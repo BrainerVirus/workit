@@ -6,8 +6,9 @@ import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hook
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
 
-// #420: a Claude Code subagent spawn that names no model gets its role's
-// model and effort through PreToolUse updatedInput; an explicit model wins.
+// #420, #654: a Claude Code subagent spawn gets its role's model and effort
+// through PreToolUse updatedInput; an explicit model wins over a built-in
+// default, and over a configured one only with models.allowLeadOverride.
 
 let configHome: ConfigHome;
 let cwd: string;
@@ -77,28 +78,80 @@ test("G an implementer brief with TIER: hard, W PreToolUse runs, T it gets opus;
   ).toBe("sonnet");
 });
 
-test("G a configured verifier effort and a model the Agent tool cannot take, W PreToolUse runs, T effort is filled and the unusable model skipped", () => {
-  writeFileSync(
-    path.join(configHome.configDir, "workspaces.json"),
-    JSON.stringify({
-      models: {
-        roles: {
-          verifier: { claude_code: { model: "claude-sonnet-5-5", effort: "high" } },
-          reviewer: { claude_code: { model: "haiku", effort: "high" } },
-        },
-      },
-    }),
-  );
+const withConfig = (models: unknown, run: () => void): void => {
+  writeFileSync(path.join(configHome.configDir, "workspaces.json"), JSON.stringify({ models }));
   try {
-    const verifier = spawn("Agent", { subagent_type: "workit:verifier" }).hookSpecificOutput
-      ?.updatedInput;
-    expect(verifier?.model).toBeUndefined();
-    expect(verifier?.effort).toBe("high");
-    // an explicit effort stays
-    const reviewer = spawn("Agent", { subagent_type: "workit:reviewer", effort: "low" })
-      .hookSpecificOutput?.updatedInput;
-    expect(reviewer).toMatchObject({ model: "haiku", effort: "low" });
+    run();
   } finally {
     rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
   }
+};
+
+test("G a configured verifier effort and a full Claude model id, W PreToolUse runs, T the id is applied as its alias with the effort", () => {
+  withConfig(
+    {
+      roles: {
+        verifier: { claude_code: { model: "claude-sonnet-5-5", effort: "high" } },
+        reviewer: { claude_code: { model: "haiku", effort: "high" } },
+        explore: "anthropic/claude-opus-5",
+      },
+    },
+    () => {
+      const verifier = spawn("Agent", { subagent_type: "workit:verifier" }).hookSpecificOutput
+        ?.updatedInput;
+      expect(verifier).toMatchObject({ model: "sonnet", effort: "high" });
+      expect(
+        spawn("Agent", { subagent_type: "Explore" }).hookSpecificOutput?.updatedInput?.model,
+      ).toBe("opus");
+      // an explicit effort stays
+      const reviewer = spawn("Agent", { subagent_type: "workit:reviewer", effort: "low" })
+        .hookSpecificOutput?.updatedInput;
+      expect(reviewer).toMatchObject({ model: "haiku", effort: "low" });
+    },
+  );
+});
+
+test("G a configured model the Agent tool cannot take, W PreToolUse runs, T the spawn runs as written and a note names the value and the fix", () => {
+  withConfig({ roles: { verifier: "gpt-5" } }, () => {
+    const out = spawn("Agent", { subagent_type: "workit:verifier" }).hookSpecificOutput;
+    expect(out?.updatedInput).toBeUndefined();
+    expect(out?.additionalContext).toContain("could not apply gpt-5");
+    expect(out?.additionalContext).toContain("workit models show --role verifier");
+  });
+});
+
+test("G a configured verifier model, W the lead names another model, T the configured one wins with a note; allowLeadOverride true keeps the lead's", () => {
+  withConfig({ roles: { verifier: "haiku" } }, () => {
+    const out = spawn("Agent", {
+      subagent_type: "workit:verifier",
+      model: "opus",
+    }).hookSpecificOutput;
+    expect(out?.updatedInput?.model).toBe("haiku");
+    expect(out?.additionalContext).toContain("replaced model opus with haiku");
+    expect(out?.additionalContext).toContain('"allowLeadOverride": true');
+  });
+  withConfig({ roles: { verifier: "haiku" }, allowLeadOverride: true }, () => {
+    expect(
+      spawn("Agent", { subagent_type: "workit:verifier", model: "opus" }).hookSpecificOutput,
+    ).toBeUndefined();
+  });
+});
+
+test("G models.roles.default, W a general-purpose spawn or one with no type, T the default model is applied; a fork is left alone", () => {
+  withConfig({ roles: { default: { claude_code: "haiku" } } }, () => {
+    for (const subagent_type of ["general-purpose", undefined])
+      expect(
+        spawn("Agent", { subagent_type }).hookSpecificOutput?.updatedInput?.model,
+        String(subagent_type),
+      ).toBe("haiku");
+    expect(spawn("Agent", { subagent_type: "fork" }).hookSpecificOutput).toBeUndefined();
+  });
+});
+
+test("G a general-purpose spawn with a ROLE: decider line, W PreToolUse runs, T it gets the decider's built-in model and effort", () => {
+  const updated = spawn("Agent", {
+    subagent_type: "general-purpose",
+    prompt: "ROLE: decider\nPick one.",
+  }).hookSpecificOutput?.updatedInput;
+  expect(updated).toMatchObject({ model: "fable", effort: "high" });
 });

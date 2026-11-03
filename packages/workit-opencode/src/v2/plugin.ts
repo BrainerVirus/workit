@@ -38,6 +38,7 @@ import {
   type PendingShells,
 } from "./shell-session";
 import { injectSkillNudge, observeSkillLoad } from "./skills";
+import { applySpawnModel, injectSpawnNotes, type SpawnNotes } from "./spawn-model";
 import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
@@ -223,6 +224,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   });
   const shellWorkdirs: ShellWorkdirs = new Map();
   const pendingShells: PendingShells = new Map();
+  const spawnNotes: SpawnNotes = new Map();
   await ctx.tool.hook("execute.before", async (event) => {
     const budgetEvent = {
       tool: event.tool,
@@ -245,6 +247,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
       id: String(event.id),
       input: event.input,
     });
+    applySpawnModel(root, budgetEvent, spawnNotes);
     // Queued only once the launch gate let the spawn through.
     observeBudget(root, budgetEvent, lifecycle.directChildren);
   });
@@ -280,6 +283,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     const session = await sessionFacts(ctx, String(event.sessionID));
     injectAgentContext(root, session, lifecycle.directChildren, event.system);
     injectHistoryOffer(root, session, historyOfferSessions, event.system);
+    injectSpawnNotes(spawnNotes, String(event.sessionID), event.system);
     if (session) injectSkillNudge(root, session, event.messages, event.system);
     if (modelSwitched(sessionModels, String(event.sessionID), modelKey(event.model)))
       injectModelSwitch(root, session, lifecycle.directChildren, event.system);

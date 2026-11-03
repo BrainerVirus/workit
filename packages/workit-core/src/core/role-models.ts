@@ -16,6 +16,12 @@
 // leniently: a malformed entry is skipped and reported (`roleModelIssues`),
 // never an error. Claude Code has built-in defaults; other hosts inherit
 // their own default model when nothing is configured.
+//
+// The `default` role is a spawn no Workit role claims (Claude Code's
+// general-purpose, OpenCode's general). `models.lead` names the lead's own
+// model, advisory on every host (none lets Workit pick the session model).
+// A model the lead names on a spawn loses to a configured role model unless
+// `models.allowLeadOverride` is true; a built-in default never overrides one.
 import { hostFamily, modelSources } from "./workspaces";
 
 export const MODEL_ROLES = [
@@ -25,6 +31,7 @@ export const MODEL_ROLES = [
   "reviewer",
   "explore",
   "babysit",
+  "default",
 ] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 export const MODEL_TIERS = ["mundane", "standard", "hard"] as const;
@@ -128,6 +135,114 @@ export const resolveRoleModel = (
   return null;
 };
 
+/** `models.lead` for a host (nearest workspace, then the global default), or null. */
+export const resolveLeadModel = (
+  cwd: string,
+  host: string | null,
+  dir?: string,
+): RoleModel | null => {
+  for (const source of modelSources(cwd, dir)) {
+    if (!isObject(source.models) || !Object.hasOwn(source.models, "lead")) continue;
+    const found = forHost(source.models.lead, host);
+    if (found)
+      return {
+        ...found,
+        source: `models.lead in ${source.global ? "the global default" : `workspace ${source.name}`}`,
+      };
+  }
+  return null;
+};
+
+/** `models.allowLeadOverride` (nearest source that sets it): true lets a spawn's own model win. */
+export const leadOverrideAllowed = (cwd: string, dir?: string): boolean => {
+  for (const source of modelSources(cwd, dir))
+    if (isObject(source.models) && Object.hasOwn(source.models, "allowLeadOverride"))
+      return source.models.allowLeadOverride === true;
+  return false;
+};
+
+/** The hosts `models show` reports enforcement for, in the order it prints them. */
+export const ENFORCEMENT_HOSTS = ["claude_code", "opencode", "codex", "cursor", "pi"] as const;
+export type Enforcement = "enforced" | "advisory";
+
+/**
+ * Whether Workit applies a role's model on a host itself (`enforced`) or only
+ * names it for the lead to pass (`advisory`). Claude Code (PreToolUse
+ * updatedInput) and OpenCode (the plugin's subagent hook) set it on every
+ * spawn; Codex writes it into its verifier, reviewer and implementer agent
+ * files, Pi passes it to its reviewer, investigator and implementer workers
+ * (the implementer on both only when the three tiers agree); Cursor has no
+ * hook that can change a spawn. The lead's own model is advisory everywhere.
+ */
+export const roleEnforcement = (
+  cwd: string,
+  selector: RoleSelector | "lead",
+  host: string,
+  dir?: string,
+): Enforcement => {
+  if (selector === "lead") return "advisory";
+  const family = hostFamily(host);
+  if (family === "claude_code" || family === "opencode") return "enforced";
+  const agents =
+    family === "codex" ? ["verifier", "reviewer"] : family === "pi" ? ["reviewer", "explore"] : [];
+  if (agents.includes(selector.role)) return "enforced";
+  if (selector.role === "implementer" && (family === "codex" || family === "pi"))
+    return uniformImplementerModel(cwd, host, dir) ? "enforced" : "advisory";
+  return "advisory";
+};
+
+export type SpawnModelChoice = {
+  /** The model the spawn should run on, or null to leave its own. */
+  model: string | null;
+  /** The effort to fill (only when the spawn names none), or null. */
+  effort: string | null;
+  /** Why Workit changed the spawn, for the lead; null when nothing changed. */
+  note: string | null;
+};
+
+const roleLabel = (selector: RoleSelector): string =>
+  selector.tier ? `${selector.role} ${selector.tier}` : selector.role;
+
+/**
+ * The model and effort a spawn for `selector` runs on: a spawn that names no
+ * model gets the role's; one that names another model keeps it only when the
+ * role model is a built-in default or `models.allowLeadOverride` is true.
+ * `accept` maps a configured value to what the host's spawn takes (null: it
+ * cannot take it, and the spawn runs as written with a note naming the fix).
+ */
+export const chooseSpawnModel = (
+  cwd: string,
+  selector: RoleSelector,
+  host: string,
+  given: { model?: unknown; effort?: unknown },
+  accept: (model: string) => string | null,
+  dir?: string,
+): SpawnModelChoice => {
+  const none: SpawnModelChoice = { model: null, effort: null, note: null };
+  const resolved = resolveRoleModel(cwd, selector, host, dir);
+  if (!resolved) return none;
+  const givenModel = name(given.model);
+  const label = roleLabel(selector);
+  const configured = resolved.source !== "built-in";
+  if (givenModel && (!configured || leadOverrideAllowed(cwd, dir))) return none;
+  const model = accept(resolved.model);
+  const effort = resolved.effort && !name(given.effort) ? resolved.effort : null;
+  if (!model)
+    return {
+      model: null,
+      effort,
+      note: `Workit could not apply ${resolved.model} (role ${label}, ${resolved.source}): this host's spawn does not take that model name, so the spawn runs on ${givenModel ?? "its default model"}. Fix the value in workspaces.json, then run \`workit models show --role ${selector.role}\`.`,
+    };
+  if (givenModel && accept(givenModel) === model) return { ...none, effort };
+  return {
+    model,
+    effort,
+    note: givenModel
+      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}. To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
+      : `Workit set ${model}${effort ? ` (effort ${effort})` : ""} on this spawn: role ${label}, ${resolved.source}.${configured ? "" : " Name a model to choose another."}`,
+  };
+};
+
 /**
  * The implementer model when a host's agent serves every fanout tier (a Codex
  * agent file, a Pi worker): set only when all three tiers resolve to the same
@@ -183,7 +298,8 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
   const issues: string[] = [];
   for (const source of modelSources(cwd, dir)) {
     if (source.models === undefined) continue;
-    const base = `${source.global ? "global default" : `workspace ${source.name}`} models.roles`;
+    const owner = `${source.global ? "global default" : `workspace ${source.name}`} models`;
+    const base = `${owner}.roles`;
     if (
       !isObject(source.models) ||
       (source.models.roles !== undefined && !rolesOf(source.models))
@@ -191,6 +307,12 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
       issues.push(`${base} is not an object; ignored`);
       continue;
     }
+    if (source.models.lead !== undefined) valueIssues(`${owner}.lead`, source.models.lead, issues);
+    if (
+      source.models.allowLeadOverride !== undefined &&
+      typeof source.models.allowLeadOverride !== "boolean"
+    )
+      issues.push(`${owner}.allowLeadOverride: not true or false; read as false`);
     for (const [role, value] of Object.entries(rolesOf(source.models) ?? {})) {
       const where = `${base}.${role}`;
       if (!(MODEL_ROLES as readonly string[]).includes(role))
@@ -208,29 +330,33 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
   return issues;
 };
 
+/** A Workit agent by name on any host: `workit:<role>`, `workit-<role>` or the bare role. */
+const AGENT_ROLE = /^(?:workit[:-])?(decider|implementer|verifier|reviewer|explore|babysit)$/iu;
+/** A `ROLE: <role>` line in a spawn prompt, for a host agent Workit does not ship. */
+const ROLE_LINE = /^[ \t]*ROLE:[ \t]*(decider|implementer|verifier|reviewer|explore|babysit)\b/imu;
+const TIER_LINE = /^[ \t]*TIER:[ \t]*(mundane|standard|hard)\b/imu;
+/** A Workit implementer brief: its TIER and WORKTREE lines. */
+const isBrief = (text: string): boolean => TIER_LINE.test(text) && /^WORKTREE:/mu.test(text);
+/** Spawn types with no role of their own: Claude Code's general-purpose (also its default), OpenCode's general. */
+const GENERAL = new Set(["", "general-purpose", "general"]);
+
 /**
- * The role a Claude Code subagent type runs as: the Workit agents by their
- * namespaced name, the built-in `Explore`. Plan, general-purpose and every
- * other type map to none (their model is not Workit's to choose). An
- * implementer spawn names its brief tier on a `TIER: <tier>` line in its
- * prompt; without one it is `standard`.
+ * The role a subagent spawn runs as, on any host: a Workit agent by name
+ * (`workit:verifier`, `workit-verifier`, `verifier`, Claude Code's
+ * `Explore`), else a `ROLE: <role>` line in the prompt, else an implementer
+ * brief (TIER and WORKTREE lines) or `default` for a general spawn. A fork
+ * (it inherits its parent's model) and any other type map to none. An
+ * implementer's tier is its prompt's `TIER: <tier>` line, `standard` without one.
  */
 export const roleForAgentType = (agentType: unknown, prompt?: unknown): RoleSelector | null => {
-  switch (agentType) {
-    case "workit:implementer": {
-      const tier =
-        typeof prompt === "string"
-          ? /^[ \t]*TIER:[ \t]*(mundane|standard|hard)\b/im.exec(prompt)?.[1]
-          : undefined;
-      return { role: "implementer", tier: (tier?.toLowerCase() as ModelTier) ?? "standard" };
-    }
-    case "workit:verifier":
-      return { role: "verifier" };
-    case "workit:reviewer":
-      return { role: "reviewer" };
-    case "Explore":
-      return { role: "explore" };
-    default:
-      return null;
-  }
+  const type = typeof agentType === "string" ? agentType.trim() : agentType == null ? "" : null;
+  if (type === null || type === "fork") return null;
+  const text = typeof prompt === "string" ? prompt : "";
+  const general = GENERAL.has(type) ? (isBrief(text) ? "implementer" : "default") : null;
+  const role = AGENT_ROLE.exec(type)?.[1] ?? ROLE_LINE.exec(text)?.[1] ?? general;
+  if (!role) return null;
+  const lower = role.toLowerCase() as ModelRole;
+  if (lower !== "implementer") return { role: lower };
+  const tier = TIER_LINE.exec(text)?.[1]?.toLowerCase() as ModelTier | undefined;
+  return { role: lower, tier: tier ?? "standard" };
 };

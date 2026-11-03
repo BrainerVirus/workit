@@ -171,7 +171,7 @@
             "additionalProperties": false
           },
           "models": {
-            "description": "Model and effort per role and host; the same key at the top of workspaces.json is the global default.",
+            "description": "Model and effort per role and host (roles), the lead's own advisory model (lead) and whether a model the lead names on a spawn wins (allowLeadOverride, default false); the same key at the top of workspaces.json is the global default.",
             "type": "object",
             "properties": {
               "roles": {
@@ -206,10 +206,21 @@
                   },
                   "babysit": {
                     "$ref": "#/definitions/roleModel"
+                  },
+                  "default": {
+                    "$ref": "#/definitions/roleModel"
                   }
                 },
                 "additionalProperties": false,
-                "description": "Per role (decider, implementer, verifier, reviewer, explore, babysit): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard)."
+                "description": "Per role (decider, implementer, verifier, reviewer, explore, babysit, default for a general-purpose spawn): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard)."
+              },
+              "lead": {
+                "$ref": "#/definitions/roleModel",
+                "description": "The lead's own model per host; advisory (Workit cannot set a session's model)."
+              },
+              "allowLeadOverride": {
+                "type": "boolean",
+                "description": "True lets a model the lead names on a spawn win over the configured role model (default false)."
               }
             },
             "additionalProperties": false
@@ -715,7 +726,7 @@
       }
     },
     "models": {
-      "description": "The global default model and effort per role and host.",
+      "description": "The global default model and effort per role and host (roles), the lead's own advisory model (lead) and whether a model the lead names on a spawn wins (allowLeadOverride, default false).",
       "type": "object",
       "properties": {
         "roles": {
@@ -750,10 +761,21 @@
             },
             "babysit": {
               "$ref": "#/definitions/roleModel"
+            },
+            "default": {
+              "$ref": "#/definitions/roleModel"
             }
           },
           "additionalProperties": false,
-          "description": "Per role (decider, implementer, verifier, reviewer, explore, babysit): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard)."
+          "description": "Per role (decider, implementer, verifier, reviewer, explore, babysit, default for a general-purpose spawn): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard)."
+        },
+        "lead": {
+          "$ref": "#/definitions/roleModel",
+          "description": "The lead's own model per host; advisory (Workit cannot set a session's model)."
+        },
+        "allowLeadOverride": {
+          "type": "boolean",
+          "description": "True lets a model the lead names on a spawn win over the configured role model (default false)."
         }
       },
       "additionalProperties": false

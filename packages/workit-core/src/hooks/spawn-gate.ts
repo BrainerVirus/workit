@@ -1,10 +1,10 @@
-// The implementer spawn gate (#432), Claude Code's PreToolUse on the Agent
-// tool. A `workit:implementer` spawn always carries a Workit brief and never
-// host isolation: Claude Code's worktree isolation refuses every command that
-// wraps git and cannot be turned off, so `isolation` is stripped (the brief's
-// WORKTREE is the worker's worktree), and a prompt with no WORKTREE line (no
-// brief, or a brief rendered before the worktree existed) is denied with the
-// commands that make one. Other agent types pass untouched.
+// The spawn gate (#432, #654), Claude Code's PreToolUse on the Agent tool.
+// No spawn runs under host isolation: Claude Code's worktree isolation refuses
+// every command that wraps git and cannot be turned off, so `isolation` is
+// stripped from every agent type (an implementer works in its brief's
+// WORKTREE). A `workit:implementer` spawn also carries a Workit brief: a
+// prompt with no WORKTREE line (no brief, or a brief rendered before the
+// worktree existed) is denied with the commands that make one.
 import { agentModelDecision } from "./agent-model";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision } from "./protocol";
@@ -20,8 +20,8 @@ export const implementerSpawn = (
   tool: Record<string, unknown>,
 ): HookDecision => {
   const type = typeof tool.subagent_type === "string" ? tool.subagent_type : "";
-  if (workitRole(descriptor, type) !== "implementer") return { kind: "none" };
-  if (typeof tool.prompt !== "string" || !MADE_WORKTREE.test(tool.prompt))
+  const implementer = workitRole(descriptor, type) === "implementer";
+  if (implementer && (typeof tool.prompt !== "string" || !MADE_WORKTREE.test(tool.prompt)))
     return {
       kind: "deny",
       reason: `workit spawn gate: a ${type} spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Run \`${UNBLOCK}\`, then spawn again with the text of \`workit fanout brief <slice>\` as the prompt.`,
@@ -32,11 +32,15 @@ export const implementerSpawn = (
   return {
     kind: "update-input",
     input,
-    text: `Workit removed isolation from this ${type} spawn: it works in the brief's WORKTREE (Claude Code's isolation refuses wrapped git).`,
+    text: `Workit removed isolation from this ${type || "general-purpose"} spawn: ${
+      implementer
+        ? "it works in the brief's WORKTREE"
+        : "it runs in your checkout; for its own worktree run `workit fanout worktree create <slice>` and name it in the prompt"
+    } (Claude Code's isolation refuses wrapped git).`,
   };
 };
 
-/** The gate, then the role's model default (agent-model.ts) on what it lets run; a deny wins. */
+/** The gate, then the role's model (agent-model.ts) on what it lets run; a deny wins. */
 export const spawnDecision = (
   descriptor: HostDescriptor,
   cwd: string,
@@ -46,7 +50,8 @@ export const spawnDecision = (
   if (gate.kind === "deny") return gate;
   const model = agentModelDecision(cwd, gate.kind === "update-input" ? gate.input : tool);
   if (gate.kind !== "update-input") return model;
-  return model.kind === "update-input"
-    ? { ...model, text: [gate.text, model.text].filter(Boolean).join("\n") }
-    : gate;
+  if (model.kind === "update-input")
+    return { ...model, text: [gate.text, model.text].filter(Boolean).join("\n") };
+  if (model.kind === "context") return { ...gate, text: [gate.text, model.text].join("\n") };
+  return gate;
 };

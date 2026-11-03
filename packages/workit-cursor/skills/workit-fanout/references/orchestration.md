@@ -28,8 +28,12 @@ race. Claude Code's built-in defaults, when nothing is configured:
 | reviewer | `opus` |
 | explore, babysit | `haiku` |
 
-OpenCode takes a subagent's model from its agent config: pick a
-configured agent whose model fits the TIER, else the default.
+Claude Code and OpenCode also get the role's model set on the spawn by
+Workit; a configured one beats a `model` you pass unless
+`models.allowLeadOverride` is true. A general spawn takes
+`models.roles.default`, or the role its prompt's `ROLE: <role>` line names.
+`models.lead` (your own model) is advisory. `workit models show` marks each
+role `enforced` or `advisory` per host: on advisory, pass the model.
 
 ## Rolling window
 
@@ -62,9 +66,9 @@ reversibility (the option cheapest to undo wins a tie), and the exact change
 list. The fixer applies that list once, then one focused recheck follows.
 
 - Hard call (shared contract, security, migration): two deciders on different
-  models (Claude Code: the `decider` role model, the other a different `model` on the Agent call; OpenCode: a
-  child session on another configured agent; Codex, Cursor and Pi: one
-  decider, since the host picks no model). If they disagree, you take the
+  models (Claude Code, OpenCode, Cursor: the `decider` role model and a
+  different `model` on the spawn, kept on a configured decider role only with
+  `models.allowLeadOverride`; Codex and Pi: one decider). If they disagree, you take the
   more reversible option.
 - Record it: `workit ledger decision "<pick>" --by decider --why "<why it is
   the more reversible>" --view "<decider A: view>" --view "<decider B: view>"`.

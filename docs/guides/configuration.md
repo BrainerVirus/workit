@@ -452,8 +452,10 @@ workspace to override it; a nested workspace inherits each role it leaves unset
 from the enclosing one, then from the global default.
 
 Roles: `decider`, `implementer` (one entry per fanout tier: `mundane`,
-`standard`, `hard`), `verifier`, `reviewer`, `explore` (read-only scouting) and
-`babysit` (PR and CI watching). A role is an object keyed by host
+`standard`, `hard`), `verifier`, `reviewer`, `explore` (read-only scouting),
+`babysit` (PR and CI watching) and `default` (a general spawn: Claude Code's
+`general-purpose`, OpenCode's `general`; a `ROLE: <role>` line in the spawn
+prompt picks another role). A role is an object keyed by host
 (`claude_code`, `opencode`, `codex`, `cursor`, `pi`, plus an optional
 `default`) whose values are a model name or `{ "model": "...", "effort": "..." }`.
 A bare model name or `{ model, effort }` applies to every host. Effort values
@@ -492,12 +494,28 @@ host: the lead's, else `claude_code`). `workit doctor` and `workit grant show`
 report an unknown role, tier or host key, or a value that is not a model or
 effort name; those entries are skipped.
 
+**The lead's model and overrides.** `models.lead` (same shape as a role)
+names the model the lead session should run on per host. No host lets Workit
+set a session's own model, so it is advisory: `workit models show` lists it
+for you to pick with the host's model switch. A configured role model wins
+over a `model` the lead passes on a spawn; set `"allowLeadOverride": true`
+under `models` to let the lead's choice win instead. A built-in default never
+overrides a model the lead passes. `workit models show` marks each role
+`enforced` (Workit sets it on the spawn) or `advisory` (the lead passes it)
+per host.
+
+```json
+{ "models": { "lead": { "claude_code": "opus" }, "allowLeadOverride": false, "roles": { "default": { "claude_code": "sonnet" } } } }
+```
+
 **How each host applies it.**
 
-- Claude Code: a subagent spawn that names no `model` gets its role's model
-  (and `effort`) from the plugin's PreToolUse hook, so `Explore` runs on the
-  explore role and `workit:verifier` on the verifier role; a spawn that names a
-  model keeps it, and a spawn is never denied over its model.
+- Claude Code: the plugin's PreToolUse hook sets the role's model (and
+  `effort`) on every subagent spawn, so `Explore` runs on the explore role,
+  `workit:verifier` on the verifier role and `general-purpose` on `default`.
+  A full Claude id (`claude-sonnet-5-5`) is applied as its family alias,
+  since the Agent tool takes only aliases; a value it cannot take is skipped
+  with a note naming it. A spawn is never denied over its model.
   `workit models show --report [--days n]` lists the models subagents actually
   ran on (default last 7 days) and flags a role that ran on a non-default one.
   The fanout brief also names `model:` and `effort:` under TIER and a
@@ -515,9 +533,13 @@ effort name; those entries are skipped.
 - Pi: a supervised worker gets `--model` and `--thinking` for a configured
   role (reviewer; investigator uses `explore`; implementer only when its tiers
   agree). Without config the worker keeps the ambient model.
-- OpenCode and Cursor: Workit registers no agents of its own there, so the
-  skills and the brief name the model and the lead passes it (Cursor's Task
-  `model`; an OpenCode subagent takes its model from its agent config).
+- OpenCode: the plugin sets the role's model on each new `subagent` spawn,
+  as `providerID/modelID` (optionally `#variant`), with the same override rule;
+  a value without a provider is skipped with a note. A continued child keeps
+  its model. Effort is not set.
+- Cursor: no hook can change a spawn, so role models are advisory: the skills
+  and the brief name the model and the lead passes it as the Task tool's
+  `model`.
 
 **Migrating `fanout.tierModels`.** It keeps working: it is read as
 `models.roles.implementer.<tier>` (a model name per tier and host, no

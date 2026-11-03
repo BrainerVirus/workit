@@ -7,12 +7,16 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  ENFORCEMENT_HOSTS,
   MODEL_ROLES,
   MODEL_TIERS,
   ROLE_SELECTORS,
+  resolveLeadModel,
   resolveRoleModel,
+  roleEnforcement,
   roleForAgentType,
   roleModelIssues,
+  type Enforcement,
   type ModelRole,
   type ModelTier,
 } from "@brainervirus/workit-core/src/core/role-models";
@@ -30,13 +34,22 @@ const flag = (argv: string[], name: string): string | null | Error => {
 };
 
 type Row = { model: string | null; effort: string | null; source: string };
+type HostEnforcement = Record<string, Enforcement>;
 
-const line = (label: string, entry: Row): string =>
+const enforcementText = (hosts: HostEnforcement): string => {
+  const of = (kind: Enforcement) => Object.keys(hosts).filter((host) => hosts[host] === kind);
+  return (["enforced", "advisory"] as const)
+    .filter((kind) => of(kind).length)
+    .map((kind) => `${kind} on ${of(kind).join(", ")}`)
+    .join("; ");
+};
+
+const line = (label: string, entry: Row, hosts?: HostEnforcement): string =>
   `  ${label}: ${
     entry.model
       ? `${entry.model}${entry.effort ? ` (effort ${entry.effort})` : ""}  [${entry.source}]`
       : "host default (nothing configured)"
-  }`;
+  }${hosts ? `; ${enforcementText(hosts)}` : ""}`;
 
 type AgentUse = {
   role: string | null;
@@ -171,23 +184,46 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const host = (hostFlag as string | null) ?? (envHost === "cli" ? "claude_code" : envHost);
   const row = (selector: { role: ModelRole; tier?: ModelTier }): Row =>
     resolveRoleModel(io.cwd, selector, host) ?? { model: null, effort: null, source: "none" };
+  const hostsFor = (selector: Parameters<typeof roleEnforcement>[1]): HostEnforcement =>
+    Object.fromEntries(
+      ENFORCEMENT_HOSTS.map((each) => [each, roleEnforcement(io.cwd, selector, each)]),
+    );
   const roles: Record<string, Row | Record<string, Row>> = {};
+  const enforcement: Record<string, HostEnforcement> = {};
   for (const selector of ROLE_SELECTORS) {
     if (role && selector.role !== role) continue;
     if (selector.tier) {
       if (tier && selector.tier !== tier) continue;
       const tiers = (roles[selector.role] ??= {}) as Record<string, Row>;
       tiers[selector.tier] = row(selector);
-    } else roles[selector.role] = row(selector);
+      enforcement[`${selector.role} ${selector.tier}`] = hostsFor(selector);
+    } else {
+      roles[selector.role] = row(selector);
+      enforcement[selector.role] = hostsFor(selector);
+    }
   }
+  const lead: Row | null = role
+    ? null
+    : (resolveLeadModel(io.cwd, host) ?? { model: null, effort: null, source: "none" });
+  if (lead) enforcement.lead = hostsFor("lead");
   const issues = roleModelIssues(io.cwd);
-  return emit(io, ok({ host, roles, ...(issues.length ? { issues } : {}) }), (data) => [
-    `models for ${data.host}`,
-    ...Object.entries(data.roles).flatMap(([name, entry]) =>
+  const data = {
+    host,
+    ...(lead ? { lead } : {}),
+    roles,
+    enforcement,
+    ...(issues.length ? { issues } : {}),
+  };
+  return emit(io, ok(data), (shown) => [
+    `models for ${shown.host}`,
+    ...(shown.lead ? [line("lead", shown.lead, shown.enforcement.lead)] : []),
+    ...Object.entries(shown.roles).flatMap(([name, entry]) =>
       "source" in entry
-        ? [line(name, entry as Row)]
-        : Object.entries(entry).map(([t, tierRow]) => line(`${name} ${t}`, tierRow)),
+        ? [line(name, entry as Row, shown.enforcement[name])]
+        : Object.entries(entry).map(([t, tierRow]) =>
+            line(`${name} ${t}`, tierRow, shown.enforcement[`${name} ${t}`]),
+          ),
     ),
-    ...(data.issues ?? []).map((issue) => `note: ${issue}`),
+    ...(shown.issues ?? []).map((issue) => `note: ${issue}`),
   ]);
 }

@@ -58,7 +58,62 @@ test("G no models config, W models show --host claude_code, T the built-in Claud
     reviewer: { model: "opus", effort: null, source: "built-in" },
     explore: { model: "haiku", effort: null, source: "built-in" },
     babysit: { model: "haiku", effort: null, source: "built-in" },
+    default: { model: null, effort: null, source: "none" },
   });
+});
+
+test("G models.lead and a default role, W models show runs, T the lead is listed advisory on every host and each role says per host whether it is enforced", async () => {
+  const cwd = project();
+  config({
+    models: {
+      lead: { claude_code: "opus", opencode: "anthropic/claude-opus-5" },
+      roles: { default: "haiku", verifier: { codex: "gpt-5.5" } },
+    },
+  });
+  const data = (await show(cwd, "--host", "opencode")).json().data;
+  expect(data.lead).toEqual({
+    model: "anthropic/claude-opus-5",
+    effort: null,
+    source: "models.lead in the global default",
+  });
+  expect(data.roles.default).toMatchObject({ model: "haiku" });
+  expect(data.enforcement.lead).toEqual({
+    claude_code: "advisory",
+    opencode: "advisory",
+    codex: "advisory",
+    cursor: "advisory",
+    pi: "advisory",
+  });
+  expect(data.enforcement.verifier).toEqual({
+    claude_code: "enforced",
+    opencode: "enforced",
+    codex: "enforced",
+    cursor: "advisory",
+    pi: "advisory",
+  });
+  expect(data.enforcement["implementer hard"]).toMatchObject({ codex: "advisory", pi: "advisory" });
+  let text = "";
+  await main(["models", "show", "--host", "claude_code"], {
+    cwd,
+    env: { ...process.env, WORKIT_HOST: "", WORKIT_SESSION_ID: "" },
+    stdout: (chunk) => void (text += chunk),
+    stderr: () => {},
+  });
+  expect(text).toContain(
+    "lead: opus  [models.lead in the global default]; advisory on claude_code, opencode, codex, cursor, pi",
+  );
+  expect(text).toContain(
+    "default: haiku  [models.roles in the global default]; enforced on claude_code, opencode; advisory on codex, cursor, pi",
+  );
+});
+
+test("G a malformed models.lead or allowLeadOverride, W the issues are read, T each is named", () => {
+  const cwd = project();
+  config({ models: { lead: 3, allowLeadOverride: "yes" } });
+  expect(roleModelIssues(cwd)).toEqual([
+    "global default models.lead: not a model name or a per-host object; ignored",
+    "global default models.allowLeadOverride: not true or false; read as false",
+  ]);
 });
 
 test("G no models config, W another host, T no built-in model (the host's own default applies)", async () => {

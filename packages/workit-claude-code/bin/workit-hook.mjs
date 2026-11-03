@@ -140,6 +140,21 @@ const stateDir = () => {
     return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
   return path.join(home, ".local", "state", "workit");
 };
+/** Does the user's workspaces.json name role models? A doubt answers yes (core/config.ts resolveConfigDir). */
+const roleModelsConfigured = () => {
+  const env = process.env;
+  const dir =
+    env.WORKFLOW_TOOLKIT_CONFIG ??
+    env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+    path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
+  let text;
+  try {
+    text = readFileSync(path.join(dir, "workspaces.json"), "utf8");
+  } catch (error) {
+    return error?.code !== "ENOENT";
+  }
+  return /"(?:roles|tierModels)"\s*:/u.test(text);
+};
 const REPO_CHECKS = ".workit/checks.json";
 const LEGACY_REPO_CHECKS = "workit.checks.json";
 /** Could the command be heavy? A doubt answers yes (it only costs a runtime load). */
@@ -375,19 +390,22 @@ const fastAllow = (() => {
         return true;
       return !implementer && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
-    // A subagent spawn that names its model has no default to fill (hooks/agent-model.ts);
-    // an implementer spawn with isolation or without a brief meets the spawn gate
-    // (hooks/spawn-gate.ts, the same WORKTREE test).
+    // A spawn with isolation (any type) or an implementer without a brief meets the
+    // spawn gate (hooks/spawn-gate.ts, the same WORKTREE test). One that names its
+    // model has no default to fill (hooks/agent-model.ts) unless the user's
+    // workspaces.json configures role models, which win over a named model.
     if (value.tool_name === "Agent" || value.tool_name === "Task") {
       const spawn = value.tool_input ?? {};
+      if (spawn.isolation !== undefined) return false;
       if (
         spawn.subagent_type === "workit:implementer" &&
-        (spawn.isolation !== undefined ||
-          typeof spawn.prompt !== "string" ||
+        (typeof spawn.prompt !== "string" ||
           !/^WORKTREE:[ \t]*(?!not made yet)\S(?![^\n]*not made yet)/mu.test(spawn.prompt))
       )
         return false;
-      return typeof spawn.model === "string" && spawn.model.trim() !== "";
+      return (
+        typeof spawn.model === "string" && spawn.model.trim() !== "" && !roleModelsConfigured()
+      );
     }
     // Read, Grep and Glob reach this hook only to be counted against a budget.
     if (READS.has(value.tool_name)) return true;
