@@ -29,9 +29,9 @@ test("a half-made branch at the base is deleted; a killed run keeps a lock and n
   });
   expect(existsSync(lock)).toBe(true);
   expect(r.git("branch", "--list", "feature/half")).toBe("");
-  // git reports the resolved path (/private/var on macOS, forward slashes on Windows).
+  // git reports the resolved path (/private/var on macOS; forward slashes and long names on Windows).
   const printed = /rm (\S+index\.lock)/u.exec(notes.join(" "))?.[1] ?? "";
-  expect(realpathSync(printed)).toBe(realpathSync(lock));
+  expect(realpathSync.native(printed)).toBe(realpathSync.native(lock));
 });
 
 test("a branch that existed before, or moved off the base, is kept", () => {
