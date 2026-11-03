@@ -474,6 +474,7 @@ export type MergeRefusal = {
     | "closed"
     | "protected_branch"
     | "others_pr"
+    | "identity_unknown"
     | "base_mismatch"
     | "base_red"
     | "ledger_tampered"
@@ -801,18 +802,22 @@ export async function mergePullRequest(
   const prFlag = input.pr ? ` --pr ${doc.number}` : "";
   const foreign = otherAuthor(resolved, doc.number);
   let othersPr: { author: string; login: string; reason: string } | null = null;
+  if (foreign !== null && !foreign.ok)
+    return refuse(
+      `identity_unknown: ${foreign.error}, so ${label} cannot be shown to be yours`,
+      `fix: gh auth status / gh auth login (or glab auth login), then retry workit pr merge${prFlag}`,
+      { reason: "identity_unknown" },
+    );
   if (foreign !== null) {
     if (!othersBypass)
       return refuse(
-        foreign.ok
-          ? `others_pr: ${label} is by ${foreign.author}, not ${foreign.login} (the forge login); workit never merges another author's PR on its own`
-          : `others_pr: ${label} cannot be shown to be yours: ${foreign.error}`,
+        `others_pr: ${label} is by ${foreign.author}, not ${foreign.login} (the forge login); workit never merges another author's PR on its own`,
         `only if the user asks you to merge it: workit pr merge${prFlag} --others-pr --reason "<why>"`,
         { reason: "others_pr" },
       );
     othersPr = {
-      author: foreign.ok ? foreign.author : "unknown",
-      login: foreign.ok ? foreign.login : "unknown",
+      author: foreign.author,
+      login: foreign.login,
       reason: othersBypass.reason.trim(),
     };
   }

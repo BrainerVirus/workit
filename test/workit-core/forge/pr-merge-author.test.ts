@@ -118,11 +118,14 @@ test("given a PR by another author, when merging, then it refuses naming the aut
   expect(merges(runner.calls)).toEqual([]);
 });
 
-test("given an unreadable PR author, when merging, then it refuses rather than guess", async () => {
+test("given an unreadable PR author, when merging, then it names the auth fix and never offers --others-pr", async () => {
   const { repo, runner } = setup(null);
   const result = await run(["pr", "merge", "--json"], repo.cwd);
   expect(result.code).toBe(3);
-  expect(result.json().data.reason).toBe("others_pr");
+  expect(result.json().data.reason).toBe("identity_unknown");
+  expect(result.json().unblock).toContain("gh auth login");
+  expect(result.json().unblock).not.toContain("--others-pr");
+  expect(result.json().error).not.toContain("--others-pr");
   expect(merges(runner.calls)).toEqual([]);
 });
 
