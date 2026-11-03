@@ -29,7 +29,7 @@ import {
   workitInvocations,
   type RawInvocation,
 } from "./raw-git";
-import { segmentsOf, type ShellDialect } from "./shell-words";
+import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -489,6 +489,91 @@ const assignmentsOf = (words: readonly string[]): Array<[string, string]> => {
   });
 };
 
+/** `words` without the leading `do`, `then`, `else`… that only introduce the command. */
+const commandWords = (words: readonly string[]): string[] => {
+  let start = 0;
+  while (start < words.length && COMPOUND.has(words[start])) start++;
+  return words.slice(start);
+};
+
+const BINDERS = new Set([
+  "read",
+  "mapfile",
+  "readarray",
+  "printf",
+  "getopts",
+  "unset",
+  "eval",
+  "let",
+  "set",
+  "source",
+  ".",
+  "declare",
+  "typeset",
+  "local",
+  "readonly",
+  "export",
+  "builtin",
+  "command",
+]);
+const COMPOUND = new Set([
+  "if",
+  "then",
+  "elif",
+  "else",
+  "fi",
+  "for",
+  "while",
+  "until",
+  "do",
+  "done",
+  "case",
+  "esac",
+  "select",
+  "function",
+  "{",
+  "}",
+]);
+
+/**
+ * Which variables a command's assignments may not be trusted for: none at all
+ * when it has loops, conditionals or `case` (`all`); else the names a
+ * conditional or non-plain assignment (`+=`, `a[i]=`), a binder (`read`,
+ * `eval`, `unset`, `declare -n`, `printf -v`…) or `${N:=…}` can change. Only a
+ * plain `NAME=literal` that runs in sequence, or `export NAME=literal`, is
+ * substituted.
+ */
+const untrustedVars = (
+  segments: readonly Segment[],
+): { all: boolean; names: ReadonlySet<string> } => {
+  const names = new Set<string>();
+  let all = false;
+  const poison = (text: string) => {
+    for (const match of text.matchAll(/[A-Za-z_]\w*/g)) names.add(match[0]);
+  };
+  for (const segment of segments) {
+    const lead = segment.words.findIndex((word) => !/^\w+\+?=|^\w+\[.*\]\+?=/.test(word));
+    const first = lead < 0 ? undefined : segment.words[lead];
+    if (first !== undefined && COMPOUND.has(first)) all = true;
+    for (const word of segment.words)
+      for (const match of word.matchAll(/\$\{(\w+)(?:\[[^\]]*\])?:?[=]/g)) names.add(match[1]);
+    const assigned =
+      lead < 0 ? segment.words : first === "export" ? segment.words.slice(lead + 1) : [];
+    const plainOnly = assigned.every((word) => /^\w+=/.test(word) || word === "export");
+    if (segment.conditional || (!plainOnly && lead < 0))
+      for (const word of assigned) poison(word.split("=")[0]);
+    if (lead >= 0 && segment.words.slice(lead).some((word) => BINDERS.has(word))) {
+      const flagged = segment.words.slice(lead + 1).some((word) => word.startsWith("-"));
+      const plainExport = first === "export" && !flagged;
+      if (!plainExport) poison(segment.words.slice(lead).join(" "));
+      else if (segment.conditional) poison(segment.words.slice(lead).join(" "));
+    }
+    if (segment.words.some((word) => /^\w+\+=/.test(word)))
+      for (const word of segment.words) if (/^\w+\+=/.test(word)) poison(word.split("+")[0]);
+  }
+  return { all, names };
+};
+
 /** A leading `~`, `$HOME` or `${HOME}` the shell would expand. */
 const homeExpanded = (file: string): string => {
   const match = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(file);
@@ -512,7 +597,11 @@ const segmentTargets = (
   const targets: string[] = [];
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
-  let vars = new Map(inherited);
+  const segments = segmentsOf(command, dialect);
+  const untrusted = untrustedVars(segments);
+  let vars = new Map(
+    untrusted.all ? [] : [...inherited].filter(([key]) => !untrusted.names.has(key)),
+  );
   const groups: Array<{
     dir: string | undefined;
     stack: Array<string | undefined>;
@@ -522,7 +611,7 @@ const segmentTargets = (
     const home = homeExpanded(expandVars(file, vars));
     return path.isAbsolute(home) ? home : dir === undefined ? null : path.resolve(dir, home);
   };
-  for (const segment of segmentsOf(command, dialect)) {
+  for (const segment of segments) {
     if (segment.group === "open") {
       groups.push({ dir, stack: [...stack], vars: new Map(vars) });
       continue;
@@ -534,8 +623,9 @@ const segmentTargets = (
     }
     const lead = segment.words.findIndex((word) => !/^\w+=/.test(word));
     const words = lead < 0 ? [] : segment.words.slice(lead);
-    for (const [key, value] of assignmentsOf(segment.words))
-      vars.set(key, homeExpanded(expandVars(value, vars)));
+    if (!segment.conditional && !untrusted.all)
+      for (const [key, value] of assignmentsOf(segment.words))
+        if (!untrusted.names.has(key)) vars.set(key, homeExpanded(expandVars(value, vars)));
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
     if (CD.has(name)) {
       dir = cdInto(dir, words, strict, vars);
@@ -573,7 +663,7 @@ const segmentTargets = (
         const resolved = at(file);
         if (resolved) targets.push(resolved);
       }
-    const edits = editsOf(segment.words);
+    const edits = editsOf(commandWords(segment.words));
     if (edits === null) {
       if (dir !== undefined) targets.push(path.join(dir, DIR_TARGET));
     } else

@@ -16,6 +16,12 @@ export type Segment = {
   group?: "open" | "close";
   /** Its standard output feeds the next segment (`a | b`). */
   pipe?: true;
+  /**
+   * Whether it may not run, or runs in its own process, so a shell variable it
+   * sets is not reliably set afterwards: it follows `&&`, `||` or `|`, or
+   * precedes a single `&`.
+   */
+  conditional?: true;
   /** Text it reads on standard input: heredoc bodies and here-strings. */
   stdin?: string[];
   /**
@@ -337,6 +343,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
   let word = "";
   let inWord = false;
   let expanding = false;
+  let afterOperator = false;
   let pending: "redirect" | "input" | "heredoc" | "herestring" | null = null;
   const heredocs: Array<{ delimiter: string; owner: Segment }> = [];
   const escape = posix ? "\\" : "`";
@@ -361,8 +368,10 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
   };
   const flushSegment = () => {
     flushWord();
-    if (current.words.length || current.redirects.length || current.stdin || current.subs)
+    if (current.words.length || current.redirects.length || current.stdin || current.subs) {
+      if (afterOperator) current.conditional = true;
       segments.push(current);
+    }
     current = { words: [], redirects: [] };
   };
   const group = (kind: "open" | "close") => {
@@ -425,6 +434,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
       inWord = true;
     } else if (char === "\n") {
       flushSegment();
+      afterOperator = false;
       // Each heredoc body, up to its delimiter line, is its command's stdin.
       while (heredocs.length) {
         const { delimiter, owner } = heredocs.shift()!;
@@ -469,13 +479,21 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
       flushSegment();
     } else if (";&|".includes(char)) {
       if (char === "&" && next === ">") continue;
+      if (char === "&" && next !== "&" && command[index - 1] !== "&") {
+        flushWord();
+        if (current.words.length) current.conditional = true;
+      }
       if (char === "|" && next === "|") index++;
       else if (char === "|") {
         flushWord();
-        if (current.words.length) current.pipe = true;
+        if (current.words.length) {
+          current.pipe = true;
+          current.conditional = true;
+        }
         if (next === "&") index++;
       }
       flushSegment();
+      afterOperator = char === "&" || char === "|";
     } else if (char === ">") {
       // `2>`, `&>`: the fd digit is not a word.
       if (inWord && /^\d$/.test(word)) {

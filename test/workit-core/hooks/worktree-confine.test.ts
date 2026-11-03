@@ -613,3 +613,25 @@ test("Given a bound implementer, When a same-command variable names the path, Th
   ])
     expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
 });
+
+test("Given a bound implementer, When a variable is reassigned conditionally or by +=, read, eval, for, declare -n and the like, Then it is not trusted and the write is denied", () => {
+  const id = implementerBoundToA("impl-shell-vars-reassign");
+  const out = path.join(lead, "src");
+  for (const command of [
+    `W=${out}; false && W=${wtA}; rm $W/x`,
+    `W=${out}; true || W=${wtA}; rm $W/x`,
+    `W=${out}; W=${wtA} | cat; rm $W/x`,
+    `W=${out}; W=${wtA} & rm $W/x`,
+    `W=${wtA}; W+=/../../..; rm $W/x`,
+    `W=${wtA}; read W < f; rm $W/a`,
+    `W=${wtA}; eval "W=${out}"; rm $W/a`,
+    `W=${wtA}; for W in ${out}; do rm $W/a; done`,
+    `W=${wtA}; declare -n W=OTHER; rm $W/a`,
+    `W=${wtA}; printf -v W %s ${out}; rm $W/a`,
+    `W=${wtA}; mapfile W < f; rm $W/a`,
+    `W=${wtA}; getopts a W; rm $W/a`,
+    `W=${wtA}; unset W; rm $W/a`,
+    `W=${wtA}; : \${W:=x}; case a in a) W=${out};; esac; rm $W/a`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBe("deny");
+});
