@@ -180,6 +180,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Configured role models (`models.roles`) now apply at spawn on OpenCode: the plugin sets the model on every new subagent, so a verifier or implementer runs on the model you configured instead of inheriting the lead's (#654).
+- `models.roles.default` sets the model for general-purpose spawns, `models.lead` records the orchestrator model, and `models.allowLeadOverride: true` lets a model the lead names win over the configured one.
+- `workit models show` says per host whether each role model is enforced or only advisory.
 - `workit check <name>` / `workit check [--name <n>] -- <cmd…>` runs a check
   and records what the CLI observed (exit code, duration, argv, HEAD, worktree
   tree key before and after, patch-id, a minimal environment fingerprint, a
@@ -378,6 +381,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Claude Code accepts full model ids such as `claude-sonnet-5-5` in `models.roles` (applied as their alias) and warns about a value it cannot apply instead of silently dropping it.
+- Claude Code: Workit strips worktree `isolation` on every Agent spawn, not only `workit:implementer`.
 - Close-time testing and verification gates accept only a fresh, passing,
   CLI-observed run of a configured check (or an approved limitation): `testing`
   binds to `test` (or `gates.testing`), `verification` to the configured
