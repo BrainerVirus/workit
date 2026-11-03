@@ -67,7 +67,10 @@ const string = (description?: string): JsonSchema => ({
   type: "string",
   ...(description ? { description } : {}),
 });
-const enumOf = (values: readonly string[]): JsonSchema => ({ type: "string", enum: [...values] });
+const enumOf = (values: readonly string[]): JsonSchema => ({
+  type: "string",
+  enum: [...values],
+});
 const closed = (properties: Record<string, JsonSchema>, required?: string[]): JsonSchema => ({
   type: "object",
   properties,
@@ -95,12 +98,36 @@ const DEFINITIONS: Record<string, JsonSchema> = {
   modelLeaf: {
     anyOf: [
       { ...nonBlankString, description: "A model name." },
-      closed({ model: string("The model name."), effort: string("The reasoning effort.") }, [
-        "model",
-      ]),
+      closed(
+        {
+          model: string("The model name."),
+          effort: string("The reasoning effort."),
+        },
+        ["model"],
+      ),
     ],
   },
-  roleModel: { anyOf: [ref("modelLeaf"), perHost(ref("modelLeaf"))] },
+  modelList: {
+    type: "array",
+    minItems: 1,
+    items: ref("modelLeaf"),
+    description:
+      "Models in fallback order: the first whose provider has not hit its usage limit runs.",
+  },
+  roleModel: {
+    anyOf: [
+      ref("modelLeaf"),
+      ref("modelList"),
+      perHost({ anyOf: [ref("modelLeaf"), ref("modelList")] }),
+      {
+        type: "array",
+        minItems: 1,
+        items: { anyOf: [ref("modelLeaf"), perHost(ref("modelLeaf"))] },
+        description:
+          "Models in fallback order, each for every host or per host: the first whose provider has not hit its usage limit runs.",
+      },
+    ],
+  },
   tierModel: { anyOf: [nonBlankString, perHost(nonBlankString)] },
 };
 
@@ -119,12 +146,21 @@ const MODELS_EDITOR = closed({
   roles: { ...ROLES_EDITOR, description: modelRoles.description },
   lead: {
     ...ref("roleModel"),
-    description: "The lead's own model per host; advisory (Workit cannot set a session's model).",
+    description:
+      "The lead's own model per host, or a list in fallback order; advisory (Workit cannot set a session's model, it prints a switch notice when the lead's provider hits its usage limit).",
   },
   allowLeadOverride: {
     type: "boolean",
     description:
       "True lets a model the lead names on a spawn win over the configured role model (default false).",
+  },
+  limitWindow: {
+    anyOf: [
+      { type: "string", pattern: String.raw`^\s*(\d+(\.\d+)?\s*[dhms]\s*)+$` },
+      { type: "number", exclusiveMinimum: 0 },
+    ],
+    description:
+      "How long a provider stays exhausted after a usage limit that names no reset time: a duration (5h, 1d 12h) or hours (default 5h).",
   },
 });
 
@@ -387,7 +423,9 @@ export const configJsonSchema = (file: ConfigSchemaFile): JsonSchema => {
     },
   }) as JsonSchema;
   const { $schema, definitions, ...body } = generated;
-  const all: Record<string, JsonSchema> = { ...(definitions as Record<string, JsonSchema>) };
+  const all: Record<string, JsonSchema> = {
+    ...(definitions as Record<string, JsonSchema>),
+  };
   for (let grew = true; grew;) {
     const text = JSON.stringify([body, all]);
     const missing = Object.keys(DEFINITIONS).filter(
@@ -590,7 +628,10 @@ const check = (
       if (schema.propertyNames) check(root, schema.propertyNames as JsonSchema, key, where, out);
       if (Object.hasOwn(properties, key)) check(root, properties[key], child, where, out);
       else if (schema.additionalProperties === false)
-        out.push({ path: where, message: `unknown key ${JSON.stringify(key)}` });
+        out.push({
+          path: where,
+          message: `unknown key ${JSON.stringify(key)}`,
+        });
       else if (schema.additionalProperties && typeof schema.additionalProperties === "object")
         check(root, schema.additionalProperties as JsonSchema, child, where, out);
     }

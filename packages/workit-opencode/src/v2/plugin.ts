@@ -38,7 +38,14 @@ import {
   type PendingShells,
 } from "./shell-session";
 import { injectSkillNudge, observeSkillLoad } from "./skills";
-import { applySpawnModel, injectSpawnNotes, type SpawnNotes } from "./spawn-model";
+import {
+  applySpawnModel,
+  injectLeadSwitch,
+  injectSpawnNotes,
+  observeSubagentLimit,
+  type SpawnNotes,
+  type SwitchNotices,
+} from "./spawn-model";
 import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
@@ -225,6 +232,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const shellWorkdirs: ShellWorkdirs = new Map();
   const pendingShells: PendingShells = new Map();
   const spawnNotes: SpawnNotes = new Map();
+  const switchNotices: SwitchNotices = new Set();
   await ctx.tool.hook("execute.before", async (event) => {
     const budgetEvent = {
       tool: event.tool,
@@ -266,6 +274,12 @@ const setup = async (ctx: Context): Promise<() => void> => {
       return observeShellResult(root, event as never, failureMemo);
     }
     if (event.tool !== "subagent") return;
+    if (event.status !== "completed")
+      observeSubagentLimit(
+        root,
+        { sessionID: String(event.sessionID), input: event.input, error: event.error },
+        spawnNotes,
+      );
     await lifecycle.executeAfter({
       tool: event.tool,
       sessionID: String(event.sessionID),
@@ -284,6 +298,14 @@ const setup = async (ctx: Context): Promise<() => void> => {
     injectAgentContext(root, session, lifecycle.directChildren, event.system);
     injectHistoryOffer(root, session, historyOfferSessions, event.system);
     injectSpawnNotes(spawnNotes, String(event.sessionID), event.system);
+    if (session && session.parentID === undefined)
+      injectLeadSwitch(
+        root,
+        String(event.sessionID),
+        modelKey(event.model),
+        switchNotices,
+        event.system,
+      );
     if (session) injectSkillNudge(root, session, event.messages, event.system);
     if (modelSwitched(sessionModels, String(event.sessionID), modelKey(event.model)))
       injectModelSwitch(root, session, lifecycle.directChildren, event.system);
@@ -307,12 +329,19 @@ const setup = async (ctx: Context): Promise<() => void> => {
     getSession: (sessionID) => sessionFacts(ctx, sessionID),
     messages: async (sessionID) => await ctx.session.context({ sessionID }),
     resume: (sessionID, text) =>
-      ctx.session.synthetic({ sessionID, text, delivery: "queue", resume: true }),
+      ctx.session.synthetic({
+        sessionID,
+        text,
+        delivery: "queue",
+        resume: true,
+      }),
   });
   const subscription = new AbortController();
   void (async () => {
     try {
-      for await (const event of ctx.event.subscribe({ signal: subscription.signal })) {
+      for await (const event of ctx.event.subscribe({
+        signal: subscription.signal,
+      })) {
         await lifecycle.handleEvent(event);
         if (event.type === "session.idle") void stopControl.onIdle(String(event.data.sessionID));
       }

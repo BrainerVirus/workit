@@ -12,7 +12,11 @@
 // A bare model name or `{ model, effort? }` applies to every host. The
 // implementer takes one such value per fanout tier. `fanout.tierModels` is
 // read as the implementer tiers (a model name per tier and host, no effort);
-// within one workspace `models.roles` wins over it. Everything is read
+// within one workspace `models.roles` wins over it. Any value may be an
+// ordered list (`["opus", "openai/gpt-5"]`, or a list per host): the first
+// model whose provider is not exhausted by a usage limit runs
+// (core/model-fallback.ts, #655); `models.limitWindow` sets how long a limit
+// with no reset time lasts (default 5h). Everything is read
 // leniently: a malformed entry is skipped and reported (`roleModelIssues`),
 // never an error. Claude Code has built-in defaults; other hosts inherit
 // their own default model when nothing is configured.
@@ -22,6 +26,13 @@
 // model, advisory on every host (none lets Workit pick the session model).
 // A model the lead names on a spawn loses to a configured role model unless
 // `models.allowLeadOverride` is true; a built-in default never overrides one.
+import {
+  exhaustionFor,
+  parseWindow,
+  providerOf,
+  shortTime,
+  type Exhaustion,
+} from "./model-fallback";
 import { hostFamily, modelSources } from "./workspaces";
 
 export const MODEL_ROLES = [
@@ -38,7 +49,22 @@ export const MODEL_TIERS = ["mundane", "standard", "hard"] as const;
 export type ModelTier = (typeof MODEL_TIERS)[number];
 
 export type RoleSelector = { role: ModelRole; tier?: ModelTier };
-export type RoleModel = { model: string; effort: string | null; source: string };
+export type RoleModel = {
+  model: string;
+  effort: string | null;
+  source: string;
+};
+/** A role model chosen past exhausted providers: `skipped` names each model passed over. */
+export type AvailableRoleModel = RoleModel & {
+  skipped: Array<{
+    model: string;
+    provider: string;
+    until: string;
+    reason: string;
+  }>;
+  /** Every candidate is exhausted: the primary runs anyway. */
+  allExhausted: boolean;
+};
 
 const HOST_KEYS = new Set([
   "claude_code",
@@ -79,25 +105,33 @@ const leaf = (value: unknown): { model: string; effort: string | null } | null =
 const isFlat = (value: unknown): boolean =>
   typeof value === "string" || (isObject(value) && Object.hasOwn(value, "model"));
 
-/** The value for `host` in a per-host object (or a flat value for every host). */
-const forHost = (value: unknown, host: string | null) => {
-  if (isFlat(value)) return leaf(value);
-  if (!isObject(value)) return null;
+type Leaf = { model: string; effort: string | null };
+
+/** The ordered models for `host` in a value: a list, a per-host object or a flat value. */
+const forHostList = (value: unknown, host: string | null): Leaf[] => {
+  if (Array.isArray(value)) return value.flatMap((item) => forHostList(item, host));
+  if (isFlat(value)) {
+    const found = leaf(value);
+    return found ? [found] : [];
+  }
+  if (!isObject(value)) return [];
   const family = host ? hostFamily(host) : null;
   for (const key of [family, host, "default"])
     if (key && Object.hasOwn(value, key)) {
-      const found = leaf(value[key]);
-      if (found) return found;
+      const found = Array.isArray(value[key])
+        ? forHostList(value[key], host)
+        : [leaf(value[key])].filter((one): one is Leaf => !!one);
+      if (found.length) return found;
     }
-  return null;
+  return [];
 };
 
 const rolesOf = (models: unknown): Record<string, unknown> | null =>
   isObject(models) && isObject(models.roles) ? models.roles : null;
 
 /**
- * The model and effort for a role on a host, or null (the host's own default
- * applies). Order: the selected workspace, each enclosing workspace, the
+ * The model and effort for a role on a host now (the first of its list whose
+ * provider is not exhausted), or null (the host's own default applies). Order: the selected workspace, each enclosing workspace, the
  * global default (each: `models.roles`, then `fanout.tierModels` for an
  * implementer tier), then Claude Code's built-in defaults.
  */
@@ -107,6 +141,17 @@ export const resolveRoleModel = (
   host: string | null,
   dir?: string,
 ): RoleModel | null => {
+  const chosen = firstAvailable(resolveRoleModels(cwd, selector, host, dir), host);
+  return chosen ? { model: chosen.model, effort: chosen.effort, source: chosen.source } : null;
+};
+
+/** Every model configured for a role on a host, in fallback order (see resolveRoleModel). */
+export const resolveRoleModels = (
+  cwd: string,
+  selector: RoleSelector,
+  host: string | null,
+  dir?: string,
+): RoleModel[] => {
   const { role, tier } = selector;
   for (const source of modelSources(cwd, dir)) {
     const where = source.global ? "the global default" : `workspace ${source.name}`;
@@ -115,24 +160,83 @@ export const resolveRoleModel = (
     const fromRoles =
       role === "implementer"
         ? tier && isObject(configured) && Object.hasOwn(configured, tier)
-          ? forHost(configured[tier], host)
-          : null
-        : forHost(configured, host);
-    if (fromRoles) return { ...fromRoles, source: `models.roles in ${where}` };
+          ? forHostList(configured[tier], host)
+          : []
+        : forHostList(configured, host);
+    if (fromRoles.length)
+      return fromRoles.map((one) => ({
+        ...one,
+        source: `models.roles in ${where}`,
+      }));
     if (role === "implementer" && tier && isObject(source.tierModels)) {
       const fromTiers = Object.hasOwn(source.tierModels, tier)
-        ? forHost(source.tierModels[tier], host)
-        : null;
-      if (fromTiers)
-        return { model: fromTiers.model, effort: null, source: `fanout.tierModels in ${where}` };
+        ? forHostList(source.tierModels[tier], host)
+        : [];
+      if (fromTiers.length)
+        return fromTiers.map((one) => ({
+          model: one.model,
+          effort: null,
+          source: `fanout.tierModels in ${where}`,
+        }));
     }
   }
   if (host && hostFamily(host) === "claude_code") {
     const builtIn = BUILT_IN_CLAUDE_CODE[tier ? `${role}.${tier}` : role];
     if (builtIn)
-      return { model: builtIn.model, effort: builtIn.effort ?? null, source: "built-in" };
+      return [
+        {
+          model: builtIn.model,
+          effort: builtIn.effort ?? null,
+          source: "built-in",
+        },
+      ];
   }
-  return null;
+  return [];
+};
+
+/**
+ * The first of `candidates` whose provider is not exhausted at `now`; the
+ * primary when every one is (a limit already past its reset never counts).
+ */
+export const firstAvailable = (
+  candidates: RoleModel[],
+  host: string | null,
+  now: Date = new Date(),
+): AvailableRoleModel | null => {
+  const [primary] = candidates;
+  if (!primary) return null;
+  const skipped: AvailableRoleModel["skipped"] = [];
+  for (const candidate of candidates) {
+    const blocked: (Exhaustion & { provider: string }) | null = exhaustionFor(
+      candidate.model,
+      host,
+      now,
+    );
+    if (!blocked) return { ...candidate, skipped, allExhausted: false };
+    skipped.push({ model: candidate.model, ...blocked });
+  }
+  return { ...primary, skipped, allExhausted: true };
+};
+
+/** The role's model on a host now: past every provider exhausted by a usage limit. */
+export const resolveAvailableRoleModel = (
+  cwd: string,
+  selector: RoleSelector,
+  host: string | null,
+  now: Date = new Date(),
+  dir?: string,
+): AvailableRoleModel | null =>
+  firstAvailable(resolveRoleModels(cwd, selector, host, dir), host, now);
+
+/** Why a role runs on a fallback (or on an exhausted primary), for notes; null when it does not. */
+export const fallbackText = (chosen: AvailableRoleModel): string | null => {
+  if (!chosen.skipped.length) return null;
+  const passed = chosen.skipped
+    .map((one) => `${one.model} (${one.provider} exhausted until ${shortTime(one.until)})`)
+    .join(", ");
+  return chosen.allExhausted
+    ? `every model configured for it is exhausted: ${passed}; it runs on ${chosen.model} anyway. Add a model of another provider to the list in workspaces.json, then run \`workit models show\`.`
+    : `fell back past ${passed}.`;
 };
 
 /** `models.lead` for a host (nearest workspace, then the global default), or null. */
@@ -140,17 +244,53 @@ export const resolveLeadModel = (
   cwd: string,
   host: string | null,
   dir?: string,
-): RoleModel | null => {
+): RoleModel | null => resolveLeadModels(cwd, host, dir)[0] ?? null;
+
+/** Every `models.lead` model for a host, in fallback order. */
+export const resolveLeadModels = (cwd: string, host: string | null, dir?: string): RoleModel[] => {
   for (const source of modelSources(cwd, dir)) {
     if (!isObject(source.models) || !Object.hasOwn(source.models, "lead")) continue;
-    const found = forHost(source.models.lead, host);
-    if (found)
-      return {
-        ...found,
+    const found = forHostList(source.models.lead, host);
+    if (found.length)
+      return found.map((one) => ({
+        ...one,
         source: `models.lead in ${source.global ? "the global default" : `workspace ${source.name}`}`,
-      };
+      }));
   }
-  return null;
+  return [];
+};
+
+const SWITCH_HOW: Record<string, string> = {
+  claude_code: "/model",
+  opencode: "/models",
+  codex: "/model",
+  cursor: "the model picker",
+  pi: "/model",
+};
+
+/**
+ * One line telling the lead to switch its own model (no host lets Workit
+ * switch a running session's model): when `current` (the session's model, or
+ * else the primary `models.lead`) runs on an exhausted provider. Names the
+ * first available `models.lead` fallback; null when nothing is exhausted.
+ */
+export const leadSwitchNotice = (
+  cwd: string,
+  host: string,
+  current: string | null,
+  now: Date = new Date(),
+  dir?: string,
+): string | null => {
+  const leads = resolveLeadModels(cwd, host, dir);
+  const model = current ?? leads[0]?.model ?? null;
+  if (!model) return null;
+  const blocked = exhaustionFor(model, host, now);
+  if (!blocked) return null;
+  const next = leads.find((one) => !exhaustionFor(one.model, host, now));
+  const how = SWITCH_HOW[hostFamily(host) ?? ""] ?? "the host's model switch";
+  return next
+    ? `Workit cannot switch this session's model: ${blocked.provider} is exhausted until ${shortTime(blocked.until)}. Switch the lead to ${next.model} with ${how}${hostFamily(host) === "claude_code" && providerOf(next.model, host) !== "anthropic" ? " (another host: Claude Code runs only Anthropic models)" : ""}.`
+    : `Workit cannot switch this session's model: ${blocked.provider} is exhausted until ${shortTime(blocked.until)}, and models.lead names no model of another provider. Add one to models.lead in workspaces.json, then run \`workit models show\`.`;
 };
 
 /** `models.allowLeadOverride` (nearest source that sets it): true lets a spawn's own model win. */
@@ -219,7 +359,10 @@ export const chooseSpawnModel = (
   dir?: string,
 ): SpawnModelChoice => {
   const none: SpawnModelChoice = { model: null, effort: null, note: null };
-  const resolved = resolveRoleModel(cwd, selector, host, dir);
+  const all = resolveRoleModels(cwd, selector, host, dir);
+  // A list for every host may name models this host cannot take: those are passed over.
+  const takes = all.filter((one) => accept(one.model));
+  const resolved = firstAvailable(takes.length ? takes : all, host);
   if (!resolved) return none;
   const givenModel = name(given.model);
   const label = roleLabel(selector);
@@ -227,19 +370,26 @@ export const chooseSpawnModel = (
   if (givenModel && (!configured || leadOverrideAllowed(cwd, dir))) return none;
   const model = accept(resolved.model);
   const effort = resolved.effort && !name(given.effort) ? resolved.effort : null;
+  const fallback = fallbackText(resolved);
+  const why = fallback ? ` Role ${label} ${fallback}` : "";
   if (!model)
     return {
       model: null,
       effort,
-      note: `Workit could not apply ${resolved.model} (role ${label}, ${resolved.source}): this host's spawn does not take that model name, so the spawn runs on ${givenModel ?? "its default model"}. Fix the value in workspaces.json, then run \`workit models show --role ${selector.role}\`.`,
+      note: `Workit could not apply ${resolved.model} (role ${label}, ${resolved.source}): this host's spawn does not take that model name, so the spawn runs on ${givenModel ?? "its default model"}.${why} Fix the value in workspaces.json, then run \`workit models show --role ${selector.role}\`.`,
     };
-  if (givenModel && accept(givenModel) === model) return { ...none, effort };
+  if (givenModel && accept(givenModel) === model)
+    return {
+      ...none,
+      effort,
+      note: fallback ? `Workit kept ${model} on this spawn.${why}` : null,
+    };
   return {
     model,
     effort,
     note: givenModel
-      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}. To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
-      : `Workit set ${model}${effort ? ` (effort ${effort})` : ""} on this spawn: role ${label}, ${resolved.source}.${configured ? "" : " Name a model to choose another."}`,
+      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}.${why} To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
+      : `Workit set ${model}${effort ? ` (effort ${effort})` : ""} on this spawn: role ${label}, ${resolved.source}.${why}${configured ? "" : " Name a model to choose another."}`,
   };
 };
 
@@ -268,6 +418,11 @@ export const ROLE_SELECTORS: RoleSelector[] = MODEL_ROLES.flatMap((role): RoleSe
 );
 
 const valueIssues = (where: string, value: unknown, out: string[]): void => {
+  if (Array.isArray(value)) {
+    if (!value.length) out.push(`${where}: an empty list; ignored`);
+    value.forEach((item, at) => valueIssues(`${where}[${at}]`, item, out));
+    return;
+  }
   if (isFlat(value)) {
     if (!leaf(value)) out.push(`${where}.model: not a model name; ignored`);
     if (isObject(value) && value.effort !== undefined && !name(value.effort))
@@ -280,6 +435,7 @@ const valueIssues = (where: string, value: unknown, out: string[]): void => {
   }
   for (const [host, entry] of Object.entries(value)) {
     if (!HOST_KEYS.has(host)) out.push(`${where}.${host}: unknown host; ignored`);
+    else if (Array.isArray(entry)) valueIssues(`${where}.${host}`, entry, out);
     else {
       if (!leaf(entry)) out.push(`${where}.${host}.model: not a model name; ignored`);
       if (isObject(entry) && entry.effort !== undefined && !name(entry.effort))
@@ -308,6 +464,8 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
       continue;
     }
     if (source.models.lead !== undefined) valueIssues(`${owner}.lead`, source.models.lead, issues);
+    if (source.models.limitWindow !== undefined && !parseWindow(source.models.limitWindow))
+      issues.push(`${owner}.limitWindow: not a duration such as "5h" or "1d 12h"; read as 5h`);
     if (
       source.models.allowLeadOverride !== undefined &&
       typeof source.models.allowLeadOverride !== "boolean"

@@ -2,7 +2,9 @@
 // model and effort each role runs on for a host, from `models.roles` in
 // workspaces.json (workspace, then global default), `fanout.tierModels` for
 // the implementer tiers, then Claude Code's built-in defaults. Skills call it
-// to know what to pass as `model` (and `effort`) when they spawn a role.
+// to know what to pass as `model` (and `effort`) when they spawn a role. A
+// role's list falls back past a provider exhausted by a usage limit (#655);
+// `exhausted` lists those providers and their resets.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +13,9 @@ import {
   MODEL_ROLES,
   MODEL_TIERS,
   ROLE_SELECTORS,
+  fallbackText,
+  leadSwitchNotice,
+  resolveAvailableRoleModel,
   resolveLeadModel,
   resolveRoleModel,
   roleEnforcement,
@@ -20,6 +25,7 @@ import {
   type ModelRole,
   type ModelTier,
 } from "@brainervirus/workit-core/src/core/role-models";
+import { exhaustedProviders, shortTime } from "@brainervirus/workit-core/src/core/model-fallback";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 
@@ -33,7 +39,12 @@ const flag = (argv: string[], name: string): string | null | Error => {
   return value && !value.startsWith("--") ? value : new Error(`${name} needs a value`);
 };
 
-type Row = { model: string | null; effort: string | null; source: string };
+type Row = {
+  model: string | null;
+  effort: string | null;
+  source: string;
+  fallback?: string;
+};
 type HostEnforcement = Record<string, Enforcement>;
 
 const enforcementText = (hosts: HostEnforcement): string => {
@@ -49,7 +60,7 @@ const line = (label: string, entry: Row, hosts?: HostEnforcement): string =>
     entry.model
       ? `${entry.model}${entry.effort ? ` (effort ${entry.effort})` : ""}  [${entry.source}]`
       : "host default (nothing configured)"
-  }${hosts ? `; ${enforcementText(hosts)}` : ""}`;
+  }${hosts ? `; ${enforcementText(hosts)}` : ""}${entry.fallback ? `\n    ${entry.fallback}` : ""}`;
 
 type AgentUse = {
   role: string | null;
@@ -182,8 +193,17 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const envHost = actorFromEnv(io.env).host;
   const host = (hostFlag as string | null) ?? (envHost === "cli" ? "claude_code" : envHost);
-  const row = (selector: { role: ModelRole; tier?: ModelTier }): Row =>
-    resolveRoleModel(io.cwd, selector, host) ?? { model: null, effort: null, source: "none" };
+  const row = (selector: { role: ModelRole; tier?: ModelTier }): Row => {
+    const chosen = resolveAvailableRoleModel(io.cwd, selector, host);
+    if (!chosen) return { model: null, effort: null, source: "none" };
+    const fallback = fallbackText(chosen);
+    return {
+      model: chosen.model,
+      effort: chosen.effort,
+      source: chosen.source,
+      ...(fallback ? { fallback } : {}),
+    };
+  };
   const hostsFor = (selector: Parameters<typeof roleEnforcement>[1]): HostEnforcement =>
     Object.fromEntries(
       ENFORCEMENT_HOSTS.map((each) => [each, roleEnforcement(io.cwd, selector, each)]),
@@ -207,11 +227,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
     : (resolveLeadModel(io.cwd, host) ?? { model: null, effort: null, source: "none" });
   if (lead) enforcement.lead = hostsFor("lead");
   const issues = roleModelIssues(io.cwd);
+  const exhausted = exhaustedProviders();
+  const leadSwitch = lead ? leadSwitchNotice(io.cwd, host, null) : null;
   const data = {
     host,
     ...(lead ? { lead } : {}),
     roles,
     enforcement,
+    exhausted,
+    ...(leadSwitch ? { leadSwitch } : {}),
     ...(issues.length ? { issues } : {}),
   };
   return emit(io, ok(data), (shown) => [
@@ -224,6 +248,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
             line(`${name} ${t}`, tierRow, shown.enforcement[`${name} ${t}`]),
           ),
     ),
+    ...(shown.exhausted.length
+      ? [
+          "exhausted providers (usage limit):",
+          ...shown.exhausted.map(
+            (one) => `  ${one.provider}: until ${shortTime(one.until)}  [${one.reason}]`,
+          ),
+        ]
+      : ["exhausted providers: none"]),
+    ...(shown.leadSwitch ? [`note: ${shown.leadSwitch}`] : []),
     ...(shown.issues ?? []).map((issue) => `note: ${issue}`),
   ]);
 }
