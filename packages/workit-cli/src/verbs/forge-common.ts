@@ -134,6 +134,16 @@ export function releaseTrunk(
   };
 }
 
+/**
+ * The first line of a verb that can outlast a host's shell timeout (#638): on
+ * stderr at once, in every mode, so a call the host kills is never silent.
+ */
+export const announce = (io: Io, line: string): void => io.stderr(`workit: ${line}\n`);
+
+/** How to keep a long verb alive under a host shell timeout, for its first line. */
+export const BACKGROUND_HINT =
+  "if your shell tool times out sooner, run it in the background (Claude Code: run_in_background; OpenCode, Codex, Cursor, Pi: a background shell) and read its output when it ends";
+
 export const usage = (io: Io, message: string, line: string): number =>
   emit(io, fail("invalid_input", message, { unblock: line }));
 

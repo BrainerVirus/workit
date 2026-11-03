@@ -23,12 +23,16 @@ import {
   type WaitVerdict,
 } from "@brainervirus/workit-core/src/forge/report";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
-import type { ForgePrStatus } from "@brainervirus/workit-core/src/forge/types";
+import type { ForgePrStatus, ForgeResult } from "@brainervirus/workit-core/src/forge/types";
+import { apiJson } from "@brainervirus/workit-core/src/forge/exec";
+import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { forgeTarget } from "@brainervirus/workit-core/src/core/remotes";
 import { emit, fail, ok, type Io } from "../output";
 import { progressFor } from "../progress";
 import {
+  announce,
+  BACKGROUND_HINT,
   connect,
   forgeDeps,
   forgeFail,
@@ -57,6 +61,80 @@ const MAX_POLL_ERRORS = 3;
 
 const seconds = (ms: number): string => `${Math.round(ms / 1000)}s`;
 
+type HeadRun = { id: number; name: string; conclusion: string; url: string | null };
+
+const PASSED_RUN = new Set(["success", "skipped", "neutral"]);
+
+/**
+ * The Actions runs API's word on the PR head, asked when the check rollup
+ * still lists checks pending (#646): the rollup can lag, or describe another
+ * commit, while the runs API keys on the head SHA. Returns the head's newest
+ * run per workflow when every one completed without failing and every
+ * pending check is an Actions run; else null and the rollup's verdict stands.
+ */
+function headRunsPassed(
+  resolved: ResolvedForge,
+  status: ForgePrStatus,
+  missing: { required: readonly string[] | null; expected: readonly string[] },
+): HeadRun[] | null {
+  if (resolved.forge.kind !== "github") return null;
+  // A required or expected check not posted on the head yet is not a pass, whatever the runs say.
+  if ((missing.required?.length ?? 0) > 0 || missing.expected.length > 0) return null;
+  const pending = status.checks.filter((check) => check.state === "pending");
+  if (!pending.length || pending.some((check) => check.runId === null)) return null;
+  if (status.checks.some((check) => check.state === "failing")) return null;
+  type Runs = {
+    workflow_runs?: Array<{
+      id: number;
+      name?: string | null;
+      workflow_id?: number;
+      head_sha?: string;
+      status?: string | null;
+      conclusion?: string | null;
+      html_url?: string | null;
+    }>;
+  };
+  let read: ForgeResult<Runs>;
+  try {
+    read = apiJson<Runs>(
+      resolved.runner,
+      "gh",
+      resolved.forge.apiHost,
+      ["api", `repos/${resolved.forge.repo}/actions/runs?head_sha=${status.head.sha}&per_page=100`],
+      `actions runs for head ${status.head.sha.slice(0, 12)}`,
+    );
+  } catch {
+    // Advisory: a runner that throws leaves the rollup's verdict in place.
+    return null;
+  }
+  if (!read.ok) return null;
+  const passed = (headRun: { status?: string | null; conclusion?: string | null }) =>
+    headRun.status === "completed" && PASSED_RUN.has(headRun.conclusion ?? "");
+  const onHead = (read.data.workflow_runs ?? []).filter(
+    (headRun) => !headRun.head_sha || headRun.head_sha === status.head.sha,
+  );
+  // Each pending check's own run (a workflow can run twice on one head: push and pull_request).
+  const byId = new Map(onHead.map((headRun) => [headRun.id, headRun]));
+  for (const check of pending) {
+    const own = check.runId === null ? undefined : byId.get(check.runId);
+    if (!own || !passed(own)) return null;
+  }
+  const newest = new Map<number, NonNullable<Runs["workflow_runs"]>[number]>();
+  for (const headRun of onHead) {
+    const key = headRun.workflow_id ?? headRun.id;
+    if ((newest.get(key)?.id ?? -1) < headRun.id) newest.set(key, headRun);
+  }
+  const runs = [...newest.values()];
+  if (!runs.length) return null;
+  if (!runs.every(passed)) return null;
+  return runs.map((headRun) => ({
+    id: headRun.id,
+    name: headRun.name ?? `run ${headRun.id}`,
+    conclusion: headRun.conclusion ?? "",
+    url: headRun.html_url ?? null,
+  }));
+}
+
 async function wait(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     pr: "value",
@@ -81,6 +159,15 @@ async function wait(argv: string[], io: Io): Promise<number> {
   if (head !== null && !/^[0-9a-f]{7,64}$/u.test(head))
     return usage(io, "--head must be a commit sha (7-64 hex chars)", WAIT_USAGE);
 
+  const target = pr
+    ? `PR #${pr}`
+    : flags.values.branch
+      ? `branch ${flags.values.branch}`
+      : "this branch's PR";
+  announce(
+    io,
+    `ci wait: waiting on CI for ${target} for up to ${flags.values.timeout ?? "20m"} (--timeout <dur> sets it);${BACKGROUND_HINT}`,
+  );
   // One hard deadline for every API call, from resolving the forge and the
   // identity check to the final status build (M2). A zero or tiny --timeout
   // still gets one complete poll.
@@ -103,6 +190,8 @@ async function wait(argv: string[], io: Io): Promise<number> {
   // the required ones. Read once; a failed read means no expectation (#510).
   let baseContexts: string[] | null = null;
   let expectedMissing: string[] = [];
+  let headRuns: HeadRun[] | null = null;
+  let rollupPending: string[] = [];
   const waiting = progressFor(io).start("Waiting for CI");
   const abort = (...args: [Parameters<typeof forgeFail>[1], Record<string, unknown>?]) => {
     waiting.end("failed");
@@ -125,6 +214,16 @@ async function wait(argv: string[], io: Io): Promise<number> {
       const seen = new Set(status.checks.map((check) => check.context));
       expectedMissing = (baseContexts ?? []).filter((context) => !seen.has(context));
       verdict = waitVerdict(doc.data, { head, elapsedMs, expectedMissing });
+      if (verdict.state === "waiting" && verdict.reason === "checks_pending") {
+        headRuns = headRunsPassed(resolved, status, {
+          required: doc.data.checks.missingRequired,
+          expected: expectedMissing,
+        });
+        if (headRuns) {
+          rollupPending = doc.data.checks.pending;
+          verdict = { state: "ready", reason: "runs_passed" };
+        }
+      }
       if (verdict.state !== "waiting") break;
       const pending = doc.data.checks.pending;
       waiting.label(
@@ -167,6 +266,7 @@ async function wait(argv: string[], io: Io): Promise<number> {
       : {}),
     reason: verdict.reason,
     ...(expectedMissing.length > 0 ? { expectedMissing } : {}),
+    ...(headRuns ? { runs: headRuns, rollupPending } : {}),
     polls,
     elapsedMs,
     timeoutMs,
@@ -184,6 +284,15 @@ async function wait(argv: string[], io: Io): Promise<number> {
         ? `CI none: no CI configured for this head (no checks registered within the grace) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`
         : `CI pass (${verdict.reason}) after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`) +
         never,
+      ...(headRuns
+        ? [
+            `the check rollup still lists pending: ${rollupPending.join(", ")}; the Actions runs API says every run for head ${doc.head.sha.slice(0, 12)} completed, so it is trusted:`,
+            ...headRuns.map(
+              (headRun) =>
+                `  run ${headRun.id} ${headRun.name}: ${headRun.conclusion}${headRun.url ? `  ${headRun.url}` : ""}`,
+            ),
+          ]
+        : []),
       ...renderStatus(doc),
     ]);
   if (verdict.state === "failed")

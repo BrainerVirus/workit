@@ -88,6 +88,7 @@ import {
   type ResourceSettings,
 } from "@brainervirus/workit-core/src/core/resources";
 import { startHeartbeat } from "@brainervirus/workit-core/src/core/heavy-lease";
+import { announce, BACKGROUND_HINT } from "./forge-common";
 
 const USAGE =
   'workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
@@ -98,6 +99,9 @@ const USAGE =
 export const OUTPUT_LINES = 60;
 /** Lease age bound for a check without --timeout, where the holder cannot be identified. */
 const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
+
+/** How often a running check says it is still running, so a host never sees silence (#645). */
+const CHECK_STATUS_MS = 60_000;
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
 const RECORD_TAIL_LINES = 20;
 const RECORD_TAIL_CHARS = 200;
@@ -687,6 +691,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
     io.stderr(
       `note: "${name}" is configured as \`${shadowed.argv.join(" ")}\`; this ad-hoc run does not satisfy a configured gate (run workit check ${name})\n`,
     );
+  const label = name ?? command.join(" ");
+  announce(
+    io,
+    `check ${label}: starting (${options.timeoutMs ? `timeout ${Math.ceil(options.timeoutMs / 1000)}s` : "no timeout; --timeout <s> sets one"}); the result prints when it ends, a status line every ${CHECK_STATUS_MS / 1000}s until then; ${BACKGROUND_HINT}`,
+  );
   const actor = actorFromEnv(io.env);
   const branchKey: CodeKey = codeKey(io.cwd, { base: options.base });
   // codeKey keys the tree only on a checked-out branch; a detached HEAD is
@@ -733,6 +742,16 @@ export async function run(argv: string[], io: Io): Promise<number> {
       : sink;
   let result: Awaited<ReturnType<typeof runCheckCommand>>;
   let stderrTail = "";
+  const runStarted = Date.now();
+  const statusTimer = setInterval(
+    () =>
+      announce(
+        io,
+        `check ${label}: still running after ${Math.round((Date.now() - runStarted) / 1000)}s (pid ${process.pid})`,
+      ),
+    CHECK_STATUS_MS,
+  );
+  statusTimer.unref?.();
   try {
     const scoped = await runScoped(
       (wrapper, sinks) =>
@@ -765,6 +784,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       heavy.scope = { unit: null, reason: `systemd-run failed: ${scoped.fallback}` };
     }
   } finally {
+    clearInterval(statusTimer);
     heartbeat?.stop();
     lease?.release();
   }
@@ -882,7 +902,6 @@ export async function run(argv: string[], io: Io): Promise<number> {
         ? `cannot start ${command[0]}: ${result.spawnError}`
         : `exited ${result.exitCode}`
     : recordError?.message;
-  const label = name ?? command.join(" ");
   const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; log: ${logPath ?? "not stored"}`;
   if (io.json)
     io.stdout(

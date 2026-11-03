@@ -12,6 +12,24 @@ import { buildBody, parseGhIssue, parseGhRepo } from "../forge/pr-body";
 // the approved source SHA through WORKIT_EXPECTED_* and the shared executor
 // post-verifies the provider PR head before reporting success. The residual
 // non-atomic source-SHA race is accepted.
+
+// Every child has a deadline and no stdin, so a prompt or a stalled remote
+// fails instead of hanging the caller (#644).
+const bounded = (timeout: number) => ({
+  encoding: "utf8" as const,
+  timeout,
+  killSignal: "SIGKILL" as const,
+  stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+  windowsHide: true,
+});
+const LOCAL = bounded(20_000);
+const NETWORK = bounded(60_000);
+const NO_PROMPT = {
+  GIT_TERMINAL_PROMPT: "0",
+  GH_PROMPT_DISABLED: "1",
+  GLAB_CHECK_UPDATE: "false",
+  NO_PROMPT: "1",
+};
 const remoteRepoPath = (
   remote: string,
 ): { host: string; path: string; protocol: string } | null => {
@@ -83,7 +101,7 @@ export const hostingCliAvailable = (provider: string): boolean =>
   whichOnPath(provider === "gitlab" ? "glab" : "gh") !== null;
 
 function repoRoot(cwd: string): string {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" });
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, ...LOCAL });
   return result.status === 0 ? (result.stdout ?? "").trim() : cwd;
 }
 
@@ -91,7 +109,7 @@ function repoRoot(cwd: string): string {
 export const pushRemote = (cwd: string): string | null => {
   const result = spawnSync("git", ["remote", "get-url", "--push", "--all", "origin"], {
     cwd,
-    encoding: "utf8",
+    ...LOCAL,
   });
   if (result.status !== 0) return null;
   const urls = (result.stdout ?? "")
@@ -150,7 +168,7 @@ export const pushTargetIsStable = (cwd: string, remote: string): boolean => {
   const result = spawnSync(
     "git",
     ["config", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"],
-    { cwd, encoding: "utf8" },
+    { cwd, ...LOCAL },
   );
   if (result.status !== 0 && result.status !== 1) return false;
   const prefixes = (result.stdout ?? "")
@@ -165,7 +183,7 @@ export function prBuildBody(env: NodeJS.ProcessEnv, cwd?: string): string {
   const ghLinkOnPr = truthy(env.GH_LINK_ON_PR);
   let ghRepo = env.GH_REPO || null;
   if (!ghRepo && ghLinkOnPr) {
-    const result = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
+    const result = spawnSync("git", ["remote", "get-url", "origin"], { cwd, ...LOCAL });
     if (result.status === 0) ghRepo = parseGhRepo(result.stdout ?? "");
   }
   return buildBody(
@@ -243,13 +261,13 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const title = String(env.WF_PR_TITLE ?? "");
   const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
     cwd: root,
-    encoding: "utf8",
+    ...LOCAL,
   });
   const branch = br.status === 0 ? (br.stdout ?? "").trim() : "";
   const sourceResult = branch
     ? spawnSync("git", ["rev-parse", "--verify", `refs/heads/${branch}`], {
         cwd: root,
-        encoding: "utf8",
+        ...LOCAL,
       })
     : null;
   const sourceCommit = sourceResult?.status === 0 ? (sourceResult.stdout ?? "").trim() : "";
@@ -303,8 +321,8 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const remoteBranchTip = (): string | null => {
     const read = spawnSync("git", ["ls-remote", targetUrl, `refs/heads/${branch}`], {
       cwd: root,
-      encoding: "utf8",
-      env: { ...process.env, PATH: process.env.PATH ?? "" },
+      ...NETWORK,
+      env: { ...process.env, ...NO_PROMPT, PATH: process.env.PATH ?? "" },
     });
     return read.status === 0 ? (read.stdout ?? "").trim().split(/\s+/u)[0] || null : null;
   };
@@ -322,7 +340,11 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     const pushed = spawnSync(
       "git",
       ["push", "-u", targetUrl, `${sourceCommit}:refs/heads/${branch}`],
-      { cwd: root, encoding: "utf8", env: { ...process.env, PATH: process.env.PATH ?? "" } },
+      {
+        cwd: root,
+        ...NETWORK,
+        env: { ...process.env, ...NO_PROMPT, PATH: process.env.PATH ?? "" },
+      },
     );
     if (pushed.status !== 0)
       return { error: "push failed", provider, stderr: (pushed.stderr ?? "").slice(0, 800) };
@@ -353,7 +375,12 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     // bun's Windows spawn only consults PATH when the env object carries an
     // explicit PATH key — a spread-only PATH is invisible to the lookup and
     // uv_spawn fails with ENOENT even though the CLI is on PATH.
-    cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GITLAB_HOST: identity.host };
+    cmdEnv = {
+      ...process.env,
+      ...NO_PROMPT,
+      PATH: process.env.PATH ?? "",
+      GITLAB_HOST: identity.host,
+    };
   } else {
     cmd = [
       "gh",
@@ -367,10 +394,10 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     ];
     if (finalBody) cmd.push("--body", finalBody);
     if (draft) cmd.push("--draft");
-    cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GH_HOST: identity.host };
+    cmdEnv = { ...process.env, ...NO_PROMPT, PATH: process.env.PATH ?? "", GH_HOST: identity.host };
   }
 
-  const result = spawnSync(cmd[0], cmd.slice(1), { cwd: root, encoding: "utf8", env: cmdEnv });
+  const result = spawnSync(cmd[0], cmd.slice(1), { cwd: root, ...NETWORK, env: cmdEnv });
   if (result.status !== 0) {
     const err = (result.stderr ?? result.stdout ?? "").trim();
     let hint: Record<string, any> | null = null;
@@ -380,7 +407,7 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     ) {
       const list = spawnSync("glab", ["mr", "list", `--source-branch=${branch}`, "--output=json"], {
         cwd: root,
-        encoding: "utf8",
+        ...NETWORK,
         env: cmdEnv,
       });
       if (list.status === 0 && (list.stdout ?? "").trim()) {

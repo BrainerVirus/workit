@@ -43,7 +43,7 @@ import {
 } from "@brainervirus/workit-core/src/forge/pr-ops";
 import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
-import { currentBranch, headSha } from "@brainervirus/workit-core/src/git/rev";
+import { currentBranch, GIT_TIMEOUTS, headSha } from "@brainervirus/workit-core/src/git/rev";
 import { configDir } from "@brainervirus/workit-core/src/core/config";
 import {
   workspaceChangelog,
@@ -95,6 +95,7 @@ import {
 import { checkRoot } from "@brainervirus/workit-core/src/check-config";
 import { emit, fail, ok, type Io } from "../output";
 import {
+  announce,
   connect,
   forgeDeps,
   forgeFail,
@@ -294,6 +295,9 @@ function refuseTitle(io: Io, title: string, line: string): number | null {
 }
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
+/** Every forge call of one `pr create` together, under a typical 120 s host shell timeout (#644). */
+const PR_CREATE_BUDGET_MS = 90_000;
+
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>] [--json]";
 const MERGE_USAGE =
@@ -357,15 +361,35 @@ async function template(argv: string[], io: Io): Promise<number> {
   ]);
 }
 
+/**
+ * The places a relative `--body-file` may name, first match wins: the shell's
+ * directory (PWD), where the caller typed it, since `--cwd` moves only the
+ * repository context (#643); then `--cwd` itself, for a host that starts
+ * workit elsewhere than its inherited PWD.
+ */
+const bodyFileCandidates = (io: Io, file: string): string[] => {
+  if (path.isAbsolute(file)) return [file];
+  const shell = io.env.PWD;
+  const dirs = shell && path.isAbsolute(shell) ? [shell, io.cwd] : [io.cwd];
+  return [...new Set(dirs.map((dir) => path.resolve(dir, file)))];
+};
+
 /** `--body-file <path>`, or `-` for stdin. A string is the usage error. */
 function readBodyFile(io: Io, file: string): { body: string } | string {
+  if (file === "-")
+    try {
+      return { body: forgeDeps.readStdin() };
+    } catch {
+      return "cannot read --body-file - (stdin)";
+    }
+  const candidates = bodyFileCandidates(io, file);
+  const found = candidates.find((candidate) => existsSync(candidate));
   try {
-    return {
-      body: file === "-" ? forgeDeps.readStdin() : readFileSync(path.resolve(io.cwd, file), "utf8"),
-    };
+    if (found) return { body: readFileSync(found, "utf8") };
   } catch {
-    return `cannot read --body-file ${file}`;
+    return `cannot read --body-file ${found}`;
   }
+  return `cannot read --body-file ${file}: no such file at ${candidates.join(" or ")}; pass an absolute path, or --body-file - with the body on stdin`;
 }
 
 const prLabel = (kind: string, number: number): string =>
@@ -645,6 +669,11 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
       "pass --base or --track, not both (--track picks the base for you)",
       CREATE_USAGE,
     );
+  announce(
+    io,
+    `pr create: checking the forge account, the changelog and docs against the base (each git fetch bounded to ${GIT_TIMEOUTS.network / 1000}s), then opening the PR (forge calls bounded to ${PR_CREATE_BUDGET_MS / 1000}s in all); a call that stalls fails naming it`,
+  );
+  const deadline = forgeDeps.now() + PR_CREATE_BUDGET_MS;
   let base: string | null = flags.values.base ?? null;
   const branch = currentBranch(io.cwd);
   const kind = branchKindOf(branch);
@@ -696,7 +725,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
   // A given title is checked before any forge call; a --fill title once it is derived.
   const given = flags.values.title ? refuseTitle(io, flags.values.title, CREATE_USAGE) : null;
   if (given !== null) return given;
-  const connected = connect(io, branch);
+  const connected = connect(io, branch, { deadline });
   if (!connected.ok) return forgeFail(io, connected);
   let title = flags.values.title ?? "";
   if (fill) {
