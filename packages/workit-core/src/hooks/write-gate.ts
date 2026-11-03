@@ -440,9 +440,15 @@ export const UNKNOWN_DIR = path.resolve(path.parse(process.cwd()).root, ".workit
  * A `cd` operand resolved against `dir`. A target that cannot be known is
  * undefined, or `UNKNOWN_DIR` when `strict`.
  */
-const cdInto = (dir: string | undefined, words: string[], strict = false): string | undefined => {
+const cdInto = (
+  dir: string | undefined,
+  words: string[],
+  strict = false,
+  vars: ReadonlyMap<string, string> = new Map(),
+): string | undefined => {
   const lost = strict ? UNKNOWN_DIR : undefined;
-  const named = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
+  const found = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
+  const named = found === undefined ? undefined : expandVars(found, vars);
   // Only a leading `~` or `$HOME` expands; a mid-path `~` is literal (Windows 8.3
   // short names like RUNNER~1).
   const target = named === undefined ? undefined : homeExpanded(named);
@@ -453,6 +459,35 @@ const cdInto = (dir: string | undefined, words: string[], strict = false): strin
 
 const quoteWord = (word: string): string =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+
+/**
+ * `$NAME` and `${NAME}` replaced by the value a same-command assignment gave
+ * it. A name the command never assigned stays as written.
+ */
+const expandVars = (text: string, vars: ReadonlyMap<string, string>): string =>
+  vars.size === 0 || !text.includes("$")
+    ? text
+    : text.replace(/\$(?:(\w+)|\{(\w+)\})/g, (whole, bare?: string, braced?: string) => {
+        const value = vars.get(bare ?? braced ?? "");
+        return value === undefined ? whole : value;
+      });
+
+const DECLARERS = new Set(["export", "declare", "typeset", "local", "readonly"]);
+
+/** The `NAME=value` assignments a segment makes to the shell itself (alone, or after `export`). */
+const assignmentsOf = (words: readonly string[]): Array<[string, string]> => {
+  const first = words.findIndex((word) => !/^\w+=/.test(word));
+  const named =
+    first < 0
+      ? words
+      : first === 0 && DECLARERS.has(words[0])
+        ? words.slice(1).filter((word) => !word.startsWith("-"))
+        : [];
+  return named.flatMap((word) => {
+    const match = /^(\w+)=(.*)$/s.exec(word);
+    return match && /^[A-Za-z_]/.test(match[1]) ? [[match[1], match[2]] as [string, string]] : [];
+  });
+};
 
 /** A leading `~`, `$HOME` or `${HOME}` the shell would expand. */
 const homeExpanded = (file: string): string => {
@@ -472,35 +507,43 @@ const segmentTargets = (
   dialect: ShellDialect,
   depth = 0,
   strict = false,
+  inherited: ReadonlyMap<string, string> = new Map(),
 ): string[] => {
   const targets: string[] = [];
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
-  const groups: Array<{ dir: string | undefined; stack: Array<string | undefined> }> = [];
+  let vars = new Map(inherited);
+  const groups: Array<{
+    dir: string | undefined;
+    stack: Array<string | undefined>;
+    vars: Map<string, string>;
+  }> = [];
   const at = (file: string) => {
-    const home = homeExpanded(file);
+    const home = homeExpanded(expandVars(file, vars));
     return path.isAbsolute(home) ? home : dir === undefined ? null : path.resolve(dir, home);
   };
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.group === "open") {
-      groups.push({ dir, stack: [...stack] });
+      groups.push({ dir, stack: [...stack], vars: new Map(vars) });
       continue;
     }
     if (segment.group === "close") {
       const saved = groups.pop();
-      if (saved) ({ dir, stack } = saved);
+      if (saved) ({ dir, stack, vars } = saved);
       continue;
     }
     const lead = segment.words.findIndex((word) => !/^\w+=/.test(word));
     const words = lead < 0 ? [] : segment.words.slice(lead);
+    for (const [key, value] of assignmentsOf(segment.words))
+      vars.set(key, homeExpanded(expandVars(value, vars)));
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
     if (CD.has(name)) {
-      dir = cdInto(dir, words, strict);
+      dir = cdInto(dir, words, strict, vars);
       continue;
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
-      dir = cdInto(dir, words, strict);
+      dir = cdInto(dir, words, strict, vars);
       continue;
     }
     if (POPD.has(name)) {
@@ -509,11 +552,13 @@ const segmentTargets = (
     }
     const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
     if (inner !== null && dir !== undefined)
-      targets.push(...segmentTargets(workitRunDir(dir, words), inner, "posix", depth + 1, strict));
+      targets.push(
+        ...segmentTargets(workitRunDir(dir, words), inner, "posix", depth + 1, strict, vars),
+      );
     if (strict && dir !== undefined) {
       const runIn = dir;
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
-        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true));
+        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true, vars));
       const opaque = segment.unanalyzable ? ["."] : inner === null ? opaqueWrites(words) : null;
       for (const file of opaque ?? []) {
         const resolved = at(file);

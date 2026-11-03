@@ -578,3 +578,38 @@ test("Given a directory that only claims Claude Code's isolation through a .git 
   expect(denied?.permissionDecision).toBe("deny");
   expect(denied?.permissionDecisionReason).toContain("workit worktree confinement");
 });
+
+test("Given a bound implementer, When a same-command variable names the path, Then it resolves: inside the worktree it is allowed, outside it is denied naming the resolved path", () => {
+  const id = implementerBoundToA("impl-shell-vars");
+  const outside = path.join(lead, "src");
+  for (const command of [
+    `W=${wtA}; touch $W/a.ts`,
+    `W=${wtA} && echo x > "$W/a.ts"`,
+    `export W=${wtA}; rm "\${W}/a.ts"`,
+    `W=${wtA}; cd $W && touch a.ts`,
+    `D=${wtA}; F=$D/a.ts; touch $F`,
+    `W=${wtA}; bash -c 'touch $W/a.ts'`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  for (const command of [
+    `W=${outside}; rm $W/core.ts`,
+    `export W=${outside}; touch "$W/x"`,
+    `W=${outside}; echo x > $W/core.ts`,
+  ]) {
+    const denied = bash(command, id);
+    expect(denied?.permissionDecision, command).toBe("deny");
+    expect(denied?.permissionDecisionReason, command).toContain(`${outside}/`);
+    expect(denied?.permissionDecisionReason, command).not.toContain("$W");
+  }
+  // An unresolvable variable stays conservative.
+  expect(bash(`touch $UNSET/a.ts`, id)?.permissionDecision).toBe("deny");
+  expect(bash(`cd "$UNSET" && touch a.ts`, id)?.permissionDecision).toBe("deny");
+  // Read-only commands with variables pass.
+  for (const command of [
+    `W=${outside}; cat $W/core.ts`,
+    `W=${outside}; grep -rn core $W`,
+    `W=${outside}; ls $W`,
+    `W=${outside}; git -C $W log --oneline`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+});
