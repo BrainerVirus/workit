@@ -372,6 +372,8 @@ export type MergeInput = {
   unverified?: { reason: string };
   /** Merge onto a base whose latest CI is red (`--base-red-ok`); the reason is recorded. */
   baseRedOk?: { reason: string };
+  /** Merge a PR someone else authored (`--others-pr`); the reason is recorded. */
+  othersPr?: { reason: string };
   /** Squash commit subject and body (`--subject`, `--body`); unset parts use the defaults. */
   subject?: string;
   body?: string;
@@ -407,6 +409,8 @@ export type MergeOutcome = {
   };
   /** Set when `--unverified` bypassed the verdict: the reason and its ledger row. */
   unverified: { reason: string; recorded: string } | null;
+  /** Set when `--others-pr` merged another author's PR: who, and the recorded reason. */
+  othersPr: { author: string; login: string; reason: string } | null;
   /** The base branch's CI at its head: a one-line note when it was not green, and the override used. */
   baseCi: { note: string | null; override: { reason: string } | null };
   grant: { source: AutonomySource };
@@ -469,6 +473,7 @@ export type MergeRefusal = {
     | "already_merged"
     | "closed"
     | "protected_branch"
+    | "others_pr"
     | "base_mismatch"
     | "base_red"
     | "ledger_tampered"
@@ -688,6 +693,23 @@ function baseCiState(cwd: string, resolved: ResolvedForge, base: string): BaseCi
   };
 }
 
+/** The PR's author versus the forge login: null when the PR is the caller's own. */
+function otherAuthor(
+  resolved: ResolvedForge,
+  number: number,
+): { ok: true; author: string; login: string } | { ok: false; error: string } | null {
+  const account = resolved.expectedAccount?.trim() || null;
+  const identity = resolved.forge.identity(account);
+  const login = (identity.ok ? identity.data.login : null) ?? account;
+  if (!login) return { ok: false, error: "the forge login could not be read" };
+  const meta = resolved.forge.prMeta(number);
+  if (!meta.ok) return { ok: false, error: `the PR author could not be read (${meta.error})` };
+  if (!meta.data.author) return { ok: false, error: "the forge did not name the PR author" };
+  return meta.data.author.toLowerCase() === login.toLowerCase()
+    ? null
+    : { ok: true, author: meta.data.author, login };
+}
+
 export async function mergePullRequest(
   cwd: string,
   resolved: ResolvedForge,
@@ -769,6 +791,30 @@ export async function mergePullRequest(
         `workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --method ${input.method}  # without --delete-branch`,
         { reason: "protected_branch" },
       );
+  }
+  const othersBypass = input.othersPr ?? null;
+  if (othersBypass && !othersBypass.reason.trim())
+    return failure(
+      "invalid_input",
+      "--others-pr needs --reason <why the user asked you to merge a PR someone else authored>",
+    );
+  const prFlag = input.pr ? ` --pr ${doc.number}` : "";
+  const foreign = otherAuthor(resolved, doc.number);
+  let othersPr: { author: string; login: string; reason: string } | null = null;
+  if (foreign !== null) {
+    if (!othersBypass)
+      return refuse(
+        foreign.ok
+          ? `others_pr: ${label} is by ${foreign.author}, not ${foreign.login} (the forge login); workit never merges another author's PR on its own`
+          : `others_pr: ${label} cannot be shown to be yours: ${foreign.error}`,
+        `only if the user asks you to merge it: workit pr merge${prFlag} --others-pr --reason "<why>"`,
+        { reason: "others_pr" },
+      );
+    othersPr = {
+      author: foreign.ok ? foreign.author : "unknown",
+      login: foreign.ok ? foreign.login : "unknown",
+      reason: othersBypass.reason.trim(),
+    };
   }
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return ledger;
@@ -884,6 +930,7 @@ export async function mergePullRequest(
     lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
+    ...(othersPr ? { othersPr } : {}),
     grant: grant.source,
   });
   if (!intent.ok)
@@ -920,6 +967,7 @@ export async function mergePullRequest(
     lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
+    ...(othersPr ? { othersPr } : {}),
     grant: grant.source,
     intent: intentId,
     verified: false,
@@ -966,7 +1014,11 @@ export async function mergePullRequest(
     !input.deleteBranch && input.implicitDelete
       ? implicitDeleteSkip(cwd, resolved, doc, branch)
       : null;
-  if (!input.deleteBranch && input.implicitDelete && skipReason !== null)
+  if (othersPr && (input.deleteBranch || input.implicitDelete))
+    deletedBranch = {
+      skipped: `the PR is by ${othersPr.author}, not ${othersPr.login}; workit never deletes another author's branch`,
+    };
+  else if (!input.deleteBranch && input.implicitDelete && skipReason !== null)
     deletedBranch = { skipped: skipReason };
   else if (input.deleteBranch || input.implicitDelete) {
     const deleted = deleteRemoteBranch(cwd, resolved.remote, branch, head);
@@ -988,6 +1040,7 @@ export async function mergePullRequest(
       mergeSha: merged.data.mergeSha,
       verdict,
       unverified,
+      othersPr,
       baseCi: {
         note: baseRedOverride
           ? `base ${doc.base} CI is red; merged anyway (--base-red-ok: ${baseRedOverride.reason})`

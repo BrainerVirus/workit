@@ -256,6 +256,9 @@ export function makeStackForge(
     const call = parse(args);
     calls.push({ bin: "gh", method: call.method, endpoint: call.endpoint, vars: call.vars });
     if (call.endpoint === "user") return out({ login: "octo" });
+    const pull = /^repos\/o\/r\/pulls\/(\d+)$/u.exec(call.endpoint);
+    if (pull && call.method === "GET")
+      return out({ number: Number(pull[1]), state: "open", user: { login: "octo" } });
     if (call.endpoint === "repos/o/r") return out({ id: 1, full_name: "o/r", fork: false });
     if (call.endpoint.startsWith("repos/o/r/branches/")) return out({ protected: false });
     if (call.endpoint.startsWith("repos/o/r/rules/branches/")) return out([]);
@@ -310,6 +313,7 @@ export function makeStackForge(
       web_url: `https://gitlab.com/group/project/-/merge_requests/${pr.number}`,
       state: pr.state === "open" ? "opened" : pr.state,
       draft: false,
+      author: { username: "octo" },
       detailed_merge_status: dirty
         ? "conflict"
         : state === "passing"

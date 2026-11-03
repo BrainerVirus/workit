@@ -127,6 +127,15 @@ export function replayRunner(
       );
     if (!key && call.method === "GET" && /\/pipelines\?ref=/u.test(call.endpoint))
       return reply200("[]");
+    // The merge author guard (#442): a PR is the forge user's own unless a test routes another author.
+    if (!key && call.method === "GET" && /^repos\/[^/]+\/[^/]+\/pulls\/\d+$/u.test(call.endpoint))
+      return reply200(
+        JSON.stringify({
+          number: Number(call.endpoint.split("/").pop()),
+          state: "open",
+          user: { login: "octo" },
+        }),
+      );
     if (!key) throw new Error(`unrecorded ${bin} call: ${keys[0]}`);
     const route = routes[key];
     const reply = typeof route === "function" ? route(call) : route;
