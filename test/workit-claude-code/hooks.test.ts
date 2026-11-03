@@ -389,14 +389,58 @@ test("Given implementer spawns with isolation or without a brief, When the launc
     WORKIT_CLAUDE_RUNTIME: "source",
     WORKIT_BUN: path.join(tmpdir(), "definitely-not-bun"),
   };
+  const noConfig = { WORKFLOW_TOOLKIT_CONFIG: mkdtempSync(path.join(tmpdir(), "wk-cfg-")) };
   for (const input of [
     { subagent_type: "workit:implementer", model: "opus", prompt: brief },
     { subagent_type: "workit:verifier", model: "sonnet", prompt: "verify" },
   ]) {
-    const fast = spawn(input, noRuntime);
+    const fast = spawn(input, { ...noRuntime, ...noConfig });
     expect(fast.stdout, JSON.stringify(input)).toBe("{}\n");
     expect(fast.stderr, JSON.stringify(input)).toBe("");
   }
+});
+
+test("Given a verifier or general-purpose spawn with isolation, When the launcher runs, Then it reaches the runtime and isolation is stripped (#654)", () => {
+  const cwd = root();
+  const config = { WORKFLOW_TOOLKIT_CONFIG: mkdtempSync(path.join(tmpdir(), "wk-cfg-")) };
+  for (const tool_input of [
+    { subagent_type: "workit:verifier", model: "sonnet", isolation: "worktree", prompt: "verify" },
+    { subagent_type: "general-purpose", model: "haiku", isolation: "worktree", prompt: "look" },
+  ]) {
+    const run = runHook(
+      PLUGIN_DIR,
+      fixture("claude-code", "pre-tool-use-bash", cwd, { tool_name: "Agent", tool_input }),
+      config,
+    );
+    const specific = (
+      run.json as {
+        hookSpecificOutput?: { updatedInput?: Record<string, unknown>; additionalContext?: string };
+      }
+    ).hookSpecificOutput;
+    const { isolation: _dropped, ...rest } = tool_input;
+    expect(specific?.updatedInput, run.stderr).toEqual(rest);
+    expect(specific?.additionalContext ?? "").toContain("Workit removed isolation");
+  }
+});
+
+test("Given role models in workspaces.json, When a spawn names its own model, Then the launcher loads the runtime and the configured role model wins (#654)", () => {
+  const cwd = root();
+  const dir = mkdtempSync(path.join(tmpdir(), "wk-cfg-"));
+  writeFileSync(
+    path.join(dir, "workspaces.json"),
+    JSON.stringify({ models: { roles: { verifier: { claude_code: "claude-opus-5-5" } } } }),
+  );
+  const run = runHook(
+    PLUGIN_DIR,
+    fixture("claude-code", "pre-tool-use-bash", cwd, {
+      tool_name: "Agent",
+      tool_input: { subagent_type: "workit:verifier", model: "haiku", prompt: "verify" },
+    }),
+    { WORKFLOW_TOOLKIT_CONFIG: dir },
+  );
+  const updated = (run.json as { hookSpecificOutput?: { updatedInput?: Record<string, unknown> } })
+    .hookSpecificOutput?.updatedInput;
+  expect(updated?.model, run.stderr).toBe("opus");
 });
 
 test("SubagentStart tells an implementer Claude Code isolated, per preset, that plain git is expected but branch names stay policy-checked, naming that preset's kinds and only bases that exist", async () => {
