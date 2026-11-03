@@ -611,7 +611,7 @@ const runInstalledHooks = (res: Resolved): { ran: string[]; failed: string[] } =
         windowsHide: true,
       });
       // No node on PATH: the base hook_node row already says so.
-      if (run.error?.code === "ENOENT") return;
+      if (run.error && "code" in run.error && run.error.code === "ENOENT") return;
       const failures = readHookRuns(state).filter((row) => row.failure !== undefined);
       const problem = hookRunProblem(run, failures);
       if (problem) out.failed.push(`${hook.host} ${hook.entry}: ${problem}`);
