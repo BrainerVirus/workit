@@ -9,7 +9,7 @@
   "hook.subagent-start.reviewer": 764,
   "cli.help": 5833,
   "cli.handoff.lines": 6,
-  "cli.check.lines": 63,
+  "cli.check.lines": 64,
   "schema.task": 1146,
   "schema.policy": 832,
   "schema.evidence": 805,
