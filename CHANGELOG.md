@@ -180,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit pr merge` refuses a PR authored by someone other than your forge login (case-insensitive; bots included) with `others_pr`; `--others-pr --reason "<why>"` merges it anyway, records the reason in the ledger and never deletes that author's branch (#442). When Workit cannot read the PR author or your login it refuses with `identity_unknown` and points to `gh auth login` / `glab auth login`.
 - Configured role models (`models.roles`) now apply at spawn on OpenCode: the plugin sets the model on every new subagent, so a verifier or implementer runs on the model you configured instead of inheriting the lead's (#654).
 - `models.roles.default` sets the model for general-purpose spawns, `models.lead` records the orchestrator model, and `models.allowLeadOverride: true` lets a model the lead names win over the configured one.
 - `workit models show` says per host whether each role model is enforced or only advisory.
