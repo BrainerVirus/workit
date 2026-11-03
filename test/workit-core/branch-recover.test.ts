@@ -15,31 +15,31 @@ const repo = (): RemoteRepo => {
   return made;
 };
 const killed = { ok: false, status: null, stdout: "", stderr: "", signal: "SIGKILL" as const };
+const failed = { ok: false, status: 128, stdout: "", stderr: "fatal: x", signal: null };
 
-test("a killed git switch leaves no index.lock and no half-made branch", () => {
+test("a half-made branch at the base is deleted; a killed run keeps a lock and names the command", () => {
   const r = repo();
+  const base = r.git("rev-parse", "HEAD");
   const lock = path.join(r.cwd, ".git", "index.lock");
-  const started = Date.now();
   writeFileSync(lock, "");
   r.git("branch", "feature/half");
-  const undone = recoverFailedSwitch(r.cwd, "feature/half", killed, started);
-  expect(existsSync(lock)).toBe(false);
+  const notes = recoverFailedSwitch(r.cwd, "feature/half", killed, {
+    existed: false,
+    baseSha: base,
+  });
+  expect(existsSync(lock)).toBe(true);
   expect(r.git("branch", "--list", "feature/half")).toBe("");
-  expect(undone.join(" ")).toContain("index.lock");
+  expect(notes.join(" ")).toContain(`rm ${lock}`);
 });
 
-test("a lock from another git process is left alone", () => {
+test("a branch that existed before, or moved off the base, is kept", () => {
   const r = repo();
-  const lock = path.join(r.cwd, ".git", "index.lock");
-  writeFileSync(lock, "");
-  const failed = {
-    ...killed,
-    signal: null,
-    status: 128,
-    stderr: "fatal: Unable to create index.lock",
-  };
-  recoverFailedSwitch(r.cwd, "feature/x", failed, Date.now() + 60_000);
-  expect(existsSync(lock)).toBe(true);
+  const base = r.git("rev-parse", "HEAD");
+  r.git("branch", "feature/old");
+  recoverFailedSwitch(r.cwd, "feature/old", failed, { existed: true, baseSha: base });
+  expect(r.git("branch", "--list", "feature/old")).toContain("feature/old");
+  recoverFailedSwitch(r.cwd, "feature/old", failed, { existed: false, baseSha: "0".repeat(40) });
+  expect(r.git("branch", "--list", "feature/old")).toContain("feature/old");
 });
 
 test("a silent kill names the kill, not 'git failed'", () => {

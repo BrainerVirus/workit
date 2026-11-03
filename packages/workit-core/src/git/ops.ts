@@ -23,7 +23,7 @@
 //   the tip workit last recorded, and success only when the remote tip
 //   observed afterwards equals the local SHA (`push.verified` row).
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import {
   branchKindOf,
@@ -125,17 +125,18 @@ export const gitError = (
 };
 
 /**
- * Undo what a failed `git switch -c <name>` left behind: an index.lock the
- * killed git never released (only when this run was killed and the lock is
- * newer than its start) and a branch ref created before checkout failed.
+ * What a failed `git switch -c <name>` left behind. The branch ref is deleted
+ * only when it was absent before the switch and now points at the base this
+ * run passed. An index.lock is never removed (it may belong to a live git);
+ * after a kill the message names the check and the command instead.
  */
 export const recoverFailedSwitch = (
   cwd: string,
   name: string,
   run: Run,
-  startedAtMs: number,
+  before: { existed: boolean; baseSha: string },
 ): string[] => {
-  const undone: string[] = [];
+  const notes: string[] = [];
   if (run.signal) {
     const lock = git(cwd, [
       "rev-parse",
@@ -143,17 +144,14 @@ export const recoverFailedSwitch = (
       "--git-path",
       "index.lock",
     ]).stdout.trim();
-    try {
-      if (lock && statSync(lock).mtimeMs >= startedAtMs - 1000) {
-        rmSync(lock, { force: true });
-        undone.push("removed the index.lock it left");
-      }
-    } catch {}
+    if (lock && existsSync(lock))
+      notes.push(`index.lock remains: if no git process is running, remove it with: rm ${lock}`);
   }
-  if (resolveRef(cwd, `refs/heads/${name}`) && currentBranch(cwd) !== name) {
-    if (git(cwd, ["branch", "-D", "--", name]).ok) undone.push(`deleted the half-made ${name}`);
+  if (!before.existed && resolveRef(cwd, `refs/heads/${name}`) === before.baseSha) {
+    if (currentBranch(cwd) !== name && git(cwd, ["branch", "-D", "--", name]).ok)
+      notes.push(`deleted the half-made ${name}`);
   }
-  return undone;
+  return notes;
 };
 
 /**
@@ -435,10 +433,13 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
       `commit them first (workit git commit -m … -- <paths>), or carry them: workit git branch ${name} --carry`,
     );
   const previous = currentBranch(cwd);
-  const startedAt = Date.now();
+  const existedBefore = resolveRef(cwd, `refs/heads/${name}`) !== null;
   const switched = git(cwd, ["switch", "--no-track", "-c", name, baseSha]);
   if (!switched.ok) {
-    const undone = recoverFailedSwitch(cwd, name, switched, startedAt);
+    const undone = recoverFailedSwitch(cwd, name, switched, {
+      existed: existedBefore,
+      baseSha,
+    });
     return failure(
       "failed",
       `git switch -c ${name} failed: ${gitError(switched)}${undone.length ? ` (${undone.join("; ")})` : ""}`,
