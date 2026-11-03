@@ -301,7 +301,7 @@ const PR_CREATE_BUDGET_MS = 90_000;
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -1049,6 +1049,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
     "keep-branch": "boolean",
     unverified: "boolean",
     "base-red-ok": "boolean",
+    "others-pr": "boolean",
     reason: "value",
     subject: "value",
     body: "value",
@@ -1063,8 +1064,16 @@ async function merge(argv: string[], io: Io): Promise<number> {
       "--base-red-ok needs --reason <why merging onto a red base is fine>",
       MERGE_USAGE,
     );
-  // One --reason serves --unverified and --base-red-ok, alone or together.
-  const unverified = baseRedOk && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
+  const othersPr = flags.booleans.has("others-pr");
+  if (othersPr && !baseRedReason)
+    return usage(
+      io,
+      "--others-pr needs --reason <why the user asked you to merge a PR someone else authored>",
+      MERGE_USAGE,
+    );
+  // One --reason serves --unverified, --base-red-ok and --others-pr, alone or together.
+  const unverified =
+    (baseRedOk || othersPr) && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
   if (typeof unverified === "string") return usage(io, unverified, MERGE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, MERGE_USAGE);
@@ -1111,6 +1120,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
           actor: actorFromEnv(io.env),
           ...(unverified ? { unverified } : {}),
           ...(baseRedOk && baseRedReason ? { baseRedOk: { reason: baseRedReason } } : {}),
+          ...(othersPr && baseRedReason ? { othersPr: { reason: baseRedReason } } : {}),
           ...(subject !== undefined ? { subject } : {}),
           ...(body !== undefined ? { body } : {}),
         },

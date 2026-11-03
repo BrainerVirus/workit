@@ -227,8 +227,18 @@ test("pr merge: a branch another open PR targets (a stack parent) is kept", asyn
   await skipped({ children: [13] }, /#13 targets feature\/x/);
 });
 
-test("pr merge: a PR by someone other than vcs.account keeps its branch (#442)", async () => {
-  await skipped({ pull: { user: { login: "christian" } } }, /by christian, not octo/);
+test("pr merge: a PR by someone other than the forge login is refused, and with --others-pr its branch is kept (#442)", async () => {
+  const repo = setup({ pull: { user: { login: "christian" } } });
+  const refused = await merge(repo);
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toContain("by christian");
+  const result = await merge(repo, "--others-pr", "--reason", "owner asked");
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data.deletedBranch).toEqual({
+    skipped: expect.stringMatching(/by christian, not octo/),
+  });
+  expect(remoteHas(repo, "feature/x")).toBe(true);
+  expect(localBranch(repo)).not.toBe("");
 });
 
 test("pr merge: when the open-PR list cannot be read the branch is kept", async () => {

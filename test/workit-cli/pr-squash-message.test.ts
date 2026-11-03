@@ -148,6 +148,7 @@ const github = (): Record<string, Reply> => {
       merged: false,
       draft: false,
       title: "feat: the PR title",
+      user: { login: "octo" },
       base: { ref: "main" },
       head: { ref: "feature/x" },
     }),
