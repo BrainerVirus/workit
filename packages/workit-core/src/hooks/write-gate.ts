@@ -496,6 +496,18 @@ const commandWords = (words: readonly string[]): string[] => {
   return words.slice(start);
 };
 
+/** Commands that can set any variable, whatever their arguments name: no variable is trusted after one. */
+const REBINDS_ANY = new Set([
+  "source",
+  ".",
+  "eval",
+  "trap",
+  "alias",
+  "declare",
+  "typeset",
+  "local",
+]);
+
 const BINDERS = new Set([
   "read",
   "mapfile",
@@ -555,6 +567,7 @@ const untrustedVars = (
     const lead = segment.words.findIndex((word) => !/^\w+\+?=|^\w+\[.*\]\+?=/.test(word));
     const first = lead < 0 ? undefined : segment.words[lead];
     if (first !== undefined && COMPOUND.has(first)) all = true;
+    if (lead >= 0 && segment.words.slice(lead).some((word) => REBINDS_ANY.has(word))) all = true;
     for (const word of segment.words)
       for (const match of word.matchAll(/\$\{(\w+)(?:\[[^\]]*\])?:?[=]/g)) names.add(match[1]);
     const assigned =

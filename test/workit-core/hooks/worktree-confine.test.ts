@@ -631,6 +631,10 @@ test("Given a bound implementer, When a variable is reassigned conditionally or 
     `W=${wtA}; mapfile W < f; rm $W/a`,
     `W=${wtA}; getopts a W; rm $W/a`,
     `W=${wtA}; unset W; rm $W/a`,
+    `W=${wtA}; source ./s; rm $W/a`,
+    `W=${wtA}; . ./s; rm $W/a`,
+    `W=${wtA}; eval "$(cat f)"; rm $W/a`,
+    `W=${wtA}; eval "$X"; rm $W/a`,
     `W=${wtA}; : \${W:=x}; case a in a) W=${out};; esac; rm $W/a`,
   ])
     expect(bash(command, id)?.permissionDecision, command).toBe("deny");
