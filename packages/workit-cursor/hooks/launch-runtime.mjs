@@ -246,3 +246,40 @@ export const touchCursorHookHeartbeat = (env, bin) => {
     /* heartbeat is diagnostic only */
   }
 };
+
+/** A hook-runs failure row, as workit-core hooks/hook-runs.ts recordHookFailure
+ *  writes it (`<state>/hook-runs/cursor__<event>__failed.json`), so `workit
+ *  doctor` sees a hook that could not answer. Best effort.
+ *  @param {NodeJS.ProcessEnv} env @param {unknown} event @param {string} cause */
+export const recordCursorHookFailure = (env, event, cause) => {
+  try {
+    const name = typeof event === "string" && event ? event : "unknown";
+    const safe = (/** @type {string} */ part) => part.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
+    const file = path.join(workitStateDir(env), "hook-runs", `cursor__${safe(name)}__failed.json`);
+    let count = 0;
+    try {
+      const previous = JSON.parse(readFileSync(file, "utf8")).count;
+      if (typeof previous === "number" && Number.isFinite(previous)) count = previous;
+    } catch {
+      /* first failure, or a torn file */
+    }
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        host: "cursor",
+        event: name,
+        at: new Date().toISOString(),
+        count: count + 1,
+        failure: String(cause).slice(0, 500),
+      }),
+    );
+  } catch {
+    /* diagnostic only */
+  }
+};
+
+/** What the agent reads at sessionStart when the Workit hook could not run.
+ *  @param {string} reason */
+export const cursorHookOffNotice = (reason) =>
+  `Workit hooks are off: the Cursor hook could not run (${reason}). Branch policy, task context and verifier sessions are off until it does. Run \`workit upgrade\` to reinstall the plugin, then \`workit doctor\` (check hook_node runs each installed hook).`;

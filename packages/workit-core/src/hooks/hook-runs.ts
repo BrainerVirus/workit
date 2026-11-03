@@ -6,6 +6,12 @@
 // read-only state dir never changes the hook's answer. `workit doctor`
 // (`hook_runs`) reads it. Light imports only: the Codex launcher's quiet path
 // calls it before the runtime loads.
+//
+// A hook that could not answer (a Node below the floor, a bundle that throws on
+// import, a runtime crash) records a failure row beside its runs
+// (`<host>__<event>__failed.json`, with the cause). The plain-JavaScript
+// launchers (Claude Code bin/workit-hook.mjs, Cursor hooks/launch-runtime.mjs)
+// write the same file format; a test holds them equal.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { stateDir } from "../core/heavy-words";
@@ -17,12 +23,20 @@ export type HookRun = {
   event: string;
   at: string;
   count: number;
+  /** Set on a failure row: why the hook could not answer. */
+  failure?: string;
 };
+
+export const HOOK_FAILURE_SUFFIX = "__failed";
 
 const safe = (part: string): string => part.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
 
-const runFile = (dir: string, host: string, event: string): string =>
-  path.join(dir, HOOK_RUNS_DIR, `${safe(host)}__${safe(event)}.json`);
+const runFile = (dir: string, host: string, event: string, failed = false): string =>
+  path.join(
+    dir,
+    HOOK_RUNS_DIR,
+    `${safe(host)}__${safe(event)}${failed ? HOOK_FAILURE_SUFFIX : ""}.json`,
+  );
 
 /** Counts one run of the native `event` on `host`; never throws. */
 export const recordHookRun = (
@@ -31,10 +45,28 @@ export const recordHookRun = (
   env: NodeJS.ProcessEnv = process.env,
   now: () => number = Date.now,
 ): void => {
-  if (!event) return;
+  if (event) writeRun(host, event, undefined, env, now);
+};
+
+/** Counts one run of `event` on `host` that could not answer, with its cause; never throws. */
+export const recordHookFailure = (
+  host: string,
+  event: string | null | undefined,
+  cause: string,
+  env: NodeJS.ProcessEnv = process.env,
+  now: () => number = Date.now,
+): void => writeRun(host, event || "unknown", cause.slice(0, 500), env, now);
+
+const writeRun = (
+  host: string,
+  event: string,
+  failure: string | undefined,
+  env: NodeJS.ProcessEnv,
+  now: () => number,
+): void => {
   try {
     const dir = stateDir(env);
-    const file = runFile(dir, host, event);
+    const file = runFile(dir, host, event, failure !== undefined);
     let count = 0;
     try {
       const previous = JSON.parse(readFileSync(file, "utf8")) as {
@@ -50,6 +82,7 @@ export const recordHookRun = (
       event,
       at: new Date(now()).toISOString(),
       count: count + 1,
+      ...(failure === undefined ? {} : { failure }),
     };
     try {
       writeFileSync(file, JSON.stringify(row));
@@ -87,6 +120,7 @@ export const readHookRuns = (dir: string): HookRun[] => {
           event: row.event,
           at: row.at,
           count: row.count,
+          ...(typeof row.failure === "string" ? { failure: row.failure } : {}),
         });
     } catch {
       // Not a run record.

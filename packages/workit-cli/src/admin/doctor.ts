@@ -8,6 +8,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -99,7 +100,7 @@ import {
   type SessionHookRemoval,
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
-import { readHookRuns } from "@brainervirus/workit-core/src/hooks/hook-runs";
+import { readHookRuns, type HookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
 import { readUpdateCache, readUpdatesMode } from "../update-settings";
 import {
   grantedCommands,
@@ -510,11 +511,140 @@ const checkRuntime = (res: Resolved): DoctorCheck => {
   };
 };
 
+type HookEntry = { host: string; entry: string; args: string[]; payload: object };
+
+/** Every installed hook launcher this doctor can run: Claude Code, Codex and Cursor. */
+const installedHookEntries = (res: Resolved, cwd: string): HookEntry[] => {
+  const entries: HookEntry[] = [];
+  const prompt = { session_id: "workit-doctor-probe", cwd, prompt: "" };
+  for (const install of claudeWorkitInstalls(res.home, res.env, res.cwd)) {
+    const entry = path.join(install.installPath, "bin", "workit-hook.mjs");
+    if (existsSync(entry))
+      entries.push({
+        host: "claude_code",
+        entry,
+        args: [],
+        payload: { hook_event_name: "UserPromptSubmit", ...prompt },
+      });
+  }
+  for (const install of codexWorkitInstalls(res)) {
+    const entry = install.root ? path.join(install.root, "dist", "workit-hook.js") : "";
+    if (entry && existsSync(entry))
+      entries.push({
+        host: "codex",
+        entry,
+        args: [],
+        payload: { hook_event_name: "UserPromptSubmit", turn_id: "workit-doctor", ...prompt },
+      });
+  }
+  const cursor = path.join(res.cursorPluginDir, "hooks", "launch.mjs");
+  if (hostsFor(res.host).includes("cursor") && existsSync(cursor))
+    entries.push({
+      host: "cursor",
+      entry: cursor,
+      args: ["workit-cursor-hook"],
+      payload: { hook_event_name: "preCompact", workspace_roots: [] },
+    });
+  return entries;
+};
+
+/** Why one hook run is not a valid answer, or null when it is. */
+const hookRunProblem = (run: ReturnType<typeof spawnSync>, failures: HookRun[]): string | null => {
+  if (failures.length > 0) return failures.map((f) => f.failure).join("; ");
+  if (run.error) return run.error.message;
+  if (run.status !== 0 && run.status !== 2) {
+    const stderr =
+      String(run.stderr ?? "")
+        .trim()
+        .split("\n")
+        .at(-1) ?? "";
+    return `exited ${run.status ?? `on ${run.signal ?? "a signal"}`}${stderr ? `: ${stderr.slice(0, 300)}` : ""}`;
+  }
+  try {
+    const answer: unknown = JSON.parse(String(run.stdout ?? "").trim() || "null");
+    if (answer !== null && typeof answer === "object" && !Array.isArray(answer)) return null;
+  } catch {
+    // reported below
+  }
+  return `answered ${JSON.stringify(
+    String(run.stdout ?? "")
+      .trim()
+      .slice(0, 120),
+  )}, not a JSON object`;
+};
+
+/**
+ * Runs each installed hook launcher once, as the host would: the PATH `node`
+ * started in the doctor's working directory (where a version manager picks
+ * the repo's pinned Node), one harmless event on stdin, and a scratch state
+ * dir (holding only the recorded node.json) so the probe writes nothing real.
+ * A hook that records a failure row, exits other than 0 or 2, or answers
+ * anything but a JSON object did not run.
+ */
+const runInstalledHooks = (res: Resolved): { ran: string[]; failed: string[] } => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-doctor-hooks-"));
+  const out = { ran: [] as string[], failed: [] as string[] };
+  try {
+    const entries = installedHookEntries(res, scratch);
+    entries.forEach((hook, index) => {
+      const state = path.join(scratch, `state-${index}`);
+      mkdirSync(state, { recursive: true });
+      try {
+        copyFileSync(path.join(res.hookStateDir, "node.json"), path.join(state, "node.json"));
+      } catch {
+        // No recorded node: the launcher scans as it would in the host.
+      }
+      const env: NodeJS.ProcessEnv = {
+        ...res.env,
+        HOME: res.home,
+        WORKFLOW_TOOLKIT_STATE: state,
+        WORKIT_CURSOR_HOOK_NPX_OFFLINE: "1",
+      };
+      delete env.CLAUDE_ENV_FILE;
+      delete env.WORKIT_HOOK_REEXEC;
+      const run = spawnSync("node", [hook.entry, ...hook.args], {
+        cwd: res.cwd,
+        input: JSON.stringify(hook.payload),
+        encoding: "utf8",
+        env,
+        timeout: 40_000,
+        windowsHide: true,
+      });
+      // No node on PATH: the base hook_node row already says so.
+      if (run.error?.code === "ENOENT") return;
+      const failures = readHookRuns(state).filter((row) => row.failure !== undefined);
+      const problem = hookRunProblem(run, failures);
+      if (problem) out.failed.push(`${hook.host} ${hook.entry}: ${problem}`);
+      else out.ran.push(hook.host);
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return out;
+};
+
 // Claude Code, Codex and Cursor start their hooks with the PATH `node`. Below the
 // floor the launchers look for a newer one themselves (a recorded node, then a
 // version-manager scan); with none they fail open and every verdict fails with
-// no_session, so this is the one place that says so.
+// no_session, so this is the one place that says so. Then each installed hook
+// launcher runs once (runInstalledHooks): a hook that does not answer fails.
 const checkHookNode = (res: Resolved): DoctorCheck => {
+  const base = hookNodeBase(res);
+  const hooks = runInstalledHooks(res);
+  if (hooks.failed.length > 0)
+    return {
+      id: "hook_node",
+      status: "fail",
+      detail: `${hooks.failed.length} installed hook${hooks.failed.length === 1 ? "" : "s"} did not run under the node this directory resolves (they fail open, so the host runs with Workit off): ${hooks.failed.join("; ")}. ${base.detail}`,
+      fix:
+        base.fix ??
+        "Reinstall the hosts' plugins with `workit upgrade`, then re-run `workit doctor` from this directory",
+    };
+  if (hooks.ran.length === 0) return base;
+  return { ...base, detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}` };
+};
+
+const hookNodeBase = (res: Resolved): DoctorCheck => {
   const floor = SUPPORT_MATRIX.node.minimum;
   const report = hookNodeReport(
     { ...res.env, HOME: res.home, WORKFLOW_TOOLKIT_STATE: res.stateDir },
@@ -3539,7 +3669,27 @@ const HOOK_RUN_BASELINE = ["SessionStart", "PreToolUse"];
  * look the same, but the row at least shows what did run.
  */
 const checkHookRuns = (res: Resolved): DoctorCheck => {
-  const runs = readHookRuns(res.hookStateDir);
+  const all = readHookRuns(res.hookStateDir);
+  const runs = all.filter((run) => run.failure === undefined);
+  const lastAt = (rows: HookRun[]) => Math.max(...rows.map((row) => Date.parse(row.at)), 0);
+  // A host whose newest record is a failure is off now (the launchers fail open).
+  const failing = [...new Set(all.map((run) => run.host))].toSorted().flatMap((host) => {
+    const failures = all.filter((run) => run.host === host && run.failure !== undefined);
+    if (failures.length === 0) return [];
+    if (lastAt(failures) <= lastAt(runs.filter((run) => run.host === host))) return [];
+    const newest = failures.reduce((a, b) => (Date.parse(b.at) > Date.parse(a.at) ? b : a));
+    const count = failures.reduce((sum, row) => sum + row.count, 0);
+    return [
+      `${host}: hook could not run ${ago(Date.now() - Date.parse(newest.at))} on ${newest.event} (${count} failed run${count === 1 ? "" : "s"}): ${newest.failure}`,
+    ];
+  });
+  if (failing.length > 0)
+    return {
+      id: "hook_runs",
+      status: "warn",
+      detail: failing.join("; "),
+      fix: "Run `workit doctor` from the repo the host runs in and fix what hook_node reports (a Node 24+ for the hooks, or `workit upgrade` for a broken install)",
+    };
   if (runs.length === 0)
     return {
       id: "hook_runs",
