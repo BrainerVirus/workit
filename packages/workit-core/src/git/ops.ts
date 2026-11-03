@@ -23,11 +23,12 @@
 //   the tip workit last recorded, and success only when the remote tip
 //   observed afterwards equals the local SHA (`push.verified` row).
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   branchKindOf,
   classifyBranchDirt,
+  dirtyPaths,
   flowMismatch,
   flowRoute,
   gitFlowOf,
@@ -79,6 +80,7 @@ type Run = {
   status: number | null;
   stdout: string;
   stderr: string;
+  signal?: NodeJS.Signals | null;
 };
 
 export const git = (
@@ -103,16 +105,55 @@ export const git = (
     status: result.status,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    signal: result.signal,
   };
 };
 
 /** The last meaningful lines of git's stderr, redacted, for an error message. */
-export const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => {
+export const gitError = (
+  run: { stderr: string; stdout?: string; signal?: NodeJS.Signals | null },
+  max = 3,
+): string => {
   const lines = redactText(`${run.stderr}\n${run.stdout ?? ""}`)
     .split(/\r?\n/u)
     .map((value) => value.trim())
     .filter((value) => value && !value.startsWith("hint:"));
-  return lines.slice(-max).join(" / ").slice(0, 400) || "git failed";
+  return (
+    lines.slice(-max).join(" / ").slice(0, 400) ||
+    (run.signal ? `git was killed by ${run.signal} (timed out) and printed nothing` : "git failed")
+  );
+};
+
+/**
+ * Undo what a failed `git switch -c <name>` left behind: an index.lock the
+ * killed git never released (only when this run was killed and the lock is
+ * newer than its start) and a branch ref created before checkout failed.
+ */
+export const recoverFailedSwitch = (
+  cwd: string,
+  name: string,
+  run: Run,
+  startedAtMs: number,
+): string[] => {
+  const undone: string[] = [];
+  if (run.signal) {
+    const lock = git(cwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "index.lock",
+    ]).stdout.trim();
+    try {
+      if (lock && statSync(lock).mtimeMs >= startedAtMs - 1000) {
+        rmSync(lock, { force: true });
+        undone.push("removed the index.lock it left");
+      }
+    } catch {}
+  }
+  if (resolveRef(cwd, `refs/heads/${name}`) && currentBranch(cwd) !== name) {
+    if (git(cwd, ["branch", "-D", "--", name]).ok) undone.push(`deleted the half-made ${name}`);
+  }
+  return undone;
 };
 
 /**
@@ -390,12 +431,20 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
   if (dirt === "stash-required" && !input.carry)
     return failure(
       "blocked",
-      "dirty_worktree: tracked changes outside docs/ would ride along to the new branch",
-      `commit them first (workit git commit -m … -- <paths>), or pass --carry to bring them along`,
+      `dirty_worktree: tracked changes outside docs/ would ride along to the new branch: ${dirtyPaths(cwd)}`,
+      `commit them first (workit git commit -m … -- <paths>), or carry them: workit git branch ${name} --carry`,
     );
   const previous = currentBranch(cwd);
+  const startedAt = Date.now();
   const switched = git(cwd, ["switch", "--no-track", "-c", name, baseSha]);
-  if (!switched.ok) return failure("failed", `git switch -c ${name} failed: ${gitError(switched)}`);
+  if (!switched.ok) {
+    const undone = recoverFailedSwitch(cwd, name, switched, startedAt);
+    return failure(
+      "failed",
+      `git switch -c ${name} failed: ${gitError(switched)}${undone.length ? ` (${undone.join("; ")})` : ""}`,
+      `workit git branch ${name}  # retry; if it keeps failing, run git status and fix what it names`,
+    );
+  }
   // The cheapest track signal later (release-tracks.ts): where this branch began.
   recordBranchBase(cwd, name, base);
   return success({
