@@ -54,52 +54,12 @@ const codexHost = (): "codex_cli" | "codex_desktop" =>
     ? "codex_desktop"
     : "codex_cli";
 
-const LOUD_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "SubagentStart"]);
-const SUBAGENT_NOTE =
-  " This subagent got no Workit session: a verifier or reviewer cannot record a verdict (it fails with no_session) until the hook runs; fix the hook, run `workit doctor`, then spawn a fresh one.";
-
-/** The answer a hook that could not run gives `event`: loud where Codex shows it, else `{}`. */
-const failedAnswer = (event: unknown, text: string): object => {
-  if (typeof event !== "string" || !LOUD_EVENTS.has(event)) return {};
-  const message = event === "SubagentStart" ? `${text}${SUBAGENT_NOTE}` : text;
-  return {
-    systemMessage: message,
-    hookSpecificOutput: { hookEventName: event, additionalContext: message },
-  };
-};
-
-/** Records the failure row (best effort: a module that cannot load loses only the row). */
-const recordFailure = async (event: unknown, cause: string): Promise<void> => {
-  try {
-    const { recordHookFailure } = await import("@brainervirus/workit-core/src/hooks/hook-runs");
-    recordHookFailure(codexHost(), typeof event === "string" ? event : null, cause);
-  } catch {
-    // The answer still goes out.
-  }
-};
-
 const tooOld = nodeFloor();
 if (tooOld) {
-  const { handleBelowFloor } = await import("@brainervirus/workit-core/src/core/node-resolve.mjs");
-  const cause = `needs Node ${tooOld.range}, found ${foundNode}`;
-  let floorEvent: unknown;
-  const failed: Promise<void>[] = [];
-  const code = await handleBelowFloor({
-    host: "Codex",
-    ...tooOld,
-    found: foundNode,
-    script: fileURLToPath(import.meta.url),
-    argv: process.argv.slice(2),
-    env: process.env,
-    isStart: (event) => {
-      floorEvent = event;
-      failed.push(recordFailure(event, cause));
-      return typeof event === "string" && LOUD_EVENTS.has(event);
-    },
-    notice: (text) => failedAnswer(floorEvent, text),
-  });
-  await Promise.all(failed);
-  process.exit(code);
+  const { belowFloor } = await import("./fail-loud");
+  process.exit(
+    await belowFloor(codexHost(), { ...tooOld, found: foundNode }, fileURLToPath(import.meta.url)),
+  );
 }
 
 // Loaded after the floor check: a static import would evaluate the runtime first.
@@ -176,23 +136,8 @@ if (quiet) {
     const { runCodexHook } = await import("./workit-hook");
     await runCodexHook([payload]);
   } catch (error) {
-    const reason = `could not run (${error instanceof Error ? error.message : String(error)})`;
-    process.stderr.write(`[workit] Codex hook unavailable: ${reason}\n`);
-    let event: unknown;
-    try {
-      event = (JSON.parse(payload) as { hook_event_name?: unknown }).hook_event_name;
-    } catch {
-      event = undefined;
-    }
-    await recordFailure(event, reason);
-    process.stdout.write(
-      `${JSON.stringify(
-        failedAnswer(
-          event,
-          `Workit hooks are off: the Codex hook ${reason}. Branch policy, task context and verifier sessions are off until it does. Run \`workit upgrade\` to reinstall the plugin, then \`workit doctor\` (check hook_node runs each installed hook).`,
-        ),
-      )}\n`,
-    );
+    const { answerRuntimeFailure } = await import("./fail-loud");
+    answerRuntimeFailure(codexHost(), payload, error);
     process.exitCode = 0;
   }
 }
