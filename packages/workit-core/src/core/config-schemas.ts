@@ -106,6 +106,28 @@ const DEFINITIONS: Record<string, JsonSchema> = {
 
 const entry = workspaceConfigSchema.shape;
 
+/** `models`: the roles (from `modelRoles`), the lead's own model and the override switch. */
+const ROLES_EDITOR = closed(
+  Object.fromEntries(
+    MODEL_ROLES.map((role) => [
+      role,
+      role === "implementer" ? perTier(ref("roleModel")) : ref("roleModel"),
+    ]),
+  ),
+);
+const MODELS_EDITOR = closed({
+  roles: { ...ROLES_EDITOR, description: modelRoles.description },
+  lead: {
+    ...ref("roleModel"),
+    description: "The lead's own model per host; advisory (Workit cannot set a session's model).",
+  },
+  allowLeadOverride: {
+    type: "boolean",
+    description:
+      "True lets a model the lead names on a spawn win over the configured role model (default false).",
+  },
+});
+
 /** Editor-only definitions for the leniently read fields, keyed by their zod def. */
 const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
   [entry.defaultEndpoint, enumOf(DEFAULT_ENDPOINTS)],
@@ -141,17 +163,10 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
   [entry.issues.unwrap().shape.repo, string("owner/name")],
   [entry.issues.unwrap().shape.host, nonBlankString],
   [entry.fanout.unwrap().shape.tierModels, perTier(ref("tierModel"))],
-  [
-    modelRoles,
-    closed(
-      Object.fromEntries(
-        MODEL_ROLES.map((role) => [
-          role,
-          role === "implementer" ? perTier(ref("roleModel")) : ref("roleModel"),
-        ]),
-      ),
-    ),
-  ],
+  [modelRoles, ROLES_EDITOR],
+  ...[entry.models.unwrap(), workspacesFileSchema.shape.models.unwrap()].map(
+    (models): [unknown, JsonSchema] => [models, MODELS_EDITOR],
+  ),
   [
     entry.resources,
     closed({

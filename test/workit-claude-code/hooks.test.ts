@@ -391,12 +391,7 @@ test("Given implementer spawns with isolation or without a brief, When the launc
   };
   for (const input of [
     { subagent_type: "workit:implementer", model: "opus", prompt: brief },
-    {
-      subagent_type: "workit:verifier",
-      model: "sonnet",
-      isolation: "worktree",
-      prompt: "verify",
-    },
+    { subagent_type: "workit:verifier", model: "sonnet", prompt: "verify" },
   ]) {
     const fast = spawn(input, noRuntime);
     expect(fast.stdout, JSON.stringify(input)).toBe("{}\n");

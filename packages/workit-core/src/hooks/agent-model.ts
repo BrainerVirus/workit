@@ -1,14 +1,28 @@
-// Role models on a Claude Code subagent spawn (#420): a spawn that names no
-// `model` gets its role's model (and effort) from the role config, through
-// PreToolUse `updatedInput` on the Agent tool. An explicit `model` always
-// wins and a spawn is never denied over its model: a type with no role, or a
-// role with nothing usable configured, runs as the caller wrote it.
-import { resolveRoleModel, roleForAgentType } from "../core/role-models";
+// Role models on a Claude Code subagent spawn (#420, #654): the spawn gets
+// its role's model (and effort) from the role config through PreToolUse
+// `updatedInput` on the Agent tool. A model the spawn names wins over a
+// built-in default, and over a configured one only with
+// `models.allowLeadOverride`. A spawn is never denied over its model: a type
+// with no role, or a value the Agent tool cannot take, runs as written.
+import { chooseSpawnModel, roleForAgentType } from "../core/role-models";
 import type { HookDecision } from "./protocol";
 
 /** The Agent tool's `model` and `effort` enums (claude 2.1.309); anything else fails its schema. */
-const MODELS = new Set(["sonnet", "opus", "haiku", "fable"]);
+const ALIASES = new Set(["sonnet", "opus", "haiku", "fable"]);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+/** A full Claude model id (`claude-sonnet-5-5`, `anthropic/claude-opus-5`, `us.anthropic.claude-haiku-…`). */
+const FULL_ID = /^(?:[\w.-]+[./])?claude-(?:\d[\d.-]*-)?(sonnet|opus|haiku|fable)(?:[-.@[]|$)/u;
+
+/**
+ * What the Agent tool's `model` takes for a configured value: an alias as is,
+ * a full Claude id as its family alias (the tool takes only aliases), anything
+ * else null.
+ */
+export const claudeAgentModel = (value: string): string | null => {
+  const lower = value.trim().toLowerCase();
+  if (ALIASES.has(lower)) return lower;
+  return FULL_ID.exec(lower)?.[1] ?? null;
+};
 
 const given = (value: unknown): boolean => typeof value === "string" && value.trim() !== "";
 
@@ -18,23 +32,18 @@ export const agentModelDecision = (
   env: NodeJS.ProcessEnv = process.env,
 ): HookDecision => {
   // The host fixes the model itself: nothing to fill, and `model` is not in its schema.
-  if (given(tool.model) || env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE) return { kind: "none" };
+  if (env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE) return { kind: "none" };
   const selector = roleForAgentType(tool.subagent_type, tool.prompt);
   if (!selector) return { kind: "none" };
-  const resolved = resolveRoleModel(cwd, selector, "claude_code");
-  if (!resolved) return { kind: "none" };
-  const model = resolved.model.toLowerCase();
-  const effort = resolved.effort?.toLowerCase() ?? null;
+  const choice = chooseSpawnModel(cwd, selector, "claude_code", tool, claudeAgentModel);
+  const effort = choice.effort?.toLowerCase() ?? null;
   const input: Record<string, unknown> = { ...tool };
-  if (MODELS.has(model)) input.model = model;
+  if (choice.model) input.model = choice.model;
   if (effort && EFFORTS.has(effort) && !given(tool.effort)) input.effort = effort;
-  if (input.model === undefined && input.effort === tool.effort) return { kind: "none" };
-  const label = selector.tier ? `${selector.role} ${selector.tier}` : selector.role;
-  return {
-    kind: "update-input",
-    input,
-    text: `Workit set ${String(input.model ?? "no model")}${
-      input.effort !== tool.effort ? ` (effort ${String(input.effort)})` : ""
-    } on this ${String(tool.subagent_type)} spawn: role ${label}, ${resolved.source}. Name a model to choose another.`,
-  };
+  if (input.model === tool.model && input.effort === tool.effort)
+    return choice.note ? { kind: "context", text: choice.note } : { kind: "none" };
+  const text =
+    choice.note ??
+    `Workit set effort ${String(input.effort)} on this spawn: its role's configured effort.`;
+  return { kind: "update-input", input, text };
 };

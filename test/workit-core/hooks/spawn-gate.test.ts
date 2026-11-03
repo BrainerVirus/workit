@@ -6,7 +6,8 @@ import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hook
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
 
-// #432: a workit:implementer spawn carries a Workit brief and no host isolation.
+// #432: a workit:implementer spawn carries a Workit brief; #654: no spawn
+// type keeps host isolation.
 
 let configHome: ConfigHome;
 let cwd: string;
@@ -101,12 +102,32 @@ test("G a WORKTREE line that is only the not-made-yet note, W PreToolUse runs, T
   }
 });
 
-test("G a verifier spawn with isolation and no brief, W PreToolUse runs, T it is left as written", () => {
-  const out = spawn({
-    subagent_type: "workit:verifier",
-    prompt: "verify it",
-    model: "sonnet",
-    isolation: "worktree",
-  });
+test("G any other spawn type with isolation, W PreToolUse runs, T isolation is dropped and the rest kept (retro class 9)", () => {
+  for (const subagent_type of [
+    "workit:verifier",
+    "general-purpose",
+    "Explore",
+    "Plan",
+    undefined,
+  ]) {
+    const out = spawn({
+      subagent_type,
+      prompt: "verify it",
+      model: "sonnet",
+      isolation: "worktree",
+    });
+    expect(out.hookSpecificOutput?.permissionDecision, String(subagent_type)).toBeUndefined();
+    expect(out.hookSpecificOutput?.updatedInput, String(subagent_type)).toEqual({
+      description: "d",
+      prompt: "verify it",
+      model: "sonnet",
+      ...(subagent_type ? { subagent_type } : {}),
+    });
+    expect(out.hookSpecificOutput?.additionalContext).toContain("removed isolation");
+  }
+});
+
+test("G a verifier spawn with no isolation and a model, W PreToolUse runs, T it is left as written", () => {
+  const out = spawn({ subagent_type: "workit:verifier", prompt: "verify it", model: "sonnet" });
   expect(out.hookSpecificOutput).toBeUndefined();
 });
