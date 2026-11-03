@@ -2,7 +2,7 @@
   "name": "workit",
   "displayName": "Workit",
   "description": "Adaptive Workit workflow with shared MCP tools and native Cursor hooks",
-  "version": "8.52.4",
+  "version": "8.53.0",
   "author": {
     "name": "Cristhofer Pincetti"
   },
