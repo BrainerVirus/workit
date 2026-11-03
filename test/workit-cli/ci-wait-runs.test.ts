@@ -34,7 +34,7 @@ afterEach(() => {
 const STATUS = 'graphql status {"owner":"o","name":"r","number":"12"}';
 const RUNS = "GET repos/o/r/actions/runs?head_sha={{HEAD}}&per_page=100";
 
-const setup = (runs: Reply) => {
+const setup = (runs: Reply, extra: Record<string, Reply> = {}) => {
   const repo = makeForgeRepo("github");
   repos.push(repo);
   const runner = replayRunner(
@@ -46,6 +46,7 @@ const setup = (runs: Reply) => {
       "graphql find": fixture("github/find-pr.json"),
       [STATUS]: fixture("github/pr-pending.json"),
       [RUNS.replace("{{HEAD}}", repo.head)]: runs,
+      ...extra,
     },
     repo.subs,
   );
@@ -128,4 +129,45 @@ test("Given ci wait starts, When it prints its first line, Then the line says ho
   const first = result.stderr.split("\n")[0];
   expect(first).toContain("waiting on CI for PR #12 for up to 20m");
   expect(first).toContain("run it in the background");
+});
+
+test("Given a required check not yet posted on the head, When the head's runs all succeeded, Then ci wait stays pending", async () => {
+  const branch = JSON.parse(fixture("github/branch-main.json"));
+  branch.protection.required_status_checks.contexts.push("e2e");
+  const repo = setup(runs("completed", "success"), {
+    "GET repos/o/r/branches/main": JSON.stringify(branch),
+  });
+  const result = await run(["ci", "wait", "--timeout", "1m", "--json"], repo.cwd);
+  expect(result.code).toBe(4);
+  expect(result.json()).toMatchObject({ code: "pending", data: { state: "in_progress" } });
+});
+
+test("Given one workflow ran twice on the head (push and pull_request), When only the newer run passed, Then ci wait stays pending on the pending check's own run", async () => {
+  const twice = JSON.stringify({
+    workflow_runs: [
+      {
+        id: 1,
+        name: "CI",
+        workflow_id: 7,
+        head_sha: "{{HEAD}}",
+        status: "in_progress",
+        conclusion: null,
+      },
+      {
+        id: 2,
+        name: "CI",
+        workflow_id: 7,
+        head_sha: "{{HEAD}}",
+        status: "completed",
+        conclusion: "success",
+      },
+    ],
+  });
+  const repo = setup(twice);
+  const result = await run(["ci", "wait", "--timeout", "1m", "--json"], repo.cwd);
+  expect(result.code).toBe(4);
+  expect(result.json()).toMatchObject({
+    code: "pending",
+    data: { state: "in_progress", reason: "checks_pending" },
+  });
 });

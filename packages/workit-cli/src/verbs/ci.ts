@@ -72,8 +72,14 @@ const PASSED_RUN = new Set(["success", "skipped", "neutral"]);
  * run per workflow when every one completed without failing and every
  * pending check is an Actions run; else null and the rollup's verdict stands.
  */
-function headRunsPassed(resolved: ResolvedForge, status: ForgePrStatus): HeadRun[] | null {
+function headRunsPassed(
+  resolved: ResolvedForge,
+  status: ForgePrStatus,
+  missing: { required: readonly string[] | null; expected: readonly string[] },
+): HeadRun[] | null {
   if (resolved.forge.kind !== "github") return null;
+  // A required or expected check not posted on the head yet is not a pass, whatever the runs say.
+  if ((missing.required?.length ?? 0) > 0 || missing.expected.length > 0) return null;
   const pending = status.checks.filter((check) => check.state === "pending");
   if (!pending.length || pending.some((check) => check.runId === null)) return null;
   if (status.checks.some((check) => check.state === "failing")) return null;
@@ -102,20 +108,24 @@ function headRunsPassed(resolved: ResolvedForge, status: ForgePrStatus): HeadRun
     return null;
   }
   if (!read.ok) return null;
+  const passed = (headRun: { status?: string | null; conclusion?: string | null }) =>
+    headRun.status === "completed" && PASSED_RUN.has(headRun.conclusion ?? "");
+  const onHead = (read.data.workflow_runs ?? []).filter(
+    (headRun) => !headRun.head_sha || headRun.head_sha === status.head.sha,
+  );
+  // Each pending check's own run (a workflow can run twice on one head: push and pull_request).
+  for (const check of pending) {
+    const own = onHead.find((headRun) => headRun.id === check.runId);
+    if (!own || !passed(own)) return null;
+  }
   const newest = new Map<number, NonNullable<Runs["workflow_runs"]>[number]>();
-  for (const headRun of read.data.workflow_runs ?? []) {
-    if (headRun.head_sha && headRun.head_sha !== status.head.sha) continue;
+  for (const headRun of onHead) {
     const key = headRun.workflow_id ?? headRun.id;
     if ((newest.get(key)?.id ?? -1) < headRun.id) newest.set(key, headRun);
   }
   const runs = [...newest.values()];
   if (!runs.length) return null;
-  if (
-    runs.some(
-      (headRun) => headRun.status !== "completed" || !PASSED_RUN.has(headRun.conclusion ?? ""),
-    )
-  )
-    return null;
+  if (!runs.every(passed)) return null;
   return runs.map((headRun) => ({
     id: headRun.id,
     name: headRun.name ?? `run ${headRun.id}`,
@@ -204,7 +214,10 @@ async function wait(argv: string[], io: Io): Promise<number> {
       expectedMissing = (baseContexts ?? []).filter((context) => !seen.has(context));
       verdict = waitVerdict(doc.data, { head, elapsedMs, expectedMissing });
       if (verdict.state === "waiting" && verdict.reason === "checks_pending") {
-        headRuns = headRunsPassed(resolved, status);
+        headRuns = headRunsPassed(resolved, status, {
+          required: doc.data.checks.missingRequired,
+          expected: expectedMissing,
+        });
         if (headRuns) {
           rollupPending = doc.data.checks.pending;
           verdict = { state: "ready", reason: "runs_passed" };
