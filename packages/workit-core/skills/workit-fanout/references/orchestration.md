@@ -28,8 +28,16 @@ race. Claude Code's built-in defaults, when nothing is configured:
 | reviewer | `opus` |
 | explore, babysit | `haiku` |
 
-OpenCode takes a subagent's model from its agent config: pick a
-configured agent whose model fits the TIER, else the default.
+On Claude Code and OpenCode Workit also sets the role's model on the spawn
+itself (Claude Code's PreToolUse hook; OpenCode's plugin, as
+`providerID/modelID` on the `subagent` call). A configured role model wins
+over a `model` you pass unless `models.allowLeadOverride` is true, and a note
+says which one ran. A `general-purpose` (OpenCode: `general`) spawn takes
+`models.roles.default`; give a general spawn another role with a
+`ROLE: <role>` line in its prompt (for example `ROLE: verifier`).
+`models.lead` names your own model per host: Workit cannot set it, so it is
+advisory everywhere. `workit models show` says per host whether each role is
+`enforced` or `advisory`; on an advisory host pass the model yourself.
 
 ## Rolling window
 
@@ -62,9 +70,11 @@ reversibility (the option cheapest to undo wins a tie), and the exact change
 list. The fixer applies that list once, then one focused recheck follows.
 
 - Hard call (shared contract, security, migration): two deciders on different
-  models (Claude Code: the `decider` role model, the other a different `model` on the Agent call; OpenCode: a
-  child session on another configured agent; Codex, Cursor and Pi: one
-  decider, since the host picks no model). If they disagree, you take the
+  models (Claude Code and OpenCode: one on the `decider` role model, the other
+  with a different `model` on the spawn, which holds only when the decider
+  model is the built-in default or `models.allowLeadOverride` is true;
+  Cursor: a different `model` on the Task tool; Codex and Pi: one decider,
+  since the host picks no model per spawn). If they disagree, you take the
   more reversible option.
 - Record it: `workit ledger decision "<pick>" --by decider --why "<why it is
   the more reversible>" --view "<decider A: view>" --view "<decider B: view>"`.

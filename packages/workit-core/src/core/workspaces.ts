@@ -168,7 +168,7 @@ export const modelRoles = z
   .unknown()
   .optional()
   .describe(
-    "Per role (decider, implementer, verifier, reviewer, explore, babysit): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard).",
+    "Per role (decider, implementer, verifier, reviewer, explore, babysit, default for a general-purpose spawn): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard).",
   );
 export const workspaceConfigSchema = z
   .object({
@@ -286,7 +286,7 @@ export const workspaceConfigSchema = z
       .passthrough()
       .optional()
       .describe(
-        "Model and effort per role and host; the same key at the top of workspaces.json is the global default.",
+        "Model and effort per role and host (roles), the lead's own advisory model (lead) and whether a model the lead names on a spawn wins (allowLeadOverride, default false); the same key at the top of workspaces.json is the global default.",
       ),
     // Read leniently (core/resources.ts): an unknown or malformed field warns.
     resources: z
@@ -404,7 +404,9 @@ export const workspacesFileSchema = z
       .object({ roles: modelRoles })
       .passthrough()
       .optional()
-      .describe("The global default model and effort per role and host."),
+      .describe(
+        "The global default model and effort per role and host (roles), the lead's own advisory model (lead) and whether a model the lead names on a spawn wins (allowLeadOverride, default false).",
+      ),
   })
   .passthrough()
   .superRefine((file, context) => {
