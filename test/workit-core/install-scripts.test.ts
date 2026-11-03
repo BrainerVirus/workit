@@ -255,6 +255,8 @@ const STUB_CORE_FILES = [
   // doctor's *_permissions rows (#297) resolve the state dir here.
   "heavy-words.ts",
   "role-models.ts",
+  // role-models.ts skips providers exhausted by a usage limit (#655).
+  "model-fallback.ts",
   "config-schemas.ts",
   // workspaces.ts validates `remotes` patterns, autonomy caps by them (#549).
   "remotes.ts",
