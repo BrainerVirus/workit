@@ -10,11 +10,11 @@ const LOUD_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "SubagentStart"
 const SUBAGENT_NOTE =
   " This subagent got no Workit session: a verifier or reviewer cannot record a verdict (it fails with no_session) until the hook runs; fix the hook, run `workit doctor`, then spawn a fresh one.";
 
-export const isLoudEvent = (event: unknown): boolean =>
+const isLoudEvent = (event: unknown): boolean =>
   typeof event === "string" && LOUD_EVENTS.has(event);
 
 /** The answer a hook that could not run gives `event`. */
-export const failedAnswer = (event: unknown, text: string): object => {
+const failedAnswer = (event: unknown, text: string): object => {
   if (typeof event !== "string" || !LOUD_EVENTS.has(event)) return {};
   const message = event === "SubagentStart" ? `${text}${SUBAGENT_NOTE}` : text;
   return {
@@ -23,7 +23,7 @@ export const failedAnswer = (event: unknown, text: string): object => {
   };
 };
 
-export const recordFailure = (host: string, event: unknown, cause: string): void =>
+const recordFailure = (host: string, event: unknown, cause: string): void =>
   recordHookFailure(host, typeof event === "string" ? event : null, cause);
 
 /** A runtime that threw on import or while answering: stderr line, failure row, answer. */
