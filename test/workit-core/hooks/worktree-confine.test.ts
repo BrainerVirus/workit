@@ -578,3 +578,66 @@ test("Given a directory that only claims Claude Code's isolation through a .git 
   expect(denied?.permissionDecision).toBe("deny");
   expect(denied?.permissionDecisionReason).toContain("workit worktree confinement");
 });
+
+test("Given a bound implementer, When a same-command variable names the path, Then it resolves: inside the worktree it is allowed, outside it is denied naming the resolved path", () => {
+  const id = implementerBoundToA("impl-shell-vars");
+  const outside = path.join(lead, "src");
+  for (const command of [
+    `W=${wtA}; touch $W/a.ts`,
+    `W=${wtA} && echo x > "$W/a.ts"`,
+    `export W=${wtA}; rm "\${W}/a.ts"`,
+    `W=${wtA}; cd $W && touch a.ts`,
+    `D=${wtA}; F=$D/a.ts; touch $F`,
+    `W=${wtA}; bash -c 'touch $W/a.ts'`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+  for (const command of [
+    `W=${outside}; rm $W/core.ts`,
+    `export W=${outside}; touch "$W/x"`,
+    `W=${outside}; echo x > $W/core.ts`,
+  ]) {
+    const denied = bash(command, id);
+    expect(denied?.permissionDecision, command).toBe("deny");
+    // The reason prints the resolved path with forward slashes on Windows.
+    const reason = (denied?.permissionDecisionReason ?? "").replaceAll("\\", "/");
+    expect(reason, command).toContain(`${outside.replaceAll("\\", "/")}/`);
+    expect(denied?.permissionDecisionReason, command).not.toContain("$W");
+  }
+  // An unresolvable variable stays conservative.
+  expect(bash(`touch $UNSET/a.ts`, id)?.permissionDecision).toBe("deny");
+  expect(bash(`cd "$UNSET" && touch a.ts`, id)?.permissionDecision).toBe("deny");
+  // Read-only commands with variables pass.
+  for (const command of [
+    `W=${outside}; cat $W/core.ts`,
+    `W=${outside}; grep -rn core $W`,
+    `W=${outside}; ls $W`,
+    `W=${outside}; git -C $W log --oneline`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBeUndefined();
+});
+
+test("Given a bound implementer, When a variable is reassigned conditionally or by +=, read, eval, for, declare -n and the like, Then it is not trusted and the write is denied", () => {
+  const id = implementerBoundToA("impl-shell-vars-reassign");
+  const out = path.join(lead, "src");
+  for (const command of [
+    `W=${out}; false && W=${wtA}; rm $W/x`,
+    `W=${out}; true || W=${wtA}; rm $W/x`,
+    `W=${out}; W=${wtA} | cat; rm $W/x`,
+    `W=${out}; W=${wtA} & rm $W/x`,
+    `W=${wtA}; W+=/../../..; rm $W/x`,
+    `W=${wtA}; read W < f; rm $W/a`,
+    `W=${wtA}; eval "W=${out}"; rm $W/a`,
+    `W=${wtA}; for W in ${out}; do rm $W/a; done`,
+    `W=${wtA}; declare -n W=OTHER; rm $W/a`,
+    `W=${wtA}; printf -v W %s ${out}; rm $W/a`,
+    `W=${wtA}; mapfile W < f; rm $W/a`,
+    `W=${wtA}; getopts a W; rm $W/a`,
+    `W=${wtA}; unset W; rm $W/a`,
+    `W=${wtA}; source ./s; rm $W/a`,
+    `W=${wtA}; . ./s; rm $W/a`,
+    `W=${wtA}; eval "$(cat f)"; rm $W/a`,
+    `W=${wtA}; eval "$X"; rm $W/a`,
+    `W=${wtA}; : \${W:=x}; case a in a) W=${out};; esac; rm $W/a`,
+  ])
+    expect(bash(command, id)?.permissionDecision, command).toBe("deny");
+});
