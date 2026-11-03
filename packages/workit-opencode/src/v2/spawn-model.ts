@@ -7,7 +7,7 @@
 import { chooseSpawnModel, roleForAgentType } from "@brainervirus/workit-core/src/core/role-models";
 
 /** What the subagent tool's `model` takes: `providerID/modelID`, optionally `#variant`. */
-export const opencodeSubagentModel = (value: string): string | null => {
+const opencodeSubagentModel = (value: string): string | null => {
   const trimmed = value.trim();
   return /^[^\s/#]+\/[^\s#]+(?:#\S+)?$/u.test(trimmed) ? trimmed : null;
 };
