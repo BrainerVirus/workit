@@ -468,6 +468,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit git branch` no longer leaves a half-created branch behind when `git switch -c` fails; it only removes a branch it created itself, never touches another process's `index.lock` (it prints the `rm` command to run if no git is running), and names a killed or timed-out git instead of a bare "git failed" (#652).
+- `workit git branch` refused for a dirty worktree now lists the dirty paths and the exact `workit git branch <name> --carry` command.
 - `workit pr create`, `workit check` and `workit ci wait` print a first line at once (what they check, how long they may take, how to run them in the background), so a host shell timeout no longer kills a silent command (#638). `workit check` also prints a "still running" line every minute.
 - `workit pr create` bounds its forge calls (90 s in total) and fails naming the stalled call instead of hanging on the changelog check (#644).
 - `workit ci wait` reports success on its first poll when every Actions run on the head passed but the check rollup still shows them pending; a required check that has not posted, or a pending check whose own run is still going, keeps it waiting (#646).
