@@ -598,7 +598,9 @@ test("Given a bound implementer, When a same-command variable names the path, Th
   ]) {
     const denied = bash(command, id);
     expect(denied?.permissionDecision, command).toBe("deny");
-    expect(denied?.permissionDecisionReason, command).toContain(`${outside}/`);
+    // The reason prints the resolved path with forward slashes on Windows.
+    const reason = (denied?.permissionDecisionReason ?? "").replaceAll("\\", "/");
+    expect(reason, command).toContain(`${outside.replaceAll("\\", "/")}/`);
     expect(denied?.permissionDecisionReason, command).not.toContain("$W");
   }
   // An unresolvable variable stays conservative.
