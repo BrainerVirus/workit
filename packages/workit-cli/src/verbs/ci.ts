@@ -114,8 +114,9 @@ function headRunsPassed(
     (headRun) => !headRun.head_sha || headRun.head_sha === status.head.sha,
   );
   // Each pending check's own run (a workflow can run twice on one head: push and pull_request).
+  const byId = new Map(onHead.map((headRun) => [headRun.id, headRun]));
   for (const check of pending) {
-    const own = onHead.find((headRun) => headRun.id === check.runId);
+    const own = check.runId === null ? undefined : byId.get(check.runId);
     if (!own || !passed(own)) return null;
   }
   const newest = new Map<number, NonNullable<Runs["workflow_runs"]>[number]>();
