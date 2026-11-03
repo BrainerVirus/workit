@@ -920,6 +920,25 @@ export const classifyBranchDirt = (workspaceRoot: string): BranchDirt => {
   return dirty ? "carry" : "clean";
 };
 
+/** The tracked changes outside docs/ that block `workit git branch`, at most 8, as one line. */
+export const dirtyPaths = (workspaceRoot: string): string => {
+  let raw = "";
+  try {
+    raw = execFileSync("git", ["status", "--porcelain=v1"], {
+      cwd: path.resolve(workspaceRoot),
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {}
+  const paths = raw
+    .split("\n")
+    .filter((line) => line.trim() && !line.startsWith("??"))
+    .map((line) => line.slice(3).split(" -> ").pop() ?? "")
+    .filter((entry) => entry !== "docs" && !entry.startsWith("docs/"));
+  const shown = paths.slice(0, 8).join(", ");
+  return paths.length > 8 ? `${shown} and ${paths.length - 8} more` : shown;
+};
+
 export const branchSetup = ({
   action,
   sdd_dir,

@@ -28,6 +28,7 @@ import path from "node:path";
 import {
   branchKindOf,
   classifyBranchDirt,
+  dirtyPaths,
   flowMismatch,
   flowRoute,
   gitFlowOf,
@@ -79,6 +80,7 @@ type Run = {
   status: number | null;
   stdout: string;
   stderr: string;
+  signal?: NodeJS.Signals | null;
 };
 
 export const git = (
@@ -103,16 +105,53 @@ export const git = (
     status: result.status,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    signal: result.signal,
   };
 };
 
 /** The last meaningful lines of git's stderr, redacted, for an error message. */
-export const gitError = (run: { stderr: string; stdout?: string }, max = 3): string => {
+export const gitError = (
+  run: { stderr: string; stdout?: string; signal?: NodeJS.Signals | null },
+  max = 3,
+): string => {
   const lines = redactText(`${run.stderr}\n${run.stdout ?? ""}`)
     .split(/\r?\n/u)
     .map((value) => value.trim())
     .filter((value) => value && !value.startsWith("hint:"));
-  return lines.slice(-max).join(" / ").slice(0, 400) || "git failed";
+  return (
+    lines.slice(-max).join(" / ").slice(0, 400) ||
+    (run.signal ? `git was killed by ${run.signal} (timed out) and printed nothing` : "git failed")
+  );
+};
+
+/**
+ * What a failed `git switch -c <name>` left behind. The branch ref is deleted
+ * only when it was absent before the switch and now points at the base this
+ * run passed. An index.lock is never removed (it may belong to a live git);
+ * after a kill the message names the check and the command instead.
+ */
+export const recoverFailedSwitch = (
+  cwd: string,
+  name: string,
+  run: Run,
+  before: { existed: boolean; baseSha: string },
+): string[] => {
+  const notes: string[] = [];
+  if (run.signal) {
+    const lock = git(cwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "index.lock",
+    ]).stdout.trim();
+    if (lock && existsSync(lock))
+      notes.push(`index.lock remains: if no git process is running, remove it with: rm ${lock}`);
+  }
+  if (!before.existed && resolveRef(cwd, `refs/heads/${name}`) === before.baseSha) {
+    if (currentBranch(cwd) !== name && git(cwd, ["branch", "-D", "--", name]).ok)
+      notes.push(`deleted the half-made ${name}`);
+  }
+  return notes;
 };
 
 /**
@@ -390,12 +429,23 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
   if (dirt === "stash-required" && !input.carry)
     return failure(
       "blocked",
-      "dirty_worktree: tracked changes outside docs/ would ride along to the new branch",
-      `commit them first (workit git commit -m … -- <paths>), or pass --carry to bring them along`,
+      `dirty_worktree: tracked changes outside docs/ would ride along to the new branch: ${dirtyPaths(cwd)}`,
+      `commit them first (workit git commit -m … -- <paths>), or carry them: workit git branch ${name} --carry`,
     );
   const previous = currentBranch(cwd);
+  const existedBefore = resolveRef(cwd, `refs/heads/${name}`) !== null;
   const switched = git(cwd, ["switch", "--no-track", "-c", name, baseSha]);
-  if (!switched.ok) return failure("failed", `git switch -c ${name} failed: ${gitError(switched)}`);
+  if (!switched.ok) {
+    const undone = recoverFailedSwitch(cwd, name, switched, {
+      existed: existedBefore,
+      baseSha,
+    });
+    return failure(
+      "failed",
+      `git switch -c ${name} failed: ${gitError(switched)}${undone.length ? ` (${undone.join("; ")})` : ""}`,
+      `workit git branch ${name}  # retry; if it keeps failing, run git status and fix what it names`,
+    );
+  }
   // The cheapest track signal later (release-tracks.ts): where this branch began.
   recordBranchBase(cwd, name, base);
   return success({
