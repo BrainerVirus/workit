@@ -3,6 +3,7 @@
   "iid": 12,
   "project_id": 34675721,
   "title": "feat: x",
+  "author": { "username": "octo" },
   "state": "opened",
   "merged_at": null,
   "closed_at": null,
