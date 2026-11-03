@@ -6,14 +6,26 @@
 //     runs from source with bun: edits apply without a rebuild;
 //   - installed package (npm/marketplace): dist/workit-hook.js is imported.
 // WORKIT_CLAUDE_RUNTIME=source|dist forces one.
-// Fail-open: when the runtime cannot start (no bun for the pin, a missing or
-// unloadable dist/), the launcher answers `{}` with exit 0 and one
-// `[workit] Claude Code hook unavailable: …` line on stderr. Claude then
-// proceeds as if no Workit hook were installed (no context, no branch
-// policy): a broken hook must never brick the host.
+// Fail-open, never silent: when the runtime cannot start (a Node below the
+// floor, no bun for the pin, a missing or unloadable dist/, a crash), the
+// launcher exits 0 with one `[workit] Claude Code hook unavailable: …` line on
+// stderr and records a failure row (`<state>/hook-runs/claude_code__<event>__failed.json`,
+// the format of workit-core hooks/hook-runs.ts) that `workit doctor` reads.
+// SessionStart, UserPromptSubmit and SubagentStart answer with a systemMessage
+// (shown to the user) and additionalContext (read by the agent) naming the
+// cause and the fix; every other event answers `{}`, so Claude proceeds as if
+// no Workit hook were installed: a broken hook must never brick the host.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -29,9 +41,73 @@ const fromSource =
     existsSync(source) &&
     existsSync(path.join(root, "..", "workit-core", "src", "hooks", "index.ts")));
 
+const stateDir = () => {
+  const env = process.env;
+  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
+  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
+  const home = env.HOME || os.homedir();
+  if (process.platform === "darwin")
+    return path.join(home, "Library", "Application Support", "workit");
+  if (process.platform === "win32")
+    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
+  return path.join(home, ".local", "state", "workit");
+};
+
+/** A hook-runs failure row, as workit-core hooks/hook-runs.ts recordHookFailure writes it. */
+const recordFailure = (event, cause) => {
+  try {
+    const name = typeof event === "string" && event ? event : "unknown";
+    const safe = (part) => part.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 64);
+    const file = path.join(stateDir(), "hook-runs", `claude_code__${safe(name)}__failed.json`);
+    let count = 0;
+    try {
+      const previous = JSON.parse(readFileSync(file, "utf8")).count;
+      if (typeof previous === "number" && Number.isFinite(previous)) count = previous;
+    } catch {
+      // First failure, or a torn file.
+    }
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        host: "claude_code",
+        event: name,
+        at: new Date().toISOString(),
+        count: count + 1,
+        failure: String(cause).slice(0, 500),
+      }),
+    );
+  } catch {
+    // The answer still goes out; only the doctor row is lost.
+  }
+};
+
+const LOUD_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "SubagentStart"]);
+const SUBAGENT_NOTE =
+  " This subagent got no Workit session: a verifier or reviewer cannot record a verdict (it fails with no_session) until the hook runs; fix the hook, run `workit doctor`, then spawn a fresh one.";
+
+/** The answer a hook that could not run gives `event`: loud where Claude shows it, else `{}`. */
+const failedAnswer = (event, text) => {
+  if (!LOUD_EVENTS.has(event)) return {};
+  const message = event === "SubagentStart" ? `${text}${SUBAGENT_NOTE}` : text;
+  return {
+    systemMessage: message,
+    hookSpecificOutput: { hookEventName: event, additionalContext: message },
+  };
+};
+
 const failOpen = (reason) => {
   process.stderr.write(`[workit] Claude Code hook unavailable: ${reason}\n`);
-  process.stdout.write("{}\n");
+  const event = parsed?.hook_event_name;
+  recordFailure(event, reason);
+  process.stdout.write(
+    `${JSON.stringify(
+      failedAnswer(
+        event,
+        `Workit hooks are off: the Claude Code hook could not run (${reason}). Branch policy, task context and verifier sessions are off until it does. Run \`workit upgrade\` to reinstall the plugin, then \`workit doctor\` (check hook_node runs each installed hook).`,
+      ),
+    )}\n`,
+  );
 };
 
 // A Node below this package's own engines minimum cannot load dist. The launcher
@@ -54,6 +130,8 @@ const nodeFloor = () => {
 const hookNode = nodeFloor();
 const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
 const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
+// isStart runs only when no Node >= the floor was found: it records the failure row.
+let floorEvent;
 if (tooOld && hookNode)
   process.exit(
     await handleBelowFloor({
@@ -64,10 +142,12 @@ if (tooOld && hookNode)
       script: fileURLToPath(import.meta.url),
       argv: process.argv.slice(2),
       env: process.env,
-      isStart: (event) => event === "SessionStart",
-      notice: (additionalContext) => ({
-        hookSpecificOutput: { hookEventName: "SessionStart", additionalContext },
-      }),
+      isStart: (event) => {
+        floorEvent = event;
+        recordFailure(event, tooOld);
+        return LOUD_EVENTS.has(event);
+      },
+      notice: (text) => failedAnswer(floorEvent, text),
     }),
   );
 
@@ -128,17 +208,6 @@ const readJson = (file) => {
   } catch {
     return undefined;
   }
-};
-const stateDir = () => {
-  const env = process.env;
-  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (process.platform === "darwin")
-    return path.join(home, "Library", "Application Support", "workit");
-  if (process.platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
 };
 /** Does the user's workspaces.json name role models? A doubt answers yes (core/config.ts resolveConfigDir). */
 const roleModelsConfigured = () => {
@@ -466,7 +535,12 @@ if (parsed?.hook_event_name === "SubagentStop" || fastAllow) {
   } catch (error) {
     failOpen(`cannot load ${dist} (${error instanceof Error ? error.message : String(error)})`);
   }
-  if (runClaudeHook) process.exitCode = await runClaudeHook([payload], process.stdout);
+  if (runClaudeHook)
+    try {
+      process.exitCode = await runClaudeHook([payload], process.stdout);
+    } catch (error) {
+      failOpen(`crashed (${error instanceof Error ? error.message : String(error)})`);
+    }
 } else {
   failOpen(`${dist} is missing; run \`bun scripts/build.ts\` in ${root}`);
 }

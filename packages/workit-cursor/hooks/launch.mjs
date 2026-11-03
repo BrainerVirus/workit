@@ -11,14 +11,19 @@
 //      the version read from this plugin's package.json;
 //   4. missing: nothing runnable.
 //
-// Fail-open: a launcher or infrastructure failure (nothing to run, spawn
-// failure, npx network error, timeout, a crash) prints `{}`, exits 0 and
-// writes one `[workit] Cursor hook unavailable: …` line on stderr. Only a
-// policy deny from the hook itself (exit 2 with Cursor's deny JSON) blocks.
+// Fail-open, never silent: a launcher or infrastructure failure (a Node below
+// the floor, nothing to run, spawn failure, npx network error, timeout, a
+// crash) exits 0, writes one `[workit] Cursor hook unavailable: …` line on
+// stderr and records a hook-runs failure row for `workit doctor`; sessionStart
+// answers with additional_context naming the cause and the fix, every other
+// event with `{}`. Only a policy deny from the hook itself (exit 2 with
+// Cursor's deny JSON) blocks.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  cursorHookOffNotice,
+  recordCursorHookFailure,
   resolveCursorHookLaunch,
   runCursorHookLaunch,
   touchCursorHookHeartbeat,
@@ -45,6 +50,8 @@ const nodeFloor = () => {
     return null;
   }
 };
+const isSessionStart = (event) =>
+  event === "sessionStart" || process.argv[2] === "workit-cursor-session-start";
 const hookNode = nodeFloor();
 const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
 const tooOld = hookNode ? floorMessage(foundNode, hookNode.floor, hookNode.range) : null;
@@ -59,8 +66,14 @@ if (tooOld && hookNode && process.argv[2] !== "--probe")
       script: fileURLToPath(import.meta.url),
       argv: process.argv.slice(2),
       env: process.env,
-      isStart: (event) =>
-        event === "sessionStart" || process.argv[2] === "workit-cursor-session-start",
+      isStart: (event) => {
+        recordCursorHookFailure(
+          process.env,
+          isSessionStart(event) ? "sessionStart" : event,
+          tooOld,
+        );
+        return isSessionStart(event);
+      },
       notice: (additional_context) => ({ additional_context }),
     }),
   );
@@ -103,6 +116,18 @@ try {
     warning: `[workit] Cursor hook unavailable: ${error instanceof Error ? error.message : String(error)}`,
   };
 }
-if (result.warning) process.stderr.write(`${result.warning}\n`);
+if (result.warning) {
+  process.stderr.write(`${result.warning}\n`);
+  let event;
+  try {
+    event = JSON.parse(payload).hook_event_name;
+  } catch {
+    event = undefined;
+  }
+  const reason = result.warning.replace(/^\[workit\] Cursor hook unavailable: /, "");
+  recordCursorHookFailure(process.env, isSessionStart(event) ? "sessionStart" : event, reason);
+  if (isSessionStart(event))
+    result.stdout = `${JSON.stringify({ additional_context: cursorHookOffNotice(reason) })}\n`;
+}
 process.stdout.write(result.stdout);
 process.exitCode = result.exitCode;

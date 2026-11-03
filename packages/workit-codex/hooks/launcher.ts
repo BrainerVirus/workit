@@ -19,8 +19,10 @@ import { fileURLToPath } from "node:url";
  * only then so a current Node never parses it: $WORKIT_NODE, the node `workit
  * setup` recorded, a version-manager scan), with stdin, stdout, stderr and the
  * exit code passed through; WORKIT_HOOK_REEXEC stops a second hop. With none
- * found it fails open (`{}`, exit 0, one stderr line) and a SessionStart tells
- * the agent once that the hooks are off. WORKIT_HOOK_NODE_VERSION stands in for
+ * found it fails open (exit 0, one stderr line, a hook-runs failure row for
+ * `workit doctor`); SessionStart, UserPromptSubmit and SubagentStart answer
+ * with a systemMessage and additionalContext naming the cause and the fix,
+ * every other event with `{}`. WORKIT_HOOK_NODE_VERSION stands in for
  * process.versions.node (tests); an unreadable minimum never blocks. */
 const foundNode = process.env.WORKIT_HOOK_NODE_VERSION || process.versions.node;
 const nodeFloor = (): { range: string; floor: number[] } | null => {
@@ -46,22 +48,17 @@ const nodeFloor = (): { range: string; floor: number[] } | null => {
   }
 };
 
+const codexHost = (): "codex_cli" | "codex_desktop" =>
+  process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE === "Codex Desktop" ||
+  process.env.CODEX_ELECTRON_RESOURCES_PATH
+    ? "codex_desktop"
+    : "codex_cli";
+
 const tooOld = nodeFloor();
 if (tooOld) {
-  const { handleBelowFloor } = await import("@brainervirus/workit-core/src/core/node-resolve.mjs");
+  const { belowFloor } = await import("./fail-loud");
   process.exit(
-    await handleBelowFloor({
-      host: "Codex",
-      ...tooOld,
-      found: foundNode,
-      script: fileURLToPath(import.meta.url),
-      argv: process.argv.slice(2),
-      env: process.env,
-      isStart: (event) => event === "SessionStart",
-      notice: (additionalContext) => ({
-        hookSpecificOutput: { hookEventName: "SessionStart", additionalContext },
-      }),
-    }),
+    await belowFloor(codexHost(), { ...tooOld, found: foundNode }, fileURLToPath(import.meta.url)),
   );
 }
 
@@ -132,16 +129,15 @@ const quiet = observeHookBudget(payload) ? null : quietEvent();
 if (quiet) {
   // The full path records itself (runHookProcess); the quiet path counts here.
   // PostToolUse follows every shell call and tells doctor nothing PreToolUse does not.
-  if (quiet === "PreToolUse")
-    recordHookRun(
-      process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE === "Codex Desktop" ||
-        process.env.CODEX_ELECTRON_RESOURCES_PATH
-        ? "codex_desktop"
-        : "codex_cli",
-      quiet,
-    );
+  if (quiet === "PreToolUse") recordHookRun(codexHost(), quiet);
   process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: quiet } })}\n`);
 } else {
-  const { runCodexHook } = await import("./workit-hook");
-  await runCodexHook([payload]);
+  try {
+    const { runCodexHook } = await import("./workit-hook");
+    await runCodexHook([payload]);
+  } catch (error) {
+    const { answerRuntimeFailure } = await import("./fail-loud");
+    answerRuntimeFailure(codexHost(), payload, error);
+    process.exitCode = 0;
+  }
 }
