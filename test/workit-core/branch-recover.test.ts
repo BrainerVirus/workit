@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gitError, recoverFailedSwitch } from "@/packages/workit-core/src/git/ops";
 import { dirtyPaths } from "@/packages/workit-core/src/core/branch";
@@ -29,7 +29,9 @@ test("a half-made branch at the base is deleted; a killed run keeps a lock and n
   });
   expect(existsSync(lock)).toBe(true);
   expect(r.git("branch", "--list", "feature/half")).toBe("");
-  expect(notes.join(" ")).toContain(`rm ${lock}`);
+  // git reports the resolved path (/private/var on macOS, forward slashes on Windows).
+  const printed = /rm (\S+index\.lock)/u.exec(notes.join(" "))?.[1] ?? "";
+  expect(realpathSync(printed)).toBe(realpathSync(lock));
 });
 
 test("a branch that existed before, or moved off the base, is kept", () => {
