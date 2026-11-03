@@ -204,106 +204,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `workit-test-audit` (triage audit findings with Name the Break), with
   `/wk-bdd` and `/wk-test-audit` aliases on every host.
 
-### Changed
-
-- Close-time testing and verification gates accept only a fresh, passing,
-  CLI-observed run of a configured check (or an approved limitation): `testing`
-  binds to `test` (or `gates.testing`), `verification` to the configured
-  checks. Agent-recorded checks stay recordable as notes but no longer satisfy
-  them, ad-hoc `workit check -- <cmd>` runs never do, and RED-first no longer
-  applies. A check that changes the worktree is stale. Per-turn host context
-  judges freshness from a cheap stat-cached signal and never hashes the tree.
-  A task holding an observed check lists the observation as a critical field,
-  so older Workit readers fail closed on it.
-- **Migration for in-flight tasks:** a task whose testing or verification gate
-  was satisfied by agent-recorded checks reads unsatisfied after upgrading.
-  Run the repo's configured check with `workit check test` (or `npx -y
-  @brainervirus/workit-cli check test`), adding `workit.checks.json` when
-  nothing is detected, or record an approved limitation where the requirement
-  allows one.
-
-- OpenCode V1/V2 remove managed external mutations and proposal/approval
-  orchestration. Native host tools execute effects; strict read-only
-  `workit_context` replaces the old combined action/context tool. Existing
-  history and remaining-host action machinery are preserved.
-
-### Fixed
-
-- A `changelogPath` glob such as `projects/*/CHANGELOG.md` that matches no
-  file in a repo falls back to the root `CHANGELOG.md`, so one workspace
-  setting serves both its monorepos and its single-package repos; under
-  `create` the root entry is required instead of the check passing silently.
-- `workit release notes approve` and `workit grant set|raise` are denied
-  (Cursor, Codex, Pi) or asked (Claude Code) by Workit's shell hook however
-  `--json`, `--cwd` or `--session` are placed before the verb, closing the
-  Cursor prefix-match gap left by #623.
-- On macOS a quiet but busy heavy check is no longer marked `stuck?` after
-  5 minutes: the heartbeat counts its process group's CPU through `ps`, as
-  Linux does through `/proc`. On Windows only output counts as a heartbeat;
-  raise `resources.maxHold` in your own config for a long quiet check.
-- A stuck heavy check no longer starves every other agent: `workit lock
-  status` marks a holder `stuck?` past `resources.maxHold` (default 15 min) or
-  after 5 min with no output or CPU, `workit lock reap` frees its slot and
-  records it in the ledger, and a holder silent past 3x the limit is reaped
-  automatically. `workit lock cancel [<pid|session|dir>]` drops queued checks
-  without `kill`; waiters whose starting process ended leave the queue; the
-  queue serves sessions round-robin; and a check that gives up says `queued
-  behind <holder>, <age>` (#608).
-- `workit release notes approve` and `workit grant set|raise` always reach
-  the host's permission prompt or a deny: Claude Code (also in auto mode),
-  Codex and Cursor get managed rules for them, and `workit upgrade` replaces
-  the old auto-mode text. Pi has no permission layer, so only the CLI check
-  applies there. The CLI check stops a cooperating agent; the host prompt stops
-  a determined one (#615).
-- `workit workspace set` points a path-like key such as `path=` at `glob`
-  (with the workspaces.json path and `workspace add <name> --glob <g> --from
-  <ws>`) and suggests the nearest key for a misspelt one. Hints naming
-  `vcs.json` or `workspaces.json` print the file Workit actually reads when
-  `WORKFLOW_TOOLKIT_CONFIG` redirects the config dir; the grants note says that
-  override never applies to grants (#617, #618).
-- `workit uninstall` now also removes Workit pins from the OpenCode 2.x
-  `plugins` key (it only cleaned the V1-era `plugin` key, so a 2.x
-  registration, including a checkout directory pin, survived uninstall).
-- `.workit/recovery/` no longer grows without bound: each task or workspace
-  record keeps its newest three recovery copies. `workit gc` (`--dry-run`,
-  `--json`) prunes copies left by older versions, removes stale temp files, and
-  collapses duplicate stored candidates in paused tasks (closed tasks are never
-  rewritten); `--dry-run` is read-only.
-- `state.recover` is no longer advertised in host tool schemas or the CLI: it
-  requires native recovery authority that no shipped host supplies, so it could
-  only return `permission_denied`.
-- A `.workit/metadata.lock` left by a dead process (or a reused pid, or a
-  foreign-host/namespace lock past its TTL) no longer bricks the store: the next
-  write reclaims it. Locks carry the pid namespace and boot id so a container
-  sharing the hostname is never judged by this host's process table, and a
-  lock from before a reboot is reclaimed at once.
-  Contention with a live writer retries briefly (250 ms in-process, 2 s in the
-  CLI) and returns the retryable `busy` code instead of `recovery_required`.
-  `workit doctor` reports a stale lock (`workspace_lock`); `workit doctor
-  --fix-lock` clears it under the reclaim guard, and `--force --yes` clears an
-  unverifiable lock explicitly.
-- Compact task context retains the newest decisions and surfaces bounded,
-  redacted choice summaries instead of selecting an arbitrary UUID-ordered set.
-- Distributed cross-repository guidance binds unfinished work to its checkout,
-  branch, deliverables and delivery endpoint, preserves explicit holds, and
-  verifies the requested remote result before reporting completion.
-
-- OpenCode V2 keeps uncertain subagent dispatches correlated through failed
-  terminal-state persistence, retries reconciliation, and lets explicit
-  `failed`/`interrupted` session outcomes override conflicting completion text.
-- OpenCode omits a Workit slash alias when a user skill owns its matching Workit
-  skill ID; the implementation-skill trigger now matches its optional tracking
-  guidance across packaged hosts.
-- OpenCode action approvals revalidate same-text proposals before rejecting
-  ambiguity, so a stale pre-branch proposal cannot wedge a current commit.
-- Distributed guidance chooses native tools for routine authorized Git work
-  without task/writer/decision ceremony or post-commit PR-readiness escalation.
-  Native permissions and managed uncertainty/conflict safeguards remain intact.
-- Bounded behavior changes retain behavioral verification and self-review;
-  fresh-context review remains required for consequential boundaries, thorough
-  preference and explicit project constraints rather than every behavior edit.
-
-### Added
 
 - `workit stack plan|status|sync|land` (S12): forge-neutral stacks of plain
   base-branch PRs on GitHub and GitLab (no Graphite or `gh stack`
@@ -476,7 +376,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of per-callsite substring lists; the branch-setup stash upgrade is
   one core helper with one-line adapter callers.
 
+### Changed
+
+- Close-time testing and verification gates accept only a fresh, passing,
+  CLI-observed run of a configured check (or an approved limitation): `testing`
+  binds to `test` (or `gates.testing`), `verification` to the configured
+  checks. Agent-recorded checks stay recordable as notes but no longer satisfy
+  them, ad-hoc `workit check -- <cmd>` runs never do, and RED-first no longer
+  applies. A check that changes the worktree is stale. Per-turn host context
+  judges freshness from a cheap stat-cached signal and never hashes the tree.
+  A task holding an observed check lists the observation as a critical field,
+  so older Workit readers fail closed on it.
+- **Migration for in-flight tasks:** a task whose testing or verification gate
+  was satisfied by agent-recorded checks reads unsatisfied after upgrading.
+  Run the repo's configured check with `workit check test` (or `npx -y
+  @brainervirus/workit-cli check test`), adding `workit.checks.json` when
+  nothing is detected, or record an approved limitation where the requirement
+  allows one.
+
+- OpenCode V1/V2 remove managed external mutations and proposal/approval
+  orchestration. Native host tools execute effects; strict read-only
+  `workit_context` replaces the old combined action/context tool. Existing
+  history and remaining-host action machinery are preserved.
+
+
+- GitHub/GitLab setup, doctor, issues, PRs and merges now use the authenticated
+  `gh`/`glab` CLI rather than separate Workit VCS tokens; existing token files
+  remain untouched. User-selected Git-valid branch names and commit messages
+  are no longer rejected by Workit formatting rules. Doctor checks the
+  configured provider's CLI/SSH identity, and hosting API reads bind to the
+  resolved push host. YouTrack still uses its permanent token.
+- Package payload changes now cut a patch release even when their commit type
+  is `docs` or `chore` (skills and metadata live in the tarball, so installed
+  users must receive them); the release's own manifest sync is excluded and
+  merge-backs of already-released payloads stay unreleased.
+- `workit-steer` pauses the parked lead task before starting a new one (one
+  active lead per session keeps external-action writer authority unambiguous),
+  and `workit-babysit` re-records verification and review evidence after a
+  squash merge, when the pre-merge candidate identity changes.
+- AGENTS.md maps where agent-facing rules live (invariant bootstrap, method
+  skills, adapter messages, repository docs) so future fixes are proposed for
+  the distributed surface first.
+- Repository and package metadata now use v1 wording and search-friendly
+  keywords; the GitHub About gains description, homepage, and topics so the
+  project and its packages index better.
+- The repository README opens with a per-tool install guide (collapsible
+  sections for OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI) and a
+  dedicated host-surfaces section.
+- `workit-challenge` is now a grounded grill loop: ground-first facts, one
+  bounded 3-5 direction diverge burst when the approach is unknown,
+  one-question-at-a-time recommendations each with a rejected alternative, a
+  receipt funnel that binds choices the moment they resolve, counter-case
+  discipline, and the hard three-round cap. A choice already stated without a
+  receipt is recorded in progress and reassessed instead of re-asked, so close
+  never demands a stale receipt. Durability still comes only from the
+  `durable-spec` requirement.
+- Arbitrary file writes are host-policy on every adapter: the OpenCode,
+  Cursor, Codex, and Pi write interceptors no longer gate tools or shell
+  commands on task scopes, and the core product-write check keeps only
+  writer, role, and session ownership (path-scope enforcement is gone, along
+  with the now-dead shell-intent parser). Managed workit mutations (task
+  state, external actions, setup/cutover) keep writer ownership; capability
+  reports mark `known_product_writes` accordingly.
+- Removed path confinement (`trustedPaths`) across core and all four
+  adapters plus the CLI wizard: absolute scope paths are valid and only
+  traversal escapes are rejected; writer ownership, role, session, scope,
+  and approvals remain the bound. The `trustedPaths` wizard screen is gone
+  and the setup preview no longer merges it.
+- OpenCode's advertised operation schemas now use bounded provider-safe projections for deeply nested inputs while preserving core-owned validation and the complete eight-family tool surface.
+
+- Cancelling a worker that was assigned but never launched no longer leaves the coordinator blocked with no truthful way out. The core gained two host-only methods, `prepareWorkerDispatch` and `commitWorkerDispatch` (no new operation family, no new serialized field, no caller-supplied receipt): a host claims the launch slot of an exactly-`assigned` worker before spawning, and the resulting in-process reservation is settled exactly once — either `started` with the observed child session, or `not_started`, which records a host-attested `stopped` with a null session. OpenCode prepares in `tool.execute.before` for a native `task` call when exactly one assigned worker is attributable to that coordinator and only claims "never started" when that same task call explicitly proves no child session exists; Pi prepares immediately before spawn on the live handle and only settles "never started" while that same handle proves no spawn was attempted. Ambiguous assignments, generic cancellation strings, missing child metadata, and reservations lost to a restart all stay unresolved and are never inferred to be stopped.
+- Releases are now path-gated and selectively published: tooling-only merges cut no release, and npm receives only packages whose payload changed since the previous tag. The publisher diffs against the previous release tag passed by semantic-release (`${lastRelease.gitTag}`) — the new release tag is created before publish plugins run, so diffing against the latest tag skipped every package.
+- Repository checks now run lint, format verification, tests, and TypeScript typechecking.
+- The OpenCode package now bundles the `@opencode-ai/plugin` SDK surface into its build and pins the SDK as a build-only dependency, dropping the unused transitive `ini@7` install path.
+- Raised the Node support floor to 24 across the support matrix, package `engines`, CI, and documentation (the current toolchain requires Node ≥ 24).
+- The Cursor README now documents Marketplace and local installation, Node/network requirements, MCP/hook runtime execution, Git/VCS/YouTrack/filesystem interactions, persistent redacted logs, secret handling, `@latest` review drift, update behavior, and troubleshooting; CI runs the Marketplace validator in the Cursor and candidate jobs.
+- Two-workspace VCS routing: `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow; resolution order is explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The global `vcs.json` `defaultTargetBranch` is removed from the active config and can no longer shadow a matched workspace's branchPolicy default.
+- Legacy `~/.config/workflow-toolkit/` non-secret config files (config.json, vcs.json, youtrack.json, workspaces.json, templates/) were cleaned up once the active `~/.config/workit/` config passed status checks; the runtime reads only the active config dir.
+- The complete orchestration tool surface was renamed from `workflow_*` to `workit_*` across both host adapters (OpenCode native tools, Cursor MCP registrations), the shared core strings and mutation allowlist, shipped skills/templates/vendor content, and all tracked documentation. Host-only tool names are unchanged by the rename. Legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) are unchanged for legacy-identity detection.
+- User-facing surfaces were renamed from `workflow-toolkit`/`workflow_toolkit_*` to `workit`/`workit_*`: the bootstrap contract marker is now `<workit-contract>`, `workflow_toolkit_status`/`workflow_toolkit_init_status`/`workflow_toolkit_init_apply` became `workit_status`/`workit_init_status`/`workit_init_apply`, the share path is `~/.local/share/workit`, and the install-root marker is `.workit-root`; legacy-identity detection and migration from the old config directory are unchanged.
+- Installs made before the rename carry a stale `.workflow-toolkit-root` install-root marker that the runtime no longer reads (it falls back to environment/dev paths until then); the next sync rewrites the marker to `.workit-root`, so the transition resolves on re-sync.
+- `install-cursor-plugin.sh` gained a `--local-dist` mode that registers node-form MCP/hook launchers against the installed plugin's own built `dist/` (instead of the published npx pin), so a checkout install runs the current branch's code — rename included — without waiting for a release; the doctor accepts this local-dist hook alongside the canonical pin.
+- The Cursor runtime selector evolved in one step from an exact reviewed pin (`@brainervirus/workit-cursor@0.8.5`, the latest public at the time) to the `@latest` dist-tag with a mandatory `--prefer-online` flag (`npx -y --prefer-online --package=@brainervirus/workit-cursor@latest …`): `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, the doctor enforces this exact launcher shape, the doctor's negative-rejection fixtures cover near-miss variants, and no per-release manual pin bump is required.
+- `install-cursor-plugin.sh` now self-heals stale plugin installs: a `doctor-check.ts cursor --stale` pre-check exits 2 on a `stale_install` failure and the installer then refreshes the plugin directory and rewrites the workit MCP/hook entries to the canonical `@latest` + `--prefer-online` selector, preserving unrelated MCP servers; a registry-unreachable comparison stays fail-open (warn, never stale, never install failure), and a healthy install is byte-untouched.
+- Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's session handle; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
+
 ### Fixed
+
+- A verifier's `blocked` verdict no longer sticks once the same session records a passing verdict on the same code, and `workit ledger verdict --supersedes` accepts the `#N` row number that `workit ledger list` prints (#639).
+- `workit ledger verdict` run outside a git checkout now says to pass `--cwd <worktree>` instead of a bare "no commit to judge".
+- A `changelogPath` glob such as `projects/*/CHANGELOG.md` that matches no
+  file in a repo falls back to the root `CHANGELOG.md`, so one workspace
+  setting serves both its monorepos and its single-package repos; under
+  `create` the root entry is required instead of the check passing silently.
+- `workit release notes approve` and `workit grant set|raise` are denied
+  (Cursor, Codex, Pi) or asked (Claude Code) by Workit's shell hook however
+  `--json`, `--cwd` or `--session` are placed before the verb, closing the
+  Cursor prefix-match gap left by #623.
+- On macOS a quiet but busy heavy check is no longer marked `stuck?` after
+  5 minutes: the heartbeat counts its process group's CPU through `ps`, as
+  Linux does through `/proc`. On Windows only output counts as a heartbeat;
+  raise `resources.maxHold` in your own config for a long quiet check.
+- A stuck heavy check no longer starves every other agent: `workit lock
+  status` marks a holder `stuck?` past `resources.maxHold` (default 15 min) or
+  after 5 min with no output or CPU, `workit lock reap` frees its slot and
+  records it in the ledger, and a holder silent past 3x the limit is reaped
+  automatically. `workit lock cancel [<pid|session|dir>]` drops queued checks
+  without `kill`; waiters whose starting process ended leave the queue; the
+  queue serves sessions round-robin; and a check that gives up says `queued
+  behind <holder>, <age>` (#608).
+- `workit release notes approve` and `workit grant set|raise` always reach
+  the host's permission prompt or a deny: Claude Code (also in auto mode),
+  Codex and Cursor get managed rules for them, and `workit upgrade` replaces
+  the old auto-mode text. Pi has no permission layer, so only the CLI check
+  applies there. The CLI check stops a cooperating agent; the host prompt stops
+  a determined one (#615).
+- `workit workspace set` points a path-like key such as `path=` at `glob`
+  (with the workspaces.json path and `workspace add <name> --glob <g> --from
+  <ws>`) and suggests the nearest key for a misspelt one. Hints naming
+  `vcs.json` or `workspaces.json` print the file Workit actually reads when
+  `WORKFLOW_TOOLKIT_CONFIG` redirects the config dir; the grants note says that
+  override never applies to grants (#617, #618).
+- `workit uninstall` now also removes Workit pins from the OpenCode 2.x
+  `plugins` key (it only cleaned the V1-era `plugin` key, so a 2.x
+  registration, including a checkout directory pin, survived uninstall).
+- `.workit/recovery/` no longer grows without bound: each task or workspace
+  record keeps its newest three recovery copies. `workit gc` (`--dry-run`,
+  `--json`) prunes copies left by older versions, removes stale temp files, and
+  collapses duplicate stored candidates in paused tasks (closed tasks are never
+  rewritten); `--dry-run` is read-only.
+- `state.recover` is no longer advertised in host tool schemas or the CLI: it
+  requires native recovery authority that no shipped host supplies, so it could
+  only return `permission_denied`.
+- A `.workit/metadata.lock` left by a dead process (or a reused pid, or a
+  foreign-host/namespace lock past its TTL) no longer bricks the store: the next
+  write reclaims it. Locks carry the pid namespace and boot id so a container
+  sharing the hostname is never judged by this host's process table, and a
+  lock from before a reboot is reclaimed at once.
+  Contention with a live writer retries briefly (250 ms in-process, 2 s in the
+  CLI) and returns the retryable `busy` code instead of `recovery_required`.
+  `workit doctor` reports a stale lock (`workspace_lock`); `workit doctor
+  --fix-lock` clears it under the reclaim guard, and `--force --yes` clears an
+  unverifiable lock explicitly.
+- Compact task context retains the newest decisions and surfaces bounded,
+  redacted choice summaries instead of selecting an arbitrary UUID-ordered set.
+- Distributed cross-repository guidance binds unfinished work to its checkout,
+  branch, deliverables and delivery endpoint, preserves explicit holds, and
+  verifies the requested remote result before reporting completion.
+
+- OpenCode V2 keeps uncertain subagent dispatches correlated through failed
+  terminal-state persistence, retries reconciliation, and lets explicit
+  `failed`/`interrupted` session outcomes override conflicting completion text.
+- OpenCode omits a Workit slash alias when a user skill owns its matching Workit
+  skill ID; the implementation-skill trigger now matches its optional tracking
+  guidance across packaged hosts.
+- OpenCode action approvals revalidate same-text proposals before rejecting
+  ambiguity, so a stale pre-branch proposal cannot wedge a current commit.
+- Distributed guidance chooses native tools for routine authorized Git work
+  without task/writer/decision ceremony or post-commit PR-readiness escalation.
+  Native permissions and managed uncertainty/conflict safeguards remain intact.
+- Bounded behavior changes retain behavioral verification and self-review;
+  fresh-context review remains required for consequential boundaries, thorough
+  preference and explicit project constraints rather than every behavior edit.
+
 
 - OpenCode worker dispatch now binds only the exact live reserved native task call,
   follows the current coordinator's worker assignment after session resumption,
@@ -687,70 +749,6 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The release pipeline now syncs every tracked manifest (root, four platform packages, Cursor plugin manifest) to the released version through an auto-merged PR after each publish, ending the committed-version vs git-tag drift; the root workspace is renamed `workflow-toolkit` → `workit` and pre-aligned to v0.8.9.
 - Cursor subagent execution now uses documented native `subagentStart` and bounded product-write hooks. AskQuestion, compaction/session-start continuity, exact subagent stop identity, arbitrary shell writes, and Tab edits remain truthfully marked policy-only, agent-guided, or unavailable where Cursor cannot attest them.
 
-### Changed
-
-- GitHub/GitLab setup, doctor, issues, PRs and merges now use the authenticated
-  `gh`/`glab` CLI rather than separate Workit VCS tokens; existing token files
-  remain untouched. User-selected Git-valid branch names and commit messages
-  are no longer rejected by Workit formatting rules. Doctor checks the
-  configured provider's CLI/SSH identity, and hosting API reads bind to the
-  resolved push host. YouTrack still uses its permanent token.
-- Package payload changes now cut a patch release even when their commit type
-  is `docs` or `chore` (skills and metadata live in the tarball, so installed
-  users must receive them); the release's own manifest sync is excluded and
-  merge-backs of already-released payloads stay unreleased.
-- `workit-steer` pauses the parked lead task before starting a new one (one
-  active lead per session keeps external-action writer authority unambiguous),
-  and `workit-babysit` re-records verification and review evidence after a
-  squash merge, when the pre-merge candidate identity changes.
-- AGENTS.md maps where agent-facing rules live (invariant bootstrap, method
-  skills, adapter messages, repository docs) so future fixes are proposed for
-  the distributed surface first.
-- Repository and package metadata now use v1 wording and search-friendly
-  keywords; the GitHub About gains description, homepage, and topics so the
-  project and its packages index better.
-- The repository README opens with a per-tool install guide (collapsible
-  sections for OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI) and a
-  dedicated host-surfaces section.
-- `workit-challenge` is now a grounded grill loop: ground-first facts, one
-  bounded 3-5 direction diverge burst when the approach is unknown,
-  one-question-at-a-time recommendations each with a rejected alternative, a
-  receipt funnel that binds choices the moment they resolve, counter-case
-  discipline, and the hard three-round cap. A choice already stated without a
-  receipt is recorded in progress and reassessed instead of re-asked, so close
-  never demands a stale receipt. Durability still comes only from the
-  `durable-spec` requirement.
-- Arbitrary file writes are host-policy on every adapter: the OpenCode,
-  Cursor, Codex, and Pi write interceptors no longer gate tools or shell
-  commands on task scopes, and the core product-write check keeps only
-  writer, role, and session ownership (path-scope enforcement is gone, along
-  with the now-dead shell-intent parser). Managed workit mutations (task
-  state, external actions, setup/cutover) keep writer ownership; capability
-  reports mark `known_product_writes` accordingly.
-- Removed path confinement (`trustedPaths`) across core and all four
-  adapters plus the CLI wizard: absolute scope paths are valid and only
-  traversal escapes are rejected; writer ownership, role, session, scope,
-  and approvals remain the bound. The `trustedPaths` wizard screen is gone
-  and the setup preview no longer merges it.
-- OpenCode's advertised operation schemas now use bounded provider-safe projections for deeply nested inputs while preserving core-owned validation and the complete eight-family tool surface.
-
-- Cancelling a worker that was assigned but never launched no longer leaves the coordinator blocked with no truthful way out. The core gained two host-only methods, `prepareWorkerDispatch` and `commitWorkerDispatch` (no new operation family, no new serialized field, no caller-supplied receipt): a host claims the launch slot of an exactly-`assigned` worker before spawning, and the resulting in-process reservation is settled exactly once — either `started` with the observed child session, or `not_started`, which records a host-attested `stopped` with a null session. OpenCode prepares in `tool.execute.before` for a native `task` call when exactly one assigned worker is attributable to that coordinator and only claims "never started" when that same task call explicitly proves no child session exists; Pi prepares immediately before spawn on the live handle and only settles "never started" while that same handle proves no spawn was attempted. Ambiguous assignments, generic cancellation strings, missing child metadata, and reservations lost to a restart all stay unresolved and are never inferred to be stopped.
-- Releases are now path-gated and selectively published: tooling-only merges cut no release, and npm receives only packages whose payload changed since the previous tag. The publisher diffs against the previous release tag passed by semantic-release (`${lastRelease.gitTag}`) — the new release tag is created before publish plugins run, so diffing against the latest tag skipped every package.
-- Repository checks now run lint, format verification, tests, and TypeScript typechecking.
-- The OpenCode package now bundles the `@opencode-ai/plugin` SDK surface into its build and pins the SDK as a build-only dependency, dropping the unused transitive `ini@7` install path.
-- Raised the Node support floor to 24 across the support matrix, package `engines`, CI, and documentation (the current toolchain requires Node ≥ 24).
-- The Cursor README now documents Marketplace and local installation, Node/network requirements, MCP/hook runtime execution, Git/VCS/YouTrack/filesystem interactions, persistent redacted logs, secret handling, `@latest` review drift, update behavior, and troubleshooting; CI runs the Marketplace validator in the Cursor and candidate jobs.
-- Two-workspace VCS routing: `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow; resolution order is explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The global `vcs.json` `defaultTargetBranch` is removed from the active config and can no longer shadow a matched workspace's branchPolicy default.
-- Legacy `~/.config/workflow-toolkit/` non-secret config files (config.json, vcs.json, youtrack.json, workspaces.json, templates/) were cleaned up once the active `~/.config/workit/` config passed status checks; the runtime reads only the active config dir.
-- The complete orchestration tool surface was renamed from `workflow_*` to `workit_*` across both host adapters (OpenCode native tools, Cursor MCP registrations), the shared core strings and mutation allowlist, shipped skills/templates/vendor content, and all tracked documentation. Host-only tool names are unchanged by the rename. Legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) are unchanged for legacy-identity detection.
-- User-facing surfaces were renamed from `workflow-toolkit`/`workflow_toolkit_*` to `workit`/`workit_*`: the bootstrap contract marker is now `<workit-contract>`, `workflow_toolkit_status`/`workflow_toolkit_init_status`/`workflow_toolkit_init_apply` became `workit_status`/`workit_init_status`/`workit_init_apply`, the share path is `~/.local/share/workit`, and the install-root marker is `.workit-root`; legacy-identity detection and migration from the old config directory are unchanged.
-- Installs made before the rename carry a stale `.workflow-toolkit-root` install-root marker that the runtime no longer reads (it falls back to environment/dev paths until then); the next sync rewrites the marker to `.workit-root`, so the transition resolves on re-sync.
-- `install-cursor-plugin.sh` gained a `--local-dist` mode that registers node-form MCP/hook launchers against the installed plugin's own built `dist/` (instead of the published npx pin), so a checkout install runs the current branch's code — rename included — without waiting for a release; the doctor accepts this local-dist hook alongside the canonical pin.
-- The Cursor runtime selector evolved in one step from an exact reviewed pin (`@brainervirus/workit-cursor@0.8.5`, the latest public at the time) to the `@latest` dist-tag with a mandatory `--prefer-online` flag (`npx -y --prefer-online --package=@brainervirus/workit-cursor@latest …`): `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, the doctor enforces this exact launcher shape, the doctor's negative-rejection fixtures cover near-miss variants, and no per-release manual pin bump is required.
-- `install-cursor-plugin.sh` now self-heals stale plugin installs: a `doctor-check.ts cursor --stale` pre-check exits 2 on a `stale_install` failure and the installer then refreshes the plugin directory and rewrites the workit MCP/hook entries to the canonical `@latest` + `--prefer-online` selector, preserving unrelated MCP servers; a registry-unreachable comparison stays fail-open (warn, never stale, never install failure), and a healthy install is byte-untouched.
-- Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's session handle; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
-
-### Fixed
 
 - Native decision receipts recognize the binding question semantically: host
   label qualifiers such as `(Recommended)` normalize for comparison while
