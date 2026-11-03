@@ -216,11 +216,24 @@
               },
               "lead": {
                 "$ref": "#/definitions/roleModel",
-                "description": "The lead's own model per host; advisory (Workit cannot set a session's model)."
+                "description": "The lead's own model per host, or a list in fallback order; advisory (Workit cannot set a session's model, it prints a switch notice when the lead's provider hits its usage limit)."
               },
               "allowLeadOverride": {
                 "type": "boolean",
                 "description": "True lets a model the lead names on a spawn win over the configured role model (default false)."
+              },
+              "limitWindow": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\s*(\\d+(\\.\\d+)?\\s*[dhms]\\s*)+$"
+                  },
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                ],
+                "description": "How long a provider stays exhausted after a usage limit that names no reset time: a duration (5h, 1d 12h) or hours (default 5h)."
               }
             },
             "additionalProperties": false
@@ -771,11 +784,24 @@
         },
         "lead": {
           "$ref": "#/definitions/roleModel",
-          "description": "The lead's own model per host; advisory (Workit cannot set a session's model)."
+          "description": "The lead's own model per host, or a list in fallback order; advisory (Workit cannot set a session's model, it prints a switch notice when the lead's provider hits its usage limit)."
         },
         "allowLeadOverride": {
           "type": "boolean",
           "description": "True lets a model the lead names on a spawn win over the configured role model (default false)."
+        },
+        "limitWindow": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\s*(\\d+(\\.\\d+)?\\s*[dhms]\\s*)+$"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          ],
+          "description": "How long a provider stays exhausted after a usage limit that names no reset time: a duration (5h, 1d 12h) or hours (default 5h)."
         }
       },
       "additionalProperties": false
@@ -789,34 +815,135 @@
           "$ref": "#/definitions/modelLeaf"
         },
         {
+          "$ref": "#/definitions/modelList"
+        },
+        {
           "type": "object",
           "properties": {
             "claude_code": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "opencode": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "codex": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "codex_cli": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "codex_desktop": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "cursor": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "pi": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             },
             "default": {
-              "$ref": "#/definitions/modelLeaf"
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/modelLeaf"
+                },
+                {
+                  "$ref": "#/definitions/modelList"
+                }
+              ]
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/modelLeaf"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "claude_code": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "opencode": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "codex": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "codex_cli": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "codex_desktop": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "cursor": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "pi": {
+                    "$ref": "#/definitions/modelLeaf"
+                  },
+                  "default": {
+                    "$ref": "#/definitions/modelLeaf"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "Models in fallback order, each for every host or per host: the first whose provider has not hit its usage limit runs."
         }
       ]
     },
@@ -889,6 +1016,14 @@
           "additionalProperties": false
         }
       ]
+    },
+    "modelList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/modelLeaf"
+      },
+      "description": "Models in fallback order: the first whose provider has not hit its usage limit runs."
     }
   }
 }

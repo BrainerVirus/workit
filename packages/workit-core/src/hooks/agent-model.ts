@@ -4,7 +4,12 @@
 // built-in default, and over a configured one only with
 // `models.allowLeadOverride`. A spawn is never denied over its model: a type
 // with no role, or a value the Agent tool cannot take, runs as written.
+// Before choosing, the hook reads this project's recent transcripts for a
+// usage limit (model-limit.ts, #655): a role whose list names a model of
+// another provider then runs on it, and the lead learns which worker to
+// re-dispatch.
 import { chooseSpawnModel, roleForAgentType } from "../core/role-models";
+import { scanClaudeTranscripts } from "./model-limit";
 import type { HookDecision } from "./protocol";
 
 /** The Agent tool's `model` and `effort` enums (claude 2.1.309); anything else fails its schema. */
@@ -31,19 +36,31 @@ export const agentModelDecision = (
   tool: Record<string, unknown>,
   env: NodeJS.ProcessEnv = process.env,
 ): HookDecision => {
+  const limits = scanClaudeTranscripts(cwd, env).join("\n");
+  const withLimits = (decision: HookDecision): HookDecision => {
+    if (!limits) return decision;
+    if (decision.kind === "update-input")
+      return {
+        ...decision,
+        text: [decision.text, limits].filter(Boolean).join("\n"),
+      };
+    return decision.kind === "context"
+      ? { kind: "context", text: `${decision.text}\n${limits}` }
+      : { kind: "context", text: limits };
+  };
   // The host fixes the model itself: nothing to fill, and `model` is not in its schema.
-  if (env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE) return { kind: "none" };
+  if (env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE) return withLimits({ kind: "none" });
   const selector = roleForAgentType(tool.subagent_type, tool.prompt);
-  if (!selector) return { kind: "none" };
+  if (!selector) return withLimits({ kind: "none" });
   const choice = chooseSpawnModel(cwd, selector, "claude_code", tool, claudeAgentModel);
   const effort = choice.effort?.toLowerCase() ?? null;
   const input: Record<string, unknown> = { ...tool };
   if (choice.model) input.model = choice.model;
   if (effort && EFFORTS.has(effort) && !given(tool.effort)) input.effort = effort;
   if (input.model === tool.model && input.effort === tool.effort)
-    return choice.note ? { kind: "context", text: choice.note } : { kind: "none" };
+    return withLimits(choice.note ? { kind: "context", text: choice.note } : { kind: "none" });
   const text =
     choice.note ??
     `Workit set effort ${String(input.effort)} on this spawn: its role's configured effort.`;
-  return { kind: "update-input", input, text };
+  return withLimits({ kind: "update-input", input, text });
 };
