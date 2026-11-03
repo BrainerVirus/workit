@@ -381,6 +381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `workit doctor` runs each installed hook launcher once in the current repo and fails `hook_node` when one cannot answer; `hook_runs` warns when a host's newest hook run failed. See docs/guides/troubleshooting.md.
 - Claude Code accepts full model ids such as `claude-sonnet-5-5` in `models.roles` (applied as their alias) and warns about a value it cannot apply instead of silently dropping it.
 - Claude Code: Workit strips worktree `isolation` on every Agent spawn, not only `workit:implementer`.
 - Close-time testing and verification gates accept only a fresh, passing,
@@ -470,6 +471,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `workit git branch` no longer leaves a half-created branch behind when `git switch -c` fails; it only removes a branch it created itself, never touches another process's `index.lock` (it prints the `rm` command to run if no git is running), and names a killed or timed-out git instead of a bare "git failed" (#652).
 - `workit git branch` refused for a dirty worktree now lists the dirty paths and the exact `workit git branch <name> --carry` command.
+- A Workit hook that cannot run (Node below 24 in a repo that pins an older Node, a missing or broken bundle, a crash) is no longer silent on Claude Code, Codex and Cursor: session start, prompt submit and subagent start show the cause and the fix, every event writes a stderr line and a failure row, and tool events still never block the host. A verifier whose SubagentStart hook failed is told its verdict will fail with `no_session`.
 - `workit pr create`, `workit check` and `workit ci wait` print a first line at once (what they check, how long they may take, how to run them in the background), so a host shell timeout no longer kills a silent command (#638). `workit check` also prints a "still running" line every minute.
 - `workit pr create` bounds its forge calls (90 s in total) and fails naming the stalled call instead of hanging on the changelog check (#644).
 - `workit ci wait` reports success on its first poll when every Actions run on the head passed but the check rollup still shows them pending; a required check that has not posted, or a pending check whose own run is still going, keeps it waiting (#646).
