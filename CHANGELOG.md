@@ -468,6 +468,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit pr create`, `workit check` and `workit ci wait` print a first line at once (what they check, how long they may take, how to run them in the background), so a host shell timeout no longer kills a silent command (#638). `workit check` also prints a "still running" line every minute.
+- `workit pr create` bounds its forge calls (90 s in total) and fails naming the stalled call instead of hanging on the changelog check (#644).
+- `workit ci wait` reports success on its first poll when every Actions run on the head passed but the check rollup still shows them pending; a required check that has not posted, or a pending check whose own run is still going, keeps it waiting (#646).
+- A relative `--body-file` resolves against the directory you ran the command from, then `--cwd`; a missing file names both paths (#643).
 - A verifier's `blocked` verdict no longer sticks once the same session records a passing verdict on the same code, and `workit ledger verdict --supersedes` accepts the `#N` row number that `workit ledger list` prints (#639).
 - `workit ledger verdict` run outside a git checkout now says to pass `--cwd <worktree>` instead of a bare "no commit to judge".
 - A `changelogPath` glob such as `projects/*/CHANGELOG.md` that matches no
