@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { exhaustedProviders } from "@/packages/workit-core/src/core/model-fallback";
@@ -161,15 +161,20 @@ test("G an OpenCode lead on an exhausted provider, W its context builds twice, T
   expect(system[0].text).toContain("Switch the lead to openai/gpt-5.5 with /models");
 });
 
-test("G a completed OpenCode subagent whose long report mentions a usage limit, W observed, T nothing is marked", () => {
-  observeSubagentLimit(
-    cwd,
-    {
-      sessionID: "lead",
-      input: { model: "anthropic/claude-sonnet-5" },
-      result: `Report: added usage limit parsing. ${"detail ".repeat(120)}`,
-    },
-    new Map(),
+test("G a completed OpenCode subagent whose short report mentions a usage limit or a 429, W the plugin's execute.after runs, T only an error is read and nothing is marked", () => {
+  const source = readFileSync(
+    path.join(import.meta.dir, "../../../packages/workit-opencode/src/v2/plugin.ts"),
+    "utf8",
   );
+  expect(source).toMatch(/if \(event\.status !== "completed"\)\s+observeSubagentLimit\(/u);
+  for (const report of [
+    "Done: I added a usage limit banner to the settings page.",
+    "Done: handles a 429 with retry-after: 3600.",
+  ])
+    observeSubagentLimit(
+      cwd,
+      { sessionID: "lead", input: { model: "anthropic/claude-sonnet-5" }, error: report },
+      new Map(),
+    );
   expect(exhaustedProviders()).toEqual([]);
 });

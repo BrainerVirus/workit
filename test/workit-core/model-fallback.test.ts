@@ -21,7 +21,6 @@ import {
   recordUsageLimit,
   redispatchNote,
 } from "@/packages/workit-core/src/hooks/model-limit";
-import { opencodeSubagentModel } from "@/packages/workit-opencode/src/v2/spawn-model";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
 // #655: a role's ordered model list falls back past a provider whose usage
@@ -58,6 +57,10 @@ afterEach(() => {
 
 const config = (document: unknown): void =>
   writeFileSync(path.join(configHome.configDir, "workspaces.json"), JSON.stringify(document));
+
+/** What OpenCode's subagent tool takes: `providerID/modelID`. */
+const opencodeSubagentModel = (model: string): string | null =>
+  model.includes("/") ? model : null;
 
 const NOW = new Date("2026-11-03T15:00:00.000Z");
 const HOUR = 3_600_000;
@@ -119,6 +122,19 @@ test("G a short 429 rate limit or unrelated text, W parsed, T it is no usage lim
     ),
   ).toBeNull();
   expect(parseUsageLimit("Error: ENOENT no such file", NOW)).toBeNull();
+});
+
+test("G a worker's prose about limits, W parsed, T it is no usage limit (a banner sentence marked Anthropic exhausted for 5h)", () => {
+  expect(
+    parseUsageLimit("Done: I added a usage limit banner to the settings page.", NOW),
+  ).toBeNull();
+  expect(
+    parseUsageLimit(
+      "Done: the client now handles a 429 from the API and honours retry-after: 3600 before retrying.",
+      NOW,
+    ),
+  ).toBeNull();
+  expect(parseUsageLimit("Users who hit your quota limit see a dialog.", NOW)).toBeNull();
 });
 
 test("G models of each subscription, W providerOf runs, T Anthropic, OpenAI and OpenCode Go are told apart", () => {

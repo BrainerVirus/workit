@@ -31,14 +31,18 @@ export type UsageLimit = {
   resetAt: Date | null;
 };
 
+/** Provider error shapes, never a bare phrase: prose about limits is not one. */
 const LIMIT_PATTERNS = [
-  /\busage limit\b/iu,
-  /\bhit your\b[^.\n]{0,40}\blimit\b/iu,
-  /\b(?:weekly|daily|monthly|5-hour|five-hour|session|opus|sonnet|fable|haiku) limit (?:reached|exceeded|hit)\b/iu,
-  /\bexceeded your (?:current )?quota\b|\binsufficient_quota\b|\bquota (?:exceeded|exhausted)\b/iu,
+  // Claude Code and Codex: "You've hit your weekly limit · resets 7pm", "You've hit your usage limit."
+  /\byou(?:'|\u2019)?ve hit your\b[^.\n]{0,40}\blimit\b/iu,
+  /\bclaude(?: ai)? usage limit reached\b/iu,
+  /\b(?:5-hour|five-hour|weekly|daily|session|opus|sonnet|fable|haiku) limit reached\b/iu,
+  /\busage limit\b[^\n]{0,200}\b(?:try again|resets?) (?:in|at)\b/iu,
+  /\byou exceeded your current quota\b|\binsufficient_quota\b/iu,
 ];
 /** A 429 or rate_limit counts only with a quota word or a long wait. */
-const RATE_LIMIT = /\b429\b|\brate[_ ]limit/iu;
+const RATE_LIMIT =
+  /\brate_limit(?:_error)?\b|"type":\s*"rate_limit|\bstatus(?:code)?["':\s]+429\b|^\s*(?:\w+Error:\s*)?429\b/imu;
 const LONG_WAIT_MS = 15 * 60_000;
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];

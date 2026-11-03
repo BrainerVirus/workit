@@ -187,10 +187,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
             );
           if (spec.name === "workit_context")
             return {
-              content: await contextTool.execute(input, {
-                directory: root,
-                sessionID: session.id,
-              }),
+              content: await contextTool.execute(input, { directory: root, sessionID: session.id }),
             };
           const store = new TaskStore(root);
           const workerId = workerIdFor(
@@ -225,9 +222,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
           if (spec.name === "workit_init_apply") {
             // The shared executor already returns the contract JSON; prose
             // checking stays core-side.
-            return {
-              content: executeInitApply(input as never, root, initApplyRuntime),
-            };
+            return { content: executeInitApply(input as never, root, initApplyRuntime) };
           }
           return respond(failure("not_found", `unknown Workit tool ${spec.name}`));
         },
@@ -275,22 +270,16 @@ const setup = async (ctx: Context): Promise<() => void> => {
     );
   await ctx.tool.hook("execute.after", async (event) => {
     if (event.tool === "shell") {
-      settleShellCall(pendingShells, {
-        sessionID: String(event.sessionID),
-        input: event.input,
-      });
+      settleShellCall(pendingShells, { sessionID: String(event.sessionID), input: event.input });
       return observeShellResult(root, event as never, failureMemo);
     }
     if (event.tool !== "subagent") return;
-    observeSubagentLimit(
-      root,
-      {
-        sessionID: String(event.sessionID),
-        input: event.input,
-        ...(event.status === "completed" ? { result: event.result } : { error: event.error }),
-      },
-      spawnNotes,
-    );
+    if (event.status !== "completed")
+      observeSubagentLimit(
+        root,
+        { sessionID: String(event.sessionID), input: event.input, error: event.error },
+        spawnNotes,
+      );
     await lifecycle.executeAfter({
       tool: event.tool,
       sessionID: String(event.sessionID),

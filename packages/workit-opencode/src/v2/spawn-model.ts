@@ -58,7 +58,7 @@ const textOf = (value: unknown): string => {
 };
 
 /**
- * A finished subagent call: when its result or error is a usage limit, mark
+ * A failed subagent call: when its error is a usage limit, mark
  * the provider of the model it ran on exhausted and queue the re-dispatch
  * note for the lead session.
  */
@@ -76,10 +76,8 @@ export const observeSubagentLimit = (
     event.input && typeof event.input === "object" && !Array.isArray(event.input)
       ? (event.input as Record<string, unknown>)
       : {};
-  // A finished worker's own report may discuss limits: only an error, or a
-  // result as short as an error message, counts.
-  const result = textOf(event.result);
-  const text = [textOf(event.error), result.length <= 600 ? result : ""].filter(Boolean).join("\n");
+  // Only a failed call: a finished worker's own report may discuss limits.
+  const text = textOf(event.error);
   if (!text) return;
   const selector = roleForAgentType(fields.agent, fields.prompt);
   const model =
