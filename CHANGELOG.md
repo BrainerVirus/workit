@@ -398,6 +398,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit doctor` has a YouTrack row when a workspace uses YouTrack: ok when ytrack is logged in to each configured host; a warning naming `ytrack auth login --host <host>` when it is not; a deprecation warning when Workit falls back to the legacy token file.
 - `workit uninstall` can remove the Workit CLI itself (pick "Workit CLI"): the PATH launcher link, `bin/`, `current` and `versions/` under the Workit data dir. A foreign file at the launcher path is left untouched and reported (W2.32).
 - `workit issue view|comment|close|create` works on the workspace tracker (GitHub or GitLab) under the `pr` grant, so agents close and comment on issues themselves; `workit finding record --queue` files a finding as an issue (#439).
+- A fanout slice that depends on another is created as a stack: its worktree branches from the parent slice, `fanout status` shows the stack, and `workit stack sync` rebases a child onto trunk without the parent's commits once the parent is squash-merged. `stack land --others-pr --reason` lands another author's PRs like `pr merge` (W2.37).
 
 ### Changed
 
@@ -894,6 +895,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `workit upgrade` describes a foreign file at the launcher path as "foreign file, left untouched; move it to let the launcher link there" instead of listing it for removal without a command (W2.33), and a wrapper script whose heredoc prints an `exec node …` line is no longer parsed as a wrapper.
 - `workit finding resolve` finds the task that holds the finding, and a refused resolve names the evidence that would be accepted (#317). The retro skill files behavioural rules as Workit issues, not host memories.
 - Heavy checks: a lease slot that frees too close to `--timeout` (under min(10 s, a quarter of it)) no longer starts the command with a sliver of budget; it exits as a wait timeout. The `stuck?` flag and auto-reap use 1.5x the check's last measured run (never below the configured limit), so long suites on two slots are not flagged. Wait estimates read only the ledger tail, and macOS frees a reused pid's lease through `ps`.
+- `fanout worktree create` links node_modules when only other platforms' optional packages are absent (no per-worktree install); several fanout plans name `--fanout` and the candidates, defaulting to the lead's plan (#641); a nested worker glob inside a lead path glob is contained (#647).
 
 ## [0.6.0] - 2026-08-10
 
