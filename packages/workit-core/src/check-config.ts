@@ -257,6 +257,12 @@ function cleanupGlobs(value: unknown): string[] | Error {
       return new Error(`${REGENERABLE_SHAPE}; "${item}" is not repo-relative`);
     if (UNSUPPORTED_GLOB.test(glob))
       return new Error(`${REGENERABLE_SHAPE}; "${item}" uses syntax beyond * and **`);
+    // A last segment of only wildcards ("*", "**", "dist/**") names every ignored
+    // file under it, `.env` included: cleanup would discard what it must keep.
+    if (/^\*+$/u.test(glob.split("/").at(-1) ?? ""))
+      return new Error(
+        `${REGENERABLE_SHAPE}; "${item}" ends in a bare wildcard, which would discard ignored files such as .env: name the generated dir`,
+      );
     globs.push(glob);
   }
   return globs;

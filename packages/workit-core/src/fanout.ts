@@ -888,12 +888,36 @@ const heldByOtherRepo = (dir: string, common: string): boolean => {
 export function worktreeRoot(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
   const main = mainCheckout(cwd);
   const name = path.basename(main);
-  const plain = path.join(worktreesDir(env), name);
+  const base = realBase(worktreesDir(env));
+  const plain = path.join(base, name);
   const common = gitCommonDir(cwd);
-  if (!common || !heldByOtherRepo(plain, common)) return plain;
+  if (!common) return plain;
   const tag = createHash("sha256").update(comparablePath(main)).digest("hex").slice(0, 8);
-  return path.join(worktreesDir(env), `${name}-${tag}`);
+  const tagged = path.join(base, `${name}-${tag}`);
+  // Once this checkout has its tagged dir, keep it: a name that flips back to
+  // `plain` when the other repository leaves would split one checkout's slices.
+  if (fs.existsSync(tagged) || heldByOtherRepo(plain, common)) return tagged;
+  return plain;
 }
+
+/**
+ * `dir` through the real path of its nearest existing ancestor, so the root a
+ * plan names matches what git reports (macOS: /var -> /private/var).
+ */
+const realBase = (dir: string): string => {
+  const rest: string[] = [];
+  let probe = path.resolve(dir);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(probe), ...rest.toReversed());
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return path.resolve(dir);
+      rest.push(path.basename(probe));
+      probe = parent;
+    }
+  }
+};
 
 /** Whose standing orders count: the lead and those it took over from; null before leads. */
 export const planLeads = (

@@ -594,6 +594,10 @@ test("Given cleanup.regenerable that is not a list of glob strings, Then the che
     { regenerable: "packages/*/skills" },
     { regenerable: ["/abs/skills"] },
     { regenerable: ["packages/{a,b}/skills"] },
+    // Bare trailing wildcards would discard an ignored .env.
+    { regenerable: ["*"] },
+    { regenerable: ["**"] },
+    { regenerable: ["dist/**"] },
     { regenerables: ["x"] },
   ]) {
     const env = setup();
