@@ -154,7 +154,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     // Project files land at the git toplevel (realpath on macOS tmp dirs).
     const project = realpathSync(path.join(install, "project"));
     expect(spawnSync("git", ["init", "-q"], { cwd: project }).status).toBe(0);
-    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const env = isolatedEnv(home, { WORKIT_CONFIG: configDir });
 
     // workspace draft added through the extracted preview (WZ-12 apply path)
     const wsEntry = {
@@ -257,7 +257,7 @@ test("packed CLI setup refuses project files outside a git repository", async ()
     const parent = path.join(install, "projects");
     mkdirSync(path.join(parent, "app"), { recursive: true });
     expect(spawnSync("git", ["init", "-q"], { cwd: path.join(parent, "app") }).status).toBe(0);
-    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const env = isolatedEnv(home, { WORKIT_CONFIG: configDir });
     const preview = setup.buildSetupPreview(
       { ...PREVIEW_VALUES, platforms: [] },
       { dir: configDir, cwd: parent, env },
@@ -296,7 +296,7 @@ test("packed CLI: identical workspaces emit no update-workspaces mutation", asyn
       JSON.stringify({ workspaces: [wsEntry] }, null, 2) + "\n",
       "utf8",
     );
-    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const env = isolatedEnv(home, { WORKIT_CONFIG: configDir });
     // draft identical to disk: the extracted preview must not claim a rewrite
     const preview = setup.buildSetupPreview(
       { ...PREVIEW_VALUES, workspaces: [wsEntry] },
@@ -324,7 +324,7 @@ test("packed CLI partial failure exits nonzero with a Failed entry", async () =>
     const home = path.join(install, "home");
     const configDir = path.join(home, ".config", "workit");
     mkdirSync(configDir, { recursive: true });
-    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const env = isolatedEnv(home, { WORKIT_CONFIG: configDir });
 
     const preview = setup.buildSetupPreview(PREVIEW_VALUES, {
       dir: configDir,
@@ -377,7 +377,7 @@ test("packed CLI: custom credential paths and canary bytes survive preview/apply
       "utf8",
     );
     writeFileSync(customGl, "canary-gl-packed\n", { mode: 0o600 });
-    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const env = isolatedEnv(home, { WORKIT_CONFIG: configDir });
 
     const preview = setup.buildSetupPreview(
       { ...PREVIEW_VALUES, baseUrl: "https://yt.example.com", vcsProvider: "gitlab" },
@@ -467,7 +467,7 @@ test("packed CLI: workit init on malformed config.json blocks gracefully (no cra
     const configDir = path.join(home, ".config", "workit");
     mkdirSync(configDir, { recursive: true });
     writeFileSync(path.join(configDir, "config.json"), "{ not json", "utf8");
-    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const env = isolatedEnv(home, { WORKIT_CONFIG: configDir });
     const entry = path.join(cliDir, "dist", "index.js");
 
     // previously createInitialDraft()'s default readConfig() threw inside the

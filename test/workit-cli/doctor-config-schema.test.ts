@@ -21,7 +21,7 @@ const row = (files: Record<string, unknown>) => {
     home: scratch,
     configDir,
     stateDir: path.join(scratch, "state"),
-    env: { PATH: process.env.PATH ?? "", WORKFLOW_TOOLKIT_CONFIG: configDir },
+    env: { PATH: process.env.PATH ?? "", WORKIT_CONFIG: configDir },
   }).checks.find((check) => check.id === "config_schema")!;
 };
 

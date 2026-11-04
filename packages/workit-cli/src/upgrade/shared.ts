@@ -10,6 +10,7 @@ import { type InstallNode } from "../install/node";
 import { type PathWorkit } from "../install/verify";
 import { type Progress } from "../progress";
 import { workitConfigDir } from "../update-settings";
+import { CODEX_MARKETPLACE } from "./codex-marketplace";
 
 /** Hosts `workit launch` can start. */
 export const LAUNCH_HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -21,7 +22,7 @@ export const LIVE_HOSTS = new Set<HostId>(["opencode", "claude-code"]);
 export const OPENCODE_PACKAGE = "@brainervirus/workit-opencode";
 export const CLAUDE_CODE_PACKAGE = "@brainervirus/workit-claude-code";
 export const OPENCODE_UPDATE = `opencode plugin update ${OPENCODE_PACKAGE}`;
-export const CODEX_MARKETPLACE = "workflow-toolkit";
+export { CODEX_MARKETPLACE };
 /** Installs the Workit-owned CLI from any shell, whatever Node or npm PATH holds. */
 export const CLI_FIX = "npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes";
 
@@ -130,6 +131,8 @@ export type Source = {
   selector: string;
   installedVersion?: string;
   kind: "floating" | "pinned" | "local" | "repair";
+  /** Codex: registered under the old marketplace name; the upgrade re-registers it. */
+  migrate?: boolean;
 };
 export type PlanEntry = {
   host: HostId;
@@ -189,7 +192,7 @@ const HOME_DERIVED = [
   "XDG_DATA_HOME",
   "XDG_BIN_HOME",
   "XDG_STATE_HOME",
-  "WORKFLOW_TOOLKIT_STATE",
+  "WORKIT_STATE_DIR",
   "WORKIT_INSTALL_ROOT",
   "WORKIT_BIN_DIR",
   "WORKIT_NODE",
@@ -212,8 +215,8 @@ export const upgradePaths = (deps: UpgradeDeps) => {
           CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
           PI_CODING_AGENT_DIR: path.join(home, ".pi/agent"),
           XDG_CONFIG_HOME: path.join(home, ".config"),
-          WORKFLOW_TOOLKIT_CONFIG: undefined,
-          WORKFLOW_TOOLKIT_CONFIG_DIR: undefined,
+          WORKIT_CONFIG: undefined,
+          WORKIT_CONFIG_DIR: undefined,
           // An explicit home also isolates the owned install and every
           // version-manager prefix the CLI migration would look into.
           ...Object.fromEntries(HOME_DERIVED.map((name) => [name, undefined])),

@@ -69,7 +69,7 @@ const OBSERVED: Record<string, string> = {
   subagent_start: "sha256:fb4814e43323c0773920d0a75e3405e3a63ae146608b93fa61730750a8a9a823",
   subagent_stop: "sha256:3b74408935c63cfd71b489615a4fd371890019bd4577755cd666e4f9f10480d5",
 };
-const ID = "workit@workflow-toolkit";
+const ID = "workit@workit";
 const key = (event: string) => `${ID}:hooks/hooks.json:${event}:0:0`;
 
 const codexInstall = (
@@ -77,7 +77,7 @@ const codexInstall = (
 ) => {
   const { home, cwd } = freshHome();
   const codexHome = path.join(home, ".codex");
-  const root = path.join(codexHome, "plugins", "cache", "workflow-toolkit", "workit", "8.5.2");
+  const root = path.join(codexHome, "plugins", "cache", "workit", "workit", "8.5.2");
   mkdirSync(path.join(root, ".codex-plugin"), { recursive: true });
   mkdirSync(path.join(root, "hooks"), { recursive: true });
   writeFileSync(path.join(root, ".codex-plugin", "plugin.json"), '{"name":"workit"}');

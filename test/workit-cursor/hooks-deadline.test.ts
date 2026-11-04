@@ -34,7 +34,7 @@ test("Given a Cursor beforeShellExecution past the hook deadline, When Cursor ru
   const cwd = dir(() => tempRoot("workit-cursor-deadline-"));
   const run = runCursor(fixture("cursor", "before-shell-execution", cwd), {
     WORKIT_HOOK_DEADLINE_MS: "1",
-    WORKFLOW_TOOLKIT_STATE: state,
+    WORKIT_STATE_DIR: state,
   });
   expect(run.status).toBe(0);
   expect(run.json).toEqual({
@@ -58,7 +58,7 @@ test("Given a Cursor subagentStart past the hook deadline, When Cursor runs the 
     ),
     {
       WORKIT_HOOK_DEADLINE_MS: "1",
-      WORKFLOW_TOOLKIT_STATE: state,
+      WORKIT_STATE_DIR: state,
     },
   );
   expect(run.status).toBe(0);
@@ -74,7 +74,7 @@ test("Given a fast Cursor subagentStart, When Cursor runs the hook, Then its own
   const cwd = dir(() => tempRoot("workit-cursor-deadline-"));
   const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-cursor-deadline-state-")));
   const run = runCursor(fixture("cursor", "subagent-start", cwd), {
-    WORKFLOW_TOOLKIT_STATE: state,
+    WORKIT_STATE_DIR: state,
   });
   expect(run.json.additional_context).toBeUndefined();
   expect(run.json).toHaveProperty("permission");
@@ -86,7 +86,7 @@ test("Given a fast Cursor beforeShellExecution, When Cursor runs the hook, Then 
   const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-cursor-deadline-state-")));
   const run = runCursor(
     fixture("cursor", "before-shell-execution", cwd, { command: "git status" }),
-    { WORKFLOW_TOOLKIT_STATE: state },
+    { WORKIT_STATE_DIR: state },
   );
   expect(run.status).toBe(0);
   expect(run.json.agent_message ?? "").not.toContain("host under load");

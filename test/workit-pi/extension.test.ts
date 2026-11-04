@@ -627,9 +627,9 @@ test("Pi affected-doc context passes edits through and public evidence captures 
 test("Pi blocks noncompliant branch targets and leaves other commands to the host", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-route-"));
   const config = mkdtempSync(path.join(tmpdir(), "workit-pi-route-config-"));
-  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previousConfig = process.env.WORKIT_CONFIG;
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = config;
+    process.env.WORKIT_CONFIG = config;
     writeFileSync(
       path.join(config, "config.json"),
       JSON.stringify({
@@ -665,8 +665,8 @@ test("Pi blocks noncompliant branch targets and leaves other commands to the hos
       ),
     ).toBeUndefined();
   } finally {
-    if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
+    if (previousConfig === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previousConfig;
     rmSync(root, { recursive: true, force: true });
     rmSync(config, { recursive: true, force: true });
   }

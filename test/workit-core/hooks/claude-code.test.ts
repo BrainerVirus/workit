@@ -13,12 +13,12 @@ import { fixture, startTask, tempRoot, withProtectedMain } from "./hook-fixtures
 // test gets its own rather than sharing the run-wide registry.
 let savedState: string | undefined;
 beforeEach(() => {
-  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
-  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+  savedState = process.env.WORKIT_STATE_DIR;
+  process.env.WORKIT_STATE_DIR = tempRoot("workit-hook-state-");
 });
 afterEach(() => {
-  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+  if (savedState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = savedState;
 });
 
 const RUN = path.resolve(import.meta.dir, "../../../packages/workit-core/src/hooks/run.ts");
@@ -35,7 +35,7 @@ test("given a protected main, a piped Claude PreToolUse branch creation is denie
           tool_input: { command: "git checkout -b main" },
         }),
         encoding: "utf8",
-        env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG_DIR: configDir },
+        env: { ...process.env, WORKIT_CONFIG_DIR: configDir },
       });
       expect(child.status).toBe(0);
       const output = JSON.parse(child.stdout) as {

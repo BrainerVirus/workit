@@ -32,12 +32,12 @@ import { resolveStore } from "@/packages/workit-core/src/store/paths";
 // test gets its own rather than sharing the run-wide registry.
 let savedState: string | undefined;
 beforeEach(() => {
-  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
-  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+  savedState = process.env.WORKIT_STATE_DIR;
+  process.env.WORKIT_STATE_DIR = tempRoot("workit-hook-state-");
 });
 afterEach(() => {
-  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+  if (savedState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = savedState;
 });
 
 /** Moves `taskId` forward, which changes its compact context. */
@@ -389,7 +389,7 @@ test("Given implementer spawns with isolation or without a brief, When the launc
     WORKIT_CLAUDE_RUNTIME: "source",
     WORKIT_BUN: path.join(tmpdir(), "definitely-not-bun"),
   };
-  const noConfig = { WORKFLOW_TOOLKIT_CONFIG: mkdtempSync(path.join(tmpdir(), "wk-cfg-")) };
+  const noConfig = { WORKIT_CONFIG: mkdtempSync(path.join(tmpdir(), "wk-cfg-")) };
   for (const input of [
     { subagent_type: "workit:implementer", model: "opus", prompt: brief },
     { subagent_type: "workit:verifier", model: "sonnet", prompt: "verify" },
@@ -402,7 +402,7 @@ test("Given implementer spawns with isolation or without a brief, When the launc
 
 test("Given a verifier or general-purpose spawn with isolation, When the launcher runs, Then it reaches the runtime and isolation is stripped (#654)", () => {
   const cwd = root();
-  const config = { WORKFLOW_TOOLKIT_CONFIG: mkdtempSync(path.join(tmpdir(), "wk-cfg-")) };
+  const config = { WORKIT_CONFIG: mkdtempSync(path.join(tmpdir(), "wk-cfg-")) };
   for (const tool_input of [
     { subagent_type: "workit:verifier", model: "sonnet", isolation: "worktree", prompt: "verify" },
     { subagent_type: "general-purpose", model: "haiku", isolation: "worktree", prompt: "look" },
@@ -436,7 +436,7 @@ test("Given role models in workspaces.json, When a spawn names its own model, Th
       tool_name: "Agent",
       tool_input: { subagent_type: "workit:verifier", model: "haiku", prompt: "verify" },
     }),
-    { WORKFLOW_TOOLKIT_CONFIG: dir },
+    { WORKIT_CONFIG: dir },
   );
   const updated = (run.json as { hookSpecificOutput?: { updatedInput?: Record<string, unknown> } })
     .hookSpecificOutput?.updatedInput;

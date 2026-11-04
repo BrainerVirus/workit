@@ -36,7 +36,7 @@ test("Given no recorded hook run, When doctor runs, Then hook_runs is informatio
 
 test("Given Codex ran PreToolUse but never SessionStart, When doctor runs, Then hook_runs shows each host's last events", () => {
   const state = path.join(scratch, "runs");
-  const env = { WORKFLOW_TOOLKIT_STATE: state };
+  const env = { WORKIT_STATE_DIR: state };
   const minutes = (n: number) => () => Date.now() - n * 60_000;
   recordHookRun("codex_cli", "PreToolUse", env, minutes(5));
   recordHookRun("codex_cli", "PreToolUse", env, minutes(3));
@@ -49,7 +49,7 @@ test("Given Codex ran PreToolUse but never SessionStart, When doctor runs, Then 
 
 test("Given Claude Code ran SubagentStart, UserPromptSubmit, PostToolUse and Stop, When doctor runs, Then hook_runs lists every event that has a run file (#505)", () => {
   const state = path.join(scratch, "all-events");
-  const env = { WORKFLOW_TOOLKIT_STATE: state };
+  const env = { WORKIT_STATE_DIR: state };
   for (const event of ["SessionStart", "PreToolUse", "SubagentStart", "UserPromptSubmit"])
     recordHookRun("claude_code", event, env);
   recordHookRun("claude_code", "PostToolUse", env);

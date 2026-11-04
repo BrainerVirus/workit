@@ -52,8 +52,7 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   ...over,
 });
 
-const envFor = (home: string, configDir: string) =>
-  isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+const envFor = (home: string, configDir: string) => isolatedEnv(home, { WORKIT_CONFIG: configDir });
 
 const wsEntry = (name: string, glob: string) => ({
   name,
@@ -242,12 +241,15 @@ test("Cursor refresh staging failure keeps the prior live install and returns Fa
   }
 });
 
-test("migrates the legacy Cursor identity to workit, preserving unrelated bytes (CA-08/CA-09)", () => {
-  const home = tempDir("workit-migrate-home-");
-  const dir = tempDir("workit-migrate-cfg-");
-  const dev = tempDir("workit-migrate-dev-");
+// The old product name, spelled in parts so the no-legacy-name guard stays clean.
+const OLD_NAME = ["workflow", "toolkit"].join("-");
+
+test("registers workit and leaves an old-name Cursor install and unrelated bytes untouched", () => {
+  const home = tempDir("workit-oldname-home-");
+  const dir = tempDir("workit-oldname-cfg-");
+  const dev = tempDir("workit-oldname-dev-");
   const source = path.join(dev, "packages", "workit-cursor");
-  const legacyDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const oldDir = path.join(home, ".cursor", "plugins", "local", OLD_NAME);
   const newDir = path.join(home, ".cursor", "plugins", "local", "workit");
   try {
     mkdirSync(path.dirname(source), { recursive: true });
@@ -255,31 +257,15 @@ test("migrates the legacy Cursor identity to workit, preserving unrelated bytes 
       recursive: true,
       filter: (src) => !src.split(path.sep).includes("node_modules"),
     });
-    // Legacy install: old dir with a user-compiled rule, old enabled keys and
-    // old plugin-dir entries, unrelated similarly-named plugins and settings.
-    mkdirSync(path.join(legacyDir, "skills", "wk-init"), { recursive: true });
-    writeFileSync(path.join(legacyDir, "skills", "wk-init", "SKILL.md"), "# legacy\n");
-    mkdirSync(path.join(legacyDir, "rules"), { recursive: true });
-    writeFileSync(
-      path.join(legacyDir, "rules", "user-managed.mdc"),
-      "---\nalwaysApply: true\n---\n# User rule\n",
-    );
+    mkdirSync(path.join(oldDir, "rules"), { recursive: true });
+    writeFileSync(path.join(oldDir, "rules", "user-managed.mdc"), "# User rule\n");
     mkdirSync(path.join(home, ".cursor", "rules"), { recursive: true });
     writeFileSync(path.join(home, ".cursor", "rules", "custom.mdc"), "# unrelated custom rule\n");
-    const otherDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit-extra");
-    mkdirSync(otherDir, { recursive: true });
-    writeFileSync(path.join(otherDir, "marker"), "unrelated\n");
-    mkdirSync(path.join(home, ".cursor"), { recursive: true });
     writeFileSync(
       path.join(home, ".cursor", "settings.json"),
       JSON.stringify({
-        enabled_plugins: {
-          "workflow-toolkit": true,
-          "local/workflow-toolkit": true,
-          "workflow-toolkit-extra": true,
-          "other-plugin": true,
-        },
-        plugin_dirs: [legacyDir, otherDir],
+        enabled_plugins: { [OLD_NAME]: true, "other-plugin": true },
+        plugin_dirs: [oldDir],
         "chat.temperature": 0.7,
         telemetry: { machineId: "abc-123" },
       }),
@@ -287,10 +273,7 @@ test("migrates the legacy Cursor identity to workit, preserving unrelated bytes 
     writeFileSync(
       path.join(home, ".cursor", "mcp.json"),
       JSON.stringify({
-        mcpServers: {
-          "workflow-toolkit": { command: "bash", args: ["-lc", "legacy"] },
-          "other-server": { command: "python", args: ["-m", "http.server"] },
-        },
+        mcpServers: { "other-server": { command: "python", args: ["-m", "http.server"] } },
       }),
     );
 
@@ -303,32 +286,23 @@ test("migrates the legacy Cursor identity to workit, preserving unrelated bytes 
     const result = applySetupPreview(preview, opts(home, dir, { dev }));
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
 
-    // New identity installed and registered; exact legacy entries removed.
     const settings = JSON.parse(readFileSync(path.join(home, ".cursor", "settings.json"), "utf8"));
-    expect(settings.enabled_plugins.workit).toBe(true);
-    expect(settings.enabled_plugins["workflow-toolkit"]).toBeUndefined();
-    expect(settings.enabled_plugins["local/workflow-toolkit"]).toBeUndefined();
-    expect(settings.enabled_plugins["workflow-toolkit-extra"]).toBe(true);
-    expect(settings.enabled_plugins["other-plugin"]).toBe(true);
-    expect(settings.plugin_dirs).toContain(newDir);
-    expect(settings.plugin_dirs).toContain(otherDir);
-    expect(settings.plugin_dirs).not.toContain(legacyDir);
+    expect(settings.enabled_plugins).toEqual({
+      [OLD_NAME]: true,
+      "other-plugin": true,
+      workit: true,
+    });
+    expect(settings.plugin_dirs).toEqual([oldDir, newDir]);
     expect(settings["chat.temperature"]).toBe(0.7);
     expect(settings.telemetry).toEqual({ machineId: "abc-123" });
-
-    // The legacy directory is removed only after the new install succeeded;
-    // the user-compiled rule is carried forward, unrelated bytes survive.
-    expect(existsSync(legacyDir)).toBe(false);
-    expect(existsSync(newDir)).toBe(true);
-    expect(readFileSync(path.join(newDir, "rules", "user-managed.mdc"), "utf8")).toContain(
-      "# User rule",
+    // No migration reads or removes the old-name directory.
+    expect(readFileSync(path.join(oldDir, "rules", "user-managed.mdc"), "utf8")).toBe(
+      "# User rule\n",
     );
+    expect(existsSync(path.join(newDir, "rules", "user-managed.mdc"))).toBe(false);
     expect(readFileSync(path.join(home, ".cursor", "rules", "custom.mdc"), "utf8")).toBe(
       "# unrelated custom rule\n",
     );
-    expect(readFileSync(path.join(otherDir, "marker"), "utf8")).toBe("unrelated\n");
-
-    // MCP: the legacy server name is dropped, the unrelated server is kept.
     const mcp = JSON.parse(readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
     expect(Object.keys(mcp.mcpServers).toSorted()).toEqual(["other-server", "workit"]);
   } finally {
@@ -338,40 +312,34 @@ test("migrates the legacy Cursor identity to workit, preserving unrelated bytes 
   }
 });
 
-test("legacy Cursor identity and registration survive a failed replacement (CA-09 ordered cleanup)", () => {
+test("the Cursor registration survives a failed replacement (CA-09 ordered registration)", () => {
   if (
     process.platform === "win32" ||
     (typeof process.getuid === "function" && process.getuid() === 0)
   ) {
     return;
   }
-  const home = tempDir("workit-migrate-fail-home-");
-  const dir = tempDir("workit-migrate-fail-cfg-");
-  const dev = tempDir("workit-migrate-fail-dev-");
+  const home = tempDir("workit-replace-fail-home-");
+  const dir = tempDir("workit-replace-fail-cfg-");
+  const dev = tempDir("workit-replace-fail-dev-");
   const source = path.join(dev, "packages", "workit-cursor");
-  const legacyDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
-  const legacySkill = path.join("skills", "workit-shape", "SKILL.md");
-  const sourceSkill = path.join(source, legacySkill);
+  const otherDir = path.join(home, ".cursor", "plugins", "local", "other");
+  const skill = path.join(source, "skills", "workit-shape", "SKILL.md");
   try {
     mkdirSync(path.dirname(source), { recursive: true });
     cpSync(path.join(repoRoot, "packages", "workit-cursor"), source, {
       recursive: true,
       filter: (src) => !src.split(path.sep).includes("node_modules"),
     });
-    // Legacy install + registration present.
-    mkdirSync(path.join(legacyDir, "skills", "workit-shape"), { recursive: true });
-    writeFileSync(path.join(legacyDir, legacySkill), "# legacy\n");
     mkdirSync(path.join(home, ".cursor"), { recursive: true });
-    writeFileSync(
-      path.join(home, ".cursor", "settings.json"),
-      JSON.stringify({
-        enabled_plugins: { "workflow-toolkit": true },
-        plugin_dirs: [legacyDir],
-      }),
-    );
+    const before = JSON.stringify({
+      enabled_plugins: { "other-plugin": true },
+      plugin_dirs: [otherDir],
+    });
+    writeFileSync(path.join(home, ".cursor", "settings.json"), before);
     // Force the staged copy to fail (unreadable source) BEFORE the final rename.
-    writeFileSync(sourceSkill, "# changed but unreadable\n");
-    chmodSync(sourceSkill, 0o000);
+    writeFileSync(skill, "# changed but unreadable\n");
+    chmodSync(skill, 0o000);
 
     const preview = buildSetupPreview(values({ platforms: ["cursor"] }), {
       dir,
@@ -381,15 +349,10 @@ test("legacy Cursor identity and registration survive a failed replacement (CA-0
     });
     const result = applySetupPreview(preview, opts(home, dir, { dev }));
     expect(result.ok).toBe(false);
-
-    // The legacy directory and registration remain recoverable.
-    expect(existsSync(legacyDir)).toBe(true);
-    const settings = JSON.parse(readFileSync(path.join(home, ".cursor", "settings.json"), "utf8"));
-    expect(settings.enabled_plugins["workflow-toolkit"]).toBe(true);
-    expect(settings.plugin_dirs).toContain(legacyDir);
+    expect(readFileSync(path.join(home, ".cursor", "settings.json"), "utf8")).toBe(before);
   } finally {
     try {
-      chmodSync(sourceSkill, 0o644);
+      chmodSync(skill, 0o644);
     } catch {
       /* source may not exist */
     }

@@ -393,7 +393,7 @@ test("plan-vs-applied parity: every planned action yields exactly one entry", ()
 test("uninstall removes Workit pins from both the `plugins` and `plugin` keys", () => {
   const f = fixture();
   try {
-    const checkoutPin = "file:///home/dev/workflow-toolkit/packages/workit-opencode";
+    const checkoutPin = "file:///home/dev/workit/packages/workit-opencode";
     f.writeJson(f.opencodeConfig, {
       plugins: [checkoutPin, "@brainervirus/opencode-commandcode"],
       plugin: ["@brainervirus/workit-opencode@2", "@other/pkg"],

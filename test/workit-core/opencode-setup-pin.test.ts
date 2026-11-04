@@ -62,7 +62,7 @@ test("dev checkout Apply writes a file:// OpenCode pin", () => {
         configDir: dir,
         dev: repoRoot,
         cwd: dir,
-        env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+        env: isolatedEnv(home, { WORKIT_CONFIG: dir }),
       },
     );
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
@@ -94,7 +94,7 @@ test("setup preserves an existing explicit OpenCode package version pin", () => 
         configDir: dir,
         dev: repoRoot,
         cwd: dir,
-        env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+        env: isolatedEnv(home, { WORKIT_CONFIG: dir }),
       },
     );
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
@@ -123,7 +123,7 @@ test("setup preserves an existing OpenCode v2 plugins array pin byte-for-byte", 
         configDir: dir,
         dev: repoRoot,
         cwd: dir,
-        env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+        env: isolatedEnv(home, { WORKIT_CONFIG: dir }),
       },
     );
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
@@ -151,7 +151,7 @@ test("setup moves a Workit entry from the deprecated plugin key to plugins", () 
         configDir: dir,
         dev: repoRoot,
         cwd: dir,
-        env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+        env: isolatedEnv(home, { WORKIT_CONFIG: dir }),
       },
     );
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
@@ -178,7 +178,7 @@ test("setup writes plugins and no plugin key into an empty opencode.json", () =>
       configDir: dir,
       dev: repoRoot,
       cwd: dir,
-      env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+      env: isolatedEnv(home, { WORKIT_CONFIG: dir }),
     });
     const cfg = JSON.parse(readFileSync(file, "utf8"));
     expect(Array.isArray(cfg.plugins)).toBe(true);

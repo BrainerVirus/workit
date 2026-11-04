@@ -56,8 +56,7 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   ...over,
 });
 
-const envFor = (home: string, configDir: string) =>
-  isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+const envFor = (home: string, configDir: string) => isolatedEnv(home, { WORKIT_CONFIG: configDir });
 
 const apply = (dir: string, home: string): SetupResult =>
   applySetupPreview(buildSetupPreview(values(), { dir, cwd: dir, env: {}, home }), {

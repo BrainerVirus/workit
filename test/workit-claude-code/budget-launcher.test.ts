@@ -23,7 +23,7 @@ const home = temp("wk-claude-budget-home-");
 const env = {
   HOME: home,
   CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
-  WORKFLOW_TOOLKIT_STATE: temp("wk-claude-budget-state-"),
+  WORKIT_STATE_DIR: temp("wk-claude-budget-state-"),
 };
 const SESSION = "11111111-2222-3333-4444-666666666666";
 

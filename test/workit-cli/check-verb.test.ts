@@ -550,8 +550,8 @@ const heavyRepo = (
     ...process.env,
     WORKIT_SESSION_ID: "s-heavy",
     WORKFLOW_WORKSPACE_ROOT: "",
-    WORKFLOW_TOOLKIT_STATE: state,
-    WORKFLOW_TOOLKIT_CONFIG_DIR: config,
+    WORKIT_STATE_DIR: state,
+    WORKIT_CONFIG_DIR: config,
     WORKIT_LEASE: "",
   };
   return { root, config, env, leases: path.join(state, "leases") };

@@ -41,7 +41,7 @@ export const ownedCliHome = (owned: boolean) => {
     XDG_BIN_HOME: path.join(home, ".local", "bin"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
     XDG_CONFIG_HOME: path.join(home, ".config"),
-    WORKFLOW_TOOLKIT_STATE: path.join(home, "state"),
+    WORKIT_STATE_DIR: path.join(home, "state"),
     PATH: [stale, path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
   };
   const launcher = ownedLauncherPath(env, "linux");

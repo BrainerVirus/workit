@@ -62,7 +62,7 @@ const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" })
 
 // Every launcher run writes its heartbeat; keep it out of the real state dir.
 const STATE = scratch();
-const isolated = (env: Record<string, string>) => ({ WORKFLOW_TOOLKIT_STATE: STATE, ...env });
+const isolated = (env: Record<string, string>) => ({ WORKIT_STATE_DIR: STATE, ...env });
 
 const launch = (root: string, payload: unknown, env: Record<string, string>) =>
   spawnSync(NODE, [path.join(root, "hooks", "launch.mjs"), "workit-cursor-hook"], {
@@ -271,13 +271,13 @@ test("a deny larger than spawnSync's default buffer still blocks", () => {
 test("every hook run touches the heartbeat that workit doctor reads", () => {
   const state = scratch();
   const root = plugin({ bundled: 'process.stdout.write("{}");\n' });
-  const result = launch(root, SHELL_PAYLOAD, { PATH: "", WORKFLOW_TOOLKIT_STATE: state });
+  const result = launch(root, SHELL_PAYLOAD, { PATH: "", WORKIT_STATE_DIR: state });
   expect(result.status).toBe(0);
   const beat = JSON.parse(readFileSync(path.join(state, "cursor-hook-last-run"), "utf8"));
   expect(beat.bin).toBe("workit-cursor-hook");
   // Even a run that fails open proves Cursor reached the launcher.
   rmSync(path.join(state, "cursor-hook-last-run"));
-  launch(plugin(), SHELL_PAYLOAD, { PATH: "", WORKFLOW_TOOLKIT_STATE: state });
+  launch(plugin(), SHELL_PAYLOAD, { PATH: "", WORKIT_STATE_DIR: state });
   expect(existsSync(path.join(state, "cursor-hook-last-run"))).toBe(true);
 });
 

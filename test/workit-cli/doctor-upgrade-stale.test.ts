@@ -40,7 +40,7 @@ test("Given a stale Cursor install and a stale OpenCode @latest cache, When upgr
     HOME: home,
     WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "8.44.0",
   };
-  delete env.WORKFLOW_TOOLKIT_DEV;
+  delete env.WORKIT_DEV;
   const report = runDoctor({
     host: "cli",
     only: "upgrade",
@@ -76,7 +76,7 @@ test("Given XDG_CONFIG_HOME, When doctor checks the OpenCode cache, Then it read
     XDG_CONFIG_HOME: xdg,
     WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "8.44.0",
   };
-  delete env.WORKFLOW_TOOLKIT_DEV;
+  delete env.WORKIT_DEV;
   const report = runDoctor({
     host: "cli",
     only: "upgrade",

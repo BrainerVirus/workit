@@ -313,8 +313,8 @@ test("redacts secrets, content, queries, home prefixes, and long stacks", () => 
     message: "user content message",
     content: "file content body",
     url: "https://example.com/search?q=secret-query&token=qv",
-    file: path.join(home, "workflow-toolkit", "config.json"),
-    stack: `    at fn0 (${path.join(home, "workflow-toolkit", "src", "core.ts")}:1:1)\n${longStack}`,
+    file: path.join(home, "workit", "config.json"),
+    stack: `    at fn0 (${path.join(home, "workit", "src", "core.ts")}:1:1)\n${longStack}`,
     nested: { credentials: { accessToken: "nested-secret" } },
   });
 
@@ -337,8 +337,8 @@ test("redacts secrets, content, queries, home prefixes, and long stacks", () => 
   expect(raw).not.toContain("secret-query");
   expect(raw).not.toContain("nested-secret");
   expect(raw).not.toContain(home);
-  expect(raw).toContain("~/workflow-toolkit/config.json");
-  expect(raw).toContain("~/workflow-toolkit/src/core.ts");
+  expect(raw).toContain("~/workit/config.json");
+  expect(raw).toContain("~/workit/src/core.ts");
   expect(raw).not.toContain("fn30 (");
   expect(raw).toContain("71 more");
 
@@ -420,7 +420,7 @@ describe("redact", () => {
 });
 
 describe("resolveStateDir", () => {
-  const keys = ["WORKFLOW_TOOLKIT_STATE", "XDG_STATE_HOME", "HOME", "LOCALAPPDATA"];
+  const keys = ["WORKIT_STATE_DIR", "XDG_STATE_HOME", "HOME", "LOCALAPPDATA"];
   const saved = new Map<string, string | undefined>();
   const setEnv = (values: Record<string, string | undefined>): void => {
     for (const key of keys) {
@@ -437,15 +437,15 @@ describe("resolveStateDir", () => {
     saved.clear();
   };
 
-  test("honors the WORKFLOW_TOOLKIT_STATE override", () => {
-    setEnv({ WORKFLOW_TOOLKIT_STATE: "/tmp/wf-state", XDG_STATE_HOME: undefined, HOME: undefined });
+  test("honors the WORKIT_STATE_DIR override", () => {
+    setEnv({ WORKIT_STATE_DIR: "/tmp/wf-state", XDG_STATE_HOME: undefined, HOME: undefined });
     expect(resolveStateDir()).toBe("/tmp/wf-state");
     restoreEnv();
   });
 
   test("uses XDG_STATE_HOME when set", () => {
     setEnv({
-      WORKFLOW_TOOLKIT_STATE: undefined,
+      WORKIT_STATE_DIR: undefined,
       XDG_STATE_HOME: "/xdg/state",
       HOME: undefined,
     });
@@ -455,7 +455,7 @@ describe("resolveStateDir", () => {
 
   test.skipIf(process.platform !== "linux")("falls back to ~/.local/state on Linux", () => {
     setEnv({
-      WORKFLOW_TOOLKIT_STATE: undefined,
+      WORKIT_STATE_DIR: undefined,
       XDG_STATE_HOME: undefined,
       HOME: "/fake/home",
     });

@@ -439,13 +439,13 @@ test("permission evaluate validates only literal noncompliant branch targets", a
   const root = repository();
   const configDir = mkdtempSync(path.join(os.tmpdir(), "workit-v2-shell-config-"));
   const previousEnv = {
-    config: process.env.WORKFLOW_TOOLKIT_CONFIG,
-    configDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+    config: process.env.WORKIT_CONFIG,
+    configDir: process.env.WORKIT_CONFIG_DIR,
     profile: process.env.WORKFLOW_PROFILE,
     workspace: process.env.WORKFLOW_WORKSPACE_NAME,
   };
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  delete process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG_DIR = configDir;
   delete process.env.WORKFLOW_PROFILE;
   delete process.env.WORKFLOW_WORKSPACE_NAME;
   writeFileSync(
@@ -548,10 +548,10 @@ test("permission evaluate validates only literal noncompliant branch targets", a
     expect(edit.effect).toBe("allow");
   } finally {
     rmSync(root, { recursive: true, force: true });
-    if (previousEnv.config === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousEnv.config;
-    if (previousEnv.configDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previousEnv.configDir;
+    if (previousEnv.config === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previousEnv.config;
+    if (previousEnv.configDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
+    else process.env.WORKIT_CONFIG_DIR = previousEnv.configDir;
     if (previousEnv.profile === undefined) delete process.env.WORKFLOW_PROFILE;
     else process.env.WORKFLOW_PROFILE = previousEnv.profile;
     if (previousEnv.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;

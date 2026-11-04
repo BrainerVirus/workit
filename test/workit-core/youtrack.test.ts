@@ -11,7 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-// The config chain WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG must
+// The config chain WORKIT_CONFIG → WORKIT_CONFIG_DIR → XDG must
 // resolve via XDG alone in isolation tests: earlier test files may leak the override
 // vars into the ambient env (same fix family as config.test.ts).
 
@@ -21,12 +21,12 @@ import path from "node:path";
 const withNeutralXdg = <T>(xdg: string, fn: () => T): T => {
   const saved = {
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
-    WORKFLOW_TOOLKIT_CONFIG_DIR: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+    WORKIT_CONFIG: process.env.WORKIT_CONFIG,
+    WORKIT_CONFIG_DIR: process.env.WORKIT_CONFIG_DIR,
   };
   process.env.XDG_CONFIG_HOME = xdg;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  delete process.env.WORKIT_CONFIG;
+  delete process.env.WORKIT_CONFIG_DIR;
   try {
     return fn();
   } finally {
@@ -227,7 +227,7 @@ test("credentials use neutral XDG config and require token mode 0600", () => {
 
 test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CONFIG_HOME", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-script-"));
-  const directory = path.join(xdg, "workflow-toolkit");
+  const directory = path.join(xdg, "workit");
   mkdirSync(directory);
   const tokenPath = path.join(directory, "youtrack.token");
   writeFileSync(tokenPath, "dummy-token\n", { mode: 0o600 });
@@ -249,7 +249,7 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
 test("CA-03: youtrack config read resolves the token file inside the active config dir only", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-yt-active-dir-"));
   const workit = path.join(xdg, "workit");
-  const legacy = path.join(xdg, "workflow-toolkit");
+  const legacy = path.join(xdg, "decoy");
   mkdirSync(workit, { recursive: true });
   mkdirSync(legacy, { recursive: true });
   const activeToken = path.join(workit, "youtrack.token");

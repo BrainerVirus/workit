@@ -218,7 +218,7 @@ export const runCursorHookLaunch = ({ candidates, payload, env, spawn = spawnSyn
 /** Workit's state dir, as core's resolveStateDir computes it.
  *  @param {NodeJS.ProcessEnv} env */
 export const workitStateDir = (env) => {
-  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
+  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
   const home = env.HOME || os.homedir();
   if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
   if (process.platform === "darwin")

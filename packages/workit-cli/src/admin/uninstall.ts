@@ -153,8 +153,6 @@ const stripTrailingSep = (p: string): string => {
   return path.dirname(j) === j ? j : j.replace(/[\\/]+$/, "");
 };
 
-const CURSOR_LEGACY_IDENTITIES = ["workflow-toolkit", "local/workflow-toolkit"];
-
 // Inverse of mergeCursorSettings: drop workit identities from enabled_plugins,
 // drop the canonical plugin dir entry from plugin_dirs. Returns the next record
 // plus whether anything changed (plan/apply share this so outcomes match).
@@ -166,11 +164,9 @@ function cleanCursorSettings(
   let changed = false;
   if (isRecord(next.enabled_plugins)) {
     const enabled = { ...next.enabled_plugins };
-    for (const identity of ["workit", ...CURSOR_LEGACY_IDENTITIES]) {
-      if (identity in enabled) {
-        delete enabled[identity];
-        changed = true;
-      }
+    if ("workit" in enabled) {
+      delete enabled.workit;
+      changed = true;
     }
     next.enabled_plugins = enabled;
   }
@@ -212,7 +208,7 @@ function cleanOpenCodeConfig(config: Record<string, unknown>): {
   return { next, changed };
 }
 
-// Inverse of mergeCursorMcp: drop the canonical server name and its legacy twin.
+// Inverse of mergeCursorMcp: drop the canonical server name.
 function cleanCursorMcp(mcp: Record<string, unknown>): {
   next: Record<string, unknown>;
   changed: boolean;
@@ -221,11 +217,9 @@ function cleanCursorMcp(mcp: Record<string, unknown>): {
   let changed = false;
   if (isRecord(next.mcpServers)) {
     const servers = { ...next.mcpServers };
-    for (const name of ["workit", "workflow-toolkit"]) {
-      if (name in servers) {
-        delete servers[name];
-        changed = true;
-      }
+    if ("workit" in servers) {
+      delete servers.workit;
+      changed = true;
     }
     next.mcpServers = servers;
   }

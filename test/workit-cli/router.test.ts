@@ -349,8 +349,8 @@ test("under --json every verb's stdout is exactly one JSON document, error paths
         ...process.env,
         HOME: home,
         USERPROFILE: home,
-        WORKFLOW_TOOLKIT_CONFIG: path.join(home, ".config", "workit"),
-        WORKFLOW_TOOLKIT_STATE: path.join(home, ".local", "state", "workit"),
+        WORKIT_CONFIG: path.join(home, ".config", "workit"),
+        WORKIT_STATE_DIR: path.join(home, ".local", "state", "workit"),
       }).filter(([key]) => key !== "WORKFLOW_WORKSPACE_ROOT"),
     );
     for (const [verb, cases] of Object.entries(JSON_ERROR_PATHS))

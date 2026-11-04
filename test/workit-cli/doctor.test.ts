@@ -33,9 +33,9 @@ const runCli = (args: string[], cwd: string, extraEnv: Record<string, string> = 
       ...process.env,
       ...extraEnv,
       HOME: fixture.home,
-      WORKFLOW_TOOLKIT_CONFIG: fixture.configDir,
-      WORKFLOW_TOOLKIT_STATE: fixture.stateDir,
-      WORKFLOW_TOOLKIT_DEV: fixture.dev,
+      WORKIT_CONFIG: fixture.configDir,
+      WORKIT_STATE_DIR: fixture.stateDir,
+      WORKIT_DEV: fixture.dev,
     },
     encoding: "utf8",
   });

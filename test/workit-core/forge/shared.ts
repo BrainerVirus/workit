@@ -28,16 +28,16 @@ export function useForgeHarness(): {
   setDefaultTimeout(60_000);
 
   let configDir = "";
-  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previousConfig = process.env.WORKIT_CONFIG;
   const previousVcs = process.env.WORKFLOW_VCS_CONFIG;
   beforeAll(() => {
     configDir = mkdtempSync(path.join(os.tmpdir(), "wk-forge-config-"));
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    process.env.WORKIT_CONFIG = configDir;
     delete process.env.WORKFLOW_VCS_CONFIG;
   });
   afterAll(() => {
-    if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
+    if (previousConfig === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previousConfig;
     if (previousVcs !== undefined) process.env.WORKFLOW_VCS_CONFIG = previousVcs;
     rmSync(configDir, { recursive: true, force: true });
   });

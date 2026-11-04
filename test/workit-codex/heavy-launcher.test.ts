@@ -49,7 +49,7 @@ beforeAll(() => {
     PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
     HOME: home,
     CODEX_HOME: path.join(home, ".codex"),
-    WORKFLOW_TOOLKIT_STATE: path.join(home, "state"),
+    WORKIT_STATE_DIR: path.join(home, "state"),
   };
 });
 afterAll(() => {
@@ -104,7 +104,7 @@ for (const entry of ["source", "dist"] as const)
 
 for (const entry of ["source", "dist"] as const)
   test(`[${entry}] Given a shell write into the issued registry, When the Codex hook runs, Then it is denied rather than answered quietly`, () => {
-    const state = env.WORKFLOW_TOOLKIT_STATE ?? "";
+    const state = env.WORKIT_STATE_DIR ?? "";
     for (const command of [
       `echo forged > ${state}/issued/lead/abc`,
       `cd ${state} && touch issued-tokens/z`,
@@ -130,7 +130,7 @@ for (const entry of ["source", "dist"] as const)
 
 for (const entry of ["source", "dist"] as const)
   test(`[${entry}] Given a quiet and a gated PreToolUse, When the Codex hook runs, Then both are counted as Codex PreToolUse runs (#433)`, () => {
-    const state = env.WORKFLOW_TOOLKIT_STATE ?? "";
+    const state = env.WORKIT_STATE_DIR ?? "";
     const count = () =>
       readHookRuns(state).find((r) => r.host === "codex_cli" && r.event === "PreToolUse")?.count ??
       0;

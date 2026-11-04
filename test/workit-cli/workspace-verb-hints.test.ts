@@ -47,16 +47,16 @@ test("set branchpolicy=x suggests branchPolicy", async () => {
 });
 
 test("a redirected config dir names that dir; the grants note names the account home", () => {
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const saved = process.env.WORKIT_CONFIG;
   const redirected = mkdtempSync(path.join(os.tmpdir(), "wk-redirect-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = redirected;
+  process.env.WORKIT_CONFIG = redirected;
   try {
     expect(configFilePath("vcs.json")).toBe(path.join(redirected, "vcs.json"));
     const note = grantsOverride() ?? "";
     expect(note).toContain(path.join(grantsDir(), "workspaces.json"));
     expect(note).toContain("does not apply to grants");
   } finally {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    process.env.WORKIT_CONFIG = saved;
     rmSync(redirected, { recursive: true, force: true });
   }
 });

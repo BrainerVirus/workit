@@ -4,20 +4,20 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 
-// WORKFLOW_TOOLKIT_CONFIG -> dir; restored afterwards; dir removed.
+// WORKIT_CONFIG -> dir; restored afterwards; dir removed.
 export const withIsolatedConfig = (dir: string, fn: () => void) => {
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+  const previous = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = dir;
   try {
     fn();
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 };
 
-// Temp dir as WORKFLOW_TOOLKIT_CONFIG; restored afterwards; dir removed.
+// Temp dir as WORKIT_CONFIG; restored afterwards; dir removed.
 export const withTempConfigDir = (fn: (dir: string) => void) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wk-config-"));
   withIsolatedConfig(dir, () => fn(dir));

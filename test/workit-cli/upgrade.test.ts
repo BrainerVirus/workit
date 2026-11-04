@@ -296,9 +296,9 @@ test("Given a CLI in a fnm prefix and no terminal, When `workit upgrade --cli` a
 
 test("explicit home isolates inherited config overrides and explicit config roots stay supported", () => {
   const f = fixture();
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previous = process.env.WORKIT_CONFIG;
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = "/must-not-read/config";
+    process.env.WORKIT_CONFIG = "/must-not-read/config";
     expect(Object.hasOwn(previewUpgrade(["opencode"], f.deps).configDigests, f.config)).toBe(true);
     const custom = path.join(f.home, "custom-workit");
     mkdirSync(custom);
@@ -306,12 +306,12 @@ test("explicit home isolates inherited config overrides and explicit config root
       path.join(custom, "config.json"),
       JSON.stringify({ locale: "en", timezone: "UTC" }),
     );
-    const plan = previewUpgrade([], { ...f.deps, env: { WORKFLOW_TOOLKIT_CONFIG: custom } });
+    const plan = previewUpgrade([], { ...f.deps, env: { WORKIT_CONFIG: custom } });
     expect(Object.hasOwn(plan.configDigests, path.join(custom, "config.json"))).toBe(true);
     expect(plan.migrations).toEqual([]);
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
     f.cleanup();
   }
 });
@@ -322,7 +322,7 @@ test("Codex current inventory skips updates and other marketplaces remain untouc
     const rows = [
       {
         name: "workit",
-        marketplaceName: "workflow-toolkit",
+        marketplaceName: "workit",
         version: "2.1.0",
         source: {
           source: "npm",
@@ -339,7 +339,7 @@ test("Codex current inventory skips updates and other marketplaces remain untouc
     ];
     const run = (command: string, args: string[]) =>
       (command === "codex"
-        ? codexInventoryAnswer(args, rows, ["workflow-toolkit", "unrelated"])
+        ? codexInventoryAnswer(args, rows, ["workit", "unrelated"])
         : undefined) ?? f.deps.run(command, args);
     const plan = previewUpgrade(["codex"], { ...f.deps, run });
     expect(plan.entries).toEqual([]);

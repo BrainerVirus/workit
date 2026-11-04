@@ -40,7 +40,7 @@ test("Given a Codex PreToolUse past the hook deadline, When Codex runs the hook,
   const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-codex-deadline-state-")));
   const run = runCodex(gitCommand(dir(() => tempRoot("workit-codex-deadline-"))), {
     WORKIT_HOOK_DEADLINE_MS: "1",
-    WORKFLOW_TOOLKIT_STATE: state,
+    WORKIT_STATE_DIR: state,
   });
   expect(run.status).toBe(0);
   expect(run.json).toEqual({
@@ -59,7 +59,7 @@ test("Given a Codex PreToolUse past the hook deadline, When Codex runs the hook,
 test("Given a fast Codex PreToolUse, When Codex runs the hook, Then its output is the plain dispatch output", () => {
   const cwd = dir(() => tempRoot("workit-codex-deadline-"));
   const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-codex-deadline-state-")));
-  const run = runCodex(gitCommand(cwd), { WORKFLOW_TOOLKIT_STATE: state });
+  const run = runCodex(gitCommand(cwd), { WORKIT_STATE_DIR: state });
   expect(run.status).toBe(0);
   expect(run.json).toEqual(dispatchHook(codexAdapter, gitCommand(cwd), {}).json);
   expect(run.stderr).not.toContain("host under load");

@@ -88,14 +88,14 @@ const repoWithStaged = (messages: string[]): string => {
 
 const withConfig = (preset: string, extra: Record<string, unknown>, run: () => void): void => {
   const dir = mkdtempSync(join(tmpdir(), "workit-commit-config-"));
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previous = process.env.WORKIT_CONFIG;
   try {
     writeFileSync(join(dir, "config.json"), JSON.stringify({ commitPolicy: { preset, ...extra } }));
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     run();
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 };
@@ -103,7 +103,7 @@ const withConfig = (preset: string, extra: Record<string, unknown>, run: () => v
 test("commit lint validates against the matched workspace flavor", () => {
   const root = repoWithStaged(["feat(a): seed"]);
   const dir = mkdtempSync(join(tmpdir(), "workit-commit-config-"));
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previous = process.env.WORKIT_CONFIG;
   try {
     writeFileSync(
       join(dir, "config.json"),
@@ -121,7 +121,7 @@ test("commit lint validates against the matched workspace flavor", () => {
         ],
       }),
     );
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     expect(lintCommitMessage(root, "✨ emoji wins here")).toMatchObject({
       ok: true,
     });
@@ -131,8 +131,8 @@ test("commit lint validates against the matched workspace flavor", () => {
       error: expect.stringContaining("commit_style"),
     });
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }

@@ -19,10 +19,10 @@ const createRepoTools = (runtime = initApplyRuntime) => ({
 
 test("init_apply writes config.json with guided values", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-tools-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const prevConfig = process.env.WORKIT_CONFIG;
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    process.env.WORKIT_CONFIG_DIR = dir;
+    delete process.env.WORKIT_CONFIG;
     const tools = createRepoTools();
     const raw = await tools.workit_init_apply.execute(
       {
@@ -42,9 +42,9 @@ test("init_apply writes config.json with guided values", async () => {
     expect(cfg.branchPolicy.preset).toBe("custom");
     expect(cfg.branchPolicy.allowed).toContain("codex/*");
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    delete process.env.WORKIT_CONFIG_DIR;
+    if (prevConfig === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevConfig;
     rmSync(dir, { recursive: true, force: true });
   }
 });

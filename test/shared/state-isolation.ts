@@ -2,7 +2,7 @@
 // dir. Processes the suite spawns (the Cursor MCP server, the hook launcher,
 // the CLI) inherit it, so their logs and heartbeats never land in the real
 // ~/.local/state/workit. Tests that need a specific state dir still set
-// WORKFLOW_TOOLKIT_STATE (or HOME/XDG_STATE_HOME after clearing it) themselves.
+// WORKIT_STATE_DIR (or HOME/XDG_STATE_HOME after clearing it) themselves.
 import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,5 +26,5 @@ for (const key of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_D
 // ledger and its locks, and the first worker to finish deleted it under the
 // rest (CI hangs, #415).
 const dir = mkdtempSync(path.join(tmpdir(), "wk-test-state-"));
-process.env.WORKFLOW_TOOLKIT_STATE = dir;
+process.env.WORKIT_STATE_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

@@ -12,8 +12,8 @@ const cli = process.platform === "win32" ? test.skip : test;
 const setup = () => {
   const cfgDir = mkdtempSync(path.join(tmpdir(), "wk-vctok-cfg-"));
   const repo = mkdtempSync(path.join(tmpdir(), "wk-vctok-repo-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+  const prevConfig = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = cfgDir;
   const writeAll = (wsVcs: Record<string, unknown>, globalTokenFile?: string) => {
     writeFileSync(
       path.join(cfgDir, "vcs.json"),
@@ -34,8 +34,8 @@ const setup = () => {
     repo,
     writeAll,
     cleanup: () => {
-      if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+      if (prevConfig === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prevConfig;
       rmSync(cfgDir, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
     },
@@ -75,8 +75,8 @@ test("provider resolution does not require a token file", () => {
 test("unresolvable provider is explicit: resolve reports null, load fails closed", () => {
   const cfgDir = mkdtempSync(path.join(tmpdir(), "wk-vcnoprov-cfg-"));
   const repo = mkdtempSync(path.join(tmpdir(), "wk-vcnoprov-repo-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+  const prevConfig = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = cfgDir;
   try {
     writeFileSync(path.join(cfgDir, "vcs.json"), JSON.stringify({ pr: {} }));
     writeFileSync(path.join(cfgDir, "workspaces.json"), JSON.stringify({ workspaces: [] }));
@@ -89,8 +89,8 @@ test("unresolvable provider is explicit: resolve reports null, load fails closed
     expect(loaded.ok).toBe(false);
     expect(String(loaded.error)).toContain("no vcs provider");
   } finally {
-    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    if (prevConfig === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevConfig;
     rmSync(cfgDir, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });
   }

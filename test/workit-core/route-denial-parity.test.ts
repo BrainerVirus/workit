@@ -16,16 +16,16 @@ import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hook
 setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 const previousEnv = {
-  config: process.env.WORKFLOW_TOOLKIT_CONFIG,
-  configDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+  config: process.env.WORKIT_CONFIG,
+  configDir: process.env.WORKIT_CONFIG_DIR,
   profile: process.env.WORKFLOW_PROFILE,
   workspace: process.env.WORKFLOW_WORKSPACE_NAME,
 };
 let configDir: string;
 beforeAll(() => {
   configDir = mkdtempSync(path.join(tmpdir(), "workit-route-policy-config-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKIT_CONFIG_DIR = configDir;
+  delete process.env.WORKIT_CONFIG;
   delete process.env.WORKFLOW_PROFILE;
   delete process.env.WORKFLOW_WORKSPACE_NAME;
   writeFileSync(
@@ -40,10 +40,10 @@ beforeAll(() => {
   );
 });
 afterAll(() => {
-  if (previousEnv.config === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousEnv.config;
-  if (previousEnv.configDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previousEnv.configDir;
+  if (previousEnv.config === undefined) delete process.env.WORKIT_CONFIG;
+  else process.env.WORKIT_CONFIG = previousEnv.config;
+  if (previousEnv.configDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
+  else process.env.WORKIT_CONFIG_DIR = previousEnv.configDir;
   if (previousEnv.profile === undefined) delete process.env.WORKFLOW_PROFILE;
   else process.env.WORKFLOW_PROFILE = previousEnv.profile;
   if (previousEnv.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;

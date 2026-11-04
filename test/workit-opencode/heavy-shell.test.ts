@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
 
-const saved = { PATH: process.env.PATH, STATE: process.env.WORKFLOW_TOOLKIT_STATE };
+const saved = { PATH: process.env.PATH, STATE: process.env.WORKIT_STATE_DIR };
 let root: string;
 let bin: string;
 let state: string;
@@ -20,12 +20,12 @@ beforeAll(() => {
   chmodSync(path.join(bin, "workit"), 0o755);
   state = mkdtempSync(path.join(os.tmpdir(), "workit-v2-heavy-state-"));
   process.env.PATH = `${bin}${path.delimiter}${saved.PATH ?? ""}`;
-  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  process.env.WORKIT_STATE_DIR = state;
 });
 afterAll(() => {
   process.env.PATH = saved.PATH;
-  if (saved.STATE === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = saved.STATE;
+  if (saved.STATE === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = saved.STATE;
   for (const dir of [root, bin, state]) rmSync(dir, { recursive: true, force: true });
 });
 

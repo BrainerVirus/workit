@@ -661,7 +661,7 @@ test("detects a stale git+file workit pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugins: ["workflow-toolkit-opencode@git+file:///legacy"],
+      plugins: ["@brainervirus/workit-opencode@git+file:///legacy"],
     }),
   );
   const report = run();
@@ -720,7 +720,7 @@ test("cursor host never inspects the opencode config for stale pins", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugins: ["workflow-toolkit-opencode@git+file:///legacy"],
+      plugins: ["@brainervirus/workit-opencode@git+file:///legacy"],
     }),
   );
   try {
@@ -1255,7 +1255,7 @@ test("detects duplicate opencode registration and clears once deduplicated", () 
     fixture.opencodeConfig,
     JSON.stringify({
       plugins: [
-        "workflow-toolkit-opencode@git+file:///legacy",
+        "@brainervirus/workit-opencode@git+file:///legacy",
         `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`,
       ],
     }),
@@ -1274,32 +1274,19 @@ test("detects duplicate opencode registration and clears once deduplicated", () 
   expect(check(run(), "duplicate_registration").status).toBe("pass");
 });
 
-test("detects duplicate cursor registration in settings and mcp and clears once deduplicated", () => {
+test("detects duplicate cursor registration in settings and clears once deduplicated", () => {
   writeConfig(
     fixture.cursorSettings,
     JSON.stringify({
-      enabled_plugins: { workit: true, "workflow-toolkit": true },
-      plugin_dirs: [
-        fixture.pluginDir,
-        path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit"),
-      ],
-    }),
-  );
-  writeConfig(
-    fixture.cursorMcp,
-    JSON.stringify({
-      mcpServers: {
-        workit: {
-          command: "node",
-          args: [path.join(fixture.pluginDir, "dist/mcp-server.js")],
-        },
-        "workflow-toolkit": { command: "node", args: ["legacy.js"] },
-      },
+      enabled_plugins: { workit: true, "local/workit": true },
+      plugin_dirs: [fixture.pluginDir, `${fixture.pluginDir}/`],
     }),
   );
   const report = run();
   expect(report.exitCode).not.toBe(0);
   expect(check(report, "duplicate_registration").status).toBe("fail");
+  expect(check(report, "duplicate_registration").detail).toContain("2 workit plugin identities");
+  expect(check(report, "duplicate_registration").detail).toContain("plugin_dirs has 2");
   expect(check(report, "duplicate_registration").fix).toBeTruthy();
 
   writeConfig(
@@ -1357,8 +1344,8 @@ test(
   () => {
     const vcsFile = path.join(fixture.configDir, "vcs.json");
     const wsFile = path.join(fixture.configDir, "workspaces.json");
-    const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = fixture.configDir;
+    const prev = process.env.WORKIT_CONFIG;
+    process.env.WORKIT_CONFIG = fixture.configDir;
     try {
       for (const content of ["null", "42"]) {
         writeConfig(vcsFile, content);
@@ -1373,8 +1360,8 @@ test(
         expect(readSetupState(fixture.configDir).workspaces.status).toBe("malformed");
       }
     } finally {
-      if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+      if (prev === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prev;
       rmSync(vcsFile, { force: true });
       rmSync(wsFile, { force: true });
     }

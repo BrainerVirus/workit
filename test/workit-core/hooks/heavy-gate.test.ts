@@ -31,9 +31,9 @@ import { main } from "@/packages/workit-cli/src/main";
 const KEYS = [
   "PATH",
   "HOME",
-  "WORKFLOW_TOOLKIT_STATE",
-  "WORKFLOW_TOOLKIT_CONFIG_DIR",
-  "WORKFLOW_TOOLKIT_CONFIG",
+  "WORKIT_STATE_DIR",
+  "WORKIT_CONFIG_DIR",
+  "WORKIT_CONFIG",
   "CLAUDE_CONFIG_DIR",
   "CLAUDE_PROJECT_DIR",
   "CODEX_HOME",
@@ -69,14 +69,14 @@ beforeAll(() => {
     "CLAUDE_PROJECT_DIR",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_CONTENT",
-    "WORKFLOW_TOOLKIT_CONFIG",
+    "WORKIT_CONFIG",
   ])
     delete process.env[key];
   Object.assign(process.env, {
     PATH: `${bin}${path.delimiter}${saved.PATH ?? ""}`,
     HOME: home,
-    WORKFLOW_TOOLKIT_STATE: state,
-    WORKFLOW_TOOLKIT_CONFIG_DIR: config,
+    WORKIT_STATE_DIR: state,
+    WORKIT_CONFIG_DIR: config,
     CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
     CODEX_HOME: path.join(home, ".codex"),
     XDG_CONFIG_HOME: path.join(home, ".config"),

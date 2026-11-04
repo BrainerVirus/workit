@@ -195,13 +195,13 @@ test("OpenCode YouTrack context reads a fixed file without migration or secret f
   const previous = {
     xdg: process.env.XDG_CONFIG_HOME,
     direct: process.env.WORKFLOW_YOUTRACK_CONFIG,
-    toolkit: process.env.WORKFLOW_TOOLKIT_CONFIG,
-    toolkitDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+    toolkit: process.env.WORKIT_CONFIG,
+    toolkitDir: process.env.WORKIT_CONFIG_DIR,
   };
   try {
     delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    delete process.env.WORKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG_DIR;
     process.env.XDG_CONFIG_HOME = configHome;
     const current = join(configHome, "workit");
     mkdirSync(current, { recursive: true });
@@ -230,10 +230,10 @@ test("OpenCode YouTrack context reads a fixed file without migration or secret f
     else process.env.XDG_CONFIG_HOME = previous.xdg;
     if (previous.direct === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
     else process.env.WORKFLOW_YOUTRACK_CONFIG = previous.direct;
-    if (previous.toolkit === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous.toolkit;
-    if (previous.toolkitDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous.toolkitDir;
+    if (previous.toolkit === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous.toolkit;
+    if (previous.toolkitDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
+    else process.env.WORKIT_CONFIG_DIR = previous.toolkitDir;
     rmSync(root, { recursive: true, force: true });
     rmSync(configHome, { recursive: true, force: true });
   }

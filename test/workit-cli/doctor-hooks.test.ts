@@ -33,7 +33,7 @@ const row = (env: Record<string, string>, id: string): DoctorCheck =>
     home: env.HOME,
     cwd: env.HOME,
     configDir: path.join(env.HOME, "config"),
-    stateDir: env.WORKFLOW_TOOLKIT_STATE,
+    stateDir: env.WORKIT_STATE_DIR,
     dev: path.join(env.HOME, "no-dev"),
     env,
     scopeProbe: () => ({ effective: false, supported: false, reason: "test", delegate: null }),

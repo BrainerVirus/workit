@@ -10,7 +10,6 @@ export const EVENT = {
   configurationSource: "configuration_source",
   hooks: "hooks",
   mcpConnection: "mcp_connection",
-  migration: "migration",
   installSteps: "install_steps",
   uncaughtFailure: "uncaught_failure",
   toolsFailed: "tools_failed",

@@ -29,13 +29,12 @@ const SESSION_COMMAND = 'node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" workit-cu
 const PIN = "file:///work/packages/workit-opencode/src/plugin.ts";
 const CURSOR_ROOT = path.join("/home/user", ".cursor");
 const CURSOR_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "workit");
-const LEGACY_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "workflow-toolkit");
+// The old product name, spelled in parts so the no-legacy-name guard stays clean.
+const OLD_NAME = ["workflow", "toolkit"].join("-");
 const OTHER_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "other");
 
-test("isWorkitPlugin matches every legacy and current identity, never unrelated plugins", () => {
+test("isWorkitPlugin matches every Workit identity, never unrelated plugins or the old name", () => {
   for (const id of [
-    "workflow-toolkit-opencode",
-    "workflow-toolkit-opencode@git+file:///old/checkout",
     "@brainervirus/workit-opencode",
     "@brainervirus/workit-opencode@1.0.0",
     "@brainervirus/workit-cursor",
@@ -44,11 +43,8 @@ test("isWorkitPlugin matches every legacy and current identity, never unrelated 
     "file:///work/packages/workit-opencode",
     "file:///work/packages/workit-cursor",
     "file:///x/node_modules/@brainervirus/workit-opencode",
-    "git+file:///work/workflow-toolkit",
     "file:///x/node_modules/@brainervirus/workit-opencode/dist/plugin.js",
     "file:///x/packages/workit-opencode/src/plugin.ts",
-    "workflow-toolkit",
-    "local/workflow-toolkit",
     "workit",
     "local/workit",
     "workit@1.0.0",
@@ -63,6 +59,10 @@ test("isWorkitPlugin matches every legacy and current identity, never unrelated 
     "@brainervirus/workit-cursor-tools",
     "@brainervirus/workit-opencode-extra",
     "@brainervirus/workit-cursor-legacy",
+    OLD_NAME,
+    `local/${OLD_NAME}`,
+    `${OLD_NAME}-opencode@git+file:///old/checkout`,
+    `git+file:///work/${OLD_NAME}`,
   ]) {
     expect(isWorkitPlugin(id), id).toBe(false);
   }
@@ -90,23 +90,23 @@ test("isWorkitPlugin rejects prefix-shared @brainervirus names, still accepts ex
   }
 });
 
-test("isWorkitPlugin preserves unrelated plugin ids that merely contain workflow-toolkit (D3)", () => {
+test("isWorkitPlugin preserves unrelated plugin ids that merely contain workit (D3)", () => {
   for (const id of [
-    "some-workflow-toolkit-helper",
-    "my-workflow-toolkit-plugins",
-    "my-workflow-toolkit-plugin",
-    "workflow-toolkit-mcp",
-    "org/plugin-workflow-toolkit-v2",
-    "github.com/owner/workflow-toolkit-fork",
+    "some-workit-helper",
+    "my-workit-plugins",
+    "my-workit-plugin",
+    "workit-mcp",
+    "org/plugin-workit-v2",
+    "github.com/owner/workit-fork",
   ]) {
     expect(isWorkitPlugin(id), id).toBe(false);
   }
 });
 
-test("mergeOpenCodePlugins preserves unrelated workflow-toolkit-containing ids (D3)", () => {
-  const existing = ["some-workflow-toolkit-helper", "@brainervirus/workit-opencode", PIN];
+test("mergeOpenCodePlugins preserves unrelated workit-containing ids (D3)", () => {
+  const existing = ["some-workit-helper", "@brainervirus/workit-opencode", PIN];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
-  expect(config).toEqual([PIN, "some-workflow-toolkit-helper"]);
+  expect(config).toEqual([PIN, "some-workit-helper"]);
   expect(changed).toEqual(["plugins"]);
 });
 
@@ -127,10 +127,10 @@ test("mergeOpenCodePlugins preserves prefix-shared helper packages (AR-04)", () 
   expect(changed).toEqual(["plugins"]);
 });
 
-test("mergeOpenCodePlugins dedups legacy + current identities to a single pin", () => {
+test("mergeOpenCodePlugins dedups every Workit identity to a single pin", () => {
   const existing = [
     "@dietrichgebert/ponytail",
-    "workflow-toolkit-opencode@git+file:///old/checkout",
+    "file:///old/checkout/packages/workit-opencode",
     "@brainervirus/workit-opencode",
     PIN,
   ];
@@ -146,7 +146,7 @@ test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-f
     $schema: "https://opencode.ai/config.json",
     plugins: [
       "@dietrichgebert/ponytail",
-      "workflow-toolkit-opencode@git+file:///old/checkout",
+      "file:///old/checkout/packages/workit-opencode",
       "@brainervirus/workit-opencode",
       PIN,
     ],
@@ -164,18 +164,14 @@ test("mergeOpenCodeConfig preserves every skill path without ownership evidence"
   const input = {
     plugins: ["other-plugin"],
     skills: {
-      paths: [
-        "/x/share/workflow-toolkit/skills",
-        "~/.config/opencode/skills",
-        "/other/custom-skills",
-      ],
+      paths: ["/x/share/workit/skills", "~/.config/opencode/skills", "/other/custom-skills"],
       enabled: ["wk-commit"],
     },
   };
   const { config, changed } = mergeOpenCodeConfig(input, PIN);
   const skills = config.skills as { paths?: string[]; enabled?: string[] };
   expect(skills.paths).toEqual([
-    "/x/share/workflow-toolkit/skills",
+    "/x/share/workit/skills",
     "~/.config/opencode/skills",
     "/other/custom-skills",
   ]);
@@ -187,18 +183,14 @@ test("mergeOpenCodeConfig preserves similarly named and canonical Workit skill p
   const input = {
     plugins: ["other-plugin"],
     skills: {
-      paths: [
-        "/x/share/workflow-toolkit/skills",
-        "~/projects/my-workflow-toolkit-skills",
-        "~/.config/opencode/skills",
-      ],
+      paths: ["/x/share/workit/skills", "~/projects/my-workit-skills", "~/.config/opencode/skills"],
     },
   };
   const { config, changed } = mergeOpenCodeConfig(input, PIN);
   const skills = config.skills as { paths?: string[] };
   expect(skills.paths).toEqual([
-    "/x/share/workflow-toolkit/skills",
-    "~/projects/my-workflow-toolkit-skills",
+    "/x/share/workit/skills",
+    "~/projects/my-workit-skills",
     "~/.config/opencode/skills",
   ]);
   expect(changed).toEqual(["plugins"]);
@@ -229,15 +221,13 @@ test("mergeOpenCodeConfig moves a Workit entry out of the deprecated plugin key"
   expect(changed).toEqual(["plugins", "plugin"]);
 });
 
-test("mergeCursorSettings writes the canonical workit identity and removes exact legacy entries", () => {
+test("mergeCursorSettings writes the canonical workit identity and keeps unrelated entries", () => {
   const input = {
     enabled_plugins: {
-      "local/workflow-toolkit": true,
-      "workflow-toolkit": true,
       "some-other-plugin": true,
-      "my-workflow-toolkit-plugin": true, // unrelated similarly-named plugin (D3)
+      "my-workit-plugin": true, // unrelated similarly-named plugin (D3)
     },
-    plugin_dirs: [OTHER_PLUGIN_DIR, LEGACY_PLUGIN_DIR],
+    plugin_dirs: [OTHER_PLUGIN_DIR],
     "chat.temperature": 0.3,
     telemetry: { machineId: "abc" },
   };
@@ -245,7 +235,7 @@ test("mergeCursorSettings writes the canonical workit identity and removes exact
   expect(config.enabled_plugins).toEqual({
     workit: true,
     "some-other-plugin": true,
-    "my-workflow-toolkit-plugin": true,
+    "my-workit-plugin": true,
   });
   expect(config.plugin_dirs).toEqual([OTHER_PLUGIN_DIR, CURSOR_PLUGIN_DIR]);
   expect(config["chat.temperature"]).toBe(0.3);
@@ -253,13 +243,12 @@ test("mergeCursorSettings writes the canonical workit identity and removes exact
   expect(changed).toEqual(["enabled_plugins", "plugin_dirs"]);
 });
 
-test("mergeCursorEnabledPlugins writes workit and drops every legacy Workit key, preserving unrelated keys", () => {
+test("mergeCursorEnabledPlugins writes workit and treats the old name as an unrelated key", () => {
   const { config, changed } = mergeCursorEnabledPlugins({
-    "workflow-toolkit": true,
-    "local/workflow-toolkit": true,
+    [OLD_NAME]: true,
     "some-other-plugin": true,
   });
-  expect(config).toEqual({ workit: true, "some-other-plugin": true });
+  expect(config).toEqual({ [OLD_NAME]: true, workit: true, "some-other-plugin": true });
   expect(changed).toEqual(["enabled_plugins"]);
 });
 
@@ -269,22 +258,19 @@ test("mergeCursorEnabledPlugins is idempotent once canonical", () => {
   expect(once.config).toEqual({ workit: true });
 });
 
-test("mergeCursorPluginDirs removes the exact legacy directory and appends the canonical one", () => {
-  const { config, changed } = mergeCursorPluginDirs(
-    [OTHER_PLUGIN_DIR, LEGACY_PLUGIN_DIR],
-    CURSOR_PLUGIN_DIR,
-  );
+test("mergeCursorPluginDirs keeps other directories and appends the canonical one", () => {
+  const { config, changed } = mergeCursorPluginDirs([OTHER_PLUGIN_DIR], CURSOR_PLUGIN_DIR);
   expect(config).toEqual([OTHER_PLUGIN_DIR, CURSOR_PLUGIN_DIR]);
   expect(changed).toEqual(["plugin_dirs"]);
 });
 
 test("mergeOpenCodeConfig does not mutate the caller's nested skills object", () => {
-  const skills = { paths: ["/x/share/workflow-toolkit/skills", "/other"], enabled: ["wk-commit"] };
+  const skills = { paths: ["/x/share/workit/skills", "/other"], enabled: ["wk-commit"] };
   const input = { plugin: ["other-plugin"], skills };
   const before = JSON.stringify(skills);
   mergeOpenCodeConfig(input, PIN);
   expect(JSON.stringify(skills)).toBe(before);
-  expect(skills.paths).toEqual(["/x/share/workflow-toolkit/skills", "/other"]);
+  expect(skills.paths).toEqual(["/x/share/workit/skills", "/other"]);
 });
 
 test("mergeCursorPluginDirs normalizes trailing slashes so variants do not duplicate", () => {
@@ -312,11 +298,11 @@ test("mergeCursorSettings is idempotent", () => {
   expect(twice.changed).toEqual([]);
 });
 
-test("mergeCursorMcp replaces the legacy MCP name with one portable server", () => {
+test("mergeCursorMcp replaces a stale workit server with one portable server", () => {
   const portable = { command: "node", args: ["/pkg/dist/mcp-server.js", "${workspaceFolder}"] };
   const input = {
     mcpServers: {
-      "workflow-toolkit": { command: "bash", args: ["-lc", "legacy"] },
+      workit: { command: "bash", args: ["-lc", "stale"] },
       "other-server": { command: "python", args: ["-m", "http.server"] },
     },
   };

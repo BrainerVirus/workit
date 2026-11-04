@@ -204,7 +204,7 @@ Workers are used: 149 recorded, all `stopped`, nearly all OpenCode reviewers and
 
 ### 3.7 Other over-engineering
 
-- **`cutover`** (1,789 LOC + `legacy-ownership` + `config-conversion`) migrates legacy `workflow-toolkit` installs. AGENTS.md says the legacy config "was cleaned up", so this can be retired behind a one-release deprecation.
+- **`cutover`** (1,789 LOC + `legacy-ownership` + `config-conversion`) migrates installs made under the old product name. AGENTS.md says the legacy config "was cleaned up", so this can be retired behind a one-release deprecation.
 - **`doctor`** at 1,775 LOC includes npm-registry staleness logic for an OpenCode cache path. It is valuable, but it should live in the CLI package, not in core (core is bundled into every hook and plugin).
 - **The parity rule itself** ("a new feature adds the core module, both host adapters, and the CLI surface plus parity tests") multiplies the cost of every feature by about 4. It is the root cause of the test volume and of the dead OpenCode tools.
 
@@ -278,7 +278,7 @@ I observed no flakes in two full runs. Tests that depend on the environment (Nod
 6. **Candidates stored in full on every change.** They make up 88% of the largest record (2.27 MB of 2.57 MB) and are re-serialized and fsynced on every mutation and copied into `recovery/` each time.
 7. **Writer lease steal and stale leases.** `task-engine.ts:1984-1991` lets any lead overwrite another task's lease. Leases of dead sessions persist and block close and pause.
 8. **YouTrack date off by one day** when the process TZ is east of UTC (`youtrack.ts:205-221`, reproduced). The configured timezone does not drive the epoch.
-9. **A personal identity hard-coded in published packages.** `defaultMention: "<named colleague>"` (`youtrack.ts:157`, `init.ts:287`, `workit-cli/src/logic.ts:518-520`), the default timezone `America/Santiago` in 6 places, and `DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"` in `scripts/sync-runtime.sh`.
+9. **A personal identity hard-coded in published packages.** `defaultMention: "<named colleague>"` (`youtrack.ts:157`, `init.ts:287`, `workit-cli/src/logic.ts:518-520`), the default timezone `America/Santiago` in 6 places, and a personal checkout path as `DEV_DEFAULT` in `scripts/sync-runtime.sh`.
 10. **`state.recover` is advertised in every host's schema but cannot succeed anywhere.** The agent wastes turns on it.
 11. **Duplicate tasks.** Two active tasks share an identical objective. `task.start` has no idempotency key; similarity is only checked in prose ("similar titles alone never merge tasks").
 12. **Double zod parse** on every operation (`task-contract.ts:1119-1120`) and full-record validation on every read.

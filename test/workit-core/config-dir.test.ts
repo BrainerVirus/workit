@@ -1,14 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,15 +11,10 @@ import { configPath } from "@/packages/workit-core/src/core/youtrack-tools";
 const savedEnv = new Map<string, string | undefined>();
 
 const isolate = (env: Record<string, string>, fn: () => void) => {
-  for (const key of [
-    "WORKFLOW_TOOLKIT_CONFIG",
-    "WORKFLOW_TOOLKIT_CONFIG_DIR",
-    "XDG_CONFIG_HOME",
-    "HOME",
-  ]) {
+  for (const key of ["WORKIT_CONFIG", "WORKIT_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"]) {
     savedEnv.set(key, process.env[key]);
   }
-  for (const key of ["WORKFLOW_TOOLKIT_CONFIG", "WORKFLOW_TOOLKIT_CONFIG_DIR", "XDG_CONFIG_HOME"]) {
+  for (const key of ["WORKIT_CONFIG", "WORKIT_CONFIG_DIR", "XDG_CONFIG_HOME"]) {
     delete process.env[key];
   }
   for (const [key, value] of Object.entries(env)) process.env[key] = value;
@@ -59,144 +46,94 @@ test("CA-01: default configDir ends with .config/workit when no env overrides", 
   }
 });
 
-test("CA-02: legacy config copied once, second call never re-copies", () => {
+// The old product name, spelled in parts so the no-legacy-name guard stays clean.
+const OLD_NAME = ["workflow", "toolkit"].join("-");
+const OLD_ENV = (suffix: string) => ["WORKFLOW", "TOOLKIT", suffix].join("_");
+
+test("CA-02: a config dir under the old product name is never read or copied", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca02-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
+  const legacy = path.join(xdg, OLD_NAME);
   mkdirSync(legacy, { recursive: true });
   writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
-  writeFileSync(path.join(legacy, "youtrack.json"), '{"baseUrl":"https://yt.example.test"}');
-  writeFileSync(path.join(legacy, "gitlab.token"), "tok-123\n");
-  isolate({ XDG_CONFIG_HOME: xdg }, () => {
-    const dir = configDir();
-    expect(dir).toBe(path.join(xdg, "workit"));
-    expect(readFileSync(path.join(dir, "config.json"), "utf8")).toBe('{"locale":"es-CL"}');
-    expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe(
-      '{"baseUrl":"https://yt.example.test"}',
-    );
-    expect(readFileSync(path.join(dir, "gitlab.token"), "utf8")).toBe("tok-123\n");
-
-    writeFileSync(path.join(dir, "config.json"), "MODIFIED");
-    expect(configDir()).toBe(dir);
-    expect(readFileSync(path.join(dir, "config.json"), "utf8")).toBe("MODIFIED");
-    expect(readFileSync(path.join(legacy, "config.json"), "utf8")).toBe('{"locale":"es-CL"}');
-  });
-  rmSync(xdg, { recursive: true, force: true });
+  try {
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      expect(configDir()).toBe(path.join(xdg, "workit"));
+      expect(existsSync(path.join(xdg, "workit"))).toBe(false);
+    });
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
 });
 
-test("CA-03: existing workit dir leaves the legacy dir untouched", () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca03-"));
-  const workit = path.join(xdg, "workit");
-  mkdirSync(workit, { recursive: true });
-  writeFileSync(path.join(workit, "config.json"), "NEW");
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "marker.txt"), "legacy-only");
-  isolate({ XDG_CONFIG_HOME: xdg }, () => {
-    expect(configDir()).toBe(workit);
-    expect(readFileSync(path.join(workit, "config.json"), "utf8")).toBe("NEW");
-    expect(readFileSync(path.join(legacy, "marker.txt"), "utf8")).toBe("legacy-only");
-    expect(existsSync(path.join(workit, "marker.txt"))).toBe(false);
-  });
-  rmSync(xdg, { recursive: true, force: true });
-});
-
-test("CA-04: WORKFLOW_TOOLKIT_CONFIG override skips migration entirely", () => {
+test("CA-04: WORKIT_CONFIG and WORKIT_CONFIG_DIR redirect the config dir, in that order", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca04-"));
-  const override = path.join(xdg, "override");
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "config.json"), "LEGACY");
-  isolate({ WORKFLOW_TOOLKIT_CONFIG: override }, () => {
-    expect(configDir()).toBe(override);
-    expect(existsSync(override)).toBe(false);
-    expect(existsSync(path.join(xdg, "workit"))).toBe(false);
-    expect(readFileSync(path.join(legacy, "config.json"), "utf8")).toBe("LEGACY");
-  });
-  rmSync(xdg, { recursive: true, force: true });
+  const config = path.join(xdg, "config");
+  const configDirOverride = path.join(xdg, "config-dir");
+  try {
+    isolate({ WORKIT_CONFIG_DIR: configDirOverride }, () => {
+      expect(configDir()).toBe(configDirOverride);
+      expect(configPath()).toBe(path.join(configDirOverride, "youtrack.json"));
+    });
+    isolate({ WORKIT_CONFIG: config, WORKIT_CONFIG_DIR: configDirOverride }, () => {
+      expect(configDir()).toBe(config);
+    });
+    expect(existsSync(config)).toBe(false);
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
 });
 
-test("CA-05: derived paths resolve under the migrated workit dir", () => {
+test("CA-05: the old product-name env vars are ignored (no alias)", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca05-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "youtrack.json"), '{"baseUrl":"https://yt.example.test"}');
-  isolate({ XDG_CONFIG_HOME: xdg }, () => {
-    const expectedYt = path.join(xdg, "workit", "youtrack.json");
-    expect(configPath()).toBe(expectedYt);
-    expect(existsSync(expectedYt)).toBe(true);
+  try {
+    isolate(
+      {
+        XDG_CONFIG_HOME: xdg,
+        [OLD_ENV("CONFIG")]: path.join(xdg, "old-config"),
+        [OLD_ENV("CONFIG_DIR")]: path.join(xdg, "old-config-dir"),
+      },
+      () => {
+        expect(configDir()).toBe(path.join(xdg, "workit"));
+      },
+    );
+  } finally {
+    delete process.env[OLD_ENV("CONFIG")];
+    delete process.env[OLD_ENV("CONFIG_DIR")];
+    rmSync(xdg, { recursive: true, force: true });
+  }
+});
+
+// The shell installers source scripts/lib/config-dir.sh; it must resolve the
+// same dir as the TS resolver for each env shape.
+const CONFIG_DIR_SH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../packages/workit-core/scripts/lib/config-dir.sh",
+);
+const bashConfigDir = (env: Record<string, string>) => {
+  const childEnv: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: "/nonexistent" };
+  Object.assign(childEnv, env);
+  const out = spawnSync("bash", ["-c", `. "${CONFIG_DIR_SH}"; resolve_config_dir`], {
+    env: childEnv,
+    encoding: "utf8",
   });
-  rmSync(xdg, { recursive: true, force: true });
-});
+  expect(out.status, out.stderr).toBe(0);
+  return out.stdout.trim();
+};
 
-test("CA-07: copy failure is non-fatal and retried (cache set only post-loop)", () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca07-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
-  writeFileSync(path.join(legacy, "youtrack.json"), '{"baseUrl":"https://yt.example.test"}');
-  const blocked = path.join(legacy, "blocked.token");
-  writeFileSync(blocked, "tok-456\n");
-  // EACCES only fires for non-root on unix; elsewhere the failure can't be
-  // simulated, so the ordering asserts below still run (fallback per review).
-  const canSimulate =
-    process.platform !== "win32" &&
-    (typeof process.getuid !== "function" || process.getuid() !== 0);
-  if (canSimulate) chmodSync(blocked, 0o000);
-  try {
-    isolate({ XDG_CONFIG_HOME: xdg }, () => {
-      const dir = configDir();
-      expect(dir).toBe(path.join(xdg, "workit"));
-      expect(readFileSync(path.join(dir, "config.json"), "utf8")).toBe('{"locale":"es-CL"}');
-      expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe(
-        '{"baseUrl":"https://yt.example.test"}',
-      );
-      if (canSimulate) {
-        expect(existsSync(path.join(dir, "blocked.token"))).toBe(false); // mid-loop failure
-        chmodSync(blocked, 0o644);
-        expect(configDir()).toBe(dir); // cache not set pre-loop -> migration retries
-        expect(readFileSync(path.join(dir, "blocked.token"), "utf8")).toBe("tok-456\n");
-      }
-      expect(configDir()).toBe(dir); // now cached, post-loop
-    });
-  } finally {
-    rmSync(xdg, { recursive: true, force: true });
-  }
-});
-
-test("CA-06: TS configDir migration matches the legacy bash resolve_config_dir behavior", () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca06-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(
-    path.join(legacy, "vcs.json"),
-    JSON.stringify({ provider: "github", defaultTargetBranch: "main" }),
+test("CA-06: bash resolve_config_dir matches the TS resolver and ignores the old env names", () => {
+  expect(bashConfigDir({ XDG_CONFIG_HOME: "/x/xdg" })).toBe("/x/xdg/workit");
+  expect(bashConfigDir({ WORKIT_CONFIG_DIR: "/x/dir", XDG_CONFIG_HOME: "/x/xdg" })).toBe("/x/dir");
+  expect(bashConfigDir({ WORKIT_CONFIG: "/x/cfg", WORKIT_CONFIG_DIR: "/x/dir" })).toBe("/x/cfg");
+  expect(bashConfigDir({ [OLD_ENV("CONFIG_DIR")]: "/x/old", [OLD_ENV("CONFIG")]: "/x/old2" })).toBe(
+    "/nonexistent/.config/workit",
   );
-  try {
-    isolate({ XDG_CONFIG_HOME: xdg }, () => {
-      const dir = configDir();
-      expect(dir).toBe(path.join(xdg, "workit"));
-      expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("github");
-
-      writeFileSync(path.join(dir, "vcs.json"), JSON.stringify({ provider: "gitlab" }), "utf8");
-      expect(configDir()).toBe(dir); // workit already exists -> no re-migration
-      expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("gitlab"); // legacy untouched as source
-      expect(readFileSync(path.join(legacy, "vcs.json"), "utf8")).toContain("github");
-
-      const load = vcsConfig("load");
-      expect(load.ok).toBe(true);
-      expect(load.provider).toBe("gitlab");
-      expect(load.tokenPath).toBeUndefined();
-    });
-  } finally {
-    rmSync(xdg, { recursive: true, force: true });
-  }
 });
 
 test("RL-01: vcsConfig load reports a path-specific malformed diagnostic (no generic fallback)", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl01-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "vcs.json"), "{ broken !!");
+  const workit = path.join(xdg, "workit");
+  mkdirSync(workit, { recursive: true });
+  writeFileSync(path.join(workit, "vcs.json"), "{ broken !!");
   try {
     isolate({ XDG_CONFIG_HOME: xdg }, () => {
       const cfg = vcsConfig("load");
@@ -231,54 +168,6 @@ test("RL-01: readVcsConfig classifies missing, valid, and malformed with exact p
       expect(malformed.path).toBe(path.join(xdg, "workit", "vcs.json"));
       expect(malformed.error).toContain(path.join(xdg, "workit", "vcs.json"));
     });
-  } finally {
-    rmSync(xdg, { recursive: true, force: true });
-  }
-});
-
-// RL-07: migration cache contract. The memo is process-local (a fresh process
-// re-runs the migration check); the on-disk workit dir is the cross-process
-// authority — an existing dir is never re-copied over, an absent dir migrates.
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const spawnMigrate = (env: Record<string, string>) => {
-  const script = `import { configDir } from "./packages/workit-core/src/core/config.ts"; import { readFileSync } from "node:fs"; import path from "node:path"; const dir = configDir(); console.log(JSON.stringify({ dir, cfg: readFileSync(path.join(dir, "config.json"), "utf8") }));`;
-  const childEnv = { ...process.env, ...env };
-  delete childEnv.WORKFLOW_TOOLKIT_CONFIG;
-  delete childEnv.WORKFLOW_TOOLKIT_CONFIG_DIR;
-  return spawnSync("bun", ["-e", script], { cwd: REPO_ROOT, env: childEnv, encoding: "utf8" });
-};
-
-test("RL-07: a fresh process never re-copies over an existing migrated workit dir", () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl07-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
-  try {
-    isolate({ XDG_CONFIG_HOME: xdg }, () => {
-      expect(configDir()).toBe(path.join(xdg, "workit"));
-      writeFileSync(path.join(xdg, "workit", "config.json"), "MODIFIED");
-      const child = spawnMigrate({ XDG_CONFIG_HOME: xdg });
-      expect(child.status, child.stderr).toBe(0);
-      const out = JSON.parse(child.stdout);
-      expect(out.dir).toBe(path.join(xdg, "workit"));
-      expect(out.cfg).toBe("MODIFIED");
-    });
-  } finally {
-    rmSync(xdg, { recursive: true, force: true });
-  }
-});
-
-test("RL-07: migration runs again in a fresh process when the workit dir is absent (memo is per-process)", () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl07b-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
-  try {
-    const child = spawnMigrate({ XDG_CONFIG_HOME: xdg });
-    expect(child.status, child.stderr).toBe(0);
-    const out = JSON.parse(child.stdout);
-    expect(out.cfg).toBe('{"locale":"es-CL"}');
-    expect(existsSync(path.join(xdg, "workit", "config.json"))).toBe(true);
   } finally {
     rmSync(xdg, { recursive: true, force: true });
   }

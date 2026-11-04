@@ -818,7 +818,7 @@ test.skipIf(process.platform === "win32")(
       );
     const env = {
       ...S,
-      WORKFLOW_TOOLKIT_CONFIG: config,
+      WORKIT_CONFIG: config,
       PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
     };
     workspaces({ trailers: false });

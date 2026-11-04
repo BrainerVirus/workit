@@ -57,9 +57,9 @@ afterAll(() => {
 const KEYS = [
   "PATH",
   "HOME",
-  "WORKFLOW_TOOLKIT_STATE",
-  "WORKFLOW_TOOLKIT_CONFIG_DIR",
-  "WORKFLOW_TOOLKIT_CONFIG",
+  "WORKIT_STATE_DIR",
+  "WORKIT_CONFIG_DIR",
+  "WORKIT_CONFIG",
   "CLAUDE_CONFIG_DIR",
   "CLAUDE_PROJECT_DIR",
   "CODEX_HOME",
@@ -88,14 +88,14 @@ beforeEach(() => {
     "CLAUDE_PROJECT_DIR",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_CONTENT",
-    "WORKFLOW_TOOLKIT_CONFIG",
+    "WORKIT_CONFIG",
   ])
     delete process.env[key];
   Object.assign(process.env, {
     PATH: `${bin}${path.delimiter}${saved.PATH ?? ""}`,
     HOME: home,
-    WORKFLOW_TOOLKIT_STATE: state,
-    WORKFLOW_TOOLKIT_CONFIG_DIR: config,
+    WORKIT_STATE_DIR: state,
+    WORKIT_CONFIG_DIR: config,
     CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
     CODEX_HOME: path.join(home, ".codex"),
     XDG_CONFIG_HOME: path.join(home, ".config"),
@@ -137,7 +137,7 @@ const workspace = (repo: Case["repo"] = {}): { cwd: string } => {
     // Grants are read only from the account home's config dir (never an
     // override), so swap that home in-process and point the config there too.
     grantsSwap = useConfigHome("workit-behavior-grants-");
-    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = grantsSwap.configDir;
+    process.env.WORKIT_CONFIG_DIR = grantsSwap.configDir;
     writeFileSync(
       path.join(grantsSwap.configDir, "config.json"),
       JSON.stringify({

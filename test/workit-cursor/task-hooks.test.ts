@@ -553,8 +553,8 @@ test("given a protected main, beforeShellExecution branch creation is denied wit
       branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
     }),
   );
-  const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_TOOLKIT_CONFIG_DIR: configDir };
-  delete env.WORKFLOW_TOOLKIT_CONFIG;
+  const env: NodeJS.ProcessEnv = { ...process.env, WORKIT_CONFIG_DIR: configDir };
+  delete env.WORKIT_CONFIG;
   delete env.WORKFLOW_PROFILE;
   delete env.WORKFLOW_WORKSPACE_NAME;
   const run = (command: string) =>

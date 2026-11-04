@@ -236,13 +236,13 @@ const withWorkspace = <T>(root: string, workspace: Record<string, unknown>, fn: 
     path.join(dir, "workspaces.json"),
     JSON.stringify({ workspaces: [{ name: "w", glob: `${root}/**`, ...workspace }] }),
   );
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+  const saved = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = dir;
   try {
     return fn();
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    if (saved === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = saved;
   }
 };
 

@@ -28,7 +28,7 @@ export function applyWorkspaceBranchPolicy(opts: {
   env?: NodeJS.ProcessEnv;
 }): Record<string, any> {
   const { workspace_root, env = process.env } = opts;
-  const dir = path.join(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
+  const dir = path.join(env.WORKIT_CONFIG ?? configDir());
   const {
     status,
     path: wsPath,

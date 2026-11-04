@@ -30,7 +30,7 @@ const env = {
   PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
   HOME: home,
   CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
-  WORKFLOW_TOOLKIT_STATE: temp("wk-claude-heavy-state-"),
+  WORKIT_STATE_DIR: temp("wk-claude-heavy-state-"),
 };
 
 const repo = () => {
@@ -87,9 +87,9 @@ test("Given the launcher's repo checks-config paths, Then they are the checks-co
 
 test("Given a machine pattern, When its command runs, Then the launcher sends it to the gate", () => {
   const root = repo();
-  mkdirSync(env.WORKFLOW_TOOLKIT_STATE, { recursive: true });
+  mkdirSync(env.WORKIT_STATE_DIR, { recursive: true });
   writeFileSync(
-    path.join(env.WORKFLOW_TOOLKIT_STATE, "heavy-commands.json"),
+    path.join(env.WORKIT_STATE_DIR, "heavy-commands.json"),
     JSON.stringify({ patterns: ["./ci/integration.sh"] }),
   );
   const run = runHook(PLUGIN_DIR, payload(root, "./ci/integration.sh --all"), env);
@@ -104,13 +104,13 @@ for (const [label, plugin] of [
 ] as const)
   test(`[${label}] Given a repo with no task store, When an edit or shell write targets the issued registry, Then the launcher sends it to the guard and it is denied`, () => {
     const root = repo();
-    const issued = path.join(env.WORKFLOW_TOOLKIT_STATE, "issued", "lead", "abc");
+    const issued = path.join(env.WORKIT_STATE_DIR, "issued", "lead", "abc");
     const decision = (run: { json: unknown }) =>
       (run.json as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput
         ?.permissionDecision;
     for (const command of [
       `echo forged > ${issued}`,
-      `cd ${env.WORKFLOW_TOOLKIT_STATE} && touch issued-tokens/z`,
+      `cd ${env.WORKIT_STATE_DIR} && touch issued-tokens/z`,
     ])
       expect(decision(runHook(plugin(), payload(root, command), env)), command).toBe("deny");
     const edit = {

@@ -94,7 +94,7 @@ test("Given the judges, Then they run read-only and record verdicts as their own
 
 test("Given a plugin install path, Then the owning Codex home comes from it, else from CODEX_HOME or ~/.codex", () => {
   const home = path.join(scratch, "h", ".codex");
-  const install = path.join(home, "plugins", "cache", "workflow-toolkit", "workit", "8.5.2");
+  const install = path.join(home, "plugins", "cache", "workit", "workit", "8.5.2");
   expect(codexHomeOfInstall(install)).toBe(home);
   expect(codexHomeOfInstall(packageRoot)).toBeNull();
   expect(codexHomeFor(install, { CODEX_HOME: "/elsewhere" })).toBe(home);
@@ -142,7 +142,7 @@ test("Given a Codex home, When the agents install, Then missing files are writte
 /** A plugin install at `<home>/.codex/plugins/cache/<mkt>/workit/<version>` with the bundled agents. */
 const pluginAt = (name: string, version: string) => {
   const codexHome = path.join(scratch, name, ".codex");
-  const root = path.join(codexHome, "plugins", "cache", "workflow-toolkit", "workit", version);
+  const root = path.join(codexHome, "plugins", "cache", "workit", "workit", version);
   cpSync(path.join(packageRoot, "agents"), path.join(root, "agents"), { recursive: true });
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
   return { codexHome, root, agents: path.join(codexHome, "agents") };
@@ -165,14 +165,7 @@ test("Given a dangling symlink where an agent goes, When the agents install, The
 
 test("Given two plugin versions, When each installs the agents, Then the older never overwrites the newer's copy", () => {
   const newer = pluginAt("versions", "9.1.0");
-  const older = path.join(
-    newer.codexHome,
-    "plugins",
-    "cache",
-    "workflow-toolkit",
-    "workit",
-    "9.0.0",
-  );
+  const older = path.join(newer.codexHome, "plugins", "cache", "workit", "workit", "9.0.0");
   cpSync(path.join(packageRoot, "agents"), path.join(older, "agents"), { recursive: true });
   writeFileSync(path.join(older, "package.json"), JSON.stringify({ version: "9.0.0" }));
   installCodexAgents(newer.root, newer.codexHome);
@@ -268,8 +261,8 @@ test("G a Codex role model in the workspace config, W the launcher syncs the age
       string,
       unknown
     >;
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  const saved = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configDir;
   try {
     syncCodexAgents(root, cwd);
     expect(read("verifier").model).toBeUndefined();
@@ -290,8 +283,8 @@ test("G a Codex role model in the workspace config, W the launcher syncs the age
     );
     syncCodexAgents(root, cwd);
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    if (saved === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = saved;
   }
   expect(read("verifier").model).toBe("gpt-5.1-codex-mini");
   expect(read("verifier").model_reasoning_effort).toBe("low");

@@ -27,14 +27,14 @@ let previousState: string | undefined;
 let sleeper: ChildProcess;
 
 beforeEach(() => {
-  previousState = process.env.WORKFLOW_TOOLKIT_STATE;
+  previousState = process.env.WORKIT_STATE_DIR;
   state = mkdtempSync(path.join(os.tmpdir(), "wk-live-state-"));
   roots.push(state);
-  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  process.env.WORKIT_STATE_DIR = state;
 });
 afterEach(() => {
-  if (previousState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = previousState;
+  if (previousState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = previousState;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 afterAll(() => sleeper?.kill());
@@ -272,13 +272,13 @@ test("G a workspace with liveSessionGuard false, W another session writes in an 
     path.join(config, "workspaces.json"),
     JSON.stringify({ workspaces: [{ name: "repo", glob: `${root}/**`, liveSessionGuard: false }] }),
   );
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = config;
+  const previous = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = config;
   try {
     expect(decisionOf(claudeShell(root, "git commit -m x"))).not.toBe("deny");
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
   }
 });
 
@@ -291,7 +291,7 @@ test("G the marker store is unreadable or a marker is corrupt, W a session write
   // The state dir is a file: nothing can be read or written there.
   const blocked = path.join(state, "as-file");
   writeFileSync(blocked, "x");
-  process.env.WORKFLOW_TOOLKIT_STATE = blocked;
+  process.env.WORKIT_STATE_DIR = blocked;
   expect(decisionOf(claudeShell(repo(), "git commit -m x"))).not.toBe("deny");
 });
 

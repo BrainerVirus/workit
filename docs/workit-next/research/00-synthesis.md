@@ -49,7 +49,7 @@ Root causes (architecture audit, reproduced):
 | Committed per-host skill copies (70 files), hand-written Cursor `/wk-*` commands | Generate at build time; commands have already drifted | audit-skills |
 | Tests: byte-copy checks, skill-list repeats, 42 long-prose `toContain`, the 485-line phase-9 doc-ID mapping, parity tests against deleted shell scripts | ~15-20% of the suite | audit-tests |
 | Docs: ~11 of 15 spec/plan folders superseded; `.superpowers/` (old SDD run state), `.workit-evaluation/`, `docs/manifest.json` | Archive or delete | audit-tests §docs |
-| Local setup clutter: `~/.workit` (runtime 1.2.1), missing `sync-runtime.sh` in the zsh `opencode()` wrapper, stale `~/.local/share/workflow-toolkit` clone, unregistered Codex plugin copy, Cursor registering workit twice, *.bak files | Clean up with a `workit doctor --fix` pass | setup-audit |
+| Local setup clutter: `~/.workit` (runtime 1.2.1), missing `sync-runtime.sh` in the zsh `opencode()` wrapper, stale share clone under the old product name, unregistered Codex plugin copy, Cursor registering workit twice, *.bak files | Clean up with a `workit doctor --fix` pass | setup-audit |
 
 ### 1.4 What the inspirations already solved
 

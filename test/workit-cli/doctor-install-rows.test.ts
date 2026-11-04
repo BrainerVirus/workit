@@ -40,7 +40,7 @@ const bin = process.platform === "win32" ? "" : minimalBin();
 
 const installedEnv = (home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: bin };
-  for (const key of ["WORKFLOW_TOOLKIT_DEV", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"])
+  for (const key of ["WORKIT_DEV", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"])
     delete env[key];
   return { ...env, ...extra };
 };
@@ -77,7 +77,7 @@ test.skipIf(process.platform === "win32")(
     expect(row(report, "utility").status).toBe("pass");
     expect(row(report, "utility").detail).not.toContain("flock");
     const devWarns = report.checks.filter(
-      (c) => c.status === "warn" && /dev checkout|WORKFLOW_TOOLKIT_DEV|flock/.test(c.detail),
+      (c) => c.status === "warn" && /dev checkout|WORKIT_DEV|flock/.test(c.detail),
     );
     expect(devWarns).toEqual([]);
     // info counts as passed, never as a warning
@@ -126,14 +126,14 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-// An exported-but-empty WORKFLOW_TOOLKIT_DEV is no dev checkout for every row:
+// An exported-but-empty WORKIT_DEV is no dev checkout for every row:
 // the runtime row used to read "" as a checkout that needs bun and FAIL, while
 // the utility and versions rows read it as none.
 test.skipIf(process.platform === "win32")(
-  "Given WORKFLOW_TOOLKIT_DEV is empty and no bun is installed, When doctor runs, Then runtime agrees there is no dev checkout",
+  "Given WORKIT_DEV is empty and no bun is installed, When doctor runs, Then runtime agrees there is no dev checkout",
   () => {
     // No bun: not on the minimal PATH, not in the temp HOME, no BUN override.
-    const doctor = doctorFor("empty-dev", "opencode", { WORKFLOW_TOOLKIT_DEV: "", BUN: "" });
+    const doctor = doctorFor("empty-dev", "opencode", { WORKIT_DEV: "", BUN: "" });
     const report = doctor.run();
     expect(row(report, "runtime").status).not.toBe("fail");
     expect(row(report, "runtime").detail).toContain("no bun");

@@ -28,7 +28,7 @@ const writeJson = (p: string, value: unknown) =>
 // (test/artifacts/manifests.test.ts) never trips on the fixture bytes.
 const LEGACY_PIN = ["@brainervirus/workit-cursor@", "0.8.0"].join("");
 const installEnv = (home: string, stub: string, extra: Record<string, string> = {}) =>
-  envWithSupportedNode({ HOME: home, WORKFLOW_TOOLKIT_DEV: stub, ...extra });
+  envWithSupportedNode({ HOME: home, WORKIT_DEV: stub, ...extra });
 function makeStaleCursorHome(home: string, pluginDir: string) {
   mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
   mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
@@ -325,6 +325,12 @@ function copyCoreSources(stub: string) {
     path.join(repoRoot, "packages/workit-cli/src/update-settings.ts"),
     path.join(stub, "packages/workit-cli/src/update-settings.ts"),
   );
+  // host-install.ts reads the Codex marketplace names from the upgrade module.
+  mkdirSync(path.join(stub, "packages/workit-cli/src/upgrade"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-cli/src/upgrade/codex-marketplace.ts"),
+    path.join(stub, "packages/workit-cli/src/upgrade/codex-marketplace.ts"),
+  );
   // doctor's cli_installs row lists installs through the owned-install modules (#648).
   cpSync(
     path.join(repoRoot, "packages/workit-cli/src/install"),
@@ -428,7 +434,7 @@ function makeNestedStub() {
   copyCoreSources(stub);
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
-    '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',
+    '#!/usr/bin/env bash\nprintf "%s" "$WORKIT_DEV" > "$HOME/sync-dev"\n',
     { mode: 0o755 },
   );
   writeFileSync(path.join(stub, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
@@ -440,7 +446,7 @@ function makeNestedStub() {
       plugins: [
         "@dietrichgebert/ponytail",
         "@brainervirus/workit-opencode",
-        `workflow-toolkit-opencode@git+file://${stub}`,
+        `file://${stub}/packages/workit-opencode`,
       ],
     }),
   );
@@ -473,9 +479,9 @@ function makeCursorStub() {
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
     `#!/usr/bin/env bash
-printf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"
+printf "%s" "$WORKIT_DEV" > "$HOME/sync-dev"
 mkdir -p "$HOME/.cursor/plugins/local/workit"
-rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor/plugins/local/workit/"
+rsync -a --delete "$WORKIT_DEV/packages/workit-cursor/" "$HOME/.cursor/plugins/local/workit/"
 `,
     { mode: 0o755 },
   );
@@ -639,7 +645,7 @@ test(
         path.join(share, "packages/workit-opencode/src/plugin.ts"),
         "export default {};\n",
       );
-      const { WORKFLOW_TOOLKIT_DEV: _ignored, ...env } = process.env;
+      const { WORKIT_DEV: _ignored, ...env } = process.env;
       const installed = spawnSync(
         "bash",
         ["packages/workit-core/scripts/install-opencode-plugin.sh"],
@@ -682,67 +688,6 @@ test(
 );
 
 test(
-  "install-cursor-plugin.sh removes the legacy dir after success, carrying user rules forward",
-  () => {
-    if (!bashAvailable()) return;
-    const fixture = makeCursorStub();
-    const legacyDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit");
-    const otherDir = path.join(
-      fixture.home,
-      ".cursor",
-      "plugins",
-      "local",
-      "workflow-toolkit-extra",
-    );
-    try {
-      mkdirSync(path.join(legacyDir, "rules"), { recursive: true });
-      writeFileSync(
-        path.join(legacyDir, "rules", "user-managed.mdc"),
-        "---\nalwaysApply: true\n---\n# User rule\n",
-      );
-      mkdirSync(path.join(legacyDir, "skills"), { recursive: true });
-      writeFileSync(path.join(legacyDir, "skills", "stale-skill.md"), "# legacy\n");
-      mkdirSync(otherDir, { recursive: true });
-      writeFileSync(path.join(otherDir, "marker"), "unrelated\n");
-
-      const installed = spawnSync(
-        "bash",
-        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
-        {
-          cwd: fixture.stub,
-          env: installEnv(fixture.home, fixture.stub),
-          encoding: "utf8",
-        },
-      );
-      expect(installed.status, installed.stderr).toBe(0);
-
-      // The legacy identity is removed only after a successful install; the
-      // user-compiled rule is carried forward, unrelated sibling dirs survive.
-      expect(existsSync(legacyDir)).toBe(false);
-      expect(
-        readFileSync(
-          path.join(
-            fixture.home,
-            ".cursor",
-            "plugins",
-            "local",
-            "workit",
-            "rules",
-            "user-managed.mdc",
-          ),
-          "utf8",
-        ),
-      ).toContain("# User rule");
-      expect(readFileSync(path.join(otherDir, "marker"), "utf8")).toBe("unrelated\n");
-    } finally {
-      rmSync(fixture.stub, { recursive: true, force: true });
-      rmSync(fixture.home, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
   "install-cursor-plugin.sh resolves the local checkout root and never falls back to GitHub",
   () => {
     if (!bashAvailable()) return;
@@ -755,7 +700,7 @@ test(
       const share = path.join(fixture.home, ".local/share/workit");
       mkdirSync(path.join(share, ".git"), { recursive: true });
       spawnSync("git", ["init", "-q"], { cwd: share });
-      spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
+      spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workit.git"], {
         cwd: share,
       });
 
@@ -882,7 +827,13 @@ function syncEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKFLOW_") || k === "XDG_RUNTIME_DIR" || k === "XDG_CONFIG_HOME") continue;
+    if (
+      k.startsWith("WORKFLOW_") ||
+      k.startsWith("WORKIT_") ||
+      k === "XDG_RUNTIME_DIR" ||
+      k === "XDG_CONFIG_HOME"
+    )
+      continue;
     env[k] = v;
   }
   env.HOME = home;
@@ -1003,7 +954,7 @@ test(
     if (!bashAvailable() || !flockAvailable()) return;
     const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
     const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-    const lock = path.join(runtimeDir, "workflow-toolkit-sync.lock");
+    const lock = path.join(runtimeDir, "workit-sync.lock");
     const marker = path.join(runtimeDir, "lock-held");
     const holder = spawn(
       "bash",
@@ -1035,7 +986,7 @@ test(
     try {
       mkdirSync(path.join(share, ".git"), { recursive: true });
       spawnSync("git", ["init", "-q"], { cwd: share });
-      spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
+      spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workit.git"], {
         cwd: share,
       });
       const r = runSyncScript(syncEnv(home, runtimeDir));
@@ -1061,7 +1012,7 @@ test(
     try {
       const bun = writeOfflineBunWrapper(binDir);
       const env = syncEnv(home, runtimeDir, {
-        WORKFLOW_TOOLKIT_DEV: dev,
+        WORKIT_DEV: dev,
         BUN: bun,
         BUN_LOG: log,
         REAL_BUN: process.execPath,
@@ -1119,9 +1070,7 @@ test(
       );
       writeFileSync(path.join(dev, "packages/workit-cursor/scripts/build.ts"), "// build entry\n");
 
-      const r = runSyncScript(
-        syncEnv(home, runtimeDir, { WORKFLOW_TOOLKIT_DEV: dev, PATH: binDir }),
-      );
+      const r = runSyncScript(syncEnv(home, runtimeDir, { WORKIT_DEV: dev, PATH: binDir }));
       expect(r.status, r.stderr).not.toBe(0);
       expect(r.stderr).toContain("Bun");
     } finally {
@@ -1154,7 +1103,7 @@ test(
       const configured = path.join(binDir, "missing-bun");
       const r = runSyncScript(
         syncEnv(home, runtimeDir, {
-          WORKFLOW_TOOLKIT_DEV: dev,
+          WORKIT_DEV: dev,
           BUN: configured,
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         }),
@@ -1199,7 +1148,7 @@ test(
     try {
       const empty = runSyncScript(
         syncEnv(emptyHome, runtimeDir, {
-          WORKFLOW_TOOLKIT_DEV: dev,
+          WORKIT_DEV: dev,
           BUN: "",
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         }),
@@ -1209,7 +1158,7 @@ test(
       rmSync(pathBunUsed, { force: true });
       const broken = runSyncScript(
         syncEnv(brokenHome, runtimeDir, {
-          WORKFLOW_TOOLKIT_DEV: dev,
+          WORKIT_DEV: dev,
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         }),
       );

@@ -118,7 +118,7 @@ const STACK_WORDS = new Set(["stack", "stacktrace", "trace"]);
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const resolveStateDir = (): string => {
-  const override = process.env.WORKFLOW_TOOLKIT_STATE;
+  const override = process.env.WORKIT_STATE_DIR;
   if (override) return override;
   const home = os.homedir();
   if (process.env.XDG_STATE_HOME) return path.join(process.env.XDG_STATE_HOME, "workit");

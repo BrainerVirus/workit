@@ -13,8 +13,7 @@ const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 export const youTrackConfigPath = (): string =>
   process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(configDir(), "youtrack.json");
 
-/** Config path for read-only context.  Unlike youTrackConfigPath(), this never
- * calls configDir() and therefore cannot trigger legacy-config migration. */
+/** Config path for read-only context: the resolved config dir, no side effects. */
 export const youTrackReadOnlyConfigPath = (): string =>
   process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(resolveConfigDir(), "youtrack.json");
 

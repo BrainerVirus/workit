@@ -12,7 +12,7 @@ import { LEAD, addOrder, cleanup, standingRepo } from "./standing-fixture";
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const out = mkdtempSync(path.join(tmpdir(), "wk-standing-hosts-"));
 const state = mkdtempSync(path.join(tmpdir(), "wk-standing-hosts-state-"));
-const env = { WORKFLOW_TOOLKIT_STATE: state, HOME: state, CLAUDE_CONFIG_DIR: state };
+const env = { WORKIT_STATE_DIR: state, HOME: state, CLAUDE_CONFIG_DIR: state };
 
 const build = (entry: string, dir: string, split: boolean): string => {
   const built = spawnSync(

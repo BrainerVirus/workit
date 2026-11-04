@@ -28,14 +28,14 @@ import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
 let configHome: ConfigHome;
 let state: string;
-const previousState = process.env.WORKFLOW_TOOLKIT_STATE;
+const previousState = process.env.WORKIT_STATE_DIR;
 beforeAll(() => {
   configHome = useConfigHome("wk-model-fallback-");
 });
 afterAll(() => {
   configHome.restore();
-  if (previousState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = previousState;
+  if (previousState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = previousState;
 });
 
 const dirs: string[] = [];
@@ -46,7 +46,7 @@ const temp = (prefix: string): string => {
 };
 const freshState = (): void => {
   state = temp("wk-model-fallback-state-");
-  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  process.env.WORKIT_STATE_DIR = state;
 };
 freshState();
 afterEach(() => {

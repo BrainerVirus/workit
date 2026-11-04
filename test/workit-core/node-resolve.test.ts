@@ -76,15 +76,15 @@ test("Given $WORKIT_NODE, a recorded node and installs, When resolving, Then env
   expect(scanInstalledNodes(scanEnv).length).toBe(5);
 
   const recorded = install(path.join(scratchDir("wk-rec-"), "node"));
-  mkdirSync(env.WORKFLOW_TOOLKIT_STATE, { recursive: true });
+  mkdirSync(env.WORKIT_STATE_DIR, { recursive: true });
   writeFileSync(
-    path.join(env.WORKFLOW_TOOLKIT_STATE, "node.json"),
+    path.join(env.WORKIT_STATE_DIR, "node.json"),
     JSON.stringify({ path: recorded, version: "24.1.0" }),
   );
   expect(resolveHookNode({ env: scanEnv, floor: HOOK_NODE_FLOOR })?.source).toBe("recorded");
   // A record below the floor, or whose file is gone, is ignored.
   writeFileSync(
-    path.join(env.WORKFLOW_TOOLKIT_STATE, "node.json"),
+    path.join(env.WORKIT_STATE_DIR, "node.json"),
     JSON.stringify({ path: recorded, version: "22.1.0" }),
   );
   expect(resolveHookNode({ env: scanEnv, floor: HOOK_NODE_FLOOR })?.source).toBe("scan");
@@ -114,7 +114,7 @@ test("Given Windows layouts, When scanning, Then node.exe under fnm, nvm-windows
 test("Given setup runs on a Node >= 24, When it records, Then node.json holds its path; a bun or old Node records nothing", () => {
   const env = bareNodeEnv();
   const file = recordHookNode(env, { execPath: "/opt/node-24/bin/node", version: "24.22.1" });
-  expect(file).toBe(path.join(env.WORKFLOW_TOOLKIT_STATE, "node.json"));
+  expect(file).toBe(path.join(env.WORKIT_STATE_DIR, "node.json"));
   expect(JSON.parse(readFileSync(file as string, "utf8"))).toMatchObject({
     path: "/opt/node-24/bin/node",
     version: "24.22.1",
@@ -253,9 +253,9 @@ test.skipIf(process.platform === "win32")(
     expect(run({ WORKIT_NODE: explicit }).stdout).toContain("SHIM-RAN-ON 30.0.0");
     const recorded = install(path.join(scratchDir("wk-recorded-"), "node"));
     writeFileSync(recorded, reportNode("26.0.0"));
-    mkdirSync(env.WORKFLOW_TOOLKIT_STATE, { recursive: true });
+    mkdirSync(env.WORKIT_STATE_DIR, { recursive: true });
     writeFileSync(
-      path.join(env.WORKFLOW_TOOLKIT_STATE, "node.json"),
+      path.join(env.WORKIT_STATE_DIR, "node.json"),
       JSON.stringify({ path: recorded, version: "26.0.0" }),
     );
     expect(run().stdout).toContain("SHIM-RAN-ON 26.0.0");
@@ -268,7 +268,7 @@ test.skipIf(process.platform === "win32")(
     const real = scratchDir("wk-real-state-");
     const link = path.join(scratchDir("wk-link-"), "state");
     symlinkSync(real, link);
-    const file = recordHookNode(bareNodeEnv({ WORKFLOW_TOOLKIT_STATE: link }), {
+    const file = recordHookNode(bareNodeEnv({ WORKIT_STATE_DIR: link }), {
       execPath: "/opt/node/bin/node",
       version: "24.1.0",
     });

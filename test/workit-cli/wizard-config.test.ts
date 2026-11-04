@@ -107,7 +107,7 @@ const snapshot = (dir: string): string[] => {
 test("wizard defaults contain no organization-specific data (WZ-04/CA-14)", () => {
   const dir = tempDir();
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     const draft = createInitialDraft(config());
     expect(draft.values.baseUrl).toBe("");
     const serialized = JSON.stringify(draft.values);
@@ -116,7 +116,7 @@ test("wizard defaults contain no organization-specific data (WZ-04/CA-14)", () =
     expect(serialized).not.toContain("timezone");
     expect(serialized).not.toContain("youtrack.cloud");
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -799,7 +799,7 @@ test("none/github skip the youtrack screen in both directions; non-custom preset
 test("choosing None drops a typed base URL: preview carries zero youtrack mutations", () => {
   const dir = tempDir();
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     let d = createInitialDraft(config());
     d = reducer(d, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
     d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
@@ -814,7 +814,7 @@ test("choosing None drops a typed base URL: preview carries zero youtrack mutati
     d = reducer(d, { type: "set", field: "issueTracker", value: "youtrack" });
     expect(d.values.baseUrl).toBe("");
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -822,7 +822,7 @@ test("choosing None drops a typed base URL: preview carries zero youtrack mutati
 test("github mode: new workspaces default provider github with issues linked", () => {
   const dir = tempDir();
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     let d = createInitialDraft(config());
     d = reducer(d, { type: "set", field: "issueTracker", value: "github" });
     // the tracker wins over an unrelated gitlab VCS selection (writeWorkspaces
@@ -845,7 +845,7 @@ test("github mode: new workspaces default provider github with issues linked", (
     expect(ws.entries[0].issues).toEqual({ provider: "github", link_on_pr: true });
     expect(ws.entries[0].vcs?.provider).toBe("github");
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -853,7 +853,7 @@ test("github mode: new workspaces default provider github with issues linked", (
 test("changing the global tracker preserves independent workspace issue settings", () => {
   const dir = tempDir();
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     let d = createInitialDraft(config());
     d = reducer(d, { type: "set", field: "issueTracker", value: "github" });
     d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
@@ -876,7 +876,7 @@ test("changing the global tracker preserves independent workspace issue settings
     // no-op guard: an unchanged tracker dispatch returns the same draft object
     expect(reducer(d, { type: "set", field: "issueTracker", value: "github" })).toBe(d);
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -884,7 +884,7 @@ test("changing the global tracker preserves independent workspace issue settings
 test("youtrack mode stays byte-identical: preview equals the legacy literal input", () => {
   const dir = tempDir();
   try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    process.env.WORKIT_CONFIG = dir;
     let d = createInitialDraft(config());
     d = reducer(d, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
     d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
@@ -903,7 +903,7 @@ test("youtrack mode stays byte-identical: preview equals the legacy literal inpu
       JSON.stringify(fromWizard.mutations.filter((m) => m.type === "update-workspaces")),
     ).not.toContain('"issues"');
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -1126,8 +1126,8 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   symlinkSync(bunBin, path.join(bin, "bun"));
   writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
-  const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  const prevDev = process.env.WORKFLOW_TOOLKIT_DEV;
+  const prevCfg = process.env.WORKIT_CONFIG;
+  const prevDev = process.env.WORKIT_DEV;
   // Isolated HOME: the OpenCode registration must never touch the real
   // ~/.config/opencode on any machine (dev pointer keeps adapter resolution
   // inside the repository, so the install succeeds hermetically).
@@ -1145,8 +1145,8 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   let exitCode: number | undefined;
   try {
     process.env.WORKFLOW_WORKSPACE_ROOT = root;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-    process.env.WORKFLOW_TOOLKIT_DEV = REPO_ROOT;
+    process.env.WORKIT_CONFIG = configDir;
+    process.env.WORKIT_DEV = REPO_ROOT;
     process.env.HOME = home;
     process.env.PATH = bin;
     writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config()), "utf8");
@@ -1214,10 +1214,10 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     cleanupLiveInkInstances();
     if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
-    if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
-    if (prevDev === undefined) delete process.env.WORKFLOW_TOOLKIT_DEV;
-    else process.env.WORKFLOW_TOOLKIT_DEV = prevDev;
+    if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevCfg;
+    if (prevDev === undefined) delete process.env.WORKIT_DEV;
+    else process.env.WORKIT_DEV = prevDev;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevPath === undefined) delete process.env.PATH;

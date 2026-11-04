@@ -10,6 +10,11 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  CODEX_MARKETPLACE,
+  CODEX_MARKETPLACE_URL,
+  codexMigrationSteps,
+} from "../upgrade/codex-marketplace";
 
 export type HostId = "opencode" | "cursor" | "codex" | "pi" | "claude-code";
 
@@ -91,8 +96,6 @@ export type HostInstallOptions = {
   mode?: "install" | "upgrade";
 };
 
-const MARKETPLACE = "https://github.com/BrainerVirus/workit.git";
-const CODEX_MARKETPLACE_NAME = "workflow-toolkit";
 /** Claude Code reads the git-hosted marketplace at the repo root
  * (`.claude-plugin/marketplace.json`, name `workit`); its entry installs the
  * published npm package. */
@@ -457,6 +460,21 @@ export function planHostInstall(
   if (options.alreadyInstalled && options.mode !== "upgrade") return [];
   const upgrading = options.mode === "upgrade";
   if (host === "codex") {
+    const codexHome = env.CODEX_HOME ?? path.join(home, ".codex");
+    // An install under the old marketplace name is re-registered as
+    // workit@workit, by setup and upgrade alike.
+    const migration = codexMigrationSteps(path.join(codexHome, "config.toml"));
+    if (migration) {
+      const base = hostCommand("codex", [], { home, cwd, env });
+      return [
+        nodePrerequisite({ home, cwd, env }),
+        ...migration.map((step) => ({
+          ...base,
+          args: [...base.args, ...step.args],
+          purpose: step.purpose,
+        })),
+      ];
+    }
     if (!upgrading && isCodexWorkitInstalled(home, env)) return [];
     const base = hostCommand("codex", [], { home, cwd, env });
     return [
@@ -473,16 +491,16 @@ export function planHostInstall(
           "plugin",
           "marketplace",
           upgrading ? "upgrade" : "add",
-          ...(upgrading ? [CODEX_MARKETPLACE_NAME] : [MARKETPLACE]),
+          ...(upgrading ? [CODEX_MARKETPLACE] : [CODEX_MARKETPLACE_URL]),
         ],
         purpose: upgrading
           ? "Refresh the Workit Codex marketplace"
           : "Register the Workit Codex marketplace",
-        ...(upgrading ? {} : { skipWhenOutputIncludes: CODEX_MARKETPLACE_NAME }),
+        ...(upgrading ? {} : { skipWhenOutputIncludes: CODEX_MARKETPLACE }),
       },
       {
         ...base,
-        args: [...base.args, "plugin", "add", `workit@${CODEX_MARKETPLACE_NAME}`],
+        args: [...base.args, "plugin", "add", `workit@${CODEX_MARKETPLACE}`],
         purpose: upgrading ? "Refresh the Workit Codex plugin" : "Install the Workit Codex plugin",
       },
     ];

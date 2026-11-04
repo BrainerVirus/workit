@@ -34,8 +34,8 @@ const setup = () => {
     ...process.env,
     WORKIT_SESSION_ID: "s-mine",
     WORKFLOW_WORKSPACE_ROOT: "",
-    WORKFLOW_TOOLKIT_STATE: state,
-    WORKFLOW_TOOLKIT_CONFIG_DIR: config,
+    WORKIT_STATE_DIR: state,
+    WORKIT_CONFIG_DIR: config,
     WORKIT_LEASE: "",
   };
   for (const key of ["CLAUDECODE", "OPENCODE", "OPENCODE_SESSION_ID"]) delete env[key];

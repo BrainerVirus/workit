@@ -42,7 +42,7 @@ export const bareNodeEnv = (extra: Record<string, string> = {}): Record<string, 
     ...env,
     HOME: home,
     USERPROFILE: home,
-    WORKFLOW_TOOLKIT_STATE: path.join(home, "state"),
+    WORKIT_STATE_DIR: path.join(home, "state"),
     ...extra,
   };
 };

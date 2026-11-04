@@ -302,7 +302,7 @@ export function isolatedEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKFLOW_") || k.startsWith("XDG_")) continue;
+    if (k.startsWith("WORKFLOW_") || k.startsWith("WORKIT_") || k.startsWith("XDG_")) continue;
     if (STRIPPED_ENV_VARS.has(k)) continue;
     env[k] = v;
   }

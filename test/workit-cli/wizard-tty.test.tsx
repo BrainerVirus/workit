@@ -67,7 +67,7 @@ async function withNonGitRoot(run: () => void | Promise<void>): Promise<void> {
   } finally {
     if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
   }
 }
 
@@ -85,13 +85,13 @@ const seedConfig: ToolkitConfig = {
 function withSeedConfig(config: ToolkitConfig): () => void {
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
   const configPath = path.join(base, "config");
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  const previous = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configPath;
   mkdirSync(configPath, { recursive: true });
   writeFileSync(path.join(configPath, "config.json"), JSON.stringify(config, null, 2), "utf8");
   return () => {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
     rmSync(base, { recursive: true, force: true });
   };
 }
@@ -623,8 +623,8 @@ test("Back preserves the draft values entered so far", async () => {
 test("Escape cancels without writing anything", async () => {
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
   const configPath = path.join(base, "config");
-  const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  const prevCfg = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configPath;
   try {
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
@@ -635,8 +635,8 @@ test("Escape cancels without writing anything", async () => {
     expect(existsSync(configPath)).toBe(false);
     tty.unmount();
   } finally {
-    if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+    if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevCfg;
     rmSync(base, { recursive: true, force: true });
   }
 });
@@ -1035,9 +1035,9 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
   await withNonGitRoot(async () => {
     const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
     const configPath = path.join(base, "config");
-    const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevCfg = process.env.WORKIT_CONFIG;
     const prevYt = process.env.WORKFLOW_YT_BASE_URL;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+    process.env.WORKIT_CONFIG = configPath;
     process.env.WORKFLOW_YT_BASE_URL = "https://env.example.com";
     try {
       mkdirSync(configPath, { recursive: true });
@@ -1082,8 +1082,8 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       expect(exitCalls).toEqual([true]);
       tty.unmount();
     } finally {
-      if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+      if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prevCfg;
       if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
       else process.env.WORKFLOW_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
@@ -1095,9 +1095,9 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
   await withNonGitRoot(async () => {
     const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
     const configPath = path.join(base, "config");
-    const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevCfg = process.env.WORKIT_CONFIG;
     const prevYt = process.env.WORKFLOW_YT_BASE_URL;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+    process.env.WORKIT_CONFIG = configPath;
     delete process.env.WORKFLOW_YT_BASE_URL;
     try {
       mkdirSync(configPath, { recursive: true });
@@ -1123,8 +1123,8 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
       expect(exitCalls).toEqual([]);
       tty.unmount();
     } finally {
-      if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+      if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prevCfg;
       if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
       else process.env.WORKFLOW_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
