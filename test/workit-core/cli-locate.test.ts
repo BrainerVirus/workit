@@ -11,8 +11,12 @@ import {
 import { ownedCliHome, runWorkit, script } from "@/test/shared/helpers/owned-cli";
 
 const setup = ownedCliHome;
+// These simulate a POSIX PATH (":" delimiter, `sh`) on real temp paths; on
+// Windows a drive letter ("C:\\") breaks that simulation. The win32 rule has
+// its own test below with a fake filesystem.
+const posixOnly = test.skipIf(process.platform === "win32");
 
-test("an owned install wins over a stale workit earlier on PATH", () => {
+posixOnly("an owned install wins over a stale workit earlier on PATH", () => {
   const { env } = setup(true);
   expect(runWorkit(env)).toBe("stale");
   const located = useOwnedWorkitCli({ env, platform: "linux" });
@@ -22,7 +26,7 @@ test("an owned install wins over a stale workit earlier on PATH", () => {
   expect(runWorkit(env)).toBe("owned");
 });
 
-test("the owned bin dir moves to the front instead of appearing twice", () => {
+posixOnly("the owned bin dir moves to the front instead of appearing twice", () => {
   const { env } = setup(true);
   const bin = path.dirname(ownedLauncherPath(env, "linux"));
   env.PATH = `/usr/bin:${bin}:/bin`;
@@ -87,7 +91,7 @@ test("a bundled CLI is used only when there is no owned install", () => {
   expect(locateWorkitCli({ env, platform: "linux", bundled }).source).toBe("owned-launcher");
 });
 
-test("old setups without an owned install keep today's PATH resolution", () => {
+posixOnly("old setups without an owned install keep today's PATH resolution", () => {
   const { env } = setup(false);
   const before = { ...env };
   const located = useOwnedWorkitCli({ env, platform: "linux" });
