@@ -266,6 +266,9 @@ const STUB_CORE_FILES = [
   "node-resolve.mjs",
   // the one location resolver (state, config and data dirs) behind all of them.
   "workit-paths.mjs",
+  // doctor's youtrack row: the workspace tracker and the ytrack status.
+  "vcs-config.ts",
+  "youtrack-ytrack.ts",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
 const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
@@ -306,6 +309,13 @@ function copyCoreSources(stub: string) {
     path.join(repoRoot, "packages/workit-core/src/git/rev.ts"),
     path.join(stub, "packages/workit-core/src/git/rev.ts"),
   );
+  // youtrack-ytrack.ts finds ytrack on PATH through forge/exec.ts.
+  mkdirSync(path.join(stub, "packages/workit-core/src/forge"), { recursive: true });
+  for (const name of ["exec.ts", "redact.ts", "types.ts"])
+    cpSync(
+      path.join(repoRoot, "packages/workit-core/src/forge", name),
+      path.join(stub, "packages/workit-core/src/forge", name),
+    );
   // doctor's grant_endpoint row reads the grant/endpoint mismatch (#431).
   cpSync(
     path.join(repoRoot, "packages/workit-core/src/autonomy.ts"),
