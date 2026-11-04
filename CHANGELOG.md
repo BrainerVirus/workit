@@ -393,6 +393,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes fails), and the ephemeral-cache path table lives in one core helper
   instead of per-callsite substring lists; the branch-setup stash upgrade is
   one core helper with one-line adapter callers.
+- `workit youtrack show <ISSUE> [--json]` and `workit youtrack create --project --summary` (create needs `WORKIT_YT_WRITE=1`, now also required for note, time and meeting).
 
 ### Changed
 
@@ -488,6 +489,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's session handle; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
 - Fewer needless re-verifications: a clean rebase carries its verdict (judged by replaying the verified head onto the new base), bookkeeping files (changelogs, `write:*`-generated files, version-only manifest changes) never make a verdict stale, and a test-only push keeps a unit verdict at any size. A verifier that lost its token is told how to recover (#312).
 - Fanout briefs: light ad-hoc commands run as `workit check --name <n> -- <cmd>` (no lease) and `--heavy` is only for full suites, packaging, builds and knip; hard slices get 180 tool calls and every brief says by which call to run the full gates; briefs print `WORKER: <slice>`; the skills VERIFY line reads the worktree's checks and ignores `docs/agents`.
+- YouTrack goes through your `ytrack` CLI when it is installed (token in the OS keyring): Workit never reads its own token file then, passes no token, and a logged-out ytrack fails with `ytrack auth login` instead of falling back. The token-file client stays one release as the fallback when ytrack is missing (#263).
 
 ### Fixed
 
