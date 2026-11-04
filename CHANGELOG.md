@@ -876,6 +876,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Windows CI flake: the RL-03 pr-create target test now gets the 60s per-test budget already used by sibling heavy-git tests (Windows git cold starts).
 - Branch setup no longer strands the pre-checkout stash when base/checkout resolution fails — the working tree is restored exactly as it was.
 - Verdicts recorded in a throwaway clone are found by the real checkout's merge gate (#311): each verdict is mirrored per remote in the state dir and imported, hash-checked, when a gate runs.
+- `workit upgrade` can no longer leave you without a working `workit`: a hand-written wrapper that runs an old install it removes is backed up and replaced by the owned launcher link, the npx cache copy is never treated as an install, and when your shell's `workit` still misses the new install it fails with the exact fix instead of reporting "Verified".
+- `workit doctor` no longer counts host plugin launchers (Claude Code, Codex, Cursor, OpenCode, Pi `bin/workit`) as stray CLI installs, and names the obsolete `timezone` key in config.json with its removal fix.
 
 ## [0.6.0] - 2026-08-10
 
