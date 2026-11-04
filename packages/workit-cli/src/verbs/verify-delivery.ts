@@ -19,6 +19,7 @@ import {
 } from "@brainervirus/workit-core/src/forge/verify";
 import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
 import { closeDeliveredTasks } from "@brainervirus/workit-core/src/core/task-delivery";
+import { cleanupAfterMerge, type MergeCleanup } from "@brainervirus/workit-core/src/core/cleanup";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, positiveInt, usage } from "./forge-common";
@@ -42,6 +43,15 @@ const render = (report: DeliveryReport, notes = true): string[] => [
     (entry) =>
       `  ${entry.ok ? "ok" : "x "} ${entry.kind}: expected ${entry.expected ?? "-"}, observed ${entry.observed ?? "(none)"}${notes && entry.note ? ` — ${entry.note}` : ""}`,
   ),
+];
+
+const cleanupLines = (cleanup: MergeCleanup, branch: string | null): string[] => [
+  ...(cleanup.worktreeRemoved ? [`removed worktree ${cleanup.worktreeRemoved}`] : []),
+  ...(cleanup.branchDeleted ? [`deleted local ${branch}`] : []),
+  ...cleanup.notes,
+  ...(cleanup.recorded && "error" in cleanup.recorded
+    ? [`ledger: cleanup not recorded (${cleanup.recorded.error})`]
+    : []),
 ];
 
 export async function run(argv: string[], io: Io): Promise<number> {
@@ -90,7 +100,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
       () =>
         verifyReleased(
           io.cwd,
-          { tag: flags.values.tag ?? null, pkg: flags.values.package ?? null, sha, actor },
+          {
+            tag: flags.values.tag ?? null,
+            pkg: flags.values.package ?? null,
+            sha,
+            actor,
+          },
           forgeDeps.npm,
         ),
       (r) => (r.ok ? "done" : "failed"),
@@ -123,7 +138,20 @@ export async function run(argv: string[], io: Io): Promise<number> {
       // The next task read repairs it from the ledger.
     }
   }
-  if (report.delivered) return emit(io, ok(report), render);
+  // #653: a delivered merge leaves the branch's clean Workit worktree and local branch behind no longer.
+  const localCleanup: MergeCleanup | null =
+    report.delivered && expect === "merged" && report.branch && report.sha
+      ? cleanupAfterMerge(io.cwd, report.branch, report.sha, {
+          actor,
+          trigger: "verify-delivery merge",
+          env: io.env,
+        })
+      : null;
+  if (report.delivered)
+    return emit(io, ok(localCleanup ? { ...report, localCleanup } : report), (data) => [
+      ...render(data),
+      ...(localCleanup ? cleanupLines(localCleanup, data.branch) : []),
+    ]);
   const failed = report.observations.filter((entry) => !entry.ok);
   // Human mode: the observations too; the reason is the error line's, once.
   if (!io.json) for (const line of render(report, false)) io.stdout(`${line}\n`);
