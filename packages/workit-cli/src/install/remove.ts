@@ -14,7 +14,7 @@ export type OwnedRemoval =
   | { kind: "remove"; part: OwnedPart; path: string; detail: string }
   | { kind: "foreign"; path: string; detail: string };
 
-export const FOREIGN_LAUNCHER_NOTE =
+const FOREIGN_LAUNCHER_NOTE =
   "foreign file at the launcher path, left untouched; move it to let the launcher link there";
 
 const lstatOr = (file: string) => {
@@ -55,7 +55,7 @@ const launcherPlace = (linked: string, root: string): "none" | "owned" | "foreig
  * Why `root` must never be removed from: a filesystem root, the home dir or
  * an ancestor of it (WORKIT_INSTALL_ROOT is taken verbatim); null when safe.
  */
-export const unsafeRoot = (root: string, env: NodeJS.ProcessEnv): string | null => {
+const unsafeRoot = (root: string, env: NodeJS.ProcessEnv): string | null => {
   const resolved = path.resolve(root);
   if (path.parse(resolved).root === resolved) return "a filesystem root";
   const home = env.HOME || env.USERPROFILE;

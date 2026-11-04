@@ -402,7 +402,7 @@ export const listInstalls = (
 };
 
 /** A script that runs no workit install: not a copy to migrate, never removed (W2.33). */
-export const isForeignFile = (install: FoundInstall): boolean =>
+const isForeignFile = (install: FoundInstall): boolean =>
   install.kind === "wrapper" && install.runs === null && install.version === null;
 
 /** One `which -a` style line per install. */
