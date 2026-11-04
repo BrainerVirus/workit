@@ -187,6 +187,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - After `workit pr merge` (and `verify-delivery merge`) deletes the remote branch, Workit removes that branch's clean worktree under the managed root and the local branch, records them in the ledger, and keeps and names a dirty one (#653).
 - `workit gc --worktrees` lists clean worktrees whose work is on the trunk (merged, or squash-merged by patch-id), including legacy `<repo>-wt` siblings and temp scratch worktrees, with sizes and the reason each kept one stays; `--apply` removes them and prunes their branches (#653).
 - `workit doctor` lists every workit install on PATH and in version-manager prefixes (`cli_installs`) and fails when one shadows the owned launcher.
+- Grant and workspace output highlights what changed: bold names, `old -> new` in green for a raise and yellow for a lower, unchanged rows dimmed; plain under NO_COLOR or without a TTY (#656).
+- `workit workspace set --global <key>=<value>` edits the top-level `models` key in workspaces.json.
 - `workit pr merge` refuses a PR authored by someone other than your forge login (case-insensitive; bots included) with `others_pr`; `--others-pr --reason "<why>"` merges it anyway, records the reason in the ledger and never deletes that author's branch (#442). When Workit cannot read the PR author or your login it refuses with `identity_unknown` and points to `gh auth login` / `glab auth login`.
 - Usage-limit fallback (#655): a role in `models.roles` (or `models.lead`) can list models in fallback order, e.g. `"verifier": { "opencode": ["anthropic/claude-sonnet-5", "openai/gpt-5.5"] }`. When a provider hits its usage limit (Anthropic 5-hour or weekly, OpenAI usage limit or quota, a long 429), Workit marks it exhausted until the reset named in the error (else `models.limitWindow`, default `5h`), runs the next listed model, and returns to the first after the reset. A worker that died on a limit is flagged for one re-dispatch.
 - `workit models show` lists exhausted providers with their reset times and prints the lead switch notice; on OpenCode the lead also gets that notice in context once.
@@ -392,6 +394,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The CLI installs into a Workit-owned directory (`~/.local/share/workit/versions/<v>` with an atomic `current` link and a `~/.local/bin/workit` launcher that finds a Node 24+ itself; Windows: `%LOCALAPPDATA%\workit\install`), so it no longer depends on which Node version manager prefix a shell sees (#648).
+- Grant and workspace confirmations are a single-key y/N at the user's terminal instead of typing the workspace name; `workspace rm a b c` confirms once; the overlap warning names only entries whose globs really intersect (#656).
 - `workit doctor` runs each installed hook launcher once in the current repo and fails `hook_node` when one cannot answer; `hook_runs` warns when a host's newest hook run failed. See docs/guides/troubleshooting.md.
 - Claude Code accepts full model ids such as `claude-sonnet-5-5` in `models.roles` (applied as their alias) and warns about a value it cannot apply instead of silently dropping it.
 - Claude Code: Workit strips worktree `isolation` on every Agent spawn, not only `workit:implementer`.
