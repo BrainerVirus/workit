@@ -133,9 +133,10 @@ test("Given N parallel heavy checks each with --timeout 4 and one slot, When the
   expect(runs.filter((run) => run.code === 0).length).toBeGreaterThanOrEqual(1);
   for (const run of runs.filter((item) => item.code !== 0)) {
     expect(run.code, run.stderr).toBe(4);
-    // Either the lease wait used up the timeout, or the queue time left the command too little of it.
+    // The lease wait used up the timeout, left less than the run floor (the
+    // command never starts), or left the command too little of it.
     expect(run.stderr).toMatch(
-      /the check's whole --timeout|of it queued for the heavy-check lease/u,
+      /the check's whole --timeout|a run needs; the check did not run|of it queued for the heavy-check lease/u,
     );
   }
 }, 60_000);
