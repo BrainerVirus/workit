@@ -33,6 +33,30 @@ afterEach(() => {
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
+/**
+ * A path in one comparable form: git prints `/` and long names, while a
+ * Windows temp dir may come back as an 8.3 short name with `\`.
+ */
+const key = (target: string): string => {
+  let real: string;
+  try {
+    real = realpathSync.native(target);
+  } catch {
+    real = path.resolve(target);
+  }
+  const slashed = real.replaceAll("\\", "/");
+  return process.platform === "win32" ? slashed.toLowerCase() : slashed;
+};
+
+/** `value` with every absolute path string in `key` form. */
+const norm = (value: unknown): unknown => {
+  if (typeof value === "string") return path.isAbsolute(value) ? key(value) : value;
+  if (Array.isArray(value)) return value.map(norm);
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([name, inner]) => [name, norm(inner)]));
+  return value;
+};
+
 const actor = { host: "cli", session: "s-1", agentId: null };
 
 const commit = (cwd: string, file: string, text: string, message: string) => {
@@ -44,7 +68,7 @@ const commit = (cwd: string, file: string, text: string, message: string) => {
 
 /** A repo at <root>/proj on main; the managed root under <root>/cache. */
 const setup = () => {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-sweep-")));
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "wk-sweep-")));
   roots.push(root);
   const main = path.join(root, "proj");
   execFileSync("git", ["init", "-q", "-b", "main", main]);
@@ -132,14 +156,14 @@ test("after a merge, a dirty managed worktree is kept with its branch; the note 
 
   expect(out.worktreeRemoved).toBeNull();
   expect(out.branchDeleted).toBe(false);
-  expect(out.dirty).toEqual({ path: dir, paths: ["wip.txt"] });
+  expect(norm(out.dirty)).toEqual({ path: key(dir), paths: ["wip.txt"] });
   expect(out.notes).toHaveLength(1);
   expect(out.notes[0]).toContain("wip.txt");
   expect(out.notes[0]).toContain(RELEASE_COMMAND);
   expect(existsSync(path.join(dir, "wip.txt"))).toBe(true);
   expect(branchExists(env.main, "feature/x")).toBe(true);
   expect(out.recorded).toBeNull();
-  expect(cleanupRows(env.main)).toHaveLength(0);
+  expect(norm(cleanupRows(env.main))).toHaveLength(0);
 });
 
 test("after a merge, a worktree outside the managed root that Workit did not make is kept", () => {
@@ -182,9 +206,9 @@ test("gc --worktrees lists a merged legacy <repo>-wt worktree with its size; --a
   git(env.main, "merge", "-q", "--ff-only", "feature/a");
 
   const dry = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
-  expect(dry.removable).toHaveLength(1);
-  expect(dry.removable[0]).toMatchObject({
-    path: dir,
+  expect(norm(dry.removable)).toHaveLength(1);
+  expect(norm(dry.removable[0])).toMatchObject({
+    path: key(dir),
     branch: "feature/a",
     place: "legacy",
     reason: "merged",
@@ -192,18 +216,18 @@ test("gc --worktrees lists a merged legacy <repo>-wt worktree with its size; --a
   expect(dry.removable[0]?.bytes).toBeGreaterThan(0);
   expect(dry.removed).toEqual([]);
   expect(existsSync(dir)).toBe(true);
-  expect(cleanupRows(env.main)).toHaveLength(0);
+  expect(norm(cleanupRows(env.main))).toHaveLength(0);
 
   const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
-  expect(applied.removed).toEqual([dir]);
-  expect(applied.deletedBranches).toEqual(["feature/a"]);
-  expect(applied.removedDirs).toEqual([legacy]);
+  expect(norm(applied.removed)).toEqual([key(dir)]);
+  expect(norm(applied.deletedBranches)).toEqual(["feature/a"]);
+  expect(norm(applied.removedDirs)).toEqual([key(legacy)]);
   expect(existsSync(legacy)).toBe(false);
   expect(branchExists(env.main, "feature/a")).toBe(false);
-  expect(cleanupRows(env.main)).toEqual([
+  expect(norm(cleanupRows(env.main))).toEqual([
     expect.objectContaining({
       trigger: "gc --worktrees",
-      worktrees: [dir],
+      worktrees: [key(dir)],
       branches: ["feature/a"],
     }),
   ]);
@@ -216,9 +240,9 @@ test("gc --worktrees never lists an unmerged worktree for removal, and --apply k
 
   const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
 
-  expect(applied.removable).toEqual([]);
-  expect(applied.kept).toEqual([
-    { path: dir, branch: "feature/b", reason: expect.stringMatching(/^not merged into/) },
+  expect(norm(applied.removable)).toEqual([]);
+  expect(norm(applied.kept)).toEqual([
+    { path: key(dir), branch: "feature/b", reason: expect.stringMatching(/^not merged into/) },
   ]);
   expect(existsSync(dir)).toBe(true);
   expect(branchExists(env.main, "feature/b")).toBe(true);
@@ -232,7 +256,9 @@ test("gc --worktrees counts a squash-merged branch as merged", () => {
 
   const dry = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
 
-  expect(dry.removable).toEqual([expect.objectContaining({ path: dir, reason: "squash-merged" })]);
+  expect(norm(dry.removable)).toEqual([
+    expect.objectContaining({ path: key(dir), reason: "squash-merged" }),
+  ]);
 });
 
 test("gc --worktrees keeps a merged worktree with uncommitted changes and names them", () => {
@@ -242,9 +268,9 @@ test("gc --worktrees keeps a merged worktree with uncommitted changes and names 
 
   const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
 
-  expect(applied.removable).toEqual([]);
-  expect(applied.kept).toEqual([
-    { path: dir, branch: "feature/d", reason: "1 uncommitted change (wip.txt)" },
+  expect(norm(applied.removable)).toEqual([]);
+  expect(norm(applied.kept)).toEqual([
+    { path: key(dir), branch: "feature/d", reason: "1 uncommitted change (wip.txt)" },
   ]);
   expect(existsSync(path.join(dir, "wip.txt"))).toBe(true);
 });
@@ -255,9 +281,9 @@ test("gc --worktrees never removes the checkout it runs in, nor the main checkou
 
   const applied = sweepWorktrees(dir, { apply: true, actor, env: env.env });
 
-  expect(applied.removable).toEqual([]);
-  expect(applied.kept).toEqual([
-    { path: dir, branch: "feature/here", reason: "the checkout this command runs in" },
+  expect(norm(applied.removable)).toEqual([]);
+  expect(norm(applied.kept)).toEqual([
+    { path: key(dir), branch: "feature/here", reason: "the checkout this command runs in" },
   ]);
   expect(existsSync(dir)).toBe(true);
   expect(existsSync(env.main)).toBe(true);
@@ -272,16 +298,21 @@ test("gc --worktrees sweeps a merged scratch worktree in the temp dir and a stal
   rmSync(stale, { recursive: true, force: true });
 
   const dry = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
-  expect(dry.removable).toHaveLength(2);
-  expect(dry.removable).toEqual(
+  expect(norm(dry.removable)).toHaveLength(2);
+  expect(norm(dry.removable)).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ path: scratch, branch: null, place: "scratch", reason: "merged" }),
-      expect.objectContaining({ path: stale, reason: "stale" }),
+      expect.objectContaining({
+        path: key(scratch),
+        branch: null,
+        place: "scratch",
+        reason: "merged",
+      }),
+      expect.objectContaining({ path: key(stale), reason: "stale" }),
     ]),
   );
 
   const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
-  expect(applied.removed).toEqual([scratch, stale]);
+  expect(norm(applied.removed)).toEqual([key(scratch), key(stale)]);
   expect(git(env.main, "worktree", "list", "--porcelain")).not.toContain(scratch);
   expect(git(env.main, "worktree", "list", "--porcelain")).not.toContain(stale);
 });
@@ -302,7 +333,7 @@ test("gc --worktrees prunes a merged local branch whose remote is gone, and keep
   const dry = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
   expect(dry.trunk).toBe("refs/remotes/origin/main");
   expect(dry.goneBranches).toEqual([{ name: "feature/g", reason: "merged" }]);
-  expect(dry.kept).toEqual([
+  expect(norm(dry.kept)).toEqual([
     {
       path: "",
       branch: "feature/h",
@@ -311,7 +342,7 @@ test("gc --worktrees prunes a merged local branch whose remote is gone, and keep
   ]);
 
   const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
-  expect(applied.deletedBranches).toEqual(["feature/g"]);
+  expect(norm(applied.deletedBranches)).toEqual(["feature/g"]);
   expect(branchExists(env.main, "feature/g")).toBe(false);
   expect(branchExists(env.main, "feature/h")).toBe(true);
 });
@@ -338,10 +369,10 @@ test("gc --worktrees keeps a fresh worktree with no commits of its own (a live w
 
   const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
 
-  expect(applied.removable).toEqual([]);
-  expect(applied.kept).toEqual([
+  expect(norm(applied.removable)).toEqual([]);
+  expect(norm(applied.kept)).toEqual([
     {
-      path: dir,
+      path: key(dir),
       branch: "feature/fresh",
       reason: "no commits of its own and used in the last 24 hours",
     },
@@ -350,7 +381,9 @@ test("gc --worktrees keeps a fresh worktree with no commits of its own (a live w
 
   age(dir);
   const later = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
-  expect(later.removable).toEqual([expect.objectContaining({ path: dir, reason: "merged" })]);
+  expect(norm(later.removable)).toEqual([
+    expect.objectContaining({ path: key(dir), reason: "merged" }),
+  ]);
 });
 
 /** Write `files` (relative path → text) into the worktree, creating directories. */
@@ -394,7 +427,7 @@ for (const item of IGNORED_CASES)
 
     if (item.kept) {
       expect(out).toMatchObject({ worktreeRemoved: null, branchDeleted: false });
-      expect(out.dirty).toEqual({ path: dir, paths: [...item.kept] });
+      expect(norm(out.dirty)).toEqual({ path: key(dir), paths: [...item.kept] });
       expect(out.notes).toEqual([
         expect.stringContaining("ignored files that are not regenerable (.env)"),
       ]);
@@ -416,13 +449,17 @@ for (const item of IGNORED_CASES)
     const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
 
     if (item.kept) {
-      expect(applied.removable).toEqual([]);
-      expect(applied.kept).toEqual([
-        { path: dir, branch: "feature/i", reason: "ignored files that are not regenerable (.env)" },
+      expect(norm(applied.removable)).toEqual([]);
+      expect(norm(applied.kept)).toEqual([
+        {
+          path: key(dir),
+          branch: "feature/i",
+          reason: "ignored files that are not regenerable (.env)",
+        },
       ]);
       expect(existsSync(path.join(dir, ".env"))).toBe(true);
     } else {
-      expect(applied.removed).toEqual([dir]);
+      expect(norm(applied.removed)).toEqual([key(dir)]);
       expect(existsSync(dir)).toBe(false);
     }
   });

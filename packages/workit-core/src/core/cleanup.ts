@@ -29,17 +29,30 @@ export function managedWorktreeRoot(env: NodeJS.ProcessEnv = process.env): strin
   return path.join(cache, "workit-wt");
 }
 
+/**
+ * One comparable form for a path from git (`C:/Users/runneradmin/...`) and one
+ * Workit computes (`C:\Users\RUNNER~1\...`): the real path (long names,
+ * symlinks resolved; resolved as written when missing), `/` separators, and
+ * case folded where the filesystem ignores case (as fanout's samePath does).
+ */
 const canonical = (target: string): string => {
+  let real: string;
   try {
-    return fs.realpathSync.native(target);
+    real = fs.realpathSync.native(target);
   } catch {
-    return path.resolve(target);
+    real = path.resolve(target);
   }
+  const slashed = real.replace(/\\/gu, "/").replace(/\/+$/u, "");
+  return process.platform === "win32" || process.platform === "darwin"
+    ? slashed.toLowerCase()
+    : slashed;
 };
 
+/** `child` is `parent` or under it, both read through `canonical`. */
 const inside = (child: string, parent: string): boolean => {
-  const relative = path.relative(canonical(parent), canonical(child));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const from = canonical(parent);
+  const to = canonical(child);
+  return to === from || to.startsWith(from.endsWith("/") ? from : `${from}/`);
 };
 
 /** managed: under the managed root; legacy: `<parent>/<repo>-wt/<x>`; scratch: the temp dir. */

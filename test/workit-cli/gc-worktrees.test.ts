@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { run as gc } from "@/packages/workit-cli/src/verbs/gc";
+import { samePath } from "@/test/helpers/same-path";
 
 // #653: `workit gc --worktrees` lists what finished changes left on disk (a
 // dry run by default) and removes it with --apply. The verb is called
@@ -21,7 +22,7 @@ const git = (cwd: string, ...args: string[]) =>
 
 /** <root>/proj on main, a merged worktree at <root>/proj-wt/a and an unmerged one at <root>/proj-wt/b. */
 const setup = () => {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-gcwt-")));
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "wk-gcwt-")));
   roots.push(root);
   const main = path.join(root, "proj");
   execFileSync("git", ["init", "-q", "-b", "main", main]);
@@ -62,13 +63,12 @@ test("gc --worktrees is a dry run: it lists the merged worktree with its size an
   const result = await run(["gc", "--worktrees"], env.main);
   expect(result.code, result.stdout).toBe(0);
   expect(result.stdout).toContain("dry run");
+  // Paths print as git gives them (`/`, long names), so match on their tails.
   expect(result.stdout).toMatch(
-    new RegExp(
-      `would remove ${env.merged.replaceAll("\\", "\\\\")} \\[feature/a\\]: merged, \\d+\\.\\d MB`,
-    ),
+    /would remove \S+[/\\]proj-wt[/\\]a \[feature\/a\]: merged, \d+\.\d MB/u,
   );
-  expect(result.stdout).toContain(`kept ${env.unmerged} [feature/b]: not merged into`);
-  expect(result.stdout).not.toContain(`would remove ${env.unmerged}`);
+  expect(result.stdout).toMatch(/kept \S+[/\\]proj-wt[/\\]b \[feature\/b\]: not merged into/u);
+  expect(result.stdout).not.toMatch(/would remove \S+[/\\]proj-wt[/\\]b/u);
   expect(existsSync(env.merged)).toBe(true);
 });
 
@@ -77,7 +77,8 @@ test("gc --worktrees --apply removes the merged worktree, its branch and nothing
   const result = await run(["gc", "--worktrees", "--apply", "--json"], env.main);
   expect(result.code, result.stdout).toBe(0);
   const data = JSON.parse(result.stdout).data;
-  expect(data.removed).toEqual([env.merged]);
+  expect(data.removed).toHaveLength(1);
+  expect(samePath(data.removed[0], env.merged)).toBe(true);
   expect(data.deletedBranches).toEqual(["feature/a"]);
   expect(existsSync(env.merged)).toBe(false);
   expect(existsSync(env.unmerged)).toBe(true);
