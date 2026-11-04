@@ -1148,14 +1148,16 @@ async function merge(argv: string[], io: Io): Promise<number> {
               : {},
       }),
     );
-  // #653: a merged branch leaves nothing on disk unless --keep-branch asked to keep it.
-  const cleanup: MergeCleanup | null = flags.booleans.has("keep-branch")
-    ? null
-    : cleanupAfterMerge(io.cwd, result.data.branch, result.data.head, {
-        actor: actorFromEnv(io.env),
-        trigger: "pr merge",
-        env: io.env,
-      });
+  // #653: once its remote branch is gone, a merged branch leaves nothing on disk.
+  // A branch kept on the remote (stack parent, fork, --keep-branch) stays local too.
+  const cleanup: MergeCleanup | null =
+    result.data.deletedBranch !== true
+      ? null
+      : cleanupAfterMerge(io.cwd, result.data.branch, result.data.head, {
+          actor: actorFromEnv(io.env),
+          trigger: "pr merge",
+          env: io.env,
+        });
   return emit(io, ok({ ...result.data, localCleanup: cleanup }), (data) => [
     `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
     data.unverified

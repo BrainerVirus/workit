@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { defaultTrunk, gitRun, nulList, trunkRef } from "../fanout";
 import { SCRATCH_DIR, listWorktrees, type WorktreeEntry } from "../fanout-worktree";
-import { GIT_TIMEOUTS } from "../git/rev";
+import { GIT_TIMEOUTS, pushRemoteName } from "../git/rev";
 import { FANOUT_TOKEN_FILE } from "../hooks/worktree-confine";
 import { appendObserved, type LedgerActor } from "../ledger";
 
@@ -183,6 +183,19 @@ const tidyParent = (worktree: string, place: WorktreePlace): string | null => {
 };
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
+
+/** The remote no longer has `branch` (`git ls-remote` found no such head); false when it cannot tell. */
+export function remoteBranchGone(cwd: string, branch: string): boolean {
+  if (!branch || branch.startsWith("-")) return false;
+  const remote = pushRemoteName(cwd, branch) ?? "origin";
+  const found = gitRun(
+    cwd,
+    ["ls-remote", "--exit-code", "--heads", remote, `refs/heads/${branch}`],
+    GIT_TIMEOUTS.network,
+  );
+  // --exit-code: 2 = no matching ref; anything else (network, auth) is unknown.
+  return found.status === 2;
+}
 
 export type MergeCleanup = {
   /** The local branch was deleted. */

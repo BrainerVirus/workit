@@ -19,7 +19,11 @@ import {
 } from "@brainervirus/workit-core/src/forge/verify";
 import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
 import { closeDeliveredTasks } from "@brainervirus/workit-core/src/core/task-delivery";
-import { cleanupAfterMerge, type MergeCleanup } from "@brainervirus/workit-core/src/core/cleanup";
+import {
+  cleanupAfterMerge,
+  remoteBranchGone,
+  type MergeCleanup,
+} from "@brainervirus/workit-core/src/core/cleanup";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, positiveInt, usage } from "./forge-common";
@@ -138,9 +142,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
       // The next task read repairs it from the ledger.
     }
   }
-  // #653: a delivered merge leaves the branch's clean Workit worktree and local branch behind no longer.
+  // #653: a delivered merge whose remote branch is gone leaves the branch's clean Workit worktree and local branch behind no longer.
   const localCleanup: MergeCleanup | null =
-    report.delivered && expect === "merged" && report.branch && report.sha
+    report.delivered &&
+    expect === "merged" &&
+    report.branch &&
+    report.sha &&
+    remoteBranchGone(io.cwd, report.branch)
       ? cleanupAfterMerge(io.cwd, report.branch, report.sha, {
           actor,
           trigger: "verify-delivery merge",
