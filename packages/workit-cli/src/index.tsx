@@ -208,6 +208,7 @@ const UNINSTALL_HOST_OPTIONS = [
   { label: "Codex", value: "codex" as const },
   { label: "Pi", value: "pi" as const },
   { label: "Claude Code", value: "claude-code" as const },
+  { label: "Workit CLI (owned install and its PATH link)", value: "cli" as const },
 ];
 
 function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => void }): JSX.Element {
