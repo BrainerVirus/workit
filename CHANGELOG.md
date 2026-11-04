@@ -180,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Heavy-check waiters and `workit lock status` show an estimated wait from each check's last measured run, and `resources.slots` above what RAM allows prints a warning.
 - `workit fanout brief` adds a skills VERIFY line when a slice's SCOPE touches skills or agent definitions: `workit check skills` when the repo defines that check or group, else a reminder to run the repo's skill and context-budget checks.
 - `cleanup.regenerable` in `.workit/checks.json` lists a repo's generated, ignored dirs (globs) so post-merge cleanup and `gc --worktrees` remove worktrees that hold only those.
 - `workit dir <plans|retros|handoffs|config|state|data|cache|runtime> [--json]` prints where each kind of Workit file lives; per-clone kinds sit in `.git/workit/` and are shared by every worktree. The shape, fanout, retro and continue skills save their files there.
@@ -494,6 +495,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit check --timeout` now bounds the whole check, including the wait for the heavy-check lease (#645): parallel heavy checks no longer outlive their own timeout; a wait that runs out exits 4 naming the holder.
 - Release publishes packages in dependency order with the CLI last and holds back a package whose dependency failed, so `npx @brainervirus/workit-cli@latest` never resolves a CLI whose dependencies are not on npm yet (ETARGET seen on 13.0.0).
 - Workers and verifiers no longer stay listed as running after their final report: briefs and the implementer, verifier and reviewer agents now finish or stop every background command they started before reporting, and the fanout skill tells the lead to stop a worker once its report arrives.
 - When the Claude Code Agent hook replaces a spawn's model with the configured role model, its note names the model (and effort) to pass next time, so the next spawn needs no rewrite.
