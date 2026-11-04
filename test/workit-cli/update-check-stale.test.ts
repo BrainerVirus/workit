@@ -9,6 +9,7 @@ import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import {
   latestNotOlder,
   launchUpdateCheck,
+  readUpdateCache,
   writeUpdateCache,
 } from "@/packages/workit-cli/src/update-check";
 
@@ -78,4 +79,51 @@ test("Given a cached latest older than the running CLI, Then doctor's updates ro
   }).checks.find((check) => check.id === "updates")!;
   expect(updates.detail).toContain("latest CLI 8.55.0");
   expect(updates.detail).not.toContain("8.52.3");
+});
+
+// W2.24: an upgrade since the last lookup leaves the cache naming the old
+// version inside its 24 h window; the next launch drops it and asks again.
+test("Given a fresh cache whose latest is older than the running CLI, When a person launches workit, Then the stale latest is dropped and a refresh starts", async () => {
+  const { env } = setup();
+  let refreshed = 0;
+  await launchUpdateCheck(
+    { argv: ["status"], command: "status", json: false },
+    {
+      env,
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      stderr: { isTTY: true, write: () => true } as never,
+      write: () => {},
+      now: () => NOW + 60_000,
+      installed: "8.55.0",
+      refresh: () => void (refreshed += 1),
+      ask: async () => "s",
+    },
+  );
+  expect(refreshed).toBe(1);
+  const cache = readUpdateCache(env);
+  expect(cache.latest).toBeUndefined();
+  expect(cache.checkedAt).toBe(NOW + 60_000);
+});
+
+test("Given a fresh cache whose latest is the running CLI or newer, When a person launches workit, Then no refresh starts inside the window", async () => {
+  const { env } = setup();
+  writeUpdateCache(env, { checkedAt: NOW, latest: "8.55.0" });
+  let refreshed = 0;
+  await launchUpdateCheck(
+    { argv: ["status"], command: "status", json: false },
+    {
+      env,
+      stdin: { isTTY: true },
+      stdout: { isTTY: true },
+      stderr: { isTTY: true, write: () => true } as never,
+      write: () => {},
+      now: () => NOW + 60_000,
+      installed: "8.55.0",
+      refresh: () => void (refreshed += 1),
+      ask: async () => "s",
+    },
+  );
+  expect(refreshed).toBe(0);
+  expect(readUpdateCache(env).latest).toBe("8.55.0");
 });
