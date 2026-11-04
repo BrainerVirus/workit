@@ -225,6 +225,12 @@ export function resolveResourceSettings(
       else settings.maxHoldMs = hold;
     }
   }
+  // More slots run more heavy checks at once, each up to memoryMax: say when together they can take all RAM.
+  const share = Math.round((memory / host.totalMemBytes) * 100);
+  if (settings.slots > 1 && settings.slots * memory > host.totalMemBytes)
+    warnings.push(
+      `slots: ${settings.slots} heavy checks at ${share}% of RAM each can use ${settings.slots * share}% of it; lower memoryMax to about ${Math.floor(80 / settings.slots)}% or use fewer slots`,
+    );
   settings.memoryMax = String(memory);
   settings.cpuQuota = `${cpu}%`;
   return { settings, warnings };

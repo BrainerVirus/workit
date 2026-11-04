@@ -126,6 +126,19 @@ test("G machine resources, T they set every field, and a bad field keeps the ear
   expect(one({ memoryMax: "50%" }).memoryMax).toBe("17179869184");
 });
 
+test("G more slots than RAM covers at memoryMax each, T a warning names the share and the fix; within RAM, or one slot, none", () => {
+  const resolve = (value: Record<string, unknown>) =>
+    resolveResourceSettings([{ label: "workspaces.json", trust: "machine", value }], HOST);
+  const over = resolve({ slots: 3 });
+  expect(over.settings.slots).toBe(3);
+  expect(over.warnings).toEqual([
+    "slots: 3 heavy checks at 40% of RAM each can use 120% of it; lower memoryMax to about 26% or use fewer slots",
+  ]);
+  expect(resolve({ slots: 2 }).warnings).toEqual([]);
+  expect(resolve({ slots: 3, memoryMax: "25%" }).warnings).toEqual([]);
+  expect(resolve({}).warnings).toEqual([]);
+});
+
 test("G a repo .workit/checks.json, T it can only tighten the machine's limits: no slots or scope, memory and CPU only lower, heavy only added", () => {
   const repo = {
     label: ".workit/checks.json",

@@ -36,3 +36,38 @@ ran locally.
 
 A group member must be a configured check, and a group cannot share a name with
 a check.
+
+## Waiting for the heavy-check lease
+
+Heavy checks share one machine-wide lease
+([delivery guide](delivery.md#heavy-checks-share-the-machine)). From a check's
+side:
+
+- **`--timeout` covers the wait too.** A check run with `--timeout <s>` waits
+  for the lease at most that long, and the command gets what is left, so a
+  queued check never outlives the timeout its caller set. A wait that ran out
+  exits 4 and says the check did not run. Without `--timeout`, the wait is
+  `--wait <dur>`, else `resources.wait` (30 min).
+- **A waiter says where it stands.** The first line names the holder with how
+  long it has run, the queue position and an estimated wait:
+
+  ```text
+  workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s1, 4m 12s, /wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it); estimated wait ~13m (last measured runs)
+  ```
+
+  The estimate uses each check's last measured run in the ledger of the repo it
+  runs in: the holder's time left, then the runs of the waiters ahead. A check
+  never measured gives `no wait estimate yet (no measured run of <check>)`.
+- **`workit lock status`** shows each holder's time left (`~9m left`, or
+  `past its last 14m run`) and each waiter's estimated wait; `--json` adds them
+  under `estimates`.
+- **A dead holder frees its slot at once.** When a holder's `workit` process
+  and its check are gone (crashed or killed), the next waiter takes the slot
+  on its next poll, about a second later, and says it reclaimed it.
+- **Targeted tests skip the lease.** An ad-hoc run takes the lease only with
+  `--heavy`, so `workit check --name unit -- bun test <file>` runs at once and
+  never waits, even with every slot held or `unit` listed in
+  `resources.heavy`.
+- **More slots.** One heavy check runs at a time by default. On a machine with
+  room for more, raise `resources.slots` in your workspaces.json
+  ([configuration](configuration.md#heavy-check-slots)).
