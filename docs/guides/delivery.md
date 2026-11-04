@@ -605,7 +605,7 @@ body and is not checked.
 ### Linking issues
 
 `workit pr create --issue <id>` (repeatable) links the PR to issues. A
-YouTrack id or URL is a YouTrack issue, an issue URL names its forge, and a
+YouTrack id or URL is a YouTrack issue ([YouTrack guide](youtrack.md)), an issue URL names its forge, and a
 number is an issue on the workspace's GitHub or GitLab tracker
 ([`issues.provider`](configuration.md#issue-tracker)), else on the PR's forge:
 
@@ -989,6 +989,8 @@ Linux it gives each one its own memory and CPU limit.
 ```bash
 workit check test                 # heavy by default: waits for the lease, then runs
 workit check --heavy -- npx jest  # an ad-hoc command takes the lease only with --heavy
+workit check --name unit -- bun test a.test.ts  # a light ad-hoc command: no lease, runs at once
+workit check test --timeout 1200  # bounds the lease wait and the run together
 workit check test --no-lease --reason "<why>"  # run it now, outside the lease (for you, not for briefs)
 workit lock status                # who holds the lease; `workit lock wait` waits for a slot
 ```
@@ -1004,24 +1006,56 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   ([verification guide](verification.md#heavy-commands-and-the-lease)).
 - **The lease is a queue.** It has `slots` places (default 1) across every
   worktree and agent of the user. A heavy check that finds them taken joins a
-  first-come-first-served queue, says where it stands, and prints a status
-  line every 30 s (holder, position, elapsed). It waits up to `--wait <dur>`
+  queue served round-robin per session, says where it stands, and prints a
+  status line every 30 s: each holder with its age, the queue position, the
+  time waited of the wait, and an estimated wait. It waits up to `--wait <dur>`
   (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min); `--no-wait`
-  refuses at once. Only `--no-wait` or a real timeout exits 4 (`busy`), naming
-  the holders and the queue. `workit lock status` lists holders and the queue.
+  refuses at once. `workit lock status` lists holders and the queue, with
+  each holder's time left (`~3m left`, or `past its last 14m run`).
   A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
   end before a long wait: run long checks in the background. The lease is
   released when the check ends, and a queued check gives up its place when it
   stops waiting, also on Ctrl-C or SIGTERM. Leases are files
   under the Workit state dir (`~/.local/state/workit/leases` on Linux and macOS).
+- **Estimates.** The estimated wait comes from each check's last measured
+  run in the ledger of the repo it runs in (a passed run wins over a later
+  failed one; a timed-out run never counts), read from the ledger's last
+  512 KiB. A check with no measured run gives `no wait estimate yet` and
+  names it.
+- **`--timeout` bounds the whole check.** The lease wait counts toward
+  `--timeout`, so a queued check never outlives the timeout its caller set:
+  the wait is at most the timeout, and the command gets what is left. When a
+  slot frees with less than 10 s (or a quarter of the timeout, if smaller)
+  left, the check gives up as a wait timeout and never starts the command.
+- **Exit codes.** A check that never ran because of the lease exits 4
+  (`busy`): `--no-wait` with every slot held, a wait that ran out (`--wait`
+  or `--timeout`), a wait that left too little of `--timeout`, or
+  `workit lock cancel`. A command killed by `--timeout` also exits 4; every
+  other run exits with the command's own code. The two timeouts share 4
+  because Workit's codes (0-5) have no free one and any other number could be
+  a command's own; `--json` tells them apart: `"code": "busy"` with
+  `data.lease` for the wait, `"code": "failed"` with `data.timedOut: true`
+  for the command. The stderr line says which (`the check did not run`, or
+  `timed out after`).
+- **Stuck holders.** A holder is shown `stuck?` once it holds its slot past
+  its limit, or its check printed nothing and used no CPU for 5 min. The
+  limit is 1.5 times the check's last measured run, never below
+  `resources.maxHold` (default 15 min), which alone applies to a check with no
+  measured run; so two full suites that each take 25 min are not flagged at
+  20 min. `workit lock reap` frees a stuck slot. The next acquirer reclaims
+  one itself only when it is past 3 times its limit and silent for its limit.
+- **Light ad-hoc commands.** A formatter, one linter or one test file runs
+  as `workit check --name <n> -- <cmd>`: no lease, no queue, and still
+  recorded. Keep `--heavy` for full suites, packaging, builds and knip.
 - **Stale leases.** A lease stays held while its `workit` process runs. If
   `workit` is killed outright (SIGKILL), the lease stays held while the
   check's process group or scope still has processes, so two heavy checks
   never overlap. The next acquirer reclaims a lease, and says so, once those
   are gone, or when it was taken before a reboot (the kernel boot id on
-  Linux, the boot time elsewhere). Where the holder cannot be identified by
-  its process start time (macOS, Windows), a lease also ends after the
-  check's `--timeout`, or 6 hours without one, plus a minute.
+  Linux, the boot time elsewhere). A reused pid does not keep a lease: the
+  holder's process start time (`/proc` on Linux, `ps -o lstart=` on macOS)
+  must still match. Where it cannot be read (Windows), a lease also ends
+  after the check's `--timeout`, or 6 hours without one, plus a minute.
 - **Nested checks.** A heavy check started by another heavy check reuses
   that check's lease (`WORKIT_LEASE`) and does not wait for it. On Linux the
   lease must belong to one of the process's ancestors, so a leaked
@@ -1080,6 +1114,7 @@ only tighten them, so a repo cannot break the machine-wide limit: it can add
 | `memoryMax`     | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
 | `cpuQuota`      | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
 | `wait`          | `1800`                       | both      | Seconds (or a duration such as `"30m"`) to wait for the lease before exit 4 |
+| `maxHold`       | `900`                        | both      | Seconds (or `"15m"`) a holder may hold a slot before `stuck?`; the floor under 1.5x its measured run; a repo can only lower it |
 | `scope`         | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
 | `heavyCommands` | none                         | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
 
