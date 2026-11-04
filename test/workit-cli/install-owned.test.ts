@@ -20,7 +20,12 @@ import os from "node:os";
 import path from "node:path";
 import { installOwned, writeLaunchers } from "@/packages/workit-cli/src/install/owned";
 import { installRoot, launcherDir, ownedPaths } from "@/packages/workit-cli/src/install/paths";
-import { hostLauncherOf, listInstalls } from "@/packages/workit-cli/src/install/discover";
+import {
+  describeInstall,
+  describeInstallAt,
+  hostLauncherOf,
+  listInstalls,
+} from "@/packages/workit-cli/src/install/discover";
 import { migrationCopies } from "@/packages/workit-cli/src/install/migrate";
 import { pathResolvedWorkit } from "@/packages/workit-cli/src/install/verify";
 import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
@@ -606,3 +611,70 @@ test("A host plugin launcher is only the plugin's bin/workit (workit.cmd on Wind
   expect(hostLauncherOf(path.join(plugin, "bin", "workit.cmd"), "linux")).toBeNull();
   expect(hostLauncherOf(path.join(plugin, "bin", "node-resolve.mjs"), "linux")).toBeNull();
 });
+
+test("Given a script whose heredoc prints `exec node <a real workit>`, Then it is not parsed as a wrapper of that workit", () => {
+  const home = tempHome();
+  const fnm = fnmNode(home, "v24.1.0", "8.52.3");
+  const bin = path.join(home, ".local", "bin");
+  const script = path.join(bin, "workit");
+  const env = { HOME: home, PATH: `${bin}:/usr/bin:/bin` };
+  const entry = path.join(fnm.pkg, "dist", "index.js");
+  for (const opener of ["<<EOF", "<<'EOF'", '<<"EOF"', "<<-EOF", "<< EOF"]) {
+    const text = `#!/bin/sh\ncat ${opener}\nexec node ${entry} "$@"\nEOF\necho done\n`;
+    write(script, text, 0o755);
+    const found = listInstalls(env, "linux").find((install) => install.path === script);
+    expect(found?.kind, opener).toBe("wrapper");
+    expect(found?.runs, opener).toBeNull();
+    expect(
+      migrationCopies(env, "linux").map((copy) => copy.path),
+      opener,
+    ).not.toContain(script);
+  }
+  // The exec line after the heredoc still decides.
+  write(script, `#!/bin/sh\ncat <<EOF\nusage\nEOF\nexec node ${entry} "$@"\n`, 0o755);
+  expect(migrationCopies(env, "linux").find((copy) => copy.path === script)?.runs).toBe(entry);
+  // A here-string is not a heredoc: the next line is still read.
+  write(script, `#!/bin/sh\ncat <<< "hi"\nexec node ${entry} "$@"\n`, 0o755);
+  expect(migrationCopies(env, "linux").find((copy) => copy.path === script)?.runs).toBe(entry);
+});
+
+test("Given a foreign file at the launcher path, Then it reads as a foreign file left untouched, never a wrapper of an unknown workit", () => {
+  const home = tempHome();
+  const bin = path.join(home, ".local", "bin");
+  const script = path.join(bin, "workit");
+  write(script, "#!/bin/sh\necho my own tool\n", 0o755);
+  const env = { HOME: home, PATH: `${bin}:/usr/bin:/bin` };
+  const found = listInstalls(env, "linux").find((install) => install.path === script)!;
+  expect(describeInstallAt(found, script)).toBe(
+    `${script} (foreign file, left untouched; move it to let the launcher link there; PATH #1)`,
+  );
+  expect(describeInstall(found)).toBe(`${script} (foreign file, left untouched; PATH #1)`);
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given a foreign file at the launcher path, When the upgrade cannot reach the owned launcher, Then the listing calls it a foreign file left untouched and the removal list leaves it out",
+  async () => {
+    const w = migrationWorld();
+    const own = "#!/bin/sh\necho my own tool\n";
+    write(w.wrapper, own, 0o755);
+    const code = await runUpgradeCommand(["--hosts=none", "--cli", "--yes", "--json"], {
+      ...w.deps,
+      removeCopies: async () => false,
+    });
+    expect(code).toBe(1);
+    const cli = JSON.parse(w.out.join("")).hosts.find(
+      (row: { host: string }) => row.host === "cli",
+    );
+    const details: string[] = cli.details;
+    expect(details).toContain(
+      `  ${w.wrapper} (foreign file, left untouched; move it to let the launcher link there; PATH #1)`,
+    );
+    expect(details.join("\n")).not.toContain("hand-written wrapper");
+    const removal = details.slice(
+      details.indexOf("other installs left in place; back them up and remove them with:"),
+    );
+    expect(removal.length).toBeGreaterThan(1);
+    expect(removal.join("\n")).not.toContain(w.wrapper);
+    expect(readFileSync(w.wrapper, "utf8")).toBe(own);
+  },
+);

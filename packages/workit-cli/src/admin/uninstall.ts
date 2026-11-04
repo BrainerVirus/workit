@@ -10,6 +10,7 @@ import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "n
 import os from "node:os";
 import path from "node:path";
 import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
 import {
   forgetOwnership,
@@ -26,7 +27,8 @@ import {
   type HostCommandRunner,
 } from "./host-install";
 
-export type UninstallHost = "opencode" | "cursor" | "codex" | "pi" | "claude-code";
+/** A host, or `cli`: the Workit-owned CLI install (versions/, current, bin/, the PATH link). */
+export type UninstallHost = "opencode" | "cursor" | "codex" | "pi" | "claude-code" | "cli";
 
 export type UninstallAction =
   | { kind: "edit-json-remove"; path: string; detail: string }
@@ -42,7 +44,11 @@ export type UninstallAction =
       args: string[];
       /** The project a project/local-scope uninstall must run from; null for user scope. */
       cwd: string | null;
-    };
+    }
+  /** One part of the Workit-owned CLI install (exact ownedPaths() paths only). */
+  | { kind: "remove-owned-cli"; path: string; detail: string; part: OwnedPart }
+  /** A foreign file at the launcher's place: reported, never touched. */
+  | { kind: "keep-foreign"; path: string; detail: string };
 
 type UninstallHostPlan = {
   host: UninstallHost;
@@ -82,6 +88,18 @@ export type UninstallPaths = {
   cwd?: string;
   /** Workit's state dir, which records the permission entries setup added. */
   stateDir?: string;
+  /** Platform whose owned-install layout applies (default: this one). */
+  platform?: NodeJS.Platform;
+};
+
+/**
+ * The env the owned CLI install's paths derive from. An explicit `home`
+ * without an `env` uses that home alone, so a fixture home never reaches the
+ * real data dir through an ambient XDG_DATA_HOME or WORKIT_INSTALL_ROOT.
+ */
+const cliEnvOf = (paths: UninstallPaths): NodeJS.ProcessEnv => {
+  if (paths.env) return paths.home ? { ...paths.env, HOME: paths.home } : paths.env;
+  return paths.home ? { HOME: paths.home, USERPROFILE: paths.home } : process.env;
 };
 
 type ResolvedUninstall = {
@@ -443,7 +461,19 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       detail: "remove Workit's Codex rules file",
     });
 
-  return { hosts: [opencode, cursor, codex, pi, claude] };
+  const cliActions: UninstallAction[] = planOwnedRemoval(cliEnvOf(paths), paths.platform).map(
+    (step) =>
+      step.kind === "remove"
+        ? { kind: "remove-owned-cli", path: step.path, detail: step.detail, part: step.part }
+        : { kind: "keep-foreign", path: step.path, detail: step.detail },
+  );
+  const cli: UninstallHostPlan = {
+    host: "cli",
+    installed: cliActions.some((action) => action.kind === "remove-owned-cli"),
+    actions: cliActions,
+  };
+
+  return { hosts: [opencode, cursor, codex, pi, claude, cli] };
 }
 
 // CA-14 traversal guard: rm -rf is permitted ONLY on the exact resolved
@@ -576,7 +606,14 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
     for (const action of hostPlan.actions) {
       let status: UninstallResultStatus;
       let detail: string | undefined;
-      if (action.kind === "remove-file") {
+      if (action.kind === "keep-foreign") {
+        status = "skipped";
+        detail = action.detail;
+      } else if (action.kind === "remove-owned-cli") {
+        const outcome = applyOwnedRemoval(action, cliEnvOf(paths), paths.platform);
+        status = outcome.status;
+        detail = outcome.detail;
+      } else if (action.kind === "remove-file") {
         try {
           const removed = removeCodexRules(action.path, permissionPathsOf(paths));
           status = removed ? "removed" : "failed";

@@ -17,7 +17,7 @@ import { recordHookNode } from "../admin/hook-node";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
 import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
-import { describeInstall, listInstalls } from "../install/discover";
+import { describeInstall, describeInstallAt, listInstalls } from "../install/discover";
 import { leftLines, migrateCopies, migrationCopies } from "../install/migrate";
 import { resolveInstallNode } from "../install/node";
 import { installOwned, writeLaunchers } from "../install/owned";
@@ -649,7 +649,9 @@ const applyCli = async (
   // The proof: `workit --version` as a new login shell resolves it (no npx cache dir).
   const seen = (deps.pathWorkit ?? (() => pathResolvedWorkit(env)))();
   if (seen.version !== cli.latest) {
-    const listing = listInstalls(env).map((install) => `  ${describeInstall(install)}`);
+    const listing = listInstalls(env).map(
+      (install) => `  ${describeInstallAt(install, launchers.linked)}`,
+    );
     const onPath = path.dirname(launchers.linked);
     return fail(
       seen.path

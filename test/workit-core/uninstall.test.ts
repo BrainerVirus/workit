@@ -84,6 +84,7 @@ test("plan reports both hosts installed with exact action paths", () => {
     "codex",
     "pi",
     "claude-code",
+    "cli",
   ]);
   const oc = plan.hosts.find((h) => h.host === "opencode")!;
   expect(oc.installed).toBe(true);
