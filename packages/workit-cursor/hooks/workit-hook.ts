@@ -81,7 +81,7 @@ const degradedCursorHook = (raw: unknown): { json: Record<string, unknown> } | n
   if (!gap || !event) return null;
   if (!BLOCKING_EVENTS.has(event)) return { json: {} };
   const note = `[workit: ${gap}; Workit checks are skipped for this action]`;
-  return { json: { permission: "allow", user_message: note, agent_message: note } };
+  return { json: { user_message: note, agent_message: note } };
 };
 
 export const handleCursorHook = (raw: unknown): Record<string, unknown> =>

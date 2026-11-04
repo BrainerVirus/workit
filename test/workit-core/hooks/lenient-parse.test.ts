@@ -99,7 +99,7 @@ test("a broken Codex payload passes through with a stderr diagnostic instead of 
   }
 });
 
-test("Given a Cursor shell payload Workit cannot parse, When the hook runs, Then it answers allow with the reason on stderr; a parsed deny still denies (audit N7)", async () => {
+test("Given a Cursor shell payload Workit cannot parse, When the hook runs, Then it defers to Cursor with the reason on stderr; a parsed deny still denies (audit N7)", async () => {
   await withProtectedMain(async () => {
     const root = tempRoot();
     try {
@@ -127,7 +127,7 @@ test("Given a Cursor shell payload Workit cannot parse, When the hook runs, Then
           }),
         );
         expect(out.code).toBe(0);
-        expect(out.json).toEqual({ permission: "allow" });
+        expect(out.json).toEqual({});
         expect(out.stderr).toContain("[workit] hook input rejected");
       }
       const denied = await run(
@@ -290,9 +290,9 @@ test("Cursor shell policy follows the command cwd across a multi-root workspace"
           }),
           {},
         );
-      expect(run(first).json).toEqual({ permission: "allow" });
-      expect(run(second).json).toEqual({ permission: "allow" });
-      expect(run().json).toEqual({ permission: "allow" });
+      expect(run(first).json).toEqual({});
+      expect(run(second).json).toEqual({});
+      expect(run().json).toEqual({});
       const denied = run(nested);
       expect(denied.json).toMatchObject({ permission: "deny" });
       expect(denied.exitCode).toBe(2);

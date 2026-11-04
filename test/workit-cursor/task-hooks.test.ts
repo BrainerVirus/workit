@@ -43,7 +43,7 @@ test("Cursor hook rejects malformed trust-boundary inputs", () => {
       tool_input: { file_path: "src/index.ts" },
     }),
     // Hooks fail open (N7, #281): an unparseable payload is allowed and logged.
-  ).toMatchObject({ permission: "allow" });
+  ).not.toHaveProperty("permission");
   expect(
     parseCursorHookInput({
       hook_event_name: "preToolUse",
@@ -67,7 +67,7 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
       cwd: root,
       command: "cp src/in-scope /tmp/outside",
     }),
-  ).toEqual({ permission: "allow" });
+  ).toEqual({});
   expect(
     handleCursorHook({
       hook_event_name: "beforeShellExecution",
@@ -76,7 +76,7 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
       cwd: nested,
       command: "touch file",
     }),
-  ).toEqual({ permission: "allow" });
+  ).toEqual({});
   expect(
     handleCursorHook({
       hook_event_name: "beforeShellExecution",
@@ -85,7 +85,7 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
       cwd: "/tmp",
       command: "touch file",
     }),
-  ).toEqual({ permission: "allow" });
+  ).toEqual({});
 });
 
 test("shell hooks pass through when cwd is missing and redirections are opaque", () => {
@@ -101,7 +101,7 @@ test("shell hooks pass through when cwd is missing and redirections are opaque",
         cwd: root,
         command,
       }),
-    ).toEqual({ permission: "allow" });
+    ).toEqual({});
   }
   expect(
     handleCursorHook({
@@ -111,7 +111,7 @@ test("shell hooks pass through when cwd is missing and redirections are opaque",
       cwd: root,
       command: "2>&1",
     }),
-  ).toEqual({ permission: "allow" });
+  ).toEqual({});
   for (const command of [">>file", "&>file"]) {
     expect(
       handleCursorHook({
@@ -121,7 +121,7 @@ test("shell hooks pass through when cwd is missing and redirections are opaque",
         cwd: root,
         command,
       }),
-    ).toEqual({ permission: "allow" });
+    ).toEqual({});
   }
   expect(
     handleCursorHook({
@@ -131,7 +131,7 @@ test("shell hooks pass through when cwd is missing and redirections are opaque",
       cwd: path.join(root, "missing"),
       command: "touch file",
     }),
-  ).toEqual({ permission: "allow" });
+  ).toEqual({});
 });
 
 test("blocking shell hooks pass ambiguous writes through while advisory events stay nonblocking", () => {
@@ -146,7 +146,7 @@ test("blocking shell hooks pass ambiguous writes through while advisory events s
         workspace_roots: [root],
         command: 'printf x > "src/${TARGET}"',
       }),
-    ).toEqual({ permission: "allow" });
+    ).toEqual({});
     expect(
       handleCursorHook({
         hook_event_name: "preCompact",
@@ -169,7 +169,7 @@ const runHookProcess = (payload: unknown) =>
     { input: JSON.stringify(payload), encoding: "utf8" },
   );
 
-test("a blocking payload with no workspace or no conversation id is allowed with a note, not denied", () => {
+test("a blocking payload with no workspace or no conversation id defers to Cursor with a note, not denied", () => {
   for (const payload of [
     { hook_event_name: "beforeShellExecution" },
     {
@@ -185,7 +185,7 @@ test("a blocking payload with no workspace or no conversation id is allowed with
     const label = JSON.stringify(payload);
     expect(result.status, label).toBe(0);
     const output = JSON.parse(result.stdout);
-    expect(output.permission, label).toBe("allow");
+    expect(output.permission, label).toBeUndefined();
     expect(output.agent_message, label).toContain("Workit checks are skipped");
     expect(output.user_message, label).toBe(output.agent_message);
   }
@@ -203,7 +203,7 @@ test("a blocking payload that is placeable but inconsistent fails open with a lo
     command: "ls",
   });
   expect(result.status).toBe(0);
-  expect(result.stdout).toContain('"permission":"allow"');
+  expect(JSON.parse(result.stdout)).toEqual({});
   expect(result.stderr).toContain("[workit] hook input rejected");
 });
 
@@ -316,7 +316,7 @@ test("subagent hooks remain transparent when no Workit task is active", () => {
       subagent_id: "child",
       workspace_roots: [root],
     }),
-  ).toMatchObject({ permission: "allow" });
+  ).not.toHaveProperty("permission");
 });
 
 test("session start remains advisory and restores compact context once", () => {
@@ -461,18 +461,16 @@ test("shell intent captures unlisted verbs and skips env assignments", () => {
   const root = shellRoot();
   try {
     // File writes are host-policy: every shape passes through.
-    expect(shell(root, 'echo "rm -rf /"')).toEqual({ permission: "allow" });
-    expect(shell(root, "echo hi")).toEqual({ permission: "allow" });
-    expect(shell(root, 'echo "hi" > out.txt')).toEqual({ permission: "allow" });
-    expect(shell(root, "mkdir a && mkdir b")).toEqual({ permission: "allow" });
-    expect(shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual({
-      permission: "allow",
-    });
+    expect(shell(root, 'echo "rm -rf /"')).toEqual({});
+    expect(shell(root, "echo hi")).toEqual({});
+    expect(shell(root, 'echo "hi" > out.txt')).toEqual({});
+    expect(shell(root, "mkdir a && mkdir b")).toEqual({});
+    expect(shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual({});
     expect(shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual(
-      { permission: "allow" },
+      {},
     );
     // Outside a git checkout the heavy-command gate stays out too.
-    expect(shell(root, "pip install requests")).toMatchObject({ permission: "allow" });
+    expect(shell(root, "pip install requests")).not.toHaveProperty("permission");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -486,7 +484,7 @@ test("shell paths pass through canonical absolute targets without a task", () =>
     symlinkSync(outside, path.join(root, "link"));
     // Intent on `link`: resolves to the canonical absolute target outside the
     // root and passes through (no confinement); without a task it allows.
-    expect(shell(root, "tee link")).toEqual({ permission: "allow" });
+    expect(shell(root, "tee link")).toEqual({});
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { force: true });
@@ -512,7 +510,7 @@ test("a structured write tool passes through inside a task", () => {
         tool_name: "Write",
         tool_input: {},
       }),
-    ).toEqual({ permission: "allow" });
+    ).toEqual({});
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -538,7 +536,7 @@ test("outside absolute paths pass through without writer ownership", () => {
         tool_name: "Write",
         tool_input: { file_path: path.join(tmpdir(), "workit-elsewhere-x.ts") },
       }),
-    ).toEqual({ permission: "allow" });
+    ).toEqual({});
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -581,7 +579,7 @@ test("given a protected main, beforeShellExecution branch creation is denied wit
     expect(output.agent_message).toContain("protected_ref");
     const allowed = run("git checkout -b feature/ok");
     expect(allowed.status).toBe(0);
-    expect(JSON.parse(allowed.stdout)).toEqual({ permission: "allow" });
+    expect(JSON.parse(allowed.stdout)).toEqual({});
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(configDir, { recursive: true, force: true });

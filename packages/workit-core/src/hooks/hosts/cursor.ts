@@ -357,20 +357,26 @@ const render = (decision: HookDecision, native: string | null) => {
       json: cursorDeny(decision.reason),
       exitCode: native !== null && BLOCKING.has(native) ? 2 : 0,
     };
+  if (decision.kind === "ask" && native !== null && BLOCKING.has(native))
+    return {
+      json: { permission: "ask", user_message: decision.reason, agent_message: decision.reason },
+      exitCode: 0,
+    };
   // beforeShellExecution has no context channel: a raw-git nudge rides on
-  // agent_message next to Cursor's required permission answer.
+  // agent_message with no permission answer, so Cursor's own permissions
+  // decide the command (#635).
   if (decision.kind === "context" && native === "beforeShellExecution")
-    return { json: { permission: "allow", agent_message: decision.text }, exitCode: 0 };
+    return { json: { agent_message: decision.text }, exitCode: 0 };
   if (decision.kind === "context")
     return { json: { additional_context: decision.text }, exitCode: 0 };
   if (decision.kind === "notice")
     return { json: { user_message: decision.userMessage }, exitCode: 0 };
   if (decision.kind === "continue" && native === "stop")
     return { json: { followup_message: decision.reason }, exitCode: 0 };
-  return {
-    json: native !== null && BLOCKING.has(native) ? { permission: "allow" } : {},
-    exitCode: 0,
-  };
+  // Workit answers only what it decides (deny, ask); anything else omits
+  // `permission`, which cursor-agent (2026.09.26) treats like no hook at all
+  // and the user's allowlist and auto-run settings decide (#635).
+  return { json: {}, exitCode: 0 };
 };
 
 export const cursorAdapter: HostAdapter = {

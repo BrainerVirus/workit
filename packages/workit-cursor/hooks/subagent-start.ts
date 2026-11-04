@@ -48,7 +48,10 @@ const activeTask = (store: TaskStore) => {
   return { ok: true as const, workspace: workspace.data, task: tasks[0] };
 };
 
+/** Workit decided this start: it assigned (and checked) the native worker. */
 const allow = { permission: "allow" as const };
+/** No active task: nothing for Workit to decide, so Cursor's own settings do (#635). */
+const defer = {};
 
 const workerVerifier = (input: CursorHookInput): NativeWorkerVerifier => ({
   verifyWorker: ({ expected, caller }: any) => {
@@ -94,7 +97,7 @@ const explicitRole = (task: string | undefined) => {
 
 const handleSubagentStart = (input: CursorHookInput, root: string) => {
   const state = activeTask(new TaskStore(root));
-  if (!state.ok) return state.reason === "no active task" ? allow : deny(state.reason);
+  if (!state.ok) return state.reason === "no active task" ? defer : deny(state.reason);
   if (!input.subagent_id || !input.parent_conversation_id)
     return deny("subagent identity and parent session are required");
   if (

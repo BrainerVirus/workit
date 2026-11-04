@@ -29,7 +29,7 @@ const runCursor = (payload: unknown, env: Record<string, string>) => {
   return { status: child.status, json: JSON.parse(child.stdout), stderr: child.stderr };
 };
 
-test("Given a Cursor beforeShellExecution past the hook deadline, When Cursor runs the hook, Then it gets allow with the skip as agent_message and the skip is recorded", () => {
+test("Given a Cursor beforeShellExecution past the hook deadline, When Cursor runs the hook, Then it defers with the skip as agent_message and the skip is recorded", () => {
   const state = dir(() => mkdtempSync(path.join(tmpdir(), "workit-cursor-deadline-state-")));
   const cwd = dir(() => tempRoot("workit-cursor-deadline-"));
   const run = runCursor(fixture("cursor", "before-shell-execution", cwd), {
@@ -38,7 +38,6 @@ test("Given a Cursor beforeShellExecution past the hook deadline, When Cursor ru
   });
   expect(run.status).toBe(0);
   expect(run.json).toEqual({
-    permission: "allow",
     agent_message: "workit context skipped: host under load",
   });
   expect(JSON.parse(readFileSync(path.join(state, "hook-skips.jsonl"), "utf8"))).toMatchObject({

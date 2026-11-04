@@ -100,13 +100,13 @@ test("Given a Codex PreToolUse past the deadline, When it returns, Then Codex ge
   expect(out.skips[0]).toMatchObject({ host: "codex_cli", event: "shell.pre" });
 });
 
-test("Given a Cursor beforeShellExecution past the deadline, When it returns, Then Cursor gets its required permission answer with the skip as agent_message", async () => {
+test("Given a Cursor beforeShellExecution past the deadline, When it returns, Then Cursor gets the skip as agent_message and no permission answer", async () => {
   const out = await run(cursorAdapter, fixture("cursor", "before-shell-execution", root()), {
     ...slow,
     startedAt: Date.now(),
   });
   expect(out.exitCode).toBe(0);
-  expect(out.json).toEqual({ permission: "allow", agent_message: SKIP });
+  expect(out.json).toEqual({ agent_message: SKIP });
   expect(out.skips[0]).toMatchObject({ host: "cursor", event: "shell.pre" });
 });
 

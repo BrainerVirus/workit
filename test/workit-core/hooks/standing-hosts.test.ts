@@ -145,7 +145,7 @@ test("[Cursor dist] Given a session on a slice branch, When the lead adds an ord
   };
   addOrder(root, "close every browser tab you opened before reporting");
   const first = node(cursorDist, payload);
-  expect(first.permission).toBe("allow");
+  expect(first.permission).toBeUndefined();
   expect(String(first.agent_message)).toContain(ORDER);
-  expect(node(cursorDist, payload)).toEqual({ permission: "allow" });
+  expect(node(cursorDist, payload)).toEqual({});
 }, 60_000);
