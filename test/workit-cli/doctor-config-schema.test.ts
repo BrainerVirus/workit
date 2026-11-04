@@ -49,3 +49,12 @@ test("Given config files that match their schemas, When doctor runs, Then the ro
   });
   expect(check.status).toBe("pass");
 });
+
+test("Given a config.json with the timezone key older wizards wrote, When doctor runs, Then it names the key obsolete with the removal fix", () => {
+  const check = row({ "config.json": { locale: "en", timezone: "America/Santiago" } });
+  const file = path.join(scratch, `config-${count - 1}`, "config.json");
+  expect(check.status).toBe("warn");
+  expect(check.detail).toContain(`${file} timezone: obsolete key (the setup wizard wrote it`);
+  expect(check.detail).not.toContain("unknown key");
+  expect(check.fix).toBe(`delete "timezone" from ${file}`);
+});

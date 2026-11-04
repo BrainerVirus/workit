@@ -13,17 +13,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { describeInstall, listInstalls, type FoundInstall } from "./discover";
+import { describeInstall, listInstalls, npmPackageOfFile, type FoundInstall } from "./discover";
 import { type InstallNode } from "./node";
 import { linkLauncher, removeFile, type InstallRun } from "./owned";
-import { CLI_PACKAGE_NAME, ownedPaths, shellQuote } from "./paths";
+import { CLI_PACKAGE_NAME, ownedPaths, realpathOr, shellQuote } from "./paths";
 
 export type MigrationCopy = FoundInstall & { kind: "npm" | "volta" | "wrapper" };
 
 /**
  * The copies migration replaces: npm and volta packages, and wrappers that run
- * a workit-cli package. A file at the launcher's place that runs no workit-cli
- * (a user's own script) is never moved: the PATH check names it instead.
+ * a workit (a workit-cli package, or another `workit` they exec by path). A
+ * file at the launcher's place that runs no workit (a user's own script) is
+ * never moved: the PATH check names it instead. Host plugin launchers stay.
  */
 export const migrationCopies = (
   env: NodeJS.ProcessEnv,
@@ -33,7 +34,7 @@ export const migrationCopies = (
     (install): install is MigrationCopy =>
       install.kind === "npm" ||
       install.kind === "volta" ||
-      (install.kind === "wrapper" && install.version !== null),
+      (install.kind === "wrapper" && (install.version !== null || install.runs !== null)),
   );
 };
 
@@ -44,19 +45,33 @@ const slug = (copy: MigrationCopy, index: number): string =>
 const backupOf = (backup: string, copy: MigrationCopy, index: number): string =>
   path.join(backup, "cli-copies", slug(copy, index));
 
+/**
+ * Whether the copy's place becomes a link to the owned launcher: the
+ * launcher's own place, and (POSIX) every wrapper, so a PATH order that ran
+ * the wrapper runs the owned install instead of nothing.
+ */
+const relinks = (copy: MigrationCopy, linked: string, platform: NodeJS.Platform): boolean =>
+  copy.path === linked || (copy.kind === "wrapper" && platform !== "win32");
+
+/** The package dir an install's files live in, compared by realpath. */
+const packageKey = (dir: string | null): string | null => (dir ? realpathOr(dir) : null);
+
+/** The package a wrapper execs, when it still exists. */
+const wrapperPackage = (copy: MigrationCopy): string | null =>
+  packageKey(copy.packageDir ?? (copy.runs ? npmPackageOfFile(copy.runs) : null));
+
 /** The exact commands that back up and remove one copy (what a non-TTY run prints). */
 export const removalCommand = (
   copy: MigrationCopy,
   index: number,
-  context: { backup: string; launcher: string; linked: string },
+  context: { backup: string; launcher: string; linked: string; platform?: NodeJS.Platform },
 ): string => {
   const target = backupOf(context.backup, copy, index);
   const save = `mkdir -p ${shellQuote(target)}`;
   // What PATH finds where the launcher belongs becomes a link to the launcher.
-  const relink =
-    copy.path === context.linked
-      ? ` && ln -sf ${shellQuote(context.launcher)} ${shellQuote(copy.path)}`
-      : "";
+  const relink = relinks(copy, context.linked, context.platform ?? process.platform)
+    ? ` && ln -sf ${shellQuote(context.launcher)} ${shellQuote(copy.path)}`
+    : "";
   if (copy.kind === "wrapper")
     return `${save} && mv ${shellQuote(copy.path)} ${shellQuote(path.join(target, path.basename(copy.path)))}${relink}`;
   const keep = `${save} && cp -R ${shellQuote(copy.packageDir ?? copy.realpath)} ${shellQuote(path.join(target, "package"))}`;
@@ -75,8 +90,11 @@ export type MigrationOutcome = {
 
 /**
  * Back up and remove each copy (`remove`), or leave every one and return the
- * commands. The PATH launcher location is relinked to the owned launcher once
- * whatever was there is backed up.
+ * commands. Wrappers go first: each is backed up and becomes a link to the
+ * owned launcher, so no `workit` on PATH execs a package removed after it; a
+ * package a left-in-place wrapper still runs is kept (W2.39). The PATH
+ * launcher location is relinked to the owned launcher once whatever was there
+ * is backed up.
  */
 export const migrateCopies = async (
   copies: MigrationCopy[],
@@ -91,7 +109,7 @@ export const migrateCopies = async (
 ): Promise<MigrationOutcome> => {
   const platform = context.platform ?? process.platform;
   const { launcher, linked } = ownedPaths(context.env, platform);
-  const where = { backup: context.backup, launcher, linked };
+  const where = { backup: context.backup, launcher, linked, platform };
   const outcome: MigrationOutcome = { removed: [], left: [], manifest: null };
   if (!context.remove) {
     outcome.left = copies.map((copy, index) => ({
@@ -101,16 +119,37 @@ export const migrateCopies = async (
     return outcome;
   }
   const record: Record<string, unknown>[] = [];
-  for (const [index, copy] of copies.entries()) {
+  const ordered = [...copies.entries()].toSorted(
+    ([, a], [, b]) => Number(b.kind === "wrapper") - Number(a.kind === "wrapper"),
+  );
+  const keptWrappers: MigrationCopy[] = [];
+  for (const [index, copy] of ordered) {
     const command = removalCommand(copy, index, where);
     const target = backupOf(context.backup, copy, index);
     try {
+      const runBy =
+        copy.kind === "wrapper"
+          ? undefined
+          : keptWrappers.find(
+              (wrapper) =>
+                wrapperPackage(wrapper) !== null &&
+                wrapperPackage(wrapper) === packageKey(copy.packageDir ?? copy.realpath),
+            );
+      if (runBy)
+        throw new Error(
+          `kept: ${runBy.path} still runs it, and removing it would leave that workit broken`,
+        );
       mkdirSync(target, { recursive: true, mode: 0o700 });
       if (copy.kind === "wrapper") {
-        copyFileSync(copy.path, path.join(target, path.basename(copy.path)));
-        record.push({ ...copy, backup: target, command });
-        removeFile(copy.path);
-        if (copy.path === linked) linkLauncher(launcher, linked);
+        try {
+          copyFileSync(copy.path, path.join(target, path.basename(copy.path)));
+          record.push({ ...copy, backup: target, command });
+          if (relinks(copy, linked, platform)) linkLauncher(launcher, copy.path);
+          else removeFile(copy.path);
+        } catch (error) {
+          keptWrappers.push(copy);
+          throw error;
+        }
       } else {
         const packageDir = copy.packageDir ?? copy.realpath;
         cpSync(packageDir, path.join(target, "package"), {

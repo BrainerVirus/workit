@@ -11,10 +11,10 @@ import {
 test("ephemeral cache paths are recognized by content, not by caller", () => {
   for (const p of [
     "file:///home/u/.cache/pnpm/dlx/abc/package.json",
-    "file:///tmp/_npx/123/package.json",
+    "file:///home/u/.npm/_npx/123/package.json",
     "file:///home/u/.pacquet/x/package.json",
-    "file:///Users/u/Library/Caches/pnpm/abc/package.json",
-    "file://C:\\Users\\u\\_npx\\abc\\package.json",
+    "file:///Users/u/Library/Caches/pnpm/dlx/abc/package.json",
+    "file://C:\\Users\\u\\AppData\\Local\\npm-cache\\_npx\\abc\\package.json",
   ])
     expect(isEphemeralCachePath(p), p).toBe(true);
   for (const p of [
@@ -25,6 +25,26 @@ test("ephemeral cache paths are recognized by content, not by caller", () => {
     "",
   ])
     expect(isEphemeralCachePath(p), p).toBe(false);
+});
+
+test("a _npx or dlx directory outside a package manager's cache layout is not a cache", () => {
+  for (const p of [
+    "/opt/_npx/bin/",
+    "/home/u/.nvm/versions/node/v24.1.0/_npx/bin/",
+    "/tmp/_npx/123/package.json",
+    "/home/u/projects/pnpm/dlx/tool/",
+    "/home/u/.npm/_npx/",
+    "/home/u/.npm/_npx/not-a-hash/",
+  ])
+    expect(isEphemeralCachePath(p, {}), p).toBe(false);
+});
+
+test("npm_config_cache and XDG_CACHE_HOME move the anchored caches", () => {
+  const env = { npm_config_cache: "/data/npmc", XDG_CACHE_HOME: "/data/xdg" };
+  expect(isEphemeralCachePath("/data/npmc/_npx/4b6b/node_modules/.bin/", env)).toBe(true);
+  expect(isEphemeralCachePath("/data/xdg/pnpm/dlx/abc/node_modules/.bin/", env)).toBe(true);
+  expect(isEphemeralCachePath("/data/npmc/_npx/4b6b/node_modules/.bin/", {})).toBe(false);
+  expect(isEphemeralCachePath("/data/other/_npx/4b6b/", env)).toBe(false);
 });
 
 test("bundle hashes are stable hex digests of the exact bytes", () => {

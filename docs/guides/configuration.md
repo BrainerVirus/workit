@@ -172,7 +172,10 @@ the files they create or rewrite and keep a value you set yourself.
 schemas and names the file and JSON path of each bad value
 (`workspaces[0].changelog`). It warns rather than fails: Workit still reads a
 value it does not know as the default and says so, so a file written for a
-newer Workit keeps working in an older one.
+newer Workit keeps working in an older one. A key an older Workit wrote and
+nothing reads any more is named obsolete, with the removal as the fix: the
+global `timezone` in `config.json` (the setup wizard wrote it through 2.1.2; a
+work item's day comes from `youtrack.json`'s `timezone`, else `TZ`).
 
 `workit init` edits the entries you open and leaves every other entry
 byte-for-byte as it was. To add or adjust one entry without the wizard:

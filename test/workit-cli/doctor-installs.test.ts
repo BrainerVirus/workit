@@ -85,3 +85,28 @@ test("Given only the owned install, Then doctor passes", () => {
     `workit 9.0.0 via the launcher ${h.bin}/workit -> ${h.root}/bin/workit (workit 9.0.0); no other install`,
   );
 });
+
+test("Given the Claude Code plugin's own bin/workit on PATH (W2.40), When doctor runs, Then cli_installs passes and names it as a host launcher, ahead of or after the owned launcher", () => {
+  const h = home(null);
+  const plugin = path.join(h.dir, ".claude", "plugins", "cache", "workit", "workit", "8.0.0");
+  write(
+    path.join(plugin, "package.json"),
+    JSON.stringify({
+      name: "@brainervirus/workit-claude-code",
+      version: "8.0.0",
+    }),
+  );
+  write(
+    path.join(plugin, "bin", "workit"),
+    '#!/bin/sh\nexec node "$root/dist/workit.js" "$@"\n',
+    0o755,
+  );
+  const pluginBin = path.join(plugin, "bin");
+  for (const PATH of [`${h.bin}:${pluginBin}`, `${pluginBin}:${h.bin}`]) {
+    const found = check(h.dir, PATH);
+    expect(found.status, found.detail).toBe("pass");
+    expect(found.detail).toContain(
+      `host plugin launchers (managed by their host, not counted): ${path.join(pluginBin, "workit")} (workit 8.0.0; host plugin launcher, managed by its host;`,
+    );
+  }
+});

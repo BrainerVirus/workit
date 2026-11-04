@@ -11,7 +11,7 @@ import { claudeWorkitInstalls, hostCommand, planHostInstall } from "../admin/hos
 import { OPENCODE_V1_FIX } from "../admin/doctor";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
 import cliPackage from "../../package.json" with { type: "json" };
-import { describeInstall } from "../install/discover";
+import { describeInstall, isOwnedWrapper } from "../install/discover";
 import { migrationCopies } from "../install/migrate";
 import { isOwnedLauncher } from "../install/owned";
 import { entryOf, ownedPaths, ownedVersion, realpathOr, versionDir } from "../install/paths";
@@ -516,8 +516,10 @@ export const planCli = (
     return;
   }
   const install = !owned || !versionAtLeast(owned, latest);
+  // A hand-written wrapper at the launcher's place that execs the launcher is ready too.
   const launcherReady =
-    isOwnedLauncher(paths.launcher) && realpathOr(paths.linked) === realpathOr(paths.launcher);
+    isOwnedLauncher(paths.launcher) &&
+    (realpathOr(paths.linked) === realpathOr(paths.launcher) || isOwnedWrapper(paths.linked, env));
   if (!install && !copies.length && launcherReady) {
     plan.skipped.push({ host: "cli", reason: `already current (${owned})` });
     return;
