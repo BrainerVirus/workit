@@ -493,6 +493,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Verdict ranking: a failure wins a same-time tie with a verdict mirrored from another clone, a future-dated mirrored verdict no longer outranks newer local failures, and author checks use the same ordering. Only real test files (`*.test.ts`, `*_test.go`) keep a unit verdict through a test-only push; `.test.` helpers and fixtures do not.
+- A worker report that merely mentions a usage limit no longer triggers the model fallback, and standing orders reach exactly the agent types each host maps to the implementer role.
 - `workit check --timeout` now bounds the whole check, including the wait for the heavy-check lease (#645): parallel heavy checks no longer outlive their own timeout; a wait that runs out exits 4 naming the holder.
 - OpenCode: a lead can launch several workers at once, and each child binds its own brief (by `WORKER: <id>`, the brief's objective or scope paths, or role) instead of the oldest assignment (#640). A launch that matches several workers is refused, naming them and the `WORKER: <id>` fix.
 - Release publishes packages in dependency order with the CLI last and holds back a package whose dependency failed, so `npx @brainervirus/workit-cli@latest` never resolves a CLI whose dependencies are not on npm yet (ETARGET seen on 13.0.0).

@@ -150,6 +150,18 @@ test("Given a unit verdict, When a small test-only change follows, Then it carri
   });
 });
 
+test.each(["test/app.test.helper.ts", "test/fixtures/app.test.json"])(
+  "Given a unit verdict, When %s (a helper or fixture with .test. mid-name) changes, Then it does not carry as tests-only",
+  (file) => {
+    const root = featureRepo();
+    verdict(root, "unit", "tests-verified");
+    commit(root, { [file]: "export {};\n" }, "helper");
+    const result = check(root);
+    expect(result.verdicts[0].carry?.rule).not.toBe("tests-only");
+    expect(result.accepted.accepted).toBe(false);
+  },
+);
+
 test("Given a live or review verdict, When a test-only change follows, Then it does not carry and asks a focused re-verify", () => {
   for (const kind of ["live", "review"] as const) {
     const root = featureRepo();

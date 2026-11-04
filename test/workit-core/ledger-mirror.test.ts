@@ -8,6 +8,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import os from "node:os";
 import path from "node:path";
 import {
+  appendObserved,
   checkVerdicts,
   readLedger,
   recordVerdict,
@@ -158,6 +159,53 @@ test("Given a local failure and a newer pass recorded in a clone by another sess
   const result = gate(real);
   expect(result.accepted).toMatchObject({ accepted: true, reasons: [] });
   expect(result.accepted.verdict?.id).toBe(pass.id);
+});
+
+test("Given a local failure and a pass recorded in a clone with the same `at`, When the gate imports the pass, Then the failure ranks newest", () => {
+  const real = realCheckout("git@github.com:acme/mirror-tie.git");
+  const failure = judge(real, "rev-B", "failed", "2026-01-02T00:00:00Z");
+  const clone = throwawayClone(real);
+  judge(clone, "rev-A", "verified", "2026-01-02T00:00:00Z");
+  rmSync(path.dirname(clone), { recursive: true, force: true });
+  const result = gate(real);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.current.verdict?.id).toBe(failure.id);
+});
+
+test("Given a pass from a clone dated in the future, When a local failure is recorded after it was imported, Then the failure ranks newest", () => {
+  const real = realCheckout("git@github.com:acme/mirror-future.git");
+  const clone = throwawayClone(real);
+  const pass = judge(clone, "rev-A", "verified", "2099-01-01T00:00:00Z");
+  rmSync(path.dirname(clone), { recursive: true, force: true });
+  expect(gate(real).accepted.verdict?.id).toBe(pass.id);
+  const failure = judge(real, "rev-B", "failed", "2026-01-03T00:00:00Z");
+  const result = gate(real);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.current.verdict?.id).toBe(failure.id);
+});
+
+test("Given a failure from a clone, When its reviewer became an author locally only after it was recorded, Then the failure still blocks (it ranks where it was recorded, not where it was imported)", () => {
+  const real = realCheckout("git@github.com:acme/mirror-authors.git");
+  judge(real, "rev-V", "verified", "2026-01-01T00:00:00Z");
+  const clone = throwawayClone(real);
+  const failure = judge(clone, "rev-A", "failed", "2026-01-02T00:00:00Z");
+  rmSync(path.dirname(clone), { recursive: true, force: true });
+  value(
+    appendObserved(
+      real,
+      {
+        type: "commit.recorded",
+        actor: { host: "cli", session: "rev-A", agentId: null },
+        session: "rev-A",
+        branch: "feature/x",
+        head: git(real, "rev-parse", "HEAD"),
+      },
+      { now: new Date("2026-01-03T00:00:00Z") },
+    ),
+  );
+  const result = gate(real);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.current.verdict?.id).toBe(failure.id);
 });
 
 test("Given a checkout with no remote origin, Then there is no mirror", () => {

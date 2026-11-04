@@ -31,12 +31,19 @@ export type UsageLimit = {
   resetAt: Date | null;
 };
 
+/** What follows a provider's "… limit reached": a separator, its reset, or the end of the line. */
+const LIMIT_END = String.raw`(?=\s*(?:[∙·•|,:\-–—]|\.?\s*(?:$|\(?resets?\b|try again\b)))`;
 /** Provider error shapes, never a bare phrase: prose about limits is not one. */
 const LIMIT_PATTERNS = [
   // Claude Code and Codex: "You've hit your weekly limit · resets 7pm", "You've hit your usage limit."
   /\byou(?:'|\u2019)?ve hit your\b[^.\n]{0,40}\blimit\b/iu,
-  /\bclaude(?: ai)? usage limit reached\b/iu,
-  /\b(?:5-hour|five-hour|weekly|daily|session|opus|sonnet|fable|haiku) limit reached\b/iu,
+  // "5-hour limit reached ∙ resets 3am", "Claude AI usage limit reached|<epoch>": the phrase ends
+  // the message or runs into its reset, so a report quoting "the 5-hour limit reached message" is none.
+  new RegExp(String.raw`\bclaude(?: ai)? usage limit reached${LIMIT_END}`, "imu"),
+  new RegExp(
+    String.raw`\b(?:5-hour|five-hour|weekly|daily|session|opus|sonnet|fable|haiku) limit reached${LIMIT_END}`,
+    "imu",
+  ),
   /\busage limit\b[^\n]{0,200}\b(?:try again|resets?) (?:in|at)\b/iu,
   /\byou exceeded your current quota\b|\binsufficient_quota\b/iu,
 ];

@@ -1560,15 +1560,24 @@ const isMirrored = (row: ReadRow): boolean => typeof row.mirroredFrom === "strin
  * Where each imported row sits among the local rows: just after the last
  * local row (in ledger order) recorded at or before it, so an older pass
  * from a clone never outranks a newer local verdict. Local rows rank by seq.
+ * Its `at` counts for no later than its import (its own place in this
+ * ledger) or `now`, so a future-dated row never outranks local rows written
+ * after it arrived. On an equal `at`, a failure ranks after a pass.
  */
-function mirrorRanks(rows: readonly ReadRow[]): Map<ReadRow, number> {
+function mirrorRanks(rows: readonly ReadRow[], now: number = Date.now()): Map<ReadRow, number> {
   const ranks = new Map<ReadRow, number>();
   const local = rows.filter((row) => !isMirrored(row));
+  const failing = (row: ReadRow) => FAILING.has(String(row.result));
   for (const row of rows) {
     if (!isMirrored(row)) continue;
-    const at = Date.parse(row.at);
+    const at = Math.min(Date.parse(row.at), now);
     let after = 0;
-    for (const other of local) if (Date.parse(other.at) <= at) after = Math.max(after, other.seq);
+    for (const other of local) {
+      if (other.seq > row.seq) continue;
+      const otherAt = Date.parse(other.at);
+      const before = otherAt < at || (otherAt === at && (failing(row) || !failing(other)));
+      if (before) after = Math.max(after, other.seq);
+    }
     // Between that row and the next; ties among imports keep their own order.
     ranks.set(row, after + 0.5 + Math.min(row.seq, 1e9) / 1e10);
   }
@@ -1712,18 +1721,22 @@ export function checkVerdicts(
   // independent verdict, so authorship gained afterwards (a forged row, a
   // commit or an empty amend under the reviewer's id, a trailer) never
   // discounts a failure (audit N13, mv83zyg6 P2b).
-  const failureAuthorCache = new Map<number, Set<string>>();
+  // "Before" is verdict precedence (byRank), not raw seq: a row
+  // imported from the mirror sits where it was recorded, not where it landed.
+  const rank = mirrorRanks(rows);
+  const byRank = (a: ReadRow, b: ReadRow) => (rank.get(a) ?? a.seq) - (rank.get(b) ?? b.seq);
+  const failureAuthorCache = new Map<ReadRow, Set<string>>();
   const failureAuthors = (row: ReadRow): Set<string> => {
-    let set = failureAuthorCache.get(row.seq);
+    let set = failureAuthorCache.get(row);
     if (!set) {
       set = authorSessions(
         cwd,
-        rows.filter((other) => other.integrity === "verified" && other.seq < row.seq),
+        rows.filter((other) => other.integrity === "verified" && byRank(other, row) < 0),
         branch,
         { base: null, head: null },
         scope,
       );
-      failureAuthorCache.set(row.seq, set);
+      failureAuthorCache.set(row, set);
     }
     return set;
   };
@@ -1755,8 +1768,6 @@ export function checkVerdicts(
   // their ledger order; a row imported from the mirror (#311) is appended
   // whenever a gate first sees it, so it is placed after the last local row
   // recorded at or before its own `at`, never ahead of a newer local verdict.
-  const rank = mirrorRanks(rows);
-  const byRank = (a: ReadRow, b: ReadRow) => (rank.get(a) ?? a.seq) - (rank.get(b) ?? b.seq);
   const byKind = new Map<string, ReadRow[]>();
   for (const row of rows.toSorted(byRank))
     if (isLiveVerdict(row, retired) && scope(row)) {
