@@ -11,5 +11,6 @@
   "groups": {
     "ci": ["lint", "format", "typecheck", "knip", "react-doctor", "test", "packaging"]
   },
-  "resources": { "heavy": ["knip", "react-doctor"] }
+  "resources": { "heavy": ["knip", "react-doctor"] },
+  "cleanup": { "regenerable": ["packages/*/skills", "packages/*/assets"] }
 }

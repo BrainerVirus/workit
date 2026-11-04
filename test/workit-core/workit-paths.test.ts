@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -37,6 +38,7 @@ import {
 import { launcherScript } from "@/packages/workit-cli/src/install/launcher";
 import { main } from "@/packages/workit-cli/src/main";
 import { runDoctor, type DoctorCheck } from "@/packages/workit-cli/src/admin/doctor";
+import { configKeptNote } from "@/packages/workit-cli/src/admin/uninstall";
 import { scratchDir } from "../shared/helpers/hook-node";
 
 const REPO = path.resolve(import.meta.dir, "../..");
@@ -321,6 +323,27 @@ test.skipIf(process.platform === "win32")(
     expect(after.detail).toContain("moved to");
   },
 );
+
+test("Given worktrees left under the pre-move ~/.cache/workit-wt, When doctor runs, Then legacy_dirs is info naming it and gc until it is empty", () => {
+  const home = scratchDir("wk-old-wt-");
+  const old = path.join(home, ".cache", "workit-wt");
+  mkdirSync(path.join(old, "proj", "slice"), { recursive: true });
+  const row = legacyRow(home);
+  expect(row.status).toBe("info");
+  expect(row.detail).toContain(old);
+  expect(row.detail).toContain("workit gc --worktrees --apply");
+  expect(existsSync(path.join(old, "proj", "slice"))).toBe(true);
+
+  rmSync(path.join(old, "proj"), { recursive: true });
+  expect(legacyRow(home).status).toBe("pass");
+});
+
+test("Given Windows (simulated), Then the uninstall text names the config dir under APPDATA, never ~/.config/workit", () => {
+  const env = { HOME: path.join(H, "win"), APPDATA: path.join(H, "win", "Roaming") };
+  const note = configKeptNote(env, "win32");
+  expect(note).toContain(configDir(env, "win32"));
+  expect(note).not.toMatch(/\.config[/\\]workit/);
+});
 
 test("docs/agents/file-locations.md names every kind and every env override the resolver reads", () => {
   const doc = read("docs/agents/file-locations.md");

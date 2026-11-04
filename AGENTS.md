@@ -18,7 +18,7 @@ test and switch back ([real-host tests](docs/agents/testing.md#real-host-tests))
 
 ## Workflow
 
-- One worktree per change, never on `main` and never next to the checkout: `git worktree add -b feature/<slug> ~/.cache/workit-wt/workit/<slug> origin/main`; `workit gc --worktrees --apply` removes merged ones.
+- One worktree per change, never on `main` and never next to the checkout: `git worktree add -b feature/<slug> ~/.local/state/workit/worktrees/workit/<slug> origin/main` (`workit fanout worktree create` uses the same root); `workit gc --worktrees --apply` removes merged ones, old `~/.cache/workit-wt` ones included.
 - The squash-merged PR title is the release note and picks the version: a Conventional Commit (CI lints it).
 - Check `gh api user --jq .login` before a GitHub remote mutation; `gh auth status` can disagree.
 - Host parity: a feature ships for all five hosts (Claude Code, OpenCode, Codex, Cursor, Pi) through each host's native mechanism, or records the host limit in [hosts.md](docs/agents/hosts.md#host-parity).
