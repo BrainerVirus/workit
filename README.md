@@ -173,9 +173,11 @@ your machine ([install guide](docs/guides/install.md)).
 
 Every verb works without a host; hosts just put `workit` and the skills in
 front of the agent. Update with `workit upgrade --hosts=none --cli`; remove it with
-`workit uninstall` (pick the CLI): it deletes `versions/`, `current` and `bin/`
-under the install root and the `~/.local/bin/workit` link when that link points
-into the install. A file of your own at that path is left untouched and named.
+`workit uninstall` (pick the CLI). It removes the `~/.local/bin/workit` link
+only when it points into the install; in `bin/`, only the launcher Workit wrote
+and its temp files; it unlinks `current`; and from `versions/`, only entries
+holding the Workit CLI package. Anything else (a file of your own, a link
+elsewhere, an install root set to your home) is left untouched and named.
 
 </details>
 

@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { writeLaunchers } from "@/packages/workit-cli/src/install/owned";
-import { ownedPaths } from "@/packages/workit-cli/src/install/paths";
+import { LAUNCHER_MARKER, ownedPaths } from "@/packages/workit-cli/src/install/paths";
 
 const NODE = Bun.which("node") ?? "node";
 const roots: string[] = [];
@@ -56,7 +56,8 @@ const ownedInstall = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => {
     JSON.stringify({ name: "@brainervirus/workit-cli", version: "9.0.0" }),
   );
   symlinkSync(path.join(paths.versions, "9.0.0"), paths.current, "junction");
-  if (platform === "win32") write(paths.launcher, "@echo off\r\nrem workit-launcher 1\r\n", 0o755);
+  if (platform === "win32")
+    write(paths.launcher, `@echo off\r\nrem ${LAUNCHER_MARKER} 1\r\n`, 0o755);
   else writeLaunchers({ env, platform, installNode: NODE });
   return paths;
 };
@@ -209,4 +210,126 @@ test("Given only a fixture home, Then the CLI plan never reads the ambient data 
     if (saved === undefined) delete process.env.WORKIT_INSTALL_ROOT;
     else process.env.WORKIT_INSTALL_ROOT = saved;
   }
+});
+
+const applyCli = (options: Parameters<typeof planUninstall>[0]) =>
+  applyUninstall({ hosts: [cliPlan(options)] }, options);
+
+test("Given bin/ holds a user's workit-notes beside the launcher and its temp file, When uninstall applies, Then only the launcher and its temp file go", () => {
+  const home = tempHome();
+  const env = { HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, "AppData", "Local") };
+  const paths = ownedInstall(env, "win32");
+  const bin = path.dirname(paths.launcher);
+  const notes = path.join(bin, "workit.cmd-notes");
+  const temp = path.join(bin, "workit.cmd.4242.tmp");
+  write(notes, "mine\n");
+  write(temp, "half a launcher");
+  const result = applyCli({ env, platform: "win32" });
+  expect(result.ok, JSON.stringify(result)).toBe(true);
+  expect(present(paths.launcher) || present(temp)).toBe(false);
+  expect(readFileSync(notes, "utf8")).toBe("mine\n");
+  expect(result.entries[0]?.detail).toContain("kept (holds workit.cmd-notes)");
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given bin/workit-notes on POSIX and a launcher Workit did not write, Then neither is removed and the launcher is reported",
+  () => {
+    const home = tempHome();
+    const env = { HOME: home };
+    const paths = ownedInstall(env, "linux");
+    const notes = path.join(path.dirname(paths.launcher), "workit-notes");
+    write(notes, "mine\n");
+    const mine = "#!/bin/sh\necho my own launcher\n";
+    write(paths.launcher, mine, 0o755);
+    const plan = cliPlan({ home, platform: "linux" });
+    expect(plan.actions).toContainEqual({
+      kind: "keep-foreign",
+      path: paths.launcher,
+      detail: "not a launcher Workit wrote, left untouched",
+    });
+    applyUninstall({ hosts: [plan] }, { home, platform: "linux" });
+    expect(readFileSync(paths.launcher, "utf8")).toBe(mine);
+    expect(readFileSync(notes, "utf8")).toBe("mine\n");
+  },
+);
+
+test("Given bin/ and versions/ are links to directories outside the install, When uninstall applies, Then only the links go and nothing behind them", () => {
+  const home = tempHome();
+  const env = { HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, "AppData", "Local") };
+  const paths = ownedInstall(env, "win32");
+  const outsideBin = path.join(home, "tools");
+  const outsideVersions = path.join(home, "shelf");
+  write(path.join(outsideBin, "workit.cmd"), `rem ${LAUNCHER_MARKER}\r\n`);
+  write(path.join(outsideBin, "other.cmd"), "keep\n");
+  write(
+    path.join(outsideVersions, "1.0.0", "node_modules/@brainervirus/workit-cli/package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-cli", version: "1.0.0" }),
+  );
+  rmSync(path.dirname(paths.launcher), { recursive: true });
+  rmSync(paths.current);
+  rmSync(paths.versions, { recursive: true });
+  symlinkSync(outsideBin, path.dirname(paths.launcher), "junction");
+  symlinkSync(outsideVersions, paths.versions, "junction");
+  const result = applyCli({ env, platform: "win32" });
+  expect(result.ok, JSON.stringify(result)).toBe(true);
+  expect(present(path.dirname(paths.launcher)) || present(paths.versions)).toBe(false);
+  expect(readdirSync(outsideBin).toSorted()).toEqual(["other.cmd", "workit.cmd"]);
+  expect(readdirSync(outsideVersions)).toEqual(["1.0.0"]);
+});
+
+test("Given versions/ holds a non-Workit entry, When uninstall applies, Then only the Workit versions go and the entry is reported", () => {
+  const home = tempHome();
+  const env = { HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, "AppData", "Local") };
+  const paths = ownedInstall(env, "win32");
+  const doc = path.join(paths.versions, "mine", "doc");
+  write(doc, "mine\n");
+  const result = applyCli({ env, platform: "win32" });
+  expect(result.ok, JSON.stringify(result)).toBe(true);
+  expect(readdirSync(paths.versions)).toEqual(["mine"]);
+  expect(readFileSync(doc, "utf8")).toBe("mine\n");
+  expect(result.entries.at(-1)?.detail).toContain("not Workit installs: mine");
+});
+
+test("Given WORKIT_INSTALL_ROOT is the home dir, an ancestor of it or a filesystem root, Then no CLI removal is planned or applied", () => {
+  const home = tempHome();
+  const doc = path.join(home, "versions", "mine", "doc");
+  write(doc, "mine\n");
+  write(
+    path.join(home, "versions", "9.0.0", "node_modules/@brainervirus/workit-cli/package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-cli", version: "9.0.0" }),
+  );
+  for (const root of [home, path.dirname(home), path.parse(home).root]) {
+    const env = { HOME: home, WORKIT_INSTALL_ROOT: root };
+    const plan = cliPlan({ env, platform: "linux" });
+    expect(plan.installed, root).toBe(false);
+    expect(
+      plan.actions.every((action) => action.kind === "keep-foreign"),
+      root,
+    ).toBe(true);
+    // A plan handed in anyway (tampered or stale) still removes nothing.
+    const result = applyUninstall(
+      {
+        hosts: [
+          {
+            host: "cli",
+            installed: true,
+            actions: [
+              {
+                kind: "remove-owned-cli",
+                part: "versions",
+                path: path.join(root, "versions"),
+                detail: "x",
+              },
+            ],
+          },
+        ],
+      },
+      { env, platform: "linux" },
+    );
+    expect(result.ok, root).toBe(false);
+  }
+  const plan = cliPlan({ env: { HOME: home, WORKIT_INSTALL_ROOT: home }, platform: "linux" });
+  expect(plan.actions[0]?.detail).toContain("is your home directory; nothing under it is removed");
+  expect(readFileSync(doc, "utf8")).toBe("mine\n");
+  expect(present(path.join(home, "versions", "9.0.0"))).toBe(true);
 });

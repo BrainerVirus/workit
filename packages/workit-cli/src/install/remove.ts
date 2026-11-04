@@ -5,7 +5,7 @@
 import { lstatSync, readdirSync, readlinkSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { isOwnedLauncher } from "./owned";
-import { ownedPaths, realpathOr } from "./paths";
+import { ownedPaths, packageDirOf, packageVersion, realpathOr } from "./paths";
 
 /** One part of the owned install, removed in this order. */
 export type OwnedPart = "link" | "launcher" | "current" | "versions";
@@ -51,6 +51,37 @@ const launcherPlace = (linked: string, root: string): "none" | "owned" | "foreig
   return stat.isFile() && isOwnedLauncher(linked) ? "owned" : "foreign";
 };
 
+/**
+ * Why `root` must never be removed from: a filesystem root, the home dir or
+ * an ancestor of it (WORKIT_INSTALL_ROOT is taken verbatim); null when safe.
+ */
+export const unsafeRoot = (root: string, env: NodeJS.ProcessEnv): string | null => {
+  const resolved = path.resolve(root);
+  if (path.parse(resolved).root === resolved) return "a filesystem root";
+  const home = env.HOME || env.USERPROFILE;
+  if (!home) return null;
+  for (const [mine, theirs] of [
+    [resolved, path.resolve(home)],
+    [realpathOr(resolved), realpathOr(home)],
+  ]) {
+    const relative = path.relative(mine, theirs);
+    if (relative === "") return "your home directory";
+    if (!relative.startsWith("..") && !path.isAbsolute(relative))
+      return "an ancestor of your home directory";
+  }
+  return null;
+};
+
+const rootRefusal = (root: string, why: string) =>
+  `install root ${root} is ${why}; nothing under it is removed (check WORKIT_INSTALL_ROOT)`;
+
+/** The launcher's own temp files: `<launcher>.<pid>.tmp` (owned.ts writeAtomic). */
+const isLauncherTemp = (name: string, base: string): boolean =>
+  name.startsWith(`${base}.`) && /^\.\d+\.tmp$/.test(name.slice(base.length));
+
+/** A versions/ entry Workit installed: it holds the workit-cli package. */
+const isWorkitVersion = (dir: string): boolean => packageVersion(packageDirOf(dir)) !== null;
+
 /** The removal steps for the owned install under `env`; empty when there is none. */
 export const planOwnedRemoval = (
   env: NodeJS.ProcessEnv,
@@ -58,6 +89,13 @@ export const planOwnedRemoval = (
 ): OwnedRemoval[] => {
   const paths = ownedPaths(env, platform);
   const steps: OwnedRemoval[] = [];
+  const unsafe = unsafeRoot(paths.root, env);
+  if (unsafe) {
+    const present = [paths.current, paths.versions, path.dirname(paths.launcher)].some(lstatOr);
+    return present
+      ? [{ kind: "foreign", path: paths.root, detail: rootRefusal(paths.root, unsafe) }]
+      : [];
+  }
   if (paths.linked !== paths.launcher) {
     const place = launcherPlace(paths.linked, paths.root);
     if (place === "owned")
@@ -71,7 +109,15 @@ export const planOwnedRemoval = (
       steps.push({ kind: "foreign", path: paths.linked, detail: FOREIGN_LAUNCHER_NOTE });
   }
   const bin = path.dirname(paths.launcher);
-  if (lstatOr(bin))
+  const binStat = lstatOr(bin);
+  const launcherStat = binStat && !binStat.isSymbolicLink() ? lstatOr(paths.launcher) : null;
+  if (launcherStat && !(launcherStat.isFile() && isOwnedLauncher(paths.launcher)))
+    steps.push({
+      kind: "foreign",
+      path: paths.launcher,
+      detail: "not a launcher Workit wrote, left untouched",
+    });
+  else if (binStat)
     steps.push({
       kind: "remove",
       part: "launcher",
@@ -93,7 +139,7 @@ export const planOwnedRemoval = (
       kind: "remove",
       part: "versions",
       path: paths.versions,
-      detail: "remove the installed CLI versions",
+      detail: "remove the installed CLI versions (only entries holding the workit-cli package)",
     });
   return steps;
 };
@@ -121,7 +167,19 @@ export const applyOwnedRemoval = (
   };
   if (path.resolve(step.path) !== path.resolve(expected[step.part]))
     return { status: "failed", detail: `refusing to remove ${step.path}: not the owned install` };
-  if (!lstatOr(step.path)) return { status: "skipped", detail: "already absent" };
+  const unsafe = unsafeRoot(paths.root, env);
+  if (unsafe) return { status: "failed", detail: rootRefusal(paths.root, unsafe) };
+  const stat = lstatOr(step.path);
+  if (!stat) return { status: "skipped", detail: "already absent" };
+  // bin/ or versions/ as a link (or junction): remove the link, never what it points to.
+  if ((step.part === "launcher" || step.part === "versions") && stat.isSymbolicLink()) {
+    try {
+      unlinkSync(step.path);
+    } catch (error) {
+      return { status: "failed", detail: errorText(error) };
+    }
+    return { status: "removed", detail: `${step.path} was a link; removed the link only` };
+  }
   try {
     switch (step.part) {
       case "link": {
@@ -131,11 +189,22 @@ export const applyOwnedRemoval = (
         break;
       }
       case "launcher": {
-        // bin/ holds the launcher and its own temp files; anything else keeps the dir.
+        // Only the launcher Workit wrote and its own temp files; anything else keeps the dir.
         const base = path.basename(paths.launcher);
-        const others = readdirSync(step.path).filter((name) => !name.startsWith(base));
-        for (const name of readdirSync(step.path))
-          if (name.startsWith(base)) rmSync(path.join(step.path, name), { force: true });
+        const launcher = lstatOr(paths.launcher);
+        const ours = launcher?.isFile() && isOwnedLauncher(paths.launcher);
+        if (launcher && !ours)
+          return {
+            status: "skipped",
+            detail: `${paths.launcher} is not a launcher Workit wrote, left untouched`,
+          };
+        if (ours) unlinkSync(paths.launcher);
+        const others: string[] = [];
+        for (const name of readdirSync(step.path)) {
+          const file = path.join(step.path, name);
+          if (isLauncherTemp(name, base) && lstatOr(file)?.isFile()) unlinkSync(file);
+          else others.push(name);
+        }
         if (others.length)
           return {
             status: "removed",
@@ -153,9 +222,22 @@ export const applyOwnedRemoval = (
         }
         break;
       }
-      case "versions":
-        rmSync(step.path, { recursive: true, force: true });
+      case "versions": {
+        const kept: string[] = [];
+        for (const name of readdirSync(step.path)) {
+          const entry = path.join(step.path, name);
+          const entryStat = lstatOr(entry);
+          if (!entryStat?.isDirectory() || !isWorkitVersion(entry)) kept.push(name);
+          else rmSync(entry, { recursive: true, force: true });
+        }
+        if (kept.length)
+          return {
+            status: "removed",
+            detail: `Workit versions removed; ${step.path} kept (not Workit installs: ${kept.join(", ")})`,
+          };
+        rmdirSync(step.path);
         break;
+      }
     }
   } catch (error) {
     return { status: "failed", detail: errorText(error) };
