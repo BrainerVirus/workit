@@ -30,10 +30,10 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    `isolation` and refuses a prompt without the brief.
 5. **Judge liveness by side effects only:** `workit fanout status` (head age,
    PR, CI, verdict, landed; STUCK past the TIMEBOX). Stop a stuck worker and
-   observe that it exited (a timeout is not proof). Removing a worktree drops
-   its uncommitted changes: `workit fanout worktree release <slice>` records
-   `git status` in the ledger first and refuses them without `--force`. Never
-   two live workers on one branch.
+   observe that it exited (a timeout is not proof); stop a finished one when its
+   report arrives (Claude Code: TaskStop). Never two live workers on one branch.
+   Removing a worktree drops its uncommitted changes: `workit fanout worktree
+   release <slice>` records `git status` in the ledger and refuses without `--force`.
 6. **Retry once, then escalate.** A stuck or failed slice gets one retry with
    a fresh brief (`workit fanout brief <slice> --mode resume`, same branch);
    if that fails too, re-slice it, take it over, or report the gap. Never

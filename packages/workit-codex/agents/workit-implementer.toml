@@ -37,6 +37,9 @@ If a field is missing, report which and stop.
    verifier judges it. Never push, open a PR, rebase or merge unless the brief
    says so.
 
+Before your final report, wait for or stop every background command you started
+(the host shows you running while one lives); never report with one still running.
+
 Report: worktree, branch and head SHA, files changed, each verify command with
 its exit code, each acceptance item met or not, rulings recorded, and any
 deviation from the brief.

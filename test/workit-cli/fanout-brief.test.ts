@@ -225,6 +225,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "  4. Never record a verdict on your own work.",
       "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
       "  6. A failed review gets one fix round and one recheck. Still failing: stop and report the open finding, never a third round (the lead spawns a decider). A product choice is the user's: report it, do not decide it.",
+      "  7. Before your final report, wait for or stop every background command you started; never report with one still running.",
       "",
     ].join("\n"),
   );
@@ -720,5 +721,17 @@ test.each([["cursor"], ["cli"], [null]])(
     expect(resume.text).toContain("  export WORKIT_SESSION_ID=lead-1-w-a");
     expect(resume.text).toContain("  1. First command: `git switch feature/a`");
     expect(resume.text).toContain("`workit git commit -m <msg>");
+  },
+);
+
+test.each([["claude_code"], ["codex_cli"], ["opencode"], ["pi"], ["cursor"], [null]])(
+  "fanout brief: given a %s lead, when the new and resume briefs are rendered, then RULES tell the worker to stop its background commands before reporting",
+  async (host) => {
+    const cwd = await planned();
+    const line =
+      "  7. Before your final report, wait for or stop every background command you started; never report with one still running.";
+    expect((await briefOn(cwd, host, "a")).text).toContain(line);
+    git(cwd, "branch", "feature/a");
+    expect((await briefOn(cwd, host, "a")).text).toContain(line);
   },
 );
