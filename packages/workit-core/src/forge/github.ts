@@ -2,6 +2,7 @@
 // `gh api` REST for required checks, job logs and reruns (design §2.0).
 import { apiJson, apiText, apiWrite, cliFailure, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
 import { logTail, redactText, shortBody } from "./redact";
+import { rollupForHead } from "./pr-status";
 import {
   failure,
   success,
@@ -406,7 +407,7 @@ export function createGitHubForge(options: {
       if (!first.ok) return first;
       const pr = first.data;
       const threads = [...pr.reviewThreads.nodes];
-      const rollup = pr.commits.nodes[0]?.commit.statusCheckRollup ?? null;
+      const rollup = rollupForHead(pr.commits.nodes[0]?.commit, pr.headRefOid);
       const contexts = [...(rollup?.contexts.nodes ?? [])];
       let threadPage = pr.reviewThreads.pageInfo;
       let contextPage = rollup?.contexts.pageInfo ?? { hasNextPage: false, endCursor: null };
@@ -425,7 +426,7 @@ export function createGitHubForge(options: {
           threads.push(...next.data.reviewThreads.nodes);
           threadPage = next.data.reviewThreads.pageInfo;
         }
-        const nextRollup = next.data.commits.nodes[0]?.commit.statusCheckRollup;
+        const nextRollup = rollupForHead(next.data.commits.nodes[0]?.commit, pr.headRefOid);
         if (contextPage.hasNextPage && nextRollup) {
           contexts.push(...nextRollup.contexts.nodes);
           contextPage = nextRollup.contexts.pageInfo;
