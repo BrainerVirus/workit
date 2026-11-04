@@ -299,6 +299,32 @@ export function cleanupAfterMerge(
   return out;
 }
 
+/** A worktree with no commits of its own is left alone this long after its last use. */
+const FRESH_MS = 24 * 60 * 60 * 1000;
+
+/** A commit was made on `branch` (its reflog has more than the creation entry). */
+const committedOn = (cwd: string, branch: string): boolean => {
+  const log = gitRun(cwd, ["reflog", "show", "--format=%gs", `refs/heads/${branch}`, "--"]);
+  return (
+    log.ok &&
+    log.stdout.split("\n").some((line) => /^(commit|merge|cherry-pick|rebase)/u.test(line))
+  );
+};
+
+/**
+ * When the worktree last moved: its admin dir's HEAD (written on checkout and
+ * commit; `git status` may rewrite the index, so that is not used). 0 when unknown.
+ */
+const lastUsedMs = (worktree: string): number => {
+  const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
+  if (!dir.ok) return 0;
+  try {
+    return fs.statSync(path.join(dir.stdout.trim(), "HEAD")).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
 export type SweepCandidate = {
   path: string;
   branch: string | null;
@@ -418,6 +444,13 @@ export function sweepWorktrees(
           ? "unreadable state"
           : `${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} (${dirty.slice(0, DIRTY_SHOWN).join(", ")}${dirty.length > DIRTY_SHOWN ? ", …" : ""})`,
       );
+      continue;
+    }
+    // A worktree with no landed work of its own (detached, or a branch never
+    // committed to) may be a live worker's fresh slice or a session's scratch base.
+    const finished = (branch && (gone.has(branch) || committedOn(cwd, branch))) || false;
+    if (!finished && Date.now() - lastUsedMs(entry.path) < FRESH_MS) {
+      keep("no commits of its own and used in the last 24 hours");
       continue;
     }
     out.removable.push({

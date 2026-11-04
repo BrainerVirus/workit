@@ -1,6 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -53,6 +61,13 @@ const worktree = (main: string, dir: string, branch: string, extra?: string) => 
   git(main, "worktree", "add", "-q", "-b", branch, dir, "main");
   if (extra) commit(dir, `${branch.replaceAll("/", "-")}.txt`, extra, `work on ${branch}`);
   return dir;
+};
+
+/** Make the worktree look last used two days ago. */
+const age = (dir: string) => {
+  const head = path.join(git(dir, "rev-parse", "--absolute-git-dir"), "HEAD");
+  const then = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  utimesSync(head, then, then);
 };
 
 const branchExists = (main: string, branch: string) => git(main, "branch", "--list", branch) !== "";
@@ -251,6 +266,7 @@ test("gc --worktrees sweeps a merged scratch worktree in the temp dir and a stal
   const env = setup();
   const scratch = path.join(env.root, "scratch-base");
   git(env.main, "worktree", "add", "-q", "--detach", scratch, "main");
+  age(scratch);
   const stale = worktree(env.main, path.join(env.root, "proj-wt", "gone"), "feature/stale");
   rmSync(stale, { recursive: true, force: true });
 
@@ -309,4 +325,29 @@ test("remoteBranchGone is true only when the remote answers without the branch",
   expect(remoteBranchGone(env.main, "feature/r")).toBe(false);
   git(env.main, "push", "-q", "origin", "--delete", "feature/r");
   expect(remoteBranchGone(env.main, "feature/r")).toBe(true);
+});
+
+test("gc --worktrees keeps a fresh worktree with no commits of its own (a live worker's new slice)", () => {
+  const env = setup();
+  const dir = worktree(
+    env.main,
+    path.join(managedWorktreeRoot(env.env), "proj", "fresh"),
+    "feature/fresh",
+  );
+
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+
+  expect(applied.removable).toEqual([]);
+  expect(applied.kept).toEqual([
+    {
+      path: dir,
+      branch: "feature/fresh",
+      reason: "no commits of its own and used in the last 24 hours",
+    },
+  ]);
+  expect(existsSync(dir)).toBe(true);
+
+  age(dir);
+  const later = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
+  expect(later.removable).toEqual([expect.objectContaining({ path: dir, reason: "merged" })]);
 });

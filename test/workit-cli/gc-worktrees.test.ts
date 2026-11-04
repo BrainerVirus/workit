@@ -34,6 +34,10 @@ const setup = () => {
   const unmerged = path.join(root, "proj-wt", "b");
   git(main, "worktree", "add", "-q", "-b", "feature/a", merged, "main");
   git(main, "worktree", "add", "-q", "-b", "feature/b", unmerged, "main");
+  writeFileSync(path.join(merged, "a2.txt"), "a2\n");
+  git(merged, "add", "-A");
+  git(merged, "commit", "-q", "-m", "merged a");
+  git(main, "merge", "-q", "--ff-only", "feature/a");
   writeFileSync(path.join(unmerged, "b.txt"), "b\n");
   git(unmerged, "add", "-A");
   git(unmerged, "commit", "-q", "-m", "unmerged b");

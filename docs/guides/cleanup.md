@@ -57,6 +57,10 @@ removal only when all of these hold:
 - Its commit is on the trunk. That means either merged normally, or
   squash-merged with the whole branch diff equal to one trunk commit.
 - It has no uncommitted changes and is not locked.
+- It holds finished work: its branch has commits of its own or its remote
+  branch is gone. A worktree without either (a detached scratch checkout, or a
+  slice a worker has just created) is kept until it has gone unused for 24
+  hours.
 - It is not the main checkout or the checkout the command runs in.
 
 Registrations whose directory no longer exists are listed as `stale`, and
