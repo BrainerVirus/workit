@@ -16,7 +16,6 @@ import {
   isPrBranch,
 } from "@/packages/workit-core/src/core/repo-context";
 import { gitContext } from "@/packages/workit-core/src/core/git";
-import { youTrackApi } from "@/packages/workit-core/src/core/youtrack";
 
 /** Split context stdout on `## Section` headers. */
 const parseSections = (stdout: string): Record<string, string> => {
@@ -357,43 +356,6 @@ test(
       expect(ctx.stderr).toContain("not a git repository");
       expect(ctx.exitCode).not.toBe(0);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "YouTrack API uses fetch (not the curl binary) and never leaks the token",
-  async () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-fetch-"));
-    const tokenPath = path.join(dir, "youtrack.token");
-    const configPath = path.join(dir, "youtrack.json");
-    writeFileSync(tokenPath, "secret-token\n", { mode: 0o600 });
-    writeFileSync(
-      configPath,
-      JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
-    );
-    const previous = process.env.WORKIT_YOUTRACK_CONFIG;
-    const originalFetch = globalThis.fetch;
-    let seenAuth = "";
-    globalThis.fetch = (async (input: unknown, init?: unknown) => {
-      seenAuth = String(
-        (init as { headers?: Record<string, string> })?.headers?.Authorization ?? "",
-      );
-      return new Response("boom", { status: 500 });
-    }) as unknown as typeof fetch;
-    process.env.WORKIT_YOUTRACK_CONFIG = configPath;
-    try {
-      const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
-      expect(seenAuth).toBe("Bearer secret-token");
-      expect("error" in result).toBe(true);
-      expect(JSON.stringify(result)).not.toContain("secret-token");
-      expect(JSON.stringify(result)).not.toContain("Authorization");
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
-      else process.env.WORKIT_YOUTRACK_CONFIG = previous;
       rmSync(dir, { recursive: true, force: true });
     }
   },

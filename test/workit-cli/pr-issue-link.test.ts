@@ -360,11 +360,12 @@ const youTrackServer = () => {
   return { url: `http://127.0.0.1:${server.port}`, requests, comments, stop: () => server.stop() };
 };
 
-test("pr create: given backlink true and a YouTrack issue, then the comment is posted once through the YouTrack API, and without WORKIT_YT_WRITE=1 nothing is written", async () => {
+test("pr create: given backlink true and a YouTrack issue, then without WORKIT_YT_WRITE=1 nothing is written, and without ytrack the backlink fails naming the install and no token is sent", async () => {
   const yt = youTrackServer();
   const previous = process.env.WORKIT_YT_WRITE;
   try {
     const { repo } = setup("github", githubRoutes());
+    // A legacy token file and key: Workit never reads or sends them.
     const token = path.join(configHome.configDir, "youtrack.token");
     writeFileSync(token, "perm:abc\n", { mode: 0o600 });
     writeFileSync(
@@ -385,19 +386,16 @@ test("pr create: given backlink true and a YouTrack issue, then the comment is p
     ]);
     expect(yt.requests).toEqual([]);
 
+    // The test preload hides ytrack (WORKIT_NO_YTRACK=1): the backlink is not sent.
     process.env.WORKIT_YT_WRITE = "1";
-    const posted = await run(createIssue("IRPT-74"), repo.cwd);
-    expect(posted.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "done" }]);
-    expect(yt.comments).toHaveLength(1);
-    expect(yt.comments[0].text).toStartWith(
-      "Linked from PR #12: https://github.com/o/r/pull/12\n\n<!-- workit-action:",
-    );
+    const unavailable = await run(createIssue("IRPT-74"), repo.cwd);
+    const [backlink] = unavailable.json().data.backlinks;
+    expect(backlink).toMatchObject({ issue: "IRPT-74", status: "failed" });
+    expect(backlink.note).toContain("ytrack is not on PATH");
+    expect(backlink.note).toContain("https://github.com/BrainerVirus/youtrack-cli");
+    expect(yt.requests).toEqual([]);
     // The body links through youtrack.json's baseUrl when the workspace names none.
-    expect(posted.json().data.issues[0].line).toBe(`Related to: ${yt.url}/issue/IRPT-74`);
-
-    const again = await run(createIssue("IRPT-74"), repo.cwd);
-    expect(again.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "already_done" }]);
-    expect(yt.comments).toHaveLength(1);
+    expect(unavailable.json().data.issues[0].line).toBe(`Related to: ${yt.url}/issue/IRPT-74`);
     expect(linkedRows(repo.cwd).at(-1)).toMatchObject({ tracker: "youtrack", relation: "related" });
   } finally {
     if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
