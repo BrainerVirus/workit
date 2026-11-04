@@ -3846,7 +3846,6 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
 /** What `workit upgrade` verifies at its end: findings an upgrade can fix. */
 const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck>([
   checkVersions,
-  checkCliInstalls,
   checkCodexPin,
   checkCodexAgents,
   checkPiExtension,

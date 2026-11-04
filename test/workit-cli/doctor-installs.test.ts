@@ -52,7 +52,6 @@ const check = (dir: string, PATH: string) =>
     stateDir: path.join(dir, ".local/state/workit"),
     env: { HOME: dir, PATH },
     cliVersion: "9.0.0",
-    only: "upgrade",
   }).checks.find((one) => one.id === "cli_installs")!;
 
 test("Given a workit in another Node's prefix that PATH resolves first, Then doctor fails naming both realpaths and versions, with the removal command", () => {
