@@ -258,9 +258,7 @@ async function upgradeOnce(
       });
   }
   // The completion script for $SHELL follows the CLI's verbs (user files, never an rc file).
-  const completion = progress.runSync("Refreshing shell completion", () =>
-    installCompletion({ env, version: pkg.version }),
-  );
+  const completion = installCompletion({ env, version: pkg.version });
   deps.onResult?.(result.hosts);
   handed.rows = result.hosts;
   const failed = !result.ok || !permissionsOk;

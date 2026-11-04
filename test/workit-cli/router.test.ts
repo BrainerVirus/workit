@@ -305,6 +305,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   finding: [["bogus"]],
   decision: [["bogus"]],
   dir: [["bogus"]],
+  completion: [[], ["tcsh"]],
   worker: [["bogus"]],
   state: [["bogus"]],
   check: [["test"], ["test", "--no-lease"]],
