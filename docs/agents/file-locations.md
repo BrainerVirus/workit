@@ -34,6 +34,23 @@ everything.
 `APPDATA` and `LOCALAPPDATA` fall back to `<profile>\AppData\Roaming` and
 `<profile>\AppData\Local` when unset.
 
+### Shell completion files
+
+`workit setup` and `workit upgrade` write the completion script for `$SHELL`
+where that shell loads per-user completions; `workit uninstall` removes them.
+[`packages/workit-cli/src/completion/install.ts`](../../packages/workit-cli/src/completion/install.ts)
+derives each path from `workitDir` (the parent of Workit's data or config dir),
+so Workit's own `WORKIT_CONFIG*` overrides never move them. Each file starts with
+a `# workit-owned-completion` line; a file without it is never overwritten or
+removed. No rc file is edited.
+
+| Shell      | Linux and macOS                                                                              |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| zsh        | `$XDG_DATA_HOME/zsh/site-functions/_workit`, else `~/.local/share/zsh/site-functions/_workit` |
+| bash       | `$XDG_DATA_HOME/bash-completion/completions/workit`, else `~/.local/share/bash-completion/completions/workit` |
+| fish       | `$XDG_CONFIG_HOME/fish/completions/workit.fish`, else `~/.config/fish/completions/workit.fish` |
+| PowerShell | none: setup prints the `$PROFILE` line (`workit completion powershell \| Out-String \| Invoke-Expression`) |
+
 ## Repository locations
 
 Per-repo files have two homes. A repo's `.workit/` holds only committed team

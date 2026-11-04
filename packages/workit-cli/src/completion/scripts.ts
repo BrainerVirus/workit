@@ -27,6 +27,16 @@ ${caseRows("    ")}
   esac
 }
 
+# Each line read is one literal candidate: never word-split, globbed or expanded
+# (compgen -W would expand a candidate such as $(cmd)).
+_workit_reply() {
+  local line
+  COMPREPLY=()
+  while IFS= read -r line; do
+    [[ -n $line && $line == "$1"* ]] && COMPREPLY+=("$line")
+  done
+}
+
 _workit() {
   local cur="\${COMP_WORDS[COMP_CWORD]}" verb="" sub="" word skip="" i
   for ((i = 1; i < COMP_CWORD; i++)); do
@@ -41,15 +51,15 @@ _workit() {
         ;;
     esac
   done
-  local key="$verb\${sub:+ $sub}" IFS=$'\\n'
+  local key="$verb\${sub:+ $sub}"
   if [[ $cur == -* ]]; then
-    COMPREPLY=($(compgen -W "$(_workit_static "-$key")" -- "$cur"))
+    _workit_reply "$cur" < <(_workit_static "-$key")
   elif [[ -z $verb ]]; then
-    COMPREPLY=($(compgen -W "$(_workit_static "")" -- "$cur"))
+    _workit_reply "$cur" < <(_workit_static "")
   elif [[ -z $sub && -n "$(_workit_static "$verb")" ]]; then
-    COMPREPLY=($(compgen -W "$(_workit_static "$verb")" -- "$cur"))
+    _workit_reply "$cur" < <(_workit_static "$verb")
   else
-    COMPREPLY=($(compgen -W "$(workit __complete "\${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null)" -- "$cur"))
+    _workit_reply "$cur" < <(workit __complete "\${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null)
   fi
 }
 
@@ -83,15 +93,15 @@ _workit() {
   done
   local key="$verb\${sub:+ $sub}"
   if [[ $cur == -* ]]; then
-    cands=(\${(f)"$(_workit_static "-$key")"})
+    cands=("\${(@f)$(_workit_static "-$key")}")
   elif [[ -z $verb ]]; then
-    cands=(\${(f)"$(_workit_static "")"})
+    cands=("\${(@f)$(_workit_static "")}")
   elif [[ -z $sub && -n "$(_workit_static "$verb")" ]]; then
-    cands=(\${(f)"$(_workit_static "$verb")"})
+    cands=("\${(@f)$(_workit_static "$verb")}")
   else
-    cands=(\${(f)"$(workit __complete "\${(@)words[2,CURRENT]}" 2>/dev/null)"})
+    cands=("\${(@f)$(workit __complete "\${(@)words[2,CURRENT]}" 2>/dev/null)}")
   fi
-  cands=(\${cands:#})
+  cands=("\${(@)cands:#}")
   compadd -a cands
 }
 

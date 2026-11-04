@@ -150,7 +150,6 @@ function shellNotes(
   ];
 }
 
-/** Remove the completion files Workit wrote (each shell's); a foreign file stays. */
 /** The completion files Workit wrote (they carry its marker), for uninstall's plan. */
 export function ownedCompletionFiles(
   env: Env = process.env,

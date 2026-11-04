@@ -141,6 +141,14 @@ async function candidates(
   return [];
 }
 
+/**
+ * Characters a shell could act on in a candidate (expansion, quoting, globs,
+ * history, control characters): such a value is never offered (defense in
+ * depth; the scripts already take each line literally).
+ */
+// eslint-disable-next-line no-control-regex
+const UNSAFE = /[\s$`'"\\;&|<>()*?[\]{}!#~\u0000-\u001f\u007f]/u;
+
 /** The completion lines for `words`; never throws. */
 export async function complete(
   words: readonly string[],
@@ -150,7 +158,7 @@ export async function complete(
   const current = words.at(-1) ?? "";
   try {
     return [...new Set(await candidates(words, cwd, sources))].filter(
-      (word) => word.startsWith(current) && !/[\s]/u.test(word),
+      (word) => word.startsWith(current) && !UNSAFE.test(word),
     );
   } catch {
     return [];

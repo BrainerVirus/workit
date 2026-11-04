@@ -317,3 +317,94 @@ test("Given completion scripts setup wrote and a fish file of the user's own, Wh
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// A hostile value (a slice id or check name someone else wrote) must reach the
+// shell as text: pressing Tab never runs it, globs it or splits it.
+const hostile = (marker: string) => [`x$(>${marker})`, `y\`touch ${marker}\``, "z*"];
+
+test.skipIf(process.platform === "win32")(
+  "Given __complete printing $(…), backticks and globs, When bash completes, Then nothing runs and each line is offered literally",
+  () => {
+    const marker = path.join(scratch, "PWNED_BASH");
+    const file = path.join(scratch, "hostile.bash");
+    writeFileSync(file, completionScript("bash", "0.0.0"));
+    const body = [
+      `workit() { printf '%s\\n' ${hostile(marker)
+        .map((word) => `'${word}'`)
+        .join(" ")}; }`,
+      `source ${JSON.stringify(file)}`,
+      "COMP_WORDS=(workit check ''); COMP_CWORD=2",
+      "_workit; printf '%s\\n' \"${COMPREPLY[@]}\"",
+    ].join("\n");
+    const result = spawnSync("bash", ["--norc", "--noprofile", "-c", body], {
+      cwd: scratch,
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual(hostile(marker));
+  },
+);
+
+test.skipIf(process.platform === "win32" || spawnSync("zsh", ["-fc", "true"]).status !== 0)(
+  "Given __complete printing $(…), backticks and globs, When zsh completes (even with GLOB_SUBST), Then nothing runs and each line is offered literally",
+  () => {
+    const marker = path.join(scratch, "PWNED_ZSH");
+    const file = path.join(scratch, "hostile.zsh");
+    writeFileSync(file, completionScript("zsh", "0.0.0"));
+    const body = [
+      "setopt globsubst",
+      "compdef() { :; }",
+      'compadd() { [[ $1 == -a ]] && print -rl -- "${(@P)2}"; }',
+      `workit() { print -rl -- ${hostile(marker)
+        .map((word) => `'${word}'`)
+        .join(" ")}; }`,
+      `source ${JSON.stringify(file)}`,
+      "words=(workit check ''); CURRENT=3",
+      "_workit",
+    ].join("\n");
+    const result = spawnSync("zsh", ["-fc", body], { cwd: scratch, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual(hostile(marker));
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a fanout slice id with $(…), When bash completes against the real __complete, Then it is not offered and nothing runs",
+  () => {
+    const marker = path.join(scratch, "PWNED_X");
+    const plan = path.join(store.data, "hostile.json");
+    writeFileSync(
+      plan,
+      JSON.stringify({
+        name: "hostile",
+        trunk: "main",
+        slices: [
+          { id: `x$(>${marker})`, branch: "h" },
+          { id: "safe", branch: "s" },
+        ],
+      }),
+    );
+    try {
+      const file = path.join(scratch, "real.bash");
+      writeFileSync(file, completionScript("bash", "0.0.0"));
+      const body = [
+        `workit() { ${JSON.stringify(process.execPath)} ${JSON.stringify(mainEntry)} "$@"; }`,
+        `source ${JSON.stringify(file)}`,
+        "COMP_WORDS=(workit fanout worktree create ''); COMP_CWORD=4",
+        "_workit; printf '%s\\n' \"${COMPREPLY[@]}\"",
+      ].join("\n");
+      const result = spawnSync("bash", ["--norc", "--noprofile", "-c", body], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      expect(existsSync(marker)).toBe(false);
+      const offered = result.stdout.split("\n").filter(Boolean);
+      expect(offered).toContain("safe");
+      expect(offered.some((word) => word.includes("$"))).toBe(false);
+    } finally {
+      rmSync(plan, { force: true });
+    }
+  },
+);
