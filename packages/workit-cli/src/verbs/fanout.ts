@@ -2,10 +2,10 @@
 // rendering; the rules live in core fanout*.ts. The CLI never spawns agents.
 //
 //   workit fanout plan     <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]
-//   workit fanout brief    <slice> [--fanout <n>] [--mode new|resume] [--attempt <n>]
-//   workit fanout check    [<slice>…] [--fanout <n>] [--base <ref>] [--offline]
-//   workit fanout status   [--fanout <n>] [--stuck-after 30m] [--offline]
-//   workit fanout worktree create|release <slice> [--fanout <n>] [--force]
+//   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>]
+//   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
+//   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
+//   workit fanout worktree create|release <slice> [--name <n>] [--force]
 import { progressFor } from "../progress";
 import fs from "node:fs";
 import path from "node:path";
@@ -33,12 +33,12 @@ import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge
 const PLAN_USAGE =
   "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead] [--json]";
 const BRIEF_USAGE =
-  "workit fanout brief <slice> [--fanout <n>] [--mode new|resume] [--attempt <n>] [--json]";
+  "workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--json]";
 const CHECK_USAGE =
-  "workit fanout check [<slice>…] [--fanout <n>] [--base <ref>] [--offline] [--json]";
-const STATUS_USAGE = "workit fanout status [--fanout <n>] [--stuck-after 30m] [--offline] [--json]";
+  "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] [--json]";
+const STATUS_USAGE = "workit fanout status [--name <n>] [--stuck-after 30m] [--offline] [--json]";
 const WORKTREE_USAGE =
-  "workit fanout worktree create <slice> [--fanout <n>] | worktree release <slice> [--fanout <n>] [--force] [--json]";
+  "workit fanout worktree create <slice> [--name <n>] | worktree release <slice> [--name <n>] [--force] [--json]";
 const USAGE = "workit fanout plan|brief|check|status|worktree ... (workit help fanout)";
 
 /** The forge for PR lookups, or why there is none (offline is never an error). */
@@ -51,27 +51,16 @@ function forgeFor(io: Io, offline: boolean): { forge: ResolvedForge | null; erro
 }
 
 /**
- * The plan a verb acts on: `--fanout <n>` (or its older spelling `--name`),
+ * The plan a verb acts on: `--name` (the registry maps `--fanout` onto it),
  * else the one this branch or this lead session belongs to (#641).
  */
-function pickFanout(
-  io: Io,
-  values: { name?: string; fanout?: string },
-): ReturnType<typeof selectFanout> {
-  if (values.name !== undefined && values.fanout !== undefined && values.name !== values.fanout)
-    return {
-      ok: false,
-      code: "invalid_input",
-      error: `--fanout ${values.fanout} and --name ${values.name} name different plans`,
-      unblock: "pass one: --fanout <name>",
-    };
-  return selectFanout(
+const pickFanout = (io: Io, values: { name?: string }): ReturnType<typeof selectFanout> =>
+  selectFanout(
     io.cwd,
-    values.fanout ?? values.name ?? null,
+    values.name ?? null,
     currentBranch(io.cwd),
     io.env.WORKIT_SESSION_ID?.trim() || null,
   );
-}
 
 const failed = (io: Io, result: FanoutError): number =>
   emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
@@ -346,7 +335,7 @@ function status(argv: string[], io: Io): number {
 
 function worktree(argv: string[], io: Io): number {
   const [action, ...rest] = argv;
-  const flags = parseFlags(rest, { name: "value", fanout: "value", force: "boolean" });
+  const flags = parseFlags(rest, { name: "value", force: "boolean" });
   if (typeof flags === "string") return usage(io, flags, WORKTREE_USAGE);
   if (action !== "create" && action !== "release")
     return usage(
