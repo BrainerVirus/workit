@@ -901,7 +901,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Removed
 
-- Workit's built-in YouTrack token-file client: every YouTrack call now goes through ytrack, whose token stays in the OS keyring. Setup no longer asks for or writes a token; it checks ytrack and names `ytrack auth login --host <host>` when needed. Doctor warns if a leftover `youtrack.token` exists (Workit never reads it; delete it). The `tokenFile` and `tokenDefaults` keys in youtrack.json are ignored.
+- **Breaking:** Workit's built-in YouTrack token-file client. YouTrack now requires [ytrack](https://github.com/BrainerVirus/youtrack-cli) installed and logged in to the configured host (`ytrack auth login --host <host>`); every YouTrack call goes through it, whose token stays in the OS keyring. Setup no longer asks for or writes a token; it checks ytrack and names `ytrack auth login --host <host>` when needed. Doctor warns if a leftover `youtrack.token` exists (Workit never reads it; delete it). The `tokenFile` and `tokenDefaults` keys in youtrack.json are ignored.
 
 ## [0.6.0] - 2026-08-10
 
