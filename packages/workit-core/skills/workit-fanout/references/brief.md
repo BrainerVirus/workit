@@ -9,6 +9,7 @@ finishes it in about 150k tokens of context; split a larger one first.
 
 ```md
 MODE: <new | resume (a replacement continuing a branch with commits)>
+WORKER: <slice id: a spawn prompt that names it binds that worker on OpenCode>
 GOAL: <one observable outcome, in the user's terms>
 SCOPE: <file-scope manifest: the globs this worker may write; everything else is read-only>
   branch: <type>/<slug>   base: <trunk or parent branch>
@@ -17,7 +18,7 @@ ACCEPTANCE:
   - Given <state>, When <action>, Then <observable result>
 VERIFY: <exact commands, e.g. `workit check test`, the verify-<app> feature to drive>
 TIER: <mundane | standard | hard: how much model the slice needs>
-TIMEBOX: <wall clock or turn budget; past it without a new commit you will be replaced>
+TIMEBOX: <wall clock, N tool calls (hard: 180, else 120) and the call by which the full gates ran (60%); past it without a new commit you will be replaced>
 SCRATCH: <your own temp dir: the one `fanout worktree create` printed, else `mktemp -d`; never a shared path>
 FORBIDDEN: <no edits outside SCOPE; no new dependencies; ...>
 FAN-IN: <one PR per slice: no rebase, retarget, merge or force-push | integration: merge the integration tip before reporting, nothing else>
@@ -33,6 +34,7 @@ WORKTREE: <the path `workit fanout worktree create <slice>` made; the worker run
 
 ```md
 MODE: new
+WORKER: usage-endpoint
 GOAL: `GET /v1/usage` returns the workspace's run count per UTC day for the last 7 days.
 SCOPE: src/routes/usage.ts, src/queries/usage.ts, test/usage.test.ts
   branch: feature/usage-endpoint   base: main
@@ -43,7 +45,7 @@ ACCEPTANCE:
   - Given no auth header, When GET /v1/usage, Then the status is 401
 VERIFY: `workit check test`; verify-api feature "usage"
 TIER: standard
-TIMEBOX: 45 minutes
+TIMEBOX: 45 minutes, 120 tool calls (run your full VERIFY gates by call 72)
 SCRATCH: ~/.local/state/workit/worktrees/app/usage-endpoint/.workit-scratch
 FORBIDDEN: no edits outside SCOPE; no schema migration; no new packages
 FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.

@@ -25,9 +25,11 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    Never hand-edit it; change the plan or the standing orders and render again.
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
    keep 4-6 in flight and refill from `spawnable` in `workit fanout status` as
-   each one finishes. Model: the brief's `model:` and `effort:` lines (`workit models show`),
-   else TIER (`references/orchestration.md`). Claude Code: the `implementer` agent; its spawn hook drops
-   `isolation` and refuses a prompt without the brief.
+   each one finishes. Assign before spawn (OpenCode: `workit worker assign`); each prompt carries
+   the brief, or a pointer: its `WORKER`, `TIER`, `TIMEBOX` and `WORKTREE` lines plus "run `workit fanout brief <slice>` and follow it"
+   (budget and model hooks read those lines), so batched OpenCode launches each bind their worker.
+   Model: the brief's `model:` and `effort:` lines (`workit models show`), else TIER (`references/orchestration.md`).
+   Claude Code: the `implementer` agent; its spawn hook drops `isolation` and refuses a prompt without a WORKTREE line.
 5. **Judge liveness by side effects only:** `workit fanout status` (head age,
    PR, CI, verdict, landed; STUCK past the TIMEBOX). Stop a stuck worker and
    observe that it exited (a timeout is not proof); stop a finished one when its
@@ -57,11 +59,9 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
 
 ## Example
 
-Bad brief: "Do the API part and add tests." (no scope, no acceptance, no
-verify command, so nobody can tell when it is done)
+Bad brief: "Do the API part and add tests." (no scope, acceptance or verify command: nobody can tell when it is done)
 
-Good brief: the output of `workit fanout brief usage-endpoint`
-(`references/brief.md` shows one).
+Good brief: the output of `workit fanout brief usage-endpoint` (`references/brief.md` shows one).
 
 ## Check
 
