@@ -191,12 +191,7 @@ function plan(argv: string[], io: Io): number {
 }
 
 function brief(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, {
-    name: "value",
-    fanout: "value",
-    mode: "value",
-    attempt: "value",
-  });
+  const flags = parseFlags(argv, { name: "value", mode: "value", attempt: "value" });
   if (typeof flags === "string") return usage(io, flags, BRIEF_USAGE);
   if (flags.positionals.length !== 1)
     return usage(
@@ -240,12 +235,7 @@ const renderCheck = (data: CheckOutcome): string[] => [
 ];
 
 function check(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, {
-    name: "value",
-    fanout: "value",
-    base: "value",
-    offline: "boolean",
-  });
+  const flags = parseFlags(argv, { name: "value", base: "value", offline: "boolean" });
   if (typeof flags === "string") return usage(io, flags, CHECK_USAGE);
   const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
@@ -306,12 +296,7 @@ const renderStatus = (data: StatusOutcome): string[] => {
 };
 
 function status(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, {
-    name: "value",
-    fanout: "value",
-    "stuck-after": "value",
-    offline: "boolean",
-  });
+  const flags = parseFlags(argv, { name: "value", "stuck-after": "value", offline: "boolean" });
   if (typeof flags === "string") return usage(io, flags, STATUS_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, STATUS_USAGE);
