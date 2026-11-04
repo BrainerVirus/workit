@@ -23,7 +23,7 @@
   "skill.workit-continue": 2102,
   "skill.workit-debug": 2070,
   "skill.workit-deslop": 1746,
-  "skill.workit-fanout": 21404,
+  "skill.workit-fanout": 21522,
   "skill.workit-implement": 4650,
   "skill.workit-retro": 7857,
   "skill.workit-review": 5273,
@@ -31,7 +31,7 @@
   "skill.workit-ship": 11714,
   "skill.workit-test-audit": 2394,
   "skill.workit-verify-app": 5301,
-  "agent.implementer": 2596,
-  "agent.reviewer": 1899,
-  "agent.verifier": 2526
+  "agent.implementer": 2760,
+  "agent.reviewer": 2063,
+  "agent.verifier": 2690
 }

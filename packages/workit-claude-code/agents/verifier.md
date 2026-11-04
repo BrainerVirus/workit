@@ -32,6 +32,9 @@ it.
    (verify-<app>, `--kind live`); `tests-verified` means only tests ran. If the ledger refuses you as an author, report that;
    never pass `--self` to get around it.
 
+Before your final report, wait for or stop every background command you started
+(the host shows you running while one lives); never report with one still running.
+
 Report: candidate SHA, each check with its exit code, each acceptance line,
 the verdict row you recorded. Do not fix anything you find: a failing check is
 a verdict, not a task.

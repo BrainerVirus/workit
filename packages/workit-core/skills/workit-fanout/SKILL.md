@@ -33,7 +33,8 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    observe that it exited (a timeout is not proof). Removing a worktree drops
    its uncommitted changes: `workit fanout worktree release <slice>` records
    `git status` in the ledger first and refuses them without `--force`. Never
-   two live workers on one branch.
+   two live workers on one branch. Once a worker's final report arrives, stop it
+   (Claude Code: TaskStop on that agent) so no entry outlives its work.
 6. **Retry once, then escalate.** A stuck or failed slice gets one retry with
    a fresh brief (`workit fanout brief <slice> --mode resume`, same branch);
    if that fails too, re-slice it, take it over, or report the gap. Never
