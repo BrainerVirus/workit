@@ -352,7 +352,8 @@ Plugin subagents may ignore `hooks`/`mcpServers`/`permissionMode` frontmatter, s
 
 **Release:** add the package to:
 - `release.config.cjs` (`@semantic-release/npm` bumper)
-- `sync-release-manifests.ts` `SYNC_MANIFEST_PATHS` (+ `packages/workit-claude-code/.claude-plugin/plugin.json`)
+- `rewrite-workspace-deps.ts`, which stamps the version into the plugin manifests at publish time (main is not synced)
+- `sync-release-manifests.ts` `SYNC_MANIFEST_PATHS` (+ `packages/workit-claude-code/.claude-plugin/plugin.json`), the optional manual sync that no release step runs
 - `publish-changed-packages.ts`
 - `.oxlintrc.json` / `.oxfmtrc.json` paths (after S7)
 - `knip.json`

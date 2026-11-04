@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
-// Post-release manifest sync (AR-15): semantic-release bumps package versions
-// only inside the ephemeral CI checkout, so the committed manifests stay frozen
-// while tags march on. This script aligns every tracked manifest with the
-// latest released tag and is safe to re-run — a fully synced tree changes
-// nothing. The workflow step wraps it with a `[skip ci]` commit so main always
-// carries the released version after a release.
+// Optional manual manifest sync. The release never runs it: since #704
+// semantic-release and rewrite-workspace-deps.ts stamp the version into the
+// manifests of the CI checkout at publish time, and main is not synced, so the
+// committed manifests keep the version of the last manual sync. Run it in any
+// PR to align every tracked manifest with the latest `v*` tag (or a version
+// given as argv[2]); it is idempotent. plugin.test.ts reads
+// SYNC_MANIFEST_PATHS to keep every plugin manifest on this list.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";

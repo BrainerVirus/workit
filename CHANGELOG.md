@@ -395,6 +395,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one core helper with one-line adapter callers.
 - `workit youtrack show <ISSUE> [--json]` and `workit youtrack create --project --summary` (create needs `WORKIT_YT_WRITE=1`, now also required for note, time and meeting).
 - `workit config show [--json]` prints the effective config here and where each value comes from; `workit grant show` prints `vcs.provider`. Guessed verbs get a did-you-mean (`workit commit` → `workit git commit`).
+- `workit doctor` has a YouTrack row when a workspace uses YouTrack: ok when ytrack is logged in to each configured host; a warning naming `ytrack auth login --host <host>` when it is not; a deprecation warning when Workit falls back to the legacy token file.
 
 ### Changed
 
@@ -887,6 +888,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Claude Code: a spawn that already passes its role's model and effort is left unchanged, and a rewritten spawn's note names the exact model and effort to pass, so auto mode stops refusing spawns. Standing orders reach only Workit workers of their fanout, never other subagents.
 - Cursor: hooks no longer answer `allow` for commands Workit does not decide, so your own Cursor permissions apply (#635). A subagent that stops on a usage limit marks that provider exhausted at once.
 - `pr status` no longer reads an older commit's CI as the PR head's; a cached update check older than the running CLI is refreshed; `verify-delivery` on a protected branch never suggests a PR from it (#651); `pr merge` prints a start line at once.
+- `workit doctor` no longer reports a dev (local-dist) install as stale against npm latest, since main's manifest versions lag the release.
 
 ## [0.6.0] - 2026-08-10
 
