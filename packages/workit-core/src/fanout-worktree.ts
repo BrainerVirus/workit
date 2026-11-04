@@ -283,6 +283,11 @@ const LOCKFILES: ReadonlyArray<[string, (dir: string) => string]> = [
   ["package-lock.json", (dir) => `npm ci --prefix ${dir}`],
 ];
 
+/** Equal content once CRLF is read as LF (git's autocrlf rewrites checkouts). */
+const sameText = (a: Buffer, b: Buffer): boolean =>
+  a.equals(b) ||
+  a.toString("utf8").replaceAll("\r\n", "\n") === b.toString("utf8").replaceAll("\r\n", "\n");
+
 const readBytes = (file: string): Buffer | null => {
   try {
     return fs.readFileSync(file);
@@ -293,7 +298,8 @@ const readBytes = (file: string): Buffer | null => {
 
 /**
  * Link the main checkout's node_modules into `worktree` only when every
- * lockfile is byte-identical in both: a stale main checkout would otherwise
+ * lockfile is identical in both (line endings aside: a Windows checkout with
+ * core.autocrlf writes the worktree's copy with CRLF): a stale main checkout would otherwise
  * hand the worktree the wrong dependency versions (#426). When one differs,
  * nothing is linked and `install` is the command the worker runs instead. The
  * same holds when the main checkout's install is older than its bun.lock.
@@ -310,7 +316,7 @@ function worktreeDependencies(
     const ours = readBytes(path.join(main, name));
     const theirs = readBytes(path.join(worktree, name));
     if (ours === null && theirs === null) continue;
-    if (ours !== null && theirs !== null && ours.equals(theirs)) continue;
+    if (ours !== null && theirs !== null && sameText(ours, theirs)) continue;
     if (fs.existsSync(path.join(worktree, "node_modules"))) break;
     const command = install(worktree);
     return {

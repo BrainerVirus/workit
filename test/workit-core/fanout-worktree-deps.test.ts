@@ -69,7 +69,7 @@ const install = (cwd: string, versions: Record<string, string>) => {
   }
 };
 
-const create = async (lock: string, installed: Record<string, string>) => {
+const create = async (lock: string, installed: Record<string, string>, mainLock?: string) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-worktree-deps-"));
   dirs.push(root);
   const cwd = path.join(root, "app");
@@ -88,6 +88,8 @@ const create = async (lock: string, installed: Record<string, string>) => {
   writeFileSync(path.join(cwd, "bun.lock"), lock);
   git(cwd, "add", "-A");
   git(cwd, "commit", "-qm", "chore: base");
+  // A checkout whose working copy differs from the commit (autocrlf on Windows).
+  if (mainLock !== undefined) writeFileSync(path.join(cwd, "bun.lock"), mainLock);
   install(cwd, installed);
   const file = path.join(root, "plan.json");
   writeFileSync(
@@ -163,4 +165,14 @@ test("given a package also required outright is missing, then nothing is linked 
   expect(made.dependencies).toBeNull();
   expect(made.notes.join("\n")).toContain("@emnapi/runtime missing");
   expect(made.notes.join("\n")).not.toContain("@emnapi/core missing");
+});
+
+test("given the main checkout's bun.lock has CRLF line endings (core.autocrlf) and the worktree's LF, then node_modules is still linked", async () => {
+  const made = await create(
+    lockHere,
+    { resolver: "1.0.0", tslib: "2.8.1", [native]: "1.0.0" },
+    lockHere.replaceAll("\n", "\r\n"),
+  );
+  expect(made.install).toBeNull();
+  expect(made.dependencies).not.toBeNull();
 });

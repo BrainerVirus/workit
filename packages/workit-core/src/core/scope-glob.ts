@@ -47,6 +47,8 @@ const prefixCovers = (outer: readonly string[], inner: readonly string[]): boole
 
 /** Whether scope path `outer` (a path or glob) covers `inner` and everything under it. */
 export function scopePathCovers(outer: string, inner: string): boolean {
+  // `..` climbs out of whatever the outer path names; it is never inside it.
+  if (inner.split("/").includes("..")) return outer === inner;
   if (outer === "." || outer === inner || inner.startsWith(`${outer}/`)) return true;
   if (!GLOB.test(outer)) return false;
   const split = (value: string) => value.split("/").filter((part) => part !== "" && part !== ".");

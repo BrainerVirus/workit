@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { scopeCovers } from "@/packages/workit-core/src/core/task-contract";
+import { scopePathCovers } from "@/packages/workit-core/src/core/scope-glob";
 
 test("scopeCovers normalizes trailing slashes so docs/ covers docs/x", () => {
   const outer = {
@@ -36,4 +37,10 @@ test("scopeCovers (#647): a nested glob inside a lead path glob is contained; a 
   expect(scopeCovers(narrow, worker(["packages/x/src/a.ts"]))).toBe(true);
   expect(scopeCovers(narrow, worker(["packages/**"]))).toBe(false);
   expect(scopeCovers(narrow, worker(["packages/*/test/**"]))).toBe(false);
+});
+
+test("Given a worker path that climbs with `..`, Then no lead glob or prefix covers it", () => {
+  expect(scopePathCovers("packages/**", "packages/../etc/**")).toBe(false);
+  expect(scopePathCovers("packages", "packages/../etc")).toBe(false);
+  expect(scopePathCovers("**", "../x/**")).toBe(false);
 });
