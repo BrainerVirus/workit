@@ -1971,6 +1971,8 @@ export type LandOptions = {
   unverified?: { reason: string } | null;
   /** Merge onto a red base (`--base-red-ok`); each merge records the reason. */
   baseRedOk?: { reason: string } | null;
+  /** Merge PRs another author opened (`--others-pr`, as `pr merge`); each merge records the reason. */
+  othersPr?: { reason: string } | null;
   /** How long to wait for CI on a PR that was just restacked. */
   timeoutMs: number;
   intervalMs: number;
@@ -2172,6 +2174,7 @@ export async function landStack(
         expect: { base: stack.trunk, branch: entry.branch },
         ...(bypass && !verdict.satisfied ? { unverified: bypass } : {}),
         ...(options.baseRedOk ? { baseRedOk: options.baseRedOk } : {}),
+        ...(options.othersPr ? { othersPr: options.othersPr } : {}),
       },
       ctx.sleep,
     );

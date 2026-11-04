@@ -7,7 +7,7 @@
 //   workit stack sync   [--name <n>] [--local] [--dry-run]
 //   workit stack restack [--name <n>] [--dry-run] [--force <branch>]…  (sync, then delete merged branches locally)
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
-//                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s]
+//                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--timeout 20m] [--interval 30s]
 import { progressFor } from "../progress";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
@@ -292,6 +292,7 @@ async function land(argv: string[], io: Io): Promise<number> {
     interval: "value",
     unverified: "boolean",
     "base-red-ok": "boolean",
+    "others-pr": "boolean",
     reason: "value",
   });
   if (typeof flags === "string") return usage(io, flags, LAND_USAGE);
@@ -303,8 +304,16 @@ async function land(argv: string[], io: Io): Promise<number> {
       "--base-red-ok needs --reason <why merging onto a red base is fine>",
       LAND_USAGE,
     );
-  // One --reason serves --unverified and --base-red-ok, alone or together.
-  const unverified = baseRedOk && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
+  const othersPr = flags.booleans.has("others-pr");
+  if (othersPr && !baseRedReason)
+    return usage(
+      io,
+      "--others-pr needs --reason <why the user asked you to merge PRs someone else authored>",
+      LAND_USAGE,
+    );
+  // One --reason serves --unverified, --base-red-ok and --others-pr, alone or together.
+  const unverified =
+    (baseRedOk || othersPr) && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
   if (typeof unverified === "string") return usage(io, unverified, LAND_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, LAND_USAGE);
@@ -346,6 +355,7 @@ async function land(argv: string[], io: Io): Promise<number> {
             intervalMs,
             unverified,
             baseRedOk: baseRedOk && baseRedReason ? { reason: baseRedReason } : null,
+            othersPr: othersPr && baseRedReason ? { reason: baseRedReason } : null,
           },
         );
       }),
