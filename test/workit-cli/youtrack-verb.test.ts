@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -63,7 +63,7 @@ const call = async (argv: string[]) => {
   const io: Io = {
     json: true,
     cwd: dir,
-    env: {},
+    env: { WORKIT_YT_WRITE: "1" },
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
@@ -111,4 +111,126 @@ test("Given --date auto, When the same time entry is retried, Then the marker ig
   const retry = await call([...args, "--date", "auto"]);
   expect(retry.json().data.steps).toEqual([{ step: "time", status: "already_done" }]);
   expect(server.workItems).toHaveLength(1);
+});
+
+// `workit youtrack show|create` (#263): agents read and create issues through
+// Workit (ytrack, else the built-in client) instead of the token file.
+
+const callWith = async (argv: string[], env: NodeJS.ProcessEnv) => {
+  let stdout = "";
+  const io: Io = {
+    json: true,
+    cwd: dir,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  };
+  const code = await run(argv, io);
+  return { code, stdout, json: () => JSON.parse(stdout) };
+};
+
+test("Given no ytrack, When workit youtrack show runs with --json, Then it prints the issue from the server and never the token", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    urls.push(String(input));
+    expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe(
+      "Bearer test-token",
+    );
+    return new Response(
+      JSON.stringify({
+        idReadable: "ABC-4",
+        summary: "Flaky upload",
+        description: "Fails 1 in 10",
+        customFields: [{ name: "State", value: { name: "Open" } }],
+        comments: [{ id: "1", text: "seen", author: { login: "jdoe" }, created: 0 }],
+      }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+  const out = await callWith(["show", "ABC-4", "--json"], {});
+  expect(out.code).toBe(0);
+  expect(urls).toHaveLength(1);
+  expect(out.json().data).toMatchObject({
+    issueId: "ABC-4",
+    summary: "Flaky upload",
+    state: "Open",
+    fields: [{ name: "State", value: "Open" }],
+    comments: [{ id: "1", text: "seen", author: "jdoe" }],
+    source: "builtin",
+  });
+  expect(out.stdout).not.toContain("test-token");
+});
+
+test("Given no WORKIT_YT_WRITE, When workit youtrack create runs, Then it is refused naming the gate and nothing is sent", async () => {
+  const posts: string[] = [];
+  globalThis.fetch = (async (input: string | URL) => {
+    posts.push(String(input));
+    return new Response("[]", { status: 200 });
+  }) as typeof fetch;
+  const out = await callWith(["create", "--project", "ABC", "--summary", "New"], {});
+  expect(out.code).toBe(3);
+  expect(out.json().error).toContain("WORKIT_YT_WRITE=1");
+  expect(posts).toHaveLength(0);
+});
+
+test("Given WORKIT_YT_WRITE=1 and no ytrack, When workit youtrack create runs, Then the issue is created on the server", async () => {
+  const posts: unknown[] = [];
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    if ((init?.method ?? "GET") === "POST") {
+      posts.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ idReadable: "ABC-9" }), { status: 200 });
+    }
+    expect(String(input)).toContain("/api/admin/projects");
+    return new Response(JSON.stringify([{ id: "0-3", shortName: "ABC", name: "Alpha" }]), {
+      status: 200,
+    });
+  }) as typeof fetch;
+  const out = await callWith(
+    ["create", "--project", "ABC", "--summary", "New", "--description", "Body"],
+    { WORKIT_YT_WRITE: "1" },
+  );
+  expect(out.code).toBe(0);
+  expect(posts).toEqual([{ project: { id: "0-3" }, summary: "New", description: "Body" }]);
+  expect(out.json().data).toEqual({
+    issueId: "ABC-9",
+    url: `${BASE}/issue/ABC-9`,
+    source: "builtin",
+  });
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given ytrack on PATH, When workit youtrack show runs, Then ytrack answers and the built-in client is not called",
+  async () => {
+    const bin = path.join(dir, "ytrack-bin");
+    mkdirSync(bin, { recursive: true });
+    const stub = path.join(bin, "ytrack");
+    writeFileSync(
+      stub,
+      `#!/bin/sh\nprintf '{"idReadable":"ABC-6","summary":"Via ytrack","state":"Fixed","customFields":[],"comments":[]}'\n`,
+    );
+    chmodSync(stub, 0o755);
+    globalThis.fetch = (async () => {
+      throw new Error("the built-in client must not be called");
+    }) as unknown as typeof fetch;
+    const out = await callWith(["show", "ABC-6"], { PATH: bin });
+    expect(out.code).toBe(0);
+    expect(out.json().data).toMatchObject({
+      issueId: "ABC-6",
+      summary: "Via ytrack",
+      state: "Fixed",
+      source: "ytrack",
+    });
+  },
+);
+
+test("Given no WORKIT_YT_WRITE, When workit youtrack note runs, Then it is refused naming the gate and nothing is read or sent", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: string | URL) => {
+    urls.push(String(input));
+    return new Response("[]", { status: 200 });
+  }) as typeof fetch;
+  const out = await callWith(["note", "ABC-1", "--markdown", "Hi"], {});
+  expect(out.code).toBe(3);
+  expect(out.json().error).toContain("WORKIT_YT_WRITE=1");
+  expect(urls).toHaveLength(0);
 });

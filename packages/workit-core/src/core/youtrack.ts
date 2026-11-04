@@ -4,6 +4,7 @@ import { readTemplate } from "./templates";
 import { resolveWorkspaceRoot } from "./scripts";
 import { configDir, isConfigObject, resolveConfigDir } from "./config";
 import { resolveInside } from "../core";
+import { YTRACK_EXIT, ytrackDetail, ytrackRunner, type YtrackRun } from "./youtrack-ytrack";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
@@ -594,6 +595,7 @@ export const fetchYouTrackIssueBody = async (
   issue: string,
   creds: () => { token: string; base: string } | { error: string } = youTrackToken,
   request: typeof youTrackRequest = youTrackRequest,
+  ytrack: YtrackRun = ytrackRunner(process.env, youTrackBaseUrl()),
 ): Promise<
   | {
       data: {
@@ -605,6 +607,34 @@ export const fetchYouTrackIssueBody = async (
     }
   | { error: string; kind: "creds" | "request" }
 > => {
+  // ytrack on PATH (#263): read through it, never the token file.
+  const viaYtrack = ytrack([
+    "issue",
+    "view",
+    issue,
+    "--json",
+    "idReadable,summary,description,state",
+  ]);
+  if (!viaYtrack.missing) {
+    if (viaYtrack.status !== YTRACK_EXIT.ok)
+      return {
+        error: `ytrack issue view failed (exit ${viaYtrack.status ?? "signal"}): ${ytrackDetail(viaYtrack)}`,
+        kind: viaYtrack.status === YTRACK_EXIT.auth ? "creds" : "request",
+      };
+    try {
+      const parsed = JSON.parse(viaYtrack.stdout) as Record<string, unknown>;
+      return {
+        data: {
+          idReadable: String(parsed.idReadable ?? issue),
+          summary: String(parsed.summary ?? ""),
+          description: typeof parsed.description === "string" ? parsed.description : null,
+          state: typeof parsed.state === "string" && parsed.state ? parsed.state : null,
+        },
+      };
+    } catch {
+      return { error: "ytrack printed invalid JSON", kind: "request" };
+    }
+  }
   const credentials = creds();
   if ("error" in credentials) return { error: credentials.error, kind: "creds" };
   const { token, base } = credentials;

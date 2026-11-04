@@ -10,7 +10,16 @@ import {
   parseDuration as legacyParseDuration,
   postUpdate as legacyPostUpdate,
   verifyYouTrackToken,
+  youTrackBaseUrl,
+  youTrackWorkDateMs,
 } from "./youtrack";
+import {
+  youTrackBackend,
+  youTrackWriteGate,
+  type WriteResult,
+  type YouTrackBackend,
+} from "./youtrack-backend";
+import { ytrackRunner, ytrackStatus } from "./youtrack-ytrack";
 
 export const ISSUE_RE = /^[A-Z]+-\d+$/;
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -68,20 +77,65 @@ export const unwrap = (value: LegacyValue) => {
   return (value.data as Record<string, unknown> | undefined) ?? value;
 };
 
+/**
+ * A write through ytrack when it is on PATH (#263), as the legacy value shape;
+ * null when the token-file client should run instead. Same WORKIT_YT_WRITE gate.
+ */
+async function ytrackWrite(
+  write: (backend: YouTrackBackend) => Promise<WriteResult>,
+): Promise<LegacyValue | null> {
+  const backend = youTrackBackend();
+  if (backend.kind !== "ytrack") return null;
+  const gate = youTrackWriteGate(process.env);
+  if (gate) return { ok: false, error: gate.error, outcome: "not_applied" };
+  const result = await write(backend);
+  return result.ok
+    ? { ok: true, data: result.data }
+    : { ok: false, error: result.error, outcome: result.outcome };
+}
+
+/** ytrack's auth state when it is on PATH, as the legacy verify shape; else null. */
+function ytrackVerify(): LegacyValue | null {
+  const status = ytrackStatus(ytrackRunner(process.env, youTrackBaseUrl()));
+  if (!status.installed) return null;
+  if (status.auth !== "ok")
+    return { error: `ytrack is ${status.auth.replace("_", " ")}: run ytrack auth login` };
+  return { backend: "ytrack", version: status.version, tokenPresent: true };
+}
+
 export const defaultOperations: YouTrackOperations = {
-  verifyToken: () => unwrap(verifyYouTrackToken()),
+  verifyToken: () => unwrap(ytrackVerify() ?? verifyYouTrackToken()),
   context: (input) => legacyContext(input as never),
   parseDuration: (text, workspaceRoot) => legacyParseDuration(text, workspaceRoot),
-  postComment: async (issueId, markdown, workspaceRoot) =>
-    unwrap(
-      await legacyPostUpdate({
-        confirmed: true,
-        issueId,
-        markdown,
-        workspace_root: workspaceRoot,
-      }),
-    ),
-  logTime: async (input) => unwrap(await legacyLogTime(input as never)),
+  postComment: async (issueId, markdown, workspaceRoot) => {
+    const viaYtrack = await ytrackWrite((backend) => backend.addComment(issueId, markdown));
+    // A not_applied failure stays a value, so callers can tell it from an unknown outcome.
+    if (viaYtrack?.ok === false) return viaYtrack;
+    return unwrap(
+      viaYtrack ??
+        (await legacyPostUpdate({
+          confirmed: true,
+          issueId,
+          markdown,
+          workspace_root: workspaceRoot,
+        })),
+    );
+  },
+  logTime: async (input) => {
+    const viaYtrack = await ytrackWrite(async (backend) => {
+      const date = youTrackWorkDateMs(
+        input.dateMs != null ? String(input.dateMs) : String(input.date ?? "auto"),
+      );
+      if ("error" in date) return { ok: false, error: date.error, outcome: "not_applied" };
+      return backend.addWorkItem(String(input.issueId), {
+        minutes: Number(input.minutes),
+        text: typeof input.text === "string" ? input.text : "workit",
+        dateMs: date.data.dateMs,
+      });
+    });
+    if (viaYtrack?.ok === false) return viaYtrack;
+    return unwrap(viaYtrack ?? (await legacyLogTime(input as never)));
+  },
 };
 
 type PostInput = {

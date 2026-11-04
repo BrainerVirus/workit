@@ -862,7 +862,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "youtrack",
     group: "delivery",
-    summary: "Post a YouTrack comment or log work time (host permission, no grant)",
+    summary: "YouTrack issues, comments and work time (host permission, no grant)",
     subcommands: [
       {
         name: "note",
@@ -879,6 +879,18 @@ export const VERBS: readonly VerbEntry[] = [
         name: "meeting",
         usage: "workit youtrack meeting <ISSUE> --minutes <n> --text <t> [--date auto|YYYY-MM-DD]",
         summary: "Log meeting time",
+      },
+      {
+        name: "show",
+        usage: "workit youtrack show <ISSUE>",
+        summary:
+          "Read an issue (summary, state, fields, comments) through ytrack, else the built-in client",
+      },
+      {
+        name: "create",
+        usage:
+          "workit youtrack create --project <P> --summary <s> [--description <t> | --file <p>]",
+        summary: "Create an issue (needs WORKIT_YT_WRITE=1)",
       },
     ],
     load: () => import("./youtrack"),
