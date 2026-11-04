@@ -8,9 +8,9 @@ import { roleForAgentType } from "@brainervirus/workit-core/src/core/role-models
 import type { TaskRecord } from "@brainervirus/workit-core/src/core";
 
 type Worker = TaskRecord["workers"][number];
-export type LaunchCandidate = { task: TaskRecord; entry: Worker };
+type LaunchCandidate = { task: TaskRecord; entry: Worker };
 
-export type LaunchMatch =
+type LaunchMatch =
   | { kind: "bound"; item: LaunchCandidate }
   | { kind: "ambiguous"; items: LaunchCandidate[] }
   | { kind: "named_elsewhere"; workerId: string };
@@ -31,7 +31,7 @@ const WORKER_ROLE: Record<string, Worker["data"]["assignment"]["role"]> = {
   explore: "investigator",
 };
 
-export const launchText = (input: unknown): { text: string; agent: unknown; prompt: unknown } => {
+const launchText = (input: unknown): { text: string; agent: unknown; prompt: unknown } => {
   const fields =
     typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
   const text = [fields.description, fields.prompt]
