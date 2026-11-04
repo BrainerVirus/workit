@@ -328,7 +328,8 @@ sessions are never killed; that host is skipped with its pid. Uninstall with
 An install registered under the marketplace's earlier name is moved by
 `workit upgrade` (and `workit setup`): it removes that plugin and marketplace
 with `codex plugin remove` and `codex plugin marketplace remove`, then
-registers `workit@workit` once, so Workit's hooks never run twice.
+registers `workit@workit` once, so Workit's hooks never run twice. Trust the
+re-registered plugin's hooks in `/hooks` in the next Codex session.
 
 A thread that was already open keeps the hooks and MCP servers it started with.
 `workit doctor` (`codex_session_plugin`, Linux and macOS) warns for each
