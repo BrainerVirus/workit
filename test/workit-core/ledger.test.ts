@@ -562,7 +562,8 @@ test("a base change elsewhere in the same file carries the verdict as a clean re
   const rebased = checkVerdicts(root, "feature/x", read(root).rows);
   expect(rebased.current.basis).toBe("carried");
   expect(rebased.carry?.rule).toBe("rebase");
-  // An edit within three lines of the branch's hunk changes its context: stale.
+  // An edit within three lines of the branch's hunk changes the patch-id, but
+  // the head is still the judged change replayed onto the new fork: carried.
   git(root, "checkout", "-q", "main");
   commit(
     root,
@@ -572,7 +573,9 @@ test("a base change elsewhere in the same file carries the verdict as a clean re
   );
   git(root, "checkout", "-q", "feature/x");
   git(root, "rebase", "-q", "main");
-  expect(checkVerdicts(root, "feature/x", read(root).rows).current.basis).toBe("stale");
+  const near = checkVerdicts(root, "feature/x", read(root).rows);
+  expect(near.current.basis).toBe("carried");
+  expect(near.carry?.rule).toBe("rebase");
 });
 
 test("given a Python re-indent after the verdict, patch-id is unchanged but the verdict reads stale", () => {

@@ -314,7 +314,7 @@ const ABSENT = /^0+$/u;
  * and insignificant whitespace aside; see substance.ts). A file git lists
  * but this cannot read is not cosmetic.
  */
-function cosmeticFiles(
+export function cosmeticFiles(
   cwd: string,
   fork: string,
   head: string | null,
@@ -370,8 +370,8 @@ function generatedAt(cwd: string, fork: string, paths: readonly string[]): Set<s
 const forkOf = (cwd: string, base: string, head: string | null): string | null =>
   mergeBase(cwd, base, head ?? "HEAD");
 
-/** The files of `fork..head`; generated copies are read from `attributesAt` (the base revision). */
-function laneFiles(
+/** The files of `fork..head` (`fork` may be a tree); generated copies are read from `attributesAt` (the base revision). */
+export function laneFiles(
   cwd: string,
   fork: string,
   head: string | null,
