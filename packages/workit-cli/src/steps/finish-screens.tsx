@@ -271,6 +271,25 @@ export function ProjectScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   );
 }
 
+/** The summary's ytrack line: YouTrack goes through ytrack, so its state shows before Apply. */
+function YtrackLine({
+  ytrack,
+}: {
+  ytrack: { onPath: boolean; unblock?: string | null } | null | undefined;
+}): JSX.Element | null {
+  if (!ytrack) return null;
+  return (
+    <Text>
+      ytrack:{" "}
+      {ytrack.onPath ? (
+        <Text color={inkColor("ok")}>on PATH · Apply checks the login</Text>
+      ) : (
+        <Text color={inkColor("warn")}>not on PATH · {ytrack.unblock}</Text>
+      )}
+    </Text>
+  );
+}
+
 export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   const policy = effectivePolicy(draft.values);
   // WZ-08: the summary renders the authoritative preview (read-only) — the
@@ -363,16 +382,7 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
             : "—"}
         </Text>
       </Text>
-      {preview.ytrack && (
-        <Text>
-          ytrack:{" "}
-          {preview.ytrack.onPath ? (
-            <Text color={inkColor("ok")}>on PATH · Apply checks the login</Text>
-          ) : (
-            <Text color={inkColor("warn")}>not on PATH · {preview.ytrack.unblock}</Text>
-          )}
-        </Text>
-      )}
+      <YtrackLine ytrack={preview.ytrack} />
       <Text>
         VCS provider: <Text color={inkColor("ok")}>{draft.values.vcsProvider}</Text>
       </Text>
