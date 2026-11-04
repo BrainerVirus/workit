@@ -325,7 +325,10 @@ const vcsFileSchema = z
 const youtrackFileSchema = z
   .object({
     baseUrl: z.string().optional().describe("The YouTrack URL (required to use YouTrack)."),
-    tokenFile: z.string().optional().describe("The file holding the YouTrack token (mode 0600)."),
+    tokenFile: z
+      .string()
+      .optional()
+      .describe("Obsolete: Workit reaches YouTrack only through ytrack and ignores this key."),
     locale: z.string().optional().describe("The language of issue updates."),
     timezone: z
       .string()
@@ -359,7 +362,7 @@ const youtrackFileSchema = z
       })
       .passthrough()
       .optional()
-      .describe("What the setup wizard pre-fills when you create a token."),
+      .describe("Obsolete: Workit no longer creates YouTrack tokens and ignores this key."),
   })
   .passthrough();
 
