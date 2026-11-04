@@ -628,12 +628,77 @@ async function prepareHeavy(
   };
 }
 
+/**
+ * `workit check <group>`: run each member of a configured group (the `ci` group
+ * is what CI runs) as its own recorded check, light ones first so they never
+ * wait behind a heavy member's lease, and fail naming the members that failed.
+ */
+async function runGroup(
+  io: Io,
+  argv: string[],
+  group: string,
+  members: string[],
+  config: CheckConfig,
+): Promise<number> {
+  const workspace = await workspaceResources(io);
+  const { settings } = resolveResourceSettings([
+    { label: "workspaces.json", trust: "machine", value: workspace.value },
+    { label: CHECKS_FILE, trust: "repo", value: config.resources },
+  ]);
+  const isHeavy = (name: string) => settings.heavy.includes(name);
+  const ordered = [...members.filter((m) => !isHeavy(m)), ...members.filter(isHeavy)];
+  // The group name is the only positional; every other token is a flag (or its value) each member takes.
+  const passthrough = argv.filter((arg) => arg !== group);
+  const failed: string[] = [];
+  for (const member of ordered) {
+    io.stderr(
+      `workit: check ${group}: running ${member} (${ordered.indexOf(member) + 1}/${ordered.length})\n`,
+    );
+    const code = await run([member, ...passthrough], io);
+    if (code !== 0) failed.push(member);
+  }
+  if (failed.length) {
+    io.stderr(
+      `workit: check ${group}: FAILED ${failed.join(", ")} (${ordered.length - failed.length}/${ordered.length} passed)\n`,
+    );
+    return 1;
+  }
+  io.stderr(`workit: check ${group}: all ${ordered.length} passed (${ordered.join(", ")})\n`);
+  return 0;
+}
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const options = parse(argv);
   if (options instanceof Error)
     return emit(io, fail("invalid_input", options.message, { unblock: USAGE }));
   const config: CheckConfig = loadCheckConfig(io.cwd);
   if (config.note) io.stderr(`note: ${config.note}\n`);
+  const requested = options.command === null ? options.positionals[0] : undefined;
+  if (
+    requested !== undefined &&
+    options.positionals.length === 1 &&
+    !config.error &&
+    !config.checks.some((item) => item.name === requested)
+  ) {
+    const members = config.groups[requested];
+    if (members && !options.name && !options.shell)
+      return runGroup(io, argv, requested, members, config);
+    if (requested === "ci")
+      return emit(
+        io,
+        fail(
+          "invalid_input",
+          `no \`ci\` group is declared; configured checks: ${config.checks.map((item) => item.name).join(", ") || "none"}`,
+          {
+            data: { configured: config.checks.map((item) => item.name), source: config.source },
+            unblock: `declare the checks CI runs in ${CHECKS_FILE}: {"checks":{…},"groups":{"ci":[${config.checks
+              .slice(0, 3)
+              .map((item) => `"${item.name}"`)
+              .join(",")}]}}`,
+          },
+        ),
+      );
+  }
   const top = checkRoot(io.cwd);
   let command: string[];
   let runCwd = io.cwd;
