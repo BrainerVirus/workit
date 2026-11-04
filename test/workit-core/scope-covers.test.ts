@@ -15,3 +15,25 @@ test("scopeCovers normalizes trailing slashes so docs/ covers docs/x", () => {
     false,
   );
 });
+
+test("scopeCovers (#647): a nested glob inside a lead path glob is contained; a wider or sibling one is not", () => {
+  const lead = {
+    description: "lead",
+    paths: ["apps/**", "packages/**", "docs/*"],
+    exclusions: [],
+  };
+  const worker = (paths: string[]) => ({ description: "", paths, exclusions: [] });
+  expect(scopeCovers(lead, worker(["packages/x/src/**"]))).toBe(true);
+  expect(scopeCovers(lead, worker(["packages/db/**", "apps/desktop/**", "apps/web/app/**"]))).toBe(
+    true,
+  );
+  expect(scopeCovers(lead, worker(["packages/x/a.ts", "docs/guide/intro.md"]))).toBe(true);
+  expect(scopeCovers(lead, worker(["test/**"]))).toBe(false);
+  expect(scopeCovers(lead, worker(["**"]))).toBe(false);
+  expect(scopeCovers(lead, worker(["docs/**"]))).toBe(false);
+  expect(scopeCovers(lead, worker(["packagesx/**"]))).toBe(false);
+  const narrow = { ...lead, paths: ["packages/*/src/**"] };
+  expect(scopeCovers(narrow, worker(["packages/x/src/a.ts"]))).toBe(true);
+  expect(scopeCovers(narrow, worker(["packages/**"]))).toBe(false);
+  expect(scopeCovers(narrow, worker(["packages/*/test/**"]))).toBe(false);
+});

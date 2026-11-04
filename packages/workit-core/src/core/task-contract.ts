@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import * as z from "zod";
+import { scopePathCovers } from "./scope-glob";
 
 export const SCHEMA_VERSION = 1 as const;
 export const POLICY_VERSION = "1.0.0" as const;
@@ -118,8 +119,7 @@ export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
       (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
     );
   const covers = (path: string): boolean =>
-    normOuter.paths.some((base) => base === "." || path === base || path.startsWith(`${base}/`)) &&
-    !excluded(path, normOuter);
+    normOuter.paths.some((base) => scopePathCovers(base, path)) && !excluded(path, normOuter);
   const innerExcludes = (path: string): boolean =>
     innerExclusions.some(
       (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
