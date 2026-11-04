@@ -260,15 +260,14 @@ test("a 2.x store created after 3.0 (e.g. after git clean) joins the checkout's 
   );
 });
 
-test("3.0 writes the 2.x marker into every git checkout it writes for", () => {
+// `.workit/` holds committed team config only (W2.25, ruling mw26bwcz): a git
+// checkout's store writes nothing there, so the tree stays clean without a
+// self-ignoring `.workit/.gitignore`.
+test("the store writes no 2.x marker into a git checkout it writes for", () => {
   const root = repo();
   new TaskStore(root).implicitTask({ provenance, create: true });
-  const marker = JSON.parse(readFileSync(path.join(root, ".workit", "workspace.json"), "utf8"));
-  expect(marker).toMatchObject({
-    store: { format: "workit-store" },
-    critical: ["store"],
-  });
-  expect(readFileSync(path.join(root, ".workit", ".gitignore"), "utf8")).toBe("*\n");
+  expect(existsSync(path.join(root, ".workit", "workspace.json"))).toBe(false);
+  expect(existsSync(path.join(root, ".workit", ".gitignore"))).toBe(false);
   expect(git(root, "status", "--porcelain")).toBe("");
 });
 
