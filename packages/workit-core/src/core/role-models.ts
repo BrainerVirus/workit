@@ -384,11 +384,13 @@ export const chooseSpawnModel = (
       effort,
       note: fallback ? `Workit kept ${model} on this spawn.${why}` : null,
     };
+  // The exact spawn to write next time, so the lead's next call needs no rewrite.
+  const next = `pass model: ${model}${resolved.effort ? `, effort: ${resolved.effort}` : ""}`;
   return {
     model,
     effort,
     note: givenModel
-      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}.${why} To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
+      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}.${why} Next time ${next} on the spawn. To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
       : `Workit set ${model}${effort ? ` (effort ${effort})` : ""} on this spawn: role ${label}, ${resolved.source}.${why}${configured ? "" : " Name a model to choose another."}`,
   };
 };
