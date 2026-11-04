@@ -267,8 +267,8 @@ A verdict is keyed to the head it judged. It still applies to a newer head
   generated copies, bookkeeping, or an empty commit (a CI retrigger). After a
   rebase, the branch's own change is what the head changes against the judged
   head replayed onto the new fork, so trunk's lines in a branch file are left
-  out, and a file whose code equals the judged code (only comments or
-  whitespace differ) counts as a comment edit. Bookkeeping never invalidates a
+  out; a branch file that differs from that replay counts in full, never as
+  a comment or formatting edit. Bookkeeping never invalidates a
   verdict: a JSON manifest whose only change is its top-level semver
   `version` (a release sync), and a non-code file that a root `package.json`
   `write:*` script names (read at the base revision, so a branch cannot mark

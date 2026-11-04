@@ -18,7 +18,7 @@
 // After a rebase, a file whose current content is the judged change replayed
 // onto the new fork is left out before the lane is read: a trunk edit in a
 // branch file never counts as the branch's change, and a file whose result
-// differs (a hand-resolved conflict, an amend) always does.
+// differs (a hand-resolved conflict, an amend, even whitespace) always does.
 //
 // Everything else is stale, failing closed: a behavior or risk-path change,
 // an opaque file, an unreadable diff, a judged head git no longer has. A
@@ -28,7 +28,6 @@ import { mergeBase, fileAt } from "../../git/rev";
 import { bookkeepingPaths, replayTree } from "./bookkeeping";
 import {
   computeLane,
-  cosmeticFiles,
   driftFiles,
   kindOf,
   laneFiles,
@@ -83,14 +82,9 @@ export function verdictDrift(
     const tree = replayTree(cwd, range.from, range.fromFork, range.toFork);
     const own = tree ? laneFiles(cwd, tree, range.to, range.toFork) : null;
     if (own && !own.length) return { carries: true, rule: "rebase", since, files: [] };
-    // A file whose code equals the judged code (only comments or whitespace
-    // differ from the judged head, e.g. a conflict in a comment resolved by
-    // hand) is cosmetic: trunk's code in it would differ too.
-    const judged = own ? cosmeticFiles(cwd, range.from, range.to) : null;
-    if (own)
-      files = own.map((file) =>
-        !file.binary && judged?.cosmetic.has(file.path) ? { ...file, cosmetic: true } : file,
-      );
+    // Across a moved fork no edit counts as cosmetic (#334): only an exact
+    // replay is left out.
+    if (own) files = own.map((file) => ({ ...file, cosmetic: false }));
   }
   const bookkeeping = bookkeepingPaths(cwd, {
     from: input.from,

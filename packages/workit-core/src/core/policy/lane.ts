@@ -314,7 +314,7 @@ const ABSENT = /^0+$/u;
  * and insignificant whitespace aside; see substance.ts). A file git lists
  * but this cannot read is not cosmetic.
  */
-export function cosmeticFiles(
+function cosmeticFiles(
   cwd: string,
   fork: string,
   head: string | null,
