@@ -68,10 +68,7 @@ import {
   type DocsGate,
   type PrCheckOutcome,
 } from "@brainervirus/workit-core/src/core/docs-gate";
-import {
-  cleanupMergedBranch,
-  type LocalCleanup,
-} from "@brainervirus/workit-core/src/forge/merge-cleanup";
+import { cleanupAfterMerge, type MergeCleanup } from "@brainervirus/workit-core/src/core/cleanup";
 import {
   branchKindOf,
   flowMismatch,
@@ -752,7 +749,13 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     skipReason: skipChangelog,
     forkPoint,
   });
-  const docs = docsGate({ cwd: io.cwd, mode: steps.docs, title, body, forkPoint });
+  const docs = docsGate({
+    cwd: io.cwd,
+    mode: steps.docs,
+    title,
+    body,
+    forkPoint,
+  });
   const checks = checkOutcomes(changelog, docs, steps.workspace);
   const unrecorded = checks.length
     ? recordPrChecks(
@@ -946,7 +949,11 @@ function checkOutcomes(
 ): PrCheckOutcome[] {
   if (changelog.status === "off" && docs.status === "off") return [];
   return [
-    { check: "changelog", status: changelog.status, line: changelogLine(changelog, workspace) },
+    {
+      check: "changelog",
+      status: changelog.status,
+      line: changelogLine(changelog, workspace),
+    },
     { check: "docs", status: docs.status, line: docsLine(docs) },
   ];
 }
@@ -1141,10 +1148,16 @@ async function merge(argv: string[], io: Io): Promise<number> {
               : {},
       }),
     );
-  const cleanup: LocalCleanup | null =
-    result.data.deletedBranch === true
-      ? cleanupMergedBranch(io.cwd, result.data.branch, result.data.head)
-      : null;
+  // #653: once its remote branch is gone, a merged branch leaves nothing on disk.
+  // A branch kept on the remote (stack parent, fork, --keep-branch) stays local too.
+  const cleanup: MergeCleanup | null =
+    result.data.deletedBranch !== true
+      ? null
+      : cleanupAfterMerge(io.cwd, result.data.branch, result.data.head, {
+          actor: actorFromEnv(io.env),
+          trigger: "pr merge",
+          env: io.env,
+        });
   return emit(io, ok({ ...result.data, localCleanup: cleanup }), (data) => [
     `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
     data.unverified
@@ -1172,6 +1185,9 @@ async function merge(argv: string[], io: Io): Promise<number> {
             : []),
           ...(data.localCleanup.branchDeleted ? [`deleted local ${data.branch}`] : []),
           ...data.localCleanup.notes,
+          ...(data.localCleanup.recorded && "error" in data.localCleanup.recorded
+            ? [`ledger: cleanup not recorded (${data.localCleanup.recorded.error})`]
+            : []),
         ]
       : []),
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),

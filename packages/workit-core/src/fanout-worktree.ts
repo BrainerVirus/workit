@@ -63,12 +63,14 @@ function rowSample(lines: readonly string[]): string[] {
   return out;
 }
 
-type WorktreeEntry = {
+export type WorktreeEntry = {
   path: string;
   head: string | null;
   /** refs/heads/<name>, or null when detached. */
   branch: string | null;
   locked: boolean;
+  /** git would prune it: its directory is gone. */
+  prunable: boolean;
 };
 
 const canonical = (target: string): string => {
@@ -98,12 +100,19 @@ export function listWorktrees(cwd: string): WorktreeEntry[] {
   let current: WorktreeEntry | null = null;
   for (const field of gitRun(cwd, ["worktree", "list", "--porcelain", "-z"]).stdout.split("\0")) {
     if (field.startsWith("worktree ")) {
-      current = { path: field.slice(9), head: null, branch: null, locked: false };
+      current = {
+        path: field.slice(9),
+        head: null,
+        branch: null,
+        locked: false,
+        prunable: false,
+      };
       out.push(current);
     } else if (!current) continue;
     else if (field.startsWith("HEAD ")) current.head = field.slice(5);
     else if (field.startsWith("branch ")) current.branch = field.slice(7);
     else if (field === "locked" || field.startsWith("locked ")) current.locked = true;
+    else if (field === "prunable" || field.startsWith("prunable ")) current.prunable = true;
   }
   return out;
 }
@@ -289,7 +298,11 @@ const readBytes = (file: string): Buffer | null => {
 function worktreeDependencies(
   main: string,
   worktree: string,
-): { linked: LinkedDependencies | null; install: string | null; notes: string[] } {
+): {
+  linked: LinkedDependencies | null;
+  install: string | null;
+  notes: string[];
+} {
   for (const [name, install] of LOCKFILES) {
     const ours = readBytes(path.join(main, name));
     const theirs = readBytes(path.join(worktree, name));
@@ -336,7 +349,9 @@ function staleBunInstall(main: string): string | null {
   let packages: Record<string, unknown>;
   try {
     // bun.lock is JSON with trailing commas.
-    const parsed = JSON.parse(text.replace(/,(\s*[}\]])/gu, "$1")) as { packages?: unknown };
+    const parsed = JSON.parse(text.replace(/,(\s*[}\]])/gu, "$1")) as {
+      packages?: unknown;
+    };
     if (!parsed.packages || typeof parsed.packages !== "object") return null;
     packages = parsed.packages as Record<string, unknown>;
   } catch {
@@ -502,7 +517,10 @@ export function createSliceWorktree(
         );
       const added = gitRun(cwd, ["worktree", "add", "--detach", target, from], SLOW);
       if (!added.ok) return worktreeFailed(added.stderr);
-      const branched = gitBranch(target, { name: slice.branch, base: base.base });
+      const branched = gitBranch(target, {
+        name: slice.branch,
+        base: base.base,
+      });
       if (!branched.ok) {
         // The worktree was made by this call a moment ago and is clean.
         gitRun(cwd, ["worktree", "remove", target], SLOW);

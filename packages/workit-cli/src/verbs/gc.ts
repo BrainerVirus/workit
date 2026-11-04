@@ -4,15 +4,71 @@
 // prunes `workit check` log blobs (LOG_RETENTION). A 2.x `.workit/recovery`
 // directory left by migration is only reported unless `--prune-recovery --yes`.
 // `--dry-run` is read-only.
+//
+// `workit gc --worktrees [--apply]` (#653) instead lists what finished
+// changes left on disk: merged clean worktrees in Workit's places, stale
+// registrations, merged branches whose remote is gone. Dry run unless --apply.
 import { progressFor } from "../progress";
 import { LOG_RETENTION, pruneCheckLogs } from "@brainervirus/workit-core/src/checks";
 import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
 import { emit, fail, ok, type Io } from "../output";
 import { workspaceRootFor } from "../task";
+import { sweepWorktrees, type WorktreeSweep } from "@brainervirus/workit-core/src/core/cleanup";
+import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 
 const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 
+const sweepLines = (data: WorktreeSweep): string[] => {
+  const verb = data.apply ? "removed" : "would remove";
+  const done = new Set(data.removed);
+  const deleted = new Set(data.deletedBranches);
+  return [
+    `workit gc --worktrees${data.apply ? "" : " (dry run; --apply removes)"}`,
+    ...(data.removable.length || data.goneBranches.length ? [] : ["nothing to remove"]),
+    ...data.removable.map(
+      (entry) =>
+        `${data.apply && !done.has(entry.path) ? "not removed" : verb} ${entry.path}${entry.branch ? ` [${entry.branch}]` : ""}: ${entry.reason}, ${megabytes(entry.bytes)} MB`,
+    ),
+    ...data.goneBranches.map(
+      (entry) =>
+        `${data.apply && !deleted.has(entry.name) ? "not deleted" : data.apply ? "deleted" : "would delete"} branch ${entry.name}: remote gone, ${entry.reason}`,
+    ),
+    ...data.removedDirs.map((dir) => `removed empty ${dir}`),
+    ...data.kept.map(
+      (entry) =>
+        `kept ${entry.path || `branch ${entry.branch}`}${entry.path && entry.branch ? ` [${entry.branch}]` : ""}: ${entry.reason}`,
+    ),
+    ...data.notes,
+    ...(data.recorded && "error" in data.recorded
+      ? [`ledger: not recorded (${data.recorded.error})`]
+      : []),
+  ];
+};
+
 export async function run(argv: string[], io: Io): Promise<number> {
+  if (argv.includes("--worktrees")) {
+    const unknown = argv.find(
+      (arg) => !["--worktrees", "--apply", "--dry-run", "--json"].includes(arg),
+    );
+    if (unknown)
+      return emit(
+        io,
+        fail("invalid_input", `unknown argument ${unknown}: workit gc --worktrees [--apply]`),
+      );
+    if (argv.includes("--apply") && argv.includes("--dry-run"))
+      return emit(io, fail("invalid_input", "pass --apply or --dry-run, not both"));
+    const sweep = progressFor(io).runSync(
+      "Sweeping worktrees",
+      () =>
+        sweepWorktrees(io.cwd, {
+          apply: argv.includes("--apply"),
+          actor: actorFromEnv(io.env),
+          env: io.env,
+        }),
+      () => "done",
+    );
+    return emit(io, ok(sweep), sweepLines);
+  }
   const dryRun = argv.includes("--dry-run");
   const pruneRecovery = argv.includes("--prune-recovery");
   if (pruneRecovery && !dryRun && !argv.includes("--yes"))
