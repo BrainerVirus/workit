@@ -8,14 +8,13 @@ import {
   buildDraft,
   context,
   fetchYouTrackIssueBody,
-  logTime,
   parseDuration,
   parseIssueRef,
-  postUpdate,
-  verifyYouTrackToken,
-  youTrackApi,
   type YouTrackScripts,
 } from "@/packages/workit-core/src/core/youtrack";
+import { defaultOperations } from "@/packages/workit-core/src/core/youtrack-tools";
+import { youTrackWriteGate } from "@/packages/workit-core/src/core/youtrack-backend";
+import type { YtrackResult, YtrackRun } from "@/packages/workit-core/src/core/youtrack-ytrack";
 
 const cfg = (overrides: Record<string, unknown> = {}) => ({
   baseUrl: "https://yt.example.test",
@@ -26,7 +25,6 @@ const cfg = (overrides: Record<string, unknown> = {}) => ({
 const scripts = (overrides: Partial<YouTrackScripts> = {}): YouTrackScripts => ({
   config: () => ({ data: cfg() }),
   parseDuration: (text: string) => ({ minutes: text === "30m" ? 30 : 0 }),
-  api: (args: string[]) => ({ ok: true, args }),
   ...overrides,
 });
 
@@ -47,13 +45,6 @@ test("parseIssueRef handles id, url, embedded, and errors", () => {
   expect("error" in bad ? bad.error : "").toContain("could not parse");
   const undef = parseIssueRef(undefined);
   expect("error" in undef ? undef.error : "").toContain("empty");
-});
-
-test("verifyYouTrackToken delegates to config script", () => {
-  expect(verifyYouTrackToken(scripts({ config: () => ({ error: "no token" }) }))).toEqual({
-    error: "no token",
-  });
-  expect(verifyYouTrackToken(scripts())).toEqual({ data: cfg() });
 });
 
 test("context resolves issue from url and mode defaults to task", () => {
@@ -162,43 +153,6 @@ test("parseDuration delegates and maps errors", () => {
   expect(parseDuration("1h", os.tmpdir(), failing)).toEqual({ error: "bad" });
 });
 
-test("logTime validates, formats date arg, and delegates", async () => {
-  expect(
-    (await logTime({ issueId: "bad", minutes: 30, workspace_root: os.tmpdir() }, scripts())).error,
-  ).toContain("invalid issueId");
-  expect(
-    (await logTime({ issueId: "NSR-1", minutes: 0, workspace_root: os.tmpdir() }, scripts())).error,
-  ).toContain("positive");
-  expect(
-    (await logTime({ issueId: "NSR-1", minutes: -5, workspace_root: os.tmpdir() }, scripts()))
-      .error,
-  ).toContain("positive");
-  const withDateMs = await logTime(
-    { issueId: "NSR-1", minutes: 30, dateMs: 123456, workspace_root: os.tmpdir() },
-    scripts({ api: (args) => ({ data: { captured: args } }) }),
-  );
-  expect(withDateMs.ok).toBe(true);
-  expect(withDateMs.captured).toContain("123456");
-  const withDate = await logTime(
-    { issueId: "NSR-1", minutes: 30, date: "20260101", workspace_root: os.tmpdir() },
-    scripts({ api: (args) => ({ data: { captured: args } }) }),
-  );
-  expect(withDate.captured).toContain("20260101");
-  const auto = await logTime(
-    { issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() },
-    scripts({ api: (args) => ({ data: { captured: args } }) }),
-  );
-  expect(auto.captured).toContain("auto");
-  expect(
-    (
-      await logTime(
-        { issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() },
-        scripts({ api: () => ({ error: "api down" }) }),
-      )
-    ).error,
-  ).toBe("api down");
-});
-
 test("Given an old youtrack.json with greeting and mention fields, When context is read, Then it succeeds and emits no greeting or mention", () => {
   const legacy = cfg({
     timezone: "America/Santiago",
@@ -258,45 +212,6 @@ test("Given a user issue-update template with a legacy {{greetingSection}}, When
   });
 });
 
-test("postUpdate validates confirmed, issueId, and markdown", async () => {
-  expect((await postUpdate({ confirmed: false, issueId: "NSR-1", markdown: "x" })).error).toContain(
-    "confirmed",
-  );
-  expect((await postUpdate({ confirmed: true, issueId: "bad", markdown: "x" })).error).toContain(
-    "invalid issueId",
-  );
-  expect((await postUpdate({ confirmed: true, issueId: "NSR-1", markdown: "  " })).error).toContain(
-    "markdown required",
-  );
-});
-test("postUpdate surfaces comment errors and success with minutes", async () => {
-  const commentFail = await postUpdate(
-    { confirmed: true, issueId: "NSR-1", markdown: "x", workspace_root: os.tmpdir() },
-    { postComment: () => ({ error: "comment rejected" }) },
-  );
-  expect(commentFail.error).toBe("comment rejected");
-
-  const withMinutes = await postUpdate(
-    { confirmed: true, issueId: "NSR-1", markdown: "x", minutes: 45, workspace_root: os.tmpdir() },
-    {
-      postComment: () => ({ data: { ok: true } }),
-      logTime: () => ({ data: { ok: true } }),
-    },
-  );
-  expect(withMinutes).toEqual({
-    ok: true,
-    issueId: "NSR-1",
-    postedComment: true,
-    loggedMinutes: 45,
-  });
-
-  const noMinutes = await postUpdate(
-    { confirmed: true, issueId: "NSR-1", markdown: "x", workspace_root: os.tmpdir() },
-    { postComment: () => ({ data: { ok: true } }) },
-  );
-  expect(noMinutes).toEqual({ ok: true, issueId: "NSR-1", postedComment: true });
-});
-
 test("resolveYouTrackFromPaths returns null when no file has a YouTrack ref", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-yt-noref-"));
   try {
@@ -310,82 +225,48 @@ test("resolveYouTrackFromPaths returns null when no file has a YouTrack ref", ()
 });
 
 test("default scripts delegate only to read-only youtrack helpers", () => {
-  // verifyYouTrackToken and parseDuration are read-only (config/duration parse).
-  // NEVER call logTime/postUpdate/context without injected scripts — they hit the
-  // real configured YouTrack instance.
-  const verify = verifyYouTrackToken();
-  expect(verify).toBeDefined();
   const duration = parseDuration("30m", os.tmpdir());
   expect(duration).toBeDefined();
 });
 
-test("write guard: logTime refuses to mutate without WORKIT_YT_WRITE", async () => {
+test("Given no WORKIT_YT_WRITE, When a write goes through the default operations, Then it is refused before ytrack runs", async () => {
   const previous = process.env.WORKIT_YT_WRITE;
   delete process.env.WORKIT_YT_WRITE;
   try {
-    const result = await logTime(
-      { issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() },
-      scripts({
-        api: () => ({
-          error:
-            "ERROR: YouTrack write operations require WORKIT_YT_WRITE=1 (refusing to mutate production)",
-        }),
-      }),
-    );
-    expect(result.error).toContain("WORKIT_YT_WRITE");
+    const result = await defaultOperations.postComment("NSR-40", "test");
+    expect(result).toMatchObject({ ok: false, outcome: "not_applied" });
+    expect(String(result?.error)).toContain("WORKIT_YT_WRITE");
   } finally {
     if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
     else process.env.WORKIT_YT_WRITE = previous;
   }
 });
 
-test("write guard: postUpdate confirmed sets the write flag for real api calls", async () => {
-  const captured: string[][] = [];
-  const result = await postUpdate(
-    { confirmed: true, issueId: "NSR-40", markdown: "x", workspace_root: os.tmpdir() },
-    {
-      postComment: (id: string, text: string, root: string) => {
-        captured.push([id, text, root ?? ""]);
-        return { data: { ok: true } };
-      },
-      logTime: () => ({ data: { ok: true } }),
-    },
-  );
-  expect(result.ok).toBe(true);
-  expect(captured).toHaveLength(1);
-});
-
-test("real api guard rejects writes without WORKIT_YT_WRITE before any HTTP call", async () => {
-  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
-  process.env.WORKIT_YOUTRACK_CONFIG = "/nonexistent/youtrack.json";
+test("Given no ytrack, When a gated write goes through the default operations, Then it is not applied and names the ytrack install", async () => {
+  // The preload hides any real ytrack; the write must never reach an instance.
+  expect(process.env.WORKIT_NO_YTRACK).toBe("1");
+  const previous = process.env.WORKIT_YT_WRITE;
+  process.env.WORKIT_YT_WRITE = "1";
+  const workItem = { issueId: "NSR-40", minutes: 5 };
   try {
-    const denied = await youTrackApi(["post-comment", "NSR-40", "test"], "");
-    expect("error" in denied ? denied.error : "").toContain("WORKIT_YT_WRITE");
-
-    const allowed = await youTrackApi(["post-comment", "NSR-40", "test"], "1");
-    // Passes the guard but must fail on the missing config — never on a real API.
-    expect("error" in allowed ? allowed.error : "").toContain("missing youtrack.json");
+    for (const result of [
+      await defaultOperations.postComment("NSR-40", "test"),
+      await defaultOperations.logTime(workItem),
+    ]) {
+      expect(result).toMatchObject({ ok: false, outcome: "not_applied" });
+      expect(String(result?.error)).toContain("ytrack is not on PATH");
+      expect(String(result?.unblock)).toContain("github.com/BrainerVirus/youtrack-cli");
+    }
   } finally {
-    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
-    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
+    else process.env.WORKIT_YT_WRITE = previous;
   }
 });
 
-test("the pre-rename write flag is no alias: it alone leaves YouTrack writes refused", async () => {
+test("the pre-rename write flag is no alias: it alone leaves YouTrack writes refused", () => {
   // Built at runtime so the no-legacy-name guard keeps the old spelling out of the tree.
   const legacy = ["WORKFLOW", "YT_WRITE"].join("_");
-  const previous = { legacy: process.env[legacy], current: process.env.WORKIT_YT_WRITE };
-  process.env[legacy] = "1";
-  delete process.env.WORKIT_YT_WRITE;
-  try {
-    const denied = await youTrackApi(["post-comment", "NSR-40", "test"]);
-    expect("error" in denied ? denied.error : "").toContain("require WORKIT_YT_WRITE=1");
-  } finally {
-    if (previous.legacy === undefined) delete process.env[legacy];
-    else process.env[legacy] = previous.legacy;
-    if (previous.current === undefined) delete process.env.WORKIT_YT_WRITE;
-    else process.env.WORKIT_YT_WRITE = previous.current;
-  }
+  expect(youTrackWriteGate({ [legacy]: "1" })?.error).toContain("requires WORKIT_YT_WRITE=1");
 });
 
 test("no test may reach the real YouTrack API (write-guard structural scan)", () => {
@@ -430,29 +311,28 @@ test("no test may reach the real YouTrack API (write-guard structural scan)", ()
   expect(offenders).toEqual([]);
 });
 
-test("fetchYouTrackIssueBody returns summary plus description plus state on stubbed fetch", async () => {
-  const seen: string[] = [];
-  const result = await fetchYouTrackIssueBody(
-    "TST-123",
-    () => ({ token: "t", base: "https://yt.example.test" }),
-    async (url: string) => {
-      seen.push(url);
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          idReadable: "TST-123",
-          summary: "Cambia nombre",
-          description: "Detalle de la issue",
-          customFields: [{ name: "State", value: { name: "Open" } }],
-        }),
-        stderr: "",
-      };
-    },
-  );
-  expect(seen[0]).toContain(
-    "/api/issues/TST-123?fields=idReadable,summary,description,customFields(name,value(name))",
-  );
-  expect(result).toEqual({
+/** A recorded ytrack stub: every call's argv, one canned result. */
+const ytrackStub = (result: YtrackResult) => {
+  const calls: string[][] = [];
+  const run: YtrackRun = (args) => {
+    calls.push(args);
+    return result;
+  };
+  return { run, calls };
+};
+
+test("fetchYouTrackIssueBody reads summary, description and state through ytrack", async () => {
+  const stub = ytrackStub({
+    status: 0,
+    stdout: JSON.stringify({
+      idReadable: "TST-123",
+      summary: "Cambia nombre",
+      description: "Detalle de la issue",
+      state: "Open",
+    }),
+    stderr: "",
+  });
+  expect(await fetchYouTrackIssueBody("TST-123", stub.run)).toEqual({
     data: {
       idReadable: "TST-123",
       summary: "Cambia nombre",
@@ -460,57 +340,37 @@ test("fetchYouTrackIssueBody returns summary plus description plus state on stub
       state: "Open",
     },
   });
-  const noState = await fetchYouTrackIssueBody(
-    "TST-123",
-    () => ({ token: "t", base: "https://yt.example.test" }),
-    async () => ({
-      status: 0,
-      stdout: JSON.stringify({ idReadable: "TST-123", summary: "S", customFields: [] }),
-      stderr: "",
-    }),
-  );
-  expect(noState).toEqual({
-    data: { idReadable: "TST-123", summary: "S", description: null, state: null },
+  expect(stub.calls).toEqual([
+    ["issue", "view", "TST-123", "--json", "idReadable,summary,description,state"],
+  ]);
+  const noState = ytrackStub({
+    status: 0,
+    stdout: JSON.stringify({ idReadable: "TST-123", summary: "S" }),
+    stderr: "",
   });
-  const malformedState = await fetchYouTrackIssueBody(
-    "TST-123",
-    () => ({ token: "t", base: "https://yt.example.test" }),
-    async () => ({
-      status: 0,
-      stdout: JSON.stringify({
-        idReadable: "TST-123",
-        summary: "S",
-        customFields: [{ name: "State", value: { $type: "StateBundleElement" } }],
-      }),
-      stderr: "",
-    }),
-  );
-  expect(malformedState).toEqual({
+  expect(await fetchYouTrackIssueBody("TST-123", noState.run)).toEqual({
     data: { idReadable: "TST-123", summary: "S", description: null, state: null },
   });
 });
 
-test("fetchYouTrackIssueBody degrades on creds failure, fails closed on request failure", async () => {
-  const credsDown = await fetchYouTrackIssueBody(
-    "TST-123",
-    () => ({ error: "no token" }),
-    async () => {
-      throw new Error("must not fetch without creds");
-    },
-  );
-  expect(credsDown).toEqual({ error: "no token", kind: "creds" });
+test("fetchYouTrackIssueBody degrades without ytrack or its login, fails closed on a failed read", async () => {
+  const missing = ytrackStub({ status: null, stdout: "", stderr: "", missing: true });
+  const credsDown = await fetchYouTrackIssueBody("TST-123", missing.run);
+  expect(credsDown).toMatchObject({ kind: "creds" });
+  expect("error" in credsDown ? credsDown.error : "").toContain("ytrack is not on PATH");
 
-  const requestDown = await fetchYouTrackIssueBody(
-    "TST-123",
-    () => ({ token: "t", base: "https://yt.example.test" }),
-    async () => ({ status: 1, stdout: "", stderr: "boom" }),
-  );
-  expect(requestDown).toEqual({ error: "boom", kind: "request" });
+  const loggedOut = ytrackStub({ status: 4, stdout: "", stderr: "login required" });
+  expect(await fetchYouTrackIssueBody("TST-123", loggedOut.run)).toMatchObject({ kind: "creds" });
 
-  const badJson = await fetchYouTrackIssueBody(
-    "TST-123",
-    () => ({ token: "t", base: "https://yt.example.test" }),
-    async () => ({ status: 0, stdout: "not json", stderr: "" }),
-  );
-  expect(badJson).toEqual({ error: "invalid JSON from YouTrack API", kind: "request" });
+  const requestDown = ytrackStub({ status: 1, stdout: "", stderr: "boom" });
+  expect(await fetchYouTrackIssueBody("TST-123", requestDown.run)).toEqual({
+    error: "ytrack issue view failed (exit 1): boom",
+    kind: "request",
+  });
+
+  const badJson = ytrackStub({ status: 0, stdout: "not json", stderr: "" });
+  expect(await fetchYouTrackIssueBody("TST-123", badJson.run)).toEqual({
+    error: "ytrack printed invalid JSON",
+    kind: "request",
+  });
 });

@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { run } from "@/packages/workit-cli/src/verbs/youtrack";
+import type {
+  WriteResult,
+  YouTrackBackend,
+} from "@/packages/workit-core/src/core/youtrack-backend";
 
 // `workit youtrack` (S16 review M4): every write carries a deterministic
 // marker and is read back, so a retry after a lost response never duplicates.
@@ -18,8 +22,9 @@ const realFetch = globalThis.fetch;
 
 beforeAll(() => {
   dir = mkdtempSync(path.join(os.tmpdir(), "wk-yt-verb-"));
+  // A leftover legacy token file and key: Workit must never read or send either.
   const token = path.join(dir, "youtrack.token");
-  writeFileSync(token, "test-token\n");
+  writeFileSync(token, "legacy-test-token\n");
   chmodSync(token, 0o600);
   writeFileSync(
     path.join(dir, "youtrack.json"),
@@ -38,23 +43,29 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** A YouTrack issue whose POSTs apply on the server; `dropResponse` loses the reply. */
+/** An in-memory YouTrack behind the backend seam; `dropResponse` loses a write's reply after it applied. */
+let current: YouTrackBackend;
 const fakeYouTrack = (dropResponse: () => boolean) => {
   const comments: { id: string; text: string }[] = [];
   const workItems: { id: string; text: string }[] = [];
   const posts: string[] = [];
-  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
-    const url = String(input);
-    const list = url.includes("/comments") ? comments : workItems;
-    if ((init?.method ?? "GET") === "POST") {
-      const body = JSON.parse(String(init?.body)) as { text: string };
-      posts.push(url);
-      list.push({ id: `${list.length + 1}`, text: body.text });
-      if (dropResponse()) throw new Error("socket hang up (timeout)");
-      return new Response(JSON.stringify({ id: `${list.length}` }), { status: 200 });
-    }
-    return new Response(JSON.stringify(list), { status: 200 });
-  }) as typeof fetch;
+  const write = (list: typeof comments, kind: string, text: string): WriteResult => {
+    posts.push(kind);
+    list.push({ id: `${list.length + 1}`, text });
+    if (dropResponse()) return { ok: false, error: "socket hang up (timeout)", outcome: "unknown" };
+    return { ok: true, data: { id: `${list.length}` } };
+  };
+  current = {
+    kind: "ytrack",
+    showIssue: async () => ({ ok: false, code: "failed", error: "not used" }),
+    createIssue: async () => ({ ok: false, code: "failed", error: "not used" }),
+    addComment: async (_issueId, text) => write(comments, "comment", text),
+    addWorkItem: async (_issueId, item) => write(workItems, "workItem", item.text),
+    texts: async (_issueId, where) => ({
+      texts: (where === "comments" ? comments : workItems).map((item) => item.text),
+      complete: true,
+    }),
+  };
   return { comments, workItems, posts };
 };
 
@@ -67,7 +78,7 @@ const call = async (argv: string[]) => {
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
-  const code = await run(argv, io);
+  const code = await run(argv, io, () => current);
   return { code, json: () => JSON.parse(stdout) };
 };
 
@@ -114,7 +125,7 @@ test("Given --date auto, When the same time entry is retried, Then the marker ig
 });
 
 // `workit youtrack show|create` (#263): agents read and create issues through
-// Workit (ytrack, else the built-in client) instead of the token file.
+// Workit and ytrack; there is no token-file client to fall back to.
 
 const callWith = async (argv: string[], env: NodeJS.ProcessEnv) => {
   let stdout = "";
@@ -129,36 +140,24 @@ const callWith = async (argv: string[], env: NodeJS.ProcessEnv) => {
   return { code, stdout, json: () => JSON.parse(stdout) };
 };
 
-test("Given no ytrack, When workit youtrack show runs with --json, Then it prints the issue from the server and never the token", async () => {
-  const urls: string[] = [];
-  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
-    urls.push(String(input));
-    expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe(
-      "Bearer test-token",
-    );
-    return new Response(
-      JSON.stringify({
-        idReadable: "ABC-4",
-        summary: "Flaky upload",
-        description: "Fails 1 in 10",
-        customFields: [{ name: "State", value: { name: "Open" } }],
-        comments: [{ id: "1", text: "seen", author: { login: "jdoe" }, created: 0 }],
-      }),
-      { status: 200 },
-    );
-  }) as typeof fetch;
-  const out = await callWith(["show", "ABC-4", "--json"], {});
-  expect(out.code).toBe(0);
-  expect(urls).toHaveLength(1);
-  expect(out.json().data).toMatchObject({
-    issueId: "ABC-4",
-    summary: "Flaky upload",
-    state: "Open",
-    fields: [{ name: "State", value: "Open" }],
-    comments: [{ id: "1", text: "seen", author: "jdoe" }],
-    source: "builtin",
-  });
-  expect(out.stdout).not.toContain("test-token");
+/** A PATH without ytrack, and a fetch that fails the test if anything calls YouTrack directly. */
+const noYtrack = (): NodeJS.ProcessEnv => {
+  const empty = path.join(dir, "no-ytrack");
+  mkdirSync(empty, { recursive: true });
+  globalThis.fetch = (async () => {
+    throw new Error("Workit must not call YouTrack without ytrack");
+  }) as unknown as typeof fetch;
+  return { PATH: empty };
+};
+
+test("Given no ytrack, When workit youtrack show runs, Then it fails naming the ytrack install and the host login, and no token is read or sent", async () => {
+  const out = await callWith(["show", "ABC-4", "--json"], noYtrack());
+  expect(out.code).not.toBe(0);
+  const body = out.json();
+  expect(body.error).toContain("ytrack is not on PATH");
+  expect(body.unblock).toContain("https://github.com/BrainerVirus/youtrack-cli");
+  expect(body.unblock).toContain("ytrack auth login --host yt.example.test");
+  expect(out.stdout).not.toContain("legacy-test-token");
 });
 
 test("Given no WORKIT_YT_WRITE, When workit youtrack create runs, Then it is refused naming the gate and nothing is sent", async () => {
@@ -173,33 +172,19 @@ test("Given no WORKIT_YT_WRITE, When workit youtrack create runs, Then it is ref
   expect(posts).toHaveLength(0);
 });
 
-test("Given WORKIT_YT_WRITE=1 and no ytrack, When workit youtrack create runs, Then the issue is created on the server", async () => {
-  const posts: unknown[] = [];
-  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
-    if ((init?.method ?? "GET") === "POST") {
-      posts.push(JSON.parse(String(init?.body)));
-      return new Response(JSON.stringify({ idReadable: "ABC-9" }), { status: 200 });
-    }
-    expect(String(input)).toContain("/api/admin/projects");
-    return new Response(JSON.stringify([{ id: "0-3", shortName: "ABC", name: "Alpha" }]), {
-      status: 200,
-    });
-  }) as typeof fetch;
-  const out = await callWith(
-    ["create", "--project", "ABC", "--summary", "New", "--description", "Body"],
-    { WORKIT_YT_WRITE: "1" },
-  );
-  expect(out.code).toBe(0);
-  expect(posts).toEqual([{ project: { id: "0-3" }, summary: "New", description: "Body" }]);
-  expect(out.json().data).toEqual({
-    issueId: "ABC-9",
-    url: `${BASE}/issue/ABC-9`,
-    source: "builtin",
-  });
+test("Given WORKIT_YT_WRITE=1 and no ytrack, When workit youtrack create or note runs, Then nothing is sent and the unblock names the ytrack install", async () => {
+  const env = { ...noYtrack(), WORKIT_YT_WRITE: "1" };
+  const created = await callWith(["create", "--project", "ABC", "--summary", "New"], env);
+  expect(created.code).not.toBe(0);
+  expect(created.json().unblock).toContain("https://github.com/BrainerVirus/youtrack-cli");
+  const note = await callWith(["note", "ABC-1", "--markdown", "Hi"], env);
+  expect(note.code).not.toBe(0);
+  expect(note.json().unblock).toContain("ytrack auth login --host yt.example.test");
+  expect(note.json().data.steps).toEqual([{ step: "comment", status: "failed" }]);
 });
 
 test.skipIf(process.platform === "win32")(
-  "Given ytrack on PATH, When workit youtrack show runs, Then ytrack answers and the built-in client is not called",
+  "Given ytrack on PATH, When workit youtrack show runs, Then ytrack answers and nothing else is called",
   async () => {
     const bin = path.join(dir, "ytrack-bin");
     mkdirSync(bin, { recursive: true });
@@ -210,7 +195,7 @@ test.skipIf(process.platform === "win32")(
     );
     chmodSync(stub, 0o755);
     globalThis.fetch = (async () => {
-      throw new Error("the built-in client must not be called");
+      throw new Error("Workit must not call YouTrack directly");
     }) as unknown as typeof fetch;
     const out = await callWith(["show", "ABC-6"], { PATH: bin });
     expect(out.code).toBe(0);

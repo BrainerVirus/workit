@@ -11,7 +11,6 @@ import {
   scaffoldVcs,
   scaffoldYouTrack,
   shouldWriteWorkspaces,
-  TOKEN_PLACEHOLDER,
   validateBaseUrl,
   validateLocale,
   writeWorkspaces,
@@ -125,13 +124,12 @@ test("runProjectSetup without includeOpenSource skips LICENSE/CONTRIBUTING", () 
   }
 });
 
-test("scaffoldYouTrack writes youtrack.json + placeholder token + token URL", () => {
+test("scaffoldYouTrack writes a neutral youtrack.json and no token file", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
   try {
     const s = scaffoldYouTrack(dir, "https://youtrack.example.com", {
       locale: "es-CL",
     });
-    expect(s.tokenCreateUrl).toBe("https://youtrack.example.com/users/me?tab=account-security");
     const cfg = JSON.parse(readFileSync(s.youtrackJson, "utf8"));
     expect(cfg.baseUrl).toBe("https://youtrack.example.com");
     expect(cfg.locale).toBe("es-CL");
@@ -142,9 +140,12 @@ test("scaffoldYouTrack writes youtrack.json + placeholder token + token URL", ()
       "greetings",
       "greetingCutoff",
       "meetingIssues",
+      "tokenFile",
+      "tokenDefaults",
     ])
       expect(cfg).not.toHaveProperty(key);
-    expect(readFileSync(s.tokenPath, "utf8").trim()).toBe(TOKEN_PLACEHOLDER);
+    expect(existsSync(path.join(dir, "youtrack.token"))).toBe(false);
+    expect(s.created).toEqual([s.youtrackJson]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -167,7 +168,7 @@ test("scaffoldVcs configures CLI providers without creating separate token files
   }
 });
 
-test("scaffoldYouTrack preserves an existing token byte-for-byte (WZ-05)", () => {
+test("scaffoldYouTrack leaves a legacy token untouched and reports it preserved (WZ-05)", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
   try {
     const tokenPath = path.join(dir, "youtrack.token");
@@ -179,7 +180,7 @@ test("scaffoldYouTrack preserves an existing token byte-for-byte (WZ-05)", () =>
     expect(s.status).toBe("preserved");
     expect(s.preserved).toContain(tokenPath);
     expect(readFileSync(tokenPath, "utf8")).toBe("perm_abcdef123456\n");
-    expect(readFileSync(s.youtrackJson, "utf8")).not.toContain(TOKEN_PLACEHOLDER);
+    expect(readFileSync(s.youtrackJson, "utf8")).not.toContain("token");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
