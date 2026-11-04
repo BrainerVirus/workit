@@ -34,6 +34,10 @@ Some things are always kept, and the merge output says why:
 
 - A worktree with uncommitted changes. The output names the changed paths.
   Commit, move or discard them, then run `workit gc --worktrees --apply`.
+- A worktree holding gitignored files that a tool cannot rebuild, such as a
+  `.env` or a local config. The output names them. Ignored files under
+  `node_modules`, `.workit-scratch`, `dist`, `build`, `coverage`, `.turbo`,
+  `.next` or `.cache` are rebuilt by tools, so they never keep a worktree.
 - A local branch with commits that were not part of the merge.
 - The main checkout, the checkout you ran the command in, and any worktree that
   Workit did not make.
@@ -56,7 +60,8 @@ removal only when all of these hold:
   `workit fanout worktree create` made it.
 - Its commit is on the trunk. That means either merged normally, or
   squash-merged with the whole branch diff equal to one trunk commit.
-- It has no uncommitted changes and is not locked.
+- It has no uncommitted changes, no gitignored files that cannot be rebuilt
+  (see above), and is not locked.
 - It holds finished work: its branch has commits of its own or its remote
   branch is gone. A worktree without either (a detached scratch checkout, or a
   slice a worker has just created) is kept until it has gone unused for 24

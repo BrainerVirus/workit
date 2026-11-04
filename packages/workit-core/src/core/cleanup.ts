@@ -86,10 +86,58 @@ export function dirtyPaths(worktree: string): string[] | null {
   return out;
 }
 
-const dirtyNote = (worktree: string, paths: string[] | null): string =>
-  paths === null
-    ? `worktree ${worktree} has an unreadable state; kept it`
-    : `worktree ${worktree} has ${paths.length} uncommitted change${paths.length === 1 ? "" : "s"} (${paths.slice(0, DIRTY_SHOWN).join(", ")}${paths.length > DIRTY_SHOWN ? ", …" : ""}); kept it. Commit, move or discard them, then \`${RELEASE_COMMAND}\``;
+/** Ignored paths under these directories are rebuilt by a tool; removing them loses nothing. */
+const REGENERABLE = new Set([
+  "node_modules",
+  SCRATCH_DIR,
+  "dist",
+  "build",
+  "coverage",
+  ".turbo",
+  ".next",
+  ".cache",
+]);
+
+/**
+ * Ignored paths that are not regenerable (a `.env`, a local config): `git
+ * status` omits them and `git worktree remove` deletes them, so they keep the
+ * worktree. Null when git cannot say.
+ */
+export function ignoredKeepers(worktree: string): string[] | null {
+  const listed = gitRun(worktree, [
+    "ls-files",
+    "-z",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--directory",
+  ]);
+  if (!listed.ok) return null;
+  return nulList(listed.stdout).filter(
+    (file) => !file.split("/").some((segment) => REGENERABLE.has(segment)),
+  );
+}
+
+const IGNORED_REASON = "ignored files that are not regenerable";
+
+const listed = (paths: readonly string[]): string =>
+  `${paths.slice(0, DIRTY_SHOWN).join(", ")}${paths.length > DIRTY_SHOWN ? `, … (${paths.length} in all)` : ""}`;
+
+/** Why the worktree must stay (uncommitted or valuable ignored files), or null when it may go. */
+function keepReason(worktree: string): { paths: string[]; reason: string } | null {
+  const dirty = dirtyPaths(worktree);
+  if (dirty === null) return { paths: ["unreadable"], reason: "unreadable state" };
+  if (dirty.length > 0)
+    return {
+      paths: dirty,
+      reason: `${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} (${listed(dirty)})`,
+    };
+  const ignored = ignoredKeepers(worktree);
+  if (ignored === null) return { paths: ["unreadable"], reason: "unreadable state" };
+  if (ignored.length > 0)
+    return { paths: ignored, reason: `${IGNORED_REASON} (${listed(ignored)})` };
+  return null;
+}
 
 /** Bytes under a directory, symlinks not followed. */
 export function directoryBytes(dir: string): number {
@@ -260,13 +308,12 @@ export function cleanupAfterMerge(
       );
       return out;
     }
-    const dirty = dirtyPaths(entry.path);
-    if (dirty === null || dirty.length > 0) {
-      out.dirty = {
-        path: entry.path,
-        paths: (dirty ?? ["unreadable"]).slice(0, DIRTY_SHOWN),
-      };
-      out.notes.push(`${dirtyNote(entry.path, dirty)}; kept local ${branch}`);
+    const held = keepReason(entry.path);
+    if (held) {
+      out.dirty = { path: entry.path, paths: held.paths.slice(0, DIRTY_SHOWN) };
+      out.notes.push(
+        `worktree ${entry.path} has ${held.reason}; kept it and local ${branch}. Commit, move or discard them, then \`${RELEASE_COMMAND}\``,
+      );
       return out;
     }
     const removed = gitRun(cwd, ["worktree", "remove", entry.path], SLOW);
@@ -437,13 +484,9 @@ export function sweepWorktrees(
       );
       continue;
     }
-    const dirty = dirtyPaths(entry.path);
-    if (dirty === null || dirty.length > 0) {
-      keep(
-        dirty === null
-          ? "unreadable state"
-          : `${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} (${dirty.slice(0, DIRTY_SHOWN).join(", ")}${dirty.length > DIRTY_SHOWN ? ", …" : ""})`,
-      );
+    const held = keepReason(entry.path);
+    if (held) {
+      keep(held.reason);
       continue;
     }
     // A worktree with no landed work of its own (detached, or a branch never

@@ -50,6 +50,7 @@ const setup = () => {
   execFileSync("git", ["init", "-q", "-b", "main", main]);
   git(main, "config", "user.email", "t@t");
   git(main, "config", "user.name", "t");
+  writeFileSync(path.join(main, ".gitignore"), ".env\nnode_modules/\n.workit-scratch/\n");
   commit(main, "a.txt", "a\n", "base");
   const env = { ...process.env, XDG_CACHE_HOME: path.join(root, "cache") };
   return { root, main, env };
@@ -351,3 +352,77 @@ test("gc --worktrees keeps a fresh worktree with no commits of its own (a live w
   const later = sweepWorktrees(env.main, { apply: false, actor, env: env.env });
   expect(later.removable).toEqual([expect.objectContaining({ path: dir, reason: "merged" })]);
 });
+
+/** Write `files` (relative path → text) into the worktree, creating directories. */
+const put = (dir: string, files: string[]) => {
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), "x\n");
+  }
+};
+
+const IGNORED_CASES = [
+  { name: "only .env", files: [".env"], kept: [".env"] },
+  {
+    name: "only node_modules and the scratch dir",
+    files: ["node_modules/x/i.js", ".workit-scratch/y"],
+    kept: null,
+  },
+  {
+    name: ".env beside node_modules and the scratch dir",
+    files: [".env", "node_modules/x/i.js", ".workit-scratch/y"],
+    kept: [".env"],
+  },
+] as const;
+
+for (const item of IGNORED_CASES)
+  test(`after a merge, a managed worktree holding ${item.name} (gitignored) is ${item.kept ? "kept and named" : "removed"}`, () => {
+    const env = setup();
+    const dir = worktree(
+      env.main,
+      path.join(managedWorktreeRoot(env.env), "proj", "slice"),
+      "feature/x",
+      "x\n",
+    );
+    put(dir, [...item.files]);
+
+    const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+      actor,
+      trigger: "pr merge",
+      env: env.env,
+    });
+
+    if (item.kept) {
+      expect(out).toMatchObject({ worktreeRemoved: null, branchDeleted: false });
+      expect(out.dirty).toEqual({ path: dir, paths: [...item.kept] });
+      expect(out.notes).toEqual([
+        expect.stringContaining("ignored files that are not regenerable (.env)"),
+      ]);
+      expect(out.notes[0]).not.toContain("node_modules");
+      expect(existsSync(path.join(dir, ".env"))).toBe(true);
+    } else {
+      expect(out).toMatchObject({ branchDeleted: true, dirty: null, notes: [] });
+      expect(existsSync(dir)).toBe(false);
+    }
+  });
+
+for (const item of IGNORED_CASES)
+  test(`gc --worktrees --apply on a merged worktree holding ${item.name} (gitignored) ${item.kept ? "keeps it and names them" : "removes it"}`, () => {
+    const env = setup();
+    const dir = worktree(env.main, path.join(env.root, "proj-wt", "i"), "feature/i", "i work\n");
+    git(env.main, "merge", "-q", "--ff-only", "feature/i");
+    put(dir, [...item.files]);
+
+    const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+
+    if (item.kept) {
+      expect(applied.removable).toEqual([]);
+      expect(applied.kept).toEqual([
+        { path: dir, branch: "feature/i", reason: "ignored files that are not regenerable (.env)" },
+      ]);
+      expect(existsSync(path.join(dir, ".env"))).toBe(true);
+    } else {
+      expect(applied.removed).toEqual([dir]);
+      expect(existsSync(dir)).toBe(false);
+    }
+  });
