@@ -38,11 +38,11 @@ proposes and stops. Nothing changes until the user approves.
    fail, a sentence cannot. From types to test, the proof is that the new
    enforcer fails on the cited past mistake. A rule whose mistake can no
    longer happen is deleted.
-5. **Upstream.** When a workit skill, verb or hook caused the friction,
-   propose an issue or PR on BrainerVirus/workit. Never fork a local copy.
-   The issue shows the workit behavior in a minimal synthetic reproduction:
-   no private repo name, path, code, ledger text, PR or thread quote, or
-   transcript. Show the exact draft body; file it only after the user approves.
+5. **Upstream.** Friction a workit skill, verb or hook caused, or a rule for
+   agent behaviour, becomes an issue or PR on BrainerVirus/workit, not a host
+   memory (one host reads it). Never fork a local copy. Use a minimal synthetic
+   repro: no private repo name, path, code, ledger text, PR, thread or transcript.
+   Show the exact draft; once approved: `workit issue create --repo BrainerVirus/workit`.
 6. **Bloat guards.** AGENTS.md stays within 8 KB: each addition names what it
    removes. Create `CODING_STANDARDS.md` or `GLOSSARY.md` only in the same
    edit as its first real entry, never as a scaffold. Edit steering text by

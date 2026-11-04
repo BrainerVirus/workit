@@ -633,6 +633,48 @@ A closing keyword does not cross forges, so an issue on the other forge is a
   An issue on another forge host is not commented on; it is reported as
   `skipped` with a note.
 
+### Issues and findings
+
+`workit issue` reads and writes GitHub and GitLab issues, so an agent never
+needs a raw `gh issue close` that the host's permission mode blocks:
+
+```sh
+workit issue view <n>
+workit issue comment <n> --body-file <f|->
+workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->]
+workit issue create --title <t> --body-file <f|-> [--label <l>]…
+```
+
+Issues live on the workspace tracker (`issues.provider` github or gitlab,
+its `issues.repo`), else on the checkout's forge. `--repo <owner/name>` picks
+another repository on the same host. YouTrack and other hosts are refused,
+because no account is verified there. Comment, close and create need the
+`pr` grant, the same one as `pr edit` and `pr reply`, and each writes an
+`issue.commented`, `issue.closed` or `issue.created` ledger row. `close`
+posts the comment first and then re-reads the issue to confirm the close.
+GitLab has no close reason, so there the reason is kept in the ledger row
+only. A rule about how agents should behave belongs in an issue like this,
+not in a host memory, which only one host reads.
+
+`workit finding record --queue` files the finding as a new tracker issue, and
+`--queue <n>` adds it as a comment on open issue `<n>` (a closed one is
+refused). The payload is validated before anything is posted. The issue or
+comment URL is stored in the finding's refs as an `external` ref.
+
+`workit finding resolve` without `--task` goes to whichever task of the
+checkout holds the finding, so a lead can resolve a helper's finding. The
+engine matches evidence as follows:
+
+| Disposition | Accepted evidence                                                                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixed`     | `check` or `review` evidence with result `passed`, recorded after the finding, still current on the tree (on a candidate when the finding has one) |
+| `dismissed` | any kind with result `passed` or `failed`, on the finding's candidate (or none for both), sharing a ref with the finding or making the same claim   |
+| `deferred`  | an approved `limitation` decision that covers the finding's scope and names an `acceptanceAllowed` requirement                                      |
+
+When a resolve is refused, the error states the rule and lists the evidence
+ids in the task that fit it. If none fit, it gives the
+`workit evidence record` command to run.
+
 ### Babysitting a PR
 
 With a workspace `defaultEndpoint` of `green` or `merged`
