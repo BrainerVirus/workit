@@ -310,8 +310,21 @@ const statFields = (pid: number): string[] | null => {
  * Start time of `pid`, so a recycled pid does not keep a lease alive: /proc
  * on Linux, `ps -o lstart=` on macOS (store-lock.ts), null elsewhere.
  */
-export const processStart = (pid: number, deps?: ProcessStartDeps): string | null =>
-  processStartOf(pid, deps);
+export const processStart = (pid: number, deps?: ProcessStartDeps): string | null => {
+  if (deps) return processStartOf(pid, deps);
+  // A waiter polls the holder every tick; on macOS each probe spawns `ps`. A
+  // live pid's start time cannot change, so a short real-time cache is exact
+  // enough (a pid reused within it keeps its lease that long at most).
+  const now = Date.now();
+  const hit = START_CACHE.get(pid);
+  if (hit && now - hit.at < START_CACHE_MS) return hit.start;
+  const start = processStartOf(pid);
+  if (START_CACHE.size > 256) START_CACHE.clear();
+  START_CACHE.set(pid, { start, at: now });
+  return start;
+};
+const START_CACHE_MS = 2_000;
+const START_CACHE = new Map<number, { start: string | null; at: number }>();
 
 const pidAlive = (pid: number): boolean => {
   try {
