@@ -54,6 +54,19 @@ so no token read comes back. Writes need `WORKIT_YT_WRITE=1`
 which the test preload sets, so a test never spawns a developer's real ytrack:
 tests use a stub `ytrack` on a `PATH` in an env they build.
 
+The ytrack agent skill (youtrack-cli #16) ships inside ytrack, stamped with
+its version: `ytrack skill print` and `ytrack skill install --dir <root>
+--json` (`{path, version}`; it refuses a `<root>/ytrack` that is not its
+skill). Workit never copies its text. `core/ytrack-skill.ts` probes support
+with `ytrack skill print` (exit 0; ytrack 0.2.1 and older have no `skill`), installs into
+each host's root (`hostSkillsRoot`, sources in the parity table below) and
+records the directories it created in `<state dir>/ytrack-skill.json`. A
+ytrack skill that was there first is refreshed but not recorded, so
+`workit uninstall` leaves it. `workit setup` and `workit upgrade` call it
+through `upgrade/ytrack-skill.ts` (`refreshYtrackSkill`) for each selected host
+with Workit installed, only when `youtrack.json` exists or a workspace tracks
+issues in YouTrack.
+
 ## Raw git/forge steering and session ids
 
 `packages/workit-core/src/hooks/raw-git.ts` classifies shell commands by text
@@ -255,6 +268,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | `/wk-*` aliases | X: plugin commands are namespaced (`/workit:<name>`) | P `command.transform` (prose, not `prompt.skills`) | L: no plugin slash commands (`$workit-<name>`) | N `commands/wk-*.md` | N `registerCommand` |
 | Heartbeat / doctor | P plugin check; N `claude_session_plugin` (running `claude` processes older than the installed plugin, via `ps`; L: not on Windows) and a once-per-session restart line from the hook | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
 | PR issue links (`pr create --issue`, #324) | N: CLI flag (no native PR tool: delivery is the CLI's `pr` verbs under grants) | N: CLI flag; the plugin's tools are the task families only | N: CLI flag; MCP advertises the task families only | N: CLI flag; MCP advertises the task families only | N: CLI flag; `workit_context` and the task families are its only tools |
+| ytrack agent skill (youtrack-cli #16, `core/ytrack-skill.ts`): with YouTrack in use, `workit setup` and `workit upgrade` run `ytrack skill install --dir <root> --json` for each host with Workit; doctor `ytrack_skill`; uninstall removes only recorded dirs | N `$CLAUDE_CONFIG_DIR/skills`, default `~/.claude/skills` ([Claude Code skills](https://code.claude.com/docs/en/skills)) | N `$XDG_CONFIG_HOME/opencode/skills`, default `~/.config/opencode/skills` ([OpenCode skills](https://opencode.ai/docs/skills/)); OpenCode also reads `~/.claude/skills` and `~/.agents/skills`, so it can list the skill twice | N `$CODEX_HOME/skills`, default `~/.codex/skills`: still a user root, though the docs now name `~/.agents/skills` ([Codex skills](https://developers.openai.com/codex/skills)); Workit keeps `~/.agents/skills` free because OpenCode, Cursor and Pi read it too | N `~/.cursor/skills` ([Cursor skills](https://cursor.com/docs/context/skills)); Cursor also reads `~/.claude/skills` and `~/.codex/skills` | N `$PI_CODING_AGENT_DIR/skills`, default `~/.pi/agent/skills` (pi-mono `packages/coding-agent/src/core/skills.ts`, the user `skills` dir under the agent dir) |
 | Continuing a reported worker (#313) | L: no continuation gate; a subagent turn is resumed natively, so the lead follows `fanout brief --mode resume` by convention | N: `subagent` with a `sessionID` is refused (`delegation_lineage_denied`) unless the worker is running or its worktree has uncommitted changes; the refusal prints `workit fanout brief <slice> --mode resume` | L: no continuation gate | L: no continuation gate | L: no host subagents |
 | Owned CLI on the agent's PATH (#648, `core/cli-locate.ts`) | N: the plugin's bundled `bin/workit`, unchanged | N: `shell.create.before` adds `opencodeShellEnv()` to every agent shell's env (`src/cli-path.ts`); a V2 build with no shell domain applies it to the plugin process, whose shells inherit it | P: the hook entry (`hooks/launcher.ts`) and the MCP server (`scripts/launch-mcp.ts`) apply it to their own process, so what they run or probe is the owned CLI. L: no hook or MCP answer changes the agent's shell env | P: the hook process (`hooks/workit-hook.ts`) applies it to its own env. L: no hook changes the agent's shell env | N: the extension applies it to Pi's process env when it loads (`src/cli-path.ts`); the bash tool inherits it |
 | Hook older than the CLI (`hook_issued_sessions`) | N: the installed hook bundle is read for `ISSUED_SESSIONS_MARKER` | L: issues no subagent ids (children derive theirs) | N: every hook chunk in the plugin cache is read for the marker | L: `subagentStart` cannot add context, so no ids are issued | L: no host subagents; workers derive theirs |

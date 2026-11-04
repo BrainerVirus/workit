@@ -103,7 +103,7 @@ export type YtrackSkillSupport =
 
 /**
  * Whether the ytrack on PATH ships the skill: `ytrack skill print` exits 0
- * with the ytrack skill. An older ytrack (0.2.x) has no `skill` command.
+ * with the ytrack skill. An older ytrack (0.2.1 and before) has no `skill` command.
  */
 export function ytrackSkillSupport(run: YtrackRun): YtrackSkillSupport {
   const out = run(["version"]);
