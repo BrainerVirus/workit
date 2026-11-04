@@ -63,6 +63,11 @@ const ALLOW: Allow[] = [
     why: "OpenCode's config",
   },
   { file: "packages/workit-cli/src/admin/doctor.ts", match: ".bun/bin/bun", why: "the bun binary" },
+  {
+    file: "packages/workit-core/src/core/runtime-identity.ts",
+    match: "XDG_CACHE_HOME",
+    why: "pnpm's dlx cache, a package manager's location, not Workit's",
+  },
   { file: "packages/workit-cli/src/admin/doctor.ts", match: "path.join(scratch", why: SANDBOX },
   { file: "packages/workit-cli/src/upgrade/probes.ts", match: "path.join(scratch", why: SANDBOX },
   {
