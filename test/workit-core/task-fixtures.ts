@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHECKS_FILE, ensureWorkitDir } from "@/packages/workit-core/src/check-config";
 import type {
@@ -36,12 +36,20 @@ export const caller = (overrides: Partial<Caller> = {}): Caller => ({
   ...overrides,
 });
 
-type LegacySignal = { value: boolean | "unknown"; basis: string; reason: string; refs: Ref[] };
+type LegacySignal = {
+  value: boolean | "unknown";
+  basis: string;
+  reason: string;
+  refs: Ref[];
+};
 /** A ≤6.x assessment payload: still accepted and mapped onto the four judgments (S17, D17). */
 export type Assessment = {
   facts: { statement: string; basis: string; refs: Ref[] }[];
   signals: Record<string, LegacySignal>;
-  consequences: { area: string; fact: { statement: string; basis: string; refs: Ref[] } }[];
+  consequences: {
+    area: string;
+    fact: { statement: string; basis: string; refs: Ref[] };
+  }[];
   verification: unknown[];
 };
 
@@ -118,9 +126,29 @@ export const taskStartRequest = (overrides: Partial<TaskStartRequest> = {}): Tas
 export const writeTestCheck = (root: string): void =>
   writeFileSync(checksPath(root), JSON.stringify({ checks: { test: ["true"] } }));
 
-/** The repo's checks config path, with `.workit/` and its self-ignoring `.gitignore` in place. */
+/**
+ * The repo's checks config path, with `.workit/` in place. `.workit/` is
+ * committed team config, so a fixture repo excludes it locally
+ * (`.git/info/exclude`) to keep its tree clean, as a repo that committed it is.
+ */
 export const checksPath = (root: string): string => {
   ensureWorkitDir(root);
+  const gitDir = join(root, ".git");
+  let repo = false;
+  try {
+    repo = statSync(gitDir).isDirectory();
+  } catch {}
+  if (repo) {
+    const exclude = join(gitDir, "info", "exclude");
+    let current = "";
+    try {
+      current = readFileSync(exclude, "utf8");
+    } catch {}
+    if (!current.split("\n").includes("/.workit/")) {
+      mkdirSync(join(gitDir, "info"), { recursive: true });
+      appendFileSync(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}/.workit/\n`);
+    }
+  }
   return join(root, CHECKS_FILE);
 };
 
@@ -366,7 +394,14 @@ export const methodConstraint = (
   source: ref(),
   acceptanceAllowed: false,
   requires: [
-    { kind: "method", scope: scope(), refs: [], method, before: "close", dependentAction: null },
+    {
+      kind: "method",
+      scope: scope(),
+      refs: [],
+      method,
+      before: "close",
+      dependentAction: null,
+    },
   ],
   ...overrides,
 });

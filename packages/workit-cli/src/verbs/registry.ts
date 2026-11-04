@@ -286,6 +286,15 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./gc"),
   },
   {
+    name: "dir",
+    group: "setup",
+    usage: "workit dir <plans|retros|handoffs|config|state|data|cache|runtime>",
+    summary:
+      "Print where Workit keeps one kind of file: plans, retros and handoffs per clone (<git-common-dir>/workit/<kind>, the same in every worktree, created on demand), config, state, data, cache and runtime per user",
+    examples: ["workit dir plans", "workit dir state --json"],
+    load: () => import("./dir"),
+  },
+  {
     name: "uninstall",
     group: "setup",
     usage: "workit uninstall",
