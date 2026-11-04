@@ -30,7 +30,7 @@ test.each([
   (file) => {
     const text = readFileSync(path.join(ROOT, file), "utf8");
     const step5 = text.slice(text.indexOf("\n5. "), text.indexOf("\n6. "));
-    expect(step5).toContain("Once a worker's final report arrives, stop it");
-    expect(step5).toContain("TaskStop on that agent");
+    expect(step5).toContain("stop a finished one when its");
+    expect(step5).toContain("TaskStop");
   },
 );
