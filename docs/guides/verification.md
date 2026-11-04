@@ -256,30 +256,45 @@ A verdict is keyed to the head it judged. It still applies to a newer head
   the base left it alone, or the new head is exactly the judged head rebased
   cleanly onto the moved base: a 3-way merge of the judged head onto the new
   fork point, anchored at the old one, has no conflict and gives the new
-  head's tree. So a base commit that edits another part of a branch file
-  keeps the verdict. It reads `carried (rebase: patch unchanged)`. Only the
-  verdict carries: the merge still needs green CI on the new head.
+  head's tree. The same replay also decides when the patch-id moved (a trunk
+  edit within three lines of a branch hunk): if every branch file at the new
+  head is the judged change replayed onto the new fork, only trunk's commits
+  differ and the verdict carries. It reads `carried (rebase: patch
+  unchanged)`. Only the verdict carries: the merge still needs green CI on the
+  new head. A clean textual replay can still hide a semantic conflict, for
+  example trunk renaming a function the branch calls: CI on the new head
+  catches that, not the carry.
 - **Lane-none follow-up:** the branch's own change since the judged head is
-  lane `none`: docs, comment or formatting edits, generated copies, or an
-  empty commit (a CI retrigger). Base changes from a rebase are left out.
+  lane `none`: docs (a `CHANGELOG.md` included), comment or formatting edits,
+  generated copies, bookkeeping, or an empty commit (a CI retrigger). After a
+  rebase, the branch's own change is what the head changes against the judged
+  head replayed onto the new fork, so trunk's lines in a branch file are left
+  out; a branch file that differs from that replay counts in full, never as
+  a comment or formatting edit. Bookkeeping never invalidates a
+  verdict: a JSON manifest whose only change is its top-level semver
+  `version` (a release sync), and a non-code file that a root `package.json`
+  `write:*` script names (read at the base revision, so a branch cannot mark
+  its own file; here `docs/qualification/context-budget.json`, which
+  `write:budget` regenerates).
 - **Test-only follow-up, `unit` verdicts only:** every changed file is a test
-  (under `test/`, `tests/` or `__tests__/`, or named `*.test.*`, `*.spec.*` or
-  `*_test.*`; a `fixtures/` or `spec/` folder is not) or docs, off risk paths,
-  with no lockfile or binary, and the change is small (lane `self`: at most
-  100 lines in at most 5 files). A `live`, `review` or `perf` verdict does not
+  file proper (named `*.test.*`, `*.spec.*` or `*_test.*`), docs or
+  bookkeeping, off risk paths, with no lockfile or binary. Any other file in a
+  test folder (a helper, fixture, setup or runner config such as
+  `test/helpers/runtime.ts`, `test/fixtures/x.json` or `test/bunfig.toml`) does
+  not qualify: product scripts import helpers and runners preload setup. Its size does not matter, and
+  neither does the PR's own lane: a 150-line test push on a `full`-lane PR
+  keeps its `unit` verdict. A `live`, `review` or `perf` verdict does not
   carry over test changes.
 
 Anything else makes the verdict stale. That includes any behavior change, a
 risk path (even a comment there), a lockfile or binary, a lint or formatter
 config change, or a diff Workit cannot read. A hand-appended or untrusted
 verdict row never carries. When the branch was rebased between the two
-heads, files are compared by exact content, not by diff text: a file whose
-result differs, or that the base also changed outside a clean rebase, counts
-(so an edit moved within a file, a conflict resolved by hand, or an amend
-after the rebase needs a new verdict), and none of them counts as a comment
-or formatting edit. A carried `--self` verdict stays self: it never satisfies
-a lane that needs a non-author verdict. A carried independent failure still
-blocks.
+heads, a file whose result differs from the judged change replayed onto the
+new fork (a conflict resolved by hand in code, an edit moved within a file,
+an amend after the rebase) counts, so its code needs a new verdict. A carried
+`--self` verdict stays self: it never satisfies a lane that needs a
+non-author verdict. A carried independent failure still blocks.
 
 `workit ledger check` and `workit pr status` show the reason, for example
 `carried (lane none since 1a2b3c4d5e6f)`. In `--json`, the verdict's `carry`
@@ -460,11 +475,25 @@ Limits (the check stops casual forgery, not a determined one; see
   independent verdict under it. Issue-once only stops re-minting an id that
   already exists.
 
-Verdicts are SHA-keyed and carry over a rebase when
-the patch-id and diff are unchanged, and over a docs-only (or, for a `unit`
-verdict, small test-only) follow-up ([carry-over](#carry-over-and-stack-verdicts)). A dirty tree is refused, also when the
+Verdicts are SHA-keyed and carry over a rebase that only brings in trunk's
+commits, and over a docs-only or bookkeeping (or, for a `unit` verdict,
+test-only) follow-up ([carry-over](#carry-over-and-stack-verdicts)). A dirty tree is refused, also when the
 branch is checked out in another worktree. Verdicts and author rows follow a
 `git branch -m` rename (through the branch's reflog).
+
+**Verdicts from a throwaway clone.** A clone has its own `.git`, so its
+ledger is deleted with it. Every verdict is therefore also appended to a
+per-user mirror keyed by the clone's `origin` remote (host and path, any URL
+form; a clone of a local checkout is keyed by that checkout's origin):
+`<state dir>/verdicts/<key>/ledger.jsonl`, hash-chained like a ledger. Every
+verdict gate (`pr merge`, `pr status`, `ledger check`, the stop hook, fanout
+checks) of any checkout of the same remote imports the rows for the branch it
+checks into its own ledger, under the same id. So a verifier may record in a
+temp clone and delete it; the real checkout's `pr merge` finds the verdict once
+it has the branch at that head. Only rows that verify in the mirror's chain
+are imported, and the gate judges them like its own: session trust,
+independence against this checkout's authors, and carry. A worktree needs
+none of this: it shares the main checkout's ledger.
 
 `--supersedes <id>` replaces only a row of the same type, session and branch
 (and, for a verdict, the same kind). A same-session verdict that does not
@@ -499,6 +528,14 @@ These verdicts are never accepted as independent:
   none issued: reason `unissued_session`;
 - such an issued id recorded without its token (an older CLI, or another
   session reusing it): reason `unbound_session`.
+
+A verifier resumed after its lead crashed (or one whose context was
+compacted) may no longer have its token. Nothing rebinds the id, since a token
+is issued once: the `unbound_session` refusal of `ledger verdict` and `pr
+merge` says so and names the way back. If the SubagentStart context still
+shows the token, rerun the same command with `--token=<that token>`;
+otherwise the lead spawns a fresh verifier, whose SubagentStart context prints
+the whole command with a new `--session` and `--token`.
 
 `--session` from CI or a plain terminal, `--as`, and an OpenCode, Pi or Codex
 shell's own session stay accepted. A row the gate cannot trust also cannot

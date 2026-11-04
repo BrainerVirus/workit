@@ -38,6 +38,7 @@ import {
   appendObserved,
   tamperedUnblock,
   readLedger,
+  unboundRecovery,
   type CarryNote,
   type LedgerActor,
   type VerdictCheck,
@@ -898,7 +899,9 @@ export async function mergePullRequest(
         : `NEEDS_VERDICT: ${label} has no accepted independent verdict for ${head.slice(0, 12)}${lane} (${check.accepted.reasons.join(", ")})`,
       gate.need === "self"
         ? `after an observed passing \`workit check test\`, the author runs: workit ledger verdict tests-verified --self --how "<what you ran>" --branch ${branch} (or a verifier records one)${bypassHint}`
-        : `an independent session verifies the head and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${branch}${bypassHint}`,
+        : check.accepted.reasons.includes("unbound_session")
+          ? `${unboundRecovery(check.accepted.verdict?.actor.session ?? check.current.verdict?.actor.session ?? null, branch)}${bypassHint}`
+          : `an independent session verifies the head and runs: workit ledger verdict verified --how "<what was exercised>" --branch ${branch}${bypassHint}`,
       { reason: "needs_verdict", verdict: summary },
     );
   }

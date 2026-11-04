@@ -61,6 +61,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStateDir } from "./core/logger";
 import { hostAwareLockTimeout } from "./core/store-lock";
 import { verdictDrift, type CarryRule, type Drift } from "./core/policy/carry";
 import { defaultBase } from "./git/default-base";
@@ -68,6 +69,7 @@ import {
   GIT_TIMEOUTS,
   currentBranch,
   headSha,
+  parseRemoteUrl,
   patchId,
   sameOwnChange,
   worktreeTree,
@@ -573,7 +575,8 @@ export function withLedgerLock<T>(
   }
 }
 
-type AppendOptions = { now?: Date; forceLock?: boolean };
+/** `heldLock`: the caller holds the file's lock (withLedgerLock), so never take it again. */
+type AppendOptions = { now?: Date; forceLock?: boolean; heldLock?: boolean };
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 /** The chain hash of a row: over the previous line's hash and the row without `rowHash`. */
@@ -659,7 +662,8 @@ function appendLine(file: string, build: LineBuilder, options: AppendOptions): L
   };
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!options.forceLock && !onNetworkFs(path.dirname(file))) return write();
+    if (options.heldLock || (!options.forceLock && !onNetworkFs(path.dirname(file))))
+      return write();
     const locked = withLedgerLock(file, write);
     return (
       locked ??
@@ -834,24 +838,32 @@ export function readLedger(
   options: { integrity?: boolean } = {},
 ): LedgerResult<LedgerRead> {
   const file = ledgerPath(cwd);
-  if (!file.ok) return file;
+  return file.ok ? readLedgerAt(cwd, file.value, options) : file;
+}
+
+/** readLedger of the ledger file at `file` (branch renames read in `cwd`). */
+function readLedgerAt(
+  cwd: string,
+  file: string,
+  options: { integrity?: boolean },
+): LedgerResult<LedgerRead> {
   let text = "";
   let stat: fs.Stats | null = null;
   try {
-    stat = fs.statSync(file.value);
-    text = fs.readFileSync(file.value, "utf8");
+    stat = fs.statSync(file);
+    text = fs.readFileSync(file, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return {
         ok: true,
         value: {
-          path: file.value,
+          path: file,
           rows: [],
           skipped: 0,
           integrity: options.integrity ? { chained: 0, legacy: 0, unverified: [] } : null,
         },
       };
-    return err("unavailable", `cannot read ${file.value}: ${(error as Error).message}`);
+    return err("unavailable", `cannot read ${file}: ${(error as Error).message}`);
   }
   const rows: ReadRow[] = [];
   let skipped = 0;
@@ -957,7 +969,7 @@ export function readLedger(
   }
   // A read that saw exactly the stat'ed file remembers its chain breaks.
   if (options.integrity && stat && Buffer.byteLength(text) === stat.size)
-    tamperCache.set(file.value, {
+    tamperCache.set(file, {
       size: stat.size,
       stamp: fileStamp(stat),
       breaks: integrity.unverified.filter((row) => TAMPER_REASONS.has(row.reason)),
@@ -965,7 +977,7 @@ export function readLedger(
   return {
     ok: true,
     value: {
-      path: file.value,
+      path: file,
       rows,
       skipped,
       integrity: options.integrity ? integrity : null,
@@ -1317,6 +1329,15 @@ export function authorSessions(
   return sessions;
 }
 
+/**
+ * #312: the way back when an issued id lost its token (a verifier resumed
+ * after its lead crashed, or one whose context was compacted). A token is
+ * issued once, so nothing rebinds the id: re-issuing one would let anyone
+ * re-fire the hook and supersede that reviewer's failure.
+ */
+export const unboundRecovery = (session: string | null, branch: string | null): string =>
+  `a token is issued once, so no command rebinds ${session ?? "an issued id"}. If the verifier's SubagentStart context still shows the token, it reruns the same command with --token=<that token> (or WORKIT_SESSION_TOKEN). Otherwise (a verifier resumed after its lead crashed, or whose context was compacted) the lead spawns a fresh verifier for ${branch ?? "the branch"}: its SubagentStart context prints the whole workit ledger verdict command with a new --session and --token; it re-checks the head (pr status shows a focused reverify when that is enough) and records the verdict there`;
+
 /** Where each host's verifier session comes from, for refusal hints. */
 const HOST_DERIVED_SESSIONS =
   "Claude Code, Codex and Cursor: `--session <lead>:<agent id>` from the SubagentStart hook; OpenCode child sessions and Pi workers: WORKIT_SESSION_ID=<lead>:<child> already set in their shell";
@@ -1532,13 +1553,37 @@ function restackCarries(
   return false;
 }
 
+/** A row a gate imported from the verdict mirror (#311): it names the ledger it came from. */
+const isMirrored = (row: ReadRow): boolean => typeof row.mirroredFrom === "string";
+
+/**
+ * Where each imported row sits among the local rows: just after the last
+ * local row (in ledger order) recorded at or before it, so an older pass
+ * from a clone never outranks a newer local verdict. Local rows rank by seq.
+ */
+function mirrorRanks(rows: readonly ReadRow[]): Map<ReadRow, number> {
+  const ranks = new Map<ReadRow, number>();
+  const local = rows.filter((row) => !isMirrored(row));
+  for (const row of rows) {
+    if (!isMirrored(row)) continue;
+    const at = Date.parse(row.at);
+    let after = 0;
+    for (const other of local) if (Date.parse(other.at) <= at) after = Math.max(after, other.seq);
+    // Between that row and the next; ties among imports keep their own order.
+    ranks.set(row, after + 0.5 + Math.min(row.seq, 1e9) / 1e10);
+  }
+  return ranks;
+}
+
 /** Current and accepted verdicts for `branch`, after carry-over (D18). */
 export function checkVerdicts(
   cwd: string,
   branch: string,
   ledgerRows: readonly ReadRow[],
 ): VerdictCheck {
-  const rows = withIntegrity(cwd, ledgerRows);
+  // Verdicts recorded in another clone of the same remote (#311).
+  const imported = importMirroredVerdicts(cwd, branch);
+  const rows = withIntegrity(cwd, imported.length ? [...ledgerRows, ...imported] : ledgerRows);
   const head = branchHead(cwd, branch);
   const fallbackBase = defaultBase(cwd);
   const scope = branchScope(cwd, branch);
@@ -1706,8 +1751,14 @@ export function checkVerdicts(
       trustReasons(cwd, row).length === 0
     )
       retired.add(row.supersedes);
+  // Verdict precedence follows when each verdict was recorded. Local rows keep
+  // their ledger order; a row imported from the mirror (#311) is appended
+  // whenever a gate first sees it, so it is placed after the last local row
+  // recorded at or before its own `at`, never ahead of a newer local verdict.
+  const rank = mirrorRanks(rows);
+  const byRank = (a: ReadRow, b: ReadRow) => (rank.get(a) ?? a.seq) - (rank.get(b) ?? b.seq);
   const byKind = new Map<string, ReadRow[]>();
-  for (const row of rows)
+  for (const row of rows.toSorted(byRank))
     if (isLiveVerdict(row, retired) && scope(row)) {
       const kind = typeof row.kind === "string" ? row.kind : "review";
       byKind.set(kind, [...(byKind.get(kind) ?? []), row]);
@@ -1745,7 +1796,7 @@ export function checkVerdicts(
     if (reasons.length === 0)
       for (const later of list)
         if (
-          later.seq > row.seq &&
+          byRank(later, row) > 0 &&
           reasonsOf(later).length > 0 &&
           !untrusted(reasonsOf(later)) &&
           FAILING.has(String(later.result)) &&
@@ -1770,7 +1821,7 @@ export function checkVerdicts(
       entry.reasons = [...entry.reasons, "ledger_tampered"];
     }
   }
-  verdicts.sort((a, b) => a.verdict.seq - b.verdict.seq);
+  verdicts.sort((a, b) => byRank(a.verdict, b.verdict));
   const newestCurrent = verdicts.findLast((entry) => entry.current) ?? verdicts.at(-1) ?? null;
   const failing = verdicts.find(
     (entry) => entry.current && entry.independent && FAILING.has(String(entry.verdict.result)),
@@ -1848,6 +1899,138 @@ export function checkVerdicts(
     authors: [...authors].toSorted(),
     warnings,
   };
+}
+
+// ---------------------------------------------------------------------------
+// verdict mirror (#311): verdicts survive a throwaway clone
+//
+// A clone has its own `.git`, so its ledger dies with it. Every verdict is
+// also appended to a per-user mirror keyed by the clone's `origin` (one hop:
+// a clone of a local checkout is keyed by that checkout's origin), at
+// `<state dir>/verdicts/<key>/ledger.jsonl`, hash-chained like a ledger. The
+// gates of any checkout of the same remote import its rows for the branch
+// they check into their own ledger (same id, re-chained), so a verdict
+// recorded in a clone is found after the clone is deleted. Imported rows keep
+// every field, so session trust, independence and carry are judged as for a
+// row recorded here. Only rows that verify in the mirror's chain are taken.
+
+/** The remote identity of `cwd`'s `origin`: host and path, lowercased; null without one. */
+function remoteIdentity(cwd: string, hop = 0): string | null {
+  const raw = git(cwd, ["remote", "get-url", "origin"]);
+  if (!raw) return null;
+  // A clone of a local checkout: that checkout's own origin names the remote.
+  if (hop === 0 && !/^[\w+.-]+:\/\/|^[^/\\]+@[^/\\]+:/u.test(raw)) {
+    const local = raw.replace(/^file:\/\//u, "");
+    const resolved = path.isAbsolute(local) ? local : path.resolve(cwd, local);
+    if (fs.existsSync(resolved)) return remoteIdentity(resolved, 1);
+  }
+  const parsed = parseRemoteUrl(raw);
+  if (!parsed || parsed.protocol === "file") return null;
+  return `${parsed.host}${parsed.port ? `:${parsed.port}` : ""}/${parsed.path}`.toLowerCase();
+}
+
+const mirrorKeys = new Map<string, string | null>();
+/** The verdict mirror file for `cwd`'s remote, or null when it has no remote origin. */
+export function verdictMirrorPath(cwd: string): string | null {
+  const top = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!top) return null;
+  let identity = mirrorKeys.get(top);
+  if (identity === undefined) {
+    identity = remoteIdentity(cwd);
+    mirrorKeys.set(top, identity);
+  }
+  if (!identity) return null;
+  const key = createHash("sha256").update(identity).digest("hex").slice(0, 32);
+  return path.join(resolveStateDir(), "verdicts", key, "ledger.jsonl");
+}
+
+/** Append a recorded verdict to the mirror (best effort: the local row is the record). */
+function mirrorVerdict(cwd: string, row: Record<string, unknown>): void {
+  const file = verdictMirrorPath(cwd);
+  const local = ledgerPath(cwd);
+  if (!file || !local.ok || file === local.value) return;
+  const { prevHash: _prev, rowHash: _row, ...fields } = row;
+  appendLine(
+    file,
+    (previous) => {
+      const next = sealed(
+        { ...fields, mirroredFrom: local.value },
+        String(row.id),
+        String(row.at),
+        previous,
+      );
+      return Buffer.byteLength(next.line) > MAX_LINE_BYTES
+        ? err("invalid_input", "verdict row too long to mirror")
+        : { ok: true, value: next.line };
+    },
+    {},
+  );
+}
+
+const importedStamp = new Map<string, string>();
+
+/**
+ * Import the mirror's verdicts on `branch` that this checkout's ledger lacks,
+ * and return them as read back (with integrity). Empty when there is no
+ * mirror, nothing new, or the ledger is busy.
+ */
+function importMirroredVerdicts(cwd: string, branch: string): ReadRow[] {
+  const file = verdictMirrorPath(cwd);
+  const local = ledgerPath(cwd);
+  if (!file || !local.ok || file === local.value) return [];
+  let stamp: string;
+  try {
+    stamp = `${branch}\0${fileStamp(fs.statSync(file))}`;
+  } catch {
+    return [];
+  }
+  const cacheKey = `${local.value}\0${file}`;
+  if (importedStamp.get(cacheKey) === stamp) return [];
+  const mirror = readLedgerAt(cwd, file, { integrity: true });
+  if (!mirror.ok) return [];
+  const candidates = mirror.value.rows.filter(
+    (row) => row.type === "verdict" && row.branch === branch && row.integrity === "verified",
+  );
+  const added = new Set<string>();
+  try {
+    fs.mkdirSync(path.dirname(local.value), { recursive: true });
+  } catch {
+    return [];
+  }
+  const done = candidates.length
+    ? withLedgerLock(local.value, () => {
+        const have = readLedgerAt(cwd, local.value, {});
+        if (!have.ok) return false;
+        const ids = new Set(have.value.rows.map((row) => row.id));
+        for (const row of candidates) {
+          if (ids.has(row.id)) continue;
+          const {
+            v: _v,
+            id,
+            at,
+            seq: _seq,
+            superseded: _superseded,
+            supersedeIgnored: _ignored,
+            integrity: _integrity,
+            integrityReason: _reason,
+            ...fields
+          } = row;
+          const written = appendLine(
+            local.value,
+            (previous) => ({ ok: true, value: sealed(fields, id, at, previous).line }),
+            { heldLock: true },
+          );
+          if (!written.ok) return false;
+          ids.add(id);
+          added.add(id);
+        }
+        return true;
+      })
+    : true;
+  if (done) importedStamp.set(cacheKey, stamp);
+  if (!added.size) return [];
+  const read = readLedgerAt(cwd, local.value, { integrity: true });
+  return read.ok ? read.value.rows.filter((row) => added.has(row.id)) : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -2300,7 +2483,7 @@ export function recordVerdict(
     );
   const link = checkSupersede(context, "verdict", { self, kind, branch });
   if (!link.ok) return link;
-  return appendRow<VerdictRow>(
+  const recorded = appendRow<VerdictRow>(
     context.cwd,
     {
       ...common({ ...context, supersedes: link.value }, key),
@@ -2320,6 +2503,8 @@ export function recordVerdict(
     },
     { now: context.now },
   );
+  if (recorded.ok) mirrorVerdict(context.cwd, recorded.value);
+  return recorded;
 }
 
 function untrackedField(cwd: string): {

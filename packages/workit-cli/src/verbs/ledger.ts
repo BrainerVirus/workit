@@ -61,6 +61,7 @@ import {
   recordVerdict,
   summarizeRow,
   supersedeAllowed,
+  unboundRecovery,
   type LedgerRead,
   type LedgerResult,
   type ReadRow,
@@ -524,7 +525,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
     claimed === null
       ? null
       : sessionClaimRefusal(io.env, claimed, io.cwd, { token, flag: acting.source === "flag" });
-  if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
+  if (refusal)
+    return emit(
+      io,
+      fail("blocked", refusal.error, {
+        unblock: refusal.error.startsWith("unbound_session")
+          ? `${refusal.unblock}; ${unboundRecovery(claimed, target.value)}`
+          : refusal.unblock,
+      }),
+    );
   // A verified verdict needs the configured checks: a red one refuses it, a missing one warns (#509).
   const evidence =
     values.self !== true && (rest[0] === "verified" || rest[0] === "tests-verified")

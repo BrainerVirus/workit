@@ -370,8 +370,8 @@ function generatedAt(cwd: string, fork: string, paths: readonly string[]): Set<s
 const forkOf = (cwd: string, base: string, head: string | null): string | null =>
   mergeBase(cwd, base, head ?? "HEAD");
 
-/** The files of `fork..head`; generated copies are read from `attributesAt` (the base revision). */
-function laneFiles(
+/** The files of `fork..head` (`fork` may be a tree); generated copies are read from `attributesAt` (the base revision). */
+export function laneFiles(
   cwd: string,
   fork: string,
   head: string | null,

@@ -3,21 +3,42 @@
 // since H (what came from the base left out, see lane.ts driftFiles) is
 // classified with the review lane, and the verdict still applies when:
 //
-//   lane-none   that change is lane `none`: docs, comment or formatting-only
-//               edits, generated copies (by the base's .gitattributes), or
-//               nothing at all (an empty commit);
-//   tests-only  the verdict is kind `unit` and the change is lane `self`
-//               (small) with every behavior file a test: test files off risk
-//               paths, no lockfile, no binary.
+//   rebase      the branch was rebased and every file it touches is exactly
+//               the judged change replayed onto the new fork point: only
+//               trunk's commits differ (bookkeeping.ts replayTree);
+//   lane-none   that change is lane `none`: docs (a changelog included),
+//               comment or formatting-only edits, generated copies (by the
+//               base's .gitattributes), bookkeeping (a version-only manifest
+//               change, a file a `write:*` script regenerates), or nothing at
+//               all (an empty commit);
+//   tests-only  the verdict is kind `unit` and every changed file is a test
+//               file proper (`*.test.*`, `*.spec.*`, `*_test.*`; not a helper,
+//               fixture or config under a test folder), docs or bookkeeping,
+//               off risk paths, with no lockfile and no binary, whatever its
+//               size and whatever the PR's own lane.
+//
+// After a rebase, a file whose current content is the judged change replayed
+// onto the new fork is left out before the lane is read: a trunk edit in a
+// branch file never counts as the branch's change, and a file whose result
+// differs (a hand-resolved conflict, an amend, even whitespace) always does.
 //
 // Everything else is stale, failing closed: a behavior or risk-path change,
 // an opaque file, an unreadable diff, a judged head git no longer has. A
 // stale verdict whose change is lane `self` (small, no risk path, nothing
 // opaque) asks only a focused re-verify of the changed files.
 import { mergeBase, fileAt } from "../../git/rev";
-import { computeLane, driftFiles, kindOf, parseRiskPaths, RISK_PATHS_FILE } from "./lane";
+import { bookkeepingPaths, replayTree } from "./bookkeeping";
+import {
+  computeLane,
+  driftFiles,
+  kindOf,
+  laneFiles,
+  parseRiskPaths,
+  type ChangedFile,
+  RISK_PATHS_FILE,
+} from "./lane";
 
-/** `rebase`: the same patch on a moved base (ledger.ts exact carry), never a drift rule. */
+/** `rebase`: the same patch on a moved base (ledger.ts exact carry, or every branch file replays). */
 export type CarryRule = "lane-none" | "tests-only" | "rebase";
 
 export type Drift =
@@ -32,7 +53,17 @@ export type Drift =
       reason: string;
     };
 
-const TEST_ONLY_KINDS: ReadonlySet<string> = new Set(["doc", "cosmetic", "generated", "test"]);
+const TEST_ONLY_KINDS: ReadonlySet<string> = new Set(["doc", "cosmetic", "generated"]);
+/**
+ * A test file proper, by name (`*.test.*`, `*.spec.*`, Go's `*_test.*`). A
+ * helper, fixture, setup or config file under a test folder is not one:
+ * product scripts import such helpers and test runners preload them.
+ */
+const TEST_FILE = /\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/iu;
+const testOnly = (file: ChangedFile): boolean => {
+  const kind = kindOf(file);
+  return TEST_ONLY_KINDS.has(kind) || (kind === "test" && TEST_FILE.test(file.path));
+};
 
 /**
  * Whether a `kind` verdict at `from` (keyed against `fromBase`, a commit)
@@ -52,24 +83,39 @@ export function verdictDrift(
   });
   const fromFork = mergeBase(cwd, input.fromBase, input.from);
   const toFork = mergeBase(cwd, input.toBase, input.to);
-  const files =
-    fromFork && toFork
-      ? driftFiles(cwd, { from: input.from, to: input.to, fromFork, toFork })
-      : null;
-  if (!fromFork || !toFork || !files)
-    return stale(`the change since ${since.slice(0, 12)} cannot be read`);
+  const range = fromFork && toFork ? { from: input.from, to: input.to, fromFork, toFork } : null;
+  const drifted = range ? driftFiles(cwd, range) : null;
+  if (!range || !drifted) return stale(`the change since ${since.slice(0, 12)} cannot be read`);
+  let files = drifted;
+  if (range.fromFork !== range.toFork) {
+    // A rebase: the branch's own change is what the head changes against the
+    // judged head replayed onto the new fork (trunk's lines left out; a
+    // conflict holds markers, so its resolution counts). Unreadable: every
+    // drifted file stays, none cosmetic (fail closed).
+    const tree = replayTree(cwd, range.from, range.fromFork, range.toFork);
+    const own = tree ? laneFiles(cwd, tree, range.to, range.toFork) : null;
+    if (own && !own.length) return { carries: true, rule: "rebase", since, files: [] };
+    // Across a moved fork no edit counts as cosmetic (#334): only an exact
+    // replay is left out.
+    if (own) files = own.map((file) => ({ ...file, cosmetic: false }));
+  }
+  const bookkeeping = bookkeepingPaths(cwd, {
+    from: input.from,
+    to: input.to,
+    base: range.toFork,
+    paths: files.map((file) => file.path),
+  });
+  files = files.map((file) => (bookkeeping.has(file.path) ? { ...file, generated: true } : file));
   // Repo risk paths from both base revisions: they only tighten.
-  const riskPaths = [fromFork, toFork].flatMap((fork) =>
+  const riskPaths = [range.fromFork, range.toFork].flatMap((fork) =>
     parseRiskPaths(fileAt(cwd, fork, RISK_PATHS_FILE) ?? ""),
   );
   const lane = computeLane({ files, riskPaths });
   const paths = files.map((file) => file.path);
   if (lane.lane === "none") return { carries: true, rule: "lane-none", since, files: paths };
-  if (
-    input.kind === "unit" &&
-    lane.lane === "self" &&
-    files.every((file) => TEST_ONLY_KINDS.has(kindOf(file)))
-  )
+  // Tests cannot change what the code does: a unit verdict keeps any size
+  // of test-only follow-up, off risk paths, with nothing opaque.
+  if (input.kind === "unit" && lane.riskFiles.length === 0 && files.every(testOnly))
     return { carries: true, rule: "tests-only", since, files: paths };
   return stale(lane.reasons[0] ?? `lane ${lane.lane}`, paths, lane.lane === "self");
 }
