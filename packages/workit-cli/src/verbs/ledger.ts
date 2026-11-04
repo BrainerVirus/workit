@@ -639,10 +639,18 @@ function standingFanout(io: Io, values: Values): { name: string; plan: FanoutFil
     const read = readFanout(io.cwd, name);
     return { name, plan: read.ok ? read.data : null };
   }
-  const selected = selectFanout(io.cwd, null, currentBranch(io.cwd));
-  return selected.ok
-    ? { name: selected.data.name, plan: selected.data }
-    : new Error(`${selected.error}; pass --fanout <name>`);
+  const selected = selectFanout(
+    io.cwd,
+    null,
+    currentBranch(io.cwd),
+    io.env.WORKIT_SESSION_ID?.trim() || null,
+  );
+  if (selected.ok) return { name: selected.data.name, plan: selected.data };
+  return new Error(
+    selected.error.includes("--fanout")
+      ? selected.error
+      : `${selected.error}; pass --fanout <name>`,
+  );
 }
 
 async function standing(io: Io, values: Values, args: string[]): Promise<number> {

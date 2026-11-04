@@ -2,10 +2,10 @@
 // rendering; the rules live in core fanout*.ts. The CLI never spawns agents.
 //
 //   workit fanout plan     <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]
-//   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>]
-//   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
-//   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
-//   workit fanout worktree create|release <slice> [--name <n>] [--force]
+//   workit fanout brief    <slice> [--fanout <n>] [--mode new|resume] [--attempt <n>]
+//   workit fanout check    [<slice>…] [--fanout <n>] [--base <ref>] [--offline]
+//   workit fanout status   [--fanout <n>] [--stuck-after 30m] [--offline]
+//   workit fanout worktree create|release <slice> [--fanout <n>] [--force]
 import { progressFor } from "../progress";
 import fs from "node:fs";
 import path from "node:path";
@@ -33,12 +33,12 @@ import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge
 const PLAN_USAGE =
   "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead] [--json]";
 const BRIEF_USAGE =
-  "workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--json]";
+  "workit fanout brief <slice> [--fanout <n>] [--mode new|resume] [--attempt <n>] [--json]";
 const CHECK_USAGE =
-  "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] [--json]";
-const STATUS_USAGE = "workit fanout status [--name <n>] [--stuck-after 30m] [--offline] [--json]";
+  "workit fanout check [<slice>…] [--fanout <n>] [--base <ref>] [--offline] [--json]";
+const STATUS_USAGE = "workit fanout status [--fanout <n>] [--stuck-after 30m] [--offline] [--json]";
 const WORKTREE_USAGE =
-  "workit fanout worktree create <slice> [--name <n>] | worktree release <slice> [--name <n>] [--force] [--json]";
+  "workit fanout worktree create <slice> [--fanout <n>] | worktree release <slice> [--fanout <n>] [--force] [--json]";
 const USAGE = "workit fanout plan|brief|check|status|worktree ... (workit help fanout)";
 
 /** The forge for PR lookups, or why there is none (offline is never an error). */
@@ -48,6 +48,29 @@ function forgeFor(io: Io, offline: boolean): { forge: ResolvedForge | null; erro
   return connected.ok
     ? { forge: connected.data, error: null }
     : { forge: null, error: connected.error };
+}
+
+/**
+ * The plan a verb acts on: `--fanout <n>` (or its older spelling `--name`),
+ * else the one this branch or this lead session belongs to (#641).
+ */
+function pickFanout(
+  io: Io,
+  values: { name?: string; fanout?: string },
+): ReturnType<typeof selectFanout> {
+  if (values.name !== undefined && values.fanout !== undefined && values.name !== values.fanout)
+    return {
+      ok: false,
+      code: "invalid_input",
+      error: `--fanout ${values.fanout} and --name ${values.name} name different plans`,
+      unblock: "pass one: --fanout <name>",
+    };
+  return selectFanout(
+    io.cwd,
+    values.fanout ?? values.name ?? null,
+    currentBranch(io.cwd),
+    io.env.WORKIT_SESSION_ID?.trim() || null,
+  );
 }
 
 const failed = (io: Io, result: FanoutError): number =>
@@ -179,7 +202,12 @@ function plan(argv: string[], io: Io): number {
 }
 
 function brief(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { name: "value", mode: "value", attempt: "value" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    fanout: "value",
+    mode: "value",
+    attempt: "value",
+  });
   if (typeof flags === "string") return usage(io, flags, BRIEF_USAGE);
   if (flags.positionals.length !== 1)
     return usage(
@@ -194,7 +222,7 @@ function brief(argv: string[], io: Io): number {
   const attempt = rawAttempt === undefined ? null : Number(rawAttempt);
   if (attempt !== null && !(Number.isInteger(attempt) && attempt >= 1 && attempt <= 9))
     return usage(io, "--attempt takes a number from 1 to 9", BRIEF_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const result = renderBrief(io.cwd, selected.data, {
     slice: flags.positionals[0],
@@ -223,9 +251,14 @@ const renderCheck = (data: CheckOutcome): string[] => [
 ];
 
 function check(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { name: "value", base: "value", offline: "boolean" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    fanout: "value",
+    base: "value",
+    offline: "boolean",
+  });
   if (typeof flags === "string") return usage(io, flags, CHECK_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const result = progressFor(io).runSync(
     "Checking the fan-out slices",
@@ -281,7 +314,12 @@ const renderStatus = (data: StatusOutcome): string[] => {
 };
 
 function status(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { name: "value", "stuck-after": "value", offline: "boolean" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    fanout: "value",
+    "stuck-after": "value",
+    offline: "boolean",
+  });
   if (typeof flags === "string") return usage(io, flags, STATUS_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, STATUS_USAGE);
@@ -289,7 +327,7 @@ function status(argv: string[], io: Io): number {
   const stuckAfterMs = raw === undefined ? null : parseDuration(raw);
   if (stuckAfterMs === 0 || (raw !== undefined && stuckAfterMs === null))
     return usage(io, "--stuck-after takes a duration such as 30m, 45m or 2h", STATUS_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const forge = forgeFor(io, flags.booleans.has("offline"));
   const result = progressFor(io).runSync(
@@ -308,7 +346,7 @@ function status(argv: string[], io: Io): number {
 
 function worktree(argv: string[], io: Io): number {
   const [action, ...rest] = argv;
-  const flags = parseFlags(rest, { name: "value", force: "boolean" });
+  const flags = parseFlags(rest, { name: "value", fanout: "value", force: "boolean" });
   if (typeof flags === "string") return usage(io, flags, WORKTREE_USAGE);
   if (action !== "create" && action !== "release")
     return usage(
@@ -324,7 +362,7 @@ function worktree(argv: string[], io: Io): number {
     );
   if (action === "create" && flags.booleans.has("force"))
     return usage(io, "--force applies to release only", WORKTREE_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const actor = actorFromEnv(io.env);
   if (action === "create") {

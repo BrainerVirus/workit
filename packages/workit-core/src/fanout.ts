@@ -1070,11 +1070,16 @@ function listFanouts(cwd: string): FanoutResult<FanoutFile[]> {
   return { ok: true, data: out.toSorted((a, b) => a.name.localeCompare(b.name)) };
 }
 
-/** The plan `name`, else the one with the current branch as a slice, else the only one. */
+/**
+ * The plan `name`, else the one with the current branch as a slice, else the
+ * one `session` leads, else the only one. Several left: the error names
+ * `--fanout <name>` and the candidates (#641).
+ */
 export function selectFanout(
   cwd: string,
   name: string | null,
   current: string | null,
+  session: string | null = null,
 ): FanoutResult<FanoutFile> {
   if (name) {
     const read = readFanout(cwd, name);
@@ -1087,14 +1092,24 @@ export function selectFanout(
   if (!all.ok) return all;
   const holding = all.data.filter((plan) => plan.slices.some((slice) => slice.branch === current));
   if (holding.length === 1) return { ok: true, data: holding[0] };
+  const led = session ? all.data.filter((plan) => plan.leadSession === session) : [];
+  if (holding.length === 0 && led.length === 1) return { ok: true, data: led[0] };
   if (all.data.length === 1) return { ok: true, data: all.data[0] };
-  return all.data.length === 0
-    ? fanoutFail("not_found", "no fanout plan is recorded here", "workit fanout plan <plan.json>")
-    : fanoutFail(
-        "invalid_input",
-        `several fanout plans match; pick one (${all.data.map((plan) => plan.name).join(", ")})`,
-        "pass --name <plan>",
-      );
+  if (all.data.length === 0)
+    return fanoutFail(
+      "not_found",
+      "no fanout plan is recorded here",
+      "workit fanout plan <plan.json>",
+    );
+  const candidates = (holding.length > 1 ? holding : led.length > 1 ? led : all.data).map(
+    (plan) => plan.name,
+  );
+  return fanoutFail(
+    "invalid_input",
+    `several fanout plans match; pick one with --fanout <name>: ${candidates.join(", ")}`,
+    `pass --fanout <name>, one of: ${candidates.join(", ")}`,
+    { candidates },
+  );
 }
 
 /**
