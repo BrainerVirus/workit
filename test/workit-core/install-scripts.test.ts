@@ -827,7 +827,13 @@ function syncEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKFLOW_") || k === "XDG_RUNTIME_DIR" || k === "XDG_CONFIG_HOME") continue;
+    if (
+      k.startsWith("WORKFLOW_") ||
+      k.startsWith("WORKIT_") ||
+      k === "XDG_RUNTIME_DIR" ||
+      k === "XDG_CONFIG_HOME"
+    )
+      continue;
     env[k] = v;
   }
   env.HOME = home;
