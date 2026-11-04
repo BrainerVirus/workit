@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHECKS_FILE, ensureWorkitDir } from "@/packages/workit-core/src/check-config";
 import type {
@@ -118,9 +118,29 @@ export const taskStartRequest = (overrides: Partial<TaskStartRequest> = {}): Tas
 export const writeTestCheck = (root: string): void =>
   writeFileSync(checksPath(root), JSON.stringify({ checks: { test: ["true"] } }));
 
-/** The repo's checks config path, with `.workit/` and its self-ignoring `.gitignore` in place. */
+/**
+ * The repo's checks config path, with `.workit/` in place. `.workit/` is
+ * committed team config, so a fixture repo excludes it locally
+ * (`.git/info/exclude`) to keep its tree clean, as a repo that committed it is.
+ */
 export const checksPath = (root: string): string => {
   ensureWorkitDir(root);
+  const gitDir = join(root, ".git");
+  let repo = false;
+  try {
+    repo = statSync(gitDir).isDirectory();
+  } catch {}
+  if (repo) {
+    const exclude = join(gitDir, "info", "exclude");
+    let current = "";
+    try {
+      current = readFileSync(exclude, "utf8");
+    } catch {}
+    if (!current.split("\n").includes("/.workit/")) {
+      mkdirSync(join(gitDir, "info"), { recursive: true });
+      appendFileSync(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}/.workit/\n`);
+    }
+  }
   return join(root, CHECKS_FILE);
 };
 

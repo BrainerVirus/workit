@@ -165,12 +165,8 @@ test("Given two worktrees of one repo, Then they share the store root and get di
   expect(other.key.key).toBe("feature/b");
   expect(storeDirOf(second)).toBe(storeDirOf(root));
   expect(storeDirOf(root)).toBe(path.join(root, ".git", "workit"));
-  // Each checkout only carries the marker that makes 2.x readers fail closed.
-  for (const dir of [root, second])
-    expect(readdirSync(path.join(dir, ".workit")).toSorted()).toEqual([
-      ".gitignore",
-      "workspace.json",
-    ]);
+  // A checkout's `.workit/` holds team config only: the store writes nothing there.
+  for (const dir of [root, second]) expect(existsSync(path.join(dir, ".workit"))).toBe(false);
   // Each checkout lists its own tasks; the store lists both.
   const listed = new TaskStore(root).listTaskIndex();
   expect(listed.ok && listed.data.map((entry) => entry.id)).toEqual([first.task.id]);
@@ -719,12 +715,12 @@ test("Given a 2.x store in a git checkout, Then it migrates into the git common 
   expect(existsSync(eventsFileOf(root, id))).toBe(true);
   expect(eventsFileOf(root, id).startsWith(path.join(root, ".git", "workit"))).toBe(true);
   expect(existsSync(workspaceFileOf(root))).toBe(true);
-  expect(
-    JSON.parse(readFileSync(path.join(root, ".workit", "workspace.json"), "utf8")).store,
-  ).toMatchObject({
-    format: "workit-store",
-    path: path.join(root, ".git", "workit"),
-  });
+  // The 2.x files moved into the store's backup; `.workit/` is gone, no marker left.
+  expect(existsSync(path.join(root, ".workit"))).toBe(false);
+  const backup = path.join(root, ".git", "workit", "legacy");
+  const backedUp = readdirSync(backup, { recursive: true }).map(String);
+  expect(backedUp.some((name) => name.endsWith(`${id}.json`))).toBe(true);
+  expect(backedUp.some((name) => name.endsWith("workspace.json"))).toBe(true);
 });
 
 test("a directory that becomes a git repository moves its store into the git common dir", () => {
@@ -738,7 +734,10 @@ test("a directory that becomes a git repository moves its store into the git com
   });
   expect(existsSync(eventsFileOf(root, task.id))).toBe(true);
   expect(eventsFileOf(root, task.id).startsWith(path.join(root, ".git", "workit"))).toBe(true);
-  expect(existsSync(path.join(root, ".workit", "store.moved.json"))).toBe(true);
+  // The CLI's next access clears the old store's markers: a git checkout's
+  // `.workit/` keeps no runtime files.
+  expect(new TaskStore(root, { migrateOnRead: true }).readTask(task.id).ok).toBe(true);
+  expect(existsSync(path.join(root, ".workit"))).toBe(false);
 });
 
 // ---------------------------------------------------------------------------

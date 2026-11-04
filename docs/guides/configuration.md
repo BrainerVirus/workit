@@ -813,6 +813,11 @@ worktree, kept across worktree removal and `git clean`), or in
   say `workit migration pending — run workit task status`. Migrated tasks keep
   their ids and are unbound: `workit task status --all` lists them and
   `workit task adopt <id>` binds one to the current branch.
+- In a git checkout, `.workit/` holds only committed team config
+  (`checks.json`, `risk-paths`). Older runtime leftovers there (a 2.x marker,
+  `tasks/`, `workspace.json`) move once into `.git/workit/legacy/<checkout>/v2/`
+  on the first CLI write or read; only exact Workit markers and empty dirs are
+  deleted.
 - `workit gc` folds long logs into a checkpoint plus their 50 most recent
   events, removes unreferenced blobs, temp files and old check logs.
   `--dry-run` writes nothing; `--prune-recovery --yes` removes 2.x recovery

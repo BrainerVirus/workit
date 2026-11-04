@@ -310,3 +310,14 @@ test("Given every skill file, Then each other method skill is named only in the 
     }
   }
 });
+
+test("Given the skills that write plans, retro reports and handoffs, Then each names `workit dir <kind>` for where the file goes", () => {
+  const places: Record<string, string> = {
+    "workit-shape": "plans",
+    "workit-fanout": "plans",
+    "workit-retro": "retros",
+    "workit-continue": "handoffs",
+  };
+  for (const [name, kind] of Object.entries(places))
+    expect(body(skillMd(name)), name).toContain(`\`workit dir ${kind}\``);
+});

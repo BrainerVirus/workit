@@ -50,9 +50,9 @@ triggers: `references/knowledge.md`. Record each settled choice once:
 Each slice is a thin path through every layer, verifiable alone, one PR, one
 context window. Acceptance is Given/When/Then; make it tests (read the `workit-bdd` skill's SKILL.md and follow it).
 Dependent slices stack (`workit stack plan <bottom> ... <top>`); fan out
-independent ones (read the `workit-fanout` skill's SKILL.md and follow it). Plans record decisions, not code:
-`references/slicing.md`. Diagrams and UI sketches only when they settle a
-choice: `references/diagrams.md`, `references/mockups.md`.
+independent ones (read the `workit-fanout` skill's SKILL.md and follow it). Plans record decisions, not code, in a file
+under `workit dir plans` (`references/slicing.md`). Diagrams and UI sketches
+only when they settle a choice: `references/diagrams.md`, `references/mockups.md`.
 
 Authorized to build? Continue into the build (read the `workit-implement` skill's SKILL.md and follow it). Do not ask
 for a separate plan approval or repeat "continue?".

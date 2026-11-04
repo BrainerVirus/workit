@@ -9,14 +9,16 @@
 //    "gates":{"testing":"test"},"groups":{"ci":["lint","test"]}}`. A *group* is
 //    a named list of configured checks that `workit check <group>` runs one by
 //    one; the `ci` group is the checks the repo's CI runs, so a PR never goes
-//    red on a gate that never ran locally. Per-repo workit config lives in the
-//    self-ignoring `.workit/`, never at the repo root. A legacy root
+//    red on a gate that never ran locally. Per-repo workit config lives in
+//    `.workit/`, which holds only committed team config (per-clone data lives
+//    in `<git-common-dir>/workit/`), never at the repo root. A legacy root
 //    `workit.checks.json` is still read when `.workit/checks.json` is absent,
 //    with a note that it moved.
 //    In a linked worktree (a fanout slice's, an agent's) that has neither
-//    file, the main checkout's is read: `.workit/` is git-ignored, so a new
-//    worktree never has one, and it shares the main checkout's checks
-//    (#426). Configured commands still run from the worktree's own top.
+//    file, the main checkout's is read: a config not committed yet (or
+//    ignored by an older Workit's `.workit/.gitignore`) is not in a new worktree,
+//    which shares the main checkout's checks (#426). Configured commands
+//    still run from the worktree's own top.
 //    `cleanup.regenerable` lists repo-relative globs (`*`, `**`) of generated,
 //    git-ignored dirs; cleanup (core/cleanup.ts) discards ignored files under
 //    them, on top of its built-in list, when it removes a merged worktree.
@@ -54,19 +56,22 @@ export function checksConfigFile(root: string): string {
   return !fs.existsSync(current) && fs.existsSync(legacy) ? legacy : current;
 }
 
-const WORKIT_GITIGNORE = "*\n!risk-paths\n";
+/** The `.workit/.gitignore` bodies older Workit wrote to make the dir self-ignoring. */
+const GENERATED_GITIGNORES = new Set(["*\n", "*\n!risk-paths\n"]);
 
 /**
- * Create `<root>/.workit/` with its `.gitignore` (idempotent) and return the
- * dir. It ignores everything but `risk-paths`, which a repo commits; the old
- * `*` alone is rewritten.
+ * Create `<root>/.workit/` (idempotent) and return the dir. It holds committed
+ * team config only, so a self-ignoring `.gitignore` an older Workit wrote
+ * (`*`, or `*` with `!risk-paths`) is removed; any other `.gitignore` is the
+ * repo's own and kept.
  */
 export function ensureWorkitDir(root: string): string {
   const dir = path.join(root, ".workit");
   fs.mkdirSync(dir, { recursive: true });
   const ignore = path.join(dir, ".gitignore");
-  if (!fs.existsSync(ignore) || fs.readFileSync(ignore, "utf8") === "*\n")
-    fs.writeFileSync(ignore, WORKIT_GITIGNORE);
+  try {
+    if (GENERATED_GITIGNORES.has(fs.readFileSync(ignore, "utf8"))) fs.rmSync(ignore);
+  } catch {}
   return dir;
 }
 

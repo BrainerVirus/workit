@@ -22,8 +22,14 @@
 // the first mutation creates it.
 //
 // A 2.x store in `<root>/.workit` is migrated on first use (idempotent, under
-// the checkout lock, backup kept). The migrated `.workit/workspace.json` is
-// replaced by a marker that 2.x readers reject with an upgrade message.
+// the checkout lock, backup kept). In a git checkout `.workit/` holds only
+// committed team config (checks.json, risk-paths), so nothing is written
+// there: migrated files and leftovers of older runtimes (2.x tasks and
+// recovery copies, the 3.x marker that made 2.x readers fail closed) move
+// once into legacy/<slug>/v2/ in the store, and only known markers are
+// deleted. Outside git, where `.workit` is the store, the migrated
+// `.workit/workspace.json` is replaced by a marker that 2.x readers reject
+// with an upgrade message.
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
@@ -214,6 +220,88 @@ const INDEX_VERSION = 3;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * What older runtimes left in a git checkout's `.workit/`: moved into the
+ * store's backup (known markers deleted), so `.workit/` keeps only team config.
+ */
+const CHECKOUT_LEFTOVERS = [
+  "workspace.json",
+  "index.json",
+  "tasks",
+  "recovery",
+  "metadata.lock",
+  "store.moved.json",
+  "task-index.json",
+  "checkouts",
+  "blobs",
+  "legacy",
+  "ledger",
+  "keys",
+];
+/** The `.gitignore` bodies older runtimes wrote into `.workit/`. */
+const GENERATED_GITIGNORES = new Set(["*\n", "*\n!risk-paths\n"]);
+/** Every field of a marker this runtime wrote (3.x workspace marker, 2.x task stub, moved store marker). */
+const MARKER_FIELDS = {
+  workspace: ["schemaVersion", "id", "revision", "root", "runtime", "writer", "store", "critical"],
+  stub: ["schemaVersion", "id", "runtime", "store", "critical"],
+  moved: ["format", "version", "createdWith"],
+} as const;
+
+/** True only for a file holding exactly a marker of `kind`: anything else is data. */
+const isKnownMarker = (file: string, kind: keyof typeof MARKER_FIELDS): boolean => {
+  try {
+    const value = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    if (!isObject(value)) return false;
+    const fields: readonly string[] = MARKER_FIELDS[kind];
+    if (!Object.keys(value).every((key) => fields.includes(key))) return false;
+    if (kind === "moved") return value.format === "workit-store";
+    return (
+      isObject(value.store) &&
+      value.store.format === "workit-store" &&
+      JSON.stringify(value.critical) === '["store"]'
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Move `from` (file or directory) to `to`, merging into a directory already
+ * there. A file whose name is taken keeps both: identical bytes collapse,
+ * different ones land beside it under a content suffix. Nothing is lost.
+ */
+const moveInto = (from: string, to: string): void => {
+  if (fs.lstatSync(from).isDirectory()) {
+    let target = to;
+    if (fs.existsSync(target) && !fs.lstatSync(target).isDirectory()) target = `${to}.dir`;
+    fs.mkdirSync(target, { recursive: true });
+    for (const name of fs.readdirSync(from))
+      moveInto(path.join(from, name), path.join(target, name));
+    fs.rmdirSync(from);
+    return;
+  }
+  let target = to;
+  if (fs.existsSync(target)) {
+    const bytes = fs.readFileSync(from);
+    if (fs.lstatSync(target).isFile() && bytes.equals(fs.readFileSync(target))) {
+      fs.rmSync(from);
+      return;
+    }
+    target = `${to}.${createHash("sha256").update(bytes).digest("hex").slice(0, 12)}`;
+    if (fs.existsSync(target)) {
+      fs.rmSync(from);
+      return;
+    }
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  try {
+    fs.renameSync(from, target);
+  } catch {
+    fs.copyFileSync(from, target);
+    fs.rmSync(from);
+  }
+};
 const hostSession = (value: unknown): { host: string; handle: string } | null =>
   isObject(value) &&
   value.kind === "host" &&
@@ -1066,8 +1154,12 @@ export class TaskStore {
     const ready = this.ready(!dryRun);
     if (!ready.ok) return ready;
     const dirs = this.paths();
-    const recovery = path.join(this.root, ".workit", "recovery");
-    if (fs.existsSync(recovery)) {
+    // In a git store the copies were moved into the backup (settleMigrations).
+    const recovery =
+      [path.join(this.root, ".workit", "recovery"), path.join(dirs.legacy, "recovery")].find(
+        (dir) => fs.existsSync(dir),
+      ) ?? null;
+    if (recovery) {
       let files = 0;
       let bytes = 0;
       try {
@@ -1243,6 +1335,12 @@ export class TaskStore {
     for (const v2 of this.v2Dirs()) {
       const migrated = this.migrateV2(v2);
       if (!migrated.ok) return migrated;
+    }
+    if (!write && !(this.migrateOnRead ?? migrationReporterInstalled()))
+      return success(null, null, null);
+    for (const v2 of this.v2Dirs()) {
+      const cleared = this.clearCheckoutLeftovers(v2);
+      if (!cleared.ok) return cleared;
     }
     return success(null, null, null);
   }
@@ -1970,11 +2068,13 @@ export class TaskStore {
    *      difference appended as another `migrated.from_v2` event;
    *   3. the tasks join this checkout's workspace (the existing 3.x record,
    *      else the 2.x one, so nothing migrated is hidden);
-   *   4. each task file is replaced by a marker only while its digest still
-   *      matches what was migrated (compare-and-swap under the 2.x lock);
-   *   5. `.workit/workspace.json` becomes the marker last, so an interrupted
-   *      run is finished by the next one.
-   * `.workit/recovery` is left in place (`workit gc` reports it).
+   *   4. each task file is removed (git store) or replaced by a marker
+   *      (outside git) only while its digest still matches what was migrated
+   *      (compare-and-swap under the 2.x lock);
+   *   5. `.workit/workspace.json` goes (git store) or becomes the marker
+   *      (outside git) last, so an interrupted run is finished by the next one.
+   * `.workit/recovery` is kept: clearCheckoutLeftovers moves it into the
+   * backup in a git store; `workit gc` reports it either way.
    */
   private migrateV2(v2: string): Result<null> {
     const dirs = this.paths();
@@ -2080,14 +2180,17 @@ export class TaskStore {
               complete = false;
               continue;
             }
-            replaceFile(file, this.stubFor(name.slice(0, -5)), false);
+            if (dirs.shared) fs.rmSync(file);
+            else replaceFile(file, this.stubFor(name.slice(0, -5)), false);
           }
           if (!complete)
             return failure("busy", `the 2.x store at ${v2} changed during migration; retry`, {
               path: v2,
             });
           fs.rmSync(path.join(v2, "index.json"), { force: true });
-          this.writeTombstone(v2, target.id);
+          // Both are in the backup; a git checkout's `.workit/` keeps no marker.
+          if (dirs.shared) fs.rmSync(v2Workspace, { force: true });
+          else this.writeTombstone(v2, target.id);
         } catch (error) {
           return failure("storage_error", `cannot finish the 2.x migration: ${String(error)}`, {
             path: v2,
@@ -2104,6 +2207,73 @@ export class TaskStore {
         return success(null, null, null);
       }),
     );
+  }
+
+  /**
+   * Once per checkout, empty a git checkout's `.workit/` of what older
+   * runtimes left there (CHECKOUT_LEFTOVERS) so it holds only team config:
+   * a known marker (the 3.x workspace marker, a 2.x task stub, a moved store
+   * marker) and an empty directory are deleted; everything else moves into
+   * legacy/<slug>/v2/ in the store. A generated `.gitignore` goes only with
+   * the last leftover, so a config the repo still ignores stays ignored until
+   * ensureWorkitDir writes it. Outside git `.workit` is the store and is left
+   * alone. Idempotent.
+   */
+  private clearCheckoutLeftovers(v2: string): Result<null> {
+    const dirs = this.paths();
+    if (!dirs.shared) return success(null, null, null);
+    const present = () => CHECKOUT_LEFTOVERS.filter((name) => fs.existsSync(path.join(v2, name)));
+    const ignore = path.join(v2, ".gitignore");
+    const onlyGeneratedIgnore = () => {
+      try {
+        return (
+          fs.readdirSync(v2).length === 1 &&
+          GENERATED_GITIGNORES.has(fs.readFileSync(ignore, "utf8"))
+        );
+      } catch {
+        return false;
+      }
+    };
+    if (present().length === 0 && !onlyGeneratedIgnore()) return success(null, null, null);
+    const backup = path.join(dirs.dir, "legacy", checkoutSlug(path.dirname(v2)), "v2");
+    return this.withLock(dirs.checkoutLock, () => {
+      let moved = 0;
+      try {
+        for (const name of present()) {
+          const entry = path.join(v2, name);
+          const marker =
+            name === "workspace.json"
+              ? isKnownMarker(entry, "workspace")
+              : name === "store.moved.json" && isKnownMarker(entry, "moved");
+          const empty = fs.lstatSync(entry).isDirectory() && fs.readdirSync(entry).length === 0;
+          if (marker || empty) {
+            fs.rmSync(entry, { recursive: true });
+            continue;
+          }
+          if (name === "tasks" && fs.lstatSync(entry).isDirectory()) {
+            for (const task of fs.readdirSync(entry)) {
+              const file = path.join(entry, task);
+              if (fs.lstatSync(file).isFile() && isKnownMarker(file, "stub")) fs.rmSync(file);
+              else {
+                moveInto(file, path.join(backup, "tasks", task));
+                moved += 1;
+              }
+            }
+            fs.rmdirSync(entry);
+            continue;
+          }
+          moveInto(entry, path.join(backup, name));
+          moved += 1;
+        }
+        if (onlyGeneratedIgnore()) fs.rmSync(ignore);
+        if (fs.readdirSync(v2).length === 0) fs.rmdirSync(v2);
+      } catch (error) {
+        return failure("storage_error", `cannot clear ${v2}: ${String(error)}`, { path: v2 });
+      }
+      if (moved > 0)
+        reportMigration({ from: v2, to: dirs.dir, backup, tasks: 0, skipped: 0, workspace: false });
+      return success(null, null, null);
+    });
   }
 
   /**
@@ -2243,12 +2413,14 @@ export class TaskStore {
   }
 
   /**
-   * Every checkout this runtime writes for carries the marker at
-   * `<top>/.workit/workspace.json`, so a 2.x runtime never starts a second,
-   * divergent store there (it fails closed with the upgrade message).
+   * A store outside git carries the marker at `<root>/.workit/workspace.json`,
+   * so a 2.x runtime never starts a second, divergent store there (it fails
+   * closed with the upgrade message). A git checkout gets none: its
+   * `.workit/` holds only committed team config.
    */
   private writeTombstoneIfMissing() {
     try {
+      if (this.paths().shared) return;
       const v2 = path.join(this.root, ".workit");
       if (fs.existsSync(path.join(v2, "workspace.json"))) return;
       let id: Id | null = null;

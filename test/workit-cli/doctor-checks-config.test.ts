@@ -1,5 +1,5 @@
 // workit doctor `checks_config` and `--fix`: the per-repo checks config lives in
-// the self-ignoring `.workit/`; a root `workit.checks.json` is a legacy location.
+// `.workit/`, committed team config; a root `workit.checks.json` is a legacy location.
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -53,14 +53,14 @@ test("Given both files, When doctor runs, Then it warns that the root file is ig
   expect(found.detail).toContain("ignored");
 });
 
-test("Given a root workit.checks.json, When --fix runs, Then it moves into .workit/ and the checkout stays clean", () => {
+test("Given a root workit.checks.json, When --fix runs, Then it moves into .workit/, ready to commit", () => {
   const root = repo({ "workit.checks.json": CONFIG });
   spawnSync("git", ["init", "-q"], { cwd: root });
   expect(fixChecksConfig({ cwd: root })).toMatchObject({ action: "moved" });
   expect(existsSync(path.join(root, "workit.checks.json"))).toBe(false);
   expect(readFileSync(checksConfigFile(root), "utf8")).toBe(CONFIG);
   expect(spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).stdout).toBe(
-    "",
+    "?? .workit/\n",
   );
   expect(row(root).status).toBe("pass");
 });
@@ -75,32 +75,32 @@ test("Given both files, When --fix runs, Then neither is overwritten", () => {
   expect(readFileSync(path.join(root, ".workit/checks.json"), "utf8")).toBe(CONFIG);
 });
 
-test("Given a fresh repo, When a checks config is written under ensureWorkitDir, Then git sees nothing untracked", () => {
+const untracked = (root: string): string =>
+  spawnSync("git", ["status", "--porcelain", "-uall"], { cwd: root, encoding: "utf8" }).stdout;
+
+test("Given a fresh repo, When a checks config is written under ensureWorkitDir, Then .workit/ has no .gitignore and the config is untracked (committable)", () => {
   const root = repo({});
   spawnSync("git", ["init", "-q"], { cwd: root });
   writeFileSync(path.join(ensureWorkitDir(root), "checks.json"), CONFIG);
-  expect(spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).stdout).toBe(
-    "",
-  );
+  expect(existsSync(path.join(root, ".workit/checks.json"))).toBe(true);
+  expect(existsSync(path.join(root, ".workit/.gitignore"))).toBe(false);
+  expect(untracked(root)).toBe("?? .workit/checks.json\n");
 });
 
-test("Given a .workit/.gitignore, When ensureWorkitDir runs, Then risk-paths is not ignored, the old `*` is rewritten and a custom file is kept", () => {
-  const root = repo({});
-  spawnSync("git", ["init", "-q"], { cwd: root });
-  const ignore = path.join(ensureWorkitDir(root), ".gitignore");
-  expect(readFileSync(ignore, "utf8")).toBe("*\n!risk-paths\n");
-  writeFileSync(path.join(root, ".workit/risk-paths"), "src/billing/**\n");
-  writeFileSync(path.join(root, ".workit/checks.json"), CONFIG);
-  const status = spawnSync("git", ["status", "--porcelain", "-uall"], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  expect(status.stdout).toContain(".workit/risk-paths");
-  expect(status.stdout).not.toContain("checks.json");
-  writeFileSync(ignore, "*\n");
+test("Given a generated self-ignoring .workit/.gitignore, When config is next written, Then it is removed, tracked files are unaffected and a custom .gitignore is kept", () => {
+  for (const generated of ["*\n", "*\n!risk-paths\n"]) {
+    const root = repo({ ".workit/risk-paths": "src/billing/**\n", ".workit/checks.json": CONFIG });
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["add", ".workit/risk-paths"], { cwd: root });
+    const ignore = path.join(root, ".workit/.gitignore");
+    writeFileSync(ignore, generated);
+    expect(untracked(root)).not.toContain("checks.json");
+    ensureWorkitDir(root);
+    expect(existsSync(ignore)).toBe(false);
+    expect(untracked(root)).toBe("A  .workit/risk-paths\n?? .workit/checks.json\n");
+    expect(readFileSync(path.join(root, ".workit/risk-paths"), "utf8")).toBe("src/billing/**\n");
+  }
+  const root = repo({ ".workit/.gitignore": "*\n!mine\n" });
   ensureWorkitDir(root);
-  expect(readFileSync(ignore, "utf8")).toBe("*\n!risk-paths\n");
-  writeFileSync(ignore, "*\n!mine\n");
-  ensureWorkitDir(root);
-  expect(readFileSync(ignore, "utf8")).toBe("*\n!mine\n");
+  expect(readFileSync(path.join(root, ".workit/.gitignore"), "utf8")).toBe("*\n!mine\n");
 });

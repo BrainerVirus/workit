@@ -10,7 +10,7 @@
 //
 // The printed brief stays within MAX_BRIEF_BYTES (#426): a longer one is cut
 // in the middle (its note and next step always print) and the whole brief is
-// written under the store's handoff/ dir, whose path the brief names.
+// written under the store's handoffs/ dir (`workit dir handoffs`), whose path the brief names.
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -110,7 +110,7 @@ function bounded(brief: Brief, cwd: string): string[] {
   let file: string | null = null;
   if (store.ok)
     try {
-      const dir = path.join(store.value.root, "handoff");
+      const dir = path.join(store.value.root, "handoffs"); // = `workit dir handoffs`
       fs.mkdirSync(dir, { recursive: true });
       file = path.join(dir, `${(brief.branch ?? "detached").replaceAll(/[^\w.-]+/gu, "-")}.txt`);
       fs.writeFileSync(file, `${[first, ...tail, ...rest].join("\n")}\n`, {
