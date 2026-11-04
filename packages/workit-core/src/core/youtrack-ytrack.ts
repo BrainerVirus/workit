@@ -18,13 +18,13 @@ const TIMEOUT_MS = 60_000;
 export const YTRACK_EXIT = { ok: 0, failed: 1, cancelled: 2, auth: 4 } as const;
 
 /**
- * ytrack on `env`'s PATH. Never under a test runner's own environment
- * (NODE_ENV=test, which bun test sets): a developer's real ytrack is logged in
- * to a real instance, so a test reaches ytrack only through a stub PATH in an
- * env it builds itself.
+ * ytrack on `env`'s PATH, unless `WORKIT_NO_YTRACK=1`. The test preload
+ * (test/shared/state-isolation.ts) sets it for the whole run: a developer's
+ * real ytrack is logged in to a real instance (maybe the work one), so a test
+ * reaches ytrack only through a stub PATH in an env it builds itself.
  */
 export const findYtrack = (env: NodeJS.ProcessEnv): string | null =>
-  env.NODE_ENV === "test" ? null : findExecutable("ytrack", env);
+  env.WORKIT_NO_YTRACK === "1" ? null : findExecutable("ytrack", env);
 
 /**
  * Run ytrack from `env`'s PATH. `host` (youtrack.json's baseUrl, when set)

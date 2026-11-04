@@ -27,4 +27,6 @@ for (const key of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_D
 // rest (CI hangs, #415).
 const dir = mkdtempSync(path.join(tmpdir(), "wk-test-state-"));
 process.env.WORKIT_STATE_DIR = dir;
+// Never let a test reach the developer's real, logged-in ytrack (youtrack-ytrack.ts findYtrack).
+process.env.WORKIT_NO_YTRACK = "1";
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
