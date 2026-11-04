@@ -6,20 +6,24 @@
 // `pr status` document. On Claude, run it with `run_in_background: true`
 // instead of a sleep loop.
 //
-// rerun: reruns failed jobs (or named checks) once per (PR, head, check);
-// a second rerun on the same head is `blocked` unless `--force`.
+// rerun: reruns failed jobs (or named checks) once per (head, check), on the
+// PR head (`--pr`, or this branch's PR) or on the latest CI run of a branch
+// (`--branch`, e.g. a base gone red on a flake); a second rerun on the same
+// head is `blocked` unless `--force`.
 //
 // logs --failed: the failing checks of the PR head, each with only the tail
 // of its job log (LOG_LINES lines, at most the status document's few tails),
 // so an agent never pulls a whole CI log into its context (#426).
 import {
   buildStatusDoc,
+  executeBranchRerun,
   executeRerun,
   pollDelay,
   recordPrStatus,
   selectPr,
   waitVerdict,
   type PrStatusDoc,
+  type RerunOutcome,
   type WaitVerdict,
 } from "@brainervirus/workit-core/src/forge/report";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
@@ -367,8 +371,34 @@ async function rerun(argv: string[], io: Io): Promise<number> {
       io,
       fail("blocked", grant.error, { unblock: grant.unblock, data: { reason: grant.reason } }),
     );
-  const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
-  if (!number.ok) return forgeFail(io, number);
+  const options = { failed: names.length === 0, names, reason, force: flags.booleans.has("force") };
+  const branch = flags.values.branch;
+  if (branch) {
+    const ref = progressFor(io).runSync(
+      `Reading the checks on ${branch}`,
+      () => resolved.forge.branchChecks(branch),
+      (r) => (r.ok ? "done" : "failed"),
+    );
+    if (!ref.ok) return forgeFail(io, ref);
+    const done = progressFor(io).runSync(
+      "Rerunning the checks",
+      () => executeBranchRerun(io.cwd, resolved, branch, ref.data, options),
+      (r) => (r.ok ? "done" : "failed"),
+    );
+    if (!done.ok) return forgeFail(io, done);
+    return rerunReport(io, done.data, `branch ${branch}`);
+  }
+  const number = selectPr(io.cwd, resolved, { pr, branch: null });
+  if (!number.ok)
+    return number.code === "not_found"
+      ? emit(
+          io,
+          fail("not_found", `${number.error}; ci rerun targets a PR or a branch's latest CI run`, {
+            unblock:
+              "workit ci rerun --pr <n> --failed --reason flake  # or: workit ci rerun --branch <name> --failed --reason flake",
+          }),
+        )
+      : forgeFail(io, number);
   const status = progressFor(io).runSync(
     `Reading PR #${number.data} checks`,
     () => resolved.forge.prStatus(number.data),
@@ -377,24 +407,23 @@ async function rerun(argv: string[], io: Io): Promise<number> {
   if (!status.ok) return forgeFail(io, status);
   const done = progressFor(io).runSync(
     "Rerunning the checks",
-    () =>
-      executeRerun(io.cwd, resolved, status.data, {
-        failed: names.length === 0,
-        names,
-        reason,
-        force: flags.booleans.has("force"),
-      }),
+    () => executeRerun(io.cwd, resolved, status.data, options),
     (r) => (r.ok ? "done" : "failed"),
   );
   if (!done.ok) return forgeFail(io, done);
-  const outcome = done.data;
+  return rerunReport(io, done.data, `#${done.data.pr}`);
+}
+
+function rerunReport(io: Io, outcome: RerunOutcome, target: string): number {
   return emit(io, ok(outcome), () => [
-    `rerun requested on #${outcome.pr} head ${outcome.head.slice(0, 7)} (${outcome.reason}${outcome.forced ? ", forced" : ""}): ${outcome.rerun.map((check) => check.name).join(", ")}`,
+    `rerun requested on ${target} head ${outcome.head.slice(0, 7)} (${outcome.reason}${outcome.forced ? ", forced" : ""}): ${outcome.rerun.map((check) => check.name).join(", ")}`,
     ...(outcome.skipped.length ? [`not rerunnable here: ${outcome.skipped.join(", ")}`] : []),
     ...(outcome.recorded
       ? []
       : ["warning: the rerun could not be recorded; the once-per-head guard will not see it"]),
-    "next: workit ci wait",
+    outcome.branch === null
+      ? "next: workit ci wait"
+      : `next: workit pr merge, once ${outcome.branch} is green`,
   ]);
 }
 

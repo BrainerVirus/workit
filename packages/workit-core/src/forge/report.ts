@@ -21,6 +21,7 @@ import {
   type ForgeResult,
   type ForgeThread,
   type PrState,
+  type RefChecks,
   type RerunTarget,
 } from "./types";
 
@@ -356,7 +357,7 @@ export function buildStatusDoc(
   },
 ): ForgeResult<PrStatusDoc> {
   const { forge } = resolved;
-  const reruns = rerunCounts(cwd, { repo: forge.repo, pr: status.number, head: status.head.sha });
+  const reruns = rerunCounts(cwd, { repo: forge.repo, head: status.head.sha });
   const gating = gatingChecks(status);
   const missing = missingRequired(status);
   const failing = status.checks.filter((check) => check.state === "failing");
@@ -617,17 +618,23 @@ export function planRerun(
   status: ForgePrStatus,
   selection: { failed: boolean; names: readonly string[] },
 ): ForgeResult<RerunPlan> {
+  return planRerunChecks(status.checks, status.head.sha, selection);
+}
+
+function planRerunChecks(
+  all: readonly ForgeCheck[],
+  head: string,
+  selection: { failed: boolean; names: readonly string[] },
+): ForgeResult<RerunPlan> {
   let checks: ForgeCheck[];
   if (selection.names.length > 0) {
-    const unknown = selection.names.filter(
-      (name) => !status.checks.some((check) => check.name === name),
-    );
+    const unknown = selection.names.filter((name) => !all.some((check) => check.name === name));
     if (unknown.length)
       return failure(
         "invalid_input",
-        `unknown check ${unknown.map((name) => JSON.stringify(name)).join(", ")}; known: ${status.checks.map((check) => check.name).join(", ") || "none"}`,
+        `unknown check ${unknown.map((name) => JSON.stringify(name)).join(", ")}; known: ${all.map((check) => check.name).join(", ") || "none"}`,
       );
-    checks = status.checks.filter((check) => selection.names.includes(check.name));
+    checks = all.filter((check) => selection.names.includes(check.name));
     const running = checks.filter((check) => check.state === "pending");
     if (running.length)
       return failure(
@@ -636,17 +643,17 @@ export function planRerun(
         "workit ci wait",
       );
   } else {
-    checks = status.checks.filter((check) => check.state === "failing");
+    checks = all.filter((check) => check.state === "failing");
   }
   if (checks.length === 0)
-    return failure("not_found", `no failing checks on head ${status.head.sha.slice(0, 12)}`);
+    return failure("not_found", `no failing checks on head ${head.slice(0, 12)}`);
   const rerunnable = checks.filter((check) => check.jobId !== null && check.runId !== null);
   const skipped = checks.filter((check) => !rerunnable.includes(check)).map((check) => check.name);
   const targets: RerunTarget[] = [];
   if (selection.names.length === 0) {
     // One "rerun failed jobs" per workflow run / pipeline. The forge refuses
     // it while the run still has jobs in progress (GitHub: HTTP 403).
-    const busy = status.checks.filter(
+    const busy = all.filter(
       (check) =>
         check.state === "pending" &&
         check.runId !== null &&
@@ -677,7 +684,10 @@ export function planRerun(
 }
 
 export type RerunOutcome = {
-  pr: number;
+  /** The PR rerun; null for a branch rerun. */
+  pr: number | null;
+  /** The branch whose latest run was rerun; null for a PR rerun. */
+  branch: string | null;
   head: string;
   reason: string;
   forced: boolean;
@@ -685,6 +695,11 @@ export type RerunOutcome = {
   skipped: string[];
   recorded: boolean;
 };
+
+type RerunOptions = { failed: boolean; names: readonly string[]; reason: string; force: boolean };
+
+/** What a rerun acts on: a PR head, or the head of a branch (a red base). */
+type RerunSubject = { pr: number | null; branch: string | null; head: string };
 
 /**
  * Apply the rerun-once rule, trigger the reruns, and record one row per check
@@ -694,13 +709,50 @@ export function executeRerun(
   cwd: string,
   resolved: ResolvedForge,
   status: ForgePrStatus,
-  options: { failed: boolean; names: readonly string[]; reason: string; force: boolean },
+  options: RerunOptions,
 ): ForgeResult<RerunOutcome> {
   if (status.state !== "open")
     return failure("blocked", `${status.state} PR: CI cannot be rerun`, "nothing to do");
   const plan = planRerun(status, options);
   if (!plan.ok) return plan;
-  const locked = withRerunLock(cwd, () => rerunLocked(cwd, resolved, status, plan.data, options));
+  return lockedRerun(
+    cwd,
+    resolved,
+    { pr: status.number, branch: null, head: status.head.sha },
+    plan.data,
+    options,
+  );
+}
+
+/**
+ * `ci rerun --branch`: the same rule for the latest CI run on a branch's head
+ * (GitHub: its workflow runs; GitLab: its latest pipeline), so a base that
+ * went red on a flake can be rerun without a PR.
+ */
+export function executeBranchRerun(
+  cwd: string,
+  resolved: ResolvedForge,
+  branch: string,
+  ref: RefChecks,
+  options: RerunOptions,
+): ForgeResult<RerunOutcome> {
+  if (!ref.sha)
+    return failure("unavailable", `the forge did not report the head commit of ${branch}`);
+  if (ref.checks.length === 0)
+    return failure("not_found", `no CI has reported for ${branch} at ${ref.sha.slice(0, 12)}`);
+  const plan = planRerunChecks(ref.checks, ref.sha, options);
+  if (!plan.ok) return plan;
+  return lockedRerun(cwd, resolved, { pr: null, branch, head: ref.sha }, plan.data, options);
+}
+
+function lockedRerun(
+  cwd: string,
+  resolved: ResolvedForge,
+  subject: RerunSubject,
+  plan: RerunPlan,
+  options: RerunOptions,
+): ForgeResult<RerunOutcome> {
+  const locked = withRerunLock(cwd, () => rerunLocked(cwd, resolved, subject, plan, options));
   return (
     locked ??
     failure("busy", "another ci rerun is in progress for this repository", "retry in a moment")
@@ -710,24 +762,24 @@ export function executeRerun(
 function rerunLocked(
   cwd: string,
   resolved: ResolvedForge,
-  status: ForgePrStatus,
+  subject: RerunSubject,
   plan: RerunPlan,
-  options: { failed: boolean; names: readonly string[]; reason: string; force: boolean },
+  options: RerunOptions,
 ): ForgeResult<RerunOutcome> {
   const { forge } = resolved;
-  const counts = rerunCounts(cwd, { repo: forge.repo, pr: status.number, head: status.head.sha });
+  const counts = rerunCounts(cwd, { repo: forge.repo, head: subject.head });
   const repeated = plan.checks.filter((check) => (counts.get(check.name) ?? 0) > 0);
   if (repeated.length && !options.force)
     return failure(
       "blocked",
-      `rerun_limit: ${repeated.map((check) => check.name).join(", ")} already rerun once on head ${status.head.sha.slice(0, 12)}`,
+      `rerun_limit: ${repeated.map((check) => check.name).join(", ")} already rerun once on head ${subject.head.slice(0, 12)}`,
       "treat it as a real failure and fix it; if it is a confirmed flake, rerun with --force",
     );
   const accepted: ForgeCheck[] = [];
   for (const target of plan.targets) {
     const done = forge.rerun(target);
     if (!done.ok) {
-      recordAccepted(cwd, resolved, status, accepted, options);
+      recordAccepted(cwd, resolved, subject, accepted, options);
       return failure(
         done.code,
         accepted.length
@@ -744,10 +796,11 @@ function rerunLocked(
       ),
     );
   }
-  const recorded = recordAccepted(cwd, resolved, status, accepted, options);
+  const recorded = recordAccepted(cwd, resolved, subject, accepted, options);
   return success({
-    pr: status.number,
-    head: status.head.sha,
+    pr: subject.pr,
+    branch: subject.branch,
+    head: subject.head,
     reason: options.reason,
     forced: options.force,
     rerun: accepted.map((check) => ({ name: check.name, runId: check.runId, jobId: check.jobId })),
@@ -759,7 +812,7 @@ function rerunLocked(
 function recordAccepted(
   cwd: string,
   resolved: ResolvedForge,
-  status: ForgePrStatus,
+  subject: RerunSubject,
   accepted: readonly ForgeCheck[],
   options: { reason: string; force: boolean },
 ): boolean {
@@ -770,8 +823,10 @@ function recordAccepted(
     type: "ci.rerun",
     forge: resolved.forge.kind,
     repo: resolved.forge.repo,
-    pr: status.number,
-    head: status.head.sha,
+    pr: subject.pr,
+    branch: subject.branch,
+    head: subject.head,
+    runId: check.runId,
     check: check.name,
     reason: options.reason,
     forced: options.force,

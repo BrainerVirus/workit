@@ -1,6 +1,6 @@
 // The rerun-once record (design §2.1 `ci rerun`): one row per check rerun on
-// a given PR head, so a second rerun of the same check on the same head needs
-// `--force`. Rows use the ledger row shape (`type: "ci.rerun"`) so S13 can
+// a given head (of a PR, or of a branch such as a red main), so a second rerun
+// of the same check on the same head needs `--force`. Rows use the ledger row shape (`type: "ci.rerun"`) so S13 can
 // fold this file into `ledger.jsonl`.
 //
 // It lives in the git common dir (`<common>/workit/ci-reruns.jsonl`, design
@@ -16,8 +16,13 @@ export type RerunRow = {
   type: "ci.rerun";
   forge: string;
   repo: string;
-  pr: number;
+  /** The PR whose checks were rerun; null for a branch rerun (`--branch`). */
+  pr: number | null;
+  /** The branch whose latest run was rerun; null for a PR rerun. Absent on older rows. */
+  branch?: string | null;
   head: string;
+  /** The workflow run / pipeline the check belongs to. Absent on older rows. */
+  runId?: number | null;
   check: string;
   reason: string;
   forced: boolean;
@@ -33,18 +38,18 @@ const isRow = (value: unknown): value is RerunRow => {
   return (
     !!row &&
     row.type === "ci.rerun" &&
-    typeof row.pr === "number" &&
+    (typeof row.pr === "number" || typeof row.branch === "string") &&
     typeof row.head === "string" &&
     typeof row.check === "string" &&
     typeof row.repo === "string"
   );
 };
 
-/** How often each check was rerun on `head` of PR `pr` in `repo`. */
-export function rerunCounts(
-  cwd: string,
-  key: { repo: string; pr: number; head: string },
-): Map<string, number> {
+/**
+ * How often each check was rerun on commit `head` in `repo`, whether through
+ * its PR or its branch: one commit's checks are one allowance.
+ */
+export function rerunCounts(cwd: string, key: { repo: string; head: string }): Map<string, number> {
   const counts = new Map<string, number>();
   const file = rerunLogPath(cwd);
   if (!file) return counts;
@@ -62,7 +67,7 @@ export function rerunCounts(
     } catch {
       continue;
     }
-    if (isRow(row) && row.repo === key.repo && row.pr === key.pr && row.head === key.head)
+    if (isRow(row) && row.repo === key.repo && row.head === key.head)
       counts.set(row.check, (counts.get(row.check) ?? 0) + 1);
   }
   return counts;

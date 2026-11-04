@@ -544,7 +544,8 @@ export const VERBS: readonly VerbEntry[] = [
         name: "rerun",
         usage:
           "workit ci rerun [--pr <n> | --branch <b>] [--check <name>… | --failed] --reason flake|infra [--force]",
-        summary: "Rerun failed jobs once per head, with a recorded reason",
+        summary:
+          "Rerun failed jobs once per head, with a recorded reason: the PR's (--pr, default this branch's) or a branch's latest run (--branch, e.g. a red main)",
       },
       {
         name: "logs",
@@ -556,6 +557,7 @@ export const VERBS: readonly VerbEntry[] = [
       "workit ci wait --timeout 30m",
       "workit ci logs --failed",
       "workit ci rerun --failed --reason flake",
+      "workit ci rerun --branch main --failed --reason flake",
     ],
     load: () => import("./ci"),
   }),
