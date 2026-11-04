@@ -31,14 +31,18 @@ export const findYtrack = (env: NodeJS.ProcessEnv): string | null =>
  * goes in YTRACK_HOST so ytrack talks to the instance Workit is configured
  * for; Workit adds no token to argv or env.
  */
-export function ytrackRunner(env: NodeJS.ProcessEnv, host?: string | null): YtrackRun {
+export function ytrackRunner(
+  env: NodeJS.ProcessEnv,
+  host?: string | null,
+  timeoutMs: number = TIMEOUT_MS,
+): YtrackRun {
   return (args, input) => {
     const exe = findYtrack(env);
     if (!exe) return { status: null, stdout: "", stderr: "", missing: true };
     const result = spawnSync(exe, args, {
       encoding: "utf8",
       env: { ...env, NO_COLOR: "1", ...(host ? { YTRACK_HOST: host } : {}) },
-      timeout: TIMEOUT_MS,
+      timeout: timeoutMs,
       killSignal: "SIGKILL",
       windowsHide: true,
       ...(input === undefined
@@ -73,7 +77,7 @@ export type YtrackStatus =
       installed: true;
       version: string | null;
       /** ok: the active host accepted the token; logged_out: exit 4 or no host. */
-      auth: "ok" | "logged_out" | "rejected" | "error";
+      auth: YtrackAuth;
       hosts: YtrackHostStatus[];
       error: string | null;
     };
@@ -106,14 +110,55 @@ export function ytrackStatus(run: YtrackRun): YtrackStatus {
       error: typeof row.error === "string" && row.error ? row.error : null,
     }));
   const active = hosts.find((row) => row.active) ?? hosts[0];
-  const auth = !active
+  return { ...base, auth: rowAuth(active), hosts, error: null };
+}
+
+type YtrackAuth = "ok" | "logged_out" | "rejected" | "error";
+
+const rowAuth = (row: YtrackHostStatus | undefined): YtrackAuth =>
+  !row
     ? "logged_out"
-    : active.state === "ok"
+    : row.state === "ok"
       ? "ok"
-      : active.state === "rejected"
+      : row.state === "rejected"
         ? "rejected"
-        : active.state === "no_token"
+        : row.state === "no_token"
           ? "logged_out"
           : "error";
-  return { ...base, auth, hosts, error: null };
+
+/**
+ * A YouTrack URL or host as ytrack names it (`ytrack auth login --hostname`):
+ * the URL's host, lower case, without scheme, path or trailing slash.
+ */
+export const ytrackHostName = (urlOrHost: string): string =>
+  urlOrHost
+    .trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")
+    .split("/")[0]
+    .toLowerCase();
+
+/**
+ * The auth state ytrack reports for `host` (a youtrack.json or workspace
+ * baseUrl); with no host, the active one's. A host ytrack has no login for is
+ * logged_out.
+ */
+export function ytrackHostAuth(
+  status: Extract<YtrackStatus, { installed: true }>,
+  host: string | null,
+): { auth: YtrackAuth; login: string | null; error: string | null } {
+  if (!host) {
+    const active = status.hosts.find((row) => row.active) ?? status.hosts[0];
+    return {
+      auth: status.auth,
+      login: active?.login ?? null,
+      error: active?.error ?? status.error,
+    };
+  }
+  const name = ytrackHostName(host);
+  const row = status.hosts.find((candidate) => ytrackHostName(candidate.host) === name);
+  return {
+    auth: status.auth === "error" && !row ? "error" : rowAuth(row),
+    login: row?.login ?? null,
+    error: row?.error ?? status.error,
+  };
 }

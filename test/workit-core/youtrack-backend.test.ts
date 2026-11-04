@@ -20,7 +20,12 @@ import {
   withMarker,
   youTrackMarker,
 } from "@/packages/workit-core/src/core/youtrack-writes";
-import { ytrackRunner, ytrackStatus } from "@/packages/workit-core/src/core/youtrack-ytrack";
+import {
+  ytrackHostAuth,
+  ytrackHostName,
+  ytrackRunner,
+  ytrackStatus,
+} from "@/packages/workit-core/src/core/youtrack-ytrack";
 
 // The YouTrack backend seam (#263): ytrack --json when it is on PATH, the
 // token-file client only when it is missing. ytrack is a recorded stub on a
@@ -377,4 +382,27 @@ test("Given no WORKIT_YT_WRITE, When a write is gated, Then it is blocked naming
   expect(youTrackWriteGate({})).toMatchObject({ ok: false, code: "blocked" });
   expect(youTrackWriteGate({})?.error).toContain("WORKIT_YT_WRITE=1");
   expect(youTrackWriteGate({ WORKIT_YT_WRITE: "1" })).toBeNull();
+});
+
+test("Given a configured YouTrack URL, When ytrack's hosts are matched, Then only that host's login counts", () => {
+  expect(ytrackHostName("https://Acme.YouTrack.cloud/youtrack/")).toBe("acme.youtrack.cloud");
+  const row = (host: string, state: string, active = false) => ({
+    host,
+    active,
+    login: "jdoe",
+    state,
+    tokenSource: "keyring",
+    error: null,
+  });
+  const status = {
+    installed: true as const,
+    version: "0.2.0",
+    auth: "ok" as const,
+    hosts: [row("acme.youtrack.cloud", "ok", true), row("old.example.com", "rejected")],
+    error: null,
+  };
+  expect(ytrackHostAuth(status, "https://acme.youtrack.cloud/").auth).toBe("ok");
+  expect(ytrackHostAuth(status, "old.example.com").auth).toBe("rejected");
+  expect(ytrackHostAuth(status, "new.example.com").auth).toBe("logged_out");
+  expect(ytrackHostAuth(status, null)).toEqual({ auth: "ok", login: "jdoe", error: null });
 });
