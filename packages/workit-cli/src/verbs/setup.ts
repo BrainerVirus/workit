@@ -2,12 +2,12 @@
 // (issue #297) after one consent that shows the exact diff. `--yes` is that
 // consent for a script; `--dry-run` only shows the diff. Never from inside an
 // agent session: the user runs it in their own terminal.
-import os from "node:os";
 import {
   applyHostPermissions,
   permissionDiff,
   planHostPermissions,
 } from "../admin/host-permissions";
+import { userHome } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import pkg from "../../package.json" with { type: "json" };
 import { completionLines, installCompletion } from "../completion/install";
 import { emit, fail, ok, type Io } from "../output";
@@ -83,7 +83,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const completion = () => installCompletion({ env: io.env, version: pkg.version });
   // With YouTrack in use, each selected host with Workit gets the ytrack skill.
   const skill = () => {
-    const home = io.env.HOME ?? os.homedir();
+    const home = userHome(io.env);
     return refreshYtrackSkill({ hosts: workitHosts(args.hosts, home, io.env), home, env: io.env });
   };
   if (plan.changes.length === 0 && !args.dryRun) {

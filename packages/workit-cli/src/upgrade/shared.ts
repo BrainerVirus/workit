@@ -205,6 +205,10 @@ const HOME_DERIVED = [
   "ASDF_DATA_DIR",
 ];
 
+/** The XDG config base OpenCode reads (its config and skills): XDG_CONFIG_HOME, else ~/.config. */
+export const configHome = (home: string, env: NodeJS.ProcessEnv): string =>
+  env.XDG_CONFIG_HOME || path.join(home, ".config");
+
 export const upgradePaths = (deps: UpgradeDeps) => {
   const home = deps.home ?? deps.env?.HOME ?? os.homedir();
   const env: NodeJS.ProcessEnv = {
@@ -226,7 +230,7 @@ export const upgradePaths = (deps: UpgradeDeps) => {
     ...deps.env,
     HOME: home,
   };
-  const xdg = env.XDG_CONFIG_HOME || path.join(home, ".config");
+  const xdg = configHome(home, env);
   const codexHome = env.CODEX_HOME ?? path.join(home, ".codex");
   return {
     home,

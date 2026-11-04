@@ -25,33 +25,6 @@ export const YTRACK_SKILL = "ytrack";
 /** The ytrack that adds `ytrack skill`; an older one needs this. */
 export const YTRACK_UPGRADE = "ytrack upgrade";
 
-const isAbsoluteDir = (value: string | undefined): value is string =>
-  Boolean(value && path.isAbsolute(value));
-
-/**
- * Each host's native user skills directory (sources in
- * docs/agents/hosts.md#host-parity): the directory `ytrack skill install
- * --dir` writes `ytrack/` into.
- */
-export const hostSkillsRoot = (host: SkillHost, home: string, env: NodeJS.ProcessEnv): string => {
-  switch (host) {
-    case "claude-code":
-      return path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), "skills");
-    case "codex":
-      return path.join(env.CODEX_HOME || path.join(home, ".codex"), "skills");
-    case "cursor":
-      return path.join(home, ".cursor", "skills");
-    case "opencode":
-      return path.join(
-        isAbsoluteDir(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, ".config"),
-        "opencode",
-        "skills",
-      );
-    case "pi":
-      return path.join(env.PI_CODING_AGENT_DIR || path.join(home, ".pi", "agent"), "skills");
-  }
-};
-
 /** Whether Workit uses YouTrack: youtrack.json exists, or a workspace tracks issues in YouTrack. */
 export const youTrackInUse = (configDir: string, env: NodeJS.ProcessEnv): boolean => {
   if (existsSync(env.WORKIT_YOUTRACK_CONFIG ?? path.join(configDir, "youtrack.json"))) return true;
@@ -177,15 +150,14 @@ export const ytrackSkillCommand = (root: string): string =>
 
 /**
  * Install the skill of the ytrack on PATH into each host's skills directory
+ * (`roots`: the host's native user skills directory)
  * (`ytrack skill install --dir <root> --json`). A directory already at this
  * version is left alone. Workit records a directory it created, and keeps
  * recording one it created before; a ytrack skill someone else put there is
  * refreshed but never recorded, so uninstall leaves it.
  */
 export function syncYtrackSkill(options: {
-  hosts: readonly SkillHost[];
-  home: string;
-  env: NodeJS.ProcessEnv;
+  roots: readonly { host: SkillHost; root: string }[];
   stateDir: string;
   run: YtrackRun;
 }): YtrackSkillSync {
@@ -193,8 +165,7 @@ export function syncYtrackSkill(options: {
   if (support.state !== "supported") return support;
   const recorded = readYtrackSkillRecord(options.stateDir);
   const results: YtrackSkillResult[] = [];
-  for (const host of new Set(options.hosts)) {
-    const root = hostSkillsRoot(host, options.home, options.env);
+  for (const { host, root } of options.roots) {
     const dir = path.join(root, YTRACK_SKILL);
     const command = ytrackSkillCommand(root);
     const previous = installedSkillVersion(dir);

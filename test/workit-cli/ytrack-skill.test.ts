@@ -20,8 +20,8 @@ import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { runUpgradeCommand, type HostProcess } from "@/packages/workit-cli/src/upgrade";
 import { run as setup } from "@/packages/workit-cli/src/verbs/setup";
+import { hostSkillsRoot } from "@/packages/workit-cli/src/upgrade/ytrack-skill";
 import {
-  hostSkillsRoot,
   parseSkillMeta,
   readYtrackSkillRecord,
   removeYtrackSkill,
@@ -131,9 +131,10 @@ describe("syncYtrackSkill", () => {
       const env = w.env();
       const sync = () =>
         syncYtrackSkill({
-          hosts: ["claude-code", "pi"],
-          home: w.home,
-          env,
+          roots: (["claude-code", "pi"] as const).map((host) => ({
+            host,
+            root: hostSkillsRoot(host, w.home, env),
+          })),
           stateDir: w.stateDir,
           run: ytrackRunner(env),
         });
@@ -167,9 +168,7 @@ describe("syncYtrackSkill", () => {
     const env = w.env({ STUB_OLD: "1" });
     expect(
       syncYtrackSkill({
-        hosts: ["pi"],
-        home: w.home,
-        env,
+        roots: (["pi"] as const).map((host) => ({ host, root: hostSkillsRoot(host, w.home, env) })),
         stateDir: w.stateDir,
         run: ytrackRunner(env),
       }),
@@ -188,9 +187,10 @@ describe("syncYtrackSkill", () => {
       w.skillAt(theirs, "0.2.9");
       w.skillAt(foreign, "1.0.0", "my-ytrack-notes");
       const sync = syncYtrackSkill({
-        hosts: ["codex", "cursor"],
-        home: w.home,
-        env,
+        roots: (["codex", "cursor"] as const).map((host) => ({
+          host,
+          root: hostSkillsRoot(host, w.home, env),
+        })),
         stateDir: w.stateDir,
         run: ytrackRunner(env),
       });
