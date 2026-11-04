@@ -223,8 +223,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skills `workit-bdd` (Given/When/Then scenarios as test names and seams) and
   `workit-test-audit` (triage audit findings with Name the Break), with
   `/wk-bdd` and `/wk-test-audit` aliases on every host.
-
-
 - `workit stack plan|status|sync|land` (S12): forge-neutral stacks of plain
   base-branch PRs on GitHub and GitLab (no Graphite or `gh stack`
   dependency; an adapter seam is left for later). The order and what each
@@ -425,13 +423,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   @brainervirus/workit-cli check test`), adding `workit.checks.json` when
   nothing is detected, or record an approved limitation where the requirement
   allows one.
-
 - OpenCode V1/V2 remove managed external mutations and proposal/approval
   orchestration. Native host tools execute effects; strict read-only
   `workit_context` replaces the old combined action/context tool. Existing
   history and remaining-host action machinery are preserved.
-
-
 - GitHub/GitLab setup, doctor, issues, PRs and merges now use the authenticated
   `gh`/`glab` CLI rather than separate Workit VCS tokens; existing token files
   remain untouched. User-selected Git-valid branch names and commit messages
@@ -476,7 +471,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and approvals remain the bound. The `trustedPaths` wizard screen is gone
   and the setup preview no longer merges it.
 - OpenCode's advertised operation schemas now use bounded provider-safe projections for deeply nested inputs while preserving core-owned validation and the complete eight-family tool surface.
-
 - Cancelling a worker that was assigned but never launched no longer leaves the coordinator blocked with no truthful way out. The core gained two host-only methods, `prepareWorkerDispatch` and `commitWorkerDispatch` (no new operation family, no new serialized field, no caller-supplied receipt): a host claims the launch slot of an exactly-`assigned` worker before spawning, and the resulting in-process reservation is settled exactly once — either `started` with the observed child session, or `not_started`, which records a host-attested `stopped` with a null session. OpenCode prepares in `tool.execute.before` for a native `task` call when exactly one assigned worker is attributable to that coordinator and only claims "never started" when that same task call explicitly proves no child session exists; Pi prepares immediately before spawn on the live handle and only settles "never started" while that same handle proves no spawn was attempted. Ambiguous assignments, generic cancellation strings, missing child metadata, and reservations lost to a restart all stay unresolved and are never inferred to be stopped.
 - Releases are now path-gated and selectively published: tooling-only merges cut no release, and npm receives only packages whose payload changed since the previous tag. The publisher diffs against the previous release tag passed by semantic-release (`${lastRelease.gitTag}`) — the new release tag is created before publish plugins run, so diffing against the latest tag skipped every package.
 - Repository checks now run lint, format verification, tests, and TypeScript typechecking.
@@ -492,6 +486,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Cursor runtime selector evolved in one step from an exact reviewed pin (`@brainervirus/workit-cursor@0.8.5`, the latest public at the time) to the `@latest` dist-tag with a mandatory `--prefer-online` flag (`npx -y --prefer-online --package=@brainervirus/workit-cursor@latest …`): `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, the doctor enforces this exact launcher shape, the doctor's negative-rejection fixtures cover near-miss variants, and no per-release manual pin bump is required.
 - `install-cursor-plugin.sh` now self-heals stale plugin installs: a `doctor-check.ts cursor --stale` pre-check exits 2 on a `stale_install` failure and the installer then refreshes the plugin directory and rewrites the workit MCP/hook entries to the canonical `@latest` + `--prefer-online` selector, preserving unrelated MCP servers; a registry-unreachable comparison stays fail-open (warn, never stale, never install failure), and a healthy install is byte-untouched.
 - Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's session handle; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
+- Fewer needless re-verifications: a clean rebase carries its verdict (judged by replaying the verified head onto the new base), bookkeeping files (changelogs, `write:*`-generated files, version-only manifest changes) never make a verdict stale, and a test-only push keeps a unit verdict at any size. A verifier that lost its token is told how to recover (#312).
 
 ### Fixed
 
@@ -571,7 +566,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Distributed cross-repository guidance binds unfinished work to its checkout,
   branch, deliverables and delivery endpoint, preserves explicit holds, and
   verifies the requested remote result before reporting completion.
-
 - OpenCode V2 keeps uncertain subagent dispatches correlated through failed
   terminal-state persistence, retries reconciliation, and lets explicit
   `failed`/`interrupted` session outcomes override conflicting completion text.
@@ -586,8 +580,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded behavior changes retain behavioral verification and self-review;
   fresh-context review remains required for consequential boundaries, thorough
   preference and explicit project constraints rather than every behavior edit.
-
-
 - OpenCode worker dispatch now binds only the exact live reserved native task call,
   follows the current coordinator's worker assignment after session resumption,
   authorizes the observed child before its own Workit calls and after adapter restarts,
@@ -629,7 +621,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returning to `running`, one shared uncertain-worker set backs
   close/revise/resume/replacement checks, and pausing preserves progress while
   storing the pause reason separately.
-
 - Durable worker launch claims: `prepareWorkerDispatch` persists the
   `dispatching` state inside the lock-guarded prepare mutation, and only the
   live reservation settles it as `running` with an observed child or `stopped`
@@ -729,41 +720,34 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
   with symlink resolution, the Cursor preToolUse matcher covers the guard set
   with doctor drift detection, and hook attestation no longer claims unsigned
   input.
-
 - The CLI setup wizard now auto-detects installed hosts: detected OpenCode and
   Cursor installs preselect on the platforms screen, existing workit
   registrations are tagged "already configured", and detected Codex/Pi point at
   `workit cutover`. Detection is presence-only (CLI on PATH or home config
   marker, never a subprocess probe) via the shared `detect-hosts` core module.
-
 - Acceptance fixtures, observable-action judge, 90-run evaluation plan, adapter
   capability matrix generator, and stable-release gate for Workit v1 qualification.
   Deterministic CA-31/CA-32 checks run in `verify:release-candidate`; the live
   batch remains behind explicit authorization (`docs/workit-v1/qualification.md`).
-
 - Candidate capture now uses Git's ignore-aware inventory in Git workspaces,
   avoiding recursive scans of ignored dependency and build trees while keeping
   tracked files, relevant untracked files, and staged deletions visible.
-
 - Codex CLI and desktop integration with a native plugin manifest, shared MCP
   transport, documented SessionStart/PreToolUse/subagent hooks, and separate
   CLI/desktop qualification records. Unsupported receipts and writer delegation
   remain explicitly unavailable.
-
 - Optional external-action wrappers now bind concrete host-owned Git, hosting,
   YouTrack, time, and documentation effects to the exact canonical
   operation/target/payload approved by one native action decision, and preserve
   uncertain remote outcomes. OpenCode/Pi use native receipts, the CLI exposes
   an interactive TTY confirmation route, and caller-unattested MCP mutation
   requests remain unavailable.
-
 - Added the read-only `context.read` surface for git/PR/YouTrack/changelog,
   release, and affected context across native adapters and the CLI, plus
   equivalent Cursor/Codex MCP resources. Context reads require no approval or
   writer and do not mutate the checkout or Workit metadata. Release reads now
   include a deterministic Markdown draft; affected reads identify files while
   edits remain existing writer/scope-guarded native actions.
-
 - Pi v1 native extension with the stock package manifest, eight shared
   operation tools, seven canonical method skills, native session/compaction
   continuity, and truthful UI/trust/sandbox capability boundaries. The bundled
@@ -771,12 +755,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
   explicitly scoped implementers with observed lifecycle and uncertain
   cancellation boundaries. A child-disabled `workit_worker_control` host
   orchestration tool does not expand the eight shared core families.
-
 - Cursor v1 now uses the shared MCP transport, one documented native hook
   executable, and exactly seven canonical adaptive method skills. AskQuestion,
   session-start/compaction, subagent stop identity, arbitrary shell writes, and
   Tab edits are reported with their actual policy-only or unavailable assurance.
-
 - OpenCode v1 integration now exposes the eight shared Workit operation tools,
   native receipt/lineage hooks, compact task continuity, and only the seven
   policy-selected method skills; the plugin build targets OpenCode 1.18.30.
@@ -796,8 +778,6 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The doctor gained a `stale_install` finding on the Cursor/CLI hosts that detects plugin auto-load rot before it breaks features: legacy `--package=` pins in the plugin's own `mcp.json`, a sessionStart hook running a legacy selector, or a local-dist install behind the current/published runtime all surface with the exact repair step; canonical `@latest` installs never fail on version metadata (the selector resolves fresh at launch), and the sole network probe (the npm registry) fails open as a `registry_unreachable` warning — never a false `stale_install` and never a hard doctor failure.
 - The release pipeline now syncs every tracked manifest (root, four platform packages, Cursor plugin manifest) to the released version through an auto-merged PR after each publish, ending the committed-version vs git-tag drift; the root workspace is renamed `workflow-toolkit` → `workit` and pre-aligned to v0.8.9.
 - Cursor subagent execution now uses documented native `subagentStart` and bounded product-write hooks. AskQuestion, compaction/session-start continuity, exact subagent stop identity, arbitrary shell writes, and Tab edits remain truthfully marked policy-only, agent-guided, or unavailable where Cursor cannot attest them.
-
-
 - Native decision receipts recognize the binding question semantically: host
   label qualifiers such as `(Recommended)` normalize for comparison while
   original bytes stay in the receipt, the rejected option description is
@@ -822,15 +802,12 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
   blocked without recovery guidance.
 - Codex workspace-root tests compare canonical roots, matching the runtime on
   macOS and other platforms with path aliases.
-
 - Mechanical `self-review` requirements now accept the lead's fresh review
   evidence on every host. Independent reviews correctly reject the task creator's
   session even when it has not recorded any other evidence.
-
 - Init always shows Codex and Pi status and separate setup guidance, clarifies
   that Apply configures only OpenCode/Cursor, and reserves cutover guidance for
   legacy migration.
-
 - Doctor `stale_install` now detects when OpenCode's frozen npm `@latest`
   package cache (`~/.cache/opencode/packages/@brainervirus/workit-opencode@latest`)
   lags the published `@brainervirus/workit-opencode`. Bare / `@latest` pins
@@ -878,7 +855,6 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - OpenCode Workit bootstrap and method skills now require `task.start` then
   `policy.assess` when `task.list` is empty, so ordinary product/debug work no
   longer skips Workit because no policy rule was pre-selected.
-
 - Bind spec/plan approvals to exact-byte SHA-256 digests so edited documents invalidate stale approvals and require fresh reapproval; reject recursive handoffs; and restrict subagent-driven reminders and interception to active execution.
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.
 - The CLI initialization wizard no longer enters an unbounded render loop after an input change — unchanged controlled values now preserve state identity instead of constructing new drafts.
@@ -899,6 +875,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Menu receipt label matching now tolerates host qualifiers such as `(Recommended)` and `(new session only)`; original label bytes are preserved.
 - Windows CI flake: the RL-03 pr-create target test now gets the 60s per-test budget already used by sibling heavy-git tests (Windows git cold starts).
 - Branch setup no longer strands the pre-checkout stash when base/checkout resolution fails — the working tree is restored exactly as it was.
+- Verdicts recorded in a throwaway clone are found by the real checkout's merge gate (#311): each verdict is mirrored per remote in the state dir and imported, hash-checked, when a gate runs.
 
 ## [0.6.0] - 2026-08-10
 
