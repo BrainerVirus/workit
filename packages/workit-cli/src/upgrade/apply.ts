@@ -8,6 +8,11 @@ import { type HostCommandResult } from "../admin/host-install";
 import { recordHookNode } from "../admin/hook-node";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
+import { describeInstall, listInstalls } from "../install/discover";
+import { leftLines, migrateCopies, migrationCopies } from "../install/migrate";
+import { resolveInstallNode } from "../install/node";
+import { installOwned, writeLaunchers } from "../install/owned";
+import { pathResolvedWorkit } from "../install/verify";
 import { createProgress, type StepStatus } from "../progress";
 import { codexInventory } from "./codex-inventory";
 import { classifyProcess, describe, listProcesses } from "./processes";
@@ -58,6 +63,8 @@ const codexPluginRoot = (codexHome: string): string | null => {
   );
   return newest ? path.join(dir, newest) : null;
 };
+
+const CLI_INSTALL_TIMEOUT_MS = 300_000;
 
 export type UpgradeResult = {
   ok: boolean;
@@ -298,6 +305,8 @@ export async function applyUpgrade(
   options: {
     /** After the CLI updated: let the new CLI finish (its exit code), or undefined to go on here. */
     handoff?: (cli: HostOutcome) => Promise<number | undefined>;
+    /** Back up and remove the other CLI installs (the y/N answer); false prints their commands. */
+    removeCopies?: boolean;
   } = {},
 ): Promise<UpgradeResult> {
   const hosts: HostOutcome[] = [...plan.failed];
@@ -372,7 +381,15 @@ export async function applyUpgrade(
     try {
       cli = await progress.run(
         "Updating the CLI",
-        () => applyCli(plan.cli!, runAsync, backup),
+        () =>
+          applyCli(
+            plan.cli!,
+            // npm install of the CLI may outlast the 60 s host-command bound.
+            asyncRunner(deps, CLI_INSTALL_TIMEOUT_MS),
+            backup,
+            deps,
+            options.removeCopies ?? false,
+          ),
         statusOf,
         { signals: true },
       );
@@ -520,41 +537,73 @@ export async function applyUpgrade(
   return done(backup);
 }
 
+/**
+ * The owned CLI install (#648): install the version under installRoot() with
+ * a Node >= 24's own npm, swap `current`, write the launcher, migrate the
+ * other copies (removed only when `removeCopies`), then require the
+ * PATH-resolved `workit --version` to print the new version.
+ */
 const applyCli = async (
   cli: NonNullable<UpgradePlan["cli"]>,
   run: ReturnType<typeof asyncRunner>,
   backup: string,
+  deps: UpgradeDeps,
+  removeCopies: boolean,
 ): Promise<HostOutcome> => {
-  const fail = (reason: string): HostOutcome => ({
+  const { env } = upgradePaths(deps);
+  const fail = (reason: string, details?: string[]): HostOutcome => ({
     host: "cli",
     status: "failed",
     reason,
     fix: CLI_FIX,
+    ...(details?.length ? { details } : {}),
   });
-  const currentRoot = await run("npm", ["root", "--global"]);
-  if (currentRoot.status !== 0 || currentRoot.stdout.trim() !== cli.root)
-    return fail("Global npm location changed; preview again");
-  const cliBackup = path.join(backup, "cli-package");
-  cpSync(path.join(cli.root, "@brainervirus/workit-cli"), cliBackup, {
-    recursive: true,
+  const node = (deps.installNode ?? (() => resolveInstallNode(env)))();
+  if (!node)
+    return fail(
+      "no Node 24+ with npm found to install the CLI with (WORKIT_NODE, the recorded node, fnm, nvm, volta, mise, asdf); install one (fnm install 24) and rerun",
+    );
+  if (cli.install) {
+    const installed = await installOwned(cli.latest, { env, node, run });
+    if (!installed.ok)
+      return fail(
+        `${installed.reason}; current still points to ${installed.previous ?? "nothing"} under ${cli.root}`,
+      );
+  }
+  const launchers = writeLaunchers({ env, installNode: node.node });
+  const migration = await migrateCopies(migrationCopies(env), {
+    remove: removeCopies,
+    backup,
+    env,
+    node,
+    run,
   });
-  const install = await run("npm", [
-    "install",
-    "--global",
-    `@brainervirus/workit-cli@${cli.latest}`,
-  ]);
-  if (install.status !== 0)
+  // A foreign file at the launcher's place that migration did not replace stays visible.
+  if (removeCopies && launchers.foreign) writeLaunchers({ env, installNode: node.node });
+  const details = [
+    ...migration.removed.map((copy) => `removed (backup in ${backup}): ${describeInstall(copy)}`),
+    ...(migration.left.length
+      ? [
+          `other installs left in place; back them up and remove them with:`,
+          ...leftLines(migration.left),
+        ]
+      : []),
+  ];
+  const seen = (deps.pathWorkit ?? (() => pathResolvedWorkit(env)))();
+  if (seen.version !== cli.latest) {
+    const listing = listInstalls(env).map((install) => `  ${describeInstall(install)}`);
+    const onPath = path.dirname(launchers.linked);
     return fail(
-      `CLI update failed${stderrTail(install.stderr) ? ` (${stderrTail(install.stderr)})` : ""}; preserved package at ${cliBackup}; use npm to repair or run node ${path.join(cliBackup, "dist/index.js")}`,
+      seen.path
+        ? `installed ${cli.latest} under ${cli.root}, but PATH runs ${seen.path} (${seen.version ?? seen.error ?? "unknown"}), not ${cli.latest}`
+        : `installed ${cli.latest} under ${cli.root}, but ${seen.error ?? "no workit on PATH"}; put ${onPath} first on PATH`,
+      [`workit installs (which -a order, then other prefixes):`, ...listing, ...details],
     );
-  const installed = objectOrNull(path.join(cli.root, "@brainervirus/workit-cli/package.json"));
-  if (installed?.name !== "@brainervirus/workit-cli" || installed.version !== cli.latest)
-    return fail(
-      `CLI update did not verify the requested version; preserved package at ${cliBackup}`,
-    );
+  }
   return {
     host: "cli",
     status: "updated",
-    reason: `${cli.installed} -> ${cli.latest}`,
+    reason: `${cli.install ? `${cli.installed} -> ${cli.latest}` : `owned ${cli.latest}`}; PATH runs ${seen.path}`,
+    ...(details.length ? { details } : {}),
   };
 };

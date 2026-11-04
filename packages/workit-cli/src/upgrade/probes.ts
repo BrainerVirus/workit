@@ -106,7 +106,6 @@ export const runProbes = async (
       add(...registry("@brainervirus/workit-pi"));
     }
     if (cli) {
-      add("npm", ["root", "--global"]);
       add(...registry(CLI_PACKAGE));
     }
     // OpenCode's service: the real env (its plugin commands talk to the running

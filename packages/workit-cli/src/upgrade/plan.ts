@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { opencodeReading, opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
 import { CODEX_INVENTORY_ARGS, CODEX_INVENTORY_KEY, codexInventorySync } from "./codex-inventory";
 import { OPENCODE_NOT_READY } from "./opencode";
@@ -10,6 +10,12 @@ import { type HostId } from "../admin/detect-hosts";
 import { claudeWorkitInstalls, hostCommand, planHostInstall } from "../admin/host-install";
 import { OPENCODE_V1_FIX } from "../admin/doctor";
 import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
+import cliPackage from "../../package.json" with { type: "json" };
+import { describeInstall } from "../install/discover";
+import { migrationCopies } from "../install/migrate";
+import { isOwnedLauncher } from "../install/owned";
+import { entryOf, ownedPaths, ownedVersion, realpathOr, versionDir } from "../install/paths";
+import { CLI_PACKAGE } from "../update-check";
 import {
   CLAUDE_CODE_PACKAGE,
   CLI_FIX,
@@ -447,49 +453,65 @@ export function previewUpgrade(
   return plan;
 }
 
-/** The global CLI, part of every default upgrade: only a managed npm global
- *  install is touched; a local link or npx use is left as it is. */
-export const planCli = (plan: UpgradePlan, run: ReturnType<typeof runner>): void => {
-  const root = run("npm", ["root", "--global"]);
-  if (root.status !== 0 || !path.isAbsolute(root.stdout.trim())) {
+/**
+ * The CLI, part of every default upgrade: the Workit-owned install under
+ * installRoot() (#648). Planned when the owned version is behind the
+ * registry, when there is no owned install yet, when other copies (an npm
+ * global in a version manager's prefix, a hand-written wrapper) are left to
+ * migrate, or when the launcher is missing. A local checkout run with no
+ * owned install and no copy is left alone.
+ */
+export const planCli = (
+  plan: UpgradePlan,
+  run: ReturnType<typeof runner>,
+  deps: UpgradeDeps = {},
+): void => {
+  const { env } = upgradePaths(deps);
+  const paths = ownedPaths(env);
+  const owned = ownedVersion(env);
+  const copies = migrationCopies(env);
+  const script = deps.cliEntry ?? process.argv[1];
+  const packaged = Boolean(
+    script && /[\\/]node_modules[\\/]@brainervirus[\\/]workit-cli[\\/]/.test(realpathOr(script)),
+  );
+  if (!owned && !copies.length && !packaged) {
     plan.skipped.push({
       host: "cli",
-      reason: "global npm location could not be verified",
-      fix: CLI_FIX,
+      reason: `running from a local checkout (links preserved); install the owned CLI with ${CLI_FIX}`,
     });
     return;
   }
-  const packageFile = path.join(root.stdout.trim(), "@brainervirus/workit-cli/package.json");
-  const installed = objectOrNull(packageFile);
-  if (
-    installed?.name !== "@brainervirus/workit-cli" ||
-    lstatSync(path.dirname(packageFile)).isSymbolicLink()
-  ) {
-    plan.skipped.push({
-      host: "cli",
-      reason:
-        "no managed global CLI install (local links preserved); use npx @brainervirus/workit-cli@latest",
-    });
-    return;
-  }
-  const latest = registryVersion(run, "@brainervirus/workit-cli");
-  if (!latest)
+  const latest = registryVersion(run, CLI_PACKAGE);
+  if (!latest) {
     plan.failed.push({
       host: "cli",
       status: "failed",
       reason: "CLI registry version unavailable; existing installation preserved",
       fix: CLI_FIX,
     });
-  else if (!versionAtLeast(installed.version, latest)) {
-    plan.cli = {
-      latest,
-      root: root.stdout.trim(),
-      installed: installed.version,
-    };
-    plan.configDigests[packageFile] = digest(packageFile);
-  } else
-    plan.skipped.push({
-      host: "cli",
-      reason: `already current (${installed.version})`,
-    });
+    return;
+  }
+  const install = !owned || !versionAtLeast(owned, latest);
+  const launcherReady =
+    isOwnedLauncher(paths.launcher) && realpathOr(paths.linked) === realpathOr(paths.launcher);
+  if (!install && !copies.length && launcherReady) {
+    plan.skipped.push({ host: "cli", reason: `already current (${owned})` });
+    return;
+  }
+  const target = install || !owned ? latest : owned;
+  const newestCopy = copies
+    .map((copy) => copy.version)
+    .filter((version): version is string => Boolean(version))
+    .reduce<string | undefined>(
+      (best, version) => (best && versionAtLeast(best, version) ? best : version),
+      undefined,
+    );
+  plan.cli = {
+    latest: target,
+    root: paths.root,
+    installed: owned ?? newestCopy ?? cliPackage.version,
+    entry: entryOf(versionDir(paths.root, target)),
+    install,
+    copies: copies.map(describeInstall),
+  };
 };

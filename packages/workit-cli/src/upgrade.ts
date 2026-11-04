@@ -14,6 +14,7 @@ import {
 } from "./admin/host-permissions";
 import { createProgress } from "./progress";
 import { createStyle } from "./style";
+import { agentHostMarker } from "./update-check";
 import { cliVersionOnDisk } from "./update-settings";
 import { applyUpgrade } from "./upgrade/apply";
 import { runUpdateCheck, runSetUpdates } from "./upgrade/check";
@@ -111,7 +112,7 @@ async function upgradeOnce(
       // Every registry and inventory probe at once; planning then reads their results.
       const probes = await runProbes(raw as HostId[], withCli, deps);
       const planned = previewUpgrade(raw as HostId[], deps, probes);
-      if (withCli) planCli(planned, probedRunner(deps, probes));
+      if (withCli) planCli(planned, probedRunner(deps, probes), deps);
       return planned;
     },
   );
@@ -176,20 +177,31 @@ async function upgradeOnce(
     if (screens) out.write(eraseAbove(`${shown}${question}y\n`, process.stdout.columns));
   }
   if (json) for (const warning of plan.warnings ?? []) out.write(`warning: ${warning}\n`);
+  // Migration to the owned CLI install removes other copies only after a
+  // person at a terminal says yes; anywhere else they stay and the CLI row
+  // lists the exact commands.
+  const removeCopies = plan.cli?.copies.length
+    ? await (deps.removeCopies ?? defaultRemoveCopies({ env, out, json }))(
+        `${style.bold(`Back up and remove the ${plan.cli.copies.length} other workit ${plan.cli.copies.length === 1 ? "install" : "installs"} listed above?`)} [y/N] `,
+      )
+    : false;
   // After the CLI updated, the new CLI finishes: the same flags, narrowed to the hosts.
   // An injected host runner without a re-exec seam is a test: it finishes here.
+  // The new version's entry under the owned install root finishes the hosts.
+  const cliEntry = deps.cliEntry ?? plan.cli?.entry ?? process.argv[1];
   const reexec =
     deps.reexec ??
     (deps.run && !deps.cliEntry
       ? undefined
       : spawnUpgrade({
-          entry: deps.cliEntry ?? process.argv[1],
+          entry: cliEntry,
           out,
           toStderr: out === process.stderr,
           json,
         }));
   const handoff = async (cli: HostOutcome): Promise<number | undefined> => {
-    if (!reexec || (deps.cliOnDisk ?? cliVersionOnDisk)() !== plan.cli?.latest) return undefined;
+    if (!reexec || (deps.cliOnDisk ?? (() => cliVersionOnDisk(cliEntry)))() !== plan.cli?.latest)
+      return undefined;
     const scratch = mkdtempSync(path.join(os.tmpdir(), "workit-upgrade-"));
     const rowsFile = path.join(scratch, "rows.json");
     try {
@@ -216,7 +228,7 @@ async function upgradeOnce(
   const result = await applyUpgrade(
     plan,
     { ...deps, progress },
-    continued || !reexec ? {} : { handoff },
+    continued || !reexec ? { removeCopies } : { handoff, removeCopies },
   );
   if (result.handedOff !== undefined) return result.handedOff;
   if (continued?.length) {
@@ -295,6 +307,16 @@ async function upgradeOnce(
   );
   return failed ? 1 : 0;
 }
+
+/** Ask y/N only at a person's terminal (not --json, not an agent host's shell); anywhere else, no. */
+const defaultRemoveCopies =
+  (context: { env: NodeJS.ProcessEnv; out: { write: (text: string) => void }; json: boolean }) =>
+  async (question: string): Promise<boolean> =>
+    !context.json &&
+    process.stdin.isTTY === true &&
+    process.stdout.isTTY === true &&
+    agentHostMarker(context.env) === undefined &&
+    (await askConfirm(question, context.out));
 
 /** Move up over the terminal rows `text` filled (wrapped at `columns`) and clear them. */
 export const eraseAbove = (text: string, columns: number | undefined): string => {
