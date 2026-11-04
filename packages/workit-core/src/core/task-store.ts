@@ -134,21 +134,11 @@ const STALE_TEMPORARY_MS = 60 * 60_000;
 
 export type GarbageReport = {
   dryRun: boolean;
-  compacted: {
-    tasks: Id[];
-    eventsFolded: number;
-    bytesBefore: number;
-    bytesAfter: number;
-  };
+  compacted: { tasks: Id[]; eventsFolded: number; bytesBefore: number; bytesAfter: number };
   blobs: { removed: number; removedBytes: number; kept: number };
   temporary: { removed: number };
   /** A 2.x `.workit/recovery` directory left by migration (deleted only with pruneRecovery). */
-  legacyRecovery: {
-    path: string;
-    files: number;
-    bytes: number;
-    removed: boolean;
-  } | null;
+  legacyRecovery: { path: string; files: number; bytes: number; removed: boolean } | null;
   /** Logs another writer changed mid-compaction: left for the next run (benign). */
   retried: Id[];
   failed: Id[];
@@ -339,14 +329,8 @@ const indexEntry = (
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     objective: task.intent.data.objective,
-    source: {
-      host: task.intent.provenance.host,
-      kind: task.intent.provenance.kind,
-    },
-    progress: {
-      summary: task.progress.summary,
-      nextAction: task.progress.nextAction,
-    },
+    source: { host: task.intent.provenance.host, kind: task.intent.provenance.kind },
+    progress: { summary: task.progress.summary, nextAction: task.progress.nextAction },
     sessions,
     workspaceId: task.workspaceId,
     key: key?.key ?? null,
@@ -482,11 +466,7 @@ const refExists = (common: string, ref: string): boolean =>
  * from are unchanged (one entry per branch a process looked at). */
 const origins = new Map<
   string,
-  {
-    signature: string;
-    name: string | null;
-    renames: ReturnType<typeof branchRenames>;
-  }
+  { signature: string; name: string | null; renames: ReturnType<typeof branchRenames> }
 >();
 export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
@@ -720,9 +700,7 @@ export class TaskStore {
     const parsed = this.parseRecord<WorkspaceRecord>(bytes, workspaceRecordSchema, "workspace");
     if (!parsed.ok) return parsed;
     if (parsed.data.root !== this.root && !sameDirectoryIdentity(parsed.data.root, this.root))
-      return failure("recovery_required", "workspace root binding is invalid", {
-        path: file,
-      });
+      return failure("recovery_required", "workspace root binding is invalid", { path: file });
     return parsed;
   }
 
@@ -749,11 +727,7 @@ export class TaskStore {
     ) {
       const task = this.readTask(found.data.id);
       return task.ok
-        ? success(task.revision, null, {
-            task: task.data,
-            created: false,
-            key: key.data,
-          })
+        ? success(task.revision, null, { task: task.data, created: false, key: key.data })
         : task;
     }
     if (input.create === false) {
@@ -762,11 +736,7 @@ export class TaskStore {
       const loaded = this.load(found.data.id);
       if (!loaded.ok) return loaded;
       return loaded.data
-        ? success(null, null, {
-            task: loaded.data.record,
-            created: false,
-            key: key.data,
-          })
+        ? success(null, null, { task: loaded.data.record, created: false, key: key.data })
         : success(null, null, null);
     }
     return this.withLock<ImplicitTask | null>(this.paths().checkoutLock, () =>
@@ -782,11 +752,7 @@ export class TaskStore {
       if (again.data) {
         const moved = this.bindLocked(again.data.id, key, input.now);
         return moved.ok
-          ? success(moved.data.revision, null, {
-              task: moved.data,
-              created: false,
-              key,
-            })
+          ? success(moved.data.revision, null, { task: moved.data, created: false, key })
           : moved;
       }
       const label =
@@ -797,30 +763,17 @@ export class TaskStore {
             : path.basename(this.root) || this.root;
       const intent: Intent = {
         objective: input.objective?.trim() || `Work on ${label}`,
-        scope: {
-          description: `the checkout (${label})`,
-          paths: ["."],
-          exclusions: [],
-        },
+        scope: { description: `the checkout (${label})`, paths: ["."], exclusions: [] },
         authorityRefs: [],
       };
       const created = this.createLocked(
-        {
-          intent,
-          provenance: input.provenance,
-          expectedWorkspaceRevision: null,
-          now: input.now,
-        },
+        { intent, provenance: input.provenance, expectedWorkspaceRevision: null, now: input.now },
         false,
         key,
         false,
       );
       return created.ok
-        ? success(created.data.revision, null, {
-            task: created.data,
-            created: true,
-            key,
-          })
+        ? success(created.data.revision, null, { task: created.data, created: true, key })
         : created;
     }
   }
@@ -1108,9 +1061,7 @@ export class TaskStore {
 
   mutateTaskAndWorkspace(input: CoupledMutation): Result<CoupledSnapshot> {
     if (!validId(input.taskId))
-      return failure("invalid_input", "task ID is invalid", {
-        taskId: input.taskId,
-      });
+      return failure("invalid_input", "task ID is invalid", { taskId: input.taskId });
     const ready = this.ready(true);
     if (!ready.ok) return ready;
     const result = this.withLock(this.paths().checkoutLock, () =>
@@ -1126,10 +1077,7 @@ export class TaskStore {
           return this.conflict(expected, task.data.record.revision);
         if (workspace.data.revision !== input.expectedWorkspaceRevision)
           return this.workspaceConflict(input.expectedWorkspaceRevision, workspace.data.revision);
-        const workspaceContext = {
-          now: input.now ?? now(),
-          revision: newRevision(),
-        };
+        const workspaceContext = { now: input.now ?? now(), revision: newRevision() };
         let changedWorkspace: Result<WorkspaceRecord>;
         try {
           changedWorkspace = input.workspace(
@@ -1157,10 +1105,7 @@ export class TaskStore {
             outcome: "unknown",
           });
         };
-        const taskContext = {
-          now: input.now ?? now(),
-          revision: newRevision(),
-        };
+        const taskContext = { now: input.now ?? now(), revision: newRevision() };
         let changedTask: Result<TaskRecord>;
         try {
           changedTask = input.task(
@@ -1193,11 +1138,7 @@ export class TaskStore {
    * `pruneRecovery`). A dry run is read-only.
    */
   collectGarbage(
-    options: {
-      dryRun?: boolean;
-      pruneRecovery?: boolean;
-      compactAbove?: number;
-    } = {},
+    options: { dryRun?: boolean; pruneRecovery?: boolean; compactAbove?: number } = {},
   ): Result<GarbageReport> {
     const dryRun = options.dryRun === true;
     const compactAbove = options.compactAbove ?? COMPACT_ABOVE;
@@ -1366,9 +1307,7 @@ export class TaskStore {
     if (this.migrationChecked) return success(null, null, null);
     const dirs = this.paths();
     try {
-      const marker = JSON.parse(fs.readFileSync(dirs.marker, "utf8")) as {
-        version?: unknown;
-      };
+      const marker = JSON.parse(fs.readFileSync(dirs.marker, "utf8")) as { version?: unknown };
       if (typeof marker.version === "number" && marker.version > STORE_FORMAT)
         return failure(
           "recovery_required",
@@ -1619,10 +1558,7 @@ export class TaskStore {
       const ops = encodeOps(diff(before, after), blobs);
       const { type, ...data } = extra;
       if (data.key)
-        data.key = {
-          ...data.key,
-          boundAt: data.key.boundAt ?? new Date().toISOString(),
-        };
+        data.key = { ...data.key, boundAt: data.key.boundAt ?? new Date().toISOString() };
       const event = this.event(
         taskId,
         loaded.seq + 1,
@@ -1739,9 +1675,7 @@ export class TaskStore {
         return success(null, null, { folded: cut, bytes: bytes.length });
       });
     } catch (error) {
-      return failure("storage_error", `compaction failed: ${String(error)}`, {
-        taskId,
-      });
+      return failure("storage_error", `compaction failed: ${String(error)}`, { taskId });
     }
   }
 
@@ -1931,21 +1865,13 @@ export class TaskStore {
 
   private nextWorkspace(current: WorkspaceRecord | null, id?: Id): WorkspaceRecord {
     return current
-      ? {
-          ...current,
-          revision: newRevision(),
-          root: this.root,
-          runtime: stampNew(current),
-        }
+      ? { ...current, revision: newRevision(), root: this.root, runtime: stampNew(current) }
       : {
           schemaVersion: SCHEMA_VERSION,
           id: id ?? newId(),
           revision: newRevision(),
           root: this.root,
-          runtime: {
-            createdWith: runtimeVersion(),
-            updatedWith: runtimeVersion(),
-          },
+          runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
         };
   }
 
@@ -2053,9 +1979,7 @@ export class TaskStore {
     const parsed = this.parseValue<TaskRecord>(record, taskRecordSchema, "task");
     if (!parsed.ok) return { ...parsed, details: { ...parsed.details, taskId } };
     if (parsed.data.id !== taskId)
-      return failure("recovery_required", "task log and record ID differ", {
-        taskId,
-      });
+      return failure("recovery_required", "task log and record ID differ", { taskId });
     return parsed;
   }
 
@@ -2289,10 +2213,11 @@ export class TaskStore {
    * Once per checkout, empty a git checkout's `.workit/` of what older
    * runtimes left there (CHECKOUT_LEFTOVERS) so it holds only team config:
    * a known marker (the 3.x workspace marker, a 2.x task stub, a moved store
-   * marker) is deleted; everything else moves into legacy/<slug>/v2/ in the
-   * store. A generated `.gitignore` goes only with the last leftover, so a
-   * config the repo still ignores stays ignored until ensureWorkitDir writes
-   * it. Outside git `.workit` is the store and is left alone. Idempotent.
+   * marker) and an empty directory are deleted; everything else moves into
+   * legacy/<slug>/v2/ in the store. A generated `.gitignore` goes only with
+   * the last leftover, so a config the repo still ignores stays ignored until
+   * ensureWorkitDir writes it. Outside git `.workit` is the store and is left
+   * alone. Idempotent.
    */
   private clearCheckoutLeftovers(v2: string): Result<null> {
     const dirs = this.paths();
@@ -2346,14 +2271,7 @@ export class TaskStore {
         return failure("storage_error", `cannot clear ${v2}: ${String(error)}`, { path: v2 });
       }
       if (moved > 0)
-        reportMigration({
-          from: v2,
-          to: dirs.dir,
-          backup,
-          tasks: 0,
-          skipped: 0,
-          workspace: false,
-        });
+        reportMigration({ from: v2, to: dirs.dir, backup, tasks: 0, skipped: 0, workspace: false });
       return success(null, null, null);
     });
   }
@@ -2380,11 +2298,7 @@ export class TaskStore {
             try {
               fs.renameSync(from, to);
             } catch {
-              fs.cpSync(from, to, {
-                recursive: true,
-                errorOnExist: true,
-                force: false,
-              });
+              fs.cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
               fs.rmSync(from, { recursive: true, force: true });
             }
             return;
@@ -2484,11 +2398,7 @@ export class TaskStore {
       schemaVersion: SCHEMA_VERSION,
       id: taskId,
       runtime: { createdWith: version, updatedWith: version },
-      store: {
-        format: "workit-store",
-        version: STORE_FORMAT,
-        path: this.paths().dir,
-      },
+      store: { format: "workit-store", version: STORE_FORMAT, path: this.paths().dir },
       critical: ["store"],
     })}\n`;
   }
@@ -2516,11 +2426,7 @@ export class TaskStore {
       let id: Id | null = null;
       try {
         id =
-          (
-            JSON.parse(fs.readFileSync(this.paths().workspace, "utf8")) as {
-              id?: Id;
-            }
-          ).id ?? null;
+          (JSON.parse(fs.readFileSync(this.paths().workspace, "utf8")) as { id?: Id }).id ?? null;
       } catch {}
       this.writeTombstone(v2, id);
     } catch {}
@@ -2644,9 +2550,7 @@ export class TaskStore {
     let result: Result<T>;
     try {
       if (!handle.verifyStillHeld())
-        result = failure("recovery_required", "metadata lock was compromised", {
-          path: lockPath,
-        });
+        result = failure("recovery_required", "metadata lock was compromised", { path: lockPath });
       else {
         try {
           result = operation();

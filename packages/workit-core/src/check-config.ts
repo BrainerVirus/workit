@@ -16,7 +16,7 @@
 //    with a note that it moved.
 //    In a linked worktree (a fanout slice's, an agent's) that has neither
 //    file, the main checkout's is read: a config not committed yet (or
-//    ignored by a pre-10.2 `.workit/.gitignore`) is not in a new worktree,
+//    ignored by an older Workit's `.workit/.gitignore`) is not in a new worktree,
 //    which shares the main checkout's checks (#426). Configured commands
 //    still run from the worktree's own top.
 //    `cleanup.regenerable` lists repo-relative globs (`*`, `**`) of generated,
@@ -229,11 +229,7 @@ function detectedChecks(root: string): NamedCheck[] {
       if (typeof body === "string" && body.trim() !== "") add({ ...scriptCheck(pm, script), name });
     }
   }
-  const plain = (name: string, argv: string[]): NamedCheck => ({
-    name,
-    argv,
-    accepts: [argv],
-  });
+  const plain = (name: string, argv: string[]): NamedCheck => ({ name, argv, accepts: [argv] });
   if (read("go.mod") !== null) add(plain("test", ["go", "test", "./..."]));
   if (read("Cargo.toml") !== null) add(plain("test", ["cargo", "test"]));
   if (read("pytest.ini") !== null || /\bpytest\b/u.test(read("pyproject.toml") ?? ""))

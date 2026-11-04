@@ -76,10 +76,7 @@ test("Given both files, When --fix runs, Then neither is overwritten", () => {
 });
 
 const untracked = (root: string): string =>
-  spawnSync("git", ["status", "--porcelain", "-uall"], {
-    cwd: root,
-    encoding: "utf8",
-  }).stdout;
+  spawnSync("git", ["status", "--porcelain", "-uall"], { cwd: root, encoding: "utf8" }).stdout;
 
 test("Given a fresh repo, When a checks config is written under ensureWorkitDir, Then .workit/ has no .gitignore and the config is untracked (committable)", () => {
   const root = repo({});
@@ -92,10 +89,7 @@ test("Given a fresh repo, When a checks config is written under ensureWorkitDir,
 
 test("Given a generated self-ignoring .workit/.gitignore, When config is next written, Then it is removed, tracked files are unaffected and a custom .gitignore is kept", () => {
   for (const generated of ["*\n", "*\n!risk-paths\n"]) {
-    const root = repo({
-      ".workit/risk-paths": "src/billing/**\n",
-      ".workit/checks.json": CONFIG,
-    });
+    const root = repo({ ".workit/risk-paths": "src/billing/**\n", ".workit/checks.json": CONFIG });
     spawnSync("git", ["init", "-q"], { cwd: root });
     spawnSync("git", ["add", ".workit/risk-paths"], { cwd: root });
     const ignore = path.join(root, ".workit/.gitignore");

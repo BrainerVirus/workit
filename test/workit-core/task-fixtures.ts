@@ -36,20 +36,12 @@ export const caller = (overrides: Partial<Caller> = {}): Caller => ({
   ...overrides,
 });
 
-type LegacySignal = {
-  value: boolean | "unknown";
-  basis: string;
-  reason: string;
-  refs: Ref[];
-};
+type LegacySignal = { value: boolean | "unknown"; basis: string; reason: string; refs: Ref[] };
 /** A ≤6.x assessment payload: still accepted and mapped onto the four judgments (S17, D17). */
 export type Assessment = {
   facts: { statement: string; basis: string; refs: Ref[] }[];
   signals: Record<string, LegacySignal>;
-  consequences: {
-    area: string;
-    fact: { statement: string; basis: string; refs: Ref[] };
-  }[];
+  consequences: { area: string; fact: { statement: string; basis: string; refs: Ref[] } }[];
   verification: unknown[];
 };
 
@@ -394,14 +386,7 @@ export const methodConstraint = (
   source: ref(),
   acceptanceAllowed: false,
   requires: [
-    {
-      kind: "method",
-      scope: scope(),
-      refs: [],
-      method,
-      before: "close",
-      dependentAction: null,
-    },
+    { kind: "method", scope: scope(), refs: [], method, before: "close", dependentAction: null },
   ],
   ...overrides,
 });
