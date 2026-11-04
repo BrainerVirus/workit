@@ -394,6 +394,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every Workit file location now comes from one resolver: XDG on Linux and macOS (`~/.config/workit`, `~/.local/state/workit`, `~/.local/share/workit`, `~/.cache/workit`), `%APPDATA%\workit` for config and `%LOCALAPPDATA%\workit` for the rest on Windows. On first run, macOS state moves from `~/Library/Application Support/workit` and Windows config from `~\.config\workit`, leaving a `.moved-<time>` marker; `workit doctor` reports it (`legacy_dirs`). See docs/agents/file-locations.md.
 - **Breaking:** the remaining `WORKFLOW_*` env vars are now `WORKIT_*` (for example `WORKIT_WORKSPACE_ROOT`, `WORKIT_WORKSPACE_NAME`, `WORKIT_YT_WRITE`, `WORKIT_VCS_CONFIG`, `WORKIT_RELEASE_TRACK`); the old names are ignored.
 - **Breaking:** only the name Workit remains. The `WORKFLOW_TOOLKIT_*` env vars are now `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `WORKIT_STATE_DIR`, `WORKIT_DEV` and `WORKIT_REPO`, and the old names are ignored. Old `~/.config/workflow-toolkit`-style folders are no longer migrated; move them by hand.
 - Codex: the plugin is now `workit@workit`. `workit setup` and `workit upgrade` move an install off the old marketplace name with Codex's own commands, so the hooks never run twice; re-trust them in `/hooks` afterwards.

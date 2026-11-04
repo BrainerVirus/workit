@@ -968,7 +968,7 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   end before a long wait: run long checks in the background. The lease is
   released when the check ends, and a queued check gives up its place when it
   stops waiting, also on Ctrl-C or SIGTERM. Leases are files
-  under the Workit state dir (`~/.local/state/workit/leases` on Linux).
+  under the Workit state dir (`~/.local/state/workit/leases` on Linux and macOS).
 - **Stale leases.** A lease stays held while its `workit` process runs. If
   `workit` is killed outright (SIGKILL), the lease stays held while the
   check's process group or scope still has processes, so two heavy checks

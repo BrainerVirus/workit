@@ -10,8 +10,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { stateDir } from "./workit-paths.mjs";
 
 const CURSOR_HOOK_PACKAGE = "@brainervirus/workit-cursor";
 
@@ -215,18 +215,9 @@ export const runCursorHookLaunch = ({ candidates, payload, env, spawn = spawnSyn
   return failOpen(errors.join("; "));
 };
 
-/** Workit's state dir, as core's resolveStateDir computes it.
+/** Workit's state dir (workit-paths.mjs, the one resolver).
  *  @param {NodeJS.ProcessEnv} env */
-export const workitStateDir = (env) => {
-  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
-  const home = env.HOME || os.homedir();
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  if (process.platform === "darwin")
-    return path.join(home, "Library", "Application Support", "workit");
-  if (process.platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-};
+export const workitStateDir = (env) => stateDir(env);
 
 /** File the launcher touches on every run, so `workit doctor` can tell when
  *  Cursor started sessions but never ran a Workit hook. */

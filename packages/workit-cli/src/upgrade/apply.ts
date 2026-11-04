@@ -8,6 +8,7 @@ import { type HostCommandResult } from "../admin/host-install";
 import { recordHookNode } from "../admin/hook-node";
 import { applySetupPreview, type SetupPreview } from "../admin/setup";
 import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
+import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import { describeInstall, listInstalls } from "../install/discover";
 import { leftLines, migrateCopies, migrationCopies } from "../install/migrate";
 import { resolveInstallNode } from "../install/node";
@@ -349,12 +350,12 @@ export async function applyUpgrade(
         hosts,
       };
   const paths = upgradePaths(deps);
-  const { home, configDir } = paths;
+  const { configDir } = paths;
   // Hook launchers find a Node >= the floor from this record when the PATH node is older.
   recordHookNode(deps.env ?? process.env);
   const backup = path.join(
-    home,
-    ".local/state/workit/upgrades",
+    workitStateDir(paths.env),
+    "upgrades",
     new Date().toISOString().replaceAll(":", "-"),
   );
   mkdirSync(backup, { recursive: true, mode: 0o700 });

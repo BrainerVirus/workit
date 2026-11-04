@@ -1,9 +1,9 @@
 // The `updates` setting and the launch-check cache. Local files only, so
 // doctor reads them without the launch check's prompt, styles and runners.
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
+import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import {
   isConfigObject,
   isUpdatesMode,
@@ -11,10 +11,7 @@ import {
 } from "@brainervirus/workit-core/src/core/config";
 
 /** Workit's global config dir, resolved the way `workit upgrade` resolves it. */
-export const workitConfigDir = (env: NodeJS.ProcessEnv): string =>
-  env.WORKIT_CONFIG ??
-  env.WORKIT_CONFIG_DIR ??
-  path.join(env.XDG_CONFIG_HOME || path.join(env.HOME ?? os.homedir(), ".config"), "workit");
+export const workitConfigDir = (env: NodeJS.ProcessEnv): string => configDir(env);
 
 export type UpdateCache = {
   /** When the registry was last asked (a failed lookup counts: offline stays quiet). */

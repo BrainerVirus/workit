@@ -54,6 +54,13 @@ import {
 import { hookNodeReport } from "./hook-node";
 import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import {
+  LEGACY_MARKER_INFIX,
+  configDir as workitConfigDir,
+  isRealDir,
+  legacyDirs,
+  stateDir as workitStateDir,
+} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import {
   CHECKS_FILE,
   LEGACY_CHECKS_FILE,
   checkRoot,
@@ -122,6 +129,7 @@ type DoctorHost = "cli" | "opencode" | "cursor";
 type DoctorCheckId =
   | "runtime"
   | "hook_node"
+  | "legacy_dirs"
   | "versions"
   | "codex_pin"
   | "codex_hooks"
@@ -233,6 +241,8 @@ export type DoctorOptions = {
   codexProcesses?: () => ClaudeProcess[] | null;
   /** `upgrade`: only the version, asset, agent and permission checks `workit upgrade` can fix. */
   only?: "upgrade";
+  /** The platform the location rows resolve for (test seam; default process.platform). */
+  platform?: NodeJS.Platform;
 };
 
 export type ClaudeProcess = { pid: number; startedMs: number; args: string };
@@ -258,6 +268,7 @@ type Resolved = {
   cursorHeartbeatDir: string;
   /** Where hook processes record deadline skips (the same state dir). */
   hookStateDir: string;
+  platform: NodeJS.Platform;
   codexHome?: string;
   piAgentDir?: string;
   env: NodeJS.ProcessEnv;
@@ -318,13 +329,9 @@ const listCodexProcesses = (): ClaudeProcess[] | null =>
 const resolve = (options: DoctorOptions): Resolved => {
   const env = options.env ?? process.env;
   const home = options.home ?? env.HOME ?? os.homedir();
-  const configDir =
-    options.configDir ??
-    env.WORKIT_CONFIG ??
-    env.WORKIT_CONFIG_DIR ??
-    path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit");
-  const stateDir =
-    options.stateDir ?? env.WORKIT_STATE_DIR ?? path.join(home, ".local", "state", "workit");
+  const homeEnv = { ...env, HOME: home };
+  const configDir = options.configDir ?? workitConfigDir(homeEnv, options.platform);
+  const stateDir = options.stateDir ?? workitStateDir(homeEnv, options.platform);
   const cwd = options.cwd ?? process.cwd();
   // An empty WORKIT_DEV is unset: every row must agree on whether
   // there is a dev checkout (`""` read as one by some rows and none by others).
@@ -349,6 +356,7 @@ const resolve = (options: DoctorOptions): Resolved => {
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     cursorHeartbeatDir: options.stateDir ?? (env.WORKIT_STATE_DIR || resolveStateDir()),
     hookStateDir: options.stateDir ?? (env.WORKIT_STATE_DIR || resolveStateDir()),
+    platform: options.platform ?? process.platform,
     codexHome: options.codexHome,
     piAgentDir: options.piAgentDir,
     env,
@@ -673,6 +681,51 @@ const hookNodeBase = (res: Resolved): DoctorCheck => {
     detail: `PATH node is ${found} (below ${floor}) and no Node ${floor}+ was found: Claude Code, Codex and Cursor hooks are off (they fail open; verdicts fail with no_session)`,
     fix: `Install Node ${floor} (fnm install ${floor}), or run \`workit setup\` from a Node ${floor} shell so Workit records it, or set WORKIT_NODE to a Node ${floor}+ binary`,
   };
+};
+
+/** The command that finishes a move migrateLegacyDirs could not make (the new dir already exists). */
+const legacyFinishCommand = (
+  entry: { legacy: string; target: string },
+  platform: NodeJS.Platform,
+  stamp: string,
+): string => {
+  const moved = `${entry.legacy}${LEGACY_MARKER_INFIX}${stamp}`;
+  if (platform === "win32")
+    return `robocopy "${entry.legacy}" "${entry.target}" /E /XC /XN /XO; Rename-Item -LiteralPath "${entry.legacy}" -NewName "${path.basename(moved)}"`;
+  return `cp -Rn ${shellQuote(`${entry.legacy}/.`)} ${shellQuote(`${entry.target}/`)} && mv ${shellQuote(entry.legacy)} ${shellQuote(moved)}`;
+};
+
+/** Pre-XDG Workit directories: a leftover one (with the command that finishes it) or a finished move. */
+const checkLegacyDirs = (res: Resolved): DoctorCheck => {
+  const env = { ...res.env, HOME: res.home };
+  const entries = legacyDirs(env, res.platform);
+  const leftover = entries.filter((entry) => isRealDir(entry.legacy));
+  if (leftover.length > 0) {
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "Z");
+    return {
+      id: "legacy_dirs",
+      status: "warn",
+      detail: leftover
+        .map(
+          (entry) =>
+            `${entry.legacy} is a pre-XDG Workit ${entry.kind} dir left beside ${entry.target}`,
+        )
+        .join("; "),
+      fix: leftover.map((entry) => legacyFinishCommand(entry, res.platform, stamp)).join("\n"),
+    };
+  }
+  const markers = entries.flatMap((entry) => {
+    const prefix = `${path.basename(entry.legacy)}${LEGACY_MARKER_INFIX}`;
+    try {
+      return readdirSync(path.dirname(entry.legacy))
+        .filter((name) => name.startsWith(prefix))
+        .map((name) => `${entry.legacy} moved to ${entry.target} (${name.slice(prefix.length)})`);
+    } catch {
+      return [];
+    }
+  });
+  if (markers.length > 0) return { id: "legacy_dirs", status: "info", detail: markers.join("; ") };
+  return { id: "legacy_dirs", status: "pass", detail: "no pre-XDG Workit directories" };
 };
 
 const checkVersions = (res: Resolved): DoctorCheck => {
@@ -3781,6 +3834,7 @@ const checkHookRuns = (res: Resolved): DoctorCheck => {
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkHookNode,
+  checkLegacyDirs,
   checkVersions,
   checkCodexPin,
   checkCodexHooks,

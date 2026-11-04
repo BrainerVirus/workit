@@ -26,10 +26,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
+import {
+  configDir as workitConfigDir,
+  migrateLegacyDirs,
+  stateDir as workitStateDir,
+} from "./workit-paths.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "src", "run.ts");
@@ -41,17 +45,7 @@ const fromSource =
     existsSync(source) &&
     existsSync(path.join(root, "..", "workit-core", "src", "hooks", "index.ts")));
 
-const stateDir = () => {
-  const env = process.env;
-  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (process.platform === "darwin")
-    return path.join(home, "Library", "Application Support", "workit");
-  if (process.platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-};
+const stateDir = () => workitStateDir(process.env);
 
 /** A hook-runs failure row, as workit-core hooks/hook-runs.ts recordHookFailure writes it. */
 const recordFailure = (event, cause) => {
@@ -109,6 +103,10 @@ const failOpen = (reason) => {
     )}\n`,
   );
 };
+
+// One-time move of a pre-XDG state or config dir (macOS ~/Library/Application
+// Support/workit), before anything reads or writes the new one.
+migrateLegacyDirs();
 
 // A Node below this package's own engines minimum cannot load dist. The launcher
 // then looks for a Node that can (bin/node-resolve.mjs: $WORKIT_NODE, the node
@@ -209,13 +207,10 @@ const readJson = (file) => {
     return undefined;
   }
 };
-/** Does the user's workspaces.json name role models? A doubt answers yes (core/config.ts resolveConfigDir). */
+/** Does the user's workspaces.json name role models? A doubt answers yes (core/workit-paths.mjs configDir). */
 const roleModelsConfigured = () => {
   const env = process.env;
-  const dir =
-    env.WORKIT_CONFIG ??
-    env.WORKIT_CONFIG_DIR ??
-    path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
+  const dir = workitConfigDir(env);
   let text;
   try {
     text = readFileSync(path.join(dir, "workspaces.json"), "utf8");

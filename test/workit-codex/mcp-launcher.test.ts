@@ -12,7 +12,7 @@ const PKG = path.resolve(import.meta.dir, "../../packages/workit-codex");
 const plugin = () => {
   const root = scratchDir("wk-codex-mcp-");
   mkdirSync(path.join(root, "bin"));
-  for (const file of ["launch-mcp.mjs", "node-resolve.mjs"])
+  for (const file of ["launch-mcp.mjs", "node-resolve.mjs", "workit-paths.mjs"])
     copyFileSync(path.join(PKG, "bin", file), path.join(root, "bin", file));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ engines: { node: ">=24" } }));
   return root;

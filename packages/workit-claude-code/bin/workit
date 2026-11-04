@@ -9,6 +9,15 @@
 # the highest fnm/nvm/volta/mise/asdf install (same order as hooks, see
 # bin/node-resolve.mjs; a test holds the floor equal).
 set -e
+# The state dir as core/workit-paths.mjs resolves it (STATE_DIR_SH; a test holds it verbatim).
+workit_state_dir() {
+  if [ -n "${WORKIT_STATE_DIR:-}" ]; then printf '%s\n' "$WORKIT_STATE_DIR"; return; fi
+  case "${XDG_STATE_HOME:-}" in /*) printf '%s\n' "$XDG_STATE_HOME/workit"; return ;; esac
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\n' "${LOCALAPPDATA:-$HOME/AppData/Local}/workit" ;;
+    *) printf '%s\n' "$HOME/.local/state/workit" ;;
+  esac
+}
 here=$(dirname "$0")
 root=$(cd "$here/.." && pwd)
 main="$root/../workit-cli/src/main.ts"
@@ -36,10 +45,7 @@ if [ "$node_major" -lt "$node_floor" ]; then
     found="$WORKIT_NODE"
   fi
   if [ -z "$found" ]; then
-    if [ -n "${WORKIT_STATE_DIR:-}" ]; then state="$WORKIT_STATE_DIR"
-    elif [ -n "${XDG_STATE_HOME:-}" ]; then state="$XDG_STATE_HOME/workit"
-    elif [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then state="$HOME/Library/Application Support/workit"
-    else state="$HOME/.local/state/workit"; fi
+    state=$(workit_state_dir)
     recorded=$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state/node.json" 2>/dev/null | head -n 1)
     rv=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9]*\).*/\1/p' "$state/node.json" 2>/dev/null | head -n 1)
     if [ -n "$recorded" ] && [ -x "$recorded" ] && [ "${rv:-0}" -ge "$node_floor" ]; then

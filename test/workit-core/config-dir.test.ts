@@ -120,14 +120,20 @@ const bashConfigDir = (env: Record<string, string>) => {
   return out.stdout.trim();
 };
 
-test("CA-06: bash resolve_config_dir matches the TS resolver and ignores the old env names", () => {
-  expect(bashConfigDir({ XDG_CONFIG_HOME: "/x/xdg" })).toBe("/x/xdg/workit");
-  expect(bashConfigDir({ WORKIT_CONFIG_DIR: "/x/dir", XDG_CONFIG_HOME: "/x/xdg" })).toBe("/x/dir");
-  expect(bashConfigDir({ WORKIT_CONFIG: "/x/cfg", WORKIT_CONFIG_DIR: "/x/dir" })).toBe("/x/cfg");
-  expect(bashConfigDir({ [OLD_ENV("CONFIG_DIR")]: "/x/old", [OLD_ENV("CONFIG")]: "/x/old2" })).toBe(
-    "/nonexistent/.config/workit",
-  );
-});
+// bash resolves POSIX paths; Windows hosts are covered by the TS resolver tests.
+test.skipIf(process.platform === "win32")(
+  "CA-06: bash resolve_config_dir matches the TS resolver and ignores the old env names",
+  () => {
+    expect(bashConfigDir({ XDG_CONFIG_HOME: "/x/xdg" })).toBe("/x/xdg/workit");
+    expect(bashConfigDir({ WORKIT_CONFIG_DIR: "/x/dir", XDG_CONFIG_HOME: "/x/xdg" })).toBe(
+      "/x/dir",
+    );
+    expect(bashConfigDir({ WORKIT_CONFIG: "/x/cfg", WORKIT_CONFIG_DIR: "/x/dir" })).toBe("/x/cfg");
+    expect(
+      bashConfigDir({ [OLD_ENV("CONFIG_DIR")]: "/x/old", [OLD_ENV("CONFIG")]: "/x/old2" }),
+    ).toBe("/nonexistent/.config/workit");
+  },
+);
 
 test("RL-01: vcsConfig load reports a path-specific malformed diagnostic (no generic fallback)", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl01-"));

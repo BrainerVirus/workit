@@ -5,6 +5,7 @@
 import { dispatchWithin, hookBudget, readWithin, skippedHook, type HookDeadline } from "./deadline";
 import { recordHookRun } from "./hook-runs";
 import type { HostAdapter } from "./protocol";
+import { migrateLegacyDirs } from "../core/workit-paths.mjs";
 
 type Sink = { write(chunk: string): unknown };
 
@@ -21,6 +22,8 @@ export async function runAdapterHook(
   deadline: HookDeadline = {},
   host: string = adapter.descriptor.host,
 ): Promise<number> {
+  // One-time move of a pre-XDG state or config dir, before the run is recorded there.
+  migrateLegacyDirs({ env });
   const budget = hookBudget(env, deadline, adapter.descriptor.host);
   const text = await readWithin(stdin, budget);
   let raw: unknown;

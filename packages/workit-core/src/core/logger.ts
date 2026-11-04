@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stateDir as workitStateDir } from "./workit-paths.mjs";
 
 // Secret-safe structured logger (DG-01-DG-03, DG-05, DG-10). Host-neutral:
 // node: builtins only. Never logs prompts, messages, content, raw tool
@@ -117,20 +118,8 @@ const STACK_WORDS = new Set(["stack", "stacktrace", "trace"]);
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export const resolveStateDir = (): string => {
-  const override = process.env.WORKIT_STATE_DIR;
-  if (override) return override;
-  const home = os.homedir();
-  if (process.env.XDG_STATE_HOME) return path.join(process.env.XDG_STATE_HOME, "workit");
-  switch (os.platform()) {
-    case "darwin":
-      return path.join(home, "Library", "Application Support", "workit");
-    case "win32":
-      return path.join(process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-    default:
-      return path.join(process.env.HOME ?? home, ".local", "state", "workit");
-  }
-};
+/** Workit's state dir for this process (core/workit-paths.mjs). */
+export const resolveStateDir = (): string => workitStateDir(process.env);
 
 type RedactOptions = {
   maxFieldLength: number;

@@ -37,7 +37,8 @@
     "hooks/hooks-cursor.json",
     "hooks/launch.mjs",
     "hooks/launch-runtime.mjs",
-    "hooks/node-resolve.mjs"
+    "hooks/node-resolve.mjs",
+    "hooks/workit-paths.mjs"
   ],
   "type": "module",
   "publishConfig": {

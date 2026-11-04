@@ -6,8 +6,8 @@
 // packages/workit-claude-code/bin/workit-hook.mjs keeps a copy (it cannot
 // import TypeScript); test/workit-core/heavy-words.test.ts keeps them equal.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { stateDir as workitStateDir } from "./workit-paths.mjs";
 import { repoHeavyCommands } from "../check-config";
 
 export const HEAVY_WORDS: ReadonlySet<string> = new Set(
@@ -32,16 +32,7 @@ const wordsOf = (command: string): string[] =>
     )
     .filter(Boolean);
 
-export const stateDir = (env: NodeJS.ProcessEnv): string => {
-  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (process.platform === "darwin")
-    return path.join(home, "Library", "Application Support", "workit");
-  if (process.platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-};
+export const stateDir = (env: NodeJS.ProcessEnv): string => workitStateDir(env);
 
 const readJson = (file: string): unknown => {
   try {

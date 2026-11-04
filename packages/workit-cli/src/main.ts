@@ -5,6 +5,11 @@
 import path from "node:path";
 import { gitRedirectRefusal, gitRedirectsIn } from "@brainervirus/workit-core/src/git/env-redirect";
 import { configFilePath } from "@brainervirus/workit-core/src/core/config";
+import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+import {
+  migrateLegacyDirs,
+  stateDir as workitStateDir,
+} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
 import pkg from "../package.json" with { type: "json" };
 import {
@@ -150,7 +155,7 @@ const defaultIo = (json: boolean): Io => ({
 export async function main(
   argv: readonly string[],
   overrides: Partial<Io> = {},
-  options: { diagnostics?: boolean } = {},
+  options: { diagnostics?: boolean; platform?: NodeJS.Platform } = {},
 ): Promise<number> {
   const parsed = parseGlobals(argv);
   const cwd = path.resolve(overrides.cwd ?? process.cwd(), parsed.cwd ?? ".");
@@ -165,6 +170,13 @@ export async function main(
     json: parsed.json,
     cwd,
   };
+  // One-time move of a pre-XDG state or config dir (macOS ~/Library/Application
+  // Support/workit); `workit doctor` (legacy_dirs) reports it and any leftover.
+  for (const moved of migrateLegacyDirs({ env: io.env, platform: options.platform }))
+    createLogger({ stateDir: workitStateDir(io.env, options.platform) }).info(
+      "moved a legacy Workit directory",
+      moved,
+    );
   if (parsed.error) return emit(io, fail("invalid_input", parsed.error));
   if (parsed.session !== undefined) {
     // The same gate the env var meets (verdicts, commits): where the host's

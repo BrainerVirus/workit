@@ -115,7 +115,7 @@ test("Given a Claude Code runtime that crashes while answering, When UserPromptS
 const cursorPlugin = (engines?: string) => {
   const root = scratchDir("wk-cursor-loud-");
   mkdirSync(path.join(root, "hooks"));
-  for (const file of ["launch.mjs", "launch-runtime.mjs", "node-resolve.mjs"])
+  for (const file of ["launch.mjs", "launch-runtime.mjs", "node-resolve.mjs", "workit-paths.mjs"])
     copyFileSync(path.join(CURSOR_HOOKS, file), path.join(root, "hooks", file));
   writeFileSync(
     path.join(root, "package.json"),
