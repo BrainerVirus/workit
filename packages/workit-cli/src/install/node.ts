@@ -15,10 +15,7 @@ import { realpathOr } from "./paths";
 export type InstallNode = { node: string; npmCli: string; version: string | null };
 
 /** npm's entry script beside a node binary (its install layout, symlinks followed). */
-export const npmCliFor = (
-  node: string,
-  platform: NodeJS.Platform = process.platform,
-): string | null => {
+const npmCliFor = (node: string, platform: NodeJS.Platform = process.platform): string | null => {
   const candidates = [node, realpathOr(node)].flatMap((file) => {
     const bin = path.dirname(file);
     return platform === "win32"

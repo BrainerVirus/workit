@@ -69,7 +69,7 @@ export const isOwnedLauncher = (file: string): boolean => {
  * (atomic on POSIX). Windows uses a junction; rename cannot replace one, so it
  * is removed first (the only non-atomic moment, recorded in install.md).
  */
-export const swapCurrent = (
+const swapCurrent = (
   env: NodeJS.ProcessEnv,
   version: string,
   platform: NodeJS.Platform = process.platform,

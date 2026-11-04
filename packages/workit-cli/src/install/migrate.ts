@@ -20,17 +20,20 @@ import { CLI_PACKAGE_NAME, ownedPaths, shellQuote } from "./paths";
 
 export type MigrationCopy = FoundInstall & { kind: "npm" | "volta" | "wrapper" };
 
-/** The copies migration replaces: npm and volta packages, and wrappers that run the CLI or sit where the launcher goes. */
+/**
+ * The copies migration replaces: npm and volta packages, and wrappers that run
+ * a workit-cli package. A file at the launcher's place that runs no workit-cli
+ * (a user's own script) is never moved: the PATH check names it instead.
+ */
 export const migrationCopies = (
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): MigrationCopy[] => {
-  const linked = ownedPaths(env, platform).linked;
   return listInstalls(env, platform).filter(
     (install): install is MigrationCopy =>
       install.kind === "npm" ||
       install.kind === "volta" ||
-      (install.kind === "wrapper" && (install.version !== null || install.path === linked)),
+      (install.kind === "wrapper" && install.version !== null),
   );
 };
 

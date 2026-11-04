@@ -20,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { installOwned, writeLaunchers } from "@/packages/workit-cli/src/install/owned";
 import { installRoot, launcherDir, ownedPaths } from "@/packages/workit-cli/src/install/paths";
+import { migrationCopies } from "@/packages/workit-cli/src/install/migrate";
 import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 
 const NODE = Bun.which("node") ?? "";
@@ -311,4 +312,20 @@ test("Given a non-TTY shell (no removeCopies seam), Then nothing is removed and 
     `npm uninstall --global --prefix ${w.first.prefix} @brainervirus/workit-cli`,
   );
   expect(w.calls.some((call) => call.includes("uninstall"))).toBe(false);
+});
+
+test("Given a user's own script at the launcher's place that runs no workit-cli, Then migration never lists it as a copy to move", () => {
+  const home = tempHome();
+  const bin = path.join(home, ".local/bin");
+  write(path.join(bin, "workit"), "#!/bin/sh\necho my own tool\n", 0o755);
+  const env = { HOME: home, PATH: `${bin}:/usr/bin:/bin` };
+  expect(migrationCopies(env, "linux").map((copy) => copy.path)).not.toContain(
+    path.join(bin, "workit"),
+  );
+  // A wrapper that does run a workit-cli package is still a copy.
+  const first = fnmNode(home, "v24.1.0", "8.52.3");
+  write(path.join(bin, "workit"), `#!/bin/sh\nexec node ${first.pkg}/dist/index.js "$@"\n`, 0o755);
+  expect(migrationCopies(env, "linux").map((copy) => copy.path)).toContain(
+    path.join(bin, "workit"),
+  );
 });

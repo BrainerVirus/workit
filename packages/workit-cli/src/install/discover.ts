@@ -13,7 +13,7 @@ import { CLI_PACKAGE_NAME, ownedPaths, ownedVersion, packageVersion, realpathOr 
  * volta-managed package; wrapper: a hand-written script; link: anything else
  * (a dev checkout link), reported but never removed.
  */
-export type InstallKind = "owned" | "npm" | "volta" | "wrapper" | "link";
+type InstallKind = "owned" | "npm" | "volta" | "wrapper" | "link";
 
 export type FoundInstall = {
   /** The file PATH (or the prefix's bin) holds. */
