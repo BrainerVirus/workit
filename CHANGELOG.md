@@ -397,6 +397,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Releases no longer open a manifest-sync PR to main, so a release never makes open PRs fall behind; main keeps its last-synced versions and the release job sets the real version before publishing (a guard refuses to publish on a mismatch).
 - New managed worktrees go under the state dir (`~/.local/state/workit/worktrees/<repo>/<slug>` on Linux and macOS) instead of `~/.cache/workit-wt`. Existing ones are never moved: cleanup and `workit gc --worktrees --apply` still sweep merged ones there and remove the old dir once empty; `workit doctor` (`legacy_dirs`) reports it until then.
 - A repo's `.workit/` now holds only committed team config (`checks.json`, `risk-paths`): it no longer ignores itself, and the task store writes nothing into a git checkout's `.workit/`. Old leftovers there (2.x markers, `tasks/`, `workspace.json`) move once into `.git/workit/legacy/` with nothing deleted but exact Workit markers.
 - Every Workit file location now comes from one resolver: XDG on Linux and macOS (`~/.config/workit`, `~/.local/state/workit`, `~/.local/share/workit`, `~/.cache/workit`), `%APPDATA%\workit` for config and `%LOCALAPPDATA%\workit` for the rest on Windows. On first run, macOS state moves from `~/Library/Application Support/workit` and Windows config from `~\.config\workit`, leaving a `.moved-<time>` marker; `workit doctor` reports it (`legacy_dirs`). See docs/agents/file-locations.md.
@@ -493,6 +494,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release publishes packages in dependency order with the CLI last and holds back a package whose dependency failed, so `npx @brainervirus/workit-cli@latest` never resolves a CLI whose dependencies are not on npm yet (ETARGET seen on 13.0.0).
 - Workers and verifiers no longer stay listed as running after their final report: briefs and the implementer, verifier and reviewer agents now finish or stop every background command they started before reporting, and the fanout skill tells the lead to stop a worker once its report arrives.
 - When the Claude Code Agent hook replaces a spawn's model with the configured role model, its note names the model (and effort) to pass next time, so the next spawn needs no rewrite.
 - `workit upgrade` verifies the version that PATH actually runs and fails, naming every copy by real path, when another install shadows it; at the user's terminal it backs up and removes old `npm i -g` copies from fnm/nvm/volta/mise/asdf prefixes after a y/N, and only prints the commands in an agent shell (#648, #423).
