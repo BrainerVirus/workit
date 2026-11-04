@@ -32,7 +32,7 @@ export type UsageLimit = {
 };
 
 /** What follows a provider's "… limit reached": a separator, its reset, or the end of the line. */
-const LIMIT_END = String.raw`(?=\s*(?:[∙·•|]|\.?\s*$|\(?resets?\b|try again\b))`;
+const LIMIT_END = String.raw`(?=\s*(?:[∙·•|,:\-–—]|\.?\s*(?:$|\(?resets?\b|try again\b)))`;
 /** Provider error shapes, never a bare phrase: prose about limits is not one. */
 const LIMIT_PATTERNS = [
   // Claude Code and Codex: "You've hit your weekly limit · resets 7pm", "You've hit your usage limit."

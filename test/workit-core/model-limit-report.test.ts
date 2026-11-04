@@ -22,4 +22,11 @@ test("Given the provider's real limit messages, When parsed, Then each is a usag
   expect(parseUsageLimit("Claude AI usage limit reached|1793750400", NOW)).not.toBeNull();
   expect(parseUsageLimit("Claude usage limit reached.", NOW)).not.toBeNull();
   expect(parseUsageLimit("Session limit reached\n", NOW)).not.toBeNull();
+  for (const message of [
+    "5-hour limit reached - resets 3am",
+    "5-hour limit reached, resets 3am",
+    "Opus limit reached: try again later",
+    "weekly limit reached. resets Nov 5, 3am",
+  ])
+    expect(parseUsageLimit(message, NOW), message).not.toBeNull();
 });
