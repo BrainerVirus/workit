@@ -334,8 +334,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "config",
     group: "setup",
-    summary:
-      "Read-only: the effective configuration for this checkout (workspace match, vcs, models, resources) and where each value comes from",
+    summary: "Show the effective config here and where each value comes from",
     subcommands: [
       {
         name: "show",
