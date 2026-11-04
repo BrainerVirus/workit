@@ -7,15 +7,21 @@ on:
     secrets:
       NPMJS:
         required: true
-      RELEASE_SYNC_TOKEN:
-        required: false
 
 permissions: {}
 
+# A release never writes back to main (AR-15, W2.34). semantic-release sets the
+# version inside this ephemeral checkout only: the @semantic-release/npm
+# bumpers write it into every package.json, the prepare-time
+# rewrite-workspace-deps.ts mirrors it into the host plugin.json files and the
+# ^<version> internal ranges, and publish-changed-packages.ts refuses to
+# publish unless all of them equal the tag at HEAD. The committed manifests on
+# main keep their last-synced version, which nothing compares to the tag, so a
+# release adds no commit to main and leaves open PRs up to date.
 jobs:
   release:
     runs-on: ubuntu-latest
-    # Two quick merges must not race on tags or the manifest-sync branch.
+    # Two quick merges must not race on tags.
     concurrency:
       group: release-${{ github.ref }}
       cancel-in-progress: false
@@ -73,87 +79,3 @@ jobs:
           # placeholder that wins over NPM_TOKEN. NPM_TOKEN alone is not read
           # by npm when a userconfig exists.
           NODE_AUTH_TOKEN: ${{ secrets.NPMJS }}
-
-      # AR-15: semantic-release bumps versions only inside this ephemeral
-      # checkout, so without a commit-back the repo manifests stay frozen while
-      # tags march on (the 0.4.0-vs-v0.8.x drift). main is protected, so the
-      # sync lands through an auto-merged PR instead of a direct push. Any
-      # dirty tracked manifest before the sync is semantic-release's transient
-      # workspace-dep rewrite (AR-02: those writes must never reach the repo)
-      # and is discarded first — the commit then carries version fields only.
-      - name: Sync release manifests to main
-        if: success()
-        env:
-          # A GITHUB_TOKEN-opened PR never triggers workflow runs, so the
-          # required status checks would stay pending and auto-merge would
-          # hang forever (GitHub's actions/events limitation). The sync PR is
-          # therefore opened with a dedicated PAT when one exists — PAT events
-          # run CI normally. Falls back to GITHUB_TOKEN (create the PR; a
-          # human or the Actions "allow creating pull requests" policy plus a
-          # checks-triggering runner must then finish it).
-          GH_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          MANIFESTS=(package.json 'packages/*/package.json' 'packages/workit-cursor/.cursor-plugin/plugin.json' 'packages/workit-codex/.codex-plugin/plugin.json' 'packages/workit-claude-code/.claude-plugin/plugin.json')
-          git checkout -- "${MANIFESTS[@]}" 2>/dev/null || true
-          bun packages/workit-core/scripts/sync-release-manifests.ts
-          if [[ -z "$(git status --porcelain -- "${MANIFESTS[@]}")" ]]; then
-            echo "manifests already match the latest tag"
-            exit 0
-          fi
-          VERSION=$(node -p "require('./packages/workit-core/package.json').version")
-          BRANCH="chore/manifest-sync-v${VERSION}"
-          # Back-to-back releases leave older sync PRs that conflict with this
-          # one and never merge; close every open sync PR for a lower version
-          # (and delete its branch) before opening the new one. Fork PRs are
-          # never touched. sort -V misorders prereleases (1.0.0-rc.1 sorts after
-          # 1.0.0); fine while releases only come from main.
-          while IFS=$'\t' read -r OLD_PR OLD_HEAD; do
-            [[ -n "${OLD_PR}" ]] || continue
-            OLD_VERSION="${OLD_HEAD#chore/manifest-sync-v}"
-            [[ "${OLD_VERSION}" != "${VERSION}" ]] || continue
-            LOWEST=$(printf '%s\n%s\n' "${OLD_VERSION}" "${VERSION}" | sort -V | head -n1)
-            [[ "${LOWEST}" == "${OLD_VERSION}" ]] || continue
-            gh pr close "${OLD_PR}" --comment "Superseded by v${VERSION}" --delete-branch \
-              || echo "could not close superseded sync PR #${OLD_PR}"
-          done < <(gh pr list --state open --base main --limit 100 --json number,headRefName,isCrossRepository \
-            --jq '.[] | select((.isCrossRepository | not) and (.headRefName | startswith("chore/manifest-sync-"))) | "\(.number)\t\(.headRefName)"')
-          # A later non-releasing main push re-runs this step while the
-          # previous sync PR is still open; that PR already carries the change.
-          # Strict branch protection leaves it BEHIND each time main moves
-          # (#559), so bring its branch up to date here. GH_TOKEN is the PAT
-          # when set, so the update triggers CI and auto-merge can finish.
-          # Bookkeeping only: this never fails the release.
-          if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
-            echo "${BRANCH} already exists; its sync PR is pending"
-            SYNC_PR=$(gh pr list --state open --base main --head "${BRANCH}" --json number --jq '.[0].number // empty' || true)
-            if [[ -n "${SYNC_PR}" ]]; then
-              MERGE_STATE=$(gh pr view "${SYNC_PR}" --json mergeStateStatus --jq .mergeStateStatus || true)
-              if [[ "${MERGE_STATE}" == "BEHIND" ]]; then
-                if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${SYNC_PR}/update-branch" >/dev/null; then
-                  echo "updated sync PR #${SYNC_PR} with main"
-                else
-                  echo "could not update sync PR #${SYNC_PR}; update its branch manually"
-                fi
-              fi
-            fi
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git checkout -b "${BRANCH}"
-          git add "${MANIFESTS[@]}"
-          git commit -m "chore(release): sync manifests to v${VERSION}"
-          git push -u origin "${BRANCH}"
-          gh pr create \
-            --title "chore(release): sync manifests to v${VERSION}" \
-            --body "Automated post-release manifest alignment (AR-15). Sets every tracked manifest to the released ${VERSION}." \
-            --base main --head "${BRANCH}"
-          # Required checks gate the merge; if auto-merge is unavailable the
-          # PR stays open for manual merge — the release itself already
-          # succeeded, so this is bookkeeping, not a release failure.
-          # --delete-branch is requested here, but deferred auto-merge often
-          # leaves the head ref when the repo has delete_branch_on_merge off.
-          # cleanup-manifest-sync-branch.yml deletes chore/manifest-sync-* heads
-          # once the PR actually merges.
-          gh pr merge --auto --squash --delete-branch || echo "auto-merge unavailable — merge https://github.com/${GITHUB_REPOSITORY}/pull/$(gh pr view "${BRANCH}" --json number -q .number) manually"

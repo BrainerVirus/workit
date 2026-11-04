@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // Task 24 release-orchestration gate (AR-01/AR-02, CA-33/CA-44): the real
@@ -62,7 +63,7 @@ test(
 );
 
 test(
-  "release job order is install → build → candidate gate → semantic-release → manifest sync (AR-01/CA-33/AR-15)",
+  "release job order is install → build → candidate gate → semantic-release, and Release is last (AR-01/CA-33)",
   () => {
     const wf = Bun.YAML.parse(read(".github/workflows/release.yml")) as {
       jobs: {
@@ -72,72 +73,66 @@ test(
       };
     };
     const steps = wf.jobs.release.steps.map((s) => s.name ?? s.run ?? "");
-    const order = [
-      "Install dependencies",
-      "Build adapters",
-      "Verify release candidate",
-      "Release",
-      "Sync release manifests to main",
-    ];
+    const order = ["Install dependencies", "Build adapters", "Verify release candidate", "Release"];
     const idx = order.map((name) => steps.indexOf(name));
     expect(idx[0], steps.join(" | ")).toBeGreaterThanOrEqual(0);
     for (let i = 1; i < idx.length; i++) {
       expect(idx[i], steps.join(" | ")).toBeGreaterThan(idx[i - 1]);
     }
-    // The manifest sync is the only step allowed AFTER semantic-release
-    // (AR-15): it is post-publish bookkeeping that gates nothing. No
-    // dependency/protocol check may appear only after a package could already
-    // have been published (AR-01).
-    expect(idx[4], steps.join(" | ")).toBe(steps.length - 1);
-    const afterRelease = steps.slice(idx[3] + 1, idx[4]).join(" | ");
-    expect(afterRelease, "no gate may run between Release and the manifest sync").toBe("");
+    // No dependency/protocol check may appear only after a package could
+    // already have been published (AR-01), and nothing follows the release.
+    expect(idx[3], steps.join(" | ")).toBe(steps.length - 1);
     expect(wf.jobs.release.steps[idx[1]].run).toContain("bun run build");
     expect(wf.jobs.release.steps[idx[2]].run).toContain("bun run verify:release-candidate");
     // `npm version` must not reinstall the workspace: on a major bump it would
     // install the previous release under packages/*/node_modules and the
     // prepare-time build would bundle it (8.0.0).
     expect(wf.jobs.release.steps[idx[3]].env?.NPM_CONFIG_WORKSPACES_UPDATE).toBe("false");
-    // AR-15: main is protected — the sync lands via an auto-merged PR opened
-    // with the RELEASE_SYNC_TOKEN PAT (GITHUB_TOKEN-opened PRs never trigger
-    // the required checks, so auto-merge would hang); any pre-sync dirtiness
-    // (the transient workspace-dep rewrite) is discarded first.
-    const syncStep = wf.jobs.release.steps[idx[4]];
-    const syncRun = syncStep.run ?? "";
-    expect(syncRun).toContain("git checkout --");
-    expect(syncRun).toContain("gh pr create");
-    expect(syncRun).toContain("--auto --squash");
-    expect(syncRun).toContain("--delete-branch");
-    expect(syncStep.env?.GH_TOKEN ?? "").toContain("RELEASE_SYNC_TOKEN");
-    // Back-to-back releases: older open sync PRs are closed as superseded
-    // (with branch deletion) before the new sync PR is opened.
-    const supersede = syncRun.indexOf("gh pr close");
-    expect(supersede, "superseded sync PRs must be closed").toBeGreaterThanOrEqual(0);
-    expect(supersede).toBeLessThan(syncRun.indexOf("gh pr create"));
-    expect(syncRun).toContain("isCrossRepository");
-    // Fork PRs are never closed: same-repo heads only.
-    expect(syncRun).toContain(
-      'select((.isCrossRepository | not) and (.headRefName | startswith("chore/manifest-sync-")))',
-    );
-    expect(syncRun).toContain("sort -V");
-    expect(syncRun).toMatch(
-      /gh pr close[^\n]*--comment "Superseded by v\$\{VERSION\}"[^\n]*--delete-branch/,
-    );
-    // #559: a re-run that finds the sync branch already pushed updates its
-    // PR when main moved past it (BEHIND), and never fails the release.
-    const pending = syncRun.slice(syncRun.indexOf("already exists; its sync PR is pending"));
-    const pendingBlock = pending.slice(0, pending.indexOf("exit 0"));
-    expect(pendingBlock).toContain('"${MERGE_STATE}" == "BEHIND"');
-    expect(pendingBlock).toContain(
-      'gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${SYNC_PR}/update-branch"',
-    );
-    expect(pendingBlock).toMatch(/if gh api -X PUT [^\n]*update-branch[^\n]*; then/);
-    expect(pendingBlock).toContain("could not update sync PR");
-    // Deferred auto-merge does not reliably delete heads; a closed-PR cleanup
-    // workflow must remove chore/manifest-sync-* branches after merge.
-    const cleanup = read(".github/workflows/cleanup-manifest-sync-branch.yml");
-    expect(cleanup).toContain("chore/manifest-sync-");
-    expect(cleanup).toContain("pull_request");
-    expect(cleanup).toContain("git/refs/heads/");
+  },
+  { timeout: 60_000 },
+);
+
+// AR-15 after W2.34: the released version lives in the release job's own
+// checkout, never in a commit back to main. Before, every release opened and
+// auto-merged a `chore(release): sync manifests` PR; strict branch protection
+// then left every open PR BEHIND (one rebase and ~25 min of CI per PR per
+// release). test/workit-core/release-versions.test.ts proves the published
+// manifests still carry the tag's version.
+test(
+  "a release writes nothing back to main: no sync commit, branch or PR (AR-15)",
+  () => {
+    const release = read(".github/workflows/release.yml");
+    const wf = Bun.YAML.parse(release) as {
+      on: { workflow_call: { secrets: Record<string, unknown> } };
+      jobs: { release: { steps: Array<{ run?: string }> } };
+    };
+    const runs = wf.jobs.release.steps.map((s) => s.run ?? "").join("\n");
+    expect(runs).not.toMatch(/\bgit\s+(?:commit|push|checkout\s+-b)\b|\bgh\s+pr\b/);
+    expect(release).not.toContain("sync-release-manifests");
+    expect(release).not.toContain("manifest-sync");
+    // The PAT existed only to open the sync PR with CI-triggering events.
+    expect(Object.keys(wf.on.workflow_call.secrets)).toEqual(["NPMJS"]);
+    expect(read(".github/workflows/ci.yml")).not.toContain("RELEASE_SYNC_TOKEN");
+    expect(
+      existsSync(path.join(REPO_ROOT, ".github/workflows/cleanup-manifest-sync-branch.yml")),
+    ).toBe(false);
+
+    // Who sets the version: one @semantic-release/npm bumper per published
+    // package (never publishing, never committing), no @semantic-release/git.
+    const cfg = require(path.resolve(REPO_ROOT, "release.config.cjs")) as { plugins: unknown[] };
+    const names = cfg.plugins.map((p) => (Array.isArray(p) ? String(p[0]) : String(p)));
+    expect(names).not.toContain("@semantic-release/git");
+    const bumped = cfg.plugins
+      .filter((p) => Array.isArray(p) && p[0] === "@semantic-release/npm")
+      .map((p) => (p as [string, { pkgRoot: string }])[1].pkgRoot);
+    expect(bumped.toSorted()).toEqual(RELEASE_PACKAGES.map((pkg) => `packages/${pkg}`).toSorted());
+
+    // The publish entry point checks every manifest against the tag on HEAD
+    // before it publishes anything.
+    const publish = read("packages/workit-core/scripts/publish-changed-packages.ts");
+    const main = publish.slice(publish.indexOf("if (import.meta.main)"));
+    expect(main.indexOf("releaseVersionProblems(")).toBeGreaterThan(0);
+    expect(main.indexOf("releaseVersionProblems(")).toBeLessThan(main.indexOf("publishChanged("));
   },
   { timeout: 60_000 },
 );
