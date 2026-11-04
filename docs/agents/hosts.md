@@ -23,6 +23,20 @@ These rules are guarded by tests; the failure names what to fix.
 - YouTrack hosts, issue ids and timezones come from `youtrack.json`;
   `test/workit-core/youtrack-work-date.test.ts` scans shipped source for them.
 
+## YouTrack client
+
+Agents reach YouTrack only through `workit youtrack …`, never the token file or
+raw API calls. That is a CLI verb, so every host gets it through its shell tool
+with no adapter code. `show` and `create` live in
+`packages/workit-core/src/core/youtrack-issue.ts`: they run `ytrack … --json`
+when it is on `PATH` (aimed at `youtrack.json`'s `baseUrl` via `YTRACK_HOST`),
+and fall back to the built-in client when ytrack is missing or exits 4 (not
+logged in). Other ytrack failures are reported, never retried through the API.
+`create` and every other write need `WORKIT_YT_WRITE=1`. The built-in client
+redacts the token from its errors. `note`, `time` and `meeting` still use the
+built-in client with marker read-back (`core/youtrack-writes.ts`). Tests use a
+stub `ytrack` and a fake `fetch`; never a real instance or token file.
+
 ## Raw git/forge steering and session ids
 
 `packages/workit-core/src/hooks/raw-git.ts` classifies shell commands by text
