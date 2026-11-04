@@ -34,6 +34,24 @@ import {
   type TaskSummary,
 } from "@brainervirus/workit-core/src/core/task-contract";
 import { boundTaskSummary } from "@brainervirus/workit-core/src/core/task-evaluation";
+import {
+  acceptedEvidenceText,
+  type ResolveDisposition,
+} from "@brainervirus/workit-core/src/core/finding-evidence";
+import { findingIssueText } from "@brainervirus/workit-core/src/core/finding-queue";
+import {
+  parseOperation,
+  type ErrorCode,
+  type Ref,
+} from "@brainervirus/workit-core/src/core/task-contract";
+import {
+  commentOnIssue,
+  createIssue,
+  issueTarget,
+} from "@brainervirus/workit-core/src/forge/issue-ops";
+import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
+import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import { connect } from "./verbs/forge-common";
 
 export const TASK_FAMILIES = OPERATION_FAMILIES;
 
@@ -85,6 +103,8 @@ type Parsed = {
   handoff: boolean;
   taskId?: string;
   actor?: string;
+  /** `finding record --queue [<issue>]`: null files a new issue. */
+  queue?: { issue: number | null };
 };
 
 type ParseResult =
@@ -213,6 +233,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let view: string | undefined;
   let actor: string | undefined;
   let workerId: string | undefined;
+  let queue: { issue: number | null } | undefined;
   const takesWorkerId = family === "worker" && (action === "cancel" || action === "report");
   let json = jsonRequested;
   const judge: string[] = [];
@@ -264,6 +285,19 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
           `task list has no status filter (got --status ${value ?? ""}); it lists every task`,
           json,
         );
+      continue;
+    }
+    // `finding record --queue [<issue>]` (#439): file it on the tracker too.
+    if (family === "finding" && action === "record" && token === "--queue") {
+      if (queue !== undefined) return parseUsage("duplicate argument: --queue", json);
+      const next =
+        inline ??
+        (argv[i + 1] !== undefined && /^#?\d+$/u.test(argv[i + 1]) ? argv[++i] : undefined);
+      if (next !== undefined && !/^#?[1-9]\d{0,8}$/u.test(next))
+        return parseUsage(`--queue takes an issue number (got ${next})`, json);
+      queue = {
+        issue: next === undefined ? null : Number(next.replace(/^#/u, "")),
+      };
       continue;
     }
     // `worker cancel|report <workerId>`: the worker id as a positional (#264).
@@ -320,6 +354,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       json,
       handoff: false,
       actor,
+      ...(queue ? { queue } : {}),
     },
   };
 }
@@ -539,6 +574,115 @@ export const gapText = (gap: {
   return `${gap.dimension}${before}: ${gap.status ?? "unmet"}`;
 };
 
+const FORGE_CODES: Partial<Record<string, ErrorCode>> = {
+  blocked: "permission_denied",
+  not_found: "not_found",
+  invalid_input: "invalid_input",
+};
+const fromForge = (result: Extract<ForgeResult<unknown>, { ok: false }>): Result<never> =>
+  failure(
+    FORGE_CODES[result.code] ?? "capability_unavailable",
+    `finding not recorded: --queue failed: ${result.error}`,
+    result.unblock ? { guidance: result.unblock } : {},
+  );
+
+// Only for validating a payload before the forge write; the engine resolves the real task.
+const PLACEHOLDER_TASK = "00000000-0000-4000-8000-000000000000";
+
+/**
+ * `finding record --queue [<issue>]` (#439): a new tracker issue, or a
+ * comment on an open one, before the finding is recorded; its URL joins the
+ * finding's refs. The payload is validated first, so a bad one writes nothing.
+ */
+function queueFinding(
+  root: string,
+  request: Record<string, unknown>,
+  issue: number | null,
+): Result<{ url: string | null; issue: number }> {
+  const checked = parseOperation("finding", {
+    ...request,
+    taskId: request.taskId ?? PLACEHOLDER_TASK,
+  });
+  if (!checked.ok) return checked;
+  const input = checked.data as {
+    claim: string;
+    consequence: string;
+    refs: Ref[];
+  };
+  const io = {
+    json: false,
+    cwd: root,
+    env: process.env,
+    stdout: () => {},
+    stderr: () => {},
+  };
+  const connected = connect(io);
+  if (!connected.ok) return fromForge(connected);
+  const api = issueTarget(root, connected.data);
+  if (!api.ok) return fromForge(api);
+  const text = findingIssueText(input);
+  const actor = actorFromEnv(process.env);
+  const filed =
+    issue === null
+      ? createIssue(root, api.data, { ...text, labels: [], actor })
+      : commentOnIssue(root, api.data, {
+          number: issue,
+          body: text.body,
+          actor,
+          requireOpen: "workit finding record --queue (no number) files it as a new issue",
+        });
+  if (!filed.ok) return fromForge(filed);
+  return success(null, null, { url: filed.data.url, issue: filed.data.number });
+}
+
+/** The tasks of this checkout that hold finding `ref` (an id or an unambiguous prefix). */
+function findingHolders(store: TaskStore, ref: string) {
+  const tasks = store.listTasks();
+  if (!tasks.ok) return [];
+  const exact = tasks.data.filter((task) => task.findings.some((entry) => entry.id === ref));
+  return exact.length
+    ? exact
+    : tasks.data.filter((task) => task.findings.some((entry) => entry.id.startsWith(ref)));
+}
+
+/**
+ * `finding resolve` without --task (#317): the task that holds the finding,
+ * when exactly one does, so a lead resolves a helper's finding from its own
+ * checkout instead of meeting `not_found`.
+ */
+function routeResolve(store: TaskStore, request: Record<string, unknown>): void {
+  if (request.taskId !== undefined || typeof request.findingId !== "string") return;
+  const holders = findingHolders(store, request.findingId);
+  if (holders.length === 1) request.taskId = holders[0].id;
+}
+
+const DISPOSITIONS: ReadonlySet<string> = new Set(["fixed", "dismissed", "deferred"]);
+
+/** A refused resolve gains the evidence its disposition accepts and the ids that fit (#317). */
+function explainResolve(
+  store: TaskStore,
+  request: Record<string, unknown>,
+  result: Result<unknown>,
+): Result<unknown> {
+  if (result.ok || !["permission_denied", "invalid_input"].includes(result.code)) return result;
+  if (!/evidence|unknown record|deferred findings/u.test(result.error)) return result;
+  const disposition = request.disposition;
+  const ref = request.findingId;
+  if (typeof disposition !== "string" || !DISPOSITIONS.has(disposition)) return result;
+  if (typeof ref !== "string") return result;
+  const task = findingHolders(store, ref).find(
+    (holder) => request.taskId === undefined || holder.id === request.taskId,
+  );
+  const finding = task?.findings.find((entry) => entry.id === ref || entry.id.startsWith(ref));
+  if (!task || !finding) return result;
+  const text = acceptedEvidenceText(task, finding, disposition as ResolveDisposition);
+  return {
+    ...result,
+    error: `${result.error}; ${text}`,
+    details: { ...result.details, guidance: text },
+  };
+}
+
 const FINDING_LIST_USAGE = "workit finding list [--branch <b>] [--status open|resolved] [--json]";
 
 /** `workit finding list`: findings of this checkout's tasks, read-only, newest last. */
@@ -671,7 +815,32 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
           context: JSON.parse(compactTaskContext(viewed.data as any)),
         });
     }
-  } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
+  } else {
+    const { family, action, request, queue } = parsed.parsed;
+    if (family === "finding" && action === "resolve") routeResolve(store, request);
+    const queued = queue ? queueFinding(root, request, queue.issue) : null;
+    if (queued && !queued.ok) result = queued;
+    else {
+      if (queued?.data.url)
+        request.refs = [
+          ...(Array.isArray(request.refs) ? request.refs : []),
+          { kind: "external", url: queued.data.url },
+        ];
+      result = dispatch(core, family, request);
+      if (family === "finding" && action === "resolve")
+        result = explainResolve(store, request, result);
+      if (queued?.ok)
+        result = result.ok
+          ? success(result.revision, result.workspaceRevision, {
+              ...(result.data as object),
+              queued: queued.data,
+            })
+          : {
+              ...result,
+              error: `${result.error} (the --queue issue was already filed: ${queued.data.url ?? `#${queued.data.issue}`})`,
+            };
+    }
+  }
   if (
     result.ok &&
     parsed.parsed.family === "task" &&

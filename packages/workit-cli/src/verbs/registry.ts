@@ -89,7 +89,7 @@ export const FAMILY_ACTIONS: Record<Family, Record<string, string>> = {
   },
   evidence: { record: "Record evidence against a task's requirements" },
   finding: {
-    record: "Record a finding",
+    record: "Record a finding; --queue files it as a tracker issue (or a comment on <issue>)",
     resolve: "Resolve a finding",
     list: "List findings with their ids [--branch <b>] [--status open|resolved]",
   },
@@ -152,6 +152,13 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
           name: action,
           usage: "workit finding list [--branch <b>] [--status open|resolved] [--json]",
           summary,
+        };
+      if (name === "finding" && action === "record")
+        return {
+          name: action,
+          usage: "workit finding record [--queue [<issue>]]",
+          summary,
+          engineFlags: FAMILY_OPTIONS,
         };
       const usage =
         name === "task" && action === "list"
@@ -551,6 +558,40 @@ export const VERBS: readonly VerbEntry[] = [
       "workit pr merge --method squash --delete-branch",
     ],
     load: () => import("./pr"),
+  }),
+  withSubcommands({
+    name: "issue",
+    group: "delivery",
+    summary:
+      "Read, comment on, close or open a GitHub/GitLab issue on the workspace tracker; writes need the pr grant and are recorded",
+    subcommands: [
+      {
+        name: "view",
+        usage: "workit issue view <n>",
+        summary: "Show an issue's state, title, labels and body",
+      },
+      {
+        name: "comment",
+        usage: "workit issue comment <n> --body-file <f|->",
+        summary: "Comment on an issue",
+      },
+      {
+        name: "close",
+        usage:
+          "workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->]",
+        summary: "Close an issue with a reason, posting the comment first; verified after",
+      },
+      {
+        name: "create",
+        usage: "workit issue create --title <t> --body-file <f|-> [--label <l>]…",
+        summary: "Open an issue (a behavioural rule or follow-up goes here, not to host memory)",
+      },
+    ],
+    examples: [
+      'workit issue close 321 --reason not-planned --comment "superseded by #330"',
+      'workit issue create --title "fix(cli): …" --body-file - < body.md',
+    ],
+    load: () => import("./issue"),
   }),
   withSubcommands({
     name: "ci",
