@@ -552,6 +552,54 @@ and `workit fanout status` names the model next to each slice it lists to
 spawn (`spawnModels` in `--json`). The lead's host comes from its environment
 (`WORKIT_HOST` or the host's own session variable).
 
+### Usage-limit fallback
+
+A role's value may be an ordered list of models instead of one. The first model
+whose provider is not exhausted runs. When a subscription hits its usage limit,
+Workit marks that provider exhausted for this user until the reset named in the
+limit text. A limit text with no reset time lasts `models.limitWindow` (a
+duration such as `"5h"` or `"1d 12h"`, or a number of hours; default `5h`). The primary model runs
+again once the reset passes.
+
+```json
+{
+  "models": {
+    "limitWindow": "5h",
+    "roles": {
+      "reviewer": { "claude_code": ["opus", "sonnet", "haiku"] },
+      "verifier": ["sonnet", "haiku", "openai/gpt-5"]
+    }
+  }
+}
+```
+
+`models.lead` takes the same list form. No host lets Workit switch a running
+session's own model, so a lead whose provider is exhausted gets a one-line
+notice naming the next `models.lead` model to switch to. `workit models show`
+lists the exhausted providers and their resets.
+
+Per host:
+
+- Claude Code: the Agent hook reads the tails of this project's transcripts
+  written in the last 30 minutes for a usage-limit error (5-hour and weekly
+  limits, per Opus and Sonnet). Claude Code runs only Anthropic models, so a
+  role falls back only to another Claude family on a per-family limit. The
+  note on that spawn tells the lead to re-dispatch the dead worker once.
+- OpenCode: after each `subagent` call the plugin reads its error (or a short
+  result) for a usage limit, marks the provider of the model it ran on and
+  tells the lead to re-dispatch that worker; the next spawn of that role gets
+  the next model in the list. This is where a list across providers pays off,
+  e.g. Anthropic, then OpenAI, then OpenCode Go.
+- Codex: the agent files are written at launch, so a fallback applies from the
+  next session start. No hook sees a subagent's error, so nothing marks a limit
+  on Codex; `workit models show` still names the fallback for a limit another
+  host recorded.
+- Cursor: advisory. No Cursor hook can change a spawn or see its error, so
+  `workit models show` names the model to pass.
+- Pi: a supervised worker for a configured role gets the fallback model at
+  launch from the shared store. No hook reads a worker's error, so Pi marks no
+  limit itself.
+
 ### Live-session guard
 
 Two agent sessions editing one checkout overwrite each other's work. The
