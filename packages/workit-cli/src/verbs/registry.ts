@@ -331,6 +331,22 @@ export const VERBS: readonly VerbEntry[] = [
     },
     { optional: true },
   ),
+  withSubcommands({
+    name: "config",
+    group: "setup",
+    summary:
+      "Read-only: the effective configuration for this checkout (workspace match, vcs, models, resources) and where each value comes from",
+    subcommands: [
+      {
+        name: "show",
+        usage: "workit config show [--json]",
+        summary:
+          "Print the matched workspace, vcs provider and target branch, role models and heavy-check resources, each with its source",
+      },
+    ],
+    examples: ["workit config show", "workit config show --json"],
+    load: () => import("./config"),
+  }),
   withSubcommands(
     {
       name: "workspace",
@@ -929,6 +945,28 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./handoff"),
   },
 ];
+
+/**
+ * Verbs agents type that live under another verb (W2.9): the guess, to the
+ * unblock naming the command that does it. The router answers these before
+ * the edit-distance suggestion, which would point `commit` or `switch` at an
+ * unrelated verb.
+ */
+export const VERB_GUESSES: Readonly<Record<string, string>> = {
+  commit: "did you mean workit git commit? (workit help git commit)",
+  push: "did you mean workit git push? (workit help git push)",
+  branch: "did you mean workit git branch? (workit help git branch)",
+  switch:
+    "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
+  checkout:
+    "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
+  add: "did you mean workit git stage <paths…>? (workit help git stage)",
+  stage: "did you mean workit git stage? (workit help git stage)",
+  merge: "did you mean workit pr merge? (workit help pr merge)",
+  verify: "did you mean workit verify-delivery? (workit help verify-delivery)",
+  checks:
+    "did you mean workit check <name>? (a name that is not configured lists the configured ones)",
+};
 
 const BY_NAME = new Map(VERBS.map((entry) => [entry.name, entry]));
 

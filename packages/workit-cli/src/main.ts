@@ -37,6 +37,7 @@ import {
 import {
   TASK_FAMILY_NAMES,
   VERBS,
+  VERB_GUESSES,
   findSubcommand,
   findVerb,
   type VerbEntry,
@@ -477,11 +478,15 @@ const describe = (entry: VerbEntry) => ({
   ...(entry.planned ? { planned: entry.planned } : {}),
 });
 
+// A verb that lives under another one (`commit` is `git commit`) is named
+// before the edit-distance guess, which would pick an unrelated verb.
 const unknown = (io: Io, command: string): number =>
   emit(
     io,
     fail("invalid_input", `unknown command "${command}"`, {
-      unblock: commandUnblock(command),
+      unblock:
+        (Object.hasOwn(VERB_GUESSES, command) ? VERB_GUESSES[command] : undefined) ??
+        commandUnblock(command),
     }),
   );
 
