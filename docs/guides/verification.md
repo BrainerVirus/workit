@@ -27,9 +27,10 @@ output as it runs instead.
 An ad-hoc run under a configured name (`--name test -- <other cmd>`) says
 before it runs that it will not satisfy that name's gate.
 
-Configured checks come from `.workit/checks.json`, which lives in the
-self-ignoring `.workit/` directory so it adds nothing to your repo root or
-`.gitignore`:
+Configured checks come from `.workit/checks.json`. `.workit/` holds only
+team config you commit (`checks.json`, `risk-paths`); Workit keeps its own
+per-clone files in `.git/workit/` (`workit dir plans` and its other kinds print
+where):
 
 ```json
 { "checks": { "test": "bun test", "lint": "bun run lint" }, "gates": { "testing": "test" } }
@@ -41,8 +42,8 @@ Without it, Workit detects defaults: package.json `test`/`lint`/`typecheck`/
 check itself changed it.
 
 A linked worktree (a `workit fanout worktree create` slice, an agent's
-worktree) without its own `.workit/checks.json` reads the main checkout's, and
-runs the commands from the worktree.
+worktree) without its own `.workit/checks.json` (the file is not committed
+yet) reads the main checkout's, and runs the commands from the worktree.
 
 A root `workit.checks.json` from older versions is still read when
 `.workit/checks.json` is absent, and `workit check` prints a one-line `note:`
@@ -217,10 +218,10 @@ covers everything under it), `#` comments and blank lines skipped. Workit
 reads it from the base revision only, so a change cannot remove an entry
 to lower its own lane; entries only tighten. A change to the file is itself
 a risk path, and it protects the next change, not the one that adds it.
-Workit's marker directory ignores everything else in `.workit/` but leaves
-`risk-paths` visible (`.workit/.gitignore` is `*` and `!risk-paths`; `workit
-doctor --fix` and any command that creates the directory rewrite the old
-`*` alone), so `git add .workit/risk-paths` is enough. While the file is
+Commit it with `git add .workit/risk-paths`. Older Workit made `.workit/`
+self-ignoring (`.workit/.gitignore` of `*`, later `*` and `!risk-paths`); `workit
+doctor --fix` and any command that writes config there remove that generated
+file and keep a `.gitignore` you wrote. While the file is
 untracked, `policy assess` and `pr status` warn that it does not apply until
 it is committed on the base.
 

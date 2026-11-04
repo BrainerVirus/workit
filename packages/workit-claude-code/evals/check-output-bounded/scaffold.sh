@@ -28,10 +28,10 @@ test("Given a name, When greet runs, Then it greets that name", () => {
 });
 JS
 # A deliberately noisy check: 3000 lines of output, then the real test run.
+# .workit/ is committed team config, so `git add -A` below commits it.
 cat > .workit/checks.json <<'JSON'
 { "checks": { "test": "seq 1 3000 && node --test" } }
 JSON
-printf '.workit/\n' > .gitignore
 git add -A
 git commit -q -m "feat: greet cli"
 git switch -q -c feature/greet-shout

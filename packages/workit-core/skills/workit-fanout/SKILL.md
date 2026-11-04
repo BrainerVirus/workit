@@ -10,11 +10,11 @@ each slice's `reason` (explore, parallel, backstop, high-risk-verify): an
 explorer past ~3 tool calls or 10k tokens; parallel writers only for 2+ disjoint
 units of ~100+ lines each. Coupled work stays with one owner. Workit never spawns.
 
-1. **Plan the slices** (workit-shape) in a plan file (`references/brief.md`):
-   per slice an id, branch, REASON, TIER, SCOPE globs, `owns` for shared files,
-   `dependsOn` only for a real dependency, and the brief fields. `workit fanout
-   plan <plan.json>` refuses an empty or placeholder brief field (exit 2) and
-   two slices that may write one file (exit 3) with a fix; apply it and re-run:
+1. **Plan the slices** (workit-shape) in a plan file under `workit dir plans`
+   (`references/brief.md`): per slice an id, branch, REASON, TIER, SCOPE globs,
+   `owns` for shared files, `dependsOn` only for a real dependency, and the brief
+   fields. `workit fanout plan <plan.json>` refuses an empty or placeholder brief
+   field (exit 2) and two slices that may write one file (exit 3) with a fix; apply it and re-run:
    refuse to spawn while a field is empty or the plan is refused. One PR per
    slice is the default; `"fanIn": "integration"` only when the user wants one
    PR (`references/orchestration.md`).

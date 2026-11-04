@@ -25,7 +25,8 @@ workit handoff --note "<state in one line>" --next "<next command>" --record
 The brief carries the branch, HEAD, dirty state, check freshness, verdict,
 rulings and the next command. Add only what it cannot know: choices still
 open, approaches that failed and why. Work spanning repos gets one brief per
-checkout, each with its branch and delivery endpoint.
+checkout, each with its branch and delivery endpoint. Notes too long for
+`--note` go in a file under `workit dir handoffs`; name its path in the note.
 
 ## Pick up
 

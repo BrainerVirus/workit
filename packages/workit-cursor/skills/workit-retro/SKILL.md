@@ -47,12 +47,12 @@ proposes and stops. Nothing changes until the user approves.
    removes. Create `CODING_STANDARDS.md` or `GLOSSARY.md` only in the same
    edit as its first real entry, never as a scaffold. Edit steering text by
    `references/steering.md`; `workit knowledge lint` passes after the slice.
-7. **Report one ranked list, then stop:** Accepted (proposed), Backlog,
-   Dropped, each with its citations, enforcer and reason. Each approved item
-   becomes a slice to build (read the `workit-implement` skill's SKILL.md and follow it) and ship (read the `workit-ship` skill's SKILL.md and follow it), a tracker
-   issue, or `.out-of-scope/<concept>.md` when rejected and likely to return.
-   Record the user's answer so the next retro starts there:
-   `workit ledger decision "retro: <accepted ids>" --why "<window>"`.
+7. **Report one ranked list, then stop** (save it under `workit dir retros`):
+   Accepted (proposed), Backlog, Dropped, each with its citations, enforcer
+   and reason. Each approved item becomes a slice to build (read the `workit-implement` skill's SKILL.md and follow it)
+   and ship (read the `workit-ship` skill's SKILL.md and follow it), a tracker issue, or `.out-of-scope/<concept>.md` when
+   rejected and likely to return. Record the user's answer so the next retro
+   starts there: `workit ledger decision "retro: <accepted ids>" --why "<window>"`.
 
 ## Example
 

@@ -290,7 +290,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "setup",
     usage: "workit dir <plans|retros|handoffs|config|state|data|cache|runtime>",
     summary:
-      "Print where Workit keeps one kind of file: plans, retros and handoffs per clone (<git-common-dir>/workit/<kind>, the same in every worktree, created on demand), config, state, data, cache and runtime per user",
+      "Print where a kind of file lives: plans, retros, handoffs per clone; config, state, data, cache, runtime per user",
     examples: ["workit dir plans", "workit dir state --json"],
     load: () => import("./dir"),
   },

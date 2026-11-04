@@ -44,21 +44,21 @@ ACCEPTANCE:
 VERIFY: `workit check test`; verify-api feature "usage"
 TIER: standard
 TIMEBOX: 45 minutes
-SCRATCH: ../app-wt/usage-endpoint/.workit-scratch
+SCRATCH: ~/.local/state/workit/worktrees/app/usage-endpoint/.workit-scratch
 FORBIDDEN: no edits outside SCOPE; no schema migration; no new packages
 FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.
 REPORT: as in the template
 STANDING: conventional commits; no comments that restate code; ask nothing, record rulings instead
-WORKTREE: ../app-wt/usage-endpoint  (made by `workit fanout worktree create usage-endpoint`; yours alone)
+WORKTREE: ~/.local/state/workit/worktrees/app/usage-endpoint  (made by `workit fanout worktree create usage-endpoint`; yours alone)
 ```
 
 ## Plan file
 
-`workit fanout plan <plan.json>` records the slices before any spawn. Each
+`workit fanout plan <plan.json>` (keep it in `workit dir plans`) records the slices before any spawn. Each
 slice carries the brief fields the plan checks (goal, scope, acceptance,
 verify, forbidden must be filled; tier is mundane, standard or hard). `base`
 defaults to the trunk, or to the branch of a single `dependsOn` slice (a
-stack); `worktree` defaults to `../<repo>-wt/<id>`. `owns` claims a shared
+stack); `worktree` defaults to `<state>/worktrees/<repo>/<id>` (`workit dir state`). `owns` claims a shared
 file another slice's glob also matches. Globs that match no file yet are compared
 through a sample path. Use `/` as the separator; a backslash only escapes
 literal brackets: `"app/\\[id\\]/page.tsx"`. A `reason` (`explore`, `parallel`, `backstop` or `high-risk-verify`) is rendered as the brief's `REASON:` line and is
