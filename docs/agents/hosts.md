@@ -164,6 +164,19 @@ runtime, so the `PATH` Node does not apply to them. The Codex MCP entry
 `dist/launch-mcp.js` with stdio inherited (stdout stays pure JSON-RPC); with no
 Node 24 it writes one stderr line and exits 1.
 
+Owned CLI (#648): no host launcher spawns `workit` itself (each runs bundled
+code), but the agent's shell runs whichever `workit` is first on `PATH`, and a
+stale global copy can sit ahead of the owned launcher. `core/cli-locate.ts`
+picks the CLI in one order: the owned launcher `<install root>/bin/workit`
+(only when it carries the launcher marker), else the owned `current` entry run
+by node, else a bundled CLI the caller names, else plain `workit` from `PATH`
+(setups older than the owned install; `workit doctor` row `cli_installs` names
+the fix). `useOwnedWorkitCli()` applies it to a process's env: the launcher's
+`bin` first on `PATH` (moved there, never duplicated; `Path` and `;` on
+Windows) and `WORKIT_CLI` naming it; with no owned install the env is left as
+is. Its install root follows `workit-cli/src/install/paths.ts`, the writer (a
+test holds them equal). Per host: the "Owned CLI on the agent's PATH" row.
+
 N = native, P = partial, X = missing (the host has a mechanism workit does not
 use yet), L = host limit (the host has no mechanism for it).
 
@@ -210,6 +223,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | Heartbeat / doctor | P plugin check; N `claude_session_plugin` (running `claude` processes older than the installed plugin, via `ps`; L: not on Windows) and a once-per-session restart line from the hook | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
 | PR issue links (`pr create --issue`, #324) | N: CLI flag (no native PR tool: delivery is the CLI's `pr` verbs under grants) | N: CLI flag; the plugin's tools are the task families only | N: CLI flag; MCP advertises the task families only | N: CLI flag; MCP advertises the task families only | N: CLI flag; `workit_context` and the task families are its only tools |
 | Continuing a reported worker (#313) | L: no continuation gate; a subagent turn is resumed natively, so the lead follows `fanout brief --mode resume` by convention | N: `subagent` with a `sessionID` is refused (`delegation_lineage_denied`) unless the worker is running or its worktree has uncommitted changes; the refusal prints `workit fanout brief <slice> --mode resume` | L: no continuation gate | L: no continuation gate | L: no host subagents |
+| Owned CLI on the agent's PATH (#648, `core/cli-locate.ts`) | N: the plugin's bundled `bin/workit`, unchanged | P: `src/cli-path.ts` (`useOwnedCliInOpencode` for the in-process plugin, `opencodeShellEnv` for a `shell.env` hook); X: not yet called from the plugin | L: no hook or MCP answer changes the agent's shell env; `hooks/launcher.ts` applies it to the hook process, so a CLI command the hooks probe or name resolves to the owned install; X: `bin/launch-mcp.mjs` (plain JS, cannot load the TypeScript locator before its build) | L: no hook changes the agent's shell env; X: `hooks/launch.mjs` (plain JS, same limit) | P: `src/cli-path.ts` (`useOwnedCliInPi`; the bash tool inherits the extension's process env); X: not yet called from the extension |
 | Hook older than the CLI (`hook_issued_sessions`) | N: the installed hook bundle is read for `ISSUED_SESSIONS_MARKER` | L: issues no subagent ids (children derive theirs) | N: every hook chunk in the plugin cache is read for the marker | L: `subagentStart` cannot add context, so no ids are issued | L: no host subagents; workers derive theirs |
 
 Live-session guard limits:
