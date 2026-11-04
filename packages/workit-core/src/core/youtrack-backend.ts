@@ -113,10 +113,7 @@ function fields(raw: unknown): { name: string; value: unknown }[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((field): field is Obj => isObj(field) && typeof field.name === "string")
-    .map((field) => ({
-      name: field.name as string,
-      value: plainValue(field.value),
-    }));
+    .map((field) => ({ name: field.name as string, value: plainValue(field.value) }));
 }
 
 /** Normalize `ytrack issue view --json …` into one shape. */
@@ -161,11 +158,7 @@ function ranJson(run: YtrackRun, args: string[], input?: string): Ran {
   try {
     return { ok: true, json: JSON.parse(out.stdout) as unknown };
   } catch {
-    return {
-      ok: false,
-      status: out.status,
-      error: `${what} printed invalid JSON`,
-    };
+    return { ok: false, status: out.status, error: `${what} printed invalid JSON` };
   }
 }
 
@@ -217,11 +210,7 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
       const json = isObj(ran.json) ? ran.json : {};
       return {
         ok: true,
-        data: {
-          issueId: String(json.idReadable ?? ""),
-          url: str(json.url),
-          source: "ytrack",
-        },
+        data: { issueId: String(json.idReadable ?? ""), url: str(json.url), source: "ytrack" },
       };
     },
     async addComment(issueId, text) {
@@ -254,12 +243,7 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
       const json = isObj(ran.json) ? ran.json : {};
       return {
         ok: true,
-        data: {
-          issueId,
-          workItemId: json.id,
-          minutes: item.minutes,
-          dateMs: item.dateMs,
-        },
+        data: { issueId, workItemId: json.id, minutes: item.minutes, dateMs: item.dateMs },
       };
     },
     async texts(issueId, where) {

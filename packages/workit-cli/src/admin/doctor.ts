@@ -559,11 +559,7 @@ const installedHookEntries = (res: Resolved, cwd: string): HookEntry[] => {
         host: "codex",
         entry,
         args: [],
-        payload: {
-          hook_event_name: "UserPromptSubmit",
-          turn_id: "workit-doctor",
-          ...prompt,
-        },
+        payload: { hook_event_name: "UserPromptSubmit", turn_id: "workit-doctor", ...prompt },
       });
   }
   const cursor = path.join(res.cursorPluginDir, "hooks", "launch.mjs");
@@ -670,10 +666,7 @@ const checkHookNode = (res: Resolved): DoctorCheck => {
         "Reinstall the hosts' plugins with `workit upgrade`, then re-run `workit doctor` from this directory",
     };
   if (hooks.ran.length === 0) return base;
-  return {
-    ...base,
-    detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}`,
-  };
+  return { ...base, detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}` };
 };
 
 const hookNodeBase = (res: Resolved): DoctorCheck => {
@@ -764,11 +757,7 @@ const checkLegacyDirs = (res: Resolved): DoctorCheck => {
   });
   const notes = [...markers, ...(worktrees ? [worktrees] : [])];
   if (notes.length > 0) return { id: "legacy_dirs", status: "info", detail: notes.join("; ") };
-  return {
-    id: "legacy_dirs",
-    status: "pass",
-    detail: "no pre-XDG Workit directories",
-  };
+  return { id: "legacy_dirs", status: "pass", detail: "no pre-XDG Workit directories" };
 };
 
 const checkVersions = (res: Resolved): DoctorCheck => {
@@ -2476,11 +2465,7 @@ const checkConfigSchema = (res: Resolved): DoctorCheck => {
     }
   }
   if (problems.length === 0)
-    return {
-      id: "config_schema",
-      status: "pass",
-      detail: "config files match their schemas",
-    };
+    return { id: "config_schema", status: "pass", detail: "config files match their schemas" };
   const rest = problems.length > obsolete.length;
   return {
     id: "config_schema",
@@ -3262,11 +3247,7 @@ const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
 const checkGrantRemotes = (res: Resolved): DoctorCheck => {
   const { warnings, notes } = remoteFindings(res.cwd, res.configDir);
   if (warnings.length === 0 && notes.length === 0)
-    return {
-      id: "grant_remotes",
-      status: "pass",
-      detail: "remote URLs and workspaces agree",
-    };
+    return { id: "grant_remotes", status: "pass", detail: "remote URLs and workspaces agree" };
   // A stricter workspace's remote here is the risk (warn); a workspace with no
   // remotes is every entry's starting point, so it informs only.
   const lines = [...warnings, ...notes];

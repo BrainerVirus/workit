@@ -162,18 +162,12 @@ export type SetupPreview = {
 const YT_OVERRIDES: { envKey: string; affects: string }[] = [
   { envKey: "WORKIT_YT_BASE_URL", affects: "youtrack.json baseUrl" },
   { envKey: "WORKIT_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
-  {
-    envKey: "WORKIT_YT_WEB_MEETING_ISSUE",
-    affects: "youtrack.json web meeting issue",
-  },
+  { envKey: "WORKIT_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
 ];
 
 const VCS_OVERRIDES: { envKey: string; affects: string }[] = [
   { envKey: "WORKIT_VCS_PROVIDER", affects: "vcs.json provider" },
-  {
-    envKey: "WORKIT_VCS_TARGET_BRANCH",
-    affects: "vcs.json defaultTargetBranch",
-  },
+  { envKey: "WORKIT_VCS_TARGET_BRANCH", affects: "vcs.json defaultTargetBranch" },
   { envKey: "WORKIT_GITLAB_HOST", affects: "vcs.json gitlab.host" },
   { envKey: "WORKIT_GITLAB_API_URL", affects: "vcs.json gitlab.apiUrl" },
   { envKey: "WORKIT_GITHUB_HOST", affects: "vcs.json github.host" },
@@ -211,12 +205,7 @@ function vcsDraft(provider: VcsProvider): Record<string, unknown> {
       apiUrl: "https://gitlab.com/api/v4",
     },
     github: { host: "github.com" },
-    pr: {
-      squashOnMerge: true,
-      removeSourceBranch: true,
-      pushBranch: true,
-      confirmSkip: true,
-    },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
   };
 }
 
@@ -347,11 +336,7 @@ export function buildSetupPreview(
       const paths = resolveSetupPaths(opts, state.configDir);
       for (const platform of platforms) {
         if (platform === "opencode") {
-          mutations.push({
-            type: "register-platform",
-            platform,
-            path: paths.opencodeConfig,
-          });
+          mutations.push({ type: "register-platform", platform, path: paths.opencodeConfig });
         } else if (platform === "cursor") {
           const cursorRoot = adapterRoot("cursor", {
             ...paths,
@@ -378,27 +363,11 @@ export function buildSetupPreview(
               commands,
             });
           }
-          mutations.push({
-            type: "install-adapter",
-            platform,
-            path: paths.cursorPluginDir,
-          });
-          mutations.push({
-            type: "register-platform",
-            platform,
-            path: paths.cursorSettings,
-          });
-          mutations.push({
-            type: "register-platform",
-            platform,
-            path: paths.cursorMcp,
-          });
+          mutations.push({ type: "install-adapter", platform, path: paths.cursorPluginDir });
+          mutations.push({ type: "register-platform", platform, path: paths.cursorSettings });
+          mutations.push({ type: "register-platform", platform, path: paths.cursorMcp });
         } else if (platform === "codex" || platform === "pi" || platform === "claude-code") {
-          const commands = planHostInstall(platform, {
-            home: paths.home,
-            cwd: paths.cwd,
-            env,
-          });
+          const commands = planHostInstall(platform, { home: paths.home, cwd: paths.cwd, env });
           if (commands.length > 0) {
             mutations.push({
               type: "install-host",
@@ -440,17 +409,9 @@ export function buildSetupPreview(
       const entries = GITIGNORE_ENTRIES.filter(
         (e) => e.trim() !== "" && !existingLines.has(e.trim()),
       );
-      mutations.push({
-        type: "append-gitignore",
-        path: gitignorePath,
-        entries,
-      });
+      mutations.push({ type: "append-gitignore", path: gitignorePath, entries });
       for (const planned of planHygieneFiles(root)) {
-        mutations.push({
-          type: "create-file",
-          path: planned.path,
-          content: planned.content,
-        });
+        mutations.push({ type: "create-file", path: planned.path, content: planned.content });
       }
     }
   }
@@ -677,12 +638,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
           ? deepMerge(existing.value, m.value as Record<string, unknown>)
           : (m.value as Record<string, unknown>);
       if (existing.kind === "record" && JSON.stringify(existing.value) === JSON.stringify(merged)) {
-        return {
-          platform: "core",
-          file: m.path,
-          status: "Skipped",
-          detail: "already configured",
-        };
+        return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       }
       mkdirSync(dir, { recursive: true });
       writeFileSync(m.path, JSON.stringify(schemaFirst(m.path, merged), null, 2) + "\n", "utf8");
@@ -693,12 +649,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
     case "update-workspaces": {
       const prev = readFileSafe(m.path);
       if (workspaceEntriesAlreadyMatch(prev, m.path, m.entries))
-        return {
-          platform: "core",
-          file: m.path,
-          status: "Skipped",
-          detail: "already configured",
-        };
+        return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       if (workspacesRevision(prev) !== m.expectedRevision) {
         return {
           platform: "core",
@@ -713,12 +664,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
         try {
           const current = validateWorkspacesDocument(JSON.parse(prev), m.path);
           if (current.status === "malformed" || current.status === "invalid") {
-            return {
-              platform: "core",
-              file: m.path,
-              status: "Failed",
-              detail: current.error,
-            };
+            return { platform: "core", file: m.path, status: "Failed", detail: current.error };
           }
           document = current.document ?? {};
         } catch {
@@ -732,29 +678,16 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
       }
       const proposed = validateWorkspacesDocument({ ...document, workspaces: m.entries }, m.path);
       if (proposed.status !== "valid") {
-        return {
-          platform: "core",
-          file: m.path,
-          status: "Failed",
-          detail: proposed.error,
-        };
+        return { platform: "core", file: m.path, status: "Failed", detail: proposed.error };
       }
       const next =
         JSON.stringify(
-          withSchemaRef("workspaces.json", {
-            ...document,
-            workspaces: m.entries,
-          }),
+          withSchemaRef("workspaces.json", { ...document, workspaces: m.entries }),
           null,
           2,
         ) + "\n";
       if (prev === next)
-        return {
-          platform: "core",
-          file: m.path,
-          status: "Skipped",
-          detail: "already configured",
-        };
+        return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       mkdirSync(dir, { recursive: true });
       const tmp = `${m.path}.${process.pid}.tmp`;
       try {

@@ -56,9 +56,7 @@ const youtrackJsonContent = (): Record<string, any> => {
     ...(meetingIssue
       ? {
           meetingIssue,
-          meetingIssues: {
-            general: { issue: meetingIssue, label: "General meetings" },
-          },
+          meetingIssues: { general: { issue: meetingIssue, label: "General meetings" } },
         }
       : {}),
   };
@@ -93,12 +91,7 @@ const vcsJsonContent = (): Record<string, any> => {
     github: {
       host: process.env.WORKIT_GITHUB_HOST ?? "github.com",
     },
-    pr: {
-      squashOnMerge: true,
-      removeSourceBranch: true,
-      pushBranch: true,
-      confirmSkip: true,
-    },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
   };
 };
 
@@ -221,7 +214,5 @@ export function initApply({
   env?: Record<string, string>;
 }): Record<string, any> {
   if (!confirmed) return { error: "confirmed: true required" };
-  return {
-    data: initApplyData(action, env ? { ...process.env, ...env } : process.env),
-  };
+  return { data: initApplyData(action, env ? { ...process.env, ...env } : process.env) };
 }

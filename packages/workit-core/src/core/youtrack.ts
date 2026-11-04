@@ -150,13 +150,7 @@ export function youTrackWorkDateMs(dateRaw: string):
       // day); its label is that UTC calendar day so it round-trips exactly.
       const dt = new Date(Number(raw));
       if (Number.isNaN(dt.getTime())) return { error: `invalid date: ${raw}` };
-      return {
-        data: {
-          dateMs: Number(raw),
-          ...meta,
-          localDate: dt.toISOString().slice(0, 10),
-        },
-      };
+      return { data: { dateMs: Number(raw), ...meta, localDate: dt.toISOString().slice(0, 10) } };
     }
     const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
     const dateMs = match ? utcMidnight(Number(match[1]), Number(match[2]), Number(match[3])) : null;
@@ -164,9 +158,7 @@ export function youTrackWorkDateMs(dateRaw: string):
     const localDate = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
     return { data: { dateMs, ...meta, localDate } };
   } catch (err) {
-    return {
-      error: err instanceof Error ? err.message : "could not resolve date",
-    };
+    return { error: err instanceof Error ? err.message : "could not resolve date" };
   }
 }
 

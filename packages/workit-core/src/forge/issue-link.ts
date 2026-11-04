@@ -63,10 +63,7 @@ type NamedRef = {
   host: string | null;
 };
 
-const DEFAULT_HOST: Record<ForgeKind, string> = {
-  github: "github.com",
-  gitlab: "gitlab.com",
-};
+const DEFAULT_HOST: Record<ForgeKind, string> = { github: "github.com", gitlab: "gitlab.com" };
 
 const same = (left: string | null, right: string | null): boolean =>
   (left ?? "").toLowerCase() === (right ?? "").toLowerCase();
@@ -81,16 +78,10 @@ export function parseIssueRef(
 ): { ok: true; ref: NamedRef } | { ok: false; error: string } {
   const value = raw.trim();
   if (ISSUE_RE.test(value))
-    return {
-      ok: true,
-      ref: { tracker: "youtrack", id: value, repo: null, host: null },
-    };
+    return { ok: true, ref: { tracker: "youtrack", id: value, repo: null, host: null } };
   const short = /^(?:([\w.-]+(?:\/[\w.-]+)+))?#?(\d+)$/u.exec(value);
   if (short && (short[1] === undefined || value.includes("#")))
-    return {
-      ok: true,
-      ref: { tracker, id: short[2], repo: short[1] ?? null, host: null },
-    };
+    return { ok: true, ref: { tracker, id: short[2], repo: short[1] ?? null, host: null } };
   let url: URL | null = null;
   try {
     url = /^https?:\/\//iu.test(value) ? new URL(value) : null;
@@ -101,10 +92,7 @@ export function parseIssueRef(
     const pathname = url.pathname.replace(/\/+$/u, "");
     const youtrack = /\/issues?\/([A-Z][A-Z0-9]*-\d+)(?:\/|$)/u.exec(pathname);
     if (youtrack && ISSUE_RE.test(youtrack[1]))
-      return {
-        ok: true,
-        ref: { tracker: "youtrack", id: youtrack[1], repo: null, host: null },
-      };
+      return { ok: true, ref: { tracker: "youtrack", id: youtrack[1], repo: null, host: null } };
     const gitlab = /^\/(.+?)\/-\/(?:issues|work_items)\/(\d+)$/u.exec(pathname);
     const github = /^\/([^/]+\/[^/]+)\/issues\/(\d+)$/u.exec(pathname);
     const found: [ForgeKind, RegExpExecArray] | null = gitlab
@@ -116,12 +104,7 @@ export function parseIssueRef(
       const [kind, match] = found;
       return {
         ok: true,
-        ref: {
-          tracker: kind,
-          id: match[2],
-          repo: match[1],
-          host: url.host.toLowerCase(),
-        },
+        ref: { tracker: kind, id: match[2], repo: match[1], host: url.host.toLowerCase() },
       };
     }
   }
@@ -264,10 +247,7 @@ export function planIssueLinks(
     seen.add(key);
     links.push({ ...placed, source: from });
   }
-  return {
-    ok: true,
-    data: { links, backlink: tracker?.backlink === true, tracker, warnings },
-  };
+  return { ok: true, data: { links, backlink: tracker?.backlink === true, tracker, warnings } };
 }
 
 /** The body with each link's line appended once (a line already present is kept as is). */

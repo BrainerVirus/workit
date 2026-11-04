@@ -92,22 +92,12 @@ export function ytrackStatus(run: YtrackRun): YtrackStatus {
   const status = run(["auth", "status", "--json", STATUS_FIELDS]);
   const base = { installed: true as const, version: match ? match[1] : null };
   if (status.status === YTRACK_EXIT.auth)
-    return {
-      ...base,
-      auth: "logged_out",
-      hosts: [],
-      error: ytrackDetail(status) || null,
-    };
+    return { ...base, auth: "logged_out", hosts: [], error: ytrackDetail(status) || null };
   let rows: unknown;
   try {
     rows = JSON.parse(status.stdout);
   } catch {
-    return {
-      ...base,
-      auth: "error",
-      hosts: [],
-      error: ytrackDetail(status) || "no JSON",
-    };
+    return { ...base, auth: "error", hosts: [], error: ytrackDetail(status) || "no JSON" };
   }
   const hosts = (Array.isArray(rows) ? rows : [rows])
     .filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null)

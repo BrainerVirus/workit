@@ -131,38 +131,23 @@ export function setWorkspaceEditorValue(
     return { ...workspace, defaultProfile: value.trim() || undefined };
   if (section === "vcs")
     return workspace.vcs
-      ? {
-          ...workspace,
-          vcs: { ...workspace.vcs, [key]: value.trim() || undefined },
-        }
+      ? { ...workspace, vcs: { ...workspace.vcs, [key]: value.trim() || undefined } }
       : workspace;
   if (section === "youtrack") {
     const current = workspace.youtrack ?? {};
     if (key === "baseUrl")
-      return {
-        ...workspace,
-        youtrack: { ...current, baseUrl: value.trim() || undefined },
-      };
+      return { ...workspace, youtrack: { ...current, baseUrl: value.trim() || undefined } };
     if (!value || value === "inherit") {
       const { link_issues: _discard, ...rest } = current;
-      return {
-        ...workspace,
-        youtrack: Object.keys(rest).length ? rest : undefined,
-      };
+      return { ...workspace, youtrack: Object.keys(rest).length ? rest : undefined };
     }
-    return {
-      ...workspace,
-      youtrack: { ...current, link_issues: value === "true" },
-    };
+    return { ...workspace, youtrack: { ...current, link_issues: value === "true" } };
   }
   if (section === "issues") {
     const current = workspace.issues ?? { provider: "github" as const };
     if (!value || value === "inherit") {
       const { link_on_pr: _discard, ...rest } = current;
-      return {
-        ...workspace,
-        issues: Object.keys(rest).length ? rest : undefined,
-      };
+      return { ...workspace, issues: Object.keys(rest).length ? rest : undefined };
     }
     return {
       ...workspace,
@@ -174,9 +159,7 @@ export function setWorkspaceEditorValue(
       const { branchPolicy: _discard, ...rest } = workspace;
       return rest;
     }
-    const current = workspace.branchPolicy ?? {
-      preset: defaults.branchPreset ?? "gitflow",
-    };
+    const current = workspace.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
     const branchPolicy =
       key === "preset"
         ? { ...current, preset: (value || "gitflow") as typeof current.preset }
@@ -187,10 +170,7 @@ export function setWorkspaceEditorValue(
             : key === "developBranch"
               ? { ...current, developBranch: value.trim() || undefined }
               : key === "integration"
-                ? {
-                    ...current,
-                    integration: value === "pr" ? ("pr" as const) : ("merge" as const),
-                  }
+                ? { ...current, integration: value === "pr" ? ("pr" as const) : ("merge" as const) }
                 : key === "prefixes"
                   ? {
                       ...current,
@@ -211,9 +191,7 @@ export function setWorkspaceEditorValue(
       const { commitPolicy: _discard, ...rest } = workspace;
       return rest;
     }
-    const current = workspace.commitPolicy ?? {
-      preset: defaults.commitPreset ?? "conventional",
-    };
+    const current = workspace.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
     return {
       ...workspace,
       commitPolicy:
@@ -262,11 +240,7 @@ const emptyTrack = (): ReleaseTrack => ({
   strategy: "gitflow",
   productionBranch: "main",
   integrationBranch: "develop",
-  naming: {
-    feature: "feature/{name}",
-    release: "release/{version}",
-    hotfix: "hotfix/{name}",
-  },
+  naming: { feature: "feature/{name}", release: "release/{version}", hotfix: "hotfix/{name}" },
   baseBranch: "develop",
   mergeBackBranches: ["develop"],
   pullRequestTarget: "develop",
@@ -305,15 +279,10 @@ export function setProfileEditorValue(
       const { branchPolicy: _discard, ...rest } = profile;
       return rest;
     }
-    const current = profile.branchPolicy ?? {
-      preset: defaults.branchPreset ?? "gitflow",
-    };
+    const current = profile.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
     let branchPolicy: NonNullable<WorkspaceProfile["branchPolicy"]>;
     if (key === "preset")
-      branchPolicy = {
-        ...current,
-        preset: (value || "gitflow") as typeof current.preset,
-      };
+      branchPolicy = { ...current, preset: (value || "gitflow") as typeof current.preset };
     else if (key === "allowed" || key === "protected")
       branchPolicy = { ...current, [key]: splitList(value) };
     else if (key === "prefixes")
@@ -330,16 +299,10 @@ export function setProfileEditorValue(
       };
     else if (key === "developBranch")
       branchPolicy = { ...current, developBranch: value || undefined };
-    else
-      branchPolicy = {
-        ...current,
-        integration: value === "pr" ? "pr" : "merge",
-      };
+    else branchPolicy = { ...current, integration: value === "pr" ? "pr" : "merge" };
     return { ...profile, branchPolicy };
   }
-  const current = profile.commitPolicy ?? {
-    preset: defaults.commitPreset ?? "conventional",
-  };
+  const current = profile.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
   if (key === "preset" && (!value.trim() || value === "inherit")) {
     const { commitPolicy: _discard, ...rest } = profile;
     return rest;
@@ -349,10 +312,7 @@ export function setProfileEditorValue(
     commitPolicy:
       key === "pattern"
         ? { ...current, pattern: value || undefined }
-        : {
-            ...current,
-            preset: (value || "conventional") as typeof current.preset,
-          },
+        : { ...current, preset: (value || "conventional") as typeof current.preset },
   };
 }
 
@@ -415,10 +375,7 @@ export function runProjectSetup(
 ): ProjectSetupResult {
   const openSource = opts.includeOpenSource ?? hygieneFiles(root).openSource;
   const gitignore = ensureProjectGitignore(root, true);
-  const hygiene = ensureHygieneFiles(root, {
-    confirmed: true,
-    includeOpenSource: openSource,
-  });
+  const hygiene = ensureHygieneFiles(root, { confirmed: true, includeOpenSource: openSource });
   const created = [
     ...(gitignore.ok ? gitignore.added : []),
     ...(hygiene.ok ? hygiene.created : []),
@@ -560,20 +517,10 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     defaultTargetBranch: "develop",
     gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4" },
     github: { host: "github.com" },
-    pr: {
-      squashOnMerge: true,
-      removeSourceBranch: true,
-      pushBranch: true,
-      confirmSkip: true,
-    },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
   };
   writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  const outcome: ScaffoldOutcome = {
-    ok: true,
-    status: "missing",
-    created: [],
-    preserved: [],
-  };
+  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
   outcome.created.push(vcsJson);
 
   return {
@@ -628,22 +575,14 @@ export function writeWorkspaces(
       try {
         rmSync(tmp, { force: true });
       } catch {}
-      return {
-        ok: false,
-        error: `workspace config changed while writing ${file}`,
-        path: file,
-      };
+      return { ok: false, error: `workspace config changed while writing ${file}`, path: file };
     }
     renameSync(tmp, file);
   } catch (err) {
     try {
       rmSync(tmp, { force: true });
     } catch {}
-    return {
-      ok: false,
-      error: `failed to write ${file}: ${(err as Error).message}`,
-      path: file,
-    };
+    return { ok: false, error: `failed to write ${file}: ${(err as Error).message}`, path: file };
   }
   return { ok: true, path: file };
 }
