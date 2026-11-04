@@ -24,6 +24,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { loadCheckConfig } from "./check-config";
 import { resolveRoleModel } from "./core/role-models";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
 import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
@@ -143,6 +144,42 @@ const rules = (
   ];
 };
 
+/** This repository's skill gates, named only where all of them exist (retro W2.36). */
+const WORKIT_SKILL_TESTS = [
+  "test/workit-core/skill-set.test.ts",
+  "test/workit-core/methods.test.ts",
+  "test/behavior/context-budget.test.ts",
+  "test/workit-core/generated-copies.test.ts",
+];
+
+/** Does a SCOPE entry reach skills or agent definitions (`**\/skills/**`, `**\/agents/**`)? */
+const touchesSkills = (scope: readonly string[]): boolean =>
+  scope.some((entry) =>
+    entry.split(/[\\/]/u).some((segment) => segment === "skills" || segment === "agents"),
+  );
+
+/**
+ * The extra VERIFY line for a slice whose SCOPE touches skills or agents:
+ * targeted tests miss the skill cap, pinned phrases and context budget, which
+ * fail only in CI. A `skills` check or group in the checks config is the
+ * portable form; else this repository's test files, else a generic rule.
+ */
+function skillsVerify(cwd: string, scope: readonly string[], verify: readonly string[]) {
+  if (!touchesSkills(scope)) return [];
+  const config = loadCheckConfig(cwd);
+  const named =
+    !config.error &&
+    (config.checks.some((check) => check.name === "skills") || "skills" in config.groups);
+  let command = "run the repo's skill and context-budget checks";
+  if (named) command = "workit check skills";
+  else if (WORKIT_SKILL_TESTS.every((file) => fs.existsSync(path.join(config.root, file))))
+    command = `workit check --name unit -- bun test ${WORKIT_SKILL_TESTS.join(" ")}`;
+  if (verify.some((line) => line.includes(command))) return [];
+  return [
+    `  skills: ${command}  (SCOPE touches skills or agents; targeted tests miss these gates)`,
+  ];
+}
+
 /** A session id fragment that the ledger accepts ([A-Za-z0-9_.:@/+-]). */
 const sessionSafe = (text: string): string => text.replace(/[^A-Za-z0-9_.:@/+-]/gu, "-");
 
@@ -255,6 +292,7 @@ export function renderBrief(
     "ACCEPTANCE:",
     ...slice.acceptance.map((line) => `  - ${line}`),
     `VERIFY: ${slice.verify.join("; ")}`,
+    ...skillsVerify(cwd, slice.scope, slice.verify),
     ...(slice.reason ? [`REASON: ${slice.reason}`] : []),
     `TIER: ${slice.tier}`,
     ...(model

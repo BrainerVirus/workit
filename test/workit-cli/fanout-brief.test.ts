@@ -735,3 +735,105 @@ test.each([["claude_code"], ["codex_cli"], ["opencode"], ["pi"], ["cursor"], [nu
     expect((await briefOn(cwd, host, "a")).text).toContain(line);
   },
 );
+
+// ---------------------------------------------------------------------------
+// skill gates: a slice touching skills or agents names the CI-only gates
+
+const verifyLines = (text: string): string[] => {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("VERIFY: "));
+  const end = lines.findIndex((line, index) => index > start && !line.startsWith("  "));
+  return lines.slice(start, end);
+};
+
+const skillSlice = (scope: string[]) => slice("a", scope, { verify: ["workit check lint"] });
+
+test("fanout brief: given a SCOPE under packages/x/skills/** and a checks config with a skills group, when rendered, then VERIFY adds `workit check skills`", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({
+      checks: { lint: "true", unit: "true" },
+      groups: { skills: ["unit", "lint"] },
+    }),
+  );
+  expect((await plan(cwd, root, "skills", [skillSlice(["packages/x/skills/**"])])).code).toBe(0);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
+    "VERIFY: workit check lint",
+    "  skills: workit check skills  (SCOPE touches skills or agents; targeted tests miss these gates)",
+  ]);
+});
+
+test("fanout brief: given a SCOPE under an agents dir and a configured check named skills, when rendered, then VERIFY adds `workit check skills`", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { skills: "true" } }),
+  );
+  expect(
+    (await plan(cwd, root, "agents", [skillSlice(["packages/x/agents/worker.md"])])).code,
+  ).toBe(0);
+  expect((await brief(cwd, "a")).text).toContain("  skills: workit check skills  (");
+});
+
+test("fanout brief: given a SCOPE under skills and no skills check or group, when rendered, then VERIFY tells the worker to run the repo's skill and context-budget checks", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { lint: "true" }, groups: { ci: ["lint"] } }),
+  );
+  expect((await plan(cwd, root, "generic", [skillSlice(["packages/x/skills/**"])])).code).toBe(0);
+  const lines = verifyLines((await brief(cwd, "a")).text);
+  expect(lines).toEqual([
+    "VERIFY: workit check lint",
+    "  skills: run the repo's skill and context-budget checks  (SCOPE touches skills or agents; targeted tests miss these gates)",
+  ]);
+  expect(lines.join("\n")).not.toContain("test/workit-core");
+});
+
+test("fanout brief: given a SCOPE under skills, no skills check and Workit's own skill tests in the repo, when rendered, then VERIFY names those test files", async () => {
+  const { root, cwd } = repo();
+  const files = [
+    "test/workit-core/skill-set.test.ts",
+    "test/workit-core/methods.test.ts",
+    "test/behavior/context-budget.test.ts",
+    "test/workit-core/generated-copies.test.ts",
+  ];
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+    writeFileSync(path.join(cwd, file), "");
+  }
+  expect((await plan(cwd, root, "own", [skillSlice(["packages/x/skills/**"])])).code).toBe(0);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
+    "VERIFY: workit check lint",
+    `  skills: workit check --name unit -- bun test ${files.join(" ")}  (SCOPE touches skills or agents; targeted tests miss these gates)`,
+  ]);
+});
+
+test("fanout brief: given a SCOPE touching no skills or agents (a skills.ts file included), when rendered, then VERIFY is only the slice's own line", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { skills: "true", lint: "true" } }),
+  );
+  expect(
+    (await plan(cwd, root, "plain", [skillSlice(["src/skills.ts", "test/agents.test.ts"])])).code,
+  ).toBe(0);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check lint"]);
+});
+
+test("fanout brief: given a skills slice whose VERIFY already runs `workit check skills`, when rendered, then no second skills line is added", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { skills: "true" } }),
+  );
+  const own = slice("a", ["skills/**"], { verify: ["workit check skills"] });
+  expect((await plan(cwd, root, "dup", [own])).code).toBe(0);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check skills"]);
+});
