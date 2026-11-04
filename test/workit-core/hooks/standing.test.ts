@@ -106,3 +106,20 @@ test("Given a pending delta, When the worker's call is denied, Then the delta wa
   expect(denied.kind).toBe("deny");
   expect(text(handleHook(lsCall(slice, "agent-1"), deps))).toContain("new: no new dependencies");
 });
+
+test("Given a standing order for the fanout, When a subagent of the lead that is no Workit worker calls a tool, Then it gets none; a Workit worker of the lead does (W2.27)", () => {
+  const { root } = standingRepo();
+  addOrder(root, "no new dependencies");
+  const typed = (agentId: string, agentType: string): HookInput => {
+    const call = lsCall(root, agentId);
+    return { ...call, session: { ...call.session, agentType } };
+  };
+  for (const agentType of ["Explore", "general-purpose", "workit-implementer-ish"])
+    expect(handleHook(typed(`inv-${agentType}`, agentType), deps), agentType).toEqual({
+      kind: "none",
+    });
+  for (const agentType of ["workit:implementer", "workit:verifier"])
+    expect(text(handleHook(typed(`w-${agentType}`, agentType), deps)), agentType).toContain(
+      "new: no new dependencies",
+    );
+});

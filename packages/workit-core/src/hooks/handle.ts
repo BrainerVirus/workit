@@ -316,7 +316,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         trackJudge(input, event.agentId, true);
       seedStanding({
         ...input,
-        session: { ...input.session, agentId: event.agentId },
+        session: { ...input.session, agentId: event.agentId, agentType: event.agentType },
       });
       deps.budget?.start(input, event.agentId, event.agentType);
       return {
