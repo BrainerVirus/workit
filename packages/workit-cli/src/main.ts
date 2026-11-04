@@ -18,6 +18,7 @@ import {
   firstWord,
   flagLines,
   helpAsValue,
+  paintHelp,
   takesPositionals,
   subcommandHelp,
   usageLines,
@@ -34,6 +35,7 @@ import {
   type EnvelopeCode,
   type Io,
 } from "./output";
+import { createStyle } from "./style";
 import {
   TASK_FAMILY_NAMES,
   VERBS,
@@ -158,6 +160,15 @@ export async function main(
   overrides: Partial<Io> = {},
   options: { diagnostics?: boolean; platform?: NodeJS.Platform } = {},
 ): Promise<number> {
+  // Shell completion: candidates on stdout, one per line, and nothing else
+  // (no globals parsed, no migration, no update check, no error text).
+  if (argv[0] === "__complete") {
+    const { complete } = await import("./completion/complete");
+    const lines = await complete(argv.slice(1), overrides.cwd ?? process.cwd());
+    const out = overrides.stdout ?? ((text: string) => void process.stdout.write(text));
+    if (lines.length) out(`${lines.join("\n")}\n`);
+    return 0;
+  }
   const parsed = parseGlobals(argv);
   const cwd = path.resolve(overrides.cwd ?? process.cwd(), parsed.cwd ?? ".");
   const io: Io = {
@@ -211,7 +222,9 @@ export async function main(
         );
       return help(io, subcommandHelp(entry, found));
     }
-    return emit(io, ok({ version: pkg.version, verbs: listed().map(describe) }), () => helpText());
+    return emit(io, ok({ version: pkg.version, verbs: listed().map(describe) }), () =>
+      paintHelp(helpText(), helpStyle(io)),
+    );
   }
 
   const entry = findVerb(command);
@@ -467,7 +480,12 @@ function endOfOptions(io: Io, entry: VerbEntry, args: string[]): string[] | numb
 /** The positional words of `help <verb> [<sub>]`. */
 const words = (args: readonly string[]): string[] => args.filter((arg) => !arg.startsWith("-"));
 
-const help = (io: Io, doc: HelpDoc): number => emit(io, ok(doc), (data) => data.text);
+/** Help colors only a terminal stdout (never --json, a pipe, NO_COLOR or TERM=dumb). */
+const helpStyle = (io: Io) =>
+  createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
+
+const help = (io: Io, doc: HelpDoc): number =>
+  emit(io, ok(doc), (data) => paintHelp(data.text, helpStyle(io)));
 
 const describe = (entry: VerbEntry) => ({
   name: entry.name,

@@ -46,6 +46,7 @@ const mainEntry = path.join(cliSrc, "main.ts");
 const PARSERS: Record<string, string[]> = {
   init: ["verbs/init.ts"],
   dir: ["verbs/dir.ts"],
+  completion: ["verbs/completion.ts"],
   setup: ["verbs/setup.ts"],
   upgrade: ["upgrade.ts#upgradeOnce"],
   launch: ["upgrade.ts#runLaunchCommand"],

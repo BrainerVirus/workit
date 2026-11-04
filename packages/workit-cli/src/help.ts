@@ -3,6 +3,7 @@
 // `--` both land here, so no verb ever sees a help flag.
 import { ENGINE_NOTE, VERBS, findSubcommand } from "./verbs/registry";
 import type { SubcommandEntry, VerbEntry, VerbGroup } from "./verbs/registry";
+import type { Style } from "./style";
 
 const HELP_FLAGS = new Set(["--help", "-h"]);
 
@@ -25,7 +26,7 @@ export const firstWord = (args: readonly string[]): string | undefined =>
  * Flags that take a value, read from usage lines (`--why "<why>"`, `-m|--message
  * <msg>`, `--method squash|merge`), each mapped to its `--long` spelling.
  */
-const valueFlags = (lines: readonly string[]): Map<string, string> => {
+export const valueFlags = (lines: readonly string[]): Map<string, string> => {
   const out = new Map<string, string>();
   const group = /(?<![\w-])(--?[a-zA-Z][\w-]*(?:\|--?[a-zA-Z][\w-]*)*) (?=[<"a-z0-9])/gu;
   for (const line of lines)
@@ -269,4 +270,52 @@ export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck
     };
   }
   return { args: out };
+}
+
+const FLAG_TOKEN = /(?<![\w<-])(--?[a-zA-Z][\w-]*)/gu;
+
+/** A usage line: `workit <verb> [<sub>]` as a command, every flag in the accent. */
+const paintUsage = (line: string, style: Style): string => {
+  const lead = /^workit(?: [a-z][\w-]*)*/u.exec(line)?.[0] ?? "";
+  return (
+    style.command(lead) +
+    line
+      .slice(lead.length)
+      .replace(FLAG_TOKEN, (flag) => style.accent(flag))
+      .replace(/(?<= \| )workit(?: [a-z][\w-]*)*/gu, (command) => style.command(command))
+  );
+};
+
+/**
+ * Help text for a color terminal: bold headings, commands and flags in the
+ * accent, descriptions dim. Only adds escapes: with color off (NO_COLOR,
+ * --json, a pipe, TERM=dumb) it returns `text` itself, byte for byte.
+ */
+export function paintHelp(text: string, style: Style): string {
+  if (!style.enabled) return text;
+  return text
+    .split("\n")
+    .map((line, index) => {
+      if (index === 0 && /^workit [\w.-]+(?: — |: )/u.test(line)) {
+        const cut = line.indexOf(": ") >= 0 && !line.includes(" — ") ? line.indexOf(": ") : -1;
+        return cut < 0
+          ? style.bold(line)
+          : `${style.command(line.slice(0, cut))}${line.slice(cut)}`;
+      }
+      const heading = /^([A-Za-z][\w ]*:)(?: (.*))?$/u.exec(line);
+      if (heading) {
+        const [, label, rest] = heading;
+        if (rest === undefined) return style.bold(label);
+        return `${style.bold(label)} ${rest.startsWith("workit") ? paintUsage(rest, style) : rest}`;
+      }
+      const row = /^( {2,})(workit\b.*)$/u.exec(line);
+      if (row && row[1].length <= 2) return `${row[1]}${paintUsage(row[2], style)}`;
+      // `  --flag <v>   what it does` (and `  help <cmd> [<sub>] what it does`).
+      const option = /^( {2})(-\S.*?(?= {2})|help <cmd> \[<sub>\](?= ))( +)(\S.*)$/u.exec(line);
+      if (option)
+        return `${option[1]}${option[2].replace(FLAG_TOKEN, (flag) => style.accent(flag)).replace(/^help/u, (word) => style.command(word))}${option[3]}${style.dim(option[4])}`;
+      if (/^ {4,}\S/u.test(line)) return style.dim(line);
+      return line;
+    })
+    .join("\n");
 }

@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import pkg from "../package.json" with { type: "json" };
 import { type HostId } from "./admin/detect-hosts";
 import { hostCommand, type HostInstallCommand } from "./admin/host-install";
+import { completionLines, installCompletion } from "./completion/install";
 import { runDoctor } from "./admin/doctor";
 import {
   applyHostPermissions,
@@ -256,6 +257,8 @@ async function upgradeOnce(
         ...(entry.status === "written" ? {} : { fix: `workit setup --hosts=${entry.host}` }),
       });
   }
+  // The completion script for $SHELL follows the CLI's verbs (user files, never an rc file).
+  const completion = installCompletion({ env, version: pkg.version });
   deps.onResult?.(result.hosts);
   handed.rows = result.hosts;
   const failed = !result.ok || !permissionsOk;
@@ -282,6 +285,7 @@ async function upgradeOnce(
               ? { permissions: permissionPreview }
               : {}),
           doctor: { clean: left.length === 0, left },
+          completion,
         },
         null,
         2,
@@ -295,6 +299,7 @@ async function upgradeOnce(
   if (permissions.refused)
     out.write(`permissions: ${style.warn("not refreshed:")} ${permissions.refused}\n`);
   if (result.backup) out.write(`Backup: ${style.path(result.backup)}\n`);
+  for (const line of completionLines(completion, style.path)) out.write(`${line}\n`);
   // A failed row (the PATH `workit` missing the new CLI, say) is never "Verified".
   if (failed)
     out.write(

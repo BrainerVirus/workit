@@ -7,6 +7,8 @@ import {
   permissionDiff,
   planHostPermissions,
 } from "../admin/host-permissions";
+import pkg from "../../package.json" with { type: "json" };
+import { completionLines, installCompletion } from "../completion/install";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { colorDiff, createStyle } from "../style";
@@ -74,6 +76,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
         unblock: `workit setup --hosts=${plan.changes.map((c) => c.host).join(",")}`,
       }),
     );
+  // The completion script for $SHELL: user files only, never an rc file.
+  const completion = () => installCompletion({ env: io.env, version: pkg.version });
+  if (plan.changes.length === 0 && !args.dryRun) {
+    const installed = completion();
+    return emit(io, ok({ ...summary, written: [], completion: installed }), () => [
+      plan.blocked.length ? "Nothing written." : "Host permissions are up to date.",
+      ...completionLines(installed, style.path),
+    ]);
+  }
   if (plan.changes.length === 0)
     return emit(io, ok({ ...summary, written: [] }), () =>
       plan.blocked.length ? "Nothing written." : "Host permissions are up to date.",
@@ -104,7 +115,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     ...(io.env.HOME ? { home: io.env.HOME } : {}),
   });
   const failed = entries.filter((e) => e.status === "failed");
-  const data = { ...summary, written: entries };
+  const installed = completion();
+  const data = { ...summary, written: entries, completion: installed };
   if (failed.length)
     return emit(
       io,
@@ -113,5 +125,6 @@ export async function run(argv: string[], io: Io): Promise<number> {
   return emit(io, ok(data), () => [
     ...entries.map((e) => `${style.ok("written")} ${style.path(e.file)}`),
     "Restart the host sessions to load the new permissions. `workit uninstall` removes them.",
+    ...completionLines(installed, style.path),
   ]);
 }

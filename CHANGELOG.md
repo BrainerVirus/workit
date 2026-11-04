@@ -399,6 +399,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit uninstall` can remove the Workit CLI itself (pick "Workit CLI"): the PATH launcher link, `bin/`, `current` and `versions/` under the Workit data dir. A foreign file at the launcher path is left untouched and reported (W2.32).
 - `workit issue view|comment|close|create` works on the workspace tracker (GitHub or GitLab) under the `pr` grant, so agents close and comment on issues themselves; `workit finding record --queue` files a finding as an issue (#439).
 - A fanout slice that depends on another is created as a stack: its worktree branches from the parent slice, `fanout status` shows the stack, and `workit stack sync` rebases a child onto trunk without the parent's commits once the parent is squash-merged. `stack land --others-pr --reason` lands another author's PRs like `pr merge` (W2.37).
+- Shell completion: `workit completion zsh|bash|fish|powershell` completes verbs, subcommands, flags and live values (configured check names, workspaces, fanout slices) from the verb registry. `workit setup` and `workit upgrade` install it for your shell under the XDG data/config dirs and print the zsh `fpath` lines when needed; your rc files are never edited, and `workit uninstall` removes only the scripts Workit wrote.
+- `workit help` and per-verb help are coloured at a terminal (bold headings, accent commands and flags, dim descriptions); plain under NO_COLOR, TERM=dumb, CI, a pipe or `--json`.
 
 ### Changed
 

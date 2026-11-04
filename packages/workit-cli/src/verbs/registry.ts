@@ -302,6 +302,15 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./dir"),
   },
   {
+    name: "completion",
+    group: "setup",
+    usage: "workit completion <zsh|bash|fish|powershell>",
+    summary:
+      "Print the shell completion script (setup and upgrade install it for $SHELL); verbs, subcommands, flags, check names, slice ids, workspaces",
+    examples: ["workit completion zsh > ~/.local/share/zsh/site-functions/_workit"],
+    load: () => import("./completion"),
+  },
+  {
     name: "uninstall",
     group: "setup",
     usage: "workit uninstall",

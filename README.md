@@ -341,6 +341,10 @@ Global flags:
 `--version`. Exit codes: `0` ok, `1` failed, `2` usage, `3` blocked,
 `4` busy/pending, `5` unavailable.
 
+In a color terminal, help prints bold headings, commands and flags in cyan
+and dim summaries; `NO_COLOR`, `--json`, a pipe or `TERM=dumb` give the plain
+text.
+
 | Command | Purpose |
 | --- | --- |
 | `workit init` | Interactive setup wizard (hosts, config, optional project files) |
@@ -349,6 +353,7 @@ Global flags:
 | `workit upgrade [--preview \| --yes] [--hosts=…] [--cli]` | Upgrade the CLI and every host after one confirmation, then verify with doctor |
 | `workit upgrade --check` / `--set-updates=prompt\|auto\|off` | Compare installed and latest versions; choose how a launch handles a new release |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
+| `workit completion zsh\|bash\|fish\|powershell` | Print the shell completion script (setup and upgrade install it for `$SHELL`) |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
 | `workit uninstall` | Pick hosts (and the owned CLI install) and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
@@ -371,6 +376,33 @@ Global flags:
 | `workit youtrack note\|time\|meeting` | YouTrack comments and work time ([YouTrack guide](docs/guides/youtrack.md)) |
 | `workit changelog apply` | Add entries under the changelog's Unreleased section |
 | `workit <family> <action>` | Low-level task families: `task`, `policy`, `evidence`, `finding`, `decision`, `worker`, `state` |
+
+### Shell completion
+
+`workit setup` and `workit upgrade` install tab completion for the shell in
+`$SHELL`: verbs, subcommands and flags, plus configured check names
+(`workit check <Tab>`), fanout slice ids (`workit fanout worktree create <Tab>`)
+and workspace names. The values come from `workit __complete`, which reads only
+local files. No rc file is edited:
+
+| Shell | Installed to |
+| --- | --- |
+| zsh | `$XDG_DATA_HOME/zsh/site-functions/_workit` (`~/.local/share/zsh/site-functions/_workit`) |
+| bash | `$XDG_DATA_HOME/bash-completion/completions/workit` (loaded by bash-completion) |
+| fish | `$XDG_CONFIG_HOME/fish/completions/workit.fish` |
+| PowerShell | nothing; add `workit completion powershell \| Out-String \| Invoke-Expression` to `$PROFILE` |
+
+zsh loads `_workit` only from a directory on its `$fpath`. When that directory
+is missing from it, setup prints the lines to add to `~/.zshrc`, before any
+other `compinit`:
+
+```zsh
+fpath=("$HOME/.local/share/zsh/site-functions" $fpath)
+autoload -Uz compinit && compinit
+```
+
+`workit completion <shell>` prints the script for any other setup
+(`source <(workit completion zsh)`). Only a file Workit wrote is replaced.
 
 ## Upgrading
 
