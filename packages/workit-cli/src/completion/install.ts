@@ -39,7 +39,7 @@ export function completionFile(
 }
 
 /** The user's shell: $SHELL's name, PowerShell on Windows, else null. */
-export function userShell(env: Env, platform: NodeJS.Platform = process.platform): Shell | null {
+function userShell(env: Env, platform: NodeJS.Platform = process.platform): Shell | null {
   const name = path.basename(env.SHELL ?? "").replace(/\.exe$/u, "");
   if (name === "zsh" || name === "bash" || name === "fish") return name;
   if (platform === "win32" || name === "pwsh" || name === "powershell") return "powershell";
@@ -47,7 +47,7 @@ export function userShell(env: Env, platform: NodeJS.Platform = process.platform
 }
 
 /** The directories zsh searches for functions (`$fpath` of a non-interactive zsh); null when zsh cannot run. */
-export function zshFpath(env: Env): string[] | null {
+function zshFpath(env: Env): string[] | null {
   const run = spawnSync("zsh", ["-c", "print -rl -- $fpath"], {
     env,
     encoding: "utf8",
@@ -57,8 +57,7 @@ export function zshFpath(env: Env): string[] | null {
   return run.status === 0 ? run.stdout.split("\n").filter(Boolean) : null;
 }
 
-export const POWERSHELL_PROFILE_LINE =
-  "workit completion powershell | Out-String | Invoke-Expression";
+const POWERSHELL_PROFILE_LINE = "workit completion powershell | Out-String | Invoke-Expression";
 
 export type CompletionInstall = {
   shell: Shell | null;

@@ -6,7 +6,7 @@ import { flagLines, valueFlags } from "../help";
 import { VERBS, type SubcommandEntry, type VerbEntry } from "../verbs/registry";
 
 /** Flags the router reads before any verb (main.ts parseGlobals and help). */
-export const GLOBAL_FLAGS = ["--json", "--cwd", "--help"] as const;
+const GLOBAL_FLAGS = ["--json", "--cwd", "--help"] as const;
 
 /** Flags the router reads before the command only. */
 const LEADING_FLAGS = ["--session", "--version"] as const;

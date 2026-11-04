@@ -114,7 +114,7 @@ writeFileSync(
 );
 
 const run = (words: string[]) =>
-  spawnSync("bun", [mainEntry, "__complete", ...words], {
+  spawnSync(process.execPath, [mainEntry, "__complete", ...words], {
     cwd: repo,
     encoding: "utf8",
     env: { ...process.env, NO_COLOR: "1" },
@@ -253,7 +253,7 @@ test("Given a completion file Workit did not write, Then install leaves it and u
   expect(installCompletion({ env, version: "1", shell: "fish", platform: "linux" }).status).toBe(
     "written",
   );
-  expect(removeCompletions(env, "linux")).toEqual([completionFile("fish", env, "linux")]);
+  expect(removeCompletions(env, "linux")).toEqual([completionFile("fish", env, "linux") as string]);
   expect(existsSync(file)).toBe(true);
 });
 
