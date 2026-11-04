@@ -32,7 +32,7 @@ that repeats because the base keeps moving, or after 3 failed fix attempts on
 the same check. Fix round and recheck both failed: a decider (workit-fanout).
 
 1. **Open.** Last before the PR, if `workit grant show` has `changelog: update|create`: write the Unreleased entry with `workit changelog apply`, commit it; with `docs: when-user-facing` fix only docs the diff made false (`references/changelog.md`).
-   Full local check, push once: `workit git push`, then `workit pr template` and fill the template it prints: every heading, each `<!-- -->` replaced (Workit's: `references/pr-body.md`).
+   Full local check (`workit check ci` when `.workit/checks.json` has a `ci` group), push once: `workit git push`, then `workit pr template` and fill the template it prints: every heading, each `<!-- -->` replaced (Workit's: `references/pr-body.md`).
    `workit pr create --title "<title>" --body-file <f|->` refuses a body that leaves a repo template (or `prTemplate: workit`) unfilled; add `--issue <#n|ID>` (`--refs`: no close; `workit pr edit`).
    A stack: `workit stack plan <bottom> ... <top>`, one `workit pr create --base <parent> --fill`
    per branch (a filled body instead where a template is checked), then `workit stack sync`. Finish the whole stack before babysitting any PR.

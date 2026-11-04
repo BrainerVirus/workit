@@ -180,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit check ci` runs the repository's `ci` group from `.workit/checks.json` (light checks at once, heavy ones under the lease) and names every failed member; this repository declares knip, react-doctor and packaging so they run before push, not only in CI.
 - `workit pr merge` refuses a PR authored by someone other than your forge login (case-insensitive; bots included) with `others_pr`; `--others-pr --reason "<why>"` merges it anyway, records the reason in the ledger and never deletes that author's branch (#442). When Workit cannot read the PR author or your login it refuses with `identity_unknown` and points to `gh auth login` / `glab auth login`.
 - Usage-limit fallback (#655): a role in `models.roles` (or `models.lead`) can list models in fallback order, e.g. `"verifier": { "opencode": ["anthropic/claude-sonnet-5", "openai/gpt-5.5"] }`. When a provider hits its usage limit (Anthropic 5-hour or weekly, OpenAI usage limit or quota, a long 429), Workit marks it exhausted until the reset named in the error (else `models.limitWindow`, default `5h`), runs the next listed model, and returns to the first after the reset. A worker that died on a limit is flagged for one re-dispatch.
 - `workit models show` lists exhausted providers with their reset times and prints the lead switch notice; on OpenCode the lead also gets that notice in context once.

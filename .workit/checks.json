@@ -1,0 +1,15 @@
+{
+  "checks": {
+    "lint": ["bun", "run", "lint"],
+    "format": ["bun", "run", "format:check"],
+    "typecheck": ["bun", "run", "typecheck"],
+    "test": ["bun", "run", "test"],
+    "knip": ["bun", "run", "knip"],
+    "react-doctor": ["bun", "run", "doctor"],
+    "packaging": ["bun", "run", "test:packaging"]
+  },
+  "groups": {
+    "ci": ["lint", "format", "typecheck", "knip", "react-doctor", "test", "packaging"]
+  },
+  "resources": { "heavy": ["knip", "react-doctor"] }
+}

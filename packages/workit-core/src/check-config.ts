@@ -6,7 +6,10 @@
 //
 // Config, first source that exists at the repository top:
 // 1. `.workit/checks.json`: `{"checks":{"test":"bun test","lint":["bun","run","lint"]},
-//    "gates":{"testing":"test"}}`. Per-repo workit config lives in the
+//    "gates":{"testing":"test"},"groups":{"ci":["lint","test"]}}`. A *group* is
+//    a named list of configured checks that `workit check <group>` runs one by
+//    one; the `ci` group is the checks the repo's CI runs, so a PR never goes
+//    red on a gate that never ran locally. Per-repo workit config lives in the
 //    self-ignoring `.workit/`, never at the repo root. A legacy root
 //    `workit.checks.json` is still read when `.workit/checks.json` is absent,
 //    with a note that it moved.
@@ -97,6 +100,8 @@ export type CheckConfig = {
   checks: NamedCheck[];
   /** Explicit gate bindings from the checks config (`gates.testing`, `gates.verification`). */
   gates: Partial<Record<"testing" | "verification", string[]>>;
+  /** Named lists of configured checks (`groups.ci`: what CI runs); `workit check <group>` runs each member. */
+  groups: Record<string, string[]>;
   /** Set when the config exists but cannot be used; gates then fail closed. */
   error: string | null;
   /** One line for the user when the config was read from the legacy root file. */
@@ -257,6 +262,7 @@ export function loadCheckConfig(cwd: string): CheckConfig {
     root,
     checks: [],
     gates: {},
+    groups: {},
     error,
     ...note,
   });
@@ -269,7 +275,9 @@ export function loadCheckConfig(cwd: string): CheckConfig {
   }
   if (text === null) {
     const checks = detectedChecks(root);
-    return checks.length ? { source: "defaults", root, checks, gates: {}, error: null } : none();
+    return checks.length
+      ? { source: "defaults", root, checks, gates: {}, groups: {}, error: null }
+      : none();
   }
   let parsed: unknown;
   try {
@@ -311,7 +319,33 @@ export function loadCheckConfig(cwd: string): CheckConfig {
       gates[gate as (typeof GATES)[number]] = names as string[];
     }
   }
-  return { source: label, root, checks, gates, error: null, ...note, resources: parsed.resources };
+  const groups: CheckConfig["groups"] = {};
+  if (parsed.groups !== undefined) {
+    if (!isRecord(parsed.groups)) return none(`${label}: groups must be {"ci":["<name>",…]}`);
+    for (const [group, value] of Object.entries(parsed.groups)) {
+      if (!CHECK_NAME.test(group))
+        return none(`${label}: group name "${group}" must match ${CHECK_NAME.source}`);
+      if (checks.some((c) => c.name === group))
+        return none(`${label}: group "${group}" has the name of a configured check`);
+      if (
+        !Array.isArray(value) ||
+        value.length === 0 ||
+        !value.every((name) => typeof name === "string" && checks.some((c) => c.name === name))
+      )
+        return none(`${label}: groups.${group} must be a non-empty list of configured checks`);
+      groups[group] = [...new Set(value as string[])];
+    }
+  }
+  return {
+    source: label,
+    root,
+    checks,
+    gates,
+    groups,
+    error: null,
+    ...note,
+    resources: parsed.resources,
+  };
 }
 
 const sameArgv = (left: readonly string[], right: readonly string[]): boolean =>
