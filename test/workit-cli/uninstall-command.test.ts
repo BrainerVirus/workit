@@ -5,6 +5,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { retryOnce } from "@/test/shared/helpers/retry-once";
 import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
+import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 // Task 9 (`workit uninstall`): TTY-only interactive host picker + reviewable
 // action summary BEFORE mutation (D-08); non-TTY stdin prints guidance and
@@ -338,7 +339,8 @@ test("non-TTY stdin prints guidance and exits 2 without touching anything (CA-10
     const { chunks, exitCode } = await driveUninstall([], fx.home, false);
     expect(exitCode).toBe(2);
     expect(clean(chunks.join(""))).toContain("interactive terminal");
-    expect(clean(chunks.join(""))).toContain("~/.config/workit");
+    // The note names the resolved config dir (APPDATA-style on Windows), never a literal ~/.config.
+    expect(clean(chunks.join(""))).toContain(workitConfigDir({ HOME: fx.home }));
     for (const [file, before] of snapshots) {
       expect(readFileSync(file, "utf8")).toBe(before);
     }
