@@ -274,11 +274,8 @@ const codexDoctor = (
   const cwd = path.join(home, "cwd");
   mkdirSync(cwd, { recursive: true });
   if (installed) {
-    write(
-      path.join(home, ".codex/config.toml"),
-      '[plugins."workit@workflow-toolkit"]\nenabled = true\n',
-    );
-    const root = path.join(home, ".codex/plugins/cache/workflow-toolkit/workit/8.40.8");
+    write(path.join(home, ".codex/config.toml"), '[plugins."workit@workit"]\nenabled = true\n');
+    const root = path.join(home, ".codex/plugins/cache/workit/workit/8.40.8");
     mkdirSync(path.join(root, ".codex-plugin"), { recursive: true });
     utimesSync(root, INSTALLED / 1000, INSTALLED / 1000);
   }

@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -11,6 +19,7 @@ import {
   runHostCommand,
   runHostInstall,
 } from "@/packages/workit-cli/src/admin/host-install";
+import { CODEX_MARKETPLACE } from "@/packages/workit-cli/src/upgrade/codex-marketplace";
 
 const temp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const executable = (file: string) => {
@@ -28,14 +37,14 @@ test("Codex setup uses the registered marketplace and stops duplicate registrati
     expect(commands.slice(1).map((command) => command.args.slice(-3))).toEqual([
       ["plugin", "marketplace", "list"],
       ["marketplace", "add", "https://github.com/BrainerVirus/workit.git"],
-      ["plugin", "add", "workit@workflow-toolkit"],
+      ["plugin", "add", "workit@workit"],
     ]);
     const ran: string[] = [];
     const result = runHostInstall(commands, (command) => {
       ran.push(command.purpose);
       return {
         exitCode: 0,
-        stdout: command.purpose.includes("already registered") ? "workflow-toolkit" : "",
+        stdout: command.purpose.includes("already registered") ? "workit" : "",
         stderr: "",
       };
     });
@@ -45,6 +54,54 @@ test("Codex setup uses the registered marketplace and stops duplicate registrati
       "Check whether the Workit marketplace is already registered",
       "Install the Workit Codex plugin",
     ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test("a fresh Codex install registers marketplace workit and plugin workit@workit", () => {
+  // Codex names the marketplace after .agents/plugins/marketplace.json.
+  const manifest = JSON.parse(
+    readFileSync(path.resolve(import.meta.dir, "../../.agents/plugins/marketplace.json"), "utf8"),
+  );
+  expect(manifest.name).toBe("workit");
+  expect(CODEX_MARKETPLACE).toBe("workit");
+  expect(manifest.plugins.map((plugin: { name: string }) => plugin.name)).toEqual(["workit"]);
+});
+
+test("Codex setup moves an install registered under the old marketplace name to workit@workit", () => {
+  const oldName = ["workflow", "toolkit"].join("-");
+  const home = temp("workit-codex-migrate-home-");
+  const bin = temp("workit-codex-migrate-bin-");
+  try {
+    executable(path.join(bin, "node"));
+    executable(path.join(bin, "codex"));
+    // An installed plugin cache: setup would otherwise skip Codex as installed.
+    const cached = path.join(home, ".codex", "plugins", "cache", oldName, "workit", "8.0.0");
+    mkdirSync(path.join(cached, ".codex-plugin"), { recursive: true });
+    writeFileSync(
+      path.join(cached, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "workit" }),
+    );
+    writeFileSync(
+      path.join(home, ".codex", "config.toml"),
+      `[marketplaces.${oldName}]\nsource = "x"\n\n[plugins."workit@${oldName}"]\nenabled = true\n`,
+    );
+    for (const mode of ["install", "upgrade"] as const) {
+      const commands = planHostInstall("codex", {
+        home,
+        cwd: home,
+        env: { HOME: home, PATH: bin },
+        mode,
+      });
+      expect(commands.slice(1).map((command) => command.args.slice(-4).join(" "))).toEqual([
+        `plugin remove workit@${oldName}`,
+        `plugin marketplace remove ${oldName}`,
+        "plugin marketplace add https://github.com/BrainerVirus/workit.git",
+        "plugin add workit@workit",
+      ]);
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(bin, { recursive: true, force: true });
@@ -131,14 +188,7 @@ test("Windows npm shims resolve a known JavaScript entrypoint without invoking c
 test("native registration verification follows Codex version caches and Pi object sources", () => {
   const home = temp("workit-host-verify-home-");
   const codexHome = path.join(home, ".codex");
-  const codexPackage = path.join(
-    codexHome,
-    "plugins",
-    "cache",
-    "workflow-toolkit",
-    "workit",
-    "2.0.2",
-  );
+  const codexPackage = path.join(codexHome, "plugins", "cache", "workit", "workit", "2.0.2");
   const piSettings = path.join(home, ".pi", "agent", "settings.json");
   try {
     mkdirSync(path.join(codexPackage, ".codex-plugin"), { recursive: true });

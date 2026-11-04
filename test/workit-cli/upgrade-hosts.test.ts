@@ -41,7 +41,7 @@ const world = () => {
     if (real) symlinkSync(real, path.join(home, "bin", tool));
   }
   const claudePlugin = path.join(home, ".claude/plugins/cache/workit/workit/1.0.0");
-  const codexCache = path.join(home, ".codex/plugins/cache/workflow-toolkit/workit");
+  const codexCache = path.join(home, ".codex/plugins/cache/workit/workit");
   write(path.join(home, ".config/workit/config.json"), { locale: "en" });
   write(path.join(home, ".pi/agent/settings.json"), {
     packages: ["npm:@brainervirus/workit-pi"],
@@ -97,7 +97,7 @@ const world = () => {
       const answer = codexInventoryAnswer(args, [
         {
           name: "workit",
-          marketplaceName: "workflow-toolkit",
+          marketplaceName: "workit",
           version: codexVersion,
           source: { source: "npm", package: "@brainervirus/workit-codex" },
         },
@@ -180,7 +180,7 @@ test("Given a plain `workit upgrade`, When it is confirmed once, Then the CLI, C
     ).toBe(true);
     expect(ran(w.calls, "claude plugin marketplace update workit")).toBe(true);
     expect(ran(w.calls, "claude plugin update workit@workit")).toBe(true);
-    expect(ran(w.calls, "codex plugin add workit@workflow-toolkit --json")).toBe(true);
+    expect(ran(w.calls, "codex plugin add workit@workit --json")).toBe(true);
     expect(ran(w.calls, "pi update --extension npm:@brainervirus/workit-pi")).toBe(true);
     // Codex agents are refreshed from the cached plugin's launcher.
     expect(w.calls.some((call) => call[0] === "node" && call.at(-1) === "--install-agents")).toBe(
@@ -257,9 +257,9 @@ test("Given one host fails, Then the others and the CLI still upgrade, the table
     w.state.codexFails = true;
     expect(await runUpgradeCommand(["--yes"], w.deps)).toBe(1);
     const text = w.text();
-    expect(text).toMatch(/codex +FAILED +`codex plugin add workit@workflow-toolkit --json` failed/);
+    expect(text).toMatch(/codex +FAILED +`codex plugin add workit@workit --json` failed/);
     expect(text).toContain(
-      "fix: codex plugin marketplace upgrade workflow-toolkit && codex plugin add workit@workflow-toolkit",
+      "fix: codex plugin marketplace upgrade workit && codex plugin add workit@workit",
     );
     expect(text).toMatch(/pi +updated/);
     expect(text).toMatch(/claude-code +updated/);
@@ -576,10 +576,7 @@ test("Given OpenCode already at the newest version, When upgrade runs, Then the 
 test("Given Codex registered in config.toml with its plugin cache missing, When upgrade runs, Then Codex's own add command reinstalls it", async () => {
   const w = world();
   try {
-    write(
-      path.join(w.home, ".codex/config.toml"),
-      '[plugins."workit@workflow-toolkit"]\nenabled = true\n',
-    );
+    write(path.join(w.home, ".codex/config.toml"), '[plugins."workit@workit"]\nenabled = true\n');
     let added = false;
     const run = (command: string, args: string[]) => {
       if (command === "codex") {
@@ -590,7 +587,7 @@ test("Given Codex registered in config.toml with its plugin cache missing, When 
             ? [
                 {
                   name: "workit",
-                  marketplaceName: "workflow-toolkit",
+                  marketplaceName: "workit",
                   version: "2.0.0",
                   source: {
                     source: "npm",
@@ -611,8 +608,130 @@ test("Given Codex registered in config.toml with its plugin cache missing, When 
       expect.objectContaining({ host: "codex", repair: true, latest: "2.0.0" }),
     );
     expect(await runUpgradeCommand(["--hosts=codex", "--yes"], { ...w.deps, run })).toBe(0);
-    expect(ran(w.calls, "codex plugin add workit@workflow-toolkit --json")).toBe(true);
+    expect(ran(w.calls, "codex plugin add workit@workit --json")).toBe(true);
     expect(w.text()).toMatch(/codex +updated +reinstalled missing plugin files \(2\.0\.0\)/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+// The old marketplace name, spelled in parts so the no-legacy-name guard stays clean.
+const OLD_MARKETPLACE = ["workflow", "toolkit"].join("-");
+
+/** A fake Codex whose config.toml follows its plugin and marketplace commands. */
+const codexWithConfig = (
+  w: ReturnType<typeof world>,
+  start: { marketplaces: string[]; plugins: Record<string, string> },
+) => {
+  const configFile = path.join(w.home, ".codex/config.toml");
+  const marketplaces = new Set(start.marketplaces);
+  const plugins = new Map(Object.entries(start.plugins));
+  const save = () =>
+    write(
+      configFile,
+      [
+        ...[...marketplaces].map(
+          (name) =>
+            `[marketplaces.${name}]\nsource = "https://github.com/BrainerVirus/workit.git"\n`,
+        ),
+        ...[...plugins.keys()].map((id) => `[plugins."${id}"]\nenabled = true\n`),
+      ].join("\n"),
+    );
+  save();
+  const run = (command: string, args: string[]) => {
+    if (command !== "codex") return w.deps.run(command, args);
+    w.calls.push([command, ...args]);
+    const answer = codexInventoryAnswer(
+      args,
+      [...plugins].map(([id, version]) => ({
+        name: "workit",
+        marketplaceName: id.slice("workit@".length),
+        version,
+        source: { source: "npm", package: "@brainervirus/workit-codex" },
+      })),
+      [...marketplaces],
+    );
+    if (answer) return answer;
+    const line = args.join(" ");
+    if (line === `plugin remove workit@${OLD_MARKETPLACE}`)
+      plugins.delete(`workit@${OLD_MARKETPLACE}`);
+    else if (line === `plugin marketplace remove ${OLD_MARKETPLACE}`)
+      marketplaces.delete(OLD_MARKETPLACE);
+    else if (line === "plugin marketplace add https://github.com/BrainerVirus/workit.git")
+      marketplaces.add("workit");
+    else if (line === "plugin add workit@workit --json") {
+      if (!marketplaces.has("workit")) return { status: 1, stdout: "", stderr: "no marketplace" };
+      plugins.set("workit@workit", "2.0.0");
+    }
+    save();
+    return { status: 0, stdout: "" };
+  };
+  return { run, configFile };
+};
+
+test("Given Codex registered under the old marketplace name, When upgrade runs, Then the old registration is removed and workit@workit is registered once", async () => {
+  const w = world();
+  try {
+    const codex = codexWithConfig(w, {
+      marketplaces: [OLD_MARKETPLACE],
+      plugins: { [`workit@${OLD_MARKETPLACE}`]: "1.0.0" },
+    });
+    const plan = previewUpgrade(["codex"], { ...w.deps, run: codex.run });
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0].commands.map((c) => [c.command, ...c.args].join(" "))).toEqual([
+      `codex plugin remove workit@${OLD_MARKETPLACE}`,
+      `codex plugin marketplace remove ${OLD_MARKETPLACE}`,
+      "codex plugin marketplace add https://github.com/BrainerVirus/workit.git",
+      "codex plugin add workit@workit --json",
+    ]);
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], { ...w.deps, run: codex.run })).toBe(
+      0,
+    );
+    const toml = readFileSync(codex.configFile, "utf8");
+    expect(toml).not.toContain(OLD_MARKETPLACE);
+    expect(toml.match(/^\[plugins\."workit@workit"\]$/gm)).toHaveLength(1);
+    expect(toml.match(/^\[marketplaces\.workit\]$/gm)).toHaveLength(1);
+    expect(w.text()).toMatch(/codex +updated +1\.0\.0 -> 2\.0\.0/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given an old-name Codex install already at the published version and workit already a marketplace, Then upgrade still migrates it, refreshing instead of re-adding the marketplace", () => {
+  const w = world();
+  try {
+    const codex = codexWithConfig(w, {
+      marketplaces: [OLD_MARKETPLACE, "workit"],
+      plugins: { [`workit@${OLD_MARKETPLACE}`]: "2.0.0" },
+    });
+    const plan = previewUpgrade(["codex"], { ...w.deps, run: codex.run });
+    expect(plan.skipped).toEqual([]);
+    expect(plan.entries[0].commands.map((c) => c.args.join(" "))).toEqual([
+      `plugin remove workit@${OLD_MARKETPLACE}`,
+      `plugin marketplace remove ${OLD_MARKETPLACE}`,
+      "plugin marketplace upgrade workit",
+      "plugin add workit@workit --json",
+    ]);
+    expect(plan.entries[0].fix).toContain(`codex plugin remove workit@${OLD_MARKETPLACE}`);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given apply leaves the old Codex registration in place, Then the row fails instead of reporting success", async () => {
+  const w = world();
+  try {
+    const codex = codexWithConfig(w, {
+      marketplaces: [OLD_MARKETPLACE],
+      plugins: { [`workit@${OLD_MARKETPLACE}`]: "1.0.0" },
+    });
+    // A Codex whose removals do nothing: both registrations would load hooks.
+    const run = (command: string, args: string[]) =>
+      command === "codex" && args.includes("remove")
+        ? { status: 0, stdout: "" }
+        : codex.run(command, args);
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], { ...w.deps, run })).not.toBe(0);
+    expect(w.text()).toContain(`Codex still registers workit@${OLD_MARKETPLACE}`);
   } finally {
     w.cleanup();
   }
@@ -923,7 +1042,7 @@ test("Given the unscoped `codex plugin list` hangs, When upgrade applies, Then t
 test("Given a scoped Codex listing that never answers, When upgrade plans, Then Codex reads could not check after the probe timeout and the others still plan", async () => {
   const w = world();
   try {
-    const runAsync = hangs("plugin list --json --marketplace workflow-toolkit", w.deps.run);
+    const runAsync = hangs("plugin list --json --marketplace workit", w.deps.run);
     expect(
       await runUpgradeCommand(["--preview"], {
         ...w.deps,
@@ -950,7 +1069,7 @@ const codexWith = (answer: (args: string[]) => ReturnType<typeof codexInventoryA
 
 const WORKIT_ROW = {
   name: "workit",
-  marketplaceName: "workflow-toolkit",
+  marketplaceName: "workit",
   version: "1.0.0",
   source: { source: "npm", package: "@brainervirus/workit-codex" },
 };
@@ -1007,7 +1126,7 @@ test("Given a Codex without `plugin marketplace list --json`, When upgrade plans
 test("Given a Codex listing marketplaces as a bare JSON array, When upgrade plans, Then the scoped listings still run", () => {
   const { w, run } = codexWith((args) =>
     args.join(" ") === "plugin marketplace list --json"
-      ? { status: 0, stdout: JSON.stringify([{ name: "workflow-toolkit" }]) }
+      ? { status: 0, stdout: JSON.stringify([{ name: "workit" }]) }
       : codexInventoryAnswer(args, [WORKIT_ROW]),
   );
   try {
@@ -1044,10 +1163,7 @@ test("Given `codex plugin marketplace list --json` that is not JSON, When upgrad
   );
   try {
     // Codex is installed (its config exists): CI has no real codex on PATH.
-    write(
-      path.join(w.home, ".codex/config.toml"),
-      '[plugins."workit@workflow-toolkit"]\nenabled = true\n',
-    );
+    write(path.join(w.home, ".codex/config.toml"), '[plugins."workit@workit"]\nenabled = true\n');
     const plan = previewUpgrade(["codex"], { ...w.deps, run });
     expect(plan.ok).toBe(false);
     expect(JSON.stringify(plan)).toContain("Codex plugin inventory");

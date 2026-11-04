@@ -13,7 +13,7 @@ export type CodexRow = {
 export const codexInventoryAnswer = (
   args: string[],
   installed: CodexRow[],
-  marketplaces: string[] = ["workflow-toolkit"],
+  marketplaces: string[] = ["workit"],
 ): { status: number; stdout: string } | undefined => {
   const line = args.join(" ");
   if (line === "plugin marketplace list --json")

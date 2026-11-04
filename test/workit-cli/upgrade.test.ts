@@ -322,7 +322,7 @@ test("Codex current inventory skips updates and other marketplaces remain untouc
     const rows = [
       {
         name: "workit",
-        marketplaceName: "workflow-toolkit",
+        marketplaceName: "workit",
         version: "2.1.0",
         source: {
           source: "npm",
@@ -339,7 +339,7 @@ test("Codex current inventory skips updates and other marketplaces remain untouc
     ];
     const run = (command: string, args: string[]) =>
       (command === "codex"
-        ? codexInventoryAnswer(args, rows, ["workflow-toolkit", "unrelated"])
+        ? codexInventoryAnswer(args, rows, ["workit", "unrelated"])
         : undefined) ?? f.deps.run(command, args);
     const plan = previewUpgrade(["codex"], { ...f.deps, run });
     expect(plan.entries).toEqual([]);
