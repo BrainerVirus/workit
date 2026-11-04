@@ -512,8 +512,19 @@ const settleBudget = () => {
 };
 settleBudget();
 
+// A SubagentStop loads the runtime only when its last message may be a
+// provider usage limit (W2.19: hooks/handle.ts marks the provider exhausted).
+const LIMIT_HINT = /\blimit\b|\bquota\b|\b429\b|rate_limit/iu;
+const quietStop =
+  parsed?.hook_event_name === "SubagentStop" &&
+  !(
+    typeof parsed.last_assistant_message === "string" &&
+    parsed.last_assistant_message.length <= 1000 &&
+    LIMIT_HINT.test(parsed.last_assistant_message)
+  );
+
 process.env.WORKIT_PLUGIN_ROOT = root;
-if (parsed?.hook_event_name === "SubagentStop" || fastAllow) {
+if (quietStop || fastAllow) {
   process.stdout.write("{}\n");
 } else if (fromSource) {
   const run = spawnSync(process.env.WORKIT_BUN ?? "bun", [source], {

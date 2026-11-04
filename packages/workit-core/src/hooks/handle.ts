@@ -32,6 +32,8 @@ import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
 import type { BudgetHooks } from "./budget-signal";
 import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
+import { parseUsageLimit, recordUsageLimit } from "./model-limit";
+import { firstSighting } from "../core/model-fallback";
 import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
@@ -65,6 +67,24 @@ const implementerAgent = (input: HookInput, descriptor: HostDescriptor): boolean
   Boolean(input.session.agentId) &&
   input.session.agentType !== null &&
   workitRole(descriptor, input.session.agentType) === "implementer";
+
+/**
+ * W2.19: a subagent that stops on a provider usage limit marks that provider
+ * exhausted at once, so the next spawn of its role already runs on the next
+ * model in the role's list (model-fallback). The stop is never blocked.
+ */
+const LIMIT_TEXT_MAX = 1000;
+
+const usageLimitOnStop = (input: HookInput, agentId: string | null, text: string): void => {
+  try {
+    // A provider error is one short line; a worker's report that discusses limits is not one.
+    if (text.length > LIMIT_TEXT_MAX || !parseUsageLimit(text)) return;
+    if (!firstSighting(`subagent-stop:${input.session.id}:${agentId ?? ""}`)) return;
+    recordUsageLimit(text, { cwd: input.cwd, host: input.host, model: input.model ?? null });
+  } catch {
+    // The transcript scan on the next spawn notices the limit instead.
+  }
+};
 
 /** `<lead session>:<agent id>`, safe for the ledger's session grammar. */
 const subagentSession = (session: string | null, agentId: string): string =>
@@ -347,6 +367,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "subagent.stop":
       trackJudge(input, event.agentId, false);
       if (event.agentId) deps.budget?.stop(input, event.agentId);
+      if (event.lastMessage) usageLimitOnStop(input, event.agentId, event.lastMessage);
       return NONE;
     case "prompt.submit":
       return NONE;

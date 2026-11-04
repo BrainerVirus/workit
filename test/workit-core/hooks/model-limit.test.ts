@@ -12,6 +12,7 @@ import {
   observeSubagentLimit,
   type SpawnNotes,
 } from "@/packages/workit-opencode/src/v2/spawn-model";
+import { PLUGIN_DIR, runHook } from "@/test/workit-claude-code/plugin-helpers";
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
 
@@ -178,3 +179,42 @@ test("G a completed OpenCode subagent whose short report mentions a usage limit 
     );
   expect(exhaustedProviders()).toEqual([]);
 });
+
+const subagentStop = (last: string, agentId = "a1") => ({
+  hook_event_name: "SubagentStop",
+  session_id: "lead-1",
+  transcript_path: "/tmp/x.jsonl",
+  cwd,
+  permission_mode: "default",
+  stop_hook_active: false,
+  agent_id: agentId,
+  agent_type: "workit:implementer",
+  agent_transcript_path: "/tmp/a.jsonl",
+  last_assistant_message: last,
+});
+
+test("G a Claude Code worker that stops on a usage limit, W SubagentStop runs, T Anthropic is marked exhausted at once and the stop is not blocked (W2.19)", () => {
+  const out = dispatchHook(claudeCodeAdapter, subagentStop(LIMIT));
+  expect(out.json).toEqual({});
+  expect(exhaustedProviders().map((one) => one.provider)).toEqual(["anthropic"]);
+});
+
+test("G a worker whose final report only discusses limits, W SubagentStop runs, T nothing is marked exhausted (W2.19)", () => {
+  dispatchHook(claudeCodeAdapter, subagentStop("Done: Workit now parses the usage limit text."));
+  dispatchHook(claudeCodeAdapter, subagentStop(`Report.\n${"x".repeat(1200)}\n${LIMIT}`, "a2"));
+  expect(exhaustedProviders()).toEqual([]);
+});
+
+test("G the Claude Code launcher, W a SubagentStop carries a usage limit, T it loads the runtime and marks the provider; a plain stop stays on the fast path (W2.19)", () => {
+  const env = {
+    WORKIT_STATE_DIR: process.env.WORKIT_STATE_DIR,
+    CLAUDE_CONFIG_DIR: claudeDir,
+  };
+  const plain = runHook(PLUGIN_DIR, subagentStop("All done.", "a3"), env);
+  expect(plain.status, plain.stderr).toBe(0);
+  expect(exhaustedProviders()).toEqual([]);
+  const limited = runHook(PLUGIN_DIR, subagentStop(LIMIT, "a4"), env);
+  expect(limited.status, limited.stderr).toBe(0);
+  expect(limited.json).toEqual({});
+  expect(exhaustedProviders().map((one) => one.provider)).toEqual(["anthropic"]);
+}, 60_000);
