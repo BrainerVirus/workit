@@ -22,6 +22,7 @@ import { runUpdateCheck, runSetUpdates } from "./upgrade/check";
 import { planCli, previewUpgrade, probedRunner } from "./upgrade/plan";
 import { runProbes } from "./upgrade/probes";
 import { askConfirm, summary, table } from "./upgrade/report";
+import { refreshYtrackSkill } from "./upgrade/ytrack-skill";
 import {
   HOSTS,
   LAUNCH_HOSTS,
@@ -259,6 +260,13 @@ async function upgradeOnce(
   }
   // The completion script for $SHELL follows the CLI's verbs (user files, never an rc file).
   const completion = installCompletion({ env, version: pkg.version });
+  // The ytrack skill follows the ytrack on PATH, for every installed host this run covered.
+  const skill = refreshYtrackSkill({
+    hosts: result.hosts.map((row) => row.host),
+    home,
+    env,
+  });
+  if (skill) result.hosts.push(skill);
   deps.onResult?.(result.hosts);
   handed.rows = result.hosts;
   const failed = !result.ok || !permissionsOk;

@@ -91,6 +91,11 @@ const ALLOW: Allow[] = [
     why: "the variables an explicit home clears from the child env",
   },
   {
+    file: "packages/workit-cli/src/upgrade/skill-roots.ts",
+    match: "XDG_CONFIG_HOME",
+    why: "OpenCode's skills dir, a host location, not Workit's",
+  },
+  {
     file: "packages/workit-cli/src/upgrade/shared.ts",
     match: "XDG_CONFIG_HOME",
     why: "OpenCode's config and the host child env; Workit's own config comes from configDir",

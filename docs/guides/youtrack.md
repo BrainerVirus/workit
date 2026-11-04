@@ -40,6 +40,41 @@ is logged out of a host (the fix is `ytrack auth login --host <host>`), and
 when a legacy `youtrack.token` still exists (the fix is to delete it; doctor
 only checks that the file exists).
 
+## The ytrack skill for agents
+
+A ytrack newer than 0.2.1 carries an agent skill that teaches coding agents its
+commands, stamped with the ytrack version that installed it. When YouTrack is
+in use (`youtrack.json` exists, or a workspace tracks issues in YouTrack),
+`workit setup` and `workit upgrade` install that skill for every host that has
+Workit, by running `ytrack skill install --dir <skills dir> --json` into the
+host's own skills directory:
+
+| Host | Skills directory |
+| --- | --- |
+| Claude Code | `~/.claude/skills` (`$CLAUDE_CONFIG_DIR/skills`) |
+| Codex | `~/.codex/skills` (`$CODEX_HOME/skills`) |
+| Cursor | `~/.cursor/skills` |
+| OpenCode | `~/.config/opencode/skills` (`$XDG_CONFIG_HOME/opencode/skills`) |
+| Pi | `~/.pi/agent/skills` (`$PI_CODING_AGENT_DIR/skills`) |
+
+A skill that is already at the installed ytrack's version is left alone. After
+`ytrack upgrade`, run `workit upgrade` to bring every host's skill to the new
+version. Agents use `workit youtrack …` for issue work, and the `ytrack` skill
+for anything those verbs do not cover.
+
+- An older ytrack without `ytrack skill` installs nothing: the setup or upgrade
+  row and `workit doctor` say to run `ytrack upgrade`.
+- A `ytrack` directory there that holds some other skill is left untouched; the
+  row names the `ytrack skill install --dir <dir>` command to run once you have
+  moved it.
+- Workit records the skill directories it created, and `workit uninstall`
+  removes exactly those. A ytrack skill you installed yourself stays.
+
+`workit doctor` shows a `ytrack_skill` row when YouTrack is in use and ytrack
+is on `PATH`. It passes when every host's `SKILL.md` has the version
+`ytrack version` prints, and warns when one is older or missing, with
+`workit upgrade --hosts=<host>` as the fix.
+
 ## Reading an issue
 
 `workit youtrack show <ISSUE>` prints the issue's summary, state, URL, custom

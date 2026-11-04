@@ -277,33 +277,10 @@ test(
       // The packed CLI ships its bundled dist only; the wizard's scaffold logic is
       // its source of truth, so run it against the PACKED core from this isolated
       // install (the repository node_modules are not on the resolution path).
-      cpSync(
-        path.join(REPO_ROOT, "packages/workit-cli/src/logic.ts"),
-        path.join(install, "logic.ts"),
-      );
-      // logic.ts re-exports the CLI-only setup module (src/admin since 3.0).
-      cpSync(path.join(REPO_ROOT, "packages/workit-cli/src/admin"), path.join(install, "admin"), {
-        recursive: true,
-      });
-      // admin/doctor.ts reads the updates setting through ../update-settings.
-      cpSync(
-        path.join(REPO_ROOT, "packages/workit-cli/src/update-settings.ts"),
-        path.join(install, "update-settings.ts"),
-      );
-      // admin/host-install.ts reads the Codex marketplace names from ../upgrade.
-      mkdirSync(path.join(install, "upgrade"), { recursive: true });
-      cpSync(
-        path.join(REPO_ROOT, "packages/workit-cli/src/upgrade/codex-marketplace.ts"),
-        path.join(install, "upgrade", "codex-marketplace.ts"),
-      );
-      // admin/doctor.ts lists CLI installs through ../install (#648).
-      cpSync(
-        path.join(REPO_ROOT, "packages/workit-cli/src/install"),
-        path.join(install, "install"),
-        {
-          recursive: true,
-        },
-      );
+      // logic.ts re-exports the CLI-only setup module, whose import graph (doctor,
+      // uninstall, upgrade helpers) grows with every row: copy the whole CLI source
+      // tree rather than a hand-kept file list.
+      cpSync(path.join(REPO_ROOT, "packages/workit-cli/src"), install, { recursive: true });
       writeFileSync(path.join(install, "runner.ts"), SCAFFOLD_RUNNER, "utf8");
 
       const cfg = path.join(home, ".config", "workit");

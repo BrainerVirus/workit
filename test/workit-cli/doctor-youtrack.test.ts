@@ -130,15 +130,22 @@ describe.skipIf(process.platform === "win32")("ytrack on PATH (POSIX stub)", () 
   test("Given ytrack logged in to the configured host, When doctor runs, Then the YouTrack row is ok", () => {
     configure();
     loggedIn("acme.youtrack.cloud");
-    const found = row(doctor(true));
-    expect(found).toEqual({
+    const report = doctor(true);
+    expect(row(report)).toEqual({
       id: "youtrack",
       status: "pass",
       detail: "ytrack 0.2.0 logged in to acme.youtrack.cloud as jdoe",
     });
+    // The ytrack_skill row probes `ytrack skill print`: this 0.2.0 prints no skill.
+    expect(report.checks.find((check) => check.id === "ytrack_skill")).toMatchObject({
+      status: "warn",
+      fix: "ytrack upgrade",
+    });
     expect(calls()).toEqual([
       "version",
       "auth status --json host,active,login,state,tokenSource,error",
+      "version",
+      "skill print",
     ]);
   });
 

@@ -11,6 +11,7 @@ import { type PathWorkit } from "../install/verify";
 import { type Progress } from "../progress";
 import { workitConfigDir } from "../update-settings";
 import { CODEX_MARKETPLACE } from "./codex-marketplace";
+import { configHome } from "./skill-roots";
 
 /** Hosts `workit launch` can start. */
 export const LAUNCH_HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -40,7 +41,8 @@ export type CommandResult = {
 };
 /** Where a command runs (OpenCode's plugin commands act on the cwd's location). */
 export type RunOptions = { cwd?: string };
-export type UpgradeHost = HostId | "cli" | "permissions";
+/** `ytrack`: the ytrack agent skill in each host's skills directory. */
+export type UpgradeHost = HostId | "cli" | "permissions" | "ytrack";
 
 /** The last few lines of a command's stderr, for a failed row's reason. */
 export const stderrTail = (text: string | undefined, lines = 5): string =>
@@ -225,7 +227,7 @@ export const upgradePaths = (deps: UpgradeDeps) => {
     ...deps.env,
     HOME: home,
   };
-  const xdg = env.XDG_CONFIG_HOME || path.join(home, ".config");
+  const xdg = configHome(home, env);
   const codexHome = env.CODEX_HOME ?? path.join(home, ".codex");
   return {
     home,
