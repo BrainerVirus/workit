@@ -3,13 +3,16 @@
 // status` shows the order, and once the parent is squash-merged `workit stack
 // sync` rebases the child onto the trunk without the parent's commits. Real
 // git repositories with a bare origin, the real CLI entry, no forge.
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { readStack } from "@/packages/workit-core/src/stack";
+
+// Each test drives several real git worktrees; Windows runners take ~20 s.
+setDefaultTimeout(60_000);
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
 let configHome: ConfigHome;
@@ -107,6 +110,9 @@ const commitIn = (dir: string, file: string, text: string) => {
   git(dir, "commit", "-qm", `feat: ${file}`);
 };
 
+// A Windows checkout writes these with CRLF (core.autocrlf).
+const text = (file: string): string => readFileSync(file, "utf8").replaceAll("\r\n", "\n");
+
 test("given b depends on a, when the worktrees are made, then b branches from a's branch, the stack is recorded and fanout status shows it", async () => {
   const { root, cwd } = repo();
   await plan(cwd, root, [slice("a", ["a.ts"]), slice("b", ["b.ts"], { dependsOn: ["a"] })]);
@@ -189,6 +195,6 @@ test("given a squash-merged to the trunk, when workit stack sync runs, then b is
   expect(git(cwd, "log", "-1", "--format=%s", "feature/b")).toBe("feat: b.ts");
   expect(git(cwd, "rev-parse", "feature/b")).not.toBe(bOwn);
   // The worktree holding b moved with it and reads a's squashed content.
-  expect(readFileSync(path.join(b.path, "a.ts"), "utf8")).toBe("export const a = 2;\n");
-  expect(readFileSync(path.join(b.path, "b.ts"), "utf8")).toBe("export const b = 1;\n");
+  expect(text(path.join(b.path, "a.ts"))).toBe("export const a = 2;\n");
+  expect(text(path.join(b.path, "b.ts"))).toBe("export const b = 1;\n");
 });
