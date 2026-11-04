@@ -44,9 +44,7 @@ export const codexPluginRegistered = (configFile: string, marketplace: string): 
 };
 
 /** Whether config.toml still registers Workit under the old marketplace name. */
-export const codexLegacyRegistration = (
-  configFile: string,
-): { marketplace: boolean; plugin: boolean } => {
+const codexLegacyRegistration = (configFile: string): { marketplace: boolean; plugin: boolean } => {
   const headers = tableHeaders(configFile);
   return {
     marketplace: hasMarketplace(headers, CODEX_LEGACY_MARKETPLACE),
@@ -68,7 +66,9 @@ export const codexMigrationSteps = (
   const found = codexLegacyRegistration(configFile);
   const legacy = {
     plugin: found.plugin || options.installed === true,
-    marketplace: found.marketplace || options.installed === true,
+    // Only config.toml knows whether the old marketplace is configured: removing
+    // one Codex does not have exits 1 and would fail the whole migration.
+    marketplace: found.marketplace,
   };
   if (!legacy.marketplace && !legacy.plugin) return null;
   const steps: CodexStep[] = [];
