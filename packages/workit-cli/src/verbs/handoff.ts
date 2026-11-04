@@ -10,7 +10,7 @@
 //
 // The printed brief stays within MAX_BRIEF_BYTES (#426): a longer one is cut
 // in the middle (its note and next step always print) and the whole brief is
-// written under the store's handoff/ dir, whose path the brief names.
+// written under the store's handoffs/ dir (`workit dir handoffs`), whose path the brief names.
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
