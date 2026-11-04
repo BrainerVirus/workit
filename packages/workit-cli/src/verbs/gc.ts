@@ -21,6 +21,7 @@ const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 const sweepLines = (data: WorktreeSweep): string[] => {
   const verb = data.apply ? "removed" : "would remove";
   const done = new Set(data.removed);
+  const deleted = new Set(data.deletedBranches);
   return [
     `workit gc --worktrees${data.apply ? "" : " (dry run; --apply removes)"}`,
     ...(data.removable.length || data.goneBranches.length ? [] : ["nothing to remove"]),
@@ -30,7 +31,7 @@ const sweepLines = (data: WorktreeSweep): string[] => {
     ),
     ...data.goneBranches.map(
       (entry) =>
-        `${data.apply && !data.deletedBranches.includes(entry.name) ? "not deleted" : data.apply ? "deleted" : "would delete"} branch ${entry.name}: remote gone, ${entry.reason}`,
+        `${data.apply && !deleted.has(entry.name) ? "not deleted" : data.apply ? "deleted" : "would delete"} branch ${entry.name}: remote gone, ${entry.reason}`,
     ),
     ...data.removedDirs.map((dir) => `removed empty ${dir}`),
     ...data.kept.map(
