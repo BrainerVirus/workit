@@ -103,7 +103,7 @@ export const writeLaunchers = (context: {
   const content =
     platform === "win32"
       ? launcherCmd({ root: paths.root, installNode: context.installNode })
-      : launcherScript({ root: paths.root, installNode: context.installNode, platform });
+      : launcherScript({ root: paths.root, installNode: context.installNode });
   writeAtomic(paths.launcher, content, 0o755);
   if (paths.linked === paths.launcher) return { ...paths, foreign: null };
   let existing: ReturnType<typeof lstatSync> | null = null;

@@ -264,6 +264,8 @@ const STUB_CORE_FILES = [
   "remotes.ts",
   // doctor's hook_node row resolves the hook Node (also copied into the launchers).
   "node-resolve.mjs",
+  // the one location resolver (state, config and data dirs) behind all of them.
+  "workit-paths.mjs",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
 const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
@@ -519,7 +521,13 @@ rsync -a --delete "$WORKIT_DEV/packages/workit-cursor/" "$HOME/.cursor/plugins/l
   mkdirSync(path.join(cursorPkg, "mcp"), { recursive: true });
   mkdirSync(path.join(cursorPkg, "hooks"), { recursive: true });
   // The committed hook manifest and launcher, as the real package ships them.
-  for (const file of ["hooks-cursor.json", "launch.mjs", "launch-runtime.mjs", "node-resolve.mjs"])
+  for (const file of [
+    "hooks-cursor.json",
+    "launch.mjs",
+    "launch-runtime.mjs",
+    "node-resolve.mjs",
+    "workit-paths.mjs",
+  ])
     cpSync(
       path.join(repoRoot, "packages/workit-cursor/hooks", file),
       path.join(cursorPkg, "hooks", file),

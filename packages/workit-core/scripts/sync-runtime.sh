@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$SCRIPT_DIR/lib/config-dir.sh"
 
-SHARE="${HOME}/.local/share/workit"
+SHARE="$(workit_data_dir)"
 PLUGIN_DIR="${HOME}/.cursor/plugins/local/workit"
 DEV_DEFAULT="${HOME}/Documents/projects/personal/workit"
 DEV="${WORKIT_DEV:-$DEV_DEFAULT}"

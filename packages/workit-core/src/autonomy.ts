@@ -35,6 +35,7 @@ import { copyFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { configFilePath, resolveConfigDir } from "./core/config";
+import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -53,8 +54,9 @@ import {
 } from "./core/workspaces";
 
 /**
- * Grants are read only from the user's real config directory,
- * `<account home>/.config/workit` (D15; see grantsHome). The WORKIT_CONFIG(_DIR) and
+ * Grants are read only from the user's real config directory, the default
+ * config dir under the account home (`~/.config/workit`, `%APPDATA%\\workit` on
+ * Windows; D15, see grantsHome). The WORKIT_CONFIG(_DIR) and
  * XDG_CONFIG_HOME overrides that redirect the rest of the config never
  * redirect grants: an agent could point them at a file it wrote. While an
  * override points elsewhere, grants resolve to the D4 defaults.
@@ -74,7 +76,8 @@ const accountHome = (): string => {
  */
 export const grantsHome = { resolve: accountHome };
 
-export const grantsDir = (): string => path.join(grantsHome.resolve(), ".config", "workit");
+/** The default config dir (core/workit-paths.mjs) for the account home, with no override. */
+export const grantsDir = (): string => workitConfigDir({ HOME: grantsHome.resolve() });
 
 /** Why grants fell back to the defaults, or null when the real file is used. */
 export const grantsOverride = (): string | null => {

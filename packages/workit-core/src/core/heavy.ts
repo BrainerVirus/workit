@@ -24,23 +24,16 @@
 //
 // Hook-safe: node built-ins and the shell reader only, no spawn.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { stateDir as workitStateDir } from "./workit-paths.mjs";
 import { commandLines, simpleCommand } from "../hooks/raw-git";
 import type { ShellDialect } from "../hooks/shell-words";
 import { repoHeavyCommands } from "../check-config";
 import { gitTop, wrapAllowed, type RuleRead } from "./heavy-rules";
 
-/** Workit's state dir for `env` (the logger's resolution, over an explicit env). */
-export function stateDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) {
-  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "workit");
-  if (platform === "win32")
-    return path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-}
+/** Workit's state dir for `env` (core/workit-paths.mjs). */
+export const stateDir = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) =>
+  workitStateDir(env, platform);
 
 export const HEAVY_COMMANDS_FILE = "heavy-commands.json";
 export const heavyCommandsFile = (env: NodeJS.ProcessEnv): string =>

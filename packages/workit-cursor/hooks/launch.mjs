@@ -29,8 +29,12 @@ import {
   touchCursorHookHeartbeat,
 } from "./launch-runtime.mjs";
 import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
+import { migrateLegacyDirs } from "./workit-paths.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// One-time move of a pre-XDG state or config dir, before the heartbeat writes the new one.
+if (process.argv[2] !== "--probe") migrateLegacyDirs();
 
 // A Node below this package's own engines minimum cannot run the bundled hook.
 // The launcher then re-runs itself on a Node that can (hooks/node-resolve.mjs:

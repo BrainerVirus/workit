@@ -153,6 +153,7 @@ test("floorMessage reports only a version below the floor", () => {
 // under the oldest Node >= 16 on this machine when one exists.
 const LAUNCHER_FILES = [
   "packages/workit-core/src/core/node-resolve.mjs",
+  "packages/workit-core/src/core/workit-paths.mjs",
   "packages/workit-claude-code/bin/workit-hook.mjs",
   "packages/workit-cursor/hooks/launch.mjs",
   "packages/workit-codex/bin/launch-mcp.mjs",

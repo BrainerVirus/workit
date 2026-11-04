@@ -1,8 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fail, ok, type Result } from "../core";
 import { configDir, isConfigObject } from "./config";
+import { configDir as workitConfigDir, userHome } from "./workit-paths.mjs";
 import {
   context as legacyContext,
   logTime as legacyLogTime,
@@ -15,20 +15,15 @@ import {
 export const ISSUE_RE = /^[A-Z]+-\d+$/;
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// Both override names point at the config dir itself, same precedence as
-// src/core/config.ts and scripts/init/status.sh: WORKIT_CONFIG → WORKIT_CONFIG_DIR → XDG.
-// Default env (no args) routes through configDir().
-export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homedir()) =>
+// The config dir comes from core/workit-paths.mjs; default env (no args) routes
+// through configDir(), an explicit env resolves with `home` as its HOME.
+export const configPath = (env: NodeJS.ProcessEnv = process.env, home = userHome(env)) =>
   path.join(
-    env === process.env
-      ? configDir()
-      : (env.WORKIT_CONFIG ??
-          env.WORKIT_CONFIG_DIR ??
-          path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit")),
+    env === process.env ? configDir() : workitConfigDir({ ...env, HOME: home }),
     "youtrack.json",
   );
 
-export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.homedir()) {
+export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = userHome(env)) {
   const resolvedConfig = configPath(env, home);
   // AR-07/CA-37: a parseable non-object youtrack.json is malformed — exact-path
   // error, never a raw TypeError or a silent tokenFile default.

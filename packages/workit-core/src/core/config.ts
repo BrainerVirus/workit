@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { configDir as workitConfigDir } from "./workit-paths.mjs";
 import type { Logger } from "./logger";
 import type { CommitFlavorPreset } from "./commit-flavors";
 
@@ -65,10 +65,8 @@ export const mergePreset = (
   };
 };
 
-export const resolveConfigDir = (): string =>
-  process.env.WORKIT_CONFIG ??
-  process.env.WORKIT_CONFIG_DIR ??
-  path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
+/** Workit's config dir for this process (core/workit-paths.mjs). */
+export const resolveConfigDir = (): string => workitConfigDir(process.env);
 
 /** The path of a file in the config dir Workit reads, for every hint that names one. */
 export const configFilePath = (name: string): string => path.join(resolveConfigDir(), name);

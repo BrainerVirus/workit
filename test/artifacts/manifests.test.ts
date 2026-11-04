@@ -130,6 +130,7 @@ test(
     expect(files).toContain("hooks/launch.mjs");
     expect(files).toContain("hooks/launch-runtime.mjs");
     expect(files).toContain("hooks/node-resolve.mjs");
+    expect(files).toContain("hooks/workit-paths.mjs");
   },
   { timeout: 60_000 },
 );

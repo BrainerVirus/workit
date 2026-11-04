@@ -6,12 +6,13 @@
 // Side-effect free: importing it runs nothing; no process is spawned here.
 //
 // Order: (1) $WORKIT_NODE; (2) the node `workit setup`/`upgrade` recorded in
-// <state dir>/node.json; (3) a scan of version-manager installs (fnm, nvm,
+// <state dir>/node.json (workit-paths.mjs); (3) a scan of version-manager installs (fnm, nvm,
 // volta, mise, asdf and the Windows layouts), highest version >= the floor.
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stateDir } from "./workit-paths.mjs";
 
 /** The Node major the hooks need; a test holds it equal to every package's engines.node. */
 export const HOOK_NODE_FLOOR = [24, 0, 0];
@@ -39,17 +40,8 @@ export const floorOfRange = (range) => {
   return min ? [Number(min[1]), Number(min[2] || 0), Number(min[3] || 0)] : null;
 };
 
-/** @param {NodeJS.ProcessEnv} env */
-export const hookStateDir = (env) => {
-  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
-  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
-  const home = env.HOME || os.homedir();
-  if (process.platform === "darwin")
-    return path.join(home, "Library", "Application Support", "workit");
-  if (process.platform === "win32")
-    return path.join(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "workit");
-  return path.join(home, ".local", "state", "workit");
-};
+/** Workit's state dir (workit-paths.mjs, the one resolver). @param {NodeJS.ProcessEnv} env */
+export const hookStateDir = (env) => stateDir(env);
 
 /** @param {string} file */
 const isFile = (file) => {

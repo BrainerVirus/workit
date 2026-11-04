@@ -45,7 +45,7 @@ const executable = (file: string, body: string) => {
 const plugin = (opts: { version?: string; bundled?: string } = {}) => {
   const root = scratch();
   mkdirSync(path.join(root, "hooks"), { recursive: true });
-  for (const file of ["launch.mjs", "launch-runtime.mjs", "node-resolve.mjs"])
+  for (const file of ["launch.mjs", "launch-runtime.mjs", "node-resolve.mjs", "workit-paths.mjs"])
     copyFileSync(path.join(HOOKS_SRC, file), path.join(root, "hooks", file));
   if (opts.version)
     writeFileSync(

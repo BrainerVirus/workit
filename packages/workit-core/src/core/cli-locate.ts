@@ -11,32 +11,25 @@
 // loads it on every tool call before the runtime. installRoot/launcherDir are
 // the one copy: packages/workit-cli/src/install/paths.ts (the writer) re-exports them.
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { dataDir, userHome } from "./workit-paths.mjs";
 
 /** The first line after the shebang of every launcher Workit writes. */
 export const LAUNCHER_MARKER = "workit-owned-launcher";
 const CLI_PACKAGE_PATH = ["node_modules", "@brainervirus", "workit-cli"];
 
-const homeOf = (env: NodeJS.ProcessEnv): string => env.HOME || env.USERPROFILE || os.homedir();
-
 /**
- * The Workit-owned install root: `WORKIT_INSTALL_ROOT`, else
- * `$XDG_DATA_HOME/workit` or `~/.local/share/workit`, and
- * `%LOCALAPPDATA%\workit\install` on Windows.
+ * The Workit-owned install root: `WORKIT_INSTALL_ROOT`, else the data dir
+ * (core/workit-paths.mjs: `$XDG_DATA_HOME/workit` or `~/.local/share/workit`),
+ * and `<data dir>\\install` on Windows (`%LOCALAPPDATA%\\workit\\install`).
  */
 export const installRoot = (
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): string => {
   if (env.WORKIT_INSTALL_ROOT) return env.WORKIT_INSTALL_ROOT;
-  if (platform === "win32")
-    return path.join(
-      env.LOCALAPPDATA || path.join(homeOf(env), "AppData", "Local"),
-      "workit",
-      "install",
-    );
-  return path.join(env.XDG_DATA_HOME || path.join(homeOf(env), ".local", "share"), "workit");
+  const data = dataDir(env, platform);
+  return platform === "win32" ? path.join(data, "install") : data;
 };
 
 /** The directory on PATH that holds the `workit` link to the owned launcher. */
@@ -46,7 +39,7 @@ export const launcherDir = (
 ): string => {
   if (env.WORKIT_BIN_DIR) return env.WORKIT_BIN_DIR;
   if (platform === "win32") return path.join(installRoot(env, platform), "bin");
-  return env.XDG_BIN_HOME || path.join(homeOf(env), ".local", "bin");
+  return env.XDG_BIN_HOME || path.join(userHome(env), ".local", "bin");
 };
 
 /** The launcher Workit writes and owns: <install root>/bin/workit (workit.cmd on Windows). */

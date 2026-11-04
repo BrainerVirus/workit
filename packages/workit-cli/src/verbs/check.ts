@@ -38,7 +38,6 @@
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
-import os from "node:os";
 import path from "node:path";
 import {
   CHECKS_FILE,
@@ -89,6 +88,7 @@ import {
 } from "@brainervirus/workit-core/src/core/resources";
 import { startHeartbeat } from "@brainervirus/workit-core/src/core/heavy-lease";
 import { announce, BACKGROUND_HINT } from "./forge-common";
+import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 
 const USAGE =
   'workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
@@ -420,10 +420,7 @@ export async function workspaceResources(
   io: Io,
 ): Promise<{ value: unknown; warning: string | null }> {
   const env = io.env;
-  const dir =
-    env.WORKIT_CONFIG ??
-    env.WORKIT_CONFIG_DIR ??
-    path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || os.homedir(), ".config"), "workit");
+  const dir = configDir(env);
   try {
     const { resolveWorkspaceFrom } = await import("@brainervirus/workit-core/src/core/workspaces");
     const workspace = resolveWorkspaceFrom(
