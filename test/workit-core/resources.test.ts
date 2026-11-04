@@ -263,6 +263,40 @@ test("G a lease whose holder pid is dead, T the next acquirer reclaims it", asyn
   got.lease.release();
 });
 
+test("G a waiter queued behind a live holder, W the holder process is killed, T the waiter takes the slot within a poll, not at its wait's end", async () => {
+  const dir = path.join(temp(), "leases");
+  const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], {
+    stdio: "ignore",
+  });
+  const pid = holder.pid;
+  if (!pid) throw new Error("no holder pid");
+  const exited = new Promise((resolve) => holder.once("exit", resolve));
+  try {
+    writeSlot(dir, leaseRecord({ pid }));
+    let queued = false;
+    const pending = acquireLease({
+      ...base(dir),
+      waitMs: 30_000,
+      pollMs: 100,
+      onStatus: () => void (queued = true),
+    });
+    await sleep(300);
+    expect(queued).toBe(true);
+    holder.kill("SIGKILL");
+    await exited;
+    const killedAt = Date.now();
+    const got = await pending;
+    if (!got.ok) throw new Error(got.reason);
+    expect(Date.now() - killedAt).toBeLessThan(2_000);
+    expect(got.lease.reclaimed).toEqual([
+      expect.objectContaining({ pid, reason: `holder pid ${pid} is gone` }),
+    ]);
+    got.lease.release();
+  } finally {
+    holder.kill("SIGKILL");
+  }
+});
+
 test("G a live pid but another boot id, T the lease is stale; the same boot id holds", async () => {
   const dir = path.join(temp(), "leases");
   writeSlot(dir, leaseRecord({ bootId: "boot-before" }));

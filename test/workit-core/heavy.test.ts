@@ -90,6 +90,7 @@ test("given light commands, dev servers and workit itself, when classified, then
     "docker compose up",
     "bun scripts/gen.ts",
     "workit check --heavy -- npm test",
+    "workit check --name unit -- bun test test/x.test.ts",
     "npx -y @brainervirus/workit-cli check -- npm test",
     "tsc --watch",
     "jest --watch",
@@ -205,6 +206,8 @@ test("given a chain with a heavy part, when planned, then it is split, naming th
 
 test("given an already wrapped command, a light one, or a checkout outside git, when planned, then nothing changes", () => {
   expect(plan("workit check --heavy -- npx jest")).toEqual({ kind: "none" });
+  // The targeted unit lane runs as is: the hook neither wraps nor denies it.
+  expect(plan("workit check --name unit -- bun test test/x.test.ts")).toEqual({ kind: "none" });
   expect(plan("ls -la")).toEqual({ kind: "none" });
   const outside = mkdtempSync(path.join(tmpdir(), "workit-heavy-nogit-"));
   try {

@@ -539,6 +539,8 @@ export type QueueStatus = {
   position: number;
   /** Live waiters ahead of this one. */
   ahead: number;
+  /** Those waiters, in serving order (for a wait estimate). */
+  aheadOf: LeaseHolder[];
   /** The live holders of the slots. */
   holders: LeaseHolder[];
   waitedMs: number;
@@ -764,7 +766,7 @@ function waitersAhead(
   own: string,
   self: LeaseHolder,
   holders: LeaseHolder[],
-): number {
+): LeaseHolder[] {
   const live: Array<{ name: string; holder: LeaseHolder }> = [];
   for (const entry of leaseQueue(options.dir, options.probe)) {
     const name = path.basename(entry.file);
@@ -781,7 +783,12 @@ function waitersAhead(
     holders,
     readGrants(options.dir, options.probe?.now),
   );
-  return order.findIndex((entry) => entry.name === own);
+  return order
+    .slice(
+      0,
+      order.findIndex((entry) => entry.name === own),
+    )
+    .map((entry) => entry.holder);
 }
 
 /** Live holders of the slots, read without reclaiming; one past its auto-reap bound does not count. */
@@ -903,7 +910,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         if (by) return { ok: false, reason: "cancelled", by, waitedMs: waited };
       }
       const before = liveHolders(options);
-      const ahead = waitersAhead(options, queued ? name : "~", self, before);
+      const aheadOf = waitersAhead(options, queued ? name : "~", self, before);
+      const ahead = aheadOf.length;
       const free = options.slots - before.length;
       if (ahead < free) {
         const now = new Date(clock.now()).toISOString();
@@ -968,6 +976,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         options.onStatus?.({
           position: ahead + 1,
           ahead,
+          aheadOf,
           holders,
           waitedMs: waited,
           first: nextStatus === 0,
