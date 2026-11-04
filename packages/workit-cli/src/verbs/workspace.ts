@@ -795,7 +795,8 @@ const describeRaises = (
   style: Style,
 ): string[] => {
   const named = raised.filter((raise) => !raise.entry || overlapping.has(raise.taker));
-  const others = raised.filter((raise) => !named.includes(raise));
+  const namedSet = new Set(named);
+  const others = raised.filter((raise) => !namedSet.has(raise));
   const otherTakers = new Set(others.map((raise) => raise.taker));
   return [
     ...named.map(
@@ -816,14 +817,16 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const current = load(io);
   if (typeof current === "number") return current;
   const entries = entriesOf(current);
+  const byName = new Map(entries.map((entry) => [entry.name, entry]));
   const gone: Entry[] = [];
   for (const name of names) {
-    const found = entries.find((entry) => entry.name === name);
+    const found = byName.get(name);
     if (!found)
       return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
     gone.push(found);
   }
-  const remaining = entries.filter((entry) => !gone.includes(entry));
+  const goneSet = new Set(gone);
+  const remaining = entries.filter((entry) => !goneSet.has(entry));
   const label = names.map((name) => `"${name}"`).join(", ");
   if (remaining.length === 0)
     return emit(
