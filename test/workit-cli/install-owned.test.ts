@@ -379,11 +379,11 @@ const wrapperWorld = (wrapperText?: string) => {
 };
 
 /** `workit --version` the way a new login shell resolves it. */
-const loginWorkit = (home: string, PATH: string) =>
-  spawnSync("workit", ["--version"], {
-    encoding: "utf8",
-    env: { HOME: home, PATH },
-  });
+const loginWorkit = (home: string, PATH: string) => {
+  const first = Bun.which("workit", { PATH });
+  expect(first).not.toBeNull();
+  return spawnSync(first!, ["--version"], { encoding: "utf8", env: { HOME: home, PATH } });
+};
 
 test.skipIf(process.platform === "win32")(
   "Given ~/.local/bin/workit is a sh wrapper that execs the fnm install the upgrade removes, When upgrade runs through npx with yes, Then the wrapper is backed up and becomes the owned launcher link, and PATH's workit prints the new version",
