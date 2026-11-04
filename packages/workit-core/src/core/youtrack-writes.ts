@@ -6,54 +6,34 @@
 // after the server applied it), the read-back settles it instead of a retry
 // posting a duplicate.
 import { sha256 } from "./task-contract";
-import { youTrackRequest, youTrackToken } from "./youtrack";
+import { youTrackBaseUrl } from "./youtrack";
+import { youTrackBackend, type YouTrackBackend } from "./youtrack-backend";
 
 export type MarkerWhere = "comments" | "workItems";
 
-export const youTrackMarker = (request: Record<string, unknown>): string | null => {
-  const creds = youTrackToken();
-  if ("error" in creds) return null;
-  return `<!-- workit-action:${sha256({ ...request, baseUrl: creds.base })} -->`;
-};
+/**
+ * The marker for one request. It names youtrack.json's baseUrl (read without
+ * the token file) so two instances never share a marker; with ytrack and no
+ * baseUrl it names ytrack's default host.
+ */
+export const youTrackMarker = (request: Record<string, unknown>): string =>
+  `<!-- workit-action:${sha256({ ...request, baseUrl: youTrackBaseUrl() ?? "ytrack:default" })} -->`;
 
 export const withMarker = (text: string, marker: string): string =>
   `${text}${text ? "\n\n" : ""}${marker}`;
-
-const PAGE = 500;
 
 /** true/false when the read-back is conclusive, null when it is not. */
 export async function markerPresent(
   issueId: string,
   marker: string,
   where: MarkerWhere,
+  backend: YouTrackBackend = youTrackBackend(),
 ): Promise<boolean | null> {
-  const creds = youTrackToken();
-  if ("error" in creds) return null;
-  const endpoint =
-    where === "comments"
-      ? `/api/issues/${encodeURIComponent(issueId)}/comments?fields=id,text,deleted`
-      : `/api/issues/${encodeURIComponent(issueId)}/timeTracking/workItems?fields=id,text`;
-  const result = await youTrackRequest(`${creds.base}${endpoint}&$top=${PAGE}&$skip=0`, {
-    method: "GET",
-    token: creds.token,
-  });
-  if (result.status !== 0) return null;
-  try {
-    const items = JSON.parse(result.stdout) as unknown;
-    if (!Array.isArray(items)) return null;
-    const found = items.some(
-      (item) =>
-        item &&
-        typeof item === "object" &&
-        (item as { deleted?: unknown }).deleted !== true &&
-        typeof (item as { text?: unknown }).text === "string" &&
-        (item as { text: string }).text.includes(marker),
-    );
-    // A full page may hide an older match: only a hit is conclusive then.
-    return found ? true : items.length < PAGE ? false : null;
-  } catch {
-    return null;
-  }
+  const read = await backend.texts(issueId, where);
+  if (!read) return null;
+  if (read.texts.some((text) => text.includes(marker))) return true;
+  // A partial read may hide an older match: only a hit is conclusive then.
+  return read.complete ? false : null;
 }
 
 type WriteResult = { ok: boolean; error?: string | null; data?: unknown };
@@ -73,8 +53,9 @@ export async function writeOnce(
   marker: string,
   where: MarkerWhere,
   write: () => Promise<WriteResult>,
+  backend: YouTrackBackend = youTrackBackend(),
 ): Promise<OnceOutcome> {
-  const before = await markerPresent(issueId, marker, where);
+  const before = await markerPresent(issueId, marker, where, backend);
   if (before === true) return { status: "already_done" };
   const precheck = before === null ? { precheck: "inconclusive" as const } : {};
   const result = await write();
@@ -82,7 +63,7 @@ export async function writeOnce(
   const outcome = (result.data as { outcome?: unknown } | undefined)?.outcome;
   if (outcome === "not_applied")
     return { status: "failed", error: result.error ?? "not applied", data: result.data };
-  const settled = await markerPresent(issueId, marker, where);
+  const settled = await markerPresent(issueId, marker, where, backend);
   if (settled === true) return { status: "settled", ...precheck };
   return {
     status: settled === false ? "failed" : "unknown",

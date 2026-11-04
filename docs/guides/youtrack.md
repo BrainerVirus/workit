@@ -1,15 +1,24 @@
 # YouTrack issues
 
-Workit reads and writes YouTrack through its own verbs. An agent never reads
-the token file or calls the YouTrack API by hand.
+Workit reads and writes YouTrack through its own verbs, and those verbs run
+[`ytrack`](https://github.com/BrainerVirus/youtrack-cli) when it is installed.
+An agent never reads a token file or calls the YouTrack API by hand.
 
 ```sh
 workit youtrack show ABC-123 --json
 WORKIT_YT_WRITE=1 workit youtrack create --project ABC --summary "Crash on start" --file notes.md
-workit youtrack note ABC-123 --markdown "Fixed in #42" --minutes 30
-workit youtrack time ABC-123 --minutes 45 --text "Code review"
-workit youtrack meeting ABC-123 --minutes 30 --text "Planning"
+WORKIT_YT_WRITE=1 workit youtrack note ABC-123 --markdown "Fixed in #42" --minutes 30
+WORKIT_YT_WRITE=1 workit youtrack time ABC-123 --minutes 45 --text "Code review"
+WORKIT_YT_WRITE=1 workit youtrack meeting ABC-123 --minutes 30 --text "Planning"
 ```
+
+## Set up ytrack (the secure path)
+
+Install ytrack and log in once: `ytrack auth login`. ytrack keeps the token in
+the OS keyring. When ytrack is on `PATH`, Workit uses it for every YouTrack
+call and never reads its own `youtrack.token`. When `youtrack.json` sets
+`baseUrl`, Workit passes it to ytrack as `YTRACK_HOST`, so both talk to the
+same instance. Workit never passes a token to ytrack.
 
 ## Reading an issue
 
@@ -37,28 +46,21 @@ write flag.
 
 `workit youtrack create --project <P> --summary <s>` creates an issue in the
 project with that short name or name, and prints its id and URL. The
-description comes from `--description <text>` or `--file <path>`. A create is
-a write, so it is refused unless `WORKIT_YT_WRITE=1` is set, the same flag the
-other YouTrack writes use.
+description comes from `--description <text>` or `--file <path>`.
 
-## ytrack first, the built-in client as fallback
+Every write (`create`, `note`, `time`, `meeting`) is refused unless
+`WORKIT_YT_WRITE=1` is set. A comment or work item carries a marker and is read
+back before writing, so a retry never posts twice.
 
-`show` and `create` run [`ytrack`](https://github.com/BrainerVirus/youtrack-cli)
-with `--json` when it is on `PATH`. ytrack keeps its token in the OS keyring,
-so Workit never touches it. Order:
+## Which client runs
 
-1. `ytrack` on `PATH`: Workit runs `ytrack issue view|create … --json`. When
-   `youtrack.json` sets `baseUrl`, Workit passes it as `YTRACK_HOST`, so both
-   clients talk to the same instance.
-2. `ytrack` missing, or it exits 4 (not logged in): the built-in client reads
-   `youtrack.json` and its token file. The token goes only into the request
-   header and is redacted from every error.
-3. Neither works: the command exits 5 (`unavailable`) and names
-   `ytrack auth login` as the fix.
-
-Any other ytrack failure (an unknown issue, a bad project) is reported as is.
-Workit does not retry it through the built-in client, so a create is never
-sent twice.
-
-`note`, `time` and `meeting` still use the built-in client. Each write carries
-a marker and is read back first, so a retry never posts twice.
+1. `ytrack` on `PATH`: Workit runs `ytrack issue view|create|comment` and
+   `ytrack work-item add|list` with `--json`. Exit 0 is success. Exit 4 (not
+   logged in) stops with `ytrack auth login` as the fix; Workit does not fall
+   back to the token file. Exit 2 (cancelled) wrote nothing. Exit 1 is a
+   failure; for a write Workit reads the issue back to learn whether it landed.
+2. `ytrack` missing: the built-in client reads `youtrack.json` and its token
+   file. This fallback will be removed in a later release; install ytrack.
+   The token goes only into the request header and is redacted from errors.
+3. Neither works: the command exits 5 (`unavailable`) and says how to set up
+   ytrack.

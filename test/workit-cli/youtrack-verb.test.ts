@@ -63,7 +63,7 @@ const call = async (argv: string[]) => {
   const io: Io = {
     json: true,
     cwd: dir,
-    env: {},
+    env: { WORKIT_YT_WRITE: "1" },
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
@@ -156,7 +156,7 @@ test("Given no ytrack, When workit youtrack show runs with --json, Then it print
     state: "Open",
     fields: [{ name: "State", value: "Open" }],
     comments: [{ id: "1", text: "seen", author: "jdoe" }],
-    source: "api",
+    source: "builtin",
   });
   expect(out.stdout).not.toContain("test-token");
 });
@@ -191,7 +191,11 @@ test("Given WORKIT_YT_WRITE=1 and no ytrack, When workit youtrack create runs, T
   );
   expect(out.code).toBe(0);
   expect(posts).toEqual([{ project: { id: "0-3" }, summary: "New", description: "Body" }]);
-  expect(out.json().data).toEqual({ issueId: "ABC-9", url: `${BASE}/issue/ABC-9`, source: "api" });
+  expect(out.json().data).toEqual({
+    issueId: "ABC-9",
+    url: `${BASE}/issue/ABC-9`,
+    source: "builtin",
+  });
 });
 
 test.skipIf(process.platform === "win32")(
@@ -218,3 +222,15 @@ test.skipIf(process.platform === "win32")(
     });
   },
 );
+
+test("Given no WORKIT_YT_WRITE, When workit youtrack note runs, Then it is refused naming the gate and nothing is read or sent", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: string | URL) => {
+    urls.push(String(input));
+    return new Response("[]", { status: 200 });
+  }) as typeof fetch;
+  const out = await callWith(["note", "ABC-1", "--markdown", "Hi"], {});
+  expect(out.code).toBe(3);
+  expect(out.json().error).toContain("WORKIT_YT_WRITE=1");
+  expect(urls).toHaveLength(0);
+});

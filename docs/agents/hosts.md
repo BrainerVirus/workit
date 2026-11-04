@@ -27,15 +27,25 @@ These rules are guarded by tests; the failure names what to fix.
 
 Agents reach YouTrack only through `workit youtrack …`, never the token file or
 raw API calls. That is a CLI verb, so every host gets it through its shell tool
-with no adapter code. `show` and `create` live in
-`packages/workit-core/src/core/youtrack-issue.ts`: they run `ytrack … --json`
-when it is on `PATH` (aimed at `youtrack.json`'s `baseUrl` via `YTRACK_HOST`),
-and fall back to the built-in client when ytrack is missing or exits 4 (not
-logged in). Other ytrack failures are reported, never retried through the API.
-`create` and every other write need `WORKIT_YT_WRITE=1`. The built-in client
-redacts the token from its errors. `note`, `time` and `meeting` still use the
-built-in client with marker read-back (`core/youtrack-writes.ts`). Tests use a
-stub `ytrack` and a fake `fetch`; never a real instance or token file.
+with no adapter code. All YouTrack I/O goes through one seam,
+`YouTrackBackend` in `packages/workit-core/src/core/youtrack-backend.ts`
+(`showIssue`, `createIssue`, `addComment`, `addWorkItem`, and `texts` for the
+marker read-back):
+
+- `ytrackBackend` runs `ytrack … --json` (`core/youtrack-ytrack.ts`) and is
+  chosen whenever ytrack is on `PATH`; Workit then never reads its token file.
+  It sets `YTRACK_HOST` from `youtrack.json`'s `baseUrl` and passes no token.
+  Exit 4 is `unavailable` with `ytrack auth login`, never a fallback; exit 2
+  and 4 on a write are `not_applied`, exit 1 is `unknown` (read back).
+- `builtinBackend` is the token-file fallback when ytrack is missing. Removing
+  it is deleting that function and its branch in `youTrackBackend()`.
+
+`youtrack-tools.ts` `defaultOperations` (PR backlinks, MCP tools) and
+`fetchYouTrackIssueBody` (context reads) route through ytrack the same way.
+`ytrackStatus()` gives the doctor ytrack's version and auth state. Writes need
+`WORKIT_YT_WRITE=1` (`youTrackWriteGate`). `findYtrack` ignores `PATH` under
+`NODE_ENV=test`, so a test never spawns a developer's real ytrack: tests use a
+stub `ytrack` on a `PATH` in an env they build, and a fake `fetch`.
 
 ## Raw git/forge steering and session ids
 
