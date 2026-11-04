@@ -108,6 +108,18 @@ const openIssue = (api: IssueApi, n: number, alternative: string): ForgeResult<F
   return issue;
 };
 
+/** Post a comment; its URL, or (GitLab) the issue URL with the note's anchor. */
+const postComment = (
+  api: IssueApi,
+  issue: ForgeIssue,
+  body: string,
+): ForgeResult<{ url: string | null }> => {
+  const posted = api.comment(issue.number, body);
+  if (!posted.ok) return posted;
+  const { url, id } = posted.data;
+  return success({ url: url ?? (issue.url && id ? `${issue.url}#note_${id}` : null) });
+};
+
 export type CommentOutcome = {
   number: number;
   url: string | null;
@@ -115,8 +127,8 @@ export type CommentOutcome = {
 };
 
 /**
- * Comment on issue `n`. `requireOpen` refuses a closed issue, naming
- * `alternative` (the queue path: file a new issue instead).
+ * Comment on issue `n`. With `requireOpen` a closed issue is refused and
+ * that text is the unblock (the queue path: file a new issue instead).
  */
 export function commentOnIssue(
   cwd: string,
@@ -135,11 +147,9 @@ export function commentOnIssue(
       ? api.view(input.number)
       : openIssue(api, input.number, input.requireOpen);
   if (!issue.ok) return issue;
-  const posted = api.comment(input.number, input.body);
+  const posted = postComment(api, issue.data, input.body);
   if (!posted.ok) return posted;
-  const url =
-    posted.data.url ??
-    (issue.data.url && posted.data.id ? `${issue.data.url}#note_${posted.data.id}` : null);
+  const { url } = posted.data;
   const recorded = record(cwd, api, input.actor, {
     type: "issue.commented",
     issue: input.number,
@@ -187,11 +197,9 @@ export function closeIssue(
     });
   let commentUrl: string | null = null;
   if (input.comment !== null) {
-    const posted = api.comment(input.number, input.comment);
+    const posted = postComment(api, issue.data, input.comment);
     if (!posted.ok) return posted;
-    commentUrl =
-      posted.data.url ??
-      (issue.data.url && posted.data.id ? `${issue.data.url}#note_${posted.data.id}` : null);
+    commentUrl = posted.data.url;
   }
   const closed = api.close(input.number, input.reason);
   if (!closed.ok) return closed;
