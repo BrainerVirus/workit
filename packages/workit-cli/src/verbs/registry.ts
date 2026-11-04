@@ -563,27 +563,28 @@ export const VERBS: readonly VerbEntry[] = [
     name: "issue",
     group: "delivery",
     summary:
-      "Read, comment on, close or open a GitHub/GitLab issue on the workspace tracker; writes need the pr grant and are recorded",
+      "Read, comment on, close or open a GitHub/GitLab issue on the workspace tracker (or --repo on the same host); writes need the pr grant and are recorded",
     subcommands: [
       {
         name: "view",
-        usage: "workit issue view <n>",
+        usage: "workit issue view <n> [--repo <owner/name>]",
         summary: "Show an issue's state, title, labels and body",
       },
       {
         name: "comment",
-        usage: "workit issue comment <n> --body-file <f|->",
+        usage: "workit issue comment <n> --body-file <f|-> [--repo <owner/name>]",
         summary: "Comment on an issue",
       },
       {
         name: "close",
         usage:
-          "workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->]",
+          "workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->] [--repo <owner/name>]",
         summary: "Close an issue with a reason, posting the comment first; verified after",
       },
       {
         name: "create",
-        usage: "workit issue create --title <t> --body-file <f|-> [--label <l>]…",
+        usage:
+          "workit issue create --title <t> --body-file <f|-> [--label <l>]… [--repo <owner/name>]",
         summary: "Open an issue (a behavioural rule or follow-up goes here, not to host memory)",
       },
     ],

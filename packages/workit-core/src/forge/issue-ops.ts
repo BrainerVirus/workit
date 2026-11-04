@@ -2,9 +2,10 @@
 // through Workit, so an agent never needs a raw `gh issue close` the host's
 // permission mode blocks.
 //
-// Where: the workspace tracker (`issues.provider` github or gitlab, its
-// `issues.repo`) when it is on this checkout's forge host, else the forge's
-// own base repository. YouTrack and another host are refused: no account is
+// Where: `--repo` (another repository on this forge host), else the
+// workspace tracker (`issues.provider` github or gitlab, its `issues.repo`)
+// when it is on this checkout's forge host, else the forge's own base
+// repository. YouTrack and another host are refused: no account is
 // verified there. Every write needs the `pr` grant (the forge-write grant
 // `pr edit|reply` use) and leaves an `issue.*` ledger row.
 import { requireGrant } from "../autonomy";
@@ -34,9 +35,23 @@ function trackerOf(cwd: string): IssueTracker | null {
 export function issueTarget(
   cwd: string,
   resolved: ResolvedForge,
-  tracker: IssueTracker | null = trackerOf(cwd),
+  options: { repo?: string | null; tracker?: IssueTracker | null } = {},
 ): ForgeResult<IssueApi> {
   const { kind, apiHost } = resolved.forge;
+  const make = (repo: string) => {
+    const api = { apiHost, repo, runner: resolved.runner };
+    return success(kind === "github" ? githubIssues(api) : gitlabIssues(api));
+  };
+  // `--repo`: another repository on this forge host, under the same verified account.
+  if (options.repo) {
+    if (!/^\w[\w.-]*(?:\/\w[\w.-]*)+$/u.test(options.repo))
+      return failure(
+        "invalid_input",
+        `--repo is owner/name or group/project, not "${options.repo}"`,
+      );
+    return make(options.repo);
+  }
+  const tracker = options.tracker === undefined ? trackerOf(cwd) : options.tracker;
   if (tracker?.provider === "youtrack")
     return failure(
       "blocked",
@@ -53,12 +68,7 @@ export function issueTarget(
       "blocked",
       `issues.host ${tracker.host} is not this checkout's forge host ${apiHost}: no account is verified there`,
     );
-  const options = {
-    apiHost,
-    repo: tracker?.repo ?? resolved.forge.repo,
-    runner: resolved.runner,
-  };
-  return success(kind === "github" ? githubIssues(options) : gitlabIssues(options));
+  return make(tracker?.repo ?? resolved.forge.repo);
 }
 
 const grant = (cwd: string, api: IssueApi): ForgeResult<void> => {

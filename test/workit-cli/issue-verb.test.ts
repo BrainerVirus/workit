@@ -224,6 +224,24 @@ test("issue create (GitHub): title, body and labels reach the forge; issue.creat
   expect(rows(repo.cwd, "issue.created")[0]).toMatchObject({ issue: 44, labels: ["agent"] });
 });
 
+test("issue create --repo: another repository on the same host is used, and a malformed one is refused", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "POST repos/BrainerVirus/workit/issues": JSON.stringify({
+      number: 900,
+      html_url: "https://github.com/BrainerVirus/workit/issues/900",
+    }),
+  });
+  forgeDeps.readStdin = () => "behavioural rule";
+  const args = ["issue", "create", "--title", "t", "--body-file", "-", "--json"];
+  const bad = await run([...args, "--repo", "../x"], repo.cwd);
+  expect(bad.json()).toMatchObject({ code: "invalid_input" });
+  const created = await run([...args, "--repo", "BrainerVirus/workit"], repo.cwd);
+  expect(created.code, created.stdout).toBe(0);
+  expect(writes(runner.calls).map((call) => call[1])).toEqual(["repos/BrainerVirus/workit/issues"]);
+  expect(rows(repo.cwd, "issue.created")[0]).toMatchObject({ repo: "BrainerVirus/workit" });
+});
+
 test("issue comment (GitLab): the note is posted and its URL is the issue's anchor", async () => {
   const GL = "projects/group%2Fproject";
   const { repo, runner } = setup("gitlab", {

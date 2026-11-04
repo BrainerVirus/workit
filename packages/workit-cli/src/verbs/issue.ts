@@ -22,11 +22,12 @@ import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
 import { emit, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, usage } from "./forge-common";
 
-const VIEW_USAGE = "workit issue view <n> [--json]";
-const COMMENT_USAGE = "workit issue comment <n> --body-file <f|-> [--json]";
+const VIEW_USAGE = "workit issue view <n> [--repo <owner/name>] [--json]";
+const COMMENT_USAGE = "workit issue comment <n> --body-file <f|-> [--repo <owner/name>] [--json]";
 const CLOSE_USAGE =
-  "workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->] [--json]";
-const CREATE_USAGE = "workit issue create --title <t> --body-file <f|-> [--label <l>]… [--json]";
+  "workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->] [--repo <owner/name>] [--json]";
+const CREATE_USAGE =
+  "workit issue create --title <t> --body-file <f|-> [--label <l>]… [--repo <owner/name>] [--json]";
 const USAGE = [VIEW_USAGE, COMMENT_USAGE, CLOSE_USAGE, CREATE_USAGE].join("\n");
 
 /** `--x-file <path>` (relative to the shell's directory, then --cwd) or `-` for stdin. */
@@ -65,18 +66,18 @@ function issueNumber(positionals: readonly string[]): number | string {
 const ledgerLine = (recorded: Recorded | null): string[] =>
   recorded && "error" in recorded ? [`ledger: not recorded (${recorded.error})`] : [];
 
-function connectIssues(io: Io) {
+function connectIssues(io: Io, repo: string | undefined) {
   const connected = connect(io);
   if (!connected.ok) return connected;
-  return issueTarget(io.cwd, connected.data);
+  return issueTarget(io.cwd, connected.data, { repo: repo ?? null });
 }
 
 async function view(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, {});
+  const flags = parseFlags(argv, { repo: "value" });
   if (typeof flags === "string") return usage(io, flags, VIEW_USAGE);
   const number = issueNumber(flags.positionals);
   if (typeof number === "string") return usage(io, number, VIEW_USAGE);
-  const api = connectIssues(io);
+  const api = connectIssues(io, flags.values.repo);
   if (!api.ok) return forgeFail(io, api);
   const issue = api.data.view(number);
   if (!issue.ok) return forgeFail(io, issue);
@@ -88,7 +89,7 @@ async function view(argv: string[], io: Io): Promise<number> {
 }
 
 async function comment(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { "body-file": "value" });
+  const flags = parseFlags(argv, { "body-file": "value", repo: "value" });
   if (typeof flags === "string") return usage(io, flags, COMMENT_USAGE);
   const number = issueNumber(flags.positionals);
   if (typeof number === "string") return usage(io, number, COMMENT_USAGE);
@@ -97,7 +98,7 @@ async function comment(argv: string[], io: Io): Promise<number> {
   const read = readTextFile(io, "body-file", file);
   if (typeof read === "string") return usage(io, read, COMMENT_USAGE);
   if (!read.text.trim()) return usage(io, "the comment body is empty", COMMENT_USAGE);
-  const api = connectIssues(io);
+  const api = connectIssues(io, flags.values.repo);
   if (!api.ok) return forgeFail(io, api);
   const result = commentOnIssue(io.cwd, api.data, {
     number,
@@ -114,6 +115,7 @@ async function comment(argv: string[], io: Io): Promise<number> {
 async function close(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     reason: "value",
+    repo: "value",
     comment: "value",
     "comment-file": "value",
   });
@@ -136,7 +138,7 @@ async function close(argv: string[], io: Io): Promise<number> {
     text = read.text;
   }
   if (text !== null && !text.trim()) return usage(io, "the comment is empty", CLOSE_USAGE);
-  const api = connectIssues(io);
+  const api = connectIssues(io, flags.values.repo);
   if (!api.ok) return forgeFail(io, api);
   const result = closeIssue(io.cwd, api.data, {
     number,
@@ -161,6 +163,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     title: "value",
     "body-file": "value",
     label: "list",
+    repo: "value",
   });
   if (typeof flags === "string") return usage(io, flags, CREATE_USAGE);
   if (flags.positionals.length)
@@ -171,7 +174,7 @@ async function create(argv: string[], io: Io): Promise<number> {
   if (file === undefined) return usage(io, "--body-file <f|-> is required", CREATE_USAGE);
   const read = readTextFile(io, "body-file", file);
   if (typeof read === "string") return usage(io, read, CREATE_USAGE);
-  const api = connectIssues(io);
+  const api = connectIssues(io, flags.values.repo);
   if (!api.ok) return forgeFail(io, api);
   const result = createIssue(io.cwd, api.data, {
     title,
