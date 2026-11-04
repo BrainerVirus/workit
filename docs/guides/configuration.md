@@ -128,7 +128,9 @@ it with `workit upgrade --set-updates=<mode>`:
 The command never waits on the network. The latest version is cached in Workit
 state (`~/.local/state/workit/update-check.json`) for 24 hours; a stale cache is
 refreshed by a detached background process that prints nothing, and an offline
-or failing registry is silent. The check runs only on an interactive human
+or failing registry is silent. A cached latest older than the running CLI (you
+upgraded since the last lookup) is dropped and refreshed on the next launch,
+whatever its age, and never reads as an update. The check runs only on an interactive human
 launch: stdin, stdout and stderr are terminals (any redirection skips it), `CI` is unset, there is no `--json`,
 and the shell is not an agent host's (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
 or any `CODEX_*`, `OPENCODE*`, `CURSOR_*` or `PI_*` variable except
@@ -144,6 +146,14 @@ nothing (exit 0; `--json` gives the same data). `workit doctor` shows the settin
 version with its age in its `updates` row, read from local files only.
 
 ## Config files
+
+`workit config show` prints the effective configuration for the current
+checkout, read-only: the matched workspace, the vcs provider and default target
+branch, the model per role and the heavy-check resources, each with where it
+comes from (a key in `workspaces.json`, `vcs.json` or `.workit/checks.json`,
+the origin remote, a release track, or `default`). `--json` gives the same as
+`{ value, source }` pairs. `workit grant show` names the `vcs.provider` and its
+source too.
 
 Global config lives in `~/.config/workit/` (`%APPDATA%\workit\` on Windows;
 `config.json`, `workspaces.json`, `vcs.json`, optional `youtrack.json` and

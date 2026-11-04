@@ -81,6 +81,7 @@ import {
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
 import { createStyle, type Style } from "../style";
+import { vcsView } from "./config-vcs";
 
 const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=proportional|self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
@@ -355,8 +356,10 @@ function show(argv: string[], io: Io): number {
   const prTemplate = workspacePrTemplate(io.cwd);
   const picked = resolvePrTemplate(io.cwd, prTemplate.setting);
   const releaseNotes = workspaceReleaseNotes(io.cwd);
+  const vcs = vcsView(io.cwd);
   const shown = {
     ...autonomy,
+    vcs: { provider: vcs.provider.value, providerSource: vcs.provider.source },
     changelog: steps.changelog,
     docs: steps.docs,
     changelogPaths: steps.paths,
@@ -382,6 +385,7 @@ function show(argv: string[], io: Io): number {
       ? `workspace ${style.bold(data.workspace)} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
     ...describe(data.grants, data.configured, data, data.verification, style),
+    `  ${style.bold("vcs.provider")}: ${data.vcs.provider ?? "none"} (${data.vcs.providerSource})`,
     ...describeSteps(
       data.changelog,
       data.docs,

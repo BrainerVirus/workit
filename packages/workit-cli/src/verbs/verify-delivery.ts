@@ -24,7 +24,9 @@ import {
   remoteBranchGone,
   type MergeCleanup,
 } from "@brainervirus/workit-core/src/core/cleanup";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import { actorFromEnv, readLedger } from "@brainervirus/workit-core/src/ledger";
+import { isProtectedBranch } from "@brainervirus/workit-core/src/core/repo-context";
+import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, positiveInt, usage } from "./forge-common";
 
@@ -57,6 +59,22 @@ const cleanupLines = (cleanup: MergeCleanup, branch: string | null): string[] =>
     ? [`ledger: cleanup not recorded (${cleanup.recorded.error})`]
     : []),
 ];
+
+/** The PR this session's last `pr merge` landed on `base`, from the ledger; null without one. */
+function lastMergedOnto(cwd: string, base: string, session: string | null): number | null {
+  if (!session) return null;
+  const ledger = readLedger(cwd, { integrity: true });
+  if (!ledger.ok) return null;
+  const row = ledger.value.rows.findLast(
+    (candidate) =>
+      candidate.type === "pr.merged" &&
+      candidate.observer === "workit_cli" &&
+      candidate.integrity !== "unverified" &&
+      candidate.base === base &&
+      candidate.actor.session === session,
+  );
+  return typeof row?.pr === "number" ? row.pr : null;
+}
 
 export async function run(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
@@ -115,18 +133,51 @@ export async function run(argv: string[], io: Io): Promise<number> {
       (r) => (r.ok ? "done" : "failed"),
     );
   } else {
+    // #651: a protected branch (main, develop…) is never a PR head, so the
+    // current-branch lookup would suggest opening a PR from it. Use the PR
+    // this session merged onto it, else ask for --pr.
+    const here = pr || branch ? null : currentBranch(io.cwd);
+    let picked: number | null = pr;
+    if (here && isProtectedBranch(here)) {
+      picked = expect === "merged" ? lastMergedOnto(io.cwd, here, actor.session) : null;
+      if (picked === null)
+        return emit(
+          io,
+          fail(
+            "invalid_input",
+            `${here} is a protected branch, not a PR head: verify-delivery ${expect === "merged" ? "merge" : "pr"} needs the PR${expect === "merged" ? " that landed on it, and this session recorded no merge onto it" : ""}`,
+            {
+              unblock: `workit verify-delivery ${expect === "merged" ? "merge" : "pr"} --pr <n>  # or --branch <its head branch>; never a PR from ${here}`,
+            },
+          ),
+        );
+      io.stderr(
+        `workit: ${here} is a protected branch; checking PR #${picked}, the last one this session merged onto it\n`,
+      );
+    }
     const connected = connect(io, branch);
     if (!connected.ok) return forgeFail(io, connected);
     result =
       expect === "pr"
         ? progressFor(io).runSync(
             `Checking the PR`,
-            () => verifyPr(io.cwd, connected.data, { pr, branch, sha, actor }),
+            () =>
+              verifyPr(io.cwd, connected.data, {
+                pr: picked,
+                branch,
+                sha,
+                actor,
+              }),
             (r) => (r.ok ? "done" : "failed"),
           )
         : progressFor(io).runSync(
             "Checking the merge",
-            () => verifyMerged(io.cwd, connected.data, { pr, branch, actor }),
+            () =>
+              verifyMerged(io.cwd, connected.data, {
+                pr: picked,
+                branch,
+                actor,
+              }),
             (r) => (r.ok ? "done" : "failed"),
           );
   }

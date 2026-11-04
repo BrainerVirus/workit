@@ -114,13 +114,21 @@ export async function launchUpdateCheck(
   const mode = readUpdatesMode(deps.env);
   if (mode === "off") return undefined;
   const now = (deps.now ?? Date.now)();
+  const installed = deps.installed ?? pkg.version;
   const cache = readUpdateCache(deps.env);
-  if (cache.checkedAt === undefined || now - cache.checkedAt >= UPDATE_TTL_MS) {
+  // A cached latest older than the running CLI (an upgrade since the last
+  // lookup, W2.24) is stale whatever its age: drop it and ask again now.
+  const stale = staleLatest(cache, installed);
+  if (stale || cache.checkedAt === undefined || now - cache.checkedAt >= UPDATE_TTL_MS) {
     // Claim the window first so concurrent launches start one refresh, not many.
-    writeUpdateCache(deps.env, { ...cache, checkedAt: now });
+    const { latest: cachedLatest, ...rest } = cache;
+    writeUpdateCache(deps.env, {
+      ...rest,
+      ...(stale ? {} : { latest: cachedLatest }),
+      checkedAt: now,
+    });
     (deps.refresh ?? (() => startRefresh(deps.env)))();
   }
-  const installed = deps.installed ?? pkg.version;
   const latest = latestNotOlder(cache.latest, installed);
   if (!latest || versionAtLeast(installed, latest)) return undefined;
   // "Skip for now", or an upgrade already tried in this window (an npx or
@@ -227,6 +235,10 @@ export const latestNotOlder = (latest: string | undefined, running: string): str
     : /^\d+\.\d+\.\d+$/.test(running) && !versionAtLeast(latest, running)
       ? running
       : latest;
+
+/** True when the cache names a latest version older than the running CLI. */
+const staleLatest = (cache: UpdateCache, running: string): boolean =>
+  cache.latest !== undefined && latestNotOlder(cache.latest, running) !== cache.latest;
 
 /** The upgraded CLI on disk, with the same argv. */
 const defaultReexec = (argv: readonly string[]): number | undefined => {
