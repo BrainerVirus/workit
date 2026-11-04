@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   mkdirSync,
   mkdtempSync,
@@ -11,6 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 
 import {
   createLogger,
@@ -125,40 +127,107 @@ test.skipIf(process.platform === "win32")("creates logs with restrictive permiss
   expect(statSync(logsDir(stateDir)).mode & 0o777).toBe(0o700);
 });
 
+const WORKER_DEADLINE_MS = 10_000;
+
+const isAlive = (pid: number | undefined): boolean => {
+  if (pid === undefined) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// The deadline settles the wait itself. Killing the child and waiting for its
+// "exit" is not enough: on loaded macOS runners the wait hung to the 30 s test
+// timeout although this deadline fired, so the exit event never arrived. The
+// failure records whether the pid was still alive, which tells a stalled
+// worker from a lost exit notification.
+const awaitWorker = (child: ChildProcess, workerId: string, deadlineMs: number): Promise<void> =>
+  new Promise((resolve, reject) => {
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => (stderr += chunk));
+    const stderrText = (): string => stderr.trim() || "(no stderr)";
+    const timer = setTimeout(() => {
+      const alive = isAlive(child.pid);
+      child.kill("SIGKILL");
+      reject(
+        new Error(
+          `worker ${workerId} missed its ${deadlineMs} ms deadline (pid ${child.pid} ${alive ? "still running" : "gone, exit event lost"}): ${stderrText()}`,
+        ),
+      );
+    }, deadlineMs);
+    child.on("exit", (status, signal) => {
+      clearTimeout(timer);
+      if (status === 0) resolve();
+      else reject(new Error(`worker ${workerId} exited ${status ?? signal}: ${stderrText()}`));
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+
+// A child whose exit event never reaches the parent: kill() is accepted but
+// no "exit" follows, as when the runtime misses the child's exit notification.
+const childWithLostExit = (stderrText: string): ChildProcess => {
+  const stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    pid: 2_147_483_000,
+    exitCode: null,
+    signalCode: null,
+    stderr,
+    kill: () => true,
+  });
+  stderr.write(stderrText);
+  return child as unknown as ChildProcess;
+};
+
+test("Given a worker whose exit event is lost, When its deadline passes, Then the wait fails naming the worker and its stderr", async () => {
+  const started = Date.now();
+  const outcome = await awaitWorker(childWithLostExit("stuck in write"), "w9", 200).then(
+    () => "resolved",
+    (error: Error) => error.message,
+  );
+  expect(outcome).toContain("worker w9");
+  expect(outcome).toContain("exit event lost");
+  expect(outcome).toContain("stuck in write");
+  expect(Date.now() - started).toBeLessThan(5_000);
+}, 10_000);
+
+test("Given a real worker that stalls, When its deadline passes, Then it is killed and the wait fails naming it and its stderr", async () => {
+  const child = spawn(
+    process.execPath,
+    ["-e", `setInterval(() => process.stderr.write("stalled before append\\n"), 20);`],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const outcome = await awaitWorker(child, "w8", 1_500).then(
+    () => "resolved",
+    (error: Error) => error.message,
+  );
+  expect(outcome).toContain("worker w8");
+  expect(outcome).toContain("still running");
+  expect(outcome).toContain("stalled before append");
+}, 10_000);
+
 test("concurrent appends lose no records", async () => {
   const stateDir = tempDir();
   mkdirSync(logsDir(stateDir), { recursive: true });
   const loggerPath = path.resolve(import.meta.dir, "../../packages/workit-core/src/core/logger.ts");
-  const runWorker = (workerId: string): Promise<void> =>
-    new Promise((resolve, reject) => {
-      const code = `
-        import { createLogger } from ${JSON.stringify(loggerPath)};
-        const stateDir = ${JSON.stringify(stateDir)};
-        const workerId = ${JSON.stringify(workerId)};
-        const logger = createLogger({ stateDir, maxRate: 1000 });
-        for (let n = 0; n < 25; n++) {
-          logger.info("concurrent", { worker: workerId, seq: n, id: workerId + "-" + n });
-        }
-      `;
-      // A worker stalled once on a loaded macOS runner (whole file: ~230 ms
-      // normally). Kill a stalled one and name it with its stderr, before the
-      // test timeout hides which worker hung and why.
-      const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "ignore", "pipe"] });
-      let stderr = "";
-      child.stderr.on("data", (chunk) => (stderr += chunk));
-      const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
-      child.on("exit", (status, signal) => {
-        clearTimeout(timer);
-        if (status === 0) resolve();
-        else
-          reject(
-            new Error(
-              `worker ${workerId} exited ${status ?? signal}: ${stderr.trim() || "(no stderr)"}`,
-            ),
-          );
-      });
-      child.on("error", reject);
-    });
+  const runWorker = (workerId: string): Promise<void> => {
+    const code = `
+      import { createLogger } from ${JSON.stringify(loggerPath)};
+      const stateDir = ${JSON.stringify(stateDir)};
+      const workerId = ${JSON.stringify(workerId)};
+      const logger = createLogger({ stateDir, maxRate: 1000 });
+      for (let n = 0; n < 25; n++) {
+        logger.info("concurrent", { worker: workerId, seq: n, id: workerId + "-" + n });
+      }
+    `;
+    const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "ignore", "pipe"] });
+    return awaitWorker(child, workerId, WORKER_DEADLINE_MS);
+  };
 
   await Promise.all([runWorker("w0"), runWorker("w1"), runWorker("w2"), runWorker("w3")]);
 
