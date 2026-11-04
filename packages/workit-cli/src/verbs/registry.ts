@@ -862,8 +862,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "youtrack",
     group: "delivery",
-    summary:
-      "Read or create a YouTrack issue, post a comment or log work time (host permission, no grant)",
+    summary: "YouTrack issues, comments and work time (host permission, no grant)",
     subcommands: [
       {
         name: "note",
