@@ -35,8 +35,12 @@ if [ "$FROM_GITHUB" -eq 1 ]; then
     git -C "$SHARE" checkout main
     git -C "$SHARE" pull --ff-only origin main
   else
-    rm -rf "$SHARE"
-    git clone --depth 1 "https://github.com/${REPO_SLUG}.git" "$SHARE"
+    # Clone beside it and sync, so the owned CLI install (versions/, current, bin/) survives
+    TMP=$(mktemp -d)
+    git clone --depth 1 "https://github.com/${REPO_SLUG}.git" "$TMP"
+    mkdir -p "$SHARE"
+    rsync -a --delete --exclude '/versions' --exclude '/current' --exclude '/bin' "$TMP/" "$SHARE/"
+    rm -rf "$TMP"
   fi
   ROOT="$SHARE"
 else

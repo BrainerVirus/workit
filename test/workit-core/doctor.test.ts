@@ -2049,7 +2049,7 @@ test(
       const stale = check(older, "workit_on_path");
       expect(stale.status).toBe("warn");
       expect(stale.detail).toContain("9.1.4");
-      expect(stale.fix).toContain("npm i -g @brainervirus/workit-cli@9.2.0");
+      expect(stale.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0 upgrade --cli");
       expect(stale.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0");
       expect(older.exitCode).toBe(baseline.exitCode);
       expect(older.fixes.map((f) => f.id)).not.toContain("workit_on_path");
@@ -2058,7 +2058,7 @@ test(
       const absent = check(missing, "workit_on_path");
       expect(absent.status).toBe("warn");
       expect(absent.detail).toBe("no workit on PATH");
-      expect(absent.fix).toContain("npm i -g @brainervirus/workit-cli@9.2.0");
+      expect(absent.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0 upgrade --cli");
       expect(missing.exitCode).toBe(baseline.exitCode);
 
       const broken = withScript("broken", win ? "exit /b 3" : "exit 3");

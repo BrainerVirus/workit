@@ -323,6 +323,12 @@ function copyCoreSources(stub: string) {
     path.join(repoRoot, "packages/workit-cli/src/update-settings.ts"),
     path.join(stub, "packages/workit-cli/src/update-settings.ts"),
   );
+  // doctor's cli_installs row lists installs through the owned-install modules (#648).
+  cpSync(
+    path.join(repoRoot, "packages/workit-cli/src/install"),
+    path.join(stub, "packages/workit-cli/src/install"),
+    { recursive: true },
+  );
   // doctor's checks_config row and --fix read the checks config path through check-config.ts.
   cpSync(
     path.join(repoRoot, "packages/workit-core/src/check-config.ts"),

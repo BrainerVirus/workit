@@ -13,7 +13,16 @@ export const summary = (
   const run = (fix: string | undefined) => (fix ? ` (run: ${style.command(fix)})` : "");
   const version = (from: string, to: string) => `update ${style.dim(from)} -> ${style.ok(to)}`;
   const lines = [style.bold("Workit upgrade plan:")];
-  if (plan.cli) lines.push(`${host("cli")}${version(plan.cli.installed, plan.cli.latest)}`);
+  if (plan.cli) {
+    lines.push(
+      `${host("cli")}${plan.cli.install ? version(plan.cli.installed, plan.cli.latest) : `owned install ${plan.cli.latest}`} under ${style.path(plan.cli.root)}`,
+    );
+    if (plan.cli.copies.length)
+      lines.push(
+        `  ${pad("")}other installs to migrate (backed up, then removed after a y/N):`,
+        ...plan.cli.copies.map((copy) => `  ${pad("")}  ${copy}`),
+      );
+  }
   for (const entry of plan.entries) {
     const what = entry.repair
       ? `reinstall missing plugin files (${entry.latest})`
@@ -79,7 +88,7 @@ export const table = (hosts: HostOutcome[], style: Style = PLAIN): string =>
         entry.fix && entry.status !== "updated" && entry.status !== "current"
           ? `\n  ${pad("")}${"".padEnd(16)}fix: ${style.command(entry.fix)}`
           : ""
-      }`;
+      }${(entry.details ?? []).map((line) => `\n  ${pad("")}${"".padEnd(16)}${line}`).join("")}`;
     }),
   ].join("\n") + "\n";
 

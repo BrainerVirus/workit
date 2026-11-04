@@ -185,6 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit changelog merge` is a git merge driver that keeps both sides' `[Unreleased]` entries (each heading once, duplicates dropped, conflicts outside Unreleased keep git's markers); `workit changelog driver install` registers it in `.git/config` and `.gitattributes`. This repository routes CHANGELOG.md through it.
 - After `workit pr merge` (and `verify-delivery merge`) deletes the remote branch, Workit removes that branch's clean worktree under the managed root and the local branch, records them in the ledger, and keeps and names a dirty one (#653).
 - `workit gc --worktrees` lists clean worktrees whose work is on the trunk (merged, or squash-merged by patch-id), including legacy `<repo>-wt` siblings and temp scratch worktrees, with sizes and the reason each kept one stays; `--apply` removes them and prunes their branches (#653).
+- `workit doctor` lists every workit install on PATH and in version-manager prefixes (`cli_installs`) and fails when one shadows the owned launcher.
 - `workit pr merge` refuses a PR authored by someone other than your forge login (case-insensitive; bots included) with `others_pr`; `--others-pr --reason "<why>"` merges it anyway, records the reason in the ledger and never deletes that author's branch (#442). When Workit cannot read the PR author or your login it refuses with `identity_unknown` and points to `gh auth login` / `glab auth login`.
 - Usage-limit fallback (#655): a role in `models.roles` (or `models.lead`) can list models in fallback order, e.g. `"verifier": { "opencode": ["anthropic/claude-sonnet-5", "openai/gpt-5.5"] }`. When a provider hits its usage limit (Anthropic 5-hour or weekly, OpenAI usage limit or quota, a long 429), Workit marks it exhausted until the reset named in the error (else `models.limitWindow`, default `5h`), runs the next listed model, and returns to the first after the reset. A worker that died on a limit is flagged for one re-dispatch.
 - `workit models show` lists exhausted providers with their reset times and prints the lead switch notice; on OpenCode the lead also gets that notice in context once.
@@ -389,6 +390,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The CLI installs into a Workit-owned directory (`~/.local/share/workit/versions/<v>` with an atomic `current` link and a `~/.local/bin/workit` launcher that finds a Node 24+ itself; Windows: `%LOCALAPPDATA%\workit\install`), so it no longer depends on which Node version manager prefix a shell sees (#648).
 - `workit doctor` runs each installed hook launcher once in the current repo and fails `hook_node` when one cannot answer; `hook_runs` warns when a host's newest hook run failed. See docs/guides/troubleshooting.md.
 - Claude Code accepts full model ids such as `claude-sonnet-5-5` in `models.roles` (applied as their alias) and warns about a value it cannot apply instead of silently dropping it.
 - Claude Code: Workit strips worktree `isolation` on every Agent spawn, not only `workit:implementer`.
@@ -478,6 +480,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - When the Claude Code Agent hook replaces a spawn's model with the configured role model, its note names the model (and effort) to pass next time, so the next spawn needs no rewrite.
+- `workit upgrade` verifies the version that PATH actually runs and fails, naming every copy by real path, when another install shadows it; at the user's terminal it backs up and removes old `npm i -g` copies from fnm/nvm/volta/mise/asdf prefixes after a y/N, and only prints the commands in an agent shell (#648, #423).
+- The update check never reports a latest version older than the running CLI.
 - `workit git branch` no longer leaves a half-created branch behind when `git switch -c` fails; it only removes a branch it created itself, never touches another process's `index.lock` (it prints the `rm` command to run if no git is running), and names a killed or timed-out git instead of a bare "git failed" (#652).
 - `workit git branch` refused for a dirty worktree now lists the dirty paths and the exact `workit git branch <name> --carry` command.
 - A Workit hook that cannot run (Node below 24 in a repo that pins an older Node, a missing or broken bundle, a crash) is no longer silent on Claude Code, Codex and Cursor: session start, prompt submit and subagent start show the cause and the fix, every event writes a stderr line and a failure row, and tool events still never block the host. A verifier whose SubagentStart hook failed is told its verdict will fail with `no_session`.

@@ -101,6 +101,9 @@ import {
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
 import { readHookRuns, type HookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
+import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
+import { removalCommand, type MigrationCopy } from "../install/migrate";
+import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/paths";
 import { readUpdateCache, readUpdatesMode } from "../update-settings";
 import {
   grantedCommands,
@@ -130,6 +133,7 @@ type DoctorCheckId =
   | "codex_session_plugin"
   | "hook_issued_sessions"
   | "workit_on_path"
+  | "cli_installs"
   | "assets"
   | "launcher"
   | "cursor_hook"
@@ -3497,7 +3501,7 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
     null,
   );
   const target = newest?.version ?? "latest";
-  const fix = `npm i -g ${CLI_PACKAGE}@${target} (or run it without a global install: npx -y ${CLI_PACKAGE}@${target} <command>)`;
+  const fix = `npx -y ${CLI_PACKAGE}@${target} upgrade --cli --hosts=none --yes (installs the owned CLI and its launcher)`;
   const bin = findOnPath(pathextNames("workit", res.env), res.env);
   if (!bin) {
     return {
@@ -3640,9 +3644,12 @@ const checkUpdates = (res: Resolved): DoctorCheck => {
     cache.checkedAt === undefined
       ? ""
       : ` (checked ${ago(Math.max(0, Date.now() - cache.checkedAt))})`;
-  const latest = cache.latest
-    ? `latest CLI ${cache.latest}${checked}`
-    : "no latest CLI version cached yet";
+  // A cache older than the running CLI (#423) reads as the running version.
+  const newest =
+    cache.latest && res.cliVersion && !semverAtLeast(cache.latest, res.cliVersion)
+      ? res.cliVersion
+      : cache.latest;
+  const latest = newest ? `latest CLI ${newest}${checked}` : "no latest CLI version cached yet";
   return {
     id: "updates",
     status: "info",
@@ -3656,6 +3663,82 @@ const ago = (ms: number): string => {
   if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.round(minutes / 60);
   return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
+};
+
+const OWNED_FIX = "npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes";
+
+/** The command that backs up and removes one other install (a link is only removed). */
+const removalFor = (res: Resolved, install: FoundInstall, index: number): string => {
+  const env = { ...res.env, HOME: res.home };
+  const { launcher, linked } = ownedPaths(env);
+  return install.kind === "link"
+    ? `rm ${shellQuote(install.path)}`
+    : removalCommand(install as MigrationCopy, index, {
+        backup: path.join(res.stateDir, "upgrades", "manual"),
+        launcher,
+        linked,
+      });
+};
+
+/**
+ * Every workit a shell could run (#648): each on PATH (`which -a` order) and
+ * each copy in a fnm, nvm, volta, mise or asdf global prefix, by realpath.
+ * With a Workit-owned install, PATH must run its launcher and no other copy
+ * may hold another version; without one, the list is information only.
+ */
+const checkCliInstalls = (res: Resolved): DoctorCheck => {
+  const env = { ...res.env, HOME: res.home };
+  const installs = listInstalls(env);
+  const owned = ownedVersion(env);
+  const paths = ownedPaths(env);
+  if (!owned)
+    return {
+      id: "cli_installs",
+      status: "info",
+      detail: `no Workit-owned CLI install under ${paths.root}${installs.length ? `; found: ${installs.map(describeInstall).join("; ")}` : ""}`,
+      ...(installs.some((install) => install.kind !== "owned") ? { fix: OWNED_FIX } : {}),
+    };
+  const launcher = `${paths.linked} -> ${realpathOr(paths.linked)} (workit ${owned})`;
+  const first = installs.find((install) => install.pathIndex === 0);
+  const shadow = first && first.kind !== "owned" ? first : null;
+  const others = installs.filter((install) => install.kind !== "owned");
+  const differing = others.filter((install) => install !== shadow && install.version !== owned);
+  const fix = others.map((install, index) => removalFor(res, install, index)).join("; ");
+  if (!first)
+    return {
+      id: "cli_installs",
+      status: "fail",
+      detail: `owned install ${owned} under ${paths.root}, but no workit on PATH`,
+      fix: `add ${path.dirname(paths.linked)} to PATH`,
+    };
+  if (shadow || differing.length)
+    return {
+      id: "cli_installs",
+      status: "fail",
+      detail: [
+        shadow
+          ? `PATH runs ${describeInstall(shadow)} ahead of the launcher ${launcher}`
+          : `launcher ${launcher}`,
+        differing.length
+          ? `other installs with another version: ${differing.map(describeInstall).join("; ")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("; "),
+      fix: fix || `put ${path.dirname(paths.linked)} first on PATH`,
+    };
+  if (others.length)
+    return {
+      id: "cli_installs",
+      status: "warn",
+      detail: `launcher ${launcher}; other copies of the same version a version switch could put first: ${others.map(describeInstall).join("; ")}`,
+      fix,
+    };
+  return {
+    id: "cli_installs",
+    status: "pass",
+    detail: `workit ${owned} via the launcher ${launcher}; no other install`,
+  };
 };
 
 /** Always shown per host, "never" when absent; every other recorded event follows by name. */
@@ -3727,6 +3810,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkCodexSessionPlugin,
   checkHookIssuedSessions,
   checkWorkitOnPath,
+  checkCliInstalls,
   checkAssets,
   checkLauncher,
   checkCursorHook,

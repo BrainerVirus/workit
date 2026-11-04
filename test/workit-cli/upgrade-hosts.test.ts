@@ -1,7 +1,15 @@
 // `workit upgrade` as one command (#484): every host through injected deps,
 // a temp HOME, no real host, process list, registry or ~/.config.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -18,13 +26,20 @@ const write = (file: string, value: unknown) => {
   writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value));
 };
 
-/** A home with Pi, Codex, Claude Code and a global CLI, all one version behind. */
+/** A home with Pi, Codex, Claude Code and an npm global CLI in a fnm prefix, all one version behind. */
 const world = () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-upgrade-hosts-"));
   const calls: string[][] = [];
   const piRoot = path.join(home, "pi-resolved");
-  const globalRoot = path.join(home, "global/node_modules");
-  const cliPkg = path.join(globalRoot, "@brainervirus/workit-cli/package.json");
+  // The pre-#648 install: workit-cli in a fnm Node's npm global prefix.
+  const fnmPrefix = path.join(home, ".local/share/fnm/node-versions/v24.0.0/installation");
+  const cliPkg = path.join(fnmPrefix, "lib/node_modules/@brainervirus/workit-cli/package.json");
+  write(path.join(fnmPrefix, "bin/node"), "");
+  mkdirSync(path.join(home, "bin"), { recursive: true });
+  for (const tool of ["node", "npm"]) {
+    const real = Bun.which(tool);
+    if (real) symlinkSync(real, path.join(home, "bin", tool));
+  }
   const claudePlugin = path.join(home, ".claude/plugins/cache/workit/workit/1.0.0");
   const codexCache = path.join(home, ".codex/plugins/cache/workflow-toolkit/workit");
   write(path.join(home, ".config/workit/config.json"), { locale: "en" });
@@ -59,10 +74,13 @@ const world = () => {
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
     const line = args.join(" ");
-    if (command === "npm" && args[0] === "root") return { status: 0, stdout: globalRoot };
     if (command === "npm" && args[0] === "view") return { status: 0, stdout: "2.0.0\n" };
-    if (command === "npm" && args[0] === "install") {
-      write(cliPkg, { name: "@brainervirus/workit-cli", version: "2.0.0" });
+    if (isCliInstall(command, args)) {
+      const staging = args[args.indexOf("--prefix") + 1];
+      write(path.join(staging, "node_modules/@brainervirus/workit-cli/package.json"), {
+        name: "@brainervirus/workit-cli",
+        version: "2.0.0",
+      });
       return { status: 0, stdout: "" };
     }
     if (command === "pi" && args[0] === "update")
@@ -120,10 +138,19 @@ const world = () => {
       confirm: async () => true,
       doctor: () => ({ checks: [] }),
       out: { write: (text: string) => void out.push(text) },
+      // PATH holds only a node (Cursor's installer needs one), never a real workit.
+      env: { PATH: path.join(home, "bin") },
+      installNode: () => ({ node: "node24", npmCli: "npm-cli.js", version: "24.0.0" }),
+      pathWorkit: () => ({ path: path.join(home, ".local/bin/workit"), version: "2.0.0" }),
+      removeCopies: async () => false,
     },
     cleanup: () => rmSync(home, { recursive: true, force: true }),
   };
 };
+
+/** The owned install's `npm install --prefix <staging> … @brainervirus/workit-cli@<v>`. */
+const isCliInstall = (command: string, args: string[]) =>
+  command === "node24" && args.includes("install") && args.includes("--prefix");
 
 const ran = (calls: string[][], line: string) => calls.some((call) => call.join(" ") === line);
 
@@ -145,7 +172,12 @@ test("Given a plain `workit upgrade`, When it is confirmed once, Then the CLI, C
     expect(text).toContain("cli         update 1.0.0 -> 2.0.0");
     // Claude Code resolves its own update; the plan still shows the npm target.
     expect(text).toContain("claude-code update 1.0.0 -> 2.0.0");
-    expect(ran(w.calls, "npm install --global @brainervirus/workit-cli@2.0.0")).toBe(true);
+    expect(
+      w.calls.some(
+        (call) =>
+          isCliInstall(call[0], call.slice(1)) && call.at(-1) === "@brainervirus/workit-cli@2.0.0",
+      ),
+    ).toBe(true);
     expect(ran(w.calls, "claude plugin marketplace update workit")).toBe(true);
     expect(ran(w.calls, "claude plugin update workit@workit")).toBe(true);
     expect(ran(w.calls, "codex plugin add workit@workflow-toolkit --json")).toBe(true);
@@ -181,14 +213,7 @@ test("Given a declined confirmation or --preview, Then nothing changes and the a
     expect(w.calls.some((call) => ["install", "update", "add"].includes(call[1] ?? call[0]))).toBe(
       false,
     );
-    expect(
-      JSON.parse(
-        readFileSync(
-          path.join(w.home, "global/node_modules/@brainervirus/workit-cli/package.json"),
-          "utf8",
-        ),
-      ).version,
-    ).toBe("1.0.0");
+    expect(existsSync(path.join(w.home, ".local/share/workit"))).toBe(false);
   } finally {
     w.cleanup();
   }
@@ -217,11 +242,9 @@ test("Given --yes, Then it applies without asking; --apply --confirm stays the J
       }),
     ).toBe(0);
     const report = JSON.parse(w.text());
-    expect(report.hosts).toContainEqual({
-      host: "cli",
-      status: "updated",
-      reason: "1.0.0 -> 2.0.0",
-    });
+    expect(report.hosts).toContainEqual(
+      expect.objectContaining({ host: "cli", status: "updated", reason: "1.0.0 -> 2.0.0" }),
+    );
     expect(report.doctor).toEqual({ clean: true, left: [] });
   } finally {
     w.cleanup();
@@ -760,7 +783,7 @@ test("Given a plain `workit upgrade` with a newer CLI, When it applies, Then the
       reexec: newBinary(w, seen),
     });
     expect(code, w.text()).toBe(0);
-    const install = w.calls.findIndex((call) => call.join(" ").startsWith("npm install --global"));
+    const install = w.calls.findIndex((call) => isCliInstall(call[0], call.slice(1)));
     const firstHost = w.calls.findIndex((call) =>
       /^(?:claude plugin update|codex plugin add|pi update)\b/.test(call.join(" ")),
     );
@@ -769,10 +792,7 @@ test("Given a plain `workit upgrade` with a newer CLI, When it applies, Then the
     // Re-executed once, with the hosts only, confirmed, and never re-planning the CLI.
     expect(seen).toHaveLength(1);
     expect(seen[0].argv).toEqual(["--yes", "--hosts=opencode,cursor,codex,pi,claude-code"]);
-    expect(
-      w.calls.filter((call) => call.join(" ").startsWith("npm install --global")),
-    ).toHaveLength(1);
-    expect(w.calls.filter((call) => call.join(" ") === "npm root --global")).toHaveLength(2);
+    expect(w.calls.filter((call) => isCliInstall(call[0], call.slice(1)))).toHaveLength(1);
     const text = w.text();
     expect(text).toContain("Continuing the upgrade with the new CLI");
     expect(text).toMatch(/cli +updated +1\.0\.0 -> 2\.0\.0/);
@@ -811,7 +831,7 @@ test("Given the CLI install fails, Then the hosts still upgrade with the current
   try {
     const seen: { argv: string[]; env: Record<string, string> }[] = [];
     const run = (command: string, args: string[]) =>
-      command === "npm" && args[0] === "install"
+      isCliInstall(command, args)
         ? { status: 1, stdout: "", stderr: "EACCES" }
         : w.deps.run(command, args);
     const code = await runUpgradeCommand(["--yes"], {
@@ -824,7 +844,7 @@ test("Given the CLI install fails, Then the hosts still upgrade with the current
     expect(seen).toHaveLength(0);
     const text = w.text();
     expect(text).toMatch(
-      /cli +FAILED +CLI update failed.*hosts upgraded with workit \d+\.\d+\.\d+/,
+      /cli +FAILED +npm install of @brainervirus\/workit-cli@2\.0\.0 failed \(EACCES\); current still points to nothing.*hosts upgraded with workit \d+\.\d+\.\d+/,
     );
     expect(text).toMatch(/pi +updated +1\.0\.0 -> 2\.0\.0/);
     expect(text).toMatch(/claude-code +updated/);
@@ -1080,7 +1100,7 @@ test("Given --yes --json and a failed CLI install, Then stdout is one JSON docum
   const w = world();
   try {
     const run = (command: string, args: string[]) =>
-      command === "npm" && args[0] === "install"
+      isCliInstall(command, args)
         ? { status: 1, stdout: "", stderr: "EACCES" }
         : w.deps.run(command, args);
     expect(

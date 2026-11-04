@@ -6,6 +6,8 @@ import { createHash } from "node:crypto";
 import { type HostId } from "../admin/detect-hosts";
 import { hostCommand, runHostCommand, type HostInstallCommand } from "../admin/host-install";
 import { type DoctorCheck } from "../admin/doctor";
+import { type InstallNode } from "../install/node";
+import { type PathWorkit } from "../install/verify";
 import { type Progress } from "../progress";
 import { workitConfigDir } from "../update-settings";
 
@@ -20,7 +22,8 @@ export const OPENCODE_PACKAGE = "@brainervirus/workit-opencode";
 export const CLAUDE_CODE_PACKAGE = "@brainervirus/workit-claude-code";
 export const OPENCODE_UPDATE = `opencode plugin update ${OPENCODE_PACKAGE}`;
 export const CODEX_MARKETPLACE = "workflow-toolkit";
-export const CLI_FIX = "npm install --global @brainervirus/workit-cli@latest";
+/** Installs the Workit-owned CLI from any shell, whatever Node or npm PATH holds. */
+export const CLI_FIX = "npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes";
 
 export type Command = {
   command: string;
@@ -74,6 +77,8 @@ export type HostOutcome = {
   reason: string;
   /** The one command that finishes this host by hand. */
   fix?: string;
+  /** Extra lines under the row (the CLI's other installs and their removal commands). */
+  details?: string[];
 };
 export type UpgradeDeps = {
   home?: string;
@@ -109,6 +114,12 @@ export type UpgradeDeps = {
   cliEntry?: string;
   /** Run `workit upgrade <argv>` with the newly installed CLI and extra env; its exit code,
    *  or undefined when it could not start (test seam; default spawns the same entry script). */
+  /** The Node >= 24 and its npm the owned install uses (test seam; default resolves one). */
+  installNode?: () => InstallNode | null;
+  /** Remove the other CLI copies? (test seam; default asks y/N at a person's terminal, else no). */
+  removeCopies?: (question: string) => Promise<boolean>;
+  /** What the PATH-resolved `workit --version` prints (test seam; default runs it). */
+  pathWorkit?: () => PathWorkit;
   reexec?: (
     argv: string[],
     env: Record<string, string>,
@@ -142,7 +153,19 @@ export type UpgradePlan = {
   skipped: { host: UpgradeHost; reason: string; fix?: string }[];
   entries: PlanEntry[];
   configDigests: Record<string, string>;
-  cli?: { latest: string; root: string; installed: string };
+  /** The Workit-owned CLI install (#648): install `latest` (when `install`) and migrate `copies`. */
+  cli?: {
+    latest: string;
+    /** The owned install root. */
+    root: string;
+    installed: string;
+    /** The new version's entry script, which finishes the upgrade. */
+    entry: string;
+    /** False when the owned version is current and only migration or the launcher is left. */
+    install: boolean;
+    /** Other installs found (`which -a` style), each migrated after a y/N at a terminal. */
+    copies: string[];
+  };
   migrations: { id: string; file: string; description: string }[];
   /** Advisories that do not block the upgrade (e.g. an OpenCode 1.x host). */
   warnings?: string[];
@@ -161,6 +184,23 @@ export const fixFor = (host: UpgradeHost, selector = ""): string =>
             ? "workit upgrade --hosts=cursor"
             : CLI_FIX;
 
+/** Locations a real environment may set that an explicit (test) home must not inherit. */
+const HOME_DERIVED = [
+  "XDG_DATA_HOME",
+  "XDG_BIN_HOME",
+  "XDG_STATE_HOME",
+  "WORKFLOW_TOOLKIT_STATE",
+  "WORKIT_INSTALL_ROOT",
+  "WORKIT_BIN_DIR",
+  "WORKIT_NODE",
+  "FNM_DIR",
+  "NVM_DIR",
+  "NVM_HOME",
+  "VOLTA_HOME",
+  "MISE_DATA_DIR",
+  "ASDF_DATA_DIR",
+];
+
 export const upgradePaths = (deps: UpgradeDeps) => {
   const home = deps.home ?? deps.env?.HOME ?? os.homedir();
   const env: NodeJS.ProcessEnv = {
@@ -174,6 +214,9 @@ export const upgradePaths = (deps: UpgradeDeps) => {
           XDG_CONFIG_HOME: path.join(home, ".config"),
           WORKFLOW_TOOLKIT_CONFIG: undefined,
           WORKFLOW_TOOLKIT_CONFIG_DIR: undefined,
+          // An explicit home also isolates the owned install and every
+          // version-manager prefix the CLI migration would look into.
+          ...Object.fromEntries(HOME_DERIVED.map((name) => [name, undefined])),
         }
       : {}),
     ...deps.env,

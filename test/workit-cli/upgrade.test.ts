@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -210,33 +220,74 @@ test("Pi verification rejects a source-only listing and requires the resolved pa
   }
 });
 
-test("explicit CLI upgrade changes only an existing global package and verifies its version", async () => {
+/** A fnm Node whose npm global prefix holds workit-cli `version` (the pre-#648 install). */
+const fnmCopy = (home: string, node: string, version: string) => {
+  const prefix = path.join(home, ".local/share/fnm/node-versions", node, "installation");
+  const pkg = path.join(prefix, "lib/node_modules/@brainervirus/workit-cli");
+  mkdirSync(path.join(pkg, "dist"), { recursive: true });
+  mkdirSync(path.join(prefix, "bin"), { recursive: true });
+  writeFileSync(path.join(prefix, "bin/node"), "");
+  writeFileSync(
+    path.join(pkg, "package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-cli", version }),
+  );
+  writeFileSync(path.join(pkg, "dist/index.js"), `console.log("${version}")\n`);
+  return { prefix, pkg };
+};
+
+/** The CLI seams: a fake Node 24, its npm writing the staged package, and the PATH-resolved version. */
+const cliDeps = (
+  f: ReturnType<typeof fixture>,
+  options: { installs?: string; pathVersion: string; failInstall?: boolean },
+) => ({
+  ...f.deps,
+  env: { PATH: path.join(f.home, "no-bin") },
+  installNode: () => ({ node: "node24", npmCli: "npm-cli.js", version: "24.0.0" }),
+  pathWorkit: () => ({
+    path: path.join(f.home, ".local/bin/workit"),
+    version: options.pathVersion,
+  }),
+  removeCopies: async () => false,
+  run: (command: string, args: string[]) => {
+    if (command === "node24" && args[1] === "install") {
+      if (options.failInstall) return { status: 1, stdout: "", stderr: "EACCES" };
+      const staging = args[args.indexOf("--prefix") + 1];
+      const pkg = path.join(staging, "node_modules/@brainervirus/workit-cli");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(
+        path.join(pkg, "package.json"),
+        JSON.stringify({ name: "@brainervirus/workit-cli", version: options.installs ?? "2.1.0" }),
+      );
+      return { status: 0, stdout: "" };
+    }
+    return f.deps.run(command, args);
+  },
+});
+
+test("Given a CLI in a fnm prefix and no terminal, When `workit upgrade --cli` applies, Then the new version is the owned current, the fnm copy stays and its removal command is printed", async () => {
   const f = fixture();
   try {
-    const root = path.join(f.home, "global/node_modules");
-    const pkg = path.join(root, "@brainervirus/workit-cli/package.json");
-    mkdirSync(path.dirname(pkg), { recursive: true });
-    writeFileSync(pkg, JSON.stringify({ name: "@brainervirus/workit-cli", version: "2.0.2" }));
+    const copy = fnmCopy(f.home, "v24.0.0", "2.0.2");
+    let output = "";
     const deps = {
-      ...f.deps,
-      out: { write: () => {} },
-      run: (command: string, args: string[]) => {
-        if (command === "npm" && args[0] === "root") return { status: 0, stdout: root };
-        if (command === "npm" && args[0] === "install") {
-          expect(args).toEqual(["install", "--global", "@brainervirus/workit-cli@2.1.0"]);
-          writeFileSync(
-            pkg,
-            JSON.stringify({ name: "@brainervirus/workit-cli", version: "2.1.0" }),
-          );
-          return { status: 0, stdout: "" };
-        }
-        return f.deps.run(command, args);
-      },
+      ...cliDeps(f, { pathVersion: "2.1.0" }),
+      out: { write: (text: string) => void (output += text) },
     };
     expect(await runUpgradeCommand(["--hosts=none", "--cli", "--apply", "--confirm"], deps)).toBe(
       0,
     );
-    expect(JSON.parse(readFileSync(pkg, "utf8")).version).toBe("2.1.0");
+    const root = path.join(f.home, ".local/share/workit");
+    expect(readlinkSync(path.join(root, "current"))).toBe(path.join("versions", "2.1.0"));
+    expect(readFileSync(path.join(root, "bin/workit"), "utf8")).toContain("workit-owned-launcher");
+    expect(readlinkSync(path.join(f.home, ".local/bin/workit"))).toBe(
+      path.join(root, "bin/workit"),
+    );
+    expect(existsSync(copy.pkg)).toBe(true);
+    const cli = JSON.parse(output).hosts.find((row: { host: string }) => row.host === "cli");
+    expect(cli.status).toBe("updated");
+    expect(cli.details.join("\n")).toContain(
+      `npm uninstall --global --prefix ${copy.prefix} @brainervirus/workit-cli`,
+    );
     expect(readFileSync(f.host, "utf8")).toContain("unrelated-plugin");
   } finally {
     f.cleanup();
@@ -347,41 +398,50 @@ test("Cursor package drift rejects a reviewed plan before installation", async (
   }
 });
 
-test("failed global CLI update keeps an executable backup of the previous package", async () => {
+test("Given an owned 2.0.2, When the 2.1.0 install fails, Then current still points to 2.0.2, no staging is left and the CLI row fails", async () => {
   const f = fixture();
   try {
-    const root = path.join(f.home, "global/node_modules");
-    const pkg = path.join(root, "@brainervirus/workit-cli");
-    mkdirSync(path.join(pkg, "dist"), { recursive: true });
+    const root = path.join(f.home, ".local/share/workit");
+    const old = path.join(root, "versions/2.0.2/node_modules/@brainervirus/workit-cli");
+    mkdirSync(old, { recursive: true });
     writeFileSync(
-      path.join(pkg, "package.json"),
+      path.join(old, "package.json"),
       JSON.stringify({ name: "@brainervirus/workit-cli", version: "2.0.2" }),
     );
-    writeFileSync(path.join(pkg, "dist/index.js"), "console.log('old CLI');\n");
+    symlinkSync(path.join("versions", "2.0.2"), path.join(root, "current"));
     let output = "";
     const deps = {
-      ...f.deps,
-      out: {
-        write: (text: string) => {
-          output += text;
-        },
-      },
-      run: (command: string, args: string[]) => {
-        if (command === "npm" && args[0] === "root") return { status: 0, stdout: root };
-        if (command === "npm" && args[0] === "install") {
-          rmSync(pkg, { recursive: true });
-          return { status: 1, stdout: "" };
-        }
-        return f.deps.run(command, args);
-      },
+      ...cliDeps(f, { pathVersion: "2.0.2", failInstall: true }),
+      out: { write: (text: string) => void (output += text) },
     };
     expect(await runUpgradeCommand(["--hosts=none", "--cli", "--apply", "--confirm"], deps)).toBe(
       1,
     );
-    const result = JSON.parse(output);
-    expect(readFileSync(path.join(result.backup, "cli-package/dist/index.js"), "utf8")).toContain(
-      "old CLI",
+    expect(readlinkSync(path.join(root, "current"))).toBe(path.join("versions", "2.0.2"));
+    expect(readdirSync(path.join(root, "versions"))).toEqual(["2.0.2"]);
+    const cli = JSON.parse(output).hosts.find((row: { host: string }) => row.host === "cli");
+    expect(cli.reason).toContain("current still points to 2.0.2");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("Given the PATH-resolved workit is not the installed version, Then the CLI row fails and lists every install", async () => {
+  const f = fixture();
+  try {
+    fnmCopy(f.home, "v24.0.0", "2.0.2");
+    let output = "";
+    const deps = {
+      ...cliDeps(f, { pathVersion: "2.0.2" }),
+      out: { write: (text: string) => void (output += text) },
+    };
+    expect(await runUpgradeCommand(["--hosts=none", "--cli", "--apply", "--confirm"], deps)).toBe(
+      1,
     );
+    const cli = JSON.parse(output).hosts.find((row: { host: string }) => row.host === "cli");
+    expect(cli.status).toBe("failed");
+    expect(cli.reason).toContain("not 2.1.0");
+    expect(cli.details.join("\n")).toMatch(/workit 2\.0\.2; fnm global prefix /);
   } finally {
     f.cleanup();
   }
