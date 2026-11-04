@@ -1553,6 +1553,28 @@ function restackCarries(
   return false;
 }
 
+/** A row a gate imported from the verdict mirror (#311): it names the ledger it came from. */
+const isMirrored = (row: ReadRow): boolean => typeof row.mirroredFrom === "string";
+
+/**
+ * Where each imported row sits among the local rows: just after the last
+ * local row (in ledger order) recorded at or before it, so an older pass
+ * from a clone never outranks a newer local verdict. Local rows rank by seq.
+ */
+function mirrorRanks(rows: readonly ReadRow[]): Map<ReadRow, number> {
+  const ranks = new Map<ReadRow, number>();
+  const local = rows.filter((row) => !isMirrored(row));
+  for (const row of rows) {
+    if (!isMirrored(row)) continue;
+    const at = Date.parse(row.at);
+    let after = 0;
+    for (const other of local) if (Date.parse(other.at) <= at) after = Math.max(after, other.seq);
+    // Between that row and the next; ties among imports keep their own order.
+    ranks.set(row, after + 0.5 + Math.min(row.seq, 1e9) / 1e10);
+  }
+  return ranks;
+}
+
 /** Current and accepted verdicts for `branch`, after carry-over (D18). */
 export function checkVerdicts(
   cwd: string,
@@ -1729,8 +1751,14 @@ export function checkVerdicts(
       trustReasons(cwd, row).length === 0
     )
       retired.add(row.supersedes);
+  // Verdict precedence follows when each verdict was recorded. Local rows keep
+  // their ledger order; a row imported from the mirror (#311) is appended
+  // whenever a gate first sees it, so it is placed after the last local row
+  // recorded at or before its own `at`, never ahead of a newer local verdict.
+  const rank = mirrorRanks(rows);
+  const byRank = (a: ReadRow, b: ReadRow) => (rank.get(a) ?? a.seq) - (rank.get(b) ?? b.seq);
   const byKind = new Map<string, ReadRow[]>();
-  for (const row of rows)
+  for (const row of rows.toSorted(byRank))
     if (isLiveVerdict(row, retired) && scope(row)) {
       const kind = typeof row.kind === "string" ? row.kind : "review";
       byKind.set(kind, [...(byKind.get(kind) ?? []), row]);
@@ -1768,7 +1796,7 @@ export function checkVerdicts(
     if (reasons.length === 0)
       for (const later of list)
         if (
-          later.seq > row.seq &&
+          byRank(later, row) > 0 &&
           reasonsOf(later).length > 0 &&
           !untrusted(reasonsOf(later)) &&
           FAILING.has(String(later.result)) &&
@@ -1793,7 +1821,7 @@ export function checkVerdicts(
       entry.reasons = [...entry.reasons, "ledger_tampered"];
     }
   }
-  verdicts.sort((a, b) => a.verdict.seq - b.verdict.seq);
+  verdicts.sort((a, b) => byRank(a.verdict, b.verdict));
   const newestCurrent = verdicts.findLast((entry) => entry.current) ?? verdicts.at(-1) ?? null;
   const failing = verdicts.find(
     (entry) => entry.current && entry.independent && FAILING.has(String(entry.verdict.result)),

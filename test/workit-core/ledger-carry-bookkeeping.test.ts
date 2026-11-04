@@ -274,6 +274,21 @@ test("Given a unit verdict on a full-lane PR, When a 148-line test-only push fol
   });
 });
 
+test("Given a unit verdict, When a helper, a runner config or a fixture under test/ changes, Then it is not a tests-only carry", () => {
+  for (const [file, content] of [
+    ["test/helpers/runtime.ts", "export const runtime = () => 1;\n"],
+    ["test/bunfig.toml", '[test]\npreload = ["./shared/setup.ts"]\n'],
+    ["test/fixtures/x.json", '{ "x": 1 }\n'],
+  ] as const) {
+    const root = repo();
+    verdict(root, "unit");
+    commit(root, { [file]: content }, `test: ${file}`);
+    const result = check(root);
+    expect(result.accepted, file).toMatchObject({ accepted: false, reasons: ["stale"] });
+    expect(result.carry, file).toBeNull();
+  }
+});
+
 test("Given a live verdict, When the same large test-only push follows, Then it does not carry", () => {
   const root = repo();
   verdict(root, "live");

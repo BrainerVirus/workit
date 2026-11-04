@@ -261,7 +261,9 @@ A verdict is keyed to the head it judged. It still applies to a newer head
   head is the judged change replayed onto the new fork, only trunk's commits
   differ and the verdict carries. It reads `carried (rebase: patch
   unchanged)`. Only the verdict carries: the merge still needs green CI on the
-  new head.
+  new head. A clean textual replay can still hide a semantic conflict, for
+  example trunk renaming a function the branch calls: CI on the new head
+  catches that, not the carry.
 - **Lane-none follow-up:** the branch's own change since the judged head is
   lane `none`: docs (a `CHANGELOG.md` included), comment or formatting edits,
   generated copies, bookkeeping, or an empty commit (a CI retrigger). After a
@@ -275,9 +277,11 @@ A verdict is keyed to the head it judged. It still applies to a newer head
   its own file; here `docs/qualification/context-budget.json`, which
   `write:budget` regenerates).
 - **Test-only follow-up, `unit` verdicts only:** every changed file is a test
-  (under `test/`, `tests/` or `__tests__/`, or named `*.test.*`, `*.spec.*` or
-  `*_test.*`; a `fixtures/` or `spec/` folder is not), docs or bookkeeping,
-  off risk paths, with no lockfile or binary. Its size does not matter, and
+  file proper (named `*.test.*`, `*.spec.*` or `*_test.*`), docs or
+  bookkeeping, off risk paths, with no lockfile or binary. Any other file in a
+  test folder (a helper, fixture, setup or runner config such as
+  `test/helpers/runtime.ts`, `test/fixtures/x.json` or `test/bunfig.toml`) does
+  not qualify: product scripts import helpers and runners preload setup. Its size does not matter, and
   neither does the PR's own lane: a 150-line test push on a `full`-lane PR
   keeps its `unit` verdict. A `live`, `review` or `perf` verdict does not
   carry over test changes.

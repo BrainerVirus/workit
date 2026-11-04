@@ -129,6 +129,37 @@ test("Given a mirror row edited by hand, When the gate runs, Then it is never im
   expect(gate(real).accepted).toMatchObject({ accepted: false, reasons: ["no_verdict"] });
 });
 
+const judge = (cwd: string, session: string, result: "verified" | "failed", at: string) =>
+  value(
+    recordVerdict(
+      { cwd, actor: { host: "cli", session, agentId: null }, now: new Date(at) },
+      { result, how: `${result} it`, kind: "unit" },
+    ),
+  );
+
+test("Given an older pass recorded in a clone and a newer local failure on the same head, When the gate imports the pass, Then the newer failure still wins", () => {
+  const real = realCheckout("git@github.com:acme/mirror-order.git");
+  const clone = throwawayClone(real);
+  judge(clone, "rev-A", "verified", "2026-01-01T00:00:00Z");
+  rmSync(path.dirname(clone), { recursive: true, force: true });
+  const failure = judge(real, "rev-B", "failed", "2026-01-02T00:00:00Z");
+  const result = gate(real);
+  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.accepted.verdict?.id).toBe(failure.id);
+  expect(result.current.verdict?.id).toBe(failure.id);
+});
+
+test("Given a local failure and a newer pass recorded in a clone by another session, When the gate imports it, Then the newer pass wins", () => {
+  const real = realCheckout("git@github.com:acme/mirror-order-2.git");
+  judge(real, "rev-B", "failed", "2026-01-01T00:00:00Z");
+  const clone = throwawayClone(real);
+  const pass = judge(clone, "rev-A", "verified", "2026-01-02T00:00:00Z");
+  rmSync(path.dirname(clone), { recursive: true, force: true });
+  const result = gate(real);
+  expect(result.accepted).toMatchObject({ accepted: true, reasons: [] });
+  expect(result.accepted.verdict?.id).toBe(pass.id);
+});
+
 test("Given a checkout with no remote origin, Then there is no mirror", () => {
   const root = tempDir("wk-mirror-none-");
   git(root, "init", "-q", "-b", "main");
