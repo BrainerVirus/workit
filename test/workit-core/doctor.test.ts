@@ -304,6 +304,66 @@ test("canonical @latest install with an old plugin package.json version is not s
   expect(check(run(), "stale_install").status).toBe("pass");
 });
 
+// An installed (non-dev) doctor: no dev checkout, so the local-dist install is
+// compared with the doctor's own package version and then the registry.
+const RUNTIME = JSON.parse(
+  readFileSync(path.join(repoRoot, "packages/workit-cli/package.json"), "utf8"),
+).version as string;
+const PUBLISHED = `${Number(RUNTIME.split(".")[0]) + 1}.0.0`;
+const installedEnv = (extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const env = { ...process.env, ...extra };
+  delete env.WORKIT_DEV;
+  return env;
+};
+
+test("Given a dev checkout whose local-dist install is behind npm latest, When doctor runs, Then there is no stale_install and no registry probe", () => {
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const hookBundle = path.join(fixture.pluginDir, "dist", "cursor-session-start.js");
+  const devBundle = path.join(
+    fixture.dev,
+    "packages",
+    "workit-cursor",
+    "dist",
+    "cursor-session-start.js",
+  );
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  const originalHookBundle = readFileSync(hookBundle, "utf8");
+  const originalDevBundle = readFileSync(devBundle, "utf8");
+  writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
+  writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
+  // The dev checkout's workit-cursor is 1.0.0 (main is not synced); npm has 9.9.9.
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
+  rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command: `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`,
+          },
+        ],
+      },
+    }),
+  );
+  try {
+    const report = run({
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "9.9.9" },
+    });
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("pass");
+    expect(stale.detail).toContain("not compared with npm latest");
+    expect(report.offline).toBe(true);
+  } finally {
+    rmSync(pluginPkg, { force: true });
+    writeConfig(hooksFile, originalHooks);
+    writeConfig(hookBundle, originalHookBundle);
+    writeConfig(devBundle, originalDevBundle);
+  }
+});
+
 test("offline flag reflects the registry probe: false for local-dist installs, true otherwise", () => {
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
@@ -322,7 +382,7 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
   // The synced bytes keep a valid node launcher entry (shebang + syntax).
   writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: RUNTIME }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -343,9 +403,9 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
       home: fixture.home,
       configDir: fixture.configDir,
       stateDir: fixture.stateDir,
-      dev: fixture.dev,
+      dev: "",
       cwd: fixture.cwd,
-      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
+      env: installedEnv({ WORKIT_DOCTOR_STALE_REGISTRY_VERSION: RUNTIME }),
     });
     expect(report.offline).toBe(false);
     expect(check(report, "stale_install").status).toBe("pass");
@@ -362,7 +422,7 @@ test("local-dist install behind the published runtime is stale_install fail when
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
   const originalHooks = readFileSync(hooksFile, "utf8");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: RUNTIME }));
   // A local-dist install (node hook, no mcp.json selector) is the only shape
   // that consults the registry; the version seam keeps the probe spawn-free.
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
@@ -385,15 +445,14 @@ test("local-dist install behind the published runtime is stale_install fail when
       home: fixture.home,
       configDir: fixture.configDir,
       stateDir: fixture.stateDir,
-      dev: fixture.dev,
+      dev: "",
       cwd: fixture.cwd,
-      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
+      env: installedEnv({ WORKIT_DOCTOR_STALE_REGISTRY_VERSION: PUBLISHED }),
     });
     expect(report.exitCode).not.toBe(0);
     const stale = check(report, "stale_install");
     expect(stale.status).toBe("fail");
-    expect(stale.detail).toContain("0.4.0");
-    expect(stale.detail).toContain("1.0.0");
+    expect(stale.detail).toContain(`${RUNTIME} is behind the published runtime ${PUBLISHED}`);
     expect(stale.fix).toBeTruthy();
   } finally {
     rmSync(pluginPkg, { force: true });
@@ -420,7 +479,7 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
   // The synced bytes keep a valid node launcher entry (shebang + syntax).
   writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: RUNTIME }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -440,12 +499,11 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
     home: fixture.home,
     configDir: fixture.configDir,
     stateDir: fixture.stateDir,
-    dev: fixture.dev,
+    dev: "",
     cwd: fixture.cwd,
-    env: {
-      ...process.env,
+    env: installedEnv({
       WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(fixture.root, "no-registry-bin", "npm-fail"),
-    },
+    }),
   });
   try {
     const stale = check(report, "registry_unreachable");

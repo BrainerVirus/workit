@@ -110,6 +110,14 @@ import {
   type SessionHookStatus,
 } from "@brainervirus/workit-core/src/git/session-hook";
 import { readHookRuns, type HookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
+import { issueTrackerOf } from "@brainervirus/workit-core/src/core/vcs-config";
+import {
+  findYtrack,
+  ytrackHostAuth,
+  ytrackHostName,
+  ytrackRunner,
+  ytrackStatus,
+} from "@brainervirus/workit-core/src/core/youtrack-ytrack";
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
 import { removalCommand, type MigrationCopy } from "../install/migrate";
 import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/paths";
@@ -158,6 +166,7 @@ type DoctorCheckId =
   | "workspace_lock"
   | "session_hook"
   | "credential_metadata"
+  | "youtrack"
   | "github_identity"
   | "gitlab_identity"
   | "log_writable"
@@ -2296,6 +2305,16 @@ const checkCursorStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?
       }
     }
   }
+  // A dev checkout's manifests are not synced on main (versions are stamped at
+  // publish time, #704), so npm latest is always ahead: the comparisons above
+  // against the checkout's own build are the freshness signal there.
+  if (installed !== null && localDist && res.dev) {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: `installed local-dist workit-cursor ${installed} matches the dev checkout build (not compared with npm latest: main's manifest versions lag the release)`,
+    };
+  }
   if (installed !== null && localDist) {
     const expected = registryLatestVersion(res);
     if (expected === null) {
@@ -2779,6 +2798,91 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
     status: "fail",
     detail: problems.join("; "),
     fix: "Create or fix the token file (mode 0600, real value) — see /wk-status for the exact path",
+  };
+};
+
+// ytrack's `auth status` is the only spawn that may reach the network; a
+// missing ytrack is a PATH lookup, so the row stays fast without it.
+const YTRACK_DOCTOR_TIMEOUT_MS = 15_000;
+const YTRACK_INSTALL = "install ytrack (https://github.com/BrainerVirus/youtrack-cli)";
+
+/** The YouTrack hosts Workit is configured for, or null when nothing uses YouTrack. */
+const youTrackUse = (res: Resolved): { hosts: string[]; tokenFile: string | null } | null => {
+  const configFile = res.env.WORKIT_YOUTRACK_CONFIG ?? path.join(res.configDir, "youtrack.json");
+  const config = readJson(configFile);
+  const workspaces = readWorkspacesResult(res.configDir).entries.flatMap((entry) => {
+    const raw = entry as Record<string, unknown>;
+    const tracker = issueTrackerOf(raw.issues, raw.youtrack);
+    return tracker?.provider === "youtrack" ? [tracker] : [];
+  });
+  if (!config && workspaces.length === 0) return null;
+  const urls = [
+    typeof config?.baseUrl === "string" ? config.baseUrl : null,
+    ...workspaces.map((tracker) => tracker.baseUrl),
+  ].filter((url): url is string => Boolean(url?.trim()));
+  const raw =
+    typeof config?.tokenFile === "string" && config.tokenFile
+      ? config.tokenFile
+      : path.join(path.dirname(configFile), "youtrack.token");
+  const tokenFile = path.isAbsolute(raw) ? raw : path.resolve(path.dirname(configFile), raw);
+  return {
+    hosts: [...new Set(urls.map(ytrackHostName))],
+    tokenFile: existsSync(tokenFile) ? tokenFile : null,
+  };
+};
+
+/** ytrack's login for each configured YouTrack host (#711); no row without YouTrack. */
+const checkYouTrack = (res: Resolved): DoctorCheck | null => {
+  const use = youTrackUse(res);
+  if (!use) return null;
+  const login = (host: string | null) => `ytrack auth login${host ? ` --hostname ${host}` : ""}`;
+  const logins = use.hosts.length ? use.hosts.map(login).join("; ") : login(null);
+  if (!findYtrack(res.env)) {
+    return {
+      id: "youtrack",
+      status: "warn",
+      detail: use.tokenFile
+        ? `ytrack not on PATH: Workit falls back to the legacy token file ${use.tokenFile}, deprecated and removed in the next release`
+        : "ytrack not on PATH and no token file: YouTrack calls are unavailable",
+      fix: `${YTRACK_INSTALL}, then ${logins}${use.tokenFile ? `; then delete ${use.tokenFile}` : ""}`,
+    };
+  }
+  const status = ytrackStatus(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
+  if (!status.installed) {
+    return {
+      id: "youtrack",
+      status: "warn",
+      detail: "ytrack is on PATH but did not run",
+      fix: `Reinstall ytrack: ${YTRACK_INSTALL}`,
+    };
+  }
+  const version = status.version ? `ytrack ${status.version}` : "ytrack";
+  const rows = (use.hosts.length ? use.hosts : [null]).map((host) => ({
+    host,
+    ...ytrackHostAuth(status, host),
+  }));
+  const bad = rows.filter((row) => row.auth !== "ok");
+  if (bad.length === 0) {
+    const who = rows.map(
+      (row) => `${row.host ?? "the active host"}${row.login ? ` as ${row.login}` : ""}`,
+    );
+    return {
+      id: "youtrack",
+      status: "pass",
+      detail: `${version} logged in to ${who.join(", ")}${use.tokenFile ? `; the legacy token file ${use.tokenFile} is unused and can be deleted` : ""}`,
+    };
+  }
+  const why = bad.map((row) => {
+    const host = row.host ?? "the active host";
+    if (row.auth === "logged_out") return `logged_out for ${host}`;
+    if (row.auth === "rejected") return `${host} rejected the stored token`;
+    return `could not read the login for ${host}${row.error ? ` (${row.error})` : ""}`;
+  });
+  return {
+    id: "youtrack",
+    status: "warn",
+    detail: `${version}: ${why.join("; ")}`,
+    fix: bad.map((row) => login(row.host)).join("; "),
   };
 };
 
@@ -3890,7 +3994,7 @@ const checkHookRuns = (res: Resolved): DoctorCheck => {
   return { id: "hook_runs", status: "pass", detail: parts.join("; ") };
 };
 
-const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
+const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkRuntime,
   checkHookNode,
   checkLegacyDirs,
@@ -3920,6 +4024,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkWorkspaceLock,
   checkSessionHook,
   checkCredentialMetadata,
+  checkYouTrack,
   checkGithubIdentity,
   checkGitLabIdentity,
   checkLogWritable,
@@ -3939,7 +4044,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
 ];
 
 /** What `workit upgrade` verifies at its end: findings an upgrade can fix. */
-const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck>([
+const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck | null>([
   checkVersions,
   checkCodexPin,
   checkCodexAgents,
@@ -3973,7 +4078,9 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   const res = resolve(options);
   const raw = (
     options.only === "upgrade" ? RUN_CHECKS.filter((fn) => UPGRADE_CHECKS.has(fn)) : RUN_CHECKS
-  ).map((fn) => fn(res));
+  )
+    .map((fn) => fn(res))
+    .filter((check): check is DoctorCheck => check !== null);
   const checks = res.installer
     ? raw.map((c) =>
         c.status === "fail" && !INSTALLER_REQUIRED.has(c.id)
