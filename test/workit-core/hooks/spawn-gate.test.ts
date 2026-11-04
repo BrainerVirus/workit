@@ -77,6 +77,16 @@ test("G an implementer spawn without a brief, W PreToolUse runs, T it is denied 
   expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("workit fanout brief <slice>");
 });
 
+test("G an implementer prompt that points at its brief (WORKER, TIER, TIMEBOX and WORKTREE lines, render the rest), W PreToolUse runs, T it is accepted as a brief", () => {
+  const out = spawn({
+    subagent_type: "workit:implementer",
+    prompt:
+      "WORKER: slice\nTIER: standard\nTIMEBOX: 30 minutes, 120 tool calls\nWORKTREE: /w/slice\nRun `workit fanout brief slice` and follow its text exactly.\n",
+    model: "opus",
+  });
+  expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
+});
+
 test("G a brief rendered before its worktree was made, W PreToolUse runs, T it is denied too", () => {
   const out = spawn({
     subagent_type: "workit:implementer",

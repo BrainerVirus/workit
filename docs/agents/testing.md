@@ -73,10 +73,10 @@ verb output) are proven against real failures, not prose (#425).
   (`test/workit-core/skill-set.test.ts`), the pinned phrases
   (`test/workit-core/methods.test.ts`) and `generated-copies.test.ts`, which a
   targeted test misses. `workit fanout brief` adds a `skills:` VERIFY line to
-  any slice whose SCOPE has a `skills` or `agents` path segment: `workit check
-  skills` when `.workit/checks.json` defines a `skills` check or group, else
-  these four files by name, else "run the repo's skill and context-budget
-  checks".
+  any slice whose SCOPE has a `skills` or `agents` path segment outside a
+  `docs` dir: `workit check skills` when the slice worktree's
+  `.workit/checks.json` defines a `skills` check or group, else these four
+  files by name, else "run the repo's skill and context-budget checks".
 
 ### Layer 2: model-in-the-loop cases
 

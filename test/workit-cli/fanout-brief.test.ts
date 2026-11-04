@@ -210,6 +210,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
   expect(data.text).toBe(
     [
       "MODE: new",
+      "WORKER: a",
       "GOAL: GET /a answers 200",
       "SCOPE: src/a.ts, test/a.test.ts",
       "  owns: package.json",
@@ -220,7 +221,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "VERIFY: workit check test",
       "REASON: parallel",
       "TIER: mundane",
-      "TIMEBOX: 45 minutes, 120 tool calls; past it without a new commit you will be replaced",
+      "TIMEBOX: 45 minutes, 120 tool calls (run your full VERIFY gates by call 72); past it without a new commit you will be replaced",
       "SCRATCH: .workit-scratch/ at your worktree root (mkdir -p it; git ignores it; never a shared path)",
       "FORBIDDEN: no edits outside SCOPE; no new packages",
       "FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.",
@@ -238,7 +239,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
       "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`; push only if this brief says so.",
       "  4. Never record a verdict on your own work.",
-      "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
+      "  5. Run tests, lint, typecheck and builds only through `workit check`: a named check (`workit check <name>`), or an ad-hoc light command (a formatter, one linter, one test file) as `workit check --name <n> -- <cmd>`, which takes no lease. `--heavy` is only for full suites, packaging, builds and knip: one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
       "  6. A failed review gets one fix round and one recheck. Still failing: stop and report the open finding, never a third round (the lead spawns a decider). A product choice is the user's: report it, do not decide it.",
       "  7. Before your final report, wait for or stop every background command you started; never report with one still running.",
       "",
@@ -851,4 +852,69 @@ test("fanout brief: given a skills slice whose VERIFY already runs `workit check
   const own = slice("a", ["skills/**"], { verify: ["workit check skills"] });
   expect((await plan(cwd, root, "dup", [own])).code).toBe(0);
   expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check skills"]);
+});
+
+test("fanout brief: given a SCOPE of docs/agents/release.md only and a skills check, when rendered, then no skills line is added (prose about agents is not a definition)", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { skills: "true", lint: "true" } }),
+  );
+  expect(
+    (await plan(cwd, root, "docs", [skillSlice(["docs/agents/release.md", "docs/skills/x.md"])]))
+      .code,
+  ).toBe(0);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check lint"]);
+});
+
+test("fanout brief: given a lead checkout with no skills check and a slice worktree whose branch defines one, when rendered, then the skills line is `workit check skills` (the worker runs its worktree's checks)", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { lint: "true" } }),
+  );
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-qm", "chore: checks");
+  expect((await plan(cwd, root, "stale", [skillSlice(["packages/x/skills/**"])])).code).toBe(0);
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  writeFileSync(
+    path.join(managedWt("a"), ".workit", "checks.json"),
+    JSON.stringify({ checks: { lint: "true", skills: "true" } }),
+  );
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
+    "VERIFY: workit check lint",
+    "  skills: workit check skills  (SCOPE touches skills or agents; targeted tests miss these gates)",
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// tool-call budget by tier (retro W2.18)
+
+const timeboxLine = (text: string): string =>
+  text.split("\n").find((line) => line.startsWith("TIMEBOX: ")) ?? "";
+
+test("fanout brief: given a hard slice with no budget named, when rendered, then TIMEBOX gives 180 tool calls and the full gates by call 108", async () => {
+  const { root, cwd } = repo();
+  expect((await plan(cwd, root, "hard", [slice("a", ["a.ts"], { tier: "hard" })])).code).toBe(0);
+  expect(timeboxLine((await brief(cwd, "a")).text)).toBe(
+    "TIMEBOX: 30 minutes, 180 tool calls (run your full VERIFY gates by call 108); past it without a new commit you will be replaced",
+  );
+});
+
+test("fanout brief: given a slice whose TIMEBOX names its own budget, when rendered, then that budget stands and the gate mark is 60% of it", async () => {
+  const { root, cwd } = repo();
+  const own = slice("a", ["a.ts"], { tier: "hard", timebox: "1h, 80 tool calls" });
+  expect((await plan(cwd, root, "own-budget", [own])).code).toBe(0);
+  expect(timeboxLine((await brief(cwd, "a")).text)).toBe(
+    "TIMEBOX: 1h, 80 tool calls (run your full VERIFY gates by call 48); past it without a new commit you will be replaced",
+  );
+});
+
+test("fanout brief: given a race attempt, when rendered, then its WORKER line names the slice and the attempt", async () => {
+  const { root, cwd } = repo();
+  expect((await plan(cwd, root, "race", [slice("a", ["a.ts"])])).code).toBe(0);
+  expect((await brief(cwd, "a", "--attempt", "2")).text).toContain("\nWORKER: a+try2\n");
 });

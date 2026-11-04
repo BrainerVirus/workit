@@ -4,7 +4,10 @@
 // stripped from every agent type (an implementer works in its brief's
 // WORKTREE). A `workit:implementer` spawn also carries a Workit brief: a
 // prompt with no WORKTREE line (no brief, or a brief rendered before the
-// worktree existed) is denied with the commands that make one.
+// worktree existed) is denied with the commands that make one. A pointer
+// prompt (its WORKER, TIER, TIMEBOX and WORKTREE lines plus "render
+// `workit fanout brief <slice>`") passes: it spares the lead's context, and
+// the launcher fast path (workit-hook.mjs) keeps this same WORKTREE test.
 import { agentModelDecision } from "./agent-model";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision } from "./protocol";

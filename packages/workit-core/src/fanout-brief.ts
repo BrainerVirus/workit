@@ -68,10 +68,22 @@ export const DEFAULT_TIMEBOX = "30 minutes";
 /** The TIMEBOX line's tool-call budget when the slice names none (hooks/budget-signal.ts). */
 export const DEFAULT_TOOL_CALLS = 120;
 
-/** The slice's TIMEBOX text plus a tool-call budget unless it already names one. */
-const timeboxText = (timebox: string | null): string => {
+/** A hard slice's default budget: three hard slices hit 120 before their gates (retro W2.18). */
+export const HARD_TOOL_CALLS = 180;
+
+/** The share of the budget by which a worker has run its full gates, leaving the rest to fix what they find. */
+const GATES_BY = 0.6;
+
+/**
+ * The slice's TIMEBOX text plus a tool-call budget unless it already names
+ * one (hard slices get more), and the call by which the full gates have run.
+ */
+const timeboxText = (timebox: string | null, tier: string): string => {
   const text = timebox ?? DEFAULT_TIMEBOX;
-  return /\b\d+\s+tool calls\b/u.test(text) ? text : `${text}, ${DEFAULT_TOOL_CALLS} tool calls`;
+  const named = /\b(\d+)\s+tool calls\b/u.exec(text);
+  const budget = named ? Number(named[1]) : tier === "hard" ? HARD_TOOL_CALLS : DEFAULT_TOOL_CALLS;
+  const withBudget = named ? text : `${text}, ${budget} tool calls`;
+  return `${withBudget} (run your full VERIFY gates by call ${Math.round(budget * GATES_BY)})`;
 };
 
 const REPORT = [
@@ -138,7 +150,7 @@ const rules = (
     '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
     `  3. Commit with \`${workit("git")} commit -m <msg> -- <paths in SCOPE>\`; push only if this brief says so.`,
     "  4. Never record a verdict on your own work.",
-    "  5. Run tests, lint, typecheck and builds only through `workit check` (a named check, or `workit check --heavy -- <cmd>`): one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
+    "  5. Run tests, lint, typecheck and builds only through `workit check`: a named check (`workit check <name>`), or an ad-hoc light command (a formatter, one linter, one test file) as `workit check --name <n> -- <cmd>`, which takes no lease. `--heavy` is only for full suites, packaging, builds and knip: one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
     "  6. A failed review gets one fix round and one recheck. Still failing: stop and report the open finding, never a third round (the lead spawns a decider). A product choice is the user's: report it, do not decide it.",
     "  7. Before your final report, wait for or stop every background command you started; never report with one still running.",
   ];
@@ -152,21 +164,30 @@ const WORKIT_SKILL_TESTS = [
   "test/workit-core/generated-copies.test.ts",
 ];
 
-/** Does a SCOPE entry reach skills or agent definitions (`**\/skills/**`, `**\/agents/**`)? */
+/**
+ * Does a SCOPE entry reach skills or agent definitions (`**\/skills/**`,
+ * `**\/agents/**`)? Not under a `docs` dir: `docs/agents/*.md` is prose
+ * about agents, not a definition (retro W2.41).
+ */
 const touchesSkills = (scope: readonly string[]): boolean =>
-  scope.some((entry) =>
-    entry.split(/[\\/]/u).some((segment) => segment === "skills" || segment === "agents"),
-  );
+  scope.some((entry) => {
+    const segments = entry.split(/[\\/]/u);
+    const hit = segments.findIndex((segment) => segment === "skills" || segment === "agents");
+    return hit >= 0 && !segments.slice(0, hit).includes("docs");
+  });
 
 /**
  * The extra VERIFY line for a slice whose SCOPE touches skills or agents:
  * targeted tests miss the skill cap, pinned phrases and context budget, which
  * fail only in CI. A `skills` check or group in the checks config is the
  * portable form; else this repository's test files, else a generic rule.
+ * `root` is the slice's worktree once made: the worker runs the checks its
+ * branch defines, not those of the lead's checkout, which may be behind
+ * (retro W2.41: a stale main had no `skills` check).
  */
-function skillsVerify(cwd: string, scope: readonly string[], verify: readonly string[]) {
+function skillsVerify(root: string, scope: readonly string[], verify: readonly string[]) {
   if (!touchesSkills(scope)) return [];
-  const config = loadCheckConfig(cwd);
+  const config = loadCheckConfig(root);
   const named =
     !config.error &&
     (config.checks.some((check) => check.name === "skills") || "skills" in config.groups);
@@ -274,6 +295,7 @@ export function renderBrief(
 
   const lines = [
     `MODE: ${mode}${input.attempt === null ? "" : `  (race attempt ${input.attempt}: the lead keeps the attempt with the best verdict)`}`,
+    `WORKER: ${slice.id}${input.attempt === null ? "" : `+try${input.attempt}`}`,
     `GOAL: ${slice.goal}`,
     `SCOPE: ${slice.scope.join(", ")}`,
     ...(slice.owns.length ? [`  owns: ${slice.owns.join(", ")}`] : []),
@@ -292,7 +314,7 @@ export function renderBrief(
     "ACCEPTANCE:",
     ...slice.acceptance.map((line) => `  - ${line}`),
     `VERIFY: ${slice.verify.join("; ")}`,
-    ...skillsVerify(cwd, slice.scope, slice.verify),
+    ...skillsVerify(exists ? planned : cwd, slice.scope, slice.verify),
     ...(slice.reason ? [`REASON: ${slice.reason}`] : []),
     `TIER: ${slice.tier}`,
     ...(model
@@ -305,7 +327,7 @@ export function renderBrief(
           `  verifier: model ${verifier.model}${verifier.effort ? `  effort ${verifier.effort}` : ""}  (${verifier.source})`,
         ]
       : []),
-    `TIMEBOX: ${timeboxText(slice.timebox)}; past it without a new commit you will be replaced`,
+    `TIMEBOX: ${timeboxText(slice.timebox, slice.tier)}; past it without a new commit you will be replaced`,
     scratchLine,
     `FORBIDDEN: ${slice.forbidden.join("; ")}`,
     ...fanIn,
