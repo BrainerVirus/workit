@@ -10,6 +10,7 @@ import {
 } from "@brainervirus/workit-core/hooks";
 
 import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
+import { useOwnedWorkitCli } from "@brainervirus/workit-core/src/core/cli-locate";
 
 export { parseCursorHookInput, type CursorHookInput } from "@brainervirus/workit-core/hooks";
 export { cursorCapabilities } from "./capabilities";
@@ -99,6 +100,8 @@ const subagentStartStep = (_adapter: unknown, raw: unknown) => {
 };
 
 export const runCursorHook = async (): Promise<void> => {
+  // The owned CLI first on this hook's PATH (core/cli-locate), before anything probes for `workit`.
+  useOwnedWorkitCli();
   let text = "";
   for await (const chunk of process.stdin) text += String(chunk);
   let raw: unknown;

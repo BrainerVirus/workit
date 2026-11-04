@@ -45,6 +45,7 @@ import {
   skillPromptNudge,
 } from "../src/tools";
 import { abandonedLaunches, cancelHint, clearLaunch, recordLaunch } from "../src/launches";
+import { useOwnedCliInPi } from "../src/cli-path";
 import {
   cancelWorker,
   cancelWorkerAssignment,
@@ -197,6 +198,8 @@ export const lastAssistantText = (messages: readonly unknown[] | undefined): str
 };
 
 export default function extension(pi: ExtensionAPI): void {
+  // Pi's bash tool inherits this process's env: the owned `workit` goes first on PATH.
+  useOwnedCliInPi();
   const sessions = new Set<string>();
   const historyOfferSessions = new Set<string>();
   /** Sessions whose current run was started by a stop continuation. */

@@ -8,8 +8,8 @@
 // cli_installs names the fix).
 //
 // Dependency-light on purpose (node: builtins only): the Codex hook launcher
-// loads it on every tool call before the runtime. installRoot/launcherDir
-// follow packages/workit-cli/src/install/paths.ts, which is the writer.
+// loads it on every tool call before the runtime. installRoot/launcherDir are
+// the one copy: packages/workit-cli/src/install/paths.ts (the writer) re-exports them.
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
