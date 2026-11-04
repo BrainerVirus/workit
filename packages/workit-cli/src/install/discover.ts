@@ -95,6 +95,25 @@ const commandTarget = (command: string): string | null => {
   return null;
 };
 
+/**
+ * A script's lines without heredoc bodies: text a `<<EOF` feeds to a command
+ * (an `exec node …` it prints, say) is data, never a command the script runs.
+ */
+const withoutHeredocs = (lines: string[]): string[] => {
+  const kept: string[] = [];
+  let until: string | null = null;
+  for (const line of lines) {
+    if (until !== null) {
+      if (line.trim() === until) until = null;
+      continue;
+    }
+    kept.push(line);
+    const opened = /(?<!<)<<-?(?!<)\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][\w.-]*))/.exec(line);
+    if (opened) until = opened[1] ?? opened[2] ?? opened[3];
+  }
+  return kept;
+};
+
 const isRegularFile = (file: string): boolean => {
   try {
     return statSync(file).isFile();
@@ -124,8 +143,7 @@ const wrapperTarget = (
   }
   const home = env.HOME || env.USERPROFILE || "";
   const self = realpathOr(file);
-  const commands = text
-    .split(/\r?\n/)
+  const commands = withoutHeredocs(text.split(/\r?\n/))
     .map((line) => line.trim())
     .filter((line) => line && !/^(?:#|::|rem(?:\s|$))/i.test(line))
     .flatMap((line) => line.split(/&&|\|\||;|\|/));
@@ -383,19 +401,33 @@ export const listInstalls = (
   return found;
 };
 
+/** A script that runs no workit install: not a copy to migrate, never removed (W2.33). */
+export const isForeignFile = (install: FoundInstall): boolean =>
+  install.kind === "wrapper" && install.runs === null && install.version === null;
+
 /** One `which -a` style line per install. */
-export const describeInstall = (install: FoundInstall): string => {
+export const describeInstall = (install: FoundInstall): string =>
+  describeInstallAt(install, undefined);
+
+/**
+ * describeInstall, plus the hint for a foreign file sitting at `linked` (the
+ * PATH place the launcher link belongs).
+ */
+export const describeInstallAt = (install: FoundInstall, linked: string | undefined): string => {
   const where =
     install.kind === "owned"
       ? "Workit-owned launcher"
-      : install.kind === "wrapper"
-        ? `hand-written wrapper${install.runs ? ` running ${install.runs}` : ""}`
-        : install.kind === "host"
-          ? "host plugin launcher, managed by its host"
-          : install.kind === "link"
-            ? "link"
-            : `${install.manager ?? "npm"} global prefix ${install.prefix}`;
+      : isForeignFile(install)
+        ? `foreign file, left untouched${install.path === linked ? "; move it to let the launcher link there" : ""}`
+        : install.kind === "wrapper"
+          ? `hand-written wrapper${install.runs ? ` running ${install.runs}` : ""}`
+          : install.kind === "host"
+            ? "host plugin launcher, managed by its host"
+            : install.kind === "link"
+              ? "link"
+              : `${install.manager ?? "npm"} global prefix ${install.prefix}`;
   const pathPart = install.pathIndex === null ? "not on PATH" : `PATH #${install.pathIndex + 1}`;
   const real = install.realpath === install.path ? "" : ` -> ${install.realpath}`;
+  if (isForeignFile(install)) return `${install.path}${real} (${where}; ${pathPart})`;
   return `${install.path}${real} (workit ${install.version ?? "unknown"}; ${where}; ${pathPart})`;
 };

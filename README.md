@@ -172,8 +172,10 @@ moves an older `npm i -g` copy over and `workit doctor` lists every copy on
 your machine ([install guide](docs/guides/install.md)).
 
 Every verb works without a host; hosts just put `workit` and the skills in
-front of the agent. Update with `workit upgrade --hosts=none --cli`; remove it by deleting
-`~/.local/share/workit/{versions,current,bin}` and the `~/.local/bin/workit` link.
+front of the agent. Update with `workit upgrade --hosts=none --cli`; remove it with
+`workit uninstall` (pick the CLI): it deletes `versions/`, `current` and `bin/`
+under the install root and the `~/.local/bin/workit` link when that link points
+into the install. A file of your own at that path is left untouched and named.
 
 </details>
 
@@ -264,7 +266,7 @@ shape  →  implement  →  review  →  ship
    reviewer started with its own `WORKIT_SESSION_ID`) records
    `workit ledger verdict`.
 4. **Ship**: `workit git push`, `workit pr create --issue <#n|ID>` (links the
-   issue on GitHub, GitLab or YouTrack), `workit ci wait`,
+   issue on GitHub, GitLab or [YouTrack](docs/guides/youtrack.md)), `workit ci wait`,
    `workit pr status`; `workit pr merge` only when the PR is READY, verified and
    the `merge` grant allows it, and then deletes the merged head branch
    (workspace `deleteBranch`, `--keep-branch` to opt out; never a protected,
@@ -346,7 +348,7 @@ Global flags:
 | `workit upgrade --check` / `--set-updates=prompt\|auto\|off` | Compare installed and latest versions; choose how a launch handles a new release |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
-| `workit uninstall` | Pick hosts and remove their registrations (keeps `~/.config/workit`) |
+| `workit uninstall` | Pick hosts (and the owned CLI install) and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
 | `workit workspace list\|add\|set` | List, add or edit workspace entries without the wizard; never raises a grant |
 | `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer) runs on for a host |
@@ -364,7 +366,7 @@ Global flags:
 | `workit fanout plan\|brief\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); render each worker's brief with the standing orders; watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
 | `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
 | `workit release start\|finish\|publish\|notes` | git-flow releases without the git-flow binary: cut, finish (merge, tag, merge back, forge release with user-facing notes) and publish per release track; `notes draft\|show\|approve` drafts the release notes, and under `releaseNotes: review` only the user approves them ([release notes](docs/guides/delivery.md#release-notes)) |
-| `workit youtrack note\|time\|meeting` | YouTrack comments and work time |
+| `workit youtrack note\|time\|meeting` | YouTrack comments and work time ([YouTrack guide](docs/guides/youtrack.md)) |
 | `workit changelog apply` | Add entries under the changelog's Unreleased section |
 | `workit <family> <action>` | Low-level task families: `task`, `policy`, `evidence`, `finding`, `decision`, `worker`, `state` |
 
