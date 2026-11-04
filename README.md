@@ -45,7 +45,7 @@ ones you pick with their native commands, and writes your global config:
 
 ```bash
 npx @brainervirus/workit-cli init
-workit doctor          # after a global install (npm i -g @brainervirus/workit-cli)
+workit doctor          # after the CLI install below
 workit setup           # optional: let agents run Workit's delivery verbs without a prompt
 ```
 
@@ -63,8 +63,8 @@ updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
 host); the native commands below are the fallback.
 
 A CLI older than 8.38.0 has no `--yes` (it fails with `unknown option --yes`).
-Update the CLI once with `npm i -g @brainervirus/workit-cli@latest` (or, on the
-old CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
+Update the CLI once with `npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes`
+(or, on the old CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
 `workit upgrade`.
 
 <details>
@@ -161,13 +161,19 @@ npm:@brainervirus/workit-pi`). Uninstall: `workit uninstall`.
 <summary><strong>CLI only</strong></summary>
 
 ```bash
-npm i -g @brainervirus/workit-cli
+npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes
 workit help
 ```
 
+This installs the CLI into `~/.local/share/workit/versions/<v>` with a
+`~/.local/bin/workit` launcher (Windows: `%LOCALAPPDATA%\workit\install`),
+independent of which Node version manager a shell uses. `workit upgrade`
+moves an older `npm i -g` copy over and `workit doctor` lists every copy on
+your machine ([install guide](docs/guides/install.md)).
+
 Every verb works without a host; hosts just put `workit` and the skills in
-front of the agent. Update with `workit upgrade --hosts=none --cli`; remove
-with `npm rm -g @brainervirus/workit-cli`.
+front of the agent. Update with `workit upgrade --hosts=none --cli`; remove it by deleting
+`~/.local/share/workit/{versions,current,bin}` and the `~/.local/bin/workit` link.
 
 </details>
 

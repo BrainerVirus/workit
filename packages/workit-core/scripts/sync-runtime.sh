@@ -102,7 +102,9 @@ done
 if [ "$SRC" != "$SHARE" ]; then
   mkdir -p "$SHARE"
   # Keep .git if share is a clone; never wipe it when syncing from the monorepo
+  # versions/, current and bin/ are the owned CLI install (workit upgrade): never delete them
   rsync -a --delete \
+    --exclude '/versions' --exclude '/current' --exclude '/bin' \
     --exclude '.git' \
     --exclude 'node_modules' \
     --exclude 'cursor/mcp/node_modules' \

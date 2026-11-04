@@ -20,7 +20,7 @@ workit upgrade --set-updates=auto   # prompt (default) | auto | off
 ```
 
 A CLI older than 8.38.0 has no `--yes` and fails with `unknown option --yes`.
-Update it once with `npm i -g @brainervirus/workit-cli@latest` (or, on the old
+Update it once with `npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes` (or, on the old
 CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
 `workit upgrade`.
 

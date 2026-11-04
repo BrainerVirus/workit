@@ -3501,7 +3501,7 @@ const checkWorkitOnPath = (res: Resolved): DoctorCheck => {
     null,
   );
   const target = newest?.version ?? "latest";
-  const fix = `npm i -g ${CLI_PACKAGE}@${target} (or run it without a global install: npx -y ${CLI_PACKAGE}@${target} <command>)`;
+  const fix = `npx -y ${CLI_PACKAGE}@${target} upgrade --cli --hosts=none --yes (installs the owned CLI and its launcher)`;
   const bin = findOnPath(pathextNames("workit", res.env), res.env);
   if (!bin) {
     return {

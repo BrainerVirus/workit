@@ -27,7 +27,7 @@ else
       echo "FATAL: could not clone https://github.com/${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" >&2
       exit 1
     fi
-    rsync -a --delete --exclude node_modules --exclude cursor/mcp/node_modules "$TMP/" "$SHARE/"
+    rsync -a --delete --exclude '/versions' --exclude '/current' --exclude '/bin' --exclude node_modules --exclude cursor/mcp/node_modules "$TMP/" "$SHARE/"
     rm -rf "$TMP"
   fi
   PIN="file://${SHARE}/packages/workit-opencode/src/plugin.ts"
