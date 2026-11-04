@@ -487,6 +487,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Workers and verifiers no longer stay listed as running after their final report: briefs and the implementer, verifier and reviewer agents now finish or stop every background command they started before reporting, and the fanout skill tells the lead to stop a worker once its report arrives.
 - When the Claude Code Agent hook replaces a spawn's model with the configured role model, its note names the model (and effort) to pass next time, so the next spawn needs no rewrite.
 - `workit upgrade` verifies the version that PATH actually runs and fails, naming every copy by real path, when another install shadows it; at the user's terminal it backs up and removes old `npm i -g` copies from fnm/nvm/volta/mise/asdf prefixes after a y/N, and only prints the commands in an agent shell (#648, #423).
 - The update check never reports a latest version older than the running CLI.
