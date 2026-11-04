@@ -332,6 +332,75 @@ function worktreeDependencies(
   return { ...linkWorktreeDependencies(main, worktree), install: null };
 }
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const keysOf = (value: unknown): string[] => (isObject(value) ? Object.keys(value) : []);
+
+/** A bun.lock `os`/`cpu` field (`"none"`, a name, a list, `!name`) excludes `current`. */
+function excludes(field: unknown, current: string): boolean {
+  const values = typeof field === "string" ? [field] : Array.isArray(field) ? field : null;
+  if (!values?.length) return false;
+  const names = values.filter((value): value is string => typeof value === "string");
+  if (names.includes("none")) return true;
+  if (names.includes(`!${current}`)) return true;
+  const allowed = names.filter((name) => !name.startsWith("!"));
+  return allowed.length > 0 && !allowed.includes(current);
+}
+
+/**
+ * The bun.lock packages an install may leave out on this machine (W2.14):
+ * one whose `os`/`cpu` excludes this platform, and one reached only from such
+ * packages or as a peer (`@emnapi/*` under a wasm32 binding). This
+ * platform's own optional binding stays required, and so does a package
+ * nothing names, so a stale install is still caught.
+ */
+function optionalOnly(
+  packages: Record<string, unknown>,
+  workspaces: Record<string, unknown>,
+): Set<string> {
+  const meta = (key: string): Record<string, unknown> => {
+    const entry = packages[key];
+    return Array.isArray(entry) && isObject(entry[2]) ? entry[2] : {};
+  };
+  const resolve = (from: string | null, name: string): string =>
+    from !== null && `${from}/${name}` in packages ? `${from}/${name}` : name;
+  const optional = new Set<string>();
+  for (const key of Object.keys(packages)) {
+    const info = meta(key);
+    if (excludes(info.os, process.platform) || excludes(info.cpu, process.arch)) optional.add(key);
+  }
+  // Required edges: what workspaces and installed packages depend on outright.
+  const required = new Set<string>();
+  for (const workspace of Object.values(workspaces))
+    for (const field of ["dependencies", "devDependencies"])
+      for (const name of keysOf(isObject(workspace) ? workspace[field] : null))
+        required.add(resolve(null, name));
+  // Walk from the roots through what bun installs here: dependencies and
+  // optional dependencies, never into a package for another platform.
+  const queue = [...required];
+  const reached = new Set<string>();
+  while (queue.length) {
+    const key = queue.pop() as string;
+    if (reached.has(key) || optional.has(key) || !(key in packages)) continue;
+    reached.add(key);
+    for (const field of ["dependencies", "optionalDependencies"])
+      for (const name of keysOf(meta(key)[field])) queue.push(resolve(key, name));
+  }
+  const named = new Set<string>();
+  for (const key of Object.keys(packages)) {
+    const info = meta(key);
+    for (const field of ["dependencies", "optionalDependencies", "peerDependencies"])
+      for (const name of keysOf(info[field])) named.add(resolve(key, name));
+  }
+  for (const workspace of Object.values(workspaces))
+    if (isObject(workspace))
+      for (const field of ["optionalDependencies", "peerDependencies"])
+        for (const name of keysOf(workspace[field])) named.add(resolve(null, name));
+  for (const key of named) if (!reached.has(key) && !required.has(key)) optional.add(key);
+  return optional;
+}
+
 /** Packages checked against node_modules at most (a lockfile is read whole once). */
 const STALE_SCAN = 5000;
 
@@ -347,16 +416,20 @@ function staleBunInstall(main: string): string | null {
   const text = readBytes(path.join(main, "bun.lock"))?.toString("utf8");
   if (!text) return null;
   let packages: Record<string, unknown>;
+  let parsedWorkspaces: Record<string, unknown>;
   try {
     // bun.lock is JSON with trailing commas.
     const parsed = JSON.parse(text.replace(/,(\s*[}\]])/gu, "$1")) as {
       packages?: unknown;
+      workspaces?: unknown;
     };
     if (!parsed.packages || typeof parsed.packages !== "object") return null;
     packages = parsed.packages as Record<string, unknown>;
+    parsedWorkspaces = isObject(parsed.workspaces) ? parsed.workspaces : {};
   } catch {
     return null;
   }
+  const optional = optionalOnly(packages, parsedWorkspaces);
   const problems: string[] = [];
   let scanned = 0;
   for (const [key, entry] of Object.entries(packages)) {
@@ -371,7 +444,8 @@ function staleBunInstall(main: string): string | null {
     if (name !== key || version.includes(":")) continue;
     const manifest = readBytes(path.join(main, "node_modules", key, "package.json"));
     if (!manifest) {
-      problems.push(`${key} missing`);
+      // bun skips an optional dependency for another platform (W2.14).
+      if (!optional.has(key)) problems.push(`${key} missing`);
       continue;
     }
     let installed: unknown;
