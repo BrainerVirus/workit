@@ -1,5 +1,4 @@
 import {
-  copyFileSync,
   cpSync,
   existsSync,
   lstatSync,
@@ -52,6 +51,7 @@ import {
   OPENCODE_NPM_PIN,
 } from "./registration";
 import { runDoctor, type DoctorReport } from "./doctor";
+import { CODEX_MARKETPLACE } from "../upgrade/codex-marketplace";
 import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write";
 import {
   isCodexWorkitInstalled,
@@ -370,7 +370,7 @@ export function buildSetupPreview(
         } else if (platform === "cursor") {
           const cursorRoot = adapterRoot("cursor", {
             ...paths,
-            dev: opts.dev ?? env.WORKFLOW_TOOLKIT_DEV ?? null,
+            dev: opts.dev ?? env.WORKIT_DEV ?? null,
           });
           if (cursorRoot === null) {
             const commands = planHostInstall("cursor", {
@@ -410,7 +410,7 @@ export function buildSetupPreview(
                         env.CODEX_HOME ?? path.join(paths.home, ".codex"),
                         "plugins",
                         "cache",
-                        "workflow-toolkit",
+                        CODEX_MARKETPLACE,
                         "workit",
                       )
                     : path.join(
@@ -548,7 +548,7 @@ function resolveApply(preview: SetupPreview, options: ApplySetupOptions): Resolv
   const paths = resolveSetupPaths(options, options.configDir ?? preview.state.configDir);
   return {
     ...paths,
-    dev: options.dev ?? paths.env.WORKFLOW_TOOLKIT_DEV ?? null,
+    dev: options.dev ?? paths.env.WORKIT_DEV ?? null,
   };
 }
 
@@ -816,7 +816,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
 }
 
 // Package-native adapter resolution, in order: an explicit dev checkout
-// (WORKFLOW_TOOLKIT_DEV, authoritative when set), the package as Node resolves
+// (WORKIT_DEV, authoritative when set), the package as Node resolves
 // it from the running CLI (nested `npm i -g` node_modules, hoisted siblings, a
 // workspace link), the host's own install (Cursor's staged bootstrap,
 // OpenCode's plugin cache), then a dev checkout found walking up from cwd. No
@@ -870,7 +870,7 @@ function adapterRoot(
   if (platform === "cursor" && preferInstalledAdapter) candidates.push(stagedCursor);
   if (res.dev) {
     // A dev checkout is the complete source of truth for adapter packages: when
-    // WORKFLOW_TOOLKIT_DEV is set, a package missing from it is a real failure,
+    // WORKIT_DEV is set, a package missing from it is a real failure,
     // not a reason to fall through to the running process's own install.
     candidates.push(path.join(res.dev, "packages", `workit-${platform}`));
   } else {
@@ -1113,30 +1113,6 @@ export function copyPluginDir(src: string, dest: string): SetupResultStatus {
   return hadDir ? "Configured" : "Installed";
 }
 
-// CA-08/CA-09: remove the exact legacy local plugin identity only AFTER the
-// canonical `workit` copy and registration succeeded. The legacy dir's own
-// user-compiled rules are carried forward first so no user data is lost; the
-// `.workit-root` marker, share path, and unrelated sibling dirs are
-// left untouched.
-const removeLegacyCursorDir = (res: ResolvedApply): void => {
-  const legacy = path.join(res.home, ".cursor", "plugins", "local", "workflow-toolkit");
-  if (legacy === res.cursorPluginDir || !existsSync(legacy)) return;
-  const legacyRules = path.join(legacy, "rules");
-  if (existsSync(legacyRules)) {
-    try {
-      mkdirSync(path.join(res.cursorPluginDir, "rules"), { recursive: true });
-      for (const entry of readdirSync(legacyRules, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.endsWith(".mdc")) continue;
-        const target = path.join(res.cursorPluginDir, "rules", entry.name);
-        if (!existsSync(target)) copyFileSync(path.join(legacyRules, entry.name), target);
-      }
-    } catch {
-      /* best-effort rule carry-forward */
-    }
-  }
-  rmSync(legacy, { recursive: true, force: true });
-};
-
 // One reviewed mutation per Cursor write target (AR-09): the settings merge and
 // the mcp merge are dispatched independently, exactly like the adapter copy.
 function applyCursorSettings(root: string, res: ResolvedApply): SetupResultEntry {
@@ -1222,7 +1198,7 @@ function verifyPlatform(platform: Platform, res: ResolvedApply): DoctorReport | 
     installer: true,
     home: res.home,
     configDir: res.configDir,
-    stateDir: res.env.WORKFLOW_TOOLKIT_STATE,
+    stateDir: res.env.WORKIT_STATE_DIR,
     dev: res.dev ?? undefined,
     cwd: res.cwd,
     env: res.env,
@@ -1300,9 +1276,7 @@ export function applySetupPreview(
 
   const res = resolveApply(preview, options);
   // Hook launchers find a Node >= the floor from this record when the PATH node is older.
-  recordHookNode(
-    options.stateDir ? { ...res.env, WORKFLOW_TOOLKIT_STATE: options.stateDir } : res.env,
-  );
+  recordHookNode(options.stateDir ? { ...res.env, WORKIT_STATE_DIR: options.stateDir } : res.env);
   const entries: SetupResultEntry[] = [];
   // AR-09/AR-13: Apply dispatches ONLY the reviewed mutation union. The adapter
   // source is re-resolved with the apply options (dev/cwd); a resolution
@@ -1312,9 +1286,8 @@ export function applySetupPreview(
   // path (a caller that resolved the preview with different options) fails
   // fast — Failed, no write — instead of silently writing an unreviewed path.
   const rootFor = new Map<Platform, string | null>();
-  // CA-09: cursor registration and legacy cleanup only proceed after the
-  // canonical copy succeeded — a failed replacement must never remove the
-  // legacy identity or its registration.
+  // CA-09: cursor registration only proceeds after the canonical copy
+  // succeeded — a failed copy must never be registered.
   let cursorCopyOk = false;
   for (const mutation of preview.mutations) {
     if (mutation.type === "install-host") {
@@ -1326,7 +1299,7 @@ export function applySetupPreview(
                 res.env.CODEX_HOME ?? path.join(res.home, ".codex"),
                 "plugins",
                 "cache",
-                "workflow-toolkit",
+                CODEX_MARKETPLACE,
                 "workit",
               )
             : mutation.platform === "pi"
@@ -1428,7 +1401,7 @@ export function applySetupPreview(
         platform,
         file: mutation.path,
         status: "Failed",
-        detail: `@brainervirus/workit-${platform} package not found — set WORKFLOW_TOOLKIT_DEV to your checkout or install the package`,
+        detail: `@brainervirus/workit-${platform} package not found — set WORKIT_DEV to your checkout or install the package`,
       });
       continue;
     }
@@ -1448,7 +1421,7 @@ export function applySetupPreview(
     } else if (platform === "opencode") {
       entries.push(applyOpenCode(root, res));
     } else if (!cursorCopyOk) {
-      // CA-09: the canonical copy failed — leave the legacy registration intact.
+      // CA-09: the canonical copy failed — leave the registration intact.
       continue;
     } else {
       entries.push(
@@ -1457,15 +1430,6 @@ export function applySetupPreview(
           : applyCursorMcp(root, res),
       );
     }
-  }
-  // CA-08/CA-09: migrate the legacy local identity only after the canonical
-  // copy AND registration both succeeded.
-  if (
-    preview.platforms.includes("cursor") &&
-    cursorCopyOk &&
-    !entries.some((e) => e.platform === "cursor" && e.status === "Failed")
-  ) {
-    removeLegacyCursorDir(res);
   }
   for (const preserved of preview.preserved) {
     entries.push({

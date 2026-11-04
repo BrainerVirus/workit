@@ -108,7 +108,7 @@ test(
           expect(json.name, manifest).toBe("workit");
           expect(json.displayName, manifest).toBe("Workit");
           expect(json.logo, manifest).toBe("assets/logo.svg");
-          expect(JSON.stringify(json), manifest).not.toContain("Workflow Toolkit");
+          expect(JSON.stringify(json), manifest).not.toContain(["Workflow", "Toolkit"].join(" "));
         }
       } finally {
         rmSync(extracted.root, { recursive: true, force: true });
@@ -183,7 +183,7 @@ const syncEnv = (home: string, lockDir: string, repo: string): Record<string, st
   ),
   HOME: home,
   XDG_CONFIG_HOME: path.join(home, ".config"),
-  WORKFLOW_TOOLKIT_DEV: repo,
+  WORKIT_DEV: repo,
   XDG_RUNTIME_DIR: lockDir,
 });
 

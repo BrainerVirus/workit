@@ -9,10 +9,10 @@ Requires Node.js 24+.
 
 ```bash
 codex plugin marketplace add https://github.com/BrainerVirus/workit.git
-codex plugin add workit@workflow-toolkit
+codex plugin add workit@workit
 ```
 
-Update with `workit upgrade` (native fallback: `codex plugin marketplace upgrade workflow-toolkit && codex plugin add workit@workflow-toolkit`), then start a new Codex session; uninstall with `workit uninstall`.
+Update with `workit upgrade` (native fallback: `codex plugin marketplace upgrade workit && codex plugin add workit@workit`), then start a new Codex session; uninstall with `workit uninstall`.
 
 Reads run over MCP (`workit-codex-mcp`); mutations run through the `workit`
 CLI because MCP is read-only for unattested callers. Invoke skills as

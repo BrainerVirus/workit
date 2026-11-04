@@ -27,7 +27,7 @@ const layout = (name: string, running: string, installed: string) => {
       },
     }),
   );
-  return { dir, env: { WORKFLOW_TOOLKIT_STATE: path.join(base, name, "state") } };
+  return { dir, env: { WORKIT_STATE_DIR: path.join(base, name, "state") } };
 };
 
 const context = (json: unknown): string =>

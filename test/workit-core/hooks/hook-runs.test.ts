@@ -12,7 +12,7 @@ afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 const envOf = (name: string) => ({
-  WORKFLOW_TOOLKIT_STATE: path.join(scratch, name),
+  WORKIT_STATE_DIR: path.join(scratch, name),
 });
 
 test("Given repeated runs, When recorded, Then each host and event keeps its last time and a count", () => {
@@ -21,7 +21,7 @@ test("Given repeated runs, When recorded, Then each host and event keeps its las
   recordHookRun("codex_cli", "PreToolUse", env, () => Date.parse("2026-10-27T10:05:00Z"));
   recordHookRun("codex_cli", "SessionStart", env, () => Date.parse("2026-10-27T09:00:00Z"));
   recordHookRun("cursor", "PreToolUse", env);
-  const runs = readHookRuns(env.WORKFLOW_TOOLKIT_STATE);
+  const runs = readHookRuns(env.WORKIT_STATE_DIR);
   const find = (host: string, event: string) =>
     runs.find((run) => run.host === host && run.event === event);
   expect(find("codex_cli", "PreToolUse")).toEqual({
@@ -39,13 +39,13 @@ test("Given no event name, or a state dir that cannot be written, When recorded,
   const env = envOf("none");
   recordHookRun("codex_cli", null, env);
   recordHookRun("codex_cli", undefined, env);
-  expect(readHookRuns(env.WORKFLOW_TOOLKIT_STATE)).toEqual([]);
+  expect(readHookRuns(env.WORKIT_STATE_DIR)).toEqual([]);
   // A state dir under a regular file cannot be created on any OS (`/dev/null` is
   // an ordinary, writable path on Windows).
   const blocker = path.join(scratch, "not-a-dir");
   writeFileSync(blocker, "");
   const unwritable = path.join(blocker, "state");
-  recordHookRun("codex_cli", "PreToolUse", { WORKFLOW_TOOLKIT_STATE: unwritable });
+  recordHookRun("codex_cli", "PreToolUse", { WORKIT_STATE_DIR: unwritable });
   expect(readHookRuns(unwritable)).toEqual([]);
 });
 
@@ -67,7 +67,7 @@ test("Given a Codex hook process, When it handles a SessionStart, Then the run i
     env,
   );
   expect(out).toContain("hookSpecificOutput");
-  const runs = readHookRuns(env.WORKFLOW_TOOLKIT_STATE);
+  const runs = readHookRuns(env.WORKIT_STATE_DIR);
   expect(runs.map((run) => [run.host, run.event, run.count])).toEqual([
     ["codex_desktop", "SessionStart", 1],
   ]);

@@ -43,7 +43,7 @@ const fromSource =
 
 const stateDir = () => {
   const env = process.env;
-  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
+  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
   if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
   const home = env.HOME || os.homedir();
   if (process.platform === "darwin")
@@ -213,8 +213,8 @@ const readJson = (file) => {
 const roleModelsConfigured = () => {
   const env = process.env;
   const dir =
-    env.WORKFLOW_TOOLKIT_CONFIG ??
-    env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+    env.WORKIT_CONFIG ??
+    env.WORKIT_CONFIG_DIR ??
     path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
   let text;
   try {

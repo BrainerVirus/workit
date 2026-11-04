@@ -27,14 +27,14 @@ import { actorFromEnv } from "@/packages/workit-core/src/ledger";
 /** A fresh per-user state dir (where issued ids live) for one test; returns its path. */
 function freshState(cwd: string): string {
   const state = path.join(cwd, "state");
-  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  process.env.WORKIT_STATE_DIR = state;
   return state;
 }
 
-const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+const runState = process.env.WORKIT_STATE_DIR;
 const restoreState = () => {
-  if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+  if (runState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = runState;
 };
 
 test("the acting session: WORKIT_SESSION_ID when set (even empty), else the host's shell variable", () => {

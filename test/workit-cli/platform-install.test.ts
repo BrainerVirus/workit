@@ -52,8 +52,7 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   ...over,
 });
 
-const envFor = (home: string, configDir: string) =>
-  isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+const envFor = (home: string, configDir: string) => isolatedEnv(home, { WORKIT_CONFIG: configDir });
 
 const wsEntry = (name: string, glob: string) => ({
   name,

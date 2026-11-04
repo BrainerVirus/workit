@@ -42,14 +42,14 @@ setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 // Issued ids are issued once per user state dir: this file gets its own, so
 // ids other test files issue under the same names never collide with these.
-const runState = process.env.WORKFLOW_TOOLKIT_STATE;
+const runState = process.env.WORKIT_STATE_DIR;
 const ownState = mkdtempSync(path.join(os.tmpdir(), "wk-state-"));
 beforeAll(() => {
-  process.env.WORKFLOW_TOOLKIT_STATE = ownState;
+  process.env.WORKIT_STATE_DIR = ownState;
 });
 afterAll(() => {
-  if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+  if (runState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = runState;
   rmSync(ownState, { recursive: true, force: true });
 });
 

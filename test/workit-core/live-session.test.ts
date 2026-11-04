@@ -79,15 +79,15 @@ let previousState: string | undefined;
 let sleeper: ChildProcess | undefined;
 const probe = { ...liveProbe };
 beforeEach(() => {
-  previousState = process.env.WORKFLOW_TOOLKIT_STATE;
+  previousState = process.env.WORKIT_STATE_DIR;
   const state = mkdtempSync(path.join(os.tmpdir(), "wk-live-unit-state-"));
   dirs.push(state);
-  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  process.env.WORKIT_STATE_DIR = state;
 });
 afterEach(() => {
   Object.assign(liveProbe, probe);
-  if (previousState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = previousState;
+  if (previousState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = previousState;
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   sleeper?.kill();
   sleeper = undefined;

@@ -28,15 +28,15 @@ export const tempRoot = (prefix = "workit-hooks-") => mkdtempSync(path.join(tmpd
 /** Protect `main` and allow `feature/*` for the duration of `run`. */
 export const withProtectedMain = async (run: (configDir: string) => unknown): Promise<void> => {
   const keys = [
-    "WORKFLOW_TOOLKIT_CONFIG",
-    "WORKFLOW_TOOLKIT_CONFIG_DIR",
+    "WORKIT_CONFIG",
+    "WORKIT_CONFIG_DIR",
     "WORKFLOW_PROFILE",
     "WORKFLOW_WORKSPACE_NAME",
   ] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const configDir = tempRoot("workit-hooks-config-");
   for (const key of keys) delete process.env[key];
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  process.env.WORKIT_CONFIG_DIR = configDir;
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({

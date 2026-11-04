@@ -32,12 +32,12 @@ setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 // test gets its own rather than sharing the run-wide registry.
 let savedState: string | undefined;
 beforeEach(() => {
-  savedState = process.env.WORKFLOW_TOOLKIT_STATE;
-  process.env.WORKFLOW_TOOLKIT_STATE = tempRoot("workit-hook-state-");
+  savedState = process.env.WORKIT_STATE_DIR;
+  process.env.WORKIT_STATE_DIR = tempRoot("workit-hook-state-");
 });
 afterEach(() => {
-  if (savedState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = savedState;
+  if (savedState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = savedState;
 });
 
 const roots: string[] = [];

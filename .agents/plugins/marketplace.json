@@ -1,7 +1,7 @@
 {
-  "name": "workflow-toolkit",
+  "name": "workit",
   "interface": {
-    "displayName": "Workflow Toolkit"
+    "displayName": "Workit"
   },
   "plugins": [
     {

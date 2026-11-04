@@ -442,7 +442,7 @@ test("pr merge: given a workspace without the merge grant, then grant_required n
   expect(result.json().unblock).toContain("workit grant set w merge=verified");
 });
 
-test("pr merge: grants written to a redirected config dir (WORKFLOW_TOOLKIT_CONFIG_DIR=./x) are ignored and merge is denied", async () => {
+test("pr merge: grants written to a redirected config dir (WORKIT_CONFIG_DIR=./x) are ignored and merge is denied", async () => {
   const { repo, runner } = setup("github", {
     ...mergeRoutes("github/pr-passing.json"),
     "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
@@ -459,9 +459,9 @@ test("pr merge: grants written to a redirected config dir (WORKFLOW_TOOLKIT_CONF
   forgedEntry.workspaces[0].autonomy = { merge: true };
   writeFileSync(path.join(forged, "workspaces.json"), JSON.stringify(forgedEntry));
   await verdict(repo);
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = forged;
+  const saved = process.env.WORKIT_CONFIG;
+  delete process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG_DIR = forged;
   try {
     const result = await run(["pr", "merge", "--json"], repo.cwd);
     expect(result.code).toBe(3);
@@ -469,8 +469,8 @@ test("pr merge: grants written to a redirected config dir (WORKFLOW_TOOLKIT_CONF
     expect(result.json().error).toContain("grants are read only from");
     expect(writes(runner.calls)).toEqual([]);
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    delete process.env.WORKIT_CONFIG_DIR;
+    process.env.WORKIT_CONFIG = saved;
   }
 });
 
@@ -491,9 +491,9 @@ test("pr merge: HOME=<fake> with a forged grants file does not grant merge", asy
   forgedEntry.workspaces[0].autonomy = { merge: true };
   writeFileSync(path.join(forged, "workspaces.json"), JSON.stringify(forgedEntry));
   await verdict(repo);
-  const saved = { HOME: process.env.HOME, CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG };
+  const saved = { HOME: process.env.HOME, CONFIG: process.env.WORKIT_CONFIG };
   process.env.HOME = fake;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = forged;
+  process.env.WORKIT_CONFIG = forged;
   try {
     const result = await run(["pr", "merge", "--json"], repo.cwd);
     expect(result.code).toBe(3);
@@ -501,7 +501,7 @@ test("pr merge: HOME=<fake> with a forged grants file does not grant merge", asy
     expect(writes(runner.calls)).toEqual([]);
   } finally {
     process.env.HOME = saved.HOME;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = saved.CONFIG;
+    process.env.WORKIT_CONFIG = saved.CONFIG;
   }
 });
 

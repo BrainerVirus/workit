@@ -34,8 +34,8 @@ const GLOBAL_VCS = { provider: "github", defaultTargetBranch: "main" };
 const ENV_KEYS = [
   "HOME",
   "XDG_CONFIG_HOME",
-  "WORKFLOW_TOOLKIT_CONFIG",
-  "WORKFLOW_TOOLKIT_CONFIG_DIR",
+  "WORKIT_CONFIG",
+  "WORKIT_CONFIG_DIR",
   "WORKFLOW_VCS_CONFIG",
   "WORKFLOW_WORKSPACE_ROOT",
   "PATH",
@@ -59,18 +59,17 @@ const withEnv = <T>(overrides: Record<string, string | undefined>, fn: () => T):
   }
 };
 
-// Config files land in <xdg>/workflow-toolkit (the legacy dir); the shared config
-// migration copies them into <xdg>/workit, which vcsConfig reads via XDG_CONFIG_HOME.
+// Config files land in <xdg>/workit, which vcsConfig reads via XDG_CONFIG_HOME.
 const withConfigFiles = <T>(
   files: Record<string, string>,
   overrides: Record<string, string | undefined> = {},
   fn: () => T,
 ): T => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-ws-xdg-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
-  mkdirSync(legacy, { recursive: true });
+  const dir = path.join(xdg, "workit");
+  mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
-    writeFileSync(path.join(legacy, name), content, "utf8");
+    writeFileSync(path.join(dir, name), content, "utf8");
   }
   return withEnv({ XDG_CONFIG_HOME: xdg, ...overrides }, () => {
     try {
@@ -201,7 +200,7 @@ test(
 );
 
 test(
-  "config.sh resolve: WORKFLOW_TOOLKIT_CONFIG dir is honored for vcs.json + workspaces.json (TS chain parity)",
+  "config.sh resolve: WORKIT_CONFIG dir is honored for vcs.json + workspaces.json (TS chain parity)",
   () => {
     const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
     mkdirSync(path.join(base, "work", "repo"), { recursive: true });
@@ -213,7 +212,7 @@ test(
       "utf8",
     );
     try {
-      const out = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir }, () =>
+      const out = withEnv({ WORKIT_CONFIG: cfgDir }, () =>
         vcsConfig("resolve", path.join(base, "work", "repo")),
       );
       expect(out.workspace_name).toBe("work");
@@ -269,7 +268,7 @@ test(
         "vcs.json": JSON.stringify(GLOBAL_VCS),
         "workspaces.json": workspacesJson("**", "gitlab"),
       },
-      { WORKFLOW_WORKSPACE_ROOT: "D:/a/workflow-toolkit/workflow-toolkit" },
+      { WORKFLOW_WORKSPACE_ROOT: "D:/a/workit/workit" },
       () => vcsConfig("resolve", repoRoot),
     );
     expect(r.workspace_name).toBe("work");
@@ -865,7 +864,7 @@ test(
 test("RL-08: writeWorkspaces rejects unsupported glob grammar at write time", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-write-"));
   try {
-    withEnv({ WORKFLOW_TOOLKIT_CONFIG: dir }, () => {
+    withEnv({ WORKIT_CONFIG: dir }, () => {
       const ok = writeWorkspaces([
         { name: "work", glob: "/home/*/work/**", vcs: { provider: "gitlab" } },
       ]);

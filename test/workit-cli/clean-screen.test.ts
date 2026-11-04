@@ -95,8 +95,8 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
   writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const configPath = path.join(base, "config");
   mkdirSync(configPath, { recursive: true });
-  const prevToolkitConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  const prevToolkitConfig = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configPath;
   // Hermetic host detection: expose one detected OpenCode binary so the wizard
   // preselects it, while keeping every user config root inside this fixture.
   const prevHome = process.env.HOME;
@@ -229,8 +229,8 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     // timeout) is unmounted here — the product's unmount lives inside the
     // abandoned runInit promise, so only the drive can guarantee teardown.
     cleanupLiveInkInstances();
-    if (prevToolkitConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
+    if (prevToolkitConfig === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevToolkitConfig;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevCodexHome === undefined) delete process.env.CODEX_HOME;

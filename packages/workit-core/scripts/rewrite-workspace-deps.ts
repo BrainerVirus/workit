@@ -49,12 +49,5 @@ for (const file of [
 ]) {
   const data = JSON.parse(readFileSync(file, "utf8"));
   data.version = core.version;
-  if (data.homepage)
-    data.homepage = data.homepage.replace("BrainerVirus/workflow-toolkit", "BrainerVirus/workit");
-  if (data.repository)
-    data.repository = data.repository.replace(
-      "BrainerVirus/workflow-toolkit",
-      "BrainerVirus/workit",
-    );
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }

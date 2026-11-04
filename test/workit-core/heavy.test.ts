@@ -13,7 +13,7 @@ beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), "workit-heavy-"));
   mkdirSync(path.join(root, ".git"));
   state = mkdtempSync(path.join(tmpdir(), "workit-heavy-state-"));
-  env = { PATH: process.env.PATH, WORKFLOW_TOOLKIT_STATE: state };
+  env = { PATH: process.env.PATH, WORKIT_STATE_DIR: state };
 });
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });

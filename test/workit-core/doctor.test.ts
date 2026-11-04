@@ -1357,8 +1357,8 @@ test(
   () => {
     const vcsFile = path.join(fixture.configDir, "vcs.json");
     const wsFile = path.join(fixture.configDir, "workspaces.json");
-    const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = fixture.configDir;
+    const prev = process.env.WORKIT_CONFIG;
+    process.env.WORKIT_CONFIG = fixture.configDir;
     try {
       for (const content of ["null", "42"]) {
         writeConfig(vcsFile, content);
@@ -1373,8 +1373,8 @@ test(
         expect(readSetupState(fixture.configDir).workspaces.status).toBe("malformed");
       }
     } finally {
-      if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+      if (prev === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prev;
       rmSync(vcsFile, { force: true });
       rmSync(wsFile, { force: true });
     }

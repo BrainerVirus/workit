@@ -132,13 +132,13 @@ setup is in [the hosts guide](docs/guides/hosts.md#cursor).
 
 ```bash
 codex plugin marketplace add https://github.com/BrainerVirus/workit.git
-codex plugin add workit@workflow-toolkit
+codex plugin add workit@workit
 ```
 
 Update: `workit upgrade`, which updates the plugin and refreshes the Codex agent
 files; the app-server daemon keeps running and its new threads load the update (fallback:
-`codex plugin marketplace upgrade workflow-toolkit && codex plugin add
-workit@workflow-toolkit`, then a new Codex session). Uninstall:
+`codex plugin marketplace upgrade workit && codex plugin add
+workit@workit`, then a new Codex session). Uninstall:
 `workit uninstall`.
 Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 

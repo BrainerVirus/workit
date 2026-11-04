@@ -5,11 +5,11 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SHARE="${HOME}/.local/share/workit"
-DEV="${WORKFLOW_TOOLKIT_DEV:-$ROOT}"
+DEV="${WORKIT_DEV:-$ROOT}"
 PLUGIN_DIR="${HOME}/.codex/plugins/workit"
 
 chmod +x "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
-WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
+WORKIT_DEV="$ROOT" "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
 
 SOURCE="$DEV"
 if [ ! -d "$SOURCE/packages/workit-codex/.codex-plugin" ] && [ -d "$SHARE/packages/workit-codex/.codex-plugin" ]; then

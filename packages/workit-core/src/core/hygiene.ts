@@ -29,7 +29,7 @@ const isOpenSource = (root: string): boolean => {
   if (existsSync(path.join(root, "LICENSE"))) return true;
   const pkg = packageJson(root);
   if (pkg && !pkg.private) return true; // I2: missing `private` = public (npm default)
-  return path.basename(root) === "workflow-toolkit";
+  return path.basename(root) === "workit";
 };
 
 const licenseHolder = (root: string): string => {

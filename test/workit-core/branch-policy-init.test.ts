@@ -29,9 +29,9 @@ test(
   () => {
     const root = repoWith(["main", "develop"]);
     const cfg = cfgDir();
-    const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prev = process.env.WORKIT_CONFIG;
     try {
-      process.env.WORKFLOW_TOOLKIT_CONFIG = cfg;
+      process.env.WORKIT_CONFIG = cfg;
       const first = initApplyData("branch_policy", {
         WORKFLOW_WORKSPACE_ROOT: root,
       });
@@ -57,8 +57,8 @@ test(
       const ws2 = JSON.parse(readFileSync(path.join(cfg, "workspaces.json"), "utf8"));
       expect(ws2.workspaces[0].branchPolicy.integration).toBe("pr");
     } finally {
-      if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+      if (prev === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prev;
       rmSync(root, { recursive: true, force: true });
       rmSync(cfg, { recursive: true, force: true });
     }
@@ -71,9 +71,9 @@ test(
   () => {
     const root = repoWith(["main", "develop"]);
     const cfg = mkdtempSync(path.join(os.tmpdir(), "wf-bpi-fresh-"));
-    const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prev = process.env.WORKIT_CONFIG;
     try {
-      process.env.WORKFLOW_TOOLKIT_CONFIG = cfg;
+      process.env.WORKIT_CONFIG = cfg;
       const first = initApplyData("branch_policy", {
         WORKFLOW_WORKSPACE_ROOT: root,
       });
@@ -85,8 +85,8 @@ test(
       expect(ws.workspaces[0].glob).toBe(`${root}/**`);
       expect(ws.workspaces[0].branchPolicy.preset).toBe("gitflow");
     } finally {
-      if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+      if (prev === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prev;
       rmSync(root, { recursive: true, force: true });
       rmSync(cfg, { recursive: true, force: true });
     }

@@ -92,7 +92,7 @@ test(
 test(
   "legacy ok false values normalize to failures",
   async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-false-"));
+    const root = mkdtempSync(path.join(os.tmpdir(), "workit-false-"));
     try {
       const raw = await createRepoTools({
         ...runtime,
@@ -136,11 +136,11 @@ test(
   () => {
     expect(initApplyInput.properties.action.enum).not.toContain("npm_install");
 
-    const config = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-init-"));
+    const config = mkdtempSync(path.join(os.tmpdir(), "workit-init-"));
     try {
       const apply = initApplyData("npm_install", {
         ...process.env,
-        WORKFLOW_TOOLKIT_CONFIG: config,
+        WORKIT_CONFIG: config,
       });
       expect(String(apply.error)).toContain("unknown action npm_install");
     } finally {
@@ -153,9 +153,9 @@ test(
 test(
   "init_apply config locale validation matches core LOCALE_RE (es-419 in, es_cl out)",
   async () => {
-    const previousToolkit = process.env.WORKFLOW_TOOLKIT_CONFIG;
-    const dir = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-locale-"));
-    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    const previousToolkit = process.env.WORKIT_CONFIG;
+    const dir = mkdtempSync(path.join(os.tmpdir(), "workit-locale-"));
+    process.env.WORKIT_CONFIG = dir;
     try {
       const tools = createRepoTools();
       const context = { directory: dir, worktree: dir } as never;
@@ -180,8 +180,8 @@ test(
       expect(rejected.ok).toBe(false);
       expect(String(rejected.error)).toContain("invalid locale");
     } finally {
-      if (previousToolkit === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = previousToolkit;
+      if (previousToolkit === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = previousToolkit;
       rmSync(dir, { recursive: true, force: true });
     }
   },

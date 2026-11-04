@@ -178,7 +178,7 @@ test("setup apply reports Claude Code installed only when the plugin registry sh
   try {
     executable(path.join(bin, "node"));
     executable(path.join(bin, "claude"));
-    const env = { HOME: home, PATH: bin, WORKFLOW_TOOLKIT_CONFIG_DIR: configDir };
+    const env = { HOME: home, PATH: bin, WORKIT_CONFIG_DIR: configDir };
     const options = { home, cwd: home, env, dir: configDir, configDir };
     const preview = buildSetupPreview(
       {

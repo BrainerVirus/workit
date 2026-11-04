@@ -268,8 +268,8 @@ test("G a Codex role model in the workspace config, W the launcher syncs the age
       string,
       unknown
     >;
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  const saved = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configDir;
   try {
     syncCodexAgents(root, cwd);
     expect(read("verifier").model).toBeUndefined();
@@ -290,8 +290,8 @@ test("G a Codex role model in the workspace config, W the launcher syncs the age
     );
     syncCodexAgents(root, cwd);
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    if (saved === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = saved;
   }
   expect(read("verifier").model).toBe("gpt-5.1-codex-mini");
   expect(read("verifier").model_reasoning_effort).toBe("low");

@@ -60,7 +60,7 @@ const doctorFor = (
     );
   }
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
-  for (const key of ["WORKFLOW_TOOLKIT_DEV", "CODEX_HOME", "CLAUDE_CONFIG_DIR"]) delete env[key];
+  for (const key of ["WORKIT_DEV", "CODEX_HOME", "CLAUDE_CONFIG_DIR"]) delete env[key];
   return runDoctor({
     host: "cli",
     home,

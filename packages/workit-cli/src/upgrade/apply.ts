@@ -41,6 +41,7 @@ import {
   type UpgradeDeps,
   type UpgradePlan,
 } from "./shared";
+import { CODEX_LEGACY_MARKETPLACE } from "./codex-marketplace";
 
 /** A setup entry's detail: its first line, then the last five when it ran long. */
 const briefDetail = (detail: string): string => {
@@ -268,6 +269,14 @@ const applyEntry = async (
       )
     )
       return fail("Codex did not report the requested Workit version");
+    if (
+      installed.some(
+        (plugin) => plugin.name === "workit" && plugin.marketplaceName === CODEX_LEGACY_MARKETPLACE,
+      )
+    )
+      return fail(
+        `Codex still registers workit@${CODEX_LEGACY_MARKETPLACE}; its hooks would run twice`,
+      );
   }
   if (entry.host === "pi" && piInstalledVersion(verify.stdout, entry.selector) !== entry.latest)
     return fail("Pi did not report the requested Workit package version");

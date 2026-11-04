@@ -6,11 +6,11 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
 CORE_SCRIPTS="$ROOT/packages/workit-core/scripts"
 SHARE="${HOME}/.local/share/workit"
-DEV="${WORKFLOW_TOOLKIT_DEV:-$ROOT}"
+DEV="${WORKIT_DEV:-$ROOT}"
 CONFIG="${HOME}/.config/opencode/opencode.json"
 
 chmod +x "$CORE_SCRIPTS/sync-runtime.sh"
-WORKFLOW_TOOLKIT_DEV="$ROOT" "$CORE_SCRIPTS/sync-runtime.sh"
+WORKIT_DEV="$ROOT" "$CORE_SCRIPTS/sync-runtime.sh"
 
 # Prefer monorepo with .git. file:// pins skip opencode's bundled npm installer —
 # git+file:// installs an EMPTY cache dir and fails silently, so the plugin never
@@ -23,8 +23,8 @@ else
   # Last resort: ensure share is a clone, then pin it
   if [ ! -d "${SHARE}/.git" ]; then
     TMP=$(mktemp -d)
-    if ! git clone --depth 1 "https://github.com/${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" "$TMP"; then
-      echo "FATAL: could not clone https://github.com/${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" >&2
+    if ! git clone --depth 1 "https://github.com/${WORKIT_REPO:-BrainerVirus/workit}.git" "$TMP"; then
+      echo "FATAL: could not clone https://github.com/${WORKIT_REPO:-BrainerVirus/workit}.git" >&2
       exit 1
     fi
     rsync -a --delete --exclude '/versions' --exclude '/current' --exclude '/bin' --exclude node_modules --exclude cursor/mcp/node_modules "$TMP/" "$SHARE/"
@@ -58,8 +58,6 @@ find "${HOME}/.config/opencode/skills" -maxdepth 1 -name 'wf-*' -exec rm -f {} +
 find "${HOME}/.config/opencode/skill" -maxdepth 1 -name 'wf-*' -exec rm -f {} + 2>/dev/null || true
 find "${HOME}/.config/opencode/commands" -maxdepth 1 -name 'wf-*.md' -exec rm -f {} + 2>/dev/null || true
 find "${HOME}/.config/opencode/command" -maxdepth 1 -name 'wf-*.md' -exec rm -f {} + 2>/dev/null || true
-rm -f "${HOME}/.config/opencode/plugins/workflow-toolkit.ts"
-rm -rf "${HOME}/.cache/opencode/packages/workflow-toolkit-opencode@"* 2>/dev/null || true
 
 # Post-install verification: file:// pins skip the installer, so a missing/empty
 # pinned entry is a silent no-op. Fail loudly instead of pretending it worked.
@@ -67,7 +65,7 @@ PLUGIN_ENTRY="${PIN#file://}"
 if [ ! -s "$PLUGIN_ENTRY" ]; then
   echo "FATAL: pinned plugin entry missing or empty: $PLUGIN_ENTRY" >&2
   echo "The file:// pin written to $CONFIG will not load after restart." >&2
-  echo "Restore the monorepo (or fix WORKFLOW_TOOLKIT_DEV) and re-run this script." >&2
+  echo "Restore the monorepo (or fix WORKIT_DEV) and re-run this script." >&2
   exit 1
 fi
 

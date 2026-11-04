@@ -18,11 +18,11 @@ const savedEnv = new Map<string, string | undefined>();
 
 const cfgDir = () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-"));
-  for (const key of ["WORKFLOW_TOOLKIT_CONFIG", "WORKFLOW_TOOLKIT_CONFIG_DIR", "XDG_CONFIG_HOME"]) {
+  for (const key of ["WORKIT_CONFIG", "WORKIT_CONFIG_DIR", "XDG_CONFIG_HOME"]) {
     savedEnv.set(key, process.env[key]);
   }
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKIT_CONFIG_DIR = dir;
+  delete process.env.WORKIT_CONFIG;
   delete process.env.XDG_CONFIG_HOME;
   return dir;
 };

@@ -43,7 +43,7 @@ ok() { [ "$(vnum "$1")" -ge ${FLOOR_MAJOR * 1000000} ]; }
 pick=
 if [ -n "\${WORKIT_NODE:-}" ] && [ -x "$WORKIT_NODE" ]; then pick=$WORKIT_NODE; fi
 if [ -z "$pick" ]; then
-  state=\${WORKFLOW_TOOLKIT_STATE:-}
+  state=\${WORKIT_STATE_DIR:-}
   if [ -z "$state" ] && [ -n "\${XDG_STATE_HOME:-}" ]; then state=$XDG_STATE_HOME/workit; fi
   if [ -z "$state" ]; then state="$HOME/${stateSuffix}"; fi
   if [ -f "$state/node.json" ]; then

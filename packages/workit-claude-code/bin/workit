@@ -36,7 +36,7 @@ if [ "$node_major" -lt "$node_floor" ]; then
     found="$WORKIT_NODE"
   fi
   if [ -z "$found" ]; then
-    if [ -n "${WORKFLOW_TOOLKIT_STATE:-}" ]; then state="$WORKFLOW_TOOLKIT_STATE"
+    if [ -n "${WORKIT_STATE_DIR:-}" ]; then state="$WORKIT_STATE_DIR"
     elif [ -n "${XDG_STATE_HOME:-}" ]; then state="$XDG_STATE_HOME/workit"
     elif [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then state="$HOME/Library/Application Support/workit"
     else state="$HOME/.local/state/workit"; fi

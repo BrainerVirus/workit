@@ -320,15 +320,15 @@ const resolve = (options: DoctorOptions): Resolved => {
   const home = options.home ?? env.HOME ?? os.homedir();
   const configDir =
     options.configDir ??
-    env.WORKFLOW_TOOLKIT_CONFIG ??
-    env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+    env.WORKIT_CONFIG ??
+    env.WORKIT_CONFIG_DIR ??
     path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit");
   const stateDir =
-    options.stateDir ?? env.WORKFLOW_TOOLKIT_STATE ?? path.join(home, ".local", "state", "workit");
+    options.stateDir ?? env.WORKIT_STATE_DIR ?? path.join(home, ".local", "state", "workit");
   const cwd = options.cwd ?? process.cwd();
-  // An empty WORKFLOW_TOOLKIT_DEV is unset: every row must agree on whether
+  // An empty WORKIT_DEV is unset: every row must agree on whether
   // there is a dev checkout (`""` read as one by some rows and none by others).
-  const dev = options.dev?.trim() || env.WORKFLOW_TOOLKIT_DEV?.trim() || findDevFromCwd(cwd);
+  const dev = options.dev?.trim() || env.WORKIT_DEV?.trim() || findDevFromCwd(cwd);
   return {
     explicitDirs: { config: options.configDir, state: options.stateDir },
     host: options.host ?? "cli",
@@ -347,8 +347,8 @@ const resolve = (options: DoctorOptions): Resolved => {
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
-    cursorHeartbeatDir: options.stateDir ?? (env.WORKFLOW_TOOLKIT_STATE || resolveStateDir()),
-    hookStateDir: options.stateDir ?? (env.WORKFLOW_TOOLKIT_STATE || resolveStateDir()),
+    cursorHeartbeatDir: options.stateDir ?? (env.WORKIT_STATE_DIR || resolveStateDir()),
+    hookStateDir: options.stateDir ?? (env.WORKIT_STATE_DIR || resolveStateDir()),
     codexHome: options.codexHome,
     piAgentDir: options.piAgentDir,
     env,
@@ -601,7 +601,7 @@ const runInstalledHooks = (res: Resolved): { ran: string[]; failed: string[] } =
       const env: NodeJS.ProcessEnv = {
         ...res.env,
         HOME: res.home,
-        WORKFLOW_TOOLKIT_STATE: state,
+        WORKIT_STATE_DIR: state,
         WORKIT_CURSOR_HOOK_NPX_OFFLINE: "1",
       };
       delete env.CLAUDE_ENV_FILE;
@@ -651,7 +651,7 @@ const checkHookNode = (res: Resolved): DoctorCheck => {
 const hookNodeBase = (res: Resolved): DoctorCheck => {
   const floor = SUPPORT_MATRIX.node.minimum;
   const report = hookNodeReport(
-    { ...res.env, HOME: res.home, WORKFLOW_TOOLKIT_STATE: res.stateDir },
+    { ...res.env, HOME: res.home, WORKIT_STATE_DIR: res.stateDir },
     versionOf("node", res.env),
   );
   if (report.pathOk)
@@ -1627,7 +1627,7 @@ const checkPluginFiles = (res: Resolved): DoctorCheck => {
     const dirs: unknown[] = Array.isArray(settings?.plugin_dirs) ? settings.plugin_dirs : [];
     for (const entry of dirs.map(String)) {
       const normal = entry.replaceAll("\\", "/").replace(/\/+$/, "");
-      if (!normal.endsWith("local/workit") && !normal.endsWith("local/workflow-toolkit")) continue;
+      if (!normal.endsWith("local/workit")) continue;
       const dir = entry.startsWith("~") ? path.join(res.home, entry.slice(1)) : entry;
       let state: "missing" | "empty" | null = null;
       try {
@@ -2284,28 +2284,13 @@ const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
     const dirs = Array.isArray(settings?.plugin_dirs)
       ? settings.plugin_dirs.map(String).filter((d) => {
           // Exact local plugin-dir identities only (CA-09): a similarly-named
-          // unrelated dir (e.g. `local/workflow-toolkit-extra`) is preserved
-          // and must never be counted as a Workit entry.
+          // unrelated dir (e.g. `local/workit-extra`) is preserved and must
+          // never be counted as a Workit entry.
           const n = d.replaceAll("\\", "/").replace(/\/+$/, "");
-          return (
-            isWorkitPlugin(d) || n.endsWith("local/workit") || n.endsWith("local/workflow-toolkit")
-          );
+          return isWorkitPlugin(d) || n.endsWith("local/workit");
         })
       : [];
     if (dirs.length > 1) problems.push(`cursor plugin_dirs has ${dirs.length} workit entries`);
-  }
-  if (cursorHost && existsSync(res.cursorMcp)) {
-    const mcp = readJson(res.cursorMcp);
-    const servers = mcp?.mcpServers ?? {};
-    if (servers && typeof servers === "object") {
-      const workitServers = Object.keys(servers).filter(
-        (s) => s === "workit" || s.includes("workflow-toolkit"),
-      );
-      if (workitServers.length > 1)
-        problems.push(
-          `cursor registers ${workitServers.length} workit MCP servers (${workitServers.join(", ")})`,
-        );
-    }
   }
   if (problems.length === 0) {
     return {
@@ -2949,7 +2934,7 @@ const checkLogWritable = (res: Resolved): DoctorCheck => {
       id: "log_writable",
       status: "fail",
       detail: `log directory not writable: ${err instanceof Error ? err.message : String(err)}`,
-      fix: `Fix permissions on ${logsDir} or set WORKFLOW_TOOLKIT_STATE to a writable directory`,
+      fix: `Fix permissions on ${logsDir} or set WORKIT_STATE_DIR to a writable directory`,
     };
   } finally {
     try {

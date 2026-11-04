@@ -69,7 +69,7 @@ test(
       "PKG_PATH",
       "CURSOR_MCP",
       "CURSOR_SETTINGS",
-      "WORKFLOW_TOOLKIT_DEV",
+      "WORKIT_DEV",
       "XDG_CONFIG_HOME",
     ];
     const saved = new Map(names.map((n) => [n, process.env[n]]));
@@ -247,7 +247,7 @@ const SCAFFOLD_RUNNER = `
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { scaffoldYouTrack, scaffoldVcs } from "./logic.ts";
-const cfg = path.join(process.env.HOME!, ".config", "workflow-toolkit");
+const cfg = path.join(process.env.HOME!, ".config", "workit");
 const yt = scaffoldYouTrack(cfg, "https://example.youtrack.cloud", {
   locale: "en",
 }, { timeout: 60_000 });
@@ -290,6 +290,12 @@ test(
         path.join(REPO_ROOT, "packages/workit-cli/src/update-settings.ts"),
         path.join(install, "update-settings.ts"),
       );
+      // admin/host-install.ts reads the Codex marketplace names from ../upgrade.
+      mkdirSync(path.join(install, "upgrade"), { recursive: true });
+      cpSync(
+        path.join(REPO_ROOT, "packages/workit-cli/src/upgrade/codex-marketplace.ts"),
+        path.join(install, "upgrade", "codex-marketplace.ts"),
+      );
       // admin/doctor.ts lists CLI installs through ../install (#648).
       cpSync(
         path.join(REPO_ROOT, "packages/workit-cli/src/install"),
@@ -300,7 +306,7 @@ test(
       );
       writeFileSync(path.join(install, "runner.ts"), SCAFFOLD_RUNNER, "utf8");
 
-      const cfg = path.join(home, ".config", "workflow-toolkit");
+      const cfg = path.join(home, ".config", "workit");
       mkdirSync(cfg, { recursive: true });
       writeFileSync(path.join(cfg, "youtrack.token"), "perm_abcdef123456\n", { mode: 0o600 });
       writeFileSync(path.join(cfg, "gitlab.token"), "glpat-secret\n", { mode: 0o600 });

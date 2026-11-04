@@ -23,13 +23,13 @@ import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 // block per host after one consent. Every test runs against a scratch HOME and
 // state dir; the real ~/.claude, ~/.codex and ~/.cursor are never touched.
 const scratch = mkdtempSync(path.join(tmpdir(), "workit-host-perms-"));
-const realState = process.env.WORKFLOW_TOOLKIT_STATE;
+const realState = process.env.WORKIT_STATE_DIR;
 beforeAll(() => {
-  process.env.WORKFLOW_TOOLKIT_STATE = path.join(scratch, "process-state");
+  process.env.WORKIT_STATE_DIR = path.join(scratch, "process-state");
 });
 afterAll(() => {
-  if (realState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = realState;
+  if (realState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = realState;
   rmSync(scratch, { recursive: true, force: true });
 });
 
@@ -41,7 +41,7 @@ const sandbox = (extra: NodeJS.ProcessEnv = {}) => {
     HOME: home,
     PATH: process.env.PATH,
     SHELL: "/bin/zsh",
-    WORKFLOW_TOOLKIT_STATE: path.join(home, "state"),
+    WORKIT_STATE_DIR: path.join(home, "state"),
     ...extra,
   };
   return { home, env, settings: path.join(home, ".claude", "settings.json") };
@@ -346,7 +346,7 @@ test("Given a drifted Claude Code block, When doctor runs, Then its permission r
   const report = runDoctor({
     home,
     env,
-    stateDir: env.WORKFLOW_TOOLKIT_STATE,
+    stateDir: env.WORKIT_STATE_DIR,
     cwd: scratch,
   });
   const row = report.checks.find((c) => c.id === "claude_permissions");
@@ -357,7 +357,7 @@ test("Given a drifted Claude Code block, When doctor runs, Then its permission r
 
 /** Rewrite Workit's ownership record in `env`'s state dir. */
 const editRecord = (env: NodeJS.ProcessEnv, edit: (record: any) => void) => {
-  const file = path.join(env.WORKFLOW_TOOLKIT_STATE!, "host-permissions.json");
+  const file = path.join(env.WORKIT_STATE_DIR!, "host-permissions.json");
   const record = JSON.parse(readFileSync(file, "utf8"));
   edit(record);
   writeFileSync(file, JSON.stringify(record, null, 2) + "\n");

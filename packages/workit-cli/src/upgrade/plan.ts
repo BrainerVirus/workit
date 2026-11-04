@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { opencodeReading, opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
 import { CODEX_INVENTORY_ARGS, CODEX_INVENTORY_KEY, codexInventorySync } from "./codex-inventory";
 import { OPENCODE_NOT_READY } from "./opencode";
@@ -16,6 +16,12 @@ import { migrationCopies } from "../install/migrate";
 import { isOwnedLauncher } from "../install/owned";
 import { entryOf, ownedPaths, ownedVersion, realpathOr, versionDir } from "../install/paths";
 import { CLI_PACKAGE } from "../update-check";
+import {
+  CODEX_LEGACY_MARKETPLACE,
+  codexMigrationFix,
+  codexMigrationSteps,
+  codexPluginRegistered,
+} from "./codex-marketplace";
 import {
   CLAUDE_CODE_PACKAGE,
   CLI_FIX,
@@ -40,25 +46,6 @@ import {
   type UpgradeDeps,
   type UpgradePlan,
 } from "./shared";
-
-/** `[plugins."workit@workflow-toolkit"]` in Codex's config.toml, not disabled. */
-const codexRegistered = (configFile: string): boolean => {
-  let text: string;
-  try {
-    text = readFileSync(configFile, "utf8");
-  } catch {
-    return false;
-  }
-  const header = `[plugins."workit@${CODEX_MARKETPLACE}"]`;
-  const start = text.split(/\r?\n/).findIndex((line) => line.trim() === header);
-  if (start < 0) return false;
-  const body = text
-    .split(/\r?\n/)
-    .slice(start + 1)
-    .join("\n")
-    .split(/^\s*\[/m)[0];
-  return !/^\s*enabled\s*=\s*false\b/m.test(body);
-};
 
 const classify = (host: HostId, selector: string): Source => ({
   host,
@@ -178,13 +165,30 @@ export const sources = (
       throw new Error("Codex plugin inventory could not be parsed");
     }
     if (!Array.isArray(installed)) throw new Error("Codex plugin inventory is malformed");
+    const fromNpm = (plugin: Record<string, any>) =>
+      plugin.source?.source === "npm" && plugin.source?.package === "@brainervirus/workit-codex";
+    // An npm install under the old marketplace name is moved to workit@workit
+    // as one migration, whatever else is registered.
+    const legacy = installed.find(
+      (plugin) =>
+        plugin.name === "workit" &&
+        plugin.marketplaceName === CODEX_LEGACY_MARKETPLACE &&
+        fromNpm(plugin),
+    );
+    if (legacy || codexPluginRegistered(paths.codexConfig, CODEX_LEGACY_MARKETPLACE)) {
+      result.push({
+        host: "codex",
+        selector: "@brainervirus/workit-codex",
+        kind: legacy ? "floating" : "repair",
+        migrate: true,
+        ...(legacy?.version ? { installedVersion: legacy.version } : {}),
+      });
+      return;
+    }
     for (const plugin of installed) {
       if (plugin.name !== "workit") continue;
       const source = plugin.source;
-      const npm =
-        plugin.marketplaceName === CODEX_MARKETPLACE &&
-        source?.source === "npm" &&
-        source?.package === "@brainervirus/workit-codex";
+      const npm = plugin.marketplaceName === CODEX_MARKETPLACE && fromNpm(plugin);
       result.push({
         ...classify(
           "codex",
@@ -195,7 +199,10 @@ export const sources = (
     }
     // Registered in config.toml but the plugin cache is missing, so the
     // inventory omits it: reinstall with Codex's own add command.
-    if (!result.some((found) => found.host === "codex") && codexRegistered(paths.codexConfig))
+    if (
+      !result.some((found) => found.host === "codex") &&
+      codexPluginRegistered(paths.codexConfig, CODEX_MARKETPLACE)
+    )
       result.push({
         host: "codex",
         selector: "@brainervirus/workit-codex",
@@ -411,7 +418,11 @@ export function previewUpgrade(
       });
       continue;
     }
-    if (source.installedVersion && versionAtLeast(source.installedVersion, latest)) {
+    if (
+      !source.migrate &&
+      source.installedVersion &&
+      versionAtLeast(source.installedVersion, latest)
+    ) {
       plan.skipped.push({
         host: source.host,
         reason: `already current (${source.installedVersion})`,
@@ -421,24 +432,35 @@ export function previewUpgrade(
     const commands: Command[] =
       source.host === "pi"
         ? [{ command: "pi", args: ["update", "--extension", source.selector] }]
-        : source.host === "codex"
-          ? [
-              {
-                command: "codex",
-                args: ["plugin", "marketplace", "upgrade", CODEX_MARKETPLACE],
-              },
-              {
-                command: "codex",
-                args: ["plugin", "add", `workit@${CODEX_MARKETPLACE}`, "--json"],
-              },
-            ]
-          : planHostInstall("cursor", {
-              home,
-              env: deps.env,
-              cwd: home,
-              packageVersion: latest,
-              targetDir: paths.cursorRoot,
-            });
+        : source.host === "codex" && source.migrate
+          ? (
+              codexMigrationSteps(paths.codexConfig, {
+                json: true,
+                installed: source.kind !== "repair",
+              }) ?? []
+            ).map((step) => ({
+              command: "codex",
+              args: step.args,
+              purpose: step.purpose,
+            }))
+          : source.host === "codex"
+            ? [
+                {
+                  command: "codex",
+                  args: ["plugin", "marketplace", "upgrade", CODEX_MARKETPLACE],
+                },
+                {
+                  command: "codex",
+                  args: ["plugin", "add", `workit@${CODEX_MARKETPLACE}`, "--json"],
+                },
+              ]
+            : planHostInstall("cursor", {
+                home,
+                env: deps.env,
+                cwd: home,
+                packageVersion: latest,
+                targetDir: paths.cursorRoot,
+              });
     plan.entries.push({
       host: source.host,
       selector: source.selector,
@@ -446,7 +468,9 @@ export function previewUpgrade(
       commands,
       installedVersion: source.installedVersion,
       ...(source.kind === "repair" ? { repair: true } : {}),
-      fix: fixFor(source.host, source.selector),
+      fix: source.migrate
+        ? codexMigrationFix(paths.codexConfig, source.kind !== "repair")
+        : fixFor(source.host, source.selector),
     });
   }
   plan.ok = plan.blocked.length === 0 && plan.failed.length === 0;

@@ -71,8 +71,8 @@ function buildFixtureRepo(): { repo: string; mergeBase: string } {
 
 const ENV_KEYS = [
   "XDG_CONFIG_HOME",
-  "WORKFLOW_TOOLKIT_CONFIG",
-  "WORKFLOW_TOOLKIT_CONFIG_DIR",
+  "WORKIT_CONFIG",
+  "WORKIT_CONFIG_DIR",
   "WORKFLOW_VCS_CONFIG",
   "WORKFLOW_WORKSPACE_ROOT",
   "PATH",
@@ -98,7 +98,7 @@ const withEnv = <T>(overrides: Record<string, string | undefined>, fn: () => T):
 
 const withGitLabConfig = <T>(fn: (configFiles: Record<string, string>) => T): T => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-parity-xdg-"));
-  const legacy = path.join(xdg, "workflow-toolkit");
+  const legacy = path.join(xdg, "workit");
   mkdirSync(legacy, { recursive: true });
   const files = {
     "vcs.json": JSON.stringify({ provider: "gitlab", defaultTargetBranch: "develop" }),

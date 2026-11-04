@@ -21,7 +21,7 @@ import { fixture } from "./hook-fixtures";
 
 let configHome: ConfigHome;
 const saved = {
-  state: process.env.WORKFLOW_TOOLKIT_STATE,
+  state: process.env.WORKIT_STATE_DIR,
   claude: process.env.CLAUDE_CONFIG_DIR,
 };
 let cwd: string;
@@ -33,7 +33,7 @@ const temp = (prefix: string): string => {
   return dir;
 };
 const reset = (): void => {
-  process.env.WORKFLOW_TOOLKIT_STATE = temp("wk-model-limit-state-");
+  process.env.WORKIT_STATE_DIR = temp("wk-model-limit-state-");
   claudeDir = temp("wk-model-limit-claude-");
   process.env.CLAUDE_CONFIG_DIR = claudeDir;
   cwd = temp("wk-model-limit-cwd-");
@@ -50,7 +50,7 @@ afterEach(() => {
 afterAll(() => {
   configHome.restore();
   for (const [key, value] of [
-    ["WORKFLOW_TOOLKIT_STATE", saved.state],
+    ["WORKIT_STATE_DIR", saved.state],
     ["CLAUDE_CONFIG_DIR", saved.claude],
   ] as const)
     if (value === undefined) delete process.env[key];

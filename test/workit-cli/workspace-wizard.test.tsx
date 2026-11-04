@@ -110,7 +110,7 @@ test("draft workspace preview resolver matches disk specificity and preserves am
 });
 
 function withConfigDir(configDir: string, workspaces?: WorkspaceConfig[]): void {
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  process.env.WORKIT_CONFIG = configDir;
   mkdirSync(configDir, { recursive: true });
   writeFileSync(path.join(configDir, "config.json"), JSON.stringify(seedConfig), "utf8");
   if (workspaces) {
@@ -550,7 +550,7 @@ test("apply writes workspaces and preserves existing tokens (WZ-12/CA-13)", () =
       configDir: dir,
       dev: repoRoot,
       cwd: dir,
-      env: isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: dir }),
+      env: isolatedEnv(home, { WORKIT_CONFIG: dir }),
     });
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
     const ws = JSON.parse(readFileSync(path.join(dir, "workspaces.json"), "utf8"));
@@ -633,7 +633,7 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -663,7 +663,7 @@ test("advanced workspace menu exposes typed profile and release-track controls",
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
     clean(projectRoot);
   }
@@ -694,7 +694,7 @@ test("host picker disables absent hosts and supports all, clear, and manual sele
     expect(tty.lastFrame()).toContain("Step 2 — Global config · Locale");
     tty.unmount();
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -719,7 +719,7 @@ test("advanced global commit policy is reachable with named preset and pattern c
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
     clean(projectRoot);
   }
@@ -762,7 +762,7 @@ test("add flow: name → glob preview → provider → menu shows the entry with
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -785,7 +785,7 @@ test("a matching current-project pattern renders a ✓ verdict in the menu", asy
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -819,7 +819,7 @@ test("edit flow: change the pattern, the verdict flips and the save persists it"
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -846,7 +846,7 @@ test("remove flow: the entry disappears from the menu", async () => {
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -875,7 +875,7 @@ test("current-project setup adds the cwd pattern in one step", async () => {
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -905,7 +905,7 @@ test("workspace name/glob validation blocks advancing with inline errors", async
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -950,7 +950,7 @@ test("back and cancel inside the workspace flow preserve state and write nothing
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -989,7 +989,7 @@ test("summary shows the update-workspaces mutation after an add", async () => {
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -1021,7 +1021,7 @@ test("untouched workspaces produce no update-workspaces mutation in the summary"
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -1036,7 +1036,7 @@ test("createInitialDraft seeds workspaces from the configured dir", () => {
     expect(draft.workspaceDraft).toBeNull();
     expect(draft.workspaceIndex).toBeNull();
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(dir);
   }
 });
@@ -1081,7 +1081,7 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -1131,7 +1131,7 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
   }
@@ -1177,7 +1177,7 @@ test(
       process.chdir(previous);
       if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
       else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
-      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      delete process.env.WORKIT_CONFIG;
       clean(configDir);
       clean(project);
     }
@@ -1208,7 +1208,7 @@ test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
     clean(root);
@@ -1242,7 +1242,7 @@ test("Step 6 prints the git toplevel of the resolved basePath as the exact hygie
   } finally {
     process.chdir(previous);
     delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
     clean(repo);

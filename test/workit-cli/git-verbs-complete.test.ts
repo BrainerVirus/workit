@@ -459,7 +459,7 @@ test("Given a message on stdin, When the CLI runs `git commit -F -`, Then the co
     cwd: repo.cwd,
     input: "feat: from stdin\n\nPiped body.\n",
     encoding: "utf8",
-    env: { ...SESSION, WORKFLOW_TOOLKIT_CONFIG: configHome.configDir },
+    env: { ...SESSION, WORKIT_CONFIG: configHome.configDir },
   });
   expect(result.status, result.stderr).toBe(0);
   expect(repo.git("log", "-1", "--format=%B")).toBe(
@@ -742,7 +742,7 @@ test("Given no workit config, When doctor runs in a main-only repository, Then i
       home: configHome.home,
       configDir: configHome.configDir,
       stateDir: path.join(repo.root, "state"),
-      env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: configHome.configDir },
+      env: { ...process.env, WORKIT_CONFIG: configHome.configDir },
     }).checks.find((check) => check.id === "workspace_mismatch")?.detail;
   expect(doctor()).toContain("preset: detected (github-flow)");
   writeFileSync(

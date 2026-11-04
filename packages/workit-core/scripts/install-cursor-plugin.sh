@@ -2,7 +2,7 @@
 # Install / refresh Cursor plugin (+ OpenCode live loader via sync-runtime).
 set -euo pipefail
 
-REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
+REPO_SLUG="${WORKIT_REPO:-BrainerVirus/workit}"
 SHARE="${HOME}/.local/share/workit"
 SKILLS_DIR="${HOME}/.cursor/skills"
 
@@ -65,7 +65,7 @@ fi
 
 chmod +x "$ROOT/packages/workit-core/scripts/sync-runtime.sh" "$ROOT/packages/workit-core/scripts/"*.sh
 # Prefer syncing from this ROOT (dev or freshly cloned share)
-export WORKFLOW_TOOLKIT_DEV="$ROOT"
+export WORKIT_DEV="$ROOT"
 "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
 
 # Drop stale CLI skill symlinks (duplicate /wf-* and /wk-* entries)
@@ -130,20 +130,6 @@ if (mergedHooks.changed.length > 0)
 if ! bun "$ROOT/packages/workit-cli/scripts/doctor-check.ts" cursor; then
   echo "FATAL: post-install doctor found an unhealthy Cursor registration" >&2
   exit 1
-fi
-
-# CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
-# the canonical registration succeeded; carry the legacy user rules forward first.
-LEGACY_PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
-if [ -d "$LEGACY_PLUGIN_DIR" ] && [ "$LEGACY_PLUGIN_DIR" != "$PLUGIN_DIR" ]; then
-  if [ -d "$LEGACY_PLUGIN_DIR/rules" ]; then
-    mkdir -p "$PLUGIN_DIR/rules"
-    for rule in "$LEGACY_PLUGIN_DIR"/rules/*.mdc; do
-      [ -e "$rule" ] || continue
-      [ -e "$PLUGIN_DIR/rules/$(basename "$rule")" ] || cp "$rule" "$PLUGIN_DIR/rules/"
-    done
-  fi
-  rm -rf "$LEGACY_PLUGIN_DIR"
 fi
 
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."

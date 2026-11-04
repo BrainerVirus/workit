@@ -20,15 +20,15 @@ afterAll(() => {
 
 let state: string | undefined;
 beforeEach(() => {
-  state = process.env.WORKFLOW_TOOLKIT_STATE;
+  state = process.env.WORKIT_STATE_DIR;
   const dir = tempRoot("workit-verdict-line-state-");
   roots.push(dir);
   // Issued ids are per user: each test gets its own registry.
-  process.env.WORKFLOW_TOOLKIT_STATE = dir;
+  process.env.WORKIT_STATE_DIR = dir;
 });
 afterEach(() => {
-  if (state === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = state;
+  if (state === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = state;
 });
 
 const git = (cwd: string, ...args: string[]) =>

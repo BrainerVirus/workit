@@ -33,7 +33,7 @@ import { gitTop, wrapAllowed, type RuleRead } from "./heavy-rules";
 
 /** Workit's state dir for `env` (the logger's resolution, over an explicit env). */
 export function stateDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) {
-  if (env.WORKFLOW_TOOLKIT_STATE) return env.WORKFLOW_TOOLKIT_STATE;
+  if (env.WORKIT_STATE_DIR) return env.WORKIT_STATE_DIR;
   if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, "workit");
   const home = env.HOME || os.homedir();
   if (platform === "darwin") return path.join(home, "Library", "Application Support", "workit");

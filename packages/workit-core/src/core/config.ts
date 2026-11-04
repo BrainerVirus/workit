@@ -1,20 +1,11 @@
-import {
-  copyFileSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Logger } from "./logger";
-import { EVENT, errorDetail } from "./boundary";
 import type { CommitFlavorPreset } from "./commit-flavors";
 
 // Optional diagnostic seam: adapters install their host logger so config
-// migration and provenance events land in the same sanitized log stream.
+// provenance events land in the same sanitized log stream.
 let diagnosticLogger: Logger | undefined;
 export const setDiagnosticLogger = (logger: Logger | undefined): void => {
   diagnosticLogger = logger;
@@ -75,72 +66,14 @@ export const mergePreset = (
 };
 
 export const resolveConfigDir = (): string =>
-  process.env.WORKFLOW_TOOLKIT_CONFIG ??
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+  process.env.WORKIT_CONFIG ??
+  process.env.WORKIT_CONFIG_DIR ??
   path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
 
 /** The path of a file in the config dir Workit reads, for every hint that names one. */
 export const configFilePath = (name: string): string => path.join(resolveConfigDir(), name);
 
-// One-time lazy migration from the legacy ~/.config/workflow-toolkit dir.
-// migratedDir remembers the resolved dir already checked: configDir() is on
-// hot paths, so subsequent calls are one string compare. Re-checking per
-// unique dir also keeps tests with swapped env working.
-// ponytail: cache keyed by dir value — an env override explicitly set to the
-// default path caches before migration could trigger; only matters if that
-// env is cleared mid-process (next unique dir value re-checks).
-let migratedDir: string | null = null;
-// A mid-loop copy failure leaves the new dir half-populated; keep retrying
-// until a full pass succeeds instead of silently skipping the failed entry.
-let migrationFailed = false;
-
-export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
-  if (migratedDir === dir) return dir;
-  if (process.env.WORKFLOW_TOOLKIT_CONFIG || process.env.WORKFLOW_TOOLKIT_CONFIG_DIR) {
-    migratedDir = dir;
-    return dir;
-  }
-  const legacy = path.join(
-    process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
-    "workflow-toolkit",
-  );
-  if (!existsSync(legacy)) {
-    migratedDir = dir;
-    return dir;
-  }
-  if (!migrationFailed && existsSync(dir)) {
-    migratedDir = dir;
-    return dir;
-  }
-  migrationFailed = false;
-  mkdirSync(dir, { recursive: true });
-  diagnosticLogger?.info(EVENT.migration, { from: legacy, to: dir });
-  for (const entry of readdirSync(legacy, { withFileTypes: true })) {
-    const src = path.join(legacy, entry.name);
-    const dest = path.join(dir, entry.name);
-    if (existsSync(dest)) continue;
-    try {
-      if (entry.isDirectory()) cpSync(src, dest, { recursive: true });
-      else if (entry.isFile()) copyFileSync(src, dest);
-    } catch (err) {
-      migrationFailed = true;
-      diagnosticLogger?.warn(EVENT.migration, {
-        from: src,
-        ok: false,
-        ...errorDetail(err),
-      });
-      // Task 10 advisory: never leak the raw legacy source path to the terminal —
-      // the structured warn above carries it through the sanitized logger.
-      console.warn(
-        `[workit] config migration: a file could not be copied to ${dir}; it will be retried on the next run`,
-      );
-    }
-  }
-  if (!migrationFailed) migratedDir = dir;
-  return dir;
-};
-
-export const configDir = (): string => ensureConfigDir();
+export const configDir = (): string => resolveConfigDir();
 
 // Region subtags: 2-letter ISO 3166 alpha-2 or 3-digit UN M.49 (es-419 =
 // Latinoamérica), per BCP-47 well-formedness for the tags this toolkit stores.

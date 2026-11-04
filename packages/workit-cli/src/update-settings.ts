@@ -12,8 +12,8 @@ import {
 
 /** Workit's global config dir, resolved the way `workit upgrade` resolves it. */
 export const workitConfigDir = (env: NodeJS.ProcessEnv): string =>
-  env.WORKFLOW_TOOLKIT_CONFIG ??
-  env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+  env.WORKIT_CONFIG ??
+  env.WORKIT_CONFIG_DIR ??
   path.join(env.XDG_CONFIG_HOME || path.join(env.HOME ?? os.homedir(), ".config"), "workit");
 
 export type UpdateCache = {

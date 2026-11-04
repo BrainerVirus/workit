@@ -51,9 +51,9 @@ const sandbox = () => {
       env[k] = v;
   Object.assign(env, {
     HOME: home,
-    WORKFLOW_TOOLKIT_CONFIG: configDir,
-    WORKFLOW_TOOLKIT_STATE: path.join(root, "state"),
-    WORKFLOW_TOOLKIT_DEV: path.join(root, "no-dev"),
+    WORKIT_CONFIG: configDir,
+    WORKIT_STATE_DIR: path.join(root, "state"),
+    WORKIT_DEV: path.join(root, "no-dev"),
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: path.join(root, "no-gitconfig"),
     GIT_AUTHOR_NAME: "Workit Test",

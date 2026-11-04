@@ -553,8 +553,8 @@ Worktrees: `../workit-wt/s8-hooks`, `s9a-router`, `s9b-check`, `s10-pr`, `s11-gi
 ---
 
 ### Critical Files for Implementation
-- /home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit/packages/workit-codex/hooks/workit-hook.ts (template for `core/hooks` and the Claude mapping; the strict-parse bug)
-- /home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit/packages/workit-core/src/core/external-action-effects.ts (lines 601–925: forge helpers to extract; deleted in S16)
-- /home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit/packages/workit-core/src/core/pr-create.ts and vcs-config.ts (`prCreate`, `mergePr`, `pushRemote*`, `vcsCliIdentity`: identity/forge reuse; provider precedence bug at vcs-config.ts:150)
-- /home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit/packages/workit-core/src/core/task-engine.ts + task-evaluation.ts (`evidence()` at :1049/1114 agent_reported; `evaluateRequirements` at :502: S9 gate)
-- /home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit/packages/workit-cli/src/index.tsx + task.ts (router split, `workspaceRootFor`, `workit action` to delete); plus `origin/bugfix/opencode-hot-path:packages/workit-core/src/core/session-context.ts` (seed for `hooks/context.ts`)
+- packages/workit-codex/hooks/workit-hook.ts (template for `core/hooks` and the Claude mapping; the strict-parse bug)
+- packages/workit-core/src/core/external-action-effects.ts (lines 601–925: forge helpers to extract; deleted in S16)
+- packages/workit-core/src/core/pr-create.ts and vcs-config.ts (`prCreate`, `mergePr`, `pushRemote*`, `vcsCliIdentity`: identity/forge reuse; provider precedence bug at vcs-config.ts:150)
+- packages/workit-core/src/core/task-engine.ts + task-evaluation.ts (`evidence()` at :1049/1114 agent_reported; `evaluateRequirements` at :502: S9 gate)
+- packages/workit-cli/src/index.tsx + task.ts (router split, `workspaceRootFor`, `workit action` to delete); plus `origin/bugfix/opencode-hot-path:packages/workit-core/src/core/session-context.ts` (seed for `hooks/context.ts`)

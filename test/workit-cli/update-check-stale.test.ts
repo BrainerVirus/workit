@@ -25,7 +25,7 @@ const setup = () => {
   const env: NodeJS.ProcessEnv = {
     HOME: home,
     XDG_CONFIG_HOME: path.join(home, ".config"),
-    WORKFLOW_TOOLKIT_STATE: path.join(home, "state"),
+    WORKIT_STATE_DIR: path.join(home, "state"),
     TERM: "xterm-256color",
     PATH: "/usr/bin",
   };

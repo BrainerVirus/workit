@@ -19,7 +19,7 @@ const manifestPaths = [
   "packages/workit-claude-code/.claude-plugin/plugin.json",
 ];
 
-const fixtureRoot = (versions: Record<string, string>, name = "workflow-toolkit") => {
+const fixtureRoot = (versions: Record<string, string>, name = "workit") => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sync-manifests-"));
   for (const rel of manifestPaths) {
     const file = path.join(root, rel);

@@ -13,14 +13,14 @@ import { fixture, tempRoot } from "./hook-fixtures";
 const base = mkdtempSync(path.join(tmpdir(), "workit-issued-guard-"));
 const state = path.join(base, "state");
 const root = tempRoot("workit-issued-guard-root-");
-const saved = process.env.WORKFLOW_TOOLKIT_STATE;
+const saved = process.env.WORKIT_STATE_DIR;
 beforeAll(() => {
-  process.env.WORKFLOW_TOOLKIT_STATE = state;
+  process.env.WORKIT_STATE_DIR = state;
   mkdirSync(path.join(state, "issued", "lead"), { recursive: true });
 });
 afterAll(() => {
-  if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = saved;
+  if (saved === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = saved;
   rmSync(base, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
@@ -78,10 +78,10 @@ test("G shell writes into the issued dirs, W Claude Code runs them bare or under
 
 test("G the state dir under ~, W a shell writes through ~ or $HOME, T denied", () => {
   const home = path.join(base, "home");
-  const prior = { HOME: process.env.HOME, state: process.env.WORKFLOW_TOOLKIT_STATE };
+  const prior = { HOME: process.env.HOME, state: process.env.WORKIT_STATE_DIR };
   try {
     process.env.HOME = home;
-    process.env.WORKFLOW_TOOLKIT_STATE = path.join(home, "st");
+    process.env.WORKIT_STATE_DIR = path.join(home, "st");
     mkdirSync(path.join(home, "st", "issued"), { recursive: true });
     for (const target of ["~/st/issued/x", "$HOME/st/issued-tokens/x"])
       expect(claude("Bash", { command: `echo f > ${target}` })?.permissionDecision).toBe("deny");
@@ -92,7 +92,7 @@ test("G the state dir under ~, W a shell writes through ~ or $HOME, T denied", (
       ).toBe("deny");
   } finally {
     process.env.HOME = prior.HOME;
-    process.env.WORKFLOW_TOOLKIT_STATE = prior.state;
+    process.env.WORKIT_STATE_DIR = prior.state;
   }
 });
 

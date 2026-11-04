@@ -40,7 +40,7 @@ const detection = {
 
 type Sandbox = { root: string; project: string; config: string; home: string };
 
-const ENV_KEYS = ["HOME", "WORKFLOW_TOOLKIT_CONFIG", "WORKFLOW_WORKSPACE_ROOT"] as const;
+const ENV_KEYS = ["HOME", "WORKIT_CONFIG", "WORKFLOW_WORKSPACE_ROOT"] as const;
 
 async function inSandbox(run: (box: Sandbox) => Promise<void>): Promise<void> {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-golden-")));
@@ -67,7 +67,7 @@ async function inSandbox(run: (box: Sandbox) => Promise<void>): Promise<void> {
   const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   const cwd = process.cwd();
   process.env.HOME = box.home;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = box.config;
+  process.env.WORKIT_CONFIG = box.config;
   delete process.env.WORKFLOW_WORKSPACE_ROOT;
   process.chdir(box.project);
   try {

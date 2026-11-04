@@ -952,8 +952,8 @@ test("a raced Pi spawn stays unresolved", async () => {
 
 test("G no models.roles for Pi, W a supervised worker command is built, T it names no --model or --thinking: the ambient model applies", () => {
   const configDir = mkdtempSync(path.join(tmpdir(), "workit-pi-models-none-"));
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  const saved = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configDir;
   try {
     for (const role of ["reviewer", "investigator", "implementer"] as const) {
       const { args } = workerCommand(runtime(), assignment(role));
@@ -961,8 +961,8 @@ test("G no models.roles for Pi, W a supervised worker command is built, T it nam
       expect(args).not.toContain("--thinking");
     }
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    if (saved === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = saved;
   }
 });
 
@@ -986,8 +986,8 @@ test("G models.roles with a Pi model and effort per role, W a worker command is 
       ],
     }),
   );
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+  const saved = process.env.WORKIT_CONFIG;
+  process.env.WORKIT_CONFIG = configDir;
   try {
     const reviewer = workerCommand(runtime(root), assignment("reviewer")).args;
     expect(reviewer[reviewer.indexOf("--model") + 1]).toBe("anthropic/claude-sonnet-4-5");
@@ -997,7 +997,7 @@ test("G models.roles with a Pi model and effort per role, W a worker command is 
     expect(investigator).not.toContain("--thinking");
     expect(workerCommand(runtime(root), assignment("implementer")).args).not.toContain("--model");
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    if (saved === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = saved;
   }
 });

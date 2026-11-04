@@ -8,11 +8,10 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 SHARE="${HOME}/.local/share/workit"
 PLUGIN_DIR="${HOME}/.cursor/plugins/local/workit"
-OPENCODE_PLUGINS="${HOME}/.config/opencode/plugins"
-DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"
-DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
-REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
-LOCK="${XDG_RUNTIME_DIR:-/tmp}/workflow-toolkit-sync.lock"
+DEV_DEFAULT="${HOME}/Documents/projects/personal/workit"
+DEV="${WORKIT_DEV:-$DEV_DEFAULT}"
+REPO_SLUG="${WORKIT_REPO:-BrainerVirus/workit}"
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/workit-sync.lock"
 
 # RR-05: missing required tools, an unacquirable lock, or a failed clone must
 # never look like a successful sync.
@@ -137,25 +136,5 @@ if [ -d "$CONFIG_RULES_DIR" ]; then
   fi
 fi
 printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workit-root"
-
-# CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
-# the canonical sync succeeded; carry the legacy user rules forward first.
-LEGACY_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
-if [ -d "$LEGACY_DIR" ] && [ "$LEGACY_DIR" != "$PLUGIN_DIR" ]; then
-  if [ -d "$LEGACY_DIR/rules" ]; then
-    mkdir -p "$PLUGIN_DIR/rules"
-    for rule in "$LEGACY_DIR"/rules/*.mdc; do
-      [ -e "$rule" ] || continue
-      [ -e "$PLUGIN_DIR/rules/$(basename "$rule")" ] || cp "$rule" "$PLUGIN_DIR/rules/"
-    done
-  fi
-  rm -rf "$LEGACY_DIR"
-fi
-
-# Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)
-rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
-
-# Drop bun package cache so old github/file installs cannot shadow file:// plugin.ts
-rm -rf "${HOME}/.cache/opencode/packages/workflow-toolkit-opencode@"* 2>/dev/null || true
 
 exit 0

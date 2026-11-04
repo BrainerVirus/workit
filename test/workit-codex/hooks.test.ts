@@ -23,14 +23,14 @@ afterAll(() => {
 // another test file issued earlier in the same run cannot read as "already issued".
 let state: string | undefined;
 beforeEach(() => {
-  state = process.env.WORKFLOW_TOOLKIT_STATE;
+  state = process.env.WORKIT_STATE_DIR;
   const dir = tempRoot("workit-codex-hooks-state-");
   roots.push(dir);
-  process.env.WORKFLOW_TOOLKIT_STATE = dir;
+  process.env.WORKIT_STATE_DIR = dir;
 });
 afterEach(() => {
-  if (state === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-  else process.env.WORKFLOW_TOOLKIT_STATE = state;
+  if (state === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = state;
 });
 
 /** A Workit workspace checkout on feature/x. */
@@ -184,8 +184,8 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
   const root = repo();
   // Issued ids are per user (#294): give this test its own state dir so ids
   // other tests issued under the same fixture lead don't count here.
-  const runState = process.env.WORKFLOW_TOOLKIT_STATE;
-  process.env.WORKFLOW_TOOLKIT_STATE = path.join(root, ".state");
+  const runState = process.env.WORKIT_STATE_DIR;
+  process.env.WORKIT_STATE_DIR = path.join(root, ".state");
   try {
     const claudeLead = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "claude-session-1" };
     const codexLead = { CODEX_THREAD_ID: "codex-session-1" };
@@ -230,8 +230,8 @@ test("G a judge's SubagentStart on Claude Code and Codex, T the id the hook issu
     codex("subagent-start", root, { agent_type: "worker", agent_id: "agent-2" });
     expect(sessionClaimRefusal(codexLead, "codex-session-1:agent-2", root)).not.toBeNull();
   } finally {
-    if (runState === undefined) delete process.env.WORKFLOW_TOOLKIT_STATE;
-    else process.env.WORKFLOW_TOOLKIT_STATE = runState;
+    if (runState === undefined) delete process.env.WORKIT_STATE_DIR;
+    else process.env.WORKIT_STATE_DIR = runState;
   }
 });
 

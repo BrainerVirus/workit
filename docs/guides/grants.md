@@ -297,7 +297,7 @@ terminal ([config files](configuration.md#config-files)). `workspace rm a b c`
 asks once and lists only the entries whose globs can match the removed folders.
 `workit workspace set --global models.roles.verifier.claude_code=sonnet` edits
 the file's top-level `models` key (grant keys are refused, as in `workspace set`). The
-`WORKFLOW_TOOLKIT_CONFIG`, `WORKFLOW_TOOLKIT_CONFIG_DIR` and `XDG_CONFIG_HOME`
+`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR` and `XDG_CONFIG_HOME`
 overrides never redirect grants: while one is set, grants resolve to the
 defaults.
 

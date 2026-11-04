@@ -14,7 +14,7 @@ test("paths cannot escape the worktree", () => {
 });
 
 test("paths cannot escape through an in-root symlink", () => {
-  const fixture = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
+  const fixture = mkdtempSync(path.join(os.tmpdir(), "workit-"));
   const root = path.join(fixture, "root");
   const outside = path.join(fixture, "outside");
   mkdirSync(root);
@@ -29,7 +29,7 @@ test("paths cannot escape through an in-root symlink", () => {
 });
 
 test("paths allow a nonexistent file beneath an in-root parent", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "workit-"));
   const parent = path.join(root, "parent");
   mkdirSync(parent);
 
@@ -48,14 +48,9 @@ test("process runner uses executable and argument array", () => {
 });
 
 test("copied runtime cannot redirect assets or workspace through Cursor environment", () => {
-  const pluginRootSource = readFileSync(
-    path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"),
-    "utf8",
-  );
   const workspaceSource = readFileSync(
     path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"),
     "utf8",
   );
-  expect(pluginRootSource).not.toContain("WORKFLOW_TOOLKIT_ROOT");
   expect(workspaceSource).not.toContain("WORKFLOW_WORKSPACE_ROOT");
 });

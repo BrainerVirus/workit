@@ -18,7 +18,7 @@ const doctorFor = (name: string) => {
   mkdirSync(home, { recursive: true });
   mkdirSync(cwd, { recursive: true });
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
-  for (const key of ["WORKFLOW_TOOLKIT_DEV", "CODEX_HOME", "CLAUDE_CONFIG_DIR"]) delete env[key];
+  for (const key of ["WORKIT_DEV", "CODEX_HOME", "CLAUDE_CONFIG_DIR"]) delete env[key];
   const run = (): DoctorReport =>
     runDoctor({
       host: "cli",
@@ -87,7 +87,7 @@ test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it r
     workspaceRoot: doctor.home,
     configDir: path.join(doctor.home, ".config", "workit"),
     stateDir: path.join(doctor.home, ".local", "state", "workit"),
-    env: { ...process.env, HOME: doctor.home, WORKFLOW_TOOLKIT_DEV: "" },
+    env: { ...process.env, HOME: doctor.home, WORKIT_DEV: "" },
     only: "upgrade",
   });
   expect(report.checks.map((check): string => check.id).toSorted()).toEqual(

@@ -371,8 +371,8 @@ test("catchall ** matches drive-letter and posix paths (Windows CI regression)",
     }),
   );
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("D:/a/workflow-toolkit/workflow-toolkit")?.name).toBe("catchall");
-    expect(resolveWorkspace("D:\\a\\workflow-toolkit\\workflow-toolkit")?.name).toBe("catchall");
+    expect(resolveWorkspace("D:/a/workit/workit")?.name).toBe("catchall");
+    expect(resolveWorkspace("D:\\a\\workit\\workit")?.name).toBe("catchall");
     expect(resolveWorkspace("/home/u/anything")?.name).toBe("catchall");
     expect(resolveWorkspace("/home/u/anything/deep/nested")?.name).toBe("catchall");
   });
@@ -383,11 +383,11 @@ test("native Windows separators in workspace globs match normalized paths", () =
   writeWorkspaces(
     dir,
     JSON.stringify({
-      workspaces: [{ name: "windows", glob: "D:\\a\\workflow-toolkit\\**" }],
+      workspaces: [{ name: "windows", glob: "D:\\a\\workit\\**" }],
     }),
   );
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("D:/a/workflow-toolkit/repo")?.name).toBe("windows");
+    expect(resolveWorkspace("D:/a/workit/repo")?.name).toBe("windows");
   });
 });
 

@@ -21,7 +21,7 @@ const event = (name: string, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ hook_event_name: name, session_id: "s1", cwd: "/tmp", ...extra });
 
 const failures = (env: Record<string, string>) =>
-  readHookRuns(env.WORKFLOW_TOOLKIT_STATE).filter((row) => row.failure !== undefined);
+  readHookRuns(env.WORKIT_STATE_DIR).filter((row) => row.failure !== undefined);
 
 const claude = (entry: string, input: string, env: Record<string, string>) =>
   spawnSync(NODE, [entry], { input, encoding: "utf8", env });

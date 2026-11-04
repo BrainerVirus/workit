@@ -421,8 +421,8 @@ export async function workspaceResources(
 ): Promise<{ value: unknown; warning: string | null }> {
   const env = io.env;
   const dir =
-    env.WORKFLOW_TOOLKIT_CONFIG ??
-    env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+    env.WORKIT_CONFIG ??
+    env.WORKIT_CONFIG_DIR ??
     path.join(env.XDG_CONFIG_HOME || path.join(env.HOME || os.homedir(), ".config"), "workit");
   try {
     const { resolveWorkspaceFrom } = await import("@brainervirus/workit-core/src/core/workspaces");

@@ -33,7 +33,7 @@ for (const [runtime, plugin] of RUNTIMES) {
     const state = scratch("workit-claude-deadline-state-");
     const run = runHook(plugin(), fixture("claude-code", "user-prompt-submit", scratch("root")), {
       WORKIT_HOOK_DEADLINE_MS: "1",
-      WORKFLOW_TOOLKIT_STATE: state,
+      WORKIT_STATE_DIR: state,
     });
     expect(run.status).toBe(0);
     expect(outputProblem("UserPromptSubmit", run.json)).toBeNull();
@@ -61,7 +61,7 @@ for (const [runtime, plugin] of RUNTIMES) {
       }),
       {
         WORKIT_HOOK_DEADLINE_MS: "1",
-        WORKFLOW_TOOLKIT_STATE: scratch("workit-claude-deadline-state-"),
+        WORKIT_STATE_DIR: scratch("workit-claude-deadline-state-"),
       },
     );
     expect(run.status).toBe(0);
@@ -99,7 +99,7 @@ for (const [runtime, plugin] of RUNTIMES) {
   test(`Given a ${runtime} UserPromptSubmit, When Claude runs the hook, Then the run is recorded for doctor's hook_runs (#433)`, () => {
     const state = scratch("workit-claude-runs-state-");
     const run = runHook(plugin(), fixture("claude-code", "user-prompt-submit", scratch("root")), {
-      WORKFLOW_TOOLKIT_STATE: state,
+      WORKIT_STATE_DIR: state,
     });
     expect(run.status).toBe(0);
     const runs = readHookRuns(state);

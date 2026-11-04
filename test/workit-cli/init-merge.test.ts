@@ -44,13 +44,13 @@ const config: ToolkitConfig = {
 
 let dir = "";
 afterEach(() => {
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  delete process.env.WORKIT_CONFIG;
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 test("init adding an entry keeps every other entry byte-for-byte", () => {
   dir = mkdtempSync(path.join(os.tmpdir(), "workit-init-merge-"));
-  process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+  process.env.WORKIT_CONFIG = dir;
   const file = path.join(dir, "workspaces.json");
   const original = { models: { roles: {} }, workspaces: [FULL, NESTED] };
   writeFileSync(file, `${JSON.stringify(original, null, 2)}\n`);

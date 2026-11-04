@@ -312,18 +312,23 @@ carries the envelope fields `ok`, `code` and, on failure or when a fix exists, `
 
 ```bash
 codex plugin marketplace add https://github.com/BrainerVirus/workit.git
-codex plugin add workit@workflow-toolkit
+codex plugin add workit@workit
 ```
 
 Update with `workit upgrade`: it runs
-`codex plugin marketplace upgrade workflow-toolkit` and
-`codex plugin add workit@workflow-toolkit` (the native fallback) and refreshes
+`codex plugin marketplace upgrade workit` and
+`codex plugin add workit@workit` (the native fallback) and refreshes
 the agent files (it finds the plugin in any configured marketplace, without
 fetching Codex's remote catalog). The Codex app-server daemon keeps running: Codex checks the
 installed plugin version each time it resolves plugins, so a new thread (desktop,
 IDE or CLI) loads the new version without a restart. Open interactive Codex
 sessions are never killed; that host is skipped with its pid. Uninstall with
 `workit uninstall`.
+
+An install registered under the marketplace's earlier name is moved by
+`workit upgrade` (and `workit setup`): it removes that plugin and marketplace
+with `codex plugin remove` and `codex plugin marketplace remove`, then
+registers `workit@workit` once, so Workit's hooks never run twice.
 
 A thread that was already open keeps the hooks and MCP servers it started with.
 `workit doctor` (`codex_session_plugin`, Linux and macOS) warns for each

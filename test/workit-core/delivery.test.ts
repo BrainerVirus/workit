@@ -462,7 +462,7 @@ test("commit lint and package specs", () => {
 
 test("requireGrant: a redirected config dir never supplies grants (D15)", () => {
   const forged = mkdtempSync(path.join(os.tmpdir(), "wk-forged-config-"));
-  const saved = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const saved = process.env.WORKIT_CONFIG;
   try {
     writeFileSync(
       path.join(forged, "workspaces.json"),
@@ -477,13 +477,13 @@ test("requireGrant: a redirected config dir never supplies grants (D15)", () => 
         ],
       }),
     );
-    process.env.WORKFLOW_TOOLKIT_CONFIG = forged;
+    process.env.WORKIT_CONFIG = forged;
     const decision = requireGrant(process.cwd(), "merge");
     expect(decision).toMatchObject({ allowed: false, reason: "grant_required" });
     expect(decision.allowed ? "" : decision.error).toContain("grants are read only from");
     expect(resolveAutonomy(process.cwd())).toMatchObject({ source: "default", workspace: null });
   } finally {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = saved;
+    process.env.WORKIT_CONFIG = saved;
     rmSync(forged, { recursive: true, force: true });
   }
 });
@@ -492,7 +492,7 @@ test("resolveAutonomy: a legacy standing merge approval maps to merge verified, 
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-legacy-merge-"));
   try {
     writeFileSync(
-      path.join(process.env.WORKFLOW_TOOLKIT_CONFIG!, "workspaces.json"),
+      path.join(process.env.WORKIT_CONFIG!, "workspaces.json"),
       JSON.stringify({
         workspaces: [{ name: "w", glob: `${root.replaceAll("\\", "/")}/**`, autoApprove: true }],
       }),

@@ -54,7 +54,7 @@ import {
 
 /**
  * Grants are read only from the user's real config directory,
- * `<account home>/.config/workit` (D15; see grantsHome). The WORKFLOW_TOOLKIT_CONFIG(_DIR) and
+ * `<account home>/.config/workit` (D15; see grantsHome). The WORKIT_CONFIG(_DIR) and
  * XDG_CONFIG_HOME overrides that redirect the rest of the config never
  * redirect grants: an agent could point them at a file it wrote. While an
  * override points elsewhere, grants resolve to the D4 defaults.
@@ -81,7 +81,7 @@ export const grantsOverride = (): string | null => {
   const configured = path.resolve(resolveConfigDir());
   return configured === path.resolve(grantsDir())
     ? null
-    : `the config directory is redirected to ${configured} (WORKFLOW_TOOLKIT_CONFIG, WORKFLOW_TOOLKIT_CONFIG_DIR or XDG_CONFIG_HOME), but that override does not apply to grants: grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply until grants are set there`;
+    : `the config directory is redirected to ${configured} (WORKIT_CONFIG, WORKIT_CONFIG_DIR or XDG_CONFIG_HOME), but that override does not apply to grants: grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply until grants are set there`;
 };
 
 export const GRANT_KINDS = ["push", "pr", "merge", "release", "rerun"] as const;

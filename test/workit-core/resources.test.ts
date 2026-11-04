@@ -333,7 +333,7 @@ test("scope support: no systemd off Linux, without systemd-run, without a user m
 });
 
 test("G a session told once, T the no-scope notice does not repeat for it but does for another session", () => {
-  const env = { WORKFLOW_TOOLKIT_STATE: temp() };
+  const env = { WORKIT_STATE_DIR: temp() };
   expect(firstNotice(env, "s-1", "no-scope")).toBe(true);
   expect(firstNotice(env, "s-1", "no-scope")).toBe(false);
   expect(firstNotice(env, "s-2", "no-scope")).toBe(true);
@@ -494,7 +494,7 @@ test("G a slot reclaimed and retaken by another holder, T release and updateLeas
 
 test("G notice markers older than a week, T a new notice prunes them", () => {
   const state = temp();
-  const env = { WORKFLOW_TOOLKIT_STATE: state };
+  const env = { WORKIT_STATE_DIR: state };
   expect(firstNotice(env, "s-old", "no-scope")).toBe(true);
   const old = path.join(state, "notices", "no-scope-s-old");
   const week = new Date(Date.now() - 8 * 86_400_000);

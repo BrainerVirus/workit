@@ -51,11 +51,11 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
   const cfg = mkdtempSync(path.join(os.tmpdir(), "wf-bpw-cfg-"));
   writeFileSync(path.join(cfg, "workspaces.json"), JSON.stringify({ workspaces: [] }));
   const prevCwd = process.cwd();
-  const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const prevCfg = process.env.WORKIT_CONFIG;
   const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   const prevBpName = process.env.WORKFLOW_BP_NAME;
   process.chdir(root);
-  process.env.WORKFLOW_TOOLKIT_CONFIG = cfg;
+  process.env.WORKIT_CONFIG = cfg;
   process.env.WORKFLOW_WORKSPACE_ROOT = root;
   try {
     let exitValues: SetupValues | undefined;
@@ -92,7 +92,7 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
 
     const viaTool = initApplyData("branch_policy", {
       WORKFLOW_WORKSPACE_ROOT: root,
-      WORKFLOW_TOOLKIT_CONFIG: cfg,
+      WORKIT_CONFIG: cfg,
     });
     const wsTool = readFileSync(path.join(cfg, "workspaces.json"), "utf8");
     expect(viaTool.policy.integration).toBe("merge");
@@ -100,8 +100,8 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
     expect(JSON.parse(wsFile).workspaces[0].branchPolicy.preset).toBe("gitflow");
   } finally {
     process.chdir(prevCwd);
-    if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+    if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevCfg;
     if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
     if (prevBpName === undefined) delete process.env.WORKFLOW_BP_NAME;

@@ -1364,7 +1364,7 @@ test("stack sync: while another process is inside a slow rebase (post-rewrite ho
   hook(forge, "post-rewrite", 6);
   const lock = lockOf(forge);
   const child = Bun.spawn(["bun", MAIN, "--cwd", forge.cwd, "stack", "sync", "--local", "--json"], {
-    env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: configDir },
+    env: { ...process.env, WORKIT_CONFIG: configDir },
     stdout: "pipe",
     stderr: "pipe",
   });

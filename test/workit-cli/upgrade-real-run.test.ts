@@ -245,7 +245,7 @@ test("Given an installed (non-dev) Cursor without launchers, Then doctor's launc
   const home = tempHome();
   try {
     const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
-    delete env.WORKFLOW_TOOLKIT_DEV;
+    delete env.WORKIT_DEV;
     const report = runDoctor({
       host: "cursor",
       home,
@@ -287,7 +287,7 @@ const codexDoctor = (
     HOME: home,
     CODEX_HOME: path.join(home, ".codex"),
   };
-  delete env.WORKFLOW_TOOLKIT_DEV;
+  delete env.WORKIT_DEV;
   const report = runDoctor({
     host: "cli",
     home,
@@ -468,7 +468,7 @@ exit 0`,
           PATH: `${bin}:/usr/bin:/bin`,
           FAKE_CURSOR_TEMPLATE: template,
           FAKE_NPM_LOG: log,
-          WORKFLOW_TOOLKIT_DEV: "",
+          WORKIT_DEV: "",
         },
         processes: () => [],
       };

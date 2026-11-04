@@ -200,7 +200,7 @@ test("doctor reports overlapping globs and which entry wins", async () => {
     home: configHome.home,
     configDir: configHome.configDir,
     stateDir: path.join(root, "state"),
-    env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: configHome.configDir },
+    env: { ...process.env, WORKIT_CONFIG: configHome.configDir },
   }).checks.find((item) => item.id === "workspace_mismatch");
   expect(check?.detail).toContain(`overlap: kit inside work, kit wins at ${root}/work/libs/kit`);
   // `work/**` and `work/*` share one literal segment count: a tie.

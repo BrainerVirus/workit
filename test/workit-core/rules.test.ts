@@ -14,17 +14,17 @@ const savedEnv = new Map<string, string | undefined>();
 
 const cfgDir = () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-rules-"));
-  savedEnv.set("WORKFLOW_TOOLKIT_CONFIG", process.env.WORKFLOW_TOOLKIT_CONFIG);
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  savedEnv.set("WORKIT_CONFIG", process.env.WORKIT_CONFIG);
+  process.env.WORKIT_CONFIG_DIR = dir;
+  delete process.env.WORKIT_CONFIG;
   return dir;
 };
 
 const cleanupEnv = () => {
-  const value = savedEnv.get("WORKFLOW_TOOLKIT_CONFIG");
-  if (value === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  else process.env.WORKFLOW_TOOLKIT_CONFIG = value;
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  const value = savedEnv.get("WORKIT_CONFIG");
+  if (value === undefined) delete process.env.WORKIT_CONFIG;
+  else process.env.WORKIT_CONFIG = value;
+  delete process.env.WORKIT_CONFIG_DIR;
   savedEnv.clear();
 };
 

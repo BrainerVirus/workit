@@ -19,8 +19,8 @@ const git = (cwd: string, args: string[]) =>
   spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env } });
 
 const ENV_KEYS = [
-  "WORKFLOW_TOOLKIT_CONFIG",
-  "WORKFLOW_TOOLKIT_CONFIG_DIR",
+  "WORKIT_CONFIG",
+  "WORKIT_CONFIG_DIR",
   "XDG_CONFIG_HOME",
   "WORKFLOW_VCS_CONFIG",
   "WORKFLOW_WORKSPACE_ROOT",
@@ -273,7 +273,7 @@ test(
   () => {
     setupRepoWithOrigin();
     git(root, ["checkout", "-q", "-b", "feature/b1"]);
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk");
       const remote = git(root, ["remote", "get-url", "--push", "origin"]).stdout.trim();
       expect(remote).toBe("git@workit-github-host.invalid:o/r.git");
@@ -294,7 +294,7 @@ test(
     const run = (target: string) =>
       withEnv(
         {
-          WORKFLOW_TOOLKIT_CONFIG: cfgDir,
+          WORKIT_CONFIG: cfgDir,
           PATH: stubPath(),
         },
         () => {
@@ -320,7 +320,7 @@ test(
   () => {
     setupRepoWithOrigin();
     git(root, ["checkout", "-q", "-b", "feature/b1"]);
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk");
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
     });
@@ -335,7 +335,7 @@ test("prCreate refuses ambiguous origin push destinations", () => {
   git(root, ["checkout", "-q", "-b", "feature/multi-push-url"]);
   git(root, ["remote", "set-url", "--add", "--push", "origin", "https://github.com/o/r.git"]);
   git(root, ["remote", "set-url", "--add", "--push", "origin", "https://mirror.example/o/r.git"]);
-  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+  const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
     writeConfig({ preset: "gitflow" }, "develop");
     return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
   });
@@ -363,7 +363,7 @@ test(
   () => {
     setupMainRepo();
     git(root, ["checkout", "-q", "-b", "feature/ca06"]);
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig({ preset: "github-flow" }, "main");
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: "main" }, root);
     });
@@ -379,7 +379,7 @@ test(
   () => {
     setupRepoWithOrigin();
     git(root, ["checkout", "-q", "-b", "feature/ca06"]);
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig({ preset: "gitflow" }, "develop");
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: "develop" }, root);
     });
@@ -396,7 +396,7 @@ test(
     setupRepoWithOrigin();
     git(root, ["checkout", "-q", "-b", "feature/ca06"]);
     const run = (target: string) =>
-      withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+      withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
         writeConfig({ preset: "gitflow" }, "develop");
         return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: target }, root);
       });
@@ -460,7 +460,7 @@ test(
   () => {
     setupRepoWithOrigin();
     branchOn();
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk", { pushBranch: true });
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
     });
@@ -484,7 +484,7 @@ test(
     writeFileSync(path.join(bareRemote, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n", {
       mode: 0o755,
     });
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk", { pushBranch: false });
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
     });
@@ -508,7 +508,7 @@ test(
       mode: 0o755,
     });
     branchOn();
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk", { pushBranch: true });
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
     });
@@ -531,7 +531,7 @@ test(
     git(root, ["config", "user.name", "Workflow Test"]);
     git(root, ["config", "user.email", "workflow@example.test"]);
     git(root, ["remote", "add", "origin", "git@workit-github-host.invalid:o/r.git"]);
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk", { pushBranch: true });
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
     });
@@ -553,7 +553,7 @@ test(
     branchOn();
     git(root, ["remote", "set-url", "origin", "https://gitlab.com/o/r.git"]);
     git(root, ["remote", "set-url", "--push", "origin", "git@workit-gitlab-host.invalid:o/r.git"]);
-    const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const result = withEnv({ WORKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
       writeConfig(customPolicy, "trunk", { pushBranch: true }, "gitlab");
       return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
     });

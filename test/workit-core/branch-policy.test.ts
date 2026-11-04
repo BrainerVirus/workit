@@ -530,7 +530,7 @@ test(
     stubCli(stubBin, "gh", ghLog, "https://github.com/acme/workit/pull/1");
     stubCli(stubBin, "glab", glabLog, "https://gitlab.com/acme/workit/-/merge_requests/1");
     const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-remote-cfg-"));
-    const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevConfig = process.env.WORKIT_CONFIG;
     const prevPath = process.env.PATH;
     const prevSshCommand = process.env.GIT_SSH_COMMAND;
     const prevBareRemote = process.env.WORKIT_TEST_BARE_REMOTE;
@@ -588,7 +588,7 @@ server.on("exit", (code) => process.exit(code ?? 1));
       return { root, remote };
     };
     try {
-      process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+      process.env.WORKIT_CONFIG = cfgDir;
       process.env.PATH = stubPath(stubBin);
       const { root: ghRoot, remote: ghRemote } = repoWithRemote(
         "https://github.com/acme/workit.git",
@@ -632,8 +632,8 @@ server.on("exit", (code) => process.exit(code ?? 1));
         rmSync(glRemote, { recursive: true, force: true });
       }
     } finally {
-      if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+      if (prevConfig === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prevConfig;
       if (prevPath === undefined) delete process.env.PATH;
       else process.env.PATH = prevPath;
       if (prevSshCommand === undefined) delete process.env.GIT_SSH_COMMAND;
@@ -653,7 +653,7 @@ test("RL-01: malformed config.json throws the exact-path error from policy-aware
   // falling back to defaults — the diagnostic carries the exact file path.
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-malformed-cfg-repo-"));
   const cfg = mkdtempSync(path.join(os.tmpdir(), "wf-malformed-cfg-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const prevConfig = process.env.WORKIT_CONFIG;
   try {
     const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
     run(["init", "-q", "-b", "main"]);
@@ -663,12 +663,12 @@ test("RL-01: malformed config.json throws the exact-path error from policy-aware
     run(["add", "r.md"]);
     run(["commit", "-q", "-m", "base"]);
     writeFileSync(path.join(cfg, "config.json"), "{ not json\n", "utf8");
-    process.env.WORKFLOW_TOOLKIT_CONFIG = cfg;
+    process.env.WORKIT_CONFIG = cfg;
     expect(() => vcsConfig("resolve", root)).toThrow(/is not valid JSON/);
     expect(() => resolveBranchPolicyFor(root)).toThrow(/is not valid JSON/);
   } finally {
-    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    if (prevConfig === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = prevConfig;
     rmSync(root, { recursive: true, force: true });
     rmSync(cfg, { recursive: true, force: true });
   }
@@ -678,10 +678,10 @@ test(
   "branch policy rejects codex/ under gitflow and allows under custom",
   async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));
-    const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevConfig = process.env.WORKIT_CONFIG;
     try {
-      process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
-      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      process.env.WORKIT_CONFIG_DIR = dir;
+      delete process.env.WORKIT_CONFIG;
       const repo = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-repo-"));
       try {
         const run = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
@@ -726,9 +726,9 @@ test(
         rmSync(repo, { recursive: true, force: true });
       }
     } finally {
-      delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-      if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+      delete process.env.WORKIT_CONFIG_DIR;
+      if (prevConfig === undefined) delete process.env.WORKIT_CONFIG;
+      else process.env.WORKIT_CONFIG = prevConfig;
       rmSync(dir, { recursive: true, force: true });
     }
   },

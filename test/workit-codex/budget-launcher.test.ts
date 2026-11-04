@@ -23,7 +23,7 @@ const env = {
   ...process.env,
   HOME: home,
   CODEX_HOME: path.join(home, ".codex"),
-  WORKFLOW_TOOLKIT_STATE: path.join(home, "state"),
+  WORKIT_STATE_DIR: path.join(home, "state"),
 };
 
 type Output = { hookSpecificOutput?: { additionalContext?: string; permissionDecision?: string } };

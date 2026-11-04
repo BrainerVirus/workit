@@ -21,9 +21,9 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const named = (s: string, name: string) => s === name || s.startsWith(`${name}@`);
 
 /**
- * True when a plugin identity is a current or legacy Workit entry. Matched by
- * exact identity, never by substring: an unrelated plugin whose id merely
- * contains "workflow-toolkit" is preserved (D3). Path-style identities are
+ * True when a plugin identity is a Workit entry. Matched by exact identity,
+ * never by substring: an unrelated plugin whose id merely contains "workit"
+ * is preserved (D3). Path-style identities are
  * compared with normalized separators so a Windows file:// pin (backslashes)
  * still matches the packages/workit-* path checks.
  */
@@ -35,19 +35,15 @@ export function isWorkitPlugin(value: unknown): boolean {
       s,
     );
   return (
-    named(s, "workflow-toolkit") ||
-    named(s, "workflow-toolkit-opencode") ||
-    named(s, "local/workflow-toolkit") ||
     named(s, "workit") ||
     named(s, "local/workit") ||
     named(s, "@brainervirus/workit-opencode") ||
     named(s, "@brainervirus/workit-cursor") ||
-    (url && pkgPath) ||
-    (s.startsWith("git+file://") && s.includes("workflow-toolkit"))
+    (url && pkgPath)
   );
 }
 
-/** Deduplicate every legacy/current Workit plugin identity to one dev pin. */
+/** Deduplicate every Workit plugin identity to one pin. */
 export function mergeOpenCodePlugins(plugins: unknown, pin: string): MergeResult<unknown[]> {
   const existing = Array.isArray(plugins) ? plugins : typeof plugins === "string" ? [plugins] : [];
   const config = [pin, ...existing.filter((p) => !isWorkitPlugin(p))];
@@ -92,17 +88,15 @@ export function mergeOpenCodeConfig(
   return { config: base, changed };
 }
 
-/** Collapse current + legacy Cursor plugin identities to the canonical `workit`. */
+/** Enable the canonical Cursor plugin identity `workit`. */
 export function mergeCursorEnabledPlugins(enabled: unknown): MergeResult<Record<string, boolean>> {
   const prev = isRecord(enabled) ? { ...(enabled as Record<string, boolean>) } : {};
   const next: Record<string, boolean> = { ...prev, workit: true };
-  delete next["workflow-toolkit"]; // legacy identity
-  delete next["local/workflow-toolkit"]; // legacy duplicate identity
   const changed = JSON.stringify(next) !== JSON.stringify(prev) ? ["enabled_plugins"] : [];
   return { config: next, changed };
 }
 
-/** Append the plugin dir once, dropping the exact legacy sibling directory. */
+/** Append the plugin dir once. */
 export function mergeCursorPluginDirs(
   pluginDirs: unknown,
   pluginDir: string,
@@ -114,16 +108,12 @@ export function mergeCursorPluginDirs(
     return path.dirname(j) === j ? j : j.replace(/[\\/]+$/, "");
   };
   const normalized = strip(pluginDir);
-  // CA-08: the legacy local plugin dir is the exact sibling of the canonical
-  // dir; remove only that entry, never a similarly-named unrelated dir (D3).
-  const legacy = strip(path.join(path.dirname(pluginDir), "workflow-toolkit"));
   const prev = Array.isArray(pluginDirs) ? pluginDirs.map(String) : [];
-  const kept = prev.filter((d) => strip(d) !== legacy);
   // Normalize both sides for comparison so a trailing-slash variant of an
   // existing entry is not appended as a duplicate; existing entries are kept
   // verbatim.
-  const exists = kept.some((d) => strip(d) === normalized);
-  const next = exists ? kept : [...kept, normalized];
+  const exists = prev.some((d) => strip(d) === normalized);
+  const next = exists ? prev : [...prev, normalized];
   const changed = JSON.stringify(next) !== JSON.stringify(prev) ? ["plugin_dirs"] : [];
   return { config: next, changed };
 }
@@ -151,7 +141,7 @@ export function mergeCursorSettings(
   return { config: base, changed };
 }
 
-/** Set one portable workit MCP server, dropping the legacy server name. */
+/** Set one portable workit MCP server. */
 export function mergeCursorMcp(
   mcp: unknown,
   serverName: string,
@@ -159,7 +149,6 @@ export function mergeCursorMcp(
 ): MergeResult<Record<string, unknown>> {
   const base = isRecord(mcp) ? { ...mcp } : {};
   const servers = isRecord(base.mcpServers) ? { ...base.mcpServers } : {};
-  delete servers["workflow-toolkit"]; // legacy duplicate registration
   servers[serverName] = server;
   const changed = JSON.stringify(servers) !== JSON.stringify(base.mcpServers) ? ["mcpServers"] : [];
   base.mcpServers = servers;

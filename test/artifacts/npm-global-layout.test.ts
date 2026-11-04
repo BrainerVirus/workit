@@ -140,7 +140,7 @@ test.skipIf(!npmRegistryOk)(
       const setupEnv = {
         ...env,
         npm_config_offline: "true",
-        WORKFLOW_TOOLKIT_CONFIG: configDir,
+        WORKIT_CONFIG: configDir,
         WORKIT_DOCTOR_STALE_REGISTRY_VERSION: JSON.parse(
           readFileSync(path.join(cached, "package.json"), "utf8"),
         ).version,
@@ -214,7 +214,7 @@ test.skipIf(!npmRegistryOk)(
       const misleading = report.checks.filter(
         (c) =>
           (c.status === "warn" || c.status === "fail") &&
-          /dev checkout|WORKFLOW_TOOLKIT_DEV|flock|package not found/.test(c.detail),
+          /dev checkout|WORKIT_DEV|flock|package not found/.test(c.detail),
       );
       expect(misleading, doctor.stdout).toEqual([]);
     } finally {
