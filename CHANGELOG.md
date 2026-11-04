@@ -397,6 +397,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit config show [--json]` prints the effective config here and where each value comes from; `workit grant show` prints `vcs.provider`. Guessed verbs get a did-you-mean (`workit commit` → `workit git commit`).
 - `workit doctor` has a YouTrack row when a workspace uses YouTrack: ok when ytrack is logged in to each configured host; a warning naming `ytrack auth login --host <host>` when it is not; a deprecation warning when Workit falls back to the legacy token file.
 - `workit uninstall` can remove the Workit CLI itself (pick "Workit CLI"): the PATH launcher link, `bin/`, `current` and `versions/` under the Workit data dir. A foreign file at the launcher path is left untouched and reported (W2.32).
+- `workit issue view|comment|close|create` works on the workspace tracker (GitHub or GitLab) under the `pr` grant, so agents close and comment on issues themselves; `workit finding record --queue` files a finding as an issue (#439).
 
 ### Changed
 
@@ -891,6 +892,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `pr status` no longer reads an older commit's CI as the PR head's; a cached update check older than the running CLI is refreshed; `verify-delivery` on a protected branch never suggests a PR from it (#651); `pr merge` prints a start line at once.
 - `workit doctor` no longer reports a dev (local-dist) install as stale against npm latest, since main's manifest versions lag the release.
 - `workit upgrade` describes a foreign file at the launcher path as "foreign file, left untouched; move it to let the launcher link there" instead of listing it for removal without a command (W2.33), and a wrapper script whose heredoc prints an `exec node …` line is no longer parsed as a wrapper.
+- `workit finding resolve` finds the task that holds the finding, and a refused resolve names the evidence that would be accepted (#317). The retro skill files behavioural rules as Workit issues, not host memories.
 
 ## [0.6.0] - 2026-08-10
 
