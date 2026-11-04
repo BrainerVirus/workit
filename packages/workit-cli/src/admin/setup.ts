@@ -54,6 +54,15 @@ import { runDoctor, type DoctorReport } from "./doctor";
 import { CODEX_MARKETPLACE } from "../upgrade/codex-marketplace";
 import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write";
 import {
+  findYtrack,
+  ytrackHostName,
+  ytrackLogin,
+  ytrackMissingUnblock,
+  ytrackReadiness,
+  ytrackRunner,
+} from "@brainervirus/workit-core/src/core/youtrack-ytrack";
+
+import {
   isCodexWorkitInstalled,
   isPiWorkitInstalled,
   isClaudeWorkitInstalled,
@@ -77,8 +86,6 @@ import {
 // offline doctor. Integrations are neutral and optional: youtrack is skipped
 // when baseUrl is empty, vcs when the provider is "skip".
 
-export const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
-
 export type VcsProvider = "gitlab" | "github";
 
 export function parseList(raw: string): string[] {
@@ -98,10 +105,6 @@ export type SetupPreviewInput = {
   vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
   applyProject: boolean;
-  /** Deliberate token-path overrides. When they differ from an existing
-   *  configured tokenFile, the replacement is planned as its own distinct
-   *  reviewed mutation (AR-10). */
-  tokenPaths?: { youtrack?: string; gitlab?: string; github?: string };
   /** Optional global commit policy used as the base for repository overrides. */
   commitPolicy?: ToolkitConfig["commitPolicy"];
 };
@@ -120,10 +123,12 @@ export type SetupMutation =
   // during preview so the reviewed mutation set IS the Apply write set.
   | { type: "register-platform"; platform: Platform; path: string }
   | { type: "install-adapter"; platform: "cursor"; path: string }
-  | { type: "install-host"; platform: HostId; path: string; commands: HostInstallCommand[] }
-  // AR-10: changing a configured tokenFile path is never hidden inside a
-  // generic merge — it is its own reviewed mutation.
-  | { type: "set-token-path"; path: string; key: string; value: string };
+  | {
+      type: "install-host";
+      platform: HostId;
+      path: string;
+      commands: HostInstallCommand[];
+    };
 
 type SetupOverride = {
   envKey: string;
@@ -139,8 +144,13 @@ export type SetupPreview = {
   mutations: SetupMutation[];
   /** Environment overrides active for the shell init/apply path (RL-06). */
   overrides: SetupOverride[];
-  /** Credential files left byte-for-byte untouched. */
+  /** Credential files left byte-for-byte untouched: a legacy youtrack.token,
+   *  which Workit no longer reads. */
   preserved: string[];
+  /** With YouTrack enabled: whether ytrack is on PATH, and the command that
+   *  unblocks it (install, or log in to the configured host). Apply checks
+   *  the login itself. */
+  ytrack?: { onPath: boolean; host: string; unblock: string };
   /** Selected platform adapters to register on Apply (WZ-09). */
   platforms: string[];
   state: SetupState;
@@ -151,7 +161,6 @@ export type SetupPreview = {
 
 const YT_OVERRIDES: { envKey: string; affects: string }[] = [
   { envKey: "WORKIT_YT_BASE_URL", affects: "youtrack.json baseUrl" },
-  { envKey: "WORKIT_YT_TOKEN_FILE", affects: "youtrack.json tokenFile" },
   { envKey: "WORKIT_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
   { envKey: "WORKIT_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
 ];
@@ -182,21 +191,10 @@ const activeSetupOverrides = (env: NodeJS.ProcessEnv = process.env): SetupOverri
 };
 
 // Neutral youtrack.json draft: no organization names, issue IDs, greetings, or
-// language defaults (WZ-04/CA-14). merge-json preserves unrelated keys on Apply.
-// The tokenFile is the RESOLVED path (existing configured path reused, override
-// honored) — a default path never silently replaces a custom one (AR-10).
-function youtrackDraft(values: SetupPreviewInput, tokenPath: string): Record<string, unknown> {
-  return {
-    baseUrl: values.baseUrl.replace(/\/+$/, ""),
-    tokenFile: tokenPath,
-    locale: values.locale,
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-issue-update and /wk-meetings",
-      scopes: ["YouTrack"],
-      profileTab: "account-security",
-    },
-  };
+// language defaults (WZ-04/CA-14), and no token: YouTrack goes through ytrack.
+// merge-json preserves unrelated keys on Apply.
+function youtrackDraft(values: SetupPreviewInput): Record<string, unknown> {
+  return { baseUrl: values.baseUrl.replace(/\/+$/, ""), locale: values.locale };
 }
 
 function vcsDraft(provider: VcsProvider): Record<string, unknown> {
@@ -211,29 +209,17 @@ function vcsDraft(provider: VcsProvider): Record<string, unknown> {
   };
 }
 
-// Resolve the token file for a service: an explicit override wins, then the
-// configured tokenFile from an existing valid config, then the default path.
-// Reuse means a custom credential location stays authoritative (AR-10).
-const configuredTokenPath = (
+// A legacy youtrack.token (youtrack.json's tokenFile, else the default path):
+// only its existence is checked, never its contents.
+const legacyYouTrackToken = (
   config: Record<string, unknown> | null,
-  ...keys: string[]
+  configDir: string,
 ): string | null => {
-  let cursor: unknown = config;
-  for (const key of keys) {
-    if (!isRecord(cursor)) return null;
-    cursor = cursor[key];
-  }
-  if (typeof cursor === "string" && cursor.trim() !== "") return cursor;
-  return null;
-};
-
-const resolveTokenPath = (
-  configured: string | null,
-  fallback: string,
-  override?: string,
-): string => {
-  if (override && override.trim() !== "") return override;
-  return configured ?? fallback;
+  const configured = typeof config?.tokenFile === "string" ? config.tokenFile.trim() : "";
+  const file = configured
+    ? path.resolve(configDir, configured)
+    : path.join(configDir, "youtrack.token");
+  return existsSync(file) ? file : null;
 };
 
 // Read a config file that readSetupState already classified as valid. Only
@@ -258,6 +244,7 @@ export function buildSetupPreview(
   const mutations: SetupMutation[] = [];
   const preserved: string[] = [];
   let projectRefused: string | undefined;
+  let ytrack: SetupPreview["ytrack"];
   const overrides = activeSetupOverrides(env);
 
   for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
@@ -314,37 +301,20 @@ export function buildSetupPreview(
     if (values.baseUrl.trim()) {
       const ytPath = path.join(state.configDir, "youtrack.json");
       const ytExisting = readConfigRecord(ytPath);
-      const ytConfigured = configuredTokenPath(ytExisting, "tokenFile");
-      const tokenPath = resolveTokenPath(
-        ytConfigured,
-        path.join(state.configDir, "youtrack.token"),
-        values.tokenPaths?.youtrack,
-      );
-      const draft = youtrackDraft(values, tokenPath);
-      if (ytConfigured !== null && tokenPath !== ytConfigured) {
-        // AR-10: a real tokenFile replacement is its own reviewed mutation —
-        // never hidden inside the generic config merge.
-        delete draft.tokenFile;
-        mutations.push({
-          type: "set-token-path",
-          path: ytPath,
-          key: "tokenFile",
-          value: tokenPath,
-        });
-      }
       mutations.push({
         type: "merge-json",
         path: ytPath,
-        value: draft,
+        value: youtrackDraft(values),
       });
-      if (existsSync(tokenPath)) preserved.push(tokenPath);
-      else
-        mutations.push({
-          type: "create-file",
-          path: tokenPath,
-          content: TOKEN_PLACEHOLDER + "\n",
-          mode: 0o600,
-        });
+      const legacy = legacyYouTrackToken(ytExisting, state.configDir);
+      if (legacy) preserved.push(legacy);
+      const host = ytrackHostName(values.baseUrl);
+      const onPath = findYtrack(env) !== null;
+      ytrack = {
+        onPath,
+        host,
+        unblock: onPath ? ytrackLogin(host) : ytrackMissingUnblock(host),
+      };
     }
 
     if (values.vcsProvider !== "skip") {
@@ -452,6 +422,7 @@ export function buildSetupPreview(
     mutations,
     overrides,
     preserved,
+    ...(ytrack ? { ytrack } : {}),
     platforms: values.platforms ?? [],
     state,
     ...(projectRefused === undefined ? {} : { projectRefused }),
@@ -774,43 +745,6 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
         status: "Configured",
         detail: `appended ${add.length} entr${add.length === 1 ? "y" : "ies"}`,
       };
-    }
-    case "set-token-path": {
-      // AR-10: a reviewed tokenFile replacement. Writes ONLY the config key at
-      // the key path — the token file itself is a separate create-file or
-      // preserved entry, and any file at the old path is never touched.
-      const existing = readExisting(m.path);
-      if (existing.kind === "malformed") {
-        return {
-          platform: "core",
-          file: m.path,
-          status: "Failed",
-          detail: `cannot merge into malformed config: ${existing.error}`,
-        };
-      }
-      const keys = m.key.split(".");
-      const patch: Record<string, unknown> = {};
-      let cursor = patch;
-      for (const key of keys.slice(0, -1)) {
-        const next: Record<string, unknown> = {};
-        cursor[key] = next;
-        cursor = next;
-      }
-      cursor[keys[keys.length - 1]] = m.value;
-      const merged = deepMerge(existing.kind === "record" ? existing.value : {}, patch);
-      if (existing.kind === "record" && JSON.stringify(existing.value) === JSON.stringify(merged)) {
-        return {
-          platform: "core",
-          file: m.path,
-          status: "Skipped",
-          detail: "already configured",
-        };
-      }
-      mkdirSync(path.dirname(m.path), { recursive: true });
-      writeFileSync(m.path, JSON.stringify(schemaFirst(m.path, merged), null, 2) + "\n", "utf8");
-      return existing.kind === "record"
-        ? { platform: "core", file: m.path, status: "Configured" }
-        : { platform: "core", file: m.path, status: "Installed" };
     }
   }
 }
@@ -1436,9 +1370,11 @@ export function applySetupPreview(
       platform: "core",
       file: preserved,
       status: "Skipped",
-      detail: "existing credential preserved",
+      detail:
+        "legacy YouTrack token file: Workit no longer reads it; delete it once ytrack is logged in",
     });
   }
+  if (preview.ytrack) entries.push(ytrackEntry(preview.ytrack.host, res.env));
   if (preview.projectRefused) {
     entries.push({
       platform: "core",
@@ -1493,11 +1429,32 @@ export function applySetupPreview(
   };
 }
 
+// ytrack's `auth status` may reach the network; Apply waits this long at most.
+const YTRACK_SETUP_TIMEOUT_MS = 15_000;
+
+/** ytrack's login for the configured YouTrack host, as an Apply row; never a failure. */
+const ytrackEntry = (host: string, env: NodeJS.ProcessEnv): SetupResultEntry => {
+  const ready = ytrackReadiness(ytrackRunner(env, host, YTRACK_SETUP_TIMEOUT_MS), host);
+  return ready.ok
+    ? {
+        platform: "core",
+        file: "ytrack",
+        status: "Configured",
+        detail: `ytrack${ready.version ? ` ${ready.version}` : ""} logged in to ${host}${ready.login ? ` as ${ready.login}` : ""}`,
+      }
+    : {
+        platform: "core",
+        file: "ytrack",
+        status: "Skipped",
+        detail: `${ready.error}: ${ready.unblock}`,
+      };
+};
+
 // Completion guidance shown by the CLI after Apply (and on the non-TTY path):
-// the doctor command + /wk-status are the next steps for verifying the result.
+// `workit doctor` (and ytrack login) are the next steps for verifying the result.
 export const setupCompletionGuidance = (): string[] => [
   "Run `workit doctor` to verify your installation.",
-  "Run /wk-status in OpenCode to review token setup steps.",
+  "YouTrack goes through ytrack: `ytrack auth login --host <host>` once; Workit stores no YouTrack token.",
 ];
 
 // Shared per-workspace branch policy writer (CA-06): the initApplyData

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import {
-  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -41,15 +41,8 @@ import {
   configPath,
   normalizeContext,
   postUpdate,
-  readCredentials,
-  redact,
 } from "@/packages/workit-core/src/core/youtrack-tools";
-import {
-  youTrackApi,
-  youTrackConfigLoad,
-  youTrackTokenCreateUrl,
-  youTrackWorkDateMs,
-} from "@/packages/workit-core/src/core/youtrack";
+import { youTrackWorkDateMs } from "@/packages/workit-core/src/core/youtrack";
 import { initApplyData } from "@/packages/workit-core/src/core/init";
 
 test("comment success plus ambiguous time failure does not recommend retry", async () => {
@@ -195,77 +188,25 @@ test("posting requires explicit confirmation before either effect", async () => 
   expect(result).toEqual({ ok: false, data: null, error: "confirmed: true required" });
 });
 
-test("tokens are removed from errors", () => {
-  expect(redact("request Bearer secret-token failed", "secret-token")).toBe(
-    "request Bearer [REDACTED] failed",
-  );
-});
-
-test("credentials use neutral XDG config and require token mode 0600", () => {
+test("youtrack.json resolves in the neutral XDG config dir", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-"));
-  const directory = path.join(xdg, "workit");
-  mkdirSync(directory);
-  const tokenPath = path.join(directory, "youtrack.token");
-  writeFileSync(tokenPath, "dummy-token\n", { mode: 0o644 });
-  writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
-
   expect(configPath({ XDG_CONFIG_HOME: xdg }, "/unused")).toBe(
-    path.join(directory, "youtrack.json"),
+    path.join(xdg, "workit", "youtrack.json"),
   );
-  if (process.platform !== "win32") {
-    expect(() => readCredentials({ XDG_CONFIG_HOME: xdg }, "/unused")).toThrow(
-      "youtrack.token mode must be 0600",
-    );
-
-    chmodSync(tokenPath, 0o600);
-    expect(readCredentials({ XDG_CONFIG_HOME: xdg }, "/unused")).toEqual({
-      configPath: path.join(directory, "youtrack.json"),
-      token: "dummy-token",
-    });
-  }
+  rmSync(xdg, { recursive: true, force: true });
 });
 
-test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CONFIG_HOME", () => {
+test("bundled YouTrack config reads honor XDG_CONFIG_HOME", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-script-"));
   const directory = path.join(xdg, "workit");
   mkdirSync(directory);
-  const tokenPath = path.join(directory, "youtrack.token");
-  writeFileSync(tokenPath, "dummy-token\n", { mode: 0o600 });
   writeFileSync(
     path.join(directory, "youtrack.json"),
-    JSON.stringify({
-      tokenFile: tokenPath,
-      baseUrl: "https://youtrack.example.test",
-      meetingIssue: "MEET-1",
-    }),
-  );
-
-  withNeutralXdg(xdg, () => {
-    const out = youTrackConfigLoad();
-    expect("data" in out ? out.data.meetingIssue : null).toBe("MEET-1");
-  });
-});
-
-test("CA-03: youtrack config read resolves the token file inside the active config dir only", () => {
-  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-yt-active-dir-"));
-  const workit = path.join(xdg, "workit");
-  const legacy = path.join(xdg, "decoy");
-  mkdirSync(workit, { recursive: true });
-  mkdirSync(legacy, { recursive: true });
-  const activeToken = path.join(workit, "youtrack.token");
-  writeFileSync(activeToken, "dummy-token\n", { mode: 0o600 });
-  writeFileSync(path.join(legacy, "youtrack.token"), "legacy-decoy\n", { mode: 0o600 });
-  writeFileSync(
-    path.join(workit, "youtrack.json"),
-    JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: activeToken }),
+    JSON.stringify({ baseUrl: "https://youtrack.example.test", timezone: "UTC" }),
   );
   withNeutralXdg(xdg, () => {
-    const out = youTrackConfigLoad();
-    expect("data" in out).toBe(true);
-    if ("data" in out) {
-      expect(out.data.configPath).toBe(path.resolve(path.join(workit, "youtrack.json")));
-      expect(out.data.tokenPath).toBe(path.resolve(activeToken));
-    }
+    const out = youTrackWorkDateMs("auto");
+    expect("data" in out ? out.data.timezoneSource : null).toBe("youtrack.json");
   });
   rmSync(xdg, { recursive: true, force: true });
 });
@@ -279,17 +220,9 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
     for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
       writeFileSync(ytFile, content, "utf8");
       withNeutralXdg(dir, () => {
-        const out = youTrackConfigLoad() as { ok?: boolean; error?: string; configPath?: string };
-        expect(out.error, content).toBeTruthy();
-        expect(String(out.error ?? ""), content).toContain(ytFile);
-        expect(out.ok, content).toBe(false);
-        expect(out.configPath, content).toBe(ytFile);
-
         const work = youTrackWorkDateMs("auto") as { error?: string };
         expect(work.error, content).toBeTruthy();
         expect(String(work.error ?? ""), content).toContain(ytFile);
-
-        expect(() => readCredentials(), content).toThrow(ytFile);
       });
     }
   } finally {
@@ -297,52 +230,33 @@ test("AR-07: non-object youtrack.json shapes fail closed with the exact path", (
   }
 });
 
-test("init scaffolding uses the neutral XDG config directory", () => {
+test("Given no ytrack, When init scaffolds YouTrack, Then youtrack.json has no token and the result names the ytrack install", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
   withNeutralXdg(xdg, () => {
-    initApplyData("youtrack_scaffold");
+    const out = initApplyData("youtrack_scaffold");
     const directory = path.join(xdg, "workit");
     const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
-    expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
-    expect(config.tokenDefaults.description).toContain("OpenCode workit");
-    expect(config.tokenDefaults.description).not.toContain("Cursor");
+    expect(config.tokenFile).toBeUndefined();
+    expect(config.tokenDefaults).toBeUndefined();
+    expect(existsSync(path.join(directory, "youtrack.token"))).toBe(false);
+    expect(out.ytrack).toMatchObject({ ok: false, reason: "missing" });
+    expect(out.ytrack.unblock).toContain("github.com/BrainerVirus/youtrack-cli");
+    expect(out.ytrack.unblock).toContain("ytrack auth login --host youtrack.example.com");
+    expect(out.instruction).toContain(out.ytrack.unblock);
   });
+  rmSync(xdg, { recursive: true, force: true });
 });
 
-test("token helper runtime output uses OpenCode-neutral descriptions", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-help-"));
-  const config = path.join(root, "youtrack.json");
-  writeFileSync(config, JSON.stringify({ baseUrl: "https://example.youtrack.cloud" }));
-  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
-  process.env.WORKIT_YOUTRACK_CONFIG = config;
-  try {
-    const output = youTrackTokenCreateUrl().data;
-    expect(output.tokenDescription).toContain("OpenCode workit");
-    expect(JSON.stringify(output)).not.toContain("Cursor");
-  } finally {
-    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
-    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Given a youtrack.json without baseUrl, When the token-create link is built, Then there is no organization default and a clear error", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-nobase-"));
-  const config = path.join(root, "youtrack.json");
-  writeFileSync(config, JSON.stringify({}));
-  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
-  process.env.WORKIT_YOUTRACK_CONFIG = config;
-  try {
-    const output = youTrackTokenCreateUrl().data;
-    expect(output.createUrl).toBeNull();
-    expect(output.error).toContain("baseUrl missing");
-    expect(output.error).toContain(config);
-    expect(JSON.stringify(output)).not.toMatch(/youtrack\.cloud/);
-  } finally {
-    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
-    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
-    rmSync(root, { recursive: true, force: true });
-  }
+test("Given an older host, When it asks init for the token placeholder, Then nothing is written and the answer names ytrack", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-noplaceholder-"));
+  withNeutralXdg(xdg, () => {
+    const out = initApplyData("youtrack_token_placeholder");
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no longer uses a YouTrack token file");
+    expect(out.unblock).toContain("ytrack auth login");
+    expect(existsSync(path.join(xdg, "workit", "youtrack.token"))).toBe(false);
+  });
+  rmSync(xdg, { recursive: true, force: true });
 });
 
 test("meeting context exposes only the configured meetingIssue", () => {
@@ -380,37 +294,4 @@ test("Given no meeting issue in youtrack.json, When meeting context is normalize
   ) as Record<string, unknown>;
   expect(out.error).toContain("meetingIssue");
   expect(out.requiresIssueInput).toBe(true);
-});
-
-test("bundled API failures never expose the token or authorization header", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-redact-"));
-  const tokenPath = path.join(root, "youtrack.token");
-  const config = path.join(root, "youtrack.json");
-  writeFileSync(tokenPath, "secret-token\n", { mode: 0o600 });
-  writeFileSync(
-    config,
-    JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
-  );
-
-  const previousConfig = process.env.WORKIT_YOUTRACK_CONFIG;
-  const originalFetch = globalThis.fetch;
-  let called = false;
-  globalThis.fetch = (async () => {
-    called = true;
-    throw new Error("offline");
-  }) as unknown as typeof fetch;
-  process.env.WORKIT_YOUTRACK_CONFIG = config;
-  try {
-    const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
-    expect(called).toBe(true); // fetch is used, not the curl binary
-    expect("error" in result).toBe(true);
-    const text = JSON.stringify(result);
-    expect(text).not.toContain("secret-token");
-    expect(text).not.toContain("Authorization");
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (previousConfig === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
-    else process.env.WORKIT_YOUTRACK_CONFIG = previousConfig;
-    rmSync(root, { recursive: true, force: true });
-  }
 });

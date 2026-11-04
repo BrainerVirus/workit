@@ -145,8 +145,6 @@ function describeMutation(m: SetupMutation): string {
       return `+ copy adapter ${m.platform}: ${m.path}`;
     case "install-host":
       return `+ install ${m.platform}: ${m.commands.map((command) => command.command).join(", ")}`;
-    case "set-token-path":
-      return `+ change ${m.key} in ${m.path} → ${m.value}`;
   }
 }
 
@@ -273,6 +271,25 @@ export function ProjectScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   );
 }
 
+/** The summary's ytrack line: YouTrack goes through ytrack, so its state shows before Apply. */
+function YtrackLine({
+  ytrack,
+}: {
+  ytrack: { onPath: boolean; unblock?: string | null } | null | undefined;
+}): JSX.Element | null {
+  if (!ytrack) return null;
+  return (
+    <Text>
+      ytrack:{" "}
+      {ytrack.onPath ? (
+        <Text color={inkColor("ok")}>on PATH · Apply checks the login</Text>
+      ) : (
+        <Text color={inkColor("warn")}>not on PATH · {ytrack.unblock}</Text>
+      )}
+    </Text>
+  );
+}
+
 export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   const policy = effectivePolicy(draft.values);
   // WZ-08: the summary renders the authoritative preview (read-only) — the
@@ -365,6 +382,7 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
             : "—"}
         </Text>
       </Text>
+      <YtrackLine ytrack={preview.ytrack} />
       <Text>
         VCS provider: <Text color={inkColor("ok")}>{draft.values.vcsProvider}</Text>
       </Text>
@@ -394,7 +412,7 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
           ))}
           {preview.preserved.map((p) => (
             <Text key={p} color={inkColor("ok")}>
-              preserve {p} (existing token)
+              leave {p} untouched (legacy token file; Workit no longer reads it)
             </Text>
           ))}
         </Box>

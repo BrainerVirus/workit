@@ -19,8 +19,7 @@ import {
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
-import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write.ts";
-import { TOKEN_PLACEHOLDER, type VcsProvider } from "./admin/setup";
+import type { VcsProvider } from "./admin/setup";
 import { applyWorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspace-branch-policy.ts";
 import type { WorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspaces.ts";
 
@@ -384,8 +383,8 @@ export function runProjectSetup(
   return { gitignore, hygiene, openSource, created };
 }
 
-// Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
-// byte-for-byte unless absent, and malformed config files block every write.
+// Shared scaffold outcome envelope (WZ-05/WZ-06): an existing credential file
+// is never read or written, and malformed config files block every write.
 type ScaffoldStatus = "missing" | "preserved" | "malformed";
 
 type ScaffoldOutcome = {
@@ -395,17 +394,13 @@ type ScaffoldOutcome = {
   error?: string;
   /** Malformed file that blocked the scaffold, set when status === "malformed". */
   file?: string;
-  /** Files written by this scaffold (config + placeholders created). */
+  /** Files written by this scaffold. */
   created: string[];
-  /** Credential files left byte-for-byte untouched. */
+  /** Credential files left byte-for-byte untouched (a legacy youtrack.token). */
   preserved: string[];
 };
 
-export type YouTrackScaffold = ScaffoldOutcome & {
-  youtrackJson: string;
-  tokenPath: string;
-  tokenCreateUrl: string;
-};
+export type YouTrackScaffold = ScaffoldOutcome & { youtrackJson: string };
 
 type LoadedConfig = { ok: true; value: unknown } | { ok: false } | null;
 
@@ -429,19 +424,14 @@ function malformedBlock(
   created: never[];
   preserved: never[];
 } {
-  return { ok: false, status: "malformed", error: message, file, created: [], preserved: [] };
-}
-
-function ensureToken(tokenPath: string, outcome: { created: string[]; preserved: string[] }): void {
-  // wx (exclusive create) closes the TOCTOU window: a token created between any
-  // existence check and write now races the write itself, and EEXIST means the
-  // other writer won — preserve their bytes instead of clobbering them. Shared
-  // with initApplyData via core/safe-write.ts (Task 14 Step 7 / CA-13).
-  if (writeFileExclusive(tokenPath, TOKEN_PLACEHOLDER + "\n", 0o600) === "created") {
-    outcome.created.push(tokenPath);
-  } else {
-    outcome.preserved.push(tokenPath);
-  }
+  return {
+    ok: false,
+    status: "malformed",
+    error: message,
+    file,
+    created: [],
+    preserved: [],
+  };
 }
 
 function finalStatus(outcome: ScaffoldOutcome): ScaffoldStatus {
@@ -457,10 +447,11 @@ export function isSetupComplete(results: {
   return (results.youtrack?.ok ?? false) && (results.vcs?.ok ?? false);
 }
 
-// ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
-// scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
-// ponytail: mirrors apply.sh; WORKIT_YT_*/WORKIT_VCS_* env overrides intentionally ignored
-// (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts)
+// ponytail: mirrors scripts/init/apply.sh write_youtrack_json in TS — initApply shells out to
+// bash (CA-01 forbids bash); WORKIT_YT_*/WORKIT_VCS_* env overrides intentionally ignored
+// (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts).
+// No token: YouTrack goes through ytrack. A leftover youtrack.token is reported preserved,
+// never read or written.
 export function scaffoldYouTrack(
   dir: string,
   baseUrl: string,
@@ -468,9 +459,6 @@ export function scaffoldYouTrack(
 ): YouTrackScaffold {
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");
-  const tokenPath = path.join(dir, "youtrack.token");
-  const base = baseUrl.replace(/\/+$/, "");
-  const tokenCreateUrl = `${base}/users/me?tab=account-security`;
   const loaded = loadConfig(youtrackJson);
   if (
     loaded &&
@@ -485,32 +473,20 @@ export function scaffoldYouTrack(
         `youtrack.json is malformed — refusing to overwrite it: ${youtrackJson}`,
       ),
       youtrackJson,
-      tokenPath,
-      tokenCreateUrl,
     };
   }
-  const config = {
-    baseUrl,
-    tokenFile: tokenPath,
-    locale: opts.locale ?? "en",
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-issue-update and /wk-meetings",
-      scopes: ["YouTrack"],
-      profileTab: "account-security",
-    },
-  };
+  const config = { baseUrl, locale: opts.locale ?? "en" };
   writeFileSync(youtrackJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
-  outcome.created.push(youtrackJson);
-  ensureToken(tokenPath, outcome);
-  return {
-    ...outcome,
-    status: finalStatus(outcome),
-    youtrackJson,
-    tokenPath,
-    tokenCreateUrl,
+  const outcome: ScaffoldOutcome = {
+    ok: true,
+    status: "missing",
+    created: [],
+    preserved: [],
   };
+  outcome.created.push(youtrackJson);
+  const legacyToken = path.join(dir, "youtrack.token");
+  if (existsSync(legacyToken)) outcome.preserved.push(legacyToken);
+  return { ...outcome, status: finalStatus(outcome), youtrackJson };
 }
 
 export type VcsScaffold = ScaffoldOutcome & {
@@ -566,7 +542,11 @@ export function loadWorkspaces(): WorkspaceConfig[] {
   return loadWorkspacesFrom(configDir());
 }
 
-export type WriteWorkspacesResult = { ok: boolean; error?: string; path: string };
+export type WriteWorkspacesResult = {
+  ok: boolean;
+  error?: string;
+  path: string;
+};
 
 export function writeWorkspaces(
   entries: WorkspaceConfig[],
@@ -612,7 +592,6 @@ export function writeWorkspaces(
 // hooks and plugins never bundle them); re-exported for the wizard modules.
 // ---------------------------------------------------------------------------
 export {
-  TOKEN_PLACEHOLDER,
   parseList,
   buildSetupPreview,
   type SetupPreviewInput,

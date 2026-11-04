@@ -13,7 +13,7 @@
       "type": "string"
     },
     "tokenFile": {
-      "description": "The file holding the YouTrack token (mode 0600).",
+      "description": "Obsolete: Workit reaches YouTrack only through ytrack and ignores this key.",
       "type": "string"
     },
     "locale": {
@@ -58,7 +58,7 @@
       "type": "string"
     },
     "tokenDefaults": {
-      "description": "What the setup wizard pre-fills when you create a token.",
+      "description": "Obsolete: Workit no longer creates YouTrack tokens and ignores this key.",
       "type": "object",
       "properties": {
         "name": {

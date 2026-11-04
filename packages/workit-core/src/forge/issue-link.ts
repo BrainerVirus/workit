@@ -264,7 +264,13 @@ export function withIssueLines(
 /** One `pr.linked` row per link, for a PR this call opened. */
 export function recordIssueLinks(
   cwd: string,
-  pr: { number: number; url: string; branch: string; base: string; head: string },
+  pr: {
+    number: number;
+    url: string;
+    branch: string;
+    base: string;
+    head: string;
+  },
   links: readonly IssueLink[],
   context: { actor: LedgerActor; forge: ForgeKind; repo: string },
 ): Array<{ issue: string; id: string } | { issue: string; error: string }> {
@@ -350,12 +356,20 @@ const defaultYouTrackComment = (
 ): Promise<OnceOutcome> =>
   writeOnce(issueId, marker, "comments", async () => {
     try {
-      return {
-        ok: true,
-        data: unwrap(await defaultOperations.postComment(issueId, withMarker(text, marker), root)),
-      };
+      const value = await defaultOperations.postComment(issueId, withMarker(text, marker), root);
+      // Not sent (no ytrack, logged out): say how to unblock, skip the read-back.
+      if (value?.ok === false && value.outcome === "not_applied")
+        return {
+          ok: false,
+          error: `${String(value.error)}${typeof value.unblock === "string" ? `; ${value.unblock}` : ""}`,
+          data: { outcome: "not_applied" },
+        };
+      return { ok: true, data: unwrap(value) };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   });
 
@@ -412,15 +426,11 @@ export async function postBacklinks(
         });
         continue;
       }
-      const marker = youTrackMarker({ operation: "pr.backlink", issueId: link.id, pr: pr.url });
-      if (!marker) {
-        out.push({
-          issue,
-          status: "failed",
-          note: "YouTrack credentials are unavailable (youtrack.json / youtrack.token)",
-        });
-        continue;
-      }
+      const marker = youTrackMarker({
+        operation: "pr.backlink",
+        issueId: link.id,
+        pr: pr.url,
+      });
       const outcome = await defaultYouTrackComment(cwd, link.id, text, marker);
       out.push({
         issue,

@@ -11,7 +11,6 @@ import {
 import os from "node:os";
 import path from "node:path";
 import {
-  builtinBackend,
   youTrackBackend,
   youTrackWriteGate,
 } from "@/packages/workit-core/src/core/youtrack-backend";
@@ -27,12 +26,11 @@ import {
   ytrackStatus,
 } from "@/packages/workit-core/src/core/youtrack-ytrack";
 
-// The YouTrack backend seam (#263): ytrack --json when it is on PATH, the
-// token-file client only when it is missing. ytrack is a recorded stub on a
-// temp PATH; no real YouTrack is called.
+// The YouTrack backend seam (#263): every call is ytrack --json; there is no
+// token-file client. ytrack is a recorded stub on a temp PATH; no real
+// YouTrack is called.
 
 const BASE = "https://yt.example.test";
-const TOKEN = "perm:secret-token";
 let dir = "";
 let stub = "";
 const savedConfig = process.env.WORKIT_YOUTRACK_CONFIG;
@@ -56,10 +54,12 @@ beforeAll(() => {
   mkdirSync(bin);
   writeFileSync(path.join(bin, "ytrack"), STUB);
   chmodSync(path.join(bin, "ytrack"), 0o755);
-  // tokenFile names a file that does not exist: the ytrack path must not need it.
+  // A legacy tokenFile key and file: Workit must never read either.
+  const legacyToken = path.join(dir, "youtrack.token");
+  writeFileSync(legacyToken, "perm:legacy-must-not-be-read\n", { mode: 0o600 });
   writeFileSync(
     path.join(dir, "youtrack.json"),
-    JSON.stringify({ baseUrl: `${BASE}/`, tokenFile: path.join(dir, "absent.token") }),
+    JSON.stringify({ baseUrl: `${BASE}/`, tokenFile: legacyToken }),
   );
   process.env.WORKIT_YOUTRACK_CONFIG = path.join(dir, "youtrack.json");
 });
@@ -150,7 +150,11 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
   test("Given ytrack is logged out (exit 4), When an issue is shown, Then it is unavailable naming ytrack auth login", async () => {
     answer("issue-view", {}, 4, "authentication required");
     const result = await youTrackBackend(env()).showIssue("ABC-1");
-    expect(result).toMatchObject({ ok: false, code: "unavailable", unblock: "ytrack auth login" });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "unavailable",
+      unblock: "ytrack auth login --host yt.example.test",
+    });
   });
 
   test("Given ytrack fails (exit 1), When an issue is shown, Then the failure carries its stderr", async () => {
@@ -235,7 +239,7 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
     expect(await backend.addComment("ABC-1", "x")).toMatchObject({
       ok: false,
       outcome: "not_applied",
-      unblock: "ytrack auth login",
+      unblock: "ytrack auth login --host yt.example.test",
     });
     answer("issue-comment", {}, 2);
     expect(await backend.addComment("ABC-1", "x")).toMatchObject({ outcome: "not_applied" });
@@ -286,96 +290,28 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
   });
 });
 
-test("Given no ytrack on PATH, When the backend is chosen, Then it is the built-in client and the doctor sees ytrack missing", () => {
+test("Given no ytrack on PATH, When a YouTrack call runs, Then it is unavailable naming the ytrack install and the host login", async () => {
   const empty = path.join(dir, "empty");
   mkdirSync(empty, { recursive: true });
-  expect(youTrackBackend({ PATH: empty }).kind).toBe("builtin");
+  const backend = youTrackBackend({ PATH: empty });
+  expect(backend.kind).toBe("ytrack");
+  const shown = await backend.showIssue("ABC-1");
+  expect(shown).toMatchObject({ ok: false, code: "unavailable" });
+  const unblock = shown.ok ? "" : (shown.unblock ?? "");
+  expect(unblock).toContain("https://github.com/BrainerVirus/youtrack-cli");
+  expect(unblock).toContain("install.sh");
+  expect(unblock).toContain("install.ps1");
+  expect(unblock).toContain("ytrack auth login --host yt.example.test");
+  expect(unblock).not.toContain("--hostname");
+  const created = await backend.createIssue({ project: "ABC", summary: "x" });
+  expect(created).toMatchObject({ ok: false, code: "unavailable", unblock });
+  expect(await backend.addComment("ABC-1", "x")).toMatchObject({
+    ok: false,
+    outcome: "not_applied",
+    unblock,
+  });
+  expect(await backend.texts("ABC-1", "comments")).toBeNull();
   expect(ytrackStatus(ytrackRunner({ PATH: empty }))).toEqual({ installed: false });
-});
-
-// The token-file fallback, with a scripted REST server.
-type Call = { url: string; method: string; body?: unknown };
-function builtin(rest: (call: Call) => { status: number; stdout: string; stderr?: string }) {
-  const restCalls: Call[] = [];
-  const backend = builtinBackend({
-    creds: () => ({ token: TOKEN, base: BASE }),
-    request: async (url, init) => {
-      expect(init.token).toBe(TOKEN);
-      const call = { url, method: init.method, body: init.body };
-      restCalls.push(call);
-      const out = rest(call);
-      return { status: out.status, stdout: out.stdout, stderr: out.stderr ?? "" };
-    },
-    api: async () => ({ data: { ok: true } }),
-  });
-  return { backend, restCalls };
-}
-
-test("Given the built-in client, When an issue is shown, Then REST fields are normalized and deleted comments dropped", async () => {
-  const { backend, restCalls } = builtin(() => ({
-    status: 0,
-    stdout: JSON.stringify({
-      idReadable: "ABC-2",
-      summary: "Slow login",
-      description: null,
-      customFields: [
-        { name: "State", value: { name: "In Progress" } },
-        { name: "Estimation", value: { presentation: "1h 30m" } },
-      ],
-      comments: [
-        { id: "4-2", text: "gone", author: { login: "x" }, created: 0, deleted: true },
-        { id: "4-3", text: "Looking", author: { login: "jdoe" }, created: Date.UTC(2026, 9, 2) },
-      ],
-    }),
-  }));
-  const result = await backend.showIssue("ABC-2");
-  expect(restCalls[0].url.startsWith(`${BASE}/api/issues/ABC-2?fields=`)).toBe(true);
-  expect(result).toMatchObject({
-    ok: true,
-    data: {
-      state: "In Progress",
-      url: `${BASE}/issue/ABC-2`,
-      fields: [
-        { name: "State", value: "In Progress" },
-        { name: "Estimation", value: "1h 30m" },
-      ],
-      comments: [{ id: "4-3", author: "jdoe", created: "2026-10-02T00:00:00.000Z" }],
-      source: "builtin",
-    },
-  });
-});
-
-test("Given the built-in client and an error that echoes the token, When an issue is shown, Then the token is redacted", async () => {
-  const { backend } = builtin(() => ({ status: 401, stdout: "", stderr: `bad token ${TOKEN}` }));
-  const result = await backend.showIssue("ABC-2");
-  expect(JSON.stringify(result)).not.toContain(TOKEN);
-  expect(!result.ok && result.error).toContain("[REDACTED]");
-});
-
-test("Given the built-in client, When an issue is created, Then it finds the project and posts once", async () => {
-  const { backend, restCalls } = builtin((call) =>
-    call.method === "GET"
-      ? { status: 0, stdout: JSON.stringify([{ id: "0-2", shortName: "ABC", name: "Alpha" }]) }
-      : { status: 0, stdout: JSON.stringify({ idReadable: "ABC-8" }) },
-  );
-  const result = await backend.createIssue({ project: "abc", summary: "New" });
-  expect(restCalls.filter((call) => call.method === "POST")).toEqual([
-    {
-      url: `${BASE}/api/issues?fields=idReadable`,
-      method: "POST",
-      body: { project: { id: "0-2" }, summary: "New" },
-    },
-  ]);
-  expect(result).toEqual({
-    ok: true,
-    data: { issueId: "ABC-8", url: `${BASE}/issue/ABC-8`, source: "builtin" },
-  });
-});
-
-test("Given the built-in client, When a full page is read back, Then a miss is not conclusive", async () => {
-  const items = Array.from({ length: 500 }, (_, index) => ({ id: `${index}`, text: "x" }));
-  const { backend } = builtin(() => ({ status: 0, stdout: JSON.stringify(items) }));
-  expect((await backend.texts("ABC-1", "comments"))?.complete).toBe(false);
 });
 
 test("Given no WORKIT_YT_WRITE, When a write is gated, Then it is blocked naming the flag", () => {

@@ -1,8 +1,8 @@
 // `workit youtrack note|time|meeting|show|create` (design §4.2 S16, #263).
 // Every call goes through one YouTrackBackend (core/youtrack-backend.ts):
-// `ytrack … --json` when ytrack is on PATH, the token-file client only when it
-// is missing. Agents use these verbs instead of reading the token file or
-// calling the API. Writes (note, time, meeting, create) need WORKIT_YT_WRITE=1;
+// `ytrack … --json`, the only path to YouTrack (its token stays in the OS
+// keyring); without ytrack every verb fails with the install unblock. Agents use
+// these verbs, or the ytrack skill, instead of calling the API. Writes (note, time, meeting, create) need WORKIT_YT_WRITE=1;
 // the host's permission prompt authorizes them like any shell command. Every
 // comment or work item carries a deterministic marker and is read back first,
 // so a retry after a lost response never posts twice (core/youtrack-writes.ts).

@@ -27,7 +27,6 @@ import { applySetupPreview } from "@/packages/workit-cli/src/admin/setup";
 import { planHygieneFiles, ensureHygieneFiles } from "@/packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
-  TOKEN_PLACEHOLDER,
   collectConfigValues,
   type SetupMutation,
   type SetupPreviewInput,
@@ -141,7 +140,7 @@ test("unselected integrations produce no mutations (WZ-04)", () => {
   }
 });
 
-test("existing token bytes are preserved in the preview (WZ-05)", () => {
+test("a legacy token file is left untouched and reported preserved in the preview (WZ-05)", () => {
   const dir = tempDir();
   try {
     const tokenPath = path.join(dir, "youtrack.token");
@@ -159,22 +158,44 @@ test("existing token bytes are preserved in the preview (WZ-05)", () => {
   }
 });
 
-test("selected integrations create only the YouTrack placeholder", () => {
+test("Given YouTrack enabled and no ytrack, When setup previews, Then it plans no token file and names the ytrack install for the host", () => {
   const dir = tempDir();
   try {
     const preview = buildSetupPreview(
-      values({ baseUrl: "https://yt.example.com", vcsProvider: "gitlab" }),
+      values({ baseUrl: "https://yt.example.com/", vcsProvider: "gitlab" }),
       { dir, env: {} },
     );
-    const yt = preview.mutations.find((m) => m.path.endsWith("youtrack.token"));
-    const gl = preview.mutations.find((m) => m.path.endsWith("gitlab.token"));
-    expect(yt).toEqual({
-      type: "create-file",
-      path: path.join(dir, "youtrack.token"),
-      content: TOKEN_PLACEHOLDER + "\n",
-      mode: 0o600,
+    expect(preview.mutations.some((m) => m.path.endsWith(".token"))).toBe(false);
+    expect(preview.mutations.some((m) => m.type === "create-file")).toBe(false);
+    const yt = preview.mutations.find((m) => m.path.endsWith("youtrack.json")) as Extract<
+      SetupMutation,
+      { type: "merge-json" }
+    >;
+    expect(yt.value).toEqual({ baseUrl: "https://yt.example.com", locale: "en" });
+    expect(preview.ytrack).toEqual({
+      onPath: false,
+      host: "yt.example.com",
+      unblock: expect.stringContaining("ytrack auth login --host yt.example.com"),
     });
-    expect(gl).toBeUndefined();
+    expect(preview.ytrack?.unblock).toContain("https://github.com/BrainerVirus/youtrack-cli");
+  } finally {
+    clean(dir);
+  }
+});
+
+test("Given YouTrack enabled, When setup applies without ytrack, Then a Skipped ytrack row names the install and no token file appears", () => {
+  const dir = tempDir();
+  try {
+    const preview = buildSetupPreview(values({ baseUrl: "https://yt.example.com" }), {
+      dir,
+      env: {},
+    });
+    const result = applySetupPreview(preview, { configDir: dir, home: dir, cwd: dir, env: {} });
+    const row = result.entries.find((entry) => entry.file === "ytrack");
+    expect(row?.status).toBe("Skipped");
+    expect(row?.detail).toContain("ytrack is not on PATH");
+    expect(row?.detail).toContain("ytrack auth login --host yt.example.com");
+    expect(existsSync(path.join(dir, "youtrack.token"))).toBe(false);
   } finally {
     clean(dir);
   }
@@ -391,8 +412,7 @@ test("buildSetupPreview emits exact typed mutations for every section (WZ-08)", 
     const ws = byType("update-workspaces").find((m) => m.path.endsWith("workspaces.json"));
     expect((ws as { entries: unknown[] }).entries).toEqual([wsEntry("work", "/work/**")]);
 
-    const token = byType("create-file").find((m) => m.path.endsWith("youtrack.token"));
-    expect((token as { content: string }).content.trim()).toBe(TOKEN_PLACEHOLDER);
+    expect(byType("create-file").some((m) => m.path.endsWith("youtrack.token"))).toBe(false);
 
     const gi = byType("append-gitignore").find((m) => m.path.endsWith(".gitignore"));
     expect((gi as { entries: string[] }).entries).toContain("docs/*/sdd/");
@@ -565,7 +585,7 @@ test("preview plans host registration and adapter copy mutations (AR-09)", () =>
   }
 });
 
-test("existing custom token paths are reused in the draft; canary bytes preserved (AR-10)", () => {
+test("existing custom token paths are never read or rewritten; canary bytes preserved (AR-10)", () => {
   const dir = tempDir();
   try {
     const ytJson = path.join(dir, "youtrack.json");
@@ -602,14 +622,12 @@ test("existing custom token paths are reused in the draft; canary bytes preserve
     for (const def of [path.join(dir, "youtrack.token"), path.join(dir, "gitlab.token")]) {
       expect(preview.mutations.some((m) => m.path === def)).toBe(false);
     }
-    // reuse means no path replacement mutation anywhere
-    expect(preview.mutations.some((m) => m.type === "set-token-path")).toBe(false);
-    // YouTrack retains its custom path; legacy VCS paths remain on disk only.
+    // The draft names no token path; merge-json keeps the old key on disk only.
     const yt = preview.mutations.find((m) => m.path === ytJson) as Extract<
       SetupMutation,
       { type: "merge-json" }
     >;
-    expect((yt.value as { tokenFile: string }).tokenFile).toBe(customYt);
+    expect(JSON.stringify(yt.value)).not.toContain("tokenFile");
     const vcs = preview.mutations.find((m) => m.path === vcsJson) as Extract<
       SetupMutation,
       { type: "merge-json" }
@@ -625,50 +643,6 @@ test("existing custom token paths are reused in the draft; canary bytes preserve
     clean(dir);
   }
 });
-
-test("a deliberate token path replacement is its own distinct mutation (AR-10)", () => {
-  const dir = tempDir();
-  try {
-    const ytJson = path.join(dir, "youtrack.json");
-    writeFileSync(ytJson, JSON.stringify({ tokenFile: path.join(dir, "old.token") }), "utf8");
-    const next = path.join(dir, "new.token");
-    const preview = buildSetupPreview(
-      values({ baseUrl: "https://yt.example.com", tokenPaths: { youtrack: next } }),
-      { dir, env: {} },
-    );
-    expect(preview.ok).toBe(true);
-    const set = preview.mutations.find((m) => m.type === "set-token-path");
-    expect(set).toEqual({
-      type: "set-token-path",
-      path: ytJson,
-      key: "tokenFile",
-      value: next,
-    });
-    // the config draft no longer hides the path change inside the generic merge
-    const yt = preview.mutations.find((m) => m.path === ytJson) as Extract<
-      SetupMutation,
-      { type: "merge-json" }
-    >;
-    expect(JSON.stringify(yt.value)).not.toContain("tokenFile");
-    // the new path is created as a separate reviewed mutation; the old file is
-    // never written
-    expect(
-      preview.mutations.some(
-        (m) =>
-          m.type === "create-file" && m.path === next && m.content.trim() === TOKEN_PLACEHOLDER,
-      ),
-    ).toBe(true);
-    expect(preview.mutations.some((m) => m.path === path.join(dir, "old.token"))).toBe(false);
-  } finally {
-    clean(dir);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Locale SearchSelect (Task 3): pure filtering/map behavior + reducer commit.
-// The Español block leads LOCALE_LANGUAGE_MAP so the 5-row cap keeps the whole
-// language×nationality family visible together for the shared "es" prefix.
-// ---------------------------------------------------------------------------
 
 test('filterOptions("es") caps at 5 rows across language+nationality labels', () => {
   // Same adaptation the locale screen applies: Teams rows → picker options.

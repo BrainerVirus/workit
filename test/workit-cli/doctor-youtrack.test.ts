@@ -91,13 +91,14 @@ test("Given no youtrack.json and no workspace on YouTrack, When doctor runs, The
   expect(row(doctor(false))).toBeUndefined();
 });
 
-test("Given no ytrack on PATH and a legacy token file, When doctor runs, Then the row warns the fallback is deprecated and names the ytrack install", () => {
+test("Given no ytrack on PATH and a legacy token file, When doctor runs, Then the row names the ytrack install and says the token file is no longer read", () => {
   configure();
   writeFileSync(tokenFile, "perm:secret", { mode: 0o600 });
   const found = row(doctor(false));
   expect(found?.status).toBe("warn");
-  expect(found?.detail).toContain(`legacy token file ${tokenFile}, deprecated`);
-  expect(found?.fix).toContain("install ytrack");
+  expect(found?.detail).toContain("ytrack not on PATH: YouTrack calls are unavailable");
+  expect(found?.detail).toContain(`no longer reads the legacy token file ${tokenFile}: delete it`);
+  expect(found?.fix).toContain("https://github.com/BrainerVirus/youtrack-cli");
   expect(found?.fix).toContain("ytrack auth login --host acme.youtrack.cloud");
   expect(JSON.stringify(found)).not.toContain("perm:secret");
 });
@@ -106,8 +107,23 @@ test("Given no ytrack on PATH and no token file, When doctor runs, Then the row 
   configure();
   const found = row(doctor(false));
   expect(found?.status).toBe("warn");
-  expect(found?.detail).toContain("no token file");
+  expect(found?.detail).toBe("ytrack not on PATH: YouTrack calls are unavailable");
   expect(found?.fix).toContain("install ytrack");
+});
+
+test("Given only a leftover youtrack.token and no YouTrack config, When doctor runs, Then the row still says it can be deleted", () => {
+  writeFileSync(tokenFile, "perm:secret", { mode: 0o600 });
+  const found = row(doctor(false));
+  expect(found?.status).toBe("warn");
+  expect(found?.detail).toContain(`no longer reads the legacy token file ${tokenFile}`);
+});
+
+test("Given doctor runs, Then no credential_metadata row is left: Workit keeps no credential file", () => {
+  configure();
+  writeFileSync(tokenFile, "perm:secret", { mode: 0o600 });
+  expect(doctor(false).checks.some((check) => String(check.id) === "credential_metadata")).toBe(
+    false,
+  );
 });
 
 describe.skipIf(process.platform === "win32")("ytrack on PATH (POSIX stub)", () => {
@@ -124,6 +140,21 @@ describe.skipIf(process.platform === "win32")("ytrack on PATH (POSIX stub)", () 
       "version",
       "auth status --json host,active,login,state,tokenSource,error",
     ]);
+  });
+
+  test("Given ytrack logged in and an unreadable legacy token file, When doctor runs, Then the row warns it can be deleted without reading it", () => {
+    configure();
+    loggedIn("acme.youtrack.cloud");
+    writeFileSync(tokenFile, "perm:secret", { mode: 0o600 });
+    // Unreadable: a read would fail, and only its existence may be checked.
+    chmodSync(tokenFile, 0o000);
+    const found = row(doctor(true));
+    expect(found).toEqual({
+      id: "youtrack",
+      status: "warn",
+      detail: `ytrack 0.2.0 logged in to acme.youtrack.cloud as jdoe; Workit no longer reads the legacy token file ${tokenFile}: delete it`,
+      fix: `Delete ${tokenFile}`,
+    });
   });
 
   test("Given ytrack installed but logged out, When doctor runs, Then the row warns and names ytrack auth login --host", () => {

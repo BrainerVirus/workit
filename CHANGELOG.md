@@ -899,6 +899,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Heavy checks: a lease slot that frees too close to `--timeout` (under min(10 s, a quarter of it)) no longer starts the command with a sliver of budget; it exits as a wait timeout. The `stuck?` flag and auto-reap use 1.5x the check's last measured run (never below the configured limit), so long suites on two slots are not flagged. Wait estimates read only the ledger tail, and macOS frees a reused pid's lease through `ps`.
 - `fanout worktree create` links node_modules when only other platforms' optional packages are absent (no per-worktree install); several fanout plans name `--fanout` and the candidates, defaulting to the lead's plan (#641); a nested worker glob inside a lead path glob is contained (#647).
 
+### Removed
+
+- **Breaking:** Workit's built-in YouTrack token-file client. YouTrack now requires [ytrack](https://github.com/BrainerVirus/youtrack-cli) installed and logged in to the configured host (`ytrack auth login --host <host>`); every YouTrack call goes through it, whose token stays in the OS keyring. Setup no longer asks for or writes a token; it checks ytrack and names `ytrack auth login --host <host>` when needed. Doctor warns if a leftover `youtrack.token` exists (Workit never reads it; delete it). The `tokenFile` and `tokenDefaults` keys in youtrack.json are ignored.
+
 ## [0.6.0] - 2026-08-10
 
 ### Added

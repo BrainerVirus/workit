@@ -1512,65 +1512,6 @@ test("doctor surfaces typed workspace errors without throwing through identity c
   expect(identity.detail).toContain("unsupported branch preset");
 });
 
-test("credential metadata flags missing/unsafe-mode/placeholder token files", () => {
-  const youtrackJson = path.join(fixture.configDir, "youtrack.json");
-  const tokenFile = path.join(fixture.configDir, "youtrack.token");
-  writeConfig(youtrackJson, JSON.stringify({ tokenFile }));
-  rmSync(tokenFile, { force: true });
-  const missing = run();
-  expect(check(missing, "credential_metadata").status).toBe("fail");
-
-  writeConfig(tokenFile, "sk-live-11\n", 0o600);
-  writeConfig(youtrackJson, JSON.stringify({ tokenFile }));
-  const okRun = run();
-  expect(check(okRun, "credential_metadata").status).toBe("pass");
-  // the token value never leaves the engine
-  expect(JSON.stringify(okRun)).not.toContain("sk-live-11");
-
-  writeConfig(tokenFile, "YOUR_TOKEN_HERE\n", 0o600);
-  const placeholder = run();
-  expect(check(placeholder, "credential_metadata").status).toBe("fail");
-  expect(JSON.stringify(placeholder)).not.toContain("YOUR_TOKEN_HERE");
-
-  rmSync(youtrackJson, { force: true });
-  rmSync(tokenFile, { force: true });
-});
-
-test("credential metadata only flags providers actually configured in vcs.json", () => {
-  const vcsFile = path.join(fixture.configDir, "vcs.json");
-  const gitlabToken = path.join(fixture.configDir, "gitlab.token");
-  writeConfig(vcsFile, JSON.stringify({ gitlab: { tokenFile: "gitlab.token" } }));
-  writeConfig(gitlabToken, "glpat-ok-11\n", 0o600);
-  try {
-    expect(check(run(), "credential_metadata").status).toBe("pass");
-  } finally {
-    rmSync(vcsFile, { force: true });
-    rmSync(gitlabToken, { force: true });
-  }
-  expect(check(run(), "credential_metadata").status).toBe("pass");
-});
-
-test("credential metadata ignores inactive VCS provider token files", () => {
-  const vcsFile = path.join(fixture.configDir, "vcs.json");
-  const githubToken = path.join(fixture.configDir, "github.token");
-  writeConfig(
-    vcsFile,
-    JSON.stringify({
-      provider: "github",
-      github: { tokenFile: "github.token" },
-      gitlab: { tokenFile: "gitlab.token" },
-    }),
-  );
-  writeConfig(githubToken, "ghp-ok-11\n", 0o600);
-  // gitlab.token intentionally missing — must not fail when provider is github
-  try {
-    expect(check(run(), "credential_metadata").status).toBe("pass");
-  } finally {
-    rmSync(vcsFile, { force: true });
-    rmSync(githubToken, { force: true });
-  }
-});
-
 test("stale_pin fails fragile pnpm dlx file:// pins", () => {
   writeConfig(
     fixture.opencodeConfig,
