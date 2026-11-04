@@ -551,11 +551,11 @@ const applyCli = async (
   removeCopies: boolean,
 ): Promise<HostOutcome> => {
   const { env } = upgradePaths(deps);
-  const fail = (reason: string, details?: string[]): HostOutcome => ({
+  const fail = (reason: string, details?: string[], fix = CLI_FIX): HostOutcome => ({
     host: "cli",
     status: "failed",
     reason,
-    fix: CLI_FIX,
+    fix,
     ...(details?.length ? { details } : {}),
   });
   const node = (deps.installNode ?? (() => resolveInstallNode(env)))();
@@ -585,7 +585,7 @@ const applyCli = async (
     ...(migration.left.length
       ? [
           `other installs left in place; back them up and remove them with:`,
-          ...leftLines(migration.left),
+          ...leftLines(migration.left).flatMap((line) => line.split("\n")),
         ]
       : []),
   ];
@@ -598,6 +598,7 @@ const applyCli = async (
         ? `installed ${cli.latest} under ${cli.root}, but PATH runs ${seen.path} (${seen.version ?? seen.error ?? "unknown"}), not ${cli.latest}`
         : `installed ${cli.latest} under ${cli.root}, but ${seen.error ?? "no workit on PATH"}; put ${onPath} first on PATH`,
       [`workit installs (which -a order, then other prefixes):`, ...listing, ...details],
+      `export PATH="${onPath}:$PATH" (first on PATH in your shell profile), or remove the other installs with the commands below`,
     );
   }
   return {
