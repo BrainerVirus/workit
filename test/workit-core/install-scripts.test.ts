@@ -257,6 +257,8 @@ const STUB_CORE_FILES = [
   "role-models.ts",
   // role-models.ts skips providers exhausted by a usage limit (#655).
   "model-fallback.ts",
+  // install/paths.ts re-exports the owned-install locations from core (#648).
+  "cli-locate.ts",
   "config-schemas.ts",
   // workspaces.ts validates `remotes` patterns, autonomy caps by them (#549).
   "remotes.ts",
