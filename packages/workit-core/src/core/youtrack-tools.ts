@@ -1,16 +1,11 @@
-import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fail, ok, type Result } from "../core";
-import { configDir, isConfigObject } from "./config";
+import { configDir } from "./config";
 import { configDir as workitConfigDir, userHome } from "./workit-paths.mjs";
 import {
   context as legacyContext,
-  logTime as legacyLogTime,
   meetingWorkItemText,
   parseDuration as legacyParseDuration,
-  postUpdate as legacyPostUpdate,
-  verifyYouTrackToken,
-  youTrackBaseUrl,
   youTrackWorkDateMs,
 } from "./youtrack";
 import {
@@ -19,7 +14,6 @@ import {
   type WriteResult,
   type YouTrackBackend,
 } from "./youtrack-backend";
-import { ytrackRunner, ytrackStatus } from "./youtrack-ytrack";
 
 export const ISSUE_RE = /^[A-Z]+-\d+$/;
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -32,38 +26,16 @@ export const configPath = (env: NodeJS.ProcessEnv = process.env, home = userHome
     "youtrack.json",
   );
 
-export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = userHome(env)) {
-  const resolvedConfig = configPath(env, home);
-  // AR-07/CA-37: a parseable non-object youtrack.json is malformed — exact-path
-  // error, never a raw TypeError or a silent tokenFile default.
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(resolvedConfig, "utf8"));
-  } catch {
-    throw new Error(`${resolvedConfig} is not valid JSON`);
-  }
-  if (!isConfigObject(parsed)) {
-    throw new Error(`${resolvedConfig} is not a JSON object`);
-  }
-  const config = parsed as { tokenFile?: string };
-  const tokenFile = config.tokenFile ?? "youtrack.token";
-  const tokenPath = path.resolve(path.dirname(resolvedConfig), tokenFile.replace(/^~(?=\/)/, home));
-  if (process.platform !== "win32" && (statSync(tokenPath).mode & 0o777) !== 0o600)
-    throw new Error("youtrack.token mode must be 0600");
-  const token = readFileSync(tokenPath, "utf8").trim();
-  if (!token) throw new Error("youtrack.token is empty");
-  return { configPath: resolvedConfig, token };
-}
-
-export const redact = (text: string, token: string) =>
-  token ? text.split(token).join("[REDACTED]") : text;
-
 type MaybePromise<T> = T | Promise<T>;
 export type LegacyValue = Record<string, unknown> | void;
-export type NotApplied = { ok: false; error: string; outcome: "not_applied" };
+export type NotApplied = {
+  ok: false;
+  error: string;
+  outcome: "not_applied";
+  unblock?: string;
+};
 
 export type YouTrackOperations = {
-  verifyToken(): MaybePromise<LegacyValue>;
   context(input: Record<string, unknown>): MaybePromise<LegacyValue>;
   parseDuration(text: string, workspaceRoot: string): MaybePromise<LegacyValue>;
   postComment(issueId: string, markdown: string, workspaceRoot?: string): MaybePromise<LegacyValue>;
@@ -78,51 +50,41 @@ export const unwrap = (value: LegacyValue) => {
 };
 
 /**
- * A write through ytrack when it is on PATH (#263), as the legacy value shape;
- * null when the token-file client should run instead. Same WORKIT_YT_WRITE gate.
+ * A write through ytrack (#263), as the legacy value shape, behind the
+ * WORKIT_YT_WRITE gate. A failure that surely did not land (gate, missing
+ * ytrack, logged out) stays a not_applied value with its unblock; any other
+ * failure throws, so callers report an unknown outcome.
  */
 async function ytrackWrite(
   write: (backend: YouTrackBackend) => Promise<WriteResult>,
-): Promise<LegacyValue | null> {
-  const backend = youTrackBackend();
-  if (backend.kind !== "ytrack") return null;
+): Promise<LegacyValue> {
   const gate = youTrackWriteGate(process.env);
-  if (gate) return { ok: false, error: gate.error, outcome: "not_applied" };
-  const result = await write(backend);
-  return result.ok
-    ? { ok: true, data: result.data }
-    : { ok: false, error: result.error, outcome: result.outcome };
-}
-
-/** ytrack's auth state when it is on PATH, as the legacy verify shape; else null. */
-function ytrackVerify(): LegacyValue | null {
-  const status = ytrackStatus(ytrackRunner(process.env, youTrackBaseUrl()));
-  if (!status.installed) return null;
-  if (status.auth !== "ok")
-    return { error: `ytrack is ${status.auth.replace("_", " ")}: run ytrack auth login` };
-  return { backend: "ytrack", version: status.version, tokenPresent: true };
+  if (gate)
+    return {
+      ok: false,
+      error: gate.error,
+      outcome: "not_applied",
+      unblock: gate.unblock,
+    };
+  const result = await write(youTrackBackend());
+  if (result.ok) return unwrap({ ok: true, data: result.data });
+  if (result.outcome === "not_applied")
+    return {
+      ok: false,
+      error: result.error,
+      outcome: "not_applied",
+      ...(result.unblock ? { unblock: result.unblock } : {}),
+    };
+  throw new Error(result.error);
 }
 
 export const defaultOperations: YouTrackOperations = {
-  verifyToken: () => unwrap(ytrackVerify() ?? verifyYouTrackToken()),
   context: (input) => legacyContext(input as never),
   parseDuration: (text, workspaceRoot) => legacyParseDuration(text, workspaceRoot),
-  postComment: async (issueId, markdown, workspaceRoot) => {
-    const viaYtrack = await ytrackWrite((backend) => backend.addComment(issueId, markdown));
-    // A not_applied failure stays a value, so callers can tell it from an unknown outcome.
-    if (viaYtrack?.ok === false) return viaYtrack;
-    return unwrap(
-      viaYtrack ??
-        (await legacyPostUpdate({
-          confirmed: true,
-          issueId,
-          markdown,
-          workspace_root: workspaceRoot,
-        })),
-    );
-  },
-  logTime: async (input) => {
-    const viaYtrack = await ytrackWrite(async (backend) => {
+  postComment: (issueId, markdown) =>
+    ytrackWrite((backend) => backend.addComment(issueId, markdown)),
+  logTime: (input) =>
+    ytrackWrite(async (backend) => {
       const date = youTrackWorkDateMs(
         input.dateMs != null ? String(input.dateMs) : String(input.date ?? "auto"),
       );
@@ -132,10 +94,7 @@ export const defaultOperations: YouTrackOperations = {
         text: typeof input.text === "string" ? input.text : "workit",
         dateMs: date.data.dateMs,
       });
-    });
-    if (viaYtrack?.ok === false) return viaYtrack;
-    return unwrap(viaYtrack ?? (await legacyLogTime(input as never)));
-  },
+    }),
 };
 
 type PostInput = {
@@ -154,6 +113,7 @@ type PostData = {
   outcome?: "unknown" | "not_applied";
   instructions?: string;
   retry?: "youtrack.update" | "youtrack.time";
+  unblock?: string;
 };
 
 const notApplied = (value: LegacyValue): value is NotApplied =>
@@ -181,6 +141,7 @@ export async function postUpdate(
         loggedMinutes: 0,
         outcome: "not_applied",
         retry: "youtrack.update",
+        ...(comment.unblock ? { unblock: comment.unblock } : {}),
       });
     unwrap(comment);
   } catch (error) {
@@ -209,6 +170,7 @@ export async function postUpdate(
           loggedMinutes: 0,
           outcome: "not_applied",
           retry: "youtrack.time",
+          ...(time.unblock ? { unblock: time.unblock } : {}),
         });
       unwrap(time);
     } catch (error) {
@@ -242,6 +204,7 @@ export async function logTimeUpdate(
         loggedMinutes: 0,
         outcome: "not_applied",
         retry: "youtrack.time",
+        ...(value.unblock ? { unblock: value.unblock } : {}),
       });
     return ok(unwrap(value));
   } catch (error) {

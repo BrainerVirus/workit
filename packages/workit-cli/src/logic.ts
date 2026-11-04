@@ -19,8 +19,7 @@ import {
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
-import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write.ts";
-import { TOKEN_PLACEHOLDER, type VcsProvider } from "./admin/setup";
+import type { VcsProvider } from "./admin/setup";
 import { applyWorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspace-branch-policy.ts";
 import type { WorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspaces.ts";
 
@@ -132,23 +131,38 @@ export function setWorkspaceEditorValue(
     return { ...workspace, defaultProfile: value.trim() || undefined };
   if (section === "vcs")
     return workspace.vcs
-      ? { ...workspace, vcs: { ...workspace.vcs, [key]: value.trim() || undefined } }
+      ? {
+          ...workspace,
+          vcs: { ...workspace.vcs, [key]: value.trim() || undefined },
+        }
       : workspace;
   if (section === "youtrack") {
     const current = workspace.youtrack ?? {};
     if (key === "baseUrl")
-      return { ...workspace, youtrack: { ...current, baseUrl: value.trim() || undefined } };
+      return {
+        ...workspace,
+        youtrack: { ...current, baseUrl: value.trim() || undefined },
+      };
     if (!value || value === "inherit") {
       const { link_issues: _discard, ...rest } = current;
-      return { ...workspace, youtrack: Object.keys(rest).length ? rest : undefined };
+      return {
+        ...workspace,
+        youtrack: Object.keys(rest).length ? rest : undefined,
+      };
     }
-    return { ...workspace, youtrack: { ...current, link_issues: value === "true" } };
+    return {
+      ...workspace,
+      youtrack: { ...current, link_issues: value === "true" },
+    };
   }
   if (section === "issues") {
     const current = workspace.issues ?? { provider: "github" as const };
     if (!value || value === "inherit") {
       const { link_on_pr: _discard, ...rest } = current;
-      return { ...workspace, issues: Object.keys(rest).length ? rest : undefined };
+      return {
+        ...workspace,
+        issues: Object.keys(rest).length ? rest : undefined,
+      };
     }
     return {
       ...workspace,
@@ -160,7 +174,9 @@ export function setWorkspaceEditorValue(
       const { branchPolicy: _discard, ...rest } = workspace;
       return rest;
     }
-    const current = workspace.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
+    const current = workspace.branchPolicy ?? {
+      preset: defaults.branchPreset ?? "gitflow",
+    };
     const branchPolicy =
       key === "preset"
         ? { ...current, preset: (value || "gitflow") as typeof current.preset }
@@ -171,7 +187,10 @@ export function setWorkspaceEditorValue(
             : key === "developBranch"
               ? { ...current, developBranch: value.trim() || undefined }
               : key === "integration"
-                ? { ...current, integration: value === "pr" ? ("pr" as const) : ("merge" as const) }
+                ? {
+                    ...current,
+                    integration: value === "pr" ? ("pr" as const) : ("merge" as const),
+                  }
                 : key === "prefixes"
                   ? {
                       ...current,
@@ -192,7 +211,9 @@ export function setWorkspaceEditorValue(
       const { commitPolicy: _discard, ...rest } = workspace;
       return rest;
     }
-    const current = workspace.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
+    const current = workspace.commitPolicy ?? {
+      preset: defaults.commitPreset ?? "conventional",
+    };
     return {
       ...workspace,
       commitPolicy:
@@ -241,7 +262,11 @@ const emptyTrack = (): ReleaseTrack => ({
   strategy: "gitflow",
   productionBranch: "main",
   integrationBranch: "develop",
-  naming: { feature: "feature/{name}", release: "release/{version}", hotfix: "hotfix/{name}" },
+  naming: {
+    feature: "feature/{name}",
+    release: "release/{version}",
+    hotfix: "hotfix/{name}",
+  },
   baseBranch: "develop",
   mergeBackBranches: ["develop"],
   pullRequestTarget: "develop",
@@ -280,10 +305,15 @@ export function setProfileEditorValue(
       const { branchPolicy: _discard, ...rest } = profile;
       return rest;
     }
-    const current = profile.branchPolicy ?? { preset: defaults.branchPreset ?? "gitflow" };
+    const current = profile.branchPolicy ?? {
+      preset: defaults.branchPreset ?? "gitflow",
+    };
     let branchPolicy: NonNullable<WorkspaceProfile["branchPolicy"]>;
     if (key === "preset")
-      branchPolicy = { ...current, preset: (value || "gitflow") as typeof current.preset };
+      branchPolicy = {
+        ...current,
+        preset: (value || "gitflow") as typeof current.preset,
+      };
     else if (key === "allowed" || key === "protected")
       branchPolicy = { ...current, [key]: splitList(value) };
     else if (key === "prefixes")
@@ -300,10 +330,16 @@ export function setProfileEditorValue(
       };
     else if (key === "developBranch")
       branchPolicy = { ...current, developBranch: value || undefined };
-    else branchPolicy = { ...current, integration: value === "pr" ? "pr" : "merge" };
+    else
+      branchPolicy = {
+        ...current,
+        integration: value === "pr" ? "pr" : "merge",
+      };
     return { ...profile, branchPolicy };
   }
-  const current = profile.commitPolicy ?? { preset: defaults.commitPreset ?? "conventional" };
+  const current = profile.commitPolicy ?? {
+    preset: defaults.commitPreset ?? "conventional",
+  };
   if (key === "preset" && (!value.trim() || value === "inherit")) {
     const { commitPolicy: _discard, ...rest } = profile;
     return rest;
@@ -313,7 +349,10 @@ export function setProfileEditorValue(
     commitPolicy:
       key === "pattern"
         ? { ...current, pattern: value || undefined }
-        : { ...current, preset: (value || "conventional") as typeof current.preset },
+        : {
+            ...current,
+            preset: (value || "conventional") as typeof current.preset,
+          },
   };
 }
 
@@ -376,7 +415,10 @@ export function runProjectSetup(
 ): ProjectSetupResult {
   const openSource = opts.includeOpenSource ?? hygieneFiles(root).openSource;
   const gitignore = ensureProjectGitignore(root, true);
-  const hygiene = ensureHygieneFiles(root, { confirmed: true, includeOpenSource: openSource });
+  const hygiene = ensureHygieneFiles(root, {
+    confirmed: true,
+    includeOpenSource: openSource,
+  });
   const created = [
     ...(gitignore.ok ? gitignore.added : []),
     ...(hygiene.ok ? hygiene.created : []),
@@ -384,8 +426,8 @@ export function runProjectSetup(
   return { gitignore, hygiene, openSource, created };
 }
 
-// Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
-// byte-for-byte unless absent, and malformed config files block every write.
+// Shared scaffold outcome envelope (WZ-05/WZ-06): an existing credential file
+// is never read or written, and malformed config files block every write.
 type ScaffoldStatus = "missing" | "preserved" | "malformed";
 
 type ScaffoldOutcome = {
@@ -395,17 +437,13 @@ type ScaffoldOutcome = {
   error?: string;
   /** Malformed file that blocked the scaffold, set when status === "malformed". */
   file?: string;
-  /** Files written by this scaffold (config + placeholders created). */
+  /** Files written by this scaffold. */
   created: string[];
-  /** Credential files left byte-for-byte untouched. */
+  /** Credential files left byte-for-byte untouched (a legacy youtrack.token). */
   preserved: string[];
 };
 
-export type YouTrackScaffold = ScaffoldOutcome & {
-  youtrackJson: string;
-  tokenPath: string;
-  tokenCreateUrl: string;
-};
+export type YouTrackScaffold = ScaffoldOutcome & { youtrackJson: string };
 
 type LoadedConfig = { ok: true; value: unknown } | { ok: false } | null;
 
@@ -429,19 +467,14 @@ function malformedBlock(
   created: never[];
   preserved: never[];
 } {
-  return { ok: false, status: "malformed", error: message, file, created: [], preserved: [] };
-}
-
-function ensureToken(tokenPath: string, outcome: { created: string[]; preserved: string[] }): void {
-  // wx (exclusive create) closes the TOCTOU window: a token created between any
-  // existence check and write now races the write itself, and EEXIST means the
-  // other writer won — preserve their bytes instead of clobbering them. Shared
-  // with initApplyData via core/safe-write.ts (Task 14 Step 7 / CA-13).
-  if (writeFileExclusive(tokenPath, TOKEN_PLACEHOLDER + "\n", 0o600) === "created") {
-    outcome.created.push(tokenPath);
-  } else {
-    outcome.preserved.push(tokenPath);
-  }
+  return {
+    ok: false,
+    status: "malformed",
+    error: message,
+    file,
+    created: [],
+    preserved: [],
+  };
 }
 
 function finalStatus(outcome: ScaffoldOutcome): ScaffoldStatus {
@@ -457,10 +490,11 @@ export function isSetupComplete(results: {
   return (results.youtrack?.ok ?? false) && (results.vcs?.ok ?? false);
 }
 
-// ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
-// scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
-// ponytail: mirrors apply.sh; WORKIT_YT_*/WORKIT_VCS_* env overrides intentionally ignored
-// (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts)
+// ponytail: mirrors scripts/init/apply.sh write_youtrack_json in TS — initApply shells out to
+// bash (CA-01 forbids bash); WORKIT_YT_*/WORKIT_VCS_* env overrides intentionally ignored
+// (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts).
+// No token: YouTrack goes through ytrack. A leftover youtrack.token is reported preserved,
+// never read or written.
 export function scaffoldYouTrack(
   dir: string,
   baseUrl: string,
@@ -468,9 +502,6 @@ export function scaffoldYouTrack(
 ): YouTrackScaffold {
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");
-  const tokenPath = path.join(dir, "youtrack.token");
-  const base = baseUrl.replace(/\/+$/, "");
-  const tokenCreateUrl = `${base}/users/me?tab=account-security`;
   const loaded = loadConfig(youtrackJson);
   if (
     loaded &&
@@ -485,32 +516,20 @@ export function scaffoldYouTrack(
         `youtrack.json is malformed — refusing to overwrite it: ${youtrackJson}`,
       ),
       youtrackJson,
-      tokenPath,
-      tokenCreateUrl,
     };
   }
-  const config = {
-    baseUrl,
-    tokenFile: tokenPath,
-    locale: opts.locale ?? "en",
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-issue-update and /wk-meetings",
-      scopes: ["YouTrack"],
-      profileTab: "account-security",
-    },
-  };
+  const config = { baseUrl, locale: opts.locale ?? "en" };
   writeFileSync(youtrackJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
-  outcome.created.push(youtrackJson);
-  ensureToken(tokenPath, outcome);
-  return {
-    ...outcome,
-    status: finalStatus(outcome),
-    youtrackJson,
-    tokenPath,
-    tokenCreateUrl,
+  const outcome: ScaffoldOutcome = {
+    ok: true,
+    status: "missing",
+    created: [],
+    preserved: [],
   };
+  outcome.created.push(youtrackJson);
+  const legacyToken = path.join(dir, "youtrack.token");
+  if (existsSync(legacyToken)) outcome.preserved.push(legacyToken);
+  return { ...outcome, status: finalStatus(outcome), youtrackJson };
 }
 
 export type VcsScaffold = ScaffoldOutcome & {
@@ -541,10 +560,20 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     defaultTargetBranch: "develop",
     gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4" },
     github: { host: "github.com" },
-    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
+    pr: {
+      squashOnMerge: true,
+      removeSourceBranch: true,
+      pushBranch: true,
+      confirmSkip: true,
+    },
   };
   writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
+  const outcome: ScaffoldOutcome = {
+    ok: true,
+    status: "missing",
+    created: [],
+    preserved: [],
+  };
   outcome.created.push(vcsJson);
 
   return {
@@ -566,7 +595,11 @@ export function loadWorkspaces(): WorkspaceConfig[] {
   return loadWorkspacesFrom(configDir());
 }
 
-export type WriteWorkspacesResult = { ok: boolean; error?: string; path: string };
+export type WriteWorkspacesResult = {
+  ok: boolean;
+  error?: string;
+  path: string;
+};
 
 export function writeWorkspaces(
   entries: WorkspaceConfig[],
@@ -595,14 +628,22 @@ export function writeWorkspaces(
       try {
         rmSync(tmp, { force: true });
       } catch {}
-      return { ok: false, error: `workspace config changed while writing ${file}`, path: file };
+      return {
+        ok: false,
+        error: `workspace config changed while writing ${file}`,
+        path: file,
+      };
     }
     renameSync(tmp, file);
   } catch (err) {
     try {
       rmSync(tmp, { force: true });
     } catch {}
-    return { ok: false, error: `failed to write ${file}: ${(err as Error).message}`, path: file };
+    return {
+      ok: false,
+      error: `failed to write ${file}: ${(err as Error).message}`,
+      path: file,
+    };
   }
   return { ok: true, path: file };
 }
@@ -612,7 +653,6 @@ export function writeWorkspaces(
 // hooks and plugins never bundle them); re-exported for the wizard modules.
 // ---------------------------------------------------------------------------
 export {
-  TOKEN_PLACEHOLDER,
   parseList,
   buildSetupPreview,
   type SetupPreviewInput,

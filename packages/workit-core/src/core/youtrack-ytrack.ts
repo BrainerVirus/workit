@@ -1,6 +1,6 @@
 // The `ytrack` executable (BrainerVirus/youtrack-cli, #263): found on PATH,
 // run without a shell, never handed a token (it keeps its own in the OS
-// keyring). Kept free of the built-in client so youtrack.ts can use it too.
+// keyring). Workit reaches YouTrack only through it.
 import { spawnSync } from "node:child_process";
 import { findExecutable } from "../forge/exec";
 
@@ -92,12 +92,22 @@ export function ytrackStatus(run: YtrackRun): YtrackStatus {
   const status = run(["auth", "status", "--json", STATUS_FIELDS]);
   const base = { installed: true as const, version: match ? match[1] : null };
   if (status.status === YTRACK_EXIT.auth)
-    return { ...base, auth: "logged_out", hosts: [], error: ytrackDetail(status) || null };
+    return {
+      ...base,
+      auth: "logged_out",
+      hosts: [],
+      error: ytrackDetail(status) || null,
+    };
   let rows: unknown;
   try {
     rows = JSON.parse(status.stdout);
   } catch {
-    return { ...base, auth: "error", hosts: [], error: ytrackDetail(status) || "no JSON" };
+    return {
+      ...base,
+      auth: "error",
+      hosts: [],
+      error: ytrackDetail(status) || "no JSON",
+    };
   }
   const hosts = (Array.isArray(rows) ? rows : [rows])
     .filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null)
@@ -160,5 +170,58 @@ export function ytrackHostAuth(
     auth: status.auth === "error" && !row ? "error" : rowAuth(row),
     login: row?.login ?? null,
     error: row?.error ?? status.error,
+  };
+}
+
+/** Where ytrack comes from: Workit reaches YouTrack only through it. */
+export const YTRACK_INSTALL =
+  "install ytrack (https://github.com/BrainerVirus/youtrack-cli: install.sh, or install.ps1 on Windows)";
+
+/** `ytrack auth login`, aimed at `host` (a URL or host name) when one is known. */
+export const ytrackLogin = (host?: string | null): string =>
+  `ytrack auth login${host ? ` --host ${ytrackHostName(host)}` : ""}`;
+
+/** The unblock for a missing ytrack: install it, then log in to `host`. */
+export const ytrackMissingUnblock = (host?: string | null): string =>
+  `${YTRACK_INSTALL}, then ${ytrackLogin(host)}`;
+
+export const YTRACK_MISSING = "ytrack is not on PATH: Workit reaches YouTrack only through ytrack";
+
+export type YtrackReadiness =
+  | { ok: true; version: string | null; login: string | null }
+  | {
+      ok: false;
+      reason: "missing" | "logged_out" | "rejected" | "error";
+      error: string;
+      unblock: string;
+    };
+
+/**
+ * Whether ytrack can reach `host` (youtrack.json's baseUrl; null for its
+ * active host): installed and logged in, else the reason and the one command
+ * that unblocks it. Never reads or prints a token.
+ */
+export function ytrackReadiness(run: YtrackRun, host: string | null): YtrackReadiness {
+  const status = ytrackStatus(run);
+  if (!status.installed)
+    return {
+      ok: false,
+      reason: "missing",
+      error: YTRACK_MISSING,
+      unblock: ytrackMissingUnblock(host),
+    };
+  const auth = ytrackHostAuth(status, host);
+  const where = host ? ytrackHostName(host) : "the active host";
+  if (auth.auth === "ok") return { ok: true, version: status.version, login: auth.login };
+  return {
+    ok: false,
+    reason: auth.auth,
+    error:
+      auth.auth === "logged_out"
+        ? `ytrack is not logged in to ${where}`
+        : auth.auth === "rejected"
+          ? `${where} rejected ytrack's stored token`
+          : `could not read ytrack's login for ${where}${auth.error ? ` (${auth.error})` : ""}`,
+    unblock: ytrackLogin(host),
   };
 }

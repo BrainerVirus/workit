@@ -112,9 +112,11 @@ import {
 import { readHookRuns, type HookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
 import { issueTrackerOf } from "@brainervirus/workit-core/src/core/vcs-config";
 import {
+  YTRACK_INSTALL,
   findYtrack,
   ytrackHostAuth,
   ytrackHostName,
+  ytrackLogin,
   ytrackRunner,
   ytrackStatus,
 } from "@brainervirus/workit-core/src/core/youtrack-ytrack";
@@ -129,10 +131,6 @@ import {
   permissionTarget,
   type PermissionHost,
 } from "./host-permissions";
-
-// Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
-// import the YouTrack/VCS stack just to label a credential state.
-const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
 type DoctorHost = "cli" | "opencode" | "cursor";
 
@@ -165,7 +163,6 @@ type DoctorCheckId =
   | "workspace_mismatch"
   | "workspace_lock"
   | "session_hook"
-  | "credential_metadata"
   | "youtrack"
   | "github_identity"
   | "gitlab_identity"
@@ -562,7 +559,11 @@ const installedHookEntries = (res: Resolved, cwd: string): HookEntry[] => {
         host: "codex",
         entry,
         args: [],
-        payload: { hook_event_name: "UserPromptSubmit", turn_id: "workit-doctor", ...prompt },
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          turn_id: "workit-doctor",
+          ...prompt,
+        },
       });
   }
   const cursor = path.join(res.cursorPluginDir, "hooks", "launch.mjs");
@@ -669,7 +670,10 @@ const checkHookNode = (res: Resolved): DoctorCheck => {
         "Reinstall the hosts' plugins with `workit upgrade`, then re-run `workit doctor` from this directory",
     };
   if (hooks.ran.length === 0) return base;
-  return { ...base, detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}` };
+  return {
+    ...base,
+    detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}`,
+  };
 };
 
 const hookNodeBase = (res: Resolved): DoctorCheck => {
@@ -760,7 +764,11 @@ const checkLegacyDirs = (res: Resolved): DoctorCheck => {
   });
   const notes = [...markers, ...(worktrees ? [worktrees] : [])];
   if (notes.length > 0) return { id: "legacy_dirs", status: "info", detail: notes.join("; ") };
-  return { id: "legacy_dirs", status: "pass", detail: "no pre-XDG Workit directories" };
+  return {
+    id: "legacy_dirs",
+    status: "pass",
+    detail: "no pre-XDG Workit directories",
+  };
 };
 
 const checkVersions = (res: Resolved): DoctorCheck => {
@@ -2468,7 +2476,11 @@ const checkConfigSchema = (res: Resolved): DoctorCheck => {
     }
   }
   if (problems.length === 0)
-    return { id: "config_schema", status: "pass", detail: "config files match their schemas" };
+    return {
+      id: "config_schema",
+      status: "pass",
+      detail: "config files match their schemas",
+    };
   const rest = problems.length > obsolete.length;
   return {
     id: "config_schema",
@@ -2744,70 +2756,15 @@ export const fixSessionHook = (options: DoctorOptions = {}): SessionHookFix => {
   return { ...installSessionHook(res.cwd, res.env), workspace: workspace.name };
 };
 
-// Credential metadata: existence, mode, placeholder — never the value.
-const isPlaceholder = (p: string): boolean => {
-  try {
-    return readFileSync(p, "utf8").trim() === TOKEN_PLACEHOLDER;
-  } catch {
-    return false;
-  }
-};
-
-const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
-  const tokenPaths: string[] = [];
-  const youtrackJson = readJson(path.join(res.configDir, "youtrack.json"));
-  if (youtrackJson) {
-    tokenPaths.push(
-      typeof youtrackJson.tokenFile === "string"
-        ? youtrackJson.tokenFile
-        : path.join(res.configDir, "youtrack.token"),
-    );
-  } else if (existsSync(path.join(res.configDir, "youtrack.token"))) {
-    tokenPaths.push(path.join(res.configDir, "youtrack.token"));
-  }
-
-  if (tokenPaths.length === 0) {
-    return {
-      id: "credential_metadata",
-      status: "pass",
-      detail: "no credentials configured",
-    };
-  }
-  const problems: string[] = [];
-  for (const raw of tokenPaths) {
-    const p = path.isAbsolute(raw) ? raw : path.resolve(res.configDir, raw);
-    if (!existsSync(p)) {
-      problems.push(`${p} is missing`);
-      continue;
-    }
-    if (process.platform !== "win32") {
-      const mode = statSync(p).mode & 0o777;
-      if (mode !== 0o600) problems.push(`${p} must be mode 0600 (found ${mode.toString(8)})`);
-    }
-    if (isPlaceholder(p)) problems.push(`${p} still contains the placeholder token`);
-  }
-  if (problems.length === 0) {
-    return {
-      id: "credential_metadata",
-      status: "pass",
-      detail: "credential files present with safe metadata",
-    };
-  }
-  return {
-    id: "credential_metadata",
-    status: "fail",
-    detail: problems.join("; "),
-    fix: "Create or fix the token file (mode 0600, real value) — see /wk-status for the exact path",
-  };
-};
-
 // ytrack's `auth status` is the only spawn that may reach the network; a
 // missing ytrack is a PATH lookup, so the row stays fast without it.
 const YTRACK_DOCTOR_TIMEOUT_MS = 15_000;
-const YTRACK_INSTALL = "install ytrack (https://github.com/BrainerVirus/youtrack-cli)";
 
-/** The YouTrack hosts Workit is configured for, or null when nothing uses YouTrack. */
-const youTrackUse = (res: Resolved): { hosts: string[]; tokenFile: string | null } | null => {
+/**
+ * The YouTrack hosts Workit is configured for, and a leftover legacy token
+ * file (only its existence: Workit never reads it); null when neither exists.
+ */
+const youTrackUse = (res: Resolved): { hosts: string[]; legacyToken: string | null } | null => {
   const configFile = res.env.WORKIT_YOUTRACK_CONFIG ?? path.join(res.configDir, "youtrack.json");
   const config = readJson(configFile);
   const workspaces = readWorkspacesResult(res.configDir).entries.flatMap((entry) => {
@@ -2815,36 +2772,37 @@ const youTrackUse = (res: Resolved): { hosts: string[]; tokenFile: string | null
     const tracker = issueTrackerOf(raw.issues, raw.youtrack);
     return tracker?.provider === "youtrack" ? [tracker] : [];
   });
-  if (!config && workspaces.length === 0) return null;
-  const urls = [
-    typeof config?.baseUrl === "string" ? config.baseUrl : null,
-    ...workspaces.map((tracker) => tracker.baseUrl),
-  ].filter((url): url is string => Boolean(url?.trim()));
   const raw =
     typeof config?.tokenFile === "string" && config.tokenFile
       ? config.tokenFile
       : path.join(path.dirname(configFile), "youtrack.token");
   const tokenFile = path.isAbsolute(raw) ? raw : path.resolve(path.dirname(configFile), raw);
-  return {
-    hosts: [...new Set(urls.map(ytrackHostName))],
-    tokenFile: existsSync(tokenFile) ? tokenFile : null,
-  };
+  const legacyToken = existsSync(tokenFile) ? tokenFile : null;
+  if (!config && workspaces.length === 0 && !legacyToken) return null;
+  const urls = [
+    typeof config?.baseUrl === "string" ? config.baseUrl : null,
+    ...workspaces.map((tracker) => tracker.baseUrl),
+  ].filter((url): url is string => Boolean(url?.trim()));
+  return { hosts: [...new Set(urls.map(ytrackHostName))], legacyToken };
 };
 
-/** ytrack's login for each configured YouTrack host (#711); no row without YouTrack. */
+/**
+ * ytrack's login for each configured YouTrack host (#711): Workit reaches
+ * YouTrack only through ytrack. No row without YouTrack or a legacy token.
+ */
 const checkYouTrack = (res: Resolved): DoctorCheck | null => {
   const use = youTrackUse(res);
   if (!use) return null;
-  const login = (host: string | null) => `ytrack auth login${host ? ` --host ${host}` : ""}`;
-  const logins = use.hosts.length ? use.hosts.map(login).join("; ") : login(null);
+  const legacy = use.legacyToken
+    ? `; Workit no longer reads the legacy token file ${use.legacyToken}: delete it`
+    : "";
+  const logins = use.hosts.length ? use.hosts.map(ytrackLogin).join("; ") : ytrackLogin(null);
   if (!findYtrack(res.env)) {
     return {
       id: "youtrack",
       status: "warn",
-      detail: use.tokenFile
-        ? `ytrack not on PATH: Workit falls back to the legacy token file ${use.tokenFile}, deprecated and removed in the next release`
-        : "ytrack not on PATH and no token file: YouTrack calls are unavailable",
-      fix: `${YTRACK_INSTALL}, then ${logins}${use.tokenFile ? `; then delete ${use.tokenFile}` : ""}`,
+      detail: `ytrack not on PATH: YouTrack calls are unavailable${legacy}`,
+      fix: `${YTRACK_INSTALL}, then ${logins}`,
     };
   }
   const status = ytrackStatus(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
@@ -2852,7 +2810,7 @@ const checkYouTrack = (res: Resolved): DoctorCheck | null => {
     return {
       id: "youtrack",
       status: "warn",
-      detail: "ytrack is on PATH but did not run",
+      detail: `ytrack is on PATH but did not run${legacy}`,
       fix: `Reinstall ytrack: ${YTRACK_INSTALL}`,
     };
   }
@@ -2866,11 +2824,15 @@ const checkYouTrack = (res: Resolved): DoctorCheck | null => {
     const who = rows.map(
       (row) => `${row.host ?? "the active host"}${row.login ? ` as ${row.login}` : ""}`,
     );
-    return {
-      id: "youtrack",
-      status: "pass",
-      detail: `${version} logged in to ${who.join(", ")}${use.tokenFile ? `; the legacy token file ${use.tokenFile} is unused and can be deleted` : ""}`,
-    };
+    const detail = `${version} logged in to ${who.join(", ")}${legacy}`;
+    return use.legacyToken
+      ? {
+          id: "youtrack",
+          status: "warn",
+          detail,
+          fix: `Delete ${use.legacyToken}`,
+        }
+      : { id: "youtrack", status: "pass", detail };
   }
   const why = bad.map((row) => {
     const host = row.host ?? "the active host";
@@ -2881,8 +2843,8 @@ const checkYouTrack = (res: Resolved): DoctorCheck | null => {
   return {
     id: "youtrack",
     status: "warn",
-    detail: `${version}: ${why.join("; ")}`,
-    fix: bad.map((row) => login(row.host)).join("; "),
+    detail: `${version}: ${why.join("; ")}${legacy}`,
+    fix: bad.map((row) => ytrackLogin(row.host)).join("; "),
   };
 };
 
@@ -3300,7 +3262,11 @@ const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
 const checkGrantRemotes = (res: Resolved): DoctorCheck => {
   const { warnings, notes } = remoteFindings(res.cwd, res.configDir);
   if (warnings.length === 0 && notes.length === 0)
-    return { id: "grant_remotes", status: "pass", detail: "remote URLs and workspaces agree" };
+    return {
+      id: "grant_remotes",
+      status: "pass",
+      detail: "remote URLs and workspaces agree",
+    };
   // A stricter workspace's remote here is the risk (warn); a workspace with no
   // remotes is every entry's starting point, so it informs only.
   const lines = [...warnings, ...notes];
@@ -4023,7 +3989,6 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkWorkspaceMismatch,
   checkWorkspaceLock,
   checkSessionHook,
-  checkCredentialMetadata,
   checkYouTrack,
   checkGithubIdentity,
   checkGitLabIdentity,

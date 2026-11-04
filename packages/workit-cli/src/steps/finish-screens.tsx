@@ -145,8 +145,6 @@ function describeMutation(m: SetupMutation): string {
       return `+ copy adapter ${m.platform}: ${m.path}`;
     case "install-host":
       return `+ install ${m.platform}: ${m.commands.map((command) => command.command).join(", ")}`;
-    case "set-token-path":
-      return `+ change ${m.key} in ${m.path} → ${m.value}`;
   }
 }
 
@@ -365,6 +363,16 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
             : "—"}
         </Text>
       </Text>
+      {preview.ytrack && (
+        <Text>
+          ytrack:{" "}
+          {preview.ytrack.onPath ? (
+            <Text color={inkColor("ok")}>on PATH · Apply checks the login</Text>
+          ) : (
+            <Text color={inkColor("warn")}>not on PATH · {preview.ytrack.unblock}</Text>
+          )}
+        </Text>
+      )}
       <Text>
         VCS provider: <Text color={inkColor("ok")}>{draft.values.vcsProvider}</Text>
       </Text>
@@ -394,7 +402,7 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
           ))}
           {preview.preserved.map((p) => (
             <Text key={p} color={inkColor("ok")}>
-              preserve {p} (existing token)
+              leave {p} untouched (legacy token file; Workit no longer reads it)
             </Text>
           ))}
         </Box>
