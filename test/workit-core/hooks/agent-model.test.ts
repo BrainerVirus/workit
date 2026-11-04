@@ -48,7 +48,10 @@ test("G a workit:verifier spawn with no model, W PreToolUse runs, T updatedInput
 });
 
 test("G a spawn that names model opus, W PreToolUse runs, T the model is left as is", () => {
-  const out = spawn("Agent", { subagent_type: "workit:verifier", model: "opus" });
+  const out = spawn("Agent", {
+    subagent_type: "workit:verifier",
+    model: "opus",
+  });
   expect(out.hookSpecificOutput?.updatedInput).toBeUndefined();
 });
 
@@ -73,8 +76,10 @@ test("G an implementer brief with TIER: hard, W PreToolUse runs, T it gets opus;
   });
   expect(hard.hookSpecificOutput?.updatedInput?.model).toBe("opus");
   expect(
-    spawn("Agent", { subagent_type: "workit:implementer", prompt: "WORKTREE: /w/x" })
-      .hookSpecificOutput?.updatedInput?.model,
+    spawn("Agent", {
+      subagent_type: "workit:implementer",
+      prompt: "WORKTREE: /w/x",
+    }).hookSpecificOutput?.updatedInput?.model,
   ).toBe("sonnet");
 });
 
@@ -91,7 +96,9 @@ test("G a configured verifier effort and a full Claude model id, W PreToolUse ru
   withConfig(
     {
       roles: {
-        verifier: { claude_code: { model: "claude-sonnet-5-5", effort: "high" } },
+        verifier: {
+          claude_code: { model: "claude-sonnet-5-5", effort: "high" },
+        },
         reviewer: { claude_code: { model: "haiku", effort: "high" } },
         explore: "anthropic/claude-opus-5",
       },
@@ -104,8 +111,10 @@ test("G a configured verifier effort and a full Claude model id, W PreToolUse ru
         spawn("Agent", { subagent_type: "Explore" }).hookSpecificOutput?.updatedInput?.model,
       ).toBe("opus");
       // an explicit effort stays
-      const reviewer = spawn("Agent", { subagent_type: "workit:reviewer", effort: "low" })
-        .hookSpecificOutput?.updatedInput;
+      const reviewer = spawn("Agent", {
+        subagent_type: "workit:reviewer",
+        effort: "low",
+      }).hookSpecificOutput?.updatedInput;
       expect(reviewer).toMatchObject({ model: "haiku", effort: "low" });
     },
   );
@@ -113,7 +122,9 @@ test("G a configured verifier effort and a full Claude model id, W PreToolUse ru
 
 test("G a configured model the Agent tool cannot take, W PreToolUse runs, T the spawn runs as written and a note names the value and the fix", () => {
   withConfig({ roles: { verifier: "gpt-5" } }, () => {
-    const out = spawn("Agent", { subagent_type: "workit:verifier" }).hookSpecificOutput;
+    const out = spawn("Agent", {
+      subagent_type: "workit:verifier",
+    }).hookSpecificOutput;
     expect(out?.updatedInput).toBeUndefined();
     expect(out?.additionalContext).toContain("could not apply gpt-5");
     expect(out?.additionalContext).toContain("workit models show --role verifier");
@@ -154,4 +165,57 @@ test("G a general-purpose spawn with a ROLE: decider line, W PreToolUse runs, T 
     prompt: "ROLE: decider\nPick one.",
   }).hookSpecificOutput?.updatedInput;
   expect(updated).toMatchObject({ model: "fable", effort: "high" });
+});
+
+test("G a spawn that already passes its role's model and effort, W PreToolUse runs, T it runs as written with no updatedInput (W2.21)", () => {
+  withConfig(
+    {
+      roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } },
+    },
+    () => {
+      const out = spawn("Agent", {
+        subagent_type: "workit:verifier",
+        model: "sonnet",
+        effort: "high",
+      }).hookSpecificOutput;
+      expect(out?.updatedInput).toBeUndefined();
+      expect(out?.permissionDecision).toBeUndefined();
+    },
+  );
+});
+
+test("G a spawn with no model or another model, W PreToolUse rewrites it, T the note names the exact model and effort to pass next time (W2.21)", () => {
+  withConfig(
+    {
+      roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } },
+    },
+    () => {
+      const filled = spawn("Agent", {
+        subagent_type: "workit:verifier",
+      }).hookSpecificOutput;
+      expect(filled?.updatedInput).toMatchObject({
+        model: "sonnet",
+        effort: "high",
+      });
+      expect(filled?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
+      const replaced = spawn("Agent", {
+        subagent_type: "workit:verifier",
+        model: "opus",
+      }).hookSpecificOutput;
+      expect(replaced?.updatedInput).toMatchObject({
+        model: "sonnet",
+        effort: "high",
+      });
+      expect(replaced?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
+      const effortOnly = spawn("Agent", {
+        subagent_type: "workit:verifier",
+        model: "sonnet",
+      }).hookSpecificOutput;
+      expect(effortOnly?.updatedInput).toMatchObject({
+        model: "sonnet",
+        effort: "high",
+      });
+      expect(effortOnly?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
+    },
+  );
 });

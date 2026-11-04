@@ -138,6 +138,42 @@ test("G any other spawn type with isolation, W PreToolUse runs, T isolation is d
 });
 
 test("G a verifier spawn with no isolation and a model, W PreToolUse runs, T it is left as written", () => {
-  const out = spawn({ subagent_type: "workit:verifier", prompt: "verify it", model: "sonnet" });
+  const out = spawn({
+    subagent_type: "workit:verifier",
+    prompt: "verify it",
+    model: "sonnet",
+  });
   expect(out.hookSpecificOutput).toBeUndefined();
+});
+
+test("G every agent type and either isolation mode, W PreToolUse runs, T isolation never reaches Claude Code (W2.12)", () => {
+  const types = [
+    "workit:implementer",
+    "workit:verifier",
+    "workit:reviewer",
+    "general-purpose",
+    "Explore",
+    "Plan",
+    "fork",
+    "claude",
+    "claude-code-guide",
+    "statusline-setup",
+    "someone:else",
+    undefined,
+  ];
+  for (const subagent_type of types)
+    for (const isolation of ["worktree", "remote"]) {
+      const label = `${String(subagent_type)} ${isolation}`;
+      const out = spawn({
+        subagent_type,
+        prompt: BRIEF,
+        model: "sonnet",
+        isolation,
+      });
+      expect(out.hookSpecificOutput?.permissionDecision, label).toBeUndefined();
+      const input = out.hookSpecificOutput?.updatedInput;
+      expect(input, label).toBeDefined();
+      expect(input, label).not.toHaveProperty("isolation");
+      expect(input?.prompt, label).toBe(BRIEF);
+    }
 });
