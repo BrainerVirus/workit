@@ -46,20 +46,29 @@ directory. Workit keeps the previous version for a manual rollback:
 ln -sfn versions/<previous> ~/.local/share/workit/current
 ```
 
-After the swap, the upgrade runs the PATH-resolved `workit --version`. If that prints
-anything other than the new version, the CLI row fails and lists every `workit` install in
-`which -a` order, then the ones PATH does not reach.
+After the swap, the upgrade runs `workit --version` the way a new login shell finds it: in
+PATH order, without the npx cache directory `npx … upgrade` put first on PATH and without a
+host plugin's own launcher. If that prints anything other than the new version, the CLI row
+fails, the upgrade exits non-zero and never prints `Verified`, and the row's fix is the one
+command that makes PATH's `workit` the launcher: the removal of the copy PATH runs, a move of
+a foreign file at `~/.local/bin/workit` into the backup with the launcher link in its place,
+or the launcher's directory first on PATH. The row lists every `workit` install in `which -a`
+order, then the ones PATH does not reach. The npx cache copy that runs the upgrade is never
+listed or removed.
 
 ## Moving from an npm global install
 
 The first upgrade under this layout looks for other copies: `@brainervirus/workit-cli` in
 each fnm, nvm, mise or asdf Node's npm global prefix, a volta package, and a hand-written
-`~/.local/bin/workit` wrapper.
+wrapper on PATH that runs one (it names a workit-cli package, or execs another `workit` by
+path, such as `exec <fnm node> <fnm prefix>/bin/workit "$@"`).
 
 - At a terminal it asks `[y/N]`. On `y`, each copy is copied under
   `~/.local/state/workit/upgrades/<time>/cli-copies/` (with a `manifest.json`) and then
   removed with `npm uninstall --global --prefix <prefix>`, `volta uninstall` or, for a
-  wrapper, a move that leaves a link to the launcher in its place.
+  wrapper, a move that leaves a link to the launcher in its place. Wrappers go first, so no
+  `workit` on PATH runs a copy removed after it; a copy that a wrapper that could not be
+  replaced still runs is kept, and the row says why.
 - On `N`, in an agent's shell, or with `--json`, nothing is removed. The CLI row prints
   the exact commands that back up and remove each copy.
 
@@ -68,7 +77,8 @@ each fnm, nvm, mise or asdf Node's npm global prefix, a volta package, and a han
 `workit doctor` reports `cli_installs`: every `workit` on PATH and in the version-manager
 prefixes, each with its realpath and version. The check fails when an install other than the
 launcher comes first on PATH, or when another copy holds a different version. Its fix lists the
-removal commands.
+removal commands. A host plugin's own launcher, such as the Claude Code plugin's `bin/workit`
+on its Bash tool's PATH, is managed by its host: the row names it and never counts it.
 
 ## Windows limits
 

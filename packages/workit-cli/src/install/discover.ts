@@ -5,15 +5,18 @@
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { scanInstalledNodes } from "@brainervirus/workit-core/src/core/node-resolve.mjs";
+import { isEphemeralCachePath } from "@brainervirus/workit-core/src/core/runtime-identity";
 import { isOwnedLauncher } from "./owned";
 import { CLI_PACKAGE_NAME, ownedPaths, ownedVersion, packageVersion, realpathOr } from "./paths";
 
 /**
  * owned: the Workit launcher; npm: a package in an npm global prefix; volta: a
- * volta-managed package; wrapper: a hand-written script; link: anything else
- * (a dev checkout link), reported but never removed.
+ * volta-managed package; wrapper: a hand-written script; host: a host plugin's
+ * own launcher (the Claude Code plugin's bin/workit, #683), which its host
+ * manages; link: anything else (a dev checkout link, a link into an npx
+ * cache), reported but never removed.
  */
-type InstallKind = "owned" | "npm" | "volta" | "wrapper" | "link";
+type InstallKind = "owned" | "npm" | "volta" | "wrapper" | "host" | "link";
 
 export type FoundInstall = {
   /** The file PATH (or the prefix's bin) holds. */
@@ -28,6 +31,8 @@ export type FoundInstall = {
   packageDir: string | null;
   /** Position among the PATH matches (0 = what `workit` runs), or null when PATH misses it. */
   pathIndex: number | null;
+  /** The `workit` a wrapper execs, as its text names it (it may be gone); null otherwise. */
+  runs: string | null;
 };
 
 const PACKAGE_SEGMENTS = ["node_modules", ...CLI_PACKAGE_NAME.split("/")];
@@ -61,8 +66,21 @@ const npmPackageOf = (file: string): { prefix: string; packageDir: string } | nu
   return null;
 };
 
-/** The workit-cli package a hand-written wrapper runs, read from its text. */
-const wrapperTarget = (file: string): string | null => {
+/** The workit-cli package dir a file (after its links) belongs to, or null. */
+export const npmPackageOfFile = (file: string): string | null =>
+  npmPackageOf(realpathOr(file))?.packageDir ?? null;
+
+const WORKIT_NAMES = new Set(["workit", "workit.cmd", "workit.exe", "workit.ps1"]);
+
+/**
+ * What a hand-written wrapper runs, read from its text: a workit-cli package
+ * path it names, else the first other `workit` it names by absolute path
+ * (`exec <node> <prefix>/bin/workit "$@"`, W2.39), `$HOME` and `~` expanded.
+ */
+const wrapperTarget = (
+  file: string,
+  env: NodeJS.ProcessEnv,
+): { runs: string; packageDir: string | null } | null => {
   let text = "";
   try {
     text = readFileSync(file, "utf8").slice(0, 4000);
@@ -70,7 +88,41 @@ const wrapperTarget = (file: string): string | null => {
     return null;
   }
   const found = /([^\s'"=]*node_modules[\\/]@brainervirus[\\/]workit-cli)/.exec(text);
-  return found ? found[1] : null;
+  if (found) return { runs: found[1], packageDir: found[1] };
+  const home = env.HOME || env.USERPROFILE || "";
+  const self = realpathOr(file);
+  for (const match of text.matchAll(/"([^"\n]+)"|'([^'\n]+)'|([^\s'"`;|&<>()=]+)/g)) {
+    let candidate = match[1] ?? match[2] ?? match[3];
+    if (home) candidate = candidate.replace(/^(?:\$\{HOME\}|\$HOME|~)(?=[\\/])/, home);
+    if (!path.isAbsolute(candidate) && !path.win32.isAbsolute(candidate)) continue;
+    if (!WORKIT_NAMES.has(path.basename(candidate.replaceAll("\\", "/")).toLowerCase())) continue;
+    const real = realpathOr(candidate);
+    if (real === self) continue;
+    return { runs: candidate, packageDir: npmPackageOf(real)?.packageDir ?? null };
+  }
+  return null;
+};
+
+const HOST_PLUGIN_PACKAGE = /^@brainervirus\/workit-(?:claude-code|codex|cursor|opencode|pi)$/;
+
+/**
+ * The host plugin package whose own `bin/workit` this is (#683: the Claude
+ * Code plugin's launcher on the Bash tool's PATH), read from the plugin
+ * root's package.json; null for anything else.
+ */
+export const hostLauncherOf = (file: string): { name: string; version: string | null } | null => {
+  const bin = path.dirname(file);
+  if (path.basename(bin) !== "bin") return null;
+  try {
+    const found = JSON.parse(
+      readFileSync(path.join(path.dirname(bin), "package.json"), "utf8"),
+    ) as { name?: unknown; version?: unknown };
+    return typeof found.name === "string" && HOST_PLUGIN_PACKAGE.test(found.name)
+      ? { name: found.name, version: typeof found.version === "string" ? found.version : null }
+      : null;
+  } catch {
+    return null;
+  }
 };
 
 const pathNames = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] => {
@@ -79,16 +131,27 @@ const pathNames = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] 
   return [...exts.map((ext) => `workit${ext.toLowerCase()}`), "workit"];
 };
 
-/** Every `workit` on PATH, in order, duplicates of the same file dropped. */
+/** PATH without the directories a package runner put there for one run (npx, pnpm dlx). */
+export const persistentPath = (
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): string[] =>
+  (env.PATH ?? env.Path ?? "")
+    .split(platform === "win32" ? ";" : ":")
+    .filter((dir) => dir && !isEphemeralCachePath(`${dir}/`));
+
+/**
+ * Every `workit` on PATH, in order, duplicates of the same file dropped. A
+ * package runner's cache dir (`~/.npm/_npx/<hash>/node_modules/.bin` while
+ * `npx … upgrade` runs) is skipped: no shell the person opens later has it.
+ */
 export const pathWorkits = (
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): string[] => {
-  const delimiter = platform === "win32" ? ";" : ":";
   const seen = new Set<string>();
   const found: string[] = [];
-  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
-    if (!dir) continue;
+  for (const dir of persistentPath(env, platform)) {
     for (const name of pathNames(env, platform)) {
       const file = path.join(dir, name);
       if (seen.has(file) || !isFile(file)) continue;
@@ -155,16 +218,13 @@ const classify = (
   owned: { launcher: string; version: string | null },
 ): Omit<FoundInstall, "pathIndex"> => {
   const real = realpathOr(file);
+  const base = { path: file, realpath: real, manager: null, prefix: null, packageDir: null };
   if (real === owned.launcher || isOwnedLauncher(real))
-    return {
-      path: file,
-      realpath: real,
-      version: owned.version,
-      kind: "owned",
-      manager: null,
-      prefix: null,
-      packageDir: null,
-    };
+    return { ...base, version: owned.version, kind: "owned", runs: null };
+  const host = hostLauncherOf(real);
+  if (host) return { ...base, version: host.version, kind: "host", runs: null };
+  // A link into a package runner's cache: npm cannot uninstall it, and it breaks when the cache goes.
+  if (isEphemeralCachePath(real)) return { ...base, version: null, kind: "link", runs: null };
   const npm = npmPackageOf(real);
   if (npm) {
     const manager = managerOf(npm.packageDir);
@@ -175,6 +235,7 @@ const classify = (
       kind: manager === "volta" && npm.prefix.includes("packages") ? "volta" : "npm",
       manager,
       ...npm,
+      runs: null,
     };
   }
   // A volta shim, or a Windows npm .cmd shim: find the package beside it.
@@ -189,6 +250,7 @@ const classify = (
           manager: "volta",
           prefix: copy.prefix,
           packageDir: copy.packageDir,
+          runs: null,
         };
   if (platform === "win32") {
     const packageDir = path.join(path.dirname(real), ...PACKAGE_SEGMENTS);
@@ -201,6 +263,7 @@ const classify = (
         manager: managerOf(packageDir),
         prefix: path.dirname(real),
         packageDir,
+        runs: null,
       };
   }
   let symlink = false;
@@ -209,15 +272,15 @@ const classify = (
   } catch {
     symlink = false;
   }
-  const target = symlink ? null : wrapperTarget(real);
+  const target = symlink ? null : wrapperTarget(real, env);
+  // A wrapper around the owned launcher is the owned launcher.
+  if (target && realpathOr(target.runs) === owned.launcher)
+    return { ...base, version: owned.version, kind: "owned", runs: target.runs };
   return {
-    path: file,
-    realpath: real,
-    version: target ? packageVersion(target) : null,
+    ...base,
+    version: target?.packageDir ? packageVersion(target.packageDir) : null,
     kind: symlink ? "link" : "wrapper",
-    manager: null,
-    prefix: null,
-    packageDir: null,
+    runs: target?.runs ?? null,
   };
 };
 
@@ -251,6 +314,7 @@ export const listInstalls = (
       prefix: copy.prefix,
       packageDir: copy.packageDir,
       pathIndex: null,
+      runs: null,
     });
   }
   return found;
@@ -262,10 +326,12 @@ export const describeInstall = (install: FoundInstall): string => {
     install.kind === "owned"
       ? "Workit-owned launcher"
       : install.kind === "wrapper"
-        ? "hand-written wrapper"
-        : install.kind === "link"
-          ? "link"
-          : `${install.manager ?? "npm"} global prefix ${install.prefix}`;
+        ? `hand-written wrapper${install.runs ? ` running ${install.runs}` : ""}`
+        : install.kind === "host"
+          ? "host plugin launcher, managed by its host"
+          : install.kind === "link"
+            ? "link"
+            : `${install.manager ?? "npm"} global prefix ${install.prefix}`;
   const pathPart = install.pathIndex === null ? "not on PATH" : `PATH #${install.pathIndex + 1}`;
   const real = install.realpath === install.path ? "" : ` -> ${install.realpath}`;
   return `${install.path}${real} (workit ${install.version ?? "unknown"}; ${where}; ${pathPart})`;

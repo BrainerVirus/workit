@@ -295,9 +295,16 @@ async function upgradeOnce(
   if (permissions.refused)
     out.write(`permissions: ${style.warn("not refreshed:")} ${permissions.refused}\n`);
   if (result.backup) out.write(`Backup: ${style.path(result.backup)}\n`);
+  // A failed row (the PATH `workit` missing the new CLI, say) is never "Verified".
+  if (failed)
+    out.write(
+      `${style.fail("Not verified:")} the upgrade failed; run the fix under each FAILED row above.\n`,
+    );
   out.write(
     left.length === 0
-      ? `${style.ok("Verified:")} workit doctor is clean for versions, assets, agents, stale installs and permissions.\n`
+      ? failed
+        ? ""
+        : `${style.ok("Verified:")} workit doctor is clean for versions, assets, agents, stale installs and permissions.\n`
       : `${style.warn("Left after upgrade (workit doctor):")}\n${left
           .map(
             (check) =>

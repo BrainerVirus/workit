@@ -525,7 +525,12 @@ const checkRuntime = (res: Resolved): DoctorCheck => {
   };
 };
 
-type HookEntry = { host: string; entry: string; args: string[]; payload: object };
+type HookEntry = {
+  host: string;
+  entry: string;
+  args: string[];
+  payload: object;
+};
 
 /** Every installed hook launcher this doctor can run: Claude Code, Codex and Cursor. */
 const installedHookEntries = (res: Resolved, cwd: string): HookEntry[] => {
@@ -2408,6 +2413,17 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
 };
 
 /**
+ * Top-level keys an older Workit wrote that nothing reads any more: doctor
+ * names them obsolete with the removal, never "unknown".
+ */
+const OBSOLETE_CONFIG_KEYS: Partial<Record<ConfigSchemaFile, Record<string, string>>> = {
+  "config.json": {
+    timezone:
+      'the setup wizard wrote it through Workit 2.1.2 and nothing reads it since 2.1.3; a work item\'s day comes from youtrack.json "timezone", else TZ',
+  },
+};
+
+/**
  * Each config file checked against its published JSON Schema (#614), naming
  * the file and the JSON path of every bad value. A warning, never a failure:
  * Workit itself reads these values leniently and falls back.
@@ -2420,19 +2436,33 @@ const checkConfigSchema = (res: Resolved): DoctorCheck => {
     "youtrack.json": res.env.WORKIT_YOUTRACK_CONFIG ?? path.join(res.configDir, "youtrack.json"),
   };
   const problems: string[] = [];
+  const obsolete: string[] = [];
   for (const [name, file] of Object.entries(files) as Array<[ConfigSchemaFile, string]>) {
     const parsed = existsSync(file) ? readJson(file) : null;
     if (!parsed) continue;
-    for (const issue of configSchemaIssues(name, parsed))
-      problems.push(`${file} ${issue.path}: ${issue.message}`);
+    for (const issue of configSchemaIssues(name, parsed)) {
+      const why = OBSOLETE_CONFIG_KEYS[name]?.[issue.path];
+      if (why && issue.message.startsWith("unknown key")) {
+        problems.push(`${file} ${issue.path}: obsolete key (${why})`);
+        obsolete.push(`delete "${issue.path}" from ${file}`);
+      } else problems.push(`${file} ${issue.path}: ${issue.message}`);
+    }
   }
   if (problems.length === 0)
     return { id: "config_schema", status: "pass", detail: "config files match their schemas" };
+  const rest = problems.length > obsolete.length;
   return {
     id: "config_schema",
     status: "warn",
     detail: problems.join("; "),
-    fix: `Fix the named values (an editor reading "$schema" underlines them); the schemas are under ${CONFIG_SCHEMA_BASE_URL}`,
+    fix: [
+      ...obsolete,
+      ...(rest
+        ? [
+            `Fix the named values (an editor reading "$schema" underlines them); the schemas are under ${CONFIG_SCHEMA_BASE_URL}`,
+          ]
+        : []),
+    ].join("; "),
   };
 };
 
@@ -3744,7 +3774,13 @@ const removalFor = (res: Resolved, install: FoundInstall, index: number): string
  */
 const checkCliInstalls = (res: Resolved): DoctorCheck => {
   const env = { ...res.env, HOME: res.home };
-  const installs = listInstalls(env);
+  const found = listInstalls(env);
+  // A host plugin's own launcher (Claude Code's bin/workit, #683) is its host's to manage, never a stray copy.
+  const hosted = found.filter((install) => install.kind === "host");
+  const installs = found.filter((install) => install.kind !== "host");
+  const hostNote = hosted.length
+    ? `; host plugin launchers (managed by their host, not counted): ${hosted.map(describeInstall).join("; ")}`
+    : "";
   const owned = ownedVersion(env);
   const paths = ownedPaths(env);
   if (!owned)
@@ -3755,7 +3791,9 @@ const checkCliInstalls = (res: Resolved): DoctorCheck => {
       ...(installs.some((install) => install.kind !== "owned") ? { fix: OWNED_FIX } : {}),
     };
   const launcher = `${paths.linked} -> ${realpathOr(paths.linked)} (workit ${owned})`;
-  const first = installs.find((install) => install.pathIndex === 0);
+  const first = installs
+    .filter((install) => install.pathIndex !== null)
+    .toSorted((a, b) => a.pathIndex! - b.pathIndex!)[0];
   const shadow = first && first.kind !== "owned" ? first : null;
   const others = installs.filter((install) => install.kind !== "owned");
   const differing = others.filter((install) => install !== shadow && install.version !== owned);
@@ -3787,13 +3825,13 @@ const checkCliInstalls = (res: Resolved): DoctorCheck => {
     return {
       id: "cli_installs",
       status: "warn",
-      detail: `launcher ${launcher}; other copies of the same version a version switch could put first: ${others.map(describeInstall).join("; ")}`,
+      detail: `launcher ${launcher}; other copies of the same version a version switch could put first: ${others.map(describeInstall).join("; ")}${hostNote}`,
       fix,
     };
   return {
     id: "cli_installs",
     status: "pass",
-    detail: `workit ${owned} via the launcher ${launcher}; no other install`,
+    detail: `workit ${owned} via the launcher ${launcher}; no other install${hostNote}`,
   };
 };
 

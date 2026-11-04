@@ -1,4 +1,12 @@
-import { existsSync, readdirSync, mkdirSync, copyFileSync, chmodSync, cpSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  mkdirSync,
+  copyFileSync,
+  chmodSync,
+  cpSync,
+  lstatSync,
+} from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import pkg from "../../package.json" with { type: "json" };
@@ -13,6 +21,7 @@ import { describeInstall, listInstalls } from "../install/discover";
 import { leftLines, migrateCopies, migrationCopies } from "../install/migrate";
 import { resolveInstallNode } from "../install/node";
 import { installOwned, writeLaunchers } from "../install/owned";
+import { realpathOr, shellQuote } from "../install/paths";
 import { pathResolvedWorkit } from "../install/verify";
 import { createProgress, type StepStatus } from "../progress";
 import { codexInventory } from "./codex-inventory";
@@ -547,6 +556,40 @@ export async function applyUpgrade(
   return done(backup);
 }
 
+const isSymbolicLink = (file: string): boolean => {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The one command that makes PATH's `workit` the owned launcher: the left
+ * copy's own removal command when that copy is what PATH runs; a foreign file
+ * at the launcher's place moved into the backup and replaced by the link;
+ * else the launcher's directory first on PATH.
+ */
+const pathFix = (
+  seen: string | null,
+  context: {
+    launcher: string;
+    linked: string;
+    backup: string;
+    left: { copy: { path: string }; command: string }[];
+  },
+): string => {
+  const left = context.left.find((entry) => entry.copy.path === seen);
+  if (left) return left.command;
+  const { launcher, linked } = context;
+  if (seen === linked && realpathOr(linked) !== realpathOr(launcher)) {
+    const save = path.join(context.backup, "cli-copies", "launcher-place");
+    return `mkdir -p ${shellQuote(save)} && mv ${shellQuote(linked)} ${shellQuote(save)}/ && ln -s ${shellQuote(launcher)} ${shellQuote(linked)}`;
+  }
+  if (seen === linked) return CLI_FIX;
+  return `export PATH="${path.dirname(linked)}:$PATH"`;
+};
+
 /**
  * The owned CLI install (#648): install the version under installRoot() with
  * a Node >= 24's own npm, swap `current`, write the launcher, migrate the
@@ -591,7 +634,11 @@ const applyCli = async (
   // A foreign file at the launcher's place that migration did not replace stays visible.
   if (removeCopies && launchers.foreign) writeLaunchers({ env, installNode: node.node });
   const details = [
-    ...migration.removed.map((copy) => `removed (backup in ${backup}): ${describeInstall(copy)}`),
+    ...migration.removed.map((copy) =>
+      copy.kind === "wrapper" && isSymbolicLink(copy.path)
+        ? `replaced with a link to ${launchers.launcher} (backup in ${backup}): ${describeInstall(copy)}`
+        : `removed (backup in ${backup}): ${describeInstall(copy)}`,
+    ),
     ...(migration.left.length
       ? [
           `other installs left in place; back them up and remove them with:`,
@@ -599,16 +646,17 @@ const applyCli = async (
         ]
       : []),
   ];
+  // The proof: `workit --version` as a new login shell resolves it (no npx cache dir).
   const seen = (deps.pathWorkit ?? (() => pathResolvedWorkit(env)))();
   if (seen.version !== cli.latest) {
     const listing = listInstalls(env).map((install) => `  ${describeInstall(install)}`);
     const onPath = path.dirname(launchers.linked);
     return fail(
       seen.path
-        ? `installed ${cli.latest} under ${cli.root}, but PATH runs ${seen.path} (${seen.version ?? seen.error ?? "unknown"}), not ${cli.latest}`
-        : `installed ${cli.latest} under ${cli.root}, but ${seen.error ?? "no workit on PATH"}; put ${onPath} first on PATH`,
+        ? `installed ${cli.latest} under ${cli.root}, but PATH runs ${seen.path} (${seen.version ?? seen.error ?? "unknown"}), not ${cli.latest}; \`workit\` does not reach the owned install until the fix below runs`
+        : `installed ${cli.latest} under ${cli.root}, but ${seen.error ?? "no workit on PATH"}; put ${onPath} first on PATH (in your shell profile too)`,
       [`workit installs (which -a order, then other prefixes):`, ...listing, ...details],
-      `export PATH="${onPath}:$PATH" (first on PATH in your shell profile), or remove the other installs with the commands below`,
+      pathFix(seen.path, { ...launchers, backup, left: migration.left }),
     );
   }
   return {
