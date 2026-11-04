@@ -50,6 +50,18 @@ function forgeFor(io: Io, offline: boolean): { forge: ResolvedForge | null; erro
     : { forge: null, error: connected.error };
 }
 
+/**
+ * The plan a verb acts on: `--name` (the registry maps `--fanout` onto it),
+ * else the one this branch or this lead session belongs to (#641).
+ */
+const pickFanout = (io: Io, values: { name?: string }): ReturnType<typeof selectFanout> =>
+  selectFanout(
+    io.cwd,
+    values.name ?? null,
+    currentBranch(io.cwd),
+    io.env.WORKIT_SESSION_ID?.trim() || null,
+  );
+
 const failed = (io: Io, result: FanoutError): number =>
   emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
 
@@ -194,7 +206,7 @@ function brief(argv: string[], io: Io): number {
   const attempt = rawAttempt === undefined ? null : Number(rawAttempt);
   if (attempt !== null && !(Number.isInteger(attempt) && attempt >= 1 && attempt <= 9))
     return usage(io, "--attempt takes a number from 1 to 9", BRIEF_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const result = renderBrief(io.cwd, selected.data, {
     slice: flags.positionals[0],
@@ -225,7 +237,7 @@ const renderCheck = (data: CheckOutcome): string[] => [
 function check(argv: string[], io: Io): number {
   const flags = parseFlags(argv, { name: "value", base: "value", offline: "boolean" });
   if (typeof flags === "string") return usage(io, flags, CHECK_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const result = progressFor(io).runSync(
     "Checking the fan-out slices",
@@ -273,6 +285,9 @@ const renderStatus = (data: StatusOutcome): string[] => {
       const why = slice.state === "landed" ? [] : [...slice.reasons, ...slice.notes];
       return `  ${label.padEnd(11)} ${slice.id} (${slice.branch}) ${detail}${why.length ? `\n      ${why.join("\n      ")}` : ""}`;
     }),
+    ...data.stacks.map(
+      (stack) => `stack ${stack.name ?? "(not recorded yet)"}: ${stack.slices.join(" -> ")}`,
+    ),
     `landing order: ${data.landingOrder.length ? data.landingOrder.join(", ") : "(none ready)"}`,
     ...(data.spawnable.length ? [`spawnable: ${data.spawnable.join(", ")}`] : []),
     `next: ${data.next}`,
@@ -289,7 +304,7 @@ function status(argv: string[], io: Io): number {
   const stuckAfterMs = raw === undefined ? null : parseDuration(raw);
   if (stuckAfterMs === 0 || (raw !== undefined && stuckAfterMs === null))
     return usage(io, "--stuck-after takes a duration such as 30m, 45m or 2h", STATUS_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const forge = forgeFor(io, flags.booleans.has("offline"));
   const result = progressFor(io).runSync(
@@ -324,7 +339,7 @@ function worktree(argv: string[], io: Io): number {
     );
   if (action === "create" && flags.booleans.has("force"))
     return usage(io, "--force applies to release only", WORKTREE_USAGE);
-  const selected = selectFanout(io.cwd, flags.values.name ?? null, currentBranch(io.cwd));
+  const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const actor = actorFromEnv(io.env);
   if (action === "create") {
@@ -337,6 +352,7 @@ function worktree(argv: string[], io: Io): number {
     return emit(io, ok(result.data), (data: CreateOutcome) => [
       `${data.created ? "created" : "kept"} worktree for slice ${data.slice} (${data.mode}): ${data.path}`,
       `  branch ${data.branch} <- ${data.base} at ${short(data.head)}`,
+      ...(data.stack ? [`  stack ${data.stack.name}: ${data.stack.slices.join(" -> ")}`] : []),
       `  scratch ${data.scratch}  (put it in the worker brief: temp files go here)`,
       ...data.notes.map((note) => `note: ${note}`),
     ]);

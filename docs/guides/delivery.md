@@ -726,7 +726,7 @@ workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record th
 workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
 workit stack sync [--local] [--dry-run] [--force <branch>]
 workit stack restack [--dry-run] [--force <branch>]                # sync, then delete the merged branches locally
-workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>]
+workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--others-pr --reason <why>]
 ```
 
 - The order is stored in `<git common dir>/workit/stacks/`, shared by every
@@ -738,6 +738,11 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>]
   unless you pass `--force <branch>`. On a conflict, resolve,
   `git rebase --continue`, then `workit stack sync` again. Branches with merge
   commits are refused.
+- `sync` also notices a parent landed by squash on its own (its change has
+  the same patch-id as one trunk commit) and rebases the child onto the trunk
+  with only the child's commits.
+- `land --others-pr --reason <why>` lands PRs another author opened, as
+  `workit pr merge --others-pr` does; without it they are refused.
 - A restacked branch with the same patch-id and diff keeps its verdict; CI
   always runs again.
 - After a parent PR lands by squash, run `workit stack restack`. A squash
@@ -864,7 +869,10 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   The lead needs a `WORKIT_SESSION_ID` (it refuses without one); a worker id
   longer than 128 characters hashes its slice part.
 - Slices are independent PRs off the trunk by default. A slice with exactly
-  one `dependsOn` is stacked on that slice's branch. Once every dependency
+  one `dependsOn` is stacked on that slice's branch, and `worktree create`
+  records it as a `workit stack` (a second child of one parent starts its own
+  stack); `fanout status` lists each stack (`stack <name>: a -> b`) and names
+  `workit stack sync` once a parent has landed. Once every dependency
   has landed (a merged PR, or git finds the squashed change on the trunk),
   `worktree create` starts the dependent slice from the trunk instead of the
   dependency's pre-squash tip, says so in a note, and its brief names the

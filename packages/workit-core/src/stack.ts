@@ -745,6 +745,44 @@ export async function withStackLock<T>(
   }
 }
 
+/**
+ * Hold the stack's lock for a synchronous `fn` without waiting: a live holder
+ * answers `busy` at once; a stale lock is reclaimed first.
+ */
+export function withStackLockSync<T>(
+  cwd: string,
+  name: string,
+  fn: () => StackResult<T>,
+): StackResult<T> {
+  const dir = stacksDir(cwd);
+  if (!dir.ok) return dir;
+  if (!validName(name))
+    return stackFail("invalid_input", "a stack name must be 1-200 printable characters");
+  const lock = path.join(dir.data, `${fileFor(name)}.lock`);
+  try {
+    fs.mkdirSync(dir.data, { recursive: true });
+  } catch (error) {
+    return stackFail("unavailable", `cannot create ${dir.data}: ${(error as Error).message}`);
+  }
+  let owner = takeLock(lock);
+  if (!owner) {
+    const seen = readOwner(lock);
+    if (stackLockStale(seen.raw, seen.age) && reapLock(lock, seen.raw)) owner = takeLock(lock);
+  }
+  if (!owner)
+    return stackFail(
+      "busy",
+      `stack ${name} is busy: another workit stack command holds ${lock}`,
+      "retry when it finishes",
+      { lock },
+    );
+  try {
+    return fn();
+  } finally {
+    releaseLock(lock, owner);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // plan
 
@@ -862,7 +900,10 @@ export function planStack(
         const status = resolved.forge.prStatus(before.pr);
         still = status.ok && status.data.state === "merged";
       } else
-        still = hasOwnCommits(cwd, tip, before.lastParentHead) && isAncestor(cwd, tip, trunkSha);
+        still =
+          hasOwnCommits(cwd, tip, before.lastParentHead) &&
+          (isAncestor(cwd, tip, trunkSha) ||
+            squashedOnTrunk(cwd, before.lastParentHead as string, tip, trunkSha));
       if (still) {
         entries.push(before);
         continue;
@@ -951,6 +992,31 @@ export function planStack(
       notes,
     },
   };
+}
+
+/**
+ * Record (or refresh) stack `name` as `branches`, bottom first, without the
+ * forge: `fanout worktree create` calls it when a slice starts on its parent
+ * slice's branch, so `stack sync` can later replay only the child's commits.
+ */
+export function recordStack(
+  cwd: string,
+  input: { name: string; trunk: string; branches: string[] },
+): StackResult<{ stack: StackFile; created: boolean }> {
+  return withStackLockSync(cwd, input.name, () => {
+    const existing = readStack(cwd, input.name);
+    if (!existing.ok) return existing;
+    const planned = planStack(
+      cwd,
+      null,
+      { name: input.name, trunk: input.trunk, branches: input.branches },
+      existing.data,
+    );
+    if (!planned.ok) return planned;
+    const written = writeStack(cwd, planned.data.stack);
+    if (!written.ok) return written;
+    return { ok: true, data: { stack: planned.data.stack, created: planned.data.created } };
+  });
 }
 
 /** `tip` has commits of its own beyond `base` (an empty branch is not "merged"). */
@@ -1434,13 +1500,15 @@ function detectMerged(
       state.docs.set(entry.pr, read.data);
       merged = read.data.state === "merged";
     } else {
-      // Without a PR only ancestry can tell; a branch with no commits of its
-      // own is empty, not merged.
+      // Without a PR only git can tell: the tip is on the trunk, or its own
+      // change is one trunk commit (a squash merge). A branch with no commits
+      // of its own is empty, not merged.
       const tip = branchTip(cwd, entry.branch);
       merged =
         tip !== null &&
         hasOwnCommits(cwd, tip, entry.lastParentHead) &&
-        isAncestor(cwd, tip, trunkSha);
+        (isAncestor(cwd, tip, trunkSha) ||
+          squashedOnTrunk(cwd, entry.lastParentHead as string, tip, trunkSha));
     }
     if (merged) {
       entry.merged = {
@@ -1452,6 +1520,49 @@ function detectMerged(
     }
   }
   return { ok: true, data: newly };
+}
+
+/** Trunk commits scanned for a squash merge at most. */
+const SQUASH_SCAN = 500;
+
+/**
+ * Whether `base..tip` landed on the trunk as one squash commit: its patch-id
+ * equals one trunk commit's since they forked (the trunk not touching the
+ * same lines in between). Squash merges never make the tip an ancestor.
+ */
+function squashedOnTrunk(cwd: string, base: string, tip: string, trunkSha: string): boolean {
+  const own = patchId(cwd, base, tip);
+  const fork = mergeBase(cwd, tip, trunkSha);
+  if (!own || !fork || fork === trunkSha) return false;
+  const log = gitRun(cwd, [
+    "log",
+    "--no-merges",
+    `--max-count=${SQUASH_SCAN}`,
+    "-p",
+    "--format=commit %H",
+    "-U3",
+    "--diff-algorithm=myers",
+    "--indent-heuristic",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-renames",
+    "--full-index",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    `${fork}..${trunkSha}`,
+    "--",
+  ]);
+  if (!log.ok || !log.stdout.trim()) return false;
+  const ids = spawnSync("git", ["patch-id", "--stable"], {
+    cwd,
+    input: log.stdout,
+    encoding: "utf8",
+    timeout: GIT_TIMEOUTS.local,
+    windowsHide: true,
+  });
+  if (ids.status !== 0) return false;
+  return ids.stdout.split("\n").some((line) => line.split(" ")[0] === own);
 }
 
 /**
@@ -1971,6 +2082,8 @@ export type LandOptions = {
   unverified?: { reason: string } | null;
   /** Merge onto a red base (`--base-red-ok`); each merge records the reason. */
   baseRedOk?: { reason: string } | null;
+  /** Merge PRs another author opened (`--others-pr`, as `pr merge`); each merge records the reason. */
+  othersPr?: { reason: string } | null;
   /** How long to wait for CI on a PR that was just restacked. */
   timeoutMs: number;
   intervalMs: number;
@@ -2172,6 +2285,7 @@ export async function landStack(
         expect: { base: stack.trunk, branch: entry.branch },
         ...(bypass && !verdict.satisfied ? { unverified: bypass } : {}),
         ...(options.baseRedOk ? { baseRedOk: options.baseRedOk } : {}),
+        ...(options.othersPr ? { othersPr: options.othersPr } : {}),
       },
       ctx.sleep,
     );

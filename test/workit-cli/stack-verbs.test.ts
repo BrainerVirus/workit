@@ -294,6 +294,63 @@ test("stack land: a red base refuses the merge, and --base-red-ok --reason passe
   });
 });
 
+/** The forge's runner, but every PR reads as opened by another author. */
+const othersPrs = (forge: StackForge) => {
+  const inner = forge.runner;
+  forge.runner = (bin, args, options) => {
+    const result = inner(bin, args, options);
+    if (!args.some((arg) => /^repos\/o\/r\/pulls\/\d+$/u.test(arg))) return result;
+    try {
+      const doc = JSON.parse(result.stdout) as { user?: { login?: string } };
+      if (doc.user?.login !== "octo") return result;
+      return { ...result, stdout: JSON.stringify({ ...doc, user: { login: "someone-else" } }) };
+    } catch {
+      return result;
+    }
+  };
+  Object.assign(forgeDeps, { runner: forge.runner });
+};
+
+test("stack land (W2.19): another author's PR stops at others_pr; --others-pr --reason lands it and records who and why, as pr merge does", async () => {
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  othersPrs(forge);
+  const refused = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
+  expect(refused.json().data.landed).toEqual([]);
+  expect(refused.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "merge_refused" });
+  expect(refused.json().data.stoppedAt.detail).toContain("others_pr");
+  expect(forge.writes).toEqual([]);
+
+  const needsReason = await run(["stack", "land", "--others-pr"], forge.cwd);
+  expect(needsReason.code).toBe(2);
+  expect(needsReason.stderr).toContain("--others-pr needs --reason");
+
+  const landed = await run(
+    [
+      "stack",
+      "land",
+      "--max",
+      "1",
+      "--others-pr",
+      "--reason",
+      "the user asked to land Ana's stack",
+      "--json",
+    ],
+    forge.cwd,
+  );
+  expect(landed.code, landed.stderr + landed.stdout).toBe(0);
+  expect(landed.json().data.landed.map((item: { pr: number }) => item.pr)).toEqual([11]);
+  expect(forge.writes).toContain("merge 11");
+  expect(rows(forge.cwd, "pr.merged")[0]).toMatchObject({
+    othersPr: {
+      author: "someone-else",
+      login: "octo",
+      reason: "the user asked to land Ana's stack",
+    },
+  });
+});
+
 test("stack land: given no merge grant, then nothing merges and it stops at verified, ready", async () => {
   const forge = setup("github", { push: true, pr: true, merge: false });
   await plan(forge);

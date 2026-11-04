@@ -30,6 +30,7 @@ import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/re
 import type { ResolvedForge } from "./forge/resolve";
 import { appendObserved, readLedger, type LedgerActor } from "./ledger";
 import { detectLanding, forgeBreaker, sliceStart } from "./fanout-landed";
+import { recordSliceStack } from "./fanout-stack";
 import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
 import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
 import {
@@ -268,6 +269,8 @@ export type CreateOutcome = {
   dependencies: LinkedDependencies | null;
   /** The install command to run in the worktree when its lockfile differs from the main checkout's. */
   install: string | null;
+  /** The `workit stack` this slice was recorded in when it started on its parent slice's branch. */
+  stack: { name: string; slices: string[] } | null;
   notes: string[];
 };
 
@@ -280,6 +283,11 @@ const LOCKFILES: ReadonlyArray<[string, (dir: string) => string]> = [
   ["package-lock.json", (dir) => `npm ci --prefix ${dir}`],
 ];
 
+/** Equal content once CRLF is read as LF (git's autocrlf rewrites checkouts). */
+const sameText = (a: Buffer, b: Buffer): boolean =>
+  a.equals(b) ||
+  a.toString("utf8").replaceAll("\r\n", "\n") === b.toString("utf8").replaceAll("\r\n", "\n");
+
 const readBytes = (file: string): Buffer | null => {
   try {
     return fs.readFileSync(file);
@@ -290,7 +298,8 @@ const readBytes = (file: string): Buffer | null => {
 
 /**
  * Link the main checkout's node_modules into `worktree` only when every
- * lockfile is byte-identical in both: a stale main checkout would otherwise
+ * lockfile is identical in both (line endings aside: a Windows checkout with
+ * core.autocrlf writes the worktree's copy with CRLF): a stale main checkout would otherwise
  * hand the worktree the wrong dependency versions (#426). When one differs,
  * nothing is linked and `install` is the command the worker runs instead. The
  * same holds when the main checkout's install is older than its bun.lock.
@@ -307,7 +316,7 @@ function worktreeDependencies(
     const ours = readBytes(path.join(main, name));
     const theirs = readBytes(path.join(worktree, name));
     if (ours === null && theirs === null) continue;
-    if (ours !== null && theirs !== null && ours.equals(theirs)) continue;
+    if (ours !== null && theirs !== null && sameText(ours, theirs)) continue;
     if (fs.existsSync(path.join(worktree, "node_modules"))) break;
     const command = install(worktree);
     return {
@@ -332,6 +341,75 @@ function worktreeDependencies(
   return { ...linkWorktreeDependencies(main, worktree), install: null };
 }
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const keysOf = (value: unknown): string[] => (isObject(value) ? Object.keys(value) : []);
+
+/** A bun.lock `os`/`cpu` field (`"none"`, a name, a list, `!name`) excludes `current`. */
+function excludes(field: unknown, current: string): boolean {
+  const values = typeof field === "string" ? [field] : Array.isArray(field) ? field : null;
+  if (!values?.length) return false;
+  const names = values.filter((value): value is string => typeof value === "string");
+  if (names.includes("none")) return true;
+  if (names.includes(`!${current}`)) return true;
+  const allowed = names.filter((name) => !name.startsWith("!"));
+  return allowed.length > 0 && !allowed.includes(current);
+}
+
+/**
+ * The bun.lock packages an install may leave out on this machine (W2.14):
+ * one whose `os`/`cpu` excludes this platform, and one reached only from such
+ * packages or as a peer (`@emnapi/*` under a wasm32 binding). This
+ * platform's own optional binding stays required, and so does a package
+ * nothing names, so a stale install is still caught.
+ */
+function optionalOnly(
+  packages: Record<string, unknown>,
+  workspaces: Record<string, unknown>,
+): Set<string> {
+  const meta = (key: string): Record<string, unknown> => {
+    const entry = packages[key];
+    return Array.isArray(entry) && isObject(entry[2]) ? entry[2] : {};
+  };
+  const resolve = (from: string | null, name: string): string =>
+    from !== null && `${from}/${name}` in packages ? `${from}/${name}` : name;
+  const optional = new Set<string>();
+  for (const key of Object.keys(packages)) {
+    const info = meta(key);
+    if (excludes(info.os, process.platform) || excludes(info.cpu, process.arch)) optional.add(key);
+  }
+  // Required edges: what workspaces and installed packages depend on outright.
+  const required = new Set<string>();
+  for (const workspace of Object.values(workspaces))
+    for (const field of ["dependencies", "devDependencies"])
+      for (const name of keysOf(isObject(workspace) ? workspace[field] : null))
+        required.add(resolve(null, name));
+  // Walk from the roots through what bun installs here: dependencies and
+  // optional dependencies, never into a package for another platform.
+  const queue = [...required];
+  const reached = new Set<string>();
+  while (queue.length) {
+    const key = queue.pop() as string;
+    if (reached.has(key) || optional.has(key) || !(key in packages)) continue;
+    reached.add(key);
+    for (const field of ["dependencies", "optionalDependencies"])
+      for (const name of keysOf(meta(key)[field])) queue.push(resolve(key, name));
+  }
+  const named = new Set<string>();
+  for (const key of Object.keys(packages)) {
+    const info = meta(key);
+    for (const field of ["dependencies", "optionalDependencies", "peerDependencies"])
+      for (const name of keysOf(info[field])) named.add(resolve(key, name));
+  }
+  for (const workspace of Object.values(workspaces))
+    if (isObject(workspace))
+      for (const field of ["optionalDependencies", "peerDependencies"])
+        for (const name of keysOf(workspace[field])) named.add(resolve(null, name));
+  for (const key of named) if (!reached.has(key) && !required.has(key)) optional.add(key);
+  return optional;
+}
+
 /** Packages checked against node_modules at most (a lockfile is read whole once). */
 const STALE_SCAN = 5000;
 
@@ -347,16 +425,20 @@ function staleBunInstall(main: string): string | null {
   const text = readBytes(path.join(main, "bun.lock"))?.toString("utf8");
   if (!text) return null;
   let packages: Record<string, unknown>;
+  let parsedWorkspaces: Record<string, unknown>;
   try {
     // bun.lock is JSON with trailing commas.
     const parsed = JSON.parse(text.replace(/,(\s*[}\]])/gu, "$1")) as {
       packages?: unknown;
+      workspaces?: unknown;
     };
     if (!parsed.packages || typeof parsed.packages !== "object") return null;
     packages = parsed.packages as Record<string, unknown>;
+    parsedWorkspaces = isObject(parsed.workspaces) ? parsed.workspaces : {};
   } catch {
     return null;
   }
+  const optional = optionalOnly(packages, parsedWorkspaces);
   const problems: string[] = [];
   let scanned = 0;
   for (const [key, entry] of Object.entries(packages)) {
@@ -371,7 +453,8 @@ function staleBunInstall(main: string): string | null {
     if (name !== key || version.includes(":")) continue;
     const manifest = readBytes(path.join(main, "node_modules", key, "package.json"));
     if (!manifest) {
-      problems.push(`${key} missing`);
+      // bun skips an optional dependency for another platform (W2.14).
+      if (!optional.has(key)) problems.push(`${key} missing`);
       continue;
     }
     let installed: unknown;
@@ -447,6 +530,7 @@ export function createSliceWorktree(
         created: false,
         dependencies: deps.linked,
         install: deps.install,
+        stack: null,
         notes: [
           deps.linked
             ? "the worktree already exists; only its missing dependencies were linked"
@@ -480,6 +564,7 @@ export function createSliceWorktree(
 
   const notes: string[] = [];
   let mode: CreateOutcome["mode"] = "resume";
+  let stack: CreateOutcome["stack"] = null;
   if (resolveRef(cwd, localRef)) {
     const added = gitRun(cwd, ["worktree", "add", target, slice.branch], SLOW);
     if (!added.ok) return worktreeFailed(added.stderr);
@@ -532,6 +617,15 @@ export function createSliceWorktree(
         );
       }
       notes.push(...branched.data.notes);
+      if (parent) {
+        const recorded = recordSliceStack(cwd, plan, slice);
+        if (recorded?.ok) {
+          stack = { name: recorded.name, slices: recorded.slices };
+          notes.push(
+            `stacked on ${parent.id}: stack ${recorded.name} is ${recorded.slices.join(" -> ")}; once ${parent.branch} merges (a squash too), workit stack sync --name ${recorded.name} rebases ${slice.branch} onto ${plan.trunk} without ${parent.id}'s commits`,
+          );
+        } else if (recorded) notes.push(`${recorded.error}; record it with: ${recorded.unblock}`);
+      }
     }
   }
   excludeScratch(cwd);
@@ -558,6 +652,7 @@ export function createSliceWorktree(
     ...(baseSha ? { baseSha } : {}),
     ...(base.base === slice.base ? {} : { startBase: base.base }),
     ...(deps.install ? { install: deps.install } : {}),
+    ...(stack ? { stack: stack.name } : {}),
   });
   return {
     ok: true,
@@ -569,6 +664,7 @@ export function createSliceWorktree(
       created: true,
       dependencies: deps.linked,
       install: deps.install,
+      stack,
       notes,
     },
   };
