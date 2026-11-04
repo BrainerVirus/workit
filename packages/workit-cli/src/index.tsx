@@ -15,6 +15,7 @@ import { detectHosts } from "./admin/detect-hosts";
 import { readSetupState, type SetupState } from "./admin/setup-state";
 import {
   applyUninstall,
+  configKeptNote,
   planUninstall,
   type UninstallHost,
   type UninstallPlan,
@@ -197,7 +198,7 @@ export async function runInit() {
 // FILTERED reviewed plan so apply reuses exactly what was displayed (no
 // duplicated selection predicate). Planning and applying go through the Task 8
 // core module with injectable homes resolved from process.env.HOME —
-// ~/.config/workit is never an action target. Exits: 0 ok/cancelled/nothing to
+// the Workit config dir is never an action target. Exits: 0 ok/cancelled/nothing to
 // remove · 1 partial failure · 2 non-TTY usage error (CA-10, CA-13).
 type UninstallOutcome = { confirmed: boolean; hosts: UninstallHost[]; plan: UninstallPlan | null };
 
@@ -261,9 +262,7 @@ function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => vo
 export async function runUninstall() {
   if (process.stdin.isTTY !== true) {
     console.log("workit uninstall requires an interactive terminal (TTY).");
-    console.log(
-      "It removes workit registrations from the selected hosts; your ~/.config/workit configuration is always kept.",
-    );
+    console.log(`It removes workit registrations from the selected hosts; ${configKeptNote()}.`);
     process.exit(2);
   }
   const outcomes: UninstallOutcome[] = [];

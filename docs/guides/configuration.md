@@ -149,7 +149,8 @@ Global config lives in `~/.config/workit/` (`%APPDATA%\workit\` on Windows;
 `config.json`, `workspaces.json`, `vcs.json`, optional `youtrack.json` and
 `templates/`). Logs, the recorded hook Node, leases and upgrade backups live in
 the state dir, `~/.local/state/workit/` on Linux and macOS
-(`%LOCALAPPDATA%\workit\` on Windows); `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`,
+(`%LOCALAPPDATA%\workit\` on Windows), and so do the worktrees Workit manages
+(`worktrees/<repo>/<slice>`; see [cleanup](cleanup.md)); `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`,
 `WORKIT_CONFIG_DIR` and `WORKIT_STATE_DIR` move them. macOS kept state in
 `~/Library/Application Support/workit` in older versions: the first `workit` run or
 hook run moves it, leaves a `workit.moved-<time>` note beside the old place,

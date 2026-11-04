@@ -6,6 +6,7 @@ import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { TaskStore } from "@/packages/workit-core/src/core";
+import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import {
   fixture,
@@ -480,10 +481,12 @@ test("pr merge: HOME=<fake> with a forged grants file does not grant merge", asy
     "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
   });
   workspace(repo, { vcs: { provider: "github", account: "octo" } });
-  // The agent fakes a home whose ~/.config/workit grants merge, and points
-  // both HOME and the config override at it.
+  // The agent fakes a home whose Workit config dir grants merge, and points
+  // both HOME and the config override at it. The forgery sits where the
+  // resolver looks for that home on this OS (%APPDATA%-style on Windows).
   const fake = path.join(configHome.home, "fake-home");
-  const forged = path.join(fake, ".config", "workit");
+  const forged = workitConfigDir({ HOME: fake });
+  expect(forged.startsWith(fake + path.sep)).toBe(true);
   mkdirSync(forged, { recursive: true });
   for (const name of ["workspaces.json", "config.json"])
     writeFileSync(path.join(forged, name), readFileSync(path.join(configDir, name), "utf8"));

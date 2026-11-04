@@ -11,10 +11,12 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { loadCheckConfig } from "@/packages/workit-core/src/check-config";
 import {
   RELEASE_COMMAND,
   cleanupAfterMerge,
   managedWorktreeRoot,
+  managedWorktreeRoots,
   placeOf,
   remoteBranchGone,
   sweepWorktrees,
@@ -66,7 +68,7 @@ const commit = (cwd: string, file: string, text: string, message: string) => {
   return git(cwd, "rev-parse", "HEAD");
 };
 
-/** A repo at <root>/proj on main; the managed root under <root>/cache. */
+/** A repo at <root>/proj on main; the managed root under <root>/state, the pre-move one under <root>/cache. */
 const setup = () => {
   const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "wk-sweep-")));
   roots.push(root);
@@ -76,7 +78,11 @@ const setup = () => {
   git(main, "config", "user.name", "t");
   writeFileSync(path.join(main, ".gitignore"), ".env\nnode_modules/\n.workit-scratch/\n");
   commit(main, "a.txt", "a\n", "base");
-  const env = { ...process.env, XDG_CACHE_HOME: path.join(root, "cache") };
+  const env = {
+    ...process.env,
+    XDG_CACHE_HOME: path.join(root, "cache"),
+    WORKIT_STATE_DIR: path.join(root, "state"),
+  };
   return { root, main, env };
 };
 
@@ -103,9 +109,67 @@ const cleanupRows = (main: string) => {
   return ledger.value.rows.filter((row) => row.type === "cleanup.removed");
 };
 
-test("the managed root is <cache>/workit-wt, from XDG_CACHE_HOME or HOME", () => {
-  expect(managedWorktreeRoot({ XDG_CACHE_HOME: "/c" })).toBe(path.join("/c", "workit-wt"));
-  expect(managedWorktreeRoot({ HOME: "/h" })).toBe(path.join("/h", ".cache", "workit-wt"));
+test("the managed root is <state>/worktrees; the pre-move <cache>/workit-wt is still a managed root", () => {
+  expect(managedWorktreeRoot({ WORKIT_STATE_DIR: "/s" })).toBe(path.join("/s", "worktrees"));
+  expect(managedWorktreeRoots({ WORKIT_STATE_DIR: "/s", XDG_CACHE_HOME: "/c" })).toEqual([
+    path.join("/s", "worktrees"),
+    path.join("/c", "workit-wt"),
+  ]);
+  expect(managedWorktreeRoots({ WORKIT_STATE_DIR: "/s", HOME: "/h" })[1]).toBe(
+    path.join("/h", ".cache", "workit-wt"),
+  );
+});
+
+test("Given merged clean worktrees under both managed roots, When gc --worktrees --apply, Then both go; an unmerged or dirty one in either root stays", () => {
+  const env = setup();
+  const [current, old] = managedWorktreeRoots(env.env) as [string, string];
+  const done = [
+    worktree(env.main, path.join(current, "proj", "a"), "feature/a", "a\n"),
+    worktree(env.main, path.join(old, "proj", "b"), "feature/b", "b\n"),
+  ];
+  for (const branch of ["feature/a", "feature/b"])
+    git(env.main, "merge", "-q", "--no-ff", "-m", `merge ${branch}`, branch);
+  const dirty = [
+    worktree(env.main, path.join(current, "proj", "c"), "feature/c", "c\n"),
+    worktree(env.main, path.join(old, "proj", "d"), "feature/d", "d\n"),
+  ];
+  git(env.main, "merge", "-q", "--no-ff", "-m", "merge c", "feature/c");
+  git(env.main, "merge", "-q", "--no-ff", "-m", "merge d", "feature/d");
+  for (const dir of dirty) writeFileSync(path.join(dir, "wip.txt"), "unsaved\n");
+  const unmerged = [
+    worktree(env.main, path.join(current, "proj", "e"), "feature/e", "e\n"),
+    worktree(env.main, path.join(old, "proj", "f"), "feature/f", "f\n"),
+  ];
+  for (const dir of [...done, ...dirty, ...unmerged]) expect(placeOf(dir, env.env)).toBe("managed");
+
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+
+  expect(applied.removed.map(key).toSorted()).toEqual(done.map(key).toSorted());
+  for (const dir of done) expect(existsSync(dir)).toBe(false);
+  for (const dir of [...dirty, ...unmerged]) expect(existsSync(dir)).toBe(true);
+  expect(norm(applied.kept)).toEqual(
+    expect.arrayContaining([
+      ...dirty.map((dir) =>
+        expect.objectContaining({ path: key(dir), reason: expect.stringContaining("wip.txt") }),
+      ),
+      ...unmerged.map((dir) =>
+        expect.objectContaining({ path: key(dir), reason: expect.stringMatching(/^not merged/) }),
+      ),
+    ]),
+  );
+});
+
+test("gc --worktrees --apply removes the pre-move root once its last worktree is gone", () => {
+  const env = setup();
+  const old = managedWorktreeRoots(env.env)[1];
+  const dir = worktree(env.main, path.join(old, "proj", "a"), "feature/a", "a\n");
+  git(env.main, "merge", "-q", "--ff-only", "feature/a");
+
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+
+  expect(norm(applied.removed)).toEqual([key(dir)]);
+  expect(norm(applied.removedDirs)).toEqual([key(path.join(old, "proj"))]);
+  expect(existsSync(old)).toBe(false);
 });
 
 test("after a merge, a clean worktree under the managed root and its branch go, and the ledger lists them", () => {
@@ -463,3 +527,98 @@ for (const item of IGNORED_CASES)
       expect(existsSync(dir)).toBe(false);
     }
   });
+
+/** Commit `.workit/checks.json` with `cleanup`, and ignore `packages/<pkg>/skills/`, on main. */
+const declareRegenerable = (main: string, cleanup: unknown) => {
+  mkdirSync(path.join(main, ".workit"), { recursive: true });
+  writeFileSync(
+    path.join(main, ".workit", "checks.json"),
+    JSON.stringify({ checks: { test: ["true"] }, cleanup }),
+  );
+  writeFileSync(
+    path.join(main, ".gitignore"),
+    ".env\nnode_modules/\n.workit-scratch/\npackages/*/skills/\n",
+  );
+  mkdirSync(path.join(main, "packages", "x"), { recursive: true });
+  writeFileSync(path.join(main, "packages", "x", "index.ts"), "export {};\n");
+  git(main, "add", "-A");
+  git(main, "commit", "-q", "-m", "chore: regenerable skills");
+};
+
+for (const declared of [true, false])
+  test(`Given a merged worktree whose only untracked files are under packages/x/skills, When cleanup runs ${declared ? "with" : "without"} cleanup.regenerable, Then the worktree is ${declared ? "removed" : "kept"}`, () => {
+    const env = setup();
+    declareRegenerable(env.main, declared ? { regenerable: ["packages/*/skills"] } : undefined);
+    const dir = worktree(
+      env.main,
+      path.join(managedWorktreeRoot(env.env), "proj", "slice"),
+      "feature/x",
+      "x\n",
+    );
+    put(dir, ["packages/x/skills/a/SKILL.md", "packages/x/skills/b/SKILL.md"]);
+
+    const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+      actor,
+      trigger: "pr merge",
+      env: env.env,
+    });
+
+    if (declared) {
+      expect(out).toMatchObject({ branchDeleted: true, dirty: null, notes: [] });
+      expect(existsSync(dir)).toBe(false);
+    } else {
+      expect(out.worktreeRemoved).toBeNull();
+      expect(out.notes).toEqual([
+        expect.stringContaining("ignored files that are not regenerable (packages/x/skills/)"),
+      ]);
+      expect(existsSync(dir)).toBe(true);
+    }
+  });
+
+test("gc --worktrees honours cleanup.regenerable, and a .env nested under a regenerable dir goes with it", () => {
+  const env = setup();
+  declareRegenerable(env.main, { regenerable: ["packages/*/skills/"] });
+  const dir = worktree(env.main, path.join(env.root, "proj-wt", "r"), "feature/r", "r\n");
+  git(env.main, "merge", "-q", "--ff-only", "feature/r");
+  put(dir, ["packages/x/skills/a/SKILL.md", "packages/x/skills/sub/.env"]);
+
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+
+  expect(norm(applied.removed)).toEqual([key(dir)]);
+  expect(existsSync(dir)).toBe(false);
+});
+
+test("Given cleanup.regenerable that is not a list of glob strings, Then the checks config is invalid and names the key; cleanup keeps the worktree", () => {
+  for (const cleanup of [
+    { regenerable: [7] },
+    { regenerable: "packages/*/skills" },
+    { regenerable: ["/abs/skills"] },
+    { regenerable: ["packages/{a,b}/skills"] },
+    // Bare trailing wildcards would discard an ignored .env.
+    { regenerable: ["*"] },
+    { regenerable: ["**"] },
+    { regenerable: ["dist/**"] },
+    { regenerables: ["x"] },
+  ]) {
+    const env = setup();
+    declareRegenerable(env.main, cleanup);
+    const config = loadCheckConfig(env.main);
+    expect(config.error, JSON.stringify(cleanup)).toMatch(/cleanup\.regenerable/);
+  }
+  const env = setup();
+  declareRegenerable(env.main, { regenerable: [7] });
+  const dir = worktree(
+    env.main,
+    path.join(managedWorktreeRoot(env.env), "proj", "slice"),
+    "feature/x",
+    "x\n",
+  );
+  put(dir, ["packages/x/skills/a/SKILL.md"]);
+  const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+    actor,
+    trigger: "pr merge",
+    env: env.env,
+  });
+  expect(out.worktreeRemoved).toBeNull();
+  expect(existsSync(dir)).toBe(true);
+});

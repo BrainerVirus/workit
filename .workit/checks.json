@@ -6,10 +6,19 @@
     "test": ["bun", "run", "test"],
     "knip": ["bun", "run", "knip"],
     "react-doctor": ["bun", "run", "doctor"],
-    "packaging": ["bun", "run", "test:packaging"]
+    "packaging": ["bun", "run", "test:packaging"],
+    "skills": [
+      "bun",
+      "test",
+      "test/workit-core/skill-set.test.ts",
+      "test/workit-core/methods.test.ts",
+      "test/behavior/context-budget.test.ts",
+      "test/workit-core/generated-copies.test.ts"
+    ]
   },
   "groups": {
     "ci": ["lint", "format", "typecheck", "knip", "react-doctor", "test", "packaging"]
   },
-  "resources": { "heavy": ["knip", "react-doctor"] }
+  "resources": { "heavy": ["knip", "react-doctor"] },
+  "cleanup": { "regenerable": ["packages/*/skills", "packages/*/assets"] }
 }

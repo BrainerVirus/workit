@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -19,6 +20,7 @@ import path from "node:path";
 import {
   CONFIG_DIR_SH,
   DATA_DIR_SH,
+  RUNTIME_DIR_SH,
   STATE_DIR_SH,
   WORKIT_DIR_KINDS,
   WORKIT_DIR_OVERRIDES,
@@ -26,14 +28,17 @@ import {
   cacheDir,
   configDir,
   dataDir,
+  legacyWorktreesDir,
   migrateLegacyDirs,
   runtimeDir,
   stateDir,
   workitDir,
+  worktreesDir,
 } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { launcherScript } from "@/packages/workit-cli/src/install/launcher";
 import { main } from "@/packages/workit-cli/src/main";
 import { runDoctor, type DoctorCheck } from "@/packages/workit-cli/src/admin/doctor";
+import { configKeptNote } from "@/packages/workit-cli/src/admin/uninstall";
 import { scratchDir } from "../shared/helpers/hook-node";
 
 const REPO = path.resolve(import.meta.dir, "../..");
@@ -113,6 +118,26 @@ test("the shell launchers embed the resolver's shell functions verbatim", () => 
   const lib = read("packages/workit-core/scripts/lib/config-dir.sh");
   expect(lib).toContain(CONFIG_DIR_SH);
   expect(lib).toContain(DATA_DIR_SH);
+  expect(lib).toContain(RUNTIME_DIR_SH);
+  // Runs piped (curl | bash) without lib/, so it carries the function itself.
+  expect(read("packages/workit-core/scripts/install-cursor-plugin.sh")).toContain(DATA_DIR_SH);
+});
+
+test("Given any platform, Then managed worktrees sit under the state dir and the old root under the cache base", () => {
+  for (const platform of ["linux", "darwin", "win32"] as const) {
+    const env = { HOME: H, LOCALAPPDATA: path.join(H, "L") };
+    expect(worktreesDir(env, platform)).toBe(path.join(stateDir(env, platform), "worktrees"));
+  }
+  expect(worktreesDir({ HOME: H, WORKIT_STATE_DIR: "/o/s" }, "linux")).toBe(
+    path.join("/o/s", "worktrees"),
+  );
+  expect(legacyWorktreesDir({ HOME: H })).toBe(path.join(H, ".cache", "workit-wt"));
+  expect(legacyWorktreesDir({ HOME: H, XDG_CACHE_HOME: "/x/c" })).toBe(
+    path.join("/x/c", "workit-wt"),
+  );
+  expect(legacyWorktreesDir({ HOME: H, XDG_CACHE_HOME: "rel" })).toBe(
+    path.join(H, ".cache", "workit-wt"),
+  );
 });
 
 // A fake `uname` stands in for Git Bash on Windows (MINGW64_NT-…).
@@ -143,12 +168,16 @@ test.skipIf(process.platform === "win32")(
       { HOME: H, WORKIT_STATE_DIR: "/o/s", WORKIT_CONFIG_DIR: "/o/c" },
       { HOME: H, WORKIT_CONFIG: "/o/cfg", WORKIT_CONFIG_DIR: "/o/c" },
       { HOME: H, APPDATA: "/w/Roaming", LOCALAPPDATA: "/w/Local" },
+      { HOME: H, TMPDIR: "/t/", TEMP: "/w/Temp", XDG_RUNTIME_DIR: "/run/user/7" },
+      { HOME: H, TMPDIR: "/t/", TMP: "/w/Tmp", XDG_RUNTIME_DIR: "rel" },
     ];
     const cases: Array<[string, string, Kind]> = [
       [STATE_DIR_SH, "workit_state_dir", "state"],
       [CONFIG_DIR_SH, "workit_config_dir", "config"],
       [DATA_DIR_SH, "workit_data_dir", "data"],
     ];
+    // runtime falls back to os.tmpdir(), which reads this process's TMPDIR: only envs that name one.
+    const runtimeCase: [string, string, Kind] = [RUNTIME_DIR_SH, "workit_runtime_dir", "runtime"];
     const systems: Array<[string, NodeJS.Platform]> = [
       ["Linux", "linux"],
       ["Darwin", "darwin"],
@@ -158,7 +187,9 @@ test.skipIf(process.platform === "win32")(
     for (const [system, platform] of systems) {
       const bin = unameBin(system);
       for (const env of envs)
-        for (const [fn, name, kind] of cases)
+        for (const [fn, name, kind] of [...cases, ...(env.TMPDIR ? [runtimeCase] : [])] as Array<
+          [string, string, Kind]
+        >)
           expect(slash(runSh(fn, name, env, bin)), `${system} ${name} ${JSON.stringify(env)}`).toBe(
             slash(workitDir(kind, env, platform)),
           );
@@ -292,6 +323,27 @@ test.skipIf(process.platform === "win32")(
     expect(after.detail).toContain("moved to");
   },
 );
+
+test("Given worktrees left under the pre-move ~/.cache/workit-wt, When doctor runs, Then legacy_dirs is info naming it and gc until it is empty", () => {
+  const home = scratchDir("wk-old-wt-");
+  const old = path.join(home, ".cache", "workit-wt");
+  mkdirSync(path.join(old, "proj", "slice"), { recursive: true });
+  const row = legacyRow(home);
+  expect(row.status).toBe("info");
+  expect(row.detail).toContain(old);
+  expect(row.detail).toContain("workit gc --worktrees --apply");
+  expect(existsSync(path.join(old, "proj", "slice"))).toBe(true);
+
+  rmSync(path.join(old, "proj"), { recursive: true });
+  expect(legacyRow(home).status).toBe("pass");
+});
+
+test("Given Windows (simulated), Then the uninstall text names the config dir under APPDATA, never ~/.config/workit", () => {
+  const env = { HOME: path.join(H, "win"), APPDATA: path.join(H, "win", "Roaming") };
+  const note = configKeptNote(env, "win32");
+  expect(note).toContain(configDir(env, "win32"));
+  expect(note).not.toMatch(/\.config[/\\]workit/);
+});
 
 test("docs/agents/file-locations.md names every kind and every env override the resolver reads", () => {
   const doc = read("docs/agents/file-locations.md");

@@ -359,7 +359,8 @@ test("Given a bound implementer, When it links into W a path outside W (symlink 
   for (const command of [
     `ln -s ${lead}/src ${wtA}/esc && echo x > ${wtA}/esc/core.ts`,
     `ln ${lead}/src/core.ts ${wtA}/hard.ts`,
-    `ln -s ../../app/src ${wtA}/esc2`,
+    // A relative link that climbs out of W to the lead checkout, whatever the managed root.
+    `ln -s ${path.relative(wtA, path.join(lead, "src"))} ${wtA}/esc2`,
     `ln -s -t ${wtA} ${lead}/src`,
   ]) {
     const denied = bash(command, id);

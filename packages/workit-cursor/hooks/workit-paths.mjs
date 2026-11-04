@@ -94,6 +94,22 @@ export const cacheDir = (env, platform) => workitDir("cache", env, platform);
 export const runtimeDir = (env, platform) => workitDir("runtime", env, platform);
 
 /**
+ * Where Workit keeps the worktrees it manages: `<state>/worktrees/<repo>/<slug>`.
+ * State, not cache: a worktree holds uncommitted work.
+ * @param {NodeJS.ProcessEnv} [env] @param {string} [platform]
+ */
+export const worktreesDir = (env, platform) => path.join(stateDir(env, platform), "worktrees");
+
+/**
+ * The managed worktree root before it moved to worktreesDir:
+ * `$XDG_CACHE_HOME/workit-wt`, else `~/.cache/workit-wt` (on every platform).
+ * Never moved (a session may be using a worktree there); cleanup still sweeps it.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export const legacyWorktreesDir = (env = process.env) =>
+  path.join(xdgBase("cache", env) || path.join(userHome(env), ".cache"), "workit-wt");
+
+/**
  * The POSIX shell form of stateDir, embedded verbatim by the shell launchers
  * (claude-code bin/workit, the owned launcher `workit upgrade` writes).
  */
@@ -123,6 +139,18 @@ export const DATA_DIR_SH = `workit_data_dir() {
   case "$(uname -s 2>/dev/null)" in
     MINGW*|MSYS*|CYGWIN*) printf '%s\\n' "\${LOCALAPPDATA:-$HOME/AppData/Local}/workit" ;;
     *) printf '%s\\n' "$HOME/.local/share/workit" ;;
+  esac
+}`;
+
+/**
+ * The POSIX shell form of runtimeDir, embedded verbatim by scripts/lib/config-dir.sh.
+ * `os.tmpdir()` drops a trailing slash from TMPDIR; so does this.
+ */
+export const RUNTIME_DIR_SH = `workit_runtime_dir() {
+  case "\${XDG_RUNTIME_DIR:-}" in /*) printf '%s\\n' "$XDG_RUNTIME_DIR/workit"; return ;; esac
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\\n' "\${TEMP:-\${TMP:-/tmp}}/workit" ;;
+    *) set -- "\${TMPDIR:-/tmp}"; printf '%s\\n' "\${1%/}/workit-$(id -u)" ;;
   esac
 }`;
 

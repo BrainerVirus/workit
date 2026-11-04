@@ -30,7 +30,8 @@ or `bun run check` in it; use a separate worktree.
 ## Make a change
 
 1. Branch from `origin/main`, ideally in its own worktree:
-   `git worktree add -b feature/<slug> ../workit-wt/<slug> origin/main`.
+   `git worktree add -b feature/<slug> ~/.local/state/workit/worktrees/workit/<slug> origin/main`
+   (Linux and macOS; `workit fanout worktree create` picks the right root on every OS).
 2. Keep the change small and focused. For larger work, open an issue first;
    a short spec or plan under `docs/` helps when the change spans several PRs.
 3. Write tests for behavior (Given/When/Then is a good shape) and update the

@@ -11,7 +11,8 @@ PLUGIN_DIR="${HOME}/.cursor/plugins/local/workit"
 DEV_DEFAULT="${HOME}/Documents/projects/personal/workit"
 DEV="${WORKIT_DEV:-$DEV_DEFAULT}"
 REPO_SLUG="${WORKIT_REPO:-BrainerVirus/workit}"
-LOCK="${XDG_RUNTIME_DIR:-/tmp}/workit-sync.lock"
+LOCK_DIR="$(workit_runtime_dir)"
+LOCK="$LOCK_DIR/sync.lock"
 
 # RR-05: missing required tools, an unacquirable lock, or a failed clone must
 # never look like a successful sync.
@@ -19,6 +20,7 @@ if ! command -v flock >/dev/null 2>&1; then
   echo "FATAL: sync-runtime requires flock (util-linux) — not found in PATH" >&2
   exit 1
 fi
+mkdir -p "$LOCK_DIR"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "sync-runtime: another process holds $LOCK — state unverified, failing" >&2

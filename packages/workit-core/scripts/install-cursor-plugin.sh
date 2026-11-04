@@ -3,7 +3,16 @@
 set -euo pipefail
 
 REPO_SLUG="${WORKIT_REPO:-BrainerVirus/workit}"
-SHARE="${HOME}/.local/share/workit"
+# core/workit-paths.mjs DATA_DIR_SH, verbatim (a test holds it): this script
+# also runs piped (curl | bash) without scripts/lib/.
+workit_data_dir() {
+  case "${XDG_DATA_HOME:-}" in /*) printf '%s\n' "$XDG_DATA_HOME/workit"; return ;; esac
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\n' "${LOCALAPPDATA:-$HOME/AppData/Local}/workit" ;;
+    *) printf '%s\n' "$HOME/.local/share/workit" ;;
+  esac
+}
+SHARE="$(workit_data_dir)"
 SKILLS_DIR="${HOME}/.cursor/skills"
 
 FROM_GITHUB=0

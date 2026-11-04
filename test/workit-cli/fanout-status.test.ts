@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -153,6 +161,21 @@ const noGh: ForgeRunner = () => ({
 
 // ---------------------------------------------------------------------------
 // status with the forge
+
+// Each test plans into a state dir of its own, so the managed worktree root
+// (<state>/worktrees/app) holds only that test's worktrees.
+let testState = "";
+const previousState = process.env.WORKIT_STATE_DIR;
+beforeEach(() => {
+  testState = mkdtempSync(path.join(os.tmpdir(), "wk-fanout-state-"));
+  process.env.WORKIT_STATE_DIR = testState;
+});
+afterEach(() => {
+  process.env.WORKIT_STATE_DIR = previousState;
+  rmSync(testState, { recursive: true, force: true });
+});
+/** Where `fanout plan` puts slice `id` of the repo `app` by default. */
+const managedWt = (id: string) => path.join(testState, "worktrees", "app", id);
 
 test("fanout status: given slice a verified with PR #11 open and passing and slice b unverified, when shown, then a is ready with PR and CI, b is active, and the landing order is a", async () => {
   const forge = forgeSetup();
@@ -621,8 +644,8 @@ test("fanout status: given a fresh branch with no commits of its own, when shown
 test("fanout worktree: given a planned slice, when created, released while dirty, then forced, then created again, then the worktree follows the branch, dirty state is recorded before removal, and nothing outside it is touched", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("a", ["a.ts"]), slice("b", ["b.ts"])]);
-  const wt = path.join(root, "app-wt", "a");
-  const neighbour = path.join(root, "app-wt", "keep", "notes.txt");
+  const wt = managedWt("a");
+  const neighbour = path.join(testState, "worktrees", "app", "keep", "notes.txt");
   mkdirSync(path.dirname(neighbour), { recursive: true });
   writeFileSync(neighbour, "mine\n");
 
@@ -697,7 +720,7 @@ test("fanout worktree: given a planned slice, when created, released while dirty
 test("fanout worktree release: given a plain directory at the slice's path, when released, then it is refused and the directory is untouched", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("a", ["a.ts"])]);
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   mkdirSync(wt, { recursive: true });
   writeFileSync(path.join(wt, "precious.txt"), "keep\n");
   const result = await run(cwd, ["fanout", "worktree", "release", "a", "--force", "--json"]);
@@ -713,7 +736,7 @@ test("fanout worktree release: given a plain directory at the slice's path, when
 test("fanout worktree release: given a detached worktree someone else added at the slice's path, when released even with --force, then it is refused and kept; create refuses to adopt it", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("a", ["a.ts"])]);
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   git(cwd, "worktree", "add", "-q", "--detach", wt, "main");
   const release = await run(cwd, ["fanout", "worktree", "release", "a", "--force", "--json"]);
   expect(release.code).toBe(3);
@@ -727,7 +750,7 @@ test("fanout worktree release: given a detached worktree someone else added at t
 test("fanout worktree release: given a worktree that was created and released, then a foreign detached worktree added at the same path with uncommitted work, when released with --force, then it is refused and the work is kept", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("b", ["b.ts"])]);
-  const wt = path.join(root, "app-wt", "b");
+  const wt = managedWt("b");
   expect((await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).code).toBe(0);
   expect((await run(cwd, ["fanout", "worktree", "release", "b", "--json"])).code).toBe(0);
   git(cwd, "worktree", "add", "-q", "--detach", wt, "main");
@@ -742,7 +765,7 @@ test("fanout worktree release: given a worktree that was created and released, t
 test("fanout worktree release: given slice b's worktree removed by hand (no released row) and a foreign detached worktree added at the same path with uncommitted work, when released with --force, then it is refused and the work is kept; create refuses to adopt it", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("b", ["b.ts"])]);
-  const wt = path.join(root, "app-wt", "b");
+  const wt = managedWt("b");
   expect((await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).code).toBe(0);
   const row = rowsOf(cwd, "fanout.worktree.created").at(-1);
   expect(row?.adminId).toBe("b");
@@ -766,7 +789,7 @@ test("fanout worktree release: given slice b's worktree removed by hand (no rele
 test("fanout worktree release: given a created row written before worktree identity (no token), when released with --force, then it is refused and kept; without --force the clean worktree is released", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("b", ["b.ts"])]);
-  const wt = path.join(root, "app-wt", "b");
+  const wt = managedWt("b");
   expect((await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).code).toBe(0);
   const ledger = readLedger(cwd);
   if (!ledger.ok) throw new Error(ledger.error);
@@ -803,7 +826,7 @@ test("fanout worktree release: given a filesystem without birth times that reuse
   expect((await run(cwd, ["fanout", "worktree", "create", "a", "--json"])).code).toBe(0);
   expect((await run(cwd, ["fanout", "worktree", "release", "a", "--json"])).code).toBe(0);
 
-  const wt = path.join(root, "app-wt", "b");
+  const wt = managedWt("b");
   expect((await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).code).toBe(0);
   expect(rowsOf(cwd, "fanout.worktree.created").at(-1)).toMatchObject({
     adminId: "b",
@@ -822,7 +845,7 @@ test("fanout worktree release: given a filesystem without birth times that reuse
 test("fanout worktree: given a file at the slice's path, when created, then it is refused; given an empty directory there, it is used and recreated empty on release", async () => {
   const { root, cwd } = localRepo();
   await plan(cwd, root, [slice("a", ["a.ts"])]);
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   mkdirSync(path.dirname(wt), { recursive: true });
   writeFileSync(wt, "not a dir\n");
   const onFile = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
@@ -843,7 +866,7 @@ test("fanout worktree create: given the slice branch is checked out in the main 
   const result = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(result.code).toBe(3);
   expect(result.json().error).toContain("feature/a is checked out at");
-  expect(existsSync(path.join(root, "app-wt", "a"))).toBe(false);
+  expect(existsSync(managedWt("a"))).toBe(false);
 });
 
 test("fanout worktree: given an unknown slice or a missing action, when run, then it is a usage error", async () => {
@@ -882,7 +905,7 @@ const workspaceRepo = (ignored = true) => {
 test("fanout worktree create: given a workspace monorepo whose main checkout has node_modules, when a slice worktree is created, then its workspace packages and bins resolve inside the worktree, third-party packages are shared, and release removes the links without touching the main checkout's", async () => {
   const { root, cwd } = workspaceRepo();
   await plan(cwd, root, [slice("a", ["packages/lib/**"])]);
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
   expect(created.json().data.dependencies).toMatchObject({ dirs: ["node_modules"] });
@@ -918,7 +941,7 @@ test("fanout worktree create: given node_modules is not git-ignored, when create
   const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
   expect(created.json().data.dependencies).toBeNull();
-  expect(existsSync(path.join(root, "app-wt", "a", "node_modules"))).toBe(false);
+  expect(existsSync(path.join(managedWt("a"), "node_modules"))).toBe(false);
   expect(created.json().data.notes.join("\n")).toContain("node_modules is not ignored by git");
 });
 
@@ -937,7 +960,7 @@ test("fanout worktree create: given the main checkout's bun.lock differs from th
 
   // A stale main checkout: its working copy pins other versions than the slice's base.
   writeFileSync(path.join(cwd, "bun.lock"), '{"lockfileVersion":1,"pi":"0.85.0"}\n');
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   const json = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(json.code, json.stderr + json.stdout).toBe(0);
   const install = `bun install --frozen-lockfile --cwd ${json.json().data.path}`;

@@ -2,20 +2,26 @@
 // branch's clean worktree (made by `workit fanout worktree create`, or under
 // the managed root) and its local branch go, and the ledger says what went.
 // `workit gc --worktrees` sweeps what earlier changes left: merged or
-// squash-merged clean worktrees in Workit's places (the managed root, legacy
+// squash-merged clean worktrees in Workit's places (the managed root
+// `<state>/worktrees`, the pre-move root `~/.cache/workit-wt`, legacy
 // `<repo>-wt`/`workit-wt` dirs beside a project, the temp dir), stale
 // registrations, and local branches whose remote is gone once merged.
+// Ignored files under a regenerable dir (the built-in list, plus the repo's
+// `cleanup.regenerable` globs in .workit/checks.json) do not keep a worktree.
 // Never forced: a dirty, locked or unmerged worktree, the main checkout and
 // the checkout the command runs in are kept and named.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { loadCheckConfig } from "../check-config";
 import { defaultTrunk, gitRun, nulList, trunkRef } from "../fanout";
 import { SCRATCH_DIR, listWorktrees, type WorktreeEntry } from "../fanout-worktree";
 import { GIT_TIMEOUTS, pushRemoteName } from "../git/rev";
 import { FANOUT_TOKEN_FILE } from "../hooks/worktree-confine";
 import { appendObserved, type LedgerActor } from "../ledger";
+import { legacyWorktreesDir, worktreesDir } from "./workit-paths.mjs";
+import { matchWorkspace } from "./workspaces";
 
 const SLOW = GIT_TIMEOUTS.worktree;
 /** Dirty paths named in output and ledger rows. */
@@ -23,10 +29,17 @@ const DIRTY_SHOWN = 5;
 /** Run once a dirty worktree is dealt with; gc removes it when it is merged and clean. */
 export const RELEASE_COMMAND = "workit gc --worktrees --apply";
 
-/** Where Workit makes worktrees: `<cache>/workit-wt/<repo>/<slice>`, never beside the project. */
+/** Where Workit makes worktrees: `<state>/worktrees/<repo>/<slice>`, never beside the project. */
 export function managedWorktreeRoot(env: NodeJS.ProcessEnv = process.env): string {
-  const cache = env.XDG_CACHE_HOME || path.join(env.HOME || os.homedir(), ".cache");
-  return path.join(cache, "workit-wt");
+  return worktreesDir(env);
+}
+
+/**
+ * Every root whose worktrees are Workit's: the managed root, and the pre-move
+ * `~/.cache/workit-wt` (its worktrees are never moved; they go once merged).
+ */
+export function managedWorktreeRoots(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [worktreesDir(env), legacyWorktreesDir(env)];
 }
 
 /**
@@ -55,11 +68,11 @@ const inside = (child: string, parent: string): boolean => {
   return to === from || to.startsWith(from.endsWith("/") ? from : `${from}/`);
 };
 
-/** managed: under the managed root; legacy: `<parent>/<repo>-wt/<x>`; scratch: the temp dir. */
+/** managed: under a managed root (current or pre-move); legacy: `<parent>/<repo>-wt/<x>`; scratch: the temp dir. */
 export type WorktreePlace = "managed" | "legacy" | "scratch" | "other";
 
 export function placeOf(worktree: string, env: NodeJS.ProcessEnv = process.env): WorktreePlace {
-  if (inside(worktree, managedWorktreeRoot(env))) return "managed";
+  if (managedWorktreeRoots(env).some((root) => inside(worktree, root))) return "managed";
   if (path.basename(path.dirname(canonical(worktree))).endsWith("-wt")) return "legacy";
   if ([os.tmpdir(), "/tmp"].some((dir) => fs.existsSync(dir) && inside(worktree, dir)))
     return "scratch";
@@ -112,11 +125,38 @@ const REGENERABLE = new Set([
 ]);
 
 /**
+ * The repo's `cleanup.regenerable` globs (.workit/checks.json, read from
+ * `cwd`); none when the config is missing or invalid, so nothing extra goes.
+ */
+export function repoRegenerable(cwd: string): string[] {
+  const config = loadCheckConfig(cwd);
+  return config.error ? [] : (config.regenerable ?? []);
+}
+
+/**
+ * `file` (repo-relative, `/`-separated) is under a regenerable dir: one of its
+ * segments is in the built-in list, or it or a parent dir matches a repo glob.
+ * Anything nested under such a dir counts, a `.env` included.
+ */
+const regenerablePath = (file: string, globs: readonly string[]): boolean => {
+  const segments = file.replace(/\/+$/u, "").split("/");
+  if (segments.some((segment) => REGENERABLE.has(segment))) return true;
+  return segments.some((_, index) => {
+    const prefix = segments.slice(0, index + 1).join("/");
+    return globs.some((glob) => matchWorkspace(glob, prefix));
+  });
+};
+
+/**
  * Ignored paths that are not regenerable (a `.env`, a local config): `git
  * status` omits them and `git worktree remove` deletes them, so they keep the
- * worktree. Null when git cannot say.
+ * worktree. `regenerable` adds repo globs to the built-in list. Null when git
+ * cannot say.
  */
-export function ignoredKeepers(worktree: string): string[] | null {
+export function ignoredKeepers(
+  worktree: string,
+  regenerable: readonly string[] = [],
+): string[] | null {
   const listed = gitRun(worktree, [
     "ls-files",
     "-z",
@@ -126,9 +166,7 @@ export function ignoredKeepers(worktree: string): string[] | null {
     "--directory",
   ]);
   if (!listed.ok) return null;
-  return nulList(listed.stdout).filter(
-    (file) => !file.split("/").some((segment) => REGENERABLE.has(segment)),
-  );
+  return nulList(listed.stdout).filter((file) => !regenerablePath(file, regenerable));
 }
 
 const IGNORED_REASON = "ignored files that are not regenerable";
@@ -137,7 +175,10 @@ const listed = (paths: readonly string[]): string =>
   `${paths.slice(0, DIRTY_SHOWN).join(", ")}${paths.length > DIRTY_SHOWN ? `, … (${paths.length} in all)` : ""}`;
 
 /** Why the worktree must stay (uncommitted or valuable ignored files), or null when it may go. */
-function keepReason(worktree: string): { paths: string[]; reason: string } | null {
+function keepReason(
+  worktree: string,
+  regenerable: readonly string[],
+): { paths: string[]; reason: string } | null {
   const dirty = dirtyPaths(worktree);
   if (dirty === null) return { paths: ["unreadable"], reason: "unreadable state" };
   if (dirty.length > 0)
@@ -145,7 +186,7 @@ function keepReason(worktree: string): { paths: string[]; reason: string } | nul
       paths: dirty,
       reason: `${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} (${listed(dirty)})`,
     };
-  const ignored = ignoredKeepers(worktree);
+  const ignored = ignoredKeepers(worktree, regenerable);
   if (ignored === null) return { paths: ["unreadable"], reason: "unreadable state" };
   if (ignored.length > 0)
     return { paths: ignored, reason: `${IGNORED_REASON} (${listed(ignored)})` };
@@ -236,11 +277,21 @@ const removeIfEmpty = (dir: string): boolean => {
   }
 };
 
-/** The managed `<repo>` dir or the legacy `-wt` dir that held a removed worktree, once empty. */
-const tidyParent = (worktree: string, place: WorktreePlace): string | null => {
+/**
+ * The managed `<repo>` dir or the legacy `-wt` dir that held a removed
+ * worktree, once empty; then the pre-move root too, once nothing is left in it.
+ */
+const tidyParent = (
+  worktree: string,
+  place: WorktreePlace,
+  env: NodeJS.ProcessEnv,
+): string | null => {
   if (place !== "managed" && place !== "legacy") return null;
   const parent = path.dirname(worktree);
-  return removeIfEmpty(parent) ? parent : null;
+  if (!removeIfEmpty(parent)) return null;
+  const old = legacyWorktreesDir(env);
+  if (place === "managed" && canonical(path.dirname(parent)) === canonical(old)) removeIfEmpty(old);
+  return parent;
 };
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
@@ -321,7 +372,7 @@ export function cleanupAfterMerge(
       );
       return out;
     }
-    const held = keepReason(entry.path);
+    const held = keepReason(entry.path, repoRegenerable(cwd));
     if (held) {
       out.dirty = { path: entry.path, paths: held.paths.slice(0, DIRTY_SHOWN) };
       out.notes.push(
@@ -337,7 +388,7 @@ export function cleanupAfterMerge(
       return out;
     }
     out.worktreeRemoved = entry.path;
-    tidyParent(entry.path, place);
+    tidyParent(entry.path, place, env);
   }
   if (!listWorktrees(cwd).some((entry) => entry.branch === ref)) {
     const deleted = gitRun(cwd, ["branch", "-D", "--", branch]);
@@ -464,6 +515,7 @@ export function sweepWorktrees(
     tip && trunk ? mergeProof(cwd, tip, trunk, patches) : null;
   const trees = listWorktrees(cwd);
   const gone = goneUpstreams(cwd);
+  const regenerable = repoRegenerable(cwd);
   for (const [index, entry] of trees.entries()) {
     if (index === 0) continue;
     const branch = shortBranch(entry.branch);
@@ -497,7 +549,7 @@ export function sweepWorktrees(
       );
       continue;
     }
-    const held = keepReason(entry.path);
+    const held = keepReason(entry.path, regenerable);
     if (held) {
       keep(held.reason);
       continue;
@@ -543,7 +595,7 @@ export function sweepWorktrees(
       continue;
     }
     out.removed.push(candidate.path);
-    const parent = tidyParent(candidate.path, candidate.place);
+    const parent = tidyParent(candidate.path, candidate.place, env);
     if (parent) out.removedDirs.push(parent);
     if (
       candidate.branch &&
