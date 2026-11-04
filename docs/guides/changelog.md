@@ -9,7 +9,8 @@ edit the same lines. Workit ships a git merge driver that keeps both sides' entr
 workit changelog driver install
 ```
 
-This registers `merge.workit-changelog.driver` (`workit changelog merge %O %A %B`) in the
+This registers `merge.workit-changelog.driver` (`workit changelog merge %O %A %B`, falling back to
+`git merge-file` with normal conflict markers when `workit` cannot run) in the
 repo's local git config and adds `<path> merge=workit-changelog` to `.gitattributes` for each
 configured changelog path (`changelogPath`, default `CHANGELOG.md`). Commit `.gitattributes` so
 every clone gets the attribute; each clone runs the install once for the git config. Running it

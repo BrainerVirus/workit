@@ -110,6 +110,35 @@ test("Given the driver is installed, When git rebase replays an Unreleased bulle
     expect(text).toContain(`- ${entry}`);
 }, 60_000);
 
+test("Given the driver is configured but workit cannot run, When a merge conflicts in Unreleased, Then git leaves both sides with conflict markers", async () => {
+  const dir = repo();
+  expect(await run(["driver", "install"], io(dir))).toBe(0);
+  sh(dir, "add", ".gitattributes");
+  sh(dir, "commit", "-q", "-m", "attrs");
+
+  // An older CLI without the verb, or none at all: the shim fails like `command not found`.
+  const bin = path.join(dir, ".bin");
+  mkdirSync(bin);
+  const shim = path.join(bin, "workit");
+  writeFileSync(shim, "#!/bin/sh\nexit 127\n");
+  chmodSync(shim, 0o755);
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` };
+
+  sh(dir, "switch", "-q", "-c", "feature");
+  writeFileSync(path.join(dir, "CHANGELOG.md"), changelog("### Added\n\n- feature entry\n\n"));
+  sh(dir, "commit", "-q", "-am", "feature");
+  sh(dir, "switch", "-q", "main");
+  writeFileSync(path.join(dir, "CHANGELOG.md"), changelog("### Added\n\n- main entry\n\n"));
+  sh(dir, "commit", "-q", "-am", "main change");
+
+  const merge = spawnSync("git", ["merge", "feature"], { cwd: dir, encoding: "utf8", env });
+  expect(merge.status).not.toBe(0);
+  const text = readFileSync(path.join(dir, "CHANGELOG.md"), "utf8");
+  expect(text).toContain("<<<<<<<");
+  expect(text).toContain("- feature entry");
+  expect(text).toContain("- main entry");
+}, 60_000);
+
 test("Given the merge verb gets too few files, Then it is a usage error", async () => {
   expect(await run(["merge", "a"], io(os.tmpdir()))).toBe(2);
 });

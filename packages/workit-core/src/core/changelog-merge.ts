@@ -110,7 +110,15 @@ export const withMergedUnreleased = (
 };
 
 export const CHANGELOG_DRIVER = "workit-changelog";
-export const CHANGELOG_DRIVER_COMMAND = "workit changelog merge %O %A %B";
+/**
+ * Git runs the driver through sh. When `workit` cannot run (not on PATH: 127,
+ * an older CLI without the verb: 2), git would leave a conflicted file holding
+ * only ours with no markers, and a quick `git add` would drop theirs; falling
+ * back to `git merge-file` leaves normal markers instead. Exit 0 or 1 is the
+ * driver's own answer and is passed through untouched.
+ */
+export const CHANGELOG_DRIVER_COMMAND =
+  'workit changelog merge %O %A %B; s=$?; [ "$s" -le 1 ] && exit "$s"; git merge-file %A %O %B';
 
 /** The `.gitattributes` file `driver install` edits: the one at the work tree root. */
 export const gitattributesPath = (root: string): string => path.join(root, ".gitattributes");
