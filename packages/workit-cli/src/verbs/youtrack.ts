@@ -8,6 +8,12 @@
 //   workit youtrack note <ISSUE> (--markdown <text> | --file <path>) [--minutes <n>] [--date auto|YYYY-MM-DD]
 //   workit youtrack time <ISSUE> --minutes <n> [--text <t>] [--date auto|YYYY-MM-DD]
 //   workit youtrack meeting <ISSUE> --minutes <n> --text <t> [--date auto|YYYY-MM-DD]
+//   workit youtrack show <ISSUE>
+//   workit youtrack create --project <P> --summary <s> [--description <t> | --file <p>]
+//
+// show and create (#263) go through `ytrack … --json` when it is on PATH and
+// the built-in client otherwise (core/youtrack-issue.ts); create is gated by
+// WORKIT_YT_WRITE=1. Agents use these instead of reading the token file.
 import { progressFor } from "../progress";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -25,14 +31,27 @@ import {
   type MarkerWhere,
   type OnceOutcome,
 } from "@brainervirus/workit-core/src/core/youtrack-writes";
+import {
+  createIssue,
+  defaultIssueDeps,
+  showIssue,
+  type IssueDeps,
+  type IssueView,
+} from "@brainervirus/workit-core/src/core/youtrack-issue";
 import { emit, fail, ok, type Io } from "../output";
 import { parseFlags, positiveInt, usage } from "./forge-common";
 
 const USAGE =
-  "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …]";
+  "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …] | youtrack show <ISSUE> | youtrack create --project <P> --summary <s> [--description <t> | --file <p>]";
 
-export async function run(argv: string[], io: Io): Promise<number> {
+export async function run(
+  argv: string[],
+  io: Io,
+  issueDeps: IssueDeps = defaultIssueDeps(io.env),
+): Promise<number> {
   const [sub, ...rest] = argv;
+  if (sub === "show") return show(rest, io, issueDeps);
+  if (sub === "create") return create(rest, io, issueDeps);
   if (sub !== "note" && sub !== "time" && sub !== "meeting")
     return usage(io, `unknown subcommand "${sub ?? ""}"`, USAGE);
   const flags = parseFlags(rest, {
@@ -150,6 +169,79 @@ export async function run(argv: string[], io: Io): Promise<number> {
   return emit(io, ok({ issueId, date: date.data.localDate, steps: results }), (data) => [
     `${issueId}: ${data.steps.map((entry) => `${entry.step} ${entry.status.replace("_", " ")}`).join(", ")} (${data.date})`,
     ...data.steps.flatMap((entry) => (entry.note ? [`  note (${entry.step}): ${entry.note}`] : [])),
+  ]);
+}
+
+async function show(argv: string[], io: Io, deps: IssueDeps): Promise<number> {
+  const flags = parseFlags(argv, {});
+  if (typeof flags === "string") return usage(io, flags, USAGE);
+  const [issueId, extra] = flags.positionals;
+  if (!issueId || !ISSUE_RE.test(issueId))
+    return usage(io, "an issue id like ABC-123 is required", USAGE);
+  if (extra !== undefined) return usage(io, `unexpected argument ${extra}`, USAGE);
+  const result = await showIssue(issueId, deps);
+  if (!result.ok)
+    return emit(
+      io,
+      fail(result.code, result.error, {
+        data: { issueId },
+        ...(result.unblock ? { unblock: result.unblock } : {}),
+      }),
+    );
+  return emit(io, ok(result.data), showLines);
+}
+
+const showLines = (issue: IssueView): string[] => [
+  `${issue.issueId}: ${issue.summary}${issue.state ? ` [${issue.state}]` : ""}`,
+  ...(issue.url ? [issue.url] : []),
+  ...issue.fields
+    .filter((field) => field.value !== null && field.name !== "State")
+    .map((field) => `  ${field.name}: ${JSON.stringify(field.value)}`),
+  ...(issue.description ? ["", issue.description] : []),
+  ...issue.comments.flatMap((comment) => [
+    "",
+    `-- ${comment.author ?? "unknown"} ${comment.created ?? ""}`.trimEnd(),
+    comment.text,
+  ]),
+];
+
+async function create(argv: string[], io: Io, deps: IssueDeps): Promise<number> {
+  const flags = parseFlags(argv, {
+    project: "value",
+    summary: "value",
+    description: "value",
+    file: "value",
+  });
+  if (typeof flags === "string") return usage(io, flags, USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, USAGE);
+  const { project, summary, file } = flags.values;
+  if (!project || !summary?.trim())
+    return usage(io, "create needs --project <P> and --summary <s>", USAGE);
+  if (file && flags.values.description !== undefined)
+    return usage(io, "pass at most one of --description or --file", USAGE);
+  let description = flags.values.description;
+  if (file)
+    try {
+      description = readFileSync(path.resolve(io.cwd, file), "utf8");
+    } catch (error) {
+      return usage(io, `cannot read ${file}: ${String(error)}`, USAGE);
+    }
+  const result = await createIssue(
+    { project, summary: summary.trim(), ...(description === undefined ? {} : { description }) },
+    io.env,
+    deps,
+  );
+  if (!result.ok)
+    return emit(
+      io,
+      fail(result.code, result.error, {
+        data: { project },
+        ...(result.unblock ? { unblock: result.unblock } : {}),
+      }),
+    );
+  return emit(io, ok(result.data), (data) => [
+    `created ${data.issueId}${data.url ? ` ${data.url}` : ""}`,
   ]);
 }
 
