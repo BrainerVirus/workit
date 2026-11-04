@@ -4,7 +4,8 @@
 //   workit workspace list
 //   workit workspace add <name> --glob <g> [--from <parent>]
 //   workit workspace set <name> <key>=<value>…
-//   workit workspace rm <name>
+//   workit workspace set --global <key>=<value>…   (top-level keys such as models)
+//   workit workspace rm <name>…
 //
 // list, add and set never raise authority, so an agent shell may run them. Grants,
 // defaultEndpoint and verification stay with `workit grant set` at the user's
@@ -19,7 +20,7 @@
 //   (name, glob). `remotes` (#549) caps every checkout of a claimed remote at
 //   the entry's grants, so adding or removing one is the user's, like a
 //   grant: `set` changes it only at an interactive terminal outside an agent,
-//   with the workspace name typed to confirm. `add` offers the folder's origin
+//   with a y/N. `add` offers the folder's origin
 //   as the new entry's `remotes` there, and sets none headless.
 // - `rm` (#453) hands the entry's directories to whichever entry or default
 //   resolves there next. Textual overlap is no bound on that (see above), so
@@ -28,8 +29,8 @@
 //   every command fails, so its baseline is nothing: no grant, no endpoint
 //   beyond commit, the strictest verification). A removal
 //   that might raise any grant, the endpoint or verification is refused in an
-//   agent or headless shell, like `grant set`, and needs the workspace name
-//   typed at the user's own terminal. It never removes the last entry.
+//   agent or headless shell, like `grant set`, and needs a y/N at the
+//   user's own terminal; several names confirm once. It never removes the last entry.
 // Every write keeps the previous file as workspaces.json.bak, like grant set.
 import { copyFileSync, existsSync } from "node:fs";
 import {
@@ -59,7 +60,7 @@ import {
   prTemplateOf,
   globRoot,
   globSpecificity,
-  overlappingEntries,
+  intersectingEntries,
   readWorkspacesResult,
   resolveWorkspaceFromEntries,
   validateWorkspaceGlob,
@@ -71,11 +72,12 @@ import { configFilePath } from "@brainervirus/workit-core/src/core/config";
 import { withSchemaRef } from "@brainervirus/workit-core/src/core/config-schemas";
 import { closest } from "../help";
 import { emit, fail, ok, type Io } from "../output";
-import { askLine, askOrCancel, cancelled } from "../prompt";
-import { agentMarker, type GrantDeps } from "./grant";
+import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
+import { createStyle, type Style } from "../style";
+import { agentMarker, confirmWith, type GrantDeps } from "./grant";
 
 const USAGE =
-  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace rm <name>";
+  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace set --global <key>=<value>… | workspace rm <name>…";
 
 /** What `--from` copies: never a grant, the endpoint or verification. */
 export const INHERITED_KEYS = [
@@ -208,6 +210,7 @@ const clampToShadowed = (shadowed: Ceiling | null): Record<string, unknown> => {
 const defaultDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
   ask: (question) => askLine(question),
+  confirm: (question) => confirmKey(question),
 };
 
 /** What `after` grants beyond `before`: grant kinds, defaultEndpoint, verification. */
@@ -245,8 +248,13 @@ const entriesOf = (current: WorkspacesResult): Entry[] => current.entries;
 const save = (
   current: WorkspacesResult,
   entries: Entry[],
+  topLevel: Record<string, unknown> = {},
 ): { ok: true; path: string; backup: string | null } | { ok: false; error: string } => {
-  const document = withSchemaRef("workspaces.json", { ...current.document, workspaces: entries });
+  const document = withSchemaRef("workspaces.json", {
+    ...current.document,
+    ...topLevel,
+    workspaces: entries,
+  });
   const validated = validateWorkspacesDocument(document, current.path);
   if (validated.status !== "valid")
     return { ok: false, error: validated.error ?? "invalid workspaces.json" };
@@ -271,6 +279,54 @@ const save = (
 
 const written = (path: string, backup: string | null) =>
   `${path}${backup ? ` (previous copy: ${backup})` : ""}`;
+
+const styleOf = (io: Io): Style =>
+  createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
+
+const brief = (value: unknown): string => {
+  const text = value === undefined ? "(unset)" : JSON.stringify(value);
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+};
+
+/** The grant line of a ceiling; with `before`, each value that moved is colored (raise green, lower yellow), the rest dim. */
+const ceilingLine = (style: Style, after: Ceiling, before?: Ceiling): string => {
+  const part = (label: string, value: string, mark: "raise" | "lower" | "same"): string =>
+    !before || mark === "same"
+      ? before
+        ? style.dim(`${label}${value}`)
+        : `${label}${value}`
+      : (mark === "raise" ? style.raise : style.lower)(`${label}${value}`);
+  const kinds = GRANT_KINDS.map((kind) =>
+    part(
+      `${kind}=`,
+      String(after.grants[kind]),
+      !before || before.grants[kind] === after.grants[kind]
+        ? "same"
+        : raises(kind, before.grants[kind], after.grants[kind])
+          ? "raise"
+          : "lower",
+    ),
+  ).join(" ");
+  const endpoint = part(
+    "default endpoint ",
+    after.endpoint,
+    !before || before.endpoint === after.endpoint
+      ? "same"
+      : raisesEndpoint(before.endpoint, after.endpoint)
+        ? "raise"
+        : "lower",
+  );
+  const verification = part(
+    "verification ",
+    after.verification,
+    !before || before.verification === after.verification
+      ? "same"
+      : looser(before.verification, after.verification)
+        ? "raise"
+        : "lower",
+  );
+  return `${kinds}; ${endpoint}; ${verification}`;
+};
 
 function list(argv: string[], io: Io): number {
   if (argv.length) return usage(io, `unexpected argument ${argv[0]}`);
@@ -409,7 +465,7 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       )
     : {};
   // Capped at every entry, not only the overlapping ones (see the header).
-  const shadowed = overlappingEntries(glob, entries);
+  const shadowed = intersectingEntries(glob, entries);
   const remotes = await askRemotes(glob, io, deps);
   if (remotes === null) return cancelled(io);
   const entry: Entry = {
@@ -422,6 +478,7 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const result = save(current, [...entries, entry]);
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
   const ceiling = ceilingOf(entry);
+  const style = styleOf(io);
   return emit(
     io,
     ok({
@@ -435,14 +492,18 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       verification: ceiling.verification,
     }),
     (data) => [
-      `${name} (${glob}) added to ${written(data.path, data.backup)}`,
-      ...(data.inherited.length ? [`  from ${from}: ${data.inherited.join(", ")}`] : []),
-      ...(data.shadows.length ? [`  overlaps: ${data.shadows.join(", ")}`] : []),
+      `${style.bold(name)} ${style.dim(`(${glob})`)} ${style.raise("added")} to ${written(data.path, data.backup)}`,
+      ...(data.inherited.length
+        ? [`  from ${style.bold(from ?? "")}: ${data.inherited.join(", ")}`]
+        : []),
+      ...(data.shadows.length
+        ? [`  overlaps: ${data.shadows.map((item) => style.bold(item)).join(", ")}`]
+        : []),
       remotesOf(data.workspace).length
         ? `  remotes: ${remotesOf(data.workspace).join(", ")}`
         : `  no remotes: a checkout elsewhere whose origin is this workspace's remote keeps its own folder's grants; the user can set them: workit workspace set ${name} remotes=<url>`,
       `  grants start at the strictest level of every workspace and the defaults:`,
-      `  grants: ${GRANT_KINDS.map((kind) => `${kind}=${String(data.grants[kind])}`).join(" ")}; default endpoint ${data.defaultEndpoint}; verification ${data.verification}`,
+      `  grants: ${ceilingLine(style, { grants: data.grants, endpoint: data.defaultEndpoint, verification: data.verification })}`,
       `  raising a grant needs the user, in their own terminal: workit grant set ${name} <kind>=<value>`,
     ],
   );
@@ -457,9 +518,19 @@ const parseSetValue = (raw: string): unknown => {
   }
 };
 
-async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
-  const [name, ...specs] = argv;
-  if (!name || specs.length === 0) return usage(io, "set needs <name> and <key>=<value>");
+/** Top-level keys of workspaces.json that `set --global` changes (the schema's non-grant keys). */
+const GLOBAL_KEYS = new Set(["models"]);
+
+async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> {
+  const global = rawArgv.includes("--global");
+  const argv = rawArgv.filter((arg) => arg !== "--global");
+  const [name = "", ...specs] = global ? ["", ...argv] : argv;
+  if (global ? specs.length === 0 : !name || specs.length === 0)
+    return usage(
+      io,
+      global ? "set --global needs <key>=<value>" : "set needs <name> and <key>=<value>",
+    );
+  const settable = global ? GLOBAL_KEYS : SETTABLE_KEYS;
   const grantSpecs: string[] = [];
   const remoteSpecs: string[] = [];
   const changes: { path: string[]; value: unknown }[] = [];
@@ -474,7 +545,7 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       grantSpecs.push(spec);
       continue;
     }
-    if (keyPath[0] === REMOTES_KEY) {
+    if (!global && keyPath[0] === REMOTES_KEY) {
       if (keyPath.length > 1) return usage(io, `${spec}: remotes takes the whole list`);
       const remotes = parseRemotes(spec.slice(eq + 1));
       if (remotes instanceof Error) return usage(io, remotes.message);
@@ -482,7 +553,7 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       changes.push({ path: keyPath, value: remotes });
       continue;
     }
-    if (SCOPE_KEYS.has(keyPath[0]))
+    if (!global && SCOPE_KEYS.has(keyPath[0]))
       return emit(
         io,
         fail(
@@ -495,11 +566,11 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       );
     // Anything else (a case variant such as Autonomy or GLOB included) would
     // be an inert key: refused, never written.
-    if (!SETTABLE_KEYS.has(keyPath[0])) {
-      const hint = unknownKeyHint(keyPath[0]);
+    if (!settable.has(keyPath[0])) {
+      const hint = global ? null : unknownKeyHint(keyPath[0]);
       return usage(
         io,
-        `${spec}: unknown key ${keyPath[0]}${hint ? `; ${hint}` : ""} (settable: ${[...SETTABLE_KEYS].join(", ")})`,
+        `${spec}: unknown key ${keyPath[0]}${hint ? `; ${hint}` : ""} (settable${global ? " with --global" : ""}: ${[...settable].join(", ")})`,
       );
     }
     const value = parseSetValue(spec.slice(eq + 1));
@@ -547,16 +618,18 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       io,
       fail(
         "blocked",
-        `workspace set does not change grants, defaultEndpoint or verification (${grantSpecs.join(", ")})`,
+        `workspace set${global ? " --global" : ""} does not change grants, defaultEndpoint or verification (${grantSpecs.join(", ")})`,
         {
-          unblock: `ask the user to run, in their own terminal outside the agent host: workit grant set ${name} ${grantSpecs.join(" ")}`,
+          unblock: `ask the user to run, in their own terminal outside the agent host: workit grant set ${global ? "<workspace>" : name} ${grantSpecs.join(" ")}`,
         },
       ),
     );
   const current = load(io);
   if (typeof current === "number") return current;
   const entries = structuredClone(entriesOf(current));
-  const entry = entries.find((item) => item.name === name);
+  // --global edits the file's own top-level object; the entries stay as they are.
+  const topLevel: Record<string, unknown> = structuredClone(current.document ?? {});
+  const entry = global ? topLevel : entries.find((item) => item.name === name);
   if (!entry) return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
   if (remoteSpecs.length) {
     // Removing a claim raises the checkouts it capped; adding one moves where
@@ -575,18 +648,20 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
         ),
       );
     const answer = await askOrCancel(io, () =>
-      deps.ask(
-        `Change the remotes of workspace "${name}" to ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants. Type the workspace name to confirm: `,
+      confirmWith(
+        deps,
+        `Change the remotes of workspace "${name}" to ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants.`,
       ),
     );
     if (answer === null) return cancelled(io);
-    if (answer.trim() !== name)
+    if (!answer)
       return emit(io, fail("blocked", "remotes change not confirmed; nothing was written"));
   }
   // Configured grants need vcs.account (autonomy.ts): changing the entry's vcs
   // could switch them on or move them to another credential.
   const credential = changes.find((change) => change.path[0] === "vcs");
   if (
+    !global &&
     credential &&
     (configuredGrants(entry).source !== "default" || entry.defaultEndpoint !== undefined)
   )
@@ -600,6 +675,7 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
         },
       ),
     );
+  const moves: { key: string; from: unknown; to: unknown }[] = [];
   for (const change of changes) {
     let target: Record<string, unknown> = entry;
     for (const part of change.path.slice(0, -1)) {
@@ -610,41 +686,59 @@ async function set(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       target = target[part] as Record<string, unknown>;
     }
     const last = change.path[change.path.length - 1];
+    moves.push({
+      key: change.path.join("."),
+      from: structuredClone(target[last]),
+      to: change.value ?? undefined,
+    });
     if (change.value === null) delete target[last];
     else target[last] = change.value;
   }
-  const result = save(current, entries);
+  const result = global ? save(current, entries, topLevel) : save(current, entries);
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
-  return emit(io, ok({ path: result.path, backup: result.backup, workspace: entry }), (data) => [
-    `${name}: ${changes.map((change) => change.path.join(".")).join(", ")} updated in ${written(data.path, data.backup)}`,
-  ]);
+  const style = styleOf(io);
+  return emit(
+    io,
+    ok({
+      path: result.path,
+      backup: result.backup,
+      ...(global ? { global: true, settings: topLevel } : { workspace: entry }),
+      changes: moves,
+    }),
+    (data) => [
+      `${style.bold(global ? "global" : name)}: ${changes.map((change) => change.path.join(".")).join(", ")} updated in ${written(data.path, data.backup)}`,
+      ...moves.map((move) => {
+        const paint =
+          move.to === undefined
+            ? style.remove
+            : move.from === undefined
+              ? style.raise
+              : style.lower;
+        return paint(`  ${style.bold(move.key)}: ${brief(move.from)} -> ${brief(move.to)}`);
+      }),
+    ],
+  );
 }
 
 /** One possible taker of the removed entry's directories and what it would raise. */
-type Raise = { taker: string; kinds: string[]; reason: string };
+type Raise = { taker: string; kinds: string[]; reason: string; entry?: true };
 
-async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
-  const [name, extra] = argv;
-  if (!name) return usage(io, "rm needs <name>");
-  if (extra) return usage(io, `unexpected argument ${extra}`);
-  const current = load(io);
-  if (typeof current === "number") return current;
-  const entries = entriesOf(current);
-  const removed = entries.find((entry) => entry.name === name);
-  if (!removed)
-    return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
-  const remaining = entries.filter((entry) => entry !== removed);
-  if (remaining.length === 0)
-    return emit(
-      io,
-      fail(
-        "blocked",
-        `"${name}" is the last workspace in ${current.path}: it holds your vcs, policies and grants, and without it every folder falls back to the defaults; workspace rm does not remove it`,
-        {
-          unblock: `add the workspace that should replace it first (workit workspace add <name> --glob <g> --from ${name}), or edit ${current.path} in your own editor`,
-        },
-      ),
-    );
+/** Group raises by taker: the same taker and reason across a batch reads once. */
+const mergeRaises = (all: Raise[]): Raise[] => {
+  const merged = new Map<string, Raise>();
+  for (const raise of all) {
+    const key = `${raise.taker}\n${raise.reason}`;
+    const known = merged.get(key);
+    merged.set(key, {
+      ...raise,
+      kinds: [...new Set([...(known?.kinds ?? []), ...raise.kinds])],
+    });
+  }
+  return [...merged.values()];
+};
+
+/** What the raises of removing `removed` would give each possible taker. */
+const raisesOf = (removed: Entry, remaining: Entry[]): Raise[] => {
   // Every directory the entry decided now resolves to some other entry or the
   // defaults; which one is not decidable from the text (see the header).
   const before = deliveredCeilingOf(removed);
@@ -656,7 +750,7 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
     verification: STRICTNESS[0],
   };
   const specificity = globSpecificity(removed.glob);
-  const raised: Raise[] = [
+  return [
     {
       taker: "defaults",
       kinds: raisedKinds(before, defaults),
@@ -666,6 +760,7 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       taker: entry.name,
       kinds: raisedKinds(before, ceilingOf(entry)),
       reason: "may match a folder it covered",
+      entry: true as const,
     })),
     ...remaining
       .filter((entry) => globSpecificity(entry.glob) === specificity)
@@ -673,6 +768,7 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
         taker: entry.name,
         kinds: raisedKinds(nothing, ceilingOf(entry)),
         reason: "equally specific: a folder both matched was ambiguous, with nothing granted",
+        entry: true as const,
       })),
     // Its remotes capped checkouts anywhere (#549); they stop being capped.
     ...(remotesOf(removed).length
@@ -680,76 +776,151 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
           {
             taker: "checkouts of its remotes",
             kinds: ["remotes"],
-            reason: `no longer capped at ${name}: ${remotesOf(removed).join(", ")}`,
+            reason: `no longer capped at ${removed.name}: ${remotesOf(removed).join(", ")}`,
           },
         ]
       : []),
   ].filter((raise) => raise.kinds.length > 0);
+};
+
+/**
+ * The raises as text. Every entry still counts as a possible taker for the
+ * decision (a linked worktree or symlink can resolve through any of them), but
+ * only the entries whose globs really intersect a removed glob are named; the
+ * rest collapse into one clause.
+ */
+const describeRaises = (
+  raised: Raise[],
+  overlapping: ReadonlySet<string>,
+  style: Style,
+): string[] => {
+  const named = raised.filter((raise) => !raise.entry || overlapping.has(raise.taker));
+  const namedSet = new Set(named);
+  const others = raised.filter((raise) => !namedSet.has(raise));
+  const otherTakers = new Set(others.map((raise) => raise.taker));
+  return [
+    ...named.map(
+      (raise) =>
+        `${style.bold(raise.taker)} (${raise.reason}): ${style.raise(raise.kinds.join(", "))}`,
+    ),
+    ...(others.length
+      ? [
+          `${otherTakers.size} other ${otherTakers.size === 1 ? "entry" : "entries"} whose globs do not overlap (a linked worktree or symlink could still resolve there): ${style.raise([...new Set(others.flatMap((raise) => raise.kinds))].join(", "))}`,
+        ]
+      : []),
+  ];
+};
+
+async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
+  const names = [...new Set(argv)];
+  if (names.length === 0) return usage(io, "rm needs <name>");
+  const current = load(io);
+  if (typeof current === "number") return current;
+  const entries = entriesOf(current);
+  const byName = new Map(entries.map((entry) => [entry.name, entry]));
+  const gone: Entry[] = [];
+  for (const name of names) {
+    const found = byName.get(name);
+    if (!found)
+      return emit(io, fail("not_found", `no workspace named "${name}" in ${current.path}`));
+    gone.push(found);
+  }
+  const goneSet = new Set(gone);
+  const remaining = entries.filter((entry) => !goneSet.has(entry));
+  const label = names.map((name) => `"${name}"`).join(", ");
+  if (remaining.length === 0)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `${gone.length === 1 ? `"${names[0]}" is` : `${label} are`} the last workspace${gone.length === 1 ? "" : "s"} in ${current.path}: ${gone.length === 1 ? "it holds" : "they hold"} your vcs, policies and grants, and without ${gone.length === 1 ? "it" : "them"} every folder falls back to the defaults; workspace rm does not remove ${gone.length === 1 ? "it" : "them"}`,
+        {
+          unblock: `add the workspace that should replace ${gone.length === 1 ? "it" : "them"} first (workit workspace add <name> --glob <g> --from ${names[0]}), or edit ${current.path} in your own editor`,
+        },
+      ),
+    );
+  const raised = mergeRaises(gone.flatMap((removed) => raisesOf(removed, remaining)));
+  const takers = remaining.filter((entry) =>
+    gone.some((removed) => intersectingEntries(removed.glob, [entry]).length > 0),
+  );
+  const style = styleOf(io);
   if (raised.length > 0) {
     const kinds = [...new Set(raised.flatMap((raise) => raise.kinds))];
-    const detail = raised
-      .map((raise) => `${raise.taker} (${raise.reason}): ${raise.kinds.join(", ")}`)
-      .join("; ");
+    const detail = describeRaises(raised, new Set(takers.map((entry) => entry.name)), style);
+    const plain = describeRaises(raised, new Set(takers.map((entry) => entry.name)), createStyle());
     const agent = agentMarker(io.env);
     if (!deps.interactive() || agent)
       return emit(
         io,
         fail(
           "blocked",
-          `grant_raise_refused: removing "${name}" may raise ${kinds.join(", ")} for the folders it covered (${detail}); that needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; grants are never raised headless`,
+          `grant_raise_refused: removing ${label} may raise ${kinds.join(", ")} for the folders ${gone.length === 1 ? "it" : "they"} covered (${plain.join("; ")}); that needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; grants are never raised headless`,
           {
-            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): workit workspace rm ${name}`,
+            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): workit workspace rm ${names.join(" ")}`,
           },
         ),
       );
     const answer = await askOrCancel(io, () =>
-      deps.ask(
-        `Removing workspace "${name}" may raise ${kinds.join(", ")} for the folders it covered (${detail}). An agent there may then do more without asking. Type the workspace name to confirm: `,
+      confirmWith(
+        deps,
+        `Remove ${gone.length === 1 ? "workspace" : `${gone.length} workspaces`} ${names.map((name) => style.bold(`"${name}"`)).join(", ")}? It may raise ${kinds.join(", ")} for the folders ${gone.length === 1 ? "it" : "they"} covered:\n${detail.map((line) => `  - ${line}`).join("\n")}\nAn agent there may then do more without asking.`,
       ),
     );
     if (answer === null) return cancelled(io);
-    if (answer.trim() !== name)
+    if (!answer)
       return emit(io, fail("blocked", "workspace removal not confirmed; nothing was written"));
   }
   const result = save(current, remaining);
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
-  const at = globRoot(removed.glob);
-  let covers: { at: string; workspace: string | null; error?: string };
-  try {
-    covers = {
-      at,
-      workspace: resolveWorkspaceFromEntries(at, remaining)?.name ?? null,
+  const results = gone.map((removed) => {
+    const at = globRoot(removed.glob);
+    let covers: { at: string; workspace: string | null; error?: string };
+    try {
+      covers = {
+        at,
+        workspace: resolveWorkspaceFromEntries(at, remaining)?.name ?? null,
+      };
+    } catch (error) {
+      covers = {
+        at,
+        workspace: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const covering = ceilingOf(remaining.find((entry) => entry.name === covers.workspace));
+    return {
+      removed,
+      covers: {
+        ...covers,
+        grants: covering.grants,
+        defaultEndpoint: covering.endpoint,
+        verification: covering.verification,
+      },
+      was: deliveredCeilingOf(removed),
     };
-  } catch (error) {
-    covers = {
-      at,
-      workspace: null,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-  const coveringCeiling = ceilingOf(remaining.find((entry) => entry.name === covers.workspace));
+  });
+  const one = results.length === 1;
   return emit(
     io,
     ok({
       path: result.path,
       backup: result.backup,
-      removed,
-      covers: {
-        ...covers,
-        grants: coveringCeiling.grants,
-        defaultEndpoint: coveringCeiling.endpoint,
-        verification: coveringCeiling.verification,
-      },
-      takers: overlappingEntries(removed.glob, remaining).map((entry) => entry.name),
-      raises: raised,
+      removed: one ? results[0].removed : results.map((item) => item.removed),
+      covers: one ? results[0].covers : results.map((item) => item.covers),
+      takers: takers.map((entry) => entry.name),
+      raises: raised.map(({ taker, kinds, reason }) => ({ taker, kinds, reason })),
     }),
     (data) => [
-      `${name} (${removed.glob}) removed from ${written(data.path, data.backup)}`,
-      data.covers.error
-        ? `  ${data.covers.at}: ${data.covers.error}`
-        : `  ${data.covers.at} is now ${data.covers.workspace ? `workspace ${data.covers.workspace}` : "under the defaults (no workspace)"}: ${GRANT_KINDS.map((kind) => `${kind}=${String(data.covers.grants[kind])}`).join(" ")}; default endpoint ${data.covers.defaultEndpoint}; verification ${data.covers.verification}`,
+      ...results.flatMap(({ removed, covers, was }) => [
+        `${style.bold(removed.name)} ${style.dim(`(${removed.glob})`)} ${style.remove("removed")}${removed === results[0].removed ? ` from ${written(data.path, data.backup)}` : ""}`,
+        covers.error
+          ? `  ${covers.at}: ${covers.error}`
+          : `  ${covers.at} is now ${covers.workspace ? `workspace ${style.bold(covers.workspace)}` : "under the defaults (no workspace)"}: ${ceilingLine(style, { grants: covers.grants, endpoint: covers.defaultEndpoint, verification: covers.verification }, was)}`,
+      ]),
       ...(data.takers.length
-        ? [`  entries whose globs may cover its other folders: ${data.takers.join(", ")}`]
+        ? [
+            `  entries whose globs may cover ${one ? "its" : "their"} other folders: ${takers.map((entry) => style.bold(entry.name)).join(", ")}`,
+          ]
         : []),
       "  workit workspace list --cwd <folder> shows which entry applies to a folder",
     ],

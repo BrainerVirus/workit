@@ -59,12 +59,19 @@ const headless: GrantDeps = {
   ask: async () => {
     throw new Error("a headless call must never prompt");
   },
+  confirm: async () => {
+    throw new Error("a headless call must never prompt");
+  },
 };
 const interactive = (answer: string, asked: string[] = []): GrantDeps => ({
   interactive: () => true,
   ask: async (question) => {
     asked.push(question);
     return answer;
+  },
+  confirm: async (question) => {
+    asked.push(question);
+    return answer === "y";
   },
 });
 
@@ -118,7 +125,7 @@ test("grant set: raising merge=verified headless is refused and nothing is writt
 test("grant set: an agent shell (CLAUDECODE=1) is refused even when interactive", async () => {
   const before = readFileSync(file(), "utf8");
   const asked: string[] = [];
-  const result = await run(["set", "w", "merge=verified"], interactive("w", asked), {
+  const result = await run(["set", "w", "merge=verified"], interactive("y", asked), {
     CLAUDECODE: "1",
   });
   expect(result.code).toBe(3);
@@ -129,10 +136,10 @@ test("grant set: an agent shell (CLAUDECODE=1) is refused even when interactive"
   expect(readFileSync(file(), "utf8")).toBe(before);
 });
 
-test("grant set: interactive and confirmed by the workspace name writes the raise with a backup", async () => {
+test("grant set: interactive and confirmed with y writes the raise with a backup", async () => {
   const before = readFileSync(file(), "utf8");
   const asked: string[] = [];
-  const result = await run(["set", "w", "merge=verified"], interactive("w\n", asked));
+  const result = await run(["set", "w", "merge=verified"], interactive("y", asked));
   expect(result.code).toBe(0);
   expect(asked).toHaveLength(1);
   expect(asked[0]).toContain('workspace "w"');
@@ -146,9 +153,9 @@ test("grant set: interactive and confirmed by the workspace name writes the rais
   expect(readFileSync(backup(), "utf8")).toBe(before);
 });
 
-test("grant set: interactive with the wrong confirmation writes nothing", async () => {
+test("grant set: interactive with the n writes nothing", async () => {
   const before = readFileSync(file(), "utf8");
-  const result = await run(["set", "w", "merge=verified"], interactive("yes"));
+  const result = await run(["set", "w", "merge=verified"], interactive("n"));
   expect(result.code).toBe(3);
   expect(result.json()).toMatchObject({ ok: false, code: "blocked" });
   expect(result.json().error).toContain("not confirmed");
@@ -163,6 +170,9 @@ test("grant set: Ctrl+C at the confirmation cancels cleanly (exit 130, nothing w
   const ctrlC: GrantDeps = {
     interactive: () => true,
     ask: async () => {
+      throw new DOMException("The operation was aborted", "AbortError");
+    },
+    confirm: async () => {
       throw new DOMException("The operation was aborted", "AbortError");
     },
   };
@@ -194,6 +204,9 @@ test("grant set: Ctrl+C under --json emits one cancelled envelope and exits 130"
     ask: async () => {
       throw new DOMException("The operation was aborted", "AbortError");
     },
+    confirm: async () => {
+      throw new DOMException("The operation was aborted", "AbortError");
+    },
   };
   const result = await run(["set", "w", "merge=verified"], ctrlC);
   expect(result.code).toBe(130);
@@ -210,6 +223,9 @@ test("grant set: a prompt failure that is not a cancellation still propagates", 
   const broken: GrantDeps = {
     interactive: () => true,
     ask: async () => {
+      throw new Error("stdin exploded");
+    },
+    confirm: async () => {
       throw new Error("stdin exploded");
     },
   };
@@ -305,12 +321,12 @@ test("verification=independent (user config, S17) tightens headless, makes norma
   expect(raiseToSelf.code).not.toBe(0);
   expect(raiseToSelf.json().error).toContain("grant_raise_refused");
   expect(entry().verification).toBeUndefined();
-  expect((await run(["set", "w", "verification=self"], interactive("w"))).code).toBe(0);
+  expect((await run(["set", "w", "verification=self"], interactive("y"))).code).toBe(0);
   expect(rules()).toEqual(["check:test", "verdict:self"]);
   // self -> proportional and self -> independent lower, so headless may.
   expect((await run(["set", "w", "verification=proportional"], headless)).code).toBe(0);
   expect(rules()).toEqual(["check:test", "verdict:lane"]);
-  expect((await run(["set", "w", "verification=self"], interactive("w"))).code).toBe(0);
+  expect((await run(["set", "w", "verification=self"], interactive("y"))).code).toBe(0);
   const tightened = await run(["set", "w", "verification=independent"], headless);
   expect(tightened.code).toBe(0);
   expect(entry().verification).toBe("independent");
@@ -322,7 +338,7 @@ test("verification=independent (user config, S17) tightens headless, makes norma
   expect(entry().verification).toBe("independent");
   // Unset falls back to proportional, the loosest: a raise too.
   expect((await run(["unset", "w", "verification"], headless)).code).not.toBe(0);
-  expect((await run(["unset", "w", "verification"], interactive("w"))).code).toBe(0);
+  expect((await run(["unset", "w", "verification"], interactive("y"))).code).toBe(0);
   expect(entry().verification).toBeUndefined();
   expect(rules()).toEqual(["check:test", "verdict:lane"]);
 });
@@ -349,16 +365,16 @@ test("grant set: each step up the endpoint ladder is a raise refused headless", 
 
 test("grant set: a raise to green or merged writes once the user types the workspace name", async () => {
   const asked: string[] = [];
-  const green = await run(["set", "w", "defaultEndpoint=green"], interactive("w", asked));
+  const green = await run(["set", "w", "defaultEndpoint=green"], interactive("y", asked));
   expect(green.code).toBe(0);
   expect(asked[0]).toContain("defaultEndpoint=green");
   expect(entry().defaultEndpoint).toBe("green");
 
-  const refused = await run(["set", "w", "defaultEndpoint=merged"], interactive("nope"));
+  const refused = await run(["set", "w", "defaultEndpoint=merged"], interactive("n"));
   expect(refused.code).toBe(3);
   expect(entry().defaultEndpoint).toBe("green");
 
-  const merged = await run(["set", "w", "defaultEndpoint=merged"], interactive("w"));
+  const merged = await run(["set", "w", "defaultEndpoint=merged"], interactive("y"));
   expect(merged.code).toBe(0);
   expect(entry().defaultEndpoint).toBe("merged");
 });
@@ -378,7 +394,7 @@ test("grant set: stepping the endpoint down is free headless", async () => {
 
 test("grant set: an endpoint outside commit|pr|green|merged is rejected and nothing is written", async () => {
   const before = readFileSync(file(), "utf8");
-  const result = await run(["set", "w", "defaultEndpoint=deployed"], interactive("w"));
+  const result = await run(["set", "w", "defaultEndpoint=deployed"], interactive("y"));
   expect(result.code).not.toBe(0);
   expect(result.json()).toMatchObject({ ok: false, code: "invalid_input" });
   expect(result.json().error).toContain("commit, pr, green, merged");

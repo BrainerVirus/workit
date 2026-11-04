@@ -929,6 +929,42 @@ export const overlappingEntries = <T extends { name: string; glob: string }>(
   entries: readonly T[],
 ): T[] => entries.filter((entry) => globsMayOverlap(entry.glob, glob));
 
+/** One path segment as a regex: `*` stays inside the segment, anything else is literal. */
+const segmentRegExp = (segment: string): RegExp =>
+  new RegExp(`^${segment.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", "[^/]*")}$`);
+
+/** Whether two path-glob segment lists can name a common path (a globstar ends the comparison). */
+const segmentsIntersect = (a: readonly string[], b: readonly string[]): boolean => {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const [x, y] = [a[i], b[i]];
+    if (x.includes("**") || y.includes("**")) return true;
+    const [xWild, yWild] = [x.includes("*"), y.includes("*")];
+    if (xWild && yWild) continue;
+    if (xWild ? !segmentRegExp(x).test(y) : yWild ? !segmentRegExp(y).test(x) : x !== y)
+      return false;
+  }
+  // One glob ends first: the shorter one names a folder that holds the other.
+  return true;
+};
+
+/**
+ * Whether two globs really can match a common folder, segment by segment: a
+ * stricter reading than `globsMayOverlap`, for what the verbs print (the
+ * safety decisions still use the conservative one). Compared in logical and
+ * real form, so a symlinked root cannot hide an overlap.
+ */
+export const globsIntersect = (a: string, b: string): boolean => {
+  const split = (glob: string) => glob.replaceAll("\\", "/").split("/").filter(Boolean);
+  const forms = (glob: string) => [glob, canonicalGlob(glob.replaceAll("\\", "/"))];
+  return forms(a).some((fa) => forms(b).some((fb) => segmentsIntersect(split(fa), split(fb))));
+};
+
+/** Every entry whose glob can really match a folder `glob` matches. */
+export const intersectingEntries = <T extends { name: string; glob: string }>(
+  glob: string,
+  entries: readonly T[],
+): T[] => entries.filter((entry) => globsIntersect(entry.glob, glob));
+
 export type WorkspaceOverlap = {
   /** The entry nested inside (or tied with) `outer`. */
   inner: string;

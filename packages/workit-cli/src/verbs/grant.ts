@@ -14,7 +14,7 @@
 // lets the review lane ask for less). Unset means proportional.
 //
 // Raising a grant (anything that lets an agent deliver more) needs the user at
-// an interactive terminal who types the workspace name to confirm; a headless
+// an interactive terminal who answers y to confirm; a headless
 // or agent-run call is refused with the command to hand to the user. Lowering
 // is always allowed, so an agent can tighten its own ceiling. Grants are never
 // read from a repository file, and no MCP or host tool can set them.
@@ -25,6 +25,7 @@
 // permission prompt (deny or ask on `workit grant set` and on edits under
 // ~/.config/workit) is the hard boundary.
 import {
+  DEFAULT_ENDPOINT,
   DEFAULT_ENDPOINTS,
   DEFAULT_GRANTS,
   DEFAULT_VERIFICATION,
@@ -78,7 +79,8 @@ import {
   resolveChangelogPaths,
 } from "@brainervirus/workit-core/src/core/changelog-gate";
 import { emit, fail, ok, type Io } from "../output";
-import { askLine, askOrCancel, cancelled } from "../prompt";
+import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
+import { createStyle, type Style } from "../style";
 
 const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=proportional|self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
@@ -101,11 +103,20 @@ export type GrantDeps = {
   interactive: () => boolean;
   /** Ask one question on the terminal and return the typed line. */
   ask: (question: string) => Promise<string>;
+  /** A scoped y/N on the terminal: true only for y (Enter declines). */
+  confirm?: (question: string) => Promise<boolean>;
 };
+
+/** The y/N through `confirm`; a deps without it (a caller that only reads lines) answers by typing y. */
+export const confirmWith = async (deps: GrantDeps, question: string): Promise<boolean> =>
+  deps.confirm
+    ? deps.confirm(question)
+    : (await deps.ask(`${question} [y/N] `)).trim().toLowerCase() === "y";
 
 const defaultDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
   ask: (question) => askLine(question),
+  confirm: (question) => confirmKey(question),
 };
 
 const parseValue = (raw: string): GrantValue | null =>
@@ -137,20 +148,47 @@ const VERIFICATION_TEXT: Record<VerificationMode, string> = {
   independent: "a normal-risk behavior change needs a non-author verdict",
 };
 
+/** How a grant row moved in one `grant set`: raised, lowered or untouched. */
+export type Mark = "raise" | "lower" | "same";
+type Marks = Partial<Record<string, Mark>>;
+const paintMark = (style: Style, mark: Mark | undefined): ((text: string) => string) =>
+  mark === "raise" ? style.raise : mark === "lower" ? style.lower : style.dim;
+
 const describe = (
   grants: Grants,
   configured: readonly GrantKind[],
   endpoint: EndpointView,
   verification: VerificationMode,
-): string[] => [
-  ...GRANT_KINDS.map(
-    (kind) =>
-      `  ${kind.padEnd(8)}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (workit git push --release: git-flow main and develop, landed release tags)" : ""}`,
-  ),
-  `  default endpoint: ${endpointLabel(endpoint)} (an unnamed request stops at ${STOPS_AT[endpoint.effectiveEndpoint]})`,
-  ...(endpoint.endpointIssue ? [`  note: ${endpoint.endpointIssue}`] : []),
-  `  verification: ${verification} (${VERIFICATION_TEXT[verification]})`,
-];
+  style: Style = createStyle(),
+  marks?: Marks,
+): string[] => {
+  // With marks (a change), the rows that moved stand out and the rest recede.
+  const row = (key: string, plain: (bold: (text: string) => string) => string): string =>
+    marks === undefined
+      ? plain(style.bold)
+      : marks[key] === "same" || marks[key] === undefined
+        ? style.dim(plain((text) => text))
+        : paintMark(style, marks[key])(plain(style.bold));
+  return [
+    ...GRANT_KINDS.map((kind) =>
+      row(
+        kind,
+        (bold) =>
+          `  ${bold(kind.padEnd(8))}${String(grants[kind]).padEnd(10)}${configured.includes(kind) ? "configured" : "default"}${kind === "release" ? " (workit git push --release: git-flow main and develop, landed release tags)" : ""}`,
+      ),
+    ),
+    row(
+      "defaultEndpoint",
+      (bold) =>
+        `  ${bold("default endpoint")}: ${endpointLabel(endpoint)} (an unnamed request stops at ${STOPS_AT[endpoint.effectiveEndpoint]})`,
+    ),
+    ...(endpoint.endpointIssue ? [`  note: ${endpoint.endpointIssue}`] : []),
+    row(
+      "verification",
+      (bold) => `  ${bold("verification")}: ${verification} (${VERIFICATION_TEXT[verification]})`,
+    ),
+  ];
+};
 
 const CHANGELOG_TEXT: Record<ChangelogMode, string> = {
   off: "no changelog step",
@@ -266,10 +304,11 @@ function show(argv: string[], io: Io): number {
     }));
     if (named.length && rows.length === 0)
       return emit(io, fail("not_found", `no workspace named "${named[0]}" in ${listed.path}`));
+    const style = createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
     return emit(io, ok({ path: listed.path, defaults: DEFAULT_GRANTS, workspaces: rows }), () =>
       rows.flatMap((entry) => [
-        `${entry.name} (${entry.glob})`,
-        ...describe(entry.grants, entry.configured, entry, entry.verification),
+        `${style.bold(entry.name)} ${style.dim(`(${entry.glob})`)}`,
+        ...describe(entry.grants, entry.configured, entry, entry.verification, style),
         ...describeSteps(entry.changelog, entry.docs, entry.changelogPaths),
         describePrTemplate(entry.prTemplate),
         describeReleaseNotes(entry.releaseNotes, entry.releaseNotesTracks),
@@ -330,6 +369,7 @@ function show(argv: string[], io: Io): number {
     ...(tracks.tracks.length || tracks.error ? { releaseTracks: tracks } : {}),
     ...(tierModelIssues.length ? { tierModelIssues } : {}),
   };
+  const style = createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
   return emit(io, ok(shown), (data) => [
     ...(data.note ? [`note: ${data.note}`] : []),
     ...tierModelIssues.map((issue) => `note: ${issue}`),
@@ -339,9 +379,9 @@ function show(argv: string[], io: Io): number {
     ...remotes.warnings.map((warning) => `warning: ${warning}`),
     ...remotes.notes.map((note) => `note: ${note}`),
     data.workspace
-      ? `workspace ${data.workspace} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
+      ? `workspace ${style.bold(data.workspace)} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
-    ...describe(data.grants, data.configured, data, data.verification),
+    ...describe(data.grants, data.configured, data, data.verification, style),
     ...describeSteps(
       data.changelog,
       data.docs,
@@ -444,20 +484,67 @@ async function change(
         ),
       );
     const answer = await askOrCancel(io, () =>
-      deps.ask(
-        `Raise ${raised.map(({ kind, value }) => `${kind}=${value}`).join(", ")} for workspace "${workspace}"? An agent there may then do this without asking. Type the workspace name to confirm: `,
+      confirmWith(
+        deps,
+        `Raise ${raised.map(({ kind, value }) => `${kind}=${value}`).join(", ")} for workspace "${workspace}"? An agent there may then do this without asking.`,
       ),
     );
     // Ctrl+C at the confirmation: a cancellation, not a failure; nothing written.
     if (answer === null) return cancelled(io);
-    if (answer.trim() !== workspace)
+    if (!answer)
       return emit(io, fail("blocked", "grant change not confirmed; nothing was written"));
   }
   const written = writeGrants(workspace, changes, undefined, endpoint, verification);
   if (!written.ok) return emit(io, fail(written.code, written.error));
-  return emit(io, ok(written), (data) => [
-    `${data.workspace}: grants updated in ${data.path}${data.backup ? ` (previous copy: ${data.backup})` : ""}`,
-    ...describe(data.grants, data.configured, data, data.verification),
+  // Old -> new for every key the command named, so the output shows what moved.
+  const moves: { key: string; from: string; to: string; mark: Mark }[] = [
+    ...changes.map(({ kind, value }) => {
+      const to = value ?? DEFAULT_GRANTS[kind];
+      const from = entry.grants[kind];
+      const mark: Mark = raises(kind, from, to) ? "raise" : from === to ? "same" : "lower";
+      return { key: kind, from: String(from), to: String(to), mark };
+    }),
+    ...(endpoint !== undefined
+      ? [
+          (() => {
+            const to = endpoint ?? DEFAULT_ENDPOINT;
+            const mark: Mark = raisesEndpoint(entry.defaultEndpoint, to)
+              ? "raise"
+              : entry.defaultEndpoint === to
+                ? "same"
+                : "lower";
+            return { key: "defaultEndpoint", from: entry.defaultEndpoint, to, mark };
+          })(),
+        ]
+      : []),
+    ...(verification !== undefined
+      ? [
+          (() => {
+            const to = verification ?? DEFAULT_VERIFICATION;
+            const mark: Mark =
+              strictness(to) > strictness(entry.verification)
+                ? "raise"
+                : to === entry.verification
+                  ? "same"
+                  : "lower";
+            return { key: "verification", from: entry.verification, to, mark };
+          })(),
+        ]
+      : []),
+  ];
+  const style = createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
+  const marks: Marks = Object.fromEntries(moves.map((move) => [move.key, move.mark]));
+  return emit(io, ok({ ...written, changes: moves }), (data) => [
+    `${style.bold(data.workspace)}: grants updated in ${data.path}${data.backup ? ` (previous copy: ${data.backup})` : ""}`,
+    ...moves.map((move) =>
+      paintMark(
+        style,
+        move.mark,
+      )(
+        `  ${style.bold(move.key)}: ${move.from} -> ${move.to}${move.mark === "same" ? " (unchanged)" : ""}`,
+      ),
+    ),
+    ...describe(data.grants, data.configured, data, data.verification, style, marks),
   ]);
 }
 
