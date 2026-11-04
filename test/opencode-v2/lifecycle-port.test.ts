@@ -10,6 +10,10 @@ import { createV2Lifecycle, type V2SessionInfo } from "@/packages/workit-opencod
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd });
 
+// A launch for the fixture's first worker (the reviewer): with several workers
+// assigned, a launch binds the one its prompt is for (#640), never the oldest.
+const REVIEWER = { prompt: "ROLE: reviewer" };
+
 const fixture = (taskActor = "coordinator", coordinator = "coordinator") => {
   const root = mkdtempSync(join(tmpdir(), "workit-v2-lifecycle-"));
   for (const args of [
@@ -22,9 +26,9 @@ const fixture = (taskActor = "coordinator", coordinator = "coordinator") => {
   git(root, ["add", "base.txt"]);
   git(root, ["commit", "-qm", "base"]);
   const store = new TaskStore(root);
-  // A monotonic clock keeps worker ordering deterministic: the launch queue
-  // consumes the oldest assigned worker first, and equal timestamps would
-  // make that order depend on random ids.
+  // A monotonic clock keeps worker ordering deterministic: a launch that fits
+  // two copies of one brief takes the newest, and equal timestamps would make
+  // that order depend on random ids.
   let tick = 0;
   const creator = new WorkitCore(store, {
     root,
@@ -133,7 +137,7 @@ test("a launch after a branch switch rebinds the lone stale worker to the branch
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     const old = value.store.readTask(value.taskId);
     const next = value.store.readTask(branchTask);
@@ -160,7 +164,7 @@ test("an ambiguous branch switch is denied with the branch-scoped hint and rebin
         tool: "subagent",
         sessionID: "coordinator",
         id: "call_1",
-        input: {},
+        input: REVIEWER,
       }),
     ).rejects.toThrow(/branch-scoped/);
     const old = value.store.readTask(value.taskId);
@@ -212,7 +216,7 @@ test("a fresh managed launch correlates in memory, then binds the observed child
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: {
         metadata: { sessionID: "ses_child1" },
@@ -250,7 +254,7 @@ test("a resumed V2 coordinator claims its own assigned worker on an older task",
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     expect(value.worker().data.state).toBe("assigned");
     value.sessions.set("ses_child1", {
@@ -262,7 +266,7 @@ test("a resumed V2 coordinator claims its own assigned worker on an older task",
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: { metadata: { sessionID: "ses_child1" }, content: [] },
     });
@@ -305,20 +309,20 @@ test("a resumed V2 coordinator claims its own assigned worker on an older task",
   }
 });
 
-test("concurrent fresh launches share one synchronous slot", async () => {
+test("concurrent fresh launches never reserve the same worker twice", async () => {
   const value = fixture();
   try {
     const first = value.lifecycle.executeBefore({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     const second = value.lifecycle.executeBefore({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_2",
-      input: {},
+      input: REVIEWER,
     });
     await first;
     await expect(second).rejects.toThrow(/unsettled/);
@@ -335,7 +339,7 @@ test("session.created settles the exact live launch before the child runs", asyn
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     await value.lifecycle.handleEvent({
       type: "session.created",
@@ -373,7 +377,7 @@ test("a fresh managed launch with no assigned worker is denied before spawn", as
         tool: "subagent",
         sessionID: "coordinator",
         id: "call_1",
-        input: {},
+        input: REVIEWER,
       }),
     ).rejects.toThrow(/no assigned Workit worker/);
   } finally {
@@ -392,13 +396,13 @@ test("unproven subagent outcomes retain correlation until a late child is observ
         tool: "subagent",
         sessionID: "coordinator",
         id: "call_1",
-        input: {},
+        input: REVIEWER,
       });
       await value.lifecycle.executeAfter({
         tool: "subagent",
         sessionID: "coordinator",
         id: "call_1",
-        input: {},
+        input: REVIEWER,
         ...outcome,
       });
       expect(value.worker().data.state).toBe("assigned");
@@ -408,7 +412,7 @@ test("unproven subagent outcomes retain correlation until a late child is observ
           tool: "subagent",
           sessionID: "coordinator",
           id: "call_2",
-          input: {},
+          input: REVIEWER,
         }),
       ).rejects.toThrow(
         /previous native subagent launch is unsettled.*workit_worker \{"action":"cancel"/,
@@ -443,13 +447,13 @@ test("a reported child is retried and settled from session evidence", async () =
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     await value.lifecycle.executeAfter({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: { metadata: { sessionID: "ses_child1" }, content: [] },
     });
@@ -465,7 +469,7 @@ test("a reported child is retried and settled from session evidence", async () =
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_2",
-      input: {},
+      input: REVIEWER,
     });
     expect(value.worker().data.state).toBe("stopped");
     expect(value.worker(1).data.state).toBe("assigned");
@@ -482,7 +486,7 @@ test("failed completion observation keeps its launch and report for retry", asyn
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     value.sessions.set("ses_child1", {
       id: "ses_child1",
@@ -504,7 +508,7 @@ test("failed completion observation keeps its launch and report for retry", asyn
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: {
         metadata: { sessionID: "ses_child1" },
@@ -519,7 +523,7 @@ test("failed completion observation keeps its launch and report for retry", asyn
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_2",
-      input: {},
+      input: REVIEWER,
     });
     expect(value.worker().data.state).toBe("stopped");
     expect(value.worker().data.report).toEqual({
@@ -541,7 +545,7 @@ test("explicit failed session outcome overrides a completed result marker", asyn
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     value.sessions.set("ses_child1", {
       id: "ses_child1",
@@ -553,7 +557,7 @@ test("explicit failed session outcome overrides a completed result marker", asyn
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: {
         metadata: { sessionID: "ses_child1" },
@@ -575,7 +579,7 @@ test("a direct child in another workspace is not bound to the task", async () =>
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     value.sessions.set("ses_other_checkout", {
       id: "ses_other_checkout",
@@ -586,7 +590,7 @@ test("a direct child in another workspace is not bound to the task", async () =>
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: { metadata: { sessionID: "ses_other_checkout" }, content: [] },
     });
@@ -606,13 +610,13 @@ test("a lead-settled stop clears an ambiguous dispatch before the next launch", 
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     await value.lifecycle.executeAfter({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "error",
       error: { message: "provider failure" },
     });
@@ -629,7 +633,7 @@ test("a lead-settled stop clears an ambiguous dispatch before the next launch", 
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_2",
-      input: {},
+      input: REVIEWER,
     });
     expect(value.worker(1).data.state).toBe("assigned");
     expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
@@ -670,7 +674,7 @@ test("continuation requires an existing running worker binding", async () => {
 
 const reportedChild = async (value: ReturnType<typeof fixture>) => {
   value.assignWorker("investigator");
-  const launch = { tool: "subagent", sessionID: "coordinator", id: "call_1", input: {} };
+  const launch = { tool: "subagent", sessionID: "coordinator", id: "call_1", input: REVIEWER };
   await value.lifecycle.executeBefore(launch);
   await value.lifecycle.executeAfter({
     ...launch,
@@ -831,7 +835,7 @@ test("continuing a worker whose process is still running is allowed", async () =
       directory: value.root,
     });
     value.assignWorker("investigator");
-    const launch = { tool: "subagent", sessionID: "coordinator", id: "call_1", input: {} };
+    const launch = { tool: "subagent", sessionID: "coordinator", id: "call_1", input: REVIEWER };
     await value.lifecycle.executeBefore(launch);
     await value.lifecycle.executeAfter({
       ...launch,
@@ -862,7 +866,7 @@ test("nested launches are denied and unmanaged native use stays untouched", asyn
         tool: "subagent",
         sessionID: "ses_child1",
         id: "call_1",
-        input: {},
+        input: REVIEWER,
       }),
     ).rejects.toThrow(/direct children of the coordinator/);
 
@@ -871,13 +875,13 @@ test("nested launches are denied and unmanaged native use stays untouched", asyn
       tool: "subagent",
       sessionID: "ses_other",
       id: "call_2",
-      input: {},
+      input: REVIEWER,
     });
     await value.lifecycle.executeBefore({
       tool: "subagent",
       sessionID: "ses_other",
       id: "call_3",
-      input: {},
+      input: REVIEWER,
     });
     expect(value.lifecycle.pendingLaunch("ses_other")).toBe(false);
   } finally {
@@ -897,13 +901,13 @@ test("execution.succeeded and sparse deletion stop bound children", async () => 
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     await value.lifecycle.executeAfter({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: { metadata: { sessionID: "ses_child1" }, content: [] },
     });
@@ -937,13 +941,13 @@ test("execution.started and terminal execution events map to running and stopped
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
     await value.lifecycle.executeAfter({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
       status: "completed",
       result: { metadata: { sessionID: "ses_child1" }, content: [] },
     });
@@ -962,7 +966,7 @@ test("execution.started and terminal execution events map to running and stopped
   }
 });
 
-test("a second worker binds only after the first launch settles", async () => {
+test("a second worker launches while the first launch is still open (#640)", async () => {
   const value = fixture();
   try {
     value.assignWorker("investigator");
@@ -970,37 +974,39 @@ test("a second worker binds only after the first launch settles", async () => {
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_1",
-      input: {},
+      input: REVIEWER,
     });
-    await expect(
-      value.lifecycle.executeBefore({
-        tool: "subagent",
-        sessionID: "coordinator",
-        id: "call_2",
-        input: {},
-      }),
-    ).rejects.toThrow(/unsettled/);
-    value.sessions.set("ses_child1", {
-      id: "ses_child1",
-      parentID: "coordinator",
-      directory: value.root,
-    });
-    await value.lifecycle.executeAfter({
-      tool: "subagent",
-      sessionID: "coordinator",
-      id: "call_1",
-      input: {},
-      status: "completed",
-      result: { metadata: { sessionID: "ses_child1" } },
-    });
-    // The first worker stopped; the second assigned worker can now launch.
     await value.lifecycle.executeBefore({
       tool: "subagent",
       sessionID: "coordinator",
       id: "call_2",
       input: {},
     });
-    expect(value.worker(1).data.state).toBe("assigned");
+    // Both workers are reserved: a third launch has none left.
+    await expect(
+      value.lifecycle.executeBefore({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: "call_3",
+        input: {},
+      }),
+    ).rejects.toThrow(/unsettled/);
+    for (const [call, child] of [
+      ["call_2", "ses_child2"],
+      ["call_1", "ses_child1"],
+    ]) {
+      value.sessions.set(child, { id: child, parentID: "coordinator", directory: value.root });
+      await value.lifecycle.executeAfter({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: call,
+        input: {},
+        status: "completed",
+        result: { metadata: { sessionID: child } },
+      });
+    }
+    expect(value.worker(0).data.session).toMatchObject({ handle: "ses_child1" });
+    expect(value.worker(1).data.session).toMatchObject({ handle: "ses_child2" });
   } finally {
     value.cleanup();
   }

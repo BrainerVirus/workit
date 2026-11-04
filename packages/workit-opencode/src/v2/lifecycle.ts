@@ -9,6 +9,7 @@ import { selectFanout } from "@brainervirus/workit-core/src/fanout";
 import { currentBranch, worktreeTree } from "@brainervirus/workit-core/src/git/rev";
 import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { sameWorkspace } from "../shared/session";
+import { ambiguousLaunch, matchLaunch } from "./launch-match";
 
 /** V2 session facts the lifecycle binds to. `directory` is
  * `Session.Info.location.directory`; `outcome` is the terminal marker the host
@@ -53,6 +54,8 @@ type PreparedDispatch = {
   workerId: string;
   callID: string;
   childID: string | null;
+  /** The launch's `description`: OpenCode titles the child session with it. */
+  title: string | null;
   completionReport?: { outcome: "completed"; summary: string; evidenceIds: []; findingIds: [] };
 };
 
@@ -107,18 +110,29 @@ const contentText = (content: unknown): string => {
 };
 
 /**
- * V2 subagent lifecycle: direct-child lineage and one fresh launch per
- * coordinator. The in-memory correlation binds one `subagent` call to the
- * oldest assigned worker; the worker turns `running` only when its child
- * session is observed as a direct child of the coordinator.
+ * V2 subagent lifecycle: direct-child lineage and concurrent fresh launches
+ * (#640). Each `subagent` call reserves, in memory and by its call id, the
+ * assigned worker its prompt is for (launch-match.ts); concurrent calls
+ * reserve distinct workers. The worker turns `running` only when its child
+ * session is observed as a direct child of the coordinator: by the call's own
+ * result, or by `session.created` when the child's title (the launch's
+ * description) names exactly one open launch.
  */
 export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
   const { root } = deps;
   const directChildren: DirectChildren = new Map();
-  const dispatches = new Map<string, PreparedDispatch>();
-  // Synchronous single-fresh-launch slot: claimed before any awaited
-  // validation so two concurrent managed calls cannot both reserve.
-  const inflight = new Map<string, string>();
+  // coordinator -> call id -> launch. Reservation is synchronous (no await
+  // between reading the free workers and recording the launch), so two
+  // concurrent calls never reserve the same worker.
+  const dispatches = new Map<string, Map<string, PreparedDispatch>>();
+  const pendingOf = (coordinator: string): PreparedDispatch[] => [
+    ...(dispatches.get(coordinator)?.values() ?? []),
+  ];
+  const dropDispatch = (coordinator: string, callID: string): void => {
+    const open = dispatches.get(coordinator);
+    open?.delete(callID);
+    if (open?.size === 0) dispatches.delete(coordinator);
+  };
   const lifecycleBindings = new Map<
     string,
     { parentID: string; taskId: string; workerId: string }
@@ -189,28 +203,19 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     return report.ok ? (report.data.bound[0]?.id ?? null) : null;
   };
 
-  const oldest = <T extends { id: string }, E extends { id: string; recordedAt: string }>(
-    items: { task: T; entry: E }[],
-  ): { task: T; entry: E } | null => {
-    if (items.length === 0) return null;
-    return [...items].toSorted((a, b) =>
-      a.entry.recordedAt < b.entry.recordedAt
-        ? -1
-        : a.entry.recordedAt > b.entry.recordedAt
-          ? 1
-          : a.entry.id < b.entry.id
-            ? -1
-            : 1,
-    )[0];
-  };
-
-  /** The exact cancel call that releases a stuck launch (review L3). */
+  /** Every assigned worker is already launching: the exact cancel calls that release them (review L3). */
   const unsettledLaunch = (coordinator: string): string => {
-    const workerId = dispatches.get(coordinator)?.workerId;
-    const cancel = workerId
-      ? `workit_worker {"action":"cancel","workerId":"${workerId}","reason":"launch not observed"}`
-      : 'workit_worker {"action":"cancel","workerId":"<id>","reason":"launch not observed"} for the stuck worker';
-    return `recovery_required: a previous native subagent launch is unsettled; wait for it to settle, or ${cancel} before launching again`;
+    const workerIds = pendingOf(coordinator).map((pending) => pending.workerId);
+    const cancel =
+      workerIds.length > 0
+        ? workerIds
+            .map(
+              (workerId) =>
+                `workit_worker {"action":"cancel","workerId":"${workerId}","reason":"launch not observed"}`,
+            )
+            .join(" or ")
+        : 'workit_worker {"action":"cancel","workerId":"<id>","reason":"launch not observed"} for the stuck worker';
+    return `recovery_required: a previous native subagent launch is unsettled and holds every assigned worker; wait for it to settle, assign another worker for this launch, or ${cancel} before launching again`;
   };
 
   /**
@@ -301,8 +306,8 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
   const prepareDispatch = (
     coordinator: string,
     callID: string,
-  ): "prepared" | "unsettled" | "unbound" | "unmanaged" => {
-    if (dispatches.has(coordinator)) return "unsettled";
+    input: unknown,
+  ): "prepared" | "unsettled" | "unbound" | "unmanaged" | { refused: string } => {
     const store = new TaskStore(root);
     const workspace = store.readWorkspace();
     const listed = store.listTasks();
@@ -327,41 +332,84 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     // another branch's task never blocks or captures one. Without a task
     // here the lead starts this branch's task and assigns a worker first.
     const current = currentTaskId(store);
-    let next = oldest(eligible.filter((item) => item.task.id === current));
-    if (!next && current !== null) {
+    const reserved = new Set(pendingOf(coordinator).map((pending) => pending.workerId));
+    let here = eligible.filter((item) => item.task.id === current);
+    if (here.length === 0 && current !== null) {
       const stale = eligible.filter((item) => item.task.id !== current);
       if (rebindStaleWorker(coordinator, current, stale)) {
         const refreshed = store.readTask(current);
-        const rebound = refreshed.ok
-          ? refreshed.data.workers.filter(
-              (entry) =>
-                entry.data.state === "assigned" &&
-                entry.data.session === null &&
-                entry.provenance.session?.kind === "host" &&
-                entry.provenance.session.handle === coordinator,
-            )
+        here = refreshed.ok
+          ? refreshed.data.workers
+              .filter(
+                (entry) =>
+                  entry.data.state === "assigned" &&
+                  entry.data.session === null &&
+                  entry.provenance.session?.kind === "host" &&
+                  entry.provenance.session.handle === coordinator,
+              )
+              .map((entry) => ({ task: refreshed.data, entry }))
           : [];
-        if (refreshed.ok && rebound.length > 0)
-          next = oldest(rebound.map((entry) => ({ task: refreshed.data, entry })));
       }
     }
-    if (!next) return "unbound";
-    dispatches.set(coordinator, {
-      taskId: next.task.id,
-      workerId: next.entry.id,
+    if (here.length === 0) return "unbound";
+    const free = here.filter(({ entry }) => !reserved.has(entry.id));
+    const taken = [
+      ...reserved,
+      ...eligible.filter((item) => item.task.id !== current).map(({ entry }) => entry.id),
+    ];
+    if (free.length === 0) return "unsettled";
+    const match = matchLaunch(input, free, taken);
+    if (match.kind === "ambiguous") return { refused: ambiguousLaunch(match.items) };
+    if (match.kind === "named_elsewhere")
+      return reserved.has(match.workerId)
+        ? {
+            refused: `recovery_required: worker ${match.workerId} is already being launched by another subagent call; wait for it to settle, or workit_worker {"action":"cancel","workerId":"${match.workerId}","reason":"launch not observed"} before launching it again`,
+          }
+        : { refused: `${unboundLaunch(coordinator)} (worker ${match.workerId} is not on it)` };
+    const fields =
+      typeof input === "object" && input !== null ? (input as Record<string, unknown>) : null;
+    let title = typeof fields?.description === "string" ? fields.description : null;
+    // OpenCode titles the child with the description; two open launches with
+    // one title could not be told apart at session.created, so this one gets
+    // its worker's id appended (in place: the host runs the tool with it).
+    if (
+      fields &&
+      title !== null &&
+      pendingOf(coordinator).some((pending) => pending.title === title)
+    ) {
+      title = `${title} [${match.item.entry.id}]`;
+      fields.description = title;
+    }
+    const open = dispatches.get(coordinator) ?? new Map<string, PreparedDispatch>();
+    open.set(callID, {
+      taskId: match.item.task.id,
+      workerId: match.item.entry.id,
       callID,
       childID: null,
+      title,
     });
+    dispatches.set(coordinator, open);
     return "prepared";
+  };
+
+  /** A child already bound to another launch or worker never binds this one. */
+  const childTakenElsewhere = (
+    coordinator: string,
+    pending: PreparedDispatch,
+    childID: string,
+  ): boolean => {
+    const bound = lifecycleBindings.get(childID);
+    if (bound && bound.workerId !== pending.workerId) return true;
+    return pendingOf(coordinator).some((other) => other !== pending && other.childID === childID);
   };
 
   const commitDispatchStart = (
     coordinator: string,
+    pending: PreparedDispatch,
     childID: string,
     retainPending = false,
   ): boolean => {
-    const pending = dispatches.get(coordinator);
-    if (!pending) return false;
+    if (childTakenElsewhere(coordinator, pending, childID)) return false;
     pending.childID = childID;
     const current = revisions(pending.taskId);
     if (!current) return false;
@@ -382,10 +430,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       observation: { event: "running", sessionID: childID },
     });
     if (!committed.ok) return false;
-    if (!retainPending) {
-      dispatches.delete(coordinator);
-      if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
-    }
+    if (!retainPending) dropDispatch(coordinator, pending.callID);
     lifecycleBindings.set(childID, {
       parentID: coordinator,
       taskId: pending.taskId,
@@ -468,17 +513,18 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     return true;
   };
 
-  /** Reconcile an observed child or a lead-settled stop before allowing a new launch. */
+  /** Reconcile observed children and lead-settled stops before reserving a new launch. */
   const reconcilePending = async (coordinator: string): Promise<void> => {
-    const pending = dispatches.get(coordinator);
-    if (!pending) return;
+    for (const pending of pendingOf(coordinator)) await reconcileOne(coordinator, pending);
+  };
+
+  const reconcileOne = async (coordinator: string, pending: PreparedDispatch): Promise<void> => {
     const task = new TaskStore(root).readTask(pending.taskId);
     if (
       task.ok &&
       task.data.workers.find((worker) => worker.id === pending.workerId)?.data.state === "stopped"
     ) {
-      dispatches.delete(coordinator);
-      if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
+      dropDispatch(coordinator, pending.callID);
       return;
     }
     if (!pending.childID) return;
@@ -497,7 +543,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         alreadyStarted.parentID !== coordinator ||
         alreadyStarted.taskId !== pending.taskId ||
         alreadyStarted.workerId !== pending.workerId) &&
-      !commitDispatchStart(coordinator, info.id, Boolean(info.outcome))
+      !commitDispatchStart(coordinator, pending, info.id, Boolean(info.outcome))
     )
       return;
     const terminal = info.outcome !== undefined || pending.completionReport !== undefined;
@@ -515,10 +561,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         ? undefined
         : pending.completionReport,
     );
-    if (stopped) {
-      dispatches.delete(coordinator);
-      if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
-    }
+    if (stopped) dropDispatch(coordinator, pending.callID);
   };
 
   const coordinatorVeto = (coordinator: string): string | null => {
@@ -601,39 +644,26 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         );
       return;
     }
-    if (inflight.has(coordinator)) {
-      await reconcilePending(coordinator);
-      if (inflight.has(coordinator)) throw new Error(unsettledLaunch(coordinator));
-    }
-    inflight.set(coordinator, event.id);
-    try {
-      const veto = coordinatorVeto(coordinator);
-      if (veto) throw new Error(veto);
-      const lead = await trustedLead(coordinator);
-      if (!lead)
-        throw new Error(
-          "delegation_lineage_denied: native subagent workers must be direct children of the coordinator",
-        );
-      const prepared = prepareDispatch(coordinator, event.id);
-      if (prepared === "unmanaged") {
-        inflight.delete(coordinator);
-        return;
-      }
-      if (prepared === "unsettled") {
-        throw new Error(unsettledLaunch(coordinator));
-      }
-      if (prepared === "unbound") throw new Error(unboundLaunch(coordinator));
-    } catch (error) {
-      if (inflight.get(coordinator) === event.id) inflight.delete(coordinator);
-      throw error;
-    }
+    await reconcilePending(coordinator);
+    const veto = coordinatorVeto(coordinator);
+    if (veto) throw new Error(veto);
+    const lead = await trustedLead(coordinator);
+    if (!lead)
+      throw new Error(
+        "delegation_lineage_denied: native subagent workers must be direct children of the coordinator",
+      );
+    // No await from here to the reservation: concurrent calls reserve in turn.
+    const prepared = prepareDispatch(coordinator, event.id, event.input);
+    if (prepared === "unmanaged" || prepared === "prepared") return;
+    if (prepared === "unsettled") throw new Error(unsettledLaunch(coordinator));
+    if (prepared === "unbound") throw new Error(unboundLaunch(coordinator));
+    throw new Error(prepared.refused);
   };
 
   const executeAfter = async (event: V2ToolAfterEvent): Promise<void> => {
     if (event.tool !== "subagent") return;
     const coordinator = event.sessionID;
-    const pending = dispatches.get(coordinator);
-    const generation = pending?.callID === event.id ? pending : undefined;
+    const generation = dispatches.get(coordinator)?.get(event.id);
     let started = false;
     let terminalObserved = false;
     let terminalObservationRequired = false;
@@ -644,7 +674,8 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       const output = contentText(event.result.content);
       const completedOutput = /<subagent\b[^>]*\bstate="completed"/.test(output);
       if (child) {
-        if (generation) generation.childID = child;
+        if (generation && !childTakenElsewhere(coordinator, generation, child))
+          generation.childID = child;
         childSession = await readSession(child);
         if (
           parentOf(childSession) === coordinator &&
@@ -653,7 +684,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
           directChildren.set(child, coordinator);
           const terminal = childSession?.outcome !== undefined || completedOutput;
           terminalObservationRequired = terminal;
-          if (generation) started = commitDispatchStart(coordinator, child, terminal);
+          if (generation) started = commitDispatchStart(coordinator, generation, child, terminal);
         }
       }
       const completedChild =
@@ -701,25 +732,30 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       (event.status === "error" || !started || (terminalObservationRequired && !terminalObserved))
     )
       return;
-    if (generation) {
-      dispatches.delete(coordinator);
-      if (inflight.get(coordinator) === event.id) inflight.delete(coordinator);
-    } else if (inflight.get(coordinator) === event.id) {
-      inflight.delete(coordinator);
-    }
+    if (generation) dropDispatch(coordinator, event.id);
   };
 
+  /**
+   * A created child binds the open launch it is for: the only open launch
+   * still waiting for a child, or the one whose title the child carries
+   * (OpenCode titles a subagent session with the call's description). With
+   * several candidates and no telling title it waits for its call's result.
+   */
   const bindCreatedSession = async (data: {
     sessionID: string;
     parentID: string;
     directory: string;
+    title: string | null;
   }): Promise<void> => {
     if (!sameWorkspace(root, data.directory)) return;
     directChildren.set(data.sessionID, data.parentID);
-    const live = dispatches.get(data.parentID);
+    const waiting = pendingOf(data.parentID).filter((pending) => pending.childID === null);
+    const titled =
+      data.title === null ? [] : waiting.filter((pending) => pending.title === data.title);
+    const live = titled.length === 1 ? titled[0] : waiting.length === 1 ? waiting[0] : undefined;
     if (live) {
       live.childID = data.sessionID;
-      commitDispatchStart(data.parentID, data.sessionID);
+      commitDispatchStart(data.parentID, live, data.sessionID);
     }
   };
 
@@ -732,7 +768,8 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       const parentID = sessionIDOf(data.parentID);
       const directory = record(data.location).directory;
       if (!sessionID || !parentID || typeof directory !== "string") return;
-      await bindCreatedSession({ sessionID, parentID, directory });
+      const title = typeof data.title === "string" ? data.title : null;
+      await bindCreatedSession({ sessionID, parentID, directory, title });
       return;
     }
     const terminal =
@@ -760,6 +797,6 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     executeBefore,
     executeAfter,
     handleEvent,
-    pendingLaunch: (coordinator: string) => inflight.has(coordinator),
+    pendingLaunch: (coordinator: string) => pendingOf(coordinator).length > 0,
   };
 };
