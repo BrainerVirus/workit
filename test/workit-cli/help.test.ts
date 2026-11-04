@@ -45,6 +45,7 @@ const mainEntry = path.join(cliSrc, "main.ts");
 /** `file` or `file#function` (that function's body only), relative to the CLI source. */
 const PARSERS: Record<string, string[]> = {
   init: ["verbs/init.ts"],
+  dir: ["verbs/dir.ts"],
   setup: ["verbs/setup.ts"],
   upgrade: ["upgrade.ts#upgradeOnce"],
   launch: ["upgrade.ts#runLaunchCommand"],

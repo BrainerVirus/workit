@@ -110,7 +110,7 @@ function bounded(brief: Brief, cwd: string): string[] {
   let file: string | null = null;
   if (store.ok)
     try {
-      const dir = path.join(store.value.root, "handoff");
+      const dir = path.join(store.value.root, "handoffs"); // = `workit dir handoffs`
       fs.mkdirSync(dir, { recursive: true });
       file = path.join(dir, `${(brief.branch ?? "detached").replaceAll(/[^\w.-]+/gu, "-")}.txt`);
       fs.writeFileSync(file, `${[first, ...tail, ...rest].join("\n")}\n`, {
