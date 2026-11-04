@@ -17,7 +17,7 @@ export const message = (error: unknown) => (error instanceof Error ? error.messa
 
 // Both override names point at the config dir itself, same precedence as
 // src/core/config.ts and scripts/init/status.sh: WORKIT_CONFIG → WORKIT_CONFIG_DIR → XDG.
-// Default env (no args) routes through configDir() so the legacy migration runs.
+// Default env (no args) routes through configDir().
 export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homedir()) =>
   path.join(
     env === process.env
