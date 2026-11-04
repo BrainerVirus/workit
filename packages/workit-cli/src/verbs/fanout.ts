@@ -295,6 +295,9 @@ const renderStatus = (data: StatusOutcome): string[] => {
       const why = slice.state === "landed" ? [] : [...slice.reasons, ...slice.notes];
       return `  ${label.padEnd(11)} ${slice.id} (${slice.branch}) ${detail}${why.length ? `\n      ${why.join("\n      ")}` : ""}`;
     }),
+    ...data.stacks.map(
+      (stack) => `stack ${stack.name ?? "(not recorded yet)"}: ${stack.slices.join(" -> ")}`,
+    ),
     `landing order: ${data.landingOrder.length ? data.landingOrder.join(", ") : "(none ready)"}`,
     ...(data.spawnable.length ? [`spawnable: ${data.spawnable.join(", ")}`] : []),
     `next: ${data.next}`,
@@ -364,6 +367,7 @@ function worktree(argv: string[], io: Io): number {
     return emit(io, ok(result.data), (data: CreateOutcome) => [
       `${data.created ? "created" : "kept"} worktree for slice ${data.slice} (${data.mode}): ${data.path}`,
       `  branch ${data.branch} <- ${data.base} at ${short(data.head)}`,
+      ...(data.stack ? [`  stack ${data.stack.name}: ${data.stack.slices.join(" -> ")}`] : []),
       `  scratch ${data.scratch}  (put it in the worker brief: temp files go here)`,
       ...data.notes.map((note) => `note: ${note}`),
     ]);

@@ -30,6 +30,7 @@ import { GIT_TIMEOUTS, gitCommonDir, pushRemoteName, resolveRef } from "./git/re
 import type { ResolvedForge } from "./forge/resolve";
 import { appendObserved, readLedger, type LedgerActor } from "./ledger";
 import { detectLanding, forgeBreaker, sliceStart } from "./fanout-landed";
+import { recordSliceStack } from "./fanout-stack";
 import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
 import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
 import {
@@ -268,6 +269,8 @@ export type CreateOutcome = {
   dependencies: LinkedDependencies | null;
   /** The install command to run in the worktree when its lockfile differs from the main checkout's. */
   install: string | null;
+  /** The `workit stack` this slice was recorded in when it started on its parent slice's branch. */
+  stack: { name: string; slices: string[] } | null;
   notes: string[];
 };
 
@@ -521,6 +524,7 @@ export function createSliceWorktree(
         created: false,
         dependencies: deps.linked,
         install: deps.install,
+        stack: null,
         notes: [
           deps.linked
             ? "the worktree already exists; only its missing dependencies were linked"
@@ -554,6 +558,7 @@ export function createSliceWorktree(
 
   const notes: string[] = [];
   let mode: CreateOutcome["mode"] = "resume";
+  let stack: CreateOutcome["stack"] = null;
   if (resolveRef(cwd, localRef)) {
     const added = gitRun(cwd, ["worktree", "add", target, slice.branch], SLOW);
     if (!added.ok) return worktreeFailed(added.stderr);
@@ -606,6 +611,15 @@ export function createSliceWorktree(
         );
       }
       notes.push(...branched.data.notes);
+      if (parent) {
+        const recorded = recordSliceStack(cwd, plan, slice);
+        if (recorded?.ok) {
+          stack = { name: recorded.name, slices: recorded.slices };
+          notes.push(
+            `stacked on ${parent.id}: stack ${recorded.name} is ${recorded.slices.join(" -> ")}; once ${parent.branch} merges (a squash too), workit stack sync --name ${recorded.name} rebases ${slice.branch} onto ${plan.trunk} without ${parent.id}'s commits`,
+          );
+        } else if (recorded) notes.push(`${recorded.error}; record it with: ${recorded.unblock}`);
+      }
     }
   }
   excludeScratch(cwd);
@@ -632,6 +646,7 @@ export function createSliceWorktree(
     ...(baseSha ? { baseSha } : {}),
     ...(base.base === slice.base ? {} : { startBase: base.base }),
     ...(deps.install ? { install: deps.install } : {}),
+    ...(stack ? { stack: stack.name } : {}),
   });
   return {
     ok: true,
@@ -643,6 +658,7 @@ export function createSliceWorktree(
       created: true,
       dependencies: deps.linked,
       install: deps.install,
+      stack,
       notes,
     },
   };

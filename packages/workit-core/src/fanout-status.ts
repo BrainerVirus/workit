@@ -33,6 +33,7 @@ import {
   type Slice,
 } from "./fanout";
 import type { LandedHow } from "./fanout-landed";
+import { fanoutStackRows, type FanoutStackRow } from "./fanout-stack";
 
 export const DEFAULT_STUCK_MS = 30 * 60_000;
 
@@ -78,6 +79,8 @@ export type StatusOutcome = {
   /** The model `models.roles` (or `fanout.tierModels`) names for each spawnable slice's TIER on this host. */
   spawnModels: Record<string, string>;
   stuck: string[];
+  /** Stacked slices (W2.37): recorded stacks, then planned chains not recorded yet, bottom first. */
+  stacks: FanoutStackRow[];
   next: string;
   notes: string[];
 };
@@ -306,6 +309,18 @@ export function fanoutStatus(
       `forge went down during this run (${down}): later slices show no PR or CI, and git alone decided whether they landed`,
     );
   const online = forge !== null && !down;
+  const stacks = fanoutStackRows(cwd, plan);
+  for (const stack of stacks) {
+    if (!stack.name) continue;
+    const landedAt = stack.slices.findIndex((id) => out.get(id)?.landed);
+    const above = stack.slices
+      .slice(landedAt + 1)
+      .filter((id) => out.get(id) && !out.get(id)?.landed);
+    if (landedAt >= 0 && above.length)
+      notes.push(
+        `${stack.slices[landedAt]} landed under ${above.join(", ")}: workit stack sync --name ${stack.name} rebases ${above.length === 1 ? "it" : "them"} onto ${plan.trunk} without its commits`,
+      );
+  }
   // Verified, but the forge has no PR for them yet.
   const noPr = order.filter((id) => {
     const row = out.get(id) as SliceStatusRow;
@@ -339,6 +354,7 @@ export function fanoutStatus(
       spawnable,
       spawnModels,
       stuck,
+      stacks,
       next,
       notes,
     },
