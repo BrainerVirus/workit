@@ -18,7 +18,7 @@ import {
 const REPO = path.resolve(import.meta.dir, "../..");
 
 const INGREDIENT =
-  /\bhomedir\(\)|\bXDG_[A-Z]+_(?:HOME|DIR)\b|\b(?:LOCAL)?APPDATA\b|Application Support|\.local[/\\](?:state|share)[/\\]workit|\.cache[/\\]workit\b|"\.local",\s*"(?:state|share)",\s*"workit"/;
+  /\bhomedir\(\)|\bXDG_[A-Z]+_(?:HOME|DIR)\b|\b(?:LOCAL)?APPDATA\b|Application Support|\.local[/\\](?:state|share)[/\\]workit|\.cache[/\\]workit\b|"\.local",\s*"(?:state|share)",\s*"workit"|"\.(?:config|cache)",\s*"workit"/;
 
 const NODE_RESOLVE_COPIES = [
   "packages/workit-core/src/core/node-resolve.mjs",

@@ -7,9 +7,12 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -234,6 +237,20 @@ test("Given the XDG state dir already exists, When the move runs, Then it leaves
   expect(migrateLegacyDirs({ env: { HOME: home }, platform: "linux" })).toEqual([]);
   expect(existsSync(legacy)).toBe(true);
 });
+
+test.skipIf(process.platform === "win32")(
+  "Given the legacy state dir is a symlink the user made, When the move runs, Then the link is left alone",
+  () => {
+    const { home, legacy, support } = legacyHome();
+    const real = path.join(home, "real-state");
+    renameSync(legacy, real);
+    symlinkSync(real, legacy);
+    expect(migrateLegacyDirs({ env: { HOME: home }, platform: "darwin" })).toEqual([]);
+    expect(lstatSync(legacy).isSymbolicLink()).toBe(true);
+    expect(existsSync(path.join(home, ".local", "state", "workit"))).toBe(false);
+    expect(markers(support)).toEqual([]);
+  },
+);
 
 const legacyRow = (home: string): DoctorCheck =>
   runDoctor({

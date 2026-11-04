@@ -56,6 +56,7 @@ import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
 import {
   LEGACY_MARKER_INFIX,
   configDir as workitConfigDir,
+  isRealDir,
   legacyDirs,
   stateDir as workitStateDir,
 } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
@@ -682,14 +683,6 @@ const hookNodeBase = (res: Resolved): DoctorCheck => {
   };
 };
 
-const isDirectory = (dir: string): boolean => {
-  try {
-    return statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
 /** The command that finishes a move migrateLegacyDirs could not make (the new dir already exists). */
 const legacyFinishCommand = (
   entry: { legacy: string; target: string },
@@ -706,7 +699,7 @@ const legacyFinishCommand = (
 const checkLegacyDirs = (res: Resolved): DoctorCheck => {
   const env = { ...res.env, HOME: res.home };
   const entries = legacyDirs(env, res.platform);
-  const leftover = entries.filter((entry) => isDirectory(entry.legacy));
+  const leftover = entries.filter((entry) => isRealDir(entry.legacy));
   if (leftover.length > 0) {
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "Z");
     return {

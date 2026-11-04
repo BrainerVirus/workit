@@ -10,7 +10,7 @@
 // POSIX shell launchers embed the *_SH functions below verbatim, and a test
 // runs them against the JavaScript for the same environment.
 // Side-effect free on import; only migrateLegacyDirs touches the disk.
-import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -160,10 +160,14 @@ export const legacyDirs = (env = process.env, platform = process.platform) => {
 /** The marker a move leaves beside the old location: `<legacy>.moved-<stamp>`. */
 export const LEGACY_MARKER_INFIX = ".moved-";
 
-/** @param {string} file */
-const isDir = (file) => {
+/**
+ * A real directory, never a symlink to one: a migration must not move a link
+ * the user made (the data behind it would stay where the link pointed).
+ * @param {string} file
+ */
+export const isRealDir = (file) => {
   try {
-    return statSync(file).isDirectory();
+    return lstatSync(file).isDirectory();
   } catch {
     return false;
   }
@@ -188,7 +192,7 @@ export const migrateLegacyDirs = (options = {}) => {
   /** @type {Array<{ kind: string, legacy: string, target: string, marker: string }>} */
   const moved = [];
   for (const entry of legacyDirs(env, platform)) {
-    if (!isDir(entry.legacy) || existsSync(entry.target)) continue;
+    if (!isRealDir(entry.legacy) || existsSync(entry.target)) continue;
     const marker = `${entry.legacy}${LEGACY_MARKER_INFIX}${stamp}`;
     try {
       mkdirSync(path.dirname(entry.target), { recursive: true });
