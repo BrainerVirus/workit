@@ -17,7 +17,14 @@ import {
   standingSeenFile,
   writeStandingSeen,
 } from "./standing-signal";
-import type { HookInput } from "./protocol";
+import type { HostDescriptor } from "./descriptor";
+import { CLAUDE_CODE_DESCRIPTOR } from "./hosts/claude-code";
+import { codexDescriptor } from "./hosts/codex";
+import { CURSOR_DESCRIPTOR } from "./hosts/cursor";
+import { OPENCODE_DESCRIPTOR } from "./hosts/opencode";
+import { PI_DESCRIPTOR } from "./hosts/pi";
+import type { HookInput, HostId } from "./protocol";
+import { workitRole } from "./steering";
 
 type Plan = { name: string; leads: string[]; branches: string[] };
 
@@ -63,17 +70,26 @@ const leadOf = (input: HookInput): string | null =>
   (input.session.agentId ? input.session.id : null) ??
   (input.session.id.includes(":") ? input.session.id.split(":")[0] : null);
 
-/** A Workit worker or judge agent type, spelled any host's way (`workit:implementer`, `workit-verifier`). */
-const WORKER_TYPE = /^workit[:-](?:implementer|verifier|reviewer)$/u;
+const DESCRIPTORS: Readonly<Record<HostId, HostDescriptor>> = {
+  claude_code: CLAUDE_CODE_DESCRIPTOR,
+  opencode: OPENCODE_DESCRIPTOR,
+  codex_cli: codexDescriptor("codex_cli"),
+  codex_desktop: codexDescriptor("codex_desktop"),
+  cursor: CURSOR_DESCRIPTOR,
+  pi: PI_DESCRIPTOR,
+};
 
 /**
  * A subagent of the lead whose host names its type works for the lead's
- * fanouts only as a Workit worker or judge (W2.27): an inventory or Explore
+ * fanouts only as a Workit worker or judge (W2.27), spelled its host's way
+ * (workitRole: `workit:implementer` on Claude Code, `workit-implementer`
+ * elsewhere), so the orders and the role steering agree: an inventory or Explore
  * agent of the same lead gets no orders unless it sits on a slice branch.
  * A host that names no type (OpenCode children) keeps the lead link alone.
  */
 const workerOfLead = (input: HookInput): boolean =>
-  input.session.agentType === null || WORKER_TYPE.test(input.session.agentType);
+  input.session.agentType === null ||
+  workitRole(DESCRIPTORS[input.host], input.session.agentType) !== null;
 
 const worksFor = (plan: Plan, input: HookInput, branch: () => string | null): boolean => {
   const session = input.session.id;
