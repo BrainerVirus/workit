@@ -2,13 +2,14 @@
 // write set. planUninstall is a pure reader — it classifies the installed state
 // and returns the actions apply WOULD perform; applyUninstall dispatches only
 // reviewed plan actions, preserves unrelated user config byte-for-byte
-// (write-only-if-changed), and never touches ~/.config/workit
+// (write-only-if-changed), and never touches the Workit config dir
 // (CA-11, CA-12, CA-13, CA-14). Homes are injectable exactly like setup/doctor
 // path options (D-07): tests pass explicit paths and no default ever resolves
 // to a real user directory in tests.
 import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import { isWorkitPlugin } from "./registration";
 import {
   forgetOwnership,
@@ -299,8 +300,14 @@ const jsonCleanerFor = (
   return null;
 };
 
+/** What uninstall says about Workit's own config: it stays, named at its resolved path. */
+export const configKeptNote = (
+  env: NodeJS.ProcessEnv = process.env,
+  platform: string = process.platform,
+): string => `your Workit configuration in ${configDir(env, platform)} is always kept`;
+
 /** Pure planner: reports the uninstall actions Apply would perform. Reads host
- *  config files but never writes; ~/.config/workit is never an action target. */
+ *  config files but never writes; the Workit config dir is never an action target. */
 export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   const res = resolveUninstallPaths(paths);
 

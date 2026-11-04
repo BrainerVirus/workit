@@ -12,6 +12,7 @@ import path from "node:path";
 import {
   CONFIG_DIR_SH,
   DATA_DIR_SH,
+  RUNTIME_DIR_SH,
   STATE_DIR_SH,
 } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
@@ -103,21 +104,6 @@ const ALLOW: Allow[] = [
     why: "Codex's home",
   },
   {
-    file: [
-      "packages/workit-core/scripts/install-codex-plugin.sh",
-      "packages/workit-core/scripts/install-cursor-plugin.sh",
-      "packages/workit-core/scripts/install-opencode-plugin.sh",
-      "packages/workit-core/scripts/install-pi-package.sh",
-    ],
-    match: 'SHARE="${HOME}/.local/share/workit"',
-    why: "dev share-clone installers; install-cursor-plugin.sh also runs piped without lib/ (follow-up: source lib/config-dir.sh)",
-  },
-  {
-    file: "packages/workit-core/scripts/sync-runtime.sh",
-    match: "XDG_RUNTIME_DIR",
-    why: "the dev sync script's flock file (follow-up: a runtime dir in lib/config-dir.sh)",
-  },
-  {
     file: ["packages/workit-core/src/autonomy.ts", "packages/workit-core/src/core/remotes.ts"],
     match: "return os.homedir();",
     why: "the account home fallback (grants D15, ssh_config); the grants dir itself comes from configDir",
@@ -126,11 +112,6 @@ const ALLOW: Allow[] = [
     file: "packages/workit-core/src/autonomy.ts",
     match: "WORKIT_CONFIG_DIR or XDG_CONFIG_HOME",
     why: "a message naming the overrides",
-  },
-  {
-    file: "packages/workit-core/src/core/cleanup.ts",
-    match: "XDG_CACHE_HOME",
-    why: "managed worktrees in ~/.cache/workit-wt, beside the cache dir; moving them is part 2 of W2.25",
   },
   {
     file: "packages/workit-core/src/core/cli-locate.ts",
@@ -198,7 +179,7 @@ const scannedFiles = (): string[] => {
 
 /** The file's text with the resolver's shell functions blanked (same line count). */
 const withoutResolverShell = (text: string) =>
-  [STATE_DIR_SH, CONFIG_DIR_SH, DATA_DIR_SH].reduce(
+  [STATE_DIR_SH, CONFIG_DIR_SH, DATA_DIR_SH, RUNTIME_DIR_SH].reduce(
     (body, fn) => body.split(fn).join(fn.replace(/[^\n]/g, "")),
     text,
   );
@@ -232,6 +213,27 @@ test("no code under packages/ builds a Workit location outside core/workit-paths
   ).toEqual([]);
   const stale = ALLOW.filter((entry) => !used.has(entry)).map((entry) => entry.match);
   expect(stale, "allowlist entries that no longer match any line").toEqual([]);
+});
+
+// Text a user or agent reads names the config dir as it resolves (APPDATA on
+// Windows), never a fixed ~/.config/workit; comments may still say it.
+const CONFIG_CLAIM = /~[/\\]\.config[/\\]workit/;
+
+test("no user-facing text under packages/ claims the config dir is ~/.config/workit", () => {
+  const offenders: string[] = [];
+  for (const file of scannedFiles())
+    readFileSync(path.join(REPO, file), "utf8")
+      .split("\n")
+      .forEach((line, index) => {
+        if (!COMMENT.test(line) && CONFIG_CLAIM.test(line))
+          offenders.push(`${file}:${index + 1}: ${line.trim()}`);
+      });
+  // The one exception: the old auto-mode line, kept so a refresh replaces it and uninstall removes it.
+  const prior = (line: string) =>
+    line.startsWith("packages/workit-cli/src/admin/host-permissions.ts:") &&
+    line.includes("configured in ~/.config/workit,");
+  expect(offenders.filter((line) => !prior(line))).toEqual([]);
+  expect(offenders.filter(prior)).toHaveLength(1);
 });
 
 test("the lint catches a Workit path built from homedir() or an XDG variable", () => {

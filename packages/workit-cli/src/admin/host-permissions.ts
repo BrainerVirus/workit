@@ -72,6 +72,9 @@ export const CLAUDE_ASK: readonly string[] = [
   ]),
 ];
 const AUTO_MODE_ENVIRONMENT =
+  "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in the Workit config dir, outside the agent's reach.";
+/** The environment line before it stopped naming ~/.config/workit (wrong on Windows); a refresh replaces it. */
+const AUTO_MODE_ENVIRONMENT_V1 =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
 const AUTO_MODE_ALLOW =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
@@ -282,7 +285,10 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
  * so uninstall still removes it, and a merge drops them from the list it writes.
  */
 const PRIOR_ENTRIES: Record<"claude-code" | "cursor", Record<string, readonly string[]>> = {
-  "claude-code": { "autoMode.allow": [AUTO_MODE_ALLOW_V1] },
+  "claude-code": {
+    "autoMode.environment": [AUTO_MODE_ENVIRONMENT_V1],
+    "autoMode.allow": [AUTO_MODE_ALLOW_V1],
+  },
   cursor: {},
 };
 

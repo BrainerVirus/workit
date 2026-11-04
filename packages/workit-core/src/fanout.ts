@@ -45,6 +45,7 @@ import {
   storeRoot,
   type LedgerActor,
 } from "./ledger";
+import { worktreesDir } from "./core/workit-paths.mjs";
 import { workspaceDelegation, type DelegationMode } from "./core/workspaces";
 import { stackFileName } from "./stack";
 
@@ -839,10 +840,59 @@ export function mainCheckout(cwd: string): string {
   return common && path.basename(common) === ".git" ? path.dirname(common) : path.resolve(cwd);
 }
 
-/** `<repo>-wt/` beside the main checkout. */
-export function worktreeRoot(cwd: string): string {
+/** A path in one comparable form: real (when it exists), `/`-separated, case folded where the filesystem ignores case. */
+const comparablePath = (target: string): string => {
+  let real: string;
+  try {
+    real = fs.realpathSync.native(target);
+  } catch {
+    real = path.resolve(target);
+  }
+  const slashed = real.replace(/\\/gu, "/").replace(/\/+$/u, "");
+  return process.platform === "win32" || process.platform === "darwin"
+    ? slashed.toLowerCase()
+    : slashed;
+};
+
+/**
+ * Some worktree in `dir` belongs to another repository (its `.git` file points
+ * outside `common`, git's dir for this repo), or is a clone of its own.
+ */
+const heldByOtherRepo = (dir: string, common: string): boolean => {
+  let children: string[];
+  try {
+    children = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  const own = `${comparablePath(common)}/`;
+  return children.some((child) => {
+    const marker = path.join(dir, child, ".git");
+    let text: string;
+    try {
+      if (fs.statSync(marker).isDirectory()) return true;
+      text = fs.readFileSync(marker, "utf8");
+    } catch {
+      return false;
+    }
+    const admin = /^gitdir:\s*(.+)$/mu.exec(text)?.[1]?.trim();
+    return !admin || !`${comparablePath(path.resolve(dir, child, admin))}/`.startsWith(own);
+  });
+};
+
+/**
+ * The managed root for this checkout's slices: `<state>/worktrees/<repo>`. When
+ * another repository with the same name already has worktrees there, this one
+ * gets `<repo>-<hash of its path>`, so two checkouts never share a dir.
+ */
+export function worktreeRoot(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
   const main = mainCheckout(cwd);
-  return path.join(path.dirname(main), `${path.basename(main)}-wt`);
+  const name = path.basename(main);
+  const plain = path.join(worktreesDir(env), name);
+  const common = gitCommonDir(cwd);
+  if (!common || !heldByOtherRepo(plain, common)) return plain;
+  const tag = createHash("sha256").update(comparablePath(main)).digest("hex").slice(0, 8);
+  return path.join(worktreesDir(env), `${name}-${tag}`);
 }
 
 /** Whose standing orders count: the lead and those it took over from; null before leads. */

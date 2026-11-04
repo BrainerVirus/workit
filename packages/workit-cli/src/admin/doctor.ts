@@ -58,7 +58,9 @@ import {
   configDir as workitConfigDir,
   isRealDir,
   legacyDirs,
+  legacyWorktreesDir,
   stateDir as workitStateDir,
+  worktreesDir,
 } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import {
   CHECKS_FILE,
@@ -695,9 +697,26 @@ const legacyFinishCommand = (
   return `cp -Rn ${shellQuote(`${entry.legacy}/.`)} ${shellQuote(`${entry.target}/`)} && mv ${shellQuote(entry.legacy)} ${shellQuote(moved)}`;
 };
 
+/**
+ * The pre-move worktree root (`~/.cache/workit-wt`) while anything is left in
+ * it. Never moved: a session may be using a worktree there; gc sweeps merged ones.
+ */
+const oldWorktreeRoot = (env: NodeJS.ProcessEnv, platform: string): string | null => {
+  const old = legacyWorktreesDir(env);
+  let left: string[];
+  try {
+    left = readdirSync(old);
+  } catch {
+    return null;
+  }
+  if (left.length === 0) return null;
+  return `${old} still holds worktrees (${left.length} repo dir${left.length === 1 ? "" : "s"}) from before they moved to ${worktreesDir(env, platform)}; Workit leaves them in place and \`workit gc --worktrees --apply\` removes merged ones`;
+};
+
 /** Pre-XDG Workit directories: a leftover one (with the command that finishes it) or a finished move. */
 const checkLegacyDirs = (res: Resolved): DoctorCheck => {
   const env = { ...res.env, HOME: res.home };
+  const worktrees = oldWorktreeRoot(env, res.platform);
   const entries = legacyDirs(env, res.platform);
   const leftover = entries.filter((entry) => isRealDir(entry.legacy));
   if (leftover.length > 0) {
@@ -710,6 +729,7 @@ const checkLegacyDirs = (res: Resolved): DoctorCheck => {
           (entry) =>
             `${entry.legacy} is a pre-XDG Workit ${entry.kind} dir left beside ${entry.target}`,
         )
+        .concat(worktrees ?? [])
         .join("; "),
       fix: leftover.map((entry) => legacyFinishCommand(entry, res.platform, stamp)).join("\n"),
     };
@@ -724,7 +744,8 @@ const checkLegacyDirs = (res: Resolved): DoctorCheck => {
       return [];
     }
   });
-  if (markers.length > 0) return { id: "legacy_dirs", status: "info", detail: markers.join("; ") };
+  const notes = [...markers, ...(worktrees ? [worktrees] : [])];
+  if (notes.length > 0) return { id: "legacy_dirs", status: "info", detail: notes.join("; ") };
   return { id: "legacy_dirs", status: "pass", detail: "no pre-XDG Workit directories" };
 };
 

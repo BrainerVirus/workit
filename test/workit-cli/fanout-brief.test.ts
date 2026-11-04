@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
@@ -103,6 +103,21 @@ const brief = async (cwd: string, ...args: string[]) => {
 
 // ---------------------------------------------------------------------------
 // standing orders
+
+// Each test plans into a state dir of its own, so the managed worktree root
+// (<state>/worktrees/app) holds only that test's worktrees.
+let testState = "";
+const previousState = process.env.WORKIT_STATE_DIR;
+beforeEach(() => {
+  testState = mkdtempSync(path.join(os.tmpdir(), "wk-fanout-state-"));
+  process.env.WORKIT_STATE_DIR = testState;
+});
+afterEach(() => {
+  process.env.WORKIT_STATE_DIR = previousState;
+  rmSync(testState, { recursive: true, force: true });
+});
+/** Where `fanout plan` puts slice `id` of the repo `app` by default. */
+const managedWt = (id: string) => path.join(testState, "worktrees", "app", id);
 
 test("ledger standing: given one fanout, when the lead adds two orders, clears one by id, then clears all, then the list follows each step in the order given", async () => {
   const { root, cwd } = repo();
@@ -216,7 +231,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "STANDING:",
       "  - no new dependencies",
       "  - ask nothing; record rulings",
-      `WORKTREE: ${path.join(root, "app-wt", "a")}  (not made yet: the lead runs \`workit fanout worktree create a\` before spawning, then renders this brief again)`,
+      `WORKTREE: ${managedWt("a")}  (not made yet: the lead runs \`workit fanout worktree create a\` before spawning, then renders this brief again)`,
       "  export WORKIT_SESSION_ID=lead-1-w-a",
       "RULES:",
       "  1. First command: `workit git branch feature/a --base main` (your worktree may start on another name).",
@@ -242,7 +257,7 @@ test("fanout brief: given the slice's worktree made by fanout worktree create an
   await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
   const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   writeFileSync(path.join(wt, "a.ts"), "export const a = 1;\n");
   git(wt, "add", "a.ts");
   git(wt, "commit", "-qm", "feat: a");
@@ -288,7 +303,7 @@ test("fanout brief: given a worktree whose lockfile differs from the main checko
   writeFileSync(path.join(cwd, "bun.lock"), '{"changed":true}\n');
   const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
-  const wt = path.join(root, "app-wt", "a");
+  const wt = managedWt("a");
   expect(created.json().data.install).toBe(`bun install --frozen-lockfile --cwd ${wt}`);
   const data = await brief(cwd, "a");
   expect(data.text).toContain(

@@ -17,6 +17,9 @@
 //    file, the main checkout's is read: `.workit/` is git-ignored, so a new
 //    worktree never has one, and it shares the main checkout's checks
 //    (#426). Configured commands still run from the worktree's own top.
+//    `cleanup.regenerable` lists repo-relative globs (`*`, `**`) of generated,
+//    git-ignored dirs; cleanup (core/cleanup.ts) discards ignored files under
+//    them, on top of its built-in list, when it removes a merged worktree.
 // 2. Built-in ecosystem defaults detected from the repo: package.json scripts
 //    `test`, `lint`, `typecheck`, `check` (`<pm> run <script>`, pm from the
 //    lockfile); go.mod → `go test ./...`; Cargo.toml → `cargo test`;
@@ -108,6 +111,8 @@ export type CheckConfig = {
   note?: string;
   /** The raw `resources` block of the checks config (heavy-check limits; core/resources.ts reads it). */
   resources?: unknown;
+  /** `cleanup.regenerable`: repo globs of generated, ignored dirs that cleanup may discard. */
+  regenerable?: string[];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -231,6 +236,32 @@ function detectedChecks(root: string): NamedCheck[] {
 
 const GATES = ["testing", "verification"] as const;
 
+/** What the cleanup matcher (core/workspaces.ts matchWorkspace) supports: `*` and `**`. */
+const UNSUPPORTED_GLOB = /[?[\]{}!\\]|[@+*]\(/u;
+const REGENERABLE_SHAPE =
+  'cleanup.regenerable must be a list of repo-relative globs (["packages/*/skills"])';
+
+/** `cleanup` of the checks config: the regenerable globs (trailing `/` dropped), or why it is invalid. */
+function cleanupGlobs(value: unknown): string[] | Error {
+  if (value === undefined) return [];
+  if (!isRecord(value)) return new Error('cleanup must be {"regenerable":["<glob>",…]}');
+  const unknown = Object.keys(value).find((key) => key !== "regenerable");
+  if (unknown) return new Error(`cleanup.${unknown} is not a setting (use cleanup.regenerable)`);
+  const list = value.regenerable ?? [];
+  if (!Array.isArray(list)) return new Error(REGENERABLE_SHAPE);
+  const globs: string[] = [];
+  for (const item of list) {
+    if (typeof item !== "string") return new Error(REGENERABLE_SHAPE);
+    const glob = item.trim().replace(/\/+$/u, "");
+    if (!glob || glob.startsWith("/") || glob.split("/").includes(".."))
+      return new Error(`${REGENERABLE_SHAPE}; "${item}" is not repo-relative`);
+    if (UNSUPPORTED_GLOB.test(glob))
+      return new Error(`${REGENERABLE_SHAPE}; "${item}" uses syntax beyond * and **`);
+    globs.push(glob);
+  }
+  return globs;
+}
+
 /**
  * The checks config file for `root`: its own, else (in a linked worktree
  * without one) the main checkout's, else the path a new config belongs at.
@@ -336,6 +367,8 @@ export function loadCheckConfig(cwd: string): CheckConfig {
       groups[group] = [...new Set(value as string[])];
     }
   }
+  const regenerable = cleanupGlobs(parsed.cleanup);
+  if (regenerable instanceof Error) return none(`${label}: ${regenerable.message}`);
   return {
     source: label,
     root,
@@ -345,6 +378,7 @@ export function loadCheckConfig(cwd: string): CheckConfig {
     error: null,
     ...note,
     resources: parsed.resources,
+    regenerable,
   };
 }
 

@@ -372,20 +372,20 @@ const OPEN_OBJECTS = new Set<unknown>([
 const SOURCES: Record<ConfigSchemaFile, { schema: z.ZodType; title: string; open?: true }> = {
   "workspaces.json": {
     schema: workspacesFileSchema,
-    title: "Workit workspaces (~/.config/workit/workspaces.json)",
+    title: "Workit workspaces (workspaces.json in the Workit config dir)",
   },
   "config.json": {
     schema: configFileSchema,
-    title: "Workit config (~/.config/workit/config.json)",
+    title: "Workit config (config.json in the Workit config dir)",
   },
   "vcs.json": {
     schema: vcsFileSchema,
-    title: "Workit forge settings (~/.config/workit/vcs.json)",
+    title: "Workit forge settings (vcs.json in the Workit config dir)",
     open: true,
   },
   "youtrack.json": {
     schema: youtrackFileSchema,
-    title: "Workit YouTrack settings (~/.config/workit/youtrack.json)",
+    title: "Workit YouTrack settings (youtrack.json in the Workit config dir)",
     open: true,
   },
 };

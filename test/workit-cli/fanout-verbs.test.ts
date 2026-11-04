@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -152,6 +152,48 @@ const fanoutsDir = (repo: Repo) => path.join(repo.cwd, ".git", "workit", "fanout
 // ---------------------------------------------------------------------------
 // plan
 
+// Each test plans into a state dir of its own, so the managed worktree root
+// (<state>/worktrees/app) holds only that test's worktrees.
+let testState = "";
+const previousState = process.env.WORKIT_STATE_DIR;
+beforeEach(() => {
+  testState = mkdtempSync(path.join(os.tmpdir(), "wk-fanout-state-"));
+  process.env.WORKIT_STATE_DIR = testState;
+});
+afterEach(() => {
+  process.env.WORKIT_STATE_DIR = previousState;
+  rmSync(testState, { recursive: true, force: true });
+});
+/** Where `fanout plan` puts slice `id` of the repo `app` by default. */
+const managedWt = (id: string) => path.join(testState, "worktrees", "app", id);
+
+test("fanout plan: given another repository named app whose worktree already sits in <state>/worktrees/app, when planned, then this repo's slices go to app-<hash> and never share that dir", async () => {
+  const other = makeRepo();
+  git(other.cwd, "worktree", "add", "-q", "--detach", managedWt("api"), "main");
+  const repo = makeRepo();
+  const result = await run(repo.cwd, [
+    "fanout",
+    "plan",
+    repo.plan(planDoc([slice("api", ["src/api/**"])])),
+    "--json",
+  ]);
+  expect(result.code, result.stderr).toBe(0);
+  const planned: string = result.json().data.slices[0].worktree;
+  expect(path.basename(planned)).toBe("api");
+  expect(path.dirname(path.dirname(planned))).toBe(path.join(testState, "worktrees"));
+  expect(path.basename(path.dirname(planned))).toMatch(/^app-[0-9a-f]{8}$/u);
+
+  // The other repo plans into its own dir, the plain one it already uses.
+  const own = await run(other.cwd, [
+    "fanout",
+    "plan",
+    other.plan(planDoc([slice("ui", ["src/ui/**"])])),
+    "--json",
+  ]);
+  expect(own.code, own.stderr).toBe(0);
+  expect(own.json().data.slices[0].worktree).toBe(managedWt("ui"));
+});
+
 test("fanout plan: given two slices with complete briefs and disjoint scopes, when planned, then the slice file is stored under the git common dir, both run in one wave off main, and the ledger records it", async () => {
   const repo = makeRepo();
   const result = await run(repo.cwd, [
@@ -171,7 +213,7 @@ test("fanout plan: given two slices with complete briefs and disjoint scopes, wh
     ["api", "main", "standard"],
     ["ui", "main", "mundane"],
   ]);
-  expect(data.slices[0].worktree).toBe(path.join(repo.root, "app-wt", "api"));
+  expect(data.slices[0].worktree).toBe(managedWt("api"));
   expect(data.waves).toEqual([["api", "ui"]]);
   expect(data.overlaps).toEqual([]);
   expect(path.dirname(data.file)).toBe(fanoutsDir(repo));

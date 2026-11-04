@@ -289,7 +289,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "uninstall",
     group: "setup",
     usage: "workit uninstall",
-    summary: "Remove workit host registrations interactively (~/.config/workit is kept)",
+    summary: "Remove workit host registrations interactively (the Workit config dir is kept)",
     load: () => import("./uninstall"),
   },
   withSubcommands(

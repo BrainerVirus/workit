@@ -374,6 +374,10 @@ function makeStub(pluginTs: string) {
   mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), {
     recursive: true,
   });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/scripts/lib/config-dir.sh"),
+    path.join(stub, "packages/workit-core/scripts/lib/config-dir.sh"),
+  );
   mkdirSync(path.join(stub, "packages/workit-core/src/core"), {
     recursive: true,
   });
@@ -423,6 +427,10 @@ function makeNestedStub() {
   mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), {
     recursive: true,
   });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/scripts/lib/config-dir.sh"),
+    path.join(stub, "packages/workit-core/scripts/lib/config-dir.sh"),
+  );
   mkdirSync(path.join(stub, "packages/workit-core/src/core"), {
     recursive: true,
   });
@@ -467,6 +475,10 @@ function makeCursorStub() {
   mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), {
     recursive: true,
   });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/scripts/lib/config-dir.sh"),
+    path.join(stub, "packages/workit-core/scripts/lib/config-dir.sh"),
+  );
   mkdirSync(path.join(stub, "packages/workit-core/src/core"), {
     recursive: true,
   });
@@ -956,7 +968,9 @@ test(
     if (!bashAvailable() || !flockAvailable()) return;
     const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
     const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-    const lock = path.join(runtimeDir, "workit-sync.lock");
+    // The resolver's runtime dir for XDG_RUNTIME_DIR=<runtimeDir> (lib/config-dir.sh workit_runtime_dir).
+    mkdirSync(path.join(runtimeDir, "workit"));
+    const lock = path.join(runtimeDir, "workit", "sync.lock");
     const marker = path.join(runtimeDir, "lock-held");
     const holder = spawn(
       "bash",
