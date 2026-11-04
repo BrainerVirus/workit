@@ -49,7 +49,7 @@ const SYNC_USAGE =
   "workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]… [--json]";
 const RESTACK_USAGE = "workit stack restack [--name <n>] [--dry-run] [--force <branch>]… [--json]";
 const LAND_USAGE =
-  "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
+  "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
 const USAGE = "workit stack plan|status|sync|restack|land ... (workit help stack)";
 
 const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12) : "?");

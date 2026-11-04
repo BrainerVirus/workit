@@ -269,6 +269,8 @@ const STUB_CORE_FILES = [
   // doctor's youtrack row: the workspace tracker and the ytrack status.
   "vcs-config.ts",
   "youtrack-ytrack.ts",
+  // task-contract.ts checks worker scopes against the lead's globs.
+  "scope-glob.ts",
 ];
 // doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
 const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
