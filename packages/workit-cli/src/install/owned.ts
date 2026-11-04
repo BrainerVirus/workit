@@ -152,8 +152,9 @@ const pruneVersions = (versions: string, keep: string[]): void => {
   } catch {
     return;
   }
+  const kept = new Set(keep);
   for (const name of names)
-    if (!keep.includes(name)) rmSync(path.join(versions, name), { recursive: true, force: true });
+    if (!kept.has(name)) rmSync(path.join(versions, name), { recursive: true, force: true });
 };
 
 export type InstallResult =

@@ -290,6 +290,14 @@ test(
         path.join(REPO_ROOT, "packages/workit-cli/src/update-settings.ts"),
         path.join(install, "update-settings.ts"),
       );
+      // admin/doctor.ts lists CLI installs through ../install (#648).
+      cpSync(
+        path.join(REPO_ROOT, "packages/workit-cli/src/install"),
+        path.join(install, "install"),
+        {
+          recursive: true,
+        },
+      );
       writeFileSync(path.join(install, "runner.ts"), SCAFFOLD_RUNNER, "utf8");
 
       const cfg = path.join(home, ".config", "workflow-toolkit");
