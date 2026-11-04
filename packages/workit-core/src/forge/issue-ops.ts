@@ -8,11 +8,12 @@
 // repository. YouTrack and another host are refused: no account is
 // verified there. Every write needs the `pr` grant (the forge-write grant
 // `pr edit|reply` use) and leaves an `issue.*` ledger row.
+import { createHash } from "node:crypto";
 import { requireGrant } from "../autonomy";
 import { forgeTarget } from "../core/remotes";
 import { vcsConfig, type IssueTracker } from "../core/vcs-config";
 import { currentBranch, headSha } from "../git/rev";
-import { appendObserved, type LedgerActor } from "../ledger";
+import { appendObserved, readLedger, type LedgerActor } from "../ledger";
 import {
   githubIssues,
   gitlabIssues,
@@ -21,7 +22,7 @@ import {
   type IssueCloseReason,
 } from "./issue-forge";
 import type { ResolvedForge } from "./resolve";
-import { failure, success, type ForgeResult } from "./types";
+import { failure, success, type ForgeErrorCode, type ForgeResult } from "./types";
 
 const same = (left: string, right: string): boolean => left.toLowerCase() === right.toLowerCase();
 
@@ -44,10 +45,11 @@ export function issueTarget(
   };
   // `--repo`: another repository on this forge host, under the same verified account.
   if (options.repo) {
-    if (!/^\w[\w.-]*(?:\/\w[\w.-]*)+$/u.test(options.repo))
+    // The owner has no dot, so a host (`gitlab.com/o/r`) is never read as one.
+    if (!/^[\w-]+(?:\/\w[\w.-]*)+$/u.test(options.repo))
       return failure(
         "invalid_input",
-        `--repo is owner/name or group/project, not "${options.repo}"`,
+        `--repo is owner/name or group/project on this forge host, without the host: not "${options.repo}"`,
       );
     return make(options.repo);
   }
@@ -120,6 +122,50 @@ const postComment = (
   return success({ url: url ?? (issue.url && id ? `${issue.url}#note_${id}` : null) });
 };
 
+const bodyHash = (body: string): string =>
+  createHash("sha256").update(body.trim()).digest("hex").slice(0, 32);
+
+const recordComment = (
+  cwd: string,
+  api: IssueApi,
+  actor: LedgerActor,
+  issue: number,
+  body: string,
+  url: string | null,
+): Recorded =>
+  record(cwd, api, actor, { type: "issue.commented", issue, url, bodyHash: bodyHash(body) });
+
+/**
+ * The URL of the same comment this session already posted on the issue
+ * (an `issue.commented` row), so a retried close never posts it twice;
+ * undefined when there is none or the session is unknown.
+ */
+function postedBefore(
+  cwd: string,
+  api: IssueApi,
+  actor: LedgerActor,
+  issue: number,
+  body: string,
+): { url: string | null } | undefined {
+  if (!actor.session) return undefined;
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return undefined;
+  const hash = bodyHash(body);
+  const row = ledger.value.rows.findLast((candidate) => {
+    const value = candidate as unknown as Record<string, unknown>;
+    return (
+      value.type === "issue.commented" &&
+      value.forge === api.kind &&
+      value.repo === api.repo &&
+      value.issue === issue &&
+      value.bodyHash === hash &&
+      candidate.actor.session === actor.session
+    );
+  }) as unknown as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  return { url: typeof row.url === "string" ? row.url : null };
+}
+
 export type CommentOutcome = {
   number: number;
   url: string | null;
@@ -150,11 +196,7 @@ export function commentOnIssue(
   const posted = postComment(api, issue.data, input.body);
   if (!posted.ok) return posted;
   const { url } = posted.data;
-  const recorded = record(cwd, api, input.actor, {
-    type: "issue.commented",
-    issue: input.number,
-    url,
-  });
+  const recorded = recordComment(cwd, api, input.actor, input.number, input.body, url);
   return success({ number: input.number, url, recorded });
 }
 
@@ -165,6 +207,8 @@ export type CloseOutcome = {
   /** False when the issue was already closed: nothing was posted. */
   changed: boolean;
   commentUrl: string | null;
+  /** posted now, already posted by this session (a retry), or none asked. */
+  comment: "posted" | "already_posted" | "none";
   recorded: Recorded | null;
 };
 
@@ -193,23 +237,42 @@ export function closeIssue(
       ...base,
       changed: false,
       commentUrl: null,
+      comment: "none",
       recorded: null,
     });
   let commentUrl: string | null = null;
+  let comment: CloseOutcome["comment"] = "none";
   if (input.comment !== null) {
-    const posted = postComment(api, issue.data, input.comment);
-    if (!posted.ok) return posted;
-    commentUrl = posted.data.url;
+    const before = postedBefore(cwd, api, input.actor, input.number, input.comment);
+    if (before) {
+      commentUrl = before.url;
+      comment = "already_posted";
+    } else {
+      const posted = postComment(api, issue.data, input.comment);
+      if (!posted.ok) return posted;
+      commentUrl = posted.data.url;
+      comment = "posted";
+      // Recorded at once: a failed close below must not lose it, and a retry reads it.
+      recordComment(cwd, api, input.actor, input.number, input.comment, commentUrl);
+    }
   }
+  // After a posted comment, a failure says so and the retry needs no --comment.
+  const stillOpen = (code: ForgeErrorCode, error: string): ForgeResult<CloseOutcome> =>
+    comment === "none"
+      ? failure(code, error, `workit issue view ${input.number}`)
+      : failure(
+          code,
+          `${error}; the comment is posted${commentUrl ? ` (${commentUrl})` : ""} and issue #${input.number} is still open`,
+          `workit issue close ${input.number} --reason ${input.reason}  # no --comment: it is posted; or workit issue view ${input.number}`,
+        );
   const closed = api.close(input.number, input.reason);
-  if (!closed.ok) return closed;
+  if (!closed.ok) return stillOpen(closed.code, closed.error);
   const after = api.view(input.number);
   if (!after.ok) return after;
   if (after.data.state !== "closed")
-    return failure(
+    return stillOpen(
       "failed",
       `close_unverified: the forge accepted the close but issue #${input.number} still reads open`,
-      `workit issue view ${input.number}`,
     );
   const recorded = record(cwd, api, input.actor, {
     type: "issue.closed",
@@ -218,7 +281,7 @@ export function closeIssue(
     reason: input.reason,
     commentUrl,
   });
-  return success({ ...base, changed: true, commentUrl, recorded });
+  return success({ ...base, changed: true, commentUrl, comment, recorded });
 }
 
 export type CreateOutcome = {

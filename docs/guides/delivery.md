@@ -652,6 +652,9 @@ because no account is verified there. Comment, close and create need the
 `pr` grant, the same one as `pr edit` and `pr reply`, and each writes an
 `issue.commented`, `issue.closed` or `issue.created` ledger row. `close`
 posts the comment first and then re-reads the issue to confirm the close.
+The comment is recorded as soon as it is posted. If the close then fails, the
+error says the comment is posted and the issue is still open. A retry from
+the same session does not post the same comment again.
 GitLab has no close reason, so there the reason is kept in the ledger row
 only. A rule about how agents should behave belongs in an issue like this,
 not in a host memory, which only one host reads.

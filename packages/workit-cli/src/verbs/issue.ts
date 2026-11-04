@@ -151,7 +151,13 @@ async function close(argv: string[], io: Io): Promise<number> {
     data.changed
       ? [
           `closed issue #${data.number} as ${data.reason}${data.url ? `  ${data.url}` : ""}`,
-          ...(data.commentUrl ? [`comment: ${data.commentUrl}`] : []),
+          ...(data.comment === "already_posted"
+            ? [
+                `comment: already posted by this session${data.commentUrl ? ` (${data.commentUrl})` : ""}; not posted again`,
+              ]
+            : data.commentUrl
+              ? [`comment: ${data.commentUrl}`]
+              : []),
           ...ledgerLine(data.recorded),
         ]
       : [`issue #${data.number} was already closed; nothing posted`],

@@ -12,6 +12,7 @@ import {
   fixture,
   makeForgeRepo,
   replayRunner,
+  replyError,
   type Call,
   type ForgeRepo,
   type Reply,
@@ -137,6 +138,64 @@ test("issue close (GitHub): given the forge write granted, the comment then the 
   });
 });
 
+test("issue close: given the comment posts and the close fails, the error says the comment is posted, it is recorded, and a retry does not post it again", async () => {
+  let attempts = 0;
+  const routes = closingIssue(321);
+  const patch = routes["PATCH repos/o/r/issues/321"];
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    ...routes,
+    "PATCH repos/o/r/issues/321": (call) => {
+      attempts += 1;
+      return attempts === 1
+        ? replyError("gh: Resource not accessible by integration (HTTP 403)")
+        : (patch as (call: Call) => string)(call);
+    },
+  });
+  const argv = ["issue", "close", "321", "--reason", "not-planned", "--comment", "x", "--json"];
+  const failed = await run(argv, repo.cwd);
+  expect(failed.code).not.toBe(0);
+  expect(failed.json().error).toContain(
+    "the comment is posted (https://github.com/o/r/issues/321#issuecomment-7) and issue #321 is still open",
+  );
+  expect(failed.json().unblock).toStartWith("workit issue close 321 --reason not-planned  #");
+  expect(failed.json().unblock).toContain("workit issue view 321");
+  expect(rows(repo.cwd, "issue.commented")).toEqual([
+    expect.objectContaining({
+      issue: 321,
+      url: "https://github.com/o/r/issues/321#issuecomment-7",
+    }),
+  ]);
+  expect(rows(repo.cwd, "issue.closed")).toEqual([]);
+
+  const retried = await run(argv, repo.cwd);
+  expect(retried.code, retried.stdout).toBe(0);
+  expect(retried.json().data).toMatchObject({
+    changed: true,
+    comment: "already_posted",
+    commentUrl: "https://github.com/o/r/issues/321#issuecomment-7",
+  });
+  // One comment POST across both runs; two close attempts.
+  expect(writes(runner.calls).map((call) => [call[0], call[1]])).toEqual([
+    ["POST", "repos/o/r/issues/321/comments"],
+    ["PATCH", "repos/o/r/issues/321"],
+    ["PATCH", "repos/o/r/issues/321"],
+  ]);
+  expect(rows(repo.cwd, "issue.closed")).toHaveLength(1);
+});
+
+test("issue close: a different comment from the same session is posted, not taken for the earlier one", async () => {
+  const { repo, runner } = setup("github", { ...githubBase(), ...closingIssue(321) });
+  forgeDeps.readStdin = () => "first note";
+  expect((await run(["issue", "comment", "321", "--body-file", "-"], repo.cwd)).code).toBe(0);
+  const closed = await run(
+    ["issue", "close", "321", "--reason", "completed", "--comment", "second note", "--json"],
+    repo.cwd,
+  );
+  expect(closed.json().data.comment).toBe("posted");
+  expect(writes(runner.calls).filter((call) => call[0] === "POST")).toHaveLength(2);
+});
+
 test("issue close: given the pr grant is off, it is refused naming the grant and nothing is written", async () => {
   const { repo, runner } = setup("github", {
     ...githubBase(),
@@ -234,8 +293,10 @@ test("issue create --repo: another repository on the same host is used, and a ma
   });
   forgeDeps.readStdin = () => "behavioural rule";
   const args = ["issue", "create", "--title", "t", "--body-file", "-", "--json"];
-  const bad = await run([...args, "--repo", "../x"], repo.cwd);
-  expect(bad.json()).toMatchObject({ code: "invalid_input" });
+  for (const value of ["../x", "gitlab.com/o/r", "github.example.org/o/r", "o"]) {
+    const bad = await run([...args, "--repo", value], repo.cwd);
+    expect(bad.json(), value).toMatchObject({ code: "invalid_input" });
+  }
   const created = await run([...args, "--repo", "BrainerVirus/workit"], repo.cwd);
   expect(created.code, created.stdout).toBe(0);
   expect(writes(runner.calls).map((call) => call[1])).toEqual(["repos/BrainerVirus/workit/issues"]);
