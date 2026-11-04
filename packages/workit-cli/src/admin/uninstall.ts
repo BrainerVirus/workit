@@ -10,6 +10,7 @@ import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "n
 import os from "node:os";
 import path from "node:path";
 import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { ownedCompletionFiles, removeCompletions } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
 import {
@@ -47,6 +48,7 @@ export type UninstallAction =
     }
   /** One part of the Workit-owned CLI install (exact ownedPaths() paths only). */
   | { kind: "remove-owned-cli"; path: string; detail: string; part: OwnedPart }
+  | { kind: "remove-completion"; path: string; detail: string }
   /** A foreign file at the launcher's place: reported, never touched. */
   | { kind: "keep-foreign"; path: string; detail: string };
 
@@ -467,6 +469,13 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
         ? { kind: "remove-owned-cli", path: step.path, detail: step.detail, part: step.part }
         : { kind: "keep-foreign", path: step.path, detail: step.detail },
   );
+  // The shell completion scripts setup/upgrade wrote belong to the CLI.
+  for (const file of ownedCompletionFiles(cliEnvOf(paths), paths.platform ?? process.platform))
+    cliActions.push({
+      kind: "remove-completion",
+      path: file,
+      detail: "remove Workit's shell completion script",
+    });
   const cli: UninstallHostPlan = {
     host: "cli",
     installed: cliActions.some((action) => action.kind === "remove-owned-cli"),
@@ -609,6 +618,13 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
       if (action.kind === "keep-foreign") {
         status = "skipped";
         detail = action.detail;
+      } else if (action.kind === "remove-completion") {
+        const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
+        status = removed.includes(action.path) || !existsSync(action.path) ? "removed" : "failed";
+        detail =
+          status === "failed"
+            ? `${action.path} is no longer Workit's completion script`
+            : undefined;
       } else if (action.kind === "remove-owned-cli") {
         const outcome = applyOwnedRemoval(action, cliEnvOf(paths), paths.platform);
         status = outcome.status;

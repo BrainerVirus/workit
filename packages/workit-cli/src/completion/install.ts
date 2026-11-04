@@ -151,6 +151,19 @@ function shellNotes(
 }
 
 /** Remove the completion files Workit wrote (each shell's); a foreign file stays. */
+/** The completion files Workit wrote (they carry its marker), for uninstall's plan. */
+export function ownedCompletionFiles(
+  env: Env = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const files: string[] = [];
+  for (const shell of ["zsh", "bash", "fish"] as const) {
+    const file = completionFile(shell, env, platform);
+    if (file && owned(file)) files.push(file);
+  }
+  return files;
+}
+
 export function removeCompletions(
   env: Env = process.env,
   platform: NodeJS.Platform = process.platform,
