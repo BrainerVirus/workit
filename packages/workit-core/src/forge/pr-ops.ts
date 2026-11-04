@@ -911,7 +911,7 @@ export async function mergePullRequest(
     if (!baseRed)
       return refuse(
         `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base`,
-        `workit ci rerun --branch ${doc.base} --failed --reason flake  # a flake on ${doc.base}: merge once it is green; a real failure: fix ${doc.base} first, or, if the user accepts it: workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
+        `workit ci rerun --ref ${doc.base} --failed --reason flake  # a flake on ${doc.base}: merge once it is green; a real failure: fix ${doc.base} first, or, if the user accepts it: workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
         { reason: "base_red", blockers: baseCi.failing.map((failed) => failed.name) },
       );
     baseRedOverride = baseRed;

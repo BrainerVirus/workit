@@ -16,7 +16,7 @@ export type RerunRow = {
   type: "ci.rerun";
   forge: string;
   repo: string;
-  /** The PR whose checks were rerun; null for a branch rerun (`--branch`). */
+  /** The PR whose checks were rerun; null for a branch rerun (`--ref`). */
   pr: number | null;
   /** The branch whose latest run was rerun; null for a PR rerun. Absent on older rows. */
   branch?: string | null;

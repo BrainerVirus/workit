@@ -7,8 +7,8 @@
 // instead of a sleep loop.
 //
 // rerun: reruns failed jobs (or named checks) once per (head, check), on the
-// PR head (`--pr`, or this branch's PR) or on the latest CI run of a branch
-// (`--branch`, e.g. a base gone red on a flake); a second rerun on the same
+// PR head (`--pr`, `--branch`'s PR, or this branch's PR) or on the latest CI
+// run of a branch (`--ref`, e.g. a base gone red on a flake); a second rerun on the same
 // head is `blocked` unless `--force`.
 //
 // logs --failed: the failing checks of the PR head, each with only the tail
@@ -50,7 +50,7 @@ import {
 const WAIT_USAGE =
   "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s] [--json]";
 const RERUN_USAGE =
-  "workit ci rerun [--pr <n> | --branch <b>] [--check <name>… | --failed] --reason flake|infra [--force] [--json]";
+  "workit ci rerun [--pr <n> | --branch <b> | --ref <branch>] [--check <name>… | --failed] --reason flake|infra [--force] [--json]";
 
 const LOGS_USAGE = "workit ci logs --failed [--pr <n> | --branch <b>] [--json]";
 
@@ -325,6 +325,7 @@ async function rerun(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     pr: "value",
     branch: "value",
+    ref: "value",
     check: "list",
     failed: "boolean",
     reason: "value",
@@ -336,7 +337,17 @@ async function rerun(argv: string[], io: Io): Promise<number> {
   const pr = positiveInt(flags.values.pr, "--pr");
   if (typeof pr === "string") return usage(io, pr, RERUN_USAGE);
   const names = flags.lists.check ?? [];
-  if (pr && flags.values.branch) return usage(io, "pass --pr or --branch, not both", RERUN_USAGE);
+  const targets = [
+    pr ? "--pr" : null,
+    flags.values.branch ? "--branch" : null,
+    flags.values.ref ? "--ref" : null,
+  ].filter(Boolean);
+  if (targets.length > 1)
+    return usage(
+      io,
+      `pass one of --pr, --branch or --ref, not ${targets.join(" and ")}`,
+      RERUN_USAGE,
+    );
   if (names.length && flags.booleans.has("failed"))
     return usage(io, "pass --check or --failed, not both", RERUN_USAGE);
   const reason = flags.values.reason;
@@ -347,7 +358,7 @@ async function rerun(argv: string[], io: Io): Promise<number> {
       RERUN_USAGE,
     );
 
-  const connected = connect(io, flags.values.branch);
+  const connected = connect(io, flags.values.branch ?? flags.values.ref);
   if (!connected.ok) return forgeFail(io, connected);
   const resolved = connected.data;
   // A mutation needs a verified account: a credential that cannot read /user
@@ -372,7 +383,7 @@ async function rerun(argv: string[], io: Io): Promise<number> {
       fail("blocked", grant.error, { unblock: grant.unblock, data: { reason: grant.reason } }),
     );
   const options = { failed: names.length === 0, names, reason, force: flags.booleans.has("force") };
-  const branch = flags.values.branch;
+  const branch = flags.values.ref;
   if (branch) {
     const ref = progressFor(io).runSync(
       `Reading the checks on ${branch}`,
@@ -388,14 +399,13 @@ async function rerun(argv: string[], io: Io): Promise<number> {
     if (!done.ok) return forgeFail(io, done);
     return rerunReport(io, done.data, `branch ${branch}`);
   }
-  const number = selectPr(io.cwd, resolved, { pr, branch: null });
+  const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok)
     return number.code === "not_found"
       ? emit(
           io,
           fail("not_found", `${number.error}; ci rerun targets a PR or a branch's latest CI run`, {
-            unblock:
-              "workit ci rerun --pr <n> --failed --reason flake  # or: workit ci rerun --branch <name> --failed --reason flake",
+            unblock: `workit ci rerun --ref ${flags.values.branch ?? "<branch>"} --failed --reason flake  # the branch's latest run; or a PR: workit ci rerun --pr <n> --failed --reason flake`,
           }),
         )
       : forgeFail(io, number);

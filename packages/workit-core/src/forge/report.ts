@@ -725,7 +725,7 @@ export function executeRerun(
 }
 
 /**
- * `ci rerun --branch`: the same rule for the latest CI run on a branch's head
+ * `ci rerun --ref`: the same rule for the latest CI run on a branch's head
  * (GitHub: its workflow runs; GitLab: its latest pipeline), so a base that
  * went red on a flake can be rerun without a PR.
  */

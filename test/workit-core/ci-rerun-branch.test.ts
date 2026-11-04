@@ -5,7 +5,7 @@ import { rerunLogPath } from "@/packages/workit-core/src/forge/reruns";
 import { fixture } from "@/test/shared/helpers/forge-replay";
 import { GL, GL_PIPE, connect, gitlabRoutes, useForgeHarness } from "./forge/shared";
 
-// `ci rerun --branch` on GitLab: the branch's latest pipeline on its tip is
+// `ci rerun --ref` on GitLab: the branch's latest pipeline on its tip is
 // read through branchChecks and its failed jobs retried through the pipeline
 // retry endpoint, under the same once-per-head record as the MR form.
 
@@ -13,7 +13,7 @@ const { repoFor } = useForgeHarness();
 
 const options = { failed: true, names: [], reason: "infra", force: false };
 
-test("given GitLab, when ci rerun --branch main --failed, then the failed jobs of main's latest pipeline are retried once per head", () => {
+test("given GitLab, when ci rerun --ref main --failed, then the failed jobs of main's latest pipeline are retried once per head", () => {
   const repo = repoFor("gitlab");
   const routes = gitlabRoutes();
   routes[`GET ${GL}/pipelines?ref=main&sha=${repo.base}&order_by=id&sort=desc&per_page=1`] =

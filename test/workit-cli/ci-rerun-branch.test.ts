@@ -15,7 +15,7 @@ import {
   type Reply,
 } from "@/test/shared/helpers/forge-replay";
 
-// `ci rerun --branch <b>`: reruns the failed jobs of a branch's latest CI run
+// `ci rerun --ref <b>`: reruns the failed jobs of a branch's latest CI run
 // (a base gone red on a flake) with the PR form's record and once-per-head
 // limit, and `pr merge`'s base_red refusal names it. All forge calls are
 // replayed stubs.
@@ -127,10 +127,10 @@ const rerunRows = (cwd: string) =>
     .split("\n")
     .map((line) => JSON.parse(line));
 
-test("given main's latest run has failed jobs, when ci rerun --branch main --failed --reason flake, then only that run's failed jobs are rerun and a row records branch, run id and reason", async () => {
+test("given main's latest run has failed jobs, when ci rerun --ref main --failed --reason flake, then only that run's failed jobs are rerun and a row records branch, run id and reason", async () => {
   const { repo, runner } = setup();
   const result = await run(
-    ["ci", "rerun", "--branch", "main", "--failed", "--reason", "flake", "--json"],
+    ["ci", "rerun", "--ref", "main", "--failed", "--reason", "flake", "--json"],
     repo.cwd,
   );
   expect(result.code).toBe(0);
@@ -163,7 +163,7 @@ test("given main's latest run has failed jobs, when ci rerun --branch main --fai
 
 test("given main's head was already rerun once, when it is rerun again, then it is refused with the PR form's rerun_limit, and --force reruns it", async () => {
   const { repo, runner } = setup();
-  const argv = ["ci", "rerun", "--branch", "main", "--failed", "--reason", "flake", "--json"];
+  const argv = ["ci", "rerun", "--ref", "main", "--failed", "--reason", "flake", "--json"];
   expect((await run(argv, repo.cwd)).code).toBe(0);
   const second = await run(argv, repo.cwd);
   expect(second.code).toBe(3);
@@ -180,12 +180,12 @@ test("given main's head was already rerun once, when it is rerun again, then it 
   expect(rerunRows(repo.cwd)).toHaveLength(2);
 });
 
-test("given main's latest run is green, when ci rerun --branch main --failed, then nothing is rerun", async () => {
+test("given main's latest run is green, when ci rerun --ref main --failed, then nothing is rerun", async () => {
   const { repo, runner } = setup({
     "graphql branch-checks": branchChecks([checkRun("unit", "SUCCESS", 778, 2)]),
   });
   const result = await run(
-    ["ci", "rerun", "--branch", "main", "--failed", "--reason", "flake", "--json"],
+    ["ci", "rerun", "--ref", "main", "--failed", "--reason", "flake", "--json"],
     repo.cwd,
   );
   expect(result.code).not.toBe(0);
@@ -193,7 +193,7 @@ test("given main's latest run is green, when ci rerun --branch main --failed, th
   expect(posts(runner.calls)).toEqual([]);
 });
 
-test("given pr merge refuses with base_red, then its unblock line is the ci rerun --branch <base> command", async () => {
+test("given pr merge refuses with base_red, then its unblock line is the ci rerun --ref <base> command", async () => {
   const { repo } = setup();
   repo.git("rm", "-q", "feature.txt");
   writeFileSync(path.join(repo.cwd, "README.md"), "# Feature\n");
@@ -203,19 +203,68 @@ test("given pr merge refuses with base_red, then its unblock line is the ci reru
   const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().data.reason).toBe("base_red");
-  expect(result.json().unblock).toStartWith(
-    "workit ci rerun --branch main --failed --reason flake",
-  );
+  expect(result.json().unblock).toStartWith("workit ci rerun --ref main --failed --reason flake");
   expect(result.json().unblock).toContain("--base-red-ok --reason");
 });
 
-test("given neither --pr nor --branch and no PR for the current branch, then the error names both forms", async () => {
+test("given neither --pr nor --branch and no PR for the current branch, then the error names the PR and the --ref forms", async () => {
   const { repo, runner } = setup({ "graphql find": fixture("github/find-none.json") });
   const result = await run(["ci", "rerun", "--failed", "--reason", "flake", "--json"], repo.cwd);
   expect(result.code).not.toBe(0);
   const envelope = result.json();
   expect(envelope.code).toBe("not_found");
   expect(envelope.unblock).toContain("workit ci rerun --pr <n>");
-  expect(envelope.unblock).toContain("workit ci rerun --branch <name>");
+  expect(envelope.unblock).toContain("workit ci rerun --ref <branch>");
+  expect(posts(runner.calls)).toEqual([]);
+});
+
+test("given --branch <b> with no PR, then the unblock is the ci rerun --ref <b> command", async () => {
+  const { repo, runner } = setup({ "graphql find": fixture("github/find-none.json") });
+  const result = await run(
+    ["ci", "rerun", "--branch", "feature/x", "--failed", "--reason", "flake", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).not.toBe(0);
+  expect(result.json().code).toBe("not_found");
+  expect(result.json().unblock).toStartWith(
+    "workit ci rerun --ref feature/x --failed --reason flake",
+  );
+  expect(posts(runner.calls)).toEqual([]);
+});
+
+test("given --branch <b> with an open PR, then the PR's head is rerun, as before --ref existed", async () => {
+  const { repo, runner } = setup({
+    "graphql status": fixture("github/pr-failing-thread.json"),
+    "POST repos/o/r/actions/runs/1/rerun-failed-jobs": "",
+  });
+  const result = await run(
+    ["ci", "rerun", "--branch", "feature/x", "--failed", "--reason", "flake", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(0);
+  expect(result.json().data).toMatchObject({ pr: 12, branch: null, head: repo.head });
+  expect(posts(runner.calls)).toEqual(["repos/o/r/actions/runs/1/rerun-failed-jobs"]);
+  expect(runner.calls.some((call) => call.op === "branch-checks")).toBe(false);
+});
+
+test("given --pr, --branch and --ref together, then it is a usage error naming them", async () => {
+  const { repo, runner } = setup();
+  const result = await run(
+    [
+      "ci",
+      "rerun",
+      "--branch",
+      "feature/x",
+      "--ref",
+      "main",
+      "--failed",
+      "--reason",
+      "flake",
+      "--json",
+    ],
+    repo.cwd,
+  );
+  expect(result.json()).toMatchObject({ code: "invalid_input" });
+  expect(result.json().error).toContain("--branch and --ref");
   expect(posts(runner.calls)).toEqual([]);
 });
