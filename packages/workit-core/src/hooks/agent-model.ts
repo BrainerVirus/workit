@@ -31,6 +31,22 @@ export const claudeAgentModel = (value: string): string | null => {
 
 const given = (value: unknown): boolean => typeof value === "string" && value.trim() !== "";
 
+/**
+ * The exact values the lead's next spawn should pass (W2.21): in auto mode
+ * Claude Code's classifier refuses a call a hook rewrote once, so a spawn
+ * that already names its role's model and effort runs untouched.
+ */
+const withNextSpawn = (text: string, input: Record<string, unknown>): string => {
+  if (text.includes("Next time pass")) return text;
+  const values = [
+    given(input.model) ? `model: ${String(input.model)}` : null,
+    given(input.effort) ? `effort: ${String(input.effort)}` : null,
+  ].filter(Boolean);
+  return values.length
+    ? `${text} Next time pass ${values.join(", ")} on the spawn, so it runs as written (auto mode refuses a rewritten spawn once).`
+    : text;
+};
+
 export const agentModelDecision = (
   cwd: string,
   tool: Record<string, unknown>,
@@ -62,5 +78,9 @@ export const agentModelDecision = (
   const text =
     choice.note ??
     `Workit set effort ${String(input.effort)} on this spawn: its role's configured effort.`;
-  return withLimits({ kind: "update-input", input, text });
+  return withLimits({
+    kind: "update-input",
+    input,
+    text: withNextSpawn(text, input),
+  });
 };

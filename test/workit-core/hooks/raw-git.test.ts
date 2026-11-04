@@ -536,7 +536,6 @@ test("each host renders the deny on its own channel and the nudge without granti
     expect(nudged.exitCode).toBe(0);
     // Cursor's shell has no session id: the nudge names the conversation's.
     expect(nudged.json).toEqual({
-      permission: "allow",
       agent_message: expect.stringMatching(/workit --session \S+ git commit/),
     });
 
@@ -979,7 +978,7 @@ test("G OpenCode and Pi shell calls around a raw commit, T recorded for the sess
 // ---------------------------------------------------------------------------
 // fail open
 
-test("G an unreadable branch policy on Cursor, W a push onto main, T the hook still answers allow (fail open)", async () => {
+test("G an unreadable branch policy on Cursor, W a push onto main, T the hook still defers to Cursor (fail open)", async () => {
   await withProtectedMain((configDir) => {
     const root = repo({ branch: "feature/x" });
     writeFileSync(path.join(configDir, "workspaces.json"), "{ not json");
@@ -989,7 +988,7 @@ test("G an unreadable branch policy on Cursor, W a push onto main, T the hook st
     );
     expect(out.error).toBeNull();
     expect(out.exitCode).toBe(0);
-    expect(out.json).toMatchObject({ permission: "allow" });
+    expect(out.json).not.toHaveProperty("permission");
   });
 });
 

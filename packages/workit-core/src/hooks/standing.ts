@@ -4,7 +4,8 @@
 // call, once per revision (standing-signal.ts). A worker of a fanout is a
 // subagent or child of one of its leads, a session id handed out under one
 // (`<lead>:<x>`, `<lead>-w-<slice>`), or any session on one of its slice
-// branches; the lead itself is never one.
+// branches; the lead itself is never one, nor is a subagent of the lead whose
+// type is not a Workit worker or judge (W2.27).
 import fs from "node:fs";
 import path from "node:path";
 import { currentBranch } from "../git/rev";
@@ -62,11 +63,23 @@ const leadOf = (input: HookInput): string | null =>
   (input.session.agentId ? input.session.id : null) ??
   (input.session.id.includes(":") ? input.session.id.split(":")[0] : null);
 
+/** A Workit worker or judge agent type, spelled any host's way (`workit:implementer`, `workit-verifier`). */
+const WORKER_TYPE = /^workit[:-](?:implementer|verifier|reviewer)$/u;
+
+/**
+ * A subagent of the lead whose host names its type works for the lead's
+ * fanouts only as a Workit worker or judge (W2.27): an inventory or Explore
+ * agent of the same lead gets no orders unless it sits on a slice branch.
+ * A host that names no type (OpenCode children) keeps the lead link alone.
+ */
+const workerOfLead = (input: HookInput): boolean =>
+  input.session.agentType === null || WORKER_TYPE.test(input.session.agentType);
+
 const worksFor = (plan: Plan, input: HookInput, branch: () => string | null): boolean => {
   const session = input.session.id;
   if (plan.leads.includes(session) && !input.session.agentId) return false;
   const lead = leadOf(input);
-  if (lead && plan.leads.includes(lead)) return true;
+  if (lead && plan.leads.includes(lead) && workerOfLead(input)) return true;
   if (plan.leads.some((each) => session.startsWith(`${each}-w-`))) return true;
   const current = branch();
   return current !== null && plan.branches.includes(current);

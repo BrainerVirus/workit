@@ -879,6 +879,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Verdicts recorded in a throwaway clone are found by the real checkout's merge gate (#311): each verdict is mirrored per remote in the state dir and imported, hash-checked, when a gate runs.
 - `workit upgrade` can no longer leave you without a working `workit`: a hand-written wrapper that runs an old install it removes is backed up and replaced by the owned launcher link, the npx cache copy is never treated as an install, and when your shell's `workit` still misses the new install it fails with the exact fix instead of reporting "Verified".
 - `workit doctor` no longer counts host plugin launchers (Claude Code, Codex, Cursor, OpenCode, Pi `bin/workit`) as stray CLI installs, and names the obsolete `timezone` key in config.json with its removal fix.
+- Claude Code: a spawn that already passes its role's model and effort is left unchanged, and a rewritten spawn's note names the exact model and effort to pass, so auto mode stops refusing spawns. Standing orders reach only Workit workers of their fanout, never other subagents.
+- Cursor: hooks no longer answer `allow` for commands Workit does not decide, so your own Cursor permissions apply (#635). A subagent that stops on a usage limit marks that provider exhausted at once.
 
 ## [0.6.0] - 2026-08-10
 

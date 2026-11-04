@@ -317,7 +317,7 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
       hookSpecificOutput: { hookEventName: "PreToolUse" },
     });
     expect(codex.exitCode).toBe(0);
-    // Cursor fails open too (audit N7): the same failure answers allow.
+    // Cursor fails open too (audit N7): the same failure defers to Cursor (#635).
     const cursor = dispatchHook(
       cursorAdapter,
       fixture("cursor", "before-shell-execution", root, {
@@ -326,7 +326,7 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
       {},
     );
     expect(cursor.error).toBe("a workspace root is required");
-    expect(cursor.json).toEqual({ permission: "allow" });
+    expect(cursor.json).toEqual({});
     expect(cursor.exitCode).toBe(0);
     // Claude is not fail-closed and never emits allow.
     const claude = dispatchHook(
@@ -352,6 +352,31 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
     );
     expect(unknownSource.error).toBeNull();
     expect(JSON.stringify(unknownSource.json)).toContain("<workit-contract>");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Given a Cursor shell command or tool call Workit does not decide, When the hook answers, Then it carries no permission so Cursor's own settings decide (#635)", () => {
+  const root = tempRoot();
+  try {
+    for (const command of ["ls", "git status", "echo hi"]) {
+      const shell = dispatchHook(
+        cursorAdapter,
+        fixture("cursor", "before-shell-execution", root, { command }),
+        {},
+      );
+      expect(shell.json, command).not.toHaveProperty("permission");
+      expect(shell.exitCode, command).toBe(0);
+    }
+    expect(cursorAdapter.render({ kind: "none" }, "preToolUse").json).toEqual({});
+    expect(cursorAdapter.render({ kind: "none" }, "subagentStart").json).toEqual({});
+    expect(
+      cursorAdapter.render({ kind: "context", text: "nudge" }, "beforeShellExecution").json,
+    ).toEqual({ agent_message: "nudge" });
+    expect(
+      cursorAdapter.render({ kind: "ask", reason: "why" }, "beforeShellExecution").json,
+    ).toEqual({ permission: "ask", user_message: "why", agent_message: "why" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
