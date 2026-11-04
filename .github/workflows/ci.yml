@@ -474,10 +474,9 @@ jobs:
     permissions:
       contents: write # GitHub Release
       issues: write # semantic-release success comments
-      pull-requests: write # semantic-release success comments, manifest sync PR
+      pull-requests: write # semantic-release success comments
       id-token: write # npm provenance
     # `$/` self-repository syntax is not understood by actionlint 1.7.12 yet.
     uses: ./.github/workflows/release.yml # zizmor: ignore[self-repository]
     secrets:
       NPMJS: ${{ secrets.NPMJS }}
-      RELEASE_SYNC_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN }}

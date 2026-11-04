@@ -49,15 +49,101 @@ export function changedPackages(root: string, fromTag: string): string[] {
   return RELEASE_PACKAGES.filter((pkg) => changed.has(pkg));
 }
 
-/** The release packages `pkg` declares as runtime dependencies at HEAD. */
+type DependencyGroups = Partial<
+  Record<
+    "dependencies" | "peerDependencies" | "optionalDependencies" | "devDependencies",
+    Record<string, string>
+  >
+>;
+
+/** The groups npm installs with a published package (devDependencies never). */
+const INSTALLED_GROUPS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
+
+/** The release packages `pkg` declares as install-time dependencies at HEAD. */
 const internalDependencies = (root: string, pkg: string): string[] => {
-  const manifest = JSON.parse(git(root, ["show", `HEAD:packages/${pkg}/package.json`])) as {
-    dependencies?: Record<string, string>;
-  };
-  return RELEASE_PACKAGES.filter(
-    (other) => manifest.dependencies?.[`@brainervirus/${other}`] !== undefined,
+  const manifest = JSON.parse(
+    git(root, ["show", `HEAD:packages/${pkg}/package.json`]),
+  ) as DependencyGroups;
+  return RELEASE_PACKAGES.filter((other) =>
+    INSTALLED_GROUPS.some((group) => manifest[group]?.[`@brainervirus/${other}`] !== undefined),
   );
 };
+
+/**
+ * The order packages reach the registry (W2.38): each one after every release
+ * package it installs, and workit-cli last. `npx @brainervirus/workit-cli@latest
+ * upgrade` is the user entry point and installs the host packages @latest, so
+ * a CLI published before them failed with ETARGET (v13.0.0: workit-cli landed
+ * 1m40s before the workit-cursor it requires). Throws on a dependency cycle.
+ */
+export function publishOrder(root: string): string[] {
+  const order: string[] = [];
+  const visiting = new Set<string>();
+  const visit = (pkg: string, path: string[]) => {
+    if (order.includes(pkg)) return;
+    if (visiting.has(pkg))
+      throw new Error(`release dependency cycle: ${[...path, pkg].join(" -> ")}`);
+    visiting.add(pkg);
+    for (const dep of internalDependencies(root, pkg)) visit(dep, [...path, pkg]);
+    visiting.delete(pkg);
+    order.push(pkg);
+  };
+  const cli = "workit-cli";
+  for (const pkg of RELEASE_PACKAGES) if (pkg !== cli) visit(pkg, []);
+  visit(cli, []);
+  return order;
+}
+
+const HOST_PLUGIN_MANIFESTS = [
+  "packages/workit-cursor/.cursor-plugin/plugin.json",
+  "packages/workit-codex/.codex-plugin/plugin.json",
+  "packages/workit-claude-code/.claude-plugin/plugin.json",
+] as const;
+
+const SEMVER_TAG = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/;
+
+/**
+ * The release tag semantic-release created on HEAD before its publish step,
+ * or null. With several (never expected), the highest by version order.
+ */
+export function releaseTagAtHead(root: string): string | null {
+  return (
+    git(root, ["tag", "--points-at", "HEAD", "--list", "v*", "--sort=-v:refname"])
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => SEMVER_TAG.test(line)) ?? null
+  );
+}
+
+/**
+ * Every place a published package carries the release version must say
+ * `tag` (AR-15, W2.34): each release package.json, each host plugin.json and
+ * each internal dependency range (`^<version>`, never `workspace:*`). The
+ * working tree is read on purpose: the release job writes these values in its
+ * own checkout and never commits them, so main keeps its last-synced version.
+ */
+export function releaseVersionProblems(root: string, tag: string): string[] {
+  const match = SEMVER_TAG.exec(tag);
+  if (!match) return [`${tag} is not a v<semver> release tag`];
+  const version = match[1];
+  const problems: string[] = [];
+  const read = (rel: string) => JSON.parse(readFileSync(resolve(root, rel), "utf8"));
+  for (const pkg of RELEASE_PACKAGES) {
+    const rel = `packages/${pkg}/package.json`;
+    const manifest = read(rel) as DependencyGroups & { version?: string };
+    if (manifest.version !== version)
+      problems.push(`${rel} version ${manifest.version} != ${version}`);
+    for (const group of [...INSTALLED_GROUPS, "devDependencies"] as const)
+      for (const [name, range] of Object.entries(manifest[group] ?? {}))
+        if (name.startsWith("@brainervirus/") && range !== `^${version}`)
+          problems.push(`${rel} ${group}.${name} is ${range}, not ^${version}`);
+  }
+  for (const rel of HOST_PLUGIN_MANIFESTS) {
+    const plugin = read(rel) as { version?: string };
+    if (plugin.version !== version) problems.push(`${rel} version ${plugin.version} != ${version}`);
+  }
+  return problems;
+}
 
 type Run = (cmd: string, args: string[], o: { cwd: string }) => unknown;
 
@@ -146,10 +232,21 @@ export function publishChanged(opts: {
   // Every changed package is attempted even after a failure: one package that
   // cannot publish (e.g. a first publish of a new npm name the token does not
   // cover) must not leave the others unreleased. Failures throw at the end.
-  for (const pkg of RELEASE_PACKAGES) {
+  // The exception is a package that installs a failed one: its ^<version>
+  // range would not resolve (ETARGET), so it is held back as failed too.
+  for (const pkg of publishOrder(root)) {
     if (!changed.has(pkg)) {
       skipped.push(pkg);
       console.log(`skip ${pkg} (no payload change since ${tag})`);
+      continue;
+    }
+    const blockedBy = internalDependencies(root, pkg).filter((dep) =>
+      failed.some((f) => f.pkg === dep),
+    );
+    if (blockedBy.length > 0) {
+      const error = `not published: its dependency ${blockedBy.join(", ")} failed to publish`;
+      failed.push({ pkg, error });
+      console.log(`publish failed ${pkg}: ${error}`);
       continue;
     }
     const cwd = resolve(root, "packages", pkg);
@@ -182,10 +279,26 @@ export function publishChanged(opts: {
 // previous release exists, absent on a first-ever release. The repo root is
 // always the spawn cwd (release.config.cjs paths are repo-root-relative), so
 // the CLI takes no root argument.
+// Before anything reaches the registry, the version guard proves the tag
+// semantic-release just created on HEAD and every published manifest agree;
+// a mismatch fails the job with nothing published.
 if (import.meta.main) {
+  const root = process.cwd();
+  const dryRun = process.env.PUBLISH_DRY_RUN === "1";
+  const releaseTag = releaseTagAtHead(root);
+  if (releaseTag === null) {
+    if (!dryRun)
+      throw new Error("no v* release tag on HEAD: publishing runs after semantic-release tags it");
+    console.log("dry run: no v* release tag on HEAD, version check skipped");
+  } else {
+    const problems = releaseVersionProblems(root, releaseTag);
+    if (problems.length > 0)
+      throw new Error(`release ${releaseTag} manifests disagree:\n  ${problems.join("\n  ")}`);
+    console.log(`every published manifest carries ${releaseTag}`);
+  }
   publishChanged({
-    root: process.cwd(),
-    dryRun: process.env.PUBLISH_DRY_RUN === "1",
+    root,
+    dryRun,
     ...(process.argv[2] !== undefined ? { fromTag: process.argv[2] } : {}),
   });
 }

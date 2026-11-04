@@ -1,13 +1,19 @@
 import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   changedPackages,
   publishChanged,
+  publishOrder,
 } from "@/packages/workit-core/scripts/publish-changed-packages";
 import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
+
+// The fixture packages declare no internal dependencies, so the publish order
+// is the release list with workit-cli moved last (W2.38).
+const ORDER = [...RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-cli"), "workit-cli"];
 
 // Measured over 15 s per test on loaded Windows runners (#415).
 if (process.platform === "win32") setDefaultTimeout(60_000);
@@ -117,7 +123,7 @@ describe("publishChanged", () => {
           calls.push(`${args.join(" ")} @ ${opts.cwd}`);
         },
       });
-      const others = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-opencode");
+      const others = ORDER.filter((pkg) => pkg !== "workit-opencode");
       expect(result.published).toEqual(["workit-opencode"]);
       expect(result.skipped).toEqual(others);
       expect(calls[0]).toBe(
@@ -126,7 +132,7 @@ describe("publishChanged", () => {
       const log = spyOn(console, "log");
       publishChanged({ root: r.root, run: () => {} });
       expect(log.mock.calls.map((c) => c[0])).toEqual(
-        RELEASE_PACKAGES.map((pkg) =>
+        ORDER.map((pkg) =>
           pkg === "workit-opencode"
             ? `published workit-opencode @ ${path.join(r.root, "packages", "workit-opencode")}`
             : `skip ${pkg} (no payload change since v0.8.10)`,
@@ -239,14 +245,14 @@ describe("publishChanged", () => {
           cwds.push(opts.cwd);
         },
       });
-      expect(result.published).toEqual([...RELEASE_PACKAGES]);
+      expect(result.published).toEqual(ORDER);
       expect(result.skipped).toEqual([]);
       expect(result.tag).toBeNull();
-      expect(cwds).toEqual(RELEASE_PACKAGES.map((pkg) => path.join(r.root, "packages", pkg)));
+      expect(cwds).toEqual(ORDER.map((pkg) => path.join(r.root, "packages", pkg)));
       const log = spyOn(console, "log");
       publishChanged({ root: r.root, run: () => {} });
       expect(log.mock.calls.map((c) => c[0])).toEqual(
-        RELEASE_PACKAGES.map((pkg) => `published ${pkg} @ ${path.join(r.root, "packages", pkg)}`),
+        ORDER.map((pkg) => `published ${pkg} @ ${path.join(r.root, "packages", pkg)}`),
       );
       log.mockRestore();
     } finally {
@@ -270,7 +276,7 @@ describe("publishChanged", () => {
         },
       });
       expect(result.published).toEqual(["workit-opencode"]);
-      expect(result.skipped).toEqual(RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-opencode"));
+      expect(result.skipped).toEqual(ORDER.filter((pkg) => pkg !== "workit-opencode"));
       expect(result.tag).toBe("v0.8.10");
       expect(calls[0]).toBe(
         `publish --access public @ ${path.join(r.root, "packages/workit-opencode")}`,
@@ -374,5 +380,108 @@ describe("publishChanged recovers a failed npm publish (v8.41.0)", () => {
     expect(out.calls).toEqual([PUBLISH, VIEW, PUBLISH, VIEW]);
     expect(out.error?.message).toContain("publish failed for 1 package(s): workit-opencode");
     expect(out.lines).toContain("publish failed workit-opencode: still failing");
+  });
+});
+
+describe("publish order (W2.38)", () => {
+  // npm installs these groups with a published package; devDependencies never.
+  const installDeps = (pkg: string): string[] => {
+    const manifest = JSON.parse(
+      readFileSync(path.join(REPO_ROOT, "packages", pkg, "package.json"), "utf8"),
+    ) as Record<string, Record<string, string> | undefined>;
+    return ["dependencies", "peerDependencies", "optionalDependencies"].flatMap((group) =>
+      Object.keys(manifest[group] ?? {})
+        .filter((name) => name.startsWith("@brainervirus/"))
+        .map((name) => name.slice("@brainervirus/".length)),
+    );
+  };
+
+  test("the real packages publish after every @brainervirus package they install, the CLI last", () => {
+    const order = publishOrder(REPO_ROOT);
+    expect(order.toSorted()).toEqual([...RELEASE_PACKAGES].toSorted());
+    expect(order.at(-1)).toBe("workit-cli");
+    // The v13.0.0 incident: workit-cli requires workit-cursor.
+    expect(installDeps("workit-cli")).toContain("workit-cursor");
+    for (const pkg of order)
+      for (const dep of installDeps(pkg))
+        expect(order.indexOf(dep), `${pkg} needs ${dep} first`).toBeLessThan(order.indexOf(pkg));
+  });
+
+  test("a package listed early still waits for a dependency listed after it; cycles fail", () => {
+    const r = repo();
+    try {
+      r.change(
+        "packages/workit-mcp/package.json",
+        `{"name":"@brainervirus/workit-mcp","version":"0.8.10","peerDependencies":{"@brainervirus/workit-pi":"workspace:*"}}\n`,
+      );
+      const order = publishOrder(r.root);
+      expect(order.indexOf("workit-pi")).toBeLessThan(order.indexOf("workit-mcp"));
+      expect(order.at(-1)).toBe("workit-cli");
+      r.change(
+        "packages/workit-pi/package.json",
+        `{"name":"@brainervirus/workit-pi","version":"0.8.10","dependencies":{"@brainervirus/workit-mcp":"workspace:*"}}\n`,
+      );
+      expect(() => publishOrder(r.root)).toThrow(/release dependency cycle/);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("npm publish runs dependencies first and the CLI last", () => {
+    const r = repo();
+    try {
+      r.change(
+        "packages/workit-cli/package.json",
+        `{"name":"@brainervirus/workit-cli","version":"0.8.10","dependencies":{"@brainervirus/workit-cursor":"workspace:*"}}\n`,
+      );
+      r.change("packages/workit-core/src/i.ts", "c\n");
+      const published: string[] = [];
+      publishChanged({
+        root: r.root,
+        run: (_cmd, args, opts) => {
+          if (args[0] === "publish") published.push(path.basename(opts.cwd));
+        },
+      });
+      expect(published).toHaveLength(RELEASE_PACKAGES.length);
+      expect(published.indexOf("workit-cursor")).toBeLessThan(published.indexOf("workit-cli"));
+      expect(published.at(-1)).toBe("workit-cli");
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("a package whose dependency failed to publish is held back, not published", () => {
+    const r = repo();
+    try {
+      r.change(
+        "packages/workit-cli/package.json",
+        `{"name":"@brainervirus/workit-cli","version":"0.8.10","dependencies":{"@brainervirus/workit-cursor":"workspace:*"}}\n`,
+      );
+      const published: string[] = [];
+      const log = spyOn(console, "log");
+      let err: unknown;
+      try {
+        publishChanged({
+          root: r.root,
+          pause: () => {},
+          run: (_cmd, args, opts) => {
+            if (opts.cwd.endsWith("workit-cursor")) throw new Error("boom");
+            if (args[0] === "publish") published.push(path.basename(opts.cwd));
+          },
+        });
+      } catch (e) {
+        err = e;
+      }
+      const lines = log.mock.calls.map((c) => String(c[0]));
+      log.mockRestore();
+      expect(published).toEqual(["workit-claude-code"]);
+      const message = (err as Error).message;
+      expect(message).toContain("publish failed for 2 package(s): workit-cursor, workit-cli");
+      expect(lines).toContain(
+        "publish failed workit-cli: not published: its dependency workit-cursor failed to publish",
+      );
+    } finally {
+      r.cleanup();
+    }
   });
 });
