@@ -1111,6 +1111,11 @@ async function merge(argv: string[], io: Io): Promise<number> {
   if (subject !== undefined && (!subject.trim() || subject.includes("\n")))
     return usage(io, "--subject must be one non-empty line", MERGE_USAGE);
 
+  // #638 (W2.19): a first line at once, so a host that kills a slow merge never leaves it silent.
+  announce(
+    io,
+    `pr merge${pr ? ` #${pr}` : ""}: checking the gate (CI, threads, verdict, the base's CI), then merging and confirming the merge with the forge (a few seconds of retries); the outcome prints when it ends`,
+  );
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
   const result = await progressFor(io).run(

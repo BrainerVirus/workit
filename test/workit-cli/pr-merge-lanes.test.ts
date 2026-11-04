@@ -435,12 +435,16 @@ test("given checks still pending, when pr merge is refused, then a line naming t
   expect(merges(runner.calls)).toEqual([]);
 });
 
-test("given a merge that lands, when it prints, then its first line is the merged line on stdout and stderr is empty", async () => {
+test("given a merge that lands, when it prints, then its first line is the merged line on stdout and stderr holds only the start line", async () => {
   const { repo } = setup(DOCS);
   const result = await run(["pr", "merge"], repo.cwd);
   expect(result.code).toBe(0);
   expect(result.stdout.split("\n")[0]).toMatch(/^merged PR #12 \(squash\) at head [0-9a-f]{12}/u);
-  expect(result.stderr).toBe("");
+  // stderr holds only the start line (#638), which a grep for the outcome skips.
+  expect(result.stderr.split("\n").filter(Boolean)).toEqual([
+    expect.stringMatching(/^workit: pr merge: checking the gate/u),
+  ]);
+  expect(kept(result.stderr)).toEqual([]);
 });
 
 test("given the forge accepts the merge but the PR stays open (merge queue, auto-merge), then pr merge says it is not merged and exits non-zero", async () => {
