@@ -19,7 +19,7 @@ import {
   ytrackSkillPathRefusal,
   type SkillHost,
 } from "@brainervirus/workit-core/src/core/ytrack-skill";
-import { hostSkillsRoot } from "../upgrade/shared";
+import { hostSkillsRoot } from "../upgrade/skill-roots";
 import { ownedCompletionFiles, removeCompletions } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";

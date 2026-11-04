@@ -12,7 +12,8 @@ import {
 } from "@brainervirus/workit-core/src/core/ytrack-skill";
 import { ytrackRunner } from "@brainervirus/workit-core/src/core/youtrack-ytrack";
 import { detectHosts } from "../admin/detect-hosts";
-import { hostSkillsRoot, type HostOutcome } from "./shared";
+import { type HostOutcome } from "./shared";
+import { hostSkillsRoot } from "./skill-roots";
 
 const SKILL_HOSTS: readonly SkillHost[] = ["claude-code", "codex", "cursor", "opencode", "pi"];
 // `ytrack skill` is offline; a stuck binary still never holds the run long.

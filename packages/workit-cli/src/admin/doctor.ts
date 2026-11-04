@@ -131,7 +131,7 @@ import {
   type SkillHost,
 } from "@brainervirus/workit-core/src/core/ytrack-skill";
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
-import { hostSkillsRoot } from "../upgrade/shared";
+import { hostSkillsRoot } from "../upgrade/skill-roots";
 import { detectHosts } from "./detect-hosts";
 import { removalCommand, type MigrationCopy } from "../install/migrate";
 import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/paths";

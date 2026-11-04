@@ -10,8 +10,8 @@ import { type InstallNode } from "../install/node";
 import { type PathWorkit } from "../install/verify";
 import { type Progress } from "../progress";
 import { workitConfigDir } from "../update-settings";
-import { type SkillHost } from "@brainervirus/workit-core/src/core/ytrack-skill";
 import { CODEX_MARKETPLACE } from "./codex-marketplace";
+import { configHome } from "./skill-roots";
 
 /** Hosts `workit launch` can start. */
 export const LAUNCH_HOSTS: HostId[] = ["opencode", "cursor", "codex", "pi"];
@@ -205,30 +205,6 @@ const HOME_DERIVED = [
   "MISE_DATA_DIR",
   "ASDF_DATA_DIR",
 ];
-
-/** The XDG config base OpenCode reads (its config and skills): XDG_CONFIG_HOME, else ~/.config. */
-const configHome = (home: string, env: NodeJS.ProcessEnv): string =>
-  env.XDG_CONFIG_HOME || path.join(home, ".config");
-
-/**
- * Each host's native user skills directory (sources in
- * docs/agents/hosts.md#host-parity): the directory `ytrack skill install
- * --dir` writes `ytrack/` into.
- */
-export const hostSkillsRoot = (host: SkillHost, home: string, env: NodeJS.ProcessEnv): string => {
-  switch (host) {
-    case "claude-code":
-      return path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), "skills");
-    case "codex":
-      return path.join(env.CODEX_HOME || path.join(home, ".codex"), "skills");
-    case "cursor":
-      return path.join(home, ".cursor", "skills");
-    case "opencode":
-      return path.join(configHome(home, env), "opencode", "skills");
-    case "pi":
-      return path.join(env.PI_CODING_AGENT_DIR || path.join(home, ".pi", "agent"), "skills");
-  }
-};
 
 export const upgradePaths = (deps: UpgradeDeps) => {
   const home = deps.home ?? deps.env?.HOME ?? os.homedir();

@@ -230,58 +230,6 @@ function flockAvailable(): boolean {
   return spawnSync("bash", ["-c", "command -v flock"], { encoding: "utf8" }).status === 0;
 }
 
-// Stub monorepo (scripts copied in, tiny tree) so sync-runtime + the install
-// script run without network or a full-repo rsync; HOME points into tmp so no
-// real ~/.config/opencode is touched. The installer imports the shared
-// registration helper and doctor-check from the CLI admin sources, which
-// import core by its package name, so the stub mirrors both packages and the
-// workspace link.
-const STUB_CORE_FILES = [
-  "config.ts",
-  "boundary.ts",
-  "logger.ts",
-  "workspaces.ts",
-  "branch-policy.ts",
-  "support-matrix.ts",
-  "skill-manifests.ts",
-  "package-root.ts",
-  "safe-write.ts",
-  "task-contract.ts",
-  "store-lock.ts",
-  // doctor's heavy_scope row probes the systemd scope (#325).
-  "heavy-scope.ts",
-  "runtime-identity.ts",
-  "release-tracks.ts",
-  // doctor's *_permissions rows (#297) resolve the state dir here.
-  "heavy-words.ts",
-  "role-models.ts",
-  // role-models.ts skips providers exhausted by a usage limit (#655).
-  "model-fallback.ts",
-  // install/paths.ts re-exports the owned-install locations from core (#648).
-  "cli-locate.ts",
-  "config-schemas.ts",
-  // workspaces.ts validates `remotes` patterns, autonomy caps by them (#549).
-  "remotes.ts",
-  // doctor's hook_node row resolves the hook Node (also copied into the launchers).
-  "node-resolve.mjs",
-  // the one location resolver (state, config and data dirs) behind all of them.
-  "workit-paths.mjs",
-  // doctor's youtrack row: the workspace tracker and the ytrack status.
-  "vcs-config.ts",
-  "youtrack-ytrack.ts",
-  // task-contract.ts checks worker scopes against the lead's globs.
-  "scope-glob.ts",
-];
-// doctor's *_permissions rows read Workit's verb list (hooks/delivery-verbs.ts).
-const STUB_HOOK_FILES = ["delivery-verbs.ts", "shell-words.ts", "hook-runs.ts"];
-const STUB_ADMIN_FILES = [
-  "registration.ts",
-  "doctor.ts",
-  "host-install.ts",
-  "host-permissions.ts",
-  "hook-node.ts",
-];
-
 function copyCoreSources(stub: string) {
   mkdirSync(path.join(stub, "node_modules", "@brainervirus"), { recursive: true });
   symlinkSync(
@@ -300,79 +248,13 @@ function copyCoreSources(stub: string) {
     path.join(repoRoot, "packages/workit-core/package.json"),
     path.join(stub, "packages/workit-core/package.json"),
   );
-  for (const name of STUB_CORE_FILES)
-    cpSync(
-      path.join(repoRoot, "packages/workit-core/src/core", name),
-      path.join(stub, "packages/workit-core/src/core", name),
-    );
-  // remotes.ts resolves ssh aliases as deriveForge does (#549).
-  mkdirSync(path.join(stub, "packages/workit-core/src/git"), { recursive: true });
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/git/rev.ts"),
-    path.join(stub, "packages/workit-core/src/git/rev.ts"),
-  );
-  // youtrack-ytrack.ts finds ytrack on PATH through forge/exec.ts.
-  mkdirSync(path.join(stub, "packages/workit-core/src/forge"), { recursive: true });
-  for (const name of ["exec.ts", "redact.ts", "types.ts"])
-    cpSync(
-      path.join(repoRoot, "packages/workit-core/src/forge", name),
-      path.join(stub, "packages/workit-core/src/forge", name),
-    );
-  // doctor's grant_endpoint row reads the grant/endpoint mismatch (#431).
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/autonomy.ts"),
-    path.join(stub, "packages/workit-core/src/autonomy.ts"),
-  );
-  mkdirSync(path.join(stub, "packages/workit-core/src/hooks"), { recursive: true });
-  for (const name of STUB_HOOK_FILES)
-    cpSync(
-      path.join(repoRoot, "packages/workit-core/src/hooks", name),
-      path.join(stub, "packages/workit-core/src/hooks", name),
-    );
-  for (const name of STUB_ADMIN_FILES)
-    cpSync(
-      path.join(repoRoot, "packages/workit-cli/src/admin", name),
-      path.join(stub, "packages/workit-cli/src/admin", name),
-    );
-  // doctor's updates row reads the setting and the launch-check cache.
-  cpSync(
-    path.join(repoRoot, "packages/workit-cli/src/update-settings.ts"),
-    path.join(stub, "packages/workit-cli/src/update-settings.ts"),
-  );
-  // host-install.ts reads the Codex marketplace names from the upgrade module.
-  mkdirSync(path.join(stub, "packages/workit-cli/src/upgrade"), { recursive: true });
-  cpSync(
-    path.join(repoRoot, "packages/workit-cli/src/upgrade/codex-marketplace.ts"),
-    path.join(stub, "packages/workit-cli/src/upgrade/codex-marketplace.ts"),
-  );
-  // doctor's cli_installs row lists installs through the owned-install modules (#648).
-  cpSync(
-    path.join(repoRoot, "packages/workit-cli/src/install"),
-    path.join(stub, "packages/workit-cli/src/install"),
-    { recursive: true },
-  );
-  // doctor's checks_config row and --fix read the checks config path through check-config.ts.
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/check-config.ts"),
-    path.join(stub, "packages/workit-core/src/check-config.ts"),
-  );
-  // release-tracks.ts (doctor) reads branch facts through git/rev.ts.
-  mkdirSync(path.join(stub, "packages/workit-core/src/git"), { recursive: true });
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/git/rev.ts"),
-    path.join(stub, "packages/workit-core/src/git/rev.ts"),
-  );
-  // doctor's session_hook check reads the commit-msg hook state.
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/git/session-hook.ts"),
-    path.join(stub, "packages/workit-core/src/git/session-hook.ts"),
-  );
-  // store-lock.ts resolves the checkout lock through the task store layout.
-  mkdirSync(path.join(stub, "packages/workit-core/src/store"), { recursive: true });
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/store/paths.ts"),
-    path.join(stub, "packages/workit-core/src/store/paths.ts"),
-  );
+  // doctor-check.ts runs the real doctor, whose import graph grows with every
+  // row: copy the whole source trees rather than a hand-kept file list (three
+  // CI breaks on 2026-11-04 came from a new import missing from that list).
+  for (const pkg of ["workit-core", "workit-cli"])
+    cpSync(path.join(repoRoot, "packages", pkg, "src"), path.join(stub, "packages", pkg, "src"), {
+      recursive: true,
+    });
   cpSync(
     path.join(repoRoot, "packages/workit-cli/scripts/doctor-check.ts"),
     path.join(stub, "packages/workit-cli/scripts/doctor-check.ts"),

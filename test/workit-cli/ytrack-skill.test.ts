@@ -21,7 +21,7 @@ import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { runUpgradeCommand, type HostProcess } from "@/packages/workit-cli/src/upgrade";
 import { run as setup } from "@/packages/workit-cli/src/verbs/setup";
-import { hostSkillsRoot } from "@/packages/workit-cli/src/upgrade/shared";
+import { hostSkillsRoot } from "@/packages/workit-cli/src/upgrade/skill-roots";
 import {
   parseSkillMeta,
   readYtrackSkillRecord,
