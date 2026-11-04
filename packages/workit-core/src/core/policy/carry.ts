@@ -55,11 +55,12 @@ export type Drift =
 
 const TEST_ONLY_KINDS: ReadonlySet<string> = new Set(["doc", "cosmetic", "generated"]);
 /**
- * A test file proper, by name (`*.test.*`, `*.spec.*`, Go's `*_test.*`). A
- * helper, fixture, setup or config file under a test folder is not one:
+ * A test file proper, by name (`*.test.ts`, `*.spec.js` and the other JS/TS
+ * extensions, Go's `*_test.go`). A helper, fixture, setup or config file is
+ * not one, even with `.test.` mid-name (`foo.test.helper.ts`, `a.test.json`):
  * product scripts import such helpers and test runners preload them.
  */
-const TEST_FILE = /\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/iu;
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$|_test\.[^./]+$/iu;
 const testOnly = (file: ChangedFile): boolean => {
   const kind = kindOf(file);
   return TEST_ONLY_KINDS.has(kind) || (kind === "test" && TEST_FILE.test(file.path));
