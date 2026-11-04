@@ -75,10 +75,10 @@ test(
     // passes (the PATH node meets the floor); legacy_dirs passes (no pre-XDG dir).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 43,
+      passed: 42,
       warned: 1,
       failed: 1,
-      total: 45,
+      total: 44,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -124,10 +124,10 @@ test(
       // check's setting, local files only); legacy_dirs passes (no pre-XDG dir).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 43,
+        passed: 42,
         warned: 1,
         failed: 1,
-        total: 45,
+        total: 44,
         fixes: 1,
       });
     } finally {

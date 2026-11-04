@@ -155,8 +155,8 @@ export function initApplyData(
           },
         },
         instruction: ytrack.ok
-          ? `Set baseUrl in ${configPath} if needed; ytrack is logged in, so /wk-status should pass.`
-          : `Set baseUrl in ${configPath}, then ${ytrack.unblock}, then /wk-status.`,
+          ? `Set baseUrl in ${configPath} if needed; ytrack is logged in, so \`workit doctor\` should pass.`
+          : `Set baseUrl in ${configPath}, then ${ytrack.unblock}, then \`workit doctor\`.`,
       };
     }
     case "vcs_scaffold": {
@@ -184,8 +184,8 @@ export function initApplyData(
           },
           instruction:
             provider === null
-              ? `No provider resolved — set provider to gitlab or github in ${configPath}, then /wk-status.`
-              : `Run ${provider === "gitlab" ? "glab" : "gh"} auth login, then /wk-status.`,
+              ? `No provider resolved — set provider to gitlab or github in ${configPath}, then \`workit doctor\`.`
+              : `Run ${provider === "gitlab" ? "glab" : "gh"} auth login, then \`workit doctor\`.`,
         };
       } finally {
         if (prev === undefined) delete process.env.WORKIT_VCS_CONFIG;

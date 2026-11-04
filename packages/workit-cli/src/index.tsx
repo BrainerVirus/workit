@@ -32,7 +32,7 @@ import { dropSignalListenersAddedSince, snapshotSignalListeners } from "./steps/
 
 // WZ-13-WZ-15 / CA-31: Apply prints one line per platform/file (Installed /
 // Configured / Skipped / Failed), the post-apply doctor summary, and the
-// /wk-status + doctor completion guidance. Partial failures propagate to a
+// doctor + ytrack completion guidance. Partial failures propagate to a
 // nonzero exit code.
 const stdoutStyle = (): Style => createStyle({ stream: process.stdout, env: process.env });
 

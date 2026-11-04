@@ -1451,7 +1451,7 @@ const ytrackEntry = (host: string, env: NodeJS.ProcessEnv): SetupResultEntry => 
 };
 
 // Completion guidance shown by the CLI after Apply (and on the non-TTY path):
-// the doctor command + /wk-status are the next steps for verifying the result.
+// `workit doctor` (and ytrack login) are the next steps for verifying the result.
 export const setupCompletionGuidance = (): string[] => [
   "Run `workit doctor` to verify your installation.",
   "YouTrack goes through ytrack: `ytrack auth login --host <host>` once; Workit stores no YouTrack token.",

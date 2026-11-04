@@ -443,7 +443,7 @@ test("packed CLI: non-TTY init gives guidance + nonzero; --help exits 0", () => 
     expect(init.status, init.stdout + init.stderr).toBe(1);
     expect(init.stdout).toContain("interactive terminal");
     expect(init.stdout).toContain("workit doctor");
-    expect(init.stdout).toContain("/wk-status");
+    expect(init.stdout).toContain("ytrack auth login --host");
     expect(init.stderr).not.toContain('"initialization"');
 
     // non-TTY uninstall is a usage error (exit 2), not an interactive failure
@@ -491,9 +491,9 @@ test("packed CLI ships completion guidance and hygiene templates", () => {
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
     const cliDir = installPackedPackage(nm, byName(packs, CLI));
-    // /wk-status + doctor completion guidance are compiled into the shipped CLI
+    // the ytrack + doctor completion guidance is compiled into the shipped CLI
     const bundle = readFileSync(path.join(cliDir, "dist", "index.js"), "utf8");
-    expect(bundle).toContain("/wk-status");
+    expect(bundle).toContain("ytrack auth login --host");
     expect(bundle).toContain("workit doctor");
     // hygiene templates ship package-locally under the CLI assets
     expect(existsSync(path.join(cliDir, "assets", "templates", "hygiene", "CHANGELOG.md"))).toBe(
