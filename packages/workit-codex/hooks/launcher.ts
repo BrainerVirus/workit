@@ -63,6 +63,10 @@ if (tooOld) {
 }
 
 // Loaded after the floor check: a static import would evaluate the runtime first.
+// The owned CLI first on this process's PATH, before anything probes for
+// `workit` (core/cli-locate: owned launcher, else owned current, else PATH).
+const { useOwnedWorkitCli } = await import("@brainervirus/workit-core/src/core/cli-locate");
+useOwnedWorkitCli();
 const { maybeHeavy, stateDir } = await import("@brainervirus/workit-core/src/core/heavy-words");
 const { standingPending } = await import("@brainervirus/workit-core/src/hooks/standing-signal");
 const { recordHookRun } = await import("@brainervirus/workit-core/src/hooks/hook-runs");

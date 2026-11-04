@@ -49,6 +49,7 @@ import {
 import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
+import { opencodeShellEnv, useOwnedCliInOpencode } from "../cli-path";
 import {
   escalateToolFailure,
   type FailureMemo,
@@ -261,13 +262,17 @@ const setup = async (ctx: Context): Promise<() => void> => {
   });
   // Older V2 builds have no shell domain: their shells keep OPENCODE_SESSION_ID only.
   const shellDomain = (ctx as Partial<Context>).shell;
+  // Every agent shell runs the owned `workit` (core/cli-locate); a build with no
+  // shell domain gets it through this process's env, which its shells inherit.
   if (shellDomain)
-    await shellDomain.hook("create.before", (event) =>
-      applyShellSession(pendingShells, event, async (sessionID) => {
+    await shellDomain.hook("create.before", async (event) => {
+      Object.assign(event.env, opencodeShellEnv({ ...process.env, ...event.env }));
+      await applyShellSession(pendingShells, event, async (sessionID) => {
         const known = lifecycle.directChildren.get(sessionID);
         return known ?? (await sessionFacts(ctx, sessionID))?.parentID;
-      }),
-    );
+      });
+    });
+  else useOwnedCliInOpencode();
   await ctx.tool.hook("execute.after", async (event) => {
     if (event.tool === "shell") {
       settleShellCall(pendingShells, { sessionID: String(event.sessionID), input: event.input });

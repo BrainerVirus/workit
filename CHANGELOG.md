@@ -180,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OpenCode and Pi agent shells, the Codex hook and MCP processes and the Cursor hook prefer the owned workit install over a stale copy earlier on PATH (owned bin first on PATH, `WORKIT_CLI` set); nothing changes without an owned install. Claude Code keeps its plugin-bundled CLI (#648).
 - `workit check ci` runs the repository's `ci` group from `.workit/checks.json` (light checks at once, heavy ones under the lease) and names every failed member; this repository declares knip, react-doctor and packaging so they run before push, not only in CI.
 - `docs/guides/configuration.md` documents usage-limit fallback lists (ordered models per role and `models.lead`, `models.limitWindow`, what each host can switch).
 - `workit changelog merge` is a git merge driver that keeps both sides' `[Unreleased]` entries (each heading once, duplicates dropped, conflicts outside Unreleased keep git's markers); `workit changelog driver install` registers it in `.git/config` and `.gitattributes`. This repository routes CHANGELOG.md through it.
