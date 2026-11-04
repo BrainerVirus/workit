@@ -120,7 +120,19 @@ import {
   ytrackRunner,
   ytrackStatus,
 } from "@brainervirus/workit-core/src/core/youtrack-ytrack";
+import {
+  hostSkillsRoot,
+  installedSkillVersion,
+  readYtrackSkillRecord,
+  sameVersion,
+  youTrackInUse,
+  YTRACK_SKILL,
+  YTRACK_UPGRADE,
+  ytrackSkillSupport,
+  type SkillHost,
+} from "@brainervirus/workit-core/src/core/ytrack-skill";
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
+import { detectHosts } from "./detect-hosts";
 import { removalCommand, type MigrationCopy } from "../install/migrate";
 import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/paths";
 import { readUpdateCache, readUpdatesMode } from "../update-settings";
@@ -164,6 +176,7 @@ type DoctorCheckId =
   | "workspace_lock"
   | "session_hook"
   | "youtrack"
+  | "ytrack_skill"
   | "github_identity"
   | "gitlab_identity"
   | "log_writable"
@@ -2833,6 +2846,61 @@ const checkYouTrack = (res: Resolved): DoctorCheck | null => {
   };
 };
 
+const SKILL_HOSTS: SkillHost[] = ["claude-code", "codex", "cursor", "opencode", "pi"];
+
+/**
+ * The ytrack agent skill (youtrack-cli #16) in each host Workit is installed
+ * in or installed the skill for: its SKILL.md version against `ytrack
+ * version`. No row without YouTrack or without ytrack on PATH (the
+ * `youtrack` row covers that).
+ */
+const checkYtrackSkill = (res: Resolved): DoctorCheck | null => {
+  if (!youTrackInUse(res.configDir, res.env) || !findYtrack(res.env)) return null;
+  const support = ytrackSkillSupport(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
+  if (support.state === "missing") return null;
+  if (support.state === "unsupported")
+    return {
+      id: "ytrack_skill",
+      status: "warn",
+      detail: `ytrack${support.version ? ` ${support.version}` : ""} has no \`ytrack skill\`: agents get no ytrack skill`,
+      fix: YTRACK_UPGRADE,
+    };
+  const env = {
+    ...res.env,
+    ...(res.codexHome ? { CODEX_HOME: res.codexHome } : {}),
+    ...(res.piAgentDir ? { PI_CODING_AGENT_DIR: res.piAgentDir } : {}),
+  };
+  const recorded = new Set(readYtrackSkillRecord(res.stateDir).map((install) => install.host));
+  const found = detectHosts({ home: res.home, env });
+  const hosts = SKILL_HOSTS.filter((host) => recorded.has(host) || found[host].configured);
+  if (hosts.length === 0) return null;
+  const rows = hosts.map((host) => ({
+    host,
+    installed: installedSkillVersion(path.join(hostSkillsRoot(host, res.home, env), YTRACK_SKILL)),
+  }));
+  const off = rows.filter(
+    (row) => row.installed === null || !sameVersion(row.installed, support.version),
+  );
+  if (off.length === 0)
+    return {
+      id: "ytrack_skill",
+      status: "pass",
+      detail: `ytrack skill ${support.version} in ${hosts.join(", ")}`,
+    };
+  return {
+    id: "ytrack_skill",
+    status: "warn",
+    detail: `ytrack ${support.version}: ${off
+      .map((row) =>
+        row.installed === null
+          ? `no ytrack skill for ${row.host}`
+          : `${row.host} has skill ${row.installed || "without a version"}`,
+      )
+      .join("; ")}`,
+    fix: `workit upgrade --hosts=${off.map((row) => row.host).join(",")}`,
+  };
+};
+
 // Provider CLI and SSH identities are public usernames; Workit never reads a VCS token file.
 export type IdentitySurface = { surface: string; login: string | null };
 
@@ -3971,6 +4039,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkWorkspaceLock,
   checkSessionHook,
   checkYouTrack,
+  checkYtrackSkill,
   checkGithubIdentity,
   checkGitLabIdentity,
   checkLogWritable,
@@ -4002,6 +4071,7 @@ const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck | null>([
   checkPluginFiles,
   checkStalePin,
   checkStaleInstall,
+  checkYtrackSkill,
   ...RUN_CHECKS.slice(-6),
 ]);
 

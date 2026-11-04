@@ -40,7 +40,8 @@ export type CommandResult = {
 };
 /** Where a command runs (OpenCode's plugin commands act on the cwd's location). */
 export type RunOptions = { cwd?: string };
-export type UpgradeHost = HostId | "cli" | "permissions";
+/** `ytrack`: the ytrack agent skill in each host's skills directory. */
+export type UpgradeHost = HostId | "cli" | "permissions" | "ytrack";
 
 /** The last few lines of a command's stderr, for a failed row's reason. */
 export const stderrTail = (text: string | undefined, lines = 5): string =>

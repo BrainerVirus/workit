@@ -9,7 +9,15 @@
 import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import {
+  configDir,
+  stateDir as workitStateDir,
+} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import {
+  readYtrackSkillRecord,
+  removeYtrackSkill,
+  type SkillHost,
+} from "@brainervirus/workit-core/src/core/ytrack-skill";
 import { ownedCompletionFiles, removeCompletions } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
@@ -49,6 +57,8 @@ export type UninstallAction =
   /** One part of the Workit-owned CLI install (exact ownedPaths() paths only). */
   | { kind: "remove-owned-cli"; path: string; detail: string; part: OwnedPart }
   | { kind: "remove-completion"; path: string; detail: string }
+  /** A ytrack skill directory Workit installed (its own record, exact path only). */
+  | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost; version: string }
   /** A foreign file at the launcher's place: reported, never touched. */
   | { kind: "keep-foreign"; path: string; detail: string };
 
@@ -291,6 +301,12 @@ const permissionPathsOf = (paths: UninstallPaths) => {
 };
 
 /** Inverse of `workit setup`: the entries the ownership record names (else the canonical ones). */
+/** Where Workit records what it installed (permission blocks, the ytrack skill). */
+const stateDirOf = (paths: UninstallPaths): string => {
+  const { home, env } = permissionPathsOf(paths);
+  return paths.stateDir ?? workitStateDir({ ...env, HOME: home }, paths.platform);
+};
+
 const permissionCleaner =
   (host: "claude-code" | "cursor", file: string, paths: UninstallPaths): JsonCleaner =>
   (record) => {
@@ -463,6 +479,18 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       detail: "remove Workit's Codex rules file",
     });
 
+  // The ytrack skill directories Workit recorded installing, and only those.
+  // Like the permission blocks, they do not mark a host as installed.
+  const byHost = { opencode, cursor, codex, pi, "claude-code": claude };
+  for (const install of readYtrackSkillRecord(stateDirOf(paths)))
+    byHost[install.host]?.actions.push({
+      kind: "remove-ytrack-skill",
+      path: install.path,
+      detail: "remove the ytrack skill Workit installed",
+      host: install.host,
+      version: install.version,
+    });
+
   const cliActions: UninstallAction[] = planOwnedRemoval(cliEnvOf(paths), paths.platform).map(
     (step) =>
       step.kind === "remove"
@@ -625,6 +653,15 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
           status === "failed"
             ? `${action.path} is no longer Workit's completion script`
             : undefined;
+      } else if (action.kind === "remove-ytrack-skill") {
+        const recorded = readYtrackSkillRecord(stateDirOf(paths)).find(
+          (install) => install.host === action.host && install.path === action.path,
+        );
+        const outcome = recorded
+          ? removeYtrackSkill(recorded, stateDirOf(paths))
+          : { status: "skipped" as const, detail: "no longer recorded as Workit's" };
+        status = outcome.status;
+        detail = outcome.detail;
       } else if (action.kind === "remove-owned-cli") {
         const outcome = applyOwnedRemoval(action, cliEnvOf(paths), paths.platform);
         status = outcome.status;
