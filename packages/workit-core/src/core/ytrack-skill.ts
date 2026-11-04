@@ -8,6 +8,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -215,13 +216,58 @@ const isLink = (file: string): boolean => {
   }
 };
 
+const realpathOrNull = (file: string): string | null => {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return null;
+  }
+};
+
 /**
- * Remove one recorded skill directory: only `<root>/ytrack` that still holds
- * the ytrack skill and is a real directory, never a symlink or another skill.
+ * Why a recorded skill path is not the one Workit may delete, or null when it
+ * is. The only allowed path is `<root>/ytrack` for the host's skills root,
+ * spelled exactly so (no `..`, no other host's root), and no component from
+ * `home` (or, for a root outside home, the root's parent) down to it may be a
+ * symlink: its real path must be the anchor's real path plus the same
+ * relative path.
+ */
+export function ytrackSkillPathRefusal(
+  recorded: string,
+  root: string,
+  home: string,
+): string | null {
+  const expected = path.join(path.resolve(root), YTRACK_SKILL);
+  if (recorded !== expected)
+    return `${recorded} is not ${expected}, the only ytrack skill directory Workit installs for this host`;
+  const inHome = path.relative(path.resolve(home), expected);
+  const anchor =
+    inHome && !inHome.startsWith("..") && !path.isAbsolute(inHome)
+      ? path.resolve(home)
+      : path.dirname(path.resolve(root));
+  const realAnchor = realpathOrNull(anchor);
+  if (realAnchor === null) return null; // nothing there to delete
+  const lexical = path.join(realAnchor, path.relative(anchor, expected));
+  // Walk down from the anchor: an existing component must be itself, not a link.
+  let current = realAnchor;
+  for (const part of path.relative(anchor, expected).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    if (!existsSync(current) && !isLink(current)) return null;
+    if (isLink(current) || realpathOrNull(current) !== current)
+      return `${current} is a symlink: ${expected} does not resolve to ${lexical}`;
+  }
+  return null;
+}
+
+/**
+ * Remove one recorded skill directory: only `<root>/ytrack` for the host's
+ * skills root (`ytrackSkillPathRefusal`), a real directory that still holds
+ * the ytrack skill; never a symlink, another path or another skill.
  */
 export function removeYtrackSkill(
   install: YtrackSkillInstall,
   stateDir: string,
+  expected: { root: string; home: string },
 ): { status: "removed" | "skipped" | "failed"; detail?: string } {
   const forget = () =>
     writeRecord(
@@ -230,8 +276,8 @@ export function removeYtrackSkill(
         (row) => !(row.host === install.host && row.path === install.path),
       ),
     );
-  if (path.basename(install.path) !== YTRACK_SKILL)
-    return { status: "failed", detail: `${install.path} is not a ytrack skill directory` };
+  const refusal = ytrackSkillPathRefusal(install.path, expected.root, expected.home);
+  if (refusal) return { status: "skipped", detail: `left untouched: ${refusal}` };
   if (!existsSync(install.path) && !isLink(install.path)) {
     forget();
     return { status: "skipped", detail: "directory already absent" };

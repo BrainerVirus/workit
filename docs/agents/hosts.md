@@ -59,10 +59,13 @@ its version: `ytrack skill print` and `ytrack skill install --dir <root>
 --json` (`{path, version}`; it refuses a `<root>/ytrack` that is not its
 skill). Workit never copies its text. `core/ytrack-skill.ts` probes support
 with `ytrack skill print` (exit 0; ytrack 0.2.1 and older have no `skill`), installs into
-each host's root (`hostSkillsRoot` in the CLI's `upgrade/ytrack-skill.ts`, sources in the parity table below) and
+each host's root (`hostSkillsRoot` in the CLI's `upgrade/shared.ts`, sources in the parity table below) and
 records the directories it created in `<state dir>/ytrack-skill.json`. A
 ytrack skill that was there first is refreshed but not recorded, so
-`workit uninstall` leaves it. `workit setup` and `workit upgrade` call it
+`workit uninstall` leaves it. Uninstall removes a recorded row only when its
+path is exactly that host's `<root>/ytrack` and no component from the home
+down is a symlink (`ytrackSkillPathRefusal`, checked when planning and again
+before deleting); any other recorded path is reported and left untouched. `workit setup` and `workit upgrade` call it
 through `upgrade/ytrack-skill.ts` (`refreshYtrackSkill`) for each selected host
 with Workit installed, only when `youtrack.json` exists or a workspace tracks
 issues in YouTrack.

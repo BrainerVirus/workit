@@ -16,8 +16,10 @@ import {
 import {
   readYtrackSkillRecord,
   removeYtrackSkill,
+  ytrackSkillPathRefusal,
   type SkillHost,
 } from "@brainervirus/workit-core/src/core/ytrack-skill";
+import { hostSkillsRoot } from "../upgrade/shared";
 import { ownedCompletionFiles, removeCompletions } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
@@ -306,6 +308,12 @@ const stateDirOf = (paths: UninstallPaths): string => {
   return paths.stateDir ?? workitStateDir({ ...env, HOME: home }, paths.platform);
 };
 
+/** A host's skills root and the home it hangs off, as setup and upgrade resolve them. */
+const skillRootOf = (host: SkillHost, paths: UninstallPaths): [root: string, home: string] => {
+  const { home, env } = permissionPathsOf(paths);
+  return [hostSkillsRoot(host, home, env), home];
+};
+
 /** Inverse of `workit setup`: the entries the ownership record names (else the canonical ones). */
 const permissionCleaner =
   (host: "claude-code" | "cursor", file: string, paths: UninstallPaths): JsonCleaner =>
@@ -479,16 +487,30 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       detail: "remove Workit's Codex rules file",
     });
 
-  // The ytrack skill directories Workit recorded installing, and only those.
-  // Like the permission blocks, they do not mark a host as installed.
+  // The ytrack skill directories Workit recorded installing, and only those,
+  // each at exactly its host's `<skills root>/ytrack` with no symlink on the
+  // way: any other recorded path is reported and never removed. Like the
+  // permission blocks, they do not mark a host as installed.
   const byHost = { opencode, cursor, codex, pi, "claude-code": claude };
-  for (const install of readYtrackSkillRecord(stateDirOf(paths)))
-    byHost[install.host]?.actions.push({
-      kind: "remove-ytrack-skill",
-      path: install.path,
-      detail: "remove the ytrack skill Workit installed",
-      host: install.host,
-    });
+  for (const install of readYtrackSkillRecord(stateDirOf(paths))) {
+    const plan = Object.hasOwn(byHost, install.host) ? byHost[install.host] : null;
+    if (!plan) continue;
+    const refusal = ytrackSkillPathRefusal(install.path, ...skillRootOf(install.host, paths));
+    plan.actions.push(
+      refusal
+        ? {
+            kind: "keep-foreign",
+            path: install.path,
+            detail: `ytrack skill left untouched: ${refusal}`,
+          }
+        : {
+            kind: "remove-ytrack-skill",
+            path: install.path,
+            detail: "remove the ytrack skill Workit installed",
+            host: install.host,
+          },
+    );
+  }
 
   const cliActions: UninstallAction[] = planOwnedRemoval(cliEnvOf(paths), paths.platform).map(
     (step) =>
@@ -656,8 +678,9 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
         const recorded = readYtrackSkillRecord(stateDirOf(paths)).find(
           (install) => install.host === action.host && install.path === action.path,
         );
+        const [root, home] = skillRootOf(action.host, paths);
         const outcome = recorded
-          ? removeYtrackSkill(recorded, stateDirOf(paths))
+          ? removeYtrackSkill(recorded, stateDirOf(paths), { root, home })
           : { status: "skipped" as const, detail: "no longer recorded as Workit's" };
         status = outcome.status;
         detail = outcome.detail;

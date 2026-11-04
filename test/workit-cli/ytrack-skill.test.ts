@@ -12,6 +12,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -20,7 +21,7 @@ import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { runUpgradeCommand, type HostProcess } from "@/packages/workit-cli/src/upgrade";
 import { run as setup } from "@/packages/workit-cli/src/verbs/setup";
-import { hostSkillsRoot } from "@/packages/workit-cli/src/upgrade/ytrack-skill";
+import { hostSkillsRoot } from "@/packages/workit-cli/src/upgrade/shared";
 import {
   parseSkillMeta,
   readYtrackSkillRecord,
@@ -224,9 +225,12 @@ test("removeYtrackSkill leaves a recorded path that no longer holds the ytrack s
   const w = world();
   const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
   w.skillAt(dir, "1.0.0", "someone-else");
-  expect(removeYtrackSkill({ host: "pi", path: dir, version: "0.3.0" }, w.stateDir)).toMatchObject({
-    status: "failed",
-  });
+  expect(
+    removeYtrackSkill({ host: "pi", path: dir, version: "0.3.0" }, w.stateDir, {
+      root: hostSkillsRoot("pi", w.home, w.env()),
+      home: w.home,
+    }),
+  ).toMatchObject({ status: "failed" });
   expect(existsSync(path.join(dir, "SKILL.md"))).toBe(true);
 });
 
@@ -400,5 +404,102 @@ describe("doctor ytrack_skill", () => {
   posix("Given YouTrack unused, Then there is no row", () => {
     const w = world({ pi: true, youtrack: false });
     expect(doctorRow(w)).toBeUndefined();
+  });
+});
+
+describe("uninstall refuses a recorded path that is not the host's <skills root>/ytrack", () => {
+  /** A ytrack skill dir the record points at, with a file that must survive. */
+  const target = (w: ReturnType<typeof world>, dir: string) => {
+    w.skillAt(dir, "0.3.0");
+    writeFileSync(path.join(dir, "keep.txt"), "important");
+    return dir;
+  };
+  const record = (w: ReturnType<typeof world>, rows: { host: string; path: string }[]) => {
+    mkdirSync(w.stateDir, { recursive: true });
+    writeFileSync(
+      path.join(w.stateDir, "ytrack-skill.json"),
+      JSON.stringify({ installs: rows.map((row) => ({ ...row, version: "0.3.0" })) }),
+    );
+  };
+  const uninstall = (w: ReturnType<typeof world>) => {
+    const paths = { home: w.home, env: w.env(), stateDir: w.stateDir };
+    const plan = planUninstall(paths);
+    const skill = (action: { kind: string; path: string }) =>
+      action.kind === "remove-ytrack-skill" ||
+      (action.kind === "keep-foreign" && action.path.endsWith("ytrack"));
+    const actions = plan.hosts.flatMap((host) => host.actions.filter(skill));
+    const result = applyUninstall(
+      { hosts: plan.hosts.map((host) => ({ ...host, actions: host.actions.filter(skill) })) },
+      paths,
+    );
+    return { actions, entries: result.entries };
+  };
+  const cases: [string, (w: ReturnType<typeof world>) => { host: string; path: string }][] = [
+    [
+      "a path outside every skills root",
+      (w) => ({
+        host: "pi",
+        path: target(w, path.join(w.home, "projects", "important", "ytrack")),
+      }),
+    ],
+    [
+      "a `..` path that leaves the host's root",
+      (w) => {
+        target(w, path.join(w.home, "other", "ytrack"));
+        return {
+          host: "claude-code",
+          path: [w.home, ".claude", "skills", "..", "..", "other", "ytrack"].join(path.sep),
+        };
+      },
+    ],
+    [
+      "another host's root under a valid host",
+      (w) => ({ host: "pi", path: target(w, path.join(w.home, ".claude", "skills", "ytrack")) }),
+    ],
+  ];
+  for (const [name, row] of cases)
+    test(`Given ${name}, Then the plan keeps it, apply skips it and the dir survives`, () => {
+      const w = world();
+      const recorded = row(w);
+      record(w, [recorded]);
+      const kept = path.resolve(recorded.path);
+      const { actions, entries } = uninstall(w);
+      expect(actions.map((action) => action.kind)).toEqual(["keep-foreign"]);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ status: "skipped" });
+      expect(entries[0].detail).toContain("left untouched");
+      expect(readFileSync(path.join(kept, "keep.txt"), "utf8")).toBe("important");
+      // The apply-time guard refuses the same row on its own.
+      expect(
+        removeYtrackSkill(
+          { host: recorded.host as "pi", path: recorded.path, version: "0.3.0" },
+          w.stateDir,
+          {
+            root: hostSkillsRoot(recorded.host as "pi", w.home, w.env()),
+            home: w.home,
+          },
+        ),
+      ).toMatchObject({ status: "skipped" });
+      expect(readFileSync(path.join(kept, "keep.txt"), "utf8")).toBe("important");
+    });
+
+  posix("Given a symlinked parent of the skills root, Then the dir behind it survives", () => {
+    const w = world();
+    const elsewhere = path.join(w.home, "elsewhere", "skills");
+    target(w, path.join(elsewhere, "ytrack"));
+    mkdirSync(path.join(w.home, ".pi"), { recursive: true });
+    symlinkSync(path.join(w.home, "elsewhere"), path.join(w.home, ".pi", "agent"));
+    const recorded = path.join(w.home, ".pi", "agent", "skills", "ytrack");
+    record(w, [{ host: "pi", path: recorded }]);
+    const { actions, entries } = uninstall(w);
+    expect(actions.map((action) => action.kind)).toEqual(["keep-foreign"]);
+    expect(entries[0]).toMatchObject({ status: "skipped" });
+    expect(
+      removeYtrackSkill({ host: "pi", path: recorded, version: "0.3.0" }, w.stateDir, {
+        root: hostSkillsRoot("pi", w.home, w.env()),
+        home: w.home,
+      }),
+    ).toMatchObject({ status: "skipped" });
+    expect(readFileSync(path.join(elsewhere, "ytrack", "keep.txt"), "utf8")).toBe("important");
   });
 });
