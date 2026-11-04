@@ -22,9 +22,9 @@ const readJson = (p: string): Record<string, any> | null => {
 /** Provider for a fresh vcs.json: explicit env, else origin remote, else null
  *  (no silent default — a tool for everyone must not assume a provider). */
 export const resolveInitProvider = (cwd?: string): string | null => {
-  const env = process.env.WORKFLOW_VCS_PROVIDER?.trim();
+  const env = process.env.WORKIT_VCS_PROVIDER?.trim();
   if (env) return env.toLowerCase();
-  const root = cwd ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
+  const root = cwd ?? process.env.WORKIT_WORKSPACE_ROOT ?? process.cwd();
   try {
     const out = spawnSync("git", ["remote", "get-url", "origin"], {
       cwd: root,
@@ -46,10 +46,10 @@ export const resolveInitProvider = (cwd?: string): string | null => {
 // IDs, mentions, greetings or timezone. The work-item date uses the process
 // timezone unless the user adds an explicit `timezone` to youtrack.json.
 const youtrackJsonContent = (dir: string): Record<string, any> => {
-  const meetingIssue = process.env.WORKFLOW_YT_MEETING_ISSUE;
+  const meetingIssue = process.env.WORKIT_YT_MEETING_ISSUE;
   return {
-    baseUrl: process.env.WORKFLOW_YT_BASE_URL ?? "https://youtrack.example.com",
-    tokenFile: process.env.WORKFLOW_YT_TOKEN_FILE ?? path.join(dir, "youtrack.token"),
+    baseUrl: process.env.WORKIT_YT_BASE_URL ?? "https://youtrack.example.com",
+    tokenFile: process.env.WORKIT_YT_TOKEN_FILE ?? path.join(dir, "youtrack.token"),
     ...(meetingIssue
       ? {
           meetingIssue,
@@ -72,13 +72,13 @@ const vcsJsonContent = (): Record<string, any> => {
   const provider = resolveInitProvider();
   return {
     ...(provider ? { provider } : {}),
-    defaultTargetBranch: process.env.WORKFLOW_VCS_TARGET_BRANCH ?? "develop",
+    defaultTargetBranch: process.env.WORKIT_VCS_TARGET_BRANCH ?? "develop",
     gitlab: {
-      host: process.env.WORKFLOW_GITLAB_HOST ?? "gitlab.com",
-      apiUrl: process.env.WORKFLOW_GITLAB_API_URL ?? "https://gitlab.com/api/v4",
+      host: process.env.WORKIT_GITLAB_HOST ?? "gitlab.com",
+      apiUrl: process.env.WORKIT_GITLAB_API_URL ?? "https://gitlab.com/api/v4",
     },
     github: {
-      host: process.env.WORKFLOW_GITHUB_HOST ?? "github.com",
+      host: process.env.WORKIT_GITHUB_HOST ?? "github.com",
     },
     pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
   };
@@ -122,8 +122,8 @@ export function initApplyData(
         writeFileExclusive(tokenOut, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved";
       const configPath = path.resolve(jsonOut);
       const tokenPath = path.resolve(tokenOut);
-      const prev = process.env.WORKFLOW_YOUTRACK_CONFIG;
-      process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
+      const prev = process.env.WORKIT_YOUTRACK_CONFIG;
+      process.env.WORKIT_YOUTRACK_CONFIG = configPath;
       let tokenCreate: Record<string, any> = {};
       try {
         const cfg = readJson(configPath) ?? {};
@@ -166,16 +166,16 @@ export function initApplyData(
           instruction: `Open the create-token URL, New token → name workit, scope YouTrack, paste into ${tokenPath}, then /wk-status.`,
         };
       } finally {
-        if (prev === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-        else process.env.WORKFLOW_YOUTRACK_CONFIG = prev;
+        if (prev === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+        else process.env.WORKIT_YOUTRACK_CONFIG = prev;
       }
     }
     case "vcs_scaffold": {
       const jsonOut = path.join(dir, "vcs.json");
       fs.writeFileSync(jsonOut, JSON.stringify(vcsJsonContent(), null, 2) + "\n", "utf8");
       const configPath = path.resolve(jsonOut);
-      const prev = process.env.WORKFLOW_VCS_CONFIG;
-      process.env.WORKFLOW_VCS_CONFIG = configPath;
+      const prev = process.env.WORKIT_VCS_CONFIG;
+      process.env.WORKIT_VCS_CONFIG = configPath;
       try {
         const cfg = readJson(configPath) ?? {};
         const rawProvider = cfg.provider;
@@ -199,14 +199,12 @@ export function initApplyData(
               : `Run ${provider === "gitlab" ? "glab" : "gh"} auth login, then /wk-status.`,
         };
       } finally {
-        if (prev === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-        else process.env.WORKFLOW_VCS_CONFIG = prev;
+        if (prev === undefined) delete process.env.WORKIT_VCS_CONFIG;
+        else process.env.WORKIT_VCS_CONFIG = prev;
       }
     }
     case "branch_policy": {
-      const root = env.WORKFLOW_WORKSPACE_ROOT?.trim()
-        ? env.WORKFLOW_WORKSPACE_ROOT
-        : process.cwd();
+      const root = env.WORKIT_WORKSPACE_ROOT?.trim() ? env.WORKIT_WORKSPACE_ROOT : process.cwd();
       return applyWorkspaceBranchPolicy({ workspace_root: root, env });
     }
     default: {

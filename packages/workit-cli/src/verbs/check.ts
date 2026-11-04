@@ -429,7 +429,7 @@ export async function workspaceResources(
     const workspace = resolveWorkspaceFrom(
       io.cwd,
       dir,
-      env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+      env.WORKIT_WORKSPACE_NAME?.trim() || undefined,
     ) as Record<string, unknown> | null;
     return { value: workspace?.resources, warning: null };
   } catch (error) {
@@ -921,7 +921,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ? checkCommand(names[0], version)
       : `add ${CHECKS_FILE} (e.g. {"checks":{"test":"<your test command>"}}), then ${checkCommand("test", version)}`;
   };
-  const storeDir = io.env.WORKFLOW_WORKSPACE_ROOT || top;
+  const storeDir = io.env.WORKIT_WORKSPACE_ROOT || top;
   const task: TaskOutcome = await recordInTask(io, storeDir, options.task, observation, unblockFor);
 
   const warnings = countWarnings(result.log);

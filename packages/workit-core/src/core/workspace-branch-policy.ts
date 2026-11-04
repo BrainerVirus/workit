@@ -40,11 +40,11 @@ export function applyWorkspaceBranchPolicy(opts: {
   if (status === "malformed" || status === "invalid")
     return { ok: false, error: workspacesError ?? `invalid workspaces.json: ${wsPath}` };
   const detection = detectBranchPolicy(workspace_root);
-  const name = String(env.WORKFLOW_BP_NAME ?? path.basename(workspace_root));
-  const integration = (env.WORKFLOW_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
+  const name = String(env.WORKIT_BP_NAME ?? path.basename(workspace_root));
+  const integration = (env.WORKIT_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
   const policy = {
     preset: detection.preset,
-    developBranch: env.WORKFLOW_BP_DEVELOP ?? detection.developBranch ?? undefined,
+    developBranch: env.WORKIT_BP_DEVELOP ?? detection.developBranch ?? undefined,
     prefixes: detection.prefixes,
     allowed: detection.allowed,
     protected: detection.protected,
@@ -57,7 +57,7 @@ export function applyWorkspaceBranchPolicy(opts: {
   try {
     existing = resolveWorkspaceFrom(workspace_root, dir);
   } catch (error) {
-    const selectedName = env.WORKFLOW_BP_NAME?.trim();
+    const selectedName = env.WORKIT_BP_NAME?.trim();
     if (!selectedName)
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     try {

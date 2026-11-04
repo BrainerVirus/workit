@@ -33,7 +33,7 @@ test(
     try {
       process.env.WORKIT_CONFIG = cfg;
       const first = initApplyData("branch_policy", {
-        WORKFLOW_WORKSPACE_ROOT: root,
+        WORKIT_WORKSPACE_ROOT: root,
       });
       expect(first.ok).toBe(true);
       expect(first.status).toBe("configured");
@@ -45,13 +45,13 @@ test(
       expect(ws.workspaces[0].branchPolicy.preset).toBe("gitflow");
 
       const second = initApplyData("branch_policy", {
-        WORKFLOW_WORKSPACE_ROOT: root,
+        WORKIT_WORKSPACE_ROOT: root,
       });
       expect(second.status).toBe("already-configured");
 
       const edited = initApplyData("branch_policy", {
-        WORKFLOW_WORKSPACE_ROOT: root,
-        WORKFLOW_BP_INTEGRATION: "pr",
+        WORKIT_WORKSPACE_ROOT: root,
+        WORKIT_BP_INTEGRATION: "pr",
       });
       expect(edited.status).toBe("updated");
       const ws2 = JSON.parse(readFileSync(path.join(cfg, "workspaces.json"), "utf8"));
@@ -75,7 +75,7 @@ test(
     try {
       process.env.WORKIT_CONFIG = cfg;
       const first = initApplyData("branch_policy", {
-        WORKFLOW_WORKSPACE_ROOT: root,
+        WORKIT_WORKSPACE_ROOT: root,
       });
       expect(first.ok).toBe(true);
       expect(first.status).toBe("configured");

@@ -291,7 +291,7 @@ const STRIPPED_ENV_VARS = new Set([
   "CURSOR_SETTINGS",
 ]);
 
-// Env for isolated runs: HOME points at a temp dir and every WORKFLOW_* /
+// Env for isolated runs: HOME points at a temp dir and every WORKIT_* /
 // XDG_* override plus the script-specific path overrides above is stripped so
 // scripts fall back to their HOME defaults and can never be pointed back at
 // the repository.
@@ -302,7 +302,7 @@ export function isolatedEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKFLOW_") || k.startsWith("WORKIT_") || k.startsWith("XDG_")) continue;
+    if (k.startsWith("WORKIT_") || k.startsWith("XDG_")) continue;
     if (STRIPPED_ENV_VARS.has(k)) continue;
     env[k] = v;
   }

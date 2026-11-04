@@ -456,7 +456,7 @@ test("packed task list runs on Node without a Bun runtime", () => {
       install,
       "node",
       [entry, "task", "list", "--json"],
-      isolatedEnv(path.join(install, "home"), { WORKFLOW_WORKSPACE_ROOT: root }),
+      isolatedEnv(path.join(install, "home"), { WORKIT_WORKSPACE_ROOT: root }),
     );
     expect(run.status, run.stdout + run.stderr).toBe(0);
     expect(JSON.parse(run.stdout)).toMatchObject({ ok: true, schemaVersion: 1, data: [] });

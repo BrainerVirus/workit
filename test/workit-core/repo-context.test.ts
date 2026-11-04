@@ -73,8 +73,8 @@ const ENV_KEYS = [
   "XDG_CONFIG_HOME",
   "WORKIT_CONFIG",
   "WORKIT_CONFIG_DIR",
-  "WORKFLOW_VCS_CONFIG",
-  "WORKFLOW_WORKSPACE_ROOT",
+  "WORKIT_VCS_CONFIG",
+  "WORKIT_WORKSPACE_ROOT",
   "PATH",
 ];
 
@@ -374,7 +374,7 @@ test(
       configPath,
       JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
     );
-    const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+    const previous = process.env.WORKIT_YOUTRACK_CONFIG;
     const originalFetch = globalThis.fetch;
     let seenAuth = "";
     globalThis.fetch = (async (input: unknown, init?: unknown) => {
@@ -383,7 +383,7 @@ test(
       );
       return new Response("boom", { status: 500 });
     }) as unknown as typeof fetch;
-    process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
+    process.env.WORKIT_YOUTRACK_CONFIG = configPath;
     try {
       const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
       expect(seenAuth).toBe("Bearer secret-token");
@@ -392,8 +392,8 @@ test(
       expect(JSON.stringify(result)).not.toContain("Authorization");
     } finally {
       globalThis.fetch = originalFetch;
-      if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-      else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+      if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+      else process.env.WORKIT_YOUTRACK_CONFIG = previous;
       rmSync(dir, { recursive: true, force: true });
     }
   },

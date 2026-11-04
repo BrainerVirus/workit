@@ -30,17 +30,17 @@ console.log(JSON.stringify(youTrackWorkDateMs(${JSON.stringify(raw)})));`;
 const writeYouTrackJson = (value: Record<string, unknown>): void => {
   const file = path.join(dir, "youtrack.json");
   writeFileSync(file, JSON.stringify(value), "utf8");
-  process.env.WORKFLOW_YOUTRACK_CONFIG = file;
+  process.env.WORKIT_YOUTRACK_CONFIG = file;
 };
 
 beforeEach(() => {
   dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-date-"));
-  savedConfig = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  savedConfig = process.env.WORKIT_YOUTRACK_CONFIG;
 });
 
 afterEach(() => {
-  if (savedConfig === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-  else process.env.WORKFLOW_YOUTRACK_CONFIG = savedConfig;
+  if (savedConfig === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+  else process.env.WORKIT_YOUTRACK_CONFIG = savedConfig;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -104,7 +104,7 @@ test("Given a youtrack.json timezone override, When the date is auto, Then today
 });
 
 test("Given no youtrack.json, When the date is auto, Then the process timezone is used instead of a hard-coded zone", () => {
-  process.env.WORKFLOW_YOUTRACK_CONFIG = path.join(dir, "missing.json");
+  process.env.WORKIT_YOUTRACK_CONFIG = path.join(dir, "missing.json");
   const out = workDateInTz("Asia/Tokyo", "auto");
   expect("data" in out && out.data.timezone).toBe("Asia/Tokyo");
   expect("data" in out && out.data.timezoneSource).toBe("process");

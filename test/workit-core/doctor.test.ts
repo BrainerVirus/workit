@@ -1815,12 +1815,12 @@ test("checkGithubIdentity passes without a remote and warns on stubbed divergenc
 
 test("GitLab doctor uses glab identity and never probes gh for a GitLab checkout", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-gitlab-identity-"));
-  const previous = process.env.WORKFLOW_VCS_CONFIG;
+  const previous = process.env.WORKIT_VCS_CONFIG;
   writeFileSync(
     path.join(dir, "vcs.json"),
     JSON.stringify({ provider: "gitlab", gitlab: { host: "gitlab.example.test" } }),
   );
-  process.env.WORKFLOW_VCS_CONFIG = path.join(dir, "vcs.json");
+  process.env.WORKIT_VCS_CONFIG = path.join(dir, "vcs.json");
   try {
     let ghCalls = 0;
     let gitlabHost = "";
@@ -1853,15 +1853,15 @@ test("GitLab doctor uses glab identity and never probes gh for a GitLab checkout
       ]),
     ).toMatchObject({ id: "gitlab_identity", status: "warn" });
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-    else process.env.WORKFLOW_VCS_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_VCS_CONFIG;
+    else process.env.WORKIT_VCS_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test("doctor uses a workspace provider for custom SSH-host aliases", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-workspace-provider-"));
-  const previous = process.env.WORKFLOW_VCS_CONFIG;
+  const previous = process.env.WORKIT_VCS_CONFIG;
   const configPath = path.join(dir, "vcs.json");
   writeFileSync(
     configPath,
@@ -1877,7 +1877,7 @@ test("doctor uses a workspace provider for custom SSH-host aliases", () => {
       workspaces: [{ name: "personal", glob: `${dir}/**`, vcs: { provider: "github" } }],
     }),
   );
-  process.env.WORKFLOW_VCS_CONFIG = configPath;
+  process.env.WORKIT_VCS_CONFIG = configPath;
   try {
     let githubHost = "";
     let glabCalls = 0;
@@ -1904,15 +1904,15 @@ test("doctor uses a workspace provider for custom SSH-host aliases", () => {
     expect(githubHost).toBe("github.com");
     expect(glabCalls).toBe(0);
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-    else process.env.WORKFLOW_VCS_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_VCS_CONFIG;
+    else process.env.WORKIT_VCS_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test("doctor uses the default GitHub API host when the SSH alias has no host config", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-github-alias-default-"));
-  const previous = process.env.WORKFLOW_VCS_CONFIG;
+  const previous = process.env.WORKIT_VCS_CONFIG;
   const configPath = path.join(dir, "vcs.json");
   writeFileSync(configPath, JSON.stringify({ provider: "github" }));
   writeFileSync(
@@ -1921,7 +1921,7 @@ test("doctor uses the default GitHub API host when the SSH alias has no host con
       workspaces: [{ name: "personal", glob: `${dir}/**`, vcs: { provider: "github" } }],
     }),
   );
-  process.env.WORKFLOW_VCS_CONFIG = configPath;
+  process.env.WORKIT_VCS_CONFIG = configPath;
   try {
     let apiHost = "";
     const result = checkGithubIdentity(
@@ -1938,8 +1938,8 @@ test("doctor uses the default GitHub API host when the SSH alias has no host con
     expect(result).toMatchObject({ id: "github_identity", status: "pass" });
     expect(apiHost).toBe("github.com");
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-    else process.env.WORKFLOW_VCS_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_VCS_CONFIG;
+    else process.env.WORKIT_VCS_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });

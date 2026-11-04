@@ -629,14 +629,14 @@ test("pr merge: a PR landing on a track's production branch reports the merge-ba
   });
   await verdict(repo);
   // The owner of the merged-into branch decides, not a session's track choice.
-  const previous = process.env.WORKFLOW_RELEASE_TRACK;
-  process.env.WORKFLOW_RELEASE_TRACK = "next";
+  const previous = process.env.WORKIT_RELEASE_TRACK;
+  process.env.WORKIT_RELEASE_TRACK = "next";
   let result: Awaited<ReturnType<typeof run>>;
   try {
     result = await run(["pr", "merge", "--json"], repo.cwd);
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_RELEASE_TRACK;
-    else process.env.WORKFLOW_RELEASE_TRACK = previous;
+    if (previous === undefined) delete process.env.WORKIT_RELEASE_TRACK;
+    else process.env.WORKIT_RELEASE_TRACK = previous;
   }
   expect(result.code).toBe(0);
   expect(result.json().data).toMatchObject({

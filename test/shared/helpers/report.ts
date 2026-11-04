@@ -57,7 +57,7 @@ export function buildReliabilityReport(options: ReliabilityReportOptions = {}): 
       options.doctor ?? {
         // Default: a disposable isolated fixture, never the caller's real HOME,
         // with an env-isolated PATH (only node+bun, no git) so the utility
-        // counts are deterministic across machines (D11) — WORKFLOW_*/XDG_*
+        // counts are deterministic across machines (D11) — WORKIT_*/XDG_*
         // overrides are stripped by isolatedEnv.
         home: fixture.home,
         configDir: fixture.configDir,

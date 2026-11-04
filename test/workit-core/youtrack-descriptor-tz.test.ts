@@ -24,7 +24,7 @@ const dateIn = (tz: string, raw: string): any => {
 console.log(JSON.stringify(youTrackWorkDateMs(${JSON.stringify(raw)})));`;
   const out = Bun.spawnSync([process.execPath, "-e", script], {
     cwd: root,
-    env: { ...process.env, TZ: tz, WORKFLOW_YOUTRACK_CONFIG: path.join(root, "youtrack.json") },
+    env: { ...process.env, TZ: tz, WORKIT_YOUTRACK_CONFIG: path.join(root, "youtrack.json") },
     stdout: "pipe",
     stderr: "pipe",
   });

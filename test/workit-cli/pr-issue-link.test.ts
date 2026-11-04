@@ -360,9 +360,9 @@ const youTrackServer = () => {
   return { url: `http://127.0.0.1:${server.port}`, requests, comments, stop: () => server.stop() };
 };
 
-test("pr create: given backlink true and a YouTrack issue, then the comment is posted once through the YouTrack API, and without WORKFLOW_YT_WRITE=1 nothing is written", async () => {
+test("pr create: given backlink true and a YouTrack issue, then the comment is posted once through the YouTrack API, and without WORKIT_YT_WRITE=1 nothing is written", async () => {
   const yt = youTrackServer();
-  const previous = process.env.WORKFLOW_YT_WRITE;
+  const previous = process.env.WORKIT_YT_WRITE;
   try {
     const { repo } = setup("github", githubRoutes());
     const token = path.join(configHome.configDir, "youtrack.token");
@@ -373,19 +373,19 @@ test("pr create: given backlink true and a YouTrack issue, then the comment is p
     );
     workspace(repo, { issues: { provider: "youtrack", backlink: true } });
 
-    delete process.env.WORKFLOW_YT_WRITE;
+    delete process.env.WORKIT_YT_WRITE;
     const refused = await run(createIssue("IRPT-74"), repo.cwd);
     expect(refused.code).toBe(0);
     expect(refused.json().data.backlinks).toEqual([
       {
         issue: "IRPT-74",
         status: "failed",
-        note: "YouTrack writes need WORKFLOW_YT_WRITE=1 (as for workit youtrack note)",
+        note: "YouTrack writes need WORKIT_YT_WRITE=1 (as for workit youtrack note)",
       },
     ]);
     expect(yt.requests).toEqual([]);
 
-    process.env.WORKFLOW_YT_WRITE = "1";
+    process.env.WORKIT_YT_WRITE = "1";
     const posted = await run(createIssue("IRPT-74"), repo.cwd);
     expect(posted.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "done" }]);
     expect(yt.comments).toHaveLength(1);
@@ -400,8 +400,8 @@ test("pr create: given backlink true and a YouTrack issue, then the comment is p
     expect(yt.comments).toHaveLength(1);
     expect(linkedRows(repo.cwd).at(-1)).toMatchObject({ tracker: "youtrack", relation: "related" });
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
-    else process.env.WORKFLOW_YT_WRITE = previous;
+    if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
+    else process.env.WORKIT_YT_WRITE = previous;
     await yt.stop();
   }
 });

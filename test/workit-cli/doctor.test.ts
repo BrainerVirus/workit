@@ -209,7 +209,7 @@ test("Given a lock past the TTL whose pid is running but whose start time cannot
   }
 });
 
-test("Given WORKFLOW_WORKSPACE_ROOT points at another checkout, When workit doctor --fix-lock runs, Then it clears that checkout's stale lock", () => {
+test("Given WORKIT_WORKSPACE_ROOT points at another checkout, When workit doctor --fix-lock runs, Then it clears that checkout's stale lock", () => {
   const other = path.join(fixture.root, "other-workspace");
   mkdirSync(other, { recursive: true });
   const lockPath = lockPathFor(other);
@@ -220,7 +220,7 @@ test("Given WORKFLOW_WORKSPACE_ROOT points at another checkout, When workit doct
   );
   try {
     const result = runCli(["doctor", "--fix-lock"], fixture.cwd, {
-      WORKFLOW_WORKSPACE_ROOT: other,
+      WORKIT_WORKSPACE_ROOT: other,
     });
     expect(result.stdout).toContain(`cleared stale lock ${lockPath}`);
     expect(existsSync(lockPath)).toBe(false);

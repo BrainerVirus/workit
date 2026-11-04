@@ -210,7 +210,7 @@ export type DoctorOptions = {
   /** Checkout containing packages/ (monorepo or share clone). */
   dev?: string;
   cwd?: string;
-  /** Workit store root for the lock check (default: WORKFLOW_WORKSPACE_ROOT, then cwd). */
+  /** Workit store root for the lock check (default: WORKIT_WORKSPACE_ROOT, then cwd). */
   workspaceRoot?: string;
   opencodeConfig?: string;
   /** OpenCode npm `@latest` package cache root (test seam). */
@@ -336,7 +336,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     configDir,
     stateDir,
     cwd,
-    workspaceRoot: options.workspaceRoot ?? env.WORKFLOW_WORKSPACE_ROOT ?? cwd,
+    workspaceRoot: options.workspaceRoot ?? env.WORKIT_WORKSPACE_ROOT ?? cwd,
     dev,
     opencodeConfig:
       options.opencodeConfig ??
@@ -2342,8 +2342,8 @@ const checkConfigSchema = (res: Resolved): DoctorCheck => {
   const files: Record<ConfigSchemaFile, string> = {
     "config.json": path.join(res.configDir, "config.json"),
     "workspaces.json": path.join(res.configDir, "workspaces.json"),
-    "vcs.json": res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"),
-    "youtrack.json": res.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(res.configDir, "youtrack.json"),
+    "vcs.json": res.env.WORKIT_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"),
+    "youtrack.json": res.env.WORKIT_YOUTRACK_CONFIG ?? path.join(res.configDir, "youtrack.json"),
   };
   const problems: string[] = [];
   for (const [name, file] of Object.entries(files) as Array<[ConfigSchemaFile, string]>) {
@@ -2428,14 +2428,14 @@ const checkWorkspaceMatch = (res: Resolved): DoctorCheck => {
     match = resolveWorkspaceFrom(
       res.cwd,
       res.configDir,
-      res.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+      res.env.WORKIT_WORKSPACE_NAME?.trim() || undefined,
     );
   } catch (error) {
     return {
       id: "workspace_mismatch",
       status: "fail",
       detail: error instanceof Error ? error.message : String(error),
-      fix: `Choose a matching workspace with WORKFLOW_WORKSPACE_NAME or repair ${file}`,
+      fix: `Choose a matching workspace with WORKIT_WORKSPACE_NAME or repair ${file}`,
     };
   }
   if (match) {
@@ -2483,7 +2483,7 @@ const matchedWorkspace = (res: Resolved): WorkspaceConfig | null => {
     return resolveWorkspaceFrom(
       res.cwd,
       res.configDir,
-      res.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+      res.env.WORKIT_WORKSPACE_NAME?.trim() || undefined,
     );
   } catch {
     return null;
@@ -2766,11 +2766,8 @@ const workspaceProviderForIdentity = (
 ): { provider?: unknown; error?: string } => {
   try {
     return {
-      provider: resolveWorkspaceFrom(
-        cwd,
-        configDir,
-        env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
-      )?.vcs?.provider,
+      provider: resolveWorkspaceFrom(cwd, configDir, env.WORKIT_WORKSPACE_NAME?.trim() || undefined)
+        ?.vcs?.provider,
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
@@ -2844,7 +2841,7 @@ export const checkGithubIdentity = (
       status: "pass",
       detail: "no GitHub remote configured",
     };
-  const vcsJson = readJson(res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
+  const vcsJson = readJson(res.env.WORKIT_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
   const workspace = workspaceProviderForIdentity(res.cwd, res.configDir, res.env);
   if (workspace.error)
     return {
@@ -2885,7 +2882,7 @@ export const checkGitLabIdentity = (
       status: "pass",
       detail: "no GitLab remote configured",
     };
-  const vcsJson = readJson(res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
+  const vcsJson = readJson(res.env.WORKIT_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
   const workspace = workspaceProviderForIdentity(res.cwd, res.configDir, res.env);
   if (workspace.error)
     return {

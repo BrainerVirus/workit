@@ -197,7 +197,7 @@ describe("resolveReleaseTrack", () => {
     expect(result.status === "invalid" && result.error).toContain("no release tracks configured");
   });
 
-  test("given WORKFLOW_RELEASE_TRACK, then it selects a work branch's track but never outranks a track branch", () => {
+  test("given WORKIT_RELEASE_TRACK, then it selects a work branch's track but never outranks a track branch", () => {
     expect(
       picked(resolve({ branch: "feature/x", facts: FROM_DEVELOP, envRequested: "nun" })),
     ).toMatchObject({ track: "nun", source: "env" });
@@ -207,10 +207,10 @@ describe("resolveReleaseTrack", () => {
     });
   });
 
-  test("given WORKFLOW_RELEASE_TRACK naming no track, then it is ignored with a warning and marks the resolution blocking", () => {
+  test("given WORKIT_RELEASE_TRACK naming no track, then it is ignored with a warning and marks the resolution blocking", () => {
     const result = resolve({ branch: "feature/x", facts: FROM_DEVELOP, envRequested: "bogus" });
     expect(picked(result)).toMatchObject({ track: "standard", source: "ancestry" });
-    expect(blocking(result)).toContain("WORKFLOW_RELEASE_TRACK=bogus");
+    expect(blocking(result)).toContain("WORKIT_RELEASE_TRACK=bogus");
     expect(result.status === "resolved" && result.warnings.join("\n")).toContain("bogus");
   });
 

@@ -10,7 +10,7 @@ export { cursorCapabilities } from "../hooks/workit-hook";
 /** Cursor MCP has no documented per-request session identity. Keep the actor
  * empty and mark it unattested; the shared transport blocks authority writes. */
 export const cursorContextProvider = (
-  workspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
+  workspaceRoot = process.env.WORKIT_WORKSPACE_ROOT ?? process.cwd(),
 ): { current: () => Promise<OperationContext> } => ({
   current: async (): Promise<OperationContext> => ({
     root: workspaceRoot,
@@ -43,6 +43,6 @@ export const stampCursorSessionStart = (stateDir = resolveStateDir()): void => {
 if (import.meta.main) {
   stampCursorSessionStart();
   const workspaceRoot = process.argv[2];
-  if (workspaceRoot) process.env.WORKFLOW_WORKSPACE_ROOT = workspaceRoot;
+  if (workspaceRoot) process.env.WORKIT_WORKSPACE_ROOT = workspaceRoot;
   await runStdioServer("cursor", cursorContextProvider());
 }

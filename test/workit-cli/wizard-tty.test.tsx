@@ -57,16 +57,16 @@ const Wizard = (props: React.ComponentProps<typeof WorkitWizard>) => (
 // CA-06 (Task 5): the branchPolicy screen appears only when the resolution root
 // is a git repo. This suite drives the non-git flow (workspaces ↔ project
 // directly), but it runs in the repo root (a git repo), so pin
-// WORKFLOW_WORKSPACE_ROOT to a guaranteed non-git path for the tests that walk
+// WORKIT_WORKSPACE_ROOT to a guaranteed non-git path for the tests that walk
 // past the workspaces step.
 async function withNonGitRoot(run: () => void | Promise<void>): Promise<void> {
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
-  process.env.WORKFLOW_WORKSPACE_ROOT = path.join(os.tmpdir(), `wiz-nongit-${process.pid}`);
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
+  process.env.WORKIT_WORKSPACE_ROOT = path.join(os.tmpdir(), `wiz-nongit-${process.pid}`);
   try {
     await run();
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
     delete process.env.WORKIT_CONFIG;
   }
 }
@@ -128,7 +128,7 @@ test("next advances through the sequential screens", async () => {
       field: "platforms",
       value: ["opencode"],
     });
-    // Note: withNonGitRoot pins WORKFLOW_WORKSPACE_ROOT, so the basePath
+    // Note: withNonGitRoot pins WORKIT_WORKSPACE_ROOT, so the basePath
     // screen is skipped in both directions here (see the D-06 tests).
     const sequence: WizardScreen[] = [
       "locale",
@@ -1006,8 +1006,8 @@ test("the develop-branch editor carries its example placeholder (CA-09 wiring)",
   const cleanup = withSeedConfig(seedConfig);
   // The branchPolicy screen only mounts over a git repo; pin the resolution
   // root to this repo (and skip the basePath prompt) for the walk.
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
-  process.env.WORKFLOW_WORKSPACE_ROOT = REPO_ROOT;
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
+  process.env.WORKIT_WORKSPACE_ROOT = REPO_ROOT;
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(ENTER); // -> locale
@@ -1020,8 +1020,8 @@ test("the develop-branch editor carries its example placeholder (CA-09 wiring)",
     expect(frame).toContain(SCREEN_PLACEHOLDERS.branchPolicyDevelop);
     tty.unmount();
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
     cleanup();
   }
 });
@@ -1036,9 +1036,9 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
     const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
     const configPath = path.join(base, "config");
     const prevCfg = process.env.WORKIT_CONFIG;
-    const prevYt = process.env.WORKFLOW_YT_BASE_URL;
+    const prevYt = process.env.WORKIT_YT_BASE_URL;
     process.env.WORKIT_CONFIG = configPath;
-    process.env.WORKFLOW_YT_BASE_URL = "https://env.example.com";
+    process.env.WORKIT_YT_BASE_URL = "https://env.example.com";
     try {
       mkdirSync(configPath, { recursive: true });
       writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
@@ -1075,7 +1075,7 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       expect(frame).toContain("youtrack.json");
       expect(frame).toContain("workspaces.json");
       expect(frame).toContain("https://yt.example.com");
-      expect(frame).toContain("WORKFLOW_YT_BASE_URL"); // active override exposed
+      expect(frame).toContain("WORKIT_YT_BASE_URL"); // active override exposed
       expect(frame).toContain("https://env.example.com"); // ...with its actual value
 
       await tty.keys("y"); // apply
@@ -1084,8 +1084,8 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
     } finally {
       if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
       else process.env.WORKIT_CONFIG = prevCfg;
-      if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
-      else process.env.WORKFLOW_YT_BASE_URL = prevYt;
+      if (prevYt === undefined) delete process.env.WORKIT_YT_BASE_URL;
+      else process.env.WORKIT_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
     }
   });
@@ -1096,9 +1096,9 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
     const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
     const configPath = path.join(base, "config");
     const prevCfg = process.env.WORKIT_CONFIG;
-    const prevYt = process.env.WORKFLOW_YT_BASE_URL;
+    const prevYt = process.env.WORKIT_YT_BASE_URL;
     process.env.WORKIT_CONFIG = configPath;
-    delete process.env.WORKFLOW_YT_BASE_URL;
+    delete process.env.WORKIT_YT_BASE_URL;
     try {
       mkdirSync(configPath, { recursive: true });
       writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
@@ -1125,8 +1125,8 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
     } finally {
       if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
       else process.env.WORKIT_CONFIG = prevCfg;
-      if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
-      else process.env.WORKFLOW_YT_BASE_URL = prevYt;
+      if (prevYt === undefined) delete process.env.WORKIT_YT_BASE_URL;
+      else process.env.WORKIT_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
     }
   });

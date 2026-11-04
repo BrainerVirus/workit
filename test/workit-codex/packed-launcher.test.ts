@@ -63,7 +63,7 @@ const startPackedMcp = (workspaceRoot: string) => {
       HOME: home,
       USERPROFILE: home,
       CODEX_HOME: path.join(home, ".codex"),
-      WORKFLOW_WORKSPACE_ROOT: workspaceRoot,
+      WORKIT_WORKSPACE_ROOT: workspaceRoot,
       CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "",
       CODEX_ELECTRON_RESOURCES_PATH: "",
     },

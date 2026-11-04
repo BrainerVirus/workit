@@ -30,8 +30,8 @@ export const withProtectedMain = async (run: (configDir: string) => unknown): Pr
   const keys = [
     "WORKIT_CONFIG",
     "WORKIT_CONFIG_DIR",
-    "WORKFLOW_PROFILE",
-    "WORKFLOW_WORKSPACE_NAME",
+    "WORKIT_PROFILE",
+    "WORKIT_WORKSPACE_NAME",
   ] as const;
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const configDir = tempRoot("workit-hooks-config-");

@@ -100,7 +100,7 @@ cli("merged PR style reads the configured push host and full GitLab subgroup pat
   const t = setup();
   const tools = mkdtempSync(path.join(tmpdir(), "wk-vcs-style-tools-"));
   const previousPath = process.env.PATH;
-  const previousVcs = process.env.WORKFLOW_VCS_CONFIG;
+  const previousVcs = process.env.WORKIT_VCS_CONFIG;
   const log = path.join(tools, "glab.log");
   try {
     spawnSync("git", ["init", "-q"], { cwd: t.repo });
@@ -122,7 +122,7 @@ cli("merged PR style reads the configured push host and full GitLab subgroup pat
       { mode: 0o755 },
     );
     process.env.PATH = `${tools}${path.delimiter}${previousPath ?? ""}`;
-    process.env.WORKFLOW_VCS_CONFIG = path.join(t.cfgDir, "vcs.json");
+    process.env.WORKIT_VCS_CONFIG = path.join(t.cfgDir, "vcs.json");
     const result = mergedPrStyle(6, t.repo);
     expect(result.ok).toBe(true);
     expect(readFileSync(log, "utf8")).toContain(
@@ -131,8 +131,8 @@ cli("merged PR style reads the configured push host and full GitLab subgroup pat
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
-    if (previousVcs === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-    else process.env.WORKFLOW_VCS_CONFIG = previousVcs;
+    if (previousVcs === undefined) delete process.env.WORKIT_VCS_CONFIG;
+    else process.env.WORKIT_VCS_CONFIG = previousVcs;
     t.cleanup();
     rmSync(tools, { recursive: true, force: true });
   }
@@ -142,7 +142,7 @@ cli("GitLab style lookup does not fall back to account-wide merge requests", () 
   const t = setup();
   const tools = mkdtempSync(path.join(tmpdir(), "wk-vcs-style-scope-tools-"));
   const previousPath = process.env.PATH;
-  const previousVcs = process.env.WORKFLOW_VCS_CONFIG;
+  const previousVcs = process.env.WORKIT_VCS_CONFIG;
   const log = path.join(tools, "glab.log");
   try {
     spawnSync("git", ["init", "-q"], { cwd: t.repo });
@@ -167,7 +167,7 @@ cli("GitLab style lookup does not fall back to account-wide merge requests", () 
       `@echo off\r\n>>"${log}" echo %*\r\necho unavailable 1>&2\r\nexit /b 1\r\n`,
     );
     process.env.PATH = `${tools}${path.delimiter}${previousPath ?? ""}`;
-    process.env.WORKFLOW_VCS_CONFIG = path.join(t.cfgDir, "vcs.json");
+    process.env.WORKIT_VCS_CONFIG = path.join(t.cfgDir, "vcs.json");
     expect(mergedPrStyle(6, t.repo)).toMatchObject({
       ok: false,
       error: "could not list merge requests",
@@ -178,8 +178,8 @@ cli("GitLab style lookup does not fall back to account-wide merge requests", () 
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
-    if (previousVcs === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-    else process.env.WORKFLOW_VCS_CONFIG = previousVcs;
+    if (previousVcs === undefined) delete process.env.WORKIT_VCS_CONFIG;
+    else process.env.WORKIT_VCS_CONFIG = previousVcs;
     t.cleanup();
     rmSync(tools, { recursive: true, force: true });
   }

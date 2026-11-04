@@ -36,7 +36,7 @@ const repo = (): string => {
 
 /** The shell with no host or session variable of its own, plus `extra`. */
 const shell = (extra: Record<string, string>): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" };
+  const env: NodeJS.ProcessEnv = { ...process.env, WORKIT_WORKSPACE_ROOT: "" };
   for (const key of [
     "WORKIT_HOST",
     "WORKIT_SESSION_ID",

@@ -351,7 +351,7 @@ beforeAll(() => {
       GIT_COMMITTER_EMAIL: "t@example.com",
     }).filter(
       (pair): pair is [string, string] =>
-        pair[0] !== "WORKFLOW_WORKSPACE_ROOT" && pair[1] !== undefined,
+        pair[0] !== "WORKIT_WORKSPACE_ROOT" && pair[1] !== undefined,
     ),
   );
   const git = (...args: string[]) =>

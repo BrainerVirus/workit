@@ -16,7 +16,7 @@
 //   cheapest deterministic signal first:
 //     1. an explicit `--track`;
 //     2. the branch is a track's integration, production or base branch;
-//     3. WORKFLOW_RELEASE_TRACK (a host session's choice);
+//     3. WORKIT_RELEASE_TRACK (a host session's choice);
 //     4. only one track, when the workspace default target is on it;
 //     5. the base `workit git branch` recorded for the branch
 //        (git config branch.<b>.workitBase), followed through stacked
@@ -271,7 +271,7 @@ export type TrackResolution =
       warnings: string[];
       tracks: RuntimeReleaseTrack[];
       /**
-       * Set when the line could not be decided (or WORKFLOW_RELEASE_TRACK is
+       * Set when the line could not be decided (or WORKIT_RELEASE_TRACK is
        * wrong): read-only verbs warn, mutating verbs refuse with this.
        */
       blocking: string | null;
@@ -282,7 +282,7 @@ export type TrackInput = {
   tracks: readonly RuntimeReleaseTrack[];
   /** An explicit `--track`. */
   requested?: string | null;
-  /** WORKFLOW_RELEASE_TRACK: below "the branch is a track branch". */
+  /** WORKIT_RELEASE_TRACK: below "the branch is a track branch". */
   envRequested?: string | null;
   /** The branch being resolved (current branch, or a base); null when detached. */
   branch: string | null;
@@ -426,8 +426,8 @@ export function resolveReleaseTrack(input: TrackInput): TrackResolution {
   const env = input.envRequested?.trim();
   if (env) {
     const named = tracks.find((track) => track.name === env);
-    if (named) return done(named, "env", `WORKFLOW_RELEASE_TRACK selects track ${named.name}`);
-    envProblem = `WORKFLOW_RELEASE_TRACK=${env} names no release track of this workspace (${names}); ignored`;
+    if (named) return done(named, "env", `WORKIT_RELEASE_TRACK selects track ${named.name}`);
+    envProblem = `WORKIT_RELEASE_TRACK=${env} names no release track of this workspace (${names}); ignored`;
   }
 
   if (!branch) return fallback("HEAD is detached");
@@ -646,7 +646,7 @@ export function resolveTrackFor(
   if (read.tracks.length === 0 && !options.track?.trim())
     return { status: "none", issues: read.issues };
   const branch = options.branch === undefined ? currentBranch(cwd) : options.branch;
-  const envRequested = process.env.WORKFLOW_RELEASE_TRACK?.trim() || null;
+  const envRequested = process.env.WORKIT_RELEASE_TRACK?.trim() || null;
   const input = {
     tracks: read.tracks,
     requested: options.track ?? null,

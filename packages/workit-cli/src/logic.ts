@@ -459,7 +459,7 @@ export function isSetupComplete(results: {
 
 // ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
 // scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
-// ponytail: mirrors apply.sh; WORKFLOW_YT_*/WORKFLOW_VCS_* env overrides intentionally ignored
+// ponytail: mirrors apply.sh; WORKIT_YT_*/WORKIT_VCS_* env overrides intentionally ignored
 // (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts)
 export function scaffoldYouTrack(
   dir: string,
@@ -624,7 +624,7 @@ export type { VcsProvider };
 // proposal→write helper as the host init action (init.ts branch_policy), so
 // both produce byte-identical workspaces.json writes on the same fixture.
 // The env override construction lives HERE (not in the host entrypoint) so the
-// wizard and the host side cannot drift; ambient WORKFLOW_BP_* overrides are
+// wizard and the host side cannot drift; ambient WORKIT_BP_* overrides are
 // stripped so both sides are hermetic.
 export function applyWizardBranchPolicy(
   branchPolicy: WorkspaceBranchPolicy | undefined,
@@ -632,11 +632,11 @@ export function applyWizardBranchPolicy(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, any> {
   const clean: NodeJS.ProcessEnv = { ...env };
-  delete clean.WORKFLOW_BP_INTEGRATION;
-  delete clean.WORKFLOW_BP_DEVELOP;
-  delete clean.WORKFLOW_BP_NAME;
-  clean.WORKFLOW_WORKSPACE_ROOT = workspace_root;
-  if (branchPolicy?.integration) clean.WORKFLOW_BP_INTEGRATION = branchPolicy.integration;
-  if (branchPolicy?.developBranch) clean.WORKFLOW_BP_DEVELOP = branchPolicy.developBranch;
+  delete clean.WORKIT_BP_INTEGRATION;
+  delete clean.WORKIT_BP_DEVELOP;
+  delete clean.WORKIT_BP_NAME;
+  clean.WORKIT_WORKSPACE_ROOT = workspace_root;
+  if (branchPolicy?.integration) clean.WORKIT_BP_INTEGRATION = branchPolicy.integration;
+  if (branchPolicy?.developBranch) clean.WORKIT_BP_DEVELOP = branchPolicy.developBranch;
   return applyWorkspaceBranchPolicy({ workspace_root, env: clean });
 }

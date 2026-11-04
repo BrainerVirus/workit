@@ -8,8 +8,7 @@ import { resolveTrackFor, type RuntimeReleaseTrack, type TrackResolution } from 
 
 const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
-const vcsCwd = (cwd?: string): string =>
-  cwd ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
+const vcsCwd = (cwd?: string): string => cwd ?? process.env.WORKIT_WORKSPACE_ROOT ?? process.cwd();
 
 // RL-03b: the origin remote is the ground truth for PR creation. A stale global
 // provider (e.g. gitlab from another repo) must not drive glab on a
@@ -239,12 +238,12 @@ export type ResolvedReleaseTrack = {
   track: RuntimeReleaseTrack | null;
   /** Every configured track, for displays and the branch policy. */
   tracks: RuntimeReleaseTrack[];
-  /** The line is undetermined (or WORKFLOW_RELEASE_TRACK is wrong): mutating verbs refuse. */
+  /** The line is undetermined (or WORKIT_RELEASE_TRACK is wrong): mutating verbs refuse. */
   blocking: string | null;
 };
 
 export type VcsConfigOptions = {
-  /** An explicit release track (`--track`); WORKFLOW_RELEASE_TRACK is read below it. */
+  /** An explicit release track (`--track`); WORKIT_RELEASE_TRACK is read below it. */
   track?: string | null;
   /** Resolve the track for this branch instead of the checked-out one. */
   branch?: string | null;
@@ -277,12 +276,12 @@ export function vcsConfig(
 
   // Explicit workspace vcs.provider is the user's per-repo intent and wins;
   // otherwise, with a determinate repo root (explicit cwd or host-provided
-  // WORKFLOW_WORKSPACE_ROOT), the origin remote is authoritative over the
+  // WORKIT_WORKSPACE_ROOT), the origin remote is authoritative over the
   // global default (RL-03b). Ambient process.cwd() callers keep the legacy
   // config-only contract (CA-06 parity), so a stale global default cannot
   // contaminate host-agnostic reads.
   const root = vcsCwd(cwd);
-  const determinateRoot = cwd !== undefined || process.env.WORKFLOW_WORKSPACE_ROOT !== undefined;
+  const determinateRoot = cwd !== undefined || process.env.WORKIT_WORKSPACE_ROOT !== undefined;
   // No silent default: a provider resolves from the workspace, the origin
   // remote, or the global config — otherwise it is null, explicitly. Branch
   // policy never needed a provider (preset defaults apply); credential and

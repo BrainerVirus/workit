@@ -52,11 +52,11 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
   writeFileSync(path.join(cfg, "workspaces.json"), JSON.stringify({ workspaces: [] }));
   const prevCwd = process.cwd();
   const prevCfg = process.env.WORKIT_CONFIG;
-  const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
-  const prevBpName = process.env.WORKFLOW_BP_NAME;
+  const prevRoot = process.env.WORKIT_WORKSPACE_ROOT;
+  const prevBpName = process.env.WORKIT_BP_NAME;
   process.chdir(root);
   process.env.WORKIT_CONFIG = cfg;
-  process.env.WORKFLOW_WORKSPACE_ROOT = root;
+  process.env.WORKIT_WORKSPACE_ROOT = root;
   try {
     let exitValues: SetupValues | undefined;
     const tty = await renderInk(
@@ -91,7 +91,7 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
     const wsFile = readFileSync(path.join(cfg, "workspaces.json"), "utf8");
 
     const viaTool = initApplyData("branch_policy", {
-      WORKFLOW_WORKSPACE_ROOT: root,
+      WORKIT_WORKSPACE_ROOT: root,
       WORKIT_CONFIG: cfg,
     });
     const wsTool = readFileSync(path.join(cfg, "workspaces.json"), "utf8");
@@ -102,10 +102,10 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
     process.chdir(prevCwd);
     if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
     else process.env.WORKIT_CONFIG = prevCfg;
-    if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
-    if (prevBpName === undefined) delete process.env.WORKFLOW_BP_NAME;
-    else process.env.WORKFLOW_BP_NAME = prevBpName;
+    if (prevRoot === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prevRoot;
+    if (prevBpName === undefined) delete process.env.WORKIT_BP_NAME;
+    else process.env.WORKIT_BP_NAME = prevBpName;
     rmSync(root, { recursive: true, force: true });
     rmSync(cfg, { recursive: true, force: true });
   }

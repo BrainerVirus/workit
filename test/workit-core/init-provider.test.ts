@@ -19,17 +19,17 @@ test("resolveInitProvider prefers env, then origin remote, else null (no silent 
   const gh = repoWithRemote("https://github.com/acme/workit.git");
   const gl = repoWithRemote("https://gitlab.com/acme/workit.git");
   const bare = repoWithRemote(null);
-  const prev = process.env.WORKFLOW_VCS_PROVIDER;
+  const prev = process.env.WORKIT_VCS_PROVIDER;
   try {
-    delete process.env.WORKFLOW_VCS_PROVIDER;
+    delete process.env.WORKIT_VCS_PROVIDER;
     expect(resolveInitProvider(gh)).toBe("github");
     expect(resolveInitProvider(gl)).toBe("gitlab");
     expect(resolveInitProvider(bare)).toBe(null);
-    process.env.WORKFLOW_VCS_PROVIDER = "GitHub";
+    process.env.WORKIT_VCS_PROVIDER = "GitHub";
     expect(resolveInitProvider(gl)).toBe("github");
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_VCS_PROVIDER;
-    else process.env.WORKFLOW_VCS_PROVIDER = prev;
+    if (prev === undefined) delete process.env.WORKIT_VCS_PROVIDER;
+    else process.env.WORKIT_VCS_PROVIDER = prev;
     for (const root of [gh, gl, bare]) rmSync(root, { recursive: true, force: true });
   }
 });

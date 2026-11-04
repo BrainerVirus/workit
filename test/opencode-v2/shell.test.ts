@@ -441,13 +441,13 @@ test("permission evaluate validates only literal noncompliant branch targets", a
   const previousEnv = {
     config: process.env.WORKIT_CONFIG,
     configDir: process.env.WORKIT_CONFIG_DIR,
-    profile: process.env.WORKFLOW_PROFILE,
-    workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+    profile: process.env.WORKIT_PROFILE,
+    workspace: process.env.WORKIT_WORKSPACE_NAME,
   };
   delete process.env.WORKIT_CONFIG;
   process.env.WORKIT_CONFIG_DIR = configDir;
-  delete process.env.WORKFLOW_PROFILE;
-  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  delete process.env.WORKIT_PROFILE;
+  delete process.env.WORKIT_WORKSPACE_NAME;
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
@@ -552,10 +552,10 @@ test("permission evaluate validates only literal noncompliant branch targets", a
     else process.env.WORKIT_CONFIG = previousEnv.config;
     if (previousEnv.configDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
     else process.env.WORKIT_CONFIG_DIR = previousEnv.configDir;
-    if (previousEnv.profile === undefined) delete process.env.WORKFLOW_PROFILE;
-    else process.env.WORKFLOW_PROFILE = previousEnv.profile;
-    if (previousEnv.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-    else process.env.WORKFLOW_WORKSPACE_NAME = previousEnv.workspace;
+    if (previousEnv.profile === undefined) delete process.env.WORKIT_PROFILE;
+    else process.env.WORKIT_PROFILE = previousEnv.profile;
+    if (previousEnv.workspace === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+    else process.env.WORKIT_WORKSPACE_NAME = previousEnv.workspace;
     rmSync(configDir, { recursive: true, force: true });
   }
 });

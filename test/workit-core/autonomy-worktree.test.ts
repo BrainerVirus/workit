@@ -19,7 +19,7 @@ import {
 
 let configHome: ConfigHome;
 let root = "";
-const savedName = process.env.WORKFLOW_WORKSPACE_NAME;
+const savedName = process.env.WORKIT_WORKSPACE_NAME;
 const git = (cwd: string, ...args: string[]) => {
   const run = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
@@ -64,15 +64,15 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 afterEach(() => {
-  if (savedName === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-  else process.env.WORKFLOW_WORKSPACE_NAME = savedName;
+  if (savedName === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+  else process.env.WORKIT_WORKSPACE_NAME = savedName;
 });
 
 const write = (workspaces: Record<string, unknown>[]) =>
   writeFileSync(path.join(configHome.configDir, "workspaces.json"), JSON.stringify({ workspaces }));
 const withName = <T>(name: string | undefined, run: () => T): T => {
-  if (name === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-  else process.env.WORKFLOW_WORKSPACE_NAME = name;
+  if (name === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+  else process.env.WORKIT_WORKSPACE_NAME = name;
   return run();
 };
 const account = { provider: "github", account: "me" };
@@ -183,7 +183,7 @@ test("a name and a worktree compose: both caps apply and both are noted", () => 
   expect(autonomy.workspace).toBe("outer");
   expect(autonomy.grants.merge).toBe(false);
   expect(autonomy.grants.release).toBe(false);
-  expect(autonomy.note).toContain("WORKFLOW_WORKSPACE_NAME=outer");
+  expect(autonomy.note).toContain("WORKIT_WORKSPACE_NAME=outer");
   expect(autonomy.note).toContain("brasil");
 });
 

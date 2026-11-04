@@ -110,12 +110,9 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
   const prevPath = process.env.PATH;
   process.env.PATH = bin;
   if (malformedConfig) writeFileSync(path.join(configPath, "config.json"), "{ not json", "utf8");
-  const prevWorkspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prevWorkspaceRoot = process.env.WORKIT_WORKSPACE_ROOT;
   // Non-git resolution root keeps the branch-policy screen out of the walk.
-  process.env.WORKFLOW_WORKSPACE_ROOT = path.join(
-    os.tmpdir(),
-    `workit-clean-nongit-${process.pid}`,
-  );
+  process.env.WORKIT_WORKSPACE_ROOT = path.join(os.tmpdir(), `workit-clean-nongit-${process.pid}`);
 
   const prevExit = process.exit;
   const prevLog = console.log;
@@ -242,8 +239,8 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     if (prevPath === undefined) delete process.env.PATH;
     else process.env.PATH = prevPath;
     rmSync(home, { recursive: true, force: true });
-    if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prevWorkspaceRoot;
+    if (prevWorkspaceRoot === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prevWorkspaceRoot;
     process.exit = prevExit;
     console.log = prevLog;
     process.stdin = prevStdin;

@@ -93,7 +93,7 @@ const OUTCOMES: Record<string, "verified" | "accepted_limitations" | "stopped"> 
 };
 
 /** The checkout root implicit tasks are kept for: the workspace root, else the worktree top. */
-const rootFor = (io: Io): string => io.env.WORKFLOW_WORKSPACE_ROOT || checkRoot(io.cwd);
+const rootFor = (io: Io): string => io.env.WORKIT_WORKSPACE_ROOT || checkRoot(io.cwd);
 
 export async function run(argv: string[], io: Io): Promise<number> {
   const [action, ...rest] = argv;

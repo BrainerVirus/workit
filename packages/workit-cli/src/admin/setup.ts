@@ -150,18 +150,18 @@ export type SetupPreview = {
 };
 
 const YT_OVERRIDES: { envKey: string; affects: string }[] = [
-  { envKey: "WORKFLOW_YT_BASE_URL", affects: "youtrack.json baseUrl" },
-  { envKey: "WORKFLOW_YT_TOKEN_FILE", affects: "youtrack.json tokenFile" },
-  { envKey: "WORKFLOW_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
-  { envKey: "WORKFLOW_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
+  { envKey: "WORKIT_YT_BASE_URL", affects: "youtrack.json baseUrl" },
+  { envKey: "WORKIT_YT_TOKEN_FILE", affects: "youtrack.json tokenFile" },
+  { envKey: "WORKIT_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
+  { envKey: "WORKIT_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
 ];
 
 const VCS_OVERRIDES: { envKey: string; affects: string }[] = [
-  { envKey: "WORKFLOW_VCS_PROVIDER", affects: "vcs.json provider" },
-  { envKey: "WORKFLOW_VCS_TARGET_BRANCH", affects: "vcs.json defaultTargetBranch" },
-  { envKey: "WORKFLOW_GITLAB_HOST", affects: "vcs.json gitlab.host" },
-  { envKey: "WORKFLOW_GITLAB_API_URL", affects: "vcs.json gitlab.apiUrl" },
-  { envKey: "WORKFLOW_GITHUB_HOST", affects: "vcs.json github.host" },
+  { envKey: "WORKIT_VCS_PROVIDER", affects: "vcs.json provider" },
+  { envKey: "WORKIT_VCS_TARGET_BRANCH", affects: "vcs.json defaultTargetBranch" },
+  { envKey: "WORKIT_GITLAB_HOST", affects: "vcs.json gitlab.host" },
+  { envKey: "WORKIT_GITLAB_API_URL", affects: "vcs.json gitlab.apiUrl" },
+  { envKey: "WORKIT_GITHUB_HOST", affects: "vcs.json github.host" },
 ];
 
 const SETUP_OVERRIDES = [...YT_OVERRIDES, ...VCS_OVERRIDES];

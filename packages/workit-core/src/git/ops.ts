@@ -1437,7 +1437,7 @@ export function releaseLinesOf(cwd: string): ReleaseLine[] {
     const selected = resolveRuntimeWorkspacePolicy(
       cwd,
       "branch",
-      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+      process.env.WORKIT_PROFILE?.trim() || undefined,
     ).policy as Record<string, unknown> | undefined;
     policyPrefix = selected?.releaseTagPrefix;
   } catch {

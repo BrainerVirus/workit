@@ -34,7 +34,7 @@ afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 const start = () => {
   const child = spawn(process.execPath, [entry, "--host", "cursor"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: tempRoot, WORKFLOW_SESSION_ID: "" },
+    env: { ...process.env, WORKIT_WORKSPACE_ROOT: tempRoot, WORKIT_SESSION_ID: "" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";

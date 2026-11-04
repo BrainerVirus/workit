@@ -36,8 +36,8 @@ const ENV_KEYS = [
   "XDG_CONFIG_HOME",
   "WORKIT_CONFIG",
   "WORKIT_CONFIG_DIR",
-  "WORKFLOW_VCS_CONFIG",
-  "WORKFLOW_WORKSPACE_ROOT",
+  "WORKIT_VCS_CONFIG",
+  "WORKIT_WORKSPACE_ROOT",
   "PATH",
 ];
 
@@ -226,7 +226,7 @@ test(
 );
 
 test(
-  "config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd",
+  "config.sh resolve: WORKIT_WORKSPACE_ROOT overrides the cwd",
   () => {
     const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
     mkdirSync(path.join(base, "work", "repo"), { recursive: true });
@@ -238,7 +238,7 @@ test(
           "vcs.json": JSON.stringify(GLOBAL_VCS),
           "workspaces.json": workspacesJson(`${base}/work/**`, "gitlab"),
         },
-        { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") },
+        { WORKIT_WORKSPACE_ROOT: path.join(base, "work", "repo") },
         () => vcsConfig("resolve"),
       );
       expect(r.workspace_name).toBe("work");
@@ -247,7 +247,7 @@ test(
           "vcs.json": JSON.stringify(GLOBAL_VCS),
           "workspaces.json": workspacesJson(`${base}/work/**`, "gitlab"),
         },
-        { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") },
+        { WORKIT_WORKSPACE_ROOT: path.join(base, "work", "repo") },
         () => vcsConfig("resolve", elsewhere),
       );
       expect(explicit.workspace_name).toBeNull();
@@ -261,14 +261,14 @@ test(
 );
 
 test(
-  "config.sh resolve: catchall ** matches a drive-letter WORKFLOW_WORKSPACE_ROOT (TS parity)",
+  "config.sh resolve: catchall ** matches a drive-letter WORKIT_WORKSPACE_ROOT (TS parity)",
   () => {
     const r = withConfigFiles(
       {
         "vcs.json": JSON.stringify(GLOBAL_VCS),
         "workspaces.json": workspacesJson("**", "gitlab"),
       },
-      { WORKFLOW_WORKSPACE_ROOT: "D:/a/workit/workit" },
+      { WORKIT_WORKSPACE_ROOT: "D:/a/workit/workit" },
       () => vcsConfig("resolve", repoRoot),
     );
     expect(r.workspace_name).toBe("work");
@@ -505,7 +505,7 @@ test.skipIf(process.platform === "win32")(
 const buildBody = (extra: Record<string, string>, cwd?: string): string => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || k.startsWith("WORKFLOW_")) continue;
+    if (v === undefined || k.startsWith("WORKIT_")) continue;
     env[k] = v;
   }
   return prBuildBody({ ...env, ...extra }, cwd ?? repoRoot);
@@ -614,14 +614,14 @@ test(
 );
 
 test(
-  "pr-create.sh --build-body: explicit WORKFLOW_YT_ISSUE wins over branch-derived id",
+  "pr-create.sh --build-body: explicit WORKIT_YT_ISSUE wins over branch-derived id",
   () => {
     expect(
       buildBody({
         BRANCH: "feature/IRP-123-fix",
         LINK_ISSUES: "true",
         YT_BASE_URL: "https://yt.example.com",
-        WORKFLOW_YT_ISSUE: "NSAT-9",
+        WORKIT_YT_ISSUE: "NSAT-9",
       }),
     ).toBe("Related to: https://yt.example.com/issue/NSAT-9");
   },
@@ -647,27 +647,27 @@ test(
 );
 
 test(
-  "pr-create.sh --build-body: explicit WORKFLOW_GH_ISSUE closes/related (default closes, # prefix stripped)",
+  "pr-create.sh --build-body: explicit WORKIT_GH_ISSUE closes/related (default closes, # prefix stripped)",
   () => {
-    expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42" })).toBe("Closes #42");
+    expect(buildBody({ GH_LINK_ON_PR: "true", WORKIT_GH_ISSUE: "42" })).toBe("Closes #42");
     expect(
-      buildBody({ BODY: "Existing body", GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "#42" }),
+      buildBody({ BODY: "Existing body", GH_LINK_ON_PR: "true", WORKIT_GH_ISSUE: "#42" }),
     ).toBe("Existing body\n\nCloses #42");
     expect(
       buildBody({
         GH_LINK_ON_PR: "true",
-        WORKFLOW_GH_ISSUE: "https://github.com/acme/app/issues/42",
+        WORKIT_GH_ISSUE: "https://github.com/acme/app/issues/42",
       }),
     ).toBe("Closes #42");
     expect(
       buildBody({
         GH_LINK_ON_PR: "true",
-        WORKFLOW_GH_ISSUE: "42",
-        WORKFLOW_GH_ISSUE_RELATION: "related",
+        WORKIT_GH_ISSUE: "42",
+        WORKIT_GH_ISSUE_RELATION: "related",
         GH_REPO: "acme/app",
       }),
     ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
-    expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", BODY: "" })).toBe(
+    expect(buildBody({ GH_LINK_ON_PR: "true", WORKIT_GH_ISSUE: "42", BODY: "" })).toBe(
       "Closes #42",
     );
   },
@@ -703,13 +703,13 @@ test(
       }
       expect(
         buildBody(
-          { GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" },
+          { GH_LINK_ON_PR: "true", WORKIT_GH_ISSUE: "42", WORKIT_GH_ISSUE_RELATION: "related" },
           repoDir,
         ),
       ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
       expect(
         buildBody(
-          { GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" },
+          { GH_LINK_ON_PR: "true", WORKIT_GH_ISSUE: "42", WORKIT_GH_ISSUE_RELATION: "related" },
           bareDir,
         ),
       ).toBe("Related to #42");
@@ -777,7 +777,7 @@ test(
           PATH: `${stubBin}${path.delimiter}${process.env.PATH ?? ""}`,
           WF_PR_CONFIRMED: "true",
           WF_PR_TITLE: "Test title",
-          WORKFLOW_GH_ISSUE: "42",
+          WORKIT_GH_ISSUE: "42",
         },
         () =>
           prCreate(
@@ -785,7 +785,7 @@ test(
               ...process.env,
               WF_PR_CONFIRMED: "true",
               WF_PR_TITLE: "Test title",
-              WORKFLOW_GH_ISSUE: "42",
+              WORKIT_GH_ISSUE: "42",
             },
             repoDir,
           ),

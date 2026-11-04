@@ -399,8 +399,8 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
 }
 
 const defaultContextProvider = (host: McpHost): NativeContextProvider => {
-  const root = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
-  const actor = process.env.WORKFLOW_SESSION_ID ?? "";
+  const root = process.env.WORKIT_WORKSPACE_ROOT ?? process.cwd();
+  const actor = process.env.WORKIT_SESSION_ID ?? "";
   return {
     current: async () => ({
       root,

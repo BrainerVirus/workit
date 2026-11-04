@@ -38,12 +38,12 @@ import { boundTaskSummary } from "@brainervirus/workit-core/src/core/task-evalua
 export const TASK_FAMILIES = OPERATION_FAMILIES;
 
 /**
- * The checkout root for a CLI command: explicit root, WORKFLOW_WORKSPACE_ROOT,
+ * The checkout root for a CLI command: explicit root, WORKIT_WORKSPACE_ROOT,
  * then the worktree top of cwd (cwd outside git), so every verb run anywhere
  * in a checkout shares its workspace record and implicit task.
  */
 export const workspaceRootFor = (deps: { root?: string; cwd?: string } = {}): string => {
-  const explicit = deps.root || process.env.WORKFLOW_WORKSPACE_ROOT;
+  const explicit = deps.root || process.env.WORKIT_WORKSPACE_ROOT;
   if (explicit) return explicit;
   const cwd = deps.cwd ?? process.cwd();
   const top = checkRoot(cwd);

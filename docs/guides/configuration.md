@@ -299,7 +299,7 @@ YouTrack, a GitLab one in GitLab issues.
   `skipped` with a note. Your
   host's permission prompt for `workit pr create` is what allows the comment,
   as with `workit youtrack note`, and a YouTrack comment also needs
-  `WORKFLOW_YT_WRITE=1` in the environment, the same gate as `workit
+  `WORKIT_YT_WRITE=1` in the environment, the same gate as `workit
   youtrack note`. A failed comment is reported and never undoes the PR.
 
 An issue on another forge than the PR's cannot be closed from it, so it gets a
@@ -731,7 +731,7 @@ first signal that answers wins):
    tracks, is an error);
 2. the branch is a track's integration, production or base branch (for
    `git branch --base <b>`, the base's track);
-3. `WORKFLOW_RELEASE_TRACK=<name>` for a host session (a name this workspace
+3. `WORKIT_RELEASE_TRACK=<name>` for a host session (a name this workspace
    does not have is ignored with a note by read-only verbs and blocks
    mutating ones);
 4. only one track is configured and the workspace default target is on it;

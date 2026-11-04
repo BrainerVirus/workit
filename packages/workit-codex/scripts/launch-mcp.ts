@@ -30,7 +30,7 @@ export const resolveCodexWorkspaceRoot = (
   pluginRoot: string,
   env: NodeJS.ProcessEnv,
 ): string | null => {
-  const explicit = env.WORKFLOW_WORKSPACE_ROOT;
+  const explicit = env.WORKIT_WORKSPACE_ROOT;
   const inherited = env.PWD;
   const candidate =
     explicit ??
@@ -45,7 +45,7 @@ export const resolveCodexWorkspaceRoot = (
       // the MCP server in the project directory (no plugin root exists), so
       // an explicit live root is operator intent, not a plugin-dir accident.
       // Recipe: run exec from the project and pass
-      // -c 'mcp_servers.workit.env={WORKFLOW_WORKSPACE_ROOT="<project>"}'.
+      // -c 'mcp_servers.workit.env={WORKIT_WORKSPACE_ROOT="<project>"}'.
       if (!explicit) return null;
       const workspace = new TaskStore(canonical).readWorkspace();
       if (!workspace.ok || !workspace.data || workspace.data.root !== canonical) return null;
@@ -71,7 +71,7 @@ export const codexContextProvider = (
     const workspaceRoot =
       root === undefined
         ? resolveCodexWorkspaceRoot(process.cwd(), process.env)
-        : resolveCodexWorkspaceRoot(process.cwd(), { WORKFLOW_WORKSPACE_ROOT: root });
+        : resolveCodexWorkspaceRoot(process.cwd(), { WORKIT_WORKSPACE_ROOT: root });
     if (!workspaceRoot) throw new McpCapabilityUnavailableError("workspace");
     return {
       root: workspaceRoot,

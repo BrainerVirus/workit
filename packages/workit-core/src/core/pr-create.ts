@@ -191,10 +191,10 @@ export function prBuildBody(env: NodeJS.ProcessEnv, cwd?: string): string {
     env.BRANCH ?? "",
     truthy(env.LINK_ISSUES),
     env.YT_BASE_URL ?? "",
-    env.WORKFLOW_YT_ISSUE ?? "",
+    env.WORKIT_YT_ISSUE ?? "",
     ghLinkOnPr,
-    env.WORKFLOW_GH_ISSUE ?? "",
-    env.WORKFLOW_GH_ISSUE_RELATION ?? "closes",
+    env.WORKIT_GH_ISSUE ?? "",
+    env.WORKIT_GH_ISSUE_RELATION ?? "closes",
     ghRepo,
   );
 }
@@ -203,7 +203,7 @@ export function prBuildBody(env: NodeJS.ProcessEnv, cwd?: string): string {
 export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, any> {
   // An explicitly supplied, already-approved checkout root outranks ambient
   // process state; otherwise an unrelated env root could redirect the effect.
-  const root = cwd ? repoRoot(cwd) : (process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd());
+  const root = cwd ? repoRoot(cwd) : (process.env.WORKIT_WORKSPACE_ROOT ?? process.cwd());
   const policy = resolveBranchPolicyFor(root);
   const cfg = vcsConfig("load", root);
   if (!cfg.ok) return { error: cfg.error ?? "vcs config missing" };
@@ -288,7 +288,7 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   let baseUrl = cfg.youtrack_base_url as string | undefined;
   if (!baseUrl) {
     const ytCfg =
-      process.env.WORKFLOW_YOUTRACK_CONFIG ??
+      process.env.WORKIT_YOUTRACK_CONFIG ??
       path.join(path.dirname(String(cfg.configPath)), "youtrack.json");
     try {
       const yt = JSON.parse(fs.readFileSync(ytCfg, "utf8")) as Record<string, any>;
@@ -307,10 +307,10 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     branch,
     cfg.link_issues === true,
     baseUrl ?? "",
-    env.WORKFLOW_YT_ISSUE ?? "",
+    env.WORKIT_YT_ISSUE ?? "",
     ghLinkOnPr,
-    env.WORKFLOW_GH_ISSUE ?? "",
-    env.WORKFLOW_GH_ISSUE_RELATION ?? "closes",
+    env.WORKIT_GH_ISSUE ?? "",
+    env.WORKIT_GH_ISSUE_RELATION ?? "closes",
     ghRepo,
   );
 

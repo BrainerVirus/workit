@@ -95,7 +95,7 @@ export type SetupValues = {
   issueTracker: IssueTracker;
   baseUrl: string;
   /** D-06: the workspace root every derived path uses. Seeded from
-   *  WORKFLOW_WORKSPACE_ROOT; otherwise the basePath prompt fills it in. */
+   *  WORKIT_WORKSPACE_ROOT; otherwise the basePath prompt fills it in. */
   basePath: string;
   vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
@@ -253,14 +253,14 @@ const skipsYoutrack = (screen: WizardScreen, tracker: IssueTracker): boolean =>
 const skipsBasePath = (screen: WizardScreen, basePath: string): boolean =>
   screen === "basePath" && basePath !== "";
 
-// D-06 resolution order (CA-06): WORKFLOW_WORKSPACE_ROOT env wins, then the
+// D-06 resolution order (CA-06): WORKIT_WORKSPACE_ROOT env wins, then the
 // prompted path. Every former process.cwd() call-site routes through this one
 // helper so the wizard can never drift back to the process cwd.
 export function resolveBasePath(
   values: Pick<SetupValues, "basePath">,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return env.WORKFLOW_WORKSPACE_ROOT?.trim() || values.basePath.trim();
+  return env.WORKIT_WORKSPACE_ROOT?.trim() || values.basePath.trim();
 }
 
 // D-06: the prompt refuses to advance without an existing absolute directory.
@@ -463,7 +463,7 @@ export function createInitialDraft(
       baseUrl: "",
       // D-06: the env root pre-seeds the resolution; empty makes the basePath
       // prompt gate the flow instead of silently inheriting process.cwd().
-      basePath: process.env.WORKFLOW_WORKSPACE_ROOT ?? "",
+      basePath: process.env.WORKIT_WORKSPACE_ROOT ?? "",
       issueTracker: "youtrack",
       // No silent provider default: "skip" is an explicit configure-later
       // choice, never an assumed host.

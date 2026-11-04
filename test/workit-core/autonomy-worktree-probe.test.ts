@@ -21,7 +21,7 @@ import { GRANT_KINDS, requireGrant, resolveAutonomy } from "@/packages/workit-co
 let configHome: ConfigHome;
 let root = "";
 const savedPath = process.env.PATH;
-const savedName = process.env.WORKFLOW_WORKSPACE_NAME;
+const savedName = process.env.WORKIT_WORKSPACE_NAME;
 const git = (cwd: string, ...args: string[]) => {
   const run = spawnSync(
     "git",
@@ -38,7 +38,7 @@ const init = (at: string) => {
 const unix = process.platform !== "win32";
 
 beforeAll(() => {
-  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  delete process.env.WORKIT_WORKSPACE_NAME;
   configHome = useConfigHome("wk-wt-probe-config-");
   root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-wt-probe-"))).replaceAll("\\", "/");
   // A superproject under brasil with a submodule, and a linked worktree of it under work.
@@ -73,8 +73,8 @@ afterAll(() => {
 });
 afterEach(() => {
   process.env.PATH = savedPath;
-  if (savedName === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-  else process.env.WORKFLOW_WORKSPACE_NAME = savedName;
+  if (savedName === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+  else process.env.WORKIT_WORKSPACE_NAME = savedName;
 });
 
 const write = (workspaces: Record<string, unknown>[]) =>

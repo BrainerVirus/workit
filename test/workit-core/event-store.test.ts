@@ -104,7 +104,7 @@ const cli = async (cwd: string, argv: string[], env: Record<string, string> = {}
     env: {
       ...process.env,
       WORKIT_SESSION_ID: "s-agent",
-      WORKFLOW_WORKSPACE_ROOT: "",
+      WORKIT_WORKSPACE_ROOT: "",
       ...env,
     },
     stdout: (text) => void (stdout += text),

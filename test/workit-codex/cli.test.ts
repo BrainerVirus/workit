@@ -28,14 +28,14 @@ const withTestBranchPolicy = (run: () => void) => {
   const previous = {
     config: process.env.WORKIT_CONFIG,
     configDir: process.env.WORKIT_CONFIG_DIR,
-    profile: process.env.WORKFLOW_PROFILE,
-    workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+    profile: process.env.WORKIT_PROFILE,
+    workspace: process.env.WORKIT_WORKSPACE_NAME,
   };
   const configDir = mkdtempSync(path.join(tmpdir(), "workit-codex-policy-"));
   delete process.env.WORKIT_CONFIG;
   process.env.WORKIT_CONFIG_DIR = configDir;
-  delete process.env.WORKFLOW_PROFILE;
-  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  delete process.env.WORKIT_PROFILE;
+  delete process.env.WORKIT_WORKSPACE_NAME;
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
@@ -49,10 +49,10 @@ const withTestBranchPolicy = (run: () => void) => {
     else process.env.WORKIT_CONFIG = previous.config;
     if (previous.configDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
     else process.env.WORKIT_CONFIG_DIR = previous.configDir;
-    if (previous.profile === undefined) delete process.env.WORKFLOW_PROFILE;
-    else process.env.WORKFLOW_PROFILE = previous.profile;
-    if (previous.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-    else process.env.WORKFLOW_WORKSPACE_NAME = previous.workspace;
+    if (previous.profile === undefined) delete process.env.WORKIT_PROFILE;
+    else process.env.WORKIT_PROFILE = previous.profile;
+    if (previous.workspace === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+    else process.env.WORKIT_WORKSPACE_NAME = previous.workspace;
     rmSync(configDir, { recursive: true, force: true });
   }
 };
@@ -628,11 +628,11 @@ test("explicit root at the server directory resolves only for a live workspace",
     expect(started.ok).toBe(true);
     // codex exec spawns the MCP server in the project dir: an explicit live
     // root is operator intent and resolves.
-    expect(resolveCodexWorkspaceRoot(live, { WORKFLOW_WORKSPACE_ROOT: live })).toBe(
+    expect(resolveCodexWorkspaceRoot(live, { WORKIT_WORKSPACE_ROOT: live })).toBe(
       new TaskStore(live).root,
     );
     // Without live state the same setup still refuses (never init plugin dirs).
-    expect(resolveCodexWorkspaceRoot(fresh, { WORKFLOW_WORKSPACE_ROOT: fresh })).toBeNull();
+    expect(resolveCodexWorkspaceRoot(fresh, { WORKIT_WORKSPACE_ROOT: fresh })).toBeNull();
   } finally {
     rmSync(live, { recursive: true, force: true });
     rmSync(fresh, { recursive: true, force: true });
@@ -644,15 +644,13 @@ test("workspace root resolution honors explicit root and refuses the plugin dir"
   const workspace = cwd();
   try {
     // Fresh checkouts without state resolve so task.start can initialize them.
-    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: workspace })).toBe(
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKIT_WORKSPACE_ROOT: workspace })).toBe(
       new TaskStore(workspace).root,
     );
     // The plugin root itself never resolves (would operate on shipped files).
-    expect(
-      resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: pluginRoot }),
-    ).toBeNull();
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKIT_WORKSPACE_ROOT: pluginRoot })).toBeNull();
     // Relative and missing candidates refuse.
-    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: "rel" })).toBeNull();
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKIT_WORKSPACE_ROOT: "rel" })).toBeNull();
     expect(resolveCodexWorkspaceRoot(pluginRoot, {})).toBeNull();
     // PWD inherits only when it points outside the plugin root.
     expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: workspace })).toBe(

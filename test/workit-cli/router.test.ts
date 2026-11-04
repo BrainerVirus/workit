@@ -262,25 +262,25 @@ test("existing task families still route through the router (with --cwd)", () =>
       cwd: repoRoot,
       encoding: "utf8",
       env: Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => key !== "WORKFLOW_WORKSPACE_ROOT"),
+        Object.entries(process.env).filter(([key]) => key !== "WORKIT_WORKSPACE_ROOT"),
       ),
     });
     expect(listed.status, listed.stderr).toBe(0);
     expect(JSON.parse(listed.stdout)).toMatchObject({ ok: true, data: [] });
 
-    // An explicit --cwd beats an inherited WORKFLOW_WORKSPACE_ROOT.
+    // An explicit --cwd beats an inherited WORKIT_WORKSPACE_ROOT.
     const bogus = path.join(root, "does-not-exist");
     const inheritedArgv = argv.slice(0, -2);
     const inherited = spawnSync("bun", inheritedArgv, {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: bogus },
+      env: { ...process.env, WORKIT_WORKSPACE_ROOT: bogus },
     });
     expect(inherited.status).toBe(1);
     const explicit = spawnSync("bun", argv, {
       cwd: repoRoot,
       encoding: "utf8",
-      env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: bogus },
+      env: { ...process.env, WORKIT_WORKSPACE_ROOT: bogus },
     });
     expect(explicit.status, explicit.stderr).toBe(0);
     expect(JSON.parse(explicit.stdout)).toMatchObject({ ok: true, data: [] });
@@ -351,7 +351,7 @@ test("under --json every verb's stdout is exactly one JSON document, error paths
         USERPROFILE: home,
         WORKIT_CONFIG: path.join(home, ".config", "workit"),
         WORKIT_STATE_DIR: path.join(home, ".local", "state", "workit"),
-      }).filter(([key]) => key !== "WORKFLOW_WORKSPACE_ROOT"),
+      }).filter(([key]) => key !== "WORKIT_WORKSPACE_ROOT"),
     );
     for (const [verb, cases] of Object.entries(JSON_ERROR_PATHS))
       for (const args of cases)
