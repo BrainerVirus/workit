@@ -14,7 +14,9 @@ export const pathResolvedWorkit = (
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): PathWorkit => {
-  const first = pathWorkits(env, platform).find((file) => !hostLauncherOf(realpathOr(file)));
+  const first = pathWorkits(env, platform).find(
+    (file) => !hostLauncherOf(realpathOr(file), platform),
+  );
   if (!first) return { path: null, version: null, error: "no workit on PATH" };
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
   const result = spawnSync(first, ["--version"], {

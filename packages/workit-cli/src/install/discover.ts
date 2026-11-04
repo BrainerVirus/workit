@@ -70,35 +70,78 @@ const npmPackageOf = (file: string): { prefix: string; packageDir: string } | nu
 export const npmPackageOfFile = (file: string): string | null =>
   npmPackageOf(realpathOr(file))?.packageDir ?? null;
 
-const WORKIT_NAMES = new Set(["workit", "workit.cmd", "workit.exe", "workit.ps1"]);
+/** Interpreters a wrapper may name before the script it runs. */
+const RUNNERS = new Set(["node", "node.exe", "nodejs", "env"]);
+
+/** The words of one shell or cmd command, quotes removed. */
+const words = (command: string): string[] =>
+  [...command.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
+    (match) => match[1] ?? match[2] ?? match[3],
+  );
+
+/** The script a command runs: past `exec`, `call`, VAR=value, `env` and a node with its flags. */
+const commandTarget = (command: string): string | null => {
+  const list = words(command.trim().replace(/^@/, ""));
+  let at = 0;
+  while (at < list.length) {
+    const word = list[at];
+    const name = path.basename(word.replaceAll("\\", "/")).toLowerCase();
+    if (["exec", "call"].includes(word.toLowerCase()) || /^\w+=/.test(word)) at += 1;
+    else if (RUNNERS.has(name)) {
+      at += 1;
+      while (list[at]?.startsWith("-")) at += 1;
+    } else return word;
+  }
+  return null;
+};
+
+const isRegularFile = (file: string): boolean => {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
 
 /**
- * What a hand-written wrapper runs, read from its text: a workit-cli package
- * path it names, else the first other `workit` it names by absolute path
- * (`exec <node> <prefix>/bin/workit "$@"`, W2.39), `$HOME` and `~` expanded.
+ * What a hand-written wrapper runs (W2.39): the script of its `exec` line,
+ * else of the last command that runs one, never a path in a comment or an
+ * argument. It counts only when that script is an existing file that resolves
+ * to a real workit install: a file inside a workit-cli package (its
+ * dist/index.js, or an npm bin linked to it) or the owned launcher. Anything
+ * else makes the wrapper a foreign file, left alone and reported.
  */
 const wrapperTarget = (
   file: string,
   env: NodeJS.ProcessEnv,
-): { runs: string; packageDir: string | null } | null => {
+  ownedLauncher: string,
+): { runs: string; packageDir: string | null; owned: boolean } | null => {
   let text = "";
   try {
     text = readFileSync(file, "utf8").slice(0, 4000);
   } catch {
     return null;
   }
-  const found = /([^\s'"=]*node_modules[\\/]@brainervirus[\\/]workit-cli)/.exec(text);
-  if (found) return { runs: found[1], packageDir: found[1] };
   const home = env.HOME || env.USERPROFILE || "";
   const self = realpathOr(file);
-  for (const match of text.matchAll(/"([^"\n]+)"|'([^'\n]+)'|([^\s'"`;|&<>()=]+)/g)) {
-    let candidate = match[1] ?? match[2] ?? match[3];
-    if (home) candidate = candidate.replace(/^(?:\$\{HOME\}|\$HOME|~)(?=[\\/])/, home);
-    if (!path.isAbsolute(candidate) && !path.win32.isAbsolute(candidate)) continue;
-    if (!WORKIT_NAMES.has(path.basename(candidate.replaceAll("\\", "/")).toLowerCase())) continue;
-    const real = realpathOr(candidate);
+  const commands = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(?:#|::|rem(?:\s|$))/i.test(line))
+    .flatMap((line) => line.split(/&&|\|\||;|\|/));
+  const execs = commands.filter((command) => /^exec\s/.test(command.trim()));
+  for (const command of (execs.length ? execs : commands).toReversed()) {
+    let target = commandTarget(command);
+    if (!target) continue;
+    if (home) target = target.replace(/^(?:\$\{HOME\}|\$HOME|~)(?=[\\/])/, home);
+    if (!path.isAbsolute(target) && !path.win32.isAbsolute(target)) continue;
+    if (!isRegularFile(target)) continue;
+    const real = realpathOr(target);
     if (real === self) continue;
-    return { runs: candidate, packageDir: npmPackageOf(real)?.packageDir ?? null };
+    if (real === ownedLauncher || isOwnedLauncher(real))
+      return { runs: target, packageDir: null, owned: true };
+    const npm = npmPackageOf(real);
+    if (npm) return { runs: target, packageDir: npm.packageDir, owned: false };
   }
   return null;
 };
@@ -110,7 +153,12 @@ const HOST_PLUGIN_PACKAGE = /^@brainervirus\/workit-(?:claude-code|codex|cursor|
  * Code plugin's launcher on the Bash tool's PATH), read from the plugin
  * root's package.json; null for anything else.
  */
-export const hostLauncherOf = (file: string): { name: string; version: string | null } | null => {
+export const hostLauncherOf = (
+  file: string,
+  platform: NodeJS.Platform = process.platform,
+): { name: string; version: string | null } | null => {
+  const names = platform === "win32" ? ["workit", "workit.cmd"] : ["workit"];
+  if (!names.includes(path.basename(file).toLowerCase())) return null;
   const bin = path.dirname(file);
   if (path.basename(bin) !== "bin") return null;
   try {
@@ -131,14 +179,22 @@ const pathNames = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] 
   return [...exts.map((ext) => `workit${ext.toLowerCase()}`), "workit"];
 };
 
-/** PATH without the directories a package runner put there for one run (npx, pnpm dlx). */
+/**
+ * PATH as a login shell keeps it: absolute directories only (an empty entry,
+ * `.` or a relative one would run a file from the current directory), without
+ * the ones a package runner put there for one run (npx, pnpm dlx).
+ */
 export const persistentPath = (
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): string[] =>
   (env.PATH ?? env.Path ?? "")
     .split(platform === "win32" ? ";" : ":")
-    .filter((dir) => dir && !isEphemeralCachePath(`${dir}/`));
+    .filter(
+      (dir) =>
+        (platform === "win32" ? path.win32.isAbsolute(dir) : path.posix.isAbsolute(dir)) &&
+        !isEphemeralCachePath(`${dir}/`, env),
+    );
 
 /**
  * Every `workit` on PATH, in order, duplicates of the same file dropped. A
@@ -221,10 +277,10 @@ const classify = (
   const base = { path: file, realpath: real, manager: null, prefix: null, packageDir: null };
   if (real === owned.launcher || isOwnedLauncher(real))
     return { ...base, version: owned.version, kind: "owned", runs: null };
-  const host = hostLauncherOf(real);
+  const host = hostLauncherOf(real, platform);
   if (host) return { ...base, version: host.version, kind: "host", runs: null };
   // A link into a package runner's cache: npm cannot uninstall it, and it breaks when the cache goes.
-  if (isEphemeralCachePath(real)) return { ...base, version: null, kind: "link", runs: null };
+  if (isEphemeralCachePath(real, env)) return { ...base, version: null, kind: "link", runs: null };
   const npm = npmPackageOf(real);
   if (npm) {
     const manager = managerOf(npm.packageDir);
@@ -272,10 +328,9 @@ const classify = (
   } catch {
     symlink = false;
   }
-  const target = symlink ? null : wrapperTarget(real, env);
-  // A wrapper around the owned launcher is the owned launcher.
-  if (target && realpathOr(target.runs) === owned.launcher)
-    return { ...base, version: owned.version, kind: "owned", runs: target.runs };
+  const target = symlink ? null : wrapperTarget(real, env, owned.launcher);
+  // A wrapper around the owned launcher is the owned launcher: never a copy to replace.
+  if (target?.owned) return { ...base, version: owned.version, kind: "owned", runs: target.runs };
   return {
     ...base,
     version: target?.packageDir ? packageVersion(target.packageDir) : null,
@@ -283,6 +338,14 @@ const classify = (
     runs: target?.runs ?? null,
   };
 };
+
+/** True when `file` is a hand-written wrapper whose exec line runs the owned launcher. */
+export const isOwnedWrapper = (
+  file: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): boolean =>
+  wrapperTarget(file, env, realpathOr(ownedPaths(env, platform).launcher))?.owned === true;
 
 /** Every workit install, PATH order first, then the copies PATH does not reach. */
 export const listInstalls = (

@@ -20,7 +20,9 @@ import os from "node:os";
 import path from "node:path";
 import { installOwned, writeLaunchers } from "@/packages/workit-cli/src/install/owned";
 import { installRoot, launcherDir, ownedPaths } from "@/packages/workit-cli/src/install/paths";
+import { hostLauncherOf, listInstalls } from "@/packages/workit-cli/src/install/discover";
 import { migrationCopies } from "@/packages/workit-cli/src/install/migrate";
+import { pathResolvedWorkit } from "@/packages/workit-cli/src/install/verify";
 import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 
 const NODE = Bun.which("node") ?? "";
@@ -482,3 +484,125 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     expect(cli.details.join("\n")).toContain(`[not removed: kept: ${other} still runs it`);
   },
 );
+
+test("Given scripts that only mention a workit path (a comment, a cd into a workit dir, a target that does not exist), Then none is a copy to migrate and each stays a foreign wrapper", () => {
+  const home = tempHome();
+  const fnm = fnmNode(home, "v24.1.0", "8.52.3");
+  const bin = path.join(home, ".local", "bin");
+  const script = path.join(bin, "workit");
+  const projects = path.join(home, "projects", "workit");
+  mkdirSync(projects, { recursive: true });
+  const env = { HOME: home, PATH: `${bin}:/usr/bin:/bin` };
+  for (const text of [
+    `#!/bin/sh\n# docs: ${path.join(fnm.bin, "workit")}\necho my own tool\n`,
+    `#!/bin/sh\ncd ${projects} && make "$@"\n`,
+    `#!/bin/sh\nexec node ${path.join(home, "gone", "bin", "workit")} "$@"\n`,
+  ]) {
+    write(script, text, 0o755);
+    const found = listInstalls(env, "linux").find((install) => install.path === script);
+    expect(found?.kind, text).toBe("wrapper");
+    expect(found?.runs, text).toBeNull();
+    expect(
+      migrationCopies(env, "linux").map((copy) => copy.path),
+      text,
+    ).not.toContain(script);
+  }
+  // The exec line still decides when a comment names another path.
+  write(
+    script,
+    `#!/bin/sh\n# was: /usr/local/bin/workit\nexec "${path.join(fnm.bin, "node")}" "${path.join(fnm.bin, "workit")}" "$@"\n`,
+    0o755,
+  );
+  const copy = migrationCopies(env, "linux").find((one) => one.path === script);
+  expect(copy?.runs).toBe(path.join(fnm.bin, "workit"));
+  expect(copy?.version).toBe("8.52.3");
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given ~/.local/bin/workit is a wrapper that execs the owned launcher, Then it counts as owned, is never replaced, and each upgrade plans nothing for the CLI",
+  async () => {
+    const home = tempHome();
+    const bin = path.join(home, ".local", "bin");
+    const wrapper = path.join(bin, "workit");
+    const launcher = path.join(home, ".local", "share", "workit", "bin", "workit");
+    const env = { PATH: `${bin}:/usr/bin:/bin`, WORKIT_NODE: NODE };
+    // An owned 9.0.0, then the person's own wrapper in place of the launcher link.
+    const root = path.join(home, ".local", "share", "workit");
+    stagePackage(path.join(root, "versions", "9.0.0"), "9.0.0");
+    symlinkSync(path.join("versions", "9.0.0"), path.join(root, "current"));
+    writeLaunchers({ env: { ...env, HOME: home }, installNode: NODE });
+    rmSync(wrapper);
+    const text = `#!/bin/sh\nexec "${launcher}" "$@"\n`;
+    write(wrapper, text, 0o755);
+    const run = async () => {
+      let out = "";
+      const code = await runUpgradeCommand(["--hosts=none", "--cli", "--yes", "--json"], {
+        home,
+        env,
+        run: (command: string, args: string[]) =>
+          command === "npm" && args[0] === "view"
+            ? { status: 0, stdout: "9.0.0\n" }
+            : { status: 0, stdout: "" },
+        runAsync: async (command: string, args: string[]) =>
+          command === "npm" && args[0] === "view"
+            ? { status: 0, stdout: "9.0.0\n" }
+            : fakeNpm()(command, args),
+        installNode: () => installNode,
+        removeCopies: async () => true,
+        doctor: () => ({ checks: [] }),
+        processes: () => [],
+        out: { write: (chunk: string) => void (out += chunk) },
+      });
+      return {
+        code,
+        cli: JSON.parse(out).hosts.find((row: { host: string }) => row.host === "cli"),
+      };
+    };
+    const found = listInstalls({ ...env, HOME: home }, "linux").find((one) => one.path === wrapper);
+    expect(found?.kind).toBe("owned");
+    expect(migrationCopies({ ...env, HOME: home }, "linux")).toEqual([]);
+    for (const _ of [1, 2]) {
+      const again = await run();
+      expect(again.code).toBe(0);
+      expect(again.cli.status).toBe("current");
+      expect(again.cli.reason).toBe("already current (9.0.0)");
+      expect(readFileSync(wrapper, "utf8")).toBe(text);
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given PATH holds `.`, an empty entry and a relative dir, When the upgrade verifies PATH's workit, Then it never runs a workit from the current directory",
+  () => {
+    const home = tempHome();
+    const evil = path.join(home, "evil");
+    const marker = path.join(home, "EVIL-RAN");
+    write(path.join(evil, "workit"), `#!/bin/sh\ntouch ${marker}\necho 9.0.0\n`, 0o755);
+    write(path.join(evil, "rel", "workit"), `#!/bin/sh\ntouch ${marker}\necho 9.0.0\n`, 0o755);
+    const cwd = process.cwd();
+    process.chdir(evil);
+    try {
+      const seen = pathResolvedWorkit({ HOME: home, PATH: ".::rel:/usr/bin:/bin" }, "linux");
+      expect(seen.path).toBeNull();
+      expect(seen.error).toBe("no workit on PATH");
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(existsSync(marker)).toBe(false);
+  },
+);
+
+test("A host plugin launcher is only the plugin's bin/workit (workit.cmd on Windows), never another file in its bin", () => {
+  const plugin = path.join(tempHome(), "plugin");
+  write(
+    path.join(plugin, "package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-claude-code", version: "8.0.0" }),
+  );
+  expect(hostLauncherOf(path.join(plugin, "bin", "workit"), "linux")).toEqual({
+    name: "@brainervirus/workit-claude-code",
+    version: "8.0.0",
+  });
+  expect(hostLauncherOf(path.join(plugin, "bin", "workit.cmd"), "win32")?.version).toBe("8.0.0");
+  expect(hostLauncherOf(path.join(plugin, "bin", "workit.cmd"), "linux")).toBeNull();
+  expect(hostLauncherOf(path.join(plugin, "bin", "node-resolve.mjs"), "linux")).toBeNull();
+});

@@ -61,7 +61,10 @@ listed or removed.
 The first upgrade under this layout looks for other copies: `@brainervirus/workit-cli` in
 each fnm, nvm, mise or asdf Node's npm global prefix, a volta package, and a hand-written
 wrapper on PATH that runs one (it names a workit-cli package, or execs another `workit` by
-path, such as `exec <fnm node> <fnm prefix>/bin/workit "$@"`).
+path, such as `exec <fnm node> <fnm prefix>/bin/workit "$@"`). Only the script its `exec`
+line (or last command) runs counts, and only when that file exists and resolves to a workit-cli
+package or the owned launcher; a path in a comment, a `cd` into a `workit` directory or a missing
+target leaves the script a foreign file, reported and never moved.
 
 - At a terminal it asks `[y/N]`. On `y`, each copy is copied under
   `~/.local/state/workit/upgrades/<time>/cli-copies/` (with a `manifest.json`) and then

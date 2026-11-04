@@ -587,7 +587,7 @@ const pathFix = (
     return `mkdir -p ${shellQuote(save)} && mv ${shellQuote(linked)} ${shellQuote(save)}/ && ln -s ${shellQuote(launcher)} ${shellQuote(linked)}`;
   }
   if (seen === linked) return CLI_FIX;
-  return `export PATH="${path.dirname(linked)}:$PATH"`;
+  return `export PATH=${shellQuote(path.dirname(linked))}:"$PATH"`;
 };
 
 /**
