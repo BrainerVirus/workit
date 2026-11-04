@@ -311,6 +311,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   models: [[], ["bogus"], ["show", "--role", "judge"]],
   lock: [["bogus"], ["heavy", "add"], ["wait", "--timeout", "x"]],
   pr: [["status"]],
+  issue: [["view"], ["close", "1"]],
   ci: [["wait"]],
   git: [["push"]],
   release: [["finish"], ["start"]],
