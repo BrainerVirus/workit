@@ -25,27 +25,34 @@ These rules are guarded by tests; the failure names what to fix.
 
 ## YouTrack client
 
-Agents reach YouTrack only through `workit youtrack …`, never the token file or
-raw API calls. That is a CLI verb, so every host gets it through its shell tool
-with no adapter code. All YouTrack I/O goes through one seam,
-`YouTrackBackend` in `packages/workit-core/src/core/youtrack-backend.ts`
+Agents reach YouTrack only through `workit youtrack …`, never raw API calls.
+That is a CLI verb, so every host gets it through its shell tool with no
+adapter code. Workit never reads, writes, prompts for or stores a YouTrack
+token: ytrack keeps it in the OS keyring. All YouTrack I/O goes through one
+seam, `YouTrackBackend` in `packages/workit-core/src/core/youtrack-backend.ts`
 (`showIssue`, `createIssue`, `addComment`, `addWorkItem`, and `texts` for the
-marker read-back):
+marker read-back), and its only implementation, `ytrackBackend`, runs
+`ytrack … --json` (`core/youtrack-ytrack.ts`). It sets `YTRACK_HOST` from
+`youtrack.json`'s `baseUrl` and passes no token.
 
-- `ytrackBackend` runs `ytrack … --json` (`core/youtrack-ytrack.ts`) and is
-  chosen whenever ytrack is on `PATH`; Workit then never reads its token file.
-  It sets `YTRACK_HOST` from `youtrack.json`'s `baseUrl` and passes no token.
-  Exit 4 is `unavailable` with `ytrack auth login`, never a fallback; exit 2
-  and 4 on a write are `not_applied`, exit 1 is `unknown` (read back).
-- `builtinBackend` is the token-file fallback when ytrack is missing. Removing
-  it is deleting that function and its branch in `youTrackBackend()`.
+- ytrack missing: `unavailable`, unblock `install ytrack (…youtrack-cli:
+  install.sh, or install.ps1 on Windows), then ytrack auth login --host <host>`
+  (`ytrackMissingUnblock`).
+- Exit 4 (not logged in): `unavailable`, unblock `ytrack auth login --host
+  <host>` (`ytrackLogin`; the flag is `--host`). Exit 2 and 4 on a write, and
+  a missing ytrack, are `not_applied`; exit 1 is `unknown` (read back).
 
 `youtrack-tools.ts` `defaultOperations` (PR backlinks, MCP tools) and
-`fetchYouTrackIssueBody` (context reads) route through ytrack the same way.
-`ytrackStatus()` gives the doctor ytrack's version and auth state. Writes need
-`WORKIT_YT_WRITE=1` (`youTrackWriteGate`). `findYtrack` ignores `PATH` under
-`NODE_ENV=test`, so a test never spawns a developer's real ytrack: tests use a
-stub `ytrack` on a `PATH` in an env they build, and a fake `fetch`.
+`fetchYouTrackIssueBody` (context reads) route through the same backend.
+`ytrackStatus()` and `ytrackReadiness()` give the doctor, `workit setup` and
+the OpenCode init action ytrack's version and per-host login. Setup and init
+write `youtrack.json` without a token; a leftover `youtrack.token` is only
+checked for existence (doctor warns it can be deleted, setup leaves it
+untouched); `test/workit-core/youtrack-no-token.test.ts` scans shipped source
+so no token read comes back. Writes need `WORKIT_YT_WRITE=1`
+(`youTrackWriteGate`). `findYtrack` ignores `PATH` when `WORKIT_NO_YTRACK=1`,
+which the test preload sets, so a test never spawns a developer's real ytrack:
+tests use a stub `ytrack` on a `PATH` in an env they build.
 
 ## Raw git/forge steering and session ids
 

@@ -1,8 +1,9 @@
 # YouTrack issues
 
 Workit reads and writes YouTrack through its own verbs, and those verbs run
-[`ytrack`](https://github.com/BrainerVirus/youtrack-cli) when it is installed.
-An agent never reads a token file or calls the YouTrack API by hand.
+[`ytrack`](https://github.com/BrainerVirus/youtrack-cli). ytrack is required:
+Workit never reads, writes, prompts for or stores a YouTrack token, and an
+agent never calls the YouTrack API by hand.
 
 ```sh
 workit youtrack show ABC-123 --json
@@ -12,19 +13,32 @@ WORKIT_YT_WRITE=1 workit youtrack time ABC-123 --minutes 45 --text "Code review"
 WORKIT_YT_WRITE=1 workit youtrack meeting ABC-123 --minutes 30 --text "Planning"
 ```
 
-## Set up ytrack (the secure path)
+## Set up ytrack
 
-Install ytrack and log in once: `ytrack auth login`. ytrack keeps the token in
-the OS keyring. When ytrack is on `PATH`, Workit uses it for every YouTrack
-call and never reads its own `youtrack.token`. When `youtrack.json` sets
-`baseUrl`, Workit passes it to ytrack as `YTRACK_HOST`, so both talk to the
-same instance. Workit never passes a token to ytrack.
+1. Install ytrack from
+   [BrainerVirus/youtrack-cli](https://github.com/BrainerVirus/youtrack-cli):
+   `install.sh` on Linux and macOS, `install.ps1` on Windows.
+2. Log in once to your instance: `ytrack auth login --host <host>`, for
+   example `ytrack auth login --host acme.youtrack.cloud`. ytrack keeps the
+   token in the OS keyring.
 
-`workit doctor` shows a `youtrack` row whenever `youtrack.json` exists or a
-workspace links YouTrack issues. It runs `ytrack auth status` and passes when
-ytrack is logged in to every configured host. It warns when ytrack is logged
-out of a host (the fix is `ytrack auth login --host <host>`) or when
-ytrack is missing and Workit falls back to the deprecated token file.
+`youtrack.json` keeps the rest of the setup (`baseUrl`, `meetingIssue`,
+`timezone`, and so on). Workit passes `baseUrl` to ytrack as `YTRACK_HOST`, so
+both talk to the same instance, and never passes a token. `workit setup` and
+the OpenCode init action write `youtrack.json` without a token and check ytrack
+instead: when it is missing they name the install, and when it is not logged in
+to the configured host they name `ytrack auth login --host <host>`.
+
+An older Workit wrote `youtrack.token` next to `youtrack.json`. Workit no
+longer reads it; delete it once ytrack is logged in.
+
+`workit doctor` shows a `youtrack` row whenever `youtrack.json` exists, a
+workspace links YouTrack issues, or a legacy `youtrack.token` is left. It runs
+`ytrack auth status` and passes when ytrack is logged in to every configured
+host. It warns when ytrack is missing (the fix names the install), when ytrack
+is logged out of a host (the fix is `ytrack auth login --host <host>`), and
+when a legacy `youtrack.token` still exists (the fix is to delete it; doctor
+only checks that the file exists).
 
 ## Reading an issue
 
@@ -58,15 +72,16 @@ Every write (`create`, `note`, `time`, `meeting`) is refused unless
 `WORKIT_YT_WRITE=1` is set. A comment or work item carries a marker and is read
 back before writing, so a retry never posts twice.
 
-## Which client runs
+## How the verbs run ytrack
 
-1. `ytrack` on `PATH`: Workit runs `ytrack issue view|create|comment` and
-   `ytrack work-item add|list` with `--json`. Exit 0 is success. Exit 4 (not
-   logged in) stops with `ytrack auth login` as the fix; Workit does not fall
-   back to the token file. Exit 2 (cancelled) wrote nothing. Exit 1 is a
-   failure; for a write Workit reads the issue back to learn whether it landed.
-2. `ytrack` missing: the built-in client reads `youtrack.json` and its token
-   file. This fallback will be removed in a later release; install ytrack.
-   The token goes only into the request header and is redacted from errors.
-3. Neither works: the command exits 5 (`unavailable`) and says how to set up
-   ytrack.
+Workit runs `ytrack issue view|create|comment` and `ytrack work-item add|list`
+with `--json`.
+
+- Exit 0 is success.
+- ytrack missing: the command exits 5 (`unavailable`) and the unblock names
+  the install and `ytrack auth login --host <host>`. Nothing is sent.
+- Exit 4 (not logged in): the command exits 5 (`unavailable`) with
+  `ytrack auth login --host <host>` as the fix. Nothing is sent.
+- Exit 2 (cancelled) wrote nothing.
+- Exit 1 is a failure; for a write Workit reads the issue back to learn
+  whether it landed.
