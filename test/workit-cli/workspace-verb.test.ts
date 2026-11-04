@@ -462,12 +462,19 @@ const headless: GrantDeps = {
   ask: async () => {
     throw new Error("a headless call must never prompt");
   },
+  confirm: async () => {
+    throw new Error("a headless call must never prompt");
+  },
 };
 const terminal = (answer: string, asked: string[] = []): GrantDeps => ({
   interactive: () => true,
   ask: async (question) => {
     asked.push(question);
     return answer;
+  },
+  confirm: async (question) => {
+    asked.push(question);
+    return answer === "y";
   },
 });
 const GH = { provider: "github", account: "me" };
@@ -483,7 +490,7 @@ test("rm that would raise merge for a path is refused from an agent shell, even 
   seed([WORK(), KIT()]);
   const before = readFileSync(file(), "utf8");
   const asked: string[] = [];
-  const result = await run(["rm", "kit"], root, AGENT_ENV, terminal("kit", asked));
+  const result = await run(["rm", "kit"], root, AGENT_ENV, terminal("y", asked));
   expect(result.code).not.toBe(0);
   const envelope = result.json();
   expect(envelope.code).toBe("blocked");
@@ -500,13 +507,13 @@ test("rm that would raise merge for a path is refused from an agent shell, even 
   expect(readFileSync(file(), "utf8")).toBe(before);
 });
 
-test("rm that would raise needs the workspace name typed at the user's own terminal", async () => {
+test("rm that would raise needs a y at the user's own terminal", async () => {
   seed([WORK(), KIT()]);
   const before = readFileSync(file(), "utf8");
-  expect((await run(["rm", "kit"], root, {}, terminal("nope"))).json().code).toBe("blocked");
+  expect((await run(["rm", "kit"], root, {}, terminal("n"))).json().code).toBe("blocked");
   expect(readFileSync(file(), "utf8")).toBe(before);
   const asked: string[] = [];
-  const result = await run(["rm", "kit"], root, {}, terminal("kit\n", asked));
+  const result = await run(["rm", "kit"], root, {}, terminal("y", asked));
   expect(result.code).toBe(0);
   expect(asked[0]).toContain("merge");
   expect(readFileSync(backup(), "utf8")).toBe(before);
@@ -556,7 +563,7 @@ test("rm of an entry stricter than the defaults is a raise: the defaults take it
 
 test("rm never removes the last entry, and refuses an unknown name", async () => {
   const before = readFileSync(file(), "utf8");
-  const last = await run(["rm", "work"], root, {}, terminal("work"));
+  const last = await run(["rm", "work"], root, {}, terminal("y"));
   expect(last.json().code).toBe("blocked");
   expect(last.json().error).toContain("last workspace");
   expect(readFileSync(file(), "utf8")).toBe(before);
@@ -768,7 +775,7 @@ test("set remotes is refused from an agent shell and headless, both adding and r
   const before = readFileSync(file(), "utf8");
   for (const spec of ["remotes=https://github.com/acme/app", "remotes=null"]) {
     const asked: string[] = [];
-    const agent = await run(["set", "work", spec], root, AGENT_ENV, terminal("work", asked));
+    const agent = await run(["set", "work", spec], root, AGENT_ENV, terminal("y", asked));
     expect(agent.json().code, spec).toBe("blocked");
     expect(agent.json().error, spec).toContain("grant_raise_refused");
     expect(agent.json().unblock, spec).toContain("workit workspace set work");
@@ -779,12 +786,12 @@ test("set remotes is refused from an agent shell and headless, both adding and r
   }
 });
 
-test("set remotes at the user's terminal needs the name typed, validates patterns, and writes the list", async () => {
+test("set remotes at the user's terminal needs a y, validates patterns, and writes the list", async () => {
   seed([WORK()]);
   const before = readFileSync(file(), "utf8");
-  const bad = await run(["set", "work", "remotes=ext::sh"], root, {}, terminal("work"));
+  const bad = await run(["set", "work", "remotes=ext::sh"], root, {}, terminal("y"));
   expect(bad.json().code).toBe("invalid_input");
-  expect((await run(["set", "work", "remotes=a/b"], root, {}, terminal("no"))).json().code).toBe(
+  expect((await run(["set", "work", "remotes=a/b"], root, {}, terminal("n"))).json().code).toBe(
     "blocked",
   );
   expect(readFileSync(file(), "utf8")).toBe(before);
@@ -792,11 +799,11 @@ test("set remotes at the user's terminal needs the name typed, validates pattern
     ["set", "work", "remotes=git@github.com:acme/*,https://gitlab.com/x/y"],
     root,
     {},
-    terminal("work"),
+    terminal("y"),
   );
   expect(done.code).toBe(0);
   expect(byName("work").remotes).toEqual(["git@github.com:acme/*", "https://gitlab.com/x/y"]);
-  expect((await run(["set", "work", "remotes=null"], root, {}, terminal("work"))).code).toBe(0);
+  expect((await run(["set", "work", "remotes=null"], root, {}, terminal("y"))).code).toBe(0);
   expect(byName("work").remotes).toBeUndefined();
 });
 

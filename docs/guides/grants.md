@@ -156,7 +156,7 @@ entry that caps it.
 `remotes` decides where an entry's grants reach, so only you change it, at
 your own terminal: `workit workspace set work remotes=git@github.com:acme/*`
 (a JSON array or a comma-separated list; `remotes=null` removes it) asks you
-to type the workspace name and is refused from an agent or headless shell,
+a y/N and is refused from an agent or headless shell,
 adding or removing. `workit workspace add` at your terminal offers the
 folder's `origin` as the default, and `workit workspace rm` of an entry with
 `remotes` counts as a raise.
@@ -235,11 +235,13 @@ Raising a grant (including any step up `defaultEndpoint`'s
 `commit` < `pr` < `green` < `merged`, and
 any step down `verification`'s `independent` > `proportional` > `self`,
 including unsetting it) needs you
-at an interactive terminal, typing the workspace name to confirm. Headless and
+at an interactive terminal, answering a y/N (one key, Enter declines). Headless and
 agent shells (no TTY, or an agent marker such as `CLAUDECODE`, `OPENCODE`,
 `CURSOR_AGENT`, `PI_CODING_AGENT`, `AI_AGENT`, `AGENT` or any `CODEX_*`) are
 refused with `blocked` and the command to run yourself. Lowering is always
-allowed. Each write keeps `workspaces.json.bak`.
+allowed. Each write keeps `workspaces.json.bak`. `grant set` prints each key
+it changed as `old -> new` (raise green, lower yellow, unchanged dim; plain
+under `NO_COLOR` and in pipes).
 
 That check keeps a cooperating agent out; it is a deterrent, not a boundary, because an
 agent could hide its markers and fake a terminal. The host's prompt is what stops a
@@ -290,8 +292,11 @@ wins; equally specific matches need an explicit workspace name.
 why; `workit workspace add|set` adds or edits an entry without the wizard and
 never raises a grant. `workit workspace rm` removes one; when another entry or
 the defaults could give its folders more, it is a raise like `grant set`: refused
-in an agent or headless shell, confirmed by typing the workspace name at your own
-terminal ([config files](configuration.md#config-files)). The
+in an agent or headless shell, confirmed with a y/N at your own
+terminal ([config files](configuration.md#config-files)). `workspace rm a b c`
+asks once and lists only the entries whose globs can match the removed folders.
+`workit workspace set --global models.roles.verifier.claude_code=sonnet` edits
+the file's top-level `models` key (grant keys are refused, as in `workspace set`). The
 `WORKFLOW_TOOLKIT_CONFIG`, `WORKFLOW_TOOLKIT_CONFIG_DIR` and `XDG_CONFIG_HOME`
 overrides never redirect grants: while one is set, grants resolve to the
 defaults.

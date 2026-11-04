@@ -44,6 +44,12 @@ export type Style = {
   dim: Paint;
   bold: Paint;
   accent: Paint;
+  /** A grant or setting raised or added: green. */
+  raise: Paint;
+  /** A grant or setting lowered or changed: yellow. */
+  lower: Paint;
+  /** Something removed: red. */
+  remove: Paint;
   diffAdd: Paint;
   diffDel: Paint;
   diffHunk: Paint;
@@ -70,6 +76,9 @@ export function createStyle(options: StyleOptions = {}): Style {
     dim: pick("2"),
     bold: pick("1"),
     accent: pick("36"),
+    raise: pick("32"),
+    lower: pick("33"),
+    remove: pick("31"),
     diffAdd: pick("32"),
     diffDel: pick("31"),
     diffHunk: pick("36"),
