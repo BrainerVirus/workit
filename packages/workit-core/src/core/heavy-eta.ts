@@ -1,24 +1,61 @@
 // Wait estimates for the heavy-check lease (#326): how long until a waiter
 // gets a slot, from each check's last measured duration in the ledger of the
 // repo it runs in. Only the CLI imports this module; hooks never do.
-import { readLedger } from "../ledger";
-import { formatWait, type LeaseHolder } from "./resources";
+import fs from "node:fs";
+import { ledgerPath } from "../ledger";
+import { DEFAULT_MAX_HOLD_MS, formatWait, type LeaseHolder } from "./resources";
 
 /** The last measured run of a holder's or waiter's check, in ms, or null when there is none. */
 export type DurationOf = (holder: Pick<LeaseHolder, "check" | "cwd">) => number | null;
 
 /**
- * Each check's last measured duration per label (the check's name, or its
- * argv for an ad-hoc run), from the ledger at `cwd`. A passed run wins over
- * a later failed one, which may have stopped early; a timed-out run never counts.
+ * How much of the ledger's end measuredDurations reads: the last runs are what
+ * an estimate wants, and a long-lived ledger must not be read whole on every
+ * waiter's status line.
  */
-export function measuredDurations(cwd: string): Map<string, number> {
+export const ETA_TAIL_BYTES = 512 * 1024;
+
+/** The complete lines in the last `bytes` of `file` (a cut first line is dropped). */
+function tailRows(file: string, bytes: number): string[] {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, "r");
+  } catch {
+    return [];
+  }
+  try {
+    const size = fs.fstatSync(fd).size;
+    const span = Math.min(size, Math.max(1, bytes));
+    const buffer = Buffer.alloc(span);
+    fs.readSync(fd, buffer, 0, span, size - span);
+    const lines = buffer.toString("utf8").split("\n");
+    if (span < size) lines.shift();
+    return lines;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Each check's last measured duration per label (the check's name, or its
+ * argv for an ad-hoc run), from the last `tailBytes` of the ledger at `cwd`.
+ * A passed run wins over a later failed one, which may have stopped early; a
+ * timed-out run never counts.
+ */
+export function measuredDurations(cwd: string, tailBytes = ETA_TAIL_BYTES): Map<string, number> {
   const passed = new Map<string, number>();
   const any = new Map<string, number>();
-  const read = readLedger(cwd);
-  if (!read.ok) return passed;
-  for (const row of read.value.rows) {
-    if (row.type !== "check" || row.timedOut === true) continue;
+  const file = ledgerPath(cwd);
+  if (!file.ok) return passed;
+  for (const line of tailRows(file.value, tailBytes)) {
+    if (!line.trim()) continue;
+    let row: Record<string, unknown>;
+    try {
+      row = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!row || typeof row !== "object" || row.type !== "check" || row.timedOut === true) continue;
     const ms = row.durationMs;
     if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) continue;
     const label =
@@ -33,6 +70,27 @@ export function measuredDurations(cwd: string): Map<string, number> {
   }
   for (const [label, ms] of any) if (!passed.has(label)) passed.set(label, ms);
   return passed;
+}
+
+/** A holder may run this many times its last measured run before it looks stuck. */
+export const HOLD_MARGIN = 1.5;
+
+/** The most a measured run can raise the hold limit to. */
+export const MAX_DERIVED_HOLD_MS = 6 * 60 * 60_000;
+
+/**
+ * How long a check may hold its slot before it is shown `stuck?`: HOLD_MARGIN
+ * times its last measured run, never below the configured limit (default
+ * DEFAULT_MAX_HOLD_MS), which alone applies when it was never measured. The
+ * lease carries it, so auto-reap's factor applies to it too.
+ */
+export function holdLimit(measuredMs: number | null, configuredMs = DEFAULT_MAX_HOLD_MS): number {
+  if (measuredMs === null || !Number.isFinite(measuredMs) || measuredMs <= 0) return configuredMs;
+  // A corrupt or freak ledger row must not make a hung check unreapable.
+  return Math.max(
+    configuredMs,
+    Math.min(MAX_DERIVED_HOLD_MS, Math.round(measuredMs * HOLD_MARGIN)),
+  );
 }
 
 /** A DurationOf that reads each repo's ledger once. */

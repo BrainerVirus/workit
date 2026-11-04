@@ -17,6 +17,7 @@ import {
   acquireLease,
   firstNotice,
   heldLease,
+  processStart,
   resolveResourceSettings,
   runScoped,
   scopePrefix,
@@ -591,3 +592,52 @@ test.skipIf(process.platform === "win32")(
     expect(seen).toBe("Failed to parse X=1\nsecond\n");
   },
 );
+
+test("G macOS without /proc, T processStart reads `ps -o lstart=`, so a reused pid is told apart; G Linux, T /proc field 22", () => {
+  const procRead: number[] = [];
+  const psRead: number[] = [];
+  const deps = {
+    readStat: (pid: number) => {
+      procRead.push(pid);
+      return `${pid} (a comm) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 777 20`;
+    },
+    psStart: (pid: number) => {
+      psRead.push(pid);
+      return pid === 42 ? "Wed Nov  4 10:00:00 2026" : null;
+    },
+  };
+  expect(processStart(42, { ...deps, platform: "darwin" })).toBe("Wed Nov  4 10:00:00 2026");
+  expect(processStart(43, { ...deps, platform: "darwin" })).toBeNull();
+  expect(procRead).toEqual([]);
+  expect(processStart(42, { ...deps, platform: "linux" })).toBe("777");
+  expect(processStart(42, { ...deps, platform: "win32" })).toBeNull();
+  expect(psRead).toEqual([42, 43]);
+  // A lease whose pid now runs another process (a later start) is stale.
+  const lease: LeaseRecord = {
+    id: "l",
+    pid: 42,
+    processStart: "Wed Nov  4 09:00:00 2026",
+    bootId: null,
+    check: "test",
+    cwd: "/repo",
+    session: null,
+    startedAt: new Date().toISOString(),
+    scope: null,
+  };
+  const start = (pid: number) => processStart(pid, { ...deps, platform: "darwin" });
+  expect(staleReason(lease, { start, alive: () => true, boot: null, bootTime: null })).toBe(
+    "pid 42 now belongs to another process",
+  );
+});
+
+test("G a check with its own hold limit, T its lease records it; without one, the configured maxHoldMs", async () => {
+  const dir = temp();
+  const own = await acquireLease({ ...base(dir), maxHoldMs: 900_000, holdMs: 2_250_000 });
+  if (!own.ok) throw new Error(own.reason);
+  expect(JSON.parse(readFileSync(own.lease.file, "utf8")).maxHoldMs).toBe(2_250_000);
+  own.lease.release();
+  const plain = await acquireLease({ ...base(dir), maxHoldMs: 900_000 });
+  if (!plain.ok) throw new Error(plain.reason);
+  expect(JSON.parse(readFileSync(plain.lease.file, "utf8")).maxHoldMs).toBe(900_000);
+  plain.lease.release();
+});

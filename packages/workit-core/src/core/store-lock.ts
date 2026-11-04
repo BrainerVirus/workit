@@ -98,26 +98,46 @@ export const parseProcStatStart = (stat: string): string | null => {
   );
 };
 
-export const processStartOf = (pid: number): string | null => {
-  if (process.platform === "linux") {
-    try {
-      return parseProcStatStart(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
-    } catch {
-      return null;
-    }
+/** What processStartOf reads; tests inject a platform and readers. */
+export type ProcessStartDeps = {
+  platform?: NodeJS.Platform;
+  /** The text of /proc/<pid>/stat, or null. */
+  readStat?: (pid: number) => string | null;
+  /** `ps -o lstart= -p <pid>` output, or null. */
+  psStart?: (pid: number) => string | null;
+};
+
+const readProcStat = (pid: number): string | null => {
+  try {
+    return fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch {
+    return null;
   }
-  if (process.platform === "darwin" || process.platform === "freebsd") {
-    try {
-      const run = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-        encoding: "utf8",
-        timeout: 1_000,
-      });
-      const value = run.status === 0 ? run.stdout.trim() : "";
-      return value || null;
-    } catch {
-      return null;
-    }
+};
+
+const psStart = (pid: number): string | null => {
+  try {
+    // C locale: lstart is compared as a string across processes, and a holder
+    // and a waiter in different locales would otherwise disagree on a live pid.
+    const run = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 1_000,
+      env: { ...process.env, LC_ALL: "C" },
+    });
+    return run.status === 0 ? run.stdout.trim() || null : null;
+  } catch {
+    return null;
   }
+};
+
+/** Start time of `pid`, so a recycled pid is told apart: /proc on Linux, `ps -o lstart=` on macOS and FreeBSD. */
+export const processStartOf = (pid: number, deps: ProcessStartDeps = {}): string | null => {
+  const platform = deps.platform ?? process.platform;
+  if (platform === "linux") {
+    const stat = (deps.readStat ?? readProcStat)(pid);
+    return stat ? parseProcStatStart(stat) : null;
+  }
+  if (platform === "darwin" || platform === "freebsd") return (deps.psStart ?? psStart)(pid);
   return null;
 };
 

@@ -4,7 +4,7 @@
 // checks never wait.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -150,4 +150,41 @@ test("Given no host marker, When a heavy check waits, Then the configured wait a
   const result = await heavy(root, env);
   expect(result.code).toBe(4);
   expect(Date.now() - started).toBeGreaterThanOrEqual(1_800);
+}, 20_000);
+
+test("Given a slot that frees with less than the run floor left of --timeout, When the heavy check gets it, Then it exits 4 as a wait timeout and never starts the command", async () => {
+  // --timeout 8 s: the floor is min(10 s, 2 s) = 2 s; the slot frees about 1 s before the end.
+  const { root, env } = setup(30);
+  const marker = path.join(root, "ran");
+  const slot = path.join(env.WORKIT_STATE_DIR as string, "leases", "slot-0.json");
+  const free = setTimeout(() => rmSync(slot, { force: true }), 6_300);
+  let stdout = "";
+  let stderr = "";
+  const code = await main(
+    [
+      "check",
+      "--heavy",
+      "--timeout",
+      "8",
+      "--json",
+      "--",
+      BUN,
+      "-e",
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x")`,
+    ],
+    {
+      cwd: root,
+      env,
+      stdout: (text) => void (stdout += text),
+      stderr: (text) => void (stderr += text),
+    },
+  );
+  clearTimeout(free);
+  expect(code, stderr).toBe(4);
+  const envelope = JSON.parse(stdout);
+  expect(envelope).toMatchObject({ ok: false, code: "busy", data: { lease: { starved: true } } });
+  expect(envelope.error).toContain("the check did not run");
+  expect(existsSync(marker)).toBe(false);
+  // The slot it took is released again.
+  expect(existsSync(slot)).toBe(false);
 }, 20_000);

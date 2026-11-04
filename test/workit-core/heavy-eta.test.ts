@@ -1,17 +1,32 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  ETA_TAIL_BYTES,
   describeEstimate,
   estimateWait,
+  holdLimit,
+  MAX_DERIVED_HOLD_MS,
   ledgerDurations,
   measuredDurations,
   remainingNote,
 } from "@/packages/workit-core/src/core/heavy-eta";
-import type { LeaseHolder } from "@/packages/workit-core/src/core/resources";
-import { actorFromEnv, appendObserved } from "@/packages/workit-core/src/ledger";
+import {
+  DEFAULT_MAX_HOLD_MS,
+  autoReapReason,
+  stuckReason,
+  type LeaseHolder,
+  type LeaseRecord,
+} from "@/packages/workit-core/src/core/resources";
+import { actorFromEnv, appendObserved, ledgerPath } from "@/packages/workit-core/src/ledger";
+
+const ledgerPathOf = (root: string): string => {
+  const file = ledgerPath(root);
+  if (!file.ok) throw new Error(file.error);
+  return file.value;
+};
 
 // #326: wait estimates for the heavy-check lease from measured durations.
 
@@ -105,4 +120,66 @@ test("G ledger check rows, T the last passed run of each check counts, a later f
   expect(lookup({ check: "nope", cwd: root })).toBeNull();
   expect(reads).toBe(1);
   expect(measuredDurations(path.join(root, "missing")).size).toBe(0);
+});
+
+test("G a ledger longer than the read window, T measuredDurations reads only its tail: an early row is not read", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-eta-tail-"));
+  dirs.push(root);
+  spawnSync("git", ["init", "-q", "-b", "feature/eta"], { cwd: root });
+  const actor = actorFromEnv({});
+  const row = (fields: Record<string, unknown>) =>
+    expect(
+      appendObserved(root, { type: "check", actor, timedOut: false, result: "passed", ...fields })
+        .ok,
+    ).toBe(true);
+  row({ name: "early", durationMs: 100 });
+  for (let i = 0; i < 40; i += 1) row({ name: "test", durationMs: 1_000 + i });
+  const tail = 4 * 1024;
+  expect(statSync(ledgerPathOf(root)).size).toBeGreaterThan(tail);
+  const bounded = measuredDurations(root, tail);
+  expect(bounded.get("test")).toBe(1_039);
+  expect(bounded.has("early")).toBe(false);
+  // The default window is bounded too, and holds this whole small ledger.
+  expect(ETA_TAIL_BYTES).toBeLessThanOrEqual(1024 * 1024);
+  expect(measuredDurations(root).get("early")).toBe(100);
+});
+
+test("G a check measured at 25m, W it has held a slot 20m, T it is not stuck; G no history, T the 15m limit applies", () => {
+  const lease = (holdMs: number, heldMs: number): LeaseRecord => ({
+    id: "l",
+    pid: 1,
+    processStart: null,
+    bootId: null,
+    check: "test",
+    cwd: "/repo",
+    session: null,
+    startedAt: new Date(NOW - heldMs).toISOString(),
+    heartbeatAt: new Date(NOW).toISOString(),
+    scope: null,
+    maxHoldMs: holdMs,
+  });
+  const measured = holdLimit(25 * MIN);
+  expect(measured).toBe(37.5 * MIN);
+  expect(stuckReason(lease(measured, 20 * MIN), DEFAULT_MAX_HOLD_MS, NOW)).toBeNull();
+  expect(stuckReason(lease(measured, 40 * MIN), DEFAULT_MAX_HOLD_MS, NOW)).toContain(
+    "37m 30s limit",
+  );
+  const unmeasured = holdLimit(null);
+  expect(unmeasured).toBe(15 * MIN);
+  expect(stuckReason(lease(unmeasured, 20 * MIN), DEFAULT_MAX_HOLD_MS, NOW)).toContain(
+    "past its 15m limit",
+  );
+  // A short measured run never lowers the configured limit; a configured one is the floor.
+  expect(holdLimit(2 * MIN)).toBe(15 * MIN);
+  expect(holdLimit(25 * MIN, 45 * MIN)).toBe(45 * MIN);
+  // Auto-reap keeps its 3x factor on the derived limit: silent 100m, held 100m < 112.5m.
+  const silent = { ...lease(measured, 100 * MIN), heartbeatAt: null };
+  expect(autoReapReason(silent, DEFAULT_MAX_HOLD_MS, NOW)).toBeNull();
+  const longer = { ...lease(measured, 115 * MIN), heartbeatAt: null };
+  expect(autoReapReason(longer, DEFAULT_MAX_HOLD_MS, NOW)).toContain("3x its 37m 30s limit");
+});
+
+test("Given a corrupt ledger duration, When the hold limit is derived, Then it is capped so a hung check stays reapable", () => {
+  expect(holdLimit(1e12)).toBe(MAX_DERIVED_HOLD_MS);
+  expect(holdLimit(1e12, 8 * 60 * 60_000)).toBe(8 * 60 * 60_000);
 });

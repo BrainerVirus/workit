@@ -37,7 +37,11 @@
 //   `--timeout` bounds the whole check, the lease wait included (#645): a
 //   queued check never outlives the timeout its caller set.
 // - Exit code: the command's own (4 on --timeout, on --no-wait with the lease
-//   busy, or a lease wait that timed out or was cancelled, 2 on usage). When the
+//   busy, or a lease wait that timed out, was cancelled or left less than
+//   runFloorMs of --timeout to run, 2 on usage). Both timeouts exit 4 (the CLI
+//   codes table has no free code, and any other code is a command's own):
+//   `--json` tells them apart, `busy` with `data.lease` for the wait, `failed`
+//   with `data.timedOut` for the command. When the
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
@@ -93,6 +97,7 @@ import { startHeartbeat } from "@brainervirus/workit-core/src/core/heavy-lease";
 import {
   describeEstimate,
   estimateWait,
+  holdLimit,
   ledgerDurations,
 } from "@brainervirus/workit-core/src/core/heavy-eta";
 import { announce, BACKGROUND_HINT } from "./forge-common";
@@ -105,6 +110,13 @@ const USAGE =
  * failing test with its stack, far below a build log (#426). --full streams all.
  */
 export const OUTPUT_LINES = 60;
+/**
+ * A check whose lease wait left it less than this of its --timeout (at most a
+ * quarter of it) gives up as a wait timeout instead of starting a command it
+ * would kill at once.
+ */
+const MIN_RUN_MS = 10_000;
+const runFloorMs = (timeoutMs: number): number => Math.min(MIN_RUN_MS, Math.floor(timeoutMs / 4));
 /** Lease age bound for a check without --timeout, where the holder cannot be identified. */
 const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
 
@@ -526,10 +538,12 @@ async function prepareHeavy(
     session,
     waitMs: settings.waitMs,
     pollMs: 1000,
-    // Where the holder cannot be identified (no /proc), its lease ends with
-    // the check's timeout, else after MAX_UNVERIFIED_RUN_MS.
+    // Where the holder cannot be identified (no process start time), its
+    // lease ends with the check's timeout, else after MAX_UNVERIFIED_RUN_MS.
     maxAgeMs: (timeoutMs || MAX_UNVERIFIED_RUN_MS) + 60_000,
+    // A check that measured 25 min is not stuck at 15 (#705 follow-up).
     maxHoldMs: settings.maxHoldMs,
+    holdMs: holdLimit(durationOf({ check: label, cwd: runCwd }), settings.maxHoldMs),
     onStatus: (status) => {
       const slots = `${settings.slots} slot${settings.slots === 1 ? "" : "s"}`;
       const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
@@ -597,6 +611,23 @@ async function prepareHeavy(
             : waitByTimeout
               ? `the lease wait counts toward --timeout: run it again with a longer --timeout (in a background shell when the host's tool timeout is shorter), or once ${holders || "the waiters ahead"} finish`
               : `wait for ${holders || "the waiters ahead"} to finish (each holder's age is shown; a full test suite takes minutes), then run it again, or queue longer with --wait 30m`,
+        },
+      ),
+    );
+    return 4;
+  }
+  if (acquired.ok && timeoutMs > 0 && timeoutMs - acquired.lease.waitedMs < runFloorMs(timeoutMs)) {
+    const left = Math.max(0, timeoutMs - acquired.lease.waitedMs);
+    acquired.lease.release();
+    emit(
+      io,
+      fail(
+        "busy",
+        `the heavy-check lease freed after ${formatWait(acquired.lease.waitedMs)} of the check's ${formatWait(timeoutMs)} --timeout, leaving ${formatWait(left)}, less than the ${formatWait(runFloorMs(timeoutMs))} a run needs; the check did not run`,
+        {
+          data: { lease: { waitedMs: acquired.lease.waitedMs, leftMs: left, starved: true } },
+          unblock:
+            "the lease wait counts toward --timeout: run it again with a longer --timeout (in a background shell when the host's tool timeout is shorter)",
         },
       ),
     );
@@ -832,6 +863,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let stderrTail = "";
   // The time queued for the lease counts toward --timeout (#645).
   const queuedMs = heavy?.leaseReport?.waitedMs ?? 0;
+  // prepareHeavy gave up when the wait left less than runFloorMs.
   const runTimeoutMs = options.timeoutMs ? Math.max(1, options.timeoutMs - queuedMs) : 0;
   const runStarted = Date.now();
   const statusTimer = setInterval(

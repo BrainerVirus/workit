@@ -21,6 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { tailLines, type CheckRun } from "../checks";
 import { stateDir } from "./heavy";
+import { processStartOf, type ProcessStartDeps } from "./store-lock";
 
 export { stateDir };
 export {
@@ -255,7 +256,7 @@ export type LeaseRecord = {
   id: string;
   /** The workit process that took the lease. */
   pid: number;
-  /** Field 22 of /proc/<pid>/stat, so a recycled pid does not keep a lease alive. */
+  /** The process start time (processStart), so a recycled pid does not keep a lease alive. */
   processStart: string | null;
   /** The kernel boot id (Linux). */
   bootId: string | null;
@@ -305,8 +306,25 @@ const statFields = (pid: number): string[] | null => {
   return stat ? stat.slice(stat.lastIndexOf(")") + 2).split(" ") : null;
 };
 
-/** Start time of `pid` (Linux). */
-export const processStart = (pid: number): string | null => statFields(pid)?.[19] ?? null;
+/**
+ * Start time of `pid`, so a recycled pid does not keep a lease alive: /proc
+ * on Linux, `ps -o lstart=` on macOS (store-lock.ts), null elsewhere.
+ */
+export const processStart = (pid: number, deps?: ProcessStartDeps): string | null => {
+  if (deps) return processStartOf(pid, deps);
+  // A waiter polls the holder every tick; on macOS each probe spawns `ps`. A
+  // live pid's start time cannot change, so a short real-time cache is exact
+  // enough (a pid reused within it keeps its lease that long at most).
+  const now = Date.now();
+  const hit = START_CACHE.get(pid);
+  if (hit && now - hit.at < START_CACHE_MS) return hit.start;
+  const start = processStartOf(pid);
+  if (START_CACHE.size > 256) START_CACHE.clear();
+  START_CACHE.set(pid, { start, at: now });
+  return start;
+};
+const START_CACHE_MS = 2_000;
+const START_CACHE = new Map<number, { start: string | null; at: number }>();
 
 const pidAlive = (pid: number): boolean => {
   try {
@@ -525,8 +543,10 @@ export type AcquireOptions = {
   pollMs?: number;
   /** The age bound recorded on the lease (see LeaseRecord.maxAgeMs). */
   maxAgeMs?: number;
-  /** The max hold time recorded on the lease and applied to older leases (#608). */
+  /** The max hold time applied to older leases that carry none (#608); recorded on the lease unless `holdMs` is set. */
   maxHoldMs?: number;
+  /** This check's own max hold time, recorded on its lease (heavy-eta holdLimit: from its measured runs). */
+  holdMs?: number;
   /** The process that started this waiter (default: the parent); null records none. */
   ownerPid?: number | null;
   /** Called once, when the first attempt finds every slot held. */
@@ -868,7 +888,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     startedAt: new Date(clock.now()).toISOString(),
     scope: null,
     heartbeatAt: null,
-    maxHoldMs: options.maxHoldMs ?? null,
+    maxHoldMs: options.holdMs ?? options.maxHoldMs ?? null,
   };
   try {
     fs.mkdirSync(options.dir, { recursive: true, mode: 0o700 });
