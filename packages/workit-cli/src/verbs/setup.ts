@@ -2,12 +2,12 @@
 // (issue #297) after one consent that shows the exact diff. `--yes` is that
 // consent for a script; `--dry-run` only shows the diff. Never from inside an
 // agent session: the user runs it in their own terminal.
+import os from "node:os";
 import {
   applyHostPermissions,
   permissionDiff,
   planHostPermissions,
 } from "../admin/host-permissions";
-import os from "node:os";
 import pkg from "../../package.json" with { type: "json" };
 import { completionLines, installCompletion } from "../completion/install";
 import { emit, fail, ok, type Io } from "../output";

@@ -58,7 +58,7 @@ export type UninstallAction =
   | { kind: "remove-owned-cli"; path: string; detail: string; part: OwnedPart }
   | { kind: "remove-completion"; path: string; detail: string }
   /** A ytrack skill directory Workit installed (its own record, exact path only). */
-  | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost; version: string }
+  | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost }
   /** A foreign file at the launcher's place: reported, never touched. */
   | { kind: "keep-foreign"; path: string; detail: string };
 
@@ -300,13 +300,13 @@ const permissionPathsOf = (paths: UninstallPaths) => {
   };
 };
 
-/** Inverse of `workit setup`: the entries the ownership record names (else the canonical ones). */
 /** Where Workit records what it installed (permission blocks, the ytrack skill). */
 const stateDirOf = (paths: UninstallPaths): string => {
   const { home, env } = permissionPathsOf(paths);
   return paths.stateDir ?? workitStateDir({ ...env, HOME: home }, paths.platform);
 };
 
+/** Inverse of `workit setup`: the entries the ownership record names (else the canonical ones). */
 const permissionCleaner =
   (host: "claude-code" | "cursor", file: string, paths: UninstallPaths): JsonCleaner =>
   (record) => {
@@ -488,7 +488,6 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       path: install.path,
       detail: "remove the ytrack skill Workit installed",
       host: install.host,
-      version: install.version,
     });
 
   const cliActions: UninstallAction[] = planOwnedRemoval(cliEnvOf(paths), paths.platform).map(
