@@ -403,6 +403,7 @@ workit pr threads                      # unresolved review threads, one line eac
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
+workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
 workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
@@ -483,7 +484,13 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   only). A failing check there refuses the merge (`base_red`, exit 3), naming
   the failing checks and the run URL, so a PR never lands silently on a red
   base. Checks still running only print a note, and a base with no checks or
-  green checks merges quietly. `--base-red-ok --reason "<why>"` overrides it
+  green checks merges quietly. Its unblock line is the rerun for a flaky base:
+  `workit ci rerun --ref <base> --failed --reason flake` reruns the failed
+  jobs of the base's latest run (GitHub workflow runs, GitLab pipeline), under
+  the same once-per-head limit and `ci.rerun` record as a PR rerun (the row
+  carries `branch` and `runId` instead of `pr`). `--branch <b>` means the PR
+  of `<b>`, as in the other verbs; without `--pr`, `--branch` or `--ref`,
+  `ci rerun` targets this branch's PR. `--base-red-ok --reason "<why>"` overrides it
   and records the reason in the `pr.merge.intent` and `pr.merged` rows; one
   `--reason` serves it and `--unverified` together. `stack land` takes the
   same `--base-red-ok --reason` and passes it to every merge it makes.
