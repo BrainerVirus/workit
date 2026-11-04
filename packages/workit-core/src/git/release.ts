@@ -565,7 +565,7 @@ function integrationPrWarning(cwd: string, production: string): string[] {
     const selected = resolveRuntimeWorkspacePolicy(
       cwd,
       "branch",
-      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+      process.env.WORKIT_PROFILE?.trim() || undefined,
     ).policy as { integration?: unknown } | undefined;
     return selected?.integration === "pr"
       ? [

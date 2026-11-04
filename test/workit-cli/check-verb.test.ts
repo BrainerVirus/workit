@@ -116,7 +116,7 @@ const run = async (cwd: string, argv: string[]) => {
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "s-agent", WORKFLOW_WORKSPACE_ROOT: "" },
+    env: { ...process.env, WORKIT_SESSION_ID: "s-agent", WORKIT_WORKSPACE_ROOT: "" },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -450,7 +450,7 @@ test("concurrent checks on one task all record (omitted revisions retry, never r
           const child = spawn(
             BUN,
             [path.join(ROOT, "packages/workit-cli/src/main.ts"), "check", "test", "--json"],
-            { cwd: root, env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" } },
+            { cwd: root, env: { ...process.env, WORKIT_WORKSPACE_ROOT: "" } },
           );
           let stdout = "";
           let stderr = "";
@@ -549,7 +549,7 @@ const heavyRepo = (
   const env = {
     ...process.env,
     WORKIT_SESSION_ID: "s-heavy",
-    WORKFLOW_WORKSPACE_ROOT: "",
+    WORKIT_WORKSPACE_ROOT: "",
     WORKIT_STATE_DIR: state,
     WORKIT_CONFIG_DIR: config,
     WORKIT_LEASE: "",

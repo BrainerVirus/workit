@@ -161,7 +161,7 @@ function mutationRows(mutations: SetupMutation[]): { key: string; text: string }
   });
 }
 
-// D-06: shown only when WORKFLOW_WORKSPACE_ROOT is unset — the prompt IS the
+// D-06: shown only when WORKIT_WORKSPACE_ROOT is unset — the prompt IS the
 // resolution root for every workspace preview and hygiene target. Extracted
 // component with stable callbacks: @inkjs/ui re-fires its onChange effect
 // whenever the handler identity changes, and fresh inline arrows per render

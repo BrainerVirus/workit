@@ -444,9 +444,9 @@ test("active environment overrides are exposed in the preview (RL-06)", () => {
   try {
     const preview = buildSetupPreview(values({ baseUrl: "https://wizard.example.com" }), {
       dir,
-      env: { WORKFLOW_YT_BASE_URL: "https://env.example.com" },
+      env: { WORKIT_YT_BASE_URL: "https://env.example.com" },
     });
-    const override = preview.overrides.find((o) => o.envKey === "WORKFLOW_YT_BASE_URL");
+    const override = preview.overrides.find((o) => o.envKey === "WORKIT_YT_BASE_URL");
     expect(override).toBeDefined();
     expect(override!.value).toBe("https://env.example.com");
     expect(override!.affects).toContain("baseUrl");
@@ -465,13 +465,13 @@ test("buildSetupPreview exposes active VCS overrides alongside YouTrack ones (RL
   try {
     const preview = buildSetupPreview(values({ vcsProvider: "gitlab" }), {
       dir,
-      env: { WORKFLOW_VCS_PROVIDER: "github", WORKFLOW_GITLAB_HOST: "gitlab.example.com" },
+      env: { WORKIT_VCS_PROVIDER: "github", WORKIT_GITLAB_HOST: "gitlab.example.com" },
     });
-    const provider = preview.overrides.find((o) => o.envKey === "WORKFLOW_VCS_PROVIDER");
+    const provider = preview.overrides.find((o) => o.envKey === "WORKIT_VCS_PROVIDER");
     expect(provider).toBeDefined();
     expect(provider!.value).toBe("github");
     expect(provider!.affects).toContain("provider");
-    const host = preview.overrides.find((o) => o.envKey === "WORKFLOW_GITLAB_HOST");
+    const host = preview.overrides.find((o) => o.envKey === "WORKIT_GITLAB_HOST");
     expect(host).toBeDefined();
     expect(host!.value).toBe("gitlab.example.com");
   } finally {
@@ -909,7 +909,7 @@ test("youtrack mode stays byte-identical: preview equals the legacy literal inpu
 });
 
 // ---------------------------------------------------------------------------
-// Base-path resolution (Task 6, D-06/CA-06/CA-07): WORKFLOW_WORKSPACE_ROOT env
+// Base-path resolution (Task 6, D-06/CA-06/CA-07): WORKIT_WORKSPACE_ROOT env
 // wins over the prompted path; without env the basePath screen gates the
 // wizard with existsSync validation; process.cwd() is gone from every
 // workspace-preview and hygiene-target code path.
@@ -924,10 +924,10 @@ const walkToVcs = (): ReturnType<typeof createInitialDraft> => {
   return d;
 };
 
-test("D-06: WORKFLOW_WORKSPACE_ROOT beats the prompted path and seeds the initial draft", () => {
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+test("D-06: WORKIT_WORKSPACE_ROOT beats the prompted path and seeds the initial draft", () => {
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
   try {
-    process.env.WORKFLOW_WORKSPACE_ROOT = "/tmp/wk-t6-env-root";
+    process.env.WORKIT_WORKSPACE_ROOT = "/tmp/wk-t6-env-root";
     const d = createInitialDraft(config());
     expect(d.values.basePath).toBe("/tmp/wk-t6-env-root");
     expect(resolveBasePath(d.values)).toBe("/tmp/wk-t6-env-root");
@@ -937,14 +937,14 @@ test("D-06: WORKFLOW_WORKSPACE_ROOT beats the prompted path and seeds the initia
     // …but an explicit env argument wins over the ambient one (pure seam)
     expect(resolveBasePath(edited.values, {})).toBe("/tmp/wk-t6-prompted");
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
   }
 });
 
 test("D-06: without env the basePath prompt gates advancement with field errors", () => {
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
-  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
+  delete process.env.WORKIT_WORKSPACE_ROOT;
   try {
     let d = walkToVcs();
     d = reducer(d, { type: "next" }); // vcs -> basePath prompt (no env)
@@ -972,28 +972,28 @@ test("D-06: without env the basePath prompt gates advancement with field errors"
       rmSync(real, { recursive: true, force: true });
     }
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
   }
 });
 
 test("D-06: with env set the basePath screen is skipped in both directions", () => {
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
   try {
-    process.env.WORKFLOW_WORKSPACE_ROOT = os.tmpdir();
+    process.env.WORKIT_WORKSPACE_ROOT = os.tmpdir();
     const d = walkToVcs();
     const fwd = reducer(d, { type: "next" });
     expect(fwd.screen).toBe("workspaces");
     expect(reducer(fwd, { type: "back" }).screen).toBe("vcs");
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
   }
 });
 
 test("basePath gate rejects an existing FILE (directory required)", () => {
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
-  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
+  delete process.env.WORKIT_WORKSPACE_ROOT;
   const dir = tempDir();
   try {
     const file = path.join(dir, "passwd");
@@ -1004,16 +1004,16 @@ test("basePath gate rejects an existing FILE (directory required)", () => {
     expect(d.errors.basePath).toContain("existing absolute directory");
     expect(reducer(d, { type: "next" }).screen).toBe("basePath"); // gated
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
     clean(dir);
   }
 });
 
-test("a whitespace-only WORKFLOW_WORKSPACE_ROOT seed is treated as unset", () => {
-  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+test("a whitespace-only WORKIT_WORKSPACE_ROOT seed is treated as unset", () => {
+  const prev = process.env.WORKIT_WORKSPACE_ROOT;
   try {
-    process.env.WORKFLOW_WORKSPACE_ROOT = "   ";
+    process.env.WORKIT_WORKSPACE_ROOT = "   ";
     let d = walkToVcs();
     d = reducer(d, { type: "next" });
     expect(d.screen).toBe("basePath"); // prompt appears, never silently skipped
@@ -1028,8 +1028,8 @@ test("a whitespace-only WORKFLOW_WORKSPACE_ROOT seed is treated as unset", () =>
       rmSync(real, { recursive: true, force: true });
     }
   } finally {
-    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    if (prev === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prev;
   }
 });
 
@@ -1125,7 +1125,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   if (!bunBin) throw new Error("Bun must be on PATH for the runInit host fixture");
   symlinkSync(bunBin, path.join(bin, "bun"));
   writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prevRoot = process.env.WORKIT_WORKSPACE_ROOT;
   const prevCfg = process.env.WORKIT_CONFIG;
   const prevDev = process.env.WORKIT_DEV;
   // Isolated HOME: the OpenCode registration must never touch the real
@@ -1144,7 +1144,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   const chunks: string[] = [];
   let exitCode: number | undefined;
   try {
-    process.env.WORKFLOW_WORKSPACE_ROOT = root;
+    process.env.WORKIT_WORKSPACE_ROOT = root;
     process.env.WORKIT_CONFIG = configDir;
     process.env.WORKIT_DEV = REPO_ROOT;
     process.env.HOME = home;
@@ -1212,8 +1212,8 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     expect(existsSync(path.join(cwdDir, ".gitignore"))).toBe(false);
   } finally {
     cleanupLiveInkInstances();
-    if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
+    if (prevRoot === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+    else process.env.WORKIT_WORKSPACE_ROOT = prevRoot;
     if (prevCfg === undefined) delete process.env.WORKIT_CONFIG;
     else process.env.WORKIT_CONFIG = prevCfg;
     if (prevDev === undefined) delete process.env.WORKIT_DEV;

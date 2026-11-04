@@ -286,7 +286,7 @@ export type Autonomy = EndpointView & {
   verification: VerificationMode;
   /**
    * Set when the grants file was not read (see grantsOverride), or when
-   * WORKFLOW_WORKSPACE_NAME (#536) or a linked worktree's main checkout (#540)
+   * WORKIT_WORKSPACE_NAME (#536) or a linked worktree's main checkout (#540)
    * capped the grants.
    */
   note?: string;
@@ -381,7 +381,7 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
 /**
  * The grants, endpoint and verification of `named` never exceed what `where`
  * resolves to without a name, or nothing granted when its entries tie (#536:
- * WORKFLOW_WORKSPACE_NAME, which any shell can set; #540: a linked worktree's
+ * WORKIT_WORKSPACE_NAME, which any shell can set; #540: a linked worktree's
  * main checkout). Explicit grants without vcs.account reach no forge, so such
  * an entry caps at nothing granted too. A lowered grant's unblock names the
  * capping entry, never the named one. Settings that are not authority stay.
@@ -448,15 +448,10 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const override = grantsOverride();
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
-  const name = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
+  const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
   let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name));
   if (name)
-    autonomy = capAt(
-      autonomy,
-      cwd,
-      `WORKFLOW_WORKSPACE_NAME=${name}`,
-      "a name never raises grants",
-    );
+    autonomy = capAt(autonomy, cwd, `WORKIT_WORKSPACE_NAME=${name}`, "a name never raises grants");
   const above = checkoutsAbove(cwd);
   for (const where of above instanceof Error ? [above] : above)
     autonomy = capAt(

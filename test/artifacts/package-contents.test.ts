@@ -336,8 +336,8 @@ test(
 // --- Tool-rename content gate: shipped prose names only live workit_* tools ---
 // The orchestration tools are registered as workit_*; a live workflow_*
 // reference in shipped skill/template/vendor markdown points at a tool that no
-// longer exists. Uppercase WORKFLOW_* env names are out of scope and stay.
-const LIVE_WORKFLOW_TOOL = /\bworkflow_[a-z0-9_]+\b/;
+// longer exists.
+const LIVE_LEGACY_TOOL = /\bworkflow_[a-z0-9_]+\b/;
 const CONTENT_TREES = [
   "skills/",
   "templates/",
@@ -386,7 +386,7 @@ test(
         if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
         if (!CONTENT_TREES.some((tree) => entry.startsWith(tree))) continue;
         const md = readTarballFile(pack.tarball, entry);
-        const stale = LIVE_WORKFLOW_TOOL.exec(md);
+        const stale = LIVE_LEGACY_TOOL.exec(md);
         if (stale) offenders.push(`${entry}: ${stale[0]}`);
       }
       expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);

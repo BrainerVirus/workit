@@ -386,7 +386,7 @@ function issueForge(
  * on each linked issue, posted at most once: a marker naming the PR is read
  * back first. Forge issues on the PR's host go through the workspace's
  * verified credential; one on another forge host is skipped (no account is
- * verified there). YouTrack goes through its API behind WORKFLOW_YT_WRITE=1,
+ * verified there). YouTrack goes through its API behind WORKIT_YT_WRITE=1,
  * like `workit youtrack note`. A failure is reported per issue and never
  * undoes the PR.
  */
@@ -404,11 +404,11 @@ export async function postBacklinks(
   for (const link of links) {
     const issue = label(link);
     if (link.tracker === "youtrack") {
-      if (env.WORKFLOW_YT_WRITE !== "1") {
+      if (env.WORKIT_YT_WRITE !== "1") {
         out.push({
           issue,
           status: "failed",
-          note: "YouTrack writes need WORKFLOW_YT_WRITE=1 (as for workit youtrack note)",
+          note: "YouTrack writes need WORKIT_YT_WRITE=1 (as for workit youtrack note)",
         });
         continue;
       }

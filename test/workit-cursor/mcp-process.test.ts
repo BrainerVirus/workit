@@ -7,7 +7,7 @@ const ROOT = path.resolve(import.meta.dir, "..", "..");
 const requestServer = async (entry: string, args: string[] = []) => {
   const child = spawn(process.execPath, [entry, ...args], {
     cwd: ROOT,
-    env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: ROOT },
+    env: { ...process.env, WORKIT_WORKSPACE_ROOT: ROOT },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let output = "";
@@ -59,7 +59,7 @@ test("run-server <workspace> from an unrelated cwd defaults omitted roots to the
   ]);
 });
 
-test("WORKFLOW_WORKSPACE_ROOT env beats the process cwd for omitted tool roots", async () => {
+test("WORKIT_WORKSPACE_ROOT env beats the process cwd for omitted tool roots", async () => {
   const result = await requestServer("packages/workit-cursor/mcp/run-server.ts");
   expect(result.initialized.result.serverInfo.name).toBe("workit");
   expect(result.output).not.toContain("[WORKSPACE_ROOT]");

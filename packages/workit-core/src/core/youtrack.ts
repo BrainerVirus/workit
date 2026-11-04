@@ -8,14 +8,14 @@ import { resolveInside } from "../core";
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
-// Port of scripts/youtrack/config.sh chain: WORKFLOW_YOUTRACK_CONFIG ->
+// Port of scripts/youtrack/config.sh chain: WORKIT_YOUTRACK_CONFIG ->
 // configDir() (XDG_CONFIG_HOME / HOME .config + workit).
 export const youTrackConfigPath = (): string =>
-  process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(configDir(), "youtrack.json");
+  process.env.WORKIT_YOUTRACK_CONFIG ?? path.join(configDir(), "youtrack.json");
 
 /** Config path for read-only context: the resolved config dir, no side effects. */
 export const youTrackReadOnlyConfigPath = (): string =>
-  process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(resolveConfigDir(), "youtrack.json");
+  process.env.WORKIT_YOUTRACK_CONFIG ?? path.join(resolveConfigDir(), "youtrack.json");
 
 const youTrackTokenModeOk = (p: string): boolean => {
   if (process.platform === "win32") return true;
@@ -282,17 +282,17 @@ export async function youTrackRequest(
   }
 }
 
-/** Port of scripts/youtrack/api.sh — log-time / post-comment with the WORKFLOW_YT_WRITE guard. */
+/** Port of scripts/youtrack/api.sh — log-time / post-comment with the WORKIT_YT_WRITE guard. */
 export async function youTrackApi(
   args: string[],
-  writeFlag = process.env.WORKFLOW_YT_WRITE ?? "",
+  writeFlag = process.env.WORKIT_YT_WRITE ?? "",
 ): Promise<{ data: Record<string, any> } | { error: string }> {
   const cmd = args[0];
   if (cmd === "log-time" || cmd === "post-comment") {
     if (writeFlag !== "1") {
       return {
         error:
-          "YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)",
+          "YouTrack write operations require WORKIT_YT_WRITE=1 (refusing to mutate production)",
       };
     }
   }
@@ -344,7 +344,7 @@ export async function youTrackApi(
 
 /** Port of scripts/youtrack/token-create-url.sh — deep link to Account Security. */
 export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
-  const tokenName = process.env.WORKFLOW_YT_TOKEN_NAME ?? "workit";
+  const tokenName = process.env.WORKIT_YT_TOKEN_NAME ?? "workit";
   const loaded = readYouTrackConfig(false);
   if ("error" in loaded) {
     return { data: { error: loaded.error } };
@@ -421,7 +421,7 @@ export type YouTrackScripts = {
 const defaultScripts: YouTrackScripts = {
   config: () => youTrackConfigLoad(),
   parseDuration: (text) => youTrackParseDuration(text),
-  api: (args) => youTrackApi(args, process.env.WORKFLOW_YT_WRITE ?? ""),
+  api: (args) => youTrackApi(args, process.env.WORKIT_YT_WRITE ?? ""),
 };
 
 const contextScripts: YouTrackScripts = {
@@ -751,7 +751,7 @@ export async function postUpdate(
   const postComment =
     operations.postComment ??
     ((id: string, text: string, _root: string) =>
-      youTrackApi(["post-comment", id, text], process.env.WORKFLOW_YT_WRITE ?? ""));
+      youTrackApi(["post-comment", id, text], process.env.WORKIT_YT_WRITE ?? ""));
   const logTimeOperation = operations.logTime ?? logTime;
   const comment = await postComment(issueId, markdown, workspace_root);
   if (comment.error) return { error: comment.error };

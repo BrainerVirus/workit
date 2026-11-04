@@ -47,13 +47,7 @@ const sandbox = () => {
   for (const dir of [home, configDir, work]) mkdirSync(dir, { recursive: true });
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env))
-    if (
-      v !== undefined &&
-      !STRIPPED.has(k) &&
-      !k.startsWith("WORKFLOW_") &&
-      !k.startsWith("WORKIT_") &&
-      !k.startsWith("GIT_")
-    )
+    if (v !== undefined && !STRIPPED.has(k) && !k.startsWith("WORKIT_") && !k.startsWith("GIT_"))
       env[k] = v;
   Object.assign(env, {
     HOME: home,

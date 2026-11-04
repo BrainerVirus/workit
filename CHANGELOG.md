@@ -393,6 +393,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** the remaining `WORKFLOW_*` env vars are now `WORKIT_*` (for example `WORKIT_WORKSPACE_ROOT`, `WORKIT_WORKSPACE_NAME`, `WORKIT_YT_WRITE`, `WORKIT_VCS_CONFIG`, `WORKIT_RELEASE_TRACK`); the old names are ignored.
 - **Breaking:** only the name Workit remains. The `WORKFLOW_TOOLKIT_*` env vars are now `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `WORKIT_STATE_DIR`, `WORKIT_DEV` and `WORKIT_REPO`, and the old names are ignored. Old `~/.config/workflow-toolkit`-style folders are no longer migrated; move them by hand.
 - Codex: the plugin is now `workit@workit`. `workit setup` and `workit upgrade` move an install off the old marketplace name with Codex's own commands, so the hooks never run twice; re-trust them in `/hooks` afterwards.
 - The CLI installs into a Workit-owned directory (`~/.local/share/workit/versions/<v>` with an atomic `current` link and a `~/.local/bin/workit` launcher that finds a Node 24+ itself; Windows: `%LOCALAPPDATA%\workit\install`), so it no longer depends on which Node version manager prefix a shell sees (#648).

@@ -399,8 +399,11 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
 }
 
 const defaultContextProvider = (host: McpHost): NativeContextProvider => {
-  const root = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
-  const actor = process.env.WORKFLOW_SESSION_ID ?? "";
+  const root = process.env.WORKIT_WORKSPACE_ROOT ?? process.cwd();
+  // Not WORKIT_SESSION_ID: every agent shell inherits that one, so a server
+  // started from a shell would claim an attested caller. Only a host launcher
+  // that attests the caller sets this.
+  const actor = process.env.WORKIT_MCP_CALLER_SESSION ?? "";
   return {
     current: async () => ({
       root,

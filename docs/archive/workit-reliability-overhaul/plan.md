@@ -747,7 +747,7 @@ flowchart LR
 - Modify: `packages/workit-opencode/scripts/build.ts`, `packages/workit-cursor/scripts/build.ts`, `packages/workit-cli/scripts/build.ts`
 - Test: `test/workit-cursor/mcp-process.test.ts`, `test/workit-cursor/mcp-regressions.test.ts`, `test/artifacts/manifests.test.ts`, `test/artifacts/registration.test.ts`
 
-**Interfaces:** `workspaceRootSchema` defaults to `WORKFLOW_WORKSPACE_ROOT` before cwd. Build scripts derive their directory through `fileURLToPath(import.meta.url)`. Cursor manifests use explicit `node` commands and package-relative arguments on every OS.
+**Interfaces:** `workspaceRootSchema` defaults to `WORKIT_WORKSPACE_ROOT` before cwd. Build scripts derive their directory through `fileURLToPath(import.meta.url)`. Cursor manifests use explicit `node` commands and package-relative arguments on every OS.
 
 - [ ] **Step 1: Write failing process and path tests**
   Launch `mcp/run-server.ts <workspace>` from an unrelated cwd, omit `workspace_root` in a tool call, assert the response root equals `<workspace>`, simulate Windows URL/path conversion, and assert MCP/hook commands invoke Node explicitly.

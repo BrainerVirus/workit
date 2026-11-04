@@ -11,8 +11,8 @@ import { run } from "@/packages/workit-cli/src/verbs/youtrack";
 const BASE = "https://yt.example.test";
 let dir = "";
 const saved = {
-  WORKFLOW_YOUTRACK_CONFIG: process.env.WORKFLOW_YOUTRACK_CONFIG,
-  WORKFLOW_YT_WRITE: process.env.WORKFLOW_YT_WRITE,
+  WORKIT_YOUTRACK_CONFIG: process.env.WORKIT_YOUTRACK_CONFIG,
+  WORKIT_YT_WRITE: process.env.WORKIT_YT_WRITE,
 };
 const realFetch = globalThis.fetch;
 
@@ -25,8 +25,8 @@ beforeAll(() => {
     path.join(dir, "youtrack.json"),
     JSON.stringify({ baseUrl: BASE, tokenFile: token, timezone: "UTC" }),
   );
-  process.env.WORKFLOW_YOUTRACK_CONFIG = path.join(dir, "youtrack.json");
-  process.env.WORKFLOW_YT_WRITE = "1";
+  process.env.WORKIT_YOUTRACK_CONFIG = path.join(dir, "youtrack.json");
+  process.env.WORKIT_YT_WRITE = "1";
 });
 afterAll(() => {
   for (const [key, value] of Object.entries(saved))

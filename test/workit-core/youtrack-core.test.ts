@@ -319,23 +319,23 @@ test("default scripts delegate only to read-only youtrack helpers", () => {
   expect(duration).toBeDefined();
 });
 
-test("write guard: logTime refuses to mutate without WORKFLOW_YT_WRITE", async () => {
-  const previous = process.env.WORKFLOW_YT_WRITE;
-  delete process.env.WORKFLOW_YT_WRITE;
+test("write guard: logTime refuses to mutate without WORKIT_YT_WRITE", async () => {
+  const previous = process.env.WORKIT_YT_WRITE;
+  delete process.env.WORKIT_YT_WRITE;
   try {
     const result = await logTime(
       { issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() },
       scripts({
         api: () => ({
           error:
-            "ERROR: YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)",
+            "ERROR: YouTrack write operations require WORKIT_YT_WRITE=1 (refusing to mutate production)",
         }),
       }),
     );
-    expect(result.error).toContain("WORKFLOW_YT_WRITE");
+    expect(result.error).toContain("WORKIT_YT_WRITE");
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
-    else process.env.WORKFLOW_YT_WRITE = previous;
+    if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
+    else process.env.WORKIT_YT_WRITE = previous;
   }
 });
 
@@ -355,19 +355,36 @@ test("write guard: postUpdate confirmed sets the write flag for real api calls",
   expect(captured).toHaveLength(1);
 });
 
-test("real api guard rejects writes without WORKFLOW_YT_WRITE before any HTTP call", async () => {
-  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
-  process.env.WORKFLOW_YOUTRACK_CONFIG = "/nonexistent/youtrack.json";
+test("real api guard rejects writes without WORKIT_YT_WRITE before any HTTP call", async () => {
+  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
+  process.env.WORKIT_YOUTRACK_CONFIG = "/nonexistent/youtrack.json";
   try {
     const denied = await youTrackApi(["post-comment", "NSR-40", "test"], "");
-    expect("error" in denied ? denied.error : "").toContain("WORKFLOW_YT_WRITE");
+    expect("error" in denied ? denied.error : "").toContain("WORKIT_YT_WRITE");
 
     const allowed = await youTrackApi(["post-comment", "NSR-40", "test"], "1");
     // Passes the guard but must fail on the missing config — never on a real API.
     expect("error" in allowed ? allowed.error : "").toContain("missing youtrack.json");
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
+  }
+});
+
+test("the pre-rename write flag is no alias: it alone leaves YouTrack writes refused", async () => {
+  // Built at runtime so the no-legacy-name guard keeps the old spelling out of the tree.
+  const legacy = ["WORKFLOW", "YT_WRITE"].join("_");
+  const previous = { legacy: process.env[legacy], current: process.env.WORKIT_YT_WRITE };
+  process.env[legacy] = "1";
+  delete process.env.WORKIT_YT_WRITE;
+  try {
+    const denied = await youTrackApi(["post-comment", "NSR-40", "test"]);
+    expect("error" in denied ? denied.error : "").toContain("require WORKIT_YT_WRITE=1");
+  } finally {
+    if (previous.legacy === undefined) delete process.env[legacy];
+    else process.env[legacy] = previous.legacy;
+    if (previous.current === undefined) delete process.env.WORKIT_YT_WRITE;
+    else process.env.WORKIT_YT_WRITE = previous.current;
   }
 });
 

@@ -430,7 +430,7 @@ export type MergeOutcome = {
 
 /**
  * The merge-back a merge into `base` owes: the track whose production branch
- * `base` is, by ownership alone (no --track, no WORKFLOW_RELEASE_TRACK, no
+ * `base` is, by ownership alone (no --track, no WORKIT_RELEASE_TRACK, no
  * history); without tracks, a git-flow release/* or hotfix/* landing on the
  * production branch owes develop. Best effort: a config problem never stops
  * the pr.merged record.

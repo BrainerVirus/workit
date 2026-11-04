@@ -13,14 +13,14 @@ import {
   type VerificationMode,
 } from "@/packages/workit-core/src/autonomy";
 
-// #536: WORKFLOW_WORKSPACE_NAME is set by whatever shell runs Workit, an
+// #536: WORKIT_WORKSPACE_NAME is set by whatever shell runs Workit, an
 // agent's included, so it may choose which matching entry's vcs and policies
 // apply but never raise grants, defaultEndpoint or verification above what the
 // folder resolves to without it.
 
 let configHome: ConfigHome;
 let root = "";
-const savedName = process.env.WORKFLOW_WORKSPACE_NAME;
+const savedName = process.env.WORKIT_WORKSPACE_NAME;
 beforeAll(() => {
   configHome = useConfigHome("wk-name-cap-config-");
   root = mkdtempSync(path.join(os.tmpdir(), "wk-name-cap-")).replaceAll("\\", "/");
@@ -30,15 +30,15 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 afterEach(() => {
-  if (savedName === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-  else process.env.WORKFLOW_WORKSPACE_NAME = savedName;
+  if (savedName === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+  else process.env.WORKIT_WORKSPACE_NAME = savedName;
 });
 
 const write = (workspaces: Record<string, unknown>[]) =>
   writeFileSync(path.join(configHome.configDir, "workspaces.json"), JSON.stringify({ workspaces }));
 const withName = <T>(name: string | undefined, run: () => T): T => {
-  if (name === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-  else process.env.WORKFLOW_WORKSPACE_NAME = name;
+  if (name === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+  else process.env.WORKIT_WORKSPACE_NAME = name;
   return run();
 };
 const account = { provider: "github", account: "me" };

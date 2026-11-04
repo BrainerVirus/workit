@@ -452,7 +452,7 @@ test(
 
 // Tool-rename runtime gate: the EXTRACTED installed package (what a host actually
 // reads) ships only renamed workit_* tool identifiers in its skill/template/
-// vendor markdown. Uppercase WORKFLOW_* env names are out of scope and stay.
+// vendor markdown.
 test(
   "extracted adapter packages ship no live workflow_ tool references in skills/templates/vendor",
   () => {

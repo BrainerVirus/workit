@@ -179,9 +179,7 @@ const syncToolsAvailable =
 
 const syncEnv = (home: string, lockDir: string, repo: string): Record<string, string> => ({
   ...Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => !key.startsWith("WORKFLOW_") && !key.startsWith("WORKIT_") && key !== "HOME",
-    ),
+    Object.entries(process.env).filter(([key]) => !key.startsWith("WORKIT_") && key !== "HOME"),
   ),
   HOME: home,
   XDG_CONFIG_HOME: path.join(home, ".config"),

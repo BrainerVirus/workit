@@ -266,9 +266,9 @@ export async function main(
         return emit(routed, fail("invalid_input", `--cwd: cannot enter ${routed.cwd}`));
       }
       // An explicit --cwd beats an inherited workspace root (task.ts and the
-      // core read WORKFLOW_WORKSPACE_ROOT before process.cwd()).
-      if (process.env.WORKFLOW_WORKSPACE_ROOT !== undefined) {
-        process.env.WORKFLOW_WORKSPACE_ROOT = routed.cwd;
+      // core read WORKIT_WORKSPACE_ROOT before process.cwd()).
+      if (process.env.WORKIT_WORKSPACE_ROOT !== undefined) {
+        process.env.WORKIT_WORKSPACE_ROOT = routed.cwd;
         routed.env = process.env;
       }
     }

@@ -27,7 +27,7 @@ context on its own issues.
   remote exactly like `parseGhRepo` (scp-style + `.git` suffix handling).
 - Token storage mirrors existing files: GitHub reuses `github.token`;
   GitLab reuses the vcs `gitlab.tokenFile`. No new secret files, no new env
-  names beyond the existing `WORKFLOW_GITHUB_*` / `WORKFLOW_GITLAB_*` set.
+  names beyond the existing `WORKIT_GITHUB_*` / `WORKIT_GITLAB_*` set.
 - Wizard: extend `IssueTracker` with `gitlab` and generalize `skipsYoutrack`
   to a per-tracker skip (none/github already skip the youtrack screen;
   gitlab skips it too until a gitlab screen exists). No new wizard screen.

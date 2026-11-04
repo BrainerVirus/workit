@@ -37,7 +37,7 @@ const run = async (cwd: string, argv: string[]) => {
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "s-lead", WORKFLOW_WORKSPACE_ROOT: "" },
+    env: { ...process.env, WORKIT_SESSION_ID: "s-lead", WORKIT_WORKSPACE_ROOT: "" },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });

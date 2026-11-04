@@ -313,15 +313,15 @@ test("token helper runtime output uses OpenCode-neutral descriptions", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-help-"));
   const config = path.join(root, "youtrack.json");
   writeFileSync(config, JSON.stringify({ baseUrl: "https://example.youtrack.cloud" }));
-  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
-  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
+  process.env.WORKIT_YOUTRACK_CONFIG = config;
   try {
     const output = youTrackTokenCreateUrl().data;
     expect(output.tokenDescription).toContain("OpenCode workit");
     expect(JSON.stringify(output)).not.toContain("Cursor");
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -330,8 +330,8 @@ test("Given a youtrack.json without baseUrl, When the token-create link is built
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-nobase-"));
   const config = path.join(root, "youtrack.json");
   writeFileSync(config, JSON.stringify({}));
-  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
-  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
+  process.env.WORKIT_YOUTRACK_CONFIG = config;
   try {
     const output = youTrackTokenCreateUrl().data;
     expect(output.createUrl).toBeNull();
@@ -339,8 +339,8 @@ test("Given a youtrack.json without baseUrl, When the token-create link is built
     expect(output.error).toContain(config);
     expect(JSON.stringify(output)).not.toMatch(/youtrack\.cloud/);
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -392,14 +392,14 @@ test("bundled API failures never expose the token or authorization header", asyn
     JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
   );
 
-  const previousConfig = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  const previousConfig = process.env.WORKIT_YOUTRACK_CONFIG;
   const originalFetch = globalThis.fetch;
   let called = false;
   globalThis.fetch = (async () => {
     called = true;
     throw new Error("offline");
   }) as unknown as typeof fetch;
-  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  process.env.WORKIT_YOUTRACK_CONFIG = config;
   try {
     const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
     expect(called).toBe(true); // fetch is used, not the curl binary
@@ -409,8 +409,8 @@ test("bundled API failures never expose the token or authorization header", asyn
     expect(text).not.toContain("Authorization");
   } finally {
     globalThis.fetch = originalFetch;
-    if (previousConfig === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previousConfig;
+    if (previousConfig === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = previousConfig;
     rmSync(root, { recursive: true, force: true });
   }
 });

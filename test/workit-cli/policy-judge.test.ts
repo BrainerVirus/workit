@@ -25,7 +25,7 @@ const workit = (cwd: string, ...args: string[]) => {
   const result = spawnSync(
     process.execPath,
     [path.join(ROOT, "packages/workit-cli/src/main.ts"), ...args],
-    { cwd, encoding: "utf8", env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" } },
+    { cwd, encoding: "utf8", env: { ...process.env, WORKIT_WORKSPACE_ROOT: "" } },
   );
   return { code: result.status, stdout: result.stdout, json: () => JSON.parse(result.stdout) };
 };
@@ -97,7 +97,7 @@ test("G a needed plan, W --ref cites it, T the judgment keeps its calls and reco
 // M6 (audit 2026-10-07): judge calls are auditable and a session cannot
 // silently lift the before-write blockers it judged.
 const workitAs = (cwd: string, session: string | null, ...args: string[]) => {
-  const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_WORKSPACE_ROOT: "" };
+  const env: NodeJS.ProcessEnv = { ...process.env, WORKIT_WORKSPACE_ROOT: "" };
   if (session === null) delete env.WORKIT_SESSION_ID;
   else env.WORKIT_SESSION_ID = session;
   const result = spawnSync(

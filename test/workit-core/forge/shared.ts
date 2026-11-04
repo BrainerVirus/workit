@@ -29,16 +29,16 @@ export function useForgeHarness(): {
 
   let configDir = "";
   const previousConfig = process.env.WORKIT_CONFIG;
-  const previousVcs = process.env.WORKFLOW_VCS_CONFIG;
+  const previousVcs = process.env.WORKIT_VCS_CONFIG;
   beforeAll(() => {
     configDir = mkdtempSync(path.join(os.tmpdir(), "wk-forge-config-"));
     process.env.WORKIT_CONFIG = configDir;
-    delete process.env.WORKFLOW_VCS_CONFIG;
+    delete process.env.WORKIT_VCS_CONFIG;
   });
   afterAll(() => {
     if (previousConfig === undefined) delete process.env.WORKIT_CONFIG;
     else process.env.WORKIT_CONFIG = previousConfig;
-    if (previousVcs !== undefined) process.env.WORKFLOW_VCS_CONFIG = previousVcs;
+    if (previousVcs !== undefined) process.env.WORKIT_VCS_CONFIG = previousVcs;
     rmSync(configDir, { recursive: true, force: true });
   });
 

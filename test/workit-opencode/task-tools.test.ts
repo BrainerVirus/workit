@@ -194,12 +194,12 @@ test("OpenCode YouTrack context reads a fixed file without migration or secret f
   const configHome = mkdtempSync(join(tmpdir(), "workit-opencode-config-"));
   const previous = {
     xdg: process.env.XDG_CONFIG_HOME,
-    direct: process.env.WORKFLOW_YOUTRACK_CONFIG,
+    direct: process.env.WORKIT_YOUTRACK_CONFIG,
     toolkit: process.env.WORKIT_CONFIG,
     toolkitDir: process.env.WORKIT_CONFIG_DIR,
   };
   try {
-    delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+    delete process.env.WORKIT_YOUTRACK_CONFIG;
     delete process.env.WORKIT_CONFIG;
     delete process.env.WORKIT_CONFIG_DIR;
     process.env.XDG_CONFIG_HOME = configHome;
@@ -228,8 +228,8 @@ test("OpenCode YouTrack context reads a fixed file without migration or secret f
   } finally {
     if (previous.xdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = previous.xdg;
-    if (previous.direct === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous.direct;
+    if (previous.direct === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = previous.direct;
     if (previous.toolkit === undefined) delete process.env.WORKIT_CONFIG;
     else process.env.WORKIT_CONFIG = previous.toolkit;
     if (previous.toolkitDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
@@ -245,7 +245,7 @@ test("OpenCode YouTrack context rejects spec and plan paths outside the workspac
   const configPath = join(root, "youtrack.json");
   const outsideSpec = join(outside, "spec.md");
   const link = join(root, "linked-spec.md");
-  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  const previous = process.env.WORKIT_YOUTRACK_CONFIG;
   try {
     writeFileSync(
       configPath,
@@ -253,7 +253,7 @@ test("OpenCode YouTrack context rejects spec and plan paths outside the workspac
     );
     writeFileSync(outsideSpec, "**YouTrack:** NSR-40\n");
     symlinkSync(outsideSpec, link);
-    process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
+    process.env.WORKIT_YOUTRACK_CONFIG = configPath;
     const tools = createWorkitTools() as any;
     for (const specPath of [outsideSpec, "linked-spec.md"]) {
       const result = await tools.workit_context.execute(
@@ -266,8 +266,8 @@ test("OpenCode YouTrack context rejects spec and plan paths outside the workspac
       });
     }
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    if (previous === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = previous;
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   }

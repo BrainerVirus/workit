@@ -416,7 +416,7 @@ test("pr edit --base (release tracks): given a PR on the nun line, then retarget
   expect(writes(runner.calls)).toEqual([]);
 });
 
-test("pr edit --base (release tracks): given a PR whose line can't be decided and a bad WORKFLOW_RELEASE_TRACK, then it is blocked", async () => {
+test("pr edit --base (release tracks): given a PR whose line can't be decided and a bad WORKIT_RELEASE_TRACK, then it is blocked", async () => {
   const { repo, runner } = setup("github", {
     ...githubBase(),
     ...octoToken,
@@ -426,15 +426,15 @@ test("pr edit --base (release tracks): given a PR whose line can't be decided an
     vcs: { provider: "github", account: "octo", defaultTargetBranch: "develop" },
     releaseTracks: TWO_TRACKS,
   });
-  const saved = process.env.WORKFLOW_RELEASE_TRACK;
-  process.env.WORKFLOW_RELEASE_TRACK = "bogus";
+  const saved = process.env.WORKIT_RELEASE_TRACK;
+  process.env.WORKIT_RELEASE_TRACK = "bogus";
   try {
     const result = await run(["pr", "edit", "--base", "develop", "--json"], repo.cwd);
     expect(result.code, result.stdout).toBe(3);
     expect(result.json().error).toContain("bogus");
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_RELEASE_TRACK;
-    else process.env.WORKFLOW_RELEASE_TRACK = saved;
+    if (saved === undefined) delete process.env.WORKIT_RELEASE_TRACK;
+    else process.env.WORKIT_RELEASE_TRACK = saved;
   }
   expect(writes(runner.calls)).toEqual([]);
 });

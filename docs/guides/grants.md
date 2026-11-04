@@ -32,7 +32,7 @@ the `release` grant ([Releasing](#releasing)); outside git-flow a protected
 branch only moves through a PR.
 
 When several workspaces match a folder, the most specific one sets its
-grants. `WORKFLOW_WORKSPACE_NAME` can pick another matching entry for its
+grants. `WORKIT_WORKSPACE_NAME` can pick another matching entry for its
 account, policies and issues, but never more authority: grants, the
 effective `defaultEndpoint` and `verification` stay at most what the folder gets
 without the name, and nothing is granted when equally specific entries tie.

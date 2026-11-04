@@ -40,7 +40,7 @@ const detection = {
 
 type Sandbox = { root: string; project: string; config: string; home: string };
 
-const ENV_KEYS = ["HOME", "WORKIT_CONFIG", "WORKFLOW_WORKSPACE_ROOT"] as const;
+const ENV_KEYS = ["HOME", "WORKIT_CONFIG", "WORKIT_WORKSPACE_ROOT"] as const;
 
 async function inSandbox(run: (box: Sandbox) => Promise<void>): Promise<void> {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-golden-")));
@@ -68,7 +68,7 @@ async function inSandbox(run: (box: Sandbox) => Promise<void>): Promise<void> {
   const cwd = process.cwd();
   process.env.HOME = box.home;
   process.env.WORKIT_CONFIG = box.config;
-  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  delete process.env.WORKIT_WORKSPACE_ROOT;
   process.chdir(box.project);
   try {
     await run(box);
@@ -570,7 +570,7 @@ test("golden: the branch-policy screens in a git checkout render the same frames
       "init",
     );
     git("branch", "develop");
-    process.env.WORKFLOW_WORKSPACE_ROOT = box.project;
+    process.env.WORKIT_WORKSPACE_ROOT = box.project;
     const exits: Array<{ complete: boolean; values?: SetupValues }> = [];
     const tty = await renderInk(
       <Wizard
@@ -699,7 +699,7 @@ test("golden: the branch-policy screens in a git checkout render the same frames
 
 test("Given a profile was just edited, When Done returns to the profile list and Enter is pressed at once, Then the list's default row (Back) is taken instead of crashing", async () => {
   await inSandbox(async (box) => {
-    process.env.WORKFLOW_WORKSPACE_ROOT = box.project;
+    process.env.WORKIT_WORKSPACE_ROOT = box.project;
     const tty = await renderInk(<Wizard onExit={() => {}} detection={detection} />);
     await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
     await tty.keys(UP, UP, ENTER, "work", ENTER, "/work/**", ENTER, ENTER);

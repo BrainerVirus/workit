@@ -91,7 +91,7 @@ function effectiveWorkspacePolicy(
   const selected = resolveRuntimeWorkspacePolicy(
     workspaceRoot,
     kind,
-    profileName?.trim() || process.env.WORKFLOW_PROFILE?.trim() || undefined,
+    profileName?.trim() || process.env.WORKIT_PROFILE?.trim() || undefined,
   );
   const config = readConfig();
   return kind === "branch"
@@ -425,7 +425,7 @@ export const gitFlowOf = (root: string, integration?: string | null): GitFlow | 
     const selected = resolveRuntimeWorkspacePolicy(
       root,
       "branch",
-      process.env.WORKFLOW_PROFILE?.trim() || undefined,
+      process.env.WORKIT_PROFILE?.trim() || undefined,
     ).policy as WorkspaceBranchPolicy | undefined;
     const names = branchNames(root);
     const production = productionBranchOf(names);

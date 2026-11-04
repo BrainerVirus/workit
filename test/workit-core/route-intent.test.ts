@@ -12,16 +12,16 @@ import {
 const previous = {
   config: process.env.WORKIT_CONFIG,
   configDir: process.env.WORKIT_CONFIG_DIR,
-  profile: process.env.WORKFLOW_PROFILE,
-  workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+  profile: process.env.WORKIT_PROFILE,
+  workspace: process.env.WORKIT_WORKSPACE_NAME,
 };
 let configDir: string;
 beforeAll(() => {
   configDir = mkdtempSync(join(tmpdir(), "workit-shell-policy-config-"));
   delete process.env.WORKIT_CONFIG;
   process.env.WORKIT_CONFIG_DIR = configDir;
-  delete process.env.WORKFLOW_PROFILE;
-  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  delete process.env.WORKIT_PROFILE;
+  delete process.env.WORKIT_WORKSPACE_NAME;
   writeFileSync(
     join(configDir, "config.json"),
     JSON.stringify({
@@ -34,10 +34,10 @@ afterAll(() => {
   else process.env.WORKIT_CONFIG = previous.config;
   if (previous.configDir === undefined) delete process.env.WORKIT_CONFIG_DIR;
   else process.env.WORKIT_CONFIG_DIR = previous.configDir;
-  if (previous.profile === undefined) delete process.env.WORKFLOW_PROFILE;
-  else process.env.WORKFLOW_PROFILE = previous.profile;
-  if (previous.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-  else process.env.WORKFLOW_WORKSPACE_NAME = previous.workspace;
+  if (previous.profile === undefined) delete process.env.WORKIT_PROFILE;
+  else process.env.WORKIT_PROFILE = previous.profile;
+  if (previous.workspace === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+  else process.env.WORKIT_WORKSPACE_NAME = previous.workspace;
   rmSync(configDir, { recursive: true, force: true });
 });
 

@@ -124,7 +124,7 @@ function checkBase(cwd: string, meta: PrMeta, base: string): ForgeResult<void> {
     return failure(
       "blocked",
       String(blocking),
-      "retarget it on the forge yourself, or fix WORKFLOW_RELEASE_TRACK",
+      "retarget it on the forge yourself, or fix WORKIT_RELEASE_TRACK",
     );
   const target = String(config.defaultTargetBranch ?? "") || null;
   if (base === target) return success(undefined);

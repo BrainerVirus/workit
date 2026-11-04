@@ -208,7 +208,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     ]);
     expect(server.args.join(" ")).not.toContain("$HOME");
 
-    // Runtime: with a temp HOME and every WORKFLOW_* var stripped, the launcher
+    // Runtime: with a temp HOME and every WORKIT_* var stripped, the launcher
     // must resolve the installed core copy (not the repo) and serve MCP.
     const env = isolatedEnv(home, { BUN: process.execPath });
     const { child, request, workspace } = startMcpServer(cursorDir, env);

@@ -555,8 +555,8 @@ test("given a protected main, beforeShellExecution branch creation is denied wit
   );
   const env: NodeJS.ProcessEnv = { ...process.env, WORKIT_CONFIG_DIR: configDir };
   delete env.WORKIT_CONFIG;
-  delete env.WORKFLOW_PROFILE;
-  delete env.WORKFLOW_WORKSPACE_NAME;
+  delete env.WORKIT_PROFILE;
+  delete env.WORKIT_WORKSPACE_NAME;
   const run = (command: string) =>
     spawnSync(
       process.execPath,

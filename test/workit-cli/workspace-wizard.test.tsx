@@ -619,7 +619,7 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -632,7 +632,7 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -644,7 +644,7 @@ test("advanced workspace menu exposes typed profile and release-track controls",
   const projectRoot = tmp("wk-ws-advanced-proj-");
   const previous = process.cwd();
   process.chdir(projectRoot);
-  process.env.WORKFLOW_WORKSPACE_ROOT = projectRoot;
+  process.env.WORKIT_WORKSPACE_ROOT = projectRoot;
   try {
     withConfigDir(dir, [entry("work", `${projectRoot}/**`)]);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -662,7 +662,7 @@ test("advanced workspace menu exposes typed profile and release-track controls",
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(dir);
     clean(projectRoot);
@@ -704,7 +704,7 @@ test("advanced global commit policy is reachable with named preset and pattern c
   const projectRoot = tmp("wk-global-commit-proj-");
   const previous = process.cwd();
   process.chdir(projectRoot);
-  process.env.WORKFLOW_WORKSPACE_ROOT = projectRoot;
+  process.env.WORKIT_WORKSPACE_ROOT = projectRoot;
   try {
     withConfigDir(dir, []);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -718,7 +718,7 @@ test("advanced global commit policy is reachable with named preset and pattern c
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(dir);
     clean(projectRoot);
@@ -732,7 +732,7 @@ test("add flow: name → glob preview → provider → menu shows the entry with
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -761,7 +761,7 @@ test("add flow: name → glob preview → provider → menu shows the entry with
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -775,7 +775,7 @@ test("a matching current-project pattern renders a ✓ verdict in the menu", asy
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", `${project}/**`)]);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -784,7 +784,7 @@ test("a matching current-project pattern renders a ✓ verdict in the menu", asy
     expect(menu).toContain("✓ matches work");
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -798,7 +798,7 @@ test("edit flow: change the pattern, the verdict flips and the save persists it"
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -818,7 +818,7 @@ test("edit flow: change the pattern, the verdict flips and the save persists it"
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -832,7 +832,7 @@ test("remove flow: the entry disappears from the menu", async () => {
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -845,7 +845,7 @@ test("remove flow: the entry disappears from the menu", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -859,7 +859,7 @@ test("current-project setup adds the cwd pattern in one step", async () => {
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -874,7 +874,7 @@ test("current-project setup adds the cwd pattern in one step", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -888,7 +888,7 @@ test("workspace name/glob validation blocks advancing with inline errors", async
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -904,7 +904,7 @@ test("workspace name/glob validation blocks advancing with inline errors", async
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -918,7 +918,7 @@ test("back and cancel inside the workspace flow preserve state and write nothing
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
@@ -949,7 +949,7 @@ test("back and cancel inside the workspace flow preserve state and write nothing
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -963,7 +963,7 @@ test("summary shows the update-workspaces mutation after an add", async () => {
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
@@ -988,7 +988,7 @@ test("summary shows the update-workspaces mutation after an add", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -1002,7 +1002,7 @@ test("untouched workspaces produce no update-workspaces mutation in the summary"
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const exitCalls: boolean[] = [];
@@ -1020,7 +1020,7 @@ test("untouched workspaces produce no update-workspaces mutation in the summary"
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -1054,7 +1054,7 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
   process.chdir(project);
   // Pin the D-06 resolution root to the project so traversals skip the new
   // base-path prompt and previews derive from the env (Task 6 mechanical update).
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
@@ -1080,7 +1080,7 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -1093,7 +1093,7 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
   const previous = process.cwd();
   process.chdir(project);
   // Pin the D-06 resolution root so traversals skip the base-path prompt.
-  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  process.env.WORKIT_WORKSPACE_ROOT = project;
   let captured: WizardDraft["values"] | undefined;
   try {
     withConfigDir(configDir);
@@ -1130,7 +1130,7 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -1149,8 +1149,8 @@ test(
     const configDir = tmp("wk-ws-root-cfg-");
     const project = tmp("wk-ws-root-proj-");
     const previous = process.cwd();
-    const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    const prevRoot = process.env.WORKIT_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     process.chdir(project);
     try {
       withConfigDir(configDir);
@@ -1175,8 +1175,8 @@ test(
       tty.unmount();
     } finally {
       process.chdir(previous);
-      if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-      else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
+      if (prevRoot === undefined) delete process.env.WORKIT_WORKSPACE_ROOT;
+      else process.env.WORKIT_WORKSPACE_ROOT = prevRoot;
       delete process.env.WORKIT_CONFIG;
       clean(configDir);
       clean(project);
@@ -1185,13 +1185,13 @@ test(
   { timeout: 15_000 },
 );
 
-test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from it, not cwd", async () => {
+test("with WORKIT_WORKSPACE_ROOT set, current-project and previews derive from it, not cwd", async () => {
   const configDir = tmp("wk-ws-envroot-cfg-");
   const project = tmp("wk-ws-envroot-proj-");
   const root = tmp("wk-ws-envroot-dir-");
   const previous = process.cwd();
   process.chdir(project);
-  process.env.WORKFLOW_WORKSPACE_ROOT = root;
+  process.env.WORKIT_WORKSPACE_ROOT = root;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -1207,7 +1207,7 @@ test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from
     tty.unmount();
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -1226,7 +1226,7 @@ test("Step 6 prints the git toplevel of the resolved basePath as the exact hygie
   mkdirSync(root);
   const previous = process.cwd();
   process.chdir(project);
-  process.env.WORKFLOW_WORKSPACE_ROOT = root;
+  process.env.WORKIT_WORKSPACE_ROOT = root;
   try {
     withConfigDir(configDir, [entry("work", `${root}/**`)]);
     const tty = await renderInk(<Wizard onExit={noop} detection={availableHosts} />);
@@ -1241,7 +1241,7 @@ test("Step 6 prints the git toplevel of the resolved basePath as the exact hygie
     tty.unmount(); // never apply
   } finally {
     process.chdir(previous);
-    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKIT_WORKSPACE_ROOT;
     delete process.env.WORKIT_CONFIG;
     clean(configDir);
     clean(project);

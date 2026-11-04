@@ -105,7 +105,7 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
   const pluginRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
   expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: pluginRoot })).toBeNull();
   const validRoot = initializedRoot();
-  expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: validRoot })).toBe(
+  expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKIT_WORKSPACE_ROOT: validRoot })).toBe(
     new TaskStore(validRoot).root,
   );
   const freshRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-no-state-"));
@@ -123,6 +123,6 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
   workspace.root = path.join(mismatchedRoot, "different-root");
   writeFileSync(workspacePath, `${JSON.stringify(workspace)}\n`);
   expect(
-    resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: mismatchedRoot }),
+    resolveCodexWorkspaceRoot(pluginRoot, { WORKIT_WORKSPACE_ROOT: mismatchedRoot }),
   ).toBeNull();
 });

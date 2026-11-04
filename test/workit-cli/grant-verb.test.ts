@@ -538,21 +538,21 @@ test("grant show: a workspace name that would raise grants is capped, with one n
       ],
     }),
   );
-  const saved = process.env.WORKFLOW_WORKSPACE_NAME;
-  process.env.WORKFLOW_WORKSPACE_NAME = "work";
+  const saved = process.env.WORKIT_WORKSPACE_NAME;
+  process.env.WORKIT_WORKSPACE_NAME = "work";
   try {
     const result = await run(["show"], headless);
     expect(result.json().data).toMatchObject({ workspace: "work", grants: { merge: false } });
     const notes = (await run(["show"], headless, {}, false))
       .text()
       .split("\n")
-      .filter((line) => line.includes("WORKFLOW_WORKSPACE_NAME"));
+      .filter((line) => line.includes("WORKIT_WORKSPACE_NAME"));
     expect(notes).toEqual([
-      "note: WORKFLOW_WORKSPACE_NAME=work: merge capped at workspace brasil; a name never raises grants",
+      "note: WORKIT_WORKSPACE_NAME=work: merge capped at workspace brasil; a name never raises grants",
     ]);
   } finally {
-    if (saved === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
-    else process.env.WORKFLOW_WORKSPACE_NAME = saved;
+    if (saved === undefined) delete process.env.WORKIT_WORKSPACE_NAME;
+    else process.env.WORKIT_WORKSPACE_NAME = saved;
   }
 });
 

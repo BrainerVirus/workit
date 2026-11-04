@@ -99,14 +99,14 @@ export const executeInitApply = (
   }
   const env = Object.fromEntries(
     Object.entries({
-      WORKFLOW_YT_BASE_URL: args.base_url,
-      WORKFLOW_YT_MEETING_ISSUE: args.meeting_issue,
-      WORKFLOW_VCS_PROVIDER: args.vcs_provider,
-      WORKFLOW_VCS_TARGET_BRANCH: args.vcs_target_branch,
-      WORKFLOW_WORKSPACE_ROOT: directory,
-      WORKFLOW_BP_NAME: args.name,
-      WORKFLOW_BP_DEVELOP: args.develop_branch,
-      WORKFLOW_BP_INTEGRATION: args.integration,
+      WORKIT_YT_BASE_URL: args.base_url,
+      WORKIT_YT_MEETING_ISSUE: args.meeting_issue,
+      WORKIT_VCS_PROVIDER: args.vcs_provider,
+      WORKIT_VCS_TARGET_BRANCH: args.vcs_target_branch,
+      WORKIT_WORKSPACE_ROOT: directory,
+      WORKIT_BP_NAME: args.name,
+      WORKIT_BP_DEVELOP: args.develop_branch,
+      WORKIT_BP_INTEGRATION: args.integration,
     }).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
   return output(legacyScriptResult(runtime.initApply(directory, action, env)));

@@ -21,7 +21,7 @@ const run = (entry: string, owned: boolean, input: string) => {
     env: {
       ...fixture.env,
       CODEX_HOME: path.join(fixture.home, ".codex"),
-      WORKFLOW_WORKSPACE_ROOT: fixture.home,
+      WORKIT_WORKSPACE_ROOT: fixture.home,
     },
     timeout: 30_000,
   });

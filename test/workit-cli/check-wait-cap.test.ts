@@ -58,7 +58,7 @@ const setup = (waitS: number) => {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WORKIT_SESSION_ID: "s-wait",
-    WORKFLOW_WORKSPACE_ROOT: "",
+    WORKIT_WORKSPACE_ROOT: "",
     WORKIT_STATE_DIR: state,
     WORKIT_CONFIG_DIR: config,
     WORKIT_LEASE: "",

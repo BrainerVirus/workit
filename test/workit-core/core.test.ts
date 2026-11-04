@@ -52,5 +52,5 @@ test("copied runtime cannot redirect assets or workspace through Cursor environm
     path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"),
     "utf8",
   );
-  expect(workspaceSource).not.toContain("WORKFLOW_WORKSPACE_ROOT");
+  expect(workspaceSource).not.toContain("WORKIT_WORKSPACE_ROOT");
 });

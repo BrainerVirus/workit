@@ -36,7 +36,7 @@ const setup = (config: unknown) => {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WORKIT_SESSION_ID: "s-ci",
-    WORKFLOW_WORKSPACE_ROOT: "",
+    WORKIT_WORKSPACE_ROOT: "",
     WORKIT_STATE_DIR: state,
     WORKIT_CONFIG_DIR: cfg,
     WORKIT_LEASE: "",

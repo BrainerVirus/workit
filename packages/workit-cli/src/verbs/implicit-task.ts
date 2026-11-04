@@ -15,7 +15,7 @@ export async function ensureImplicitTask(
     // Only the checked-out branch has an implicit task here.
     if (branch !== null && branch !== currentBranch(io.cwd)) return null;
     const { TaskStore } = await import("@brainervirus/workit-core/src/core/task-store");
-    const store = new TaskStore(io.env.WORKFLOW_WORKSPACE_ROOT || checkRoot(io.cwd));
+    const store = new TaskStore(io.env.WORKIT_WORKSPACE_ROOT || checkRoot(io.cwd));
     const actor = hostSessionFromEnv(io.env).session ?? "cli";
     const found = store.implicitTask({
       provenance: {

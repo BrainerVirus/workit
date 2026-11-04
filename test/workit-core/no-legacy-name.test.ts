@@ -1,5 +1,6 @@
 // Only the name workit exists: no tracked file may spell the old product name
-// (env vars, paths, marketplace names, docs). The allowed leftovers are the
+// (env vars, paths, marketplace names, docs) or an old WORKFLOW_* env var (now
+// WORKIT_*, with no alias). The allowed leftovers are the
 // release history in CHANGELOG.md, this guard, and the one constant Codex
 // setup and upgrade read to move an install off the old marketplace name.
 import { expect, test } from "bun:test";
@@ -9,6 +10,7 @@ import path from "node:path";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const OLD_NAME = /workflow[-_ ]?toolkit/i;
+const OLD_ENV_PREFIX = /\bWORKFLOW_[A-Z]/;
 const SELF = "test/workit-core/no-legacy-name.test.ts";
 const ALLOWED_FILES = new Set(["CHANGELOG.md", SELF]);
 const ALLOWED_LINES = new Map([
@@ -20,13 +22,13 @@ const ALLOWED_LINES = new Map([
 
 type Source = { file: string; text: string };
 
-/** Every `file:line: text` that spells the old name outside the allowed places. */
+/** Every `file:line: text` that spells the old name or env prefix outside the allowed places. */
 const oldNameHits = (sources: Source[]): string[] => {
   const hits: string[] = [];
   for (const { file, text } of sources) {
     if (ALLOWED_FILES.has(file) || text.includes("\0")) continue;
     text.split(/\r?\n/).forEach((line, index) => {
-      if (!OLD_NAME.test(line)) return;
+      if (!OLD_NAME.test(line) && !OLD_ENV_PREFIX.test(line)) return;
       if (ALLOWED_LINES.get(file) === line.trim()) return;
       hits.push(`${file}:${index + 1}: ${line.trim()}`);
     });
@@ -49,7 +51,7 @@ const trackedSources = (): Source[] => {
     });
 };
 
-test("no tracked file spells the old product name outside CHANGELOG.md and the Codex legacy constant", () => {
+test("no tracked file spells the old product name or WORKFLOW_* env prefix outside CHANGELOG.md and the Codex legacy constant", () => {
   expect(oldNameHits(trackedSources())).toEqual([]);
 });
 
@@ -59,7 +61,11 @@ test("the guard names the file and line of a reintroduced old env var", () => {
       file: "packages/x/src/state.ts",
       text: "const a = 1;\nconst dir = env.WORKFLOW_TOOLKIT_STATE;\n",
     },
-    { file: "CHANGELOG.md", text: "WORKFLOW_TOOLKIT_STATE was renamed" },
+    {
+      file: "packages/x/src/root.ts",
+      text: "const root = env.WORKFLOW_WORKSPACE_ROOT;\nconst kept = env.WORKIT_WORKSPACE_ROOT;\nconst word = SUB_WORKFLOW_X;\n",
+    },
+    { file: "CHANGELOG.md", text: "WORKFLOW_TOOLKIT_STATE and WORKFLOW_YT_WRITE were renamed" },
     {
       file: "packages/workit-cli/src/upgrade/codex-marketplace.ts",
       text: 'export const CODEX_LEGACY_MARKETPLACE = "workflow-toolkit";\nconst again = "workflow-toolkit";\n',
@@ -67,6 +73,7 @@ test("the guard names the file and line of a reintroduced old env var", () => {
   ]);
   expect(hits).toEqual([
     "packages/x/src/state.ts:2: const dir = env.WORKFLOW_TOOLKIT_STATE;",
+    "packages/x/src/root.ts:1: const root = env.WORKFLOW_WORKSPACE_ROOT;",
     'packages/workit-cli/src/upgrade/codex-marketplace.ts:2: const again = "workflow-toolkit";',
   ]);
 });

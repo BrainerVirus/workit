@@ -1075,7 +1075,7 @@ export const resolveWorkspaceFrom = (
 
 export const resolveWorkspace = (
   cwd: string,
-  workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+  workspaceName = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined,
 ): WorkspaceConfig | null => resolveWorkspaceFrom(cwd, configDir(), workspaceName);
 
 type RuntimeWorkspacePolicy = "branch" | "commit" | "vcs";
@@ -1172,7 +1172,7 @@ const matchRuntimeWorkspace = (
     if (!glob.ok) throw new WorkspaceConfigError(`${file} workspace ${entry.name}: ${glob.error}`);
   }
   const matches = matchingEntries(cwd, entries ?? []);
-  const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
+  const workspaceName = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
   const selected = selectWorkspaceMatch(matches, cwd, workspaceName);
   return selected ? { file, selected, matches } : null;
 };
@@ -1730,7 +1730,7 @@ export function workspaceDefaultTarget(cwd: string, globalDefault: unknown): str
   const selected = resolveRuntimeWorkspacePolicy(
     cwd,
     "branch",
-    process.env.WORKFLOW_PROFILE?.trim() || undefined,
+    process.env.WORKIT_PROFILE?.trim() || undefined,
   );
   const policyDefault = resolveConfiguredBranchPolicy(
     readConfig(),

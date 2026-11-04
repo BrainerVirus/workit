@@ -12,13 +12,13 @@ import {
 import type { IssueTracker } from "@/packages/workit-core/src/core/vcs-config";
 
 // Never the machine's own youtrack.json: a base URL comes from the tracker only.
-const previousYouTrack = process.env.WORKFLOW_YOUTRACK_CONFIG;
+const previousYouTrack = process.env.WORKIT_YOUTRACK_CONFIG;
 beforeAll(() => {
-  process.env.WORKFLOW_YOUTRACK_CONFIG = path.join(os.tmpdir(), "wk-no-youtrack", "youtrack.json");
+  process.env.WORKIT_YOUTRACK_CONFIG = path.join(os.tmpdir(), "wk-no-youtrack", "youtrack.json");
 });
 afterAll(() => {
-  if (previousYouTrack === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-  else process.env.WORKFLOW_YOUTRACK_CONFIG = previousYouTrack;
+  if (previousYouTrack === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+  else process.env.WORKIT_YOUTRACK_CONFIG = previousYouTrack;
 });
 
 const github: PrForge = { kind: "github", repo: "o/r", host: "github.com" };
