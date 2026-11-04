@@ -1329,6 +1329,15 @@ export function authorSessions(
   return sessions;
 }
 
+/**
+ * #312: the way back when an issued id lost its token (a verifier resumed
+ * after its lead crashed, or one whose context was compacted). A token is
+ * issued once, so nothing rebinds the id: re-issuing one would let anyone
+ * re-fire the hook and supersede that reviewer's failure.
+ */
+export const unboundRecovery = (session: string | null, branch: string | null): string =>
+  `a token is issued once, so no command rebinds ${session ?? "an issued id"}. If the verifier's SubagentStart context still shows the token, it reruns the same command with --token=<that token> (or WORKIT_SESSION_TOKEN). Otherwise (a verifier resumed after its lead crashed, or whose context was compacted) the lead spawns a fresh verifier for ${branch ?? "the branch"}: its SubagentStart context prints the whole workit ledger verdict command with a new --session and --token; it re-checks the head (pr status shows a focused reverify when that is enough) and records the verdict there`;
+
 /** Where each host's verifier session comes from, for refusal hints. */
 const HOST_DERIVED_SESSIONS =
   "Claude Code, Codex and Cursor: `--session <lead>:<agent id>` from the SubagentStart hook; OpenCode child sessions and Pi workers: WORKIT_SESSION_ID=<lead>:<child> already set in their shell";
@@ -1937,7 +1946,7 @@ const importedStamp = new Map<string, string>();
  * and return them as read back (with integrity). Empty when there is no
  * mirror, nothing new, or the ledger is busy.
  */
-export function importMirroredVerdicts(cwd: string, branch: string): ReadRow[] {
+function importMirroredVerdicts(cwd: string, branch: string): ReadRow[] {
   const file = verdictMirrorPath(cwd);
   const local = ledgerPath(cwd);
   if (!file || !local.ok || file === local.value) return [];

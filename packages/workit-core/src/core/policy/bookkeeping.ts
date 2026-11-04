@@ -80,7 +80,7 @@ const SCRIPT_FILE = /[\w./-]+\.[cm]?[jt]s\b/gu;
  * `rev` regenerates: the script's source names the path (fanout.ts
  * regeneratedFiles reads the working tree; this reads one revision).
  */
-export function regeneratedAt(cwd: string, rev: string, paths: readonly string[]): Set<string> {
+function regeneratedAt(cwd: string, rev: string, paths: readonly string[]): Set<string> {
   const found = new Set<string>();
   const outputs = paths.filter((file) => !CODE.test(file));
   if (!outputs.length) return found;
