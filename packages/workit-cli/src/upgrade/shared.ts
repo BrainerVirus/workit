@@ -184,6 +184,23 @@ export const fixFor = (host: UpgradeHost, selector = ""): string =>
             ? "workit upgrade --hosts=cursor"
             : CLI_FIX;
 
+/** Locations a real environment may set that an explicit (test) home must not inherit. */
+const HOME_DERIVED = [
+  "XDG_DATA_HOME",
+  "XDG_BIN_HOME",
+  "XDG_STATE_HOME",
+  "WORKFLOW_TOOLKIT_STATE",
+  "WORKIT_INSTALL_ROOT",
+  "WORKIT_BIN_DIR",
+  "WORKIT_NODE",
+  "FNM_DIR",
+  "NVM_DIR",
+  "NVM_HOME",
+  "VOLTA_HOME",
+  "MISE_DATA_DIR",
+  "ASDF_DATA_DIR",
+];
+
 export const upgradePaths = (deps: UpgradeDeps) => {
   const home = deps.home ?? deps.env?.HOME ?? os.homedir();
   const env: NodeJS.ProcessEnv = {
@@ -197,6 +214,9 @@ export const upgradePaths = (deps: UpgradeDeps) => {
           XDG_CONFIG_HOME: path.join(home, ".config"),
           WORKFLOW_TOOLKIT_CONFIG: undefined,
           WORKFLOW_TOOLKIT_CONFIG_DIR: undefined,
+          // An explicit home also isolates the owned install and every
+          // version-manager prefix the CLI migration would look into.
+          ...Object.fromEntries(HOME_DERIVED.map((name) => [name, undefined])),
         }
       : {}),
     ...deps.env,

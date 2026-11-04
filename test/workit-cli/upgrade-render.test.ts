@@ -17,7 +17,14 @@ const plan = {
   ],
   entries: [{ host: "opencode", installedVersion: "1.0.0", latest: "1.1.0", commands: [] }],
   configDigests: {},
-  cli: { latest: "8.41.0", root: "/r", installed: "8.40.8" },
+  cli: {
+    latest: "8.41.0",
+    root: "/r",
+    installed: "8.40.8",
+    entry: "/r/versions/8.41.0/node_modules/@brainervirus/workit-cli/dist/index.js",
+    install: true,
+    copies: ["/n/bin/workit (workit 8.40.8; fnm global prefix /n; PATH #1)"],
+  },
   migrations: [{ id: "m", file: "/f", description: "migrate config" }],
   warnings: ["OpenCode 1.x"],
 } as unknown as UpgradePlan;
@@ -30,7 +37,9 @@ const hosts: HostOutcome[] = [
 ];
 
 const SUMMARY = `Workit upgrade plan:
-  cli         update 8.40.8 -> 8.41.0
+  cli         update 8.40.8 -> 8.41.0 under /r
+              other installs to migrate (backed up, then removed after a y/N):
+                /n/bin/workit (workit 8.40.8; fnm global prefix /n; PATH #1)
   opencode    update 1.0.0 -> 1.1.0
   cursor      already current (1.0.0)
   codex       skip: not installed (run: workit setup --hosts=codex)

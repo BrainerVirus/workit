@@ -6,6 +6,7 @@ import pkg from "../../package.json" with { type: "json" };
 import { createStyle } from "../style";
 import {
   CLI_PACKAGE,
+  latestNotOlder,
   readUpdateCache,
   readUpdatesMode,
   writeUpdateCache,
@@ -66,7 +67,7 @@ export async function runUpdateCheck(json: boolean, deps: UpgradeDeps): Promise<
   );
   const run = probedRunner(deps, probes);
   const latest = (name: string) => registryVersion(run, name);
-  const cliLatest = latest(CLI_PACKAGE);
+  const cliLatest = latestNotOlder(latest(CLI_PACKAGE), pkg.version);
   // The launch check reads this cache; a check that reached the registry refreshes it.
   if (cliLatest)
     writeUpdateCache(paths.env, {

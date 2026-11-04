@@ -603,7 +603,7 @@ const applyCli = async (
   return {
     host: "cli",
     status: "updated",
-    reason: `${cli.install ? `${cli.installed} -> ${cli.latest}` : `owned ${cli.latest}`}; PATH runs ${seen.path}`,
-    ...(details.length ? { details } : {}),
+    reason: cli.install ? `${cli.installed} -> ${cli.latest}` : `owned install ${cli.latest}`,
+    details: [`PATH runs ${seen.path} (workit ${seen.version})`, ...details],
   };
 };

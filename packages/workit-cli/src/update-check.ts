@@ -9,6 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import pkg from "../package.json" with { type: "json" };
 import { isPromptAbort } from "./prompt";
 import { createStyle, terminalMode, type TerminalStream } from "./style";
+import { entryOf, ownedPaths, ownedVersion } from "./install/paths";
 import { registryVersion, runner, versionAtLeast } from "./upgrade/shared";
 
 export const CLI_PACKAGE = "@brainervirus/workit-cli";
@@ -120,7 +121,7 @@ export async function launchUpdateCheck(
     (deps.refresh ?? (() => startRefresh(deps.env)))();
   }
   const installed = deps.installed ?? pkg.version;
-  const latest = cache.latest;
+  const latest = latestNotOlder(cache.latest, installed);
   if (!latest || versionAtLeast(installed, latest)) return undefined;
   // "Skip for now", or an upgrade already tried in this window (an npx or
   // linked CLI that `workit upgrade` leaves alone): quiet until the TTL passes.
@@ -169,7 +170,7 @@ export async function launchUpdateCheck(
     );
   // Re-execute only when the CLI package on disk really changed: an upgrade
   // that left it alone (a failure, an npx or linked CLI) never loops.
-  const onDisk = (deps.cliOnDisk ?? cliVersionOnDisk)();
+  const onDisk = (deps.cliOnDisk ?? (() => upgradedCli(deps.env).version))();
   if (!onDisk || onDisk === installed) {
     if (outcome.code !== 0)
       deps.write(
@@ -201,9 +202,35 @@ const defaultUpgrade = async (): Promise<UpgradeOutcome> => {
   return { code, failed };
 };
 
-/** The same entry script, now the upgraded package on disk, with the same argv. */
+/**
+ * The CLI an upgrade left on disk: the Workit-owned `current` once there is
+ * one (the running script may be the previous version's, or a removed npm
+ * global copy), else the running entry script's package.
+ */
+const upgradedCli = (
+  env: NodeJS.ProcessEnv,
+): { version: string | undefined; script: string | undefined } => {
+  const owned = ownedVersion(env);
+  return owned
+    ? { version: owned, script: entryOf(ownedPaths(env).current) }
+    : { version: cliVersionOnDisk(), script: process.argv[1] };
+};
+
+/**
+ * A cached or fetched "latest" never reads older than the running CLI: a
+ * stale cache, a lagging registry mirror or a run before a fresh publish
+ * reports the running version as current (#423).
+ */
+export const latestNotOlder = (latest: string | undefined, running: string): string | undefined =>
+  latest === undefined
+    ? undefined
+    : /^\d+\.\d+\.\d+$/.test(running) && !versionAtLeast(latest, running)
+      ? running
+      : latest;
+
+/** The upgraded CLI on disk, with the same argv. */
 const defaultReexec = (argv: readonly string[]): number | undefined => {
-  const script = process.argv[1];
+  const script = upgradedCli(process.env).script;
   if (!script) return undefined;
   const result = spawnSync(process.execPath, [script, ...argv], {
     stdio: "inherit",
