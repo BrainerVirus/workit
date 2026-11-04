@@ -881,6 +881,16 @@ export const VERBS: readonly VerbEntry[] = [
           "workit changelog apply (--entries <JSON|@file|-> | --normalize-only) [--path CHANGELOG.md] [--preview]",
         summary: "Add entries (or only normalize the file)",
       },
+      {
+        name: "merge",
+        usage: "workit changelog merge <base> <ours> <theirs>",
+        summary: "Git merge driver: keep both sides' Unreleased entries",
+      },
+      {
+        name: "driver",
+        usage: "workit changelog driver install",
+        summary: "Register the merge driver in .git/config and .gitattributes",
+      },
     ],
     load: () => import("./changelog"),
   }),

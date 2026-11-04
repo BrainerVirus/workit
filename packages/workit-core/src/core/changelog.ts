@@ -43,7 +43,7 @@ const readChangelogSource = (target: string): ChangelogSource => {
   }
 };
 
-function normalizeBullet(text: string): string {
+export function normalizeBullet(text: string): string {
   text = text.trim();
   const m = BULLET_RE.exec(text);
   if (m) return m[2].trim();
@@ -55,7 +55,7 @@ function formatBullet(text: string): string {
   return `- ${normalizeBullet(text)}`;
 }
 
-function splitUnreleased(text: string): [string, string, string] {
+export function splitUnreleased(text: string): [string, string, string] {
   const lines = text.split(/(?<=\n)/);
   let start: number | null = null;
   for (let i = 0; i < lines.length; i++) {
@@ -98,7 +98,7 @@ function canonicalCategory(heading: string): string | null {
   );
 }
 
-function splitSections(
+export function splitSections(
   body: string,
 ): [string[], Array<{ heading: string; category: string | null; body: string[] }>] {
   const preamble: string[] = [];
@@ -117,7 +117,7 @@ function splitSections(
   return [preamble, sections];
 }
 
-function bulletBlocks(lines: string[]): Array<[string | null, string[]]> {
+export function bulletBlocks(lines: string[]): Array<[string | null, string[]]> {
   const blocks: Array<[string | null, string[]]> = [];
   let current: string[] = [];
   let key: string | null = null;
@@ -204,7 +204,7 @@ function mergeSections(
   return [output, counts, added, null];
 }
 
-function hasUnreleasedHeading(text: string): boolean {
+export function hasUnreleasedHeading(text: string): boolean {
   return text.split("\n").some((line) => UNRELEASED_RE.test(line.replace(/\n$/, "")));
 }
 

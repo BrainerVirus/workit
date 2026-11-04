@@ -12,9 +12,15 @@ import {
   changelogApply,
   changelogApplyPreview,
 } from "@brainervirus/workit-core/src/core/changelog";
+import {
+  installChangelogDriver,
+  mergeChangelogFiles,
+} from "@brainervirus/workit-core/src/core/changelog-merge";
 import { emit, fail, ok, type Io } from "../output";
 import { parseFlags, usage } from "./forge-common";
 
+const MERGE_USAGE = "workit changelog merge <base> <ours> <theirs>";
+const DRIVER_USAGE = "workit changelog driver install";
 const USAGE =
   "workit changelog apply (--entries <JSON|@file|-> | --normalize-only) [--path CHANGELOG.md] [--preview]";
 
@@ -30,6 +36,35 @@ const readEntries = (raw: string, cwd: string): unknown => {
 
 export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = argv;
+  if (sub === "merge") {
+    const [base, ours, theirs, ...extra] = rest;
+    if (!base || !ours || !theirs || extra.length > 1)
+      return usage(io, "merge takes <base> <ours> <theirs>", MERGE_USAGE);
+    try {
+      const merged = mergeChangelogFiles({
+        base: path.resolve(io.cwd, base),
+        ours: path.resolve(io.cwd, ours),
+        theirs: path.resolve(io.cwd, theirs),
+      });
+      if (merged.error) return emit(io, fail("failed", merged.error));
+      // Exit 1 is git's "conflict": the markers are already in <ours>.
+      if (merged.code !== 0) io.stderr("workit: changelog conflict outside [Unreleased]\n");
+      return merged.code;
+    } catch (error) {
+      return emit(io, fail("failed", error instanceof Error ? error.message : String(error)));
+    }
+  }
+  if (sub === "driver") {
+    if (rest[0] !== "install" || rest.length > 1)
+      return usage(io, "driver takes install", DRIVER_USAGE);
+    const installed = installChangelogDriver(io.cwd);
+    if ("error" in installed) return emit(io, fail("failed", installed.error));
+    return emit(io, ok(installed), (data) => [
+      data.changed.length
+        ? `changelog merge driver installed (${data.changed.join(", ")})`
+        : "changelog merge driver already installed",
+    ]);
+  }
   if (sub !== "apply") return usage(io, `unknown subcommand "${sub ?? ""}"`, USAGE);
   const flags = parseFlags(rest, {
     entries: "value",
