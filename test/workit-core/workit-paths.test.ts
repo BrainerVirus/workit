@@ -45,11 +45,11 @@ const H = "/home/u";
 test("Given Linux or macOS with no XDG vars, When each resolver runs, Then every kind sits under the XDG defaults", () => {
   for (const platform of ["linux", "darwin"] as const) {
     const env = { HOME: H };
-    expect(configDir(env, platform)).toBe(`${H}/.config/workit`);
-    expect(stateDir(env, platform)).toBe(`${H}/.local/state/workit`);
-    expect(dataDir(env, platform)).toBe(`${H}/.local/share/workit`);
-    expect(cacheDir(env, platform)).toBe(`${H}/.cache/workit`);
-    expect(runtimeDir({ ...env, TMPDIR: "/t" }, platform)).toMatch(/^\/t\/workit-\S+$/);
+    expect(configDir(env, platform)).toBe(path.join(H, ".config", "workit"));
+    expect(stateDir(env, platform)).toBe(path.join(H, ".local", "state", "workit"));
+    expect(dataDir(env, platform)).toBe(path.join(H, ".local", "share", "workit"));
+    expect(cacheDir(env, platform)).toBe(path.join(H, ".cache", "workit"));
+    expect(runtimeDir({ ...env, TMPDIR: "/t" }, platform)).toStartWith(path.join("/t", "workit-"));
   }
 });
 
@@ -63,14 +63,14 @@ test("Given XDG_*_HOME set, Then each kind follows its variable; a relative one 
     XDG_RUNTIME_DIR: "/run/user/1",
   };
   for (const platform of ["linux", "darwin"] as const) {
-    expect(configDir(env, platform)).toBe("/x/c/workit");
-    expect(stateDir(env, platform)).toBe("/x/s/workit");
-    expect(dataDir(env, platform)).toBe("/x/d/workit");
-    expect(cacheDir(env, platform)).toBe("/x/k/workit");
-    expect(runtimeDir(env, platform)).toBe("/run/user/1/workit");
+    expect(configDir(env, platform)).toBe(path.join("/x/c", "workit"));
+    expect(stateDir(env, platform)).toBe(path.join("/x/s", "workit"));
+    expect(dataDir(env, platform)).toBe(path.join("/x/d", "workit"));
+    expect(cacheDir(env, platform)).toBe(path.join("/x/k", "workit"));
+    expect(runtimeDir(env, platform)).toBe(path.join("/run/user/1", "workit"));
   }
   expect(stateDir({ HOME: H, XDG_STATE_HOME: "rel/state" }, "linux")).toBe(
-    `${H}/.local/state/workit`,
+    path.join(H, ".local", "state", "workit"),
   );
 });
 
@@ -82,7 +82,7 @@ test("Given WORKIT_STATE_DIR, WORKIT_CONFIG_DIR or WORKIT_CONFIG, Then those win
     "/o/cfg",
   );
   // An empty override is unset.
-  expect(stateDir({ ...env, WORKIT_STATE_DIR: "" }, "linux")).toBe("/x/s/workit");
+  expect(stateDir({ ...env, WORKIT_STATE_DIR: "" }, "linux")).toBe(path.join("/x/s", "workit"));
 });
 
 test("Given Windows (simulated), Then config is under APPDATA and state, data and cache under LOCALAPPDATA", () => {
@@ -132,35 +132,39 @@ const runSh = (fn: string, name: string, env: Record<string, string>, bin: strin
   return out.stdout.trim();
 };
 
-test("Given the same env, When the shell functions and the resolver run, Then they name the same dirs", () => {
-  const envs: Array<Record<string, string>> = [
-    { HOME: H },
-    { HOME: H, XDG_STATE_HOME: "/x/s", XDG_CONFIG_HOME: "/x/c", XDG_DATA_HOME: "/x/d" },
-    { HOME: H, XDG_STATE_HOME: "rel", XDG_CONFIG_HOME: "rel", XDG_DATA_HOME: "rel" },
-    { HOME: H, WORKIT_STATE_DIR: "/o/s", WORKIT_CONFIG_DIR: "/o/c" },
-    { HOME: H, WORKIT_CONFIG: "/o/cfg", WORKIT_CONFIG_DIR: "/o/c" },
-    { HOME: H, APPDATA: "/w/Roaming", LOCALAPPDATA: "/w/Local" },
-  ];
-  const cases: Array<[string, string, Kind]> = [
-    [STATE_DIR_SH, "workit_state_dir", "state"],
-    [CONFIG_DIR_SH, "workit_config_dir", "config"],
-    [DATA_DIR_SH, "workit_data_dir", "data"],
-  ];
-  const systems: Array<[string, NodeJS.Platform]> = [
-    ["Linux", "linux"],
-    ["Darwin", "darwin"],
-    ["MINGW64_NT-10.0", "win32"],
-  ];
-  const slash = (value: string) => value.replaceAll("\\", "/");
-  for (const [system, platform] of systems) {
-    const bin = unameBin(system);
-    for (const env of envs)
-      for (const [fn, name, kind] of cases)
-        expect(slash(runSh(fn, name, env, bin)), `${system} ${name} ${JSON.stringify(env)}`).toBe(
-          slash(workitDir(kind, env, platform)),
-        );
-  }
-});
+// The shell copies run under a POSIX sh; on a Windows host the TS side joins with "\\".
+test.skipIf(process.platform === "win32")(
+  "Given the same env, When the shell functions and the resolver run, Then they name the same dirs",
+  () => {
+    const envs: Array<Record<string, string>> = [
+      { HOME: H },
+      { HOME: H, XDG_STATE_HOME: "/x/s", XDG_CONFIG_HOME: "/x/c", XDG_DATA_HOME: "/x/d" },
+      { HOME: H, XDG_STATE_HOME: "rel", XDG_CONFIG_HOME: "rel", XDG_DATA_HOME: "rel" },
+      { HOME: H, WORKIT_STATE_DIR: "/o/s", WORKIT_CONFIG_DIR: "/o/c" },
+      { HOME: H, WORKIT_CONFIG: "/o/cfg", WORKIT_CONFIG_DIR: "/o/c" },
+      { HOME: H, APPDATA: "/w/Roaming", LOCALAPPDATA: "/w/Local" },
+    ];
+    const cases: Array<[string, string, Kind]> = [
+      [STATE_DIR_SH, "workit_state_dir", "state"],
+      [CONFIG_DIR_SH, "workit_config_dir", "config"],
+      [DATA_DIR_SH, "workit_data_dir", "data"],
+    ];
+    const systems: Array<[string, NodeJS.Platform]> = [
+      ["Linux", "linux"],
+      ["Darwin", "darwin"],
+      ["MINGW64_NT-10.0", "win32"],
+    ];
+    const slash = (value: string) => value.replaceAll("\\", "/");
+    for (const [system, platform] of systems) {
+      const bin = unameBin(system);
+      for (const env of envs)
+        for (const [fn, name, kind] of cases)
+          expect(slash(runSh(fn, name, env, bin)), `${system} ${name} ${JSON.stringify(env)}`).toBe(
+            slash(workitDir(kind, env, platform)),
+          );
+    }
+  },
+);
 
 test("bin/workit and the owned launcher read node.json from the resolver's state dir", () => {
   // Each launcher calls the embedded function; none keeps its own state path.
@@ -265,25 +269,29 @@ const legacyRow = (home: string): DoctorCheck =>
     scopeProbe: () => ({ effective: false, supported: false, reason: "test", delegate: null }),
   }).checks.find((check) => check.id === "legacy_dirs")!;
 
-test("Given a leftover legacy dir beside the XDG one, When doctor runs, Then legacy_dirs warns with the command that finishes the move", () => {
-  const { home, legacy } = legacyHome();
-  mkdirSync(path.join(home, ".local", "state", "workit"), { recursive: true });
-  const row = legacyRow(home);
-  expect(row.status).toBe("warn");
-  expect(row.detail).toContain(legacy);
-  expect(row.fix).toStartWith(
-    `cp -Rn '${legacy}/.' ${path.join(home, ".local/state/workit")}/ && mv `,
-  );
-  expect(row.fix).toMatch(/ '.+workit\.moved-\d{8}T\d{6}Z'$/);
+// Runs the printed POSIX fix with sh against a macOS layout.
+test.skipIf(process.platform === "win32")(
+  "Given a leftover legacy dir beside the XDG one, When doctor runs, Then legacy_dirs warns with the command that finishes the move",
+  () => {
+    const { home, legacy } = legacyHome();
+    mkdirSync(path.join(home, ".local", "state", "workit"), { recursive: true });
+    const row = legacyRow(home);
+    expect(row.status).toBe("warn");
+    expect(row.detail).toContain(legacy);
+    expect(row.fix).toStartWith(
+      `cp -Rn '${legacy}/.' ${path.join(home, ".local/state/workit")}/ && mv `,
+    );
+    expect(row.fix).toMatch(/ '.+workit\.moved-\d{8}T\d{6}Z'$/);
 
-  // Running the printed command finishes it: doctor then reports the finished move.
-  expect(spawnSync("sh", ["-c", row.fix!]).status).toBe(0);
-  expect(existsSync(legacy)).toBe(false);
-  expect(existsSync(path.join(home, ".local/state/workit/ledger/events.jsonl"))).toBe(true);
-  const after = legacyRow(home);
-  expect(after.status).toBe("info");
-  expect(after.detail).toContain("moved to");
-});
+    // Running the printed command finishes it: doctor then reports the finished move.
+    expect(spawnSync("sh", ["-c", row.fix!]).status).toBe(0);
+    expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(path.join(home, ".local/state/workit/ledger/events.jsonl"))).toBe(true);
+    const after = legacyRow(home);
+    expect(after.status).toBe("info");
+    expect(after.detail).toContain("moved to");
+  },
+);
 
 test("docs/agents/file-locations.md names every kind and every env override the resolver reads", () => {
   const doc = read("docs/agents/file-locations.md");
