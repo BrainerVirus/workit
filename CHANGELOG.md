@@ -893,6 +893,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `workit doctor` no longer reports a dev (local-dist) install as stale against npm latest, since main's manifest versions lag the release.
 - `workit upgrade` describes a foreign file at the launcher path as "foreign file, left untouched; move it to let the launcher link there" instead of listing it for removal without a command (W2.33), and a wrapper script whose heredoc prints an `exec node …` line is no longer parsed as a wrapper.
 - `workit finding resolve` finds the task that holds the finding, and a refused resolve names the evidence that would be accepted (#317). The retro skill files behavioural rules as Workit issues, not host memories.
+- Heavy checks: a lease slot that frees too close to `--timeout` (under min(10 s, a quarter of it)) no longer starts the command with a sliver of budget; it exits as a wait timeout. The `stuck?` flag and auto-reap use 1.5x the check's last measured run (never below the configured limit), so long suites on two slots are not flagged. Wait estimates read only the ledger tail, and macOS frees a reused pid's lease through `ps`.
 
 ## [0.6.0] - 2026-08-10
 
