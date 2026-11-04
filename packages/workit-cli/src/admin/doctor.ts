@@ -2835,7 +2835,7 @@ const youTrackUse = (res: Resolved): { hosts: string[]; tokenFile: string | null
 const checkYouTrack = (res: Resolved): DoctorCheck | null => {
   const use = youTrackUse(res);
   if (!use) return null;
-  const login = (host: string | null) => `ytrack auth login${host ? ` --hostname ${host}` : ""}`;
+  const login = (host: string | null) => `ytrack auth login${host ? ` --host ${host}` : ""}`;
   const logins = use.hosts.length ? use.hosts.map(login).join("; ") : login(null);
   if (!findYtrack(res.env)) {
     return {

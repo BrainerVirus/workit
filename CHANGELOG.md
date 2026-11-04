@@ -395,7 +395,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one core helper with one-line adapter callers.
 - `workit youtrack show <ISSUE> [--json]` and `workit youtrack create --project --summary` (create needs `WORKIT_YT_WRITE=1`, now also required for note, time and meeting).
 - `workit config show [--json]` prints the effective config here and where each value comes from; `workit grant show` prints `vcs.provider`. Guessed verbs get a did-you-mean (`workit commit` → `workit git commit`).
-- `workit doctor` has a YouTrack row when a workspace uses YouTrack: ok when ytrack is logged in to each configured host; a warning naming `ytrack auth login --hostname <host>` when it is not; a deprecation warning when Workit falls back to the legacy token file.
+- `workit doctor` has a YouTrack row when a workspace uses YouTrack: ok when ytrack is logged in to each configured host; a warning naming `ytrack auth login --host <host>` when it is not; a deprecation warning when Workit falls back to the legacy token file.
 
 ### Changed
 

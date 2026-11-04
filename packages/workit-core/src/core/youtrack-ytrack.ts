@@ -127,7 +127,7 @@ const rowAuth = (row: YtrackHostStatus | undefined): YtrackAuth =>
           : "error";
 
 /**
- * A YouTrack URL or host as ytrack names it (`ytrack auth login --hostname`):
+ * A YouTrack URL or host as ytrack names it (`ytrack auth login --host`):
  * the URL's host, lower case, without scheme, path or trailing slash.
  */
 export const ytrackHostName = (urlOrHost: string): string =>

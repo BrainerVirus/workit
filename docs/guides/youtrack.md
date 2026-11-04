@@ -23,7 +23,7 @@ same instance. Workit never passes a token to ytrack.
 `workit doctor` shows a `youtrack` row whenever `youtrack.json` exists or a
 workspace links YouTrack issues. It runs `ytrack auth status` and passes when
 ytrack is logged in to every configured host. It warns when ytrack is logged
-out of a host (the fix is `ytrack auth login --hostname <host>`) or when
+out of a host (the fix is `ytrack auth login --host <host>`) or when
 ytrack is missing and Workit falls back to the deprecated token file.
 
 ## Reading an issue

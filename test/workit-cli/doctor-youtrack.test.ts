@@ -98,7 +98,7 @@ test("Given no ytrack on PATH and a legacy token file, When doctor runs, Then th
   expect(found?.status).toBe("warn");
   expect(found?.detail).toContain(`legacy token file ${tokenFile}, deprecated`);
   expect(found?.fix).toContain("install ytrack");
-  expect(found?.fix).toContain("ytrack auth login --hostname acme.youtrack.cloud");
+  expect(found?.fix).toContain("ytrack auth login --host acme.youtrack.cloud");
   expect(JSON.stringify(found)).not.toContain("perm:secret");
 });
 
@@ -126,14 +126,14 @@ describe.skipIf(process.platform === "win32")("ytrack on PATH (POSIX stub)", () 
     ]);
   });
 
-  test("Given ytrack installed but logged out, When doctor runs, Then the row warns and names ytrack auth login --hostname", () => {
+  test("Given ytrack installed but logged out, When doctor runs, Then the row warns and names ytrack auth login --host", () => {
     configure();
     answer("version-", "ytrack version 0.2.0\n");
     answer("auth-status", "[]", 4);
     const found = row(doctor(true));
     expect(found?.status).toBe("warn");
     expect(found?.detail).toContain("logged_out for acme.youtrack.cloud");
-    expect(found?.fix).toBe("ytrack auth login --hostname acme.youtrack.cloud");
+    expect(found?.fix).toBe("ytrack auth login --host acme.youtrack.cloud");
   });
 
   test("Given ytrack logged in to another host only, When doctor runs, Then the configured host reads logged_out", () => {
@@ -141,7 +141,7 @@ describe.skipIf(process.platform === "win32")("ytrack on PATH (POSIX stub)", () 
     loggedIn("other.youtrack.cloud");
     const found = row(doctor(true));
     expect(found?.status).toBe("warn");
-    expect(found?.fix).toBe("ytrack auth login --hostname acme.youtrack.cloud");
+    expect(found?.fix).toBe("ytrack auth login --host acme.youtrack.cloud");
   });
 
   test("Given only a workspace on YouTrack, When doctor runs, Then the row checks that workspace's host", () => {
