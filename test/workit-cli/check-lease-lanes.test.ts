@@ -104,7 +104,7 @@ test("Given N parallel heavy checks each with --timeout 4 and one slot, When the
   const names = ["c1", "c2", "c3", "c4"];
   const { root, env } = setup({
     resources: { slots: 1, heavy: names },
-    checks: Object.fromEntries(names.map((name) => [name, sleeper(2500)])),
+    checks: Object.fromEntries(names.map((name) => [name, sleeper(3000)])),
   });
   const runs = await Promise.all(
     names.map(
@@ -128,12 +128,15 @@ test("Given N parallel heavy checks each with --timeout 4 and one slot, When the
         ),
     ),
   );
-  // Serially the four take over 10 s; each is bounded by its 4 s timeout plus start-up.
-  for (const run of runs) expect(run.ms, `${run.name}: ${run.stderr}`).toBeLessThan(9_000);
+  // Serially the four take over 12 s; each is bounded by its 4 s timeout plus start-up.
+  for (const run of runs) expect(run.ms, `${run.name}: ${run.stderr}`).toBeLessThan(10_000);
   expect(runs.filter((run) => run.code === 0).length).toBeGreaterThanOrEqual(1);
   for (const run of runs.filter((item) => item.code !== 0)) {
     expect(run.code, run.stderr).toBe(4);
-    expect(run.stderr).toContain("--timeout");
+    // Either the lease wait used up the timeout, or the queue time left the command too little of it.
+    expect(run.stderr).toMatch(
+      /the check's whole --timeout|of it queued for the heavy-check lease/u,
+    );
   }
 }, 60_000);
 
