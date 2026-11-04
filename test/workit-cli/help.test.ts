@@ -60,6 +60,7 @@ const PARSERS: Record<string, string[]> = {
   lock: ["verbs/lock.ts"],
   models: ["verbs/models.ts"],
   pr: ["verbs/pr.ts"],
+  issue: ["verbs/issue.ts"],
   ci: ["verbs/ci.ts"],
   git: ["verbs/git.ts"],
   release: ["verbs/release.ts"],
@@ -87,6 +88,8 @@ const NOT_ACCEPTED: Record<string, string[]> = {
       [
         ...(name === "policy" ? [] : ["--judge", "--ref", "--why"]),
         ...(name === "task" || name === "finding" ? [] : ["--status"]),
+        // --queue only for `finding record` (#439).
+        ...(name === "finding" ? [] : ["--queue"]),
       ],
     ]),
   ),
