@@ -140,8 +140,9 @@ looks for a Node that meets the floor (`core/node-resolve.mjs`: carried as a
 byte-equal copy in `claude-code/bin/` and `cursor/hooks/`, imported into the
 Codex bundle; a test holds the copies equal) in this order: (1) `WORKIT_NODE`;
 (2) the absolute `process.execPath` that `workit setup` or `workit upgrade`
-recorded in `<state dir>/node.json` (same dir resolution as the other state, so
-`WORKIT_STATE_DIR` and XDG apply), when it exists and was >= the floor;
+recorded in `<state dir>/node.json` (the state dir from `core/workit-paths.mjs`,
+whose byte-equal copy sits beside each launcher, so `WORKIT_STATE_DIR` and XDG
+apply; see [file locations](file-locations.md)), when it exists and was >= the floor;
 (3) a directory-listing scan (no spawning, at most 200 entries per root) of
 fnm (`$FNM_DIR`, `~/.local/share/fnm`, `%APPDATA%/fnm`), nvm (`$NVM_DIR`,
 `~/.nvm`, nvm-windows `%NVM_HOME%`), volta, mise and asdf installs, highest
