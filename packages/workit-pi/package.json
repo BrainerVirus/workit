@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-pi",
-  "version": "10.1.1",
+  "version": "11.0.0",
   "description": "Workit native extension for Pi — tools, method skills, and session continuity",
   "keywords": [
     "agentic-coding",
