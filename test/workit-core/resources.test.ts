@@ -126,6 +126,19 @@ test("G machine resources, T they set every field, and a bad field keeps the ear
   expect(one({ memoryMax: "50%" }).memoryMax).toBe("17179869184");
 });
 
+test("G more slots than RAM covers at memoryMax each, T a warning names the share and the fix; within RAM, or one slot, none", () => {
+  const resolve = (value: Record<string, unknown>) =>
+    resolveResourceSettings([{ label: "workspaces.json", trust: "machine", value }], HOST);
+  const over = resolve({ slots: 3 });
+  expect(over.settings.slots).toBe(3);
+  expect(over.warnings).toEqual([
+    "slots: 3 heavy checks at 40% of RAM each can use 120% of it; lower memoryMax to about 26% or use fewer slots",
+  ]);
+  expect(resolve({ slots: 2 }).warnings).toEqual([]);
+  expect(resolve({ slots: 3, memoryMax: "25%" }).warnings).toEqual([]);
+  expect(resolve({}).warnings).toEqual([]);
+});
+
 test("G a repo .workit/checks.json, T it can only tighten the machine's limits: no slots or scope, memory and CPU only lower, heavy only added", () => {
   const repo = {
     label: ".workit/checks.json",
@@ -261,6 +274,40 @@ test("G a lease whose holder pid is dead, T the next acquirer reclaims it", asyn
     expect.objectContaining({ pid, cwd: "/repo/other", reason: `holder pid ${pid} is gone` }),
   ]);
   got.lease.release();
+});
+
+test("G a waiter queued behind a live holder, W the holder process is killed, T the waiter takes the slot within a poll, not at its wait's end", async () => {
+  const dir = path.join(temp(), "leases");
+  const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], {
+    stdio: "ignore",
+  });
+  const pid = holder.pid;
+  if (!pid) throw new Error("no holder pid");
+  const exited = new Promise((resolve) => holder.once("exit", resolve));
+  try {
+    writeSlot(dir, leaseRecord({ pid }));
+    let queued = false;
+    const pending = acquireLease({
+      ...base(dir),
+      waitMs: 30_000,
+      pollMs: 100,
+      onStatus: () => void (queued = true),
+    });
+    await sleep(300);
+    expect(queued).toBe(true);
+    holder.kill("SIGKILL");
+    await exited;
+    const killedAt = Date.now();
+    const got = await pending;
+    if (!got.ok) throw new Error(got.reason);
+    expect(Date.now() - killedAt).toBeLessThan(2_000);
+    expect(got.lease.reclaimed).toEqual([
+      expect.objectContaining({ pid, reason: `holder pid ${pid} is gone` }),
+    ]);
+    got.lease.release();
+  } finally {
+    holder.kill("SIGKILL");
+  }
 });
 
 test("G a live pid but another boot id, T the lease is stale; the same boot id holds", async () => {

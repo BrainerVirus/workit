@@ -679,6 +679,23 @@ and Codex use `PreToolUse`, Cursor uses `preToolUse` and
 Two heavy checks on one machine are kept apart separately, by the
 [machine-wide check lease](delivery.md#heavy-checks-share-the-machine).
 
+### Heavy-check slots
+
+`resources.slots` in a workspaces.json entry sets how many heavy checks run at
+once on this machine. The default is 1: parallel test suites pushed the
+desktop session out of memory before the lease existed. Raise it only on a
+machine with room for more:
+
+```bash
+workit workspace set work resources.slots=2
+```
+
+Each heavy check may use up to `resources.memoryMax` (default 40% of RAM).
+When `slots` times that is more than the RAM, every check prints a warning
+naming a `memoryMax` that fits. A repo's `.workit/checks.json` cannot change
+`slots`. `workit lock status` shows the slots, who holds them and each
+waiter's estimated wait.
+
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
 no forge tokens of its own.
 

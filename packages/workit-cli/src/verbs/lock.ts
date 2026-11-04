@@ -1,6 +1,8 @@
 // `workit lock` (issue #325): the machine-wide heavy-check lease under its
-// own name. `status` shows who holds it and who is queued (#508), first
-// dropping what no longer holds or waits and marking stuck holders (#608);
+// own name. `status` shows who holds it and who is queued (#508), with each
+// holder's time left and each waiter's estimated wait from the ledger's last
+// measured runs (#326), first dropping what no longer holds or waits and
+// marking stuck holders (#608);
 // `reap` frees a stuck holder's slot, `cancel` drops queued waiters, `wait`
 // waits for a free slot without taking it, `run` is `workit check --heavy`,
 // and `heavy` lists, tests and extends which commands the shell hook gates
@@ -44,6 +46,13 @@ import {
   pruneLease,
   reapStuck,
 } from "@brainervirus/workit-core/src/core/heavy-lease";
+import {
+  describeEstimate,
+  estimateWait,
+  ledgerDurations,
+  remainingNote,
+  type DurationOf,
+} from "@brainervirus/workit-core/src/core/heavy-eta";
 import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
 import { emit, fail, ok, type Io } from "../output";
 import { recordReaped, workspaceResources } from "./check";
@@ -70,19 +79,69 @@ const servingOrder = (dir: string, slots: SlotState[], queue: QueueEntry[]): Que
     readGrants(dir),
   );
 
-function slotLines(slots: SlotState[], waiting: QueueEntry[] = []): string[] {
+type Estimates = {
+  /** Each live holder's time left from its check's last measured run (null: never measured). */
+  slots: Array<{ slot: number; remainingMs: number | null; note: string | null }>;
+  /** Each waiter's estimated wait, in serving order. */
+  queue: Array<{ position: number; waitMs: number | null; unmeasured: string[]; note: string }>;
+};
+
+/** Time left per holder and the estimated wait per waiter (#326). */
+function estimates(
+  slots: SlotState[],
+  waiting: QueueEntry[],
+  count: number,
+  durationOf: DurationOf,
+  now = Date.now(),
+): Estimates {
+  const holders = held(slots).flatMap((slot) => (slot.holder ? [slot.holder] : []));
+  return {
+    slots: held(slots).flatMap((slot) => {
+      if (!slot.holder) return [];
+      const ms = durationOf(slot.holder);
+      return [
+        {
+          slot: slot.slot,
+          remainingMs:
+            ms === null ? null : Math.max(0, ms - (now - Date.parse(slot.holder.startedAt))),
+          note: remainingNote(slot.holder, durationOf, now),
+        },
+      ];
+    }),
+    queue: waiting.map((_, index) => {
+      const estimate = estimateWait({
+        slots: count,
+        holders,
+        ahead: waiting.slice(0, index).map((entry) => entry.holder),
+        durationOf,
+        now,
+      });
+      return {
+        position: index + 1,
+        waitMs: estimate.ms,
+        unmeasured: estimate.ms === null ? estimate.unmeasured : [],
+        note: describeEstimate(estimate),
+      };
+    }),
+  };
+}
+
+function slotLines(slots: SlotState[], waiting: QueueEntry[], eta: Estimates): string[] {
   const busy = held(slots).length;
   const stuck = slots.some((slot) => slot.stuck);
+  const left = (slot: number) => eta.slots.find((item) => item.slot === slot)?.note;
   return [
     `heavy-check lease: ${busy} of ${slots.length} slot${slots.length === 1 ? "" : "s"} held`,
     ...slots.map((slot) =>
       slot.holder
-        ? `  slot ${slot.slot}: ${describeHolder(slot.holder)}${slot.stale ? ` (stale: ${slot.stale}; the next heavy check reclaims it)` : ""}`
+        ? `  slot ${slot.slot}: ${describeHolder(slot.holder)}${slot.stale ? ` (stale: ${slot.stale}; the next heavy check reclaims it)` : left(slot.slot) ? `; ${left(slot.slot)}` : ""}`
         : `  slot ${slot.slot}: free`,
     ),
     ...(stuck ? ["  a stuck? holder's slot is freed by: workit lock reap [<pid>]"] : []),
     `queue: ${waiting.length ? `${waiting.length} waiting, round-robin per session` : "empty"}`,
-    ...waiting.map((entry, index) => `  ${index + 1}. ${describeHolder(entry.holder)}`),
+    ...waiting.map(
+      (entry, index) => `  ${index + 1}. ${describeHolder(entry.holder)}; ${eta.queue[index].note}`,
+    ),
   ];
 }
 
@@ -93,12 +152,14 @@ async function status(io: Io): Promise<number> {
   const pruned = pruneLease(dir, settings.slots);
   const slots = leaseSlots(dir, settings.slots, {}, maxHold);
   const waiting = servingOrder(dir, slots, leaseQueue(dir));
+  const eta = estimates(slots, waiting, settings.slots, ledgerDurations());
   return emit(
     io,
     ok({
       dir,
       slots,
       queue: waiting.map((entry) => entry.holder),
+      estimates: eta,
       pruned,
       waitMs: settings.waitMs,
       maxHoldMs: maxHold,
@@ -109,7 +170,7 @@ async function status(io: Io): Promise<number> {
         (item) =>
           `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
       ),
-      ...slotLines(slots, waiting),
+      ...slotLines(slots, waiting, eta),
     ],
   );
 }

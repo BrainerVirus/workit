@@ -225,6 +225,12 @@ export function resolveResourceSettings(
       else settings.maxHoldMs = hold;
     }
   }
+  // More slots run more heavy checks at once, each up to memoryMax: say when together they can take all RAM.
+  const share = Math.round((memory / host.totalMemBytes) * 100);
+  if (settings.slots > 1 && settings.slots * memory > host.totalMemBytes)
+    warnings.push(
+      `slots: ${settings.slots} heavy checks at ${share}% of RAM each can use ${settings.slots * share}% of it; lower memoryMax to about ${Math.floor(80 / settings.slots)}% or use fewer slots`,
+    );
   settings.memoryMax = String(memory);
   settings.cpuQuota = `${cpu}%`;
   return { settings, warnings };
@@ -539,6 +545,8 @@ export type QueueStatus = {
   position: number;
   /** Live waiters ahead of this one. */
   ahead: number;
+  /** Those waiters, in serving order (for a wait estimate). */
+  aheadOf: LeaseHolder[];
   /** The live holders of the slots. */
   holders: LeaseHolder[];
   waitedMs: number;
@@ -764,7 +772,7 @@ function waitersAhead(
   own: string,
   self: LeaseHolder,
   holders: LeaseHolder[],
-): number {
+): LeaseHolder[] {
   const live: Array<{ name: string; holder: LeaseHolder }> = [];
   for (const entry of leaseQueue(options.dir, options.probe)) {
     const name = path.basename(entry.file);
@@ -781,7 +789,12 @@ function waitersAhead(
     holders,
     readGrants(options.dir, options.probe?.now),
   );
-  return order.findIndex((entry) => entry.name === own);
+  return order
+    .slice(
+      0,
+      order.findIndex((entry) => entry.name === own),
+    )
+    .map((entry) => entry.holder);
 }
 
 /** Live holders of the slots, read without reclaiming; one past its auto-reap bound does not count. */
@@ -903,7 +916,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         if (by) return { ok: false, reason: "cancelled", by, waitedMs: waited };
       }
       const before = liveHolders(options);
-      const ahead = waitersAhead(options, queued ? name : "~", self, before);
+      const aheadOf = waitersAhead(options, queued ? name : "~", self, before);
+      const ahead = aheadOf.length;
       const free = options.slots - before.length;
       if (ahead < free) {
         const now = new Date(clock.now()).toISOString();
@@ -968,6 +982,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         options.onStatus?.({
           position: ahead + 1,
           ahead,
+          aheadOf,
           holders,
           waitedMs: waited,
           first: nextStatus === 0,
