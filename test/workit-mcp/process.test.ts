@@ -34,7 +34,13 @@ afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 const start = () => {
   const child = spawn(process.execPath, [entry, "--host", "cursor"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, WORKIT_WORKSPACE_ROOT: tempRoot, WORKIT_SESSION_ID: "" },
+    // An agent shell's inherited session id must not attest the caller.
+    env: {
+      ...process.env,
+      WORKIT_WORKSPACE_ROOT: tempRoot,
+      WORKIT_SESSION_ID: "inherited-agent-shell",
+      WORKIT_MCP_CALLER_SESSION: "",
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";
