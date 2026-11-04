@@ -75,6 +75,9 @@ export function measuredDurations(cwd: string, tailBytes = ETA_TAIL_BYTES): Map<
 /** A holder may run this many times its last measured run before it looks stuck. */
 export const HOLD_MARGIN = 1.5;
 
+/** The most a measured run can raise the hold limit to. */
+export const MAX_DERIVED_HOLD_MS = 6 * 60 * 60_000;
+
 /**
  * How long a check may hold its slot before it is shown `stuck?`: HOLD_MARGIN
  * times its last measured run, never below the configured limit (default
@@ -83,7 +86,11 @@ export const HOLD_MARGIN = 1.5;
  */
 export function holdLimit(measuredMs: number | null, configuredMs = DEFAULT_MAX_HOLD_MS): number {
   if (measuredMs === null || !Number.isFinite(measuredMs) || measuredMs <= 0) return configuredMs;
-  return Math.max(configuredMs, Math.round(measuredMs * HOLD_MARGIN));
+  // A corrupt or freak ledger row must not make a hung check unreapable.
+  return Math.max(
+    configuredMs,
+    Math.min(MAX_DERIVED_HOLD_MS, Math.round(measuredMs * HOLD_MARGIN)),
+  );
 }
 
 /** A DurationOf that reads each repo's ledger once. */

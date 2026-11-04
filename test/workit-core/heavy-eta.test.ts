@@ -8,6 +8,7 @@ import {
   describeEstimate,
   estimateWait,
   holdLimit,
+  MAX_DERIVED_HOLD_MS,
   ledgerDurations,
   measuredDurations,
   remainingNote,
@@ -176,4 +177,9 @@ test("G a check measured at 25m, W it has held a slot 20m, T it is not stuck; G 
   expect(autoReapReason(silent, DEFAULT_MAX_HOLD_MS, NOW)).toBeNull();
   const longer = { ...lease(measured, 115 * MIN), heartbeatAt: null };
   expect(autoReapReason(longer, DEFAULT_MAX_HOLD_MS, NOW)).toContain("3x its 37m 30s limit");
+});
+
+test("Given a corrupt ledger duration, When the hold limit is derived, Then it is capped so a hung check stays reapable", () => {
+  expect(holdLimit(1e12)).toBe(MAX_DERIVED_HOLD_MS);
+  expect(holdLimit(1e12, 8 * 60 * 60_000)).toBe(8 * 60 * 60_000);
 });

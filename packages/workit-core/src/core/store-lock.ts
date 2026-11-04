@@ -117,9 +117,12 @@ const readProcStat = (pid: number): string | null => {
 
 const psStart = (pid: number): string | null => {
   try {
+    // C locale: lstart is compared as a string across processes, and a holder
+    // and a waiter in different locales would otherwise disagree on a live pid.
     const run = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
       timeout: 1_000,
+      env: { ...process.env, LC_ALL: "C" },
     });
     return run.status === 0 ? run.stdout.trim() || null : null;
   } catch {
