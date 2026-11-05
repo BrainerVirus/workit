@@ -403,6 +403,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A fanout slice that depends on another is created as a stack: its worktree branches from the parent slice, `fanout status` shows the stack, and `workit stack sync` rebases a child onto trunk without the parent's commits once the parent is squash-merged. `stack land --others-pr --reason` lands another author's PRs like `pr merge` (W2.37).
 - Shell completion: `workit completion zsh|bash|fish|powershell` completes verbs, subcommands, flags and live values (configured check names, workspaces, fanout slices) from the verb registry. `workit setup` and `workit upgrade` install it for your shell under the XDG data/config dirs and print the zsh `fpath` lines when needed; your rc files are never edited, and `workit uninstall` removes only the scripts Workit wrote.
 - `workit help` and per-verb help are coloured at a terminal (bold headings, accent commands and flags, dim descriptions); plain under NO_COLOR, TERM=dumb, CI, a pipe or `--json`.
+- `workit fanout brief <slice> --host <host>` renders the brief for the worker's host (model lines, attribution); with WORKIT_HOST unset, `cli` or misspelled, a warning names the valid hosts (#292).
 
 ### Changed
 
@@ -500,6 +501,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fanout briefs: light ad-hoc commands run as `workit check --name <n> -- <cmd>` (no lease) and `--heavy` is only for full suites, packaging, builds and knip; hard slices get 180 tool calls and every brief says by which call to run the full gates; briefs print `WORKER: <slice>`; the skills VERIFY line reads the worktree's checks and ignores `docs/agents`.
 - YouTrack goes through your `ytrack` CLI when it is installed (token in the OS keyring): Workit never reads its own token file then, passes no token, and a logged-out ytrack fails with `ytrack auth login` instead of falling back. The token-file client stays one release as the fallback when ytrack is missing (#263).
 - CI: Windows tests run in 12 shards balanced from fresh timings; spawn- and git-heavy tests share one Windows-scaled timeout helper; fixtures and goldens are pinned to LF by .gitattributes and a test fails on any fixture without an eol rule; docs-only PRs still run the tests that read the docs (#415).
+- Implementer instructions agree with the hooks on git: in a Workit worktree use `workit git --cwd <worktree> …`; only a Claude Code host-isolated worktree uses plain git. Implementer definitions and briefs show `workit git commit --trailer "Co-Authored-By: …"`, and Claude Code and Cursor briefs carry the concrete trailer (no invented addresses for other hosts) (#292).
 
 ### Fixed
 
