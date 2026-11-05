@@ -103,7 +103,7 @@ test("Given a GitLab project with 'Pipelines must succeed', When an MR has a fai
   const read = gitlabStatus(JSON.stringify({ id: 1, only_allow_merge_if_pipeline_succeeds: true }));
   const failing = read.checks.find((item) => item.state === "failing");
   expect(failing?.required).toBe(true);
-  expect(read.requiredContexts).toContain(failing?.context);
+  expect(read.requiredContexts).toContain(failing?.context ?? "");
 });
 
 test("Given an unreadable GitLab project, When an MR has a failing job, Then the job stays required (a waiver is refused)", () => {

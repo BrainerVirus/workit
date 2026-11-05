@@ -44,7 +44,7 @@ test("Given 25 GitHub PRs for a head where the open one is the 21st, When findPr
   const forge = createGitHubForge({ apiHost: "github.com", repo: "o/r", runner });
   const found = forge.findPr(HEAD, { owner: "o", projectId: null, sha: null });
   expect(found).toMatchObject({ ok: true, data: { number: 80, state: "open" } });
-  expect(runner.calls.map((call) => call.vars.after ?? null)).toEqual([null, "20"]);
+  expect(runner.calls.map((call) => call.vars.after ?? "")).toEqual(["", "20"]);
 });
 
 test("Given 25 GitLab MRs for a head where the open one is the 21st, When findPr runs, Then it pages and finds it", () => {
