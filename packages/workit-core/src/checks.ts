@@ -176,6 +176,8 @@ export type RunOptions = {
   wrapper?: readonly string[];
   /** Called with the child's pid once it started (on POSIX also its process group id). */
   onSpawn?: (pid: number) => void;
+  /** For tests: the spawn function (default: node:child_process spawn). */
+  spawn?: typeof spawn;
 };
 
 // cmd.exe metacharacters (the cross-spawn set).
@@ -258,8 +260,20 @@ export function planSpawn(
   };
 }
 
+/** Is `pid` still a process (ESRCH: gone; EPERM: exists but not ours)? */
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 /** After the child exits, how long its pipes may stay open (held by leftovers) before they are cut. */
 const DRAIN_MS = 250;
+/** Once both pipes closed without an `exit` event, how often the child's own status is read. */
+const STATUS_POLL_MS = 100;
 const FORWARDED_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /**
@@ -291,6 +305,8 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
     let drain: NodeJS.Timeout | null = null;
     let child: ReturnType<typeof spawn>;
     let timer: NodeJS.Timeout | null = null;
+    let poll: NodeJS.Timeout | null = null;
+    let exited = false;
     const killTree = () => {
       if (!child?.pid) return;
       if (windows)
@@ -311,6 +327,7 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
       settled = true;
       if (timer) clearTimeout(timer);
       if (drain) clearTimeout(drain);
+      if (poll) clearInterval(poll);
       for (const [name, handler] of forwarders) process.off(name, handler);
       child?.stdout?.destroy();
       child?.stderr?.destroy();
@@ -341,7 +358,7 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
       shell: plan.shell,
     };
     try {
-      child = spawn(plan.file, plan.args, spawnOptions);
+      child = (options.spawn ?? spawn)(plan.file, plan.args, spawnOptions);
     } catch (error) {
       finish(null, null, (error as NodeJS.ErrnoException).code ?? (error as Error).message);
       return;
@@ -393,7 +410,31 @@ export function runCheckCommand(argv: readonly string[], options: RunOptions): P
     child.on("error", (error: NodeJS.ErrnoException) =>
       finish(null, null, error.code ?? error.message),
     );
+    // The run must not hang on a lost `exit` event (#730: a 30 s stall on
+    // macOS CI that `exit` and `close` never ended): once both pipes closed,
+    // read the child's own status; a child that is gone without one settles
+    // as a failure that says so. A live child keeps waiting (the timeout and
+    // the normal events still apply).
+    let open = (child.stdout ? 1 : 0) + (child.stderr ? 1 : 0);
+    const pipeClosed = () => {
+      open -= 1;
+      if (open > 0 || exited || settled || poll) return;
+      poll = setInterval(() => {
+        if (exited || settled) return;
+        if (child.exitCode !== null || child.signalCode !== null) {
+          finish(child.exitCode, child.signalCode);
+          return;
+        }
+        if (child.pid && !alive(child.pid)) {
+          redactor.write("workit", "workit: the command ended without reporting its exit status\n");
+          finish(1, null);
+        }
+      }, STATUS_POLL_MS);
+    };
+    child.stdout?.on("close", pipeClosed);
+    child.stderr?.on("close", pipeClosed);
     child.on("exit", (code, signal) => {
+      exited = true;
       // Leftovers of the command die with it; then give the pipes a moment.
       if (!windows) killTree();
       drain = setTimeout(() => finish(code, signal), DRAIN_MS);
