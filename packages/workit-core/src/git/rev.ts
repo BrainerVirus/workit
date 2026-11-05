@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { configFilePath } from "../core/config";
 import { gitDirs } from "./facts";
+import { readHeadBranch, readHeadCommit } from "./refs-read";
 
 const MAX_BUFFER = 256 * 1024 * 1024;
 
@@ -195,7 +196,7 @@ export function redactRemote(raw: string): string {
 
 /** The commit HEAD points at, or null (unborn HEAD, not a repository). */
 export function headSha(cwd: string): string | null {
-  return line(git(cwd, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]));
+  return readHeadCommit(cwd) ?? line(git(cwd, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]));
 }
 
 const emptyTree = (cwd: string): string | null => line(git(cwd, ["mktree"], { input: "" }));
@@ -794,7 +795,8 @@ const config = (cwd: string, key: string): string | null =>
 
 /** The current branch name (also on an unborn branch), or null when detached. */
 export function currentBranch(cwd: string): string | null {
-  return line(git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]));
+  const read = readHeadBranch(cwd);
+  return read ? read.branch : line(git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]));
 }
 
 /**

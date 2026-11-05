@@ -65,7 +65,8 @@ import { resolveStateDir } from "./core/logger";
 import { hostAwareLockTimeout } from "./core/store-lock";
 import { verdictDrift, type CarryRule, type Drift } from "./core/policy/carry";
 import { defaultBase } from "./git/default-base";
-import { gitDirs } from "./git/facts";
+import { gitDirs, originUrl, withinCall } from "./git/facts";
+import { readBranchCommit } from "./git/refs-read";
 import {
   GIT_TIMEOUTS,
   currentBranch,
@@ -300,10 +301,14 @@ const git = (cwd: string, args: string[]): string | null => {
 
 const safeRef = (value: string): boolean => value.length > 0 && !value.startsWith("-");
 
-/** The commit a ref resolves to, or null. */
+/** The commit a ref resolves to, or null. A local branch is read from the git files when they are plain. */
 export function resolveCommit(cwd: string, ref: string): string | null {
   if (!safeRef(ref)) return null;
-  return git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]);
+  const branch = /^refs\/heads\/(.+)$/u.exec(ref)?.[1];
+  return (
+    (branch ? readBranchCommit(cwd, branch) : null) ??
+    git(cwd, ["rev-parse", "--verify", "-q", `${ref}^{commit}`])
+  );
 }
 
 /** A local branch's tip, falling back to its remote-tracking ref on origin. */
@@ -1610,6 +1615,14 @@ export function checkVerdicts(
   branch: string,
   ledgerRows: readonly ReadRow[],
 ): VerdictCheck {
+  return withinCall(() => checkVerdictsOnce(cwd, branch, ledgerRows));
+}
+
+function checkVerdictsOnce(
+  cwd: string,
+  branch: string,
+  ledgerRows: readonly ReadRow[],
+): VerdictCheck {
   // Verdicts recorded in another clone of the same remote (#311).
   const imported = importMirroredVerdicts(cwd, branch);
   const rows = withIntegrity(cwd, imported.length ? [...ledgerRows, ...imported] : ledgerRows);
@@ -1944,7 +1957,7 @@ export function checkVerdicts(
 
 /** The remote identity of `cwd`'s `origin`: host and path, lowercased; null without one. */
 function remoteIdentity(cwd: string, hop = 0): string | null {
-  const raw = git(cwd, ["remote", "get-url", "origin"]);
+  const raw = originUrl(cwd);
   if (!raw) return null;
   // A clone of a local checkout: that checkout's own origin names the remote.
   if (hop === 0 && !/^[\w+.-]+:\/\/|^[^/\\]+@[^/\\]+:/u.test(raw)) {
