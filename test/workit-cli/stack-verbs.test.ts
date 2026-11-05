@@ -227,8 +227,10 @@ for (const kind of ["github", "gitlab"] as const)
     expect(forge.git("symbolic-ref", "--short", "HEAD")).toBe("feature/d");
     const after = await run(["stack", "status", "--json"], forge.cwd);
     expect(after.json().data).toMatchObject({ verdict: "WAITING" });
-    // PR3's restacked head: its CI reruns (the land stopped before awaiting it), then no verdict.
-    expect(after.json().data.reason).toMatch(/WAITING_CI|no_verdict/u);
+    // PR3's restacked head: its CI reruns, and the land stopped at --max before awaiting it.
+    expect(after.json().data.reason).toMatch(
+      /^not_ready: (PR #|MR !)13 is WAITING_CI \(checks_pending\)$/u,
+    );
   });
 
 /** The forge's runner, but the base branch's head CI has one failing required check. */
