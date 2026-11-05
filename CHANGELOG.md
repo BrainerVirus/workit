@@ -408,6 +408,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Verdict gates and stack carry checks compute a range's patch-id and diff hash from one git diff instead of two.
 - Workit runs fewer git processes per command: a checkout's top level, git dir and common dir are read once per process, and the default base is found with one git call instead of one per candidate branch (faster on Windows especially).
 - Releases no longer open a manifest-sync PR to main, so a release never makes open PRs fall behind; main keeps its last-synced versions and the release job sets the real version before publishing (a guard refuses to publish on a mismatch).
 - New managed worktrees go under the state dir (`~/.local/state/workit/worktrees/<repo>/<slug>` on Linux and macOS) instead of `~/.cache/workit-wt`. Existing ones are never moved: cleanup and `workit gc --worktrees --apply` still sweep merged ones there and remove the old dir once empty; `workit doctor` (`legacy_dirs`) reports it until then.

@@ -69,6 +69,7 @@ import {
 import {
   appendObserved,
   diffHash,
+  rangeKeys,
   readLedger,
   storeRoot,
   type LedgerActor,
@@ -1861,14 +1862,10 @@ export function syncStack(
       if (moved && parentTip) {
         const fromBase = entry.lastParentHead as string;
         const fromHead = entry.lastHead as string;
-        const before = {
-          p: patchId(cwd, fromBase, fromHead),
-          d: diffHash(cwd, fromBase, fromHead),
-        };
-        const after = {
-          p: patchId(cwd, parentTip, newTip),
-          d: diffHash(cwd, parentTip, newTip),
-        };
+        const keysBefore = rangeKeys(cwd, fromBase, fromHead);
+        const keysAfter = rangeKeys(cwd, parentTip, newTip);
+        const before = { p: keysBefore.patchId, d: keysBefore.diffHash };
+        const after = { p: keysAfter.patchId, d: keysAfter.diffHash };
         const equal =
           before.d !== null &&
           before.d === after.d &&
