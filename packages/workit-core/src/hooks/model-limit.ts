@@ -31,8 +31,16 @@ export type UsageLimit = {
   resetAt: Date | null;
 };
 
-/** What follows a provider's "… limit reached": a separator, its reset, or the end of the line. */
-const LIMIT_END = String.raw`(?=\s*(?:[∙·•|,:\-–—]|\.?\s*(?:$|\(?resets?\b|try again\b)))`;
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+/** A time word after "resets" or "try again": "in 2h", "at 3pm", "3am", "later", "Nov 5". */
+const TIME_WORD = String.raw`(?:\d|(?:in|at|on|later|tomorrow|soon)\b|(?:${[...WEEKDAYS, ...MONTHS].join("|")})[a-z]*\b)`;
+/**
+ * What follows a provider's "… limit reached": the end of the line, an epoch
+ * (`|<seconds>`), or its reset with a time word, after an optional separator.
+ * A report quoting "the weekly limit reached, resets handling" is none.
+ */
+const LIMIT_END = String.raw`(?=\s*(?:\|\d{10}\b|(?:[∙·•|,:\-–—.]\s*)?(?:$|\(?(?:resets?|try again)\s+${TIME_WORD})))`;
 /** Provider error shapes, never a bare phrase: prose about limits is not one. */
 const LIMIT_PATTERNS = [
   // Claude Code and Codex: "You've hit your weekly limit · resets 7pm", "You've hit your usage limit."
@@ -52,10 +60,9 @@ const RATE_LIMIT =
   /\brate_limit(?:_error)?\b|"type":\s*"rate_limit|\bstatus(?:code)?["':\s]+429\b|^\s*(?:\w+Error:\s*)?429\b/imu;
 const LONG_WAIT_MS = 15 * 60_000;
 
-const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const AT_TIME = new RegExp(
   String.raw`\b(?:resets?|reset at|try again at|available again at|retry at)\s+(?:at\s+|on\s+)?` +
-    String.raw`(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+)?` +
+    String.raw`(?:(?:${WEEKDAYS.join("|")})[a-z]*,?\s+)?` +
     String.raw`(?:(${MONTHS.join("|")})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:at\s+)?)?` +
     String.raw`(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([A-Za-z_]+(?:/[A-Za-z_+-]+)*)\))?`,
   "iu",

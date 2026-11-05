@@ -117,7 +117,10 @@ test("Given a verdict recorded in a clone of a different remote, When the gate r
   const other = throwawayClone(real, "git@github.com:acme/someone-else.git");
   verify(other);
   expect(verdictMirrorPath(other)).not.toBe(verdictMirrorPath(real));
-  expect(gate(real).accepted).toMatchObject({ accepted: false, reasons: ["no_verdict"] });
+  expect(gate(real).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["no_verdict"],
+  });
 });
 
 test("Given a mirror row edited by hand, When the gate runs, Then it is never imported", () => {
@@ -127,13 +130,20 @@ test("Given a mirror row edited by hand, When the gate runs, Then it is never im
   const mirror = verdictMirrorPath(real) as string;
   const text = readFileSync(mirror, "utf8");
   writeFileSync(mirror, text.replace("exercised it", "forged it"));
-  expect(gate(real).accepted).toMatchObject({ accepted: false, reasons: ["no_verdict"] });
+  expect(gate(real).accepted).toMatchObject({
+    accepted: false,
+    reasons: ["no_verdict"],
+  });
 });
 
 const judge = (cwd: string, session: string, result: "verified" | "failed", at: string) =>
   value(
     recordVerdict(
-      { cwd, actor: { host: "cli", session, agentId: null }, now: new Date(at) },
+      {
+        cwd,
+        actor: { host: "cli", session, agentId: null },
+        now: new Date(at),
+      },
       { result, how: `${result} it`, kind: "unit" },
     ),
   );
@@ -145,7 +155,10 @@ test("Given an older pass recorded in a clone and a newer local failure on the s
   rmSync(path.dirname(clone), { recursive: true, force: true });
   const failure = judge(real, "rev-B", "failed", "2026-01-02T00:00:00Z");
   const result = gate(real);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["failing_verdict"],
+  });
   expect(result.accepted.verdict?.id).toBe(failure.id);
   expect(result.current.verdict?.id).toBe(failure.id);
 });
@@ -168,8 +181,22 @@ test("Given a local failure and a pass recorded in a clone with the same `at`, W
   judge(clone, "rev-A", "verified", "2026-01-02T00:00:00Z");
   rmSync(path.dirname(clone), { recursive: true, force: true });
   const result = gate(real);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["failing_verdict"],
+  });
   expect(result.current.verdict?.id).toBe(failure.id);
+});
+
+test("Given mirrored imports out of time order (pass day 2, failure day 1, pass day 2), Then only same-instant ties move: the newer pass still ranks newest", () => {
+  const real = realCheckout("git@github.com:acme/mirror-out-of-order.git");
+  const clone = throwawayClone(real);
+  judge(clone, "rev-A", "verified", "2026-01-02T00:00:00Z");
+  judge(clone, "rev-B", "failed", "2026-01-01T00:00:00Z");
+  const newest = judge(clone, "rev-C", "verified", "2026-01-02T00:00:00Z");
+  rmSync(path.dirname(clone), { recursive: true, force: true });
+  const result = gate(real);
+  expect(result.current.verdict?.id).toBe(newest.id);
 });
 
 test("Given a pass from a clone dated in the future, When a local failure is recorded after it was imported, Then the failure ranks newest", () => {
@@ -180,7 +207,10 @@ test("Given a pass from a clone dated in the future, When a local failure is rec
   expect(gate(real).accepted.verdict?.id).toBe(pass.id);
   const failure = judge(real, "rev-B", "failed", "2026-01-03T00:00:00Z");
   const result = gate(real);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["failing_verdict"],
+  });
   expect(result.current.verdict?.id).toBe(failure.id);
 });
 
@@ -204,7 +234,10 @@ test("Given a failure from a clone, When its reviewer became an author locally o
     ),
   );
   const result = gate(real);
-  expect(result.accepted).toMatchObject({ accepted: false, reasons: ["failing_verdict"] });
+  expect(result.accepted).toMatchObject({
+    accepted: false,
+    reasons: ["failing_verdict"],
+  });
   expect(result.current.verdict?.id).toBe(failure.id);
 });
 

@@ -502,6 +502,16 @@ export function recordReaped(
   });
 }
 
+/** Name each slot an acquire reclaimed, and record a reaped live holder (#608). */
+function noteReclaimed(io: Io, reclaimed: readonly Reclaimed[]) {
+  for (const stale of reclaimed) {
+    io.stderr(
+      `workit: reclaimed a ${stale.reaped ? "stuck" : "stale"} heavy-check lease (${stale.reason}): ${describeHolder(stale)}\n`,
+    );
+    if (stale.reaped) recordReaped(io, stale, "auto");
+  }
+}
+
 /**
  * Take the machine lease (or reuse an outer run's) and pick the scope for a
  * heavy check. A number is the exit code when the wait timed out or was cancelled.
@@ -618,6 +628,8 @@ async function prepareHeavy(
   }
   if (acquired.ok && timeoutMs > 0 && timeoutMs - acquired.lease.waitedMs < runFloorMs(timeoutMs)) {
     const left = Math.max(0, timeoutMs - acquired.lease.waitedMs);
+    // Its acquire may have freed a stuck holder: say so and record it, as a run would.
+    noteReclaimed(io, acquired.lease.reclaimed);
     acquired.lease.release();
     emit(
       io,
@@ -637,12 +649,7 @@ async function prepareHeavy(
   if (acquired.ok) lease = acquired.lease;
   // Fail open: an unwritable state dir must not stop the check.
   else io.stderr(`workit: running without the heavy-check lease: ${acquired.error}\n`);
-  for (const stale of lease?.reclaimed ?? []) {
-    io.stderr(
-      `workit: reclaimed a ${stale.reaped ? "stuck" : "stale"} heavy-check lease (${stale.reason}): ${describeHolder(stale)}\n`,
-    );
-    if (stale.reaped) recordReaped(io, stale, "auto");
-  }
+  noteReclaimed(io, lease?.reclaimed ?? []);
   const leaseReport: LeaseReport | null = lease
     ? {
         slot: lease.slot,

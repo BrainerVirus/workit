@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { readLedger } from "@/packages/workit-core/src/ledger";
 
 const BUN = process.execPath;
 const dirs: string[] = [];
@@ -187,4 +188,42 @@ test("Given a slot that frees with less than the run floor left of --timeout, Wh
   expect(existsSync(marker)).toBe(false);
   // The slot it took is released again.
   expect(existsSync(slot)).toBe(false);
+}, 20_000);
+
+test("Given a stuck holder auto-reaped only when less than the run floor is left of --timeout, When the heavy check gets its slot, Then it says the lease was reclaimed and records the reap before exiting 4", async () => {
+  // --timeout 8 s (floor 2 s); the live holder's 2.5 s max hold makes it auto-reapable
+  // (3x the max hold, silent) about 6.3 s in, so the acquire that frees it is starved.
+  const { root, env } = setup(30);
+  const slot = path.join(env.WORKIT_STATE_DIR as string, "leases", "slot-0.json");
+  writeFileSync(
+    slot,
+    JSON.stringify({
+      id: "00000000-0000-4000-8000-0000000000d2",
+      pid: process.pid,
+      processStart: null,
+      bootId: null,
+      check: "test",
+      cwd: "/elsewhere/stuck",
+      session: "s-stuck",
+      startedAt: new Date(Date.now() - 1_200).toISOString(),
+      maxHoldMs: 2_500,
+      scope: null,
+    }),
+  );
+  let stdout = "";
+  let stderr = "";
+  const code = await main(["check", "--heavy", "--timeout", "8", "--json", "--", BUN, "-e", "0"], {
+    cwd: root,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stderr += text),
+  });
+  expect(code, stderr).toBe(4);
+  expect(JSON.parse(stdout)).toMatchObject({ code: "busy", data: { lease: { starved: true } } });
+  expect(stderr).toContain("reclaimed a stuck heavy-check lease");
+  const rows = readLedger(root);
+  if (!rows.ok) throw new Error(rows.error);
+  expect(rows.value.rows.filter((row) => row.type === "lease.reaped")).toEqual([
+    expect.objectContaining({ by: "auto", pid: process.pid, session: "s-stuck", check: "test" }),
+  ]);
 }, 20_000);
