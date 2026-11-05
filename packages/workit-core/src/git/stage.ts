@@ -4,6 +4,7 @@
 // commit with `workit git commit --staged`; whole paths stage or unstage as
 // `git add -A` / `git reset` would. The working tree is never touched.
 import { failure, success, type ForgeResult } from "../forge/types";
+import { gitDirs } from "./facts";
 import { git, gitError } from "./ops";
 
 export type StageOutcome = {
@@ -28,11 +29,11 @@ export function gitStage(
   cwd: string,
   input: { patch: string } | { paths: readonly string[] },
 ): ForgeResult<StageOutcome> {
-  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
-  if (!top.ok) return failure("invalid_input", "not inside a git work tree");
+  const top = gitDirs(cwd)?.top ?? null;
+  if (!top) return failure("invalid_input", "not inside a git work tree");
   if ("patch" in input) {
     if (!input.patch.trim()) return failure("invalid_input", "the patch is empty");
-    const root = top.stdout.trim();
+    const root = top;
     const apply = (...flags: string[]) =>
       git(root, ["apply", "--cached", "--recount", ...flags, "-"], { input: input.patch });
     const checked = apply("--check");
