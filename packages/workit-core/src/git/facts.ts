@@ -86,3 +86,37 @@ export function gitDirs(cwd: string): GitDirs | null {
 export function forgetGitDirs(): void {
   cache.clear();
 }
+
+// One read per call, never across calls: the origin URL can be changed by the
+// user between two workit calls, but one verdict gate asked git for it twice
+// (the provider in vcs-config, the verdict mirror's identity in the ledger).
+// Inside `withinCall`, the first answer per directory is reused until `fn`
+// returns; outside it every read asks git.
+let callReads: Map<string, string | null> | null = null;
+
+/** Run `fn` with per-call reads (originUrl) shared, and forgotten when it returns. Nested calls join the outer one. */
+export function withinCall<T>(fn: () => T): T {
+  if (callReads) return fn();
+  callReads = new Map();
+  try {
+    return fn();
+  } finally {
+    callReads = null;
+  }
+}
+
+/** `git remote get-url origin`, trimmed; null without an origin. */
+export function originUrl(cwd: string): string | null {
+  const key = path.resolve(cwd);
+  if (callReads?.has(key)) return callReads.get(key) ?? null;
+  const run = spawnSync("git", ["remote", "get-url", "origin"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+    windowsHide: true,
+  });
+  const url = run.status === 0 ? (run.stdout ?? "").trim() || null : null;
+  callReads?.set(key, url);
+  return url;
+}

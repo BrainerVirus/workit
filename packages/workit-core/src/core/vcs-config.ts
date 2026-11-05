@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { originUrl } from "../git/facts";
 import { configDir, vcsConfigPath } from "./config";
 import { resolveRuntimeWorkspaceVcs, workspaceDefaultTarget } from "./workspaces";
 import { resolveTrackFor, type RuntimeReleaseTrack, type TrackResolution } from "./release-tracks";
@@ -15,9 +16,7 @@ const vcsCwd = (cwd?: string): string => cwd ?? process.env.WORKIT_WORKSPACE_ROO
 // github.com-hosted checkout. Recognized hosts only — custom/self-hosted
 // remotes keep the configured provider, and a missing origin is untouched.
 const remoteProvider = (cwd: string): string | null => {
-  const r = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
-  if (r.status !== 0) return null;
-  const url = (r.stdout ?? "").trim();
+  const url = originUrl(cwd) ?? "";
   if (/github\.com[:/]/.test(url)) return "github";
   if (/gitlab\.com[:/]/.test(url)) return "gitlab";
   return null;

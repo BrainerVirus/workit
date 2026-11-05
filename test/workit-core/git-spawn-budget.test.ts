@@ -14,10 +14,14 @@ import { defaultBase } from "@/packages/workit-core/src/git/default-base";
 import { forgetGitDirs } from "@/packages/workit-core/src/git/facts";
 
 const BUDGET = {
-  /** A first gate check on a branch (12 before #284 N6; one diff serves patch-id and hash since slice 2). */
-  gateFirst: 10,
-  /** The same gate again in the same process: the fixed facts come from the cache (was 11). */
-  gateAgain: 8,
+  /**
+   * A first gate check on a branch (12 before #284 N6; 10 once one diff served
+   * patch-id and hash). Slice 3: the branch tip is read from the ref files and
+   * origin's URL once per gate (was 10).
+   */
+  gateFirst: 8,
+  /** The same gate again in the same process: the fixed facts come from the cache (11 before #284 N6; was 8, the tip now from the ref files). */
+  gateAgain: 7,
   /** defaultBase: one `git for-each-ref` whatever the candidates, plus the two reads of the track lookup (was 4, more with fewer candidates). */
   defaultBase: 3,
 };
