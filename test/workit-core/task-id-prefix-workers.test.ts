@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,10 @@ import {
   type OperationContext,
 } from "@/packages/workit-core/src/core";
 import { caller, ref, scope, taskStartRequest } from "./task-fixtures";
+import { spawnHeavyTimeout } from "@/test/shared/timeouts";
+
+// Each test spawns git or the CLI; Windows runners take several times longer (#415).
+setDefaultTimeout(spawnHeavyTimeout());
 
 const verifier: NativeWorkerVerifier = {
   verifyWorker: ({ expected, caller: actualCaller }) =>
