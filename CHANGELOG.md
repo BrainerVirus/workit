@@ -180,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit init` installs the ytrack agent skill for the hosts you set up when you pick YouTrack (as setup and upgrade do), and names `ytrack upgrade` when your ytrack is too old.
 - Agents get a ytrack skill that matches your installed ytrack: when a workspace uses YouTrack, `workit setup` and `workit upgrade` run `ytrack skill install` into each host's skills dir (Claude Code, OpenCode, Codex, Cursor, Pi), `workit doctor` warns when a host's copy is older than ytrack (fix: `workit upgrade --hosts=<host>`) or when ytrack predates `ytrack skill` (fix: `ytrack upgrade`), and `workit uninstall` removes the copies Workit installed. Workit's ship skill points agents at `workit youtrack` verbs first and the ytrack skill for the rest.
 - Heavy-check waiters and `workit lock status` show an estimated wait from each check's last measured run, and `resources.slots` above what RAM allows prints a warning.
 - `workit fanout brief` adds a skills VERIFY line when a slice's SCOPE touches skills or agent definitions: `workit check skills` when the repo defines that check or group, else a reminder to run the repo's skill and context-budget checks.
