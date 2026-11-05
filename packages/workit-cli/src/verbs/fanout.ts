@@ -2,7 +2,7 @@
 // rendering; the rules live in core fanout*.ts. The CLI never spawns agents.
 //
 //   workit fanout plan     <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]
-//   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>]
+//   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--host <h>]
 //   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
 //   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
 //   workit fanout worktree create|release <slice> [--name <n>] [--force]
@@ -10,7 +10,12 @@ import { progressFor } from "../progress";
 import fs from "node:fs";
 import path from "node:path";
 import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
-import { renderBrief, type BriefOutcome } from "@brainervirus/workit-core/src/fanout-brief";
+import {
+  BRIEF_HOSTS,
+  briefHost,
+  renderBrief,
+  type BriefOutcome,
+} from "@brainervirus/workit-core/src/fanout-brief";
 import { checkFanout, type CheckOutcome } from "@brainervirus/workit-core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@brainervirus/workit-core/src/fanout-status";
 import {
@@ -33,7 +38,7 @@ import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge
 const PLAN_USAGE =
   "workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead] [--json]";
 const BRIEF_USAGE =
-  "workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--json]";
+  "workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--host <h>] [--json]";
 const CHECK_USAGE =
   "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] [--json]";
 const STATUS_USAGE = "workit fanout status [--name <n>] [--stuck-after 30m] [--offline] [--json]";
@@ -191,7 +196,12 @@ function plan(argv: string[], io: Io): number {
 }
 
 function brief(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { name: "value", mode: "value", attempt: "value" });
+  const flags = parseFlags(argv, {
+    name: "value",
+    mode: "value",
+    attempt: "value",
+    host: "value",
+  });
   if (typeof flags === "string") return usage(io, flags, BRIEF_USAGE);
   if (flags.positionals.length !== 1)
     return usage(
@@ -206,13 +216,27 @@ function brief(argv: string[], io: Io): number {
   const attempt = rawAttempt === undefined ? null : Number(rawAttempt);
   if (attempt !== null && !(Number.isInteger(attempt) && attempt >= 1 && attempt <= 9))
     return usage(io, "--attempt takes a number from 1 to 9", BRIEF_USAGE);
+  const hosts = BRIEF_HOSTS.join(", ");
+  const asked = flags.values.host;
+  const host = asked === undefined ? null : briefHost(asked);
+  if (asked !== undefined && !host)
+    return usage(io, `--host takes one of ${hosts} (got ${asked})`, BRIEF_USAGE);
+  const actor = actorFromEnv(io.env);
+  // Without --host the brief follows the lead's host; a missing, `cli` or
+  // misspelled one silently renders the plain-terminal identity and no
+  // model or trailer, so say so.
+  if (!host && !briefHost(actor.host))
+    io.stderr(
+      `workit: warning: no known host for this brief (WORKIT_HOST is ${io.env.WORKIT_HOST?.trim() || "unset"}): it renders a plain-terminal worker; pass --host <${hosts}> for the worker's host\n`,
+    );
   const selected = pickFanout(io, flags.values);
   if (!selected.ok) return failed(io, selected);
   const result = renderBrief(io.cwd, selected.data, {
     slice: flags.positionals[0],
     mode,
     attempt,
-    actor: actorFromEnv(io.env),
+    actor,
+    host,
   });
   if (!result.ok) return failed(io, result);
   return emit(io, ok(result.data), (data: BriefOutcome) => data.text.trimEnd());

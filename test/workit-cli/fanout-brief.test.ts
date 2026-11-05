@@ -5,12 +5,15 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { briefHost, renderBrief } from "@/packages/workit-core/src/fanout-brief";
+import { selectFanout } from "@/packages/workit-core/src/fanout";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { stackFileName } from "@/packages/workit-core/src/stack";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
@@ -37,12 +40,29 @@ const git = (cwd: string, ...args: string[]): string => {
   return result.stdout.trim();
 };
 
+const HOST_VARS = [
+  "WORKIT_HOST",
+  "WORKIT_SESSION_ID",
+  "OPENCODE_SESSION_ID",
+  "PI_SESSION_ID",
+  "CODEX_THREAD_ID",
+  "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+  "CODEX_ELECTRON_RESOURCES_PATH",
+];
+
+/** The test's env: no host of the shell running the suite, the lead's session. */
+const leadEnv = (session: string): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of HOST_VARS) delete env[key];
+  return { ...env, WORKIT_SESSION_ID: session };
+};
+
 const run = async (cwd: string, argv: string[], session = "lead-1") => {
   let stdout = "";
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: session },
+    env: leadEnv(session),
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -637,16 +657,6 @@ test("fanout plan --take-lead: given a worker id, a hook-named verifier id or no
 // ---------------------------------------------------------------------------
 // per-host identity and git rules
 
-const HOST_VARS = [
-  "WORKIT_HOST",
-  "WORKIT_SESSION_ID",
-  "OPENCODE_SESSION_ID",
-  "PI_SESSION_ID",
-  "CODEX_THREAD_ID",
-  "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
-  "CODEX_ELECTRON_RESOURCES_PATH",
-];
-
 const briefOn = async (cwd: string, host: string | null, ...args: string[]) => {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of HOST_VARS) delete env[key];
@@ -681,7 +691,9 @@ test("fanout brief: given a Claude Code lead, when a new brief is rendered, then
   );
   expect(data.text).not.toContain("context names");
   expect(data.text).toContain("  1. First command: `workit git branch feature/a --base main`");
-  expect(data.text).toContain("  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`");
+  expect(data.text).toContain(
+    '  3. Commit with `workit git commit -m <msg> --trailer "Co-Authored-By: Claude Haiku <noreply@anthropic.com>" -- <paths in SCOPE>`',
+  );
   expect(data.text).not.toContain("plain `git commit");
   expect(data.text).not.toContain("git switch -c");
   expect(data.text).toContain("  2. Decide ambiguities yourself: `workit ledger ruling");
@@ -693,7 +705,7 @@ test("fanout brief: given a Claude Code lead, when the resume and race-attempt v
   const resume = await briefOn(cwd, "claude_code", "a");
   expect(resume.text).toContain("MODE: resume");
   expect(resume.text).toContain("  1. First command: `git switch feature/a`");
-  expect(resume.text).toContain("`workit git commit -m <msg> -- <paths in SCOPE>`");
+  expect(resume.text).toContain('`workit git commit -m <msg> --trailer "Co-Authored-By: Claude');
   expect(resume.text).not.toContain("export WORKIT_SESSION_ID");
   const attempt = await briefOn(cwd, "claude_code", "a", "--attempt", "2");
   expect(attempt.session).toBeNull();
@@ -713,7 +725,7 @@ test.each([["opencode"], ["pi"], ["codex_cli"], ["codex_desktop"]])(
       "  Session: your host already sets WORKIT_SESSION_ID in your shell; export nothing and never hand-mint one.",
     );
     expect(data.text).toContain("`workit git branch feature/a --base main`");
-    expect(data.text).toContain("`workit git commit -m <msg> -- <paths in SCOPE>`");
+    expect(data.text).toContain("`workit git commit -m <msg>");
     const retry = await briefOn(cwd, host, "a", "--attempt", "1");
     expect(retry.text).not.toContain("export WORKIT_SESSION_ID");
     expect(retry.text).toContain("`workit git branch feature/a-try1 --base main`");
@@ -728,7 +740,7 @@ test.each([["cursor"], ["cli"], [null]])(
     expect(data.session).toBe("lead-1-w-a");
     expect(data.text).toContain("  export WORKIT_SESSION_ID=lead-1-w-a");
     expect(data.text).toContain("`workit git branch feature/a --base main`");
-    expect(data.text).toContain("`workit git commit -m <msg> -- <paths in SCOPE>`");
+    expect(data.text).toContain("`workit git commit -m <msg>");
     const attempt = await briefOn(cwd, host, "a", "--attempt", "2");
     expect(attempt.session).toBe("lead-1-w-a+try2");
     expect(attempt.text).toContain("  export WORKIT_SESSION_ID=lead-1-w-a+try2");
@@ -751,6 +763,134 @@ test.each([["claude_code"], ["codex_cli"], ["opencode"], ["pi"], ["cursor"], [nu
     expect((await briefOn(cwd, host, "a")).text).toContain(line);
   },
 );
+
+const rawBrief = async (cwd: string, host: string | null, ...args: string[]) => {
+  const env = leadEnv("lead-1");
+  if (host) env.WORKIT_HOST = host;
+  let stdout = "";
+  let stderr = "";
+  const code = await main(["fanout", "brief", ...args, "--json"], {
+    cwd,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: (text) => void (stderr += text),
+  });
+  return { code, stderr, data: code === 0 ? JSON.parse(stdout).data : null };
+};
+
+const VALID_HOSTS = "claude_code, codex, opencode, cursor, pi";
+
+test.each([["cli"], ["claud_code"], [null]])(
+  "fanout brief: given WORKIT_HOST %s and no --host, when rendered, then stderr warns and names the valid hosts",
+  async (host) => {
+    const cwd = await planned();
+    const result = await rawBrief(cwd, host, "a");
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(`WORKIT_HOST is ${host ?? "unset"}`);
+    expect(result.stderr).toContain(`--host <${VALID_HOSTS}>`);
+  },
+);
+
+test("fanout brief: given a known WORKIT_HOST, when rendered, then nothing is warned", async () => {
+  const cwd = await planned();
+  expect((await rawBrief(cwd, "claude_code", "a")).stderr).toBe("");
+  expect((await rawBrief(cwd, "codex_desktop", "a")).stderr).toBe("");
+});
+
+test("briefHost: given --host spellings, then known hosts normalize (codex is Codex's CLI) and cli, empty or a typo is null", () => {
+  expect(briefHost("codex")).toBe("codex_cli");
+  expect(briefHost("claude-code")).toBe("claude_code");
+  expect(briefHost("codex_desktop")).toBe("codex_desktop");
+  expect(briefHost("Pi")).toBe("pi");
+  for (const bad of ["cli", "", "codx", null]) expect(briefHost(bad), String(bad)).toBeNull();
+});
+
+test("fanout brief: given a Claude Code lead rendering for host codex (--host codex), when rendered, then the brief follows Codex: its model, derived identity and Co-Authored-By trailer, no Claude Code rules", async () => {
+  const cwd = await planned();
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "app",
+          glob: `${realpathSync(cwd)}/**`,
+          models: {
+            roles: { implementer: { mundane: { claude_code: "haiku", codex: "gpt-5-codex" } } },
+          },
+        },
+      ],
+    }),
+  );
+  try {
+    const selected = selectFanout(cwd, "usage", null);
+    if (!selected.ok) throw new Error(selected.error);
+    const actor = { host: "claude_code", session: "lead-1", agentId: null };
+    const lead = renderBrief(cwd, selected.data, { slice: "a", mode: null, attempt: null, actor });
+    if (!lead.ok) throw new Error(lead.error);
+    expect(lead.data.model).toBe("haiku");
+    const result = renderBrief(cwd, selected.data, {
+      slice: "a",
+      mode: null,
+      attempt: null,
+      actor,
+      host: briefHost("codex"),
+    });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.host).toBe("codex_cli");
+    expect(result.data.model).toBe("gpt-5-codex");
+    expect(result.data.text).toContain("  model: gpt-5-codex  (models.roles in workspace app)");
+    expect(result.data.coAuthor).toBeNull();
+    expect(result.data.text).toContain(
+      "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`",
+    );
+    expect(result.data.text).toContain("your host already sets WORKIT_SESSION_ID");
+    expect(result.data.text).not.toContain("Claude");
+  } finally {
+    rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
+  }
+});
+
+test.each([
+  ["claude_code", "Co-Authored-By: Claude Haiku <noreply@anthropic.com>"],
+  ["cursor", "Co-Authored-By: Cursor Agent <cursoragent@cursor.com>"],
+])(
+  "fanout brief: given a %s lead, when rendered, then RULE 3 carries the host's concrete Co-Authored-By trailer, not a placeholder",
+  async (host, trailer) => {
+    const cwd = await planned();
+    const data = await briefOn(cwd, host, "a");
+    expect(data.text).toContain(`--trailer "${trailer}" -- <paths in SCOPE>`);
+    expect(data.text).not.toContain("<host attribution>");
+  },
+);
+
+test.each([["pi"], ["cli"], ["codex"], ["opencode"]])(
+  "fanout brief: given a %s lead (no attribution convention), when rendered, then RULE 3 adds no trailer",
+  async (host) => {
+    const cwd = await planned();
+    const data = await briefOn(cwd, host, "a");
+    expect(data.text).toContain(
+      "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`;",
+    );
+  },
+);
+
+test("fanout brief: given a made worktree, when rendered for Claude Code and for Codex, then Claude Code's RULE 3 names workit git --cwd for the Workit worktree and plain git only for a host-isolated one; Codex's names only workit git", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  const wt = managedWt("a");
+  const claude = await briefOn(cwd, "claude_code", "a");
+  expect(claude.text).toContain(
+    `  3. Commit with \`workit git --cwd ${wt} commit -m <msg> --trailer`,
+  );
+  expect(claude.text).toContain(
+    "Only a Claude Code host-isolated worktree (`.claude/worktrees/agent-<id>`) takes plain git instead, as its SubagentStart text says: that isolation refuses a git wrapper.",
+  );
+  const codex = await briefOn(cwd, "codex_cli", "a");
+  expect(codex.text).toContain(`\`workit git --cwd ${wt} commit -m <msg>`);
+  expect(codex.text).not.toContain("host-isolated");
+});
 
 // ---------------------------------------------------------------------------
 // skill gates: a slice touching skills or agents names the CI-only gates
@@ -917,4 +1057,27 @@ test("fanout brief: given a race attempt, when rendered, then its WORKER line na
   const { root, cwd } = repo();
   expect((await plan(cwd, root, "race", [slice("a", ["a.ts"])])).code).toBe(0);
   expect((await brief(cwd, "a", "--attempt", "2")).text).toContain("\nWORKER: a+try2\n");
+});
+
+test("fanout brief: given --host on the command line, then the router accepts it and the brief renders for that host; a typo is a usage error naming the valid hosts", async () => {
+  const cwd = await planned();
+  const codex = (await briefOn(cwd, "claude_code", "a", "--host", "codex")) as {
+    text: string;
+    host?: string;
+  };
+  expect(codex.host).toBe("codex_cli");
+  expect(codex.text).not.toContain("noreply@anthropic.com");
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of HOST_VARS) delete env[key];
+  env.WORKIT_SESSION_ID = "lead-1";
+  let stderr = "";
+  const code = await main(["fanout", "brief", "a", "--host", "codx"], {
+    cwd,
+    env,
+    stdout: () => {},
+    stderr: (text) => void (stderr += text),
+  });
+  expect(code).toBe(2);
+  expect(stderr).toContain("claude_code");
+  expect(stderr).toContain("codex");
 });
