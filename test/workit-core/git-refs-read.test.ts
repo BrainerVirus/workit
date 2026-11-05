@@ -393,11 +393,13 @@ const SEEDS = Array.from(
   (_, index) => 0x5eed + index * 7919,
 );
 
-test("Given many generated layouts, Then no file read ever disagrees with git", () => {
-  // How often the file read spared a spawn where git had a commit for HEAD.
-  let headKnown = 0;
-  let headRead = 0;
-  for (const seed of SEEDS) {
+// One test per generated layout: each stays a few seconds even where git
+// spawns are slow (Windows), instead of one test whose time grows with SEEDS.
+// How often the file read spared a spawn where git had a commit for HEAD.
+const tally = { headKnown: 0, headRead: 0 };
+
+for (const seed of SEEDS)
+  test(`Given generated layout ${seed}, Then no file read ever disagrees with git`, () => {
     const next = random(seed);
     const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)];
     const dir = repo();
@@ -416,12 +418,14 @@ test("Given many generated layouts, Then no file read ever disagrees with git", 
           );
         }
         if (oracle.head(at) !== null) {
-          headKnown += 1;
-          if (readHeadCommit(at) !== null) headRead += 1;
+          tally.headKnown += 1;
+          if (readHeadCommit(at) !== null) tally.headRead += 1;
         }
       }
     }
-  }
-  // The property must not pass by always deferring to git.
-  expect(headRead).toBeGreaterThan(headKnown / 2);
+  });
+
+test("Given every generated layout, Then the file read answered most HEAD reads (it does not pass by always deferring to git)", () => {
+  expect(tally.headKnown).toBeGreaterThan(0);
+  expect(tally.headRead).toBeGreaterThan(tally.headKnown / 2);
 });
