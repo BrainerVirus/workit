@@ -778,12 +778,13 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--othe
 - `land --others-pr --reason <why>` lands PRs another author opened, as
   `workit pr merge --others-pr` does; without it they are refused.
 - `land --allow-failing <check> --reason <why>` (repeatable) passes a failing
-  optional check on each PR it lands, through the same gate as
-  `workit pr merge --allow-failing`: every PR it lets through records its own
-  `merge.waived` row and lists it under `waived` in `--json`. A required check
-  is never waived: naming one refuses (`waiver_refused`) before that PR
-  merges. A name that matches no check on a PR's head is refused
-  (`unknown_check`). `--dry-run` predicts with the waiver and records nothing.
+  optional check on the PRs whose head runs that check, through the same gate
+  as `workit pr merge --allow-failing`. A PR without the check is not refused
+  for it. Every PR it lets through records its own `merge.waived` row once it
+  merges, and lists it under `waived` in `--json`. A required check is never
+  waived: naming one that any PR runs as required refuses the whole land
+  (`waiver_refused`, exit 3), with nothing merged. A name that no PR of the
+  land runs is refused (`unknown_check`, exit 2).
 - `land` re-reads a PR whose mergeability the forge is still computing, as
   `pr merge` does; still unknown, it stops at `not_ready` with `babysit:
   "wait-forge"` in `stoppedAt`: wait a minute and land again.
@@ -804,11 +805,38 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--othe
   recorded in the ledger (`stack.branch.deleted`). A failed sync deletes
   nothing. Remote branches are left to the forge's delete-on-merge. Plan the stack (`workit stack plan`) before the parent
   merges: the recorded parent tip is what `--onto` replays from.
-- `land` merges the contiguous run from the root whose PRs are READY and
-  verified, one at a time through `pr merge`'s gates, and stops at the first
-  that does not qualify with a reason (`no_verdict`, `not_ready`,
-  `grant_required`, …). Under `merge: true`, `--unverified --reason "<why>"`
-  also lands the unverified PRs in that run and records a bypass row for each.
+- `land` first runs a pre-flight. It judges every PR it would land (every
+  open PR of the stack, or the first `--max <n>`) before it merges anything.
+  A refusal it can know then stops the land with nothing merged, and every
+  refused PR is named with its reason under `preflight` in `--json` (the
+  first is `stoppedAt`):
+
+  ```text
+  landed nothing
+  pre-flight refused 2 of 3 PRs; nothing merged:
+    PR #12 (feature/b): needs_verdict - PR #12 has no accepted independent verdict for …
+      unblock: an independent session verifies feature/b and runs: workit ledger verdict verified …
+    PR #13 (feature/c): merge_refused - others_pr: PR #13 is by ana, not octo (the forge login); …
+      unblock: only if the user asks you to land it: workit stack land --others-pr --reason "<why>"
+  ```
+
+  The pre-flight covers a missing or stale verdict (`no_verdict`,
+  `needs_verdict`), a failing check or a mergeability the forge still cannot
+  tell after the re-reads (`not_ready`), a PR that does not target the trunk
+  (or, above the root, its parent) (`base_not_trunk`), another author's PR without
+  `--others-pr`, `waiver_refused` and the merge grant. A PR above the root is
+  judged as it will be at its turn: its parent base counts as the trunk, and
+  CI still running is not a refusal, since the land restacks the PR and waits
+  for its CI. To land the verified PRs at the bottom while the ones above
+  still wait, pass `--max <n>`. `--dry-run` prints the same pre-flight and
+  records nothing.
+- After the pre-flight passes, `land` merges from the root, one PR at a time
+  through `pr merge`'s gates, and judges each PR again at its turn. Some
+  refusals only show up then: a head that moved, a forge that refuses the
+  merge, or CI that fails after the restack. Such a refusal stops the land at
+  that PR. `landed` and the error (`landed before the stop: PR #11 …`) say
+  which PRs already merged. Under `merge: true`, `--unverified --reason
+  "<why>"` also lands the unverified PRs and records a bypass row for each.
 
 ## Parallel slices (fanout)
 

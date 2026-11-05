@@ -9,6 +9,7 @@
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
 //                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>]
 //                       [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]
+//                       (a pre-flight judges every PR first; any refusal lands nothing)
 import { progressFor } from "../progress";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
