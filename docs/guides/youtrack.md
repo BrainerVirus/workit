@@ -45,9 +45,19 @@ only checks that the file exists).
 A ytrack newer than 0.2.1 carries an agent skill that teaches coding agents its
 commands, stamped with the ytrack version that installed it. When YouTrack is
 in use (`youtrack.json` exists, or a workspace tracks issues in YouTrack),
-`workit setup` and `workit upgrade` install that skill for every host that has
-Workit, by running `ytrack skill install --dir <skills dir> --json` into the
-host's own skills directory:
+`workit init` (when you pick YouTrack), `workit setup` and `workit upgrade`
+install that skill for every host that has Workit, by running
+`ytrack skill install --dir <skills dir> --json` into the host's own skills
+directory. The `workit init` finish screen lists the result after the doctor
+lines, for example:
+
+```text
+ytrack skill 0.3.0 installed for claude-code, pi
+  ~/.claude/skills/ytrack
+  ~/.pi/agent/skills/ytrack
+```
+
+The skills directory for each host:
 
 | Host | Skills directory |
 | --- | --- |
@@ -62,8 +72,8 @@ A skill that is already at the installed ytrack's version is left alone. After
 version. Agents use `workit youtrack …` for issue work, and the `ytrack` skill
 for anything those verbs do not cover.
 
-- An older ytrack without `ytrack skill` installs nothing: the setup or upgrade
-  row and `workit doctor` say to run `ytrack upgrade`.
+- An older ytrack without `ytrack skill` installs nothing: the init, setup or
+  upgrade output and `workit doctor` say to run `ytrack upgrade`.
 - A `ytrack` directory there that holds some other skill is left untouched; the
   row names the `ytrack skill install --dir <dir>` command to run once you have
   moved it.
