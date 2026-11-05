@@ -9,7 +9,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import { defaultBase } from "@/packages/workit-core/src/git/default-base";
-import { forgetGitDirs, gitDirs } from "@/packages/workit-core/src/git/facts";
+import {
+  forgetGitDirs,
+  gitDirs,
+  originUrl,
+  withinCall,
+} from "@/packages/workit-core/src/git/facts";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -208,4 +213,24 @@ test("Given a directory that becomes a repository later, Then gitDirs finds it (
   expect(gitDirs(dir)).toBeNull();
   git(dir, "init", "-q");
   expect(gitDirs(dir)?.top).toBe(git(dir, "rev-parse", "--show-toplevel"));
+});
+
+test("Given origin's URL changed during one call and between calls, Then one call reads it once and the next call reads it fresh", () => {
+  const dir = repo();
+  git(dir, "remote", "add", "origin", "git@github.com:acme/one.git");
+  const seen = withinCall(() => {
+    const first = originUrl(dir);
+    git(dir, "remote", "set-url", "origin", "git@github.com:acme/two.git");
+    // Nested calls join the outer one.
+    return [first, originUrl(dir), withinCall(() => originUrl(dir))];
+  });
+  expect(seen).toEqual([
+    "git@github.com:acme/one.git",
+    "git@github.com:acme/one.git",
+    "git@github.com:acme/one.git",
+  ]);
+  expect(originUrl(dir)).toBe("git@github.com:acme/two.git");
+  expect(withinCall(() => originUrl(dir))).toBe("git@github.com:acme/two.git");
+  git(dir, "remote", "remove", "origin");
+  expect(withinCall(() => originUrl(dir))).toBeNull();
 });

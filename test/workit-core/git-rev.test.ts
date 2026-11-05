@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import {
+  currentBranch,
   deriveForge,
   forgeConflict,
   headSha,
@@ -115,6 +116,25 @@ test("worktreeTree and headSha handle an unborn branch", () => {
   writeFileSync(path.join(root, "a.txt"), "a\n");
   expect(worktreeTree(root)!.dirty).toBe(true);
   expect(headSha(tmp("wk-rev-nogit-"))).toBeNull();
+});
+
+test("Given layouts the ref files read and layouts they leave to git, Then headSha and currentBranch give git's answer", () => {
+  const root = repo();
+  const first = commit(root, "a.txt", "1\n", "one");
+  expect(headSha(root)).toBe(first);
+  expect(currentBranch(root)).toBe("main");
+  // Read from the files: HEAD moves between two calls and the second sees it.
+  const second = commit(root, "a.txt", "2\n", "two");
+  expect(headSha(root)).toBe(second);
+  // Left to git: a tag named like the branch makes git print `heads/main`.
+  git(root, "tag", "main", first);
+  expect(currentBranch(root)).toBe("heads/main");
+  // Left to git: reftable storage on disk.
+  mkdirSync(path.join(root, ".git", "reftable"));
+  expect(headSha(root)).toBe(second);
+  git(root, "checkout", "-q", "--detach", first);
+  expect(headSha(root)).toBe(first);
+  expect(currentBranch(root)).toBeNull();
 });
 
 test("given a rebase that changes only the base, patchId is equal", () => {
