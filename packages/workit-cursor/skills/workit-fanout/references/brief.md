@@ -105,12 +105,15 @@ is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
 
 ## Identity and git rules per host
 
-`workit fanout brief` renders the identity line and RULES 1 and 3 for the
-lead's host (`WORKIT_HOST`, or the host's own session variable):
+`workit fanout brief` renders the identity line, the model lines and RULES 1
+and 3 for the worker's host: `--host <host>` (claude_code, codex, opencode,
+cursor, pi), else the lead's (`WORKIT_HOST`, or the host's own session
+variable). With no known host it warns on stderr and names the valid ones.
+RULE 3 carries the host's concrete Co-Authored-By line as a `--trailer`.
 
 | Lead's host | Identity line | RULES 1 and 3 |
 | --- | --- | --- |
-| Claude Code | `Session: your env already has WORKIT_SESSION_ID (the lead's id)`; no `export`, no hand-minted id (SubagentStart issues `<lead>:<agent id>` only to verifiers and reviewers, never to an implementer, so the worker's commits carry the lead's id) | `workit git branch <branch> --base <base>`, `workit git commit -m <msg> -- <paths in SCOPE>`: the implementer runs without Claude Code's worktree isolation, which refused every `workit git` form |
+| Claude Code | `Session: your env already has WORKIT_SESSION_ID (the lead's id)`; no `export`, no hand-minted id (SubagentStart issues `<lead>:<agent id>` only to verifiers and reviewers, never to an implementer, so the worker's commits carry the lead's id) | `workit git branch <branch> --base <base>`, `workit git commit -m <msg> -- <paths in SCOPE>` in the Workit worktree (the spawn hook drops `isolation`); only a host-isolated `.claude/worktrees/agent-<id>` takes plain git, as its SubagentStart text says, since that isolation refuses a git wrapper |
 | OpenCode, Pi, Codex | `Session: your host already sets WORKIT_SESSION_ID in your shell`; export nothing (the host derives the id and an export cannot replace it) | `workit git branch <branch> --base <base>`, `workit git commit -m <msg> -- <paths in SCOPE>` |
 | Cursor, CI, a plain terminal | `export WORKIT_SESSION_ID=<lead>-w-<slice>` (`+try<n>` for a race attempt): declared, not checked | the same `workit git` forms |
 
@@ -133,6 +136,6 @@ attempt (`--attempt <n>`) follows its host's row with the branch
    `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`.
    Stop only for an irreversible action, a security-sensitive one, or a side
    effect outside the worktree.
-3. Commit with `workit git --cwd <worktree> commit -m "<msg>" -- <paths in SCOPE>`;
+3. Commit with `workit git --cwd <worktree> commit -m "<msg>" --trailer "<host's Co-Authored-By>" -- <paths in SCOPE>`;
    push only if the brief says so.
 4. Never record a verdict on your own work.

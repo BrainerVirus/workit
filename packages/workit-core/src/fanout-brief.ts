@@ -9,8 +9,9 @@
 // another slice has that branch), worktree `<worktree>+try<n>` and session
 // `<lead>-w-<slice>+try<n>`: slice ids cannot contain `+`, so no attempt
 // collides with another slice's path or session.
-// The lead's host (WORKIT_HOST, or its own session variable) picks the identity
-// rules: Claude Code workers use the WORKIT_SESSION_ID in their env (the
+// The worker's host (`--host`, else the lead's: WORKIT_HOST or its own
+// session variable) picks the model lines, the Co-Authored-By trailer and the
+// identity rules: Claude Code workers use the WORKIT_SESSION_ID in their env (the
 // lead's: SubagentStart issues ids only to judges); OpenCode, Pi and Codex
 // workers export nothing (the host derives the id);
 // Cursor, CI and plain terminals export `<lead>-w-<slice>`. Once
@@ -57,6 +58,10 @@ export type BriefOutcome = {
   verifier: { model: string; effort: string | null } | null;
   /** Absolute when the slice's worktree exists, else relative to the worker's worktree root. */
   scratch: string;
+  /** The host the brief was rendered for (`--host`, else the lead's), or null. */
+  host: string | null;
+  /** RULE 3's Co-Authored-By trailer for that host, or null when it has none. */
+  coAuthor: string | null;
   /** The id a worker exports, or null when its host issues or derives it. */
   session: string | null;
   standing: Array<{ id: string; what: string }>;
@@ -106,8 +111,42 @@ const REPORT = [
  */
 export type BriefIdentity = "issued" | "derived" | "declared";
 
+/** The hosts a brief renders for, as `--host` spells them. */
+export const BRIEF_HOSTS = ["claude_code", "codex", "opencode", "cursor", "pi"] as const;
+
+const familyOf = (host: string | null): string => host?.replace(/_(?:cli|desktop)$/, "") ?? "";
+
+/**
+ * A known worker host for `host` (`codex` names Codex's CLI; `claude-code`
+ * and `_cli`/`_desktop` spellings are accepted), else null: unset, `cli` (a
+ * plain terminal) or a typo.
+ */
+export const briefHost = (host: string | null): string | null => {
+  const spelled = host?.trim().toLowerCase().replaceAll("-", "_") ?? "";
+  if (spelled === "codex") return "codex_cli";
+  return (BRIEF_HOSTS as readonly string[]).includes(familyOf(spelled)) ? spelled : null;
+};
+
+/**
+ * The Co-Authored-By trailer a host's agents sign commits with, or null for
+ * a host with no convention (Pi) or no host. Claude Code names the model
+ * family when the brief's model is a Claude alias (`opus` -> Claude Opus).
+ */
+export const coAuthorTrailer = (host: string | null, model: string | null): string | null => {
+  const family = familyOf(host);
+  if (family === "claude_code") {
+    const named = /\b(opus|sonnet|haiku|fable)\b/iu.exec(model ?? "")?.[1].toLowerCase();
+    const who = named ? `Claude ${named[0].toUpperCase()}${named.slice(1)}` : "Claude";
+    return `Co-Authored-By: ${who} <noreply@anthropic.com>`;
+  }
+  if (family === "codex") return "Co-Authored-By: Codex <noreply@openai.com>";
+  if (family === "opencode") return "Co-Authored-By: opencode <noreply@opencode.ai>";
+  if (family === "cursor") return "Co-Authored-By: Cursor Agent <cursoragent@cursor.com>";
+  return null;
+};
+
 const identityOf = (host: string | null): BriefIdentity => {
-  const family = host?.replace(/_(?:cli|desktop)$/, "") ?? "";
+  const family = familyOf(host);
   if (family === "claude_code") return "issued";
   if (family === "opencode" || family === "pi" || family === "codex") return "derived";
   return "declared";
@@ -136,6 +175,8 @@ const rules = (
   branch: string,
   base: string,
   worktree: string | null,
+  trailer: string | null,
+  host: string | null,
 ): string[] => {
   const workit = (verb: string) =>
     worktree ? `workit ${verb} --cwd ${worktree}` : `workit ${verb}`;
@@ -148,7 +189,7 @@ const rules = (
     "RULES:",
     first,
     '  2. Decide ambiguities yourself: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"`; stop only for an irreversible, security-sensitive or out-of-worktree action.',
-    `  3. Commit with \`${workit("git")} commit -m <msg> -- <paths in SCOPE>\`; push only if this brief says so.`,
+    `  3. Commit with \`${workit("git")} commit -m <msg>${trailer ? ` --trailer "${trailer}"` : ""} -- <paths in SCOPE>\`${trailer ? " (Co-Authored-By rides in the same commit, never an amend)" : ""}; push only if this brief says so.${familyOf(host) === "claude_code" ? " Only a Claude Code host-isolated worktree (`.claude/worktrees/agent-<id>`) takes plain git instead, as its SubagentStart text says: that isolation refuses a git wrapper." : ""}`,
     "  4. Never record a verdict on your own work.",
     "  5. Run tests, lint, typecheck and builds only through `workit check`: a named check (`workit check <name>`), or an ad-hoc light command (a formatter, one linter, one test file) as `workit check --name <n> -- <cmd>`, which takes no lease. `--heavy` is only for full suites, packaging, builds and knip: one machine-wide lease queues every agent, so never a hand-made flock; `workit lock status` shows who holds it.",
     "  6. A failed review gets one fix round and one recheck. Still failing: stop and report the open finding, never a third round (the lead spawns a decider). A product choice is the user's: report it, do not decide it.",
@@ -224,6 +265,8 @@ export function renderBrief(
     mode: BriefMode | null;
     attempt: number | null;
     actor: LedgerActor;
+    /** The worker's host (`--host`, normalized by briefHost), else the lead's. */
+    host?: string | null;
   },
 ): FanoutResult<BriefOutcome> {
   const found = findSlice(plan, input.slice);
@@ -277,9 +320,11 @@ export function renderBrief(
     id: row.id,
     what: String(row.what),
   }));
-  const identity = identityOf(input.actor.host);
-  const model = resolveRoleModel(cwd, { role: "implementer", tier: slice.tier }, input.actor.host);
-  const verifier = resolveRoleModel(cwd, { role: "verifier" }, input.actor.host);
+  const host = input.host ?? input.actor.host;
+  const identity = identityOf(host);
+  const model = resolveRoleModel(cwd, { role: "implementer", tier: slice.tier }, host);
+  const verifier = resolveRoleModel(cwd, { role: "verifier" }, host);
+  const coAuthor = coAuthorTrailer(host, model?.model ?? null);
   const minted = workerSession(sessionSafe(input.actor.session), slice.id, input.attempt);
   const session = identity === "declared" ? minted : null;
   const fanIn =
@@ -345,7 +390,7 @@ export function renderBrief(
       ? [`INSTALL: \`${made.install}\` first: the main checkout's node_modules was not linked here`]
       : []),
     ...identityLines(identity, minted),
-    ...rules(mode, branch, sliceBase, exists ? planned : null),
+    ...rules(mode, branch, sliceBase, exists ? planned : null, coAuthor, host),
   ];
   return {
     ok: true,
@@ -362,6 +407,8 @@ export function renderBrief(
       effort: model?.effort ?? null,
       verifier: verifier ? { model: verifier.model, effort: verifier.effort } : null,
       scratch,
+      host,
+      coAuthor,
       session,
       standing,
       text: `${lines.join("\n")}\n`,
