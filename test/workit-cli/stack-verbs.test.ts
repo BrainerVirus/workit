@@ -158,7 +158,7 @@ const isAncestor = (cwd: string, a: string, b: string) =>
 // land (the spec acceptance), on both forges
 
 for (const kind of ["github", "gitlab"] as const)
-  test(`stack land (${kind}): given a 4-PR stack where PR1-2 are verified and READY and PR3 is unverified, with a merge grant, then only PR1 and PR2 merge in order, PR3 is restacked and retargeted onto main, and PR4 is untouched`, async () => {
+  test(`stack land (${kind}): given a 4-PR stack where PR1-2 are verified and READY and PR3 is unverified, with a merge grant, then the pre-flight names PR3 and PR4 and nothing merges; with --max 2 only PR1 and PR2 merge in order, PR3 is restacked and retargeted onto main, and PR4 is untouched`, async () => {
     const forge = setup(kind);
     const planned = await plan(forge);
     expect(planned.stack.branches.map((entry: { pr: number }) => entry.pr)).toEqual([
@@ -173,14 +173,37 @@ for (const kind of ["github", "gitlab"] as const)
       next: "workit stack land",
     });
 
-    const result = await run(["stack", "land", "--json"], forge.cwd);
+    // #739: a refusal known up front lands nothing.
+    const refused = await run(["stack", "land", "--json"], forge.cwd);
+    expect(refused.code, refused.stderr + refused.stdout).toBe(0);
+    expect(refused.json().data.landed).toEqual([]);
+    expect(refused.json().data.stoppedAt).toMatchObject({
+      pr: 13,
+      reason: "no_verdict",
+    });
+    expect(
+      refused
+        .json()
+        .data.preflight.map((entry: { pr: number; refused: { reason: string } | null }) => [
+          entry.pr,
+          entry.refused?.reason ?? "ok",
+        ]),
+    ).toEqual([
+      [11, "ok"],
+      [12, "ok"],
+      [13, "no_verdict"],
+      [14, "no_verdict"],
+    ]);
+    expect(forge.writes).toEqual([]);
+
+    const result = await run(["stack", "land", "--max", "2", "--json"], forge.cwd);
     expect(result.code, result.stderr + result.stdout).toBe(0);
     const data = result.json().data;
     expect(data.landed.map((item: { pr: number }) => item.pr)).toEqual([11, 12]);
     expect(data.stoppedAt).toMatchObject({
       pr: 13,
       branch: "feature/c",
-      reason: "no_verdict",
+      reason: "max_reached",
     });
     expect(data.retargeted).toEqual([12, 13]);
     expect(forge.writes).toEqual(["merge 11", "retarget 12 main", "merge 12", "retarget 13 main"]);
@@ -204,7 +227,10 @@ for (const kind of ["github", "gitlab"] as const)
     expect(forge.git("symbolic-ref", "--short", "HEAD")).toBe("feature/d");
     const after = await run(["stack", "status", "--json"], forge.cwd);
     expect(after.json().data).toMatchObject({ verdict: "WAITING" });
-    expect(after.json().data.reason).toContain("no_verdict");
+    // PR3's restacked head: its CI reruns, and the land stopped at --max before awaiting it.
+    expect(after.json().data.reason).toMatch(
+      /^not_ready: (PR #|MR !)13 is WAITING_CI \(checks_pending\)$/u,
+    );
   });
 
 /** The forge's runner, but the base branch's head CI has one failing required check. */
@@ -265,7 +291,7 @@ test("stack land: a red base refuses the merge, and --base-red-ok --reason passe
   await plan(forge);
   await verdict(forge, "feature/a");
   redBase(forge);
-  const refused = await run(["stack", "land", "--json"], forge.cwd);
+  const refused = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
   expect(refused.json().data.landed).toEqual([]);
   expect(refused.json().data.stoppedAt).toMatchObject({
     pr: 11,
@@ -282,6 +308,8 @@ test("stack land: a red base refuses the merge, and --base-red-ok --reason passe
     [
       "stack",
       "land",
+      "--max",
+      "1",
       "--base-red-ok",
       "--reason",
       "main CI is down for an unrelated outage",
@@ -297,12 +325,13 @@ test("stack land: a red base refuses the merge, and --base-red-ok --reason passe
   });
 });
 
-/** The forge's runner, but every PR reads as opened by another author. */
-const othersPrs = (forge: StackForge) => {
+/** The forge's runner, but every PR (or each PR in `only`) reads as opened by another author. */
+const othersPrs = (forge: StackForge, only?: readonly number[]) => {
   const inner = forge.runner;
   forge.runner = (bin, args, options) => {
     const result = inner(bin, args, options);
-    if (!args.some((arg) => /^repos\/o\/r\/pulls\/\d+$/u.test(arg))) return result;
+    const pull = args.map((arg) => /^repos\/o\/r\/pulls\/(\d+)$/u.exec(arg)).find(Boolean);
+    if (!pull || (only && !only.includes(Number(pull[1])))) return result;
     try {
       const doc = JSON.parse(result.stdout) as { user?: { login?: string } };
       if (doc.user?.login !== "octo") return result;
@@ -505,11 +534,11 @@ test("stack land: given merge: true and an accepted verdict on the root, then th
   const forge = setup("github", MERGE_TRUE);
   await plan(forge);
   await verdict(forge, "feature/a");
-  const result = await run(["stack", "land", "--json"], forge.cwd);
+  const result = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   expect(result.json().data).toMatchObject({
     landed: [{ pr: 11, unverified: null }],
-    stoppedAt: { pr: 12, reason: "no_verdict" },
+    stoppedAt: { pr: 12, reason: "max_reached" },
   });
   expect(rows(forge.cwd, "merge.unverified")).toEqual([]);
 });
@@ -534,7 +563,13 @@ test("stack land under proportional (#333): a small root PR (lane self) lands on
     forge.cwd,
   );
   expect(self.code, self.stderr + self.stdout).toBe(0);
-  const result = await run(["stack", "land", "--json"], forge.cwd);
+  const next = await run(["stack", "land", "--json"], forge.cwd);
+  expect(next.json().data).toMatchObject({
+    landed: [],
+    preflight: [{ pr: 11, refused: null }, { pr: 12, refused: { pr: 12 } }, {}, {}],
+    stoppedAt: { pr: 12 },
+  });
+  const result = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   expect(result.json().data).toMatchObject({
     landed: [{ pr: 11, unverified: null }],
@@ -564,7 +599,7 @@ test("stack land: given only a hand-appended verdict on the root, then it stops 
   expect(forge.writes).toEqual([]);
 });
 
-test("stack land --dry-run: reports the contiguous verified run and mutates nothing", async () => {
+test("stack land --dry-run: reports the pre-flight and the --max run and mutates nothing", async () => {
   const forge = setup("github");
   await plan(forge);
   await verdict(forge, "feature/a");
@@ -581,11 +616,17 @@ test("stack land --dry-run: reports the contiguous verified run and mutates noth
   expect(result.json().data).toMatchObject({
     dryRun: true,
     landed: [],
+    wouldLand: [],
+    stoppedAt: { pr: 13, reason: "no_verdict" },
+  });
+  const limited = await run(["stack", "land", "--dry-run", "--max", "2", "--json"], forge.cwd);
+  expect(limited.json().data).toMatchObject({
     wouldLand: [
       { pr: 11, branch: "feature/a" },
       { pr: 12, branch: "feature/b" },
     ],
-    stoppedAt: { pr: 13, reason: "no_verdict" },
+    stoppedAt: { pr: 13, reason: "max_reached" },
+    complete: false,
   });
   expect(forge.writes).toEqual([]);
   expect(["main", "feature/a", "feature/b", "feature/c", "feature/d"].map(forge.tip)).toEqual(tips);
@@ -1490,7 +1531,7 @@ test("stack land: given a 3-PR stack verified only at the top, when landing, the
   ).toEqual([topId, topId]);
 });
 
-test("stack land: given the middle PR got a code change after the top verdict, then the root lands but the middle PR is not covered", async () => {
+test("stack land: given the middle PR got a code change after the top verdict, then the pre-flight names the middle PR and nothing lands", async () => {
   const forge = setup("github", undefined, STACK3, "ts");
   await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
   expect((await verdict(forge, "feature/c")).code).toBe(0);
@@ -1501,9 +1542,10 @@ test("stack land: given the middle PR got a code change after the top verdict, t
   const result = await run(["stack", "land", "--json"], forge.cwd);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   expect(result.json().data).toMatchObject({
-    landed: [{ pr: 11 }],
+    landed: [],
     stoppedAt: { pr: 12, branch: "feature/b" },
   });
+  expect(forge.writes).toEqual([]);
   expect(result.json().data.stoppedAt.reason).toMatch(/no_verdict|needs_verdict/u);
 });
 
@@ -1532,12 +1574,16 @@ test("pr merge: given a lower PR of a stack verified at the top, then pr status 
 
 /**
  * The forge's runner, with every open PR's status read rewritten: a failing
- * `codeql` check (optional unless `required`), and mergeability UNKNOWN
- * while `unknown()` holds.
+ * `codeql` check (optional unless `required`; on the PRs in `only` when set),
+ * and mergeability UNKNOWN while `unknown()` holds.
  */
 const gateForge = (
   forge: StackForge,
-  options: { codeql?: "optional" | "required"; unknown?: () => boolean },
+  options: {
+    codeql?: "optional" | "required";
+    only?: readonly number[];
+    unknown?: () => boolean;
+  },
 ) => {
   const inner = forge.runner;
   forge.runner = (bin, args, runOptions) => {
@@ -1566,7 +1612,7 @@ const gateForge = (
     }
     const pr = doc.data?.repository?.pullRequest;
     if (!pr || pr.state !== "OPEN") return result;
-    if (options.codeql) {
+    if (options.codeql && (!options.only || options.only.includes(pr.number))) {
       pr.commits.nodes[0]?.commit.statusCheckRollup.contexts.nodes.push({
         __typename: "CheckRun",
         name: "codeql",
@@ -1606,7 +1652,18 @@ test("stack land (#731): given PRs with a failing optional check, without a waiv
   expect(needsReason.stderr).toContain("--allow-failing needs --reason");
 
   const dry = await run(
-    ["stack", "land", "--dry-run", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    [
+      "stack",
+      "land",
+      "--dry-run",
+      "--max",
+      "2",
+      "--allow-failing",
+      "codeql",
+      "--reason",
+      "advisory",
+      "--json",
+    ],
     forge.cwd,
   );
   expect(dry.code, dry.stderr + dry.stdout).toBe(0);
@@ -1617,6 +1674,8 @@ test("stack land (#731): given PRs with a failing optional check, without a waiv
     [
       "stack",
       "land",
+      "--max",
+      "2",
       "--allow-failing",
       "codeql",
       "--reason",
@@ -1685,7 +1744,7 @@ test("stack land (#731): given a persistent UNKNOWN, then it stops at the deadli
   await plan(forge);
   await verdict(forge, "feature/a");
   gateForge(forge, { unknown: () => true });
-  const result = await run(["stack", "land", "--json"], forge.cwd);
+  const result = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   expect(waited).toEqual([500, 1000, 2000]);
   expect(result.json().data.landed).toEqual([]);
@@ -1716,4 +1775,185 @@ test("stack land (#731): given another author's PR with a failing optional check
   expect(result.json().data.stoppedAt.detail).toContain("others_pr");
   expect(forge.writes).toEqual([]);
   expect(rows(forge.cwd, "merge.waived")).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// #739: the pre-flight judges every PR before anything merges; the waiver
+// applies per PR
+
+const PreflightRow = (entry: { pr: number; refused: { reason: string } | null }) => [
+  entry.pr,
+  entry.refused?.reason ?? "ok",
+];
+
+test("stack land (#739): given a 3-PR stack whose PR 3 has a failing required check named in --allow-failing, then nothing merges and the error names PR 3 and the check", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github", undefined, STACK3);
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  for (const branch of STACK3) expect((await verdict(forge, branch)).code).toBe(0);
+  gateForge(forge, { codeql: "required", only: [13] });
+  const result = await run(
+    ["stack", "land", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    forge.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain(
+    "PR #13 (feature/c) waiver_refused: codeql (required by branch protection)",
+  );
+  const land = result.json().data.land;
+  expect(land.landed).toEqual([]);
+  expect(land.preflight.map(PreflightRow)).toEqual([
+    [11, "ok"],
+    [12, "ok"],
+    [13, "waiver_refused"],
+  ]);
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.waived")).toEqual([]);
+});
+
+/** PR 12 without a verdict (its branch changed after the top verdict), PR 13 another author's. */
+const twoRefusals = async () => {
+  const forge = setup("github", undefined, STACK3);
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  expect((await verdict(forge, "feature/a")).code).toBe(0);
+  expect((await verdict(forge, "feature/c")).code).toBe(0);
+  forge.git("switch", "-q", "feature/b");
+  writeFileSync(path.join(forge.cwd, "b.txt"), "b changed\n");
+  forge.git("commit", "-qam", "fix: b");
+  forge.git("switch", "-q", "feature/c");
+  othersPrs(forge, [13]);
+  return forge;
+};
+
+test("stack land (#739): given PR 2 without a verdict and PR 3 another author's PR without --others-pr, then nothing merges and both are named with their reasons", async () => {
+  const forge = await twoRefusals();
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  const data = result.json().data;
+  expect(data.landed).toEqual([]);
+  expect(data.stoppedAt).toMatchObject({ pr: 12 });
+  expect(data.preflight.map(PreflightRow)).toEqual([
+    [11, "ok"],
+    [12, expect.stringMatching(/^(no_verdict|needs_verdict)$/u)],
+    [13, "merge_refused"],
+  ]);
+  expect(data.preflight[2].refused.detail).toContain("others_pr: PR #13 is by someone-else");
+  expect(forge.writes).toEqual([]);
+
+  const human = await run(["stack", "land"], forge.cwd);
+  expect(human.code).toBe(0);
+  expect(human.stdout).toContain("landed nothing");
+  expect(human.stdout).toContain("pre-flight refused 2 of 3 PRs; nothing merged:");
+  expect(human.stdout).toMatch(/PR #12 \(feature\/b\): (no|needs)_verdict - /u);
+  expect(human.stdout).toContain("PR #13 (feature/c): merge_refused - others_pr:");
+  expect(forge.writes).toEqual([]);
+});
+
+test("stack land (#739): --dry-run prints the same pre-flight verdicts and records nothing", async () => {
+  const forge = await twoRefusals();
+  const ledgerBefore = readLedger(forge.cwd);
+  const dry = await run(["stack", "land", "--dry-run", "--json"], forge.cwd);
+  expect(dry.code, dry.stderr + dry.stdout).toBe(0);
+  const humanDry = await run(["stack", "land", "--dry-run"], forge.cwd);
+  const ledgerAfter = readLedger(forge.cwd);
+  expect(ledgerAfter.ok && ledgerAfter.value.rows.length).toBe(
+    ledgerBefore.ok && ledgerBefore.value.rows.length,
+  );
+  const real = await run(["stack", "land", "--json"], forge.cwd);
+  expect(dry.json().data.wouldLand).toEqual([]);
+  expect(dry.json().data.preflight).toEqual(real.json().data.preflight);
+  expect(dry.json().data.preflight.map(PreflightRow)).toEqual([
+    [11, "ok"],
+    [12, expect.stringMatching(/_verdict$/u)],
+    [13, "merge_refused"],
+  ]);
+  const humanReal = await run(["stack", "land"], forge.cwd);
+  const refusals = (text: string) => text.split("\n").filter((line) => line.startsWith("  "));
+  expect(refusals(humanDry.stdout).length).toBeGreaterThan(0);
+  expect(refusals(humanDry.stdout)).toEqual(refusals(humanReal.stdout));
+  expect(humanDry.stdout).toContain("would land nothing");
+  expect(forge.writes).toEqual([]);
+});
+
+test("stack land (#739): given --allow-failing codeql where only PR 2 runs codeql (failing, optional), then all PRs land and only PR 2 records a waiver row", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github", undefined, STACK3);
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  for (const branch of STACK3) expect((await verdict(forge, branch)).code).toBe(0);
+  gateForge(forge, { codeql: "optional", only: [12] });
+  const dry = await run(
+    ["stack", "land", "--dry-run", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    forge.cwd,
+  );
+  expect(dry.code, dry.stderr + dry.stdout).toBe(0);
+  expect(
+    dry
+      .json()
+      .data.preflight.map((entry: { pr: number; waives: string[] }) => [entry.pr, entry.waives]),
+  ).toEqual([
+    [11, []],
+    [12, ["codeql"]],
+    [13, []],
+  ]);
+  const result = await run(
+    ["stack", "land", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    forge.cwd,
+  );
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  const data = result.json().data;
+  expect(data.landed.map((item: { pr: number }) => item.pr)).toEqual([11, 12, 13]);
+  expect(data.complete).toBe(true);
+  const waived = rows(forge.cwd, "merge.waived");
+  expect(waived.map((row) => [row.pr, row.check])).toEqual([[12, "codeql"]]);
+  expect(data.landed.map((item: { waived: unknown[] }) => item.waived.length)).toEqual([0, 1, 0]);
+});
+
+test("stack land (#739): given --allow-failing nope and no PR of the stack runs it, then unknown_check and nothing merges", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github", undefined, STACK3);
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  for (const branch of STACK3) expect((await verdict(forge, branch)).code).toBe(0);
+  gateForge(forge, { codeql: "optional", only: [12] });
+  const result = await run(
+    ["stack", "land", "--allow-failing", "nope", "--reason", "r", "--json"],
+    forge.cwd,
+  );
+  expect(result.code).toBe(2);
+  expect(result.json().error).toContain(
+    'unknown_check: --allow-failing "nope" matches no check on any PR this land would merge (PR #11, PR #12, PR #13)',
+  );
+  expect(result.json().data.land.landed).toEqual([]);
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.waived")).toEqual([]);
+});
+
+test("stack land (#739): given PR 2's head moves after the pre-flight passed, then PR 1 merges, the land stops at PR 2 and the report names PR 1 as landed", async () => {
+  const forge = setup("github", undefined, STACK3);
+  await run(["stack", "plan", ...STACK3, "--json"], forge.cwd);
+  for (const branch of STACK3) expect((await verdict(forge, branch)).code).toBe(0);
+  // A push to feature/b lands between the land's last read of PR 12 and its merge call.
+  const inner = forge.runner;
+  forge.runner = (bin, args, options) => {
+    if (args.includes("repos/o/r/pulls/12/merge"))
+      forge.commitElsewhere("feature/b", "race.txt", "race\n");
+    return inner(bin, args, options);
+  };
+  Object.assign(forgeDeps, { runner: forge.runner });
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code).not.toBe(0);
+  expect(result.json().error).toContain("landed before the stop: PR #11 (feature/a)");
+  const land = result.json().data.land;
+  expect(land.preflight.map(PreflightRow)).toEqual([
+    [11, "ok"],
+    [12, "ok"],
+    [13, "ok"],
+  ]);
+  expect(land.landed.map((item: { pr: number }) => item.pr)).toEqual([11]);
+  expect(land.stoppedAt).toMatchObject({
+    pr: 12,
+    branch: "feature/b",
+    reason: "merge_refused",
+  });
+  expect(forge.writes.filter((write) => write.startsWith("merge"))).toEqual(["merge 11"]);
+  expect(forge.prs.get(12)?.state).toBe("open");
 });

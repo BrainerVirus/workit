@@ -699,14 +699,24 @@ function baseCiState(cwd: string, resolved: ResolvedForge, base: string): BaseCi
   };
 }
 
-/** The PR's author versus the forge login: null when the PR is the caller's own. */
-function otherAuthor(
-  resolved: ResolvedForge,
-  number: number,
-): { ok: true; author: string; login: string } | { ok: false; error: string } | null {
+/** The forge login (the account the CLI acts as), or null when it cannot be read. */
+export function forgeLogin(resolved: ResolvedForge): string | null {
   const account = resolved.expectedAccount?.trim() || null;
   const identity = resolved.forge.identity(account);
-  const login = (identity.ok ? identity.data.login : null) ?? account;
+  return (identity.ok ? identity.data.login : null) ?? account;
+}
+
+/**
+ * The PR's author versus the forge login: null when the PR is the caller's
+ * own. `pr merge` and `stack land`'s pre-flight share it; a caller checking
+ * many PRs passes the login it read once.
+ */
+export function otherAuthor(
+  resolved: ResolvedForge,
+  number: number,
+  knownLogin?: string | null,
+): { ok: true; author: string; login: string } | { ok: false; error: string } | null {
+  const login = knownLogin === undefined ? forgeLogin(resolved) : knownLogin;
   if (!login) return { ok: false, error: "the forge login could not be read" };
   const meta = resolved.forge.prMeta(number);
   if (!meta.ok) return { ok: false, error: `the PR author could not be read (${meta.error})` };

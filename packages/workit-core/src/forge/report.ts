@@ -854,6 +854,8 @@ export type WaivedCheck = { check: string; recorded: string } | { check: string;
 export function waiveChecks(
   status: ForgePrStatus,
   waiver: CheckWaiver,
+  /** `stack land` (#739): a name this head does not run is skipped, not refused. */
+  options: { perPr?: boolean } = {},
 ): ForgeResult<{ status: ForgePrStatus; waived: ForgeCheck[] }> {
   const required = (check: ForgeCheck): boolean | null =>
     check.required === true || status.requiredContexts?.includes(check.context) === true
@@ -864,6 +866,7 @@ export function waiveChecks(
   const named = new Set<ForgeCheck>();
   for (const name of waiver.checks) {
     const matches = status.checks.filter((check) => check.name === name || check.context === name);
+    if (!matches.length && options.perPr) continue;
     if (!matches.length)
       return failure(
         "invalid_input",
@@ -914,13 +917,24 @@ export const mergeGateDeps = {
  * records nothing. After the merge call the forge is read as is. `waived`
  * lists the checks a waiver passed on the merged PR, each with its row id,
  * or the error when the row could not be written after the merge.
+ *
+ * `perPr` (`stack land`, #739): the waiver applies to each PR whose head runs
+ * the named check, and a PR without it is not refused for it. `matched` then
+ * collects the names some read head ran, so the caller can refuse a name no
+ * PR runs (`unknown_check`); `waives(n)` names the failing checks the waiver
+ * passes at PR n's latest read.
  */
 export function mergeGateForge(
   forge: Forge,
   cwd: string,
-  options: { waiver: CheckWaiver | null; actor: LedgerActor },
-): Forge & { waived: WaivedCheck[] } {
+  options: { waiver: CheckWaiver | null; actor: LedgerActor; perPr?: boolean },
+): Forge & {
+  waived: WaivedCheck[];
+  matched: Set<string>;
+  waives: (number: number) => string[];
+} {
   const waivedRows: WaivedCheck[] = [];
+  const matched = new Set<string>();
   let merging = false;
   // The waiver decided at the latest read of each PR; recorded on its merge.
   const pending = new Map<number, { status: ForgePrStatus; checks: ForgeCheck[] }>();
@@ -956,7 +970,10 @@ export function mergeGateForge(
       if (merging) return forge.prStatus(number);
       const status = read(number);
       if (!status.ok || !options.waiver || status.data.state !== "open") return status;
-      const waived = waiveChecks(status.data, options.waiver);
+      for (const name of options.waiver.checks)
+        if (status.data.checks.some((check) => check.name === name || check.context === name))
+          matched.add(name);
+      const waived = waiveChecks(status.data, options.waiver, { perPr: options.perPr });
       if (!waived.ok) return waived;
       pending.set(number, { status: status.data, checks: waived.data.waived });
       return success(waived.data.status);
@@ -971,5 +988,7 @@ export function mergeGateForge(
       return merged;
     },
     waived: waivedRows,
+    matched,
+    waives: (number) => pending.get(number)?.checks.map((check) => check.name) ?? [],
   };
 }
