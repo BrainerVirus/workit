@@ -247,7 +247,8 @@ protected branches then follow the line each branch belongs to. See
 
 **Stacks.** `workit stack` manages plain base-branch PR chains on GitHub and
 GitLab (no Graphite or `gh stack` needed): plan, restack after a merge, and
-land the contiguous verified run from the root. See
+land the stack all or nothing: every PR is checked before any merges
+(`--max N` lands just the first N). See
 [delivery and stacks](docs/guides/delivery.md).
 
 ## Daily workflow

@@ -44,7 +44,7 @@ import { requireGrant, type GrantDecision } from "./autonomy";
 import { pushTarget } from "./core/remotes";
 import { isProtectedTarget } from "./core/branch";
 import { classifyLockOwner, localLockHost, processStartOf } from "./core/store-lock";
-import { baseTarget, mergePullRequest, type Sleep } from "./forge/pr-ops";
+import { baseTarget, forgeLogin, mergePullRequest, otherAuthor, type Sleep } from "./forge/pr-ops";
 import {
   buildStatusDoc,
   mergeGateForge,
@@ -2456,23 +2456,17 @@ function othersPrGate(
   let login: string | null | undefined;
   return (pr) => {
     const label = noun(resolved, pr);
-    const unknown = (why: string) => ({
-      detail: `identity_unknown: ${why}, so ${label} cannot be shown to be yours`,
-      unblock:
-        "fix: gh auth status / gh auth login (or glab auth login), then workit stack land again",
-    });
-    if (login === undefined) {
-      const account = resolved.expectedAccount?.trim() || null;
-      const identity = resolved.forge.identity(account);
-      login = (identity.ok ? identity.data.login : null) ?? account;
-    }
-    if (!login) return unknown("the forge login could not be read");
-    const meta = resolved.forge.prMeta(pr);
-    if (!meta.ok) return unknown(`the PR author could not be read (${meta.error})`);
-    if (!meta.data.author) return unknown("the forge did not name the PR author");
-    if (meta.data.author.toLowerCase() === login.toLowerCase()) return null;
+    if (login === undefined) login = forgeLogin(resolved);
+    const other = otherAuthor(resolved, pr, login);
+    if (other === null) return null;
+    if (!other.ok)
+      return {
+        detail: `identity_unknown: ${other.error}, so ${label} cannot be shown to be yours`,
+        unblock:
+          "fix: gh auth status / gh auth login (or glab auth login), then workit stack land again",
+      };
     return {
-      detail: `others_pr: ${label} is by ${meta.data.author}, not ${login} (the forge login); workit never merges another author's PR on its own`,
+      detail: `others_pr: ${label} is by ${other.author}, not ${other.login} (the forge login); workit never merges another author's PR on its own`,
       unblock: `only if the user asks you to land it: workit stack land --others-pr --reason "<why>"`,
     };
   };
