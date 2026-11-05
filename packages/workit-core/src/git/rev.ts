@@ -21,6 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { configFilePath } from "../core/config";
+import { gitDirs } from "./facts";
 
 const MAX_BUFFER = 256 * 1024 * 1024;
 
@@ -249,8 +250,13 @@ export function worktreeTree(
   cwd: string,
   options: { maxUntrackedBytes?: number; timeoutMs?: number } = {},
 ): WorktreeTree | null {
-  const top = line(git(cwd, ["rev-parse", "--show-toplevel"]));
-  const indexPath = line(git(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "index"]));
+  const dirs = gitDirs(cwd);
+  const top = dirs?.top ?? null;
+  // `--git-path index` is the git dir's index unless GIT_INDEX_FILE moves it.
+  const indexPath =
+    dirs && process.env.GIT_INDEX_FILE === undefined
+      ? path.join(dirs.gitDir, "index")
+      : line(git(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "index"]));
   if (!top || !indexPath) return null;
   const cap = options.maxUntrackedBytes ?? MAX_UNTRACKED_BYTES;
   const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.worktree;
@@ -310,7 +316,7 @@ export function worktreeTree(
  * (close, inspect) use worktreeTree. Null outside a repository.
  */
 export function worktreeSignal(cwd: string, options: { timeoutMs?: number } = {}): string | null {
-  const top = line(git(cwd, ["rev-parse", "--show-toplevel"]));
+  const top = gitDirs(cwd)?.top ?? null;
   if (!top) return null;
   const status = git(
     top,
@@ -501,7 +507,7 @@ export function remoteNames(cwd: string): string[] {
 
 /** The absolute git common dir (shared by every worktree), or null outside a repository. */
 export function gitCommonDir(cwd: string): string | null {
-  return line(git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+  return gitDirs(cwd)?.commonDir ?? null;
 }
 
 /** True when `rev` names a commit present in the local object store. */
@@ -523,7 +529,7 @@ export function originHeadRef(cwd: string): string | null {
 
 /** The top of the working tree, or null outside one. */
 export function worktreeTop(cwd: string): string | null {
-  return line(git(cwd, ["rev-parse", "--show-toplevel"]));
+  return gitDirs(cwd)?.top ?? null;
 }
 
 /** Whether git tracks `file` (repo-relative) in the index of the checkout at `top`. */

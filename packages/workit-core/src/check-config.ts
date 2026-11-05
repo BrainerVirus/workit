@@ -37,6 +37,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { gitDirs } from "./git/facts";
 
 /** The package.json scripts that count as named checks when no checks config exists. */
 export const SCRIPT_CHECKS = ["test", "lint", "typecheck", "check"] as const;
@@ -176,7 +177,7 @@ const git = (cwd: string, args: string[]): string | null => {
 
 /** The repository top for `cwd`, or `cwd` itself outside git. */
 export function checkRoot(cwd: string): string {
-  return path.resolve(git(cwd, ["rev-parse", "--show-toplevel"]) ?? cwd);
+  return path.resolve(gitDirs(cwd)?.top ?? cwd);
 }
 
 const packageManager = (root: string): "bun" | "pnpm" | "yarn" | "npm" => {

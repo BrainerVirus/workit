@@ -65,6 +65,7 @@ import { resolveStateDir } from "./core/logger";
 import { hostAwareLockTimeout } from "./core/store-lock";
 import { verdictDrift, type CarryRule, type Drift } from "./core/policy/carry";
 import { defaultBase } from "./git/default-base";
+import { gitDirs } from "./git/facts";
 import {
   GIT_TIMEOUTS,
   currentBranch,
@@ -1943,7 +1944,7 @@ function remoteIdentity(cwd: string, hop = 0): string | null {
 const mirrorKeys = new Map<string, string | null>();
 /** The verdict mirror file for `cwd`'s remote, or null when it has no remote origin. */
 export function verdictMirrorPath(cwd: string): string | null {
-  const top = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const top = gitDirs(cwd)?.commonDir ?? null;
   if (!top) return null;
   let identity = mirrorKeys.get(top);
   if (identity === undefined) {
@@ -2443,7 +2444,7 @@ export function recordVerdict(
     return err("invalid_input", `--surface must be ${VERDICT_SURFACES.join("|")}`);
   const how = required(input.how, "--how");
   if (!how.ok) return how;
-  if (git(context.cwd, ["rev-parse", "--git-dir"]) === null)
+  if (gitDirs(context.cwd) === null)
     return err(
       "invalid_input",
       `${context.cwd} is not inside a git checkout, so there is no commit to judge`,

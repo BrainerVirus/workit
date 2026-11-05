@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { gitDirs } from "../git/facts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { vcsConfig, mergedPrStyle } from "./vcs-config";
@@ -60,10 +61,7 @@ const runGit = (
 };
 
 /** repo_root: git rev-parse --show-toplevel || pwd */
-export const repoRoot = (cwd: string): string => {
-  const r = runGit(cwd, ["rev-parse", "--show-toplevel"]);
-  return r.exitCode === 0 && r.stdout ? r.stdout : cwd;
-};
+export const repoRoot = (cwd: string): string => gitDirs(cwd)?.top ?? cwd;
 
 /** current_branch: git rev-parse --abbrev-ref HEAD || unknown */
 export const currentBranch = (cwd: string): string => {
