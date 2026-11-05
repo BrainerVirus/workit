@@ -10,8 +10,7 @@ description: Build a requested change in small verified steps - follow local pat
 1. Read before writing: the files you will touch, their callers, and one
    neighbour that already does something similar. Copy its patterns, names and
    error handling. Repo rules (AGENTS.md, CLAUDE.md, lint config) win.
-2. On the default branch? Branch first: `workit git branch --kind feature --slug <s>`
-   (host note: in a Claude Code host-isolated worktree use plain `git switch -c`).
+2. On the default branch? Branch first: `workit git branch --kind feature --slug <s>` (host note: a Claude Code host-isolated worktree uses plain `git switch -c`).
    Tracking it? Judge once: `workit policy assess --judge risk=normal behavior=yes
    product-choice=no plan=no` (trivial and no for a mechanical fix). Already
    judged? Cite the plan with `--ref <path>` or record the decision; don't re-judge.

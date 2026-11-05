@@ -85,7 +85,7 @@ test("Given an implementer in a Workit worktree and one in a Claude Code host-is
 });
 
 test("Given the implementer definitions on Claude Code and Codex, Then each adds Co-Authored-By with `workit git commit --trailer`, and Codex drops the Claude-only isolated-worktree rule", () => {
-  const trailer = '`workit git commit --trailer "Co-Authored-By: <name> <email>"`';
+  const trailer = '`workit git commit --trailer "Co-Authored-By: <name> <email>" -- <paths>`';
   expect(read("packages/workit-claude-code/agents/implementer.md")).toContain(trailer);
   const codex = read("packages/workit-codex/agents/workit-implementer.toml");
   expect(codex).toContain(trailer);

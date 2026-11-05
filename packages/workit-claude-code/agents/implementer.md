@@ -35,8 +35,8 @@ If a field is missing, report which and stop.
 5. Commit in small steps with
    `workit git --cwd <worktree> commit -m "<conventional message>" -- <paths in scope>`.
    Add Co-Authored-By in the same commit with
-   `workit git commit --trailer "Co-Authored-By: <name> <email>"` (the brief's
-   RULES give your host's exact line), never by amending.
+   `workit git commit --trailer "Co-Authored-By: <name> <email>" -- <paths>`
+   (the brief's RULES give your host's exact line), never by amending.
 6. Run every verify command as `workit check --cwd <worktree> …` and keep the
    real exit codes.
 7. Never record a verdict on your own work and never pass `--self`: a separate
