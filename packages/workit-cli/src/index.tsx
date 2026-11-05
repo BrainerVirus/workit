@@ -190,9 +190,15 @@ export async function runInit() {
     const values = exit.values;
     const ytrack =
       values.issueTracker === "youtrack"
-        ? progress.runSync("Installing the ytrack agent skill", () =>
-            initYtrackSkill(values, userHome(process.env), process.env),
-          )
+        ? progress.runSync("Installing the ytrack agent skill", () => {
+            try {
+              return initYtrackSkill(values, userHome(process.env), process.env);
+            } catch (error) {
+              // Host setup already succeeded; the skill is retried by `workit upgrade`.
+              logger.warn(EVENT.installSteps, { step: "ytrack_skill", error: String(error) });
+              return null;
+            }
+          })
         : null;
     logger.info(EVENT.installSteps, { step: "wizard_apply", ok: result.ok });
     printApplySummary(result, ytrack, stdoutStyle());
