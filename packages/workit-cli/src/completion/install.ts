@@ -46,15 +46,37 @@ function userShell(env: Env, platform: NodeJS.Platform = process.platform): Shel
   return null;
 }
 
-/** The directories zsh searches for functions (`$fpath` of a non-interactive zsh); null when zsh cannot run. */
-function zshFpath(env: Env): string[] | null {
-  const run = spawnSync("zsh", ["-c", "print -rl -- $fpath"], {
-    env,
-    encoding: "utf8",
-    timeout: 3000,
-    windowsHide: true,
-  });
-  return run.status === 0 ? run.stdout.split("\n").filter(Boolean) : null;
+const FPATH_START = "__workit_fpath_start__";
+const FPATH_END = "__workit_fpath_end__";
+
+/**
+ * The directories zsh searches for functions in a new interactive shell (the
+ * one that loads completions): `zsh -i` reads ~/.zshrc, where users and Oh My
+ * Zsh set $fpath; a plain `zsh -c` never does, so it reported every fpath line
+ * in ~/.zshrc as missing. Markers fence the list from whatever the rc prints.
+ * Null when zsh cannot run or does not answer in time.
+ */
+export function zshFpath(env: Env): string[] | null {
+  const run = spawnSync(
+    "zsh",
+    ["-i", "-c", `print -r -- ${FPATH_START}; print -rl -- $fpath; print -r -- ${FPATH_END}`],
+    {
+      env,
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
+  return parseFpath(run.stdout ?? "");
+}
+
+/** The $fpath lines between the markers; null when they are missing (rc failed or timed out). */
+export function parseFpath(stdout: string): string[] | null {
+  const lines = stdout.split(/\r?\n/u);
+  const start = lines.lastIndexOf(FPATH_START);
+  const end = lines.lastIndexOf(FPATH_END);
+  return start >= 0 && end > start ? lines.slice(start + 1, end).filter(Boolean) : null;
 }
 
 const POWERSHELL_PROFILE_LINE = "workit completion powershell | Out-String | Invoke-Expression";
@@ -143,8 +165,11 @@ function shellNotes(
   if (shell === "fish") return ["fish loads it in new fish sessions"];
   const fpath = (options.fpath ?? zshFpath)(options.env);
   if (fpath?.includes(dir)) return ["that directory is on zsh's $fpath: new zsh sessions load it"];
+  const unknown = fpath === null;
   return [
-    "zsh's $fpath lacks that directory; add these lines to ~/.zshrc (before any other compinit), then open a new shell:",
+    unknown
+      ? "zsh did not report its $fpath; if new shells do not complete `workit`, add to ~/.zshrc before Oh My Zsh or compinit:"
+      : "new zsh shells will not find it yet; add to ~/.zshrc before Oh My Zsh or compinit, then open a new shell:",
     `  fpath=("${dir}" $fpath)`,
     "  autoload -Uz compinit && compinit",
   ];
@@ -188,13 +213,19 @@ const VERB: Record<CompletionInstall["status"], string> = {
   skipped: "not written to",
 };
 
-/** The human lines for an install: where it went, then the notes. */
+/** The human lines for an install: where it went, then the notes (rc lines as commands, the rest dimmed). */
 export const completionLines = (
   result: CompletionInstall,
-  paint: (text: string) => string,
+  paint: {
+    path: (text: string) => string;
+    dim: (text: string) => string;
+    command: (text: string) => string;
+  },
 ): string[] => [
   ...(result.shell && result.file && result.status !== "skipped"
-    ? [`${result.shell} completion ${VERB[result.status]} ${paint(result.file)}`]
+    ? [`${result.shell} completion ${VERB[result.status]} ${paint.path(result.file)}`]
     : []),
-  ...result.notes,
+  ...result.notes.map((note) =>
+    note.startsWith("  ") ? `  ${paint.command(note.slice(2))}` : paint.dim(note),
+  ),
 ];
