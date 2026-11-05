@@ -196,7 +196,7 @@ test("Given a linked worktree whose directory was deleted and recreated empty, T
   dirs.push(wt);
   git(dir, "worktree", "add", "-q", "--detach", wt);
   forgetGitDirs();
-  expect(gitDirs(wt)?.top).toBe(wt);
+  expect(gitDirs(wt)?.top).toBe(git(wt, "rev-parse", "--show-toplevel"));
   rmSync(wt, { recursive: true, force: true });
   mkdirSync(wt);
   expect(gitDirs(wt)).toBeNull();
@@ -207,5 +207,5 @@ test("Given a directory that becomes a repository later, Then gitDirs finds it (
   dirs.push(dir);
   expect(gitDirs(dir)).toBeNull();
   git(dir, "init", "-q");
-  expect(gitDirs(dir)?.top).toBe(dir);
+  expect(gitDirs(dir)?.top).toBe(git(dir, "rev-parse", "--show-toplevel"));
 });
