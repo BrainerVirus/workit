@@ -390,7 +390,7 @@ async function land(argv: string[], io: Io): Promise<number> {
           ]
         : [
             data.landed.length
-              ? `landed: ${data.landed.map((item) => `${label(kind, item.pr)} (${item.branch}) -> ${short(item.mergeSha)}${item.unverified ? ` UNVERIFIED (ledger ${item.unverified})` : ""}${item.waived.length ? ` WAIVED ${item.waived.map((entry) => `${entry.check} (ledger ${entry.recorded})`).join(", ")}` : ""}`).join(", ")}`
+              ? `landed: ${data.landed.map((item) => `${label(kind, item.pr)} (${item.branch}) -> ${short(item.mergeSha)}${item.unverified ? ` UNVERIFIED (ledger ${item.unverified})` : ""}${item.waived.length ? ` WAIVED ${item.waived.map((entry) => `${entry.check} (${"recorded" in entry ? `ledger ${entry.recorded}` : `not recorded: ${entry.error}`})`).join(", ")}` : ""}`).join(", ")}`
               : "landed nothing",
           ]),
       ...(data.retargeted.length

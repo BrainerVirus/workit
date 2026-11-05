@@ -49,6 +49,7 @@ import {
   pollDelay,
   waitVerdict,
   type CheckWaiver,
+  type WaivedCheck,
   type ChecksState,
   type NextAction,
   type PrStatusDoc,
@@ -2108,7 +2109,7 @@ export type LandOutcome = {
     branch: string;
     mergeSha: string | null;
     unverified: string | null;
-    waived: Array<{ check: string; recorded: string }>;
+    waived: WaivedCheck[];
   }>;
   /** Dry run: the PRs that qualify now, in order (later ones assume a clean restack). */
   wouldLand: Array<{ pr: number; branch: string }>;
@@ -2216,18 +2217,6 @@ export async function landStack(
     const ledger = readLedger(ctx.cwd, { integrity: true });
     return ledger.ok ? ledger.value.rows : [];
   };
-  // `pr merge`'s gate, one per read and one per merge: UNKNOWN mergeability
-  // is re-read with backoff, and an `--allow-failing` waiver passes the PR's
-  // failing optional checks. Only the merge gate records waiver rows, so a
-  // PR that stops records none. Sync keeps the raw forge: it lands nothing.
-  const gated = (record: boolean) => {
-    const forge = mergeGateForge(ctx.resolved.forge, ctx.cwd, {
-      waiver: options.allowFailing ?? null,
-      actor: ctx.actor,
-      dryRun: !record,
-    });
-    return { ctx: { ...ctx, resolved: { ...ctx.resolved, forge } }, waived: forge.waived };
-  };
   const simulated = new Set<string>();
   let justRestacked = new Set(outcome.restacked);
   for (;;) {
@@ -2252,14 +2241,22 @@ export async function landStack(
       };
       break;
     }
+    // `pr merge`'s gate, one per PR: UNKNOWN mergeability is re-read with
+    // backoff, and an `--allow-failing` waiver passes the PR's failing
+    // optional checks, recorded only once the forge accepts its merge (a PR
+    // that stops records none). Sync keeps the raw forge: it lands nothing.
+    const gate = mergeGateForge(ctx.resolved.forge, ctx.cwd, {
+      waiver: options.allowFailing ?? null,
+      actor: ctx.actor,
+    });
+    const gated: Ctx = { ...ctx, resolved: { ...ctx.resolved, forge: gate } };
     let doc: PrStatusDoc | null = null;
     if (entry.pr) {
       const head = branchTip(ctx.cwd, entry.branch);
-      const reader = gated(false).ctx;
       const read =
         justRestacked.has(entry.branch) && head
-          ? await awaitChecks(reader, entry.pr, head, options)
-          : statusDoc(reader, entry.pr);
+          ? await awaitChecks(gated, entry.pr, head, options)
+          : statusDoc(gated, entry.pr);
       if (!read.ok) return failWith(fromForge(read));
       doc = read.data;
       if (options.dryRun && doc.state === "merged") {
@@ -2303,10 +2300,9 @@ export async function landStack(
       simulated.add(entry.branch);
       continue;
     }
-    const gate = gated(true);
     const merged = await mergePullRequest(
       ctx.cwd,
-      gate.ctx.resolved,
+      gated.resolved,
       {
         pr,
         method: options.method,

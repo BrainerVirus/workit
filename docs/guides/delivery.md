@@ -520,9 +520,10 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - `pr merge --allow-failing <check> --reason "<why>"` (repeatable) lets a
   failing optional check through: one branch protection does not require,
   such as an advisory CodeQL run on an unprotected branch. Each waived check
-  is recorded before the merge call as a `merge.waived` ledger row with the
-  check, the PR head and the reason, and printed as a `WAIVED:` line (`waived`
-  in `--json`). A required check is never waived: naming one is refused
+  is recorded once the forge accepts the merge as a `merge.waived` ledger row
+  with the check, the PR head and the reason, and printed as a `WAIVED:` line
+  (`waived` in `--json`). A merge refused or failed for any other reason
+  records no waiver. A required check is never waived: naming one is refused
   (`waiver_refused`, exit 3) and names it, and so is a check whose required
   flag the forge cannot read. A name that matches no check on the head is
   refused (`unknown_check`). A waiver never covers a missing verdict.

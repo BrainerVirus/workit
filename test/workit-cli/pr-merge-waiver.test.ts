@@ -11,6 +11,7 @@ import {
   fixture,
   makeForgeRepo,
   replayRunner,
+  replyError,
   type Call,
   type ForgeRepo,
   type Reply,
@@ -90,7 +91,12 @@ const prStatus = (options: { requiredFails?: boolean; mergeable?: string }): str
 };
 
 /** A docs-only PR (lane none: no verdict needed) on an unprotected main unless `protectedMain`. */
-const setup = (options: { status: Reply; protectedMain?: boolean }) => {
+const setup = (options: {
+  status: Reply;
+  protectedMain?: boolean;
+  author?: string;
+  mergeError?: string;
+}) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
@@ -118,7 +124,17 @@ const setup = (options: { status: Reply; protectedMain?: boolean }) => {
         : typeof options.status === "function"
           ? options.status(call)
           : options.status,
+    ...(options.author
+      ? {
+          "GET repos/o/r/pulls/12": JSON.stringify({
+            number: 12,
+            state: "open",
+            user: { login: options.author },
+          }),
+        }
+      : {}),
     "PUT repos/o/r/pulls/12/merge": () => {
+      if (options.mergeError) return replyError(options.mergeError);
       merged = true;
       return JSON.stringify({ sha: "{{BASE}}", merged: true, message: "merged" });
     },
@@ -253,4 +269,53 @@ test("Given a persistent UNKNOWN, When pr merge runs, Then it stops at the deadl
   });
   expect(result.json().unblock).toContain("still computing mergeability");
   expect(merges(runner.calls)).toEqual([]);
+});
+
+test("Given another author's PR with an optional failing check, When pr merge --allow-failing runs without --others-pr, Then it is refused as others_pr and no waiver row is recorded", async () => {
+  const { repo, runner } = setup({ status: prStatus({}), author: "someone-else" });
+  const result = await run(
+    ["pr", "merge", "--keep-branch", "--allow-failing", "codeql", "--reason", "r", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json().data).toMatchObject({ reason: "others_pr" });
+  expect(merges(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "merge.waived")).toEqual([]);
+  expect(result.json().data.waived).toBeUndefined();
+});
+
+test("Given a waived check, When the forge refuses the merge call, Then no waiver row is recorded", async () => {
+  const { repo, runner } = setup({
+    status: prStatus({}),
+    mergeError: "HTTP 405: Pull Request is not mergeable",
+  });
+  const result = await run(
+    ["pr", "merge", "--keep-branch", "--allow-failing", "codeql", "--reason", "r", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).not.toBe(0);
+  expect(merges(runner.calls)).toHaveLength(1);
+  expect(rows(repo.cwd, "merge.waived")).toEqual([]);
+});
+
+test("Given a waived check, When the merge succeeds, Then exactly one waiver row records check, reason, actor and head after the merge intent", async () => {
+  const { repo } = setup({ status: prStatus({}) });
+  const result = await run(
+    ["pr", "merge", "--keep-branch", "--allow-failing", "codeql", "--reason", "r", "--json"],
+    repo.cwd,
+  );
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  const waived = rows(repo.cwd, "merge.waived");
+  expect(waived).toEqual([
+    expect.objectContaining({
+      check: "CI / codeql",
+      reason: "r",
+      head: repo.subs["{{HEAD}}"],
+      actor: expect.objectContaining({ session: "author-1" }),
+    }),
+  ]);
+  const ledger = readLedger(repo.cwd);
+  if (!ledger.ok) throw new Error(ledger.error);
+  const order = ledger.value.rows.map((row) => row.type);
+  expect(order.indexOf("merge.waived")).toBeGreaterThan(order.indexOf("pr.merge.intent"));
 });

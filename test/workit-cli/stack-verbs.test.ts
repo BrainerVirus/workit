@@ -1698,3 +1698,22 @@ test("stack land (#731): given a persistent UNKNOWN, then it stops at the deadli
   expect(result.json().data.stoppedAt.unblock).toContain("still computing mergeability");
   expect(forge.writes).toEqual([]);
 });
+
+test("stack land (#731): given another author's PR with a failing optional check, --allow-failing without --others-pr stops at merge_refused and records no waiver row", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  othersPrs(forge);
+  gateForge(forge, { codeql: "optional" });
+  const result = await run(
+    ["stack", "land", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    forge.cwd,
+  );
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data.landed).toEqual([]);
+  expect(result.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "merge_refused" });
+  expect(result.json().data.stoppedAt.detail).toContain("others_pr");
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.waived")).toEqual([]);
+});
