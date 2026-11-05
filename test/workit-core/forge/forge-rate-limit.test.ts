@@ -138,3 +138,23 @@ test("Given a write that hits a 403 secondary rate limit, When it is made, Then 
   expect(waited).toEqual([]);
   expect(result.ok || result.error).toStartWith("rate_limited:");
 });
+
+test("Given a GraphQL mutation that hits a 403 secondary rate limit, When apiJson runs it as a write, Then it is not repeated", () => {
+  const waited = sleeps();
+  const runner = scripted([
+    limited("gh: You have exceeded a secondary rate limit. (HTTP 403)"),
+    ok('{"data":{}}'),
+  ]);
+  const result = apiJson(
+    runner,
+    "gh",
+    "github.com",
+    ["api", "graphql", "-f", "query=mutation { x }"],
+    "reply",
+    undefined,
+    { graphql: true, write: true },
+  );
+  expect(runner.calls).toBe(1);
+  expect(waited).toEqual([]);
+  expect(result.ok).toBe(false);
+});

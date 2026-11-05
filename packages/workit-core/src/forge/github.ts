@@ -250,7 +250,9 @@ export function createGitHubForge(options: {
       args,
       what,
       FORGE_TIMEOUTS.api,
-      { graphql: true },
+      // A mutation (reply, resolve, draft) is a write: never repeated after a
+      // 403 secondary limit that may already have applied it.
+      { graphql: true, write: /^\s*mutation\b/u.test(query) },
     );
     if (!response.ok) return response;
     if (response.data.errors?.length) {

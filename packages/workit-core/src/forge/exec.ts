@@ -285,9 +285,9 @@ export function apiJson<T>(
   args: readonly string[],
   what: string,
   timeoutMs: number = FORGE_TIMEOUTS.api,
-  options: { graphql?: boolean } = {},
+  options: { graphql?: boolean; write?: boolean } = {},
 ): ForgeResult<T> {
-  const run = runLimited(runner, bin, args, { timeoutMs });
+  const run = runLimited(runner, bin, args, { timeoutMs }, options.write === true);
   if (run.status !== 0) {
     // `gh api graphql` exits 1 on GraphQL errors but still prints the
     // response; the caller reads its `errors` array.
