@@ -34,6 +34,12 @@
 //   workit it fails open and adds the trailer, so doctor warns about any
 //   Workit hook or helper left there and `--fix` removes them
 //   (removeSessionHook); another tool's hook and its manual line stay.
+//   WORKIT_TRAILERS=on is honoured the same way, on purpose: it is the answer
+//   `workit git commit` already computed, so the hook never asks twice, and a
+//   user who exports it opts in to the trailer whatever the workspace says.
+// - The bounded ask uses `timeout 5` only when `timeout --version` names GNU
+//   coreutils (Linux, Git Bash): on Windows a bare `timeout` can resolve to
+//   timeout.exe, which pauses instead; elsewhere the ask is unbounded.
 // - `--if-exists addIfDifferent`: the same session's trailer is never repeated;
 //   another session that amends adds its own, as `workit git commit --amend` does.
 import { spawnSync } from "node:child_process";
@@ -94,7 +100,9 @@ case "\${WORKIT_TRAILERS-}" in
   on) ;;
   *)
     if command -v workit >/dev/null 2>&1; then
-      t=; ! command -v timeout >/dev/null 2>&1 || t="timeout 5"
+      # Bound the call only with GNU coreutils timeout: on Windows a bare
+      # \`timeout\` can be timeout.exe, a different program (a pause).
+      t=; case "$(timeout --version 2>/dev/null)" in *coreutils*) t="timeout 5" ;; esac
       [ "$($t workit git trailers 2>/dev/null)" != off ] || exit 0
     fi
     ;;
