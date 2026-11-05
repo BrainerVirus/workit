@@ -8,7 +8,7 @@ import {
   matchesNamedCheck,
   splitCommand,
 } from "@/packages/workit-core/src/check-config";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readdirSync, utimesSync } from "node:fs";
 import { worktreeSignal } from "@/packages/workit-core/src/git/rev";
 import {
@@ -119,17 +119,53 @@ test.skipIf(process.platform === "win32")(
     const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-wrap-"));
     dirs.push(cwd);
     const wrapper = ["env", "WORKIT_WRAPPED=yes"];
-    const argv = await runCheckCommand(
-      [process.execPath, "-e", "console.log(process.env.WORKIT_WRAPPED); process.exit(5)"],
-      { cwd, wrapper },
-    );
-    expect([argv.exitCode, argv.log.trim()]).toEqual([5, "yes"]);
+    // /bin/sh, not a nested bun: the contract is wrapper + argv + exit code,
+    // and a bound per run names the step that stalls instead of a bare test timeout (#730).
+    const bound = { cwd, wrapper, timeoutMs: 10_000 };
+    const argv = await runCheckCommand(["/bin/sh", "-c", 'echo "$WORKIT_WRAPPED"; exit 5'], bound);
+    expect({
+      step: "argv",
+      timedOut: argv.timedOut,
+      code: argv.exitCode,
+      log: argv.log.trim(),
+    }).toEqual({ step: "argv", timedOut: false, code: 5, log: "yes" });
     const shell = await runCheckCommand(['echo "$WORKIT_WRAPPED" | tr y Y'], {
-      cwd,
+      ...bound,
       shell: true,
-      wrapper,
     });
-    expect([shell.exitCode, shell.log.trim()]).toEqual([0, "Yes"]);
+    expect({
+      step: "shell",
+      timedOut: shell.timedOut,
+      code: shell.exitCode,
+      log: shell.log.trim(),
+    }).toEqual({ step: "shell", timedOut: false, code: 0, log: "Yes" });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "G a child whose exit and close events are lost, T the run still settles with its real exit code once the pipes close",
+  async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-lost-exit-"));
+    dirs.push(cwd);
+    const deaf = ((...args: Parameters<typeof spawn>) => {
+      const child = spawn(...args);
+      const emit = child.emit.bind(child);
+      child.emit = ((event: string, ...rest: unknown[]) =>
+        event === "exit" || event === "close" ? false : emit(event, ...rest)) as typeof child.emit;
+      return child;
+    }) as typeof spawn;
+    const started = Date.now();
+    const run = await runCheckCommand(["/bin/sh", "-c", "echo out; exit 7"], {
+      cwd,
+      timeoutMs: 10_000,
+      spawn: deaf,
+    });
+    expect({ code: run.exitCode, timedOut: run.timedOut, log: run.log.trim() }).toEqual({
+      code: 7,
+      timedOut: false,
+      log: "out",
+    });
+    expect(Date.now() - started).toBeLessThan(3000);
   },
 );
 
