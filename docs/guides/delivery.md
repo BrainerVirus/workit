@@ -405,7 +405,7 @@ workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
-workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>]
+workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--allow-failing <check>… --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 ```
 
@@ -517,9 +517,30 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `green` or `merged` endpoint, an agent that stops while those checks are
   failing or pending is continued once with `workit ci wait --pr <n>`
   ([stop control](hosts.md)).
+- `pr merge --allow-failing <check> --reason "<why>"` (repeatable) lets a
+  failing optional check through: one branch protection does not require,
+  such as an advisory CodeQL run on an unprotected branch. Each waived check
+  is recorded before the merge call as a `merge.waived` ledger row with the
+  check, the PR head and the reason, and printed as a `WAIVED:` line (`waived`
+  in `--json`). A required check is never waived: naming one is refused
+  (`waiver_refused`, exit 3) and names it, and so is a check whose required
+  flag the forge cannot read. A name that matches no check on the head is
+  refused (`unknown_check`). A waiver never covers a missing verdict.
+- When the forge still computes mergeability (GitHub `UNKNOWN`, GitLab
+  `checking`/`unchecked`), `pr merge` reads the PR again after 0.5, 1 and 2
+  seconds. Still unknown after that, it is refused with `babysit:
+  "wait-forge"` in its data: wait a minute and merge again.
 - A forge refusal (HTTP 405/422) shows the forge's own reason, such as "No
   commits between main and feature/x". Network errors and 5xx answers exit 5
   (`unavailable`, retry), not 1.
+- A rate limit (HTTP 429, or a 403 that says "rate limit", GitHub's secondary
+  limit included) waits once, as long as `Retry-After` or `X-RateLimit-Reset`
+  asks (2 s when neither is shown, never more than 10 s) and retries. A limit
+  that persists exits 5 (`unavailable`) with an error starting `rate_limited:`
+  and an unblock saying how long to wait; `ci wait` keeps polling through it.
+- Finding the PR of a branch reads every page of the forge's results, so an
+  open PR behind 20 closed ones is still found and `pr create` never opens a
+  duplicate.
 
 ### Changelog gate
 
@@ -715,6 +736,15 @@ that glob's workspace, even when it differs from the main checkout's: the
 worktree's own path wins. A remote whose forge differs
 from the workspace `vcs.provider` blocks the PR and CI verbs (`forge_mismatch`)
 until a workspace with a narrower glob names the right provider.
+
+GitLab has no per-job required checks. When an MR's pipeline has a failing
+job, Workit reads the project's "Pipelines must succeed" setting
+(`only_allow_merge_if_pipeline_succeeds`): with it on, every job that may not
+fail is required; with it off, failing jobs are optional and
+`--allow-failing` can pass them; unreadable, they stay required. Approval
+rules reach the gate through the MR's `detailed_merge_status`
+(`not_approved` reads as review required). External status checks (GitLab
+Ultimate) are not read.
 
 ## Stacks
 
