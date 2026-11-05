@@ -4,7 +4,7 @@
 // change removes some, lower the budget to the new count.
 //
 // A `git` shim first on PATH counts every call, then runs the real git.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -16,15 +16,24 @@ import { forgetGitDirs } from "@/packages/workit-core/src/git/facts";
 const BUDGET = {
   /** A first gate check on a branch (12 before #284 N6's first slice). */
   gateFirst: 11,
-  /** The same gate again in the same process: the fixed facts come from the cache (was 10). */
-  gateAgain: 8,
-  /** defaultBase: one `git for-each-ref` whatever the candidates, plus the origin URL the track lookup reads (was 3, up to 8). */
-  defaultBase: 2,
+  /** The same gate again in the same process: the fixed facts come from the cache (was 11). */
+  gateAgain: 9,
+  /** defaultBase: one `git for-each-ref` whatever the candidates, plus the two reads of the track lookup (was 4, more with fewer candidates). */
+  defaultBase: 3,
 };
 
 const dirs: string[] = [];
+// The default base reads the workspace config (release tracks): an empty one
+// of its own, so the machine's config cannot change the count.
+const config = mkdtempSync(path.join(os.tmpdir(), "wk-budget-config-"));
+const priorConfig = process.env.WORKIT_CONFIG;
+beforeAll(() => {
+  process.env.WORKIT_CONFIG = config;
+});
 afterAll(() => {
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  if (priorConfig === undefined) delete process.env.WORKIT_CONFIG;
+  else process.env.WORKIT_CONFIG = priorConfig;
+  for (const dir of [...dirs, config]) rmSync(dir, { recursive: true, force: true });
 });
 
 const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();

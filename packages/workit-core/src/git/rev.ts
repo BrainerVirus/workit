@@ -255,7 +255,7 @@ export function worktreeTree(
   // `--git-path index` is the git dir's index unless GIT_INDEX_FILE moves it.
   const indexPath =
     dirs && process.env.GIT_INDEX_FILE === undefined
-      ? path.join(dirs.gitDir, "index")
+      ? `${dirs.gitDir}/index` // git's own form (forward slashes on Windows too)
       : line(git(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "index"]));
   if (!top || !indexPath) return null;
   const cap = options.maxUntrackedBytes ?? MAX_UNTRACKED_BYTES;

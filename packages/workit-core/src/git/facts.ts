@@ -7,7 +7,8 @@
 // costs 10-30x more than on Linux.
 //
 // Only successful answers are cached, so a directory that becomes a repository
-// later is asked again. A cached entry whose git dir is gone is dropped. HEAD,
+// later is asked again. A cached entry whose checkout no longer leads to its
+// git dir (removed, or re-added as a new worktree) is dropped. HEAD,
 // branches and other refs are never cached here: they move during a call, and
 // a stale HEAD would mis-key a SHA-keyed verdict.
 import { spawnSync } from "node:child_process";
@@ -32,11 +33,44 @@ const revParse = (cwd: string, args: string[]): string[] | null => {
   return lines.length === args.length ? lines : null;
 };
 
+const realOrNull = (file: string): string | null => {
+  try {
+    return fs.realpathSync.native(file);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Whether a cached entry still describes the checkout: its `.git` (the git
+ * dir itself, or a `gitdir:` file) must still lead to the cached git dir. A
+ * worktree removed and re-added at the same path gets a new admin dir, and
+ * git may hand the old name to another worktree, so the git dir existing is
+ * not enough.
+ */
+const stillValid = (facts: GitDirs): boolean => {
+  const gitDir = realOrNull(facts.gitDir);
+  if (!gitDir) return false;
+  if (!facts.top) return true;
+  const dotGit = path.join(facts.top, ".git");
+  let target: string | null = null;
+  try {
+    if (fs.statSync(dotGit).isDirectory()) target = dotGit;
+    else {
+      const match = /^gitdir:\s*(.+?)\s*$/mu.exec(fs.readFileSync(dotGit, "utf8"));
+      target = match ? path.resolve(facts.top, match[1]) : null;
+    }
+  } catch {
+    return false;
+  }
+  return target !== null && realOrNull(target) === gitDir;
+};
+
 /** The checkout's top level, git dir and common dir, from one git call per directory and process; null outside a repository. */
 export function gitDirs(cwd: string): GitDirs | null {
   const key = path.resolve(cwd);
   const hit = cache.get(key);
-  if (hit && fs.existsSync(hit.gitDir)) return hit;
+  if (hit && stillValid(hit)) return hit;
   cache.delete(key);
   const full = revParse(key, ["--git-dir", "--git-common-dir", "--show-toplevel"]);
   // A bare repository (or a cwd inside the git dir) has no top level, and git

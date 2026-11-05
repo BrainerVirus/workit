@@ -75,6 +75,33 @@ const shapes: Record<string, (dir: string) => void> = {
   "a tag named main peeling to a commit": (dir) => git(dir, "tag", "-a", "main", "-m", "t"),
   "a tag named main on a tree, not a commit": (dir) =>
     git(dir, "tag", "main", git(dir, "rev-parse", "HEAD^{tree}")),
+  "a tag named main on a tree beside a branch main (the tag wins, so main is no base)": (dir) => {
+    git(dir, "branch", "main");
+    git(dir, "tag", "main", git(dir, "rev-parse", "HEAD^{tree}"));
+    git(dir, "branch", "master");
+  },
+  "a ref naming a missing object (for-each-ref refuses the repo)": (dir) => {
+    git(dir, "branch", "main");
+    writeFileSync(path.join(dir, ".git", "refs", "heads", "zbroken"), `${"1".repeat(40)}\n`);
+  },
+  "origin/HEAD on origin/main with a local branch origin/main (git shortens to remotes/origin/main)":
+    (dir) => {
+      git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
+      git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+      git(dir, "branch", "origin/main");
+    },
+  "origin/HEAD on origin/main with a tag origin/main": (dir) => {
+    git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
+    git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    git(dir, "tag", "origin/main");
+  },
+  "origin/HEAD pointing at a tag outside refs/remotes": (dir) => {
+    git(dir, "tag", "v1");
+    git(dir, "branch", "master");
+    git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/tags/v1");
+  },
+  "a ref directly under refs/ (refs/develop) and nothing else": (dir) =>
+    git(dir, "update-ref", "refs/develop", "HEAD"),
   "a remote named main/HEAD only (refs/remotes/main/HEAD)": (dir) => {
     git(dir, "update-ref", "refs/remotes/main/x", "HEAD");
     git(dir, "symbolic-ref", "refs/remotes/main/HEAD", "refs/remotes/main/x");
@@ -116,7 +143,7 @@ test("Given a checkout, a linked worktree and a bare repository, Then gitDirs ma
   });
   // worktreeTree reads the index at <git dir>/index: git's own `--git-path index`.
   for (const at of [dir, linked])
-    expect(path.join(gitDirs(at)!.gitDir, "index")).toBe(
+    expect(`${gitDirs(at)!.gitDir}/index`).toBe(
       git(at, "rev-parse", "--path-format=absolute", "--git-path", "index"),
     );
   const bare = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-facts-bare-")));
@@ -143,6 +170,36 @@ test("Given a directory asked once, Then gitDirs answers again without git; once
   }
   rmSync(path.join(dir, ".git"), { recursive: true, force: true });
   expect(gitDirs(dir)).toBeNull();
+});
+
+test("Given a linked worktree removed and re-added at the same path while its old admin dir name went to another worktree, Then gitDirs reads the new one", () => {
+  const dir = repo();
+  const parent = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-facts-wt-")));
+  dirs.push(parent);
+  const at = (name: string) => path.join(parent, name, "wt");
+  for (const name of ["a", "b", "c"]) mkdirSync(path.join(parent, name));
+  git(dir, "worktree", "add", "-q", "--detach", at("a"));
+  git(dir, "worktree", "add", "-q", "--detach", at("b"));
+  forgetGitDirs();
+  const before = gitDirs(at("a"));
+  git(dir, "worktree", "remove", "--force", at("a"));
+  git(dir, "worktree", "add", "-q", "--detach", at("c")); // takes a's old admin dir name
+  git(dir, "worktree", "add", "-q", "--detach", at("a"));
+  const truth = git(at("a"), "rev-parse", "--path-format=absolute", "--git-dir");
+  expect(truth).not.toBe(before?.gitDir);
+  expect(gitDirs(at("a"))?.gitDir).toBe(truth);
+});
+
+test("Given a linked worktree whose directory was deleted and recreated empty, Then gitDirs is null again", () => {
+  const dir = repo();
+  const wt = path.join(path.dirname(dir), `${path.basename(dir)}-gone`);
+  dirs.push(wt);
+  git(dir, "worktree", "add", "-q", "--detach", wt);
+  forgetGitDirs();
+  expect(gitDirs(wt)?.top).toBe(wt);
+  rmSync(wt, { recursive: true, force: true });
+  mkdirSync(wt);
+  expect(gitDirs(wt)).toBeNull();
 });
 
 test("Given a directory that becomes a repository later, Then gitDirs finds it (a miss is never cached)", () => {
