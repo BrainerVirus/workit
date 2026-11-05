@@ -36,7 +36,8 @@ env:
 # the test legs and still satisfies every required check.
 jobs:
   # Docs-only PRs (docs/** outside docs/qualification/, which acceptance tests
-  # read, or a root or .github/ *.md) skip the test legs. A push to main always
+  # read, or a root or .github/ *.md) skip the test legs; the tests that read
+  # other docs run in "fast checks" (docs-tests). A push to main always
   # runs everything: the release gates on it. Fails open: a missing output
   # runs the tests.
   changes:
@@ -93,6 +94,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      # The docs-tests gate runs `bun test`, whose preload requires Node 24+.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_CURRENT }}
+
       - name: Restore bun cache
         uses: actions/cache@v6
         with:
@@ -117,11 +123,13 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
 
       # Each gate runs concurrently; logs are printed per gate afterwards so
-      # failures stay readable.
-      - name: Lint, format, knip, typecheck, react-doctor, actionlint, zizmor
+      # failures stay readable. docs-tests are the test files that read the
+      # repo's Markdown (README.md, docs/guides, docs/agents): a docs-only PR
+      # skips the test legs, so they gate here, where every PR runs.
+      - name: Lint, format, knip, typecheck, react-doctor, actionlint, zizmor, docs tests
         run: |
           set -uo pipefail
-          names=(lint format knip typecheck react-doctor actionlint zizmor)
+          names=(lint format knip typecheck react-doctor actionlint zizmor docs-tests)
           cmds=(
             "bun run lint"
             "bun run format:check"
@@ -130,6 +138,7 @@ jobs:
             "bun run doctor"
             "actionlint"
             "zizmor --offline --no-progress --config .github/zizmor.yml .github/workflows"
+            "bun test test/artifacts/docs-commands.test.ts test/workit-cli/dir.test.ts"
           )
           out="$RUNNER_TEMP/gates"
           mkdir -p "$out"
@@ -387,7 +396,7 @@ jobs:
           exit 1
 
   windows-shard:
-    name: windows shard ${{ matrix.shard }}/8
+    name: windows shard ${{ matrix.shard }}/12
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: windows-latest
@@ -397,7 +406,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -436,10 +445,10 @@ jobs:
       - name: Build packages
         run: bun run build
 
-      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/8)
+      - name: Test workit-core and artifacts (shard ${{ matrix.shard }}/12)
         env:
           SHARD: ${{ matrix.shard }}
-        run: bun scripts/test.ts ci windows "$env:SHARD/8"
+        run: bun scripts/test.ts ci windows "$env:SHARD/12"
 
       - name: Upload measured timings
         if: ${{ !cancelled() }}

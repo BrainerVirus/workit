@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -8,6 +8,10 @@ import {
   fetchGitLabIssueBody,
   repoPathFromRemote,
 } from "@/packages/workit-core/src/core/tracker-issues";
+import { spawnHeavyTimeout } from "@/test/shared/timeouts";
+
+// Each test spawns git or the CLI; Windows runners take several times longer (#415).
+setDefaultTimeout(spawnHeavyTimeout());
 
 test("GitHub issues use gh CLI and preserve the issue triple", async () => {
   const seen: string[][] = [];

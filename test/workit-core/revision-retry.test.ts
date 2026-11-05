@@ -9,9 +9,10 @@ import {
   setDefaultLockTimeout,
 } from "@/packages/workit-core/src/core/store-lock";
 import { caller, scope, taskStartRequest } from "./task-fixtures";
+import { windowsScaled } from "@/test/shared/timeouts";
 
 // Measured over 5 s per test on loaded Windows runners (#415).
-if (process.platform === "win32") setDefaultTimeout(60_000);
+setDefaultTimeout(windowsScaled(20_000));
 
 // Engine revision retry (design §0 item 14): a revision the caller omitted is
 // not a compare-and-swap request, so losing the race to another writer on it

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -22,14 +22,21 @@ import {
   sweepWorktrees,
 } from "@/packages/workit-core/src/core/cleanup";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { spawnHeavyTimeout } from "@/test/shared/timeouts";
 
 // #653: nothing a finished change made stays on disk. After a merge the
 // branch's clean Workit worktree and local branch go, recorded in the ledger;
 // `gc --worktrees` sweeps merged leftovers. Dirty or unmerged work is kept.
 
+// Each test builds one or more git repos and worktrees.
+setDefaultTimeout(spawnHeavyTimeout());
+
+// On Windows a git child that just exited can still hold a handle in the repo
+// for a moment, so the first rm fails EBUSY (2026-11-04, #415); rmSync retries.
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 const git = (cwd: string, ...args: string[]) =>

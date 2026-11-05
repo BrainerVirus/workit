@@ -335,7 +335,17 @@ test.skipIf(!npmRegistryOk)(
       const npmEnv = { ...env, npm_config_offline: "true", npm_config_min_release_age: "0" };
       const installRes = spawnSync(
         "npm",
-        ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
+        // --prefer-offline: the registry deps resolve from the npm cache CI
+        // restores instead of revalidating each package's metadata online, which
+        // took past this 120 s budget on a Windows runner (2026-11-04, #415).
+        [
+          "install",
+          "--prefer-offline",
+          "--no-audit",
+          "--no-fund",
+          "--no-package-lock",
+          "--ignore-scripts",
+        ],
         {
           cwd: install,
           env,
