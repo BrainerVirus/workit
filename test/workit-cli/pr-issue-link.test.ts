@@ -1,5 +1,14 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -403,6 +412,90 @@ test("pr create: given backlink true and a YouTrack issue, then without WORKIT_Y
     await yt.stop();
   }
 });
+
+/**
+ * A ytrack stub on a temp PATH: `issue view --json comments` lists the
+ * comments it keeps, `issue comment` adds the stdin body; every call is logged.
+ * Bun runs it, so no sh is needed; Windows does not run a shebang file.
+ */
+const ytrackStub = () => {
+  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-pr-ytrack-")));
+  const store = path.join(dir, "comments.json");
+  const calls = path.join(dir, "calls");
+  writeFileSync(
+    path.join(dir, "ytrack"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, args.join(" ") + "\\n");
+const store = ${JSON.stringify(store)};
+const comments = fs.existsSync(store) ? JSON.parse(fs.readFileSync(store, "utf8")) : [];
+if (args[0] === "issue" && args[1] === "view") {
+  process.stdout.write(JSON.stringify({ comments }));
+} else if (args[0] === "issue" && args[1] === "comment") {
+  const comment = { id: "c" + (comments.length + 1), text: fs.readFileSync(0, "utf8") };
+  fs.writeFileSync(store, JSON.stringify([...comments, comment]));
+  process.stdout.write(JSON.stringify({ id: comment.id, url: "https://yt.example.test/issue/" + args[2] }));
+} else process.exit(1);
+`,
+  );
+  chmodSync(path.join(dir, "ytrack"), 0o755);
+  return {
+    dir,
+    calls: (): string[] =>
+      existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
+    comments: (): Array<{ text: string }> =>
+      existsSync(store) ? JSON.parse(readFileSync(store, "utf8")) : [],
+  };
+};
+
+test.skipIf(process.platform === "win32")(
+  "pr create: given backlink true, a YouTrack issue and ytrack on PATH, then ytrack posts one comment with the PR URL and a retry reports already_done",
+  async () => {
+    const stub = ytrackStub();
+    const previous = {
+      write: process.env.WORKIT_YT_WRITE,
+      noYtrack: process.env.WORKIT_NO_YTRACK,
+      path: process.env.PATH,
+    };
+    try {
+      const { repo } = setup("github", githubRoutes());
+      writeFileSync(
+        path.join(configHome.configDir, "youtrack.json"),
+        JSON.stringify({ baseUrl: "https://yt.example.test" }),
+      );
+      workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+      process.env.WORKIT_YT_WRITE = "1";
+      delete process.env.WORKIT_NO_YTRACK;
+      process.env.PATH = [stub.dir, previous.path ?? ""].join(path.delimiter);
+
+      const first = await run(createIssue("IRPT-74"), repo.cwd);
+      expect(first.code, first.stderr).toBe(0);
+      expect(first.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "done" }]);
+      const [comment] = stub.comments();
+      expect(comment.text).toStartWith("Linked from PR #12: https://github.com/o/r/pull/12");
+      expect(comment.text).toContain("<!-- workit-action:");
+
+      // The marker is read back: nothing is posted the second time.
+      const again = await run(createIssue("IRPT-74"), repo.cwd);
+      expect(again.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "already_done" }]);
+      expect(stub.comments()).toHaveLength(1);
+      expect(stub.calls().filter((call) => call.startsWith("issue comment "))).toEqual([
+        "issue comment IRPT-74 --body-file - --json id,url",
+      ]);
+    } finally {
+      for (const [key, value] of [
+        ["WORKIT_YT_WRITE", previous.write],
+        ["WORKIT_NO_YTRACK", previous.noYtrack],
+        ["PATH", previous.path],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(stub.dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("pr create: given backlink false (the default), then no issue comment is read or posted", async () => {
   const { repo, runner } = setup("github", githubRoutes());
