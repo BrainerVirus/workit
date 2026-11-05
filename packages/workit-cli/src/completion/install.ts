@@ -8,6 +8,7 @@
 // overwritten or removed.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { workitDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import { COMPLETION_MARKER, completionScript, type Shell } from "./scripts";
@@ -56,19 +57,36 @@ const FPATH_END = "__workit_fpath_end__";
  * in ~/.zshrc as missing. Markers fence the list from whatever the rc prints.
  * Null when zsh cannot run or does not answer in time.
  */
-export function zshFpath(env: Env): string[] | null {
-  const run = spawnSync(
-    "zsh",
-    ["-i", "-c", `print -r -- ${FPATH_START}; print -rl -- $fpath; print -r -- ${FPATH_END}`],
-    {
-      env,
-      encoding: "utf8",
-      timeout: 5000,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    },
-  );
-  return parseFpath(run.stdout ?? "");
+export function zshFpath(env: Env, timeoutMs = 5000): string[] | null {
+  // stdout goes to a file, not a pipe: a child the rc leaves running (an agent,
+  // a slow `sleep`) would hold a pipe open and make spawnSync wait for it past
+  // the timeout; with a file, the wait ends when zsh exits or is killed.
+  let dir: string | null = null;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workit-fpath-"));
+    const out = path.join(dir, "fpath");
+    const fd = fs.openSync(out, "w");
+    try {
+      spawnSync(
+        "zsh",
+        ["-i", "-c", `print -r -- ${FPATH_START}; print -rl -- $fpath; print -r -- ${FPATH_END}`],
+        {
+          env,
+          timeout: timeoutMs,
+          killSignal: "SIGKILL", // an interactive zsh ignores SIGTERM
+          windowsHide: true,
+          stdio: ["ignore", fd, "ignore"],
+        },
+      );
+    } finally {
+      fs.closeSync(fd);
+    }
+    return parseFpath(fs.readFileSync(out, "utf8"));
+  } catch {
+    return null;
+  } finally {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** The $fpath lines between the markers; null when they are missing (rc failed or timed out). */

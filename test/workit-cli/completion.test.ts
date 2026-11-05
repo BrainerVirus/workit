@@ -269,6 +269,22 @@ test.skipIf(!hasZsh)(
   },
 );
 
+test.skipIf(!hasZsh)(
+  "Given a ~/.zshrc that runs a long child, Then zshFpath gives up at its timeout (the child cannot hold the probe open)",
+  () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-zsh-slow-"));
+    try {
+      writeFileSync(path.join(home, ".zshrc"), "sleep 8\n");
+      const env = { PATH: process.env.PATH, HOME: home, ZDOTDIR: home, TERM: "dumb" };
+      const started = Date.now();
+      expect(zshFpath(env, 500)).toBeNull();
+      expect(Date.now() - started).toBeLessThan(4000);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
 test("Given zsh did not report $fpath, Then the hint says so instead of claiming the directory is missing; rc lines paint as commands", () => {
   const { env } = sandbox("zsh");
   const result = installCompletion({ env, version: "1.2.3", shell: "zsh", fpath: () => null });
