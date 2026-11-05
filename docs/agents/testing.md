@@ -116,7 +116,12 @@ durations in `test/timings/<leg>.json`. Ubuntu runs the unit tier as four
 shards plus a separate packaging job; macOS (three shards) and Windows (twelve)
 run `test/workit-core` and `test/artifacts`. Ubuntu and macOS shards spread
 their files across workers (`bun test --parallel`); Windows shards run serially,
-since its spawn-heavy tests timed out under parallel load (#415). Aggregator jobs
+since its spawn-heavy tests timed out under parallel load (#415), with
+`--isolate`: every file gets a fresh `process.env`, cwd and globals, as
+`--parallel` gives each worker's files. Without it a file's leftover env (a
+`WORKIT_CONFIG`, `PATH` or `HOME`) failed later, unrelated files by shard
+order. The local `unit` and `packaging` tiers isolate too. The test preload
+also turns off git auto-maintenance (`GIT_CONFIG_*`) in throwaway repos. Aggregator jobs
 keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 

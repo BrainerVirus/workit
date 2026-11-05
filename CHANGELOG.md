@@ -506,6 +506,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tests no longer fail by shard order on Windows: every test file runs isolated (its own env, cwd and globals), tracker reads in tests use an empty config instead of the machine's, and test repos skip git auto-maintenance.
 - `workit check` no longer hangs when the runtime loses a command's exit event: once the command's output closes, its own exit status settles the run.
 - Verdict ranking: a failure wins a same-time tie with a verdict mirrored from another clone, a future-dated mirrored verdict no longer outranks newer local failures, and author checks use the same ordering. Only real test files (`*.test.ts`, `*_test.go`) keep a unit verdict through a test-only push; `.test.` helpers and fixtures do not.
 - A worker report that merely mentions a usage limit no longer triggers the model fallback, and standing orders reach exactly the agent types each host maps to the implementer role.
