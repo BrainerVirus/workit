@@ -505,6 +505,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - YouTrack goes through your `ytrack` CLI when it is installed (token in the OS keyring): Workit never reads its own token file then, passes no token, and a logged-out ytrack fails with `ytrack auth login` instead of falling back. The token-file client stays one release as the fallback when ytrack is missing (#263).
 - CI: Windows tests run in 12 shards balanced from fresh timings; spawn- and git-heavy tests share one Windows-scaled timeout helper; fixtures and goldens are pinned to LF by .gitattributes and a test fails on any fixture without an eol rule; docs-only PRs still run the tests that read the docs (#415).
 - Implementer instructions agree with the hooks on git: in a Workit worktree use `workit git --cwd <worktree> …`; only a Claude Code host-isolated worktree uses plain git. Implementer definitions and briefs show `workit git commit --trailer "Co-Authored-By: …"`, and Claude Code and Cursor briefs carry the concrete trailer (no invented addresses for other hosts) (#292).
+- Verdict gates read HEAD and branch tips from the repository files (fresh on every read, git as the fallback whenever a read is uncertain) and the origin URL once per gate, so a gate check spawns 8 git processes instead of 10.
 
 ### Fixed
 
