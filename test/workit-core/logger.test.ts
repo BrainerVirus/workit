@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { windowsScaled } from "@/test/shared/timeouts";
 
 import {
   createLogger,
@@ -127,7 +128,8 @@ test.skipIf(process.platform === "win32")("creates logs with restrictive permiss
   expect(statSync(logsDir(stateDir)).mode & 0o777).toBe(0o700);
 });
 
-const WORKER_DEADLINE_MS = 10_000;
+// Four bun children start at once; Windows starts each about 3x slower.
+const WORKER_DEADLINE_MS = windowsScaled(10_000);
 
 const isAlive = (pid: number | undefined): boolean => {
   if (pid === undefined) return false;
@@ -211,12 +213,17 @@ test("Given a real worker that stalls, When its deadline passes, Then it is kill
   expect(outcome).toContain("stalled before append");
 }, 10_000);
 
-test("concurrent appends lose no records", async () => {
-  const stateDir = tempDir();
-  mkdirSync(logsDir(stateDir), { recursive: true });
-  const loggerPath = path.resolve(import.meta.dir, "../../packages/workit-core/src/core/logger.ts");
-  const runWorker = (workerId: string): Promise<void> => {
-    const code = `
+test(
+  "concurrent appends lose no records",
+  async () => {
+    const stateDir = tempDir();
+    mkdirSync(logsDir(stateDir), { recursive: true });
+    const loggerPath = path.resolve(
+      import.meta.dir,
+      "../../packages/workit-core/src/core/logger.ts",
+    );
+    const runWorker = (workerId: string): Promise<void> => {
+      const code = `
       import { createLogger } from ${JSON.stringify(loggerPath)};
       const stateDir = ${JSON.stringify(stateDir)};
       const workerId = ${JSON.stringify(workerId)};
@@ -225,18 +232,20 @@ test("concurrent appends lose no records", async () => {
         logger.info("concurrent", { worker: workerId, seq: n, id: workerId + "-" + n });
       }
     `;
-    const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "ignore", "pipe"] });
-    return awaitWorker(child, workerId, WORKER_DEADLINE_MS);
-  };
+      const child = spawn(process.execPath, ["-e", code], { stdio: ["ignore", "ignore", "pipe"] });
+      return awaitWorker(child, workerId, WORKER_DEADLINE_MS);
+    };
 
-  await Promise.all([runWorker("w0"), runWorker("w1"), runWorker("w2"), runWorker("w3")]);
+    await Promise.all([runWorker("w0"), runWorker("w1"), runWorker("w2"), runWorker("w3")]);
 
-  const records = readRecords(stateDir);
-  expect(records.length).toBe(4 * 25);
-  const ids = new Set(records.map((r) => String((r.record.context as { id?: unknown }).id)));
-  expect(ids.size).toBe(4 * 25);
-  for (const { record } of records) assertJsonValue(record);
-}, 30_000);
+    const records = readRecords(stateDir);
+    expect(records.length).toBe(4 * 25);
+    const ids = new Set(records.map((r) => String((r.record.context as { id?: unknown }).id)));
+    expect(ids.size).toBe(4 * 25);
+    for (const { record } of records) assertJsonValue(record);
+  },
+  windowsScaled(30_000),
+);
 
 test("injectable sinks receive every event", () => {
   const stateDir = tempDir();

@@ -113,7 +113,7 @@ claude plugin eval packages/workit-claude-code --case <name> --model haiku \
 Each leg runs `bun scripts/test.ts ci <ubuntu|macos|windows> <i>/<n>`: bun
 picks the shard's files (`bun test --shard`), balanced by the per-file
 durations in `test/timings/<leg>.json`. Ubuntu runs the unit tier as four
-shards plus a separate packaging job; macOS (three shards) and Windows (eight)
+shards plus a separate packaging job; macOS (three shards) and Windows (twelve)
 run `test/workit-core` and `test/artifacts`. Ubuntu and macOS shards spread
 their files across workers (`bun test --parallel`); Windows shards run serially,
 since its spawn-heavy tests timed out under parallel load (#415). Aggregator jobs
@@ -128,14 +128,49 @@ keyed by OS, Bun version and the `bun.lock` hash with no fallback key (a cold
 `bun install --frozen-lockfile` still runs after the restore.
 
 Every shard uploads the durations it measured (`timings-<leg>-<i>` artifacts).
-Refresh the committed files when the balance drifts: download a green run's
-artifacts and merge each leg's shards into `test/timings/<leg>.json`.
+Refresh the committed files when the balance drifts: `gh run download <run>
+--pattern 'timings-*'` from a green main run, then for each file keep the value
+from the shard that ran it (the one whose value differs from the committed
+file) into `test/timings/<leg>.json`. A file missing from the timings lands on
+a shard unweighted, which is how the Windows shards drifted from 2 to 4.5 min.
 
-On Windows and on the parallel Ubuntu and macOS shards the per-test default
-timeout is 15 s; a file that needs more sets
-its own `setDefaultTimeout` (Windows-only where Linux is fast). Jobs time out
-after 15 minutes; nothing retries a failed test. PRs touching only `docs/**`
-(outside `docs/qualification/`) or root/`.github/` Markdown skip the test legs.
+### Timeouts
+
+`bun scripts/test.ts` (both tiers and every CI shard) passes a 15 s per-test
+default instead of bun's 5 s: git- and spawn-heavy tests stretch past 5 s when
+files share the machine, in CI and in a local full run. A `--timeout` you pass
+wins. The numbers live in one place, `test/shared/timeouts.ts`; never write a
+per-test number for load:
+
+- `spawnHeavyTimeout()`: 15 s, 45 s on Windows. Use it for a file whose tests
+  run git or spawn the CLI (`setDefaultTimeout(spawnHeavyTimeout())`) or as the
+  third argument of one such test.
+- `windowsScaled(ms)`: a budget you need for another reason (a worker deadline,
+  a spawn `timeout`) scaled 3x on Windows.
+
+A timeout under load is a symptom first: look for a held handle (an EBUSY `rm`
+on Windows wants `rmSync(..., { maxRetries, retryDelay })`), a busy-wait, a
+network round trip (`npm install --prefer-offline` against the restored npm
+cache) or an unbounded spawn before scaling the budget. Jobs time out after
+15 minutes; nothing retries a failed test.
+
+### Docs-only PRs
+
+PRs touching only `docs/**` (outside `docs/qualification/`) or root/`.github/`
+Markdown skip the test legs (`changes` job, covered by
+`test/artifacts/ci-changes.test.ts`). The test files that read other repo docs
+(`test/artifacts/docs-commands.test.ts`, `test/workit-cli/dir.test.ts`) run in
+"fast checks" as `docs-tests`, which every PR runs; add a new docs-reading test
+there.
+
+### Line endings
+
+`.gitattributes` checks every text file out with LF (`* text=auto eol=lf`), and
+fixtures, `testdata`, goldens and snapshots carry their own `eol=lf` rule, so a
+Windows checkout never turns a byte-compared fixture into CRLF.
+`test/workit-core/gitattributes.test.ts` fails, naming the file, on any committed
+fixture that resolves to neither `eol=lf` nor `-text`. A test that compares
+bytes of a file outside those paths needs its own `.gitattributes` rule.
 
 ## Opt-in suites
 

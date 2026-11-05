@@ -3,7 +3,7 @@
 // magic number in each file.
 
 /** Windows runners run spawn- and git-heavy tests about 3x slower than Linux and macOS. */
-export const WINDOWS_SLOWDOWN = 3;
+const WINDOWS_SLOWDOWN = 3;
 
 /**
  * The default per-test timeout `bun scripts/test.ts` passes (`--timeout`) to the
