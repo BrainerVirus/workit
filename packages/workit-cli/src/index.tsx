@@ -21,6 +21,9 @@ import {
   type UninstallPlan,
 } from "./admin/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
+import { type HostOutcome } from "./upgrade/shared";
+import { initYtrackSkill, ytrackSkillLines } from "./upgrade/ytrack-skill";
+import { userHome } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
 import { logger } from "./diagnostics";
 import { createProgress, type Progress } from "./progress";
 import { createStyle, type Style } from "./style";
@@ -48,7 +51,7 @@ const statusPaint = (style: Style, status: string): string =>
       ? style.warn(status)
       : style.ok(status);
 
-function printApplySummary(result: SetupResult, style: Style): void {
+function printApplySummary(result: SetupResult, ytrack: HostOutcome | null, style: Style): void {
   for (const entry of result.entries) {
     console.log(
       `${statusPaint(style, entry.status)}${" ".repeat(Math.max(0, 11 - entry.status.length))} ${style.path(entry.file)}${entry.detail ? ` — ${entry.detail}` : ""}`,
@@ -59,6 +62,7 @@ function printApplySummary(result: SetupResult, style: Style): void {
       `doctor ${report.host}: ${report.ok ? style.ok("healthy") : style.fail("problems found")} (${report.summary.failed} failed)`,
     );
   }
+  for (const line of ytrackSkillLines(ytrack, style)) console.log(line);
   console.log(
     result.ok ? style.ok("Setup complete.") : style.warn("Setup finished with problems."),
   );
@@ -181,8 +185,23 @@ export async function runInit() {
         exitCode = 1;
       }
     }
+    // With YouTrack chosen, each selected host gets the ytrack skill, as in
+    // `workit setup` and `workit upgrade`; a skill problem never fails init.
+    const values = exit.values;
+    const ytrack =
+      values.issueTracker === "youtrack"
+        ? progress.runSync("Installing the ytrack agent skill", () => {
+            try {
+              return initYtrackSkill(values, userHome(process.env), process.env);
+            } catch (error) {
+              // Host setup already succeeded; the skill is retried by `workit upgrade`.
+              logger.warn(EVENT.installSteps, { step: "ytrack_skill", error: String(error) });
+              return null;
+            }
+          })
+        : null;
     logger.info(EVENT.installSteps, { step: "wizard_apply", ok: result.ok });
-    printApplySummary(result, stdoutStyle());
+    printApplySummary(result, ytrack, stdoutStyle());
     process.exit(exitCode);
   }
   logger.info(EVENT.installSteps, {

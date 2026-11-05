@@ -1,5 +1,6 @@
-// `workit setup` and `workit upgrade` install the ytrack agent skill into each
-// Workit host's skills directory when YouTrack is in use (youtrack-cli #16).
+// `workit init`, `workit setup` and `workit upgrade` install the ytrack agent
+// skill into each Workit host's skills directory when YouTrack is in use
+// (youtrack-cli #16).
 import {
   configDir as workitConfigDir,
   stateDir as workitStateDir,
@@ -12,6 +13,7 @@ import {
 } from "@brainervirus/workit-core/src/core/ytrack-skill";
 import { ytrackRunner } from "@brainervirus/workit-core/src/core/youtrack-ytrack";
 import { detectHosts } from "../admin/detect-hosts";
+import { type Style } from "../style";
 import { type HostOutcome } from "./shared";
 import { hostSkillsRoot } from "./skill-roots";
 
@@ -88,3 +90,30 @@ export function refreshYtrackSkill(options: {
       : {}),
   };
 }
+
+/**
+ * `workit init`'s ytrack row: when the wizard chose YouTrack, the skill for
+ * each selected host that now has Workit; null otherwise (as refreshYtrackSkill).
+ */
+export const initYtrackSkill = (
+  values: { issueTracker: string; platforms: readonly string[] },
+  home: string,
+  env: NodeJS.ProcessEnv,
+): HostOutcome | null =>
+  values.issueTracker === "youtrack"
+    ? refreshYtrackSkill({ hosts: workitHosts(values.platforms, home, env), home, env })
+    : null;
+
+/** The ytrack row as lines, with the command that finishes it by hand. */
+export const ytrackSkillLines = (
+  row: HostOutcome | null,
+  style: Pick<Style, "path" | "command">,
+): string[] =>
+  row
+    ? [
+        // An unsupported ytrack's reason already opens with "ytrack".
+        row.reason.startsWith("ytrack") ? row.reason : `ytrack ${row.reason}`,
+        ...(row.details ?? []).map((dir) => `  ${style.path(dir)}`),
+        ...(row.fix ? [`  fix: ${style.command(row.fix)}`] : []),
+      ]
+    : [];
