@@ -60,6 +60,10 @@ const parseAgentMarkdown = (text: string) => {
 /** Claude Code wording in the canonical body, in Codex terms. */
 const toCodexText = (body: string): string =>
   body
+    // Codex never isolates a subagent, so the Claude Code host-isolated
+    // worktree rule (plain git there) does not apply: every Codex implementer
+    // runs in the lead's Workit worktree with `workit git --cwd`.
+    .replace(/\n\nIn a Claude Code host-isolated worktree[\s\S]*?(?=\n\n)/, "")
     .replace(/\(`\/workit:([a-z-]+)`\)/g, "(`$workit-$1`)")
     .replace(/`\/workit:([a-z-]+)`/g, "`$workit-$1`")
     .replace("a branch name chosen by Claude Code", "a branch name you did not choose")
