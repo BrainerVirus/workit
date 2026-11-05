@@ -373,23 +373,28 @@ export function mergeBase(cwd: string, a: string, b: string): string | null {
  */
 export function patchId(cwd: string, base: string, head: string): string | null {
   if (!safeArg(base) || !safeArg(head)) return null;
-  const diff = git(cwd, [
-    "diff",
-    "-U3",
-    "--diff-algorithm=myers",
-    "--indent-heuristic",
-    "--no-color",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--no-renames",
-    "--full-index",
-    "--src-prefix=a/",
-    "--dst-prefix=b/",
-    `${base}...${head}`,
-    "--",
-  ]);
-  if (!diff.ok || !diff.stdout.trim()) return null;
-  const id = git(cwd, ["patch-id", "--stable"], { input: diff.stdout });
+  const diff = git(cwd, ["diff", ...PINNED_DIFF, `${base}...${head}`, "--"]);
+  return diff.ok ? patchIdOfDiff(cwd, diff.stdout) : null;
+}
+
+/** The pinned `git diff` options patch-ids (and ledger diff hashes) are computed with. */
+export const PINNED_DIFF: readonly string[] = [
+  "-U3",
+  "--diff-algorithm=myers",
+  "--indent-heuristic",
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--no-renames",
+  "--full-index",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+];
+
+/** The stable patch-id of a diff made with PINNED_DIFF; null for an empty one. */
+export function patchIdOfDiff(cwd: string, diff: string): string | null {
+  if (!diff.trim()) return null;
+  const id = git(cwd, ["patch-id", "--stable"], { input: diff });
   return line(id)?.split(/\s+/u)[0] ?? null;
 }
 

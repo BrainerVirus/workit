@@ -71,7 +71,9 @@ import {
   currentBranch,
   headSha,
   parseRemoteUrl,
+  PINNED_DIFF,
   patchId,
+  patchIdOfDiff,
   sameOwnChange,
   worktreeTree,
 } from "./git/rev";
@@ -325,35 +327,53 @@ export { defaultBase };
  * versions (no `patch-id --verbatim` dependency).
  */
 export function diffHash(cwd: string, base: string, head: string): string | null {
+  const diff = binaryRangeDiff(cwd, base, head);
+  return diff ? hashOfDiff(diff) : null;
+}
+
+/** The pinned `base...head` diff with `--binary`, or null when it fails or is empty. */
+const binaryRangeDiff = (cwd: string, base: string, head: string): string | null => {
   if (!safeRef(base) || !safeRef(head)) return null;
   const diff = gitRun(
     cwd,
-    [
-      "diff",
-      "-U3",
-      "--diff-algorithm=myers",
-      "--indent-heuristic",
-      "--no-color",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--no-renames",
-      "--full-index",
-      "--binary",
-      "--src-prefix=a/",
-      "--dst-prefix=b/",
-      `${base}...${head}`,
-      "--",
-    ],
+    ["diff", ...PINNED_DIFF, "--binary", `${base}...${head}`, "--"],
     GIT_TIMEOUTS.worktree,
   );
-  if (!diff.ok || !diff.stdout) return null;
+  return diff.ok && diff.stdout ? diff.stdout : null;
+};
+
+const hashOfDiff = (diff: string): string => {
   const hash = createHash("sha256");
-  for (const line of diff.stdout.split("\n")) {
+  for (const line of diff.split("\n")) {
     if (line.startsWith("index ")) continue;
     hash.update(line.startsWith("@@ ") ? "@@" : line);
     hash.update("\n");
   }
   return `sha256:${hash.digest("hex")}`;
+};
+
+/**
+ * patchId and diffHash of one range from a single `git diff` (#284 N6): with
+ * `--full-index` already pinned, `--binary` changes only binary files'
+ * sections, so a diff without a `GIT binary patch` section is byte for byte
+ * the one patchId reads. A range touching a binary file still asks patchId's
+ * own diff: git 2.43's patch-id skips binary sections (range-keys.test.ts
+ * shows equal ids), but that is not a documented guarantee, and a patch-id
+ * must never change (verdicts carry on it).
+ */
+export function rangeKeys(
+  cwd: string,
+  base: string,
+  head: string,
+): { patchId: string | null; diffHash: string | null } {
+  const diff = binaryRangeDiff(cwd, base, head);
+  if (!diff) return { patchId: patchId(cwd, base, head), diffHash: null };
+  return {
+    patchId: /^GIT binary patch$/mu.test(diff)
+      ? patchId(cwd, base, head)
+      : patchIdOfDiff(cwd, diff),
+    diffHash: hashOfDiff(diff),
+  };
 }
 
 /**
@@ -1116,8 +1136,7 @@ export function codeKey(
     head,
     base,
     baseSha,
-    patchId: base && head ? patchId(cwd, base, head) : null,
-    diffHash: base && head ? diffHash(cwd, base, head) : null,
+    ...(base && head ? rangeKeys(cwd, base, head) : { patchId: null, diffHash: null }),
     tree: tree?.key ?? null,
     dirty: tree ? tree.dirty : null,
   };
@@ -1603,10 +1622,7 @@ export function checkVerdicts(
     const cacheKey = `${base}\0${at}`;
     let key = keyCache.get(cacheKey);
     if (!key) {
-      key = {
-        patchId: patchId(cwd, base, at),
-        diffHash: diffHash(cwd, base, at),
-      };
+      key = rangeKeys(cwd, base, at);
       keyCache.set(cacheKey, key);
     }
     return key;
