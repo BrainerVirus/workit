@@ -538,6 +538,9 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   asks (2 s when neither is shown, never more than 10 s) and retries. A limit
   that persists exits 5 (`unavailable`) with an error starting `rate_limited:`
   and an unblock saying how long to wait; `ci wait` keeps polling through it.
+  A write (comment, merge) is retried only on HTTP 429, which the forge refuses
+  before acting; after a 403 secondary limit it may already have applied, so it
+  is not repeated.
 - Finding the PR of a branch reads every page of the forge's results, so an
   open PR behind 20 closed ones is still found and `pr create` never opens a
   duplicate.

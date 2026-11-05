@@ -196,18 +196,26 @@ export const rateLimitDeps = {
   now: (): number => Date.now(),
 };
 
+/** HTTP 429: the forge refused the request before acting on it. */
+const isTooManyRequests = (run: Pick<CliRun, "stderr" | "stdout">): boolean =>
+  /HTTP 429|429 Too Many Requests/iu.test(`${run.stderr}\n${run.stdout}`);
+
 /**
  * Run one gh/glab call; on a rate limit, wait once (Retry-After, capped) and
- * run it again. A refused call was not applied, so a write retries safely.
+ * run it again. A write retries only on HTTP 429, which the forge refuses
+ * before acting; a 403 secondary limit may already have applied it, so a
+ * write is not repeated there (no double comment or double merge).
  */
 export function runLimited(
   runner: ForgeRunner,
   bin: CliBin,
   args: readonly string[],
   options: Parameters<ForgeRunner>[2],
+  write = false,
 ): CliRun {
   const run = runner(bin, args, options);
   if (run.missing || run.timedOut || !isRateLimited(run)) return run;
+  if (write && !isTooManyRequests(run)) return run;
   const wait = rateLimitWaitMs(run, rateLimitDeps.now()) ?? rateLimitDeps.defaultWaitMs;
   if (wait > rateLimitDeps.maxWaitMs) return run;
   rateLimitDeps.sleep(wait);
@@ -334,6 +342,7 @@ export function apiWrite<T>(
     bin,
     args,
     input === undefined ? { timeoutMs } : { timeoutMs, input },
+    true,
   );
   if (run.status !== 0) {
     const text = redactText(`${run.stderr}\n${run.stdout}`).trim();

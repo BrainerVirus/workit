@@ -120,3 +120,21 @@ test("Given a rate-limited write, When it persists, Then the unblock says to wai
   expect(result.ok || result.error).toStartWith("rate_limited:");
   expect(result.ok || result.unblock).not.toContain("may have gone through");
 });
+
+test("Given a write that hits a 403 secondary rate limit, When it is made, Then it is not repeated (the forge may have applied it) and fails rate_limited", () => {
+  const waited = sleeps();
+  const runner = scripted([
+    limited("gh: You have exceeded a secondary rate limit. (HTTP 403)"),
+    ok("{}"),
+  ]);
+  const result = apiWrite(
+    runner,
+    "gh",
+    "github.com",
+    ["api", "-X", "POST", "repos/o/r/issues/1/comments"],
+    "comment",
+  );
+  expect(runner.calls).toBe(1);
+  expect(waited).toEqual([]);
+  expect(result.ok || result.error).toStartWith("rate_limited:");
+});
