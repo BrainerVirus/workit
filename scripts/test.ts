@@ -8,6 +8,7 @@
 //
 // `ci <leg> <i>/<n>` runs one shard of a CI leg (.github/workflows/ci.yml).
 import { spawnSync } from "node:child_process";
+import { LOADED_TIMEOUT_MS } from "../test/shared/timeouts";
 
 const PACKAGING = [
   "test/artifacts/**",
@@ -25,14 +26,15 @@ const PACKAGING = [
   "test/workit-pi/stock-pi.test.ts",
 ];
 
-// Windows runners run this suite ~3x slower than macOS, so a Windows test
-// gets 3x bun's 5 s default. A file that needs more sets its own
-// `setDefaultTimeout`, which wins over this flag.
-const WINDOWS_TIMEOUT_MS = 15_000;
-// Files sharing a runner's cores under `--parallel` stretch spawn-heavy tests
-// the same way: several timed out at the 5 s default on macOS and Ubuntu
-// shards (2026-10-28, #415).
-const PARALLEL_TIMEOUT_MS = 15_000;
+// Every run gets LOADED_TIMEOUT_MS per test instead of bun's 5 s default:
+// spawn- and git-heavy tests timed out at 5 s when files shared the machine,
+// in CI shards (2026-10-28) and in local full runs (2026-11-04, #415). Windows
+// shards get the same 15 s (3x bun's default for a ~3x slower runner); a file
+// that needs more sets `setDefaultTimeout(spawnHeavyTimeout())`
+// (test/shared/timeouts.ts), which wins over this flag. A `--timeout` passed
+// to a tier wins too.
+const timeoutFlag = (args: readonly string[]): string[] =>
+  args.some((arg) => arg.startsWith("--timeout")) ? [] : [`--timeout=${LOADED_TIMEOUT_MS}`];
 
 // Each CI leg's tests, and whether its shard's files run across workers
 // (`bun test --parallel`). Ubuntu and macOS do: on Bun 1.4.4 they finish in
@@ -65,11 +67,7 @@ function runCiShard(leg: string | undefined, spec: string | undefined): number {
     `--timings=test/timings/${leg}.json`,
     "--update-timings",
     ...(config.parallel ? ["--parallel"] : []),
-    ...(process.platform === "win32"
-      ? [`--timeout=${WINDOWS_TIMEOUT_MS}`]
-      : config.parallel
-        ? [`--timeout=${PARALLEL_TIMEOUT_MS}`]
-        : []),
+    `--timeout=${LOADED_TIMEOUT_MS}`,
     ...config.select,
   ]);
 }
@@ -86,5 +84,5 @@ if (import.meta.main) {
     tier === "packaging"
       ? PACKAGING.map((pattern) => `./${pattern.replace(/\/\*\*$/, "")}`)
       : PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`);
-  process.exit(bunTest([...selection, ...rest]));
+  process.exit(bunTest([...selection, ...timeoutFlag(rest), ...rest]));
 }

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -7,9 +7,13 @@ import { checkFlags, closest } from "@/packages/workit-cli/src/help";
 import { main } from "@/packages/workit-cli/src/main";
 import { findVerb } from "@/packages/workit-cli/src/verbs/registry";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
+import { spawnHeavyTimeout } from "../shared/timeouts";
 
 // The wrong guesses agents measured (retro F3) either work as aliases or fail
 // with one corrective unblock line naming the right form.
+
+// Most tests init a git repo and run several CLI verbs against it.
+setDefaultTimeout(spawnHeavyTimeout());
 
 let configHome: ConfigHome;
 beforeAll(() => {

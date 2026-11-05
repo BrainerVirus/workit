@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DoctorReport } from "@/packages/workit-cli/src/admin/doctor";
 import { makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
+import { spawnHeavyTimeout } from "@/test/shared/timeouts";
 
 // `workit doctor` and `workit doctor --json` (DG-07): JSON parses, the report's
 // exitCode is reflected in the process exit status, broken fixtures fail, and no
@@ -21,6 +22,9 @@ import { makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cliEntry = path.join(repoRoot, "packages/workit-cli/src/main.ts");
+
+// Each test spawns the CLI once or twice; under load one spawn took past 5 s.
+setDefaultTimeout(spawnHeavyTimeout());
 
 const fixture = makeDoctorFixture();
 afterAll(() => fixture.cleanup());
