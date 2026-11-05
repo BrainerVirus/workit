@@ -875,7 +875,14 @@ test("G a check printing 500 lines then failing, T the agent sees its failing ta
   const bounded = await run(root, ["check", "--", BUN, "-e", script]);
   expect(bounded.code).toBe(3);
   const printed = bounded.stdout.split("\n");
-  expect(printed[0]).toContain("441 earlier lines omitted");
+  // stdout and stderr are separate pipes: under load the child's last stderr
+  // line can land early in the merged log, and boundedOutput then keeps room
+  // for it below the tail (3 lines: header, the line, and the shorter tail).
+  // Both orderings are exact; which one happens is the scheduler's choice.
+  const early = bounded.stdout.includes(
+    "the last stderr lines, which the merged log holds earlier",
+  );
+  expect(printed[0]).toContain(`${early ? 444 : 441} earlier lines omitted`);
   expect(printed.length).toBeLessThanOrEqual(62);
   expect(bounded.stdout).toContain("boom at the end");
   expect(bounded.stdout).toContain("line 500");
