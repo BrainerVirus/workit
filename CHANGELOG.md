@@ -907,6 +907,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The Workit-Session trailer is removed by git's own trailer-block rule, so a final paragraph mixing prose, Signed-off-by and Workit-Session keeps the prose and Signed-off-by (amend in a trailers-off workspace, and `pr create --fill`). A merge or rebase merge with `--subject`/`--body` is refused naming squash instead of being ignored. The commit-msg hook bounds its check only with GNU `timeout`, never Windows' timeout.exe.
 - The usage-limit fallback no longer fires on a report that merely quotes a limit message (a reset must name a time). A heavy check that gives up waiting after auto-reaping a stuck lease now prints the reclaimed notice and records the reap.
 - `pr merge` re-reads a transient UNKNOWN mergeability a few times before stopping with wait-forge; PR lookup by branch pages through results on GitHub and GitLab so an existing PR is never missed and duplicated; forge rate limits (429, secondary 403) wait once and then fail as `rate_limited:` with the wait, never as a plain failure; GitLab reads "Pipelines must succeed" for required checks; `--body-file` with CRLF line endings posts LF (#269, #284).
+- `workit upgrade` and `workit setup` no longer say zsh's $fpath lacks the completion directory when ~/.zshrc adds it; the hint is styled and says when zsh could not be asked.
 
 ### Removed
 

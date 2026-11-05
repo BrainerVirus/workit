@@ -20,8 +20,11 @@ import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/u
 import { complete } from "@/packages/workit-cli/src/completion/complete";
 import {
   completionFile,
+  completionLines,
   installCompletion,
+  parseFpath,
   removeCompletions,
+  zshFpath,
 } from "@/packages/workit-cli/src/completion/install";
 import { COMPLETION_MARKER, completionScript } from "@/packages/workit-cli/src/completion/scripts";
 import { flagsFor } from "@/packages/workit-cli/src/completion/spec";
@@ -240,6 +243,59 @@ test("Given zsh and an fpath without the directory, When installed, Then _workit
   });
   expect(onPath.status).toBe("current");
   expect(onPath.notes.join("\n")).not.toContain("fpath=(");
+});
+
+test("Given rc output around the markers, Then parseFpath keeps only the $fpath lines; without the end marker, Then null", () => {
+  const noise = "Now using node v24\r\n__workit_fpath_start__\n/a\n/b\n__workit_fpath_end__\nbye\n";
+  expect(parseFpath(noise)).toEqual(["/a", "/b"]);
+  expect(parseFpath("__workit_fpath_start__\n/a\n")).toBeNull();
+  expect(parseFpath("")).toBeNull();
+});
+
+const hasZsh = spawnSync("zsh", ["-c", "true"]).status === 0;
+
+test.skipIf(!hasZsh)(
+  "Given a ~/.zshrc that adds the directory to $fpath and prints noise, Then zshFpath sees it (an interactive zsh reads the rc)",
+  () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-zsh-fpath-"));
+    try {
+      const dir = path.join(home, ".local", "share", "zsh", "site-functions");
+      writeFileSync(path.join(home, ".zshrc"), `print rc-noise\nfpath=("${dir}" $fpath)\n`);
+      const env = { PATH: process.env.PATH, HOME: home, ZDOTDIR: home, TERM: "dumb" };
+      expect(zshFpath(env)).toContain(dir);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(!hasZsh)(
+  "Given a ~/.zshrc that runs a long child, Then zshFpath gives up at its timeout (the child cannot hold the probe open)",
+  () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-zsh-slow-"));
+    try {
+      writeFileSync(path.join(home, ".zshrc"), "sleep 8\n");
+      const env = { PATH: process.env.PATH, HOME: home, ZDOTDIR: home, TERM: "dumb" };
+      const started = Date.now();
+      expect(zshFpath(env, 500)).toBeNull();
+      expect(Date.now() - started).toBeLessThan(4000);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("Given zsh did not report $fpath, Then the hint says so instead of claiming the directory is missing; rc lines paint as commands", () => {
+  const { env } = sandbox("zsh");
+  const result = installCompletion({ env, version: "1.2.3", shell: "zsh", fpath: () => null });
+  expect(result.notes[0]).toContain("zsh did not report its $fpath");
+  const lines = completionLines(result, {
+    path: (t) => `<p>${t}</p>`,
+    dim: (t) => `<d>${t}</d>`,
+    command: (t) => `<c>${t}</c>`,
+  });
+  expect(lines).toContain("  <c>autoload -Uz compinit && compinit</c>");
+  expect(lines.some((line) => line.startsWith("<d>zsh did not report"))).toBe(true);
 });
 
 test("Given a completion file Workit did not write, Then install leaves it and uninstall's remover keeps it", () => {

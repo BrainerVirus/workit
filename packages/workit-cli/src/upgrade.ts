@@ -307,7 +307,7 @@ async function upgradeOnce(
   if (permissions.refused)
     out.write(`permissions: ${style.warn("not refreshed:")} ${permissions.refused}\n`);
   if (result.backup) out.write(`Backup: ${style.path(result.backup)}\n`);
-  for (const line of completionLines(completion, style.path)) out.write(`${line}\n`);
+  for (const line of completionLines(completion, style)) out.write(`${line}\n`);
   // A failed row (the PATH `workit` missing the new CLI, say) is never "Verified".
   if (failed)
     out.write(

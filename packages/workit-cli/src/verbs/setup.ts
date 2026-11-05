@@ -94,7 +94,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ok({ ...summary, written: [], completion: installed, ...(ytrack ? { ytrack } : {}) }),
       () => [
         plan.blocked.length ? "Nothing written." : "Host permissions are up to date.",
-        ...completionLines(installed, style.path),
+        ...completionLines(installed, style),
         ...skillLines(ytrack, style),
       ],
     );
@@ -145,7 +145,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   return emit(io, ok(data), () => [
     ...entries.map((e) => `${style.ok("written")} ${style.path(e.file)}`),
     "Restart the host sessions to load the new permissions. `workit uninstall` removes them.",
-    ...completionLines(installed, style.path),
+    ...completionLines(installed, style),
     ...skillLines(ytrack, style),
   ]);
 }
