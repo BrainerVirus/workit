@@ -499,6 +499,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fewer needless re-verifications: a clean rebase carries its verdict (judged by replaying the verified head onto the new base), bookkeeping files (changelogs, `write:*`-generated files, version-only manifest changes) never make a verdict stale, and a test-only push keeps a unit verdict at any size. A verifier that lost its token is told how to recover (#312).
 - Fanout briefs: light ad-hoc commands run as `workit check --name <n> -- <cmd>` (no lease) and `--heavy` is only for full suites, packaging, builds and knip; hard slices get 180 tool calls and every brief says by which call to run the full gates; briefs print `WORKER: <slice>`; the skills VERIFY line reads the worktree's checks and ignores `docs/agents`.
 - YouTrack goes through your `ytrack` CLI when it is installed (token in the OS keyring): Workit never reads its own token file then, passes no token, and a logged-out ytrack fails with `ytrack auth login` instead of falling back. The token-file client stays one release as the fallback when ytrack is missing (#263).
+- CI: Windows tests run in 12 shards balanced from fresh timings; spawn- and git-heavy tests share one Windows-scaled timeout helper; fixtures and goldens are pinned to LF by .gitattributes and a test fails on any fixture without an eol rule; docs-only PRs still run the tests that read the docs (#415).
 
 ### Fixed
 
