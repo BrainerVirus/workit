@@ -7,7 +7,8 @@
 //   workit stack sync   [--name <n>] [--local] [--dry-run]
 //   workit stack restack [--name <n>] [--dry-run] [--force <branch>]…  (sync, then delete merged branches locally)
 //   workit stack land   [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase]
-//                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--timeout 20m] [--interval 30s]
+//                       [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>]
+//                       [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]
 import { progressFor } from "../progress";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
@@ -49,7 +50,7 @@ const SYNC_USAGE =
   "workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]… [--json]";
 const RESTACK_USAGE = "workit stack restack [--name <n>] [--dry-run] [--force <branch>]… [--json]";
 const LAND_USAGE =
-  "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
+  "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s] [--json]";
 const USAGE = "workit stack plan|status|sync|restack|land ... (workit help stack)";
 
 const short = (sha: string | null | undefined): string => (sha ? sha.slice(0, 12) : "?");
@@ -293,6 +294,7 @@ async function land(argv: string[], io: Io): Promise<number> {
     unverified: "boolean",
     "base-red-ok": "boolean",
     "others-pr": "boolean",
+    "allow-failing": "list",
     reason: "value",
   });
   if (typeof flags === "string") return usage(io, flags, LAND_USAGE);
@@ -311,9 +313,20 @@ async function land(argv: string[], io: Io): Promise<number> {
       "--others-pr needs --reason <why the user asked you to merge PRs someone else authored>",
       LAND_USAGE,
     );
-  // One --reason serves --unverified, --base-red-ok and --others-pr, alone or together.
+  const allowFailing = (flags.lists["allow-failing"] ?? []).map((check) => check.trim());
+  if (allowFailing.some((check) => !check))
+    return usage(io, "--allow-failing needs a check name", LAND_USAGE);
+  if (allowFailing.length && !baseRedReason)
+    return usage(
+      io,
+      "--allow-failing needs --reason <why the failing optional check may be ignored>",
+      LAND_USAGE,
+    );
+  // One --reason serves --unverified, --base-red-ok, --others-pr and --allow-failing, alone or together.
   const unverified =
-    (baseRedOk || othersPr) && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
+    (baseRedOk || othersPr || allowFailing.length) && !flags.booleans.has("unverified")
+      ? null
+      : unverifiedFlag(flags);
   if (typeof unverified === "string") return usage(io, unverified, LAND_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, LAND_USAGE);
@@ -356,6 +369,10 @@ async function land(argv: string[], io: Io): Promise<number> {
             unverified,
             baseRedOk: baseRedOk && baseRedReason ? { reason: baseRedReason } : null,
             othersPr: othersPr && baseRedReason ? { reason: baseRedReason } : null,
+            allowFailing:
+              allowFailing.length && baseRedReason
+                ? { checks: allowFailing, reason: baseRedReason }
+                : null,
           },
         );
       }),
@@ -373,7 +390,7 @@ async function land(argv: string[], io: Io): Promise<number> {
           ]
         : [
             data.landed.length
-              ? `landed: ${data.landed.map((item) => `${label(kind, item.pr)} (${item.branch}) -> ${short(item.mergeSha)}${item.unverified ? ` UNVERIFIED (ledger ${item.unverified})` : ""}`).join(", ")}`
+              ? `landed: ${data.landed.map((item) => `${label(kind, item.pr)} (${item.branch}) -> ${short(item.mergeSha)}${item.unverified ? ` UNVERIFIED (ledger ${item.unverified})` : ""}${item.waived.length ? ` WAIVED ${item.waived.map((entry) => `${entry.check} (ledger ${entry.recorded})`).join(", ")}` : ""}`).join(", ")}`
               : "landed nothing",
           ]),
       ...(data.retargeted.length

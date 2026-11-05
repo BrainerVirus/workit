@@ -45,8 +45,10 @@ import { classifyLockOwner, localLockHost, processStartOf } from "./core/store-l
 import { baseTarget, mergePullRequest, type Sleep } from "./forge/pr-ops";
 import {
   buildStatusDoc,
+  mergeGateForge,
   pollDelay,
   waitVerdict,
+  type CheckWaiver,
   type ChecksState,
   type NextAction,
   type PrStatusDoc,
@@ -1304,7 +1306,9 @@ export function qualify(
       `${label} is ${doc.next}${doc.blockers.length ? ` (${doc.blockers.join(", ")})` : ""}`,
       doc.next === "WAITING_CI"
         ? `workit ci wait --pr ${entry.pr}`
-        : `workit pr status --pr ${entry.pr}`,
+        : doc.blockers.includes("mergeability_unknown")
+          ? `the forge is still computing mergeability; wait a minute, then workit stack land again (workit pr status --pr ${entry.pr} shows when it settles)`
+          : `workit pr status --pr ${entry.pr}`,
     );
   const allowUnverified = grant.allowed && grant.allowUnverified;
   // The bypass covers a missing verdict, never a rejection.
@@ -2081,6 +2085,12 @@ export type LandOptions = {
   baseRedOk?: { reason: string } | null;
   /** Merge PRs another author opened (`--others-pr`, as `pr merge`); each merge records the reason. */
   othersPr?: { reason: string } | null;
+  /**
+   * Pass these failing optional checks (`--allow-failing`, as `pr merge`):
+   * never a required one; each PR it lets through records its own
+   * `merge.waived` rows.
+   */
+  allowFailing?: CheckWaiver | null;
   /** How long to wait for CI on a PR that was just restacked. */
   timeoutMs: number;
   intervalMs: number;
@@ -2089,12 +2099,16 @@ export type LandOptions = {
 export type LandOutcome = {
   name: string;
   dryRun: boolean;
-  /** `unverified`: the ledger row of an `--unverified` bypass, else null. */
+  /**
+   * `unverified`: the ledger row of an `--unverified` bypass, else null;
+   * `waived`: the failing optional checks `--allow-failing` passed on this PR.
+   */
   landed: Array<{
     pr: number;
     branch: string;
     mergeSha: string | null;
     unverified: string | null;
+    waived: Array<{ check: string; recorded: string }>;
   }>;
   /** Dry run: the PRs that qualify now, in order (later ones assume a clean restack). */
   wouldLand: Array<{ pr: number; branch: string }>;
@@ -2106,6 +2120,8 @@ export type LandOutcome = {
     unblock: string;
     /** Everything but the merge grant holds: "verified, ready". */
     ready: boolean;
+    /** The forge, not the PR, must move first (mergeability still UNKNOWN after the re-reads). */
+    babysit?: "wait-forge";
   } | null;
   retargeted: number[];
   restacked: string[];
@@ -2200,6 +2216,18 @@ export async function landStack(
     const ledger = readLedger(ctx.cwd, { integrity: true });
     return ledger.ok ? ledger.value.rows : [];
   };
+  // `pr merge`'s gate, one per read and one per merge: UNKNOWN mergeability
+  // is re-read with backoff, and an `--allow-failing` waiver passes the PR's
+  // failing optional checks. Only the merge gate records waiver rows, so a
+  // PR that stops records none. Sync keeps the raw forge: it lands nothing.
+  const gated = (record: boolean) => {
+    const forge = mergeGateForge(ctx.resolved.forge, ctx.cwd, {
+      waiver: options.allowFailing ?? null,
+      actor: ctx.actor,
+      dryRun: !record,
+    });
+    return { ctx: { ...ctx, resolved: { ...ctx.resolved, forge } }, waived: forge.waived };
+  };
   const simulated = new Set<string>();
   let justRestacked = new Set(outcome.restacked);
   for (;;) {
@@ -2227,10 +2255,11 @@ export async function landStack(
     let doc: PrStatusDoc | null = null;
     if (entry.pr) {
       const head = branchTip(ctx.cwd, entry.branch);
+      const reader = gated(false).ctx;
       const read =
         justRestacked.has(entry.branch) && head
-          ? await awaitChecks(ctx, entry.pr, head, options)
-          : statusDoc(ctx, entry.pr);
+          ? await awaitChecks(reader, entry.pr, head, options)
+          : statusDoc(reader, entry.pr);
       if (!read.ok) return failWith(fromForge(read));
       doc = read.data;
       if (options.dryRun && doc.state === "merged") {
@@ -2262,6 +2291,9 @@ export async function landStack(
         detail: q.detail,
         unblock: q.unblock,
         ready: q.ready,
+        ...(q.reason === "not_ready" && doc?.babysit === "wait-forge"
+          ? { babysit: "wait-forge" as const }
+          : {}),
       };
       break;
     }
@@ -2271,9 +2303,10 @@ export async function landStack(
       simulated.add(entry.branch);
       continue;
     }
+    const gate = gated(true);
     const merged = await mergePullRequest(
       ctx.cwd,
-      ctx.resolved,
+      gate.ctx.resolved,
       {
         pr,
         method: options.method,
@@ -2305,6 +2338,7 @@ export async function landStack(
       branch: entry.branch,
       mergeSha: merged.data.mergeSha,
       unverified: merged.data.unverified?.recorded ?? null,
+      waived: [...gate.waived],
     });
     entry.merged = {
       pr,

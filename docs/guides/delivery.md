@@ -759,7 +759,7 @@ workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record th
 workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
 workit stack sync [--local] [--dry-run] [--force <branch>]
 workit stack restack [--dry-run] [--force <branch>]                # sync, then delete the merged branches locally
-workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--others-pr --reason <why>]
+workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
 ```
 
 - The order is stored in `<git common dir>/workit/stacks/`, shared by every
@@ -776,6 +776,16 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--othe
   with only the child's commits.
 - `land --others-pr --reason <why>` lands PRs another author opened, as
   `workit pr merge --others-pr` does; without it they are refused.
+- `land --allow-failing <check> --reason <why>` (repeatable) passes a failing
+  optional check on each PR it lands, through the same gate as
+  `workit pr merge --allow-failing`: every PR it lets through records its own
+  `merge.waived` row and lists it under `waived` in `--json`. A required check
+  is never waived: naming one refuses (`waiver_refused`) before that PR
+  merges. A name that matches no check on a PR's head is refused
+  (`unknown_check`). `--dry-run` predicts with the waiver and records nothing.
+- `land` re-reads a PR whose mergeability the forge is still computing, as
+  `pr merge` does; still unknown, it stops at `not_ready` with `babysit:
+  "wait-forge"` in `stoppedAt`: wait a minute and land again.
 - A restacked branch with the same patch-id and diff keeps its verdict; CI
   always runs again.
 - After a parent PR lands by squash, run `workit stack restack`. A squash

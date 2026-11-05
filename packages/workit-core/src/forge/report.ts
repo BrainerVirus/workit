@@ -908,12 +908,14 @@ export const mergeGateDeps = {
  * optional checks it names, each recorded as a `merge.waived` row before
  * the merge call (a waiver that cannot be audited never merges). After the
  * merge call the forge is read as is. `waived` lists the checks a waiver
- * passed, with their `merge.waived` row ids.
+ * passed, with their `merge.waived` row ids. `dryRun` passes the same checks
+ * but records nothing: `stack land` qualifies a PR through it and records
+ * only through the gate it merges with.
  */
 export function mergeGateForge(
   forge: Forge,
   cwd: string,
-  options: { waiver: CheckWaiver | null; actor: LedgerActor },
+  options: { waiver: CheckWaiver | null; actor: LedgerActor; dryRun?: boolean },
 ): Forge & { waived: Array<{ check: string; recorded: string }> } {
   const waivedRows: Array<{ check: string; recorded: string }> = [];
   let merging = false;
@@ -935,6 +937,7 @@ export function mergeGateForge(
       if (!status.ok || !options.waiver || status.data.state !== "open") return status;
       const waived = waiveChecks(status.data, options.waiver);
       if (!waived.ok) return waived;
+      if (options.dryRun) return success(waived.data.status);
       for (const check of waived.data.waived) {
         const key = `${status.data.head.sha}\0${check.name}`;
         if (recorded.has(key)) continue;
