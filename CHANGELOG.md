@@ -405,6 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit help` and per-verb help are coloured at a terminal (bold headings, accent commands and flags, dim descriptions); plain under NO_COLOR, TERM=dumb, CI, a pipe or `--json`.
 - `workit fanout brief <slice> --host <host>` renders the brief for the worker's host (model lines, attribution); with WORKIT_HOST unset, `cli` or misspelled, a warning names the valid hosts (#292).
 - `workit pr merge --allow-failing <check> --reason <why>` merges past a failing optional check (never a required one), recording a `merge.waived` row (#269).
+- `workit stack land --allow-failing <check> --reason <why>` lets a failing optional check through on each PR it lands (one waiver row per PR), and stack land re-reads a PR whose mergeability is still being computed, through the same gate as `workit pr merge`.
 
 ### Changed
 
@@ -914,6 +915,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The usage-limit fallback no longer fires on a report that merely quotes a limit message (a reset must name a time). A heavy check that gives up waiting after auto-reaping a stuck lease now prints the reclaimed notice and records the reap.
 - `pr merge` re-reads a transient UNKNOWN mergeability a few times before stopping with wait-forge; PR lookup by branch pages through results on GitHub and GitLab so an existing PR is never missed and duplicated; forge rate limits (429, secondary 403) wait once and then fail as `rate_limited:` with the wait, never as a plain failure; GitLab reads "Pipelines must succeed" for required checks; `--body-file` with CRLF line endings posts LF (#269, #284).
 - `workit upgrade` and `workit setup` no longer say zsh's $fpath lacks the completion directory when ~/.zshrc adds it; the hint is styled and says when zsh could not be asked.
+- `workit pr merge --allow-failing` no longer records a `merge.waived` row when the merge is refused or fails; the waiver is written once the forge accepts the merge.
 
 ### Removed
 

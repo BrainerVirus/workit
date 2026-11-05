@@ -14,6 +14,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { mergeGateDeps } from "@/packages/workit-core/src/forge/report";
 import { success } from "@/packages/workit-core/src/forge/types";
 import { pushPreflight } from "@/packages/workit-core/src/git/ops";
 import {
@@ -44,6 +45,7 @@ let configDir = "";
 let configHome: ConfigHome;
 const original = { ...forgeDeps };
 const originalStack = { ...stackDeps };
+const originalGate = { ...mergeGateDeps };
 beforeAll(() => {
   configHome = useConfigHome("wk-stack-config-");
   configDir = configHome.configDir;
@@ -56,6 +58,7 @@ const forges: StackForge[] = [];
 afterEach(() => {
   Object.assign(forgeDeps, original);
   Object.assign(stackDeps, originalStack);
+  Object.assign(mergeGateDeps, originalGate);
   for (const name of ["workspaces.json", "config.json"])
     rmSync(path.join(configDir, name), { force: true });
   for (const forge of forges.splice(0)) forge.cleanup();
@@ -1521,4 +1524,196 @@ test("pr merge: given a lower PR of a stack verified at the top, then pr status 
     accepted: true,
     verdictId: topId,
   });
+});
+
+// ---------------------------------------------------------------------------
+// #731: the `pr merge` gate on every land: --allow-failing waivers and the
+// bounded re-read of an UNKNOWN mergeability
+
+/**
+ * The forge's runner, with every open PR's status read rewritten: a failing
+ * `codeql` check (optional unless `required`), and mergeability UNKNOWN
+ * while `unknown()` holds.
+ */
+const gateForge = (
+  forge: StackForge,
+  options: { codeql?: "optional" | "required"; unknown?: () => boolean },
+) => {
+  const inner = forge.runner;
+  forge.runner = (bin, args, runOptions) => {
+    const result = inner(bin, args, runOptions);
+    let doc: {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            number: number;
+            state: string;
+            mergeable: string;
+            mergeStateStatus: string;
+            commits: {
+              nodes: Array<{
+                commit: { statusCheckRollup: { contexts: { nodes: unknown[] } } };
+              }>;
+            };
+          } | null;
+        };
+      };
+    };
+    try {
+      doc = JSON.parse(result.stdout) as typeof doc;
+    } catch {
+      return result;
+    }
+    const pr = doc.data?.repository?.pullRequest;
+    if (!pr || pr.state !== "OPEN") return result;
+    if (options.codeql) {
+      pr.commits.nodes[0]?.commit.statusCheckRollup.contexts.nodes.push({
+        __typename: "CheckRun",
+        name: "codeql",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: null,
+        databaseId: 2,
+        checkSuite: null,
+        isRequired: options.codeql === "required",
+      });
+      pr.mergeStateStatus = "UNSTABLE";
+    }
+    if (options.unknown?.()) {
+      pr.mergeable = "UNKNOWN";
+      pr.mergeStateStatus = "UNKNOWN";
+    }
+    return { ...result, stdout: JSON.stringify(doc) };
+  };
+  Object.assign(forgeDeps, { runner: forge.runner });
+};
+
+test("stack land (#731): given PRs with a failing optional check, without a waiver it stops at not_ready; with --allow-failing --reason each PR merges and records its own waiver row", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  await verdict(forge, "feature/b");
+  gateForge(forge, { codeql: "optional" });
+
+  const refused = await run(["stack", "land", "--json"], forge.cwd);
+  expect(refused.json().data.landed).toEqual([]);
+  expect(refused.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "not_ready" });
+  expect(forge.writes).toEqual([]);
+
+  const needsReason = await run(["stack", "land", "--allow-failing", "codeql"], forge.cwd);
+  expect(needsReason.code).toBe(2);
+  expect(needsReason.stderr).toContain("--allow-failing needs --reason");
+
+  const dry = await run(
+    ["stack", "land", "--dry-run", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    forge.cwd,
+  );
+  expect(dry.code, dry.stderr + dry.stdout).toBe(0);
+  expect(dry.json().data.wouldLand.map((item: { pr: number }) => item.pr)).toEqual([11, 12]);
+  expect(rows(forge.cwd, "merge.waived")).toEqual([]);
+
+  const landed = await run(
+    [
+      "stack",
+      "land",
+      "--allow-failing",
+      "codeql",
+      "--reason",
+      "user decided: CodeQL is advisory here",
+      "--json",
+    ],
+    forge.cwd,
+  );
+  expect(landed.code, landed.stderr + landed.stdout).toBe(0);
+  const data = landed.json().data;
+  expect(data.landed.map((item: { pr: number }) => item.pr)).toEqual([11, 12]);
+  expect(forge.writes.filter((write) => write.startsWith("merge"))).toEqual([
+    "merge 11",
+    "merge 12",
+  ]);
+  const waived = rows(forge.cwd, "merge.waived");
+  expect(waived.map((row) => row.pr)).toEqual([11, 12]);
+  for (const row of waived)
+    expect(row).toMatchObject({
+      check: "codeql",
+      reason: "user decided: CodeQL is advisory here",
+      actor: expect.objectContaining({ session: "lander-1" }),
+    });
+  expect(data.landed.map((item: { waived: unknown }) => item.waived)).toEqual([
+    [{ check: "codeql", recorded: String(waived[0]?.id) }],
+    [{ check: "codeql", recorded: String(waived[1]?.id) }],
+  ]);
+});
+
+test("stack land (#731): given a required failing check, --allow-failing naming it is refused naming the check, and nothing merges", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  gateForge(forge, { codeql: "required" });
+  const result = await run(
+    ["stack", "land", "--allow-failing", "codeql", "--reason", "r", "--json"],
+    forge.cwd,
+  );
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("waiver_refused: codeql (required by branch protection)");
+  expect(result.json().data.land.landed).toEqual([]);
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.waived")).toEqual([]);
+});
+
+test("stack land (#731): given a PR reading UNKNOWN then MERGEABLE, then it re-reads after a short wait and lands", async () => {
+  // The forge settles after the gate's first wait.
+  const waited: number[] = [];
+  mergeGateDeps.sleep = (ms) => void waited.push(ms);
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  gateForge(forge, { unknown: () => waited.length === 0 });
+  const result = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data.landed.map((item: { pr: number }) => item.pr)).toEqual([11]);
+  expect(waited).toEqual([500]);
+  expect(forge.writes).toContain("merge 11");
+});
+
+test("stack land (#731): given a persistent UNKNOWN, then it stops at the deadline with wait-forge and nothing merges", async () => {
+  const waited: number[] = [];
+  mergeGateDeps.sleep = (ms) => void waited.push(ms);
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  gateForge(forge, { unknown: () => true });
+  const result = await run(["stack", "land", "--json"], forge.cwd);
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(waited).toEqual([500, 1000, 2000]);
+  expect(result.json().data.landed).toEqual([]);
+  expect(result.json().data.stoppedAt).toMatchObject({
+    pr: 11,
+    reason: "not_ready",
+    babysit: "wait-forge",
+  });
+  expect(result.json().data.stoppedAt.detail).toContain("mergeability_unknown");
+  expect(result.json().data.stoppedAt.unblock).toContain("still computing mergeability");
+  expect(forge.writes).toEqual([]);
+});
+
+test("stack land (#731): given another author's PR with a failing optional check, --allow-failing without --others-pr stops at merge_refused and records no waiver row", async () => {
+  mergeGateDeps.sleep = () => {};
+  const forge = setup("github");
+  await plan(forge);
+  await verdict(forge, "feature/a");
+  othersPrs(forge);
+  gateForge(forge, { codeql: "optional" });
+  const result = await run(
+    ["stack", "land", "--allow-failing", "codeql", "--reason", "advisory", "--json"],
+    forge.cwd,
+  );
+  expect(result.code, result.stderr + result.stdout).toBe(0);
+  expect(result.json().data.landed).toEqual([]);
+  expect(result.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "merge_refused" });
+  expect(result.json().data.stoppedAt.detail).toContain("others_pr");
+  expect(forge.writes).toEqual([]);
+  expect(rows(forge.cwd, "merge.waived")).toEqual([]);
 });

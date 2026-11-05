@@ -787,7 +787,7 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "land",
         usage:
-          "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--timeout 20m] [--interval 30s]",
+          "workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]",
         summary: "Merge the stack root first, restacking the rest as each lands",
       },
     ],

@@ -1048,7 +1048,7 @@ function issueLines(
 
 /** The `reason` of a refused `--allow-failing` waiver, for the envelope data. */
 const waiverReason = (error: string): { reason?: string } => {
-  const reason = /^(waiver_refused|unknown_check|waiver_unrecorded):/u.exec(error)?.[1];
+  const reason = /^(waiver_refused|unknown_check):/u.exec(error)?.[1];
   return reason ? { reason } : {};
 };
 
@@ -1211,7 +1211,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
         : mergedOnLine(data.verdict),
       ...data.waived.map(
         (entry) =>
-          `WAIVED: failing optional check ${entry.check} (--allow-failing: ${baseRedReason ?? ""}); ledger ${entry.recorded}`,
+          `WAIVED: failing optional check ${entry.check} (--allow-failing: ${baseRedReason ?? ""}); ${"recorded" in entry ? `ledger ${entry.recorded}` : `ledger: waiver not recorded (${entry.error})`}`,
       ),
       ...(data.baseCi.note ? [data.baseCi.note] : []),
       ...(data.mergeBack.length

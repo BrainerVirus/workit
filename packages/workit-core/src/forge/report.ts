@@ -841,6 +841,9 @@ function recordAccepted(
 /** `pr merge --allow-failing <check>… --reason <why>`. */
 export type CheckWaiver = { checks: readonly string[]; reason: string };
 
+/** A check a waiver passed on a merged PR: its `merge.waived` row, or why it could not be written. */
+export type WaivedCheck = { check: string; recorded: string } | { check: string; error: string };
+
 /**
  * `status` with the failing checks `waiver` names marked waived (state
  * `skipped`, conclusion `waived_<conclusion>`), so the merge gate reads them
@@ -901,23 +904,26 @@ export const mergeGateDeps = {
 };
 
 /**
- * `forge` as `pr merge` reads it until the merge call: an open PR whose
- * mergeability is UNKNOWN (the forge still computing it) is re-read with
- * backoff, `MERGEABILITY_RETRY_MS`, before the gate decides (it stops at
- * `wait-forge` when it stays unknown); and a waiver passes the failing
- * optional checks it names, each recorded as a `merge.waived` row before
- * the merge call (a waiver that cannot be audited never merges). After the
- * merge call the forge is read as is. `waived` lists the checks a waiver
- * passed, with their `merge.waived` row ids.
+ * `forge` as `pr merge` and `stack land` read it until the merge call: an
+ * open PR whose mergeability is UNKNOWN (the forge still computing it) is
+ * re-read with backoff, `MERGEABILITY_RETRY_MS`, before the gate decides (it
+ * stops at `wait-forge` when it stays unknown); and a waiver passes the
+ * failing optional checks it names. Each waived check is recorded as a
+ * `merge.waived` row only once the forge accepts the merge: a refusal before
+ * the merge call (another author, a verdict, a dry run) or a failed merge
+ * records nothing. After the merge call the forge is read as is. `waived`
+ * lists the checks a waiver passed on the merged PR, each with its row id,
+ * or the error when the row could not be written after the merge.
  */
 export function mergeGateForge(
   forge: Forge,
   cwd: string,
   options: { waiver: CheckWaiver | null; actor: LedgerActor },
-): Forge & { waived: Array<{ check: string; recorded: string }> } {
-  const waivedRows: Array<{ check: string; recorded: string }> = [];
+): Forge & { waived: WaivedCheck[] } {
+  const waivedRows: WaivedCheck[] = [];
   let merging = false;
-  const recorded = new Set<string>();
+  // The waiver decided at the latest read of each PR; recorded on its merge.
+  const pending = new Map<number, { status: ForgePrStatus; checks: ForgeCheck[] }>();
   const read = (number: number): ForgeResult<ForgePrStatus> => {
     let status = forge.prStatus(number);
     for (const delay of MERGEABILITY_RETRY_MS) {
@@ -927,6 +933,23 @@ export function mergeGateForge(
     }
     return status;
   };
+  const record = (status: ForgePrStatus, check: ForgeCheck, reason: string): WaivedCheck => {
+    const row = appendObserved(cwd, {
+      type: "merge.waived",
+      actor: options.actor,
+      branch: status.head.branch,
+      head: status.head.sha,
+      pr: status.number,
+      base: status.base,
+      check: check.name,
+      conclusion: check.conclusion,
+      reason,
+      what: `#${status.number} failing optional check ${check.name} waived at ${status.head.sha.slice(0, 12)} (reason: ${reason})`,
+    });
+    return row.ok
+      ? { check: check.name, recorded: String(row.value.id) }
+      : { check: check.name, error: row.error };
+  };
   return {
     ...forge,
     prStatus(number) {
@@ -935,34 +958,17 @@ export function mergeGateForge(
       if (!status.ok || !options.waiver || status.data.state !== "open") return status;
       const waived = waiveChecks(status.data, options.waiver);
       if (!waived.ok) return waived;
-      for (const check of waived.data.waived) {
-        const key = `${status.data.head.sha}\0${check.name}`;
-        if (recorded.has(key)) continue;
-        const row = appendObserved(cwd, {
-          type: "merge.waived",
-          actor: options.actor,
-          branch: status.data.head.branch,
-          head: status.data.head.sha,
-          pr: status.data.number,
-          base: status.data.base,
-          check: check.name,
-          conclusion: check.conclusion,
-          reason: options.waiver.reason,
-          what: `#${status.data.number} failing optional check ${check.name} waived at ${status.data.head.sha.slice(0, 12)} (reason: ${options.waiver.reason})`,
-        });
-        if (!row.ok)
-          return failure(
-            "failed",
-            `waiver_unrecorded: the --allow-failing waiver of ${check.name} could not be recorded (${row.error}); nothing was merged`,
-          );
-        recorded.add(key);
-        waivedRows.push({ check: check.name, recorded: String(row.value.id) });
-      }
+      pending.set(number, { status: status.data, checks: waived.data.waived });
       return success(waived.data.status);
     },
     merge(number, mergeOptions) {
       merging = true;
-      return forge.merge(number, mergeOptions);
+      const merged = forge.merge(number, mergeOptions);
+      const decided = pending.get(number);
+      if (merged.ok && decided && options.waiver)
+        for (const check of decided.checks)
+          waivedRows.push(record(decided.status, check, options.waiver.reason));
+      return merged;
     },
     waived: waivedRows,
   };
