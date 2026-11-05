@@ -10,6 +10,9 @@ test("Given a worker report quoting the 5-hour limit reached message, When parse
     "Implemented: the 5-hour limit reached message is now parsed.",
     "Done: weekly limit reached banners now show the reset time.",
     "Fixed the Claude usage limit reached handling in the hook.",
+    "Done: the weekly limit reached, resets handling is fixed.",
+    "Opus limit reached: try again handling now waits.",
+    "the 5-hour limit reached - resets are parsed now",
   ])
     expect(parseUsageLimit(report, NOW)).toBeNull();
 });
