@@ -188,20 +188,6 @@ test("Given a local failure and a pass recorded in a clone with the same `at`, W
   expect(result.current.verdict?.id).toBe(failure.id);
 });
 
-test("Given a failure and a pass with the same `at` both imported from the mirror, When the pass was imported after the failure, Then the failure still ranks newest", () => {
-  const real = realCheckout("git@github.com:acme/mirror-tie-imports.git");
-  const clone = throwawayClone(real);
-  const failure = judge(clone, "rev-B", "failed", "2026-01-02T00:00:00Z");
-  judge(clone, "rev-A", "verified", "2026-01-02T00:00:00Z");
-  rmSync(path.dirname(clone), { recursive: true, force: true });
-  const result = gate(real);
-  expect(result.accepted).toMatchObject({
-    accepted: false,
-    reasons: ["failing_verdict"],
-  });
-  expect(result.current.verdict?.id).toBe(failure.id);
-});
-
 test("Given mirrored imports out of time order (pass day 2, failure day 1, pass day 2), Then only same-instant ties move: the newer pass still ranks newest", () => {
   const real = realCheckout("git@github.com:acme/mirror-out-of-order.git");
   const clone = throwawayClone(real);

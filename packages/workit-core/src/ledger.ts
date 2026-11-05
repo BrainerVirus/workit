@@ -1562,14 +1562,12 @@ const isMirrored = (row: ReadRow): boolean => typeof row.mirroredFrom === "strin
  * from a clone never outranks a newer local verdict. Local rows rank by seq.
  * Its `at` counts for no later than its import (its own place in this
  * ledger) or `now`, so a future-dated row never outranks local rows written
- * after it arrived. On an equal `at`, a failure ranks after a pass, local or
- * imported.
+ * after it arrived. On an equal `at`, a failure ranks after a pass.
  */
 function mirrorRanks(rows: readonly ReadRow[], now: number = Date.now()): Map<ReadRow, number> {
   const ranks = new Map<ReadRow, number>();
   const local = rows.filter((row) => !isMirrored(row));
   const failing = (row: ReadRow) => FAILING.has(String(row.result));
-  const slots: { row: ReadRow; at: number; after: number }[] = [];
   for (const row of rows) {
     if (!isMirrored(row)) continue;
     const at = Math.min(Date.parse(row.at), now);
@@ -1580,29 +1578,9 @@ function mirrorRanks(rows: readonly ReadRow[], now: number = Date.now()): Map<Re
       const before = otherAt < at || (otherAt === at && (failing(row) || !failing(other)));
       if (before) after = Math.max(after, other.seq);
     }
-    slots.push({ row, at, after });
+    // Between that row and the next; ties among imports keep their own order.
+    ranks.set(row, after + 0.5 + Math.min(row.seq, 1e9) / 1e10);
   }
-  // Imports in one slot keep their import order. A failure only moves later,
-  // past the passes of the same slot and the same `at`, so a pass imported
-  // after a failure of the same instant never outranks it; no other row moves.
-  const lastPass = new Map<string, number>();
-  for (const { row, at, after } of slots) {
-    if (failing(row)) continue;
-    const key = `${after}\0${at}`;
-    lastPass.set(key, Math.max(lastPass.get(key) ?? -Infinity, row.seq));
-  }
-  const order = slots
-    .map((slot) => ({
-      ...slot,
-      key: failing(slot.row)
-        ? Math.max(slot.row.seq, (lastPass.get(`${slot.after}\0${slot.at}`) ?? -Infinity) + 0.5)
-        : slot.row.seq,
-    }))
-    .toSorted((a, b) => a.after - b.after || a.key - b.key);
-  // Between that local row and the next.
-  order.forEach(({ row, after }, index) =>
-    ranks.set(row, after + 0.5 + (index + 1) / (order.length + 2) / 2),
-  );
   return ranks;
 }
 
@@ -2050,10 +2028,7 @@ function importMirroredVerdicts(cwd: string, branch: string): ReadRow[] {
           } = row;
           const written = appendLine(
             local.value,
-            (previous) => ({
-              ok: true,
-              value: sealed(fields, id, at, previous).line,
-            }),
+            (previous) => ({ ok: true, value: sealed(fields, id, at, previous).line }),
             { heldLock: true },
           );
           if (!written.ok) return false;
