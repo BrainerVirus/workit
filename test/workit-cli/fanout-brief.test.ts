@@ -839,9 +839,9 @@ test("fanout brief: given a Claude Code lead rendering for host codex (--host co
     expect(result.data.host).toBe("codex_cli");
     expect(result.data.model).toBe("gpt-5-codex");
     expect(result.data.text).toContain("  model: gpt-5-codex  (models.roles in workspace app)");
-    expect(result.data.coAuthor).toBe("Co-Authored-By: Codex <noreply@openai.com>");
+    expect(result.data.coAuthor).toBeNull();
     expect(result.data.text).toContain(
-      '  3. Commit with `workit git commit -m <msg> --trailer "Co-Authored-By: Codex <noreply@openai.com>" -- <paths in SCOPE>`',
+      "  3. Commit with `workit git commit -m <msg> -- <paths in SCOPE>`",
     );
     expect(result.data.text).toContain("your host already sets WORKIT_SESSION_ID");
     expect(result.data.text).not.toContain("Claude");
@@ -852,7 +852,6 @@ test("fanout brief: given a Claude Code lead rendering for host codex (--host co
 
 test.each([
   ["claude_code", "Co-Authored-By: Claude Haiku <noreply@anthropic.com>"],
-  ["opencode", "Co-Authored-By: opencode <noreply@opencode.ai>"],
   ["cursor", "Co-Authored-By: Cursor Agent <cursoragent@cursor.com>"],
 ])(
   "fanout brief: given a %s lead, when rendered, then RULE 3 carries the host's concrete Co-Authored-By trailer, not a placeholder",
@@ -864,7 +863,7 @@ test.each([
   },
 );
 
-test.each([["pi"], ["cli"]])(
+test.each([["pi"], ["cli"], ["codex"], ["opencode"]])(
   "fanout brief: given a %s lead (no attribution convention), when rendered, then RULE 3 adds no trailer",
   async (host) => {
     const cwd = await planned();
@@ -1058,4 +1057,27 @@ test("fanout brief: given a race attempt, when rendered, then its WORKER line na
   const { root, cwd } = repo();
   expect((await plan(cwd, root, "race", [slice("a", ["a.ts"])])).code).toBe(0);
   expect((await brief(cwd, "a", "--attempt", "2")).text).toContain("\nWORKER: a+try2\n");
+});
+
+test("fanout brief: given --host on the command line, then the router accepts it and the brief renders for that host; a typo is a usage error naming the valid hosts", async () => {
+  const cwd = await planned();
+  const codex = (await briefOn(cwd, "claude_code", "a", "--host", "codex")) as {
+    text: string;
+    host?: string;
+  };
+  expect(codex.host).toBe("codex_cli");
+  expect(codex.text).not.toContain("noreply@anthropic.com");
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of HOST_VARS) delete env[key];
+  env.WORKIT_SESSION_ID = "lead-1";
+  let stderr = "";
+  const code = await main(["fanout", "brief", "a", "--host", "codx"], {
+    cwd,
+    env,
+    stdout: () => {},
+    stderr: (text) => void (stderr += text),
+  });
+  expect(code).toBe(2);
+  expect(stderr).toContain("claude_code");
+  expect(stderr).toContain("codex");
 });

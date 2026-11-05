@@ -810,7 +810,8 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "brief",
         flagAliases: { fanout: "name" },
-        usage: "workit fanout brief <slice> [--mode new|resume] [--attempt <n>] [--name <n>]",
+        usage:
+          "workit fanout brief <slice> [--mode new|resume] [--attempt <n>] [--host <h>] [--name <n>]",
         summary: "Render one worker's brief with the standing orders",
       },
       {

@@ -139,8 +139,6 @@ export const coAuthorTrailer = (host: string | null, model: string | null): stri
     const who = named ? `Claude ${named[0].toUpperCase()}${named.slice(1)}` : "Claude";
     return `Co-Authored-By: ${who} <noreply@anthropic.com>`;
   }
-  if (family === "codex") return "Co-Authored-By: Codex <noreply@openai.com>";
-  if (family === "opencode") return "Co-Authored-By: opencode <noreply@opencode.ai>";
   if (family === "cursor") return "Co-Authored-By: Cursor Agent <cursoragent@cursor.com>";
   return null;
 };
