@@ -18,6 +18,7 @@ import {
   firstNotice,
   heldLease,
   processStart,
+  recordGroup,
   resolveResourceSettings,
   runScoped,
   scopePrefix,
@@ -463,6 +464,151 @@ test.skipIf(process.platform === "win32")(
     const got = await acquireLease({ ...base(dir), waitMs: 2000 });
     expect(got.ok).toBe(true);
     if (got.ok) got.lease.release();
+  },
+);
+
+// Issue #729: an orphaned check keeps its lease by its group's leader identity.
+
+/** A lease whose workit (4242) died while its check group 4343 runs under leader start "200". */
+const orphanLease = (overrides: Partial<LeaseRecord> = {}) =>
+  leaseRecord({
+    pid: 4242,
+    processStart: "100",
+    pgid: 4343,
+    pgidStart: "200",
+    maxAgeMs: 60_000,
+    ...overrides,
+  });
+const orphanProbe = (lease: LeaseRecord, leader: string | null, ageMs: number) => ({
+  boot: null,
+  alive: () => false,
+  group: (pgid: number) => pgid === 4343,
+  scope: () => false,
+  start: (pid: number) => (pid === 4343 ? leader : null),
+  now: Date.parse(lease.startedAt) + ageMs,
+});
+
+test("G a dead workit pid and a live check group whose leader start matches, W the lease passes its age bound, T it still holds; an unproven leader holds only within the bound", () => {
+  const lease = orphanLease();
+  expect(staleReason(lease, orphanProbe(lease, "200", 61_000))).toBeNull();
+  expect(staleReason(lease, orphanProbe(lease, "200", 3_600_000))).toBeNull();
+  // The leader is gone, or its start was never read: identity is unproven.
+  for (const unproven of [orphanLease(), orphanLease({ pgidStart: null })]) {
+    const leader = unproven.pgidStart === null ? "200" : null;
+    expect(staleReason(unproven, orphanProbe(unproven, leader, 1000))).toBeNull();
+    expect(staleReason(unproven, orphanProbe(unproven, leader, 61_000))).toBe(
+      "older than its 60 s bound",
+    );
+  }
+  // No workit start time recorded (Windows): the bound ends it whatever the group says.
+  const unverified = orphanLease({ processStart: null });
+  expect(staleReason(unverified, orphanProbe(unverified, "200", 61_000))).toBe(
+    "older than its 60 s bound",
+  );
+});
+
+test("G the lease's pgid now led by another process (leader start differs), T it is stale and the reason names the recycled group, within the bound too", () => {
+  const lease = orphanLease();
+  const recycled = "holder pid 4242 is gone; process group 4343 now belongs to another process";
+  expect(staleReason(lease, orphanProbe(lease, "999", 1000))).toBe(recycled);
+  expect(staleReason(lease, orphanProbe(lease, "999", 61_000))).toBe(recycled);
+});
+
+test("G a lease from an older workit (no leader start), T staleReason answers as before, not by the group's leader", () => {
+  const legacy = orphanLease();
+  delete legacy.pgidStart;
+  // The same lease with a leader start is stale once its group is recycled; the older one is not.
+  expect(staleReason(orphanLease(), orphanProbe(legacy, "999", 1000))).not.toBeNull();
+  expect(staleReason(legacy, orphanProbe(legacy, "999", 1000))).toBeNull();
+  // Past the bound an unidentified workit ends it before the group is asked.
+  expect(staleReason(legacy, orphanProbe(legacy, "200", 61_000))).toBe("older than its 60 s bound");
+  // A recycled workit pid (start known, differs) with a live group still holds past the bound.
+  const recycledPid = {
+    ...orphanProbe(legacy, "200", 61_000),
+    alive: () => true,
+    start: () => "777",
+  };
+  expect(staleReason(legacy, recycledPid)).toBeNull();
+  // Group gone: the dead holder is named.
+  const groupGone = { ...orphanProbe(legacy, null, 1000), group: () => false };
+  expect(staleReason(legacy, groupGone)).toBe("holder pid 4242 is gone");
+});
+
+test.skipIf(process.platform === "win32")(
+  "G a real orphaned check group recorded with its leader start, W the lease is past its age bound, T a second acquirer still waits until the group exits",
+  async () => {
+    const dir = path.join(temp(), "leases");
+    const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const leader = processStart(orphan.pid!);
+    expect(leader).not.toBeNull();
+    try {
+      const startedAt = new Date(Date.now() - 60_000).toISOString();
+      const lease = { pid: deadPid(), processStart: "gone", maxAgeMs: 1, startedAt };
+      writeSlot(dir, leaseRecord({ ...lease, pgid: orphan.pid, pgidStart: leader }));
+      expect(await acquireLease(base(dir))).toMatchObject({ ok: false, reason: "timeout" });
+    } finally {
+      process.kill(-orphan.pid!, "SIGKILL");
+    }
+    await new Promise((resolve) => orphan.on("exit", resolve));
+    const got = await acquireLease({ ...base(dir), waitMs: 2000 });
+    expect(got.ok).toBe(true);
+    if (got.ok) got.lease.release();
+  },
+);
+
+test("G a lease, T recordGroup writes the check group with its leader's start time", async () => {
+  const dir = path.join(temp(), "leases");
+  const got = await acquireLease(base(dir));
+  if (!got.ok) throw new Error(got.reason);
+  expect(JSON.parse(readFileSync(got.lease.file, "utf8"))).toMatchObject({ pgidStart: null });
+  recordGroup(got.lease, process.pid);
+  expect(JSON.parse(readFileSync(got.lease.file, "utf8"))).toMatchObject({
+    pgid: process.pid,
+    pgidStart: processStart(process.pid),
+  });
+  got.lease.release();
+});
+
+test("G a nested check whose ancestor chain is broken but whose group is the lease's proven check group, T heldLease reuses the outer lease", () => {
+  const dir = path.join(temp(), "leases");
+  const lease = orphanLease({ id: "00000000-0000-4000-8000-0000000000c1" });
+  writeSlot(dir, lease);
+  const orphan = orphanProbe(lease, "200", 1000);
+  const reuse = (group: number | null, leaseProbe = orphan) =>
+    heldLease(dir, lease.id, { probe: leaseProbe, ancestor: () => false, group: () => group });
+  expect(reuse(4343)?.id).toBe(lease.id);
+  // Another group, an unreadable one, or a recycled leader: no reuse.
+  expect(reuse(5555)).toBeNull();
+  expect(reuse(null)).toBeNull();
+  expect(reuse(4343, { ...orphan, start: () => "999" })).toBeNull();
+});
+
+/** This process's group, from /proc (Linux). */
+const ownPgrp = (): number => {
+  const stat = readFileSync("/proc/self/stat", "utf8");
+  return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]);
+};
+
+test.skipIf(process.platform !== "linux")(
+  "G a lease whose workit died, held by the group this process runs in, T heldLease reuses it on Linux",
+  () => {
+    const dir = path.join(temp(), "leases");
+    const pgid = ownPgrp();
+    const lease = leaseRecord({
+      id: "00000000-0000-4000-8000-0000000000c2",
+      pid: deadPid(),
+      processStart: "gone",
+      pgid,
+      pgidStart: processStart(pgid),
+    });
+    writeSlot(dir, lease);
+    expect(heldLease(dir, lease.id)?.id).toBe(lease.id);
+    // The same group under another leader is not enough.
+    writeSlot(dir, { ...lease, pgidStart: "not-the-leader" });
+    expect(heldLease(dir, lease.id)).toBeNull();
   },
 );
 

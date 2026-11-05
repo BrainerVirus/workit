@@ -83,6 +83,7 @@ import {
   firstNotice,
   heldLease,
   leaseDir,
+  recordGroup,
   resolveResourceSettings,
   runScoped,
   scopePrefix,
@@ -893,7 +894,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           ...sinks,
           ...(wrapper ? { wrapper } : {}),
           // The check's group keeps the lease held if workit itself is killed.
-          ...(lease ? { onSpawn: (pid: number) => updateLease(lease, { pgid: pid }) } : {}),
+          ...(lease ? { onSpawn: (pid: number) => recordGroup(lease, pid) } : {}),
         }),
       heavy?.wrapper ?? null,
       options.full

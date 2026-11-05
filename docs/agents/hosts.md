@@ -342,6 +342,22 @@ Issued-registry guard limits (#292):
   target, so they are not gated (L).
 - **Cursor:** a write whose payload names no path is not matched (P).
 
+Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
+
+- **Linux and macOS:** the lease records the check's process group with its
+  leader's start time (`pgidStart`). Once workit is gone, the group holds the
+  lease past its age bound only while that same leader leads it; a pgid led by
+  another process is stale. A nested `workit check` reuses `WORKIT_LEASE` from
+  an ancestor, or, when the ancestor chain broke (workit killed, a daemon
+  re-parented to init), from the proven group it runs in. That group read is
+  Linux-only (`/proc`); macOS has no cheap ancestor walk and accepts the lease
+  as before.
+- **Windows (L):** there are no process groups and no process start time, so
+  `pgidStart` stays null, a lease outlives its workit only within its age
+  bound, and a nested check reuses the lease as before.
+- **Older leases** (no `pgidStart`) keep the earlier rule: their group holds
+  them only within the age bound.
+
 ## Design background
 
 `docs/workit-next/` holds the research, spec, slice plan and design for the
