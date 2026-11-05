@@ -791,6 +791,8 @@ test.skipIf(process.platform === "win32")(
     const running = cli(root, ["check", "test", "--json"], env);
     await until(() => typeof leaseFile(leases)?.pgid === "number");
     const pgid: number = leaseFile(leases).pgid;
+    // The group's leader start is recorded with it (#729), so a recycled pgid cannot hold the lease.
+    expect(leaseFile(leases).pgidStart).toEqual(expect.any(String));
     running.child.kill("SIGKILL");
     await running.done;
     try {

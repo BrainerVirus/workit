@@ -264,7 +264,13 @@ export type LeaseRecord = {
   bootTime?: number | null;
   /** The check's process group: it outlives a SIGKILLed workit. */
   pgid?: number | null;
-  /** Past this age a lease whose holder cannot be identified (no processStart) is stale. */
+  /**
+   * The group leader's start time, so a recycled pgid does not keep a lease
+   * alive. Null when it could not be read (Windows); absent on older leases,
+   * whose group is trusted only within the age bound.
+   */
+  pgidStart?: string | null;
+  /** Past this age a lease whose holder cannot be identified (no processStart, no group identity) is stale. */
   maxAgeMs?: number | null;
   check: string;
   cwd: string;
@@ -339,6 +345,13 @@ const pidAlive = (pid: number): boolean => {
 const groupAlive = (pgid: number): boolean =>
   process.platform === "win32" ? pidAlive(pgid) : pidAlive(-pgid);
 
+/** This process's group (Linux, from /proc); null where there is no cheap read. */
+const ownGroup = (): number | null => {
+  if (process.platform !== "linux") return null;
+  const pgrp = Number(statFields(process.pid)?.[2]);
+  return Number.isInteger(pgrp) && pgrp > 0 ? pgrp : null;
+};
+
 const SCOPE_UNIT = /^[\w.@-]+\.scope$/u;
 
 /** Does the user scope `unit` still hold processes? */
@@ -390,11 +403,29 @@ export type LeaseProbe = {
 };
 
 /**
+ * The lease's check group: `same` while it runs under the leader recorded with
+ * it, `recycled` when another process now leads that pgid, `unproven` when it
+ * has members but its leader is gone or was never recorded, `none` otherwise.
+ */
+function groupState(
+  lease: LeaseRecord,
+  probe: LeaseProbe,
+): "same" | "recycled" | "unproven" | "none" {
+  const pgid = lease.pgid;
+  if (typeof pgid !== "number" || pgid <= 0 || !(probe.group ?? groupAlive)(pgid)) return "none";
+  if (typeof lease.pgidStart !== "string") return "unproven";
+  const leader = (probe.start ?? processStart)(pgid);
+  return leader === lease.pgidStart ? "same" : leader ? "recycled" : "unproven";
+}
+
+/**
  * Why `lease` no longer holds anything, or null while it does. It holds while
  * its workit process runs, or, once that is gone (a SIGKILL), while the
- * check's process group or scope still has processes. A lease from before a
- * reboot, or one past its age bound whose holder cannot be identified, is
- * stale either way.
+ * check's process group (led by the recorded leader) or scope still has
+ * processes. A lease from before a reboot is stale either way; so is one past
+ * its age bound whose holder cannot be identified (no process start, or a
+ * group whose leader cannot be proven). A lease from an older workit records
+ * no leader, so its age bound applies as soon as its workit is unidentified.
  */
 export function staleReason(lease: LeaseRecord, probe: LeaseProbe = {}): string | null {
   const boot = probe.boot === undefined ? bootId() : probe.boot;
@@ -407,19 +438,27 @@ export function staleReason(lease: LeaseRecord, probe: LeaseProbe = {}): string 
   }
   const start = lease.processStart ? (probe.start ?? processStart)(lease.pid) : null;
   const age = (probe.now ?? Date.now()) - Date.parse(lease.startedAt);
-  if (!start && typeof lease.maxAgeMs === "number" && age > lease.maxAgeMs)
-    return `older than its ${Math.round(lease.maxAgeMs / 1000)} s bound`;
+  const bound =
+    typeof lease.maxAgeMs === "number" && age > lease.maxAgeMs
+      ? `older than its ${Math.round(lease.maxAgeMs / 1000)} s bound`
+      : null;
+  const legacy = lease.pgidStart === undefined;
+  if (!start && bound && (legacy || !lease.processStart)) return bound;
   const holder = !(probe.alive ?? pidAlive)(lease.pid)
     ? `holder pid ${lease.pid} is gone`
     : start && start !== lease.processStart
       ? `pid ${lease.pid} now belongs to another process`
       : null;
-  if (!holder) return null;
+  // A live pid whose start cannot be read now is not proven to be the holder.
+  if (!holder) return start ? null : bound;
   // workit is gone, but the check it started may still run.
-  if (typeof lease.pgid === "number" && lease.pgid > 0 && (probe.group ?? groupAlive)(lease.pgid))
-    return null;
-  if (lease.scope && (probe.scope ?? scopeBusy)(lease.scope)) return null;
-  return holder;
+  const group = groupState(lease, probe);
+  if (group === "same") return null;
+  if (group === "unproven") return legacy ? null : bound;
+  if (lease.scope && (probe.scope ?? scopeBusy)(lease.scope)) return start ? null : bound;
+  return group === "recycled"
+    ? `${holder}; process group ${lease.pgid} now belongs to another process`
+    : holder;
 }
 
 /**
@@ -881,6 +920,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     bootId: boot,
     bootTime: boot ? null : bootTime(),
     pgid: null,
+    pgidStart: null,
     maxAgeMs: options.maxAgeMs ?? null,
     check: options.check,
     cwd: options.cwd,
@@ -1029,7 +1069,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
  */
 export function updateLease(
   lease: HeldLease,
-  patch: Pick<Partial<LeaseRecord>, "scope" | "pgid" | "heartbeatAt">,
+  patch: Pick<Partial<LeaseRecord>, "scope" | "pgid" | "pgidStart" | "heartbeatAt">,
 ) {
   Object.assign(lease.record, patch);
   try {
@@ -1043,15 +1083,29 @@ export function updateLease(
 }
 
 /**
+ * Record the check's process group on a held lease, with its leader's start
+ * time read fresh (not cached), so a later reader can tell a recycled pgid.
+ */
+export const recordGroup = (lease: HeldLease, pgid: number) =>
+  updateLease(lease, { pgid, pgidStart: processStartOf(pgid) });
+
+/**
  * The lease an outer heavy check passed down as WORKIT_LEASE, when it is held
- * in `dir` by this process or one of its ancestors. A nested heavy check
+ * in `dir` by this process or one of its ancestors, or by the check group
+ * this process runs in (its leader proven): the ancestor chain breaks once the
+ * outer workit dies or a daemon re-parents to init. A nested heavy check
  * reuses it instead of queueing behind its own parent; a leaked or forged id
  * from an unrelated process is ignored.
  */
 export function heldLease(
   dir: string,
   id: string | undefined,
-  options: { probe?: LeaseProbe; ancestor?: (pid: number) => boolean } = {},
+  options: {
+    probe?: LeaseProbe;
+    ancestor?: (pid: number) => boolean;
+    /** This process's group; null where it cannot be read (Windows, macOS). */
+    group?: () => number | null;
+  } = {},
 ): LeaseRecord | null {
   if (!id || !/^[0-9a-f-]{36}$/u.test(id)) return null;
   let names: string[];
@@ -1066,11 +1120,20 @@ export function heldLease(
     if (
       lease?.id === id &&
       !staleReason(lease, options.probe) &&
-      (options.ancestor ?? isAncestor)(lease.pid)
+      ((options.ancestor ?? isAncestor)(lease.pid) || inLeaseGroup(lease, options))
     )
       return lease;
   }
   return null;
+}
+
+/** Does this process run in the lease's check group, under the leader recorded with it? */
+function inLeaseGroup(
+  lease: LeaseRecord,
+  options: { probe?: LeaseProbe; group?: () => number | null },
+): boolean {
+  const own = (options.group ?? ownGroup)();
+  return own !== null && own === lease.pgid && groupState(lease, options.probe ?? {}) === "same";
 }
 /** "test, pid 123, 1m 40s, /repo/wt" for a waiting or timeout message; a stuck holder says so. */
 export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
