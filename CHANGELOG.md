@@ -405,6 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit help` and per-verb help are coloured at a terminal (bold headings, accent commands and flags, dim descriptions); plain under NO_COLOR, TERM=dumb, CI, a pipe or `--json`.
 - `workit fanout brief <slice> --host <host>` renders the brief for the worker's host (model lines, attribution); with WORKIT_HOST unset, `cli` or misspelled, a warning names the valid hosts (#292).
 - `workit pr merge --allow-failing <check> --reason <why>` merges past a failing optional check (never a required one), recording a `merge.waived` row (#269).
+- `workit stack land --allow-failing <check> --reason <why>` lets a failing optional check through on each PR it lands (one waiver row per PR), and stack land re-reads a PR whose mergeability is still being computed, through the same gate as `workit pr merge`.
 
 ### Changed
 
