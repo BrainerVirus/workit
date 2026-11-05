@@ -1,4 +1,4 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -12,6 +12,19 @@ import { spawnHeavyTimeout } from "@/test/shared/timeouts";
 
 // Each test spawns git or the CLI; Windows runners take several times longer (#415).
 setDefaultTimeout(spawnHeavyTimeout());
+
+// The default-host path reads the global vcs config: give it an empty one, so
+// a developer's (or a leaked) config cannot pick the provider or host.
+const isolatedConfig = mkdtempSync(path.join(tmpdir(), "wk-tracker-config-"));
+const priorConfig = process.env.WORKIT_CONFIG;
+beforeAll(() => {
+  process.env.WORKIT_CONFIG = isolatedConfig;
+});
+afterAll(() => {
+  if (priorConfig === undefined) delete process.env.WORKIT_CONFIG;
+  else process.env.WORKIT_CONFIG = priorConfig;
+  rmSync(isolatedConfig, { recursive: true, force: true });
+});
 
 test("GitHub issues use gh CLI and preserve the issue triple", async () => {
   const seen: string[][] = [];

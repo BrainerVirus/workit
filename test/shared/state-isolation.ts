@@ -30,3 +30,12 @@ process.env.WORKIT_STATE_DIR = dir;
 // Never let a test reach the developer's real, logged-in ytrack (youtrack-ytrack.ts findYtrack).
 process.env.WORKIT_NO_YTRACK = "1";
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// Throwaway test repos never need git's auto-maintenance, which every commit
+// started as an extra process (53 of 1,285 spawns in ledger-gates; costly on
+// Windows). A test that sets GIT_CONFIG_COUNT itself replaces these.
+process.env.GIT_CONFIG_COUNT = "2";
+process.env.GIT_CONFIG_KEY_0 = "maintenance.auto";
+process.env.GIT_CONFIG_VALUE_0 = "false";
+process.env.GIT_CONFIG_KEY_1 = "gc.auto";
+process.env.GIT_CONFIG_VALUE_1 = "0";

@@ -56,33 +56,49 @@ const bunTest = (args: string[]): number =>
 // bun picks this shard's files, balanced by the per-file durations in
 // test/timings/<leg>.json, then rewrites that file with what this shard
 // measured; CI uploads it so the committed timings can be refreshed.
-function runCiShard(leg: string | undefined, spec: string | undefined): number {
+/** The `bun test` arguments for one CI shard; null for an unknown leg or a bad spec. */
+export function ciShardArgs(leg: string | undefined, spec: string | undefined): string[] | null {
   const config = LEGS[leg as keyof typeof LEGS];
-  if (!config || !/^\d+\/\d+$/.test(spec ?? "")) {
-    console.error(`usage: bun scripts/test.ts ci <${Object.keys(LEGS).join("|")}> <i>/<n>`);
-    return 2;
-  }
-  return bunTest([
+  if (!config || !/^\d+\/\d+$/.test(spec ?? "")) return null;
+  return [
     `--shard=${spec}`,
     `--timings=test/timings/${leg}.json`,
     "--update-timings",
-    ...(config.parallel ? ["--parallel"] : []),
+    // Serial legs isolate each file too (--parallel implies it): without it a
+    // file's process.env, cwd and globals leaked into every later file of the
+    // shard, which failed unrelated Windows tests by shard order.
+    ...(config.parallel ? ["--parallel"] : ["--isolate"]),
     `--timeout=${LOADED_TIMEOUT_MS}`,
     ...config.select,
-  ]);
+  ];
 }
+
+/** The `bun test` arguments for a local tier; every file runs isolated unless the caller picked a mode. */
+export function tierArgs(tier: "unit" | "packaging", rest: readonly string[]): string[] {
+  const selection =
+    tier === "packaging"
+      ? PACKAGING.map((pattern) => `./${pattern.replace(/\/\*\*$/, "")}`)
+      : PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`);
+  const chosen = rest.some((arg) => arg.startsWith("--parallel") || arg.endsWith("isolate"));
+  return [...selection, ...(chosen ? [] : ["--isolate"]), ...timeoutFlag(rest), ...rest];
+}
+
+export const CI_LEGS = Object.keys(LEGS);
 
 if (import.meta.main) {
   const [tier, ...rest] = process.argv.slice(2);
-  if (tier === "ci") process.exit(runCiShard(rest[0], rest[1]));
+  if (tier === "ci") {
+    const args = ciShardArgs(rest[0], rest[1]);
+    if (!args) {
+      console.error(`usage: bun scripts/test.ts ci <${CI_LEGS.join("|")}> <i>/<n>`);
+      process.exit(2);
+    }
+    process.exit(bunTest(args));
+  }
   if (tier !== "unit" && tier !== "packaging") {
     console.error("usage: bun scripts/test.ts <unit|packaging> [bun test args]");
     console.error("       bun scripts/test.ts ci <ubuntu|macos|windows> <i>/<n>");
     process.exit(2);
   }
-  const selection =
-    tier === "packaging"
-      ? PACKAGING.map((pattern) => `./${pattern.replace(/\/\*\*$/, "")}`)
-      : PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`);
-  process.exit(bunTest([...selection, ...timeoutFlag(rest), ...rest]));
+  process.exit(bunTest(tierArgs(tier, rest)));
 }
