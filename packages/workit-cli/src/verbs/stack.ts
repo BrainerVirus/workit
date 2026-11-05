@@ -380,8 +380,9 @@ async function land(argv: string[], io: Io): Promise<number> {
   );
   if (!result.ok) return stackFailed(io, result);
   const kind = connected.data.forge.kind;
-  return emit(io, ok(result.data), (data: LandOutcome) =>
-    [
+  return emit(io, ok(result.data), (data: LandOutcome) => {
+    const refused = data.preflight.flatMap((entry) => (entry.refused ? [entry.refused] : []));
+    return [
       ...(data.dryRun
         ? [
             data.wouldLand.length
@@ -397,13 +398,29 @@ async function land(argv: string[], io: Io): Promise<number> {
         ? [`retargeted: ${data.retargeted.map((pr) => label(kind, pr)).join(", ")}`]
         : []),
       ...(data.restacked.length ? [`restacked: ${data.restacked.join(", ")}`] : []),
-      data.stoppedAt
-        ? `stopped at ${label(kind, data.stoppedAt.pr)} (${data.stoppedAt.branch}): ${data.stoppedAt.reason}${data.stoppedAt.ready ? " (verified, ready)" : ""} - ${data.stoppedAt.detail}\n  unblock: ${data.stoppedAt.unblock}`
-        : data.complete
-          ? "stack complete"
-          : "",
-    ].filter(Boolean),
-  );
+      // The pre-flight's refusals, every one, the same in a dry run.
+      ...(refused.length
+        ? [
+            `pre-flight refused ${refused.length} of ${data.preflight.length} PRs; nothing merged:`,
+            ...refused.map(
+              (stop) =>
+                `  ${label(kind, stop.pr)} (${stop.branch}): ${stop.reason}${stop.ready ? " (verified, ready)" : ""} - ${stop.detail}\n    unblock: ${stop.unblock}`,
+            ),
+          ]
+        : []),
+      // A real run lists them as WAIVED on each landed PR.
+      ...(data.dryRun ? data.preflight : [])
+        .filter((entry) => !entry.refused && entry.waives.length)
+        .map((entry) => `would waive on ${label(kind, entry.pr)}: ${entry.waives.join(", ")}`),
+      refused.length
+        ? ""
+        : data.stoppedAt
+          ? `stopped at ${label(kind, data.stoppedAt.pr)} (${data.stoppedAt.branch}): ${data.stoppedAt.reason}${data.stoppedAt.ready ? " (verified, ready)" : ""} - ${data.stoppedAt.detail}\n  unblock: ${data.stoppedAt.unblock}`
+          : data.complete
+            ? "stack complete"
+            : "",
+    ].filter(Boolean);
+  });
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {

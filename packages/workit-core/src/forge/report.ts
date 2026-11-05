@@ -96,7 +96,12 @@ export type PrStatusDoc = {
   state: PrState;
   draft: boolean;
   base: string;
-  head: { branch: string; sha: string; localSha: string | null; pushed: boolean | null };
+  head: {
+    branch: string;
+    sha: string;
+    localSha: string | null;
+    pushed: boolean | null;
+  };
   mergeable: "yes" | "no" | "unknown";
   mergeState: string | null;
   conflicts: boolean;
@@ -214,7 +219,10 @@ export function blockersOf(input: NextInput): Array<{ next: NextAction; reason: 
     if (input.mergeable === "unknown")
       out.push({ next: "NOT_MERGEABLE", reason: "mergeability_unknown" });
     else if (!allowed)
-      out.push({ next: "NOT_MERGEABLE", reason: `merge_state_${ms || "unknown"}` });
+      out.push({
+        next: "NOT_MERGEABLE",
+        reason: `merge_state_${ms || "unknown"}`,
+      });
   }
   return out;
 }
@@ -273,7 +281,11 @@ export function computeBehindBase(
 ): ForgeResult<BehindBase> {
   const empty = { behind: null, ahead: null, upToDate: null };
   if (!baseSha)
-    return success({ ...empty, baseSha: null, error: "the forge reported no base tip" });
+    return success({
+      ...empty,
+      baseSha: null,
+      error: "the forge reported no base tip",
+    });
   for (const [sha, remote] of [
     [baseSha, remotes.base],
     [headSha_, remotes.head],
@@ -343,7 +355,13 @@ export function evidenceFor(
   const ciChecks: CiCheck[] = ci.flatMap((check) =>
     check.state === "skipped" ? [] : [{ name: check.name, state: check.state }],
   );
-  return checkEvidence({ lane: lane.lane, head: status.head.sha, configured, local, ci: ciChecks });
+  return checkEvidence({
+    lane: lane.lane,
+    head: status.head.sha,
+    configured,
+    local,
+    ci: ciChecks,
+  });
 }
 
 export function buildStatusDoc(
@@ -442,7 +460,10 @@ export function buildStatusDoc(
       missingRequired: missing,
     },
     evidence: evidenceFor(cwd, status),
-    reviews: { decision: status.reviewDecision, unresolvedThreads: status.threads },
+    reviews: {
+      decision: status.reviewDecision,
+      unresolvedThreads: status.threads,
+    },
     blockers: status.state === "open" ? blockers.map((blocker) => blocker.reason) : [],
     identity: options.identity ?? null,
     truncated: status.truncated,
@@ -509,7 +530,10 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
 export function prStatusReport(
   cwd: string,
   resolved: ResolvedForge,
-  options: ReportOptions & { identity?: PrStatusDoc["identity"]; actor?: LedgerActor } = {},
+  options: ReportOptions & {
+    identity?: PrStatusDoc["identity"];
+    actor?: LedgerActor;
+  } = {},
 ): ForgeResult<{ doc: PrStatusDoc; raw: ForgePrStatus }> {
   const number = selectPr(cwd, resolved, options);
   if (!number.ok) return number;
@@ -530,7 +554,11 @@ export function prStatusReport(
 
 export type WaitState = "ready" | "waiting" | "failed" | "blocked";
 
-export type WaitVerdict = { state: WaitState; reason: string; unblock?: string };
+export type WaitVerdict = {
+  state: WaitState;
+  reason: string;
+  unblock?: string;
+};
 
 /**
  * Checks never appeared: after this grace a PR with no missing required check
@@ -670,7 +698,11 @@ function planRerunChecks(
     for (const check of rerunnable)
       if (!seen.has(check.runId!)) {
         seen.add(check.runId!);
-        targets.push({ kind: "failed_in_run", runId: check.runId!, scope: check.scope });
+        targets.push({
+          kind: "failed_in_run",
+          runId: check.runId!,
+          scope: check.scope,
+        });
       }
   } else {
     for (const check of rerunnable)
@@ -697,7 +729,12 @@ export type RerunOutcome = {
   recorded: boolean;
 };
 
-type RerunOptions = { failed: boolean; names: readonly string[]; reason: string; force: boolean };
+type RerunOptions = {
+  failed: boolean;
+  names: readonly string[];
+  reason: string;
+  force: boolean;
+};
 
 /** What a rerun acts on: a PR head, or the head of a branch (a red base). */
 type RerunSubject = { pr: number | null; branch: string | null; head: string };
@@ -804,7 +841,11 @@ function rerunLocked(
     head: subject.head,
     reason: options.reason,
     forced: options.force,
-    rerun: accepted.map((check) => ({ name: check.name, runId: check.runId, jobId: check.jobId })),
+    rerun: accepted.map((check) => ({
+      name: check.name,
+      runId: check.runId,
+      jobId: check.jobId,
+    })),
     skipped: plan.skipped,
     recorded,
   });
@@ -854,6 +895,8 @@ export type WaivedCheck = { check: string; recorded: string } | { check: string;
 export function waiveChecks(
   status: ForgePrStatus,
   waiver: CheckWaiver,
+  /** `stack land` (#739): a name this head does not run is skipped, not refused. */
+  options: { perPr?: boolean } = {},
 ): ForgeResult<{ status: ForgePrStatus; waived: ForgeCheck[] }> {
   const required = (check: ForgeCheck): boolean | null =>
     check.required === true || status.requiredContexts?.includes(check.context) === true
@@ -864,6 +907,7 @@ export function waiveChecks(
   const named = new Set<ForgeCheck>();
   for (const name of waiver.checks) {
     const matches = status.checks.filter((check) => check.name === name || check.context === name);
+    if (!matches.length && options.perPr) continue;
     if (!matches.length)
       return failure(
         "invalid_input",
@@ -885,7 +929,11 @@ export function waiveChecks(
       ...status,
       checks: status.checks.map((check) =>
         waived.includes(check)
-          ? { ...check, state: "skipped", conclusion: `waived_${check.conclusion ?? "failure"}` }
+          ? {
+              ...check,
+              state: "skipped",
+              conclusion: `waived_${check.conclusion ?? "failure"}`,
+            }
           : check,
       ),
     },
@@ -914,13 +962,24 @@ export const mergeGateDeps = {
  * records nothing. After the merge call the forge is read as is. `waived`
  * lists the checks a waiver passed on the merged PR, each with its row id,
  * or the error when the row could not be written after the merge.
+ *
+ * `perPr` (`stack land`, #739): the waiver applies to each PR whose head runs
+ * the named check, and a PR without it is not refused for it. `matched` then
+ * collects the names some read head ran, so the caller can refuse a name no
+ * PR runs (`unknown_check`); `waives(n)` names the failing checks the waiver
+ * passes at PR n's latest read.
  */
 export function mergeGateForge(
   forge: Forge,
   cwd: string,
-  options: { waiver: CheckWaiver | null; actor: LedgerActor },
-): Forge & { waived: WaivedCheck[] } {
+  options: { waiver: CheckWaiver | null; actor: LedgerActor; perPr?: boolean },
+): Forge & {
+  waived: WaivedCheck[];
+  matched: Set<string>;
+  waives: (number: number) => string[];
+} {
   const waivedRows: WaivedCheck[] = [];
+  const matched = new Set<string>();
   let merging = false;
   // The waiver decided at the latest read of each PR; recorded on its merge.
   const pending = new Map<number, { status: ForgePrStatus; checks: ForgeCheck[] }>();
@@ -956,7 +1015,12 @@ export function mergeGateForge(
       if (merging) return forge.prStatus(number);
       const status = read(number);
       if (!status.ok || !options.waiver || status.data.state !== "open") return status;
-      const waived = waiveChecks(status.data, options.waiver);
+      for (const name of options.waiver.checks)
+        if (status.data.checks.some((check) => check.name === name || check.context === name))
+          matched.add(name);
+      const waived = waiveChecks(status.data, options.waiver, {
+        perPr: options.perPr,
+      });
       if (!waived.ok) return waived;
       pending.set(number, { status: status.data, checks: waived.data.waived });
       return success(waived.data.status);
@@ -971,5 +1035,7 @@ export function mergeGateForge(
       return merged;
     },
     waived: waivedRows,
+    matched,
+    waives: (number) => pending.get(number)?.checks.map((check) => check.name) ?? [],
   };
 }

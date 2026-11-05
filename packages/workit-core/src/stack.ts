@@ -23,13 +23,15 @@
 // identical (patch-id and exact diff hash), S13 carries the verdict through
 // it. CI is never carried: it runs again on the new head.
 //
-// land: walks from the root and merges only the contiguous run of PRs that
-// are open, based on trunk, READY (S10) and verdict-accepted (S13), one at a
-// time through the S11 `pr merge` gates (merge grant, head-SHA guard). After
-// each merge the rest is restacked and retargeted and the next PR's CI is
-// awaited before it is judged. The first PR that does not qualify stops the
-// run with the reason; it has already been moved onto trunk. Descendants are
-// never armed for auto-merge.
+// land: first a pre-flight (#739) judges every PR the run would land (open,
+// based on trunk or its parent, READY (S10), verdict-accepted (S13), the
+// merge grant, its author, the `--allow-failing` waiver on its head); any
+// refusal stops the land with nothing merged and names every refused PR. Then
+// it merges from the root, one at a time through the S11 `pr merge` gates
+// (merge grant, head-SHA guard). After each merge the rest is restacked and
+// retargeted and the next PR's CI is awaited before it is judged again; what
+// only shows then (a head that moved, a forge race) stops the run there, and
+// the outcome lists what landed. Descendants are never armed for auto-merge.
 //
 // Optional adapters (`gh stack`, git-spice) can later implement `StackAdapter`
 // and replace the built-in restack/retarget; nothing else depends on how the
@@ -1019,7 +1021,10 @@ export function recordStack(
     if (!planned.ok) return planned;
     const written = writeStack(cwd, planned.data.stack);
     if (!written.ok) return written;
-    return { ok: true, data: { stack: planned.data.stack, created: planned.data.created } };
+    return {
+      ok: true,
+      data: { stack: planned.data.stack, created: planned.data.created },
+    };
   });
 }
 
@@ -1116,6 +1121,7 @@ export type StopReason =
   | "grant_required"
   | "max_reached"
   | "merge_refused"
+  | "waiver_refused"
   | "head_unverified";
 
 export type BranchStatus = {
@@ -1350,7 +1356,9 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
   if (!ledger.ok) return stackFail(ledger.code, ledger.error, ledger.unblock);
   const remote = remoteFor(ctx.cwd, ctx.resolved, stack.trunk);
   const trunkSha = trunkTip(ctx.cwd, remote, stack.trunk);
-  const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
+  const grant = requireGrant(ctx.cwd, "merge", {
+    target: baseTarget(ctx.resolved),
+  });
   const branches: BranchStatus[] = [];
   let verdict: StackVerdict | null = null;
   let reason: string | null = null;
@@ -1924,7 +1932,9 @@ export function syncStack(
       if (doc && doc.state === "open" && doc.base !== parent.name) {
         step.retarget = { from: doc.base, to: parent.name };
         if (!options.dryRun) {
-          const grant = requireGrant(cwd, "pr", { target: baseTarget(ctx.resolved) });
+          const grant = requireGrant(cwd, "pr", {
+            target: baseTarget(ctx.resolved),
+          });
           if (!grant.allowed)
             return stackFail("blocked", grant.error, grant.unblock, {
               reason: grant.reason,
@@ -2097,6 +2107,30 @@ export type LandOptions = {
   intervalMs: number;
 };
 
+export type LandStop = {
+  pr: number | null;
+  branch: string;
+  reason: StopReason;
+  detail: string;
+  unblock: string;
+  /** Everything but the merge grant holds: "verified, ready". */
+  ready: boolean;
+  /** The forge, not the PR, must move first (mergeability still UNKNOWN after the re-reads). */
+  babysit?: "wait-forge";
+};
+
+/**
+ * One PR in the pre-flight: `refused` is why it would not land (null: it
+ * passes); `waives` names the failing optional checks `--allow-failing`
+ * passes on its head.
+ */
+export type PreflightEntry = {
+  pr: number | null;
+  branch: string;
+  waives: string[];
+  refused: LandStop | null;
+};
+
 export type LandOutcome = {
   name: string;
   dryRun: boolean;
@@ -2113,17 +2147,13 @@ export type LandOutcome = {
   }>;
   /** Dry run: the PRs that qualify now, in order (later ones assume a clean restack). */
   wouldLand: Array<{ pr: number; branch: string }>;
-  stoppedAt: {
-    pr: number | null;
-    branch: string;
-    reason: StopReason;
-    detail: string;
-    unblock: string;
-    /** Everything but the merge grant holds: "verified, ready". */
-    ready: boolean;
-    /** The forge, not the PR, must move first (mergeability still UNKNOWN after the re-reads). */
-    babysit?: "wait-forge";
-  } | null;
+  /**
+   * Every PR this run would land, judged before anything merges (#739), in
+   * order; any refusal stops the land with nothing merged. A dry run prints
+   * the same.
+   */
+  preflight: PreflightEntry[];
+  stoppedAt: LandStop | null;
   retargeted: number[];
   restacked: string[];
   complete: boolean;
@@ -2162,6 +2192,7 @@ export async function landStack(
     dryRun: options.dryRun,
     landed: [],
     wouldLand: [],
+    preflight: [],
     stoppedAt: null,
     retargeted: [],
     restacked: [],
@@ -2175,15 +2206,21 @@ export async function landStack(
         outcome.restacked.push(step.branch);
     }
   };
+  // A stop after a merge names what already landed.
   const failWith = (error: StackError): StackError => ({
     ...error,
+    error: outcome.landed.length
+      ? `${error.error}; landed before the stop: ${outcome.landed.map((item) => `${noun(ctx.resolved, item.pr)} (${item.branch})`).join(", ")}`
+      : error.error,
     data: { ...error.data, land: outcome },
   });
   const mismatch = repoMismatch(ctx, stack);
   if (mismatch) return failWith(mismatch);
   const bypass = options.unverified ?? null;
   if (bypass) {
-    const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
+    const grant = requireGrant(ctx.cwd, "merge", {
+      target: baseTarget(ctx.resolved),
+    });
     if (!grant.allowed)
       return failWith(
         stackFail("blocked", grant.error, grant.unblock, {
@@ -2217,38 +2254,54 @@ export async function landStack(
     const ledger = readLedger(ctx.cwd, { integrity: true });
     return ledger.ok ? ledger.value.rows : [];
   };
-  const simulated = new Set<string>();
   let justRestacked = new Set(outcome.restacked);
+
+  // Judge every PR first: a refusal known now lands nothing (#739).
+  const pre = preflightLand(ctx, stack, options, justRestacked, ledgerRows());
+  if (!pre.ok) return failWith(pre);
+  outcome.preflight = pre.data.entries;
+  const refused = outcome.preflight.flatMap((entry) => (entry.refused ? [entry.refused] : []));
+  if (refused.length) {
+    outcome.stoppedAt = refused[0];
+    if (refused.some((stop) => stop.reason === "waiver_refused"))
+      return failWith(
+        stackFail(
+          "blocked",
+          `waiver_refused: nothing landed; the pre-flight refused ${refused.map((stop) => `${stop.pr ? noun(ctx.resolved, stop.pr) : stop.branch} (${stop.branch}) ${stop.detail}`).join("; ")}`,
+          refused.find((stop) => stop.reason === "waiver_refused")?.unblock,
+          { reason: "waiver_refused" },
+        ),
+      );
+    return { ok: true, data: outcome };
+  }
+  if (options.dryRun) {
+    outcome.wouldLand = outcome.preflight.map((entry) => ({
+      pr: entry.pr as number,
+      branch: entry.branch,
+    }));
+    outcome.stoppedAt = pre.data.cut;
+    outcome.complete = pre.data.cut === null;
+    return { ok: true, data: outcome };
+  }
+
+  // Merge bottom-up, re-judging each PR at its turn: what only the merge can
+  // show (a head that moved, a forge race) stops here, after the PRs below it.
   for (;;) {
     touchStackLock();
-    const entry = stack.branches.find(
-      (candidate) => !candidate.merged && !simulated.has(candidate.branch),
-    );
+    const entry = stack.branches.find((candidate) => !candidate.merged);
     if (!entry) {
-      outcome.complete =
-        !options.dryRun ||
-        stack.branches.every((candidate) => candidate.merged || simulated.has(candidate.branch));
+      outcome.complete = true;
       break;
     }
-    if (options.max !== null && outcome.landed.length + outcome.wouldLand.length >= options.max) {
-      outcome.stoppedAt = {
-        pr: entry.pr,
-        branch: entry.branch,
-        reason: "max_reached",
-        detail: `--max ${options.max} reached`,
-        unblock: "workit stack land",
-        ready: false,
-      };
+    if (options.max !== null && outcome.landed.length >= options.max) {
+      outcome.stoppedAt = maxReached(entry, options.max);
       break;
     }
     // `pr merge`'s gate, one per PR: UNKNOWN mergeability is re-read with
     // backoff, and an `--allow-failing` waiver passes the PR's failing
     // optional checks, recorded only once the forge accepts its merge (a PR
     // that stops records none). Sync keeps the raw forge: it lands nothing.
-    const gate = mergeGateForge(ctx.resolved.forge, ctx.cwd, {
-      waiver: options.allowFailing ?? null,
-      actor: ctx.actor,
-    });
+    const gate = landGate(ctx, options);
     const gated: Ctx = { ...ctx, resolved: { ...ctx.resolved, forge: gate } };
     let doc: PrStatusDoc | null = null;
     if (entry.pr) {
@@ -2259,47 +2312,26 @@ export async function landStack(
           : statusDoc(gated, entry.pr);
       if (!read.ok) return failWith(fromForge(read));
       doc = read.data;
-      if (options.dryRun && doc.state === "merged") {
-        // Merged elsewhere; the real run would restack past it.
-        simulated.add(entry.branch);
-        continue;
-      }
     }
-    const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
+    const grant = requireGrant(ctx.cwd, "merge", {
+      target: baseTarget(ctx.resolved),
+    });
     const verdict = verdictOf(ctx.cwd, entry.branch, ledgerRows(), doc);
-    // A dry run predicts the retarget the real run would do first.
-    const effective =
-      options.dryRun && simulated.size > 0 && doc ? { ...doc, base: stack.trunk } : doc;
     const q = qualify(
       ctx,
       stack,
       entry,
-      effective,
+      doc,
       verdict,
       grant,
       doc ? prBinding(ctx, entry, doc) : null,
       bypass !== null,
     );
     if (!q.ok) {
-      outcome.stoppedAt = {
-        pr: entry.pr,
-        branch: entry.branch,
-        reason: q.reason,
-        detail: q.detail,
-        unblock: q.unblock,
-        ready: q.ready,
-        ...(q.reason === "not_ready" && doc?.babysit === "wait-forge"
-          ? { babysit: "wait-forge" as const }
-          : {}),
-      };
+      outcome.stoppedAt = landStop(entry, q, doc);
       break;
     }
     const pr = entry.pr as number;
-    if (options.dryRun) {
-      outcome.wouldLand.push({ pr, branch: entry.branch });
-      simulated.add(entry.branch);
-      continue;
-    }
     const merged = await mergePullRequest(
       ctx.cwd,
       gated.resolved,
@@ -2316,17 +2348,15 @@ export async function landStack(
       ctx.sleep,
     );
     if (!merged.ok) {
-      if (merged.code === "blocked" && "refusal" in merged && merged.refusal) {
-        outcome.stoppedAt = {
-          pr,
-          branch: entry.branch,
-          reason: "merge_refused",
-          detail: merged.error,
-          unblock: merged.unblock ?? `workit pr status --pr ${pr}`,
-          ready: false,
-        };
-        break;
-      }
+      outcome.stoppedAt = {
+        pr,
+        branch: entry.branch,
+        reason: "merge_refused",
+        detail: merged.error,
+        unblock: merged.unblock ?? `workit pr status --pr ${pr}`,
+        ready: false,
+      };
+      if (merged.code === "blocked" && "refusal" in merged && merged.refusal) break;
       return failWith(stackFail(merged.code, merged.error, merged.unblock));
     }
     outcome.landed.push({
@@ -2360,4 +2390,200 @@ export async function landStack(
     for (const step of synced.data.steps) if (step.restack?.head) justRestacked.add(step.branch);
   }
   return { ok: true, data: outcome };
+}
+
+/**
+ * `pr merge`'s gate for one land read. The `--allow-failing` waiver applies
+ * per PR: a PR whose head does not run a named check is not refused for it.
+ */
+const landGate = (ctx: Ctx, options: LandOptions) =>
+  mergeGateForge(ctx.resolved.forge, ctx.cwd, {
+    waiver: options.allowFailing ?? null,
+    actor: ctx.actor,
+    perPr: true,
+  });
+
+const maxReached = (entry: StackEntry, max: number): LandStop => ({
+  pr: entry.pr,
+  branch: entry.branch,
+  reason: "max_reached",
+  detail: `--max ${max} reached`,
+  unblock: "workit stack land",
+  ready: false,
+});
+
+const landStop = (
+  entry: StackEntry,
+  q: Extract<Qualification, { ok: false }>,
+  doc: PrStatusDoc | null,
+): LandStop => ({
+  pr: entry.pr,
+  branch: entry.branch,
+  reason: q.reason,
+  detail: q.detail,
+  unblock: q.unblock,
+  ready: q.ready,
+  ...(q.reason === "not_ready" && doc?.babysit === "wait-forge"
+    ? { babysit: "wait-forge" as const }
+    : {}),
+});
+
+/** Blockers the land clears itself on a PR it restacks before judging it again. */
+const SETTLED_BY_RESTACK: ReadonlySet<string> = new Set(["checks_pending", "behind_base_required"]);
+
+/**
+ * The PR as it will stand at its turn. With a PR landing below it, its base
+ * is its parent until the land retargets it to the trunk; restacked (or about
+ * to be), its CI runs again and the land awaits it.
+ */
+function atItsTurn(
+  doc: PrStatusDoc,
+  stack: StackFile,
+  entry: StackEntry,
+  below: boolean,
+  restacked: boolean,
+): PrStatusDoc {
+  let view = doc;
+  if (below && (doc.base === entry.parent || doc.base === stack.trunk))
+    view = { ...view, base: stack.trunk };
+  if (
+    restacked &&
+    doc.next !== "READY" &&
+    doc.blockers.length > 0 &&
+    doc.blockers.every((blocker) => SETTLED_BY_RESTACK.has(blocker))
+  )
+    view = { ...view, next: "READY", blockers: [] };
+  return view;
+}
+
+/**
+ * `pr merge`'s others_pr gate, read before anything merges: the refusal for
+ * a PR whose author is not the forge login (or cannot be shown to be), else
+ * null. The login is read once.
+ */
+function othersPrGate(
+  resolved: ResolvedForge,
+): (pr: number) => { detail: string; unblock: string } | null {
+  let login: string | null | undefined;
+  return (pr) => {
+    const label = noun(resolved, pr);
+    const unknown = (why: string) => ({
+      detail: `identity_unknown: ${why}, so ${label} cannot be shown to be yours`,
+      unblock:
+        "fix: gh auth status / gh auth login (or glab auth login), then workit stack land again",
+    });
+    if (login === undefined) {
+      const account = resolved.expectedAccount?.trim() || null;
+      const identity = resolved.forge.identity(account);
+      login = (identity.ok ? identity.data.login : null) ?? account;
+    }
+    if (!login) return unknown("the forge login could not be read");
+    const meta = resolved.forge.prMeta(pr);
+    if (!meta.ok) return unknown(`the PR author could not be read (${meta.error})`);
+    if (!meta.data.author) return unknown("the forge did not name the PR author");
+    if (meta.data.author.toLowerCase() === login.toLowerCase()) return null;
+    return {
+      detail: `others_pr: ${label} is by ${meta.data.author}, not ${login} (the forge login); workit never merges another author's PR on its own`,
+      unblock: `only if the user asks you to land it: workit stack land --others-pr --reason "<why>"`,
+    };
+  };
+}
+
+/**
+ * The pre-flight (#739): every PR this run would land (each open one, or the
+ * first `--max`) is judged before anything merges, by the checks the merge
+ * loop runs: `qualify` (PR, base, READY after the mergeability re-read,
+ * verdict, grant), `pr merge`'s others_pr gate and the `--allow-failing`
+ * waiver per PR (a required check named is `waiver_refused`). A PR above the
+ * first is judged as it will stand at its turn (`atItsTurn`). A name no PR
+ * runs is `unknown_check`. `cut` is the `--max` stop.
+ */
+function preflightLand(
+  ctx: Ctx,
+  stack: StackFile,
+  options: LandOptions,
+  justRestacked: ReadonlySet<string>,
+  rows: readonly ReadRow[],
+): StackResult<{ entries: PreflightEntry[]; cut: LandStop | null }> {
+  const gate = landGate(ctx, options);
+  const gated: Ctx = { ...ctx, resolved: { ...ctx.resolved, forge: gate } };
+  const grant = requireGrant(ctx.cwd, "merge", {
+    target: baseTarget(ctx.resolved),
+  });
+  const others = options.othersPr ? null : othersPrGate(ctx.resolved);
+  const entries: PreflightEntry[] = [];
+  // A PR below this one lands first (or, in a dry run, merged elsewhere).
+  let below = false;
+  for (const entry of stack.branches) {
+    if (entry.merged) continue;
+    touchStackLock();
+    if (options.max !== null && entries.length >= options.max)
+      return {
+        ok: true,
+        data: { entries, cut: maxReached(entry, options.max) },
+      };
+    const judged = (refused: LandStop | null, waives: string[] = []) => {
+      entries.push({ pr: entry.pr, branch: entry.branch, waives, refused });
+      below = true;
+    };
+    let doc: PrStatusDoc | null = null;
+    if (entry.pr) {
+      const read = statusDoc(gated, entry.pr);
+      if (!read.ok && read.code === "blocked" && read.error.startsWith("waiver_refused:")) {
+        judged({
+          pr: entry.pr,
+          branch: entry.branch,
+          reason: "waiver_refused",
+          detail: read.error,
+          unblock: read.unblock ?? `workit pr status --pr ${entry.pr}`,
+          ready: false,
+        });
+        continue;
+      }
+      if (!read.ok) return fromForge(read);
+      doc = read.data;
+      if (options.dryRun && doc.state === "merged") {
+        // Merged elsewhere; the real run would restack past it.
+        below = true;
+        continue;
+      }
+    }
+    const q = qualify(
+      ctx,
+      stack,
+      entry,
+      doc && atItsTurn(doc, stack, entry, below, below || justRestacked.has(entry.branch)),
+      verdictOf(ctx.cwd, entry.branch, rows, doc),
+      grant,
+      doc ? prBinding(ctx, entry, doc) : null,
+      Boolean(options.unverified),
+    );
+    if (!q.ok) {
+      judged(landStop(entry, q, doc));
+      continue;
+    }
+    const pr = entry.pr as number;
+    const foreign = others?.(pr) ?? null;
+    judged(
+      foreign
+        ? {
+            pr,
+            branch: entry.branch,
+            reason: "merge_refused",
+            ...foreign,
+            ready: false,
+          }
+        : null,
+      gate.waives(pr),
+    );
+  }
+  const unknown = options.allowFailing?.checks.filter((name) => !gate.matched.has(name)) ?? [];
+  if (unknown.length)
+    return stackFail(
+      "invalid_input",
+      `unknown_check: --allow-failing ${unknown.map((name) => JSON.stringify(name)).join(", ")} matches no check on any PR this land would merge (${entries.map((entry) => (entry.pr ? noun(ctx.resolved, entry.pr) : entry.branch)).join(", ") || "none"})`,
+      "workit pr status --pr <n>  # copy the check name exactly",
+      { reason: "unknown_check" },
+    );
+  return { ok: true, data: { entries, cut: null } };
 }
