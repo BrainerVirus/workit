@@ -1021,10 +1021,7 @@ export function recordStack(
     if (!planned.ok) return planned;
     const written = writeStack(cwd, planned.data.stack);
     if (!written.ok) return written;
-    return {
-      ok: true,
-      data: { stack: planned.data.stack, created: planned.data.created },
-    };
+    return { ok: true, data: { stack: planned.data.stack, created: planned.data.created } };
   });
 }
 
@@ -1356,9 +1353,7 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
   if (!ledger.ok) return stackFail(ledger.code, ledger.error, ledger.unblock);
   const remote = remoteFor(ctx.cwd, ctx.resolved, stack.trunk);
   const trunkSha = trunkTip(ctx.cwd, remote, stack.trunk);
-  const grant = requireGrant(ctx.cwd, "merge", {
-    target: baseTarget(ctx.resolved),
-  });
+  const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
   const branches: BranchStatus[] = [];
   let verdict: StackVerdict | null = null;
   let reason: string | null = null;
@@ -1932,9 +1927,7 @@ export function syncStack(
       if (doc && doc.state === "open" && doc.base !== parent.name) {
         step.retarget = { from: doc.base, to: parent.name };
         if (!options.dryRun) {
-          const grant = requireGrant(cwd, "pr", {
-            target: baseTarget(ctx.resolved),
-          });
+          const grant = requireGrant(cwd, "pr", { target: baseTarget(ctx.resolved) });
           if (!grant.allowed)
             return stackFail("blocked", grant.error, grant.unblock, {
               reason: grant.reason,
@@ -2218,9 +2211,7 @@ export async function landStack(
   if (mismatch) return failWith(mismatch);
   const bypass = options.unverified ?? null;
   if (bypass) {
-    const grant = requireGrant(ctx.cwd, "merge", {
-      target: baseTarget(ctx.resolved),
-    });
+    const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
     if (!grant.allowed)
       return failWith(
         stackFail("blocked", grant.error, grant.unblock, {
@@ -2313,9 +2304,7 @@ export async function landStack(
       if (!read.ok) return failWith(fromForge(read));
       doc = read.data;
     }
-    const grant = requireGrant(ctx.cwd, "merge", {
-      target: baseTarget(ctx.resolved),
-    });
+    const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
     const verdict = verdictOf(ctx.cwd, entry.branch, ledgerRows(), doc);
     const q = qualify(
       ctx,
@@ -2507,9 +2496,7 @@ function preflightLand(
 ): StackResult<{ entries: PreflightEntry[]; cut: LandStop | null }> {
   const gate = landGate(ctx, options);
   const gated: Ctx = { ...ctx, resolved: { ...ctx.resolved, forge: gate } };
-  const grant = requireGrant(ctx.cwd, "merge", {
-    target: baseTarget(ctx.resolved),
-  });
+  const grant = requireGrant(ctx.cwd, "merge", { target: baseTarget(ctx.resolved) });
   const others = options.othersPr ? null : othersPrGate(ctx.resolved);
   const entries: PreflightEntry[] = [];
   // A PR below this one lands first (or, in a dry run, merged elsewhere).

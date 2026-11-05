@@ -333,10 +333,7 @@ const othersPrs = (forge: StackForge, only?: readonly number[]) => {
     try {
       const doc = JSON.parse(result.stdout) as { user?: { login?: string } };
       if (doc.user?.login !== "octo") return result;
-      return {
-        ...result,
-        stdout: JSON.stringify({ ...doc, user: { login: "someone-else" } }),
-      };
+      return { ...result, stdout: JSON.stringify({ ...doc, user: { login: "someone-else" } }) };
     } catch {
       return result;
     }
@@ -351,10 +348,7 @@ test("stack land (W2.19): another author's PR stops at others_pr; --others-pr --
   othersPrs(forge);
   const refused = await run(["stack", "land", "--max", "1", "--json"], forge.cwd);
   expect(refused.json().data.landed).toEqual([]);
-  expect(refused.json().data.stoppedAt).toMatchObject({
-    pr: 11,
-    reason: "merge_refused",
-  });
+  expect(refused.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "merge_refused" });
   expect(refused.json().data.stoppedAt.detail).toContain("others_pr");
   expect(forge.writes).toEqual([]);
 
@@ -773,10 +767,7 @@ test("stack restack (#506): after the root was squash-merged, the child is rebas
     restack: { from: oldA },
     retarget: { from: "feature/a", to: "main" },
   });
-  expect(data.pruned).toEqual({
-    deleted: [{ branch: "feature/a", sha: oldA }],
-    kept: [],
-  });
+  expect(data.pruned).toEqual({ deleted: [{ branch: "feature/a", sha: oldA }], kept: [] });
   expect(localBranch(forge, "feature/a")).toBeNull();
   expect(rows(forge.cwd, "stack.branch.deleted")).toMatchObject([
     { branch: "feature/a", head: oldA, pr: 11, because: "merged_head" },
@@ -928,9 +919,7 @@ test("stack restack: a merged branch with local commits the stack never recorded
   const result = await run(["stack", "restack", "--json"], forge.cwd);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   expect(result.json().data.pruned.deleted).toEqual([]);
-  expect(result.json().data.pruned.kept[0]).toMatchObject({
-    branch: "feature/a",
-  });
+  expect(result.json().data.pruned.kept[0]).toMatchObject({ branch: "feature/a" });
   expect(result.json().data.pruned.kept[0].reason).toContain("not recorded");
   expect(localBranch(forge, "feature/a")).not.toBeNull();
 });
@@ -1607,9 +1596,7 @@ const gateForge = (
             mergeStateStatus: string;
             commits: {
               nodes: Array<{
-                commit: {
-                  statusCheckRollup: { contexts: { nodes: unknown[] } };
-                };
+                commit: { statusCheckRollup: { contexts: { nodes: unknown[] } } };
               }>;
             };
           } | null;
@@ -1655,10 +1642,7 @@ test("stack land (#731): given PRs with a failing optional check, without a waiv
 
   const refused = await run(["stack", "land", "--json"], forge.cwd);
   expect(refused.json().data.landed).toEqual([]);
-  expect(refused.json().data.stoppedAt).toMatchObject({
-    pr: 11,
-    reason: "not_ready",
-  });
+  expect(refused.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "not_ready" });
   expect(forge.writes).toEqual([]);
 
   const needsReason = await run(["stack", "land", "--allow-failing", "codeql"], forge.cwd);
@@ -1785,10 +1769,7 @@ test("stack land (#731): given another author's PR with a failing optional check
   );
   expect(result.code, result.stderr + result.stdout).toBe(0);
   expect(result.json().data.landed).toEqual([]);
-  expect(result.json().data.stoppedAt).toMatchObject({
-    pr: 11,
-    reason: "merge_refused",
-  });
+  expect(result.json().data.stoppedAt).toMatchObject({ pr: 11, reason: "merge_refused" });
   expect(result.json().data.stoppedAt.detail).toContain("others_pr");
   expect(forge.writes).toEqual([]);
   expect(rows(forge.cwd, "merge.waived")).toEqual([]);

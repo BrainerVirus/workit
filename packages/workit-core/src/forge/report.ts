@@ -96,12 +96,7 @@ export type PrStatusDoc = {
   state: PrState;
   draft: boolean;
   base: string;
-  head: {
-    branch: string;
-    sha: string;
-    localSha: string | null;
-    pushed: boolean | null;
-  };
+  head: { branch: string; sha: string; localSha: string | null; pushed: boolean | null };
   mergeable: "yes" | "no" | "unknown";
   mergeState: string | null;
   conflicts: boolean;
@@ -219,10 +214,7 @@ export function blockersOf(input: NextInput): Array<{ next: NextAction; reason: 
     if (input.mergeable === "unknown")
       out.push({ next: "NOT_MERGEABLE", reason: "mergeability_unknown" });
     else if (!allowed)
-      out.push({
-        next: "NOT_MERGEABLE",
-        reason: `merge_state_${ms || "unknown"}`,
-      });
+      out.push({ next: "NOT_MERGEABLE", reason: `merge_state_${ms || "unknown"}` });
   }
   return out;
 }
@@ -281,11 +273,7 @@ export function computeBehindBase(
 ): ForgeResult<BehindBase> {
   const empty = { behind: null, ahead: null, upToDate: null };
   if (!baseSha)
-    return success({
-      ...empty,
-      baseSha: null,
-      error: "the forge reported no base tip",
-    });
+    return success({ ...empty, baseSha: null, error: "the forge reported no base tip" });
   for (const [sha, remote] of [
     [baseSha, remotes.base],
     [headSha_, remotes.head],
@@ -355,13 +343,7 @@ export function evidenceFor(
   const ciChecks: CiCheck[] = ci.flatMap((check) =>
     check.state === "skipped" ? [] : [{ name: check.name, state: check.state }],
   );
-  return checkEvidence({
-    lane: lane.lane,
-    head: status.head.sha,
-    configured,
-    local,
-    ci: ciChecks,
-  });
+  return checkEvidence({ lane: lane.lane, head: status.head.sha, configured, local, ci: ciChecks });
 }
 
 export function buildStatusDoc(
@@ -460,10 +442,7 @@ export function buildStatusDoc(
       missingRequired: missing,
     },
     evidence: evidenceFor(cwd, status),
-    reviews: {
-      decision: status.reviewDecision,
-      unresolvedThreads: status.threads,
-    },
+    reviews: { decision: status.reviewDecision, unresolvedThreads: status.threads },
     blockers: status.state === "open" ? blockers.map((blocker) => blocker.reason) : [],
     identity: options.identity ?? null,
     truncated: status.truncated,
@@ -530,10 +509,7 @@ export function recordPrStatus(cwd: string, doc: PrStatusDoc, actor: LedgerActor
 export function prStatusReport(
   cwd: string,
   resolved: ResolvedForge,
-  options: ReportOptions & {
-    identity?: PrStatusDoc["identity"];
-    actor?: LedgerActor;
-  } = {},
+  options: ReportOptions & { identity?: PrStatusDoc["identity"]; actor?: LedgerActor } = {},
 ): ForgeResult<{ doc: PrStatusDoc; raw: ForgePrStatus }> {
   const number = selectPr(cwd, resolved, options);
   if (!number.ok) return number;
@@ -554,11 +530,7 @@ export function prStatusReport(
 
 export type WaitState = "ready" | "waiting" | "failed" | "blocked";
 
-export type WaitVerdict = {
-  state: WaitState;
-  reason: string;
-  unblock?: string;
-};
+export type WaitVerdict = { state: WaitState; reason: string; unblock?: string };
 
 /**
  * Checks never appeared: after this grace a PR with no missing required check
@@ -698,11 +670,7 @@ function planRerunChecks(
     for (const check of rerunnable)
       if (!seen.has(check.runId!)) {
         seen.add(check.runId!);
-        targets.push({
-          kind: "failed_in_run",
-          runId: check.runId!,
-          scope: check.scope,
-        });
+        targets.push({ kind: "failed_in_run", runId: check.runId!, scope: check.scope });
       }
   } else {
     for (const check of rerunnable)
@@ -729,12 +697,7 @@ export type RerunOutcome = {
   recorded: boolean;
 };
 
-type RerunOptions = {
-  failed: boolean;
-  names: readonly string[];
-  reason: string;
-  force: boolean;
-};
+type RerunOptions = { failed: boolean; names: readonly string[]; reason: string; force: boolean };
 
 /** What a rerun acts on: a PR head, or the head of a branch (a red base). */
 type RerunSubject = { pr: number | null; branch: string | null; head: string };
@@ -841,11 +804,7 @@ function rerunLocked(
     head: subject.head,
     reason: options.reason,
     forced: options.force,
-    rerun: accepted.map((check) => ({
-      name: check.name,
-      runId: check.runId,
-      jobId: check.jobId,
-    })),
+    rerun: accepted.map((check) => ({ name: check.name, runId: check.runId, jobId: check.jobId })),
     skipped: plan.skipped,
     recorded,
   });
@@ -929,11 +888,7 @@ export function waiveChecks(
       ...status,
       checks: status.checks.map((check) =>
         waived.includes(check)
-          ? {
-              ...check,
-              state: "skipped",
-              conclusion: `waived_${check.conclusion ?? "failure"}`,
-            }
+          ? { ...check, state: "skipped", conclusion: `waived_${check.conclusion ?? "failure"}` }
           : check,
       ),
     },
@@ -1018,9 +973,7 @@ export function mergeGateForge(
       for (const name of options.waiver.checks)
         if (status.data.checks.some((check) => check.name === name || check.context === name))
           matched.add(name);
-      const waived = waiveChecks(status.data, options.waiver, {
-        perPr: options.perPr,
-      });
+      const waived = waiveChecks(status.data, options.waiver, { perPr: options.perPr });
       if (!waived.ok) return waived;
       pending.set(number, { status: status.data, checks: waived.data.waived });
       return success(waived.data.status);
