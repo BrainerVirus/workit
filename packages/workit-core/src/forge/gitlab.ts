@@ -18,6 +18,8 @@ import {
 /** Page cap for jobs and discussions (100 per page). */
 export const GITLAB_MAX_PAGES = 10;
 const PER_PAGE = 100;
+/** Merge requests per findPr page (paged until a short page). */
+const FIND_PER_PAGE = 20;
 
 type GlUser = { username?: string; bot?: boolean } | null;
 
@@ -313,20 +315,26 @@ export function createGitLabForge(options: {
     },
 
     findPr(head, match) {
-      const list = apiJson<GlMr[]>(
-        runner,
-        "glab",
-        apiHost,
-        api(
-          `${project}/merge_requests?source_branch=${encodeURIComponent(head)}&order_by=created_at&sort=desc&per_page=20`,
-        ),
-        `merge requests for ${head}`,
-      );
-      if (!list.ok) return list;
-      if (!Array.isArray(list.data)) return failure("failed", "merge request list is not a list");
+      // Every page (#284 N5): an open MR past the first 20 would read as
+      // "none" and pr create would open a duplicate.
+      const listed: GlMr[] = [];
+      const endpoint = `${project}/merge_requests?source_branch=${encodeURIComponent(head)}&order_by=created_at&sort=desc&per_page=${FIND_PER_PAGE}`;
+      for (let page = 1; page <= maxPages; page += 1) {
+        const list = apiJson<GlMr[]>(
+          runner,
+          "glab",
+          apiHost,
+          api(page === 1 ? endpoint : `${endpoint}&page=${page}`),
+          `merge requests for ${head}`,
+        );
+        if (!list.ok) return list;
+        if (!Array.isArray(list.data)) return failure("failed", "merge request list is not a list");
+        listed.push(...list.data);
+        if (list.data.length < FIND_PER_PAGE) break;
+      }
       // Same-named branches in other forks are not ours: match the source
       // project or the exact head sha.
-      const matches = list.data.filter(
+      const matches = listed.filter(
         (mr) =>
           mr.source_branch === head &&
           (!match.base || mr.target_branch === undefined || mr.target_branch === match.base) &&
@@ -412,6 +420,22 @@ export function createGitLabForge(options: {
         // not reported yet. Pending, never "no checks".
         checks = [pipelineCheck("pending", "awaiting_pipeline_for_head", null)];
       }
+      // #284 N16: GitLab has no per-job required checks; "Pipelines must
+      // succeed" (only_allow_merge_if_pipeline_succeeds) makes every job that
+      // may not fail required. Read only when a failing check makes it matter:
+      // with the setting off, failing jobs are optional (a waiver may pass
+      // them). Unreadable keeps every such job required.
+      if (open && checks.some((check) => check.state === "failing")) {
+        const settings = apiJson<{ only_allow_merge_if_pipeline_succeeds?: unknown }>(
+          runner,
+          "glab",
+          apiHost,
+          api(project),
+          `project ${repo}`,
+        );
+        if (settings.ok && settings.data.only_allow_merge_if_pipeline_succeeds === false)
+          checks = checks.map((check) => ({ ...check, required: false }));
+      }
       const discussions = pages(
         `${project}/merge_requests/${iid}/discussions`,
         `merge request !${iid} discussions`,
@@ -457,8 +481,13 @@ export function createGitLabForge(options: {
         mergeState: detailed,
         inMergeQueue: false,
         checks,
-        // GitLab gates on the whole pipeline (jobs that may not fail).
-        requiredContexts: [],
+        // GitLab gates on the whole pipeline: the jobs that may not fail
+        // when the project requires a green pipeline, none otherwise.
+        requiredContexts: [
+          ...new Set(
+            checks.filter((check) => check.required === true).map((check) => check.context),
+          ),
+        ],
         threads,
         truncated,
       };

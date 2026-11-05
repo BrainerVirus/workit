@@ -41,7 +41,7 @@ import {
   nextHint,
   type CreateOutcome,
 } from "@brainervirus/workit-core/src/forge/pr-ops";
-import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
+import { mergeGateForge, prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
 import { currentBranch, GIT_TIMEOUTS, headSha } from "@brainervirus/workit-core/src/git/rev";
 import { configDir } from "@brainervirus/workit-core/src/core/config";
@@ -298,7 +298,7 @@ const PR_CREATE_BUDGET_MS = 90_000;
 const CREATE_USAGE =
   "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>] [--json]";
 const MERGE_USAGE =
-  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--json]";
+  "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
 const EDIT_USAGE =
   "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
@@ -371,18 +371,21 @@ const bodyFileCandidates = (io: Io, file: string): string[] => {
   return [...new Set(dirs.map((dir) => path.resolve(dir, file)))];
 };
 
+/** CRLF or a lone CR (a Windows editor) posts as LF: forges keep the bytes they get. */
+const lf = (text: string): string => text.replace(/\r\n?/gu, "\n");
+
 /** `--body-file <path>`, or `-` for stdin. A string is the usage error. */
 function readBodyFile(io: Io, file: string): { body: string } | string {
   if (file === "-")
     try {
-      return { body: forgeDeps.readStdin() };
+      return { body: lf(forgeDeps.readStdin()) };
     } catch {
       return "cannot read --body-file - (stdin)";
     }
   const candidates = bodyFileCandidates(io, file);
   const found = candidates.find((candidate) => existsSync(candidate));
   try {
-    if (found) return { body: readFileSync(found, "utf8") };
+    if (found) return { body: lf(readFileSync(found, "utf8")) };
   } catch {
     return `cannot read --body-file ${found}`;
   }
@@ -1043,6 +1046,12 @@ function issueLines(
   ];
 }
 
+/** The `reason` of a refused `--allow-failing` waiver, for the envelope data. */
+const waiverReason = (error: string): { reason?: string } => {
+  const reason = /^(waiver_refused|unknown_check|waiver_unrecorded):/u.exec(error)?.[1];
+  return reason ? { reason } : {};
+};
+
 const METHODS: ReadonlySet<string> = new Set<MergeMethod>(["squash", "merge", "rebase"]);
 
 async function merge(argv: string[], io: Io): Promise<number> {
@@ -1057,6 +1066,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
     unverified: "boolean",
     "base-red-ok": "boolean",
     "others-pr": "boolean",
+    "allow-failing": "list",
     reason: "value",
     subject: "value",
     body: "value",
@@ -1078,9 +1088,20 @@ async function merge(argv: string[], io: Io): Promise<number> {
       "--others-pr needs --reason <why the user asked you to merge a PR someone else authored>",
       MERGE_USAGE,
     );
-  // One --reason serves --unverified, --base-red-ok and --others-pr, alone or together.
+  const allowFailing = (flags.lists["allow-failing"] ?? []).map((name) => name.trim());
+  if (allowFailing.some((name) => !name))
+    return usage(io, "--allow-failing needs a check name", MERGE_USAGE);
+  if (allowFailing.length && !baseRedReason)
+    return usage(
+      io,
+      "--allow-failing needs --reason <why the failing optional check may be ignored>",
+      MERGE_USAGE,
+    );
+  // One --reason serves --unverified, --base-red-ok, --others-pr and --allow-failing, alone or together.
   const unverified =
-    (baseRedOk || othersPr) && !flags.booleans.has("unverified") ? null : unverifiedFlag(flags);
+    (baseRedOk || othersPr || allowFailing.length) && !flags.booleans.has("unverified")
+      ? null
+      : unverifiedFlag(flags);
   if (typeof unverified === "string") return usage(io, unverified, MERGE_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, MERGE_USAGE);
@@ -1118,18 +1139,29 @@ async function merge(argv: string[], io: Io): Promise<number> {
   );
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
+  const actor = actorFromEnv(io.env);
+  const gated = {
+    ...connected.data,
+    forge: mergeGateForge(connected.data.forge, io.cwd, {
+      waiver:
+        allowFailing.length && baseRedReason
+          ? { checks: allowFailing, reason: baseRedReason }
+          : null,
+      actor,
+    }),
+  };
   const result = await progressFor(io).run(
     `Merging PR #${pr}`,
     () =>
       mergePullRequest(
         io.cwd,
-        connected.data,
+        gated,
         {
           pr,
           method,
           deleteBranch: flags.booleans.has("delete-branch"),
           implicitDelete: !flags.booleans.has("keep-branch") && workspaceDeleteBranch(io.cwd),
-          actor: actorFromEnv(io.env),
+          actor,
           ...(unverified ? { unverified } : {}),
           ...(baseRedOk && baseRedReason ? { baseRedOk: { reason: baseRedReason } } : {}),
           ...(othersPr && baseRedReason ? { othersPr: { reason: baseRedReason } } : {}),
@@ -1140,19 +1172,25 @@ async function merge(argv: string[], io: Io): Promise<number> {
       ),
     (r) => (r.ok ? "done" : "failed"),
   );
-  if (!result.ok)
+  if (!result.ok) {
+    const refusal = "refusal" in result ? result.refusal : undefined;
+    // #269 D2: still UNKNOWN after the bounded re-reads; the forge decides, not the PR.
+    const forgeBusy =
+      refusal?.reason === "not_ready" && refusal.blockers?.includes("mergeability_unknown");
     return emit(
       io,
       fail(result.code, result.error, {
-        unblock: result.unblock,
-        data:
-          "refusal" in result && result.refusal
-            ? result.refusal
-            : "recorded" in result && result.recorded
-              ? { recorded: result.recorded }
-              : {},
+        unblock: forgeBusy
+          ? `the forge is still computing mergeability; wait a minute, then workit pr merge${pr ? ` --pr ${pr}` : ""} again (workit pr status shows when it settles)`
+          : result.unblock,
+        data: refusal
+          ? { ...refusal, ...(forgeBusy ? { babysit: "wait-forge" } : {}) }
+          : "recorded" in result && result.recorded
+            ? { recorded: result.recorded }
+            : waiverReason(result.error),
       }),
     );
+  }
   // #653: once its remote branch is gone, a merged branch leaves nothing on disk.
   // A branch kept on the remote (stack parent, fork, --keep-branch) stays local too.
   const cleanup: MergeCleanup | null =
@@ -1163,43 +1201,51 @@ async function merge(argv: string[], io: Io): Promise<number> {
           trigger: "pr merge",
           env: io.env,
         });
-  return emit(io, ok({ ...result.data, localCleanup: cleanup }), (data) => [
-    `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
-    data.unverified
-      ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
-      : mergedOnLine(data.verdict),
-    ...(data.baseCi.note ? [data.baseCi.note] : []),
-    ...(data.mergeBack.length
-      ? [
-          `merge back: ${data.base} is the ${data.mergeBackTrack} production branch; bring it into ${data.mergeBack.join(", ")}`,
-        ]
-      : []),
-    ...(data.deletedBranch === true
-      ? [`deleted ${data.branch}`]
-      : typeof data.deletedBranch === "object"
+  return emit(
+    io,
+    ok({ ...result.data, waived: gated.forge.waived, localCleanup: cleanup }),
+    (data) => [
+      `merged ${connected.data.forge.kind === "github" ? "PR #" : "MR !"}${data.number} (${data.method}) at head ${data.head.slice(0, 12)}${data.mergeSha ? ` -> ${data.mergeSha.slice(0, 12)}` : ""}`,
+      data.unverified
+        ? `UNVERIFIED: merged without a verdict (--unverified: ${data.unverified.reason}); ledger ${data.unverified.recorded}`
+        : mergedOnLine(data.verdict),
+      ...data.waived.map(
+        (entry) =>
+          `WAIVED: failing optional check ${entry.check} (--allow-failing: ${baseRedReason ?? ""}); ledger ${entry.recorded}`,
+      ),
+      ...(data.baseCi.note ? [data.baseCi.note] : []),
+      ...(data.mergeBack.length
         ? [
-            "skipped" in data.deletedBranch
-              ? `kept ${data.branch}: ${data.deletedBranch.skipped}`
-              : `branch not deleted: ${data.deletedBranch.error}`,
+            `merge back: ${data.base} is the ${data.mergeBackTrack} production branch; bring it into ${data.mergeBack.join(", ")}`,
           ]
         : []),
-    ...(data.localCleanup
-      ? [
-          ...(data.localCleanup.worktreeRemoved
-            ? [`removed worktree ${data.localCleanup.worktreeRemoved}`]
-            : []),
-          ...(data.localCleanup.branchDeleted ? [`deleted local ${data.branch}`] : []),
-          ...data.localCleanup.notes,
-          ...(data.localCleanup.recorded && "error" in data.localCleanup.recorded
-            ? [`ledger: cleanup not recorded (${data.localCleanup.recorded.error})`]
-            : []),
-        ]
-      : []),
-    ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
-    ...("error" in data.confirmed && !("error" in data.recorded)
-      ? [`ledger: merge not confirmed in the ledger (${data.confirmed.error})`]
-      : []),
-  ]);
+      ...(data.deletedBranch === true
+        ? [`deleted ${data.branch}`]
+        : typeof data.deletedBranch === "object"
+          ? [
+              "skipped" in data.deletedBranch
+                ? `kept ${data.branch}: ${data.deletedBranch.skipped}`
+                : `branch not deleted: ${data.deletedBranch.error}`,
+            ]
+          : []),
+      ...(data.localCleanup
+        ? [
+            ...(data.localCleanup.worktreeRemoved
+              ? [`removed worktree ${data.localCleanup.worktreeRemoved}`]
+              : []),
+            ...(data.localCleanup.branchDeleted ? [`deleted local ${data.branch}`] : []),
+            ...data.localCleanup.notes,
+            ...(data.localCleanup.recorded && "error" in data.localCleanup.recorded
+              ? [`ledger: cleanup not recorded (${data.localCleanup.recorded.error})`]
+              : []),
+          ]
+        : []),
+      ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
+      ...("error" in data.confirmed && !("error" in data.recorded)
+        ? [`ledger: merge not confirmed in the ledger (${data.confirmed.error})`]
+        : []),
+    ],
+  );
 }
 
 async function ready(argv: string[], io: Io): Promise<number> {

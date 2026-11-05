@@ -103,3 +103,13 @@ test("Given a relative --body-file that exists nowhere, When pr create runs, The
   expect(envelope.error).toContain("--body-file -");
   expect(bodies(runner.calls)).toEqual([]);
 });
+
+test("Given a --body-file written with CRLF line endings, When pr create runs, Then the posted body has LF only", async () => {
+  const { repo, runner, shell } = setup();
+  writeFileSync(path.join(shell, "crlf.md"), "## Why\r\n\r\nWindows editor\r\nlast line\r\n");
+  const result = await create(repo.cwd, shell, "crlf.md");
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  const [body] = bodies(runner.calls);
+  expect(body).toContain("## Why\n\nWindows editor\nlast line");
+  expect(body).not.toContain("\r");
+});

@@ -1,6 +1,15 @@
 // GitHub adapter: `gh api graphql` for PR state, checks and review threads,
 // `gh api` REST for required checks, job logs and reruns (design §2.0).
-import { apiJson, apiText, apiWrite, cliFailure, FORGE_TIMEOUTS, type ForgeRunner } from "./exec";
+import {
+  apiJson,
+  apiText,
+  apiWrite,
+  cliFailure,
+  FORGE_TIMEOUTS,
+  isRateLimited,
+  runLimited,
+  type ForgeRunner,
+} from "./exec";
 import { logTail, redactText, shortBody } from "./redact";
 import { rollupForHead } from "./pr-status";
 import {
@@ -28,7 +37,7 @@ const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPag
 
 export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threads: String, $contexts: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} ${THREADS} commits(last: 1) { nodes { commit { oid statusCheckRollup { state ${CONTEXTS} } } } } } } }`;
 
-export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number url state baseRefName headRefName headRefOid headRepositoryOwner { login } } } } }`;
+export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!, $after: String) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, after: $after, orderBy: { field: CREATED_AT, direction: DESC }) { pageInfo { hasNextPage endCursor } nodes { number url state baseRefName headRefName headRefOid headRepositoryOwner { login } } } } }`;
 
 export const BRANCH_CHECKS_QUERY = `query($owner: String!, $name: String!, $ref: String!, $contexts: String) { repository(owner: $owner, name: $name) { object(expression: $ref) { ... on Commit { oid statusCheckRollup { contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state targetUrl } } } } } } } }`;
 
@@ -241,7 +250,9 @@ export function createGitHubForge(options: {
       args,
       what,
       FORGE_TIMEOUTS.api,
-      { graphql: true },
+      // A mutation (reply, resolve, draft) is a write: never repeated after a
+      // 403 secondary limit that may already have applied it.
+      { graphql: true, write: /^\s*mutation\b/u.test(query) },
     );
     if (!response.ok) return response;
     if (response.data.errors?.length) {
@@ -313,11 +324,14 @@ export function createGitHubForge(options: {
     repo,
 
     identity(expected) {
-      const run = runner("gh", ["api", "user"], { timeoutMs: FORGE_TIMEOUTS.api });
+      const run = runLimited(runner, "gh", ["api", "user"], { timeoutMs: FORGE_TIMEOUTS.api });
       if (run.status !== 0) {
         // App/Actions installation tokens cannot read /user; the token is
         // still valid for reads, so the check is skipped, not failed.
-        if (/HTTP 403|resource not accessible by integration/iu.test(run.stderr))
+        if (
+          !isRateLimited(run) &&
+          /HTTP 403|resource not accessible by integration/iu.test(run.stderr)
+        )
           return success({
             login: null,
             expected,
@@ -354,23 +368,36 @@ export function createGitHubForge(options: {
     },
 
     findPr(head, match) {
-      const data = graphql<{
-        repository: {
-          pullRequests: {
-            nodes: Array<{
-              number: number;
-              url: string;
-              state: string;
-              baseRefName?: string;
-              headRefName: string;
-              headRefOid: string | null;
-              headRepositoryOwner: { login: string } | null;
-            }>;
-          };
-        } | null;
-      }>(FIND_PR_QUERY, { owner, name, head }, `pull requests for ${head}`);
-      if (!data.ok) return data;
-      const nodes = data.data.repository?.pullRequests.nodes ?? [];
+      type FindNode = {
+        number: number;
+        url: string;
+        state: string;
+        baseRefName?: string;
+        headRefName: string;
+        headRefOid: string | null;
+        headRepositoryOwner: { login: string } | null;
+      };
+      // Every page (#284 N5): an open PR past the first 20 would read as
+      // "none" and pr create would open a duplicate.
+      type FindList = {
+        pageInfo?: { hasNextPage: boolean; endCursor: string | null };
+        nodes: FindNode[];
+      };
+      type FindPage = { repository: { pullRequests: FindList } | null };
+      const nodes: FindNode[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < maxPages; page += 1) {
+        const data: ForgeResult<FindPage> = graphql<FindPage>(
+          FIND_PR_QUERY,
+          { owner, name, head, after },
+          `pull requests for ${head}`,
+        );
+        if (!data.ok) return data;
+        const list: FindList | undefined = data.data.repository?.pullRequests;
+        nodes.push(...(list?.nodes ?? []));
+        if (!list?.pageInfo?.hasNextPage || !list.pageInfo.endCursor) break;
+        after = list.pageInfo.endCursor;
+      }
       // A branch name alone proves nothing: anyone can open a PR from a
       // same-named branch in their fork. The head owner or head sha must match.
       const ours = nodes.filter(

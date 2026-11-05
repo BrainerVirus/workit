@@ -156,6 +156,87 @@ export function forgeReason(run: Pick<CliRun, "stdout" | "stderr">): string {
   return redactText(text).slice(0, 300);
 }
 
+/** A forge rate limit: HTTP 429, or a 403 that says so (GitHub primary and secondary limits). */
+const RATE_LIMIT_TEXT = /rate limit|too many requests|retry-after|abuse detection/iu;
+
+export const isRateLimited = (run: Pick<CliRun, "status" | "stderr" | "stdout">): boolean => {
+  if (run.status === 0) return false;
+  const text = `${run.stderr}\n${run.stdout}`;
+  return (
+    /HTTP 429|429 Too Many Requests/iu.test(text) ||
+    (/HTTP 403|403 Forbidden|RATE_LIMITED/iu.test(text) && RATE_LIMIT_TEXT.test(text))
+  );
+};
+
+/**
+ * How long the forge asked to wait (ms): `Retry-After` seconds, else the
+ * `X-RateLimit-Reset` epoch; null when the response names neither.
+ */
+export function rateLimitWaitMs(
+  run: Pick<CliRun, "stderr" | "stdout">,
+  now: number = Date.now(),
+): number | null {
+  const text = `${run.stderr}\n${run.stdout}`;
+  const after = /retry-after"?\s*[:=]\s*"?(\d+)/iu.exec(text);
+  if (after) return Number(after[1]) * 1000;
+  const reset = /x-ratelimit-reset"?\s*[:=]\s*"?(\d+)/iu.exec(text);
+  if (reset) return Math.max(0, Number(reset[1]) * 1000 - now);
+  return null;
+}
+
+/** The one bounded backoff on a rate limit (#284 N4); tests replace `sleep`. */
+export const rateLimitDeps = {
+  /** Wait used when the forge names no Retry-After / reset. */
+  defaultWaitMs: 2_000,
+  /** A longer requested wait is not slept: the call fails as rate_limited at once. */
+  maxWaitMs: 10_000,
+  sleep: (ms: number): void => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  },
+  now: (): number => Date.now(),
+};
+
+/** HTTP 429: the forge refused the request before acting on it. */
+const isTooManyRequests = (run: Pick<CliRun, "stderr" | "stdout">): boolean =>
+  /HTTP 429|429 Too Many Requests/iu.test(`${run.stderr}\n${run.stdout}`);
+
+/**
+ * Run one gh/glab call; on a rate limit, wait once (Retry-After, capped) and
+ * run it again. A write retries only on HTTP 429, which the forge refuses
+ * before acting; a 403 secondary limit may already have applied it, so a
+ * write is not repeated there (no double comment or double merge).
+ */
+export function runLimited(
+  runner: ForgeRunner,
+  bin: CliBin,
+  args: readonly string[],
+  options: Parameters<ForgeRunner>[2],
+  write = false,
+): CliRun {
+  const run = runner(bin, args, options);
+  if (run.missing || run.timedOut || !isRateLimited(run)) return run;
+  if (write && !isTooManyRequests(run)) return run;
+  const wait = rateLimitWaitMs(run, rateLimitDeps.now()) ?? rateLimitDeps.defaultWaitMs;
+  if (wait > rateLimitDeps.maxWaitMs) return run;
+  rateLimitDeps.sleep(wait);
+  return runner(bin, args, options);
+}
+
+const rateLimitFailure = <T>(
+  bin: CliBin,
+  apiHost: string,
+  run: CliRun,
+  what: string,
+): ForgeResult<T> => {
+  const wait = rateLimitWaitMs(run, rateLimitDeps.now());
+  const seconds = wait === null ? null : Math.ceil(wait / 1000);
+  return failure(
+    "unavailable",
+    `rate_limited: ${bin} api ${what} hit the ${apiHost} rate limit (${forgeReason(run) || "HTTP 429"})`,
+    `${seconds === null ? "wait a minute" : `wait ${seconds}s`} for the rate limit to reset, then retry${bin === "gh" ? " (gh api rate_limit shows the reset)" : ""}`,
+  );
+};
+
 /** Map a failed CLI run to an envelope error. */
 export function cliFailure<T>(
   bin: CliBin,
@@ -173,6 +254,7 @@ export function cliFailure<T>(
         : `${bin} api ${what} timed out after ${run.timeoutMs ?? timeoutMs} ms`,
       `check the network to ${apiHost}, then retry`,
     );
+  if (isRateLimited(run)) return rateLimitFailure(bin, apiHost, run, what);
   const stderr = redactText(run.stderr).trim();
   if (
     /auth login|not logged in|no token|authentication required|bad credentials|\b401\b|unauthorized/iu.test(
@@ -203,16 +285,16 @@ export function apiJson<T>(
   args: readonly string[],
   what: string,
   timeoutMs: number = FORGE_TIMEOUTS.api,
-  options: { graphql?: boolean } = {},
+  options: { graphql?: boolean; write?: boolean } = {},
 ): ForgeResult<T> {
-  const run = runner(bin, args, { timeoutMs });
+  const run = runLimited(runner, bin, args, { timeoutMs }, options.write === true);
   if (run.status !== 0) {
     // `gh api graphql` exits 1 on GraphQL errors but still prints the
     // response; the caller reads its `errors` array.
     if (options.graphql && !run.missing && !run.timedOut)
       try {
         const body = JSON.parse(run.stdout) as { errors?: unknown };
-        if (Array.isArray(body.errors)) return { ok: true, data: body as T };
+        if (Array.isArray(body.errors) && !isRateLimited(run)) return { ok: true, data: body as T };
       } catch {
         // fall through
       }
@@ -234,7 +316,7 @@ export function apiText(
   what: string,
   timeoutMs: number = FORGE_TIMEOUTS.log,
 ): ForgeResult<string> {
-  const run = runner(bin, args, { timeoutMs });
+  const run = runLimited(runner, bin, args, { timeoutMs });
   if (run.status !== 0) return cliFailure(bin, apiHost, run, what, timeoutMs);
   return { ok: true, data: run.stdout };
 }
@@ -255,7 +337,13 @@ export function apiWrite<T>(
   /** A request body sent on stdin (pair it with `--input -`). */
   input?: string,
 ): ForgeResult<T> {
-  const run = runner(bin, args, input === undefined ? { timeoutMs } : { timeoutMs, input });
+  const run = runLimited(
+    runner,
+    bin,
+    args,
+    input === undefined ? { timeoutMs } : { timeoutMs, input },
+    true,
+  );
   if (run.status !== 0) {
     const text = redactText(`${run.stderr}\n${run.stdout}`).trim();
     const reason = forgeReason(run);
@@ -278,6 +366,7 @@ export function apiWrite<T>(
       !failed.ok &&
       failed.code === "unavailable" &&
       !run.missing &&
+      !isRateLimited(run) &&
       !/ is not authenticated for /u.test(failed.error)
     )
       return failure(
