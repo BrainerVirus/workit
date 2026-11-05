@@ -1582,24 +1582,23 @@ function mirrorRanks(rows: readonly ReadRow[], now: number = Date.now()): Map<Re
     }
     slots.push({ row, at, after });
   }
-  // Imports in one slot keep their import order, except that imports with
-  // the same `at` sit together at the first one's place, failures last: a
-  // pass imported after a failure of the same instant never outranks it.
-  const firstSeq = new Map<string, number>();
+  // Imports in one slot keep their import order. A failure only moves later,
+  // past the passes of the same slot and the same `at`, so a pass imported
+  // after a failure of the same instant never outranks it; no other row moves.
+  const lastPass = new Map<string, number>();
   for (const { row, at, after } of slots) {
+    if (failing(row)) continue;
     const key = `${after}\0${at}`;
-    firstSeq.set(key, Math.min(firstSeq.get(key) ?? row.seq, row.seq));
+    lastPass.set(key, Math.max(lastPass.get(key) ?? -Infinity, row.seq));
   }
   const order = slots
     .map((slot) => ({
       ...slot,
-      group: firstSeq.get(`${slot.after}\0${slot.at}`) ?? slot.row.seq,
-      fails: failing(slot.row) ? 1 : 0,
+      key: failing(slot.row)
+        ? Math.max(slot.row.seq, (lastPass.get(`${slot.after}\0${slot.at}`) ?? -Infinity) + 0.5)
+        : slot.row.seq,
     }))
-    .toSorted(
-      (a, b) =>
-        a.after - b.after || a.group - b.group || a.fails - b.fails || a.row.seq - b.row.seq,
-    );
+    .toSorted((a, b) => a.after - b.after || a.key - b.key);
   // Between that local row and the next.
   order.forEach(({ row, after }, index) =>
     ranks.set(row, after + 0.5 + (index + 1) / (order.length + 2) / 2),
