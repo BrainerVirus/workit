@@ -515,30 +515,79 @@ const SESSION_SAFE = /^[\w.:@/+-]{1,128}$/u;
 const EXTRA_TRAILER = /^[A-Za-z0-9][A-Za-z0-9-]*: *\S[^\n\r]*$/u;
 
 const SESSION_KEY = /^workit-session\s*:/iu;
-/** A trailer line (`Key: value`, no leading space) as git reads one. */
-const TRAILER_LINE = /^[A-Za-z0-9][A-Za-z0-9-]*\s*:/u;
+/** `Key:` as git's find_separator reads it: key characters, optional blanks, then `:`. */
+const TRAILER_LINE = /^[A-Za-z0-9-]+[ \t]*:/u;
+/** Lines git counts as trailers that it recognizes (trailer.c git_generated_prefixes). */
+const GIT_GENERATED = ["Signed-off-by: ", "(cherry picked from commit "];
+const isTrailer = (line: string): boolean =>
+  TRAILER_LINE.test(line) || GIT_GENERATED.some((prefix) => line.startsWith(prefix));
+const isContinuation = (line: string): boolean => /^\s/u.test(line);
 
 /**
- * `text` without the `Workit-Session:` lines of its trailer block: the last
- * paragraph, when every line in it is a trailer or a folded continuation
- * (leading whitespace) of one. Anything else, an indented line included, is
- * prose and is left alone; the rest of the text is returned byte for byte.
- * With `subject`, the first paragraph is a subject and never a trailer
- * block (a commit message); without it (a PR body) it can be.
+ * The index of the first line of the trailer block in `lines` (no trailing
+ * blank lines), or null, by git interpret-trailers' rule
+ * (trailer.c find_trailer_block_start): the last paragraph after `from` is a
+ * block when every line is a trailer or a continuation, or when it holds a
+ * git-generated trailer (Signed-off-by) and at least a quarter of its lines
+ * are trailers. `#` comment lines are skipped. With `opensAtStart`, the start
+ * of the text counts as a paragraph break (no subject paragraph).
+ */
+function trailerBlockStart(
+  lines: readonly string[],
+  from: number,
+  opensAtStart: boolean,
+): number | null {
+  let trailers = 0;
+  let others = 0;
+  let continuations = 0;
+  let recognized = false;
+  const decide = (start: number): number | null => {
+    others += continuations;
+    if ((recognized && trailers * 3 >= others) || (trailers > 0 && others === 0)) return start;
+    return null;
+  };
+  for (let index = lines.length - 1; index >= from; index -= 1) {
+    const line = lines[index] ?? "";
+    if (line.startsWith("#")) {
+      others += continuations;
+      continuations = 0;
+    } else if (line.trim() === "") return decide(index + 1);
+    else if (isTrailer(line) && !isContinuation(line)) {
+      trailers += 1;
+      continuations = 0;
+      if (GIT_GENERATED.some((prefix) => line.startsWith(prefix))) recognized = true;
+    } else if (isContinuation(line)) continuations += 1;
+    else {
+      others += 1 + continuations;
+      continuations = 0;
+    }
+  }
+  return opensAtStart && from === 0 ? decide(0) : null;
+}
+
+/**
+ * `text` without the `Workit-Session:` trailers (and their folded
+ * continuation lines) of its trailer block, found as git interpret-trailers
+ * finds it, so a final paragraph mixing prose, Signed-off-by and
+ * Workit-Session loses only the Workit-Session trailer. Prose, other
+ * trailers and the rest of the text are kept byte for byte. With `subject`,
+ * the first paragraph is a subject and never a trailer block (a commit
+ * message); without it (a PR body) it can be.
  */
 export function stripSessionTrailers(text: string, options: { subject: boolean }): string {
   const end = text.length - (/\s*$/u.exec(text)?.[0].length ?? 0);
   const lines = text.slice(0, end).split("\n");
-  let start = lines.length;
-  while (start > 0 && lines[start - 1]?.trim() !== "") start -= 1;
-  if (start === 0 && options.subject) return text;
+  let from = 0;
+  if (options.subject) {
+    while (from < lines.length && lines[from]?.trim() !== "") from += 1;
+  }
+  const start = trailerBlockStart(lines, from, !options.subject);
+  if (start === null) return text;
   const block = lines.slice(start);
-  if (!block.length || !TRAILER_LINE.test(block[0] ?? "")) return text;
-  if (!block.every((line) => TRAILER_LINE.test(line) || /^\s+\S/u.test(line))) return text;
   const kept: string[] = [];
   let dropping = false;
   for (const line of block) {
-    if (TRAILER_LINE.test(line)) dropping = SESSION_KEY.test(line);
+    if (!isContinuation(line)) dropping = isTrailer(line) && SESSION_KEY.test(line);
     if (!dropping) kept.push(line);
   }
   if (kept.length === block.length) return text;

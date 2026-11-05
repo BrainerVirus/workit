@@ -111,14 +111,12 @@ const createNext = (cwd: string): string => {
   return `a non-author verifies the head (workit-review); the endpoint is ${endpoint}, so ${AFTER_REVIEW[endpoint]}`;
 };
 
-/** Workit's own commit trailer: provenance for the ledger, not PR prose. */
-const SESSION_TRAILER = /^Workit-Session:.*$/gimu;
-
 /**
  * `--fill`: the title and body from the branch's commits on top of the base
  * (fetched first). One commit gives its subject and body; several give the
  * oldest subject and every subject with its body, like `gh pr create
- * --fill-verbose`. `Workit-Session:` trailers are left out of the body.
+ * --fill-verbose`. Workit's own `Workit-Session:` trailers (ledger
+ * provenance, not PR prose) are left out of each commit's trailer block.
  */
 export function fillFromCommits(
   cwd: string,
@@ -151,7 +149,10 @@ export function fillFromCommits(
     .filter(Boolean)
     .map((entry) => {
       const [subject = "", body = ""] = entry.split("\x1f");
-      return { subject: subject.trim(), body: body.replace(SESSION_TRAILER, "").trim() };
+      return {
+        subject: subject.trim(),
+        body: stripSessionTrailers(body, { subject: false }).trim(),
+      };
     });
   if (commits.length === 0)
     return failure(
@@ -375,7 +376,10 @@ export type MergeInput = {
   baseRedOk?: { reason: string };
   /** Merge a PR someone else authored (`--others-pr`); the reason is recorded. */
   othersPr?: { reason: string };
-  /** Squash commit subject and body (`--subject`, `--body`); unset parts use the defaults. */
+  /**
+   * Squash commit subject and body (`--subject`, `--body`); unset parts use the
+   * defaults. Squash only: any other method with either is refused.
+   */
   subject?: string;
   body?: string;
 };
@@ -718,6 +722,14 @@ export async function mergePullRequest(
   input: MergeInput,
   sleep: Sleep,
 ): Promise<MergeResult> {
+  // Only a squash takes a message from workit: a merge commit or a rebase
+  // gets the forge's own, so a subject or body there would be dropped silently.
+  if (input.method !== "squash" && (input.subject !== undefined || input.body !== undefined))
+    return failure(
+      "invalid_input",
+      `--subject and --body set a squash commit message; a ${input.method} merge takes the forge's own message`,
+      "merge with --method squash, or drop --subject/--body",
+    );
   const grant = requireGrant(cwd, "merge", { target: baseTarget(resolved) });
   if (!grant.allowed) return refuse(grant.error, grant.unblock, { reason: "grant_required" });
   const bypass = input.unverified ?? null;

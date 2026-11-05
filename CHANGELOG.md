@@ -900,6 +900,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `workit finding resolve` finds the task that holds the finding, and a refused resolve names the evidence that would be accepted (#317). The retro skill files behavioural rules as Workit issues, not host memories.
 - Heavy checks: a lease slot that frees too close to `--timeout` (under min(10 s, a quarter of it)) no longer starts the command with a sliver of budget; it exits as a wait timeout. The `stuck?` flag and auto-reap use 1.5x the check's last measured run (never below the configured limit), so long suites on two slots are not flagged. Wait estimates read only the ledger tail, and macOS frees a reused pid's lease through `ps`.
 - `fanout worktree create` links node_modules when only other platforms' optional packages are absent (no per-worktree install); several fanout plans name `--fanout` and the candidates, defaulting to the lead's plan (#641); a nested worker glob inside a lead path glob is contained (#647).
+- The Workit-Session trailer is removed by git's own trailer-block rule, so a final paragraph mixing prose, Signed-off-by and Workit-Session keeps the prose and Signed-off-by (amend in a trailers-off workspace, and `pr create --fill`). A merge or rebase merge with `--subject`/`--body` is refused naming squash instead of being ignored. The commit-msg hook bounds its check only with GNU `timeout`, never Windows' timeout.exe.
 
 ### Removed
 

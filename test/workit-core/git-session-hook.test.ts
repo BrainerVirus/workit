@@ -799,6 +799,47 @@ test.skipIf(process.platform === "win32" || !existsSync("/usr/bin/timeout"))(
   30_000,
 );
 
+// Issue #292: on Windows a bare `timeout` can be timeout.exe (a pause, not a
+// bound). The helper uses `timeout 5` only when `timeout --version` names GNU
+// coreutils. Stub timeouts stand in for both; POSIX sh stubs, so not on win32.
+test.skipIf(process.platform === "win32")(
+  "Given a timeout that is not GNU coreutils, When the hook asks workit, Then that timeout is never run and workit's answer still counts",
+  () => {
+    const root = repo();
+    installSessionHook(root);
+    const bin = tmp();
+    const ran = path.join(bin, "ran");
+    writeFileSync(
+      path.join(bin, "timeout"),
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo "ERROR: Invalid syntax." >&2; exit 1; fi\n: > "${ran}"\nexit 1\n`,
+      { mode: 0o755 },
+    );
+    const env = { ...S, WK_TRAILERS: "off", PATH: `${bin}${path.delimiter}${baseEnv().PATH}` };
+    ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: windows"], env);
+    expect(existsSync(ran)).toBe(false);
+    expect(message(root)).toBe("feat: windows");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given GNU coreutils timeout, When the hook asks workit, Then the call runs through it",
+  () => {
+    const root = repo();
+    installSessionHook(root);
+    const bin = tmp();
+    const ran = path.join(bin, "ran");
+    writeFileSync(
+      path.join(bin, "timeout"),
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo "timeout (GNU coreutils) 9.4"; exit 0; fi\n: > "${ran}"\nshift\nexec "$@"\n`,
+      { mode: 0o755 },
+    );
+    const env = { ...S, WK_TRAILERS: "off", PATH: `${bin}${path.delimiter}${baseEnv().PATH}` };
+    ok(root, ["commit", "-q", "--allow-empty", "-m", "feat: gnu"], env);
+    expect(existsSync(ran)).toBe(true);
+    expect(message(root)).toBe("feat: gnu");
+  },
+);
+
 test.skipIf(process.platform === "win32")(
   "Given workspaces.json with trailers: false, When the hook asks the real CLI, Then the commit has no trailer, and a workspace without it keeps the trailer",
   () => {

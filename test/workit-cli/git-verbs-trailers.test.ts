@@ -357,6 +357,25 @@ test("Given trailers turned off after a commit, When amending with --no-edit or 
   expect(repo.git("log", "-1", "--format=%B")).toBe("feat: b\n\nCo-Authored-By: A <a@b.c>");
 });
 
+test("Given a mixed final paragraph (prose, Signed-off-by, Workit-Session) and trailers turned off, When amending with --no-edit, Then only the Workit-Session trailer is dropped", async () => {
+  const repo = setup({});
+  repo.write("a.txt", "a\n");
+  const made = await run(
+    ["git", "commit", "-m", "feat: a\n\nprose\nSigned-off-by: A <a@b.c>", "--", "a.txt"],
+    repo.cwd,
+  );
+  expect(made.code, made.stderr).toBe(0);
+  expect(repo.git("log", "-1", "--format=%B")).toBe(
+    "feat: a\n\nprose\nSigned-off-by: A <a@b.c>\nWorkit-Session: author-1",
+  );
+  writeWorkspaces([
+    { name: "work", glob: `${repo.root.replaceAll("\\", "/")}/**`, trailers: false },
+  ]);
+  const amended = await run(["git", "commit", "--amend", "--no-edit"], repo.cwd);
+  expect(amended.code, amended.stderr).toBe(0);
+  expect(repo.git("log", "-1", "--format=%B")).toBe("feat: a\n\nprose\nSigned-off-by: A <a@b.c>");
+});
+
 test("Given a trailer alias config or a message line naming Workit-Session, When workit commits, Then the forged trailer is refused and nothing is committed", async () => {
   const repo = setup({});
   repo.write("a.txt", "a\n");
