@@ -30,7 +30,14 @@ const OLD = "14.6.0";
 const NEW = "1.0.0";
 
 /** Every host on the old scope at 14.6.0; the registry serves @workit-dev 1.0.0 (or `newCli`). */
-const world = (options: { newCli?: string; pathVersion?: (home: string) => string } = {}) => {
+const world = (
+  options: {
+    newCli?: string;
+    pathVersion?: (home: string) => string;
+    /** Codex recorded an exact version on the old package's source. */
+    codexPinned?: boolean;
+  } = {},
+) => {
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-upgrade-scope-"));
   const calls: string[][] = [];
   const data = path.join(home, ".local/share/workit");
@@ -90,9 +97,20 @@ const world = (options: { newCli?: string; pathVersion?: (home: string) => strin
       name: "workit",
       marketplaceName: "workit",
       version: OLD,
-      source: { source: "npm", package: "@brainervirus/workit-codex" },
+      source: {
+        source: "npm",
+        package: "@brainervirus/workit-codex",
+        ...(options.codexPinned ? { version: OLD } : {}),
+      },
     },
   ];
+  // Codex's plugin cache: one directory per version, the old package's 14.6.0 now.
+  const codexCache = (version: string, name: string) => {
+    const root = path.join(home, ".codex/plugins/cache/workit/workit", version);
+    write(path.join(root, "package.json"), { name, version });
+    write(path.join(root, "dist/launch-mcp.js"), "");
+  };
+  codexCache(OLD, "@brainervirus/workit-codex");
   // Claude Code: installed_plugins.json and the cached package.
   const claudeCache = (version: string) =>
     path.join(home, ".claude/plugins/cache/workit/workit", version);
@@ -159,6 +177,7 @@ const world = (options: { newCli?: string; pathVersion?: (home: string) => strin
       const answer = codexInventoryAnswer(args, codexRows);
       if (answer) return answer;
       if (line === "plugin remove workit@workit") codexRows.length = 0;
+      if (line === "plugin add workit@workit --json") codexCache(NEW, "@workit-dev/codex");
       if (line === "plugin add workit@workit --json")
         codexRows.push({
           name: "workit",
@@ -320,6 +339,22 @@ test("Given every host on @brainervirus 14.x, When `workit upgrade --apply --con
     expect(w.codexRows.map((one) => (one.source as { package: string }).package)).toEqual([
       "@workit-dev/codex",
     ]);
+    // Codex's cache keeps only the new package: by number 14.6.0 would win over 1.0.0.
+    const codexCacheDir = path.join(w.home, ".codex/plugins/cache/workit/workit");
+    expect(existsSync(path.join(codexCacheDir, OLD))).toBe(false);
+    expect(existsSync(path.join(codexCacheDir, NEW))).toBe(true);
+    expect(
+      ran(w.calls, `node ${path.join(codexCacheDir, NEW, "dist/launch-mcp.js")} --install-agents`),
+    ).toBe(true);
+    // Cursor staged the package where the new CLI's installer looks for it.
+    expect(
+      json(
+        path.join(
+          w.home,
+          ".cursor/plugins/local/.workit-package-bootstrap/node_modules/@workit-dev/cursor/package.json",
+        ),
+      ).name,
+    ).toBe("@workit-dev/cursor");
     // Claude Code: `plugin update` kept 14.6.0, so it was reinstalled from the marketplace.
     expect(ran(w.calls, "claude plugin update workit@workit")).toBe(true);
     expect(ran(w.calls, "claude plugin uninstall workit@workit")).toBe(true);
@@ -406,6 +441,46 @@ test("Given installs on the old scope, Then doctor's old_scope row warns with th
     expect(check?.detail).toContain("opencode @brainervirus/workit-opencode@latest");
     expect(check?.detail).toContain("pi npm:@brainervirus/workit-pi");
     expect(check?.fix).toBe("npx -y @brainervirus/workit-cli@latest upgrade --yes");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a 14.x CLI run through npx (the new CLI's doctor fix), When `upgrade` is confirmed once, Then every host and the CLI move in that one invocation", async () => {
+  const w = world();
+  try {
+    let asked = 0;
+    const code = await runUpgradeCommand([], {
+      ...w.deps,
+      cliEntry: path.join(
+        w.home,
+        ".npm/_npx/0a1b/node_modules/@brainervirus/workit-cli/dist/index.js",
+      ),
+      confirm: async () => {
+        asked++;
+        return true;
+      },
+    });
+    expect(code, w.text()).toBe(0);
+    expect(asked).toBe(1);
+    for (const host of ["cli", "opencode", "pi", "cursor", "codex", "claude-code"])
+      expect(w.text()).toMatch(new RegExp(`\\n  ${host} +updated +.*@workit-dev/`));
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given Codex recorded an exact version on @brainervirus/workit-codex, When upgrade plans, Then the Codex install is moved, not kept as a pin or a local source", () => {
+  const w = world({ codexPinned: true });
+  try {
+    const plan = previewUpgrade(["codex"], w.deps);
+    expect(plan.entries).toContainEqual(
+      expect.objectContaining({
+        host: "codex",
+        scope: { from: "@brainervirus/workit-codex", to: "@workit-dev/codex" },
+      }),
+    );
+    expect(plan.skipped.filter((row) => row.host === "codex")).toEqual([]);
   } finally {
     w.cleanup();
   }

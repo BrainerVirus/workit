@@ -9,7 +9,7 @@
 // Code), Workit's installer (Cursor, the owned CLI) or a pin rewrite
 // (OpenCode). A second run finds every host on the new scope and changes
 // nothing.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { copyPluginDir } from "../admin/setup";
 import { type HostId } from "../admin/detect-hosts";
@@ -220,7 +220,11 @@ const movePi = async (entry: PlanEntry, run: AsyncRun): Promise<HostOutcome> => 
 };
 
 /** Codex: reinstall from the refreshed marketplace, then require the new package in its inventory. */
-const moveCodex = async (entry: PlanEntry, run: AsyncRun): Promise<HostOutcome> => {
+const moveCodex = async (
+  entry: PlanEntry,
+  run: AsyncRun,
+  paths: ReturnType<typeof upgradePaths>,
+): Promise<HostOutcome> => {
   for (const command of entry.commands) {
     const result = await run(command.command, command.args);
     if (result.status !== 0)
@@ -248,7 +252,35 @@ const moveCodex = async (entry: PlanEntry, run: AsyncRun): Promise<HostOutcome> 
       reason: `Codex installs ${plugin?.source?.package ?? "no Workit plugin"} from the ${CODEX_MARKETPLACE} marketplace, not ${newPackage("codex")}`,
       fix: entry.fix,
     };
-  return moved(entry, plugin.version ?? entry.latest, "new Codex threads load it");
+  const removed = removeOldCodexCache(paths.codexHome);
+  return moved(
+    entry,
+    plugin.version ?? entry.latest,
+    `new Codex threads load it${removed ? `; removed ${removed} old cached ${removed === 1 ? "version" : "versions"}` : ""}`,
+  );
+};
+
+/**
+ * Codex caches each plugin version under plugins/cache/workit/workit/<version>;
+ * the newest by number is what loads, so a 14.x left there would win over
+ * 1.0.0. Remove every cached version whose package is the old one.
+ */
+const removeOldCodexCache = (codexHome: string): number => {
+  const dir = path.join(codexHome, "plugins", "cache", CODEX_MARKETPLACE, "workit");
+  let removed = 0;
+  let versions: string[] = [];
+  try {
+    versions = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  for (const version of versions) {
+    const root = path.join(dir, version);
+    if (packageNameAt(root) !== legacyPackage("codex")) continue;
+    rmSync(root, { recursive: true, force: true });
+    removed++;
+  }
+  return removed;
 };
 
 /**
@@ -355,7 +387,7 @@ export const applyScopeEntry = async (
   const { runAsync, paths } = context;
   if (entry.host === "opencode") return moveOpencode(entry, paths.opencodeConfig);
   if (entry.host === "pi") return movePi(entry, runAsync);
-  if (entry.host === "codex") return moveCodex(entry, runAsync);
+  if (entry.host === "codex") return moveCodex(entry, runAsync, paths);
   if (entry.host === "claude-code") return moveClaude(entry, runAsync, paths);
   return moveCursor(entry, runAsync, paths);
 };

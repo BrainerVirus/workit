@@ -223,6 +223,18 @@ export const sources = (
     for (const plugin of installed) {
       if (plugin.name !== "workit") continue;
       const source = plugin.source;
+      // The old package moves whatever pin or source shape Codex recorded:
+      // the marketplace, not the pin, decides what it installs next.
+      if (source?.package === legacyPackage("codex")) {
+        result.push({
+          host: "codex",
+          selector: legacyPackage("codex"),
+          kind: "floating",
+          scope: "legacy",
+          ...(plugin.version ? { installedVersion: plugin.version } : {}),
+        });
+        continue;
+      }
       const npm = plugin.marketplaceName === CODEX_MARKETPLACE && fromNpm(plugin);
       result.push({
         ...classify(
