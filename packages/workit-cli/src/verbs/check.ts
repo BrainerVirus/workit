@@ -505,7 +505,8 @@ export function retryWaitMs(estimate: WaitEstimate, waitMs: number): number {
   return waitMs > 0 ? waitMs : RETRY_WAIT_MS;
 }
 
-const shellWord = (word: string): string =>
+/** One word of a retry command, single-quoted unless plain (POSIX shells and PowerShell read it alike). */
+export const shellWord = (word: string): string =>
   /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 
 /** `argv` (a `workit check` invocation in `cwd`) again, its wait replaced by `--wait <minutes>m`. */

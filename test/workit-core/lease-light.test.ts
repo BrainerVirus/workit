@@ -19,7 +19,12 @@ import {
 import { fullSuiteVerify, leaseContention, type Slice } from "@/packages/workit-core/src/fanout";
 import { heavyGate } from "@/packages/workit-core/src/hooks/heavy-gate";
 import { appendObserved } from "@/packages/workit-core/src/ledger";
-import { requeueMs, retryCommand, retryWaitMs } from "@/packages/workit-cli/src/verbs/check";
+import {
+  requeueMs,
+  retryCommand,
+  retryWaitMs,
+  shellWord,
+} from "@/packages/workit-cli/src/verbs/check";
 
 setDefaultTimeout(90_000);
 
@@ -257,26 +262,29 @@ const cli = (args: string[], root: string, env: NodeJS.ProcessEnv) =>
     });
   });
 
-test("Given a full suite holding every slot, When `workit check --heavy -- bunx oxfmt a.ts` runs, Then it runs at once without the lease and says why", async () => {
+test("Given a full suite holding every slot, When `workit check --heavy -- <formatter> a.ts` runs, Then it runs at once without the lease and says why", async () => {
+  // `bunx oxfmt a.ts` classifies as this same formatter (above); the run
+  // goes through a package script so it needs no oxfmt binary on any OS.
+  expect(lightCommand(["bunx", "oxfmt", "a.ts"])?.kind).toBe("formatter");
   const { root, env, leases } = repo(1);
   holdSlot(leases, holderLease("test", root));
-  const bin = path.join(root, "node_modules", ".bin");
-  mkdirSync(bin, { recursive: true });
-  writeFileSync(path.join(bin, "oxfmt"), '#!/bin/sh\necho "formatted $*"\n');
-  chmodSync(path.join(bin, "oxfmt"), 0o755);
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "fixture", private: true, scripts: { format: "echo formatted" } }),
+  );
   const run = await cli(
-    ["check", "--heavy", "--wait", "3", "--json", "--", "bunx", "oxfmt", "a.ts"],
+    ["check", "--heavy", "--wait", "3", "--json", "--", BUN, "run", "format", "a.ts"],
     root,
     env,
   );
   expect(run.code, run.stderr).toBe(0);
   expect(run.stderr).toContain(
-    "running at once without the heavy-check lease: oxfmt is a formatter",
+    "running at once without the heavy-check lease: `bun run format` only formats",
   );
   expect(run.stderr).not.toContain("waiting for the heavy-check lease");
   const envelope = JSON.parse(run.stdout) as { data: Record<string, unknown> };
   expect(envelope.data.lease).toBeNull();
-  expect(envelope.data.light).toMatchObject({ kind: "formatter", tool: "oxfmt" });
+  expect(envelope.data.light).toMatchObject({ kind: "formatter", tool: "bun format" });
   expect(envelope.data.logTail).toContain("formatted a.ts");
 });
 
@@ -308,7 +316,7 @@ test("Given a full suite holding every slot, When a heavy check waits past its l
     data: { lease: { retry: string; requeuedAfterMs: number; estimatedWaitMs: number } };
   };
   expect(envelope.error).toMatch(/stayed busy for \d+s \(re-queued once after \d+s\)/u);
-  const retry = `workit check --cwd ${root} --heavy --json --wait 15m -- ${BUN} -e 0`;
+  const retry = `workit check --cwd ${shellWord(root)} --heavy --json --wait 15m -- ${shellWord(BUN)} -e 0`;
   expect(envelope.data.lease.retry).toBe(retry);
   expect(envelope.unblock).toContain(retry);
   expect(envelope.data.lease.requeuedAfterMs).toBeGreaterThanOrEqual(2_000);
