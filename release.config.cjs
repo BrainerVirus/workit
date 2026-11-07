@@ -2,7 +2,7 @@ module.exports = {
   branches: ["main"],
   // The @workit-dev packages restarted at 1.0.0. semantic-release only reads
   // tags that match this format, so the v1.0.0..v14.x tags of the
-  // @brainervirus packages never seed a version: with no workit-dev-v* tag the
+  // old-scope packages never seed a version: with no workit-dev-v* tag the
   // next release is 1.0.0. analyze-release-scope.ts and the publish, sync and
   // backfill scripts share the prefix (TAG_PREFIX).
   tagFormat: "workit-dev-v${version}",

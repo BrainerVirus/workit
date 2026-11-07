@@ -3961,7 +3961,7 @@ const checkCliInstalls = (res: Resolved): DoctorCheck => {
 };
 
 /**
- * Installs still on the pre-1.0.0 @brainervirus scope. Their 14.x versions
+ * Installs still on the pre-1.0.0 npm scope (legacy-scope.ts). Their 14.x versions
  * are never compared with a @workit-dev 1.x release (that reads as newer than
  * published); the row names each one and the single command that migrates
  * them all.

@@ -81,7 +81,7 @@ describe("latestTag", () => {
 });
 
 describe("analyzeReleaseScope", () => {
-  test("old @brainervirus v* tags never seed a release: the first @workit-dev release ships every package", () => {
+  test("old 14.x v* tags never seed a release: the first @workit-dev release ships every package", () => {
     const r = repo();
     try {
       r.commit("feat: a", { "packages/workit-core/src/a.ts": "a\n" });

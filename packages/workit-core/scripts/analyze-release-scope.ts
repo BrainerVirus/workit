@@ -114,7 +114,7 @@ export const npmName = (pkg: string): string => `${NPM_SCOPE}/${pkg.replace(/^wo
 
 /**
  * Release tags are `workit-dev-v<semver>` (release.config.cjs tagFormat). The
- * `v<semver>` tags before them belong to the @brainervirus packages (14.x and
+ * `v<semver>` tags before them belong to the pre-1.0.0 packages (14.x and
  * earlier) and never seed a @workit-dev release.
  */
 export const TAG_PREFIX = "workit-dev-v";

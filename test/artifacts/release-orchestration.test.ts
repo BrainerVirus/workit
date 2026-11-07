@@ -277,7 +277,7 @@ test(
     // the new release tag before publish plugins run, so latestTag() inside the
     // script would see the release being cut and skip every package.
     expect(opts(cfg.plugins[publishIdx]).publishCmd).toContain("${lastRelease.gitTag}");
-    // Releases are tagged workit-dev-v<version>: the old @brainervirus v* tags
+    // Releases are tagged workit-dev-v<version>: the 14.x v* tags
     // never seed a version, so the first @workit-dev release is 1.0.0, and
     // the scripts read the same prefix.
     expect(cfg.tagFormat).toBe(`${TAG_PREFIX}\${version}`);

@@ -60,7 +60,7 @@ export const releaseNotes = (root: string, context: Omit<NotesContext, "cwd">): 
 
 /**
  * A stable release tag and its tag family: `workit-dev-v<x.y.z>` for the
- * @workit-dev packages, `v<x.y.z>` for the @brainervirus releases before them.
+ * @workit-dev packages, `v<x.y.z>` for the 14.x releases before them.
  * A range stays inside the family its `<from>` tag belongs to.
  */
 const STABLE_TAG = /^(workit-dev-v|v)(\d+\.\d+\.\d+)$/;
