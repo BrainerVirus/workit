@@ -640,7 +640,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "git",
     group: "delivery",
     summary:
-      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",
+      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); rebase onto a fresh base; push with a lease and a verified remote tip",
     subcommands: [
       {
         name: "branch",
@@ -677,6 +677,12 @@ export const VERBS: readonly VerbEntry[] = [
           "Push the current branch and verify the remote tip (never a blind --force); --release finishes a git-flow release, and a pushed release tag gets its forge release with the release notes",
       },
       {
+        name: "rebase",
+        usage: "workit git rebase [--onto <base>]",
+        summary:
+          "Replay the current branch onto its freshly fetched base (the default base, or --onto); a conflict aborts and names the paths, a rewrite is recorded and prints the leased push",
+      },
+      {
         name: "trailers",
         usage: "workit git trailers",
         summary:
@@ -691,6 +697,7 @@ export const VERBS: readonly VerbEntry[] = [
       "workit git stage --patch hunks.patch  # a git diff trimmed to the hunks to commit",
       'workit git commit --staged -m "fix(a): one focused change"',
       "workit git push --set-upstream",
+      "workit git rebase  # then: workit git push --force-with-lease",
     ],
     load: () => import("./git"),
   }),

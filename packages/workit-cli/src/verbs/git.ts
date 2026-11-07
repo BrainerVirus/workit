@@ -1,4 +1,4 @@
-// `workit git branch|commit|push` (design §2.1 S11). Flag parsing, the forge
+// `workit git branch|commit|push|rebase` (design §2.1 S11). Flag parsing, the forge
 // identity check and the grant seam; the rules live in core git/ops.ts.
 //
 //   workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
@@ -7,6 +7,7 @@
 //   workit git trailers  (prints on|off: whether this workspace writes Workit-Session trailers)
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
 //   workit git push --release <main|develop|v-tag>…  (repeatable)
+//   workit git rebase [--onto <base>]  (git-rebase.ts)
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireGrant } from "@workit-dev/core/src/autonomy";
@@ -39,6 +40,7 @@ import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 import { success, type ForgeResult } from "@workit-dev/core/src/forge/types";
 import { connect, forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
+import { rebase } from "./git-rebase";
 
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
@@ -48,7 +50,7 @@ const STAGE_USAGE = "workit git stage --patch <file|-> | [--] <paths…> [--json
 const UNSTAGE_USAGE = "workit git unstage [--] <paths…> [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]] [--json]";
-const USAGE = "workit git branch|commit|stage|unstage|push|trailers ... (workit help git)";
+const USAGE = "workit git branch|commit|stage|unstage|push|rebase|trailers ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
 
@@ -618,6 +620,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sub === "stage") return stage(rest, io);
   if (sub === "unstage") return unstage(rest, io);
   if (sub === "push") return push(rest, io);
+  if (sub === "rebase") return rebase(rest, io);
   if (sub === "trailers") return trailers(rest, io);
   return usage(
     io,
