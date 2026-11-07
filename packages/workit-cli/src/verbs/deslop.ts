@@ -46,6 +46,12 @@ function parse(argv: string[], sub: "scan" | "result"): Flags | string {
     const flag = eq === -1 ? raw : raw.slice(0, eq);
     const inline = eq === -1 ? undefined : raw.slice(eq + 1);
     if (flag === "--json") continue;
+    if (raw === "--") {
+      const extra = argv.slice(index + 1);
+      return extra.length > 0
+        ? `deslop ${sub} takes no positional arguments (got: ${extra.join(" ")})`
+        : flags;
+    }
     if (sub === "scan" && flag === "--diff") {
       const next =
         inline ?? (argv[index + 1] && !argv[index + 1].startsWith("-") ? argv[++index] : undefined);

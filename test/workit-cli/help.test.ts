@@ -70,6 +70,7 @@ const PARSERS: Record<string, string[]> = {
   fanout: ["verbs/fanout.ts"],
   ledger: ["verbs/ledger.ts"],
   "test-audit": ["verbs/test-audit.ts"],
+  deslop: ["verbs/deslop.ts"],
   knowledge: ["verbs/knowledge.ts"],
   youtrack: ["verbs/youtrack.ts"],
   changelog: ["verbs/changelog.ts"],
