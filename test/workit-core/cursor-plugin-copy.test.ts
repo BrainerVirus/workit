@@ -38,7 +38,7 @@ test("copyPluginDir materializes a real directory when the adapter root is a sym
     expect(copyPluginDir(linkPkg, dest)).toBe("Installed");
     expect(lstatSync(dest).isSymbolicLink()).toBe(false);
     expect(lstatSync(dest).isDirectory()).toBe(true);
-    expect(readFileSync(path.join(dest, "package.json"), "utf8")).toContain("workit-cursor");
+    expect(readFileSync(path.join(dest, "package.json"), "utf8")).toContain("@workit-dev/cursor");
     // realpathSync: macOS tmpdir may be /var vs /private/var
     expect(readFileSync(path.join(dest, ".workit-root"), "utf8").trim()).toBe(
       realpathSync(realPkg),
