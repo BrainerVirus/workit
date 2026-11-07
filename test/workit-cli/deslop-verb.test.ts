@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -65,15 +65,38 @@ const NARRATION = [
   "",
 ].join("\n");
 
-test("Given a diff adding narration comments, When deslop scan --diff runs, Then it lists each with file:line and class in under 2 s", async () => {
+const CLI = path.resolve(import.meta.dir, "../../packages/workit-cli/src/main.ts");
+
+test("Given a diff adding narration comments, When deslop scan --diff runs with only git on PATH, Then it lists each with file:line and class, spawning nothing but a bounded number of git calls", () => {
   const root = branchWith({ "src/calc.ts": NARRATION });
-  const started = performance.now();
-  const result = await run(root, ["deslop", "scan", "--diff", "main"]);
-  const elapsed = performance.now() - started;
-  expect(result.code).toBe(0);
+  const realGit = Bun.which("git");
+  if (!realGit) throw new Error("git is not on PATH");
+  const bin = mkdtempSync(path.join(os.tmpdir(), "wk-deslop-bin-"));
+  dirs.push(bin);
+  const log = path.join(bin, "git.log");
+  writeFileSync(log, "");
+  writeFileSync(
+    path.join(bin, "git"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexec '${realGit}' "$@"\n`,
+    { mode: 0o755 },
+  );
+  const result = spawnSync(process.execPath, [CLI, "deslop", "scan", "--diff", "main"], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      HOME: root,
+      PATH: bin,
+      WORKIT_SESSION_ID: "s-agent",
+      WORKIT_CONFIG: path.join(root, ".config-workit"),
+      WORKIT_STATE_DIR: path.join(root, ".state-workit"),
+    },
+  });
+  expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("src/calc.ts:3  narration  start the sum at zero");
   expect(result.stdout).toContain("src/calc.ts:5  narration  add each item to the sum");
-  expect(elapsed).toBeLessThan(2000);
+  const gitCalls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+  expect(gitCalls.length).toBeGreaterThan(0);
+  expect(gitCalls.length).toBeLessThanOrEqual(20);
 });
 
 test("Given a diff adding a licence header, a prettier-ignore and an issue link, When scanned with --json, Then they are classed allowed", async () => {
