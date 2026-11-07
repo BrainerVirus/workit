@@ -12,7 +12,7 @@ export const NEW_SCOPE_FLOOR = "1.0.0";
 /** The plan row that names the move. */
 export const SCOPE_ROW = "migrate scope";
 
-export type ScopedName = HostId | "cli" | "core" | "mcp";
+type ScopedName = HostId | "cli" | "core" | "mcp";
 export const legacyPackage = (name: ScopedName): string => `${LEGACY_SCOPE}/workit-${name}`;
 export const newPackage = (name: ScopedName): string => `${NEW_SCOPE}/${name}`;
 

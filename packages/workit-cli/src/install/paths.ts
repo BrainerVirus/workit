@@ -23,7 +23,7 @@ export const CLI_PACKAGE_NAME = "@brainervirus/workit-cli";
 /** The CLI's package on the new npm scope (the 14.x bridge migrates to it). */
 export const NEW_CLI_PACKAGE_NAME = "@workit-dev/cli";
 /** Every name a Workit CLI package has carried. */
-export const CLI_PACKAGE_NAMES = [CLI_PACKAGE_NAME, NEW_CLI_PACKAGE_NAME] as const;
+const CLI_PACKAGE_NAMES = [CLI_PACKAGE_NAME, NEW_CLI_PACKAGE_NAME] as const;
 
 /** Every location derived from the two roots above. */
 export const ownedPaths = (

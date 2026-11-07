@@ -8,6 +8,9 @@ on:
 
 permissions: {}
 
+# The 14.x bridge line: this workflow also releases from release/14.x, so no
+# job restores a cache another run could have written (zizmor cache-poisoning).
+
 concurrency:
   # PRs: the newest push cancels the previous run. main: one group per commit,
   # never cancelled, so every merge gets its own CI-gated release attempt
@@ -93,18 +96,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
 
       # The docs-tests gate runs `bun test`, whose preload requires Node 24+.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Restore bun cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+          package-manager-cache: false
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -193,17 +191,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
 
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Restore bun cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+          package-manager-cache: false
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -244,21 +237,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
 
-      # The npm cache feeds the packaging suites' isolated npm installs
-      # (tarballs; metadata still revalidates); keyed by bun.lock.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
-          cache: npm
-          cache-dependency-path: bun.lock
-
-      - name: Restore bun cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+          package-manager-cache: false
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -342,21 +326,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
 
-      # The npm cache feeds the packaging suites' isolated npm installs
-      # (tarballs; metadata still revalidates); keyed by bun.lock.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
-          cache: npm
-          cache-dependency-path: bun.lock
-
-      - name: Restore bun cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+          package-manager-cache: false
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -416,28 +391,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
 
-      # The npm cache feeds the packaging suites' isolated npm installs
-      # (tarballs; metadata still revalidates); keyed by bun.lock.
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_CURRENT }}
-          cache: npm
-          cache-dependency-path: bun.lock
-
-      # Windows: the bun download cache restored slower (80-90 s) than a cold
-      # `bun install` (70-75 s) (CI runs, 2026-10-28), so cache the installed
-      # node_modules trees instead. The key is the OS plus the lockfile hash and
-      # there is no restore-keys fallback, so a changed bun.lock never reuses a
-      # stale tree. `bun install --frozen-lockfile` still runs: on a hit it only
-      # verifies and relinks workspaces, on a miss it is the cold install.
-      - name: Restore node_modules
-        uses: actions/cache@v6
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: node-modules-${{ runner.os }}-bun${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          package-manager-cache: false
 
       - name: Install deps
         run: bun install --frozen-lockfile

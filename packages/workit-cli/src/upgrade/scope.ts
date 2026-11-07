@@ -48,16 +48,11 @@ import {
 export {
   LEGACY_SCOPE,
   NEW_SCOPE,
-  NEW_SCOPE_FLOOR,
-  SCOPE_FIX,
   SCOPE_ROW,
   legacyPackage,
-  movedOpencodePin,
-  movedPiSource,
   newPackage,
   packageNameAt,
   scopeOf,
-  type ScopedName,
 } from "./scope-names";
 
 export type ScopeRelease =
@@ -98,9 +93,6 @@ export const refuseScope = (plan: UpgradePlan, release: ScopeRelease): void => {
     reason: `not moving to ${NEW_SCOPE}/*: ${reason}; staying on ${LEGACY_SCOPE}/workit-*`,
   });
 };
-
-/** The move one host's plan entry makes. */
-export type ScopeMove = { from: string; to: string };
 
 /**
  * The plan entry that moves one host's old-scope registration. `latest` is the

@@ -310,7 +310,11 @@ test("Given release/14.x, When its release config and CI are read, Then pushes t
   // --all ships every package whatever changed (a dry run publishes nothing).
   const dry = spawnSync(
     "bun",
-    ["packages/workit-core/scripts/publish-changed-packages.ts", "--all", "HEAD"],
+    [
+      path.join(REPO_ROOT, "packages", "workit-core", "scripts", "publish-changed-packages.ts"),
+      "--all",
+      "HEAD",
+    ],
     { cwd: REPO_ROOT, encoding: "utf8", env: { ...process.env, PUBLISH_DRY_RUN: "1" } },
   );
   expect(dry.status, dry.stderr).toBe(0);
