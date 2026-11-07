@@ -106,13 +106,27 @@ const RELEASE_SYNC = /^chore\(release\): sync manifests\b/;
 const g = (root: string, args: string[]): string =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
-const SEMVER_TAG = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+/** The npm scope every release package publishes under. */
+export const NPM_SCOPE = "@workit-dev";
 
+/** The npm name of a release package directory: `workit-cli` -> `@workit-dev/cli`. */
+export const npmName = (pkg: string): string => `${NPM_SCOPE}/${pkg.replace(/^workit-/, "")}`;
+
+/**
+ * Release tags are `workit-dev-v<semver>` (release.config.cjs tagFormat). The
+ * `v<semver>` tags before them belong to the @brainervirus packages (14.x and
+ * earlier) and never seed a @workit-dev release.
+ */
+export const TAG_PREFIX = "workit-dev-v";
+export const TAG_GLOB = `${TAG_PREFIX}*`;
+export const RELEASE_TAG = /^workit-dev-v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/;
+
+/** The newest release tag by version order, or null before the first release. */
 export function latestTag(root = process.cwd()): string | null {
-  const tag = g(root, ["tag", "--list", "v*", "--sort=-v:refname"])
+  const tag = g(root, ["tag", "--list", TAG_GLOB, "--sort=-v:refname"])
     .split("\n")
     .map((l) => l.trim())
-    .find((l) => SEMVER_TAG.test(l));
+    .find((l) => RELEASE_TAG.test(l));
   return tag ?? null;
 }
 

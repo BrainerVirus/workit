@@ -16,6 +16,7 @@
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { TAG_PREFIX } from "../packages/workit-core/scripts/analyze-release-scope";
 
 /** Runs a command and returns its stdout; throws on a non-zero exit. */
 export type Exec = (cmd: string, args: string[], input?: string) => string;
@@ -57,7 +58,12 @@ const notesOptions = (root: string): Record<string, unknown> => {
 export const releaseNotes = (root: string, context: Omit<NotesContext, "cwd">): Promise<string> =>
   generateNotes(notesOptions(root), { ...context, cwd: root });
 
-const STABLE_TAG = /^v\d+\.\d+\.\d+$/;
+/**
+ * A stable release tag and its tag family: `workit-dev-v<x.y.z>` for the
+ * @workit-dev packages, `v<x.y.z>` for the @brainervirus releases before them.
+ * A range stays inside the family its `<from>` tag belongs to.
+ */
+const STABLE_TAG = /^(workit-dev-v|v)(\d+\.\d+\.\d+)$/;
 
 /** True when a release body has nothing below its version heading. */
 export const isHeaderOnly = (body: string): boolean =>
@@ -94,10 +100,11 @@ export async function backfillReleaseNotes(opts: {
       }));
   const [from, to] = opts.range.split("..");
   if (!from || !to) throw new Error(`range must be <from-tag>..<to-tag>, got "${opts.range}"`);
-  const tags = exec("git", ["tag", "--list", "v*", "--sort=v:refname"])
+  const prefix = STABLE_TAG.exec(from)?.[1] ?? TAG_PREFIX;
+  const tags = exec("git", ["tag", "--list", `${prefix}*`, "--sort=v:refname"])
     .split("\n")
     .map((t) => t.trim())
-    .filter((t) => STABLE_TAG.test(t));
+    .filter((t) => STABLE_TAG.exec(t)?.[1] === prefix);
   const start = tags.indexOf(from);
   const end = tags.indexOf(to);
   if (start < 0 || end < 0 || end < start) throw new Error(`no tag range ${opts.range}`);
@@ -120,7 +127,7 @@ export async function backfillReleaseNotes(opts: {
     const generated = await releaseNotes(root, {
       commits,
       lastRelease: { gitTag: previous },
-      nextRelease: { version: tag.slice(1), gitTag: tag },
+      nextRelease: { version: tag.slice(prefix.length), gitTag: tag },
       options: { repositoryUrl },
     });
     // The writer dates the heading today; the release happened on the tag date.

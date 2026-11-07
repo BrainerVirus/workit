@@ -37,7 +37,7 @@ describe("syncManifests", () => {
   test("strips the v prefix and writes every tracked manifest", () => {
     const root = fixtureRoot({ "package.json": "0.4.0" }, "workit");
     try {
-      const result = syncManifests(root, "v0.8.9");
+      const result = syncManifests(root, "workit-dev-v0.8.9");
       expect(result.changed.toSorted()).toEqual([...manifestPaths].toSorted());
       for (const rel of manifestPaths) {
         const parsed = JSON.parse(readFileSync(path.join(root, rel), "utf8"));
@@ -69,7 +69,7 @@ describe("syncManifests", () => {
       "packages/workit-cli/package.json": "0.8.9",
     });
     try {
-      const result = syncManifests(root, "v0.8.9");
+      const result = syncManifests(root, "workit-dev-v0.8.9");
       expect(result.version).toBe("0.8.9");
       expect(result.changed).toEqual([
         "packages/workit-core/package.json",

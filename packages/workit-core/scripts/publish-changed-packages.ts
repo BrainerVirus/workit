@@ -1,15 +1,20 @@
 #!/usr/bin/env bun
-// AR-16: selective publishing. Publishes only packages whose directory
-// changed since the previous v* tag; logs an exact skip line per unchanged
-// package so release logs answer "what shipped?" without leaving the terminal.
+// AR-16: selective publishing. Publishes only packages whose payload changed
+// since the release the registry serves for them; logs an exact skip line per
+// unchanged package so release logs answer "what shipped?" without leaving the
+// terminal.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   latestTag,
   lockChangedPackages,
+  npmName,
   payloadPaths,
   RELEASE_PACKAGES,
+  RELEASE_TAG,
+  TAG_GLOB,
+  TAG_PREFIX,
 } from "./analyze-release-scope";
 
 const git = (root: string, args: string[]): string =>
@@ -65,13 +70,13 @@ const internalDependencies = (root: string, pkg: string): string[] => {
     git(root, ["show", `HEAD:packages/${pkg}/package.json`]),
   ) as DependencyGroups;
   return RELEASE_PACKAGES.filter((other) =>
-    INSTALLED_GROUPS.some((group) => manifest[group]?.[`@brainervirus/${other}`] !== undefined),
+    INSTALLED_GROUPS.some((group) => manifest[group]?.[npmName(other)] !== undefined),
   );
 };
 
 /**
  * The order packages reach the registry (W2.38): each one after every release
- * package it installs, and workit-cli last. `npx @brainervirus/workit-cli@latest
+ * package it installs, and workit-cli last. `npx @workit-dev/cli@latest
  * upgrade` is the user entry point and installs the host packages @latest, so
  * a CLI published before them failed with ETARGET (v13.0.0: workit-cli landed
  * 1m40s before the workit-cursor it requires). Throws on a dependency cycle.
@@ -100,18 +105,16 @@ const HOST_PLUGIN_MANIFESTS = [
   "packages/workit-claude-code/.claude-plugin/plugin.json",
 ] as const;
 
-const SEMVER_TAG = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/;
-
 /**
  * The release tag semantic-release created on HEAD before its publish step,
  * or null. With several (never expected), the highest by version order.
  */
 export function releaseTagAtHead(root: string): string | null {
   return (
-    git(root, ["tag", "--points-at", "HEAD", "--list", "v*", "--sort=-v:refname"])
+    git(root, ["tag", "--points-at", "HEAD", "--list", TAG_GLOB, "--sort=-v:refname"])
       .split("\n")
       .map((line) => line.trim())
-      .find((line) => SEMVER_TAG.test(line)) ?? null
+      .find((line) => RELEASE_TAG.test(line)) ?? null
   );
 }
 
@@ -123,8 +126,8 @@ export function releaseTagAtHead(root: string): string | null {
  * own checkout and never commits them, so main keeps its last-synced version.
  */
 export function releaseVersionProblems(root: string, tag: string): string[] {
-  const match = SEMVER_TAG.exec(tag);
-  if (!match) return [`${tag} is not a v<semver> release tag`];
+  const match = RELEASE_TAG.exec(tag);
+  if (!match) return [`${tag} is not a ${TAG_PREFIX}<semver> release tag`];
   const version = match[1];
   const problems: string[] = [];
   const read = (rel: string) => JSON.parse(readFileSync(resolve(root, rel), "utf8"));
@@ -135,7 +138,7 @@ export function releaseVersionProblems(root: string, tag: string): string[] {
       problems.push(`${rel} version ${manifest.version} != ${version}`);
     for (const group of [...INSTALLED_GROUPS, "devDependencies"] as const)
       for (const [name, range] of Object.entries(manifest[group] ?? {}))
-        if (name.startsWith("@brainervirus/") && range !== `^${version}`)
+        if (name.startsWith("@workit-dev/") && range !== `^${version}`)
           problems.push(`${rel} ${group}.${name} is ${range}, not ^${version}`);
   }
   for (const rel of HOST_PLUGIN_MANIFESTS) {
@@ -158,6 +161,30 @@ const onRegistry = (run: Run, cwd: string, spec: string, version: string): boole
     return false;
   }
 };
+
+/** The version a registry placeholder holds: reserved the name, never a release. */
+const PLACEHOLDER_VERSION = "0.0.1";
+
+const SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+
+/**
+ * The release tag to diff `pkg` from: the tag of the version the registry
+ * serves as `latest`. Null means ship it: the name is not on the registry, it
+ * holds only the placeholder, the lookup failed, or no local tag matches that
+ * version (it was published from elsewhere). A release whose publish failed
+ * part-way therefore ships the missed packages next time, whatever changed.
+ */
+export function registryBaseTag(root: string, pkg: string, run: Run): string | null {
+  let version: string;
+  try {
+    version = String(run("npm", ["view", npmName(pkg), "version"], { cwd: root }) ?? "").trim();
+  } catch {
+    return null;
+  }
+  if (!SEMVER.test(version) || version === PLACEHOLDER_VERSION) return null;
+  const tag = `${TAG_PREFIX}${version}`;
+  return git(root, ["tag", "--list", tag]) === tag ? tag : null;
+}
 
 /**
  * Publishes one package. A failed `npm publish` is checked against the
@@ -191,6 +218,43 @@ function publishOne(run: Run, cwd: string, pause: (ms: number) => void): "publis
   }
 }
 
+/**
+ * The packages a release ships and the tag each one was diffed from (null:
+ * shipped without a diff). Everything ships on a first-ever release (no
+ * previous tag) or with `all`; otherwise a package ships when its payload
+ * changed since its base, plus the internal dependencies of every package
+ * that ships (changedPackages).
+ */
+function selectPackages(
+  root: string,
+  opts: { tag: string | null; all: boolean; registryBaseline: boolean; run: Run },
+): { changed: Set<string>; baseOf: Map<string, string | null> } {
+  const baseOf = new Map<string, string | null>();
+  if (opts.all || opts.tag === null) {
+    for (const pkg of RELEASE_PACKAGES) baseOf.set(pkg, null);
+    return { changed: new Set(RELEASE_PACKAGES), baseOf };
+  }
+  for (const pkg of RELEASE_PACKAGES)
+    baseOf.set(pkg, opts.registryBaseline ? registryBaseTag(root, pkg, opts.run) : opts.tag);
+  const changed = new Set<string>();
+  const byBase = new Map<string, string[]>();
+  for (const [pkg, base] of baseOf) {
+    if (base === null) changed.add(pkg);
+    else byBase.set(base, [...(byBase.get(base) ?? []), pkg]);
+  }
+  for (const [base, pkgs] of byBase)
+    for (const pkg of changedPackages(root, base)) if (pkgs.includes(pkg)) changed.add(pkg);
+  // A package shipped for its own reason still pulls its dependencies along.
+  const queue = [...changed];
+  for (let pkg = queue.pop(); pkg !== undefined; pkg = queue.pop())
+    for (const dep of internalDependencies(root, pkg))
+      if (!changed.has(dep)) {
+        changed.add(dep);
+        queue.push(dep);
+      }
+  return { changed, baseOf };
+}
+
 export function publishChanged(opts: {
   root: string;
   dryRun?: boolean;
@@ -202,6 +266,13 @@ export function publishChanged(opts: {
    * empty and would skip every package.
    */
   fromTag?: string;
+  /**
+   * Diff each package from the release the registry serves for it
+   * (registryBaseTag) instead of from `fromTag`. The release job sets it.
+   */
+  registryBaseline?: boolean;
+  /** Ship every package whatever changed (PUBLISH_ALL=1 or `--all`). */
+  all?: boolean;
   run?: Run;
   /** Wait before the single publish retry. Default: a blocking sleep. */
   pause?: (ms: number) => void;
@@ -223,9 +294,12 @@ export function publishChanged(opts: {
   const pause = opts.pause ?? ((ms: number) => Bun.sleepSync(ms));
   const tag =
     opts.fromTag !== undefined ? (opts.fromTag === "" ? null : opts.fromTag) : latestTag(root);
-  // First-ever release: everything ships.
-  const changed =
-    tag === null ? new Set<string>(RELEASE_PACKAGES) : new Set(changedPackages(root, tag));
+  const { changed, baseOf } = selectPackages(root, {
+    tag,
+    all: opts.all === true,
+    registryBaseline: opts.registryBaseline === true,
+    run,
+  });
   const published: string[] = [];
   const skipped: string[] = [];
   const failed: Array<{ pkg: string; error: string }> = [];
@@ -237,7 +311,7 @@ export function publishChanged(opts: {
   for (const pkg of publishOrder(root)) {
     if (!changed.has(pkg)) {
       skipped.push(pkg);
-      console.log(`skip ${pkg} (no payload change since ${tag})`);
+      console.log(`skip ${pkg} (no payload change since ${baseOf.get(pkg) ?? tag})`);
       continue;
     }
     const blockedBy = internalDependencies(root, pkg).filter((dep) =>
@@ -267,38 +341,55 @@ export function publishChanged(opts: {
     );
   }
   if (failed.length > 0) {
-    const summary = `publish failed for ${failed.length} package(s): ${failed.map((f) => f.pkg).join(", ")}; published: ${published.join(", ") || "none"}. Trusted publishing cannot create a package: publish a new @brainervirus name once by hand, then add its trusted publisher (docs/agents/release.md).`;
+    const summary = `publish failed for ${failed.length} package(s): ${failed.map((f) => f.pkg).join(", ")}; published: ${published.join(", ") || "none"}. Trusted publishing cannot create a package: publish a new @workit-dev name once by hand, then add its trusted publisher (docs/agents/release.md).`;
     console.log(summary);
     throw new Error(summary);
   }
   return { published, skipped, tag };
 }
 
-// @semantic-release/exec spawns this Cmd as a shell string whose ONLY optional
-// positional arg is rendered from ${lastRelease.gitTag}: present when a
-// previous release exists, absent on a first-ever release. The repo root is
-// always the spawn cwd (release.config.cjs paths are repo-root-relative), so
-// the CLI takes no root argument.
+/**
+ * The release job's options from argv and env. @semantic-release/exec spawns
+ * this Cmd as a shell string whose only optional positional arg is rendered
+ * from ${lastRelease.gitTag}: present when a previous release exists, absent
+ * (rendered empty) on a first-ever release, which therefore ships every
+ * package. It never falls back to latestTag(): semantic-release has already
+ * tagged HEAD with the release being cut, so that diff is always empty.
+ * `--all` or PUBLISH_ALL=1 ships every package; PUBLISH_DRY_RUN=1 publishes
+ * nothing. Each package is diffed from the release the registry serves for it.
+ */
+export function cliOptions(
+  argv: readonly string[],
+  env: Record<string, string | undefined>,
+): { fromTag: string; all: boolean; dryRun: boolean; registryBaseline: true } {
+  return {
+    fromTag: argv.find((arg) => !arg.startsWith("--")) ?? "",
+    all: argv.includes("--all") || env.PUBLISH_ALL === "1",
+    dryRun: env.PUBLISH_DRY_RUN === "1",
+    registryBaseline: true,
+  };
+}
+
+// The repo root is always the spawn cwd (release.config.cjs paths are
+// repo-root-relative), so the CLI takes no root argument.
 // Before anything reaches the registry, the version guard proves the tag
 // semantic-release just created on HEAD and every published manifest agree;
 // a mismatch fails the job with nothing published.
 if (import.meta.main) {
   const root = process.cwd();
-  const dryRun = process.env.PUBLISH_DRY_RUN === "1";
+  const options = cliOptions(process.argv.slice(2), process.env);
   const releaseTag = releaseTagAtHead(root);
   if (releaseTag === null) {
-    if (!dryRun)
-      throw new Error("no v* release tag on HEAD: publishing runs after semantic-release tags it");
-    console.log("dry run: no v* release tag on HEAD, version check skipped");
+    if (!options.dryRun)
+      throw new Error(
+        `no ${TAG_GLOB} release tag on HEAD: publishing runs after semantic-release tags it`,
+      );
+    console.log(`dry run: no ${TAG_GLOB} release tag on HEAD, version check skipped`);
   } else {
     const problems = releaseVersionProblems(root, releaseTag);
     if (problems.length > 0)
       throw new Error(`release ${releaseTag} manifests disagree:\n  ${problems.join("\n  ")}`);
     console.log(`every published manifest carries ${releaseTag}`);
   }
-  publishChanged({
-    root,
-    dryRun,
-    ...(process.argv[2] !== undefined ? { fromTag: process.argv[2] } : {}),
-  });
+  publishChanged({ root, ...options });
 }

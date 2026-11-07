@@ -74,10 +74,10 @@ test("the release checkout carries vX in every published manifest while main kee
   expect(lastSynced).not.toBe(RELEASED);
   bumpLikeSemanticRelease(root, RELEASED);
   rewrite(root);
-  git(["tag", `v${RELEASED}`]);
+  git(["tag", `workit-dev-v${RELEASED}`]);
 
-  expect(releaseTagAtHead(root)).toBe(`v${RELEASED}`);
-  expect(releaseVersionProblems(root, `v${RELEASED}`)).toEqual([]);
+  expect(releaseTagAtHead(root)).toBe(`workit-dev-v${RELEASED}`);
+  expect(releaseVersionProblems(root, `workit-dev-v${RELEASED}`)).toEqual([]);
   for (const rel of PLUGINS)
     expect(
       (JSON.parse(readFileSync(path.join(root, rel), "utf8")) as { version: string }).version,
@@ -90,18 +90,20 @@ test("the release checkout carries vX in every published manifest while main kee
 test("without the prepare-time rewrite the guard names every manifest that disagrees", () => {
   const { root, git } = mainCheckout();
   bumpLikeSemanticRelease(root, RELEASED);
-  git(["tag", `v${RELEASED}`]);
-  const problems = releaseVersionProblems(root, `v${RELEASED}`);
+  git(["tag", `workit-dev-v${RELEASED}`]);
+  const problems = releaseVersionProblems(root, `workit-dev-v${RELEASED}`);
   for (const rel of PLUGINS)
     expect(problems.some((p) => p.startsWith(`${rel} version`))).toBe(true);
   expect(problems).toContain(
-    `packages/workit-cli/package.json dependencies.@brainervirus/workit-cursor is workspace:*, not ^${RELEASED}`,
+    `packages/workit-cli/package.json dependencies.@workit-dev/cursor is workspace:*, not ^${RELEASED}`,
   );
   // A tag that is not a release version is refused outright.
-  expect(releaseVersionProblems(root, "latest")).toEqual(["latest is not a v<semver> release tag"]);
+  expect(releaseVersionProblems(root, "latest")).toEqual([
+    "latest is not a workit-dev-v<semver> release tag",
+  ]);
 });
 
-test("no v* tag on HEAD reads as null (publishing before semantic-release tagged)", () => {
+test("no workit-dev-v* tag on HEAD reads as null (publishing before semantic-release tagged)", () => {
   const { root, git } = mainCheckout();
   expect(releaseTagAtHead(root)).toBeNull();
   git(["tag", "not-a-release"]);
@@ -127,11 +129,11 @@ test("the publish step checks the tag before publishing, in dependency order", (
   const { root, git } = mainCheckout();
   bumpLikeSemanticRelease(root, RELEASED);
   rewrite(root);
-  git(["tag", `v${RELEASED}`]);
+  git(["tag", `workit-dev-v${RELEASED}`]);
   const ok = publishDryRun(root);
   expect(ok.status, ok.stderr).toBe(0);
   const lines = ok.stdout.split("\n");
-  const guard = lines.indexOf(`every published manifest carries v${RELEASED}`);
+  const guard = lines.indexOf(`every published manifest carries workit-dev-v${RELEASED}`);
   const published = lines
     .filter((line) => line.startsWith("published "))
     .map((line) => line.split(" ")[1]);
@@ -143,9 +145,9 @@ test("the publish step checks the tag before publishing, in dependency order", (
   expect(published.at(-1)).toBe("workit-cli");
 
   // A tag the manifests do not carry stops the step before any package.
-  git(["tag", "v99.2.0"]);
+  git(["tag", "workit-dev-v99.2.0"]);
   const bad = publishDryRun(root);
   expect(bad.status).not.toBe(0);
-  expect(bad.stderr).toContain("release v99.2.0 manifests disagree");
+  expect(bad.stderr).toContain("release workit-dev-v99.2.0 manifests disagree");
   expect(bad.stdout).not.toContain("published ");
 });

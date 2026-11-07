@@ -51,7 +51,7 @@ test("the plugin manifest is versioned with its package and kept in lockstep by 
       mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
       cpSync(path.join(REPO, rel), path.join(tree, rel));
     }
-    syncManifests(tree, "v99.0.0");
+    syncManifests(tree, "workit-dev-v99.0.0");
     for (const rel of synced) expect(json(path.join(tree, rel)).version, rel).toBe("99.0.0");
   } finally {
     rmSync(tree, { recursive: true, force: true });
