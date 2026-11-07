@@ -307,9 +307,9 @@ export type Enforcement = "enforced" | "advisory";
 
 /**
  * Whether Workit applies a role's model on a host itself (`enforced`) or only
- * names it for the lead to pass (`advisory`). Claude Code (PreToolUse
- * updatedInput) and OpenCode (the plugin's subagent hook) set it on every
- * spawn; Codex writes it into its verifier, reviewer and implementer agent
+ * names it for the lead to pass (`advisory`). Claude Code (a PreToolUse deny
+ * naming the exact args) and OpenCode (the plugin's subagent hook) hold every
+ * spawn to it; Codex writes it into its verifier, reviewer and implementer agent
  * files, Pi passes it to its reviewer, investigator and implementer workers
  * (the implementer on both only when the three tiers agree); Cursor has no
  * hook that can change a spawn. The lead's own model is advisory everywhere.
