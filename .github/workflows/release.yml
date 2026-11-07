@@ -2,11 +2,11 @@ name: Release
 
 # Called from ci.yml after every CI job passed for the same main commit, so a
 # red commit can never publish.
+# npm auth is trusted publishing (GitHub Actions OIDC): no npm token reaches
+# this workflow. npmjs.com trusts the CALLING workflow (ci.yml) for each
+# @brainervirus package; docs/agents/release.md lists the exact settings.
 on:
   workflow_call:
-    secrets:
-      NPMJS:
-        required: true
 
 permissions: {}
 
@@ -29,7 +29,7 @@ jobs:
       contents: write # GitHub Release
       issues: write # semantic-release success comments
       pull-requests: write # semantic-release success comments
-      id-token: write # npm provenance attestation (NPM_TOKEN stays the auth path)
+      id-token: write # npm trusted publishing (OIDC auth) and provenance
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,7 +38,23 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24.20.0"
-          registry-url: https://registry.npmjs.org
+          # No registry-url: it writes an `_authToken=${NODE_AUTH_TOKEN}` line
+          # into a temp .npmrc, and a token there must not stand in for OIDC.
+
+      # Trusted publishing needs npm >= 11.5.1 and `npm dist-tag` over OIDC
+      # needs >= 11.21.0; Node 24.20.0 bundles 11.19.0.
+      - name: Install npm with trusted publishing
+        run: npm install --global npm@11.21.1 # zizmor: ignore[adhoc-packages] -- exact pin
+
+      - name: Check npm version
+        run: |
+          version="$(npm --version)"
+          echo "npm $version"
+          lowest="$(printf '%s\n' 11.21.0 "$version" | sort -V | head -n 1)"
+          if [[ "$lowest" != 11.21.0 ]]; then
+            echo "::error::npm $version is older than 11.21.0 (trusted publishing)"
+            exit 1
+          fi
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -62,8 +78,10 @@ jobs:
       - name: Release
         run: bun run release
         env:
-          # npm publish (publish-changed-packages.ts) attaches a provenance
-          # attestation via the job's OIDC token; auth is still NPM_TOKEN.
+          # npm publish (publish-changed-packages.ts) authenticates through
+          # the job's OIDC token (trusted publishing) and attaches a
+          # provenance attestation. Nothing here sets an npm token, and the
+          # @semantic-release/npm bumpers (npmPublish: false) never verify one.
           NPM_CONFIG_PROVENANCE: "true"
           # @semantic-release/npm bumps each package with `npm version`, which
           # in a workspace reinstalls it. After the verify-time rewrite the
@@ -73,9 +91,3 @@ jobs:
           # prepare-time build bundles it (8.0.0 shipped 7.7.0's core).
           NPM_CONFIG_WORKSPACES_UPDATE: "false"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPMJS }}
-          # setup-node writes //registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}
-          # into the temp .npmrc — without this var the token is an empty
-          # placeholder that wins over NPM_TOKEN. NPM_TOKEN alone is not read
-          # by npm when a userconfig exists.
-          NODE_AUTH_TOKEN: ${{ secrets.NPMJS }}

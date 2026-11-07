@@ -230,8 +230,8 @@ export function publishChanged(opts: {
   const skipped: string[] = [];
   const failed: Array<{ pkg: string; error: string }> = [];
   // Every changed package is attempted even after a failure: one package that
-  // cannot publish (e.g. a first publish of a new npm name the token does not
-  // cover) must not leave the others unreleased. Failures throw at the end.
+  // cannot publish (e.g. a new npm name with no trusted publisher yet) must
+  // not leave the others unreleased. Failures throw at the end.
   // The exception is a package that installs a failed one: its ^<version>
   // range would not resolve (ETARGET), so it is held back as failed too.
   for (const pkg of publishOrder(root)) {
@@ -267,7 +267,7 @@ export function publishChanged(opts: {
     );
   }
   if (failed.length > 0) {
-    const summary = `publish failed for ${failed.length} package(s): ${failed.map((f) => f.pkg).join(", ")}; published: ${published.join(", ") || "none"}. A first publish of a new @brainervirus package needs an npm token allowed to create packages in the scope.`;
+    const summary = `publish failed for ${failed.length} package(s): ${failed.map((f) => f.pkg).join(", ")}; published: ${published.join(", ") || "none"}. Trusted publishing cannot create a package: publish a new @brainervirus name once by hand, then add its trusted publisher (docs/agents/release.md).`;
     console.log(summary);
     throw new Error(summary);
   }
