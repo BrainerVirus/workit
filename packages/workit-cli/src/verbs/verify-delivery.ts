@@ -212,7 +212,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ...(localCleanup ? cleanupLines(localCleanup, data.branch) : []),
     ]);
   const failed = report.observations.filter((entry) => !entry.ok);
-  const offTrunk = failed.some((entry) => entry.kind === "merge_on_trunk");
+  const offTrunk = failed.some((entry) => entry.kind === "merge_on_trunk" && entry.expected);
   // Human mode: the observations too; the reason is the error line's, once.
   if (!io.json) for (const line of render(report, false)) io.stdout(`${line}\n`);
   return emit(
