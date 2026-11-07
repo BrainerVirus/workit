@@ -30,6 +30,13 @@ fix, perf, revert, refactor, docs, test, build, ci, chore), so a refactor-only
 release still lists its commit. `style` and the old `chore(release)`
 manifest-sync commits stay out (`presetConfig.types` in `release.config.cjs`).
 
+GitHub rejects a release body over 125000 characters, so
+`scripts/clean-release-notes.cjs` caps it. The first release (no previous
+`workit-dev-v*` tag) would list every commit in the repository, so its body
+only says it continues `@brainervirus/workit` 14.6.1 and links `CHANGELOG.md`
+and the migration guide. Any other body estimated over 100000 characters keeps
+the entries that fit and ends with a link to the full compare view.
+
 The GitHub release (tag, notes) is created before npm publishing, so a
 publish failure can no longer leave a tag without a release. Packages are
 published in dependency order. Each one goes after every `@workit-dev`

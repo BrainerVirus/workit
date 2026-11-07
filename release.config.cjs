@@ -50,6 +50,10 @@ module.exports = {
         // depth for any commit body that still reaches the parser: drop git
         // trailers and keep a breaking note to its first paragraph, so release
         // notes never repeat whole commit messages or Co-Authored-By lines.
+        // It also keeps the body under GitHub's 125000-character limit: the
+        // first release (no workit-dev-v tag) gets a short body pointing at
+        // CHANGELOG.md, and an oversized one is cut with a compare link. The
+        // GitHub release and every ${nextRelease.notes} reader get that body.
         writerOpts: { finalizeContext: require("./scripts/clean-release-notes.cjs") },
       },
     ],
