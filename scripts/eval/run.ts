@@ -231,6 +231,9 @@ const writeSummary = (dir: string): void => {
     total: rows.length,
     cases: rows,
   });
+  // Results are committed, so they must pass the repo's format check as written.
+  const oxfmt = path.join(REPO, "node_modules", ".bin", "oxfmt");
+  if (existsSync(oxfmt)) spawnSync(oxfmt, [dir], { cwd: REPO, stdio: "ignore" });
 };
 
 const line = (status: string, result: RunResult): string => {

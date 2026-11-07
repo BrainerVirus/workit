@@ -212,6 +212,9 @@ test("Given a failing transcript, When run, Then the exit code is 1 and the stor
   expect(printed.join("\n")).toContain(
     "raw-git-push: #1 Bash(git push origin HEAD) pushes with raw git",
   );
+  expect(readFileSync(path.join(root, "results", "haiku", "summary.json"), "utf8")).toContain(
+    '"failures": ["raw-git-push"],',
+  );
 });
 
 test("Given a stored grade that no longer matches the grader, When replayed with --check, Then it reports drift; plain --replay rewrites it", () => {
