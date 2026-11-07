@@ -8,7 +8,9 @@
 //       while the effective endpoint is pr, green or merged;
 //   (b) checks: the branch's open PR has failing or pending checks recorded
 //       for its current head (`pr.status` rows) while the endpoint is green
-//       or merged;
+//       or merged; a live `workit ci wait` on that PR and head (ci-waiter.ts),
+//       often moved to the background, is in flight: the stop is allowed
+//       with a notice instead, and the wait re-invokes the lead when it ends;
 //   (c) verdict: the session opened the PR (or verified delivery) but the
 //       head lacks the verdict the policy asks for, while the endpoint is
 //       green or merged (a PR opens without one). Under `verification:
@@ -30,10 +32,11 @@
 // A stop is never blocked: in a subagent, outside a Workit workspace, when
 // the host says this stop already follows a continuation (one continue per
 // turn), or when the agent's last message asks the user a question. Reads
-// the ledger and local git only (no forge call), and every failure allows
+// the ledger, local git and the ci-wait marker only (no forge call), and every failure allows
 // the stop.
 import { spawnSync } from "node:child_process";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
+import { liveCiWaiter, type CiWaiter } from "../ci-waiter";
 import { currentJudgment } from "../core/policy/current-judgment";
 import { branchLane, laneNeed } from "../core/policy/lane";
 import { currentBranch, pushRemoteName } from "../git/rev";
@@ -51,6 +54,8 @@ export type StopObligation = {
   reason: string;
   /** HEAD when it was found: with the kind, the once-per-head key. */
   head?: string | null;
+  /** A live `workit ci wait` on the PR and head: the checks are in flight, not owed. */
+  waiter?: CiWaiter;
 };
 
 /** A question mark (Latin, full-width, Arabic) ending a sentence, or Spanish's opening one. */
@@ -99,7 +104,12 @@ const gitList = (cwd: string, args: string[]): string[] | null => {
     encoding: "utf8",
     timeout: 3_000,
     windowsHide: true,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_OPTIONAL_LOCKS: "0",
+      LC_ALL: "C",
+    },
   });
   return run.status === 0 ? run.stdout.split("\n").filter(Boolean) : null;
 };
@@ -224,6 +234,7 @@ const unpushed = (
 
 /** (b) The open PR's checks, as last recorded for the current head. */
 const redChecks = (
+  cwd: string,
   rows: readonly ReadRow[],
   pr: number,
   head: string,
@@ -234,6 +245,13 @@ const redChecks = (
   );
   const state = status && status.head === head && prState(status) === "open" ? status.checks : null;
   if (state !== "failing" && state !== "pending") return null;
+  const waiter = liveCiWaiter(cwd, pr, head);
+  if (waiter)
+    return {
+      kind: "checks",
+      waiter,
+      reason: `a \`workit ci wait\` for PR #${pr} at ${short(waiter.head ?? head)} is in flight (pid ${waiter.pid}, until ${new Date(waiter.deadline).toISOString()}); its result re-invokes you when it ends, so do not start another wait.`,
+    };
   return {
     kind: "checks",
     reason: `PR #${pr}'s checks were last seen ${state} at ${short(head)}, and this workspace's endpoint is \`${endpoint}\`: run \`workit ci wait --pr ${pr}\`${state === "failing" ? " after fixing the failures `workit pr status` lists (then push)" : ""}.`,
@@ -344,7 +362,7 @@ export function stopObligation(
     }
     const pr = openPr(rows);
     if ((endpoint === "green" || endpoint === "merged") && pr !== null && head) {
-      const left = redChecks(rows, pr, head, endpoint);
+      const left = redChecks(input.cwd, rows, pr, head, endpoint);
       if (left) return { ...left, head };
     }
     // A PR opens without a verdict: only green and merged need one.
@@ -368,6 +386,7 @@ export function stopDecision(input: HookInput, descriptor: HostDescriptor): Hook
   if (!event.lastMessage?.trim() || asksUser(event.lastMessage)) return NONE;
   const left = stopObligation(input, descriptor);
   if (!left) return NONE;
+  if (left.waiter) return { kind: "notice", userMessage: `Workit: ${left.reason}` };
   // Once per head and obligation for the session, and no verdict nag while a
   // verifier or reviewer this lead started is still running.
   const session = input.session.id;
@@ -377,7 +396,10 @@ export function stopDecision(input: HookInput, descriptor: HostDescriptor): Hook
   const key = `${left.kind}:${left.head ?? ""}`;
   if (file && marker) {
     if (marker.stops.includes(key)) return NONE;
-    updateSessionMarker(file, (fresh) => ({ ...fresh, stops: [...fresh.stops, key] }));
+    updateSessionMarker(file, (fresh) => ({
+      ...fresh,
+      stops: [...fresh.stops, key],
+    }));
   }
   return {
     kind: "continue",
