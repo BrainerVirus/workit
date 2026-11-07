@@ -10,7 +10,7 @@ import { isConfigObject, isUpdatesMode, type UpdatesMode } from "@workit-dev/cor
 export const workitConfigDir = (env: NodeJS.ProcessEnv): string => configDir(env);
 
 /** The package a cache answer is about; a cache for another (or no) package is ignored. */
-export const UPDATE_CACHE_PACKAGE = "@workit-dev/cli";
+const UPDATE_CACHE_PACKAGE = "@workit-dev/cli";
 
 export type UpdateCache = {
   /** The package `latest` was looked up for. */
