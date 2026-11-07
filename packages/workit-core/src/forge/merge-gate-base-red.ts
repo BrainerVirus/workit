@@ -36,7 +36,12 @@ export function classifyBaseRed(
 export function previousBaseChecks(resolved: ResolvedForge, base: string): ForgeResult<RefChecks> {
   if (resolved.forge.kind !== "github")
     return failure("unavailable", `${resolved.forge.kind} has no previous-run read`);
-  return resolved.forge.branchChecks(`${base}~1`);
+  // Advisory only: a read that throws must never change the base_red refusal.
+  try {
+    return resolved.forge.branchChecks(`${base}~1`);
+  } catch (error) {
+    return failure("failed", `the previous ${base} run read threw (${String(error)})`);
+  }
 }
 
 const quote = (name: string): string => `"${name.replaceAll('"', '\\"')}"`;

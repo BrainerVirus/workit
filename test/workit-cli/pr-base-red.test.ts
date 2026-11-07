@@ -209,6 +209,19 @@ test("given the previous main run cannot be read, when merging onto a red main, 
   expect(result.json().data.baseRedCause).toBe("unknown");
 });
 
+test("given the previous main run read throws, when merging onto a red main, then the refusal is unchanged but for an unknown cause", async () => {
+  const { repo, runner } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")], {
+    "GET repos/o/r/branches/main~1": () => {
+      throw new Error("unrecorded gh call");
+    },
+  });
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().data).toMatchObject({ reason: "base_red", baseRedCause: "unknown" });
+  expect(result.json().unblock).toContain("workit ci rerun --ref main --failed --reason flake");
+  expect(merges(runner.calls)).toEqual([]);
+});
+
 test("given a base whose CI is still running, when merging, then it merges with a one-line note", async () => {
   const { repo, runner } = setup([checkRun("unit", "IN_PROGRESS", null)]);
   const result = await run(["pr", "merge", "--keep-branch"], repo.cwd);
