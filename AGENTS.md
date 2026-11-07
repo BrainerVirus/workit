@@ -31,6 +31,7 @@ test and switch back ([real-host tests](docs/agents/testing.md#real-host-tests))
 
 - Writing or reviewing code: [CODING_STANDARDS.md](CODING_STANDARDS.md).
 - Packaging, acceptance or CI-only suites: [docs/agents/testing.md](docs/agents/testing.md).
+- Weak-model parity, the local eval bench and its cases: [docs/agents/eval.md](docs/agents/eval.md).
 - Adapters, hooks, setup, grants, tool schemas, YouTrack: [docs/agents/hosts.md](docs/agents/hosts.md).
 - Files Workit keeps outside a repo (config, state, data, cache dirs): [docs/agents/file-locations.md](docs/agents/file-locations.md).
 - Skills, the bootstrap, rules for installed projects: [docs/agents/agent-rules.md](docs/agents/agent-rules.md).

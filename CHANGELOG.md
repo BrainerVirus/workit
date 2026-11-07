@@ -13,6 +13,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (retro 2026-11-07)
+
+- **Implementer confinement follows shell variables, loops and inline
+  interpreter scripts** (#744). `W=<worktree>; workit git --cwd $W commit` and
+  `workit check --cwd $W …` are judged against the worktree, not the lead's
+  checkout. A plain `NAME=<literal>` set earlier in the same command,
+  `$(mktemp …)` (the path it prints) and a `for` over literal words resolve; a
+  loop or conditional untrusts only the names assigned inside its body. An
+  inline `python -c`, `node -e`, `ruby -e` or `perl -e` script is judged by
+  the paths it names: its run directory counts as a write target, plus every
+  absolute, `~` or `..`-climbing path in its text, options, arguments and env
+  prefix; a relative `require`/`import` resolves to the run directory, and a
+  path Workit cannot resolve is denied. Such a script passes only when it runs
+  from the worktree, its scratch or a temp dir and names no path outside
+  them. A variable Workit cannot resolve is denied by name, with
+  the command reprinted with the path spelled out for the retry. Writes into
+  the lead's checkout are still denied.
+- **Formatters skip the check lease, and a lease wait re-queues once** (#745).
+  `workit check --heavy -- <cmd>` runs a formatter (`oxfmt`, `prettier`,
+  `cargo fmt`, `bun run format`) or a linter whose every target is a file at
+  once and says why; the shell heavy gate leaves them alone on every host. At
+  its wait limit a heavy check keeps its queue place for one more limit and
+  prints the estimated wait, then fails with the exact retry command. `workit
+  fanout plan` warns when a wave has more full-suite slices than lease slots.
+- **Auto mode: a spawn missing its role args is denied with the exact Agent
+  args** (#746). Claude Code's auto mode refuses a spawn a hook rewrote, so a
+  spawn missing its role's `model`/`effort`, or one setting `isolation`, is
+  now denied once with the args to pass (`run_in_background` kept). Other
+  modes still fill them in. `workit fanout brief` gives a Claude Code lead
+  `SPAWN:` lines and a `checks:` line.
+- **Stop honours a live `ci wait`** (#748). The Stop hook no longer asks for a
+  `workit ci wait` while one for the same PR and head is already running; it
+  lets the stop through with a notice. A second `ci wait` on that PR and head
+  exits busy (4, `data.state: in_flight`) naming the running one, without
+  polling.
+- **A `base_red` refusal names the next step** (#750). `pr merge` on a red
+  protected base reads the previous base run: when every failing job passed
+  there it says likely flaky and prints the exact
+  `workit ci rerun --ref <base> --check "<job>" --reason flake`; when a job
+  also failed there it says the base is broken and suggests no rerun.
+  `--json` adds `baseRedCause` (`flaky`, `broken`, `unknown`). GitHub only:
+  GitLab gets `unknown` and the generic `--failed` rerun hint.
+- **A verified verdict needs each configured check** (#751).
+  `workit ledger verdict verified|tests-verified` refuses (`check_missing`,
+  exit 3) while a configured check has no fresh passing local run on the head
+  and the head's PR CI is not green, naming the `workit check <name>` to run or
+  `workit ci wait --pr <n>`. A verifier's or reviewer's SubagentStart text
+  lists the checks on Claude Code and Codex.
+
+### Added (retro 2026-11-07)
+
+- **CLI grammar aliases** (#743). `workit git add` is an alias of
+  `workit git stage`, and `workit git push [-u] origin <current branch>`
+  pushes like `workit git push` (another branch name is still refused).
+  `workit grant show` prints the workspace-remote note after the grant table.
+  A raw `pkill -f <pattern>` gets a nudge toward `pgrep -f '[p]attern'`,
+  never a deny.
+- **Deslop depth follows the review lane** (#754). `workit deslop scan --diff
+  [<base>] [--lane <l>]` classes each comment a branch adds (narration,
+  marker, suppression, debug, allowed) with no agent, runs `test-audit` on the
+  changed tests and prints the lane's passes; a new marker or suppression
+  raises a `none`/`self` lane to `focused`. `workit deslop result --removed N`
+  records one `deslop.result` row. `workit test-audit` gains
+  `mock-call-order` and `private-access`. From `focused` up, a fresh-eyes
+  no-comments pass goes to each host's reviewer. See
+  [docs/guides/review.md](docs/guides/review.md).
+- **Repo rules from past mistakes** (#747, contributors). `bun run lint` also
+  runs four static rules (`spawn-timeout`, `spawn-env-path`,
+  `no-wall-clock-assert`, `exit-after-flush`) against a ratchet baseline: a
+  new hit fails naming its fix, and `bun run lint:rules --write` shrinks the
+  baseline after a fix.
+
+### Changed (retro 2026-11-07)
+
+- **Model evals run locally on the Claude Code subscription** (#749).
+  `bun scripts/eval/run.ts --model haiku --tier smoke` runs each case in
+  `evals/cases/` as a headless `claude -p` against this checkout, grades the
+  transcript's tool calls (never a model), caches results per case, model and
+  Workit version, and caps model runs with `--budget-runs` (default 3). The CI
+  `claude-eval.yml` workflow and the `claude plugin eval` suite are removed.
+  See [docs/agents/eval.md](docs/agents/eval.md).
+
 ### Added (config JSON Schemas)
 
 - `workspaces.json`, `config.json`, `vcs.json` and `youtrack.json` have JSON
