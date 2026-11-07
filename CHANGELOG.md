@@ -44,6 +44,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lets the stop through with a notice. A second `ci wait` on that PR and head
   exits busy (4, `data.state: in_flight`) naming the running one, without
   polling.
+- **A `base_red` refusal names the next step** (#750). `pr merge` on a red
+  protected base reads the previous base run: when every failing job passed
+  there it says likely flaky and prints the exact
+  `workit ci rerun --ref <base> --check "<job>" --reason flake`; when a job
+  also failed there it says the base is broken and suggests no rerun.
+  `--json` adds `baseRedCause` (`flaky`, `broken`, `unknown`). GitHub only:
+  GitLab gets `unknown` and the generic `--failed` rerun hint.
+- **A verified verdict needs each configured check** (#751).
+  `workit ledger verdict verified|tests-verified` refuses (`check_missing`,
+  exit 3) while a configured check has no fresh passing local run on the head
+  and the head's PR CI is not green, naming the `workit check <name>` to run or
+  `workit ci wait --pr <n>`. A verifier's or reviewer's SubagentStart text
+  lists the checks on Claude Code and Codex.
 
 ### Added (retro 2026-11-07)
 
@@ -53,6 +66,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `workit grant show` prints the workspace-remote note after the grant table.
   A raw `pkill -f <pattern>` gets a nudge toward `pgrep -f '[p]attern'`,
   never a deny.
+- **Deslop depth follows the review lane** (#754). `workit deslop scan --diff
+  [<base>] [--lane <l>]` classes each comment a branch adds (narration,
+  marker, suppression, debug, allowed) with no agent, runs `test-audit` on the
+  changed tests and prints the lane's passes; a new marker or suppression
+  raises a `none`/`self` lane to `focused`. `workit deslop result --removed N`
+  records one `deslop.result` row. `workit test-audit` gains
+  `mock-call-order` and `private-access`. From `focused` up, a fresh-eyes
+  no-comments pass goes to each host's reviewer. See
+  [docs/guides/review.md](docs/guides/review.md).
+- **Repo rules from past mistakes** (#747, contributors). `bun run lint` also
+  runs four static rules (`spawn-timeout`, `spawn-env-path`,
+  `no-wall-clock-assert`, `exit-after-flush`) against a ratchet baseline: a
+  new hit fails naming its fix, and `bun run lint:rules --write` shrinks the
+  baseline after a fix.
 
 ### Changed (retro 2026-11-07)
 

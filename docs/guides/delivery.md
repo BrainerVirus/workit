@@ -484,7 +484,19 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   only). A failing check there refuses the merge (`base_red`, exit 3), naming
   the failing checks and the run URL, so a PR never lands silently on a red
   base. Checks still running only print a note, and a base with no checks or
-  green checks merges quietly. Its unblock line is the rerun for a flaky base:
+  green checks merges quietly. The refusal reads the previous run on the base
+  (`<base>~1`) and names the next step (`baseRedCause` in `--json`):
+  - `flaky`: every failing job passed on the previous run. The refusal says
+    likely flaky, names each job and its run URL, and its unblock is the exact
+    `workit ci rerun --ref <base> --check "<job>" --reason flake`. Run it,
+    then merge again.
+  - `broken`: a failing job also failed on the previous run, so `<base>` is
+    broken and no rerun is suggested. Fix the base first, or merge anyway with
+    `--base-red-ok --reason "<why>"`.
+  - `unknown`: the previous run is unreadable or incomplete, and always on
+    GitLab. The unblock is the generic rerun below and says flake-or-not is
+    unknown.
+
   `workit ci rerun --ref <base> --failed --reason flake` reruns the failed
   jobs of the base's latest run (GitHub workflow runs, GitLab pipeline), under
   the same once-per-head limit and `ci.rerun` record as a PR rerun (the row
