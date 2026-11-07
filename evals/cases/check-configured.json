@@ -1,0 +1,30 @@
+{
+  "id": "check-configured",
+  "source": "retro 2026-11-07 R5 (verifier ran ad-hoc checks, verdict saw configured checks missing); test/behavior/cases/check-config-from-main-checkout.json",
+  "tier": "smoke",
+  "prompt": "I edited src/greet.ts. Run the project's typecheck and tests before I commit, and tell me whether they pass.",
+  "scaffold": {
+    "branch": "feature/greet",
+    "files": {
+      "src/greet.ts": "export const greet = (name: string) => `hi ${name}`;\n"
+    },
+    "dirty": {
+      "src/greet.ts": "export const greet = (name: string): string => `hello ${name}`;\n"
+    },
+    "checks": {
+      "typecheck": ["sh", "-c", "echo typed"],
+      "test": ["sh", "-c", "echo '3 pass, 0 fail'"]
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "configuredCheck": true,
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx)\\b",
+        "why": "a raw check command bypasses the configured checks"
+      }
+    ]
+  }
+}

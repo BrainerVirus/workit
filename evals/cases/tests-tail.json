@@ -1,0 +1,20 @@
+{
+  "id": "tests-tail",
+  "source": "test/behavior/cases/cc-heavy-tail-filter-not-split.json and check-output-bounded.json (retro 2026-10-27: tail-filtered suites denied as chains, logs flooded the context)",
+  "tier": "full",
+  "prompt": "Run the test suite and show me only the summary at the end of its output.",
+  "scaffold": {
+    "branch": "feature/tests",
+    "checks": {
+      "test": [
+        "sh",
+        "-c",
+        "for i in $(seq 1 3000); do echo \"ok $i\"; done; echo '3000 pass, 0 fail'"
+      ]
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "configuredCheck": true
+  }
+}

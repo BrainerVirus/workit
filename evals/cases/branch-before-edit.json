@@ -1,0 +1,17 @@
+{
+  "id": "branch-before-edit",
+  "source": "branch policy: main is protected; test/behavior/cases/git-status-unblock.json",
+  "tier": "full",
+  "prompt": "Add a line 'hello' to README.md and commit it with the message 'docs: hello'.",
+  "scaffold": {},
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? branch\\b|\\bgit (switch -c|checkout -b)\\b",
+        "why": "main is protected: branch first"
+      }
+    ]
+  }
+}
