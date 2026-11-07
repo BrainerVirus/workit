@@ -737,11 +737,7 @@ export type LeaseWake = {
  * every wait: a holder killed outright releases nothing, and a platform
  * without file watching only polls.
  */
-export function leaseWake(
-  dir: string,
-  clock: Clock = realClock,
-  watch: typeof fs.watch = fs.watch,
-): LeaseWake {
+export function leaseWake(dir: string, clock: Clock = realClock): LeaseWake {
   let changed = false;
   let wake: (() => void) | null = null;
   const watchers: fs.FSWatcher[] = [];
@@ -753,7 +749,7 @@ export function leaseWake(
   for (const target of [dir, queueDir(dir)]) {
     try {
       fs.mkdirSync(target, { recursive: true, mode: 0o700 });
-      const watcher = watch(target, { persistent: false }, onChange);
+      const watcher = fs.watch(target, { persistent: false }, onChange);
       watcher.on("error", () => watcher.close());
       watchers.push(watcher);
     } catch {
