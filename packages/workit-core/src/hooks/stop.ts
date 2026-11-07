@@ -32,8 +32,8 @@
 // A stop is never blocked: in a subagent, outside a Workit workspace, when
 // the host says this stop already follows a continuation (one continue per
 // turn), or when the agent's last message asks the user a question. Reads
-// the ledger, local git and the ci-wait marker only (no forge call), and every failure allows
-// the stop.
+// the ledger, local git and the ci-wait marker only (no forge call), and
+// every failure allows the stop.
 import { spawnSync } from "node:child_process";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 import { liveCiWaiter, type CiWaiter } from "../ci-waiter";
