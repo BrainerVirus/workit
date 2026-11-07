@@ -42,6 +42,7 @@ import {
   type CreateOutcome,
 } from "@workit-dev/core/src/forge/pr-ops";
 import { mergeGateForge, prStatusReport } from "@workit-dev/core/src/forge/report";
+import { mergedBaseGate } from "@workit-dev/core/src/forge/merge-gate-merged-base";
 import type { MergeMethod } from "@workit-dev/core/src/forge/types";
 import { currentBranch, GIT_TIMEOUTS, headSha } from "@workit-dev/core/src/git/rev";
 import { configDir } from "@workit-dev/core/src/core/config";
@@ -1131,6 +1132,12 @@ async function merge(argv: string[], io: Io): Promise<number> {
   );
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
+  const landedBase = mergedBaseGate(io.cwd, connected.data, pr);
+  if (landedBase)
+    return emit(
+      io,
+      fail("blocked", landedBase.error, { unblock: landedBase.unblock, data: landedBase.data }),
+    );
   const actor = actorFromEnv(io.env);
   const gated = {
     ...connected.data,
