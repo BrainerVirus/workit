@@ -8,7 +8,9 @@
 //   - a chain with heavy parts: denied, naming each part's lease command
 //     (never `bash -c`);
 //   - a command a host permission rule names, or one whose wrapper only an
-//     allow for `workit` would let through: left alone, with a note.
+//     allow for `workit` would let through: left alone, with a note;
+//   - one formatter or file-scoped linter (check-config.ts lightCommand):
+//     left alone, since `workit check` would run it without the lease anyway.
 import {
   claudeRules,
   codexRules,
@@ -16,8 +18,10 @@ import {
   opencodeRules,
   type RuleRead,
 } from "../core/heavy-rules";
+import { lightCommand } from "../check-config";
 import { heavyPlan, workitOnPath, type HeavyPlan } from "../core/heavy";
 import { maybeHeavy } from "../core/heavy-words";
+import { simpleCommand } from "./raw-git";
 import type { HookDecision, HostId } from "./protocol";
 import type { ShellDialect } from "./shell-words";
 
@@ -49,7 +53,8 @@ export type GateOptions = {
 /**
  * The gate's plan for `command`, run after the Workit gates allowed it.
  * Nothing when no `workit` is on PATH (the wrapper could not run) or the
- * host sets WORKIT_HEAVY_GATE=0. Never throws.
+ * host sets WORKIT_HEAVY_GATE=0, and nothing for one formatter or
+ * file-scoped linter. Never throws.
  */
 export function heavyGate(cwd: string, command: string, options: GateOptions): HeavyPlan {
   const env = options.env ?? process.env;
@@ -57,10 +62,13 @@ export function heavyGate(cwd: string, command: string, options: GateOptions): H
     // The launchers' cheap word check first: most commands stop here.
     if (env.WORKIT_HEAVY_GATE === "0" || !maybeHeavy(command, cwd, env) || !workitOnPath(env))
       return { kind: "none" };
+    const dialect = options.dialect ?? "posix";
+    const single = dialect === "posix" ? simpleCommand(command, dialect, 0, true) : null;
+    if (single && lightCommand(single, cwd)) return { kind: "none" };
     return heavyPlan(command, {
       cwd,
       env,
-      dialect: options.dialect ?? "posix",
+      dialect,
       rules: rulesFor(options.host, cwd, env),
       bypass: options.permissionMode === "bypassPermissions",
     });

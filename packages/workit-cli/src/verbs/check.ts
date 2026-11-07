@@ -30,10 +30,14 @@
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
 //   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
 //   Light checks (`resources.light`, default lint/typecheck/format) never
-//   take it. A queued check prints a status line every 30 s (holder,
-//   position, elapsed, and an estimated wait from the ledger's last measured
-//   runs) and waits `--wait <dur>` ("90", "90s", "30m"), else
-//   `resources.wait` (default 30 min); `--no-wait` gives up at once (#508).
+//   take it, nor does an ad-hoc formatter or file-scoped linter, even with
+//   --heavy (check-config.ts lightCommand; #418). A queued check prints a
+//   status line every 30 s (holder, position, elapsed, and an estimated wait
+//   from the ledger's last measured runs) and waits `--wait <dur>` ("90",
+//   "90s", "30m"), else `resources.wait` (default 30 min); at that limit it
+//   re-queues once in the same place, printing the estimate, and gives up
+//   only at the second limit, naming the exact retry command. `--no-wait`
+//   gives up at once (#508).
 //   `--timeout` bounds the whole check, the lease wait included (#645): a
 //   queued check never outlives the timeout its caller set.
 // - Exit code: the command's own (4 on --timeout, on --no-wait with the lease
@@ -51,9 +55,12 @@ import {
   checkCommand,
   checkRoot,
   gateCheckNames,
+  lightCommand,
   loadCheckConfig,
   matchesNamedCheck,
+  splitCommand,
   type CheckConfig,
+  type LightCommand,
 } from "@brainervirus/workit-core/src/check-config";
 import {
   TAIL_LINES,
@@ -91,6 +98,7 @@ import {
   updateLease,
   type HeldLease,
   type LeaseHolder,
+  type QueueStatus,
   type Reclaimed,
   type ResourceSettings,
 } from "@brainervirus/workit-core/src/core/resources";
@@ -100,6 +108,7 @@ import {
   estimateWait,
   holdLimit,
   ledgerDurations,
+  type WaitEstimate,
 } from "@brainervirus/workit-core/src/core/heavy-eta";
 import { announce, BACKGROUND_HINT } from "./forge-common";
 import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
@@ -476,6 +485,62 @@ type HeavyRun = {
   env: NodeJS.ProcessEnv;
 };
 
+/**
+ * How long a wait that reached its limit keeps queueing (once): the limit
+ * again, within what --timeout leaves a run; 0 when that is nothing.
+ */
+export function requeueMs(waitMs: number, timeoutMs: number, waitedMs: number): number {
+  if (timeoutMs <= 0) return waitMs;
+  return Math.max(0, Math.min(waitMs, timeoutMs - waitedMs - runFloorMs(timeoutMs)));
+}
+
+/** A wait that never measured the holders' runs suggests this --wait. */
+const RETRY_WAIT_MS = 30 * 60_000;
+/** The shortest --wait a retry suggests. */
+const MIN_RETRY_WAIT_MS = 5 * 60_000;
+
+/** The --wait a retry suggests: half again the estimated wait, else the limit it reached. */
+export function retryWaitMs(estimate: WaitEstimate, waitMs: number): number {
+  if (estimate.ms) return Math.max(MIN_RETRY_WAIT_MS, Math.ceil(estimate.ms * 1.5));
+  return waitMs > 0 ? waitMs : RETRY_WAIT_MS;
+}
+
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/** `argv` (a `workit check` invocation in `cwd`) again, its wait replaced by `--wait <minutes>m`. */
+export function retryCommand(argv: readonly string[], cwd: string, waitMs: number): string {
+  const split = argv.indexOf("--");
+  const head = split >= 0 ? argv.slice(0, split) : [...argv];
+  const kept: string[] = [];
+  for (let index = 0; index < head.length; index += 1) {
+    const arg = head[index];
+    if (arg === "--no-wait" || arg.startsWith("--wait=")) continue;
+    if (arg === "--wait") {
+      index += 1;
+      continue;
+    }
+    kept.push(arg);
+  }
+  const wait = ["--wait", `${Math.ceil(waitMs / 60_000)}m`];
+  const words = [
+    "workit",
+    "check",
+    "--cwd",
+    cwd,
+    ...kept,
+    ...wait,
+    ...(split >= 0 ? argv.slice(split) : []),
+  ];
+  return words.map(shellWord).join(" ");
+}
+
+/** The argv of a --shell command string, or null when it uses shell syntax. */
+const shellArgv = (text: string): string[] | null => {
+  const argv = splitCommand(text);
+  return argv instanceof Error ? null : argv;
+};
+
 /** "queued behind test, pid 12, session s1, 28m 12s, /wt" for a gave-up wait (#608). */
 export function queuedBehind(holders: LeaseHolder[], position: number): string {
   const ahead = position - 1;
@@ -523,6 +588,7 @@ async function prepareHeavy(
   label: string,
   runCwd: string,
   timeoutMs: number,
+  retry: (waitMs: number) => string,
 ): Promise<HeavyRun | number> {
   // The wait is the check's own --timeout when that is shorter (#645).
   const waitByTimeout = timeoutMs > 0 && settings.waitMs >= timeoutMs;
@@ -541,6 +607,14 @@ async function prepareHeavy(
   const progress = progressFor(io);
   let waiting: ProgressStep | null = null;
   const durationOf = ledgerDurations();
+  const estimateFor = (status: Pick<QueueStatus, "holders" | "aheadOf">) =>
+    estimateWait({
+      slots: settings.slots,
+      holders: status.holders,
+      ahead: status.aheadOf,
+      durationOf,
+    });
+  let lastEstimate: WaitEstimate | null = null;
   const acquired = await acquireLease({
     dir,
     slots: settings.slots,
@@ -555,17 +629,25 @@ async function prepareHeavy(
     // A check that measured 25 min is not stuck at 15 (#705 follow-up).
     maxHoldMs: settings.maxHoldMs,
     holdMs: holdLimit(durationOf({ check: label, cwd: runCwd }), settings.maxHoldMs),
+    // #645: a wait bounded by the check's --timeout, or --no-wait, never re-queues.
+    ...(settings.waitMs > 0 && !waitByTimeout
+      ? {
+          onLimit: (status: QueueStatus) => {
+            const more = requeueMs(settings.waitMs, timeoutMs, status.waitedMs);
+            if (more <= 0) return 0;
+            lastEstimate = estimateFor(status);
+            const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
+            const text = `waited ${formatWait(status.waitedMs)} for the heavy-check lease at queue position ${status.position}: re-queued once in the same place for up to ${formatWait(more)} more; ${describeEstimate(lastEstimate)}; held by ${holders || "nobody; waiters ahead"}`;
+            if (waiting) waiting.label(text);
+            io.stderr(`workit: ${text}\n`);
+            return more;
+          },
+        }
+      : {}),
     onStatus: (status) => {
       const slots = `${settings.slots} slot${settings.slots === 1 ? "" : "s"}`;
       const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
-      const estimate = describeEstimate(
-        estimateWait({
-          slots: settings.slots,
-          holders: status.holders,
-          ahead: status.aheadOf,
-          durationOf,
-        }),
-      );
+      const estimate = describeEstimate(estimateFor(status));
       if (progress.mode === "spinner") {
         const text = `Waiting for the heavy-check lease: held by ${holders || "nobody; waiters ahead"}, queue position ${status.position}, ${estimate}`;
         if (waiting) waiting.label(text);
@@ -574,8 +656,8 @@ async function prepareHeavy(
       }
       io.stderr(
         status.first
-          ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (${waitSource}); ${estimate}\n`
-          : `workit: still queued for the heavy-check lease: position ${status.position}, ${formatWait(status.waitedMs)} of ${formatWait(settings.waitMs)} waited, ${estimate}; held by ${holders || "nobody; waiters ahead"}\n`,
+          ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (${waitSource})${settings.waitMs > 0 && !waitByTimeout ? ", then once more in the same place" : ""}; ${estimate}\n`
+          : `workit: still queued for the heavy-check lease: position ${status.position}, ${formatWait(status.waitedMs)} waited, ${estimate}; held by ${holders || "nobody; waiters ahead"}\n`,
       );
     },
   });
@@ -599,6 +681,9 @@ async function prepareHeavy(
     const waited = formatWait(acquired.waitedMs);
     const behind = queuedBehind(acquired.holders, acquired.position);
     const stuck = acquired.holders.some((holder) => holder.stuck);
+    const requeued = acquired.requeuedAfterMs;
+    const estimate = lastEstimate ?? estimateFor({ holders: acquired.holders, aheadOf: [] });
+    const command = retry(retryWaitMs(estimate, settings.waitMs));
     emit(
       io,
       fail(
@@ -607,7 +692,7 @@ async function prepareHeavy(
           ? `the heavy-check lease is busy (--no-wait): ${behind}`
           : waitByTimeout
             ? `the heavy-check lease stayed busy for ${waited}, the check's whole --timeout (position ${acquired.position} in the queue); the check did not run: ${behind}`
-            : `the heavy-check lease stayed busy for ${waited} (position ${acquired.position} in the queue): ${behind}`,
+            : `the heavy-check lease stayed busy for ${waited}${requeued === null ? "" : ` (re-queued once after ${formatWait(requeued)})`}, position ${acquired.position} in the queue; the check did not run: ${behind}; ${describeEstimate(estimate)}`,
         {
           data: {
             lease: {
@@ -615,13 +700,16 @@ async function prepareHeavy(
               holders: acquired.holders,
               position: acquired.position,
               queuedBehind: behind,
+              requeuedAfterMs: requeued,
+              estimatedWaitMs: estimate.ms,
+              retry: command,
             },
           },
           unblock: stuck
-            ? `workit lock reap (a holder looks stuck), then run it again`
+            ? `workit lock reap (a holder looks stuck), then run it again: ${command}`
             : waitByTimeout
               ? `the lease wait counts toward --timeout: run it again with a longer --timeout (in a background shell when the host's tool timeout is shorter), or once ${holders || "the waiters ahead"} finish`
-              : `wait for ${holders || "the waiters ahead"} to finish (each holder's age is shown; a full test suite takes minutes), then run it again, or queue longer with --wait 30m`,
+              : `run it again, queueing for the estimated wait: ${command}`,
         },
       ),
     );
@@ -831,8 +919,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
     : branchKey;
   const signal = key.tree === null ? null : worktreeSignal(io.cwd);
 
-  // Heavy checks queue for the machine lease and run in their own scope.
+  // Heavy checks queue for the machine lease and run in their own scope;
+  // formatters and file-scoped linters never do, even with --heavy (#418).
   let heavy: HeavyRun | null = null;
+  let light: LightCommand | null = null;
   if (!options.noLease && (options.heavy || options.command === null)) {
     const workspace = await workspaceResources(io);
     const { settings, warnings } = resolveResourceSettings([
@@ -844,13 +934,21 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (options.timeoutMs > 0) settings.waitMs = Math.min(settings.waitMs, options.timeoutMs);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
-    if (options.heavy || (name !== null && settings.heavy.includes(name))) {
+    const adHoc = options.command === null ? null : options.shell ? shellArgv(command[0]) : command;
+    light = adHoc ? lightCommand(adHoc, runCwd) : null;
+    if (!(options.heavy || (name !== null && settings.heavy.includes(name)))) light = null;
+    else if (light)
+      io.stderr(
+        `workit: running at once without the heavy-check lease: ${light.reason}, and formatters and file-scoped linters finish in seconds, so they never queue behind a full suite\n`,
+      );
+    else {
       const prepared = await prepareHeavy(
         io,
         settings,
         name ?? command.join(" "),
         runCwd,
         options.timeoutMs,
+        (waitMs) => retryCommand(argv, io.cwd, waitMs),
       );
       if (typeof prepared === "number") return prepared;
       heavy = prepared;
@@ -1016,6 +1114,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     task: task.task,
     lease: heavy?.leaseReport ?? null,
     scope: heavy?.scope ?? null,
+    ...(light ? { light } : {}),
     ...(options.noLease ? { noLease: { reason: options.reason } } : {}),
     ...(task.note ? { taskNote: task.note } : {}),
     satisfies: task.satisfies,
