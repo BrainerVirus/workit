@@ -180,6 +180,8 @@ test(
     const bare = ["npx -y --package=@workit-dev/cursor@", "latest"].join("");
     const mixed =
       "npx -y --prefer-online --package=@workit-dev/cursor@latest workit-cursor-mcp\n" +
+      // Keeps the first line's flag outside the 80-character window of the second.
+      `${"#".repeat(90)}\n` +
       bare +
       " workit-cursor-session-start\n";
     const scan = (text: string) => {
