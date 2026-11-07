@@ -122,6 +122,7 @@ test("Given a repo whose configured checks are test and lint, When a verifier or
     expect(text).toContain("`workit check test`");
     expect(text).toContain("`workit check lint`");
     expect(text).not.toContain("`workit check check`");
+    expect(text).toContain("or cite green CI on the head");
   }
   expect(claude(root, "workit:implementer", "agent-4")).not.toContain("`workit check test`");
 });

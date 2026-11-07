@@ -43,6 +43,7 @@
 // ref; it is never guessed from other rows.
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
+import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
 import {
   VERDICT_RESULTS,
   actorFromEnv,
@@ -88,6 +89,7 @@ import {
   verdictEvidence,
   type CheckEvidenceDoc,
 } from "@brainervirus/workit-core/src/core/policy/check-evidence";
+import { connect } from "./forge-common";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 
@@ -552,17 +554,28 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ),
     );
   const missingChecks = evidence?.needed.filter((item) => item.status === "missing") ?? [];
-  if (missingChecks.length)
+  // A check with no local run is covered when the head's forge CI is green, as the merge gate reads it.
+  const ci =
+    missingChecks.length && evidence ? ledgerDeps.headCi(io, target.value, evidence.head) : null;
+  if (missingChecks.length && !ci?.green)
     return emit(
       io,
       fail(
         "blocked",
-        `check_missing: no fresh run on ${evidence?.head.slice(0, 12)} of the configured check${missingChecks.length === 1 ? "" : "s"} ${missingChecks.map((item) => item.name).join(", ")}; a ${rest[0]} verdict cannot be recorded`,
+        `check_missing: no fresh run on ${evidence?.head.slice(0, 12)} of the configured check${missingChecks.length === 1 ? "" : "s"} ${missingChecks.map((item) => item.name).join(", ")}, and CI on that head is ${ci?.state ?? "unreadable"}; a ${rest[0]} verdict cannot be recorded`,
         {
-          unblock: `${checkCommands(missingChecks.map((item) => item.name))} on this head, then record again`,
+          unblock: `${checkCommands(missingChecks.map((item) => item.name))} on this head, or wait for CI: ${ci?.pr ? `workit ci wait --pr ${ci.pr}` : "workit ci wait --pr <n>"}; then record again`,
         },
       ),
     );
+  const covered =
+    ci?.green && evidence
+      ? evidence.needed.map((item) =>
+          item.status === "missing"
+            ? { ...item, status: "fresh" as const, via: "ci" as const }
+            : item,
+        )
+      : (evidence?.needed ?? []);
   // Bound: the id's own subagent presented the token its hook gave it.
   const bound = claimed !== null && issuedTokenMatches(io.cwd, claimed, token);
   const verdict = await recorded(
@@ -575,9 +588,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
         surface: values.surface ?? null,
         self: values.self === true,
         evidenceRefs: values.evidence,
-        ...(evidence?.needed.length
+        ...(covered.length
           ? {
-              checkEvidence: evidence.needed.map(({ name, status, via }) => ({
+              checkEvidence: covered.map(({ name, status, via }) => ({
                 name,
                 status,
                 via,
@@ -607,6 +620,37 @@ export async function run(argv: string[], io: Io): Promise<number> {
     ].join("\n"),
   );
 }
+
+type HeadCi = { green: boolean; state: string; pr: number | null };
+
+/**
+ * CI on `head` of `branch`'s PR, read as `workit pr status` reads it: green
+ * only when the PR's head is `head` and its gating checks pass. No PR, an
+ * unreadable forge or another head is not green.
+ */
+function headCi(io: Io, branch: string | null, head: string): HeadCi {
+  const connected = connect(io, branch);
+  if (!connected.ok) return { green: false, state: "unreadable", pr: null };
+  const report = prStatusReport(io.cwd, connected.data, {
+    branch,
+    logLines: 0,
+    behind: false,
+  });
+  if (!report.ok) return { green: false, state: "unreadable", pr: null };
+  const doc = report.data.doc;
+  if (doc.head.sha !== head)
+    return {
+      green: false,
+      state: `not run (PR #${doc.number} is at ${doc.head.sha.slice(0, 12)})`,
+      pr: doc.number,
+    };
+  return { green: doc.checks.state === "passing", state: doc.checks.state, pr: doc.number };
+}
+
+/** Test seam: the forge read of a head's CI. */
+export const ledgerDeps: { headCi: (io: Io, branch: string | null, head: string) => HeadCi } = {
+  headCi,
+};
 
 /** The exact commands that run `names`, one `workit check` each. */
 const checkCommands = (names: readonly string[]): string =>

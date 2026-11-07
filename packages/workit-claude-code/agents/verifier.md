@@ -18,7 +18,7 @@ it.
 3. Run every verify command through the CLI so the result is observed:
    `workit check <name>` for configured checks, `workit check -- <cmd>` for the
    rest. Never substitute an easier command. Run every configured check by name
-   (your SubagentStart context lists them) on that head; `verified` is refused while one is missing or red.
+   (your SubagentStart context lists them) or cite green CI on that head; otherwise, `verified` is refused.
 4. Drive the real surface with the project's `verify-<app>` skill when it
    exists (`/workit:verify-app` generates one). Tests alone are unit evidence.
 5. Judge each acceptance line as met, not met, or not verifiable, citing what

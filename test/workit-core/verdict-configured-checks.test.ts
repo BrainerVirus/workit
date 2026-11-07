@@ -1,12 +1,14 @@
 // Retro R5: verifiers recorded `verified` with the configured checks missing
 // ("recorded as missing") after ad-hoc runs, so the lead re-ran the suite
 // before merge. The judge's SubagentStart names each configured check, and the
-// verdict is refused until each has a fresh passing run on the head.
+// verdict is refused until each has a fresh passing run on the head or the
+// head's CI is green (the merge gate's reading).
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { ledgerDeps } from "@/packages/workit-cli/src/verbs/ledger";
 import { appendObserved } from "@/packages/workit-core/src/ledger";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { fixture, tempRoot } from "./hooks/hook-fixtures";
@@ -23,7 +25,9 @@ beforeEach(() => {
   roots.push(dir);
   process.env.WORKIT_STATE_DIR = dir;
 });
+const realHeadCi = ledgerDeps.headCi;
 afterEach(() => {
+  ledgerDeps.headCi = realHeadCi;
   if (state === undefined) delete process.env.WORKIT_STATE_DIR;
   else process.env.WORKIT_STATE_DIR = state;
 });
@@ -108,10 +112,11 @@ test("Given configured checks test and lint, When a verifier starts, Then its Su
   expect(text).toContain("`workit check lint`");
 });
 
-test("Given configured checks test and lint and no fresh lint run at the head, When the verifier records verified, Then it exits non-zero naming `workit check lint` and records nothing", async () => {
+test("Given configured checks test and lint, no fresh lint run and no readable CI at the head, When the verifier records verified, Then it exits non-zero naming `workit check lint` and records nothing", async () => {
   const root = repo();
   passed(root, "test");
   const result = await verify(startText(root), root);
+  expect(result.json.unblock).toContain("or wait for CI: workit ci wait --pr");
   expect(result.code).not.toBe(0);
   expect(result.json.error).toContain("lint");
   expect(result.json.error).not.toContain("recorded as missing");
@@ -130,4 +135,43 @@ test("Given fresh passing runs of test and lint at the head, When the verifier r
     { name: "test", status: "fresh", via: "local" },
     { name: "lint", status: "fresh", via: "local" },
   ]);
+});
+
+test("Given no fresh lint run but a PR whose CI is red at the head, When the verifier records verified, Then it is refused naming `workit check lint` and `workit ci wait --pr 7`", async () => {
+  const root = repo();
+  passed(root, "test");
+  ledgerDeps.headCi = () => ({ green: false, state: "failing", pr: 7 });
+  const result = await verify(startText(root), root);
+  expect(result.code).not.toBe(0);
+  expect(result.json.error).toContain("CI on that head is failing");
+  expect(result.json.unblock).toBe(
+    "workit check lint on this head, or wait for CI: workit ci wait --pr 7; then record again",
+  );
+});
+
+test("Given green CI at the head but no local lint run, When the verifier records verified, Then it records with lint covered by CI", async () => {
+  const root = repo();
+  passed(root, "test");
+  const asked: string[] = [];
+  ledgerDeps.headCi = (_io, _branch, head) => {
+    asked.push(head);
+    return { green: true, state: "passing", pr: 7 };
+  };
+  const result = await verify(startText(root), root);
+  expect(result.code).toBe(0);
+  expect(asked).toEqual([git(root, "rev-parse", "HEAD")]);
+  expect(result.json.data.checkEvidence).toEqual([
+    { name: "test", status: "fresh", via: "local" },
+    { name: "lint", status: "fresh", via: "ci" },
+  ]);
+});
+
+test("Given fresh local runs of every configured check, When the verifier records verified, Then CI is never read", async () => {
+  const root = repo();
+  passed(root, "test");
+  passed(root, "lint");
+  ledgerDeps.headCi = () => {
+    throw new Error("CI read without a missing check");
+  };
+  expect((await verify(startText(root), root)).code).toBe(0);
 });

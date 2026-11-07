@@ -64,11 +64,11 @@ export const agentSteering = (
 
 /**
  * The configured checks a judge runs before a verified verdict, as exact
- * commands: `ledger verdict` refuses one while any is missing or red on the
- * head (#509). Null when the repository configures none.
+ * commands: `ledger verdict` refuses one while any is red, or missing with
+ * CI on the head not green (#509). Null when the repository configures none.
  */
 export const judgeChecksLine = (cwd: string): string | null => {
   const names = neededChecks("full", gateCheckNames(loadCheckConfig(cwd), "verification"));
   if (!names.length) return null;
-  return `Before a verified or tests-verified verdict, run each configured check on the candidate head, by name and one per call: ${names.map((name) => `\`workit check ${name}\``).join(", ")} (with \`--cwd <checkout>\` when the candidate is checked out elsewhere). The verdict is refused while any of them has no fresh passing run on that head; an ad-hoc \`workit check -- <cmd>\` does not stand in for one.`;
+  return `Before a verified or tests-verified verdict, run these configured checks on the candidate head, by name and one per call (or cite green CI on the head): ${names.map((name) => `\`workit check ${name}\``).join(", ")} (with \`--cwd <checkout>\` when the candidate is checked out elsewhere). The verdict is refused while one has neither a fresh passing run on that head nor green CI there; an ad-hoc \`workit check -- <cmd>\` does not stand in for one.`;
 };
