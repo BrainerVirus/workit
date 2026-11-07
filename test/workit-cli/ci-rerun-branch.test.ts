@@ -10,6 +10,7 @@ import {
   fixture,
   makeForgeRepo,
   replayRunner,
+  replyError,
   type Call,
   type ForgeRepo,
   type Reply,
@@ -193,8 +194,11 @@ test("given main's latest run is green, when ci rerun --ref main --failed, then 
   expect(posts(runner.calls)).toEqual([]);
 });
 
-test("given pr merge refuses with base_red, then its unblock line is the ci rerun --ref <base> command", async () => {
-  const { repo } = setup();
+test("given pr merge refuses with base_red and the previous main run is unreadable, then its unblock line is the ci rerun --ref <base> command", async () => {
+  const { repo } = setup({
+    [`graphql branch-checks ${JSON.stringify({ owner: "o", name: "r", ref: "refs/heads/main~1" })}`]:
+      replyError("HTTP 502 bad gateway"),
+  });
   repo.git("rm", "-q", "feature.txt");
   writeFileSync(path.join(repo.cwd, "README.md"), "# Feature\n");
   repo.git("add", "-A");
@@ -203,6 +207,7 @@ test("given pr merge refuses with base_red, then its unblock line is the ci reru
   const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
   expect(result.code).toBe(3);
   expect(result.json().data.reason).toBe("base_red");
+  expect(result.json().data.baseRedCause).toBe("unknown");
   expect(result.json().unblock).toStartWith("workit ci rerun --ref main --failed --reason flake");
   expect(result.json().unblock).toContain("--base-red-ok --reason");
 });

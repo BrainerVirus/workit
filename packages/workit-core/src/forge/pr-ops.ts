@@ -46,6 +46,12 @@ import {
 import { checkVerdictsCovered, type StackCover } from "../verdict-cover";
 import type { LaneNeed, ReviewLane } from "../core/policy/lane";
 import { laneLabel, prLaneGate } from "../core/policy/pr-lane";
+import {
+  baseRedNextStep,
+  classifyBaseRed,
+  previousBaseChecks,
+  type BaseRedCause,
+} from "./merge-gate-base-red";
 import { buildStatusDoc, selectPr, type PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
 import {
@@ -486,6 +492,8 @@ export type MergeRefusal = {
     | "intent_unrecorded";
   next?: string;
   blockers?: string[];
+  /** base_red: whether the previous base run makes it look like a flake. */
+  baseRedCause?: BaseRedCause["kind"];
   verdict?: Pick<VerdictCheck, "head" | "accepted" | "authors">;
 };
 
@@ -933,12 +941,23 @@ export async function mergePullRequest(
   if (!baseCi.ok) {
     const names = baseCi.failing.map((failed) => failed.name).join(", ");
     const url = baseCi.failing.find((failed) => failed.url)?.url ?? null;
-    if (!baseRed)
-      return refuse(
-        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base`,
-        `workit ci rerun --ref ${doc.base} --failed --reason flake  # a flake on ${doc.base}: merge once it is green; a real failure: fix ${doc.base} first, or, if the user accepts it: workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
-        { reason: "base_red", blockers: baseCi.failing.map((failed) => failed.name) },
+    if (!baseRed) {
+      const cause = classifyBaseRed(baseCi.failing, previousBaseChecks(resolved, doc.base));
+      const next = baseRedNextStep(
+        doc.base,
+        cause,
+        `workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
       );
+      return refuse(
+        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base; ${next.detail}`,
+        next.unblock,
+        {
+          reason: "base_red",
+          blockers: baseCi.failing.map((failed) => failed.name),
+          baseRedCause: cause.kind,
+        },
+      );
+    }
     baseRedOverride = baseRed;
   }
 
