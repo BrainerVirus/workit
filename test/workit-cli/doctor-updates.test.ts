@@ -43,7 +43,12 @@ test("Given no config and no cache, When doctor runs, Then updates is info with 
 test("Given updates=auto and a cached latest version, When doctor runs, Then it shows both and the cache age", () => {
   const found = row(
     { locale: "en", updates: "auto" },
-    { checkedAt: Date.now() - 3 * 60 * 60 * 1000, latest: "9.1.0", skipped: "9.0.0" },
+    {
+      package: "@workit-dev/cli",
+      checkedAt: Date.now() - 3 * 60 * 60 * 1000,
+      latest: "9.1.0",
+      skipped: "9.0.0",
+    },
   );
   expect(found.status).toBe("info");
   expect(found.detail).toBe("updates: auto; latest CLI 9.1.0 (checked 3 h ago); 9.0.0 skipped");
@@ -65,7 +70,7 @@ test("Given XDG_CONFIG_HOME and XDG_STATE_HOME, When doctor runs without explici
   writeFileSync(path.join(xdgConfig, "workit/config.json"), JSON.stringify({ updates: "off" }));
   writeFileSync(
     path.join(xdgState, "workit/update-check.json"),
-    JSON.stringify({ checkedAt: Date.now(), latest: "9.2.0" }),
+    JSON.stringify({ package: "@workit-dev/cli", checkedAt: Date.now(), latest: "9.2.0" }),
   );
   const found = runDoctor({
     host: "cli",
@@ -75,4 +80,9 @@ test("Given XDG_CONFIG_HOME and XDG_STATE_HOME, When doctor runs without explici
     env: { HOME: root, PATH: emptyBin, XDG_CONFIG_HOME: xdgConfig, XDG_STATE_HOME: xdgState },
   }).checks.find((check) => check.id === "updates")!;
   expect(found.detail).toBe("updates: off; latest CLI 9.2.0 (checked just now)");
+});
+
+test("Given a cache with no package field, When doctor runs, Then it does not claim a latest CLI", () => {
+  const found = row({ locale: "en", updates: "auto" }, { checkedAt: Date.now(), latest: "14.7.0" });
+  expect(found.detail).toBe("updates: auto; no latest CLI version cached yet");
 });
