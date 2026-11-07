@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": ["test/fixtures/**"],
+  "plugins": [],
+  "categories": { "correctness": "off" },
+  "jsPlugins": ["./plugin.mts"],
+  "rules": {
+    "workit/spawn-timeout": "error",
+    "workit/spawn-env-path": "error",
+    "workit/no-wall-clock-assert": "error",
+    "workit/exit-after-flush": "error"
+  }
+}

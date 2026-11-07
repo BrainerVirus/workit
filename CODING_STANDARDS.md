@@ -69,3 +69,12 @@ what to fix.
 - Conventional Commits: commitlint on commit messages (`bun run hooks:install`)
   and on the PR title in CI (`.github/workflows/pr-title.yml`).
 - Lint, format, types and unused exports: `bun run check` and `bun run knip`.
+- Repo rules, each from a cited past mistake (`scripts/repo-rules/plugin.mts`,
+  run by `bun run lint`): synchronous child processes carry a `timeout`
+  (`spawn-timeout`); a child env spreading `process.env` re-declares `PATH`
+  (`spawn-env-path`); tests never bound runner wall time
+  (`no-wall-clock-assert`); `process.exit` follows a stream flush
+  (`exit-after-flush`). Existing hits sit in `scripts/repo-rules/baseline.json`,
+  which only shrinks (`bun run lint:rules --write`). A new rule cites its
+  mistake, fails on it in `test/repo-rules/`, and seeds its hits with
+  `--grandfather <rule>`.

@@ -38,6 +38,8 @@
     "write:schemas": "bun packages/workit-core/scripts/write-schemas.ts",
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint",
+    "postlint": "bun run lint:rules",
+    "lint:rules": "bun scripts/repo-rules/check.mts",
     "lint:fix": "oxlint --fix",
     "doctor": "bun run ./scripts/react-doctor.ts",
     "doctor:raw": "react-doctor -y --no-telemetry --blocking warning --json",

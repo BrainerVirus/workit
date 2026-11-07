@@ -11,6 +11,9 @@ bun run lint; bun run format:check; bun run typecheck; bun run test  # one gate 
 bun test <path> # one file; `bun run format` fixes formatting (not Markdown)
 ```
 
+`bun run lint` also runs the repo rules (`scripts/repo-rules/`): a new hit fails naming its fix; after
+fixing a baselined one, `bun run lint:rules --write` shrinks the baseline.
+
 Tests need Node 24+ on PATH (`fnm use` reads `.node-version`). Never run root `build` or `check` in
 a checkout a live host has loaded; see [testing.md](docs/agents/testing.md#local-pins). Hosts run
 the released npm packages; to prove a change in a real host, point it at a worktree only for the
