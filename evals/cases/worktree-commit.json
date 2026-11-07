@@ -1,0 +1,35 @@
+{
+  "id": "worktree-commit",
+  "source": "retro 2026-11-07 R2 (`--cwd $W` denied 74 times, regression of #664)",
+  "tier": "full",
+  "prompt": "My change is in the git worktree at {{worktree}} (branch feature/wt-notes). Commit notes.md there with the message 'docs: notes'.",
+  "scaffold": {
+    "branch": "feature/base",
+    "worktree": "feature/wt-notes",
+    "dirty": {
+      "notes.md": "# Notes\n"
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b",
+        "why": "the commit is made"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "--cwd\\s+[\"']?\\$",
+        "why": "a $VAR path: use the literal worktree path"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bcd\\s+\\S+\\s*&&",
+        "why": "a `cd \u2026 &&` chain: run one verb with --cwd"
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "push-branch",
+  "source": "retro 2026-11-07 R10 (`push -u origin` guessed 6 times); test/behavior/cases/cc-isolated-implementer-raw-push.json",
+  "tier": "full",
+  "prompt": "Push this branch to origin.",
+  "scaffold": {
+    "branch": "feature/push",
+    "files": {
+      "src/a.ts": "export const a = 1;\n"
+    },
+    "remote": true
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? push\\b",
+        "why": "pushes through Workit's push verb"
+      }
+    ]
+  }
+}

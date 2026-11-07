@@ -1,0 +1,30 @@
+{
+  "id": "finding-key-self-correct",
+  "source": "ported from packages/workit-claude-code/evals/finding-key-self-correct (retro 2026-10-27 class 6; test/behavior/cases/tool-finding-record-disposition.json)",
+  "tier": "full",
+  "prompt": "Record a finding with the workit CLI. First try exactly this call so we see its answer, then fix it if it fails: workit finding record --payload '{\"action\":\"record\",\"claim\":\"greet drops the empty-name case\",\"consequence\":\"prints hello, undefined\",\"disposition\":\"fixed\"}'",
+  "scaffold": {
+    "branch": "feature/greet-shout",
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"scripts\": { \"test\": \"node --test\" }\n}\n",
+      "bin/greet.js": "const [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name}`);\n",
+      "test/greet.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { execFileSync } from \"node:child_process\";\ntest(\"Given a name, When greet runs, Then it greets that name\", () => {\n  assert.match(execFileSync(\"node\", [\"bin/greet.js\", \"ada\"], { encoding: \"utf8\" }), /^hello, ada/);\n});\n"
+    },
+    "checks": {
+      "test": ["sh", "-c", "seq 1 3000 && node --test"]
+    },
+    "dirty": {
+      "bin/greet.js": "const [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name}!`);\n"
+    }
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "finding record[^\\n]*\"claim\"(?![^\\n]*\"disposition\")",
+        "why": "the next call drops the key that belongs to resolve"
+      }
+    ]
+  }
+}
