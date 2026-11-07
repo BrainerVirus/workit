@@ -79,6 +79,12 @@ issue or `test/behavior/cases` file).
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
 | `expect.require`, `expect.forbid` | `{tool?, pattern, why}`: a regex on the Bash command, or on the JSON input for other tools |
 
+The cases that graded the agent's own choices in the retired `claude plugin
+eval` suite (`packages/workit-claude-code/evals/`) were ported here; the ones
+that only checked hook or CLI text are layer 0 cases in `test/behavior/cases/`.
+A case may also check the final answer: `expect.answer` (`{pattern, flags?,
+why}`), and `scaffold.commits` (`{message, files}` in order) builds history.
+
 Add a case when a retro or issue shows an agent failing; calibrate its
 patterns on the first real run and re-grade with `--replay`.
 

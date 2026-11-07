@@ -26,6 +26,8 @@ export type EvalCase = {
     worktree?: string;
     /** A bare `origin` remote the branch can be pushed to. */
     remote?: boolean;
+    /** Committed in order on the case's branch, after `files`. */
+    commits?: { message: string; files: Record<string, string> }[];
   };
   maxTurns?: number;
   permissionMode?: string;
@@ -35,6 +37,8 @@ export type EvalCase = {
     configuredCheck?: boolean;
     require?: CallPattern[];
     forbid?: CallPattern[];
+    /** Regexes the final answer must match. */
+    answer?: { pattern: string; flags?: string; why: string }[];
   };
 };
 

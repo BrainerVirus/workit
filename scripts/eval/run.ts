@@ -130,6 +130,10 @@ const childEnv = (world: World, pluginDir: string): Record<string, string> => {
   return env;
 };
 
+/** An empty list allows nothing: the flag is left out, since it needs at least one tool. */
+const allowed = (tools: string[]): string[] =>
+  tools.length > 0 ? ["--allowedTools", ...tools] : [];
+
 const claudeArgs = (spec: EvalCase, model: string, pluginDir: string): string[] => [
   "-p",
   "--model",
@@ -147,8 +151,7 @@ const claudeArgs = (spec: EvalCase, model: string, pluginDir: string): string[] 
   pluginDir,
   "--permission-mode",
   spec.permissionMode ?? "dontAsk",
-  "--allowedTools",
-  ...(spec.allowedTools ?? DEFAULT_TOOLS),
+  ...allowed(spec.allowedTools ?? DEFAULT_TOOLS),
   "--disallowedTools",
   "WebFetch",
   "WebSearch",

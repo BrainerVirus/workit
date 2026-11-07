@@ -1,0 +1,58 @@
+{
+  "id": "verifier-verdict-first-try",
+  "source": "ported from packages/workit-claude-code/evals/verifier-verdict-first-try (retro 2026-10-27 class 2; retro 2026-11-07 R5)",
+  "tier": "full",
+  "prompt": "You are the verifier for branch feature/greet-shout, which you did not write. Commit nothing. Run `node bin/greet.js ada`, then record your verdict with the line Workit printed for you: workit ledger verdict <verified|failed|blocked> --kind live --branch feature/greet-shout --how \"<what you ran and saw>\". Fill the placeholders, run it once, and report the exit code.",
+  "scaffold": {
+    "branch": "feature/greet-shout",
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"scripts\": { \"test\": \"node --test\" }\n}\n",
+      "bin/greet.js": "const [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name}`);\n",
+      "test/greet.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { execFileSync } from \"node:child_process\";\ntest(\"Given a name, When greet runs, Then it greets that name\", () => {\n  assert.match(execFileSync(\"node\", [\"bin/greet.js\", \"ada\"], { encoding: \"utf8\" }), /^hello, ada/);\n});\n"
+    },
+    "checks": {
+      "test": ["sh", "-c", "seq 1 3000 && node --test"]
+    },
+    "dirty": {
+      "bin/greet.js": "const [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name}!`);\n"
+    }
+  },
+  "maxTurns": 6,
+  "allowedTools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Agent",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(grep *)",
+    "Bash(wc *)",
+    "Bash(diff *)",
+    "Bash(echo *)",
+    "Bash(pwd)",
+    "Bash(node *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? ledger verdict (verified|failed|blocked)\\b[^\\n]*--kind live",
+        "why": "the printed verdict line is run"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "--self\\b",
+        "why": "a verifier never self-certifies"
+      }
+    ]
+  }
+}

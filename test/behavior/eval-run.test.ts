@@ -84,7 +84,7 @@ beforeEach(() => {
     [
       "#!/bin/sh",
       "prompt=$(cat)",
-      'echo "run cwd=$PWD key=${ANTHROPIC_API_KEY:-none} session=${WORKIT_SESSION_ID:-none} prompt=$prompt args=$*" >> "$FAKE_CLAUDE_LOG"',
+      'echo "run cwd=$PWD key=${ANTHROPIC_API_KEY:-none} session=${WORKIT_SESSION_ID:-none} prompt=$prompt commits=$(git rev-list --count HEAD) args=$*" >> "$FAKE_CLAUDE_LOG"',
       `printf '{"type":"system","subtype":"init","cwd":"%s","memory":"%s","owner":"%s"}\\n' "$PWD" "$(pwd | tr -c '[:alnum:]_\\n' -)" "$(id -un)"`,
       'cat "$FAKE_CLAUDE_OUT"',
       "",
@@ -226,4 +226,23 @@ test("Given a stored grade that no longer matches the grader, When replayed with
   expect(main(["--replay", ...argv], quiet([]))).toBe(0);
   expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
   expect(calls()).toHaveLength(1);
+});
+
+test("Given a case with scaffold commits and no allowed tools, Then the repo has them and claude -p gets no --allowedTools", () => {
+  writeFileSync(
+    path.join(root, "cases", "e-full.json"),
+    JSON.stringify({
+      id: "e-full",
+      source: "test",
+      tier: "full",
+      prompt: "p",
+      allowedTools: [],
+      scaffold: { commits: [{ message: "fix: adjust", files: { "a.ts": "b\n" } }] },
+    }),
+  );
+  main(["--model", "haiku", "--tier", "full", "--cases", "e-full", ...argv], quiet([]));
+  const [call = ""] = calls();
+  expect(call).toContain("commits=2 ");
+  expect(call).not.toContain("--allowedTools");
+  expect(call).toContain("--permission-mode dontAsk --disallowedTools WebFetch WebSearch");
 });

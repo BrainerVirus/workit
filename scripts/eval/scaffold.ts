@@ -54,6 +54,11 @@ export const makeWorld = (spec: EvalCase): World => {
   }
   if (scaffold.branch && scaffold.branch !== "main")
     git(repo, "checkout", "-q", "-b", scaffold.branch);
+  for (const commit of scaffold.commits ?? []) {
+    writeAll(repo, commit.files);
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", commit.message);
+  }
   let worktree: string | null = null;
   if (scaffold.worktree) {
     worktree = path.join(dir, "wt");

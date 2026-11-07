@@ -44,6 +44,7 @@ type Event = {
   num_turns?: number;
   duration_ms?: number;
   total_cost_usd?: number;
+  result?: string;
 };
 
 const events = (transcript: string): Event[] =>
@@ -159,6 +160,7 @@ const matches = (call: ToolCall, want: CallPattern): boolean =>
 
 export const grade = (transcript: string, spec: EvalCase): Grade => {
   const calls = toolCalls(transcript);
+  const answer = events(transcript).findLast((event) => event.type === "result")?.result ?? "";
   const failures: Failure[] = [];
 
   for (const call of calls)
@@ -208,6 +210,13 @@ export const grade = (transcript: string, spec: EvalCase): Grade => {
       failures.push({
         rule: "forbid",
         detail: `${label(call)} matches /${want.pattern}/: ${want.why}`,
+      });
+
+  for (const want of spec.expect?.answer ?? [])
+    if (!new RegExp(want.pattern, want.flags).test(answer))
+      failures.push({
+        rule: "answer",
+        detail: `the final answer does not match /${want.pattern}/: ${want.why}`,
       });
 
   return {

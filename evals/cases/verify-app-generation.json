@@ -1,0 +1,55 @@
+{
+  "id": "verify-app-generation",
+  "source": "ported from packages/workit-claude-code/evals/verify-app-generation",
+  "tier": "full",
+  "prompt": "Set up verification for this app so an agent can prove a feature works on the running app, not just with unit tests. Create the project's verify skill and prove it once.",
+  "scaffold": {
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"bin\": { \"greet\": \"./bin/greet.js\" },\n  \"scripts\": { \"test\": \"node --test test/\" }\n}\n",
+      "bin/greet.js": "#!/usr/bin/env node\nconst [name = \"world\"] = process.argv.slice(2);\nif (name === \"--help\") {\n  console.log(\"usage: greet [name]\");\n} else {\n  console.log(`hello, ${name}`);\n}\n",
+      "test/greet.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { execFileSync } from \"node:child_process\";\ntest(\"Given a name, When greet runs, Then it greets that name\", () => {\n  assert.match(execFileSync(\"node\", [\"bin/greet.js\", \"ada\"], { encoding: \"utf8\" }), /^hello, ada/);\n});\n",
+      "README.md": "# greet\n\nRun `node bin/greet.js <name>`.\n"
+    }
+  },
+  "maxTurns": 20,
+  "allowedTools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Agent",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(grep *)",
+    "Bash(wc *)",
+    "Bash(diff *)",
+    "Bash(echo *)",
+    "Bash(pwd)",
+    "Bash(node *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Skill",
+        "pattern": "verify-app",
+        "why": "a verification-setup request loads verify-app"
+      },
+      {
+        "tool": "Write",
+        "pattern": "\\.claude/skills/verify-[^/\"]+/SKILL\\.md",
+        "why": "a project-local verify skill is written"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "node bin/greet\\.js",
+        "why": "the real CLI is driven once"
+      }
+    ]
+  }
+}

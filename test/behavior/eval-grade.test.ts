@@ -225,4 +225,17 @@ describe("Given a saved transcript", () => {
       stop: "error_max_turns",
     });
   });
+
+  test("When a case checks the final answer, Then a missing pattern fails and a match passes", () => {
+    const asks = spec({
+      expect: { answer: [{ pattern: "workit-contract", why: "quotes the tag" }] },
+    });
+    expect(grade(transcript([], { result: "No context was received." }), asks).failures).toEqual([
+      {
+        rule: "answer",
+        detail: "the final answer does not match /workit-contract/: quotes the tag",
+      },
+    ]);
+    expect(grade(transcript([], { result: "Yes: <workit-contract>." }), asks).pass).toBe(true);
+  });
 });
