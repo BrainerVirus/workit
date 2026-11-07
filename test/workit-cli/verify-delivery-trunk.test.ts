@@ -4,8 +4,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
-import type { ForgeRunner } from "@/packages/workit-core/src/forge/exec";
-import { appendObserved } from "@/packages/workit-core/src/ledger";
+import { actorFromEnv, appendObserved } from "@/packages/workit-core/src/ledger";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { makeStackForge, type StackForge } from "@/test/shared/helpers/stack-forge";
 
@@ -79,7 +78,7 @@ const setup = (kind: "github" | "gitlab") => {
 const mergeFrozen = (forge: StackForge, pr: number): string => {
   const head = forge.tip(forge.prs.get(pr)?.branch as string) as string;
   const merged = forge.mergeExternally(pr);
-  const inner: ForgeRunner = forgeDeps.runner;
+  const inner = forge.runner;
   forgeDeps.runner = (bin, args, options) => {
     const result = inner(bin, args, options);
     const github = bin === "gh" && args.includes(`number=${pr}`);
@@ -97,7 +96,7 @@ const mergeFrozen = (forge: StackForge, pr: number): string => {
 const recordMerge = (forge: StackForge, pr: number, base: string, mergeSha: string) => {
   const row = appendObserved(forge.cwd, {
     type: "pr.merged",
-    actor: { session: "author-1", agent: null, model: null },
+    actor: actorFromEnv({ WORKIT_SESSION_ID: "author-1" }),
     branch: "feature/b",
     pr,
     base,
