@@ -37,44 +37,59 @@ const spawn = (input: Record<string, unknown>): Out =>
     tool_input: { description: "d", ...input },
   }).json;
 
-test("G an implementer spawn with a brief and isolation, W PreToolUse runs, T isolation is dropped and the rest kept", () => {
-  const out = spawn({
-    subagent_type: "workit:implementer",
-    prompt: BRIEF,
-    model: "opus",
-    isolation: "worktree",
-  });
-  expect(out.hookSpecificOutput?.updatedInput).toEqual({
-    description: "d",
-    subagent_type: "workit:implementer",
-    prompt: BRIEF,
-    model: "opus",
-  });
-  expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
-  expect(out.hookSpecificOutput?.additionalContext).toContain("removed isolation");
+const denied = (out: Out): string => {
+  expect(out.hookSpecificOutput?.updatedInput).toBeUndefined();
+  expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
+  return out.hookSpecificOutput?.permissionDecisionReason ?? "";
+};
+
+test("G an implementer spawn with a brief and isolation, W PreToolUse runs, T it is denied with the same args without isolation, and that retry runs as written", () => {
+  const reason = denied(
+    spawn({
+      subagent_type: "workit:implementer",
+      prompt: BRIEF,
+      model: "opus",
+      isolation: "worktree",
+      run_in_background: true,
+    }),
+  );
+  expect(reason).toContain(
+    'spawn again with exactly subagent_type: "workit:implementer", model: "opus", run_in_background: true (description and prompt as written and no isolation)',
+  );
+  expect(reason).toContain("an implementer works in its brief's WORKTREE");
+  expect(
+    spawn({
+      subagent_type: "workit:implementer",
+      prompt: BRIEF,
+      model: "opus",
+      run_in_background: true,
+    }).hookSpecificOutput,
+  ).toBeUndefined();
 });
 
-test("G an implementer spawn with isolation and no model, W PreToolUse runs, T isolation is dropped and the role model filled", () => {
-  const updated = spawn({
-    subagent_type: "workit:implementer",
-    prompt: BRIEF,
-    isolation: "worktree",
-  }).hookSpecificOutput?.updatedInput;
-  expect(updated?.isolation).toBeUndefined();
-  expect(typeof updated?.model).toBe("string");
+test("G an implementer spawn with isolation and no model, W PreToolUse runs, T one deny drops isolation and names the role model", () => {
+  const reason = denied(
+    spawn({
+      subagent_type: "workit:implementer",
+      prompt: BRIEF,
+      isolation: "worktree",
+    }),
+  );
+  expect(reason).toContain('model: "sonnet"');
+  expect(reason).toContain("no isolation");
 });
 
-test("G an implementer spawn without a brief, W PreToolUse runs, T it is denied with the worktree command", () => {
+test("G an implementer spawn without a brief, W PreToolUse runs, T it is denied with the two exact commands that make one, also for a single slice (retro 2026-11-07 R3)", () => {
   const out = spawn({
     subagent_type: "workit:implementer",
     prompt: "fix the tests",
     model: "opus",
   });
-  expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
-  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain(
-    "`workit fanout worktree create <slice>`",
-  );
-  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("workit fanout brief <slice>");
+  const reason = denied(out);
+  expect(reason).toContain("`workit fanout worktree create <slice>`");
+  expect(reason).toContain("`workit fanout brief <slice>`");
+  expect(reason).toContain("Even for one slice");
+  expect(reason).toContain("SPAWN line");
 });
 
 test("G an implementer prompt that points at its brief (WORKER, TIER, TIMEBOX and WORKTREE lines, render the rest), W PreToolUse runs, T it is accepted as a brief", () => {
@@ -112,7 +127,7 @@ test("G a WORKTREE line that is only the not-made-yet note, W PreToolUse runs, T
   }
 });
 
-test("G any other spawn type with isolation, W PreToolUse runs, T isolation is dropped and the rest kept (retro class 9)", () => {
+test("G any other spawn type with isolation, W PreToolUse runs, T it is denied with the same args without isolation (retro class 9)", () => {
   for (const subagent_type of [
     "workit:verifier",
     "general-purpose",
@@ -120,20 +135,18 @@ test("G any other spawn type with isolation, W PreToolUse runs, T isolation is d
     "Plan",
     undefined,
   ]) {
-    const out = spawn({
-      subagent_type,
-      prompt: "verify it",
-      model: "sonnet",
-      isolation: "worktree",
-    });
-    expect(out.hookSpecificOutput?.permissionDecision, String(subagent_type)).toBeUndefined();
-    expect(out.hookSpecificOutput?.updatedInput, String(subagent_type)).toEqual({
-      description: "d",
-      prompt: "verify it",
-      model: "sonnet",
-      ...(subagent_type ? { subagent_type } : {}),
-    });
-    expect(out.hookSpecificOutput?.additionalContext).toContain("removed isolation");
+    const reason = denied(
+      spawn({
+        subagent_type,
+        prompt: "verify it",
+        model: "sonnet",
+        isolation: "worktree",
+      }),
+    );
+    expect(reason, String(subagent_type)).toContain(
+      `exactly ${subagent_type ? `subagent_type: "${subagent_type}", ` : ""}model: "sonnet" (description and prompt as written and no isolation)`,
+    );
+    expect(reason).toContain("runs in your checkout");
   }
 });
 
@@ -146,7 +159,7 @@ test("G a verifier spawn with no isolation and a model, W PreToolUse runs, T it 
   expect(out.hookSpecificOutput).toBeUndefined();
 });
 
-test("G every agent type and either isolation mode, W PreToolUse runs, T isolation never reaches Claude Code (W2.12)", () => {
+test("G every agent type and either isolation mode, W PreToolUse runs, T isolation never reaches Claude Code and no spawn is rewritten (W2.12, retro 2026-11-07 R1)", () => {
   const types = [
     "workit:implementer",
     "workit:verifier",
@@ -170,10 +183,8 @@ test("G every agent type and either isolation mode, W PreToolUse runs, T isolati
         model: "sonnet",
         isolation,
       });
-      expect(out.hookSpecificOutput?.permissionDecision, label).toBeUndefined();
-      const input = out.hookSpecificOutput?.updatedInput;
-      expect(input, label).toBeDefined();
-      expect(input, label).not.toHaveProperty("isolation");
-      expect(input?.prompt, label).toBe(BRIEF);
+      expect(out.hookSpecificOutput?.updatedInput, label).toBeUndefined();
+      expect(out.hookSpecificOutput?.permissionDecision, label).toBe("deny");
+      expect(out.hookSpecificOutput?.permissionDecisionReason, label).toContain("no isolation");
     }
 });

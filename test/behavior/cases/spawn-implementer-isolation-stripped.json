@@ -1,6 +1,6 @@
 {
   "id": "spawn-implementer-isolation-stripped",
-  "source": "#432 retro 2026-10-27: 239 worktree-isolation refusals in implementers spawned with isolation: worktree",
+  "source": "#432 retro 2026-10-27: 239 worktree-isolation refusals in implementers spawned with isolation: worktree; retro 2026-11-07 R1: auto mode refuses the hook-rewritten spawn, so it is a deny with the exact args",
   "hook": {
     "host": "claude-code",
     "fixture": "pre-tool-use-bash",
@@ -11,9 +11,17 @@
         "subagent_type": "workit:implementer",
         "model": "opus",
         "isolation": "worktree",
-        "prompt": "MODE: new\nGOAL: g\nWORKTREE: /w/slice  (made by `workit fanout worktree create slice`; yours alone)\n"
-      }
+        "prompt": "MODE: new\nGOAL: g\nWORKTREE: /w/slice  (made by `workit fanout worktree create slice`; yours alone)\n",
+        "run_in_background": true
+      },
+      "permission_mode": "auto"
     }
   },
-  "expect": { "kind": ["update-input"], "require": ["removed isolation"] }
+  "expect": {
+    "kind": ["deny"],
+    "require": [
+      "subagent_type: \"workit:implementer\", model: \"opus\", run_in_background: true",
+      "no isolation"
+    ]
+  }
 }

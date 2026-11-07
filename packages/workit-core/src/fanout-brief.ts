@@ -25,8 +25,9 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { loadCheckConfig } from "./check-config";
-import { resolveRoleModel } from "./core/role-models";
+import { gateCheckNames, loadCheckConfig } from "./check-config";
+import { neededChecks } from "./core/policy/check-evidence";
+import { claudeSpawnArgs, resolveRoleModel, type RoleSelector } from "./core/role-models";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
 import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
 import {
@@ -180,7 +181,7 @@ const rules = (
     worktree ? `workit ${verb} --cwd ${worktree}` : `workit ${verb}`;
   let first = `  1. First command: \`workit git branch ${branch} --base ${base}\` (your worktree may start on another name).`;
   if (worktree)
-    first = `  1. Work only in WORKTREE, already on ${branch}${mode === "resume" ? " at its head" : ""}: edit files under it and run each git and check command against it, one verb per call (\`${workit("git")} commit …\`, \`${workit("check")} <name>\`), never \`cd … &&\` chains or \`$VAR\` paths. An implementer's change outside it is denied.`;
+    first = `  1. Work only in WORKTREE, already on ${branch}${mode === "resume" ? " at its head" : ""}: edit files under it and run each git and check command against it, one verb per call (\`${workit("git")} commit …\`, \`${workit("check")} <name>\`), never \`cd … &&\` chains or a shell variable in a path (paste the absolute path above). An implementer's change outside it is denied.`;
   else if (mode === "resume")
     first = `  1. First command: \`git switch ${branch}\`, then continue from its head.`;
   return [
@@ -238,6 +239,75 @@ function skillsVerify(root: string, scope: readonly string[], verify: readonly s
   return [
     `  skills: ${command}  (SCOPE touches skills or agents; targeted tests miss these gates)`,
   ];
+}
+
+/**
+ * The VERIFY line naming each check a verdict on this slice needs (the
+ * repo's verification gate) that its VERIFY lines do not already run by
+ * name: a check run ad hoc leaves it missing on the verdict (retro 2026-11-07
+ * R5).
+ */
+function configuredVerify(root: string, lines: readonly string[]): string[] {
+  const config = loadCheckConfig(root);
+  if (config.error) return [];
+  const named = new Set(
+    lines.flatMap((line) =>
+      [...line.matchAll(/\bworkit check (?:--cwd \S+ )?([\w.-]+)/gu)].map((match) => match[1]),
+    ),
+  );
+  const missing = neededChecks("full", gateCheckNames(config, "verification")).filter(
+    (name) => !named.has(name),
+  );
+  return missing.length
+    ? [
+        `  checks: ${missing.map((name) => `workit check ${name}`).join("; ")}  (the configured checks a verdict records: run each by name, never ad hoc)`,
+      ]
+    : [];
+}
+
+/**
+ * The SPAWN lines a Claude Code lead copies into its Agent calls: the exact
+ * args its spawn hook passes as written (retro 2026-11-07 R1: a spawn the hook
+ * rewrote is refused in auto mode, and a re-issue dropped run_in_background).
+ */
+function spawnLines(
+  cwd: string,
+  host: string | null,
+  slice: string,
+  tier: RoleSelector["tier"],
+): string[] {
+  if (familyOf(host) !== "claude_code") return [];
+  const line = (label: string, type: string, selector: RoleSelector, prompt: string) => {
+    const args = claudeSpawnArgs(cwd, selector);
+    const fields = [
+      `subagent_type: "${type}"`,
+      ...(args ? [`model: "${args.model}"`] : []),
+      ...(args?.effort ? [`effort: "${args.effort}"`] : []),
+      "run_in_background: true",
+      `description: "${slice}"`,
+    ];
+    return `${label}: Agent ${fields.join(", ")}, prompt: ${prompt}`;
+  };
+  return [
+    line(
+      "SPAWN",
+      "workit:implementer",
+      { role: "implementer", tier },
+      `this brief, or its WORKER, TIER, TIMEBOX and WORKTREE lines plus "Run \`workit fanout brief ${slice}\` and follow it exactly."`,
+    ),
+    line(
+      "  verifier SPAWN",
+      "workit:verifier",
+      { role: "verifier" },
+      "the candidate branch with this slice's ACCEPTANCE and VERIFY",
+    ),
+  ];
+}
+
+/** VERIFY's extra lines: the skill gates, then the configured checks neither names. */
+function verifyLines(root: string, scope: readonly string[], verify: readonly string[]): string[] {
+  const skills = skillsVerify(root, scope, verify);
+  return [...skills, ...configuredVerify(root, [...verify, ...skills])];
 }
 
 /** A session id fragment that the ledger accepts ([A-Za-z0-9_.:@/+-]). */
@@ -357,7 +427,7 @@ export function renderBrief(
     "ACCEPTANCE:",
     ...slice.acceptance.map((line) => `  - ${line}`),
     `VERIFY: ${slice.verify.join("; ")}`,
-    ...skillsVerify(exists ? planned : cwd, slice.scope, slice.verify),
+    ...verifyLines(exists ? planned : cwd, slice.scope, slice.verify),
     ...(slice.reason ? [`REASON: ${slice.reason}`] : []),
     `TIER: ${slice.tier}`,
     ...(model
@@ -370,6 +440,7 @@ export function renderBrief(
           `  verifier: model ${verifier.model}${verifier.effort ? `  effort ${verifier.effort}` : ""}  (${verifier.source})`,
         ]
       : []),
+    ...spawnLines(cwd, host, slice.id, slice.tier),
     `TIMEBOX: ${timeboxText(slice.timebox, slice.tier)}; past it without a new commit you will be replaced`,
     scratchLine,
     `FORBIDDEN: ${slice.forbidden.join("; ")}`,

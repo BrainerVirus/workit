@@ -6,9 +6,11 @@ import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hook
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
 
-// #420, #654: a Claude Code subagent spawn gets its role's model and effort
-// through PreToolUse updatedInput; an explicit model wins over a built-in
-// default, and over a configured one only with models.allowLeadOverride.
+// #420, #654: a Claude Code subagent spawn runs on its role's model and
+// effort; an explicit model wins over a built-in default, and over a
+// configured one only with models.allowLeadOverride. Retro 2026-11-07 R1: a
+// spawn missing them is denied once with the exact args, never rewritten
+// through updatedInput (auto mode refuses a hook-rewritten spawn).
 
 let configHome: ConfigHome;
 let cwd: string;
@@ -26,62 +28,24 @@ type Out = {
     updatedInput?: Record<string, unknown>;
     additionalContext?: string;
     permissionDecision?: string;
+    permissionDecisionReason?: string;
   };
 };
-const spawn = (tool: string, input: Record<string, unknown>): Out =>
+const MODES = ["default", "auto", "acceptEdits", "bypassPermissions", "plan", "dontAsk"];
+const spawn = (tool: string, input: Record<string, unknown>, mode = "default"): Out =>
   dispatchHook(claudeCodeAdapter, {
     ...fixture("claude-code", "pre-tool-use-bash", cwd),
+    permission_mode: mode,
     tool_name: tool,
     tool_input: { description: "d", prompt: "do it", ...input },
   }).json;
 
-test("G a workit:verifier spawn with no model, W PreToolUse runs, T updatedInput carries sonnet and the input is otherwise kept", () => {
-  const out = spawn("Agent", { subagent_type: "workit:verifier" });
-  expect(out.hookSpecificOutput?.updatedInput).toEqual({
-    description: "d",
-    prompt: "do it",
-    subagent_type: "workit:verifier",
-    model: "sonnet",
-  });
-  expect(out.hookSpecificOutput?.permissionDecision).toBeUndefined();
-  expect(out.hookSpecificOutput?.additionalContext).toContain("role verifier");
-});
-
-test("G a spawn that names model opus, W PreToolUse runs, T the model is left as is", () => {
-  const out = spawn("Agent", {
-    subagent_type: "workit:verifier",
-    model: "opus",
-  });
+/** The deny's reason; fails when the hook rewrote the spawn or let it run. */
+const denied = (out: Out): string => {
   expect(out.hookSpecificOutput?.updatedInput).toBeUndefined();
-});
-
-test("G an Explore spawn, W PreToolUse runs, T it gets haiku; the legacy Task name works too", () => {
-  expect(spawn("Agent", { subagent_type: "Explore" }).hookSpecificOutput?.updatedInput?.model).toBe(
-    "haiku",
-  );
-  expect(spawn("Task", { subagent_type: "Explore" }).hookSpecificOutput?.updatedInput?.model).toBe(
-    "haiku",
-  );
-});
-
-test("G Plan, general-purpose and an unknown type, W PreToolUse runs, T the input is unchanged", () => {
-  for (const subagent_type of ["Plan", "general-purpose", "someone:else", undefined])
-    expect(spawn("Agent", { subagent_type }).hookSpecificOutput?.updatedInput).toBeUndefined();
-});
-
-test("G an implementer brief with TIER: hard, W PreToolUse runs, T it gets opus; no tier line means standard", () => {
-  const hard = spawn("Agent", {
-    subagent_type: "workit:implementer",
-    prompt: "GOAL: x\nTIER: hard\nWORKTREE: /w/x\n",
-  });
-  expect(hard.hookSpecificOutput?.updatedInput?.model).toBe("opus");
-  expect(
-    spawn("Agent", {
-      subagent_type: "workit:implementer",
-      prompt: "WORKTREE: /w/x",
-    }).hookSpecificOutput?.updatedInput?.model,
-  ).toBe("sonnet");
-});
+  expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
+  return out.hookSpecificOutput?.permissionDecisionReason ?? "";
+};
 
 const withConfig = (models: unknown, run: () => void): void => {
   writeFileSync(path.join(configHome.configDir, "workspaces.json"), JSON.stringify({ models }));
@@ -92,7 +56,111 @@ const withConfig = (models: unknown, run: () => void): void => {
   }
 };
 
-test("G a configured verifier effort and a full Claude model id, W PreToolUse runs, T the id is applied as its alias with the effort", () => {
+test("G permission_mode auto and a spawn missing its role model, W PreToolUse runs, T it is denied with the exact args (run_in_background kept), never rewritten, and the retry with them runs as written", () => {
+  withConfig(
+    {
+      roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } },
+    },
+    () => {
+      const first = spawn(
+        "Agent",
+        { subagent_type: "workit:verifier", run_in_background: true },
+        "auto",
+      );
+      const reason = denied(first);
+      expect(reason).toContain(
+        'spawn again with exactly subagent_type: "workit:verifier", model: "sonnet", effort: "high", run_in_background: true (description and prompt as written)',
+      );
+      expect(reason).toContain("role verifier, models.roles in the global default");
+      const retry = spawn(
+        "Agent",
+        {
+          subagent_type: "workit:verifier",
+          model: "sonnet",
+          effort: "high",
+          run_in_background: true,
+        },
+        "auto",
+      );
+      expect(retry.hookSpecificOutput).toBeUndefined();
+    },
+  );
+});
+
+test("G a spawn missing its role model, W PreToolUse runs in any permission mode, T it is the same deny (no updatedInput in any mode)", () => {
+  const reasons = MODES.map((mode) => denied(spawn("Agent", { subagent_type: "Explore" }, mode)));
+  expect(new Set(reasons).size).toBe(1);
+  expect(reasons[0]).toContain('subagent_type: "Explore", model: "haiku"');
+  expect(reasons[0]).toContain("auto mode refuses a hook-rewritten spawn");
+});
+
+test("G a spawn that already names its role's model and effort, W PreToolUse runs in every permission mode, T it runs untouched", () => {
+  withConfig(
+    {
+      roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } },
+    },
+    () => {
+      for (const mode of MODES)
+        expect(
+          spawn(
+            "Agent",
+            {
+              subagent_type: "workit:verifier",
+              model: "sonnet",
+              effort: "high",
+            },
+            mode,
+          ).hookSpecificOutput,
+          mode,
+        ).toBeUndefined();
+    },
+  );
+});
+
+test("G a workit:verifier spawn with no model, W PreToolUse runs, T the deny names sonnet, the built-in default", () => {
+  const reason = denied(spawn("Agent", { subagent_type: "workit:verifier" }));
+  expect(reason).toContain('subagent_type: "workit:verifier", model: "sonnet"');
+  expect(reason).toContain("role verifier, built-in");
+});
+
+test("G a spawn that names model opus, W PreToolUse runs, T the model is left as is", () => {
+  const out = spawn("Agent", {
+    subagent_type: "workit:verifier",
+    model: "opus",
+  });
+  expect(out.hookSpecificOutput).toBeUndefined();
+});
+
+test("G an Explore spawn, W PreToolUse runs, T it needs haiku; the legacy Task name works too", () => {
+  for (const tool of ["Agent", "Task"])
+    expect(denied(spawn(tool, { subagent_type: "Explore" }))).toContain('model: "haiku"');
+});
+
+test("G Plan, general-purpose and an unknown type, W PreToolUse runs, T the input is unchanged", () => {
+  for (const subagent_type of ["Plan", "general-purpose", "someone:else", undefined])
+    expect(spawn("Agent", { subagent_type }).hookSpecificOutput).toBeUndefined();
+});
+
+test("G an implementer brief with TIER: hard, W PreToolUse runs, T it needs opus; no tier line means standard", () => {
+  expect(
+    denied(
+      spawn("Agent", {
+        subagent_type: "workit:implementer",
+        prompt: "GOAL: x\nTIER: hard\nWORKTREE: /w/x\n",
+      }),
+    ),
+  ).toContain('model: "opus"');
+  expect(
+    denied(
+      spawn("Agent", {
+        subagent_type: "workit:implementer",
+        prompt: "WORKTREE: /w/x",
+      }),
+    ),
+  ).toContain('model: "sonnet"');
+});
+
+test("G a configured verifier effort and a full Claude model id, W PreToolUse runs, T the id is named as its alias with the effort", () => {
   withConfig(
     {
       roles: {
@@ -104,18 +172,14 @@ test("G a configured verifier effort and a full Claude model id, W PreToolUse ru
       },
     },
     () => {
-      const verifier = spawn("Agent", { subagent_type: "workit:verifier" }).hookSpecificOutput
-        ?.updatedInput;
-      expect(verifier).toMatchObject({ model: "sonnet", effort: "high" });
-      expect(
-        spawn("Agent", { subagent_type: "Explore" }).hookSpecificOutput?.updatedInput?.model,
-      ).toBe("opus");
+      expect(denied(spawn("Agent", { subagent_type: "workit:verifier" }))).toContain(
+        'model: "sonnet", effort: "high"',
+      );
+      expect(denied(spawn("Agent", { subagent_type: "Explore" }))).toContain('model: "opus"');
       // an explicit effort stays
-      const reviewer = spawn("Agent", {
-        subagent_type: "workit:reviewer",
-        effort: "low",
-      }).hookSpecificOutput?.updatedInput;
-      expect(reviewer).toMatchObject({ model: "haiku", effort: "low" });
+      expect(denied(spawn("Agent", { subagent_type: "workit:reviewer", effort: "low" }))).toContain(
+        'model: "haiku", effort: "low"',
+      );
     },
   );
 });
@@ -126,20 +190,18 @@ test("G a configured model the Agent tool cannot take, W PreToolUse runs, T the 
       subagent_type: "workit:verifier",
     }).hookSpecificOutput;
     expect(out?.updatedInput).toBeUndefined();
+    expect(out?.permissionDecision).toBeUndefined();
     expect(out?.additionalContext).toContain("could not apply gpt-5");
     expect(out?.additionalContext).toContain("workit models show --role verifier");
   });
 });
 
-test("G a configured verifier model, W the lead names another model, T the configured one wins with a note; allowLeadOverride true keeps the lead's", () => {
+test("G a configured verifier model, W the lead names another model, T the deny names the configured one and allowLeadOverride; allowLeadOverride true keeps the lead's", () => {
   withConfig({ roles: { verifier: "haiku" } }, () => {
-    const out = spawn("Agent", {
-      subagent_type: "workit:verifier",
-      model: "opus",
-    }).hookSpecificOutput;
-    expect(out?.updatedInput?.model).toBe("haiku");
-    expect(out?.additionalContext).toContain("replaced model opus with haiku");
-    expect(out?.additionalContext).toContain('"allowLeadOverride": true');
+    const reason = denied(spawn("Agent", { subagent_type: "workit:verifier", model: "opus" }));
+    expect(reason).toContain('model: "haiku"');
+    expect(reason).toContain("replaces model opus");
+    expect(reason).toContain('"allowLeadOverride": true');
   });
   withConfig({ roles: { verifier: "haiku" }, allowLeadOverride: true }, () => {
     expect(
@@ -148,74 +210,45 @@ test("G a configured verifier model, W the lead names another model, T the confi
   });
 });
 
-test("G models.roles.default, W a general-purpose spawn or one with no type, T the default model is applied; a fork is left alone", () => {
+test("G models.roles.default, W a general-purpose spawn or one with no type, T the default model is named; a fork is left alone", () => {
   withConfig({ roles: { default: { claude_code: "haiku" } } }, () => {
     for (const subagent_type of ["general-purpose", undefined])
-      expect(
-        spawn("Agent", { subagent_type }).hookSpecificOutput?.updatedInput?.model,
-        String(subagent_type),
-      ).toBe("haiku");
+      expect(denied(spawn("Agent", { subagent_type })), String(subagent_type)).toContain(
+        'model: "haiku"',
+      );
     expect(spawn("Agent", { subagent_type: "fork" }).hookSpecificOutput).toBeUndefined();
   });
 });
 
-test("G a general-purpose spawn with a ROLE: decider line, W PreToolUse runs, T it gets the decider's built-in model and effort", () => {
-  const updated = spawn("Agent", {
-    subagent_type: "general-purpose",
-    prompt: "ROLE: decider\nPick one.",
-  }).hookSpecificOutput?.updatedInput;
-  expect(updated).toMatchObject({ model: "fable", effort: "high" });
+test("G a general-purpose spawn with a ROLE: decider line, W PreToolUse runs, T it needs the decider's built-in model and effort", () => {
+  expect(
+    denied(
+      spawn("Agent", {
+        subagent_type: "general-purpose",
+        prompt: "ROLE: decider\nPick one.",
+      }),
+    ),
+  ).toContain('subagent_type: "general-purpose", model: "fable", effort: "high"');
 });
 
-test("G a spawn that already passes its role's model and effort, W PreToolUse runs, T it runs as written with no updatedInput (W2.21)", () => {
+test("G a spawn with the right model but no effort, W PreToolUse runs, T the deny names only the missing effort and keeps every other arg", () => {
   withConfig(
     {
       roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } },
     },
     () => {
-      const out = spawn("Agent", {
-        subagent_type: "workit:verifier",
-        model: "sonnet",
-        effort: "high",
-      }).hookSpecificOutput;
-      expect(out?.updatedInput).toBeUndefined();
-      expect(out?.permissionDecision).toBeUndefined();
-    },
-  );
-});
-
-test("G a spawn with no model or another model, W PreToolUse rewrites it, T the note names the exact model and effort to pass next time (W2.21)", () => {
-  withConfig(
-    {
-      roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } },
-    },
-    () => {
-      const filled = spawn("Agent", {
-        subagent_type: "workit:verifier",
-      }).hookSpecificOutput;
-      expect(filled?.updatedInput).toMatchObject({
-        model: "sonnet",
-        effort: "high",
-      });
-      expect(filled?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
-      const replaced = spawn("Agent", {
-        subagent_type: "workit:verifier",
-        model: "opus",
-      }).hookSpecificOutput;
-      expect(replaced?.updatedInput).toMatchObject({
-        model: "sonnet",
-        effort: "high",
-      });
-      expect(replaced?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
-      const effortOnly = spawn("Agent", {
-        subagent_type: "workit:verifier",
-        model: "sonnet",
-      }).hookSpecificOutput;
-      expect(effortOnly?.updatedInput).toMatchObject({
-        model: "sonnet",
-        effort: "high",
-      });
-      expect(effortOnly?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
+      const reason = denied(
+        spawn("Agent", {
+          subagent_type: "workit:verifier",
+          model: "sonnet",
+          run_in_background: false,
+          name: "v1",
+        }),
+      );
+      expect(reason).toContain(
+        'exactly subagent_type: "workit:verifier", model: "sonnet", effort: "high", run_in_background: false, name: "v1" (',
+      );
+      expect(reason).toContain("It needs effort high");
     },
   );
 });

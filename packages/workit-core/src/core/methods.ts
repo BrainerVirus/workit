@@ -1,4 +1,6 @@
+import { claudeSpawnTable } from "./role-models";
 import type { Assurance, Capability, Dimension, Policy } from "./task-contract";
+import { hostFamily } from "./workspaces";
 
 export type MethodId =
   | "workit-shape"
@@ -16,9 +18,14 @@ type MethodDefinition = {
 };
 
 export const METHODS: Readonly<Record<MethodId, MethodDefinition>> = {
-  "workit-shape": { dimensions: ["challenge", "decisions", "artifacts", "continuity"] },
+  "workit-shape": {
+    dimensions: ["challenge", "decisions", "artifacts", "continuity"],
+  },
   "workit-bdd": { dimensions: ["testing"] },
-  "workit-review": { dimensions: ["review"], ruleIds: ["fresh-context-review", "self-review"] },
+  "workit-review": {
+    dimensions: ["review"],
+    ruleIds: ["fresh-context-review", "self-review"],
+  },
   // Mechanical work needs only the existing checks, not a RED/GREEN ritual.
   "workit-implement": { ruleIds: ["mechanical-existing-checks"] },
   "workit-fanout": { dimensions: ["delegation"] },
@@ -56,7 +63,10 @@ const assuranceFor = (
     (capability) => keys.has(capability.name) || keys.has(capability.surface),
   );
   if (id === "workit-review" && matches.length === 0)
-    return { assurance: "unavailable", reasons: ["independent review capability is unavailable"] };
+    return {
+      assurance: "unavailable",
+      reasons: ["independent review capability is unavailable"],
+    };
   if (matches.some((capability) => capability.assurance === "unavailable"))
     return {
       assurance: "unavailable",
@@ -65,8 +75,14 @@ const assuranceFor = (
         .map((capability) => capability.reason),
     };
   if (matches.some((capability) => capability.assurance === "enforced"))
-    return { assurance: "enforced", reasons: matches.map((capability) => capability.reason) };
-  return { assurance: "agent_guided", reasons: matches.map((capability) => capability.reason) };
+    return {
+      assurance: "enforced",
+      reasons: matches.map((capability) => capability.reason),
+    };
+  return {
+    assurance: "agent_guided",
+    reasons: matches.map((capability) => capability.reason),
+  };
 };
 
 export function selectMethods(policy: Policy, capabilities: Capability[]): SelectedMethod[] {
@@ -86,8 +102,7 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
   });
 }
 
-export const invariantBootstrap = (): string =>
-  `
+const BOOTSTRAP = `
 Workit is optional coordination and proof tooling around the host: you decide
 what and whether, the CLI does how and records what it observed.
 Native host allow/ask/deny, sandbox and org rules stay authoritative. Never
@@ -155,3 +170,16 @@ Skills: load the skill, never act from memory (aliases /wk-<name>).
 - retro (user-invoked; offer it): workit-retro
 - architecture, deepen modules (user-invoked; offer it): workit-architecture
 `.trim();
+
+/**
+ * The session contract. With the session's `cwd` and `host`, a Claude Code
+ * lead also gets one line naming every agent type's spawn model and effort,
+ * so its first spawn passes them (retro 2026-11-07 R1).
+ */
+export const invariantBootstrap = (
+  session: { cwd: string; host: string } | null = null,
+): string => {
+  const table =
+    session && hostFamily(session.host) === "claude_code" ? claudeSpawnTable(session.cwd) : null;
+  return table ? `${BOOTSTRAP}\n${table}` : BOOTSTRAP;
+};
