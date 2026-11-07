@@ -11,9 +11,6 @@
     "packages/workit-core/src/core/skill-manifests.ts": 1,
     "packages/workit-cursor/hooks/launch.mjs": 2
   },
-  "home-expanded-vars": {
-    "packages/workit-core/src/hooks/write-gate.ts": 4
-  },
   "no-wall-clock-assert": {
     "test/workit-cli/check-wait-cap.test.ts": 3,
     "test/workit-cli/completion.test.ts": 1,

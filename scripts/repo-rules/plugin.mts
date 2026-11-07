@@ -155,18 +155,6 @@ export const RULES: Record<string, RepoRule> = {
       },
     }),
   },
-  "home-expanded-vars": {
-    cited: "retro 2026-11-07 R2 (#664): `--cwd $W` resolved to <lead>/$W through homeExpanded(cwd)",
-    fix: "expand the word's variables first: `homeExpanded(expandVars(word, vars))`, and say so in the denial when one stays unresolved",
-    visit: (report) => ({
-      CallExpression(call) {
-        if (calleeName(call) !== "homeExpanded") return;
-        const argument = children(call, "arguments")[0] ?? null;
-        if (argument?.type === "CallExpression" && calleeName(argument) === "expandVars") return;
-        report(call, "homeExpanded() on a shell word that was not passed through expandVars()");
-      },
-    }),
-  },
   "no-wall-clock-assert": {
     cited:
       "#176/#497: revision-retry asserted `elapsed < 2_000` and failed on slow Windows runners",

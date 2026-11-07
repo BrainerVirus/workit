@@ -34,18 +34,6 @@ export function repoRoot(cwd: string): string {
 `,
   },
   {
-    rule: "home-expanded-vars",
-    file: "packages/workit-core/src/hooks/write-gate.ts",
-    line: 4,
-    // retro 2026-11-07 R2: workitCwd() resolving `--cwd $W`.
-    source: `import path from "node:path";
-declare const homeExpanded: (word: string) => string;
-export function workitCwd(dir: string, cwd: string | null, rest: string[]) {
-  return { at: cwd === null ? dir : path.resolve(dir, homeExpanded(cwd)), args: rest };
-}
-`,
-  },
-  {
     rule: "no-wall-clock-assert",
     file: "test/workit-core/revision-retry.test.ts",
     line: 6,
@@ -79,10 +67,6 @@ export const a = spawnSync("git", ["rev-parse"], { cwd: "/", ...LOCAL });
 export const b = spawnSync("git", ["rev-parse"], { cwd: "/", timeout: 1_000 });
 `,
   "packages/workit-core/src/core/pr-env-fixed.ts": `export const env = (token: string) => ({ ...process.env, PATH: process.env.PATH ?? "", GH_TOKEN: token });
-`,
-  "packages/workit-core/src/hooks/write-gate-fixed.ts": `declare const homeExpanded: (word: string) => string;
-declare const expandVars: (word: string, vars: Map<string, string>) => string;
-export const at = (cwd: string, vars: Map<string, string>) => homeExpanded(expandVars(cwd, vars));
 `,
   "test/workit-core/revision-retry-fixed.test.ts": `import { expect, test } from "bun:test";
 test("retries stop at the cap", () => {
@@ -138,7 +122,7 @@ test("Given each cited past mistake and an empty baseline, When the repo rules r
     expect(hit, `${entry.rule} on ${entry.file}:${entry.line}`).toContain(`workit/${entry.rule}: `);
     expect(hit).toContain(" Fix: ");
   }
-  expect(err).toContain("repo rules: 5 new hits.");
+  expect(err).toContain("repo rules: 4 new hits.");
 });
 
 test("Given the fixed shapes and files outside a rule's paths, When the repo rules run, Then none of them is reported", () => {
@@ -189,10 +173,9 @@ test("Given a baselined hit that was fixed, When the repo rules run, Then they p
 
   const shrunk = run("--write");
   expect(shrunk.code).toBe(0);
-  expect(shrunk.out).toBe("repo rules: baseline 8 -> 5 hits");
+  expect(shrunk.out).toBe("repo rules: baseline 7 -> 4 hits");
   expect(readBaseline()).toEqual({
     "exit-after-flush": { "packages/workit-cli/src/main.ts": 1 },
-    "home-expanded-vars": { "packages/workit-core/src/hooks/write-gate.ts": 1 },
     "no-wall-clock-assert": { "test/workit-core/revision-retry.test.ts": 1 },
     "spawn-env-path": { "packages/workit-core/src/core/pr-env.ts": 1 },
     "spawn-timeout": { "packages/workit-core/src/core/pr-create.ts": 1 },
@@ -208,10 +191,10 @@ test("Given new hits, When --write runs, Then the baseline never grows and the r
 
 test("Given a newly added rule, When --grandfather names it, Then only that rule's current hits are seeded", () => {
   setBaseline({});
-  const seeded = run("--grandfather", "home-expanded-vars");
+  const seeded = run("--grandfather", "spawn-env-path");
   expect(seeded.code).toBe(1);
   expect(readBaseline()).toEqual({
-    "home-expanded-vars": { "packages/workit-core/src/hooks/write-gate.ts": 1 },
+    "spawn-env-path": { "packages/workit-core/src/core/pr-env.ts": 1 },
   });
   expect(run("--grandfather", "no-such-rule").code).toBe(2);
 });

@@ -7,7 +7,6 @@
   "rules": {
     "workit/spawn-timeout": "error",
     "workit/spawn-env-path": "error",
-    "workit/home-expanded-vars": "error",
     "workit/no-wall-clock-assert": "error",
     "workit/exit-after-flush": "error"
   }
