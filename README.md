@@ -317,7 +317,7 @@ Skills load automatically when the task fits, or explicitly: `/wk-<name>`
 | `continue` | Checkpoint, hand off, and resume across sessions by re-verifying inherited claims |
 | `bdd` | Turn requirements into Given/When/Then and work test-first in RED/GREEN slices |
 | `test-audit` | Find tautological or low-value tests and replace them with ones that catch breaks |
-| `deslop` | Remove dead code, restating comments and filler before a PR, behavior unchanged |
+| `deslop` | Remove dead code, restating comments and filler before a PR, behavior unchanged; depth follows the review lane |
 | `fanout` | Run independent slices in parallel worktrees with per-slice verifiers |
 | `verify-app` | Generate the project's own `verify-<app>` skill that drives the real app |
 | `retro` | User-invoked: find repeated friction in recent sessions and propose cited fixes ranked by enforcer strength; never applies them |
@@ -365,6 +365,7 @@ text.
 | `workit check <name>` | Run a configured check and record observed evidence |
 | `workit lock status\|wait\|run\|heavy` | The machine-wide heavy-check lease: holders, waiting, running a command under it, heavy patterns |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
+| `workit deslop scan\|result` | Class the comments, suppressions and debug leftovers a branch adds, by review lane, with no agent; record one result line per PR ([review depth](docs/guides/review.md)) |
 | `workit knowledge lint` | Lint AGENTS.md budget, local links, scaffold-only and duplicated rules; register as `workit check knowledge` |
 | `workit ledger decision\|ruling\|verdict\|standing\|list\|check\|verify-integrity` | Decisions, rulings, SHA-keyed verdicts, a fanout's standing orders and the hash chain |
 | `workit git branch\|commit\|push\|trailers` | Policy-checked branch/commit; leased push with verified remote tip |
