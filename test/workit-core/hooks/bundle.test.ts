@@ -55,7 +55,11 @@ const HOOK_ENTRIES = [
 // (task-engine.ts): Cursor 494,579 B, Codex 429,657 B, core run 442,143 B,
 // Claude Code 430,370 B. The test prints each size and its headroom. Another
 // Bun gives different sizes, so the size check runs only on the pinned version.
-const BUDGET = 510_000;
+// Confinement following shell variables, loops and inline-script paths (#744) adds
+// ~4.5 KB of its own code, no new module: core run 511,558 B, so the ceiling is 512 KB.
+// temporary: #744+#748; the read-only TaskStore split for hooks (retro 2026-11-07
+// follow-up) lowers it
+const BUDGET = 516_000;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

@@ -27,7 +27,7 @@ import { appendHookObserved } from "../ledger";
 import type { HookDecision, HookInput } from "./protocol";
 import { inWorkitWorkspace, rawInvocations, skipWorkitGlobals, workitInvocations } from "./raw-git";
 import type { ShellDialect } from "./shell-words";
-import { shellMutationTargets, UNKNOWN_DIR } from "./write-gate";
+import { shellMutationTargets, UNKNOWN_DIR, UNKNOWN_VAR } from "./write-gate";
 
 /** Written by `workit fanout worktree create` into git's admin dir for the worktree. */
 export const FANOUT_TOKEN_FILE = "workit-fanout-token";
@@ -209,17 +209,65 @@ const unknownDirDeny = (input: HookInput, worktree: string | null): HookDecision
   };
 };
 
+/** `command` with each unresolved reference in `refs` spelled as the absolute path it stands for. */
+const literalForm = (command: string, refs: readonly string[]): string => {
+  let text = command;
+  for (const ref of refs) {
+    const placeholder = `<absolute path of ${ref}>`;
+    const name = /^\$(\w+)$/.exec(ref)?.[1];
+    text = name
+      ? text.replace(new RegExp(`\\$\\{${name}[^}]*\\}|\\$${name}(?!\\w)`, "g"), placeholder)
+      : text.replaceAll(ref, placeholder);
+  }
+  return text.length > 600 ? `${text.slice(0, 600)}…` : text;
+};
+
+const unknownVarDeny = (
+  input: HookInput,
+  worktree: string | null,
+  targets: readonly string[],
+  command: string | undefined,
+): HookDecision => {
+  const refs = [
+    ...new Set(
+      targets.flatMap((target) =>
+        decodeURIComponent(path.relative(UNKNOWN_VAR, path.resolve(target)).split(path.sep)[0])
+          .split(" ")
+          .filter(Boolean),
+      ),
+    ),
+  ];
+  const wt = worktree ?? "<worktree>";
+  const named = refs.join(", ");
+  const retry = command === undefined ? "" : ` Retry as: \`${literalForm(command, refs)}\`.`;
+  const unblock = `Spell the path out instead of ${named}: Workit follows only a plain \`NAME=<literal>\` set earlier in the same command, \`$(mktemp …)\` and a \`for\` over literal words.${retry} Write under ${wt} (\`workit git --cwd ${wt} …\`, \`workit check --cwd ${wt} …\`) or a temp dir.`;
+  return {
+    kind: "deny",
+    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named}, which Workit cannot resolve (a command substitution, a loop over unknown words, a conditional or a binder such as read or eval sets it), so it cannot tell whether the write stays in its worktree. ${unblock}`,
+    unblock,
+  };
+};
+
 /**
  * Judge an implementer's edit or mutating command by the absolute paths it
  * changes (`targets`). Only targets inside a git checkout, or Workit's
  * binding records, are judged (scratch and temp files elsewhere are host
  * policy). Binds on the first target inside a Workit worktree; denies a
  * target outside the bound worktree (or, unbound, outside every Workit
- * worktree). Deny reasons name a target as the agent spelled it.
+ * worktree). Deny reasons name a target as the agent spelled it; a path
+ * built from a variable Workit cannot resolve is denied naming the variable,
+ * with `command` (when given) spelled out as the form to retry.
  */
-export function confineImplementer(input: HookInput, targets: readonly string[]): HookDecision {
+export function confineImplementer(
+  input: HookInput,
+  targets: readonly string[],
+  command?: string,
+): HookDecision {
   try {
     if (!input.session.agentId || hostIsolated(input.cwd, input.session.agentId)) return NONE;
+    const unresolved = targets.filter((target) => within(path.resolve(target), UNKNOWN_VAR));
+    if (unresolved.length > 0)
+      return unknownVarDeny(input, boundWorktree(input), unresolved, command);
     if (targets.some((target) => within(path.resolve(target), UNKNOWN_DIR)))
       return unknownDirDeny(input, boundWorktree(input));
     const bindings = canonical(bindingDir());
@@ -359,5 +407,9 @@ export function confineImplementerShell(
   } catch {
     // An unanalysable command falls through to the path confinement.
   }
-  return confineImplementer(input, shellMutationTargets(input.cwd, command, dialect, true));
+  return confineImplementer(
+    input,
+    shellMutationTargets(input.cwd, command, dialect, true),
+    command,
+  );
 }
