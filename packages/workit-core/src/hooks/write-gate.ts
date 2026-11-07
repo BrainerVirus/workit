@@ -194,7 +194,10 @@ const runsWriter = (words: readonly string[]): boolean => {
  * `awk -i`, a `-c` shell script): the paths they may change, "." standing for
  * the directory they run in; null when the command is none of them.
  */
-const opaqueWrites = (input: readonly string[]): string[] | null => {
+const opaqueWrites = (
+  input: readonly string[],
+  scriptOf: (index: number) => string | undefined = (index) => input[index],
+): string[] | null => {
   let words = input;
   while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) {
     if (words[0] === "xargs") {
@@ -237,10 +240,40 @@ const opaqueWrites = (input: readonly string[]): string[] | null => {
       else named.push(args[index]);
     return listed(named);
   }
-  if (name === "perl") return has(/^-[a-zA-Z]*[eE]/) ? ["."] : null;
+  const inline = (flag: RegExp): string[] | null => {
+    const at = args.findIndex((arg) => flag.test(arg));
+    if (at < 0) return null;
+    return inlineWrites(scriptOf(input.length - args.length + at + 1), name) ? ["."] : null;
+  };
+  if (name === "perl") return inline(/^-[a-zA-Z]*[eE][a-zA-Z]*$/);
   if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
-    return has(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/) ? ["."] : null;
+    return inline(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/);
   return shellScript(words) === null ? null : ["."];
+};
+
+/** Calls and names an inline script uses to write files, run commands or hide either. */
+const WRITE_NAME =
+  /^(?:\w*(?:write|append|unlink|rmdir|mkdir|mkdtemp|makedirs|removedirs|rename|truncate|symlink|chmod|chown|utime|copyfile|copytree|rmtree|spawn|popen|subprocess|child_process|passthru|shell_exec|proc_open|execsync|execfile|system|fork|runin|o_wronly|o_rdwr|o_creat|o_trunc|o_append)\w*|exec[lv]\w*|rm|rmsync|rm_f|rm_r|rm_rf|remove|cp|cpsync|link|linksync|touch|eval|exec|__import__|importlib|getattr|setattr|globals|__builtins__|builtins|binding|dlopen|ctypes|dump|delete|fileutils|shutil|tofile|savetxt|save|savefig|to_csv|to_json|to_excel|to_parquet|to_pickle)$/;
+/** `open(f, 'w')`, `Path(f).open('a')`, `new Function(…)`, `Bun.$`, `Deno.run`. */
+const WRITE_TEXT =
+  /,\s*(?:mode\s*=\s*)?["'](?:[rbtU]*[wax][rbtU+]*|[rbtU]*\+[rbtU]*)["']\s*[,)]|\.open\s*\(\s*(?:mode\s*=\s*)?["'][rbtU]*[wax+][rbtU+]*["']|\bFunction\s*\(|\bnew\s+Function\b|\bBun\.\$|\bDeno\.(?:run|Command)\b/;
+
+/**
+ * Whether an interpreter's inline script (`python3 -c`, `node -e|-p`,
+ * `ruby -e`, `perl -e`) may write: it names a write, process or dynamic-code
+ * call, opens a file for writing, or its text is unknown (undefined). A script file
+ * (`node x.mjs`) is not judged, so neither is a script that only reads.
+ */
+const inlineWrites = (script: string | undefined, interpreter: string): boolean => {
+  if (script === undefined) return true;
+  const text = script
+    .replace(/\b(?:sys\.|process\.)?std(?:out|err)(?:\.buffer)?\.write(?:lines)?\b/g, "")
+    .replace(/\.exec\s*\(/g, ".match(");
+  if (WRITE_TEXT.test(text)) return true;
+  if (/^(?:perl|ruby|php)$/.test(interpreter) && /`|%x|\bqx\b|\bopen\b/.test(text)) return true;
+  return (text.match(/[A-Za-z_$][\w$]*/g) ?? []).some((word) =>
+    WRITE_NAME.test(word.toLowerCase()),
+  );
 };
 
 /**
@@ -547,44 +580,166 @@ const COMPOUND = new Set([
   "}",
 ]);
 
+/** Keywords that open and close a compound body; `case`, `select` and functions are not followed. */
+const OPENS = new Set(["if", "for", "while", "until", "{"]);
+const CLOSES = new Set(["fi", "done", "}"]);
+const UNFOLLOWED = new Set(["case", "esac", "select", "function"]);
+/** Words before the command that leave it the command: `builtin eval` is still `eval`. */
+const TRANSPARENT = new Set(["builtin", "command", "time", "!"]);
+
 /**
  * Which variables a command's assignments may not be trusted for: none at all
- * when it has loops, conditionals or `case` (`all`); else the names a
- * conditional or non-plain assignment (`+=`, `a[i]=`), a binder (`read`,
- * `eval`, `unset`, `declare -n`, `printf -v`…) or `${N:=…}` can change. Only a
- * plain `NAME=literal` that runs in sequence, or `export NAME=literal`, is
- * substituted.
+ * after `case`, `select`, a function or a command that can set any variable
+ * (`eval`, `source`, `declare`…) (`all`); else the names assigned inside a
+ * loop or conditional body, and the names a conditional or non-plain
+ * assignment (`+=`, `a[i]=`), a binder (`read`, `unset`, `declare -n`,
+ * `printf -v`…) or `${N:=…}` can change. A `for` variable is followed
+ * apart, in `segmentTargets`. Only a plain `NAME=literal` that runs in
+ * sequence, or `export NAME=literal`, is substituted.
  */
 const untrustedVars = (
   segments: readonly Segment[],
 ): { all: boolean; names: ReadonlySet<string> } => {
   const names = new Set<string>();
   let all = false;
+  let depth = 0;
   const poison = (text: string) => {
     for (const match of text.matchAll(/[A-Za-z_]\w*/g)) names.add(match[0]);
   };
   for (const segment of segments) {
-    const lead = segment.words.findIndex((word) => !/^\w+\+?=|^\w+\[.*\]\+?=/.test(word));
-    const first = lead < 0 ? undefined : segment.words[lead];
-    if (first !== undefined && COMPOUND.has(first)) all = true;
-    if (lead >= 0 && segment.words.slice(lead).some((word) => REBINDS_ANY.has(word))) all = true;
-    for (const word of segment.words)
+    let start = 0;
+    for (; start < segment.words.length && COMPOUND.has(segment.words[start]); start++) {
+      const keyword = segment.words[start];
+      if (UNFOLLOWED.has(keyword)) all = true;
+      if (OPENS.has(keyword)) depth++;
+      else if (CLOSES.has(keyword)) depth = Math.max(0, depth - 1);
+    }
+    const words = segment.words.slice(start);
+    if (depth > 0) for (const [key] of assignmentsOf(words)) names.add(key);
+    const lead = words.findIndex((word) => !/^\w+\+?=|^\w+\[.*\]\+?=/.test(word));
+    const first = lead < 0 ? undefined : words[lead];
+    let command = lead;
+    while (command >= 0 && TRANSPARENT.has(words[command] ?? "")) command++;
+    if (command >= 0 && REBINDS_ANY.has(words[command] ?? "")) all = true;
+    if (command >= 0 && UNFOLLOWED.has(words[command] ?? "")) all = true;
+    for (const word of words)
       for (const match of word.matchAll(/\$\{(\w+)(?:\[[^\]]*\])?:?[=]/g)) names.add(match[1]);
-    const assigned =
-      lead < 0 ? segment.words : first === "export" ? segment.words.slice(lead + 1) : [];
+    const assigned = lead < 0 ? words : first === "export" ? words.slice(lead + 1) : [];
     const plainOnly = assigned.every((word) => /^\w+=/.test(word) || word === "export");
     if (segment.conditional || (!plainOnly && lead < 0))
       for (const word of assigned) poison(word.split("=")[0]);
-    if (lead >= 0 && segment.words.slice(lead).some((word) => BINDERS.has(word))) {
-      const flagged = segment.words.slice(lead + 1).some((word) => word.startsWith("-"));
+    if (lead >= 0 && words.slice(lead).some((word) => BINDERS.has(word))) {
+      const flagged = words.slice(lead + 1).some((word) => word.startsWith("-"));
       const plainExport = first === "export" && !flagged;
-      if (!plainExport) poison(segment.words.slice(lead).join(" "));
-      else if (segment.conditional) poison(segment.words.slice(lead).join(" "));
+      if (!plainExport) poison(words.slice(lead).join(" "));
+      else if (segment.conditional) poison(words.slice(lead).join(" "));
     }
-    if (segment.words.some((word) => /^\w+\+=/.test(word)))
-      for (const word of segment.words) if (/^\w+\+=/.test(word)) poison(word.split("+")[0]);
+    if (words.some((word) => /^\w+\+=/.test(word)))
+      for (const word of words) if (/^\w+\+=/.test(word)) poison(word.split("+")[0]);
   }
   return { all, names };
+};
+
+/**
+ * Where a variable reference stands in a path Workit cannot resolve: a write
+ * under it is denied by `confineImplementer`, naming the references
+ * (URI-encoded, one path segment).
+ */
+export const UNKNOWN_VAR = path.resolve(path.parse(process.cwd()).root, ".workit-unknown-var");
+
+const REFERENCE = /\$\{(\w+)[^}]*\}|\$(\w+)|\$\([^)]*\)?|`[^`]*`?/g;
+
+/** The variable references and substitutions left in `text`, as written (`$T`, `$(cat f)`). */
+export const unresolvedRefs = (text: string): string[] => [
+  ...new Set(
+    [...text.matchAll(REFERENCE)].map((match) => {
+      const name = match[1] ?? match[2];
+      return name === undefined ? match[0] : `$${name}`;
+    }),
+  ),
+];
+
+const unknownVarTarget = (text: string): string =>
+  path.join(UNKNOWN_VAR, encodeURIComponent(unresolvedRefs(text).join(" ") || text));
+
+/** Literal-pattern parameter operators: `/`, `//`, `%`, `%%`, `#`, `##`; null for any other. */
+const applyOperator = (value: string, operator: string): string | null => {
+  if (operator === "") return value;
+  const swap = /^(\/\/?)([^/*?[\]]+)\/([^*?[\]]*)$/.exec(operator);
+  if (swap)
+    return swap[1] === "//" ? value.replaceAll(swap[2], swap[3]) : value.replace(swap[2], swap[3]);
+  const trim = /^(%%?|##?)([^*?[\]]*)$/.exec(operator);
+  if (!trim) return null;
+  if (trim[1].startsWith("%"))
+    return value.endsWith(trim[2]) ? value.slice(0, value.length - trim[2].length) : value;
+  return value.startsWith(trim[2]) ? value.slice(trim[2].length) : value;
+};
+
+/** One word expands to at most this many texts; past it, the reference stays unresolved. */
+const MAX_EXPANSIONS = 16;
+
+/**
+ * Every text `text` may expand to: each `$NAME`, `${NAME}` or literal
+ * `${NAME/a/b}`-style reference replaced by the value an assignment gave it,
+ * or by each word of the `for` list it loops over. Other references stay as
+ * written.
+ */
+const expansions = (
+  text: string,
+  vars: ReadonlyMap<string, string>,
+  loops: ReadonlyMap<string, readonly string[]>,
+): string[] => {
+  if (!text.includes("$")) return [text];
+  let results = [""];
+  let last = 0;
+  for (const match of text.matchAll(/\$\{(\w+)([^}]*)\}|\$(\w+)/g)) {
+    const name = match[1] ?? match[3];
+    const literal = text.slice(last, match.index);
+    last = match.index + match[0].length;
+    const value = vars.get(name);
+    const values = loops.get(name) ?? (value === undefined ? null : [value]);
+    const applied = values?.map((item) => applyOperator(item, match[2] ?? ""));
+    const fits = applied && results.length * applied.length <= MAX_EXPANSIONS;
+    results =
+      fits && applied.every((item) => item !== null)
+        ? results.flatMap((prefix) => applied.map((item) => prefix + literal + item))
+        : results.map((prefix) => prefix + literal + match[0]);
+  }
+  return results.map((prefix) => prefix + text.slice(last));
+};
+
+/**
+ * The path `$(mktemp [-d] [-p DIR|-t] [TEMPLATE])` prints: TEMPLATE under DIR,
+ * the temp dir, or (no `-p`/`-t`) the directory it runs in; null for any
+ * other value.
+ */
+const mktempPath = (value: string, dir: string | undefined): string | null => {
+  const match = /^\$\(\s*mktemp\b([^()`$]*)\)$/.exec(value.trim());
+  if (!match) return null;
+  const args = match[1]
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((arg) => arg.replace(/^(["'])(.*)\1$/, "$2"));
+  let base: string | null = null;
+  let template: string | undefined;
+  let temp = false;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "-p" || arg === "--tmpdir") {
+      if (arg === "-p") base = args[++index] ?? null;
+      else temp = true;
+      if (arg === "-p" && base === null) return null;
+    } else if (arg.startsWith("--tmpdir=")) base = arg.slice("--tmpdir=".length);
+    else if (arg === "-t") temp = true;
+    else if (!arg.startsWith("-")) template = arg;
+  }
+  if (base === null && (temp || template === undefined)) base = os.tmpdir();
+  const name = homeExpanded(template ?? "tmp.XXXXXXXXXX");
+  if (path.isAbsolute(name)) return name;
+  const from = base === null ? dir : homeExpanded(base);
+  if (from === undefined || (!path.isAbsolute(from) && dir === undefined)) return null;
+  return path.resolve(dir ?? from, from, name);
 };
 
 /** A leading `~`, `$HOME` or `${HOME}` the shell would expand. */
@@ -615,31 +770,72 @@ const segmentTargets = (
   let vars = new Map(
     untrusted.all ? [] : [...inherited].filter(([key]) => !untrusted.names.has(key)),
   );
+  let loops = new Map<string, string[]>();
   const groups: Array<{
     dir: string | undefined;
     stack: Array<string | undefined>;
     vars: Map<string, string>;
+    loops: Map<string, string[]>;
   }> = [];
-  const at = (file: string) => {
-    const home = homeExpanded(expandVars(file, vars));
-    return path.isAbsolute(home) ? home : dir === undefined ? null : path.resolve(dir, home);
+  const atAll = (file: string, base: string | undefined = dir): string[] =>
+    expansions(file, vars, loops).flatMap((text) => {
+      const home = homeExpanded(text);
+      if (strict && unresolvedRefs(home).length > 0) return [unknownVarTarget(home)];
+      if (path.isAbsolute(home)) return [home];
+      return base === undefined ? [] : [path.resolve(base, home)];
+    });
+  const at = (file: string): string | null => {
+    const all = atAll(file);
+    return all.length > 1 ? unknownVarTarget(file) : (all[0] ?? null);
+  };
+  const assigned = (value: string): string | null => {
+    const made = mktempPath(value, dir);
+    if (made !== null) return made;
+    const all = expansions(value, vars, loops).map(homeExpanded);
+    return all.length === 1 && unresolvedRefs(all[0]).length === 0 ? all[0] : null;
   };
   for (const segment of segments) {
     if (segment.group === "open") {
-      groups.push({ dir, stack: [...stack], vars: new Map(vars) });
+      groups.push({ dir, stack: [...stack], vars: new Map(vars), loops: new Map(loops) });
       continue;
     }
     if (segment.group === "close") {
       const saved = groups.pop();
-      if (saved) ({ dir, stack, vars } = saved);
+      if (saved) ({ dir, stack, vars, loops } = saved);
       continue;
     }
-    const lead = segment.words.findIndex((word) => !/^\w+=/.test(word));
-    const words = lead < 0 ? [] : segment.words.slice(lead);
+    const body = commandWords(segment.words);
+    const keywords = segment.words.length - body.length;
+    const loop = segment.words.slice(0, keywords).lastIndexOf("for");
+    if (loop >= 0) {
+      const [name = "", keyword, ...items] = segment.words.slice(loop + 1);
+      const expanding = new Set(segment.expands ?? []);
+      const literal =
+        keyword === "in" && items.every((_, index) => !expanding.has(loop + 3 + index));
+      vars.delete(name);
+      if (literal && !untrusted.all && !untrusted.names.has(name))
+        loops.set(name, items.map(homeExpanded));
+      else loops.delete(name);
+      continue;
+    }
+    const lead = body.findIndex((word) => !/^\w+=/.test(word));
+    const words = lead < 0 ? [] : body.slice(lead);
+    const offset = keywords + lead;
     if (!segment.conditional && !untrusted.all)
       for (const [key, value] of assignmentsOf(segment.words))
-        if (!untrusted.names.has(key)) vars.set(key, homeExpanded(expandVars(value, vars)));
+        if (!untrusted.names.has(key)) {
+          loops.delete(key);
+          const resolved = assigned(value);
+          if (resolved === null) vars.delete(key);
+          else vars.set(key, resolved);
+        }
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+    // A directory change inside a loop or conditional body may or may not run.
+    const moves = CD.has(name) || PUSHD.has(name) || POPD.has(name);
+    if (moves && keywords > 0) {
+      if (strict) dir = UNKNOWN_DIR;
+      continue;
+    }
     if (CD.has(name)) {
       dir = cdInto(dir, words, strict, vars);
       continue;
@@ -655,62 +851,71 @@ const segmentTargets = (
     }
     const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
     if (inner !== null && dir !== undefined)
-      targets.push(
-        ...segmentTargets(workitRunDir(dir, words), inner, "posix", depth + 1, strict, vars),
-      );
+      for (const runIn of workitRunDir(dir, words, atAll))
+        targets.push(...segmentTargets(runIn, inner, "posix", depth + 1, strict, vars));
     if (strict && dir !== undefined) {
       const runIn = dir;
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
         targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true, vars));
-      const opaque = segment.unanalyzable ? ["."] : inner === null ? opaqueWrites(words) : null;
-      for (const file of opaque ?? []) {
-        const resolved = at(file);
-        if (resolved) targets.push(file === "." ? path.join(resolved, DIR_TARGET) : resolved);
-      }
+      const expanding = new Set(segment.expands ?? []);
+      const scriptOf = (index: number): string | undefined => {
+        const word = words[index];
+        if (word === undefined || !expanding.has(offset + index)) return word;
+        const all = expansions(word, vars, loops);
+        return all.length === 1 && unresolvedRefs(all[0]).length === 0 ? all[0] : undefined;
+      };
+      const opaque = segment.unanalyzable
+        ? ["."]
+        : inner === null
+          ? opaqueWrites(words, scriptOf)
+          : null;
+      for (const file of opaque ?? [])
+        for (const resolved of atAll(file))
+          targets.push(file === "." ? path.join(resolved, DIR_TARGET) : resolved);
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       if (ln >= 0 && words.slice(0, ln).every((word) => PREFIXES.has(word)))
         targets.push(...linkSources(words.slice(ln + 1), at));
     }
     for (const file of segment.redirects)
-      if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) {
-        const resolved = at(file);
-        if (resolved) targets.push(resolved);
-      }
-    const edits = editsOf(commandWords(segment.words));
+      if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
+    const edits = editsOf(body);
     if (edits === null) {
       if (dir !== undefined) targets.push(path.join(dir, DIR_TARGET));
-    } else
-      for (const file of edits) {
-        const resolved = at(file);
-        if (resolved) targets.push(resolved);
-      }
+    } else for (const file of edits) targets.push(...atAll(file));
     if (dir !== undefined)
-      for (const invocation of workitInvocations(segment.words.map(quoteWord).join(" "), "posix")) {
-        const { at: runsIn, args } = workitCwd(dir, invocation);
+      for (const invocation of workitInvocations(body.map(quoteWord).join(" "), "posix")) {
+        const { at: runsIn, args } = workitCwd(dir, invocation, atAll);
         if (
           args[0] === "git" &&
           MUTATING_WORKIT_GIT.has(args[1] ?? "") &&
           !inert(args.slice(2), "")
         )
-          targets.push(path.join(runsIn, DIR_TARGET));
+          targets.push(...runsIn.map((runs) => path.join(runs, DIR_TARGET)));
       }
   }
   return targets;
 };
 
 /** Where `workit check|lock run [--cwd <dir>] -- <cmd>` runs its command: `--cwd` resolved against `dir`. */
-const workitRunDir = (dir: string, words: string[]): string => {
+const workitRunDir = (dir: string, words: string[], resolve: Resolve): string[] => {
   for (const invocation of workitInvocations(words.map(quoteWord).join(" "), "posix")) {
-    const { at, args } = workitCwd(dir, invocation);
+    const { at, args } = workitCwd(dir, invocation, resolve);
     if (args[0] === "check" || (args[0] === "lock" && args[1] === "run")) return at;
   }
-  return dir;
+  return [dir];
 };
 
+/** Resolves a path a command names against a directory: every value it may take. */
+type Resolve = (file: string, base: string) => string[];
+
 /** A workit invocation's global `--cwd <dir>` (or `--cwd=<dir>`), resolved against `dir`. */
-const workitCwd = (dir: string, args: string[]): { at: string; args: string[] } => {
+const workitCwd = (
+  dir: string,
+  args: string[],
+  resolve: Resolve,
+): { at: string[]; args: string[] } => {
   const { rest, cwd } = skipWorkitGlobals(args);
-  return { at: cwd === null ? dir : path.resolve(dir, homeExpanded(cwd)), args: rest };
+  return { at: cwd === null ? [dir] : resolve(cwd, dir), args: rest };
 };
 
 /**
