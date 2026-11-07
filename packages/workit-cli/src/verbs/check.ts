@@ -934,14 +934,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (options.timeoutMs > 0) settings.waitMs = Math.min(settings.waitMs, options.timeoutMs);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
+    const takesLease = options.heavy || (name !== null && settings.heavy.includes(name));
     const adHoc = options.command === null ? null : options.shell ? shellArgv(command[0]) : command;
-    light = adHoc ? lightCommand(adHoc, runCwd) : null;
-    if (!(options.heavy || (name !== null && settings.heavy.includes(name)))) light = null;
-    else if (light)
+    light = takesLease && adHoc ? lightCommand(adHoc, runCwd) : null;
+    if (light)
       io.stderr(
         `workit: running at once without the heavy-check lease: ${light.reason}, and formatters and file-scoped linters finish in seconds, so they never queue behind a full suite\n`,
       );
-    else {
+    else if (takesLease) {
       const prepared = await prepareHeavy(
         io,
         settings,
