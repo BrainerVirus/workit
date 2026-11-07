@@ -174,25 +174,38 @@ test("Given a waiter ahead whose workspace allows one slot, When the holder of s
   expect(await narrow).toMatchObject({ ok: false, reason: "cancelled" });
 }, 20_000);
 
+/** Real time, except that a poll longer than the settle step ends only when the waiter is woken. */
+const stalledPolls = (): Clock & { polls: () => number } => {
+  let polls = 0;
+  return {
+    now: () => Date.now(),
+    polls: () => polls,
+    sleep: (ms, signal) =>
+      new Promise((resolve) => {
+        if (ms <= 50) {
+          setTimeout(resolve, ms);
+          return;
+        }
+        polls += 1;
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      }),
+  };
+};
+
 test("Given a slot freed by a normal release, When waiters are queued, Then the head waiter takes it without waiting out its poll", async () => {
   const dir = leasesDir();
   const holding = await acquireLease(waiter(dir, null, { check: "holder", session: "s-h" }));
   if (!holding.ok) throw new Error("the holder did not get the free slot");
-  const began = Date.now();
+  const clock = stalledPolls();
   const head = acquireLease(
-    waiter(dir, null, { check: "head", session: "s-head", waitMs: 60_000, pollMs: 30_000 }),
+    waiter(dir, clock, { check: "head", session: "s-head", waitMs: 60_000, pollMs: 30_000 }),
   );
-  await until(() => queued(dir) === 1);
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await until(() => queued(dir) === 1 && clock.polls() > 0);
   holding.lease.release();
-  const got = await Promise.race([
-    head,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_500)),
-  ]);
-  expect(got?.ok).toBe(true);
-  expect(Date.now() - began).toBeLessThan(1_500);
-  if (got) release(got);
-  else release(await head);
+  // Its poll never ends on its own: only the release can wake it.
+  const got = await head;
+  expect(got.ok).toBe(true);
+  release(got);
 });
 
 test("Given waiters with different slot counts, When slots free, Then each waiter ahead takes the lowest free slot it may use", () => {

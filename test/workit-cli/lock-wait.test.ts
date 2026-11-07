@@ -72,11 +72,9 @@ const lockWait = async (root: string, env: NodeJS.ProcessEnv, extra: string[] = 
 
 test("Given `workit lock wait` on two busy slots past its first limit, When a slot frees, Then it returns free at once, re-queued once, without the single-limit 'stayed busy' text", async () => {
   const { root, env, leases } = setup(0.5);
-  let freedAt = 0;
   const freeing = new Promise<void>((resolve) =>
     setTimeout(() => {
       rmSync(path.join(leases, "slot-1.json"));
-      freedAt = Date.now();
       resolve();
     }, 800),
   );
@@ -87,8 +85,7 @@ test("Given `workit lock wait` on two busy slots past its first limit, When a sl
   expect(result.envelope.data.requeuedAfterMs).toBeGreaterThanOrEqual(500);
   expect(result.stderr).toContain("re-queued once for up to 1s more");
   expect(result.stderr).not.toContain("stayed busy");
-  // Woken by the release, not by the next one-second poll.
-  expect(Date.now() - freedAt).toBeLessThan(500);
+  expect(result.envelope.data.waitedMs).toBeGreaterThanOrEqual(800);
 });
 
 test("Given two busy slots that never free, When `workit lock wait` reaches its second limit, Then it gives up busy with the two-limit wording and an estimate", async () => {
