@@ -1,0 +1,30 @@
+{
+  "case": "check-configured",
+  "model": "haiku",
+  "workitVersion": "v14.4.0+354b2a5277",
+  "key": "296fd8aacb82a2d1",
+  "date": "2026-11-07T14:23:06.880Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 12293,
+    "costUsd": 0.00408833,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 4,
+    "failures": [
+      {
+        "rule": "configured-check",
+        "detail": "no `workit check <typecheck|test>` call"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#4 Bash(sh scripts/typecheck.sh; echo \"typecheck exit=$?\"; sh scripts/test.sh; echo \"test exit=$?\") matches /^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx|sh scripts/)/: a raw check command bypasses the configured checks"
+      }
+    ]
+  }
+}

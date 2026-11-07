@@ -1,0 +1,15 @@
+{
+  "passed": 0,
+  "total": 1,
+  "cases": [
+    {
+      "case": "check-configured",
+      "pass": false,
+      "failures": ["configured-check", "forbid"],
+      "turns": 5,
+      "costUsd": 0.00408833,
+      "workitVersion": "v14.4.0+354b2a5277",
+      "graderVersion": 1
+    }
+  ]
+}
