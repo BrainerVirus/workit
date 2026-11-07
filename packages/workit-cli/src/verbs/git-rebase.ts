@@ -22,11 +22,11 @@ import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import { emit, ok, type Io } from "../output";
 import { forgeFail, parseFlags, usage } from "./forge-common";
 
-export const REBASE_USAGE = "workit git rebase [--onto <base>] [--json]";
+const REBASE_USAGE = "workit git rebase [--onto <base>] [--json]";
 
 const short = (sha: string): string => sha.slice(0, 12);
 
-export type RebaseOutcome = {
+type RebaseOutcome = {
   branch: string;
   base: string;
   baseSha: string;
