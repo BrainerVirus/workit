@@ -189,3 +189,25 @@ export const flushStreams = async (
     ),
   );
 };
+
+type ErrorSource = {
+  on: (event: "error", listener: (error: NodeJS.ErrnoException) => void) => unknown;
+};
+
+const BROKEN_PIPE = new Set(["EPIPE", "ERR_STREAM_DESTROYED"]);
+
+/**
+ * A reader that goes away (`workit … | head -1`) ends the output, not the
+ * verb: an EPIPE on stdout or stderr is dropped instead of crashing the
+ * process or logging an uncaught failure, later writes go nowhere, and the
+ * verb still finishes with its own exit code. Any other stream error throws
+ * as it did without a listener.
+ */
+export function ignoreBrokenPipes(
+  streams: readonly ErrorSource[] = [process.stdout, process.stderr],
+): void {
+  for (const stream of streams)
+    stream.on("error", (error) => {
+      if (!BROKEN_PIPE.has(error.code ?? "")) throw error;
+    });
+}
