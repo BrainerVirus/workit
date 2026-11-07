@@ -916,7 +916,7 @@ test("git push: an explicit push=false grant and a grant without an account are 
 test("git: usage errors exit 2 with the subcommand usage", async () => {
   const repo = setup();
   expect((await run(["git"], repo.cwd)).code).toBe(2);
-  expect((await run(["git", "rebase"], repo.cwd)).code).toBe(2);
+  expect((await run(["git", "rewind"], repo.cwd)).code).toBe(2);
   expect((await run(["git", "branch"], repo.cwd)).code).toBe(2);
   expect((await run(["git", "push", "origin"], repo.cwd)).code).toBe(2);
   const help = await run(["help", "git"], repo.cwd);

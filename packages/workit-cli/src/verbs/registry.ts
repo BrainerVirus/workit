@@ -640,7 +640,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "git",
     group: "delivery",
     summary:
-      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); rebase onto a fresh base; push with a lease and a verified remote tip",
+      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",
     subcommands: [
       {
         name: "branch",
