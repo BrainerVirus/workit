@@ -12,6 +12,14 @@ anything under its `packages/<pkg>/` dir or the sources it bundles. A `docs:`
 or `chore:` change there still ships as a patch. Root docs, tests and tooling
 never release, and only changed packages are published.
 
+Releases are tagged `workit-dev-v<version>` (`tagFormat` in
+`release.config.cjs`; the scripts share `TAG_PREFIX` from
+`analyze-release-scope.ts`). The packages published as `@brainervirus/workit-*`
+up to 14.x, tagged `v<version>`; they moved to `@workit-dev/*` and restarted
+at 1.0.0. semantic-release reads only tags that match `tagFormat`, so the old
+`v*` tags never seed a version. A 14.x maintenance release of the old scope
+comes from its own branch with its own config, never from `main`.
+
 Never edit versions or tags by hand. Because PRs are squash-merged, the PR
 title is the commit semantic-release reads. A breaking change needs `!` in the
 PR title (`fix!: …`); a `BREAKING CHANGE:` footer only counts if it lands in
@@ -96,26 +104,25 @@ Trusted publishing cannot create a package. A new `@workit-dev` name must be
 published once by hand (`npm publish --access public` from its tag, logged in
 with 2FA) before its trusted publisher can be added.
 
-### Tags that were cut but not published
+### What each release publishes
 
-When the publish step fails, the tag and GitHub release stay, but the npm
-versions never appear (v14.5.0 to v14.5.4 failed on a rejected token). Never
-delete or move those tags: the next release takes the next version and
-publishes it.
+`publish-changed-packages.ts` diffs each package from the release the
+registry serves for it, not from the previous tag: `npm view <name> version`,
+then the `workit-dev-v<that version>` tag. A package ships when its payload
+changed since that tag, and also when the registry has no version of it, only
+the `0.0.1` placeholder that reserved the name, or a version with no local
+tag. So a release whose publish failed part-way (v14.5.0 to v14.5.4 failed on
+a rejected token) ships the missed packages next time. Never delete or move
+those tags.
 
-The publish step diffs against the previous tag, not against what npm has. A
-package whose only changes landed in the unpublished tags is skipped by the
-next release (unless a package that installs it ships), so npm keeps serving
-its old version. After the next release, compare each package:
+The first release (no previous `workit-dev-v*` tag: semantic-release renders
+`${lastRelease.gitTag}` empty) ships every package. `PUBLISH_ALL=1` or
+`--all` ships every package in any release, and `PUBLISH_DRY_RUN=1` runs the
+selection without publishing:
 
 ```bash
-npm view @workit-dev/<pkg> version   # last version on npm
-git diff --name-only v<that version>..v<next release> -- packages/<pkg>
+PUBLISH_DRY_RUN=1 bun packages/workit-core/scripts/publish-changed-packages.ts ""
 ```
-
-If the diff is not empty, ship it with a follow-up PR that changes something
-under `packages/<pkg>/` (a patch release publishes it), or publish it by hand
-from the release tag with 2FA, in dependency order (see above).
 
 ## Where the version lives
 
@@ -124,17 +131,17 @@ do not go `BEHIND` (strict branch protection would make each one rebase and
 rerun CI). The release job sets the version in its own checkout and does not
 commit it:
 
-1. semantic-release reads the previous release from the `v*` tags, not from
-   any manifest, and picks `vX`.
+1. semantic-release reads the previous release from the `workit-dev-v*` tags,
+   not from any manifest, and picks `X`.
 2. One `@semantic-release/npm` bumper per package writes `X` into each
    `packages/*/package.json`. They never publish.
 3. The prepare step (`rewrite-workspace-deps.ts`) writes `X` into the Codex,
    Cursor and Claude Code `plugin.json` files and turns every internal
    `workspace:*` range into `^X`, then rebuilds the bundles with `X` in them.
-4. semantic-release tags `vX` on the merge commit and creates the GitHub
+4. semantic-release tags `workit-dev-vX` on the merge commit and creates the GitHub
    release.
 5. `publish-changed-packages.ts` checks that every package.json, plugin.json
-   and internal range says the version of the `v*` tag on HEAD. If any of
+   and internal range says the version of the `workit-dev-v*` tag on HEAD. If any of
    them differs, it stops before publishing anything.
 
 The committed manifests on `main` keep the version of the last sync. Nothing

@@ -1,4 +1,32 @@
-# Migration: 2.x to 6.x
+# Migration
+
+## 1.0.0: the packages move to @workit-dev
+
+Workit published as `@brainervirus/workit-<pkg>` up to 14.x. From 1.0.0 the
+same packages publish as `@workit-dev/<pkg>`: `@workit-dev/cli`,
+`@workit-dev/core`, `@workit-dev/claude-code`, `@workit-dev/opencode`,
+`@workit-dev/codex`, `@workit-dev/cursor`, `@workit-dev/pi` and
+`@workit-dev/mcp`. Version numbers restarted at 1.0.0, so 1.0.0 is newer than
+any 14.x. The CLI command is still `workit`, the GitHub repo is still
+`BrainerVirus/workit`, and the Claude Code and Codex plugin id is still
+`workit@workit`.
+
+Move every install at once with the old scope's own upgrade, which knows both
+names:
+
+```bash
+npx -y @brainervirus/workit-cli@latest upgrade
+```
+
+`workit doctor` (row `legacy_scope`) lists each install still on the old
+scope (the Workit-owned CLI, a global npm copy, the OpenCode pin, the Pi
+package, the Cursor MCP server and plugin, the Codex and Claude Code plugins)
+and prints that command. It never compares a 14.x version with a 1.x one.
+
+New installs use the new names: `npx @workit-dev/cli init`.
+
+## 2.x to 6.x
+
 
 Upgrade every host together. A runtime that reads a store record written by a
 newer major stops with "upgrade Workit" instead of guessing. Run `workit upgrade`:

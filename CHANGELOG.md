@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (1.0.0: @workit-dev)
+
+- **BREAKING: the packages publish as `@workit-dev/*`, starting at 1.0.0.**
+  `@brainervirus/workit-{core,cli,claude-code,opencode,codex,cursor,pi,mcp}`
+  become `@workit-dev/{core,cli,claude-code,opencode,codex,cursor,pi,mcp}`.
+  This continues the `@brainervirus/workit-*` 14.x line, whose history is
+  below. Releases are tagged `workit-dev-v<version>`; the old `v*` tags stay.
+  The `workit` command, the GitHub repo and the plugin id `workit@workit` do
+  not change. Migrate every install with
+  `npx -y @brainervirus/workit-cli@latest upgrade`; `workit doctor` row
+  `legacy_scope` lists what is still on the old scope
+  ([migration guide](docs/guides/migration.md)).
+- The release publishes each package when its payload changed since the
+  version the registry serves for it (not since the previous tag), ships
+  everything on a first release, and takes `PUBLISH_ALL=1` or `--all`.
+
 ### Fixed (retro 2026-11-07)
 
 - **Implementer confinement follows shell variables, loops and inline

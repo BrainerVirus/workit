@@ -62,6 +62,11 @@ Or install a single host by hand. Whatever the install path, every host
 updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
 host); the native commands below are the fallback.
 
+Coming from `@brainervirus/workit-*` (14.x)? The packages moved to
+`@workit-dev/*` and restarted at 1.0.0: run
+`npx -y @brainervirus/workit-cli@latest upgrade` once, and see
+[the migration guide](docs/guides/migration.md#100-the-packages-move-to-workit-dev).
+
 A CLI older than 8.38.0 has no `--yes` (it fails with `unknown option --yes`).
 Update the CLI once with `npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes`
 (or, on the old CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
