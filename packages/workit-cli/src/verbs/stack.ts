@@ -167,7 +167,7 @@ async function status(argv: string[], io: Io): Promise<number> {
       (row, index) =>
         `  ${index + 1}. ${row.branch} ${label(connected.data.forge.kind, row.pr)} ${
           row.merged
-            ? "merged"
+            ? `landed on ${data.trunk}`
             : `${row.next ?? "?"} · checks ${row.checks ?? "?"} · verdict ${row.verdict.accepted ? `accepted (${row.verdict.basis})` : `missing (${row.verdict.reasons.join(", ") || row.verdict.basis})`} · ${row.onParent === false ? `not on ${row.parent}` : `on ${row.parent}`}${row.baseMatches === false ? ` · PR base ${row.prBase}` : ""}`
         }`,
     ),
@@ -175,7 +175,7 @@ async function status(argv: string[], io: Io): Promise<number> {
   ]);
 }
 
-const renderSync = (data: SyncOutcome): string[] => [
+const renderSync = (data: SyncOutcome, forge: string | null): string[] => [
   `${data.dryRun ? "would sync" : "synced"} stack ${data.name}${data.merged.length ? `; merged: ${data.merged.map((item) => item.branch).join(", ")}` : ""}`,
   ...data.steps.map((step) =>
     [
@@ -188,7 +188,11 @@ const renderSync = (data: SyncOutcome): string[] => [
           ? `pushed${step.push.forced ? " (lease)" : ""}`
           : "remote current"
         : "",
-      step.retarget ? `retargeted ${step.retarget.from} -> ${step.retarget.to}` : "",
+      step.retarget
+        ? `retargeted ${label(forge, step.pr)} ${step.retarget.from} -> ${step.retarget.to}`
+        : step.pr === null && step.push
+          ? "no PR to retarget"
+          : "",
     ]
       .filter(Boolean)
       .join(" "),
@@ -197,8 +201,8 @@ const renderSync = (data: SyncOutcome): string[] => [
 
 type RestackData = SyncOutcome & { pruned: PruneOutcome };
 
-const renderRestack = (data: RestackData): string[] => [
-  ...renderSync(data),
+const renderRestack = (data: RestackData, forge: string | null): string[] => [
+  ...renderSync(data, forge),
   ...data.pruned.deleted.map(
     (item) =>
       `${data.dryRun ? "would delete" : "deleted"} merged branch ${item.branch} at ${item.sha} (local; restore: git branch ${item.branch} ${item.sha})`,
@@ -278,8 +282,10 @@ async function sync(argv: string[], io: Io, restack = false): Promise<number> {
     (r) => (r.ok ? "done" : "failed"),
   );
   if (!result.ok) return stackFailed(io, result);
-  if (restack) return emit(io, ok(result.data as RestackData), renderRestack);
-  return emit(io, ok(result.data), renderSync);
+  const forge = ctx?.resolved.forge.kind ?? selected.data.forge;
+  if (restack)
+    return emit(io, ok(result.data as RestackData), (data) => renderRestack(data, forge));
+  return emit(io, ok(result.data), (data) => renderSync(data, forge));
 }
 
 const METHODS: ReadonlySet<string> = new Set<MergeMethod>(["squash", "merge", "rebase"]);

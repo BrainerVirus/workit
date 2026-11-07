@@ -26,6 +26,7 @@ import {
 import {
   pruneMergedBranches,
   readStack,
+  recordStack,
   stackDeps,
   stackFileName,
   stacksDir,
@@ -697,7 +698,7 @@ test("stack sync: after the root was squash-merged on the forge, the rest is res
   const advance = await run(["stack", "status", "--json"], forge.cwd);
   expect(advance.json().data).toMatchObject({
     verdict: "ADVANCE",
-    next: "workit stack sync",
+    next: "workit stack sync  # sync the child onto main: restack feature/b and retarget PR #12",
   });
 
   const result = await run(["stack", "sync", "--json"], forge.cwd);
@@ -1956,4 +1957,58 @@ test("stack land (#739): given PR 2's head moves after the pre-flight passed, th
   });
   expect(forge.writes.filter((write) => write.startsWith("merge"))).toEqual(["merge 11"]);
   expect(forge.prs.get(12)?.state).toBe("open");
+});
+
+// ---------------------------------------------------------------------------
+// #752: a parent squash-merged with its branch kept, under a stack recorded
+// without PR numbers (as `fanout worktree create` records it)
+
+for (const kind of ["github", "gitlab"] as const)
+  test(`stack status and sync (${kind}, #752): given a recorded stack without PR numbers whose parent PR squash-merged with its branch kept, then status reads the parent as landed (not no_pr) with the next step to sync the child onto main, and sync retargets the child PR to main and says so`, async () => {
+    const forge = setup(kind, undefined, ["feature/a", "feature/b"]);
+    const noun = kind === "github" ? "PR #" : "MR !";
+    const recorded = recordStack(forge.cwd, {
+      name: "wave/a",
+      trunk: "main",
+      branches: ["feature/a", "feature/b"],
+    });
+    expect(recorded.ok).toBe(true);
+    forge.mergeExternally(11);
+
+    const status = await run(["stack", "status", "--name", "wave/a", "--json"], forge.cwd);
+    expect(status.code, status.stderr + status.stdout).toBe(0);
+    const data = status.json().data;
+    expect(data.verdict).toBe("ADVANCE");
+    expect(data.branches[0]).toMatchObject({ branch: "feature/a", pr: 11, merged: true });
+    expect(data.branches[1]).toMatchObject({ branch: "feature/b", pr: 12, prBase: "feature/a" });
+    expect(data.reason).toBe(
+      "feature/a landed on main; feature/b is not restacked or retargeted onto main yet",
+    );
+    expect(data.next).toBe(
+      `workit stack sync  # sync the child onto main: restack feature/b and retarget ${noun}12`,
+    );
+    const human = await run(["stack", "status", "--name", "wave/a"], forge.cwd);
+    expect(human.stdout).toContain(`1. feature/a ${noun}11 landed on main`);
+
+    const sync = await run(["stack", "sync", "--name", "wave/a"], forge.cwd);
+    expect(sync.code, sync.stderr + sync.stdout).toBe(0);
+    expect(forge.prs.get(12)?.base).toBe("main");
+    expect(forge.writes).toContain("retarget 12 main");
+    expect(sync.stdout).toContain(`retargeted ${noun}12 feature/a -> main`);
+    const stack = readStack(forge.cwd, "wave/a");
+    expect(stack.ok && stack.data?.branches.map((entry) => entry.pr)).toEqual([11, 12]);
+  });
+
+test("stack sync (#752): a child branch without any PR is restacked onto main and the output says no PR was retargeted", async () => {
+  const forge = setup("github", undefined, ["feature/a", "feature/b"]);
+  forge.prs.delete(12);
+  expect(
+    recordStack(forge.cwd, { name: "wave/a", trunk: "main", branches: ["feature/a", "feature/b"] })
+      .ok,
+  ).toBe(true);
+  forge.mergeExternally(11);
+  const sync = await run(["stack", "sync", "--name", "wave/a"], forge.cwd);
+  expect(sync.code, sync.stderr + sync.stdout).toBe(0);
+  expect(sync.stdout).toContain("feature/b on main: restacked");
+  expect(sync.stdout).toContain("no PR to retarget");
 });
