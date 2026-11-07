@@ -484,8 +484,8 @@ jobs:
       contents: write # GitHub Release
       issues: write # semantic-release success comments
       pull-requests: write # semantic-release success comments
-      id-token: write # npm provenance
+      # npm trusted publishing: npmjs.com trusts THIS workflow file (ci.yml),
+      # and the reusable release.yml needs the grant here too.
+      id-token: write # npm trusted publishing (OIDC auth) and provenance
     # `$/` self-repository syntax is not understood by actionlint 1.7.12 yet.
     uses: ./.github/workflows/release.yml # zizmor: ignore[self-repository]
-    secrets:
-      NPMJS: ${{ secrets.NPMJS }}

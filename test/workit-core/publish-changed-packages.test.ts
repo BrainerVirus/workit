@@ -226,7 +226,7 @@ describe("publishChanged", () => {
       const message = (err as Error).message;
       expect(message).toContain("publish failed for 1 package(s): workit-opencode");
       expect(message).toContain("published: workit-mcp, workit-cursor, workit-codex");
-      expect(message).toContain("npm token");
+      expect(message).toContain("trusted publisher");
       const lines = log.mock.calls.map((c) => String(c[0]));
       expect(lines).toContain("publish failed workit-opencode: boom");
       expect(lines.at(-1)).toBe(message);

@@ -103,15 +103,16 @@ test(
   () => {
     const release = read(".github/workflows/release.yml");
     const wf = Bun.YAML.parse(release) as {
-      on: { workflow_call: { secrets: Record<string, unknown> } };
+      on: { workflow_call: { secrets?: Record<string, unknown> } | null };
       jobs: { release: { steps: Array<{ run?: string }> } };
     };
     const runs = wf.jobs.release.steps.map((s) => s.run ?? "").join("\n");
     expect(runs).not.toMatch(/\bgit\s+(?:commit|push|checkout\s+-b)\b|\bgh\s+pr\b/);
     expect(release).not.toContain("sync-release-manifests");
     expect(release).not.toContain("manifest-sync");
-    // The PAT existed only to open the sync PR with CI-triggering events.
-    expect(Object.keys(wf.on.workflow_call.secrets)).toEqual(["NPMJS"]);
+    // The PAT existed only to open the sync PR with CI-triggering events, and
+    // npm auth is trusted publishing: the release takes no secret at all.
+    expect(wf.on.workflow_call?.secrets ?? {}).toEqual({});
     expect(read(".github/workflows/ci.yml")).not.toContain("RELEASE_SYNC_TOKEN");
     expect(
       existsSync(path.join(REPO_ROOT, ".github/workflows/cleanup-manifest-sync-branch.yml")),
@@ -136,6 +137,70 @@ test(
   },
   { timeout: 60_000 },
 );
+
+// npm trusted publishing (2026-11-07: the NPMJS token was rejected with a 404
+// on PUT and npm drops bypass-2FA tokens for direct publish). npm
+// authenticates the publish through the job's OIDC token; npmjs.com trusts the
+// CALLING workflow (ci.yml), so both it and release.yml grant id-token.
+test(
+  "releases publish through npm trusted publishing: OIDC, no npm token, npm >= 11.21",
+  () => {
+    type Job = {
+      permissions?: Record<string, string>;
+      secrets?: unknown;
+      steps?: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
+    };
+    const releaseText = read(".github/workflows/release.yml");
+    const release = Bun.YAML.parse(releaseText) as { jobs: { release: Job } };
+    const ci = Bun.YAML.parse(read(".github/workflows/ci.yml")) as { jobs: { release: Job } };
+
+    // No step, env or input carries an npm token into the publish path.
+    const code = releaseText
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+    expect(code).not.toMatch(/NPMJS|NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/);
+    expect(ci.jobs.release.secrets).toBeUndefined();
+    expect(read(".github/workflows/ci.yml")).not.toContain("secrets.NPMJS");
+
+    expect(release.jobs.release.permissions?.["id-token"]).toBe("write");
+    expect(ci.jobs.release.permissions?.["id-token"]).toBe("write");
+
+    // setup-node's registry-url writes an `_authToken=${NODE_AUTH_TOKEN}` line
+    // that would stand in for OIDC.
+    const steps = release.jobs.release.steps ?? [];
+    for (const step of steps) expect(step.with?.["registry-url"]).toBeUndefined();
+
+    // Node 24.20.0 bundles npm 11.19.0; OIDC dist-tag needs 11.21.0. The npm
+    // upgrade and the printed version check both run before the release.
+    const names = steps.map((s) => s.name ?? "");
+    const install = names.indexOf("Install npm with trusted publishing");
+    const check = names.indexOf("Check npm version");
+    expect(install, names.join(" | ")).toBeGreaterThanOrEqual(0);
+    expect(check).toBeGreaterThan(install);
+    expect(check).toBeLessThan(names.indexOf("Release"));
+    const pinned = /npm@(\d+)\.(\d+)\.(\d+)/.exec(steps[install].run ?? "");
+    expect(pinned).not.toBeNull();
+    const [major, minor] = [Number(pinned?.[1]), Number(pinned?.[2])];
+    expect(major > 11 || (major === 11 && minor >= 21)).toBe(true);
+    expect(steps[check].run).toContain("npm --version");
+    expect(steps[check].run).toContain("11.21.0");
+  },
+  { timeout: 60_000 },
+);
+
+// Trusted publishing (and provenance) checks that each package's
+// repository.url names the repo the workflow runs in.
+test("every released package names this repo and its directory as repository", () => {
+  for (const pkg of RELEASE_PACKAGES) {
+    const manifest = json<{ repository?: unknown }>(`packages/${pkg}/package.json`);
+    expect(manifest.repository, pkg).toEqual({
+      type: "git",
+      url: "git+https://github.com/BrainerVirus/workit.git",
+      directory: `packages/${pkg}`,
+    });
+  }
+});
 
 test(
   "rewrite runs before npm package verification and after version assignment (AR-02)",
