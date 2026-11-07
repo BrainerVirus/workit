@@ -286,6 +286,18 @@ test(
     expect(githubIdx).toBeGreaterThan(lastNpmIdx);
     expect(githubIdx).toBeLessThan(publishIdx);
     expect(cfg.plugins.filter((p) => nameOf(p) === "@semantic-release/github")).toHaveLength(1);
+    // The notes the GitHub release and every ${nextRelease.notes} consumer get
+    // pass through clean-release-notes, which keeps the body under GitHub's
+    // 125000-character limit (1.0.0's 809-commit body was rejected).
+    const notesIdx = cfg.plugins.findIndex(
+      (p) => nameOf(p) === "@semantic-release/release-notes-generator",
+    );
+    expect(notesIdx).toBeGreaterThan(-1);
+    expect(notesIdx).toBeLessThan(githubIdx);
+    const writerOpts = opts(cfg.plugins[notesIdx]).writerOpts as Record<string, unknown>;
+    expect(writerOpts.finalizeContext).toBe(
+      require(path.resolve(REPO_ROOT, "scripts/clean-release-notes.cjs")),
+    );
   },
   { timeout: 60_000 },
 );
