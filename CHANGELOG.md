@@ -15,15 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (retro 2026-11-07)
 
-- **Implementer confinement follows shell variables, loops and read-only
-  inline scripts** (#744). `W=<worktree>; workit git --cwd $W commit` and
+- **Implementer confinement follows shell variables, loops and inline
+  interpreter scripts** (#744). `W=<worktree>; workit git --cwd $W commit` and
   `workit check --cwd $W …` are judged against the worktree, not the lead's
   checkout. A plain `NAME=<literal>` set earlier in the same command,
   `$(mktemp …)` (the path it prints) and a `for` over literal words resolve; a
   loop or conditional untrusts only the names assigned inside its body. An
-  inline `python3 -c`/`node -e` script counts as a writer only when it names a
-  write, process or dynamic-code call, opens a file for writing, or its text
-  cannot be known. A variable Workit cannot resolve is denied by name, with
+  inline `python -c`, `node -e`, `ruby -e` or `perl -e` script is judged by
+  the paths it names: its run directory counts as a write target, plus every
+  absolute, `~` or `..`-climbing path in its text, options, arguments and env
+  prefix; a relative `require`/`import` resolves to the run directory, and a
+  path Workit cannot resolve is denied. Such a script passes only when it runs
+  from the worktree, its scratch or a temp dir and names no path outside
+  them. A variable Workit cannot resolve is denied by name, with
   the command reprinted with the path spelled out for the retry. Writes into
   the lead's checkout are still denied.
 - **Formatters skip the check lease, and a lease wait re-queues once** (#745).
