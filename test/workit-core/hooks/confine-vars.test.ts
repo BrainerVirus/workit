@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+import { shellMutationTargets } from "@/packages/workit-core/src/hooks/write-gate";
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
 
@@ -154,36 +155,67 @@ test("Given an implementer, When a variable or loop names the lead's checkout, T
     expect(denied(command, id), command).toContain("workit worktree confinement");
 });
 
-test("Given an implementer, When it runs a read-only python3 -c or node -e, or copies into a scratch dir, Then nothing is denied; inline writers are", () => {
+test("Given an implementer, When an inline python3 -c or node -e runs in its worktree or a temp dir and names only paths there, or it copies into a scratch dir, Then nothing is denied", () => {
   const id = "impl-vars-scratch";
   allowed(`touch ${wt}/a.ts`, id);
-  const manifest = path.join(lead, "manifest.json");
+  const scratch = path.join(wt, ".workit-scratch");
   for (const command of [
-    `python3 -c 'print(1)'`,
-    `node -e '1'`,
+    `cd ${wt} && python3 -c 'print(1)'`,
+    `cd ${wt} && node -e '1'`,
+    `cd ${os.tmpdir()} && node -e '1'`,
     `cp ${wt}/a /tmp/x`,
-    `node -p "require('${manifest}').version"`,
-    `S=${lead}; python3 -c "\nimport json;m=json.load(open('$S/manifest.json'));print(m.keys())\n"`,
-    `node -e 'const p=require(process.argv[1]);console.log(JSON.stringify(p.peer))' ${manifest}`,
-    `python3 -c "import sys,json; sys.stdout.write(json.dumps(json.load(sys.stdin)))" < ${manifest}`,
-    `node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=JSON.parse(s);process.stdout.write(String(f.length))})'`,
-    `python3 -c "print(open('${manifest}').read().replace('a','b'))"`,
-    `T=$(mktemp -d /tmp/proof-XXXX); cp -a ${wt}/dist $T/pkg; node -e "const f='$T/pkg/package.json';const p=require(f);console.log(p.version)"`,
+    `cd ${wt} && python3 -c 'import json;m=json.load(open("${scratch}/manifest.json"));print(m["$schema"])'`,
+    `W=${wt}; cd $W && node -e 'const p=require(process.argv[1]);console.log(p.peer)' $W/package.json`,
+    `workit check --cwd ${wt} --name v -- node -p "require('./package.json').version"`,
+    `cd ${wt} && node -e "require('fs').writeFileSync('/tmp/out.json','x')"`,
+    `T=$(mktemp -d /tmp/proof-XXXX); cp -a ${wt}/dist $T/pkg; cd $T && node -e "const f='$T/pkg/package.json';require('fs').writeFileSync(f,'x')"`,
   ])
     allowed(command, id);
-  const core = path.join(lead, "src", "core.ts");
-  for (const command of [
-    `node -e "const f='${core}';require('fs').writeFileSync(f,'x')"`,
-    `python3 -c "import os; os.remove('${core}')"`,
-    `python3 -c "import shutil; shutil.rmtree('${lead}/src')"`,
-    `python3 -c "from pathlib import Path; Path('${core}').write_text('x')"`,
-    `python3 -c "open('${core}', mode='a').close()"`,
-    `node -e "require('child_process').execSync('rm ${core}')"`,
-    `python3 -c "__import__('o'+'s').system('rm x')"`,
+  // An escaped `\$` is literal text, not a variable (the hook helper above turns `\` into `/`).
+  expect(
+    shellMutationTargets(wt, `python3 -c "import json;print(m['\\$schema'])"`, "posix", true),
+  ).toEqual([path.join(wt, ".workit-live-target")]);
+});
+
+test("Given an implementer, When an inline script runs in the lead's checkout or names a path in it, Then it is denied, however the write is spelled", () => {
+  const id = "impl-vars-inline";
+  allowed(`touch ${wt}/a.ts`, id);
+  const C = path.join(lead, "src", "core.ts");
+  const L = lead;
+  const fromLead = [
+    `python3 -c 'print(1)'`,
+    `node -e '1'`,
+    `node -p "require('./package.json').version"`,
     `S=$(cat f); node -e "$S"`,
-    `ruby -e 'File.delete("${core}")'`,
-  ])
-    expect(denied(command, id), command).toContain(`bound to the worktree ${wt}`);
+  ];
+  const inWorktree = [
+    `python3 -c "import os; os.replace('${C}','/tmp/q')"`,
+    `python3 -c "import sqlite3; sqlite3.connect('${L}/x.db').execute('create table t(a)')"`,
+    `python3 -c "import fileinput; [l for l in fileinput.input('${C}',inplace=True)]"`,
+    `python3 -c "import tempfile; tempfile.mkstemp(dir='${L}')"`,
+    `python3 -c "m='w'; open('${C}',m)"`,
+    `python3 -c "open('${C}','w'.lower())"`,
+    `python3 -c "open('${C}', *['w'])"`,
+    `python3 -c "import os; os.open('${C}', 66)"`,
+    `python3 -c 'import sys;open(sys.argv[1],sys.argv[2])' ${C} a`,
+    `python3 -c "open('${path.relative(wt, C)}','w')"`,
+    `node -e "require('fs').openSync('${C}',2)"`,
+    `node -e "require('${L}/evil')"`,
+    `node --require ${L}/evil.js -e 1`,
+    `node -r ${path.relative(wt, path.join(L, "evil.js"))} -e 1`,
+    `NODE_OPTIONS="--require ${L}/evil.js" node -e 1`,
+    `node -e "new Function('return process')().mainModule.require('fs').writeFileSync('${C}','x')"`,
+    `node -e "process.chdir('${L}'); require('fs')['write'+'FileSync']('x','x')"`,
+    `X=${L} node -e 'require("fs").appendFileSync(process.env.X+"/f","x")'`,
+    `X=${L}; python3 -c "open('$X/f','w')"`,
+    `ruby -e 'File.delete("${C}")'`,
+    `perl -Mstrict -e 'unlink "${C}"'`,
+  ];
+  for (const command of fromLead)
+    expect(denied(command, id), command).toContain("workit worktree confinement");
+  for (const command of inWorktree.map((script) => `cd ${wt} && ${script}`))
+    expect(denied(command, id), command).toContain("workit worktree confinement");
+  expect(denied(`cd ${wt} && node -e "$CODE"`, id)).toContain("$CODE");
 });
 
 test("Given a variable Workit cannot resolve, When the hook denies, Then the reason names the variable and the command with its path spelled out", () => {

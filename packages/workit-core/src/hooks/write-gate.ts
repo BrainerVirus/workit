@@ -243,7 +243,17 @@ const opaqueWrites = (
   const inline = (flag: RegExp): string[] | null => {
     const at = args.findIndex((arg) => flag.test(arg));
     if (at < 0) return null;
-    return inlineWrites(scriptOf(input.length - args.length + at + 1), name) ? ["."] : null;
+    const runs = input.length - args.length - 1;
+    // The script, the interpreter's options and arguments, and the environment
+    // it is given (`X=/p node -e …`, `NODE_OPTIONS=--require …`).
+    return [
+      ".",
+      ...input.flatMap((word, index) => {
+        if (index === runs || (index < runs && !/^\w+=/.test(word))) return [];
+        const text = scriptOf(index);
+        return text === undefined ? [unknownVarTarget(word)] : pathsIn(text);
+      }),
+    ];
   };
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
   if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
@@ -251,30 +261,18 @@ const opaqueWrites = (
   return shellScript(words) === null ? null : ["."];
 };
 
-/** Calls and names an inline script uses to write files, run commands or hide either. */
-const WRITE_NAME =
-  /^(?:\w*(?:write|append|unlink|rmdir|mkdir|mkdtemp|makedirs|removedirs|rename|truncate|symlink|chmod|chown|utime|copyfile|copytree|rmtree|spawn|popen|subprocess|child_process|passthru|shell_exec|proc_open|execsync|execfile|system|fork|runin|o_wronly|o_rdwr|o_creat|o_trunc|o_append)\w*|exec[lv]\w*|rm|rmsync|rm_f|rm_r|rm_rf|remove|cp|cpsync|link|linksync|touch|eval|exec|__import__|importlib|getattr|setattr|globals|__builtins__|builtins|binding|dlopen|ctypes|dump|delete|fileutils|shutil|tofile|savetxt|save|savefig|to_csv|to_json|to_excel|to_parquet|to_pickle)$/;
-/** `open(f, 'w')`, `Path(f).open('a')`, `new Function(…)`, `Bun.$`, `Deno.run`. */
-const WRITE_TEXT =
-  /,\s*(?:mode\s*=\s*)?["'](?:[rbtU]*[wax][rbtU+]*|[rbtU]*\+[rbtU]*)["']\s*[,)]|\.open\s*\(\s*(?:mode\s*=\s*)?["'][rbtU]*[wax+][rbtU+]*["']|\bFunction\s*\(|\bnew\s+Function\b|\bBun\.\$|\bDeno\.(?:run|Command)\b/;
-
 /**
- * Whether an interpreter's inline script (`python3 -c`, `node -e|-p`,
- * `ruby -e`, `perl -e`) may write: it names a write, process or dynamic-code
- * call, opens a file for writing, or its text is unknown (undefined). A script file
- * (`node x.mjs`) is not judged, so neither is a script that only reads.
+ * The paths an inline script or its arguments spell out: every absolute or
+ * `~/` path, and every relative one that climbs with `..`. An interpreter's
+ * inline script may write anywhere it names, so each counts as a change, with
+ * the directory it runs in.
  */
-const inlineWrites = (script: string | undefined, interpreter: string): boolean => {
-  if (script === undefined) return true;
-  const text = script
-    .replace(/\b(?:sys\.|process\.)?std(?:out|err)(?:\.buffer)?\.write(?:lines)?\b/g, "")
-    .replace(/\.exec\s*\(/g, ".match(");
-  if (WRITE_TEXT.test(text)) return true;
-  if (/^(?:perl|ruby|php)$/.test(interpreter) && /`|%x|\bqx\b|\bopen\b/.test(text)) return true;
-  return (text.match(/[A-Za-z_$][\w$]*/g) ?? []).some((word) =>
-    WRITE_NAME.test(word.toLowerCase()),
-  );
-};
+const pathsIn = (text: string): string[] =>
+  [
+    ...text.matchAll(
+      /(?<![\w.~:/$-])(?:~\/|\/|[A-Za-z]:\/|\.\.(?:\/|$))[^\s'"`$),;:*?<>|\\[\]{}]*/g,
+    ),
+  ].map((match) => match[0]);
 
 /**
  * `ln`'s link sources, resolved as the link will: a relative symbolic source
@@ -789,6 +787,13 @@ const segmentTargets = (
     const all = atAll(file);
     return all.length > 1 ? unknownVarTarget(file) : (all[0] ?? null);
   };
+  /** A reference the command spells without a `\\` before its `$` somewhere: the shell expands it. */
+  const unescaped = (ref: string): boolean => {
+    const name = /^\$(\w+)$/.exec(ref)?.[1];
+    return (
+      name === undefined || new RegExp(`(?<!\\\\)\\$(?:${name}(?!\\w)|\\{${name}\\b)`).test(command)
+    );
+  };
   const assigned = (value: string): string | null => {
     const made = mktempPath(value, dir);
     if (made !== null) return made;
@@ -824,7 +829,6 @@ const segmentTargets = (
     }
     const lead = body.findIndex((word) => !/^\w+=/.test(word));
     const words = lead < 0 ? [] : body.slice(lead);
-    const offset = keywords + lead;
     if (!segment.conditional && !untrusted.all)
       for (const [key, value] of assignmentsOf(segment.words))
         if (!untrusted.names.has(key)) {
@@ -864,15 +868,16 @@ const segmentTargets = (
         targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true, vars));
       const expanding = new Set(segment.expands ?? []);
       const scriptOf = (index: number): string | undefined => {
-        const word = words[index];
-        if (word === undefined || !expanding.has(offset + index)) return word;
+        const word = body[index];
+        if (word === undefined || !expanding.has(keywords + index)) return word;
         const all = expansions(word, vars, loops);
-        return all.length === 1 && unresolvedRefs(all[0]).length === 0 ? all[0] : undefined;
+        const open = all.length === 1 ? unresolvedRefs(all[0]).filter(unescaped) : [];
+        return all.length === 1 && open.length === 0 ? all[0] : undefined;
       };
       const opaque = segment.unanalyzable
         ? ["."]
         : inner === null
-          ? opaqueWrites(words, scriptOf)
+          ? opaqueWrites(body, scriptOf)
           : null;
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
