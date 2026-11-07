@@ -287,6 +287,12 @@ export type LeaseRecord = {
   ownerStart?: string | null;
   /** The waiter honours a `workit lock cancel` marker (older ones get SIGTERM). */
   cancellable?: boolean;
+  /**
+   * The waiter's own slot count (a queued ticket; workspaces may set different
+   * ones): a waiter ahead that cannot use the slot that freed does not hold
+   * back those behind it. Absent on older tickets, which may take any slot.
+   */
+  slots?: number | null;
 };
 
 const readText = (file: string): string | null => {
@@ -618,7 +624,11 @@ export type QueueStatus = {
   first: boolean;
 };
 
-export type Clock = { now: () => number; sleep: (ms: number) => Promise<void> };
+/** `sleep` ends early when `signal` aborts. */
+export type Clock = {
+  now: () => number;
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+};
 
 export type AcquireResult =
   | { ok: true; lease: HeldLease }
@@ -696,8 +706,82 @@ function tryOnce(
 
 const realClock: Clock = {
   now: () => Date.now(),
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: (ms, signal) =>
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    }),
 };
+
+/** A change seen while a waiter was busy re-reads the lease after this, not after the whole poll. */
+const SETTLE_MS = 50;
+/** The files whose change can free a slot or move the queue: slots, tickets and cancel markers. */
+const WAKE_NAME = /^slot-\d+\.json$|^\d{15}-\d{16}-[\w-]+\.json(?:\.cancel)?$/u;
+
+export type LeaseWake = {
+  /** Wait up to `ms`, ending soon after a slot or the queue changes. */
+  pause: (ms: number) => Promise<void>;
+  close: () => void;
+};
+
+/**
+ * Wakes a lease waiter when a slot is released or taken or the queue moves,
+ * so a freed slot is taken without waiting out the poll. The poll still bounds
+ * every wait: a holder killed outright releases nothing, and a platform
+ * without file watching only polls.
+ */
+export function leaseWake(
+  dir: string,
+  clock: Clock = realClock,
+  watch: typeof fs.watch = fs.watch,
+): LeaseWake {
+  let changed = false;
+  let wake: (() => void) | null = null;
+  const watchers: fs.FSWatcher[] = [];
+  const onChange = (_event: string, name: string | Buffer | null) => {
+    if (name !== null && !WAKE_NAME.test(String(name))) return;
+    changed = true;
+    wake?.();
+  };
+  for (const target of [dir, queueDir(dir)]) {
+    try {
+      fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+      const watcher = watch(target, { persistent: false }, onChange);
+      watcher.on("error", () => watcher.close());
+      watchers.push(watcher);
+    } catch {
+      // No watching here: the poll alone wakes the waiter.
+    }
+  }
+  return {
+    pause: async (ms) => {
+      if (!changed) {
+        const abort = new AbortController();
+        await Promise.race([
+          clock.sleep(ms, abort.signal),
+          new Promise<void>((resolve) => {
+            wake = resolve;
+          }),
+        ]);
+        wake = null;
+        abort.abort();
+      }
+      if (!changed) return;
+      changed = false;
+      await clock.sleep(Math.min(ms, SETTLE_MS));
+    },
+    close: () => {
+      for (const watcher of watchers) watcher.close();
+    },
+  };
+}
 
 /** Remove `file` only while it still holds lease `id`: a reclaimed and retaken slot is someone else's. */
 function removeOwn(file: string, id: string): void {
@@ -832,14 +916,16 @@ export function fairOrder<T extends { holder: LeaseHolder }>(
     .map(({ entry }) => entry);
 }
 
+type Waiter = { name: string; holder: LeaseHolder; slots: number | null };
+
 /** The live tickets served before `own` (a ticket name, or "~" before queueing), removing stale ones on the way. */
 function waitersAhead(
   options: AcquireOptions,
   own: string,
   self: LeaseHolder,
   holders: LeaseHolder[],
-): LeaseHolder[] {
-  const live: Array<{ name: string; holder: LeaseHolder }> = [];
+): Waiter[] {
+  const live: Waiter[] = [];
   for (const entry of leaseQueue(options.dir, options.probe)) {
     const name = path.basename(entry.file);
     if (!TICKET.test(name) || name === own) continue;
@@ -848,29 +934,77 @@ function waitersAhead(
       reclaim(entry.file, (current) => !current || ticketStale(current, options.probe) !== null)
     )
       continue;
-    live.push({ name, holder: entry.holder });
+    const slots = entry.record?.slots;
+    live.push({
+      name,
+      holder: entry.holder,
+      slots: typeof slots === "number" && slots > 0 ? slots : null,
+    });
   }
   const order = fairOrder(
-    [...live, { name: own, holder: self }].toSorted((a, b) => (a.name < b.name ? -1 : 1)),
+    [...live, { name: own, holder: self, slots: options.slots }].toSorted((a, b) =>
+      a.name < b.name ? -1 : 1,
+    ),
     holders,
     readGrants(options.dir, options.probe?.now),
   );
-  return order
-    .slice(
-      0,
-      order.findIndex((entry) => entry.name === own),
-    )
-    .map((entry) => entry.holder);
+  return order.slice(
+    0,
+    order.findIndex((entry) => entry.name === own),
+  );
 }
 
-/** Live holders of the slots, read without reclaiming; one past its auto-reap bound does not count. */
-function liveHolders(options: AcquireOptions): LeaseHolder[] {
-  const maxHold = options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
-  return leaseSlots(options.dir, options.slots, options.probe, maxHold).flatMap((slot) => {
-    if (!slot.holder || slot.stale) return [];
-    const record = parseLease(readText(path.join(options.dir, `slot-${slot.slot}.json`)));
-    return record && autoReapReason(record, maxHold, options.probe?.now) ? [] : [slot.holder];
-  });
+/** Every slot file's index in `dir`, at least `slots` of them: a workspace with more slots uses higher ones. */
+function slotRange(dir: string, slots: number): number {
+  let count = slots;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const match = /^slot-(\d+)\.json$/u.exec(name);
+      if (match) count = Math.max(count, Number(match[1]) + 1);
+    }
+  } catch {
+    // No lease dir yet.
+  }
+  return count;
+}
+
+/**
+ * The live holders of the first `slots` slots by slot index, read without
+ * reclaiming: a stale lease, or one past its auto-reap bound, does not count.
+ */
+export function liveHolders(
+  dir: string,
+  slots: number,
+  probe: LeaseProbe = {},
+  maxHoldMs = DEFAULT_MAX_HOLD_MS,
+): Map<number, LeaseHolder> {
+  const live = new Map<number, LeaseHolder>();
+  for (const slot of leaseSlots(dir, slots, probe, maxHoldMs)) {
+    if (!slot.holder || slot.stale) continue;
+    const record = parseLease(readText(path.join(dir, `slot-${slot.slot}.json`)));
+    if (!record || !autoReapReason(record, maxHoldMs, probe.now)) live.set(slot.slot, slot.holder);
+  }
+  return live;
+}
+
+/**
+ * Is one of the first `slots` slots left once each waiter ahead (in serving
+ * order) takes the lowest free slot within its own slot count? A waiter of
+ * unknown count may take any. With one count for all, this is "fewer waiters
+ * ahead than free slots".
+ */
+export function slotLeft(
+  held: ReadonlySet<number>,
+  ahead: ReadonlyArray<{ slots: number | null }>,
+  slots: number,
+): boolean {
+  const top = Math.max(slots, ...ahead.map((waiter) => waiter.slots ?? 0));
+  const free = Array.from({ length: top }, (_, slot) => slot).filter((slot) => !held.has(slot));
+  for (const waiter of ahead) {
+    const at = free.findIndex((slot) => slot < (waiter.slots ?? top));
+    if (at >= 0) free.splice(at, 1);
+  }
+  return free.some((slot) => slot < slots);
 }
 
 function writeTicket(file: string, record: LeaseRecord): void {
@@ -957,6 +1091,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     ownerPid: typeof owner === "number" && owner > 1 ? owner : null,
     ownerStart: typeof owner === "number" && owner > 1 ? processStart(owner) : null,
     cancellable: true,
+    slots: options.slots,
   };
   const self = holderOf(record);
   let queued = false;
@@ -978,6 +1113,12 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   let nextStatus = 0;
   let limitMs = options.waitMs;
   let requeuedAfterMs: number | null = null;
+  const maxHold = options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
+  // Every waiter reads every slot file, whatever its own count, so all serve the queue in one order.
+  const holding = () =>
+    liveHolders(options.dir, slotRange(options.dir, options.slots), options.probe, maxHold);
+  // Watching starts before the first read, so a release right after it still wakes this waiter.
+  const wake = leaseWake(options.dir, clock);
   try {
     for (;;) {
       const waited = clock.now() - started;
@@ -985,11 +1126,11 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         const by = cancelledBy(ticket) ?? ownerGone(ticketRecord, options.probe);
         if (by) return { ok: false, reason: "cancelled", by, waitedMs: waited };
       }
-      const before = liveHolders(options);
-      const aheadOf = waitersAhead(options, queued ? name : "~", self, before);
+      const before = holding();
+      const waiters = waitersAhead(options, queued ? name : "~", self, [...before.values()]);
+      const aheadOf = waiters.map((waiter) => waiter.holder);
       const ahead = aheadOf.length;
-      const free = options.slots - before.length;
-      if (ahead < free) {
+      if (slotLeft(new Set(before.keys()), waiters, options.slots)) {
         const now = new Date(clock.now()).toISOString();
         record.startedAt = now;
         record.heartbeatAt = now;
@@ -1021,7 +1162,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
           };
         }
       }
-      const holders = liveHolders(options);
+      const holders = [...holding().values()];
       if (!waitedOn.length) {
         waitedOn = holders;
         options.onWait?.(holders);
@@ -1078,7 +1219,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         });
         nextStatus = waited + (options.statusEveryMs ?? 30_000);
       }
-      await clock.sleep(Math.min(options.pollMs ?? 2000, Math.max(1, limitMs - waited)));
+      await wake.pause(Math.min(options.pollMs ?? 2000, Math.max(1, limitMs - waited)));
     }
   } catch (error) {
     return {
@@ -1087,6 +1228,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
       error: (error as Error).message,
     };
   } finally {
+    wake.close();
     leave();
   }
 }
