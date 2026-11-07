@@ -16,6 +16,9 @@ or weaken a test to make it quiet.
    `workit test-audit --diff --json` or `workit test-audit <paths> --json`.
    Each finding has file:line, rule, severity, confidence, why and a fix.
    Prose checks are `info`; add `--min-severity info` to see them.
+   `mock-call-order` flags a call count or order asserted on a double of the
+   code's own module; `private-access` flags `_private` reads and test-only
+   imports. Both pin how the code works, not what it does.
 2. Triage every finding with "Name the Break": which wrong production change
    should make this test fail? Then choose one, and say which:
    - Replace: keep the behavior, fix the oracle. Assert the public result
