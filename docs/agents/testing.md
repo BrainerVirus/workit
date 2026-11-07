@@ -90,9 +90,6 @@ by case, model and Workit version, and caps model runs per invocation
 are committed with the change they measure. Cases, grading rules, tiers and
 cost: [eval.md](eval.md).
 
-The older `claude plugin eval` cases in `packages/workit-claude-code/evals/`
-no longer run anywhere; they are kept as a source of cases to port.
-
 ## CI shards
 
 Each leg runs `bun scripts/test.ts ci <ubuntu|macos|windows> <i>/<n>`: bun

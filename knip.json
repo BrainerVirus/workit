@@ -20,7 +20,12 @@
   ],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.ts!", "test/**/*.test.{ts,tsx}", "test/opencode-v2/mock-provider.ts"],
+      "entry": [
+        "scripts/*.ts!",
+        "scripts/eval/run.ts!",
+        "test/**/*.test.{ts,tsx}",
+        "test/opencode-v2/mock-provider.ts"
+      ],
       "project": ["scripts/**/*.ts!", "test/**/*.{ts,tsx}"]
     },
     "packages/workit-core": {
