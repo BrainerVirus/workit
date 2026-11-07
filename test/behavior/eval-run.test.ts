@@ -85,6 +85,7 @@ beforeEach(() => {
       "#!/bin/sh",
       "prompt=$(cat)",
       'echo "run cwd=$PWD key=${ANTHROPIC_API_KEY:-none} session=${WORKIT_SESSION_ID:-none} prompt=$prompt args=$*" >> "$FAKE_CLAUDE_LOG"',
+      `printf '{"type":"system","subtype":"init","cwd":"%s","memory":"%s","owner":"%s"}\\n' "$PWD" "$(pwd | tr -c '[:alnum:]_\\n' -)" "$(id -un)"`,
       'cat "$FAKE_CLAUDE_OUT"',
       "",
     ].join("\n"),
@@ -153,6 +154,21 @@ test("Given a run, Then claude -p gets the isolation flags, no API key, no paren
   expect(call).toContain("--output-format stream-json");
   expect(call).toContain(`--plugin-dir ${path.join(root, "plugin")}`);
   expect(call).toContain("--model haiku");
+});
+
+test("Given a run, Then the stored transcript names no temp path, project slug or login name", () => {
+  main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
+  const [init = ""] = readFileSync(
+    path.join(root, "results", "haiku", "a-smoke.transcript.jsonl"),
+    "utf8",
+  ).split("\n");
+  expect(JSON.parse(init)).toEqual({
+    type: "system",
+    subtype: "init",
+    cwd: "<world>/repo",
+    memory: "<world>-repo",
+    owner: "<user>",
+  });
 });
 
 test("Given cached results for case+model+version, When run again, Then no model call is made", () => {

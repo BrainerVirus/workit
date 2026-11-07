@@ -56,11 +56,14 @@ subscription and never writes to the calling session's ledger. The plugin's
 `bin/` leads `PATH`, so `workit` is this checkout's CLI. When
 `packages/workit-claude-code/skills/` is missing the runner builds it
 (`build.ts --skills-only`). Default tools: Read, Edit, Write, Glob, Grep,
-Skill, Agent and Bash limited to `workit`, `git`, `ls` and `cat`; anything else
-is denied, and the denial shows in the transcript.
+Skill, Agent and Bash limited to `workit`, `git` and read-only `ls`, `cat`,
+`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd`; anything else (a whole
+chain, when one part is not allowed) is denied, and the denial shows in the
+transcript.
 
-The transcript is stored with the world path as `<world>`, the checkout as
-`<workit>` and the home dir as `~`.
+The transcript is stored with the world path (and Claude's project slug of
+it) as `<world>`, the checkout as `<workit>`, the home dir as `~` and the
+login name as `<user>`.
 
 ## Cases
 

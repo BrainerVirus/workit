@@ -38,6 +38,13 @@ const DEFAULT_TOOLS = [
   "Bash(git *)",
   "Bash(ls *)",
   "Bash(cat *)",
+  "Bash(head *)",
+  "Bash(tail *)",
+  "Bash(grep *)",
+  "Bash(wc *)",
+  "Bash(diff *)",
+  "Bash(echo *)",
+  "Bash(pwd)",
 ];
 
 type RunResult = {
@@ -91,9 +98,14 @@ const writeJson = (file: string, value: unknown): void => {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 };
 
-/** Stable, path-free transcripts: the world, the checkout and HOME become placeholders. */
+/** Path- and user-free transcripts: the world (also as Claude's project slug), the checkout, HOME and the login name become placeholders. */
 const sanitize = (text: string, world: World): string =>
-  text.replaceAll(world.dir, "<world>").replaceAll(REPO, "<workit>").replaceAll(os.homedir(), "~");
+  text
+    .replaceAll(world.dir, "<world>")
+    .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
+    .replaceAll(REPO, "<workit>")
+    .replaceAll(os.homedir(), "~")
+    .replaceAll(os.userInfo().username, "<user>");
 
 /** The subscription login only: no API key, no parent session, Workit isolated to the world. */
 const childEnv = (world: World, pluginDir: string): Record<string, string> => {

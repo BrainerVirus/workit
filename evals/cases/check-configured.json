@@ -6,14 +6,16 @@
   "scaffold": {
     "branch": "feature/greet",
     "files": {
-      "src/greet.ts": "export const greet = (name: string) => `hi ${name}`;\n"
+      "src/greet.ts": "export const greet = (name: string) => `hi ${name}`;\n",
+      "scripts/typecheck.sh": "#!/bin/sh\ngrep -q 'export const' src/*.ts && echo 'typecheck: 1 file, 0 errors'\n",
+      "scripts/test.sh": "#!/bin/sh\ngrep -q 'greet' src/greet.ts && echo 'greet: 3 pass, 0 fail'\n"
     },
     "dirty": {
       "src/greet.ts": "export const greet = (name: string): string => `hello ${name}`;\n"
     },
     "checks": {
-      "typecheck": ["sh", "-c", "echo typed"],
-      "test": ["sh", "-c", "echo '3 pass, 0 fail'"]
+      "typecheck": ["sh", "scripts/typecheck.sh"],
+      "test": ["sh", "scripts/test.sh"]
     }
   },
   "maxTurns": 8,
@@ -22,7 +24,7 @@
     "forbid": [
       {
         "tool": "Bash",
-        "pattern": "^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx)\\b",
+        "pattern": "^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx|sh scripts/)",
         "why": "a raw check command bypasses the configured checks"
       }
     ]
