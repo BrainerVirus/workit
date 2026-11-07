@@ -14,8 +14,28 @@ import cliPackage from "../../package.json" with { type: "json" };
 import { describeInstall, isOwnedWrapper } from "../install/discover";
 import { migrationCopies } from "../install/migrate";
 import { isOwnedLauncher } from "../install/owned";
-import { entryOf, ownedPaths, ownedVersion, realpathOr, versionDir } from "../install/paths";
+import {
+  NEW_CLI_PACKAGE_NAME,
+  entryOf,
+  ownedPackage,
+  ownedPaths,
+  ownedVersion,
+  realpathOr,
+  versionDir,
+} from "../install/paths";
 import { CLI_PACKAGE } from "../update-check";
+import {
+  codexScopeCommands,
+  legacyPackage,
+  newLatest,
+  newPackage,
+  packageNameAt,
+  refuseScope,
+  scopeEntry,
+  scopeOf,
+  scopeRelease,
+  type ScopeRelease,
+} from "./scope";
 import {
   CODEX_LEGACY_MARKETPLACE,
   codexMigrationFix,
@@ -47,19 +67,20 @@ import {
   type UpgradePlan,
 } from "./shared";
 
-const classify = (host: HostId, selector: string): Source => ({
-  host,
-  selector,
-  kind:
-    selector === `@brainervirus/workit-${host}` ||
-    selector === `@brainervirus/workit-${host}@latest` ||
-    selector === `npm:@brainervirus/workit-${host}` ||
-    selector === `npm:@brainervirus/workit-${host}@latest`
-      ? "floating"
-      : new RegExp(`^(?:npm:)?@brainervirus/workit-${host}@[^/]+$`).test(selector)
-        ? "pinned"
-        : "local",
-});
+/** A registration by its package name on either scope: floating, an exact pin, or a local path. */
+const classify = (host: HostId, selector: string): Source => {
+  const name = [legacyPackage(host), newPackage(host)].find((candidate) =>
+    new RegExp(`^(?:npm:)?${candidate.replace("/", "\\/")}(?:@[^/]+)?$`).test(selector),
+  );
+  if (!name) return { host, selector, kind: "local" };
+  const floating = [name, `${name}@latest`, `npm:${name}`, `npm:${name}@latest`].includes(selector);
+  return {
+    host,
+    selector,
+    kind: floating ? "floating" : "pinned",
+    scope: scopeOf(name) ?? undefined,
+  };
+};
 
 // Read only owned registrations. A checkout or intentional exact pin is never
 // converted into a floating package as a side effect of upgrading another host.
@@ -102,10 +123,16 @@ export const sources = (
     const args: unknown[] = mcp?.mcpServers?.workit?.args ?? [];
     const arg = args.find((value) => typeof value === "string" && value.startsWith("--package="));
     const selector = typeof arg === "string" ? arg.slice(10) : "local";
-    if (cursor?.name === "@brainervirus/workit-cursor") {
+    if (cursor?.name === newPackage("cursor")) {
+      result.push({ host: "cursor", selector, kind: "floating", scope: "new" });
+      return;
+    }
+    if (cursor?.name === legacyPackage("cursor")) {
       result.push({
         ...classify("cursor", selector),
         installedVersion: cursor.version,
+        // The plugin directory decides the scope: mcp.json follows it.
+        scope: "legacy",
       });
       return;
     }
@@ -118,7 +145,13 @@ export const sources = (
       dirs.some((dir) =>
         String(dir).replaceAll("\\", "/").replace(/\/+$/, "").endsWith("local/workit"),
       );
-    if (registered) result.push({ host: "cursor", selector, kind: "repair" });
+    if (registered)
+      result.push({
+        host: "cursor",
+        selector,
+        kind: "repair",
+        scope: scopeOf(selector) ?? "legacy",
+      });
   });
   guard("pi", () => {
     const pi = object(paths.piSettings);
@@ -127,14 +160,14 @@ export const sources = (
     for (const entry of pi?.packages ?? []) {
       const source = typeof entry === "string" ? entry : entry?.source;
       if (typeof source !== "string") continue;
-      const npm = /^(?:npm:)?@brainervirus\/workit-pi(?:@[^/]+)?$/.test(source);
+      const npm = /^(?:npm:)?(?:@brainervirus\/workit-pi|@workit-dev\/pi)(?:@[^/]+)?$/.test(source);
       const local =
         path.isAbsolute(source) &&
         source.replaceAll("\\", "/").endsWith("/packages/workit-pi") &&
         object(path.join(source, "package.json"))?.name === "@brainervirus/workit-pi";
       if (!npm && !local) continue;
       const found = classify("pi", source);
-      if (found.kind === "floating") {
+      if (found.kind === "floating" && found.scope === "legacy") {
         const inventory = run("pi", ["list"]);
         if (inventory.timedOut) throw new Error(`could not check: ${inventory.stderr}`);
         if (inventory.status === 0)
@@ -166,7 +199,8 @@ export const sources = (
     }
     if (!Array.isArray(installed)) throw new Error("Codex plugin inventory is malformed");
     const fromNpm = (plugin: Record<string, any>) =>
-      plugin.source?.source === "npm" && plugin.source?.package === "@brainervirus/workit-codex";
+      plugin.source?.source === "npm" &&
+      [legacyPackage("codex"), newPackage("codex")].includes(plugin.source?.package);
     // An npm install under the old marketplace name is moved to workit@workit
     // as one migration, whatever else is registered.
     const legacy = installed.find(
@@ -181,6 +215,7 @@ export const sources = (
         selector: "@brainervirus/workit-codex",
         kind: legacy ? "floating" : "repair",
         migrate: true,
+        scope: scopeOf(legacy?.source?.package ?? legacyPackage("codex")) ?? "legacy",
         ...(legacy?.version ? { installedVersion: legacy.version } : {}),
       });
       return;
@@ -188,6 +223,18 @@ export const sources = (
     for (const plugin of installed) {
       if (plugin.name !== "workit") continue;
       const source = plugin.source;
+      // The old package moves whatever pin or source shape Codex recorded:
+      // the marketplace, not the pin, decides what it installs next.
+      if (source?.package === legacyPackage("codex")) {
+        result.push({
+          host: "codex",
+          selector: legacyPackage("codex"),
+          kind: "floating",
+          scope: "legacy",
+          ...(plugin.version ? { installedVersion: plugin.version } : {}),
+        });
+        continue;
+      }
       const npm = plugin.marketplaceName === CODEX_MARKETPLACE && fromNpm(plugin);
       result.push({
         ...classify(
@@ -207,17 +254,22 @@ export const sources = (
         host: "codex",
         selector: "@brainervirus/workit-codex",
         kind: "repair",
+        scope: "legacy",
       });
   });
   guard("claude-code", () => {
     // User-scope installs only: a project install belongs to that project.
-    for (const install of claudeWorkitInstalls(home, paths.env, null))
+    for (const install of claudeWorkitInstalls(home, paths.env, null)) {
+      // The installed package's name decides the scope; an unreadable one is the old.
+      const name = packageNameAt(install.installPath);
       result.push({
         host: "claude-code",
         selector: install.id,
         kind: "floating",
         installedVersion: install.version ?? undefined,
+        scope: name === newPackage("claude-code") ? "new" : "legacy",
       });
+    }
   });
   return result;
 };
@@ -292,6 +344,8 @@ export function previewUpgrade(
     plan.blocked.push(errorText(error));
   }
   const installedSources = sources(paths, run, hosts, plan.failed);
+  // Read once, when an old-scope registration needs it.
+  let scope: ScopeRelease | undefined;
   // Workit 3 ships only the OpenCode V2 plugin entry: warn before an upgrade
   // leaves a 1.x host with a plugin it cannot load. Unknown versions stay quiet.
   let opencodeHelp: string | undefined;
@@ -334,6 +388,22 @@ export function previewUpgrade(
         reason: `${source.kind} source preserved; change its source explicitly to upgrade`,
       });
       continue;
+    }
+    // Moved to the new scope: its versions are another line (1.x), never compared with 14.x.
+    if (source.scope === "new") {
+      plan.skipped.push({
+        host: source.host,
+        reason: `already current (on ${newPackage(source.host)}; \`workit upgrade\` with the new CLI updates it)`,
+      });
+      continue;
+    }
+    if (source.scope === "legacy") {
+      const release = (scope ??= scopeRelease(run));
+      if (release.released) {
+        planScopeMove(plan, source, release.version, { run, deps, paths });
+        continue;
+      }
+      refuseScope(plan, release);
     }
     if (source.host === "claude-code") {
       const [market] = source.selector.split("@").slice(1);
@@ -477,6 +547,73 @@ export function previewUpgrade(
   return plan;
 }
 
+/** One host's move to the new scope: the new package's version, then the host's commands. */
+const planScopeMove = (
+  plan: UpgradePlan,
+  source: Source,
+  version: string,
+  context: {
+    run: ReturnType<typeof runner>;
+    deps: UpgradeDeps;
+    paths: ReturnType<typeof upgradePaths>;
+  },
+): void => {
+  const { run, deps, paths } = context;
+  const host = source.host;
+  const failed = (reason: string) =>
+    plan.failed.push({
+      host,
+      status: "failed",
+      reason: `${reason}; the ${legacyPackage(host)} install is kept`,
+      fix: fixFor(host, source.selector),
+    });
+  const latest = newLatest(run, host);
+  if (!latest) return void failed(`${newPackage(host)} registry version unavailable`);
+  let commands: Command[];
+  try {
+    commands =
+      host === "pi"
+        ? [
+            { command: "pi", args: ["install", `npm:${newPackage("pi")}`] },
+            { command: "pi", args: ["remove", source.selector] },
+          ]
+        : host === "codex"
+          ? source.migrate
+            ? (
+                codexMigrationSteps(paths.codexConfig, {
+                  json: true,
+                  installed: source.kind !== "repair",
+                }) ?? []
+              ).map((step) => ({ command: "codex", args: step.args, purpose: step.purpose }))
+            : codexScopeCommands()
+          : host === "claude-code"
+            ? [
+                { command: "claude", args: ["plugin", "marketplace", "update", "workit"] },
+                { command: "claude", args: ["plugin", "update", source.selector] },
+              ]
+            : host === "cursor"
+              ? planHostInstall("cursor", {
+                  home: paths.home,
+                  env: deps.env,
+                  cwd: paths.home,
+                  packageVersion: latest,
+                  packageName: newPackage("cursor"),
+                  targetDir: paths.cursorRoot,
+                })
+              : [];
+  } catch (error) {
+    return void failed(errorText(error));
+  }
+  plan.entries.push(
+    scopeEntry(host, source.selector, latest, {
+      installedVersion: source.installedVersion,
+      commands,
+      repair: source.kind === "repair",
+    }),
+  );
+  plan.scope = { version };
+};
+
 /**
  * The CLI, part of every default upgrade: the Workit-owned install under
  * installRoot() (#648). Planned when the owned version is behind the
@@ -498,6 +635,15 @@ export const planCli = (
   const packaged = Boolean(
     script && /[\\/]node_modules[\\/]@brainervirus[\\/]workit-cli[\\/]/.test(realpathOr(script)),
   );
+  // Already moved to the new scope: that CLI (1.x) upgrades itself; 14.x is never compared with it.
+  const moved = ownedPackage(env);
+  if (moved?.name === NEW_CLI_PACKAGE_NAME) {
+    plan.skipped.push({
+      host: "cli",
+      reason: `already current (on ${NEW_CLI_PACKAGE_NAME} ${moved.version}; \`workit upgrade\` with it updates it)`,
+    });
+    return;
+  }
   if (!owned && !copies.length && !packaged) {
     plan.skipped.push({
       host: "cli",
@@ -505,6 +651,21 @@ export const planCli = (
     });
     return;
   }
+  const release = scopeRelease(run);
+  if (release.released) {
+    plan.scope = { version: release.version };
+    plan.cli = {
+      latest: release.version,
+      root: paths.root,
+      installed: owned ?? newestOf(copies) ?? cliPackage.version,
+      entry: entryOf(versionDir(paths.root, release.version), NEW_CLI_PACKAGE_NAME),
+      install: true,
+      copies: copies.map(describeInstall),
+      package: NEW_CLI_PACKAGE_NAME,
+    };
+    return;
+  }
+  refuseScope(plan, release);
   const latest = registryVersion(run, CLI_PACKAGE);
   if (!latest) {
     plan.failed.push({
@@ -525,19 +686,22 @@ export const planCli = (
     return;
   }
   const target = install || !owned ? latest : owned;
-  const newestCopy = copies
+  plan.cli = {
+    latest: target,
+    root: paths.root,
+    installed: owned ?? newestOf(copies) ?? cliPackage.version,
+    entry: entryOf(versionDir(paths.root, target)),
+    install,
+    copies: copies.map(describeInstall),
+  };
+};
+
+/** The newest version among old-scope copies (all one package name, so comparable). */
+const newestOf = (copies: { version: string | null }[]): string | undefined =>
+  copies
     .map((copy) => copy.version)
     .filter((version): version is string => Boolean(version))
     .reduce<string | undefined>(
       (best, version) => (best && versionAtLeast(best, version) ? best : version),
       undefined,
     );
-  plan.cli = {
-    latest: target,
-    root: paths.root,
-    installed: owned ?? newestCopy ?? cliPackage.version,
-    entry: entryOf(versionDir(paths.root, target)),
-    install,
-    copies: copies.map(describeInstall),
-  };
-};

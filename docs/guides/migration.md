@@ -79,3 +79,31 @@ makes the author independent. Each verifier runs under its own session id.
   older than Node 24 while workit itself runs on 24+. flock is checked only for a dev
   checkout. The `--json` report has the new `info` status; it counts as
   passed.
+
+## The @workit-dev npm scope (14.x bridge)
+
+Workit moved from `@brainervirus/workit-<name>` to `@workit-dev/<name>`, and the
+new line starts again at 1.0.0. The last 14.x release is a bridge: its
+`workit upgrade` moves every install to the new scope, by package name (a 14.x
+install is never read as newer than 1.0.0):
+
+```bash
+npx -y @brainervirus/workit-cli@latest upgrade --preview   # the "migrate scope" plan
+npx -y @brainervirus/workit-cli@latest upgrade --yes
+```
+
+| Install | What the move does |
+|---|---|
+| CLI (owned install) | installs `@workit-dev/cli` beside the old version, proves it runs, moves `current` and the launcher to it, then checks `workit --version` through PATH; only then is the old version removed. If PATH's launcher cannot run the new CLI, `current` goes back to the old one. npm global copies are removed after a y/N, as in an ordinary upgrade. |
+| OpenCode | `@brainervirus/workit-opencode[@latest]` becomes `@workit-dev/opencode[@latest]` in `opencode.json`; OpenCode installs it on its next start. |
+| Pi | `pi install npm:@workit-dev/pi`, then `pi remove` of the old source once Pi lists the new one. |
+| Cursor | stages `@workit-dev/cursor` with npm, copies it over `~/.cursor/plugins/local/workit`, and points `mcp.json`'s npx runtime at `@workit-dev/cursor@latest`. |
+| Codex | refreshes the `workit` marketplace and reinstalls `workit@workit`; Codex's inventory must then name `@workit-dev/codex`. |
+| Claude Code | `claude plugin marketplace update workit` and `claude plugin update`; a plugin still on the old package is uninstalled and installed again. |
+
+Exact version pins and local checkouts are left as they are. Until
+`@workit-dev/cli` 1.0.0 is on npm (the names first hold 0.0.x placeholders),
+the plan says the new scope is not released yet and the upgrade stays on the
+old scope. A second run finds every host on `@workit-dev/*` and changes
+nothing. `workit doctor` row `old_scope` lists what is still on the old scope
+and prints the command above.

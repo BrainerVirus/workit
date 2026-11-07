@@ -154,3 +154,13 @@ batch results without it.
 Branch prefixes: `feature/`, `bugfix/`, `chore/`, `docs/`, `ci/`. Commit
 messages are linted by commitlint once you run `bun run hooks:install`; CI
 lints the PR title (`.github/workflows/pr-title.yml`).
+
+## The 14.x bridge (release/14.x)
+
+`release/14.x` carries the last releases on the old `@brainervirus/workit-*`
+scope. Its `release.config.cjs` releases from `release/14.x` only, keeps the
+default `v${version}` tags, refuses any version outside 14.x
+(`verifyReleaseCmd`), and publishes all 8 packages
+(`publish-changed-packages.ts --all`, or `PUBLISH_ALL=1`): every old package's
+`latest` must carry the migrating `workit upgrade`. `ci.yml` runs on pushes to
+`release/14.x` and its `release` job runs there too. Never merge main into it.

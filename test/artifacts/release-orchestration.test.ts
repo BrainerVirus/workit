@@ -282,3 +282,42 @@ test(
   },
   { timeout: 60_000 },
 );
+
+// The 14.x bridge (release/14.x): pushes there release the next 14.x with a
+// v-prefixed tag and publish all 8 old-scope packages.
+test("Given release/14.x, When its release config and CI are read, Then pushes there release a 14.x version with v* tags and publish all 8 packages", () => {
+  const cfg = require(path.resolve(REPO_ROOT, "release.config.cjs")) as {
+    branches: unknown[];
+    tagFormat?: string;
+    plugins: unknown[];
+  };
+  expect(cfg.branches).toEqual([{ name: "release/14.x" }]);
+  // semantic-release's default tag format is v${version}.
+  expect(cfg.tagFormat ?? "v${version}").toBe("v${version}");
+  const opts = (p: unknown) => (Array.isArray(p) ? (p[1] as Record<string, unknown>) : {});
+  const verify = cfg.plugins.map(opts).find((o) => typeof o.verifyReleaseCmd === "string")
+    ?.verifyReleaseCmd as string;
+  const verdict = (version: string) =>
+    spawnSync("sh", ["-c", verify.replace("${nextRelease.version}", version)]).status;
+  expect(verdict("14.7.0")).toBe(0);
+  expect(verdict("15.0.0")).not.toBe(0);
+  const publish = cfg.plugins.map(opts).find((o) => typeof o.publishCmd === "string")
+    ?.publishCmd as string;
+  expect(publish).toContain("publish-changed-packages.ts --all");
+  const ci = read(".github/workflows/ci.yml");
+  expect(ci).toMatch(/push:\n\s+branches: \[main, release\/14\.x\]/);
+  expect(ci).toContain("github.ref == 'refs/heads/release/14.x'");
+  // --all ships every package whatever changed (a dry run publishes nothing).
+  const dry = spawnSync(
+    "bun",
+    [
+      path.join(REPO_ROOT, "packages", "workit-core", "scripts", "publish-changed-packages.ts"),
+      "--all",
+      "HEAD",
+    ],
+    { cwd: REPO_ROOT, encoding: "utf8", env: { ...process.env, PUBLISH_DRY_RUN: "1" } },
+  );
+  expect(dry.status, dry.stderr).toBe(0);
+  for (const pkg of RELEASE_PACKAGES) expect(dry.stdout).toContain(`published ${pkg} @`);
+  expect(RELEASE_PACKAGES).toHaveLength(8);
+});

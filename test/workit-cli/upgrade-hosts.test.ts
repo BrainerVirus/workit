@@ -74,7 +74,10 @@ const world = () => {
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
     const line = args.join(" ");
-    if (command === "npm" && args[0] === "view") return { status: 0, stdout: "2.0.0\n" };
+    if (command === "npm" && args[0] === "view")
+      return args[1]?.startsWith("@workit-dev/")
+        ? { status: 1, stdout: "" }
+        : { status: 0, stdout: "2.0.0\n" };
     if (isCliInstall(command, args)) {
       const staging = args[args.indexOf("--prefix") + 1];
       write(path.join(staging, "node_modules/@brainervirus/workit-cli/package.json"), {
@@ -401,7 +404,10 @@ test("Given Claude Code and OpenCode already at the published version, When upgr
       plugins: ["@brainervirus/workit-opencode"],
     });
     const run = (command: string, args: string[]) => {
-      if (command === "npm" && args[0] === "view") return { status: 0, stdout: "1.0.0\n" };
+      if (command === "npm" && args[0] === "view")
+        return args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "1.0.0\n" };
       if (command === "opencode" && args.join(" ") === "plugin --help")
         return { status: 0, stdout: OPENCODE_HELP };
       return w.deps.run(command, args);

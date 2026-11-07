@@ -1,7 +1,10 @@
 import { createStyle, type Style } from "../style";
+import { CLI_PACKAGE_NAME } from "../install/paths";
+import { LEGACY_SCOPE, NEW_SCOPE, SCOPE_ROW } from "./scope";
 import { type HostOutcome, type UpgradePlan } from "./shared";
 
-const pad = (text: string) => text.padEnd(12);
+/** A host column 12 wide; a longer label ("migrate scope") keeps one space after it. */
+const pad = (text: string) => (text.length >= 12 ? `${text} ` : text.padEnd(12));
 const PLAIN = createStyle({ json: true });
 
 export const summary = (
@@ -13,9 +16,19 @@ export const summary = (
   const run = (fix: string | undefined) => (fix ? ` (run: ${style.command(fix)})` : "");
   const version = (from: string, to: string) => `update ${style.dim(from)} -> ${style.ok(to)}`;
   const lines = [style.bold("Workit upgrade plan:")];
+  if (plan.scope)
+    lines.push(
+      `${host(SCOPE_ROW)}${style.ok(`${LEGACY_SCOPE}/workit-* -> ${NEW_SCOPE}/* ${plan.scope.version}`)} (by package name; each old install stays until its new one runs)`,
+    );
   if (plan.cli) {
     lines.push(
-      `${host("cli")}${plan.cli.install ? version(plan.cli.installed, plan.cli.latest) : `owned install ${plan.cli.latest}`} under ${style.path(plan.cli.root)}`,
+      `${host("cli")}${
+        plan.cli.package
+          ? `move ${style.dim(`${CLI_PACKAGE_NAME} ${plan.cli.installed}`)} -> ${style.ok(`${plan.cli.package} ${plan.cli.latest}`)}`
+          : plan.cli.install
+            ? version(plan.cli.installed, plan.cli.latest)
+            : `owned install ${plan.cli.latest}`
+      } under ${style.path(plan.cli.root)}`,
     );
     if (plan.cli.copies.length)
       lines.push(
@@ -24,13 +37,15 @@ export const summary = (
       );
   }
   for (const entry of plan.entries) {
-    const what = entry.repair
-      ? `reinstall missing plugin files (${entry.latest})`
-      : entry.latest
-        ? version(entry.installedVersion ?? "?", entry.latest)
-        : entry.published
-          ? version(entry.installedVersion ?? "?", entry.published)
-          : `update (${style.command(entry.commands.map((c) => `${c.command} ${c.args.join(" ")}`).join(" && "))})`;
+    const what = entry.scope
+      ? `move ${style.dim(entry.scope.from)} -> ${style.ok(`${entry.scope.to} ${entry.latest}`)}`
+      : entry.repair
+        ? `reinstall missing plugin files (${entry.latest})`
+        : entry.latest
+          ? version(entry.installedVersion ?? "?", entry.latest)
+          : entry.published
+            ? version(entry.installedVersion ?? "?", entry.published)
+            : `update (${style.command(entry.commands.map((c) => `${c.command} ${c.args.join(" ")}`).join(" && "))})`;
     lines.push(`${host(entry.host)}${what}`);
   }
   for (const skipped of plan.skipped)

@@ -134,7 +134,22 @@ import { describeInstall, listInstalls, type FoundInstall } from "../install/dis
 import { hostSkillsRoot } from "../upgrade/skill-roots";
 import { detectHosts } from "./detect-hosts";
 import { removalCommand, type MigrationCopy } from "../install/migrate";
-import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/paths";
+import {
+  CLI_PACKAGE_NAME,
+  ownedPackage,
+  ownedPaths,
+  ownedVersion,
+  realpathOr,
+  shellQuote,
+} from "../install/paths";
+import {
+  NEW_SCOPE,
+  SCOPE_FIX,
+  legacyPackage,
+  newPackage,
+  packageNameAt,
+  scopeOf,
+} from "../upgrade/scope-names";
 import { readUpdateCache, readUpdatesMode } from "../update-settings";
 import {
   grantedCommands,
@@ -148,6 +163,7 @@ type DoctorHost = "cli" | "opencode" | "cursor";
 
 type DoctorCheckId =
   | "runtime"
+  | "old_scope"
   | "hook_node"
   | "legacy_dirs"
   | "versions"
@@ -1586,8 +1602,16 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   // freshness guarantee (`--prefer-online` and the npm release-age workaround
   // are mandatory).
   const canonical = cursorMcpServerEntry("").args;
+  // The same entry after `workit upgrade` moved it to the new npm scope.
+  const moved = canonical.map((arg) =>
+    arg.startsWith("--package=") ? `--package=${newPackage("cursor")}@latest` : arg,
+  );
   if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
-    if (args.length !== canonical.length || args.some((a, i) => a !== canonical[i]))
+    if (
+      ![canonical, moved].some(
+        (form) => args.length === form.length && args.every((a, i) => a === form[i]),
+      )
+    )
       return "invalid";
     return { kind: "npx" };
   }
@@ -3391,8 +3415,11 @@ const versionBehind = (version: string, latest: string): boolean =>
  * local pin is per-session, never recorded, and never checked here.
  */
 const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
-  // Only installs Claude loads here: user scope, plus this project's.
-  const installs = claudeWorkitInstalls(res.home, res.env, res.cwd);
+  // Only installs Claude loads here: user scope, plus this project's. One moved
+  // to the new npm scope is another version line (1.x): old_scope covers the rest.
+  const installs = claudeWorkitInstalls(res.home, res.env, res.cwd).filter(
+    (install) => packageNameAt(install.installPath) !== newPackage("claude-code"),
+  );
   if (installs.length === 0)
     return {
       id: "claude_plugin",
@@ -4009,8 +4036,45 @@ const checkHookRuns = (res: Resolved): DoctorCheck => {
   return { id: "hook_runs", status: "pass", detail: parts.join("; ") };
 };
 
+/**
+ * Workit moved to the @workit-dev npm scope; installs still on
+ * @brainervirus/workit-* get no more releases. Found by package name in each
+ * host's own files (Codex keeps its plugin source in its inventory, which
+ * `workit upgrade` reads). The fix runs the 14.x bridge, which moves them all.
+ */
+const checkOldScope = (res: Resolved): DoctorCheck => {
+  const env = { ...res.env, HOME: res.home };
+  const found: string[] = [];
+  const owned = ownedPackage(env);
+  if (owned?.name === CLI_PACKAGE_NAME) found.push(`cli ${owned.version}`);
+  const opencode = existsSync(res.opencodeConfig) ? readJson(res.opencodeConfig) : null;
+  for (const pin of [opencode?.plugins, opencode?.plugin].flatMap((v: unknown) =>
+    Array.isArray(v) ? v : [],
+  ))
+    if (typeof pin === "string" && scopeOf(pin) === "legacy") found.push(`opencode ${pin}`);
+  const pi = readJson(path.join(piAgentDirOf(res), "settings.json"));
+  for (const entry of Array.isArray(pi?.packages) ? pi.packages : []) {
+    const source = typeof entry === "string" ? entry : entry?.source;
+    if (typeof source === "string" && scopeOf(source) === "legacy") found.push(`pi ${source}`);
+  }
+  if (packageNameAt(res.cursorPluginDir) === legacyPackage("cursor"))
+    found.push(`cursor ${legacyPackage("cursor")}`);
+  for (const install of claudeWorkitInstalls(res.home, res.env, null))
+    if (packageNameAt(install.installPath) === legacyPackage("claude-code"))
+      found.push(`claude-code ${legacyPackage("claude-code")} ${install.version ?? ""}`.trim());
+  return found.length
+    ? {
+        id: "old_scope",
+        status: "warn",
+        detail: `Workit moved to ${NEW_SCOPE}/*; still on @brainervirus/workit-*: ${found.join("; ")}`,
+        fix: SCOPE_FIX,
+      }
+    : { id: "old_scope", status: "pass", detail: `no install on the old @brainervirus scope` };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkRuntime,
+  checkOldScope,
   checkHookNode,
   checkLegacyDirs,
   checkVersions,

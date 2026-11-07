@@ -6,6 +6,7 @@ import {
   chmodSync,
   cpSync,
   lstatSync,
+  rmSync,
 } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -20,8 +21,15 @@ import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/w
 import { describeInstall, describeInstallAt, listInstalls } from "../install/discover";
 import { leftLines, migrateCopies, migrationCopies } from "../install/migrate";
 import { resolveInstallNode } from "../install/node";
-import { installOwned, writeLaunchers } from "../install/owned";
-import { realpathOr, shellQuote } from "../install/paths";
+import { installOwned, swapCurrent, writeLaunchers } from "../install/owned";
+import {
+  CLI_PACKAGE_NAME,
+  NEW_CLI_PACKAGE_NAME,
+  ownedPaths,
+  prefixPackage,
+  realpathOr,
+  shellQuote,
+} from "../install/paths";
 import { pathResolvedWorkit } from "../install/verify";
 import { createProgress, type StepStatus } from "../progress";
 import { codexInventory } from "./codex-inventory";
@@ -52,6 +60,7 @@ import {
   type UpgradePlan,
 } from "./shared";
 import { CODEX_LEGACY_MARKETPLACE } from "./codex-marketplace";
+import { applyScopeEntry, newPackage, packageNameAt } from "./scope";
 
 /** A setup entry's detail: its first line, then the last five when it ran long. */
 const briefDetail = (detail: string): string => {
@@ -68,6 +77,11 @@ const codexPluginRoot = (codexHome: string): string | null => {
   } catch {
     return null;
   }
+  // After the scope move the new line (1.x) sits beside 14.x: only one package's versions compare.
+  const moved = versions.filter(
+    (version) => packageNameAt(path.join(dir, version)) === newPackage("codex"),
+  );
+  if (moved.length) versions = moved;
   const newest = versions.reduce<string | null>(
     (best, version) => (best && versionAtLeast(best, version) ? best : version),
     null,
@@ -137,6 +151,7 @@ const applyEntry = async (
 ): Promise<HostOutcome> => {
   const { runAsync, paths, configDir } = context;
   const { home, env } = paths;
+  if (entry.scope) return applyScopeEntry(entry, { runAsync, paths });
   const fail = (reason: string): HostOutcome => ({
     host: entry.host,
     status: "failed",
@@ -616,14 +631,34 @@ const applyCli = async (
     return fail(
       "no Node 24+ with npm found to install the CLI with (WORKIT_NODE, the recorded node, fnm, nvm, volta, mise, asdf); install one (fnm install 24) and rerun",
     );
+  const name = cli.package ?? CLI_PACKAGE_NAME;
+  const moving = name === NEW_CLI_PACKAGE_NAME;
+  let previous: string | null = null;
   if (cli.install) {
-    const installed = await installOwned(cli.latest, { env, node, run });
+    const installed = await installOwned(cli.latest, {
+      env,
+      node,
+      run,
+      name,
+      // The scope move proves the new CLI runs before `current` leaves the old one.
+      ...(moving
+        ? {
+            verify: async (entry: string) => {
+              const ran = await run(node.node, [entry, "--version"]);
+              return ran.status === 0 && ran.stdout.includes(cli.latest)
+                ? null
+                : `\`${entry} --version\` printed ${ran.stdout.trim() || stderrTail(ran.stderr) || `exit ${ran.status}`}`;
+            },
+          }
+        : {}),
+    });
     if (!installed.ok)
       return fail(
         `${installed.reason}; current still points to ${installed.previous ?? "nothing"} under ${cli.root}`,
       );
+    previous = installed.previous;
   }
-  const launchers = writeLaunchers({ env, installNode: node.node });
+  const launchers = writeLaunchers({ env, installNode: node.node, name });
   const migration = await migrateCopies(migrationCopies(env), {
     remove: removeCopies,
     backup,
@@ -648,6 +683,22 @@ const applyCli = async (
   ];
   // The proof: `workit --version` as a new login shell resolves it (no npx cache dir).
   const seen = (deps.pathWorkit ?? (() => pathResolvedWorkit(env)))();
+  // PATH runs the owned launcher and the moved CLI fails there: go back to the
+  // old install, so PATH's workit is never left broken (#708).
+  const rollback =
+    moving &&
+    seen.version !== cli.latest &&
+    seen.path !== null &&
+    realpathOr(seen.path) === realpathOr(launchers.launcher) &&
+    previous !== null &&
+    prefixPackage(path.join(ownedPaths(env).versions, previous))?.name === CLI_PACKAGE_NAME;
+  if (rollback) {
+    swapCurrent(env, previous!);
+    writeLaunchers({ env, installNode: node.node, name: CLI_PACKAGE_NAME });
+    return fail(
+      `${NEW_CLI_PACKAGE_NAME} ${cli.latest} did not run through PATH (${seen.version ?? seen.error ?? "unknown"}); \`current\` is back on ${CLI_PACKAGE_NAME} ${previous}`,
+    );
+  }
   if (seen.version !== cli.latest) {
     const listing = listInstalls(env).map(
       (install) => `  ${describeInstallAt(install, launchers.linked)}`,
@@ -661,10 +712,48 @@ const applyCli = async (
       pathFix(seen.path, { ...launchers, backup, left: migration.left }),
     );
   }
+  const removed = moving ? removeOldScopeVersions(env, deps.cliEntry ?? process.argv[1]) : [];
   return {
     host: "cli",
     status: "updated",
-    reason: cli.install ? `${cli.installed} -> ${cli.latest}` : `owned install ${cli.latest}`,
-    details: [`PATH runs ${seen.path} (workit ${seen.version})`, ...details],
+    reason: moving
+      ? `${CLI_PACKAGE_NAME} ${cli.installed} -> ${NEW_CLI_PACKAGE_NAME} ${cli.latest}`
+      : cli.install
+        ? `${cli.installed} -> ${cli.latest}`
+        : `owned install ${cli.latest}`,
+    details: [`PATH runs ${seen.path} (workit ${seen.version})`, ...details, ...removed],
   };
+};
+
+/**
+ * After the moved CLI ran through PATH: remove the owned old-scope versions,
+ * except the one this process runs from (its files are still in use).
+ */
+const removeOldScopeVersions = (env: NodeJS.ProcessEnv, running: string | undefined): string[] => {
+  const { versions } = ownedPaths(env);
+  const here = running ? realpathOr(running) : "";
+  const lines: string[] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(versions).filter((one) => /^\d+\.\d+\.\d+/.test(one));
+  } catch {
+    return lines;
+  }
+  for (const version of names) {
+    const dir = path.join(versions, version);
+    if (prefixPackage(dir)?.name !== CLI_PACKAGE_NAME) continue;
+    if (here.startsWith(realpathOr(dir) + path.sep)) {
+      lines.push(
+        `kept ${dir} (${CLI_PACKAGE_NAME} ${version}, running now); the next upgrade removes it`,
+      );
+      continue;
+    }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      lines.push(`removed the old ${CLI_PACKAGE_NAME} ${version} install (${dir})`);
+    } catch (error) {
+      lines.push(`could not remove ${dir}: ${errorText(error)}`);
+    }
+  }
+  return lines;
 };

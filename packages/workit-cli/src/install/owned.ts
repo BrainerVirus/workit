@@ -25,6 +25,7 @@ import {
   ownedPaths,
   packageDirOf,
   packageVersion,
+  prefixPackage,
   realpathOr,
   versionDir,
 } from "./paths";
@@ -39,6 +40,10 @@ export type InstallContext = {
   platform?: NodeJS.Platform;
   node: InstallNode;
   run: InstallRun;
+  /** The CLI package to install (default the running scope's). */
+  name?: string;
+  /** Run before `current` moves: a reason when the staged entry does not run, else null. */
+  verify?: (entry: string) => Promise<string | null>;
 };
 
 /** Staging directories start with this; anything left by a killed run is removed next time. */
@@ -69,7 +74,7 @@ export const isOwnedLauncher = (file: string): boolean => {
  * (atomic on POSIX). Windows uses a junction; rename cannot replace one, so it
  * is removed first (the only non-atomic moment, recorded in install.md).
  */
-const swapCurrent = (
+export const swapCurrent = (
   env: NodeJS.ProcessEnv,
   version: string,
   platform: NodeJS.Platform = process.platform,
@@ -97,13 +102,13 @@ export const writeLaunchers = (context: {
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   installNode: string;
+  /** The CLI package `current` holds (default the running scope's). */
+  name?: string;
 }): { launcher: string; linked: string; foreign: string | null } => {
   const platform = context.platform ?? process.platform;
   const paths = ownedPaths(context.env, platform);
-  const content =
-    platform === "win32"
-      ? launcherCmd({ root: paths.root, installNode: context.installNode })
-      : launcherScript({ root: paths.root, installNode: context.installNode });
+  const options = { root: paths.root, installNode: context.installNode, name: context.name };
+  const content = platform === "win32" ? launcherCmd(options) : launcherScript(options);
   writeAtomic(paths.launcher, content, 0o755);
   if (paths.linked === paths.launcher) return { ...paths, foreign: null };
   let existing: ReturnType<typeof lstatSync> | null = null;
@@ -171,7 +176,8 @@ export const installOwned = async (
 ): Promise<InstallResult> => {
   const platform = context.platform ?? process.platform;
   const paths = ownedPaths(context.env, platform);
-  const previous = packageVersion(packageDirOf(paths.current));
+  const name = context.name ?? CLI_PACKAGE_NAME;
+  const previous = prefixPackage(paths.current)?.version ?? null;
   mkdirSync(paths.versions, { recursive: true });
   removeStaleStaging(paths.versions);
   const staging = path.join(paths.versions, `${STAGING}${version}-${process.pid}`);
@@ -184,10 +190,14 @@ export const installOwned = async (
     "--no-audit",
     "--no-fund",
     "--omit=dev",
-    `${CLI_PACKAGE_NAME}@${version}`,
+    `${name}@${version}`,
   ]);
-  const staged = packageVersion(packageDirOf(staging));
-  if (install.status !== 0 || staged !== version) {
+  const staged = packageVersion(packageDirOf(staging, name), name);
+  const unusable =
+    install.status === 0 && staged === version && context.verify
+      ? await context.verify(path.join(packageDirOf(staging, name), "dist", "index.js"))
+      : null;
+  if (install.status !== 0 || staged !== version || unusable) {
     rmSync(staging, { recursive: true, force: true });
     const tail = (install.stderr ?? "").trim().split(/\r?\n/).slice(-3).join(" | ");
     return {
@@ -195,8 +205,10 @@ export const installOwned = async (
       previous,
       reason:
         install.status !== 0
-          ? `npm install of ${CLI_PACKAGE_NAME}@${version} failed${tail ? ` (${tail})` : ""}`
-          : `npm installed ${staged ?? "no package"}, not ${version}`,
+          ? `npm install of ${name}@${version} failed${tail ? ` (${tail})` : ""}`
+          : staged !== version
+            ? `npm installed ${staged ?? "no package"}, not ${version}`
+            : `${name}@${version} does not run: ${unusable}`,
     };
   }
   const dir = versionDir(paths.root, version);

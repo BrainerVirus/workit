@@ -248,7 +248,9 @@ const upgrade = async (w: ReturnType<typeof world>, extra: Record<string, string
     env: { ...w.env(extra), WORKIT_NO_YTRACK: undefined },
     run: (command, args) =>
       command === "npm" && args[0] === "view"
-        ? { status: 0, stdout: "1.0.0\n" }
+        ? args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "1.0.0\n" }
         : command === "pi" && args[0] === "list"
           ? { status: 0, stdout: `npm:@brainervirus/workit-pi\n  ${piRoot}\n` }
           : { status: 0, stdout: "" },
