@@ -307,9 +307,9 @@ export type Enforcement = "enforced" | "advisory";
 
 /**
  * Whether Workit applies a role's model on a host itself (`enforced`) or only
- * names it for the lead to pass (`advisory`). Claude Code (PreToolUse
- * updatedInput) and OpenCode (the plugin's subagent hook) set it on every
- * spawn; Codex writes it into its verifier, reviewer and implementer agent
+ * names it for the lead to pass (`advisory`). Claude Code (a PreToolUse deny
+ * naming the exact args) and OpenCode (the plugin's subagent hook) hold every
+ * spawn to it; Codex writes it into its verifier, reviewer and implementer agent
  * files, Pi passes it to its reviewer, investigator and implementer workers
  * (the implementer on both only when the three tiers agree); Cursor has no
  * hook that can change a spawn. The lead's own model is advisory everywhere.
@@ -338,6 +338,26 @@ export type SpawnModelChoice = {
   effort: string | null;
   /** Why Workit changed the spawn, for the lead; null when nothing changed. */
   note: string | null;
+  /** Where the chosen model comes from (`role verifier, built-in`), or null when none is chosen. */
+  basis: string | null;
+};
+
+/** The Claude Code Agent tool's `model` and `effort` enums (claude 2.1.309); anything else fails its schema. */
+const CLAUDE_ALIASES = new Set(["sonnet", "opus", "haiku", "fable"]);
+export const CLAUDE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+/** A full Claude model id (`claude-sonnet-5-5`, `anthropic/claude-opus-5`, `us.anthropic.claude-haiku-…`). */
+const FULL_CLAUDE_ID =
+  /^(?:[\w.-]+[./])?claude-(?:\d[\d.-]*-)?(sonnet|opus|haiku|fable)(?:[-.@[]|$)/u;
+
+/**
+ * What the Agent tool's `model` takes for a configured value: an alias as is,
+ * a full Claude id as its family alias (the tool takes only aliases), anything
+ * else null.
+ */
+export const claudeAgentModel = (value: string): string | null => {
+  const lower = value.trim().toLowerCase();
+  if (CLAUDE_ALIASES.has(lower)) return lower;
+  return FULL_CLAUDE_ID.exec(lower)?.[1] ?? null;
 };
 
 const roleLabel = (selector: RoleSelector): string =>
@@ -358,7 +378,12 @@ export const chooseSpawnModel = (
   accept: (model: string) => string | null,
   dir?: string,
 ): SpawnModelChoice => {
-  const none: SpawnModelChoice = { model: null, effort: null, note: null };
+  const none: SpawnModelChoice = {
+    model: null,
+    effort: null,
+    note: null,
+    basis: null,
+  };
   const all = resolveRoleModels(cwd, selector, host, dir);
   // A list for every host may name models this host cannot take: those are passed over.
   const takes = all.filter((one) => accept(one.model));
@@ -372,16 +397,19 @@ export const chooseSpawnModel = (
   const effort = resolved.effort && !name(given.effort) ? resolved.effort : null;
   const fallback = fallbackText(resolved);
   const why = fallback ? ` Role ${label} ${fallback}` : "";
+  const basis = `role ${label}, ${resolved.source}${fallback ? `; it ${fallback}` : ""}`;
   if (!model)
     return {
       model: null,
       effort,
+      basis,
       note: `Workit could not apply ${resolved.model} (role ${label}, ${resolved.source}): this host's spawn does not take that model name, so the spawn runs on ${givenModel ?? "its default model"}.${why} Fix the value in workspaces.json, then run \`workit models show --role ${selector.role}\`.`,
     };
   if (givenModel && accept(givenModel) === model)
     return {
       ...none,
       effort,
+      basis,
       note: fallback ? `Workit kept ${model} on this spawn.${why}` : null,
     };
   // The exact spawn to write next time, so the lead's next call needs no rewrite.
@@ -389,10 +417,63 @@ export const chooseSpawnModel = (
   return {
     model,
     effort,
+    basis,
     note: givenModel
       ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}.${why} Next time ${next} on the spawn. To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
       : `Workit set ${model}${effort ? ` (effort ${effort})` : ""} on this spawn: role ${label}, ${resolved.source}.${why}${configured ? "" : " Name a model to choose another."}`,
   };
+};
+
+/** The model and effort a Claude Code Agent spawn names so the spawn hook leaves it as written. */
+export type ClaudeSpawnArgs = { model: string; effort: string | null };
+
+/**
+ * The `model` and `effort` a Claude Code Agent spawn for `selector` passes
+ * (the hook's own choice for a spawn that names neither), or null when the
+ * role has no model the Agent tool takes.
+ */
+export const claudeSpawnArgs = (
+  cwd: string,
+  selector: RoleSelector,
+  dir?: string,
+): ClaudeSpawnArgs | null => {
+  const choice = chooseSpawnModel(cwd, selector, "claude_code", {}, claudeAgentModel, dir);
+  if (!choice.model) return null;
+  const effort = choice.effort?.toLowerCase() ?? null;
+  return {
+    model: choice.model,
+    effort: effort && CLAUDE_EFFORTS.has(effort) ? effort : null,
+  };
+};
+
+/** Claude Code's spawn for each role: its agent type, or the prompt line that selects it. */
+const CLAUDE_SPAWNS: Array<{ label: string; selector: RoleSelector }> = [
+  ...(["hard", "standard", "mundane"] as const).map((tier) => ({
+    label: tier === "hard" ? "workit:implementer hard" : tier,
+    selector: { role: "implementer" as const, tier },
+  })),
+  { label: "workit:verifier", selector: { role: "verifier" } },
+  { label: "workit:reviewer", selector: { role: "reviewer" } },
+  { label: "Explore", selector: { role: "explore" } },
+  { label: "ROLE: decider", selector: { role: "decider" } },
+  { label: "ROLE: babysit", selector: { role: "babysit" } },
+  { label: "general-purpose", selector: { role: "default" } },
+];
+
+/**
+ * One line naming the `model`/`effort` of every Claude Code agent type
+ * Workit assigns a role (a `ROLE:` prompt line on general-purpose), so the
+ * lead's first spawn needs no correction (retro 2026-11-07 R1). Null when no
+ * role has a model.
+ */
+export const claudeSpawnTable = (cwd: string, dir?: string): string | null => {
+  const rows = CLAUDE_SPAWNS.flatMap(({ label, selector }) => {
+    const args = claudeSpawnArgs(cwd, selector, dir);
+    return args ? [`${label} ${args.model}${args.effort ? `/${args.effort}` : ""}`] : [];
+  });
+  return rows.length
+    ? `Agent spawn model/effort (pass them, workers with run_in_background: true): ${rows.join(", ")}. Implementer prompt: \`workit fanout brief <slice>\` after \`workit fanout worktree create <slice>\`, even for one slice.`
+    : null;
 };
 
 /**

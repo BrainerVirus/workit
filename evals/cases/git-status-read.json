@@ -1,0 +1,22 @@
+{
+  "id": "git-status-read",
+  "source": "test/behavior/cases/read-only-git-status.json and git-status-unblock.json (`workit git status` guessed, then raw git)",
+  "tier": "full",
+  "prompt": "Which files have I changed and not committed yet?",
+  "scaffold": {
+    "branch": "feature/status",
+    "dirty": {
+      "a.txt": "a\n"
+    }
+  },
+  "maxTurns": 6,
+  "expect": {
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? status\\b",
+        "why": "guessed grammar: read-only raw `git status` is fine"
+      }
+    ]
+  }
+}

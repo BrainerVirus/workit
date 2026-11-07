@@ -78,35 +78,17 @@ verb output) are proven against real failures, not prose (#425).
   `.workit/checks.json` defines a `skills` check or group, else these four
   files by name, else "run the repo's skill and context-budget checks".
 
-### Layer 2: model-in-the-loop cases
+### Layer 2: local weak-model bench
 
-`packages/workit-claude-code/evals/*/case.yaml` runs real models in a scaffold
-repo and grades the trace with regexes. The retro classes (#425) are one case
-each: `isolated-implementer-plain-git`, `verifier-verdict-first-try`,
-`heavy-test-tail-once`, `check-output-bounded`, `read-only-no-nudge`,
-`finding-key-self-correct`, `git-status-guess` (scaffold
-`evals/scaffold/feature-repo.sh`: offline, a feature branch, a noisy
-configured `test` check). Every retro case is `runs: 1` and `max_turns` ≤ 6. The
-merge-granted / endpoint-pr hint needs a real forge and has no case; layer 0
-covers it. Several graders are negative regexes (`^(?![\s\S]*…)`) because the
-case format has no "absent" grader; calibrate a pattern on its first real run.
-
-`.github/workflows/claude-eval.yml` runs the suite nightly and on the `eval`
-label as a matrix over `--model sonnet` and `--model haiku` (aliases, no new
-pin: only the claude CLI version is pinned in the support matrix), each leg
-with `--max-cost-usd 1.5` (about $3 a night in all) and its own
-`claude-eval-<model>` artifact. The score is a report, not a PR gate
-(`--threshold 0`): read the per-case pass rate per model before and after a
-wording change. Weak-model parity for Claude (#435) is measured here;
-OpenCode weak models and re-injecting the contract after a model switch are a
-separate slice.
-
-Run one case locally (paid; needs a Claude credential):
-
-```bash
-claude plugin eval packages/workit-claude-code --case <name> --model haiku \
-  --runs 1 --scaffold --trust-plugin --allow-tools Bash
-```
+Real models run only on the developer's machine, on their Claude Code
+subscription, never in CI (no API key, no cost there; ledger decision
+mw6gvdys). `bun scripts/eval/run.ts --model haiku --tier smoke` runs each case
+in `evals/cases/` through one headless `claude -p` with the plugin from this
+checkout, grades the tool-call transcript without a model, caches the result
+by case, model and Workit version, and caps model runs per invocation
+(`--budget-runs`, default 3). Results live under `evals/results/<model>/` and
+are committed with the change they measure. Cases, grading rules, tiers and
+cost: [eval.md](eval.md).
 
 ## CI shards
 
@@ -183,8 +165,8 @@ bytes of a file outside those paths needs its own `.gitattributes` rule.
   in the packaging tier but report as skipped unless `WORKIT_V2_HARNESS=1` is
   set and docker is available. CI runs them only on demand or with the
   `opencode-v2` PR label (`.github/workflows/opencode-v2-harness.yml`).
-- Claude Code plugin evals run nightly, on demand or with the `eval` PR label
-  (`.github/workflows/claude-eval.yml`).
+- The weak-model bench runs locally only (`bun scripts/eval/run.ts`, see
+  [eval.md](eval.md)); no workflow calls a model.
 
 ## CI-only checks
 

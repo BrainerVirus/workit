@@ -1,0 +1,59 @@
+{
+  "id": "shape-grill",
+  "source": "ported from packages/workit-claude-code/evals/shape-grill",
+  "tier": "full",
+  "prompt": "Let's brainstorm before changing anything. add() in add.ts currently subtracts; that is a known bug we will fix separately. Beyond that fix, should add() also accept strings like \"2\" and maybe arrays of numbers? Grill me on the open choices, but do not edit any file yet.",
+  "scaffold": {
+    "files": {
+      "add.ts": "export const add = (a: number, b: number) => a - b;\n"
+    }
+  },
+  "maxTurns": 10,
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Skill",
+        "pattern": "shape",
+        "why": "an open design request loads the shape skill"
+      },
+      {
+        "tool": "Read",
+        "pattern": "add\\.ts",
+        "why": "facts are grounded by reading, not asked"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Write",
+        "pattern": ".",
+        "why": "no spec or file is written"
+      },
+      {
+        "tool": "Edit",
+        "pattern": ".",
+        "why": "add.ts is not edited"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "Q1",
+        "why": "the open choices are numbered questions"
+      },
+      {
+        "pattern": "recommend",
+        "flags": "i",
+        "why": "each question carries a recommended answer"
+      }
+    ]
+  }
+}

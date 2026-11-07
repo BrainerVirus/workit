@@ -1,0 +1,21 @@
+{
+  "id": "session-context",
+  "source": "ported from packages/workit-claude-code/evals/session-context (the SessionStart contract reaches a fresh session)",
+  "tier": "smoke",
+  "prompt": "Without running any tools, tell me whether this session received workit coordination context at startup. If it did, quote the exact name of the XML-style tag that wraps it.",
+  "scaffold": {
+    "files": {
+      "add.ts": "export const add = (a: number, b: number) => a + b;\n"
+    }
+  },
+  "maxTurns": 2,
+  "allowedTools": [],
+  "expect": {
+    "answer": [
+      {
+        "pattern": "workit-contract",
+        "why": "the contract tag is quoted from context, not guessed"
+      }
+    ]
+  }
+}

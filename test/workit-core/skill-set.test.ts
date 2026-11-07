@@ -11,8 +11,8 @@ import {
 } from "@/packages/workit-core/src/core/skill-manifests";
 
 // Deterministic trigger and budget checks for the skill set (D12). Behavioral
-// triggering is measured by the opt-in `claude plugin eval` suite
-// (packages/workit-claude-code/evals); these keep the inputs to it honest.
+// triggering is measured on real models by the local bench (evals/cases,
+// docs/agents/eval.md); these keep the inputs to it honest.
 
 const SKILLS = path.join(import.meta.dir, "../../packages/workit-core/skills");
 const skillMd = (name: string) => readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8");

@@ -9,6 +9,8 @@ import { fixture } from "./hook-fixtures";
 // #420, #654: a Claude Code subagent spawn gets its role's model and effort
 // through PreToolUse updatedInput; an explicit model wins over a built-in
 // default, and over a configured one only with models.allowLeadOverride.
+// Retro 2026-11-07 R1: under auto mode, which refuses a hook-rewritten spawn,
+// a spawn missing them is denied once with the exact args instead.
 
 let configHome: ConfigHome;
 let cwd: string;
@@ -26,11 +28,13 @@ type Out = {
     updatedInput?: Record<string, unknown>;
     additionalContext?: string;
     permissionDecision?: string;
+    permissionDecisionReason?: string;
   };
 };
-const spawn = (tool: string, input: Record<string, unknown>): Out =>
+const spawn = (tool: string, input: Record<string, unknown>, mode = "default"): Out =>
   dispatchHook(claudeCodeAdapter, {
     ...fixture("claude-code", "pre-tool-use-bash", cwd),
+    permission_mode: mode,
     tool_name: tool,
     tool_input: { description: "d", prompt: "do it", ...input },
   }).json;
@@ -218,4 +222,96 @@ test("G a spawn with no model or another model, W PreToolUse rewrites it, T the 
       expect(effortOnly?.additionalContext).toContain("Next time pass model: sonnet, effort: high");
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// auto mode (retro 2026-11-07 R1: 15 refusals of hook-rewritten spawns)
+
+const MODES = ["default", "auto", "acceptEdits", "bypassPermissions", "plan", "dontAsk"];
+
+/** The deny's reason; fails when the hook rewrote the spawn or let it run. */
+const denied = (out: Out): string => {
+  expect(out.hookSpecificOutput?.updatedInput).toBeUndefined();
+  expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
+  return out.hookSpecificOutput?.permissionDecisionReason ?? "";
+};
+
+test("G permission_mode auto and a spawn missing its role model, W PreToolUse runs, T it is denied with the exact args (run_in_background kept), never rewritten, and the retry with them runs as written", () => {
+  withConfig({ roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } } }, () => {
+    const reason = denied(
+      spawn("Agent", { subagent_type: "workit:verifier", run_in_background: true }, "auto"),
+    );
+    expect(reason).toContain(
+      'spawn again with exactly subagent_type: "workit:verifier", model: "sonnet", effort: "high", run_in_background: true (description and prompt as written)',
+    );
+    expect(reason).toContain("role verifier, models.roles in the global default");
+    expect(reason).toContain("auto mode refuses a hook-rewritten spawn");
+    const retry = spawn(
+      "Agent",
+      {
+        subagent_type: "workit:verifier",
+        model: "sonnet",
+        effort: "high",
+        run_in_background: true,
+      },
+      "auto",
+    );
+    expect(retry.hookSpecificOutput).toBeUndefined();
+  });
+});
+
+test("G a spawn missing its role model, W PreToolUse runs outside auto mode, T it is filled through updatedInput; under auto it is denied", () => {
+  for (const mode of MODES) {
+    const out = spawn("Agent", { subagent_type: "Explore" }, mode).hookSpecificOutput;
+    if (mode === "auto") expect(denied({ hookSpecificOutput: out })).toContain('model: "haiku"');
+    else {
+      expect(out?.updatedInput?.model, mode).toBe("haiku");
+      expect(out?.permissionDecision, mode).toBeUndefined();
+    }
+  }
+});
+
+test("G a spawn that already names its role's model and effort, W PreToolUse runs in every permission mode, T it runs untouched", () => {
+  withConfig({ roles: { verifier: { claude_code: { model: "sonnet", effort: "high" } } } }, () => {
+    for (const mode of MODES)
+      expect(
+        spawn("Agent", { subagent_type: "workit:verifier", model: "sonnet", effort: "high" }, mode)
+          .hookSpecificOutput,
+        mode,
+      ).toBeUndefined();
+  });
+});
+
+test("G auto mode, W a spawn names another model than its configured role's, or the right model but no effort, T the deny names the configured values and keeps every other arg", () => {
+  withConfig({ roles: { verifier: { claude_code: { model: "haiku", effort: "high" } } } }, () => {
+    const replaced = denied(
+      spawn("Agent", { subagent_type: "workit:verifier", model: "opus" }, "auto"),
+    );
+    expect(replaced).toContain('model: "haiku", effort: "high"');
+    expect(replaced).toContain("replaces model opus");
+    expect(replaced).toContain('"allowLeadOverride": true');
+    const effortOnly = denied(
+      spawn(
+        "Agent",
+        { subagent_type: "workit:verifier", model: "haiku", run_in_background: false, name: "v1" },
+        "auto",
+      ),
+    );
+    expect(effortOnly).toContain(
+      'exactly subagent_type: "workit:verifier", model: "haiku", effort: "high", run_in_background: false, name: "v1" (',
+    );
+    expect(effortOnly).toContain("It needs effort high");
+  });
+});
+
+test("G auto mode and a general-purpose spawn with a ROLE: decider line, W PreToolUse runs, T the deny names the decider's built-in model and effort", () => {
+  expect(
+    denied(
+      spawn(
+        "Agent",
+        { subagent_type: "general-purpose", prompt: "ROLE: decider\nPick one." },
+        "auto",
+      ),
+    ),
+  ).toContain('subagent_type: "general-purpose", model: "fable", effort: "high"');
 });

@@ -593,6 +593,11 @@ export type AcquireOptions = {
   /** Called when the wait starts and every `statusEveryMs` after (default 30 s). */
   onStatus?: (status: QueueStatus) => void;
   statusEveryMs?: number;
+  /**
+   * Called once, when the wait first reaches its limit: the ms to keep
+   * waiting, in the same place in the queue (0 gives up as `timeout`).
+   */
+  onLimit?: (status: QueueStatus) => number;
   /** Overrides for tests. */
   probe?: LeaseProbe;
   pid?: number;
@@ -624,6 +629,8 @@ export type AcquireResult =
       waitedMs: number;
       /** Where this waiter stood when it gave up. */
       position: number;
+      /** The wait limit it reached first, when `onLimit` re-queued it once. */
+      requeuedAfterMs: number | null;
     }
   | {
       ok: false;
@@ -904,7 +911,8 @@ function cancelledBy(ticket: string): string | null {
  * Take one of `slots` machine-wide lease slots. A slot free and nobody queued
  * ahead: it is taken at once. Otherwise the caller queues (a ticket in
  * `queue/`) and polls every `pollMs`, round-robin per session, up to
- * `waitMs`; `onStatus` reports its place now and then. A `workit lock cancel`
+ * `waitMs`, which `onLimit` may extend once without losing its place;
+ * `onStatus` reports its place now and then. A `workit lock cancel`
  * marker, or the end of the process that started this waiter, ends the wait
  * as `cancelled`. The returned lease is released by `release()`, and on
  * process exit as a backstop.
@@ -968,6 +976,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     queued = false;
   };
   let nextStatus = 0;
+  let limitMs = options.waitMs;
+  let requeuedAfterMs: number | null = null;
   try {
     for (;;) {
       const waited = clock.now() - started;
@@ -1016,14 +1026,33 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         waitedOn = holders;
         options.onWait?.(holders);
       }
-      if (waited >= options.waitMs)
-        return {
-          ok: false,
-          reason: "timeout",
-          holders,
-          waitedMs: waited,
-          position: ahead + 1,
-        };
+      if (waited >= limitMs) {
+        const more =
+          requeuedAfterMs === null
+            ? (options.onLimit?.({
+                position: ahead + 1,
+                ahead,
+                aheadOf,
+                holders,
+                waitedMs: waited,
+                first: false,
+              }) ?? 0)
+            : 0;
+        if (!(more > 0))
+          return {
+            ok: false,
+            reason: "timeout",
+            holders,
+            waitedMs: waited,
+            position: ahead + 1,
+            requeuedAfterMs,
+          };
+        // Re-queued once in the same place: the ticket's age bound follows the new limit.
+        requeuedAfterMs = waited;
+        limitMs = waited + more;
+        ticketRecord.maxAgeMs = limitMs + 60_000;
+        if (queued && fs.existsSync(ticket)) writeTicket(ticket, ticketRecord);
+      }
       if (!queued) {
         // Handlers first, then one event-loop turn so Bun has armed them, then
         // the ticket: a signal that lands as the ticket appears must find a
@@ -1049,7 +1078,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         });
         nextStatus = waited + (options.statusEveryMs ?? 30_000);
       }
-      await clock.sleep(Math.min(options.pollMs ?? 2000, Math.max(1, options.waitMs - waited)));
+      await clock.sleep(Math.min(options.pollMs ?? 2000, Math.max(1, limitMs - waited)));
     }
   } catch (error) {
     return {

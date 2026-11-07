@@ -1,0 +1,27 @@
+{
+  "id": "spawn-auto-mode-isolation-denied",
+  "source": "retro 2026-11-07 R1: auto mode refuses a hook-rewritten spawn, so isolation is denied with the exact args there",
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "permission_mode": "auto",
+      "tool_name": "Agent",
+      "tool_input": {
+        "description": "slice",
+        "subagent_type": "workit:implementer",
+        "model": "opus",
+        "isolation": "worktree",
+        "run_in_background": true,
+        "prompt": "MODE: new\nGOAL: g\nWORKTREE: /w/slice  (made by `workit fanout worktree create slice`; yours alone)\n"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": [
+      "subagent_type: \"workit:implementer\", model: \"opus\", run_in_background: true",
+      "no isolation"
+    ]
+  }
+}

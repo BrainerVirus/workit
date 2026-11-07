@@ -45,8 +45,11 @@ import {
   storeRoot,
   type LedgerActor,
 } from "./ledger";
+import { CHECKS_FILE, lightCommand, loadCheckConfig, splitCommand } from "./check-config";
+import { heavyCommand } from "./core/heavy";
+import { resolveResourceSettings } from "./core/resources";
 import { worktreesDir } from "./core/workit-paths.mjs";
-import { workspaceDelegation, type DelegationMode } from "./core/workspaces";
+import { resolveWorkspace, workspaceDelegation, type DelegationMode } from "./core/workspaces";
 import { stackFileName } from "./stack";
 
 export const FANOUT_VERSION = 1;
@@ -1166,12 +1169,104 @@ export type PlanOutcome = {
   waves: string[][];
   landingOrder: string[];
   notes: string[];
-  /** A new plan under a name that still has standing orders in force (an earlier run's?). */
+  /**
+   * A new plan under a name that still has standing orders in force (an
+   * earlier run's?), or a wave with more full-suite VERIFY runs than lease slots.
+   */
   warnings: string[];
 };
 
 /** Above this many slices in one wave, the lead queues the rest (4-6 in flight). */
 export const IN_FLIGHT_CAP = 6;
+
+/** A word naming one file (`test/a.test.ts`), not a directory, glob or package pattern. */
+const FILE_WORD = /^[^*?[\]{}]*\.[A-Za-z0-9]+$/u;
+
+/**
+ * The part of a VERIFY line that runs a whole suite under the heavy-check
+ * lease, or null: `workit check <name>` for a heavy named check, or a heavy
+ * command (raw, or after `workit check --heavy --`) that names no file.
+ */
+export function fullSuiteVerify(
+  line: string,
+  heavyChecks: readonly string[],
+  cwd: string,
+): string | null {
+  for (const part of line.split(/\s*(?:;|&&|\|\|)\s*/u)) {
+    const parsed = splitCommand(part);
+    const words = parsed instanceof Error ? part.trim().split(/\s+/u).filter(Boolean) : parsed;
+    if (!words.length) continue;
+    if (words[0] === "workit" && words[1] === "check") {
+      const split = words.indexOf("--");
+      if (split < 0) {
+        const head = words.slice(2);
+        const name = head.find(
+          (word, index) =>
+            !word.startsWith("-") &&
+            !/^--(?:cwd|name|task|base|timeout|wait|reason)$/u.test(head[index - 1] ?? ""),
+        );
+        if (name && heavyChecks.includes(name)) return part.trim();
+        continue;
+      }
+      if (!words.slice(2, split).includes("--heavy")) continue;
+      const command = words.slice(split + 1);
+      if (untargetedHeavy(command, cwd)) return part.trim();
+      continue;
+    }
+    if (untargetedHeavy(words, cwd)) return part.trim();
+  }
+  return null;
+}
+
+const untargetedHeavy = (words: string[], cwd: string): boolean =>
+  words.length > 0 &&
+  !lightCommand(words) &&
+  !words.slice(1).some((word) => !word.startsWith("-") && FILE_WORD.test(word)) &&
+  heavyCommand(words.join(" "), { cwd }) !== null;
+
+/** The machine's lease slots and heavy named checks, as `workit check` resolves them. */
+function leaseSettings(cwd: string): { slots: number; heavy: string[] } {
+  let machine: unknown;
+  try {
+    machine = (resolveWorkspace(cwd) as Record<string, unknown> | null)?.resources;
+  } catch {
+    machine = undefined;
+  }
+  return resolveResourceSettings([
+    { label: "workspaces.json", trust: "machine", value: machine },
+    { label: CHECKS_FILE, trust: "repo", value: loadCheckConfig(cwd).resources },
+  ]).settings;
+}
+
+/**
+ * One warning per wave in which more slices run a full suite in VERIFY than
+ * the machine has heavy-check lease slots: the rest queue a whole suite run
+ * each (#326, retro R6).
+ */
+export function leaseContention(
+  slices: readonly Slice[],
+  grouped: readonly string[][],
+  lease: { slots: number; heavy: readonly string[] },
+  cwd: string,
+): string[] {
+  const warnings: string[] = [];
+  grouped.forEach((wave, index) => {
+    const heavy = wave.flatMap((id) => {
+      const slice = slices.find((item) => item.id === id);
+      const hit = slice?.verify
+        .map((line) => fullSuiteVerify(line, lease.heavy, cwd))
+        .find(Boolean);
+      return hit ? [{ id, hit }] : [];
+    });
+    if (heavy.length <= lease.slots) return;
+    const where = grouped.length > 1 ? `wave ${index + 1}: ` : "";
+    const slots = `${lease.slots} heavy-check lease slot${lease.slots === 1 ? "" : "s"}`;
+    warnings.push(
+      `${where}${heavy.length} slices (${heavy.map((item) => item.id).join(", ")}) run a full suite in VERIFY (\`${heavy[0].hit}\`), but this machine has ${slots}: ${heavy.length - lease.slots} of them queue a whole suite run behind the others. Have each slice verify with its targeted test files (\`workit check --name <slice>-tests -- <test runner> <its test files>\`, no lease) and run the full suite once at fan-in`,
+    );
+  });
+  return warnings;
+}
 
 export function planFanout(
   cwd: string,
@@ -1333,6 +1428,7 @@ export function planFanout(
     notes.push(
       `trunk ${plan.trunk} does not resolve here; only sample paths of each glob were compared`,
     );
+  warnings.push(...leaseContention(plan.slices, grouped, leaseSettings(cwd), cwd));
   grouped.forEach((wave, index) => {
     if (wave.length > IN_FLIGHT_CAP)
       notes.push(

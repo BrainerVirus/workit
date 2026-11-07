@@ -1070,6 +1070,7 @@ Linux it gives each one its own memory and CPU limit.
 workit check test                 # heavy by default: waits for the lease, then runs
 workit check --heavy -- npx jest  # an ad-hoc command takes the lease only with --heavy
 workit check --name unit -- bun test a.test.ts  # a light ad-hoc command: no lease, runs at once
+workit check --heavy -- bunx oxfmt a.ts         # a formatter never takes the lease, even with --heavy
 workit check test --timeout 1200  # bounds the lease wait and the run together
 workit check test --no-lease --reason "<why>"  # run it now, outside the lease (for you, not for briefs)
 workit lock status                # who holds the lease; `workit lock wait` waits for a slot
@@ -1078,8 +1079,10 @@ workit lock status                # who holds the lease; `workit lock wait` wait
 - **Which checks are heavy.** The named checks `test`, `build` and `packaging` are heavy by
   default; `lint`, `typecheck` and `format` are light and never take the lease
   (`resources.light` in workspaces.json changes the list). An ad-hoc
-  `workit check -- <cmd>` takes the lease only with `--heavy`. A raw heavy
-  shell command an agent runs (`npx jest`, `npm run test:ci`) is rewritten
+  `workit check -- <cmd>` takes the lease only with `--heavy`, and never when
+  it is a formatter (`oxfmt`, `prettier`, `cargo fmt`, `bun run format`) or a
+  linter whose every target is a file (`eslint a.ts b.ts`, not `eslint src`):
+  it runs at once and says why. A raw heavy shell command an agent runs (`npx jest`, `npm run test:ci`) is rewritten
   through the lease, or denied with the exact rewrite on Codex and Cursor. A
   chain with heavy parts is denied with each part's lease command, and a
   command a host permission rule names runs outside the lease
@@ -1088,9 +1091,12 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   worktree and agent of the user. A heavy check that finds them taken joins a
   queue served round-robin per session, says where it stands, and prints a
   status line every 30 s: each holder with its age, the queue position, the
-  time waited of the wait, and an estimated wait. It waits up to `--wait <dur>`
-  (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min); `--no-wait`
-  refuses at once. `workit lock status` lists holders and the queue, with
+  time waited, and an estimated wait. It waits up to `--wait <dur>`
+  (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min). At that limit
+  it re-queues once in the same place, printing the estimated wait, and gives
+  up only at the second limit, naming the exact command to run again with a
+  `--wait` sized to the estimate. A wait bounded by `--timeout` never
+  re-queues past it, and `--no-wait` refuses at once. `workit lock status` lists holders and the queue, with
   each holder's time left (`~3m left`, or `past its last 14m run`).
   A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
   end before a long wait: run long checks in the background. The lease is
@@ -1126,7 +1132,15 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   one itself only when it is past 3 times its limit and silent for its limit.
 - **Light ad-hoc commands.** A formatter, one linter or one test file runs
   as `workit check --name <n> -- <cmd>`: no lease, no queue, and still
-  recorded. Keep `--heavy` for full suites, packaging, builds and knip.
+  recorded. Keep `--heavy` for full suites, packaging, builds and knip. The
+  shell hook leaves a raw formatter or file-scoped linter alone on every host,
+  and `workit lock heavy test -- <cmd>` says when a command is light.
+- **Fanout plans.** `workit fanout plan` warns when one wave has more slices
+  whose VERIFY runs a full suite (a heavy named check such as
+  `workit check test`, or a heavy command that names no file) than the
+  machine has lease slots: the rest would each queue a whole suite run. Give
+  each slice its targeted test files instead and run the full suite once at
+  fan-in.
 - **Stale leases.** A lease stays held while its `workit` process runs. If
   `workit` is killed outright (SIGKILL), the lease stays held while the
   check's process group or scope still has processes, so two heavy checks
@@ -1154,7 +1168,10 @@ workit lock status                # who holds the lease; `workit lock wait` wait
 - **`--json`** adds `lease` (`slot`, `waitedMs`, the `holder` it waited on
   with pid, check, cwd and session, `reclaimed`, `inherited`) and `scope`
   (`unit`, `memoryMax` in bytes, `cpuQuota`, or `unit: null` with a
-  `reason`). Both are `null` for a check that is not heavy.
+  `reason`). Both are `null` for a check that is not heavy; a light command
+  run with `--heavy` adds `light` (`kind`, `tool`, `reason`). A wait that
+  gave up reports `data.lease.requeuedAfterMs`, `estimatedWaitMs` and the
+  `retry` command.
 
 Configure it under `resources`. The machine's limits come from the matching
 entry of your `workspaces.json`. A repo's `.workit/checks.json` can

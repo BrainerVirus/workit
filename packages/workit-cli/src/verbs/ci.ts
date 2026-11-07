@@ -4,7 +4,9 @@
 // (exit 0), fail (exit 1), the PR is blocked (exit 3), or the timeout passes
 // with checks still pending (exit 4). The final payload carries the full
 // `pr status` document. On Claude, run it with `run_in_background: true`
-// instead of a sleep loop.
+// instead of a sleep loop. A second wait on the same PR and head while one
+// is live (often moved to the background) reports that one and exits busy
+// instead of polling again (ci-waiter.ts).
 //
 // rerun: reruns failed jobs (or named checks) once per (head, check), on the
 // PR head (`--pr`, `--branch`'s PR, or this branch's PR) or on the latest CI
@@ -32,6 +34,12 @@ import { apiJson } from "@brainervirus/workit-core/src/forge/exec";
 import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
 import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
 import { forgeTarget } from "@brainervirus/workit-core/src/core/remotes";
+import {
+  claimCiWaiter,
+  liveCiWaiter,
+  type CiWaiterClaim,
+} from "@brainervirus/workit-core/src/ci-waiter";
+import { headSha, resolveRef } from "@brainervirus/workit-core/src/git/rev";
 import { emit, fail, ok, type Io } from "../output";
 import { progressFor } from "../progress";
 import {
@@ -185,6 +193,58 @@ async function wait(argv: string[], io: Io): Promise<number> {
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
   if (!number.ok) return forgeFail(io, number);
 
+  const expected =
+    head ??
+    (flags.values.branch
+      ? resolveRef(io.cwd, `refs/heads/${flags.values.branch}`)
+      : headSha(io.cwd));
+  const running = liveCiWaiter(io.cwd, number.data, expected);
+  if (running) {
+    const at = running.head ?? expected;
+    return emit(
+      io,
+      fail(
+        "busy",
+        `a workit ci wait for PR #${number.data}${at ? ` at ${at.slice(0, 12)}` : ""} is already running (pid ${running.pid}, until ${new Date(running.deadline).toISOString()}); its result arrives when it ends`,
+        {
+          data: { state: "in_flight", pr: number.data, waiter: running },
+          unblock: "read the running wait's output when it ends; do not start another wait",
+        },
+      ),
+    );
+  }
+  const claim = claimCiWaiter(io.cwd, number.data, { head, timeoutMs });
+  try {
+    return await pollChecks(io, {
+      resolved,
+      pr: number.data,
+      head,
+      started,
+      deadline,
+      intervalMs,
+      timeoutMs,
+      claim,
+    });
+  } finally {
+    claim.release();
+  }
+}
+
+type PollTarget = {
+  resolved: ResolvedForge & { identity: NonNullable<PrStatusDoc["identity"]> };
+  pr: number;
+  head: string | null;
+  started: number;
+  deadline: number;
+  intervalMs: number;
+  timeoutMs: number;
+  claim: CiWaiterClaim;
+};
+
+async function pollChecks(
+  io: Io,
+  { resolved, pr, head, started, deadline, intervalMs, timeoutMs, claim }: PollTarget,
+): Promise<number> {
   const actor = actorFromEnv(io.env);
   let polls = 0;
   let errors = 0;
@@ -202,12 +262,13 @@ async function wait(argv: string[], io: Io): Promise<number> {
     return forgeFail(io, ...args);
   };
   for (;;) {
-    const read = resolved.forge.prStatus(number.data);
+    const read = resolved.forge.prStatus(pr);
     polls += 1;
     const elapsedMs = forgeDeps.now() - started;
     if (read.ok) {
       errors = 0;
       status = read.data;
+      claim.setHead(status.head.sha);
       const doc = buildStatusDoc(io.cwd, resolved, status, { logLines: 0, behind: false });
       if (!doc.ok) return abort(doc);
       recordPrStatus(io.cwd, doc.data, actor);

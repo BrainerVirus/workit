@@ -16,7 +16,12 @@
 //   workit lock heavy list | add <pattern> | remove <pattern> | test <cmd…>
 import fs from "node:fs";
 import path from "node:path";
-import { CHECKS_FILE, loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
+import {
+  CHECKS_FILE,
+  lightCommand,
+  loadCheckConfig,
+} from "@brainervirus/workit-core/src/check-config";
+import { simpleCommand } from "@brainervirus/workit-core/src/hooks/raw-git";
 import {
   heavyCommand,
   heavyCommandsFile,
@@ -381,9 +386,13 @@ async function heavy(args: string[], io: Io): Promise<number> {
           unblock: "workit lock heavy test -- <cmd…>",
         }),
       );
-    const match = heavyCommand(command, { cwd: io.cwd, env: io.env });
+    const single = simpleCommand(command, "posix", 0, true);
+    const light = single ? lightCommand(single, io.cwd) : null;
+    const match = light ? null : heavyCommand(command, { cwd: io.cwd, env: io.env });
     // Host permission rules are the hook's to read; this answers without them.
-    const plan = heavyPlan(command, { cwd: io.cwd, env: io.env, rules: null });
+    const plan = light
+      ? ({ kind: "none" } as const)
+      : heavyPlan(command, { cwd: io.cwd, env: io.env, rules: null });
     return emit(
       io,
       ok({
@@ -391,17 +400,22 @@ async function heavy(args: string[], io: Io): Promise<number> {
         heavy: Boolean(match),
         reason: match?.reason ?? null,
         source: match?.source ?? null,
+        light: light?.reason ?? null,
         rewrite: plan.kind === "rewrite" ? plan.command : null,
         split: plan.kind === "split" ? plan.reason : null,
       }),
       (data) =>
-        !data.heavy
-          ? ["light: the shell hook leaves it alone"]
-          : data.rewrite
-            ? [`heavy (${data.reason}): the shell hook runs it as ${data.rewrite}`]
-            : data.split
-              ? [`heavy (${data.reason}): the shell hook denies the chain: ${data.split}`]
-              : [`heavy (${data.reason}): outside a git checkout the shell hook leaves it alone`],
+        data.light
+          ? [
+              `light (${data.light}): the shell hook leaves it alone, and workit check runs it without the lease even with --heavy`,
+            ]
+          : !data.heavy
+            ? ["light: the shell hook leaves it alone"]
+            : data.rewrite
+              ? [`heavy (${data.reason}): the shell hook runs it as ${data.rewrite}`]
+              : data.split
+                ? [`heavy (${data.reason}): the shell hook denies the chain: ${data.split}`]
+                : [`heavy (${data.reason}): outside a git checkout the shell hook leaves it alone`],
     );
   }
   return emit(

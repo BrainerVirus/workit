@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type {
   Capability,
@@ -15,6 +16,7 @@ import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
 } from "@/packages/workit-core/src/core/skill-manifests";
+import { useConfigHome } from "../shared/grant-home";
 
 const skillText = (name: string) =>
   readFileSync(
@@ -516,4 +518,43 @@ test("Given the session contract, When it is read, Then it names --cwd, one verb
   expect(bootstrap).toContain("never `cd <dir> && workit`");
   expect(bootstrap).toContain("printf '%s\\n' ---");
   expect(bootstrap).toContain("no variable named `status` or `path`");
+});
+
+test("Given a SessionStart in a workspace with models.roles, When the contract renders for Claude Code, Then one line names every Workit agent type's model and effort; other hosts and no session get the static contract (retro 2026-11-07 R1)", () => {
+  const home = useConfigHome("wk-methods-roles-");
+  const cwd = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-methods-roles-cwd-")));
+  try {
+    writeFileSync(
+      path.join(home.configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "app",
+            glob: `${cwd}/**`,
+            models: {
+              roles: {
+                implementer: { hard: { claude_code: { model: "opus", effort: "high" } } },
+                verifier: { claude_code: { model: "sonnet", effort: "medium" } },
+                reviewer: "claude-opus-5",
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const contract = invariantBootstrap({ cwd, host: "claude_code" });
+    const lines = contract
+      .split("\n")
+      .filter((line) => line.startsWith("Agent spawn model/effort"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe(
+      "Agent spawn model/effort (pass them, workers with run_in_background: true): workit:implementer hard opus/high, standard sonnet, mundane haiku, workit:verifier sonnet/medium, workit:reviewer opus, Explore haiku, ROLE: decider fable/high, ROLE: babysit haiku. Implementer prompt: `workit fanout brief <slice>` after `workit fanout worktree create <slice>`, even for one slice.",
+    );
+    expect(contract.startsWith(invariantBootstrap())).toBe(true);
+    for (const host of ["codex_cli", "opencode", "cursor", "pi"])
+      expect(invariantBootstrap({ cwd, host }), host).toBe(invariantBootstrap());
+  } finally {
+    home.restore();
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

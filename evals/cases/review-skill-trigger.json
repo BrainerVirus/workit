@@ -1,0 +1,46 @@
+{
+  "id": "review-skill-trigger",
+  "source": "ported from packages/workit-claude-code/evals/skill-triggers",
+  "tier": "full",
+  "prompt": "Do an independent correctness and regression review of the latest commit in this repository and report your findings.",
+  "scaffold": {
+    "files": {
+      "add.ts": "export const add = (a: number, b: number) => a + b;\n"
+    },
+    "commits": [
+      {
+        "message": "fix: adjust add",
+        "files": {
+          "add.ts": "export const add = (a: number, b: number) => a - b;\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 12,
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Skill",
+        "pattern": "review",
+        "why": "a review request loads the review skill"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "a - b|subtract",
+        "flags": "i",
+        "why": "the review finds that add() now subtracts"
+      }
+    ]
+  }
+}

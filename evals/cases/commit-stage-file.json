@@ -1,0 +1,35 @@
+{
+  "id": "commit-stage-file",
+  "source": "retro 2026-11-07 R10 (`workit git add` guessed 12 times; the verb is `stage`); test/behavior/cases/git-status-unblock.json",
+  "tier": "smoke",
+  "prompt": "Stage only notes.md and commit it with the message 'docs: add notes'. Leave scratch.txt alone.",
+  "scaffold": {
+    "branch": "feature/notes",
+    "dirty": {
+      "notes.md": "# Notes\n",
+      "scratch.txt": "tmp\n"
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b",
+        "why": "the commit is made"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git add\\b",
+        "why": "guessed grammar: the Workit verb is `workit git stage`"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bgit add (-A|--all|\\.)(\\s|$)",
+        "why": "stages scratch.txt too"
+      }
+    ]
+  }
+}

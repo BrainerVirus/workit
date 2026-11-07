@@ -8,7 +8,7 @@
 //
 // Findings are advice; nothing is edited or deleted. `--fail-on <level>` and
 // `--mutate` (a surviving mutant) exit 1, so either can be an opt-in gate.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   auditFiles,
@@ -21,9 +21,15 @@ import {
   toPosix,
   type AuditReport,
 } from "../test-audit/audit";
+import { parseSource } from "../test-audit/ast";
 import { BaselineFailed, runMutation, type MutationReport } from "../test-audit/mutate";
-import type { Level, RuleId } from "../test-audit/rules";
+import type { Finding, Level, RuleId } from "../test-audit/rules";
 import { loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
+import {
+  auditMockUse,
+  MOCK_RULES,
+  type MockRuleId,
+} from "@brainervirus/workit-core/src/test-audit-mocks";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
@@ -33,7 +39,7 @@ type Options = {
   paths: string[];
   diff: boolean;
   base: string | null;
-  rules: Set<RuleId> | null;
+  rules: Set<AnyRuleId> | null;
   minSeverity: Level;
   failOn: Level | null;
   mutate: boolean;
@@ -44,6 +50,56 @@ type Options = {
 };
 
 const LEVELS: Level[] = ["high", "medium", "low", "info"];
+const ALL_RULE_IDS: AnyRuleId[] = [...ruleIds, ...(Object.keys(MOCK_RULES) as MockRuleId[])];
+
+type AnyRuleId = RuleId | MockRuleId;
+export type TestFinding = Omit<Finding, "rule"> & { rule: AnyRuleId };
+export type TestAuditReport = Omit<AuditReport, "findings" | "summary"> & {
+  findings: TestFinding[];
+  summary: {
+    byRule: Partial<Record<AnyRuleId, number>>;
+    bySeverity: Record<Level, number>;
+  };
+};
+
+const summarize = (findings: readonly TestFinding[]): TestAuditReport["summary"] => {
+  const byRule: Partial<Record<AnyRuleId, number>> = {};
+  const bySeverity: Record<Level, number> = { high: 0, medium: 0, low: 0, info: 0 };
+  for (const finding of findings) {
+    byRule[finding.rule] = (byRule[finding.rule] ?? 0) + 1;
+    bySeverity[finding.severity] += 1;
+  }
+  return { byRule, bySeverity };
+};
+
+/** Every static rule over `files`: test-audit's own and the mock-use rules. */
+export function auditTests(files: string[], display: (file: string) => string): TestAuditReport {
+  const started = performance.now();
+  const report = auditFiles(files, display);
+  const findings: TestFinding[] = [...report.findings];
+  const unparsed = new Set(report.parseErrors.map((error) => error.file));
+  for (const file of files) {
+    const shown = display(file);
+    if (unparsed.has(shown)) continue;
+    try {
+      findings.push(...auditMockUse(parseSource(readFileSync(file, "utf8"), file), shown));
+    } catch {
+      unparsed.add(shown);
+    }
+  }
+  findings.sort(
+    (a, b) =>
+      LEVELS.indexOf(a.severity) - LEVELS.indexOf(b.severity) ||
+      a.file.localeCompare(b.file) ||
+      a.line - b.line,
+  );
+  return {
+    ...report,
+    findings,
+    summary: summarize(findings),
+    durationMs: report.durationMs + Math.round(performance.now() - started),
+  };
+}
 const VALUE_FLAGS = new Set([
   "--rule",
   "--min-severity",
@@ -90,11 +146,11 @@ function parse(argv: string[]): Options | string {
       if (value === undefined || value === "") return `${flag} requires a value`;
       if (flag === "--rule") {
         const ids = value.split(",").map((id) => id.trim());
-        const known = new Set<string>(ruleIds);
+        const known = new Set<string>(ALL_RULE_IDS);
         const unknown = ids.filter((id) => !known.has(id));
         if (unknown.length > 0)
-          return `unknown rule ${unknown.join(", ")} (rules: ${ruleIds.join(", ")})`;
-        options.rules = new Set(ids as RuleId[]);
+          return `unknown rule ${unknown.join(", ")} (rules: ${ALL_RULE_IDS.join(", ")})`;
+        options.rules = new Set(ids as AnyRuleId[]);
       } else if (flag === "--min-severity" || flag === "--fail-on") {
         if (!LEVELS.includes(value as Level)) return `${flag} must be high, medium, low or info`;
         if (flag === "--fail-on") options.failOn = value as Level;
@@ -131,7 +187,7 @@ function testCommand(repo: string, cwd: string, given: string | null) {
   return check ? { command: check.argv.map(quote).join(" "), cwd: config.root } : null;
 }
 
-type Data = AuditReport & {
+type Data = TestAuditReport & {
   root: string;
   base: string | null;
   /** Findings below --min-severity (prose-contains is `info` by default). */
@@ -219,19 +275,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
     files = expanded.files;
   }
 
-  const report = auditFiles(files, display);
+  const report = auditTests(files, display);
   const floor = LEVELS.indexOf(options.minSeverity);
   const selected = report.findings.filter(
     (finding) => !options.rules || options.rules.has(finding.rule),
   );
   report.findings = selected.filter((finding) => LEVELS.indexOf(finding.severity) <= floor);
   const hidden = selected.length - report.findings.length;
-  report.summary.byRule = {};
-  report.summary.bySeverity = { high: 0, medium: 0, low: 0, info: 0 };
-  for (const finding of report.findings) {
-    report.summary.byRule[finding.rule] = (report.summary.byRule[finding.rule] ?? 0) + 1;
-    report.summary.bySeverity[finding.severity] += 1;
-  }
+  report.summary = summarize(report.findings);
 
   let mutation: MutationReport | null = null;
   if (options.mutate && repo && base && changed) {

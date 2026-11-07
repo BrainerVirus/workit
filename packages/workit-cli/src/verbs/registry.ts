@@ -915,6 +915,28 @@ export const VERBS: readonly VerbEntry[] = [
     load: () => import("./test-audit"),
   },
   withSubcommands({
+    name: "deslop",
+    group: "delivery",
+    summary:
+      "Classify the comments, suppressions and debug leftovers a branch adds, by review lane, with no agent",
+    subcommands: [
+      {
+        name: "scan",
+        usage: "workit deslop scan [--diff [<base>]] [--lane none|self|focused|full]",
+        summary:
+          "List each added comment as narration, marker, suppression, debug or allowed (the keep list), run test-audit on changed tests, and name the lane's passes; a marker or suppression raises self to focused",
+      },
+      {
+        name: "result",
+        usage:
+          "workit deslop result --removed <n> [--reshapes <n>] [--open <n>] [--lane <lane>] [--base <b>]",
+        summary:
+          "Record the one result line of a finished deslop: deslop: lane <l>, -N lines, R reshapes, O open",
+      },
+    ],
+    load: () => import("./deslop"),
+  }),
+  withSubcommands({
     name: "knowledge",
     group: "delivery",
     summary:

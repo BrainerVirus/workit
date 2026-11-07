@@ -1,0 +1,20 @@
+{
+  "id": "spawn-implementer",
+  "source": "retro 2026-11-07 R1 (auto mode refused hook-rewritten spawns) and R3 (spawned without a brief); test/behavior/cases/spawn-implementer-no-brief.json",
+  "tier": "smoke",
+  "prompt": "Delegate this to a Workit implementer subagent: add src/hello.ts exporting hello() that returns 'hi'. Do not write the file yourself.",
+  "scaffold": {
+    "branch": "feature/hello"
+  },
+  "maxTurns": 10,
+  "permissionMode": "auto",
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "implementer",
+        "why": "the work is delegated to an implementer"
+      }
+    ]
+  }
+}

@@ -3,7 +3,7 @@
 // once, with the obligation and the workit command that clears it; it can
 // always stop after that, and never when it asks the user a question.
 import { afterAll, afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -22,6 +22,7 @@ import { recordPrStatus, type PrStatusDoc } from "@/packages/workit-core/src/for
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { SLOW_TEST_TIMEOUT_MS } from "@/test/shared/helpers/packages";
+import { localLockHost, processStartOf } from "@/packages/workit-core/src/core/store-lock";
 import { fixture, tempRoot } from "./hook-fixtures";
 
 // Spawns git and the hook per test: over 15 s on loaded Windows runners and
@@ -427,6 +428,82 @@ test("G endpoint green and the open PR's checks recorded failing at the head, T 
   forgetRaised(root);
   prStatus(root, 7, "passing");
   expect(claudeStop(root).reason).toContain("has no current verdict");
+});
+
+const sleepers: ChildProcess[] = [];
+afterEach(() => {
+  for (const child of sleepers.splice(0)) child.kill();
+});
+
+/** A `workit ci wait` marker for `pr`, held by a live process unless `dead`. */
+const ciWaiter = (
+  root: string,
+  pr: number,
+  options: { head?: string | null; deadline?: number; dead?: boolean } = {},
+) => {
+  let pid = 2 ** 22 + 12_345;
+  if (!options.dead) {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+      stdio: "ignore",
+    });
+    sleepers.push(child);
+    pid = child.pid!;
+  }
+  const dir = path.join(root, ".git", "workit", "ci-waits");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, `pr-${pr}.json`),
+    JSON.stringify({
+      pr,
+      head: options.head === undefined ? git(root, "rev-parse", "HEAD") : options.head,
+      pid,
+      start: options.dead ? null : processStartOf(pid),
+      host: localLockHost(),
+      startedAt: Date.now(),
+      deadline: options.deadline ?? Date.now() + 600_000,
+    }),
+  );
+};
+
+test("G a live workit ci wait for PR 7 at the head (moved to the background), W the lead stops with checks pending, T no block and the notice says the wait is in flight", () => {
+  const root = repo("green");
+  commit(root, "a.ts");
+  git(root, "push", "-q", "origin", "feature/x");
+  prCreated(root, 7);
+  prStatus(root, 7, "pending");
+  ciWaiter(root, 7);
+  const out = dispatchHook(
+    claudeCodeAdapter,
+    fixture("claude-code", "stop", root, { session_id: SESSION }),
+  ).json as { decision?: string; systemMessage?: string };
+  expect(out.decision).toBeUndefined();
+  expect(out.systemMessage).toContain("`workit ci wait` for PR #7");
+  expect(out.systemMessage).toContain("is in flight");
+  expect(out.systemMessage).toContain("do not start another wait");
+  // A wait that has not polled yet (no head recorded) is in flight too.
+  ciWaiter(root, 7, { head: null });
+  expect(claudeStop(root).decision).toBeUndefined();
+});
+
+test("G a ci wait marker whose process died, passed its deadline, or waits on an older head, W the lead stops with checks pending, T it blocks as before", () => {
+  const root = repo("green");
+  commit(root, "a.ts");
+  git(root, "push", "-q", "origin", "feature/x");
+  prCreated(root, 7);
+  prStatus(root, 7, "pending");
+  ciWaiter(root, 7, { dead: true });
+  expect(claudeStop(root).reason).toContain("PR #7's checks were last seen pending");
+  forgetRaised(root);
+  ciWaiter(root, 7, { deadline: Date.now() - 1 });
+  expect(claudeStop(root).reason).toContain("PR #7's checks were last seen pending");
+  forgetRaised(root);
+  ciWaiter(root, 7, { head: "0123456789abcdef0123456789abcdef01234567" });
+  expect(claudeStop(root).reason).toContain("PR #7's checks were last seen pending");
+  forgetRaised(root);
+  // A live wait on another PR says nothing about this one.
+  ciWaiter(root, 8);
+  rmSync(path.join(root, ".git", "workit", "ci-waits", "pr-7.json"));
+  expect(claudeStop(root).decision).toBe("block");
 });
 
 test("G checks recorded failing at an older head, T they say nothing about the new head", () => {

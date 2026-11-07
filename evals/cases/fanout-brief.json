@@ -1,0 +1,54 @@
+{
+  "id": "fanout-brief",
+  "source": "ported from packages/workit-claude-code/evals/fanout-brief",
+  "tier": "full",
+  "prompt": "I want to parallelize two independent changes with parallel agents: add a mul.ts module exporting mul(a, b), and add a README.md describing add(). Do not spawn any agents and do not edit files: write the worker brief for each one exactly as you would hand it to a worker, then stop.",
+  "scaffold": {
+    "files": {
+      "add.ts": "export const add = (a: number, b: number) => a + b;\n"
+    }
+  },
+  "maxTurns": 8,
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Skill",
+        "pattern": "fanout",
+        "why": "a parallelization request loads the fanout skill"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Agent",
+        "pattern": ".",
+        "why": "no worker is spawned"
+      },
+      {
+        "tool": "Write",
+        "pattern": ".",
+        "why": "no file is written"
+      },
+      {
+        "tool": "Edit",
+        "pattern": ".",
+        "why": "no file is edited"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "GOAL[\\s\\S]*SCOPE[\\s\\S]*ACCEPTANCE[\\s\\S]*VERIFY[\\s\\S]*FORBIDDEN[\\s\\S]*REPORT",
+        "why": "each brief has the template fields"
+      }
+    ]
+  }
+}

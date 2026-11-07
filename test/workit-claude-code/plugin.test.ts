@@ -217,12 +217,9 @@ test.skipIf(process.platform === "win32")(
   90_000,
 );
 
-test("CI and the eval workflow pin the support-matrix Claude Code CLI", () => {
-  for (const workflow of ["ci.yml", "claude-eval.yml"]) {
-    const text = readFileSync(path.join(REPO, ".github", "workflows", workflow), "utf8");
-    expect(text, workflow).toContain(`CLAUDE_CODE_VERSION: "${SUPPORT_MATRIX.claudeCode.cli}"`);
-  }
+test("CI pins the support-matrix Claude Code CLI", () => {
   const ci = readFileSync(path.join(REPO, ".github", "workflows", "ci.yml"), "utf8");
+  expect(ci).toContain(`CLAUDE_CODE_VERSION: "${SUPPORT_MATRIX.claudeCode.cli}"`);
   expect(ci).toContain("plugin validate --strict packages/workit-claude-code");
   expect(ci).toContain("plugin validate --strict .");
 });
