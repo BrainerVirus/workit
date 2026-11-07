@@ -89,11 +89,15 @@ type Specific = {
   hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
 };
 
+// Paths in a command use forward slashes: a POSIX shell drops an unquoted `\`
+// (Windows paths), and Git Bash takes `C:/…`.
+const posix = (command: string) => command.replaceAll("\\", "/");
+
 /** A Claude Code PreToolUse Bash from implementer `id`, in the lead's cwd. */
 const bash = (command: string, id: string) => {
   const payload = fixture("claude-code", "pre-tool-use-write", lead, {
     tool_name: "Bash",
-    tool_input: { command: command.replaceAll("\\", "/") },
+    tool_input: { command: posix(command) },
     agent_id: id,
     agent_type: "workit:implementer",
   });
@@ -223,7 +227,7 @@ test("Given a variable Workit cannot resolve, When the hook denies, Then the rea
   allowed(`touch ${wt}/a.ts`, id);
   const reason = denied(`T=$(cat dir.txt); cp -a ${wt}/dist $T/pkg`, id);
   expect(reason).toContain("$T");
-  expect(reason).toContain(`cp -a ${wt}/dist <absolute path of $T>/pkg`);
+  expect(reason).toContain(posix(`cp -a ${wt}/dist <absolute path of $T>/pkg`));
   const loop = denied(`for f in $(ls); do touch ${lead}/$f; done`, id);
   expect(loop).toContain("$f");
   const unset = denied(`workit git --cwd $UNSET commit -m x`, id);
