@@ -563,6 +563,11 @@ test("grant show warns when this checkout's origin is a stricter workspace's rem
   spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/strict.git"], { cwd: repo });
   const none = (await run(["show"], headless, {}, false)).text();
   expect(none).not.toContain("warning:");
+  const lines = none.split("\n");
+  expect(lines.findIndex((line) => line.startsWith("note: workspace w claims no remotes"))).toBe(
+    lines.length - 1 - (lines.at(-1) === "" ? 1 : 0),
+  );
+  expect(lines[0]).not.toContain("claims no remotes");
   expect(none).toContain(
     "note: workspace w claims no remotes, so a folder outside it whose origin is git@github.com:acme/strict.git keeps that folder's grants; to claim it, the user runs in their own terminal: workit workspace set w remotes=git@github.com:acme/strict.git",
   );

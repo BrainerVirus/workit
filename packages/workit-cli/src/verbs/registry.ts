@@ -658,6 +658,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "stage",
+        aliases: ["add"],
         usage: "workit git stage --patch <file|-> | [--] <paths…>",
         summary:
           "Stage selected hunks without git add -p: apply a unified diff to the index only (checked first); or stage whole paths",

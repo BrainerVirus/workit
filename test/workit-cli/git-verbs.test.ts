@@ -397,6 +397,23 @@ const feature = async (repo: RemoteRepo, file = "a.txt") => {
   return repo.git("rev-parse", "HEAD");
 };
 
+test("git add stages like git stage, and git push -u origin <branch> pushes the current branch", async () => {
+  const repo = setup();
+  repo.git("switch", "-q", "-c", "feature/a");
+  repo.write("a.txt", "a\n");
+  const added = await run(["git", "add", "--", "a.txt"], repo.cwd);
+  expect(added.code).toBe(0);
+  expect(repo.git("diff", "--cached", "--name-only")).toBe("a.txt");
+  const commit = await run(["git", "commit", "--staged", "-m", "feat: a"], repo.cwd);
+  expect(commit.code).toBe(0);
+  const sha = repo.git("rev-parse", "HEAD");
+  const other = await run(["git", "push", "-u", "origin", "feature/other", "--json"], repo.cwd);
+  expect(other.code).not.toBe(0);
+  const pushed = await run(["git", "push", "-u", "origin", "feature/a", "--json"], repo.cwd);
+  expect(pushed.code).toBe(0);
+  expect(repo.remoteTip("feature/a")).toBe(sha);
+});
+
 test("git push: a protected branch is refused before any network call", async () => {
   const repo = setup();
   repo.write("a.txt", "a\n");

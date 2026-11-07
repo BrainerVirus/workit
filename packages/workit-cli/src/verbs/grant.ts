@@ -380,7 +380,6 @@ function show(argv: string[], io: Io): number {
     ...prTemplate.issues.map((issue) => `note: ${issue}`),
     ...releaseNotes.issues.map((issue) => `note: ${issue}`),
     ...remotes.warnings.map((warning) => `warning: ${warning}`),
-    ...remotes.notes.map((note) => `note: ${note}`),
     data.workspace
       ? `workspace ${style.bold(data.workspace)} (${data.source === "default" ? "D4 defaults" : `from ${data.source}`})`
       : "no workspace matches this checkout: D4 defaults apply",
@@ -416,6 +415,7 @@ function show(argv: string[], io: Io): number {
     ...(endpointMismatch(data) ? [`note: ${endpointMismatch(data)}`] : []),
     ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
+    ...remotes.notes.map((note) => `note: ${note}`),
   ]);
 }
 
