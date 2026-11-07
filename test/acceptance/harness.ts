@@ -254,7 +254,7 @@ const probeHostVersions = (): Record<CodingHost, string> => {
     piPkg.peerDependencies?.["@earendil-works/pi-coding-agent"];
   return {
     opencode: `@opencode/plugin@${opencodePkg.devDependencies["@opencode/plugin"]}`,
-    cursor: `@brainervirus/workit-cursor@${cursorPkg.version}`,
+    cursor: `@workit-dev/cursor@${cursorPkg.version}`,
     codex_cli: `codex-cli@${codexCli.cli}`,
     codex_desktop: `codex-desktop@${codexDesktop.desktopPackage};bundled-cli@${codexDesktop.bundledCodexCli}`,
     pi: `@earendil-works/pi-coding-agent@${piVersion}`,

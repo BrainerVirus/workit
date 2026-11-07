@@ -4,7 +4,7 @@ import { useState, type JSX } from "react";
 import { Wizard } from "./steps";
 import type { SetupValues } from "./wizard-state";
 import { resolveBasePath } from "./wizard-state";
-import { EVENT } from "@brainervirus/workit-core/src/core/boundary";
+import { EVENT } from "@workit-dev/core/src/core/boundary";
 import {
   applySetupPreview,
   buildSetupPreview,
@@ -23,7 +23,7 @@ import {
 import { applyWizardBranchPolicy } from "./logic";
 import { type HostOutcome } from "./upgrade/shared";
 import { initYtrackSkill, ytrackSkillLines } from "./upgrade/ytrack-skill";
-import { userHome } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { userHome } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { logger } from "./diagnostics";
 import { createProgress, type Progress } from "./progress";
 import { createStyle, type Style } from "./style";

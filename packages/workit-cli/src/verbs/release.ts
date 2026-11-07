@@ -14,14 +14,10 @@
 // `review` refuses before any merge until the user approves the current
 // draft at their own terminal (approve refuses agent shells and no TTY).
 import { progressFor } from "../progress";
-import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
-import { pushTarget } from "@brainervirus/workit-core/src/core/remotes";
-import { verifyReleased } from "@brainervirus/workit-core/src/forge/verify";
-import {
-  deleteRemoteBranch,
-  executePush,
-  pushPreflight,
-} from "@brainervirus/workit-core/src/git/ops";
+import { requireGrant } from "@workit-dev/core/src/autonomy";
+import { pushTarget } from "@workit-dev/core/src/core/remotes";
+import { verifyReleased } from "@workit-dev/core/src/forge/verify";
+import { deleteRemoteBranch, executePush, pushPreflight } from "@workit-dev/core/src/git/ops";
 import {
   finishLocally,
   planReleaseFinish,
@@ -36,9 +32,9 @@ import {
   releaseToPublish,
   switchToRelease,
   type FinishPlan,
-} from "@brainervirus/workit-core/src/git/release";
-import { parseRemoteUrl, pushUrl } from "@brainervirus/workit-core/src/git/rev";
-import { actorFromEnv, appendObserved } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/git/release";
+import { parseRemoteUrl, pushUrl } from "@workit-dev/core/src/git/rev";
+import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Envelope, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { agentMarker, type GrantDeps } from "./grant";

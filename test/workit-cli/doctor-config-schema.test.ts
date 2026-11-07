@@ -42,7 +42,7 @@ test("Given a workspaces.json with an invalid value, When doctor runs, Then it n
 test("Given config files that match their schemas, When doctor runs, Then the row passes", () => {
   const check = row({
     "workspaces.json": {
-      $schema: "https://unpkg.com/@brainervirus/workit-core/schemas/workspaces.json",
+      $schema: "https://unpkg.com/@workit-dev/core/schemas/workspaces.json",
       workspaces: [{ name: "work", glob: "/home/u/work/**", changelog: "update" }],
     },
     "config.json": { locale: "en", updates: "prompt" },

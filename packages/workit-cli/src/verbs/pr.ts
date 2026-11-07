@@ -10,7 +10,7 @@
 // `--subject`/`--body` (squash only) set the squash commit message.
 // ready/edit/threads/reply: the lifecycle steps `next` names (audit M13).
 import { progressFor } from "../progress";
-import { endpointMismatch, resolveAutonomy } from "@brainervirus/workit-core/src/autonomy";
+import { endpointMismatch, resolveAutonomy } from "@workit-dev/core/src/autonomy";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -23,7 +23,7 @@ import {
   type BacklinkOutcome,
   type IssueLink,
   type LinkedIssue,
-} from "@brainervirus/workit-core/src/forge/issue-link";
+} from "@workit-dev/core/src/forge/issue-link";
 import {
   editPullRequest,
   listThreads,
@@ -33,63 +33,55 @@ import {
   type ReadyOutcome,
   type ReplyOutcome,
   type ThreadsOutcome,
-} from "@brainervirus/workit-core/src/forge/pr-edit";
+} from "@workit-dev/core/src/forge/pr-edit";
 import {
   createPullRequest,
   fillFromCommits,
   mergePullRequest,
   nextHint,
   type CreateOutcome,
-} from "@brainervirus/workit-core/src/forge/pr-ops";
-import { mergeGateForge, prStatusReport } from "@brainervirus/workit-core/src/forge/report";
-import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
-import { currentBranch, GIT_TIMEOUTS, headSha } from "@brainervirus/workit-core/src/git/rev";
-import { configDir } from "@brainervirus/workit-core/src/core/config";
+} from "@workit-dev/core/src/forge/pr-ops";
+import { mergeGateForge, prStatusReport } from "@workit-dev/core/src/forge/report";
+import type { MergeMethod } from "@workit-dev/core/src/forge/types";
+import { currentBranch, GIT_TIMEOUTS, headSha } from "@workit-dev/core/src/git/rev";
+import { configDir } from "@workit-dev/core/src/core/config";
 import {
   workspaceChangelog,
   workspaceDeleteBranch,
   workspacePrTemplate,
-} from "@brainervirus/workit-core/src/core/workspaces";
+} from "@workit-dev/core/src/core/workspaces";
 import {
   checkPrBody,
   resolvePrTemplate,
   templateLabel,
   type PrTemplate,
-} from "@brainervirus/workit-core/src/core/pr-template";
+} from "@workit-dev/core/src/core/pr-template";
 import {
   changelogGate,
   resolveForkPoint,
   type ChangelogGate,
   type ForkPoint,
-} from "@brainervirus/workit-core/src/core/changelog-gate";
+} from "@workit-dev/core/src/core/changelog-gate";
 import {
   docsGate,
   recordPrChecks,
   type DocsGate,
   type PrCheckOutcome,
-} from "@brainervirus/workit-core/src/core/docs-gate";
-import { cleanupAfterMerge, type MergeCleanup } from "@brainervirus/workit-core/src/core/cleanup";
+} from "@workit-dev/core/src/core/docs-gate";
+import { cleanupAfterMerge, type MergeCleanup } from "@workit-dev/core/src/core/cleanup";
 import {
   branchKindOf,
   flowMismatch,
   flowRoute,
   gitFlowOf,
   type FlowRoute,
-} from "@brainervirus/workit-core/src/core/branch";
-import {
-  actorFromEnv,
-  carryLabel,
-  readLedger,
-  type CarryNote,
-} from "@brainervirus/workit-core/src/ledger";
-import { checkVerdictsCovered, type StackCover } from "@brainervirus/workit-core/src/verdict-cover";
-import { untrackedRiskPathsWarning } from "@brainervirus/workit-core/src/core/policy/lane";
-import { prLaneGate } from "@brainervirus/workit-core/src/core/policy/pr-lane";
-import {
-  vcsConfig,
-  type ResolvedReleaseTrack,
-} from "@brainervirus/workit-core/src/core/vcs-config";
-import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+} from "@workit-dev/core/src/core/branch";
+import { actorFromEnv, carryLabel, readLedger, type CarryNote } from "@workit-dev/core/src/ledger";
+import { checkVerdictsCovered, type StackCover } from "@workit-dev/core/src/verdict-cover";
+import { untrackedRiskPathsWarning } from "@workit-dev/core/src/core/policy/lane";
+import { prLaneGate } from "@workit-dev/core/src/core/policy/pr-lane";
+import { vcsConfig, type ResolvedReleaseTrack } from "@workit-dev/core/src/core/vcs-config";
+import { checkRoot } from "@workit-dev/core/src/check-config";
 import { emit, fail, ok, type Io } from "../output";
 import {
   announce,

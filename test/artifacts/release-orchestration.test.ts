@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
+import { RELEASE_PACKAGES, TAG_PREFIX } from "@/packages/workit-core/scripts/analyze-release-scope";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // Task 24 release-orchestration gate (AR-01/AR-02, CA-33/CA-44): the real
@@ -228,7 +228,10 @@ test(
 
     // CA-08 selective-publish pins are STRUCTURAL: load the pure-object config
     // instead of matching raw bytes, so a comment reflow can't break them.
-    const cfg = require(path.resolve(REPO_ROOT, "release.config.cjs")) as { plugins: unknown[] };
+    const cfg = require(path.resolve(REPO_ROOT, "release.config.cjs")) as {
+      plugins: unknown[];
+      tagFormat?: string;
+    };
     const opts = (p: unknown): Record<string, unknown> =>
       Array.isArray(p) && p.length > 1 && typeof p[1] === "object" && p[1] !== null
         ? (p[1] as Record<string, unknown>)
@@ -274,6 +277,10 @@ test(
     // the new release tag before publish plugins run, so latestTag() inside the
     // script would see the release being cut and skip every package.
     expect(opts(cfg.plugins[publishIdx]).publishCmd).toContain("${lastRelease.gitTag}");
+    // Releases are tagged workit-dev-v<version>: the 14.x v* tags
+    // never seed a version, so the first @workit-dev release is 1.0.0, and
+    // the scripts read the same prefix.
+    expect(cfg.tagFormat).toBe(`${TAG_PREFIX}\${version}`);
     const githubIdx = cfg.plugins.findIndex((p) => nameOf(p) === "@semantic-release/github");
     expect(publishIdx).toBeGreaterThan(lastNpmIdx);
     expect(githubIdx).toBeGreaterThan(lastNpmIdx);

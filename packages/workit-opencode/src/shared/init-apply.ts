@@ -1,14 +1,14 @@
 import path from "node:path";
-import { fail, ok } from "@brainervirus/workit-core/src/core";
+import { fail, ok } from "@workit-dev/core/src/core";
 import {
   configDir,
   mergeConfigValues,
   readConfig,
   writeConfig,
-} from "@brainervirus/workit-core/src/core/config";
-import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
-import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
-import { initApply } from "@brainervirus/workit-core/src/core/init";
+} from "@workit-dev/core/src/core/config";
+import { ensureProjectGitignore } from "@workit-dev/core/src/core/gitignore";
+import { ensureHygieneFiles } from "@workit-dev/core/src/core/hygiene";
+import { initApply } from "@workit-dev/core/src/core/init";
 import { legacyScriptResult, output, requireConfirmed, type RepoRuntime } from "./repo-result";
 
 /** The core initApply call in RunResult shape (the runtime is injectable so

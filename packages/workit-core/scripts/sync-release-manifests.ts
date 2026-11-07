@@ -3,12 +3,13 @@
 // semantic-release and rewrite-workspace-deps.ts stamp the version into the
 // manifests of the CI checkout at publish time, and main is not synced, so the
 // committed manifests keep the version of the last manual sync. Run it in any
-// PR to align every tracked manifest with the latest `v*` tag (or a version
+// PR to align every tracked manifest with the latest `workit-dev-v*` tag (or a version
 // given as argv[2]); it is idempotent. plugin.test.ts reads
 // SYNC_MANIFEST_PATHS to keep every plugin manifest on this list.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { RELEASE_TAG, TAG_GLOB } from "./analyze-release-scope";
 
 export const SYNC_MANIFEST_PATHS = [
   "package.json",
@@ -31,15 +32,15 @@ export const SYNC_MANIFEST_PATHS = [
 export type ManifestSyncResult = { version: string; changed: string[] };
 
 /**
- * Write `version` (a bare semver or a leading-v git tag) into every tracked
+ * Write `version` (a bare semver or a `workit-dev-v` release tag) into every tracked
  * manifest under `root`. Idempotent: manifests already at the target version
  * are left byte-untouched and omitted from `changed`. Throws on a value that
  * is not a plain release version (`latest`, branches, ranges).
  */
 export function syncManifests(root: string, tagOrVersion: string): ManifestSyncResult {
-  const match = /^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(tagOrVersion.trim());
-  if (!match) throw new Error(`invalid version tag: ${JSON.stringify(tagOrVersion)}`);
-  const version = match[1];
+  const value = tagOrVersion.trim();
+  const version = RELEASE_TAG.exec(value)?.[1] ?? RELEASE_TAG.exec(`workit-dev-v${value}`)?.[1];
+  if (!version) throw new Error(`invalid version tag: ${JSON.stringify(tagOrVersion)}`);
   const changed: string[] = [];
   for (const rel of SYNC_MANIFEST_PATHS) {
     const file = resolve(root, ...rel.split("/"));
@@ -52,17 +53,18 @@ export function syncManifests(root: string, tagOrVersion: string): ManifestSyncR
   return { version, changed };
 }
 
-/** The newest `v*` tag by descending semver refname order (empty repo throws). */
+/** The newest release tag by descending semver refname order (none throws). */
 function latestReleaseTag(cwd?: string): string {
-  const tag = execFileSync("git", ["tag", "--list", "v*", "--sort=-v:refname"], {
+  const tag = execFileSync("git", ["tag", "--list", TAG_GLOB, "--sort=-v:refname"], {
     cwd,
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   })
     .split("\n")
     .map((line) => line.trim())
-    .find(Boolean);
-  if (!tag) throw new Error("no v* release tag found — run after the first semantic-release");
+    .find((line) => RELEASE_TAG.test(line));
+  if (!tag)
+    throw new Error(`no ${TAG_GLOB} release tag found — run after the first semantic-release`);
   return tag;
 }
 

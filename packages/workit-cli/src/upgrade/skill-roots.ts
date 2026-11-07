@@ -1,7 +1,7 @@
 // Each agent host's own user skills directory. Kept apart from upgrade/shared.ts
 // so doctor and uninstall can import it without the upgrade machinery.
 import path from "node:path";
-import { type SkillHost } from "@brainervirus/workit-core/src/core/ytrack-skill";
+import { type SkillHost } from "@workit-dev/core/src/core/ytrack-skill";
 
 /** The XDG config base OpenCode reads (its config and skills): XDG_CONFIG_HOME, else ~/.config. */
 export const configHome = (home: string, env: NodeJS.ProcessEnv): string =>

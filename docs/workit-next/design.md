@@ -309,12 +309,12 @@ packages/workit-claude-code/
   hooks/hooks.json
   bin/workit                      #!/bin/sh shim → dev: `exec bun "$ROOT/../workit-cli/src/main.ts" "$@"` when ../workit-core/src exists; else `exec node "$ROOT/dist/workit.js" "$@"`
   bin/workit-hook                 same pattern → src/hook.ts | dist/workit-hook.js
-  src/hook.ts                     import { runHookProcess } from "@brainervirus/workit-core/hooks"; process.exitCode = await runHookProcess("claude_code", …)
+  src/hook.ts                     import { runHookProcess } from "@workit-dev/core/hooks"; process.exitCode = await runHookProcess("claude_code", …)
   agents/{verifier,reviewer,implementer}.md
   skills/                         GENERATED (gitignored): from workit-core/skills, renamed workit-x → x (=> /workit:review), host tool refs injected
   evals/<case>/{case.yaml|prompt.md, graders/*.md}
   scripts/build.ts                bun build src/hook.ts → dist/workit-hook.js; workit-cli/src/main.ts → dist/workit.js; copy+transform skills
-  package.json                    "@brainervirus/workit-claude-code", files: [".claude-plugin","hooks","bin","agents","skills","dist","README.md"]
+  package.json                    "@workit-dev/claude-code", files: [".claude-plugin","hooks","bin","agents","skills","dist","README.md"]
 .claude-plugin/marketplace.json   (repo root, beside .cursor-plugin/ and .agents/plugins/)
 ```
 `hooks/hooks.json` (exec form, absolute plugin paths; `bin/` is on PATH for the **Bash tool**, as the binary confirms, but that is not guaranteed for hooks):
@@ -331,7 +331,7 @@ packages/workit-claude-code/
 ```
 Root `.claude-plugin/marketplace.json`:
 ```json
-{"name":"workit","owner":{"name":"BrainerVirus"},"plugins":[{"name":"workit","description":"…","source":{"source":"npm","package":"@brainervirus/workit-claude-code"}}]}
+{"name":"workit","owner":{"name":"BrainerVirus"},"plugins":[{"name":"workit","description":"…","source":{"source":"npm","package":"@workit-dev/claude-code"}}]}
 ```
 Do not put a version in the entry: `claude plugin tag` and `validate` reject plugin.json/entry disagreement, and plugin.json carries the synced version. The npm `version` field defaults to the latest dist-tag.
 

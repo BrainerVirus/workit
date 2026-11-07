@@ -12,7 +12,7 @@ import { createStyle, terminalMode, type TerminalStream } from "./style";
 import { entryOf, ownedPaths, ownedVersion } from "./install/paths";
 import { registryVersion, runner, versionAtLeast } from "./upgrade/shared";
 
-export const CLI_PACKAGE = "@brainervirus/workit-cli";
+export const CLI_PACKAGE = "@workit-dev/cli";
 /** How long a registry answer (or a failed lookup) is trusted, and how long "skip for now" lasts. */
 export const UPDATE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Set on the re-executed command and on the refresh child: neither checks again. */

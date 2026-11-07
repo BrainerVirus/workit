@@ -20,16 +20,16 @@ import {
   packWorkspacePackages,
 } from "@/test/shared/helpers/packages";
 
-// #265 / #272: `npm i -g @brainervirus/workit-cli` nests the CLI's workspace
-// dependencies under <global root>/@brainervirus/workit-cli/node_modules, and
+// #265 / #272: `npm i -g @workit-dev/cli` nests the CLI's workspace
+// dependencies under <global root>/@workit-dev/cli/node_modules, and
 // OpenCode installs workit-opencode into its own cache. `workit init` used to
 // look only for hoisted siblings and failed with "package not found"; doctor
 // warned about a missing dev checkout and flock on a normal install. This gate
 // installs the packed CLI with npm into a temp prefix, against a temp HOME.
 
-const CLI = "@brainervirus/workit-cli";
-const CURSOR = "@brainervirus/workit-cursor";
-const OPENCODE = "@brainervirus/workit-opencode";
+const CLI = "@workit-dev/cli";
+const CURSOR = "@workit-dev/cursor";
+const OPENCODE = "@workit-dev/opencode";
 
 // Third-party runtime deps (ink, react, @inkjs/ui) come from the registry.
 const npmRegistryOk = npmRegistryReachable();
@@ -118,8 +118,8 @@ test.skipIf(!npmRegistryOk)(
         ".cache",
         "opencode",
         "npm",
-        "@brainervirus",
-        "workit-opencode@latest",
+        "@workit-dev",
+        "opencode@latest",
         "1790643053398",
         "node_modules",
         OPENCODE,

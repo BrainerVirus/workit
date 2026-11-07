@@ -1,10 +1,7 @@
 // The forge provider and target branch with their source, shared by
 // `workit config show` and `workit grant show` (W2.8).
-import { readVcsConfig, vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
-import {
-  resolveRuntimeWorkspaceVcs,
-  workspacesPath,
-} from "@brainervirus/workit-core/src/core/workspaces";
+import { readVcsConfig, vcsConfig } from "@workit-dev/core/src/core/vcs-config";
+import { resolveRuntimeWorkspaceVcs, workspacesPath } from "@workit-dev/core/src/core/workspaces";
 
 /** A value and where it came from: a file and key, a remote, or `default`. */
 export type Sourced<T> = { value: T; source: string };

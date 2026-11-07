@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-claude-code",
+  "name": "@workit-dev/claude-code",
   "version": "13.0.0",
   "private": false,
   "description": "Workit Claude Code plugin — session and per-turn task context, branch policy on git shell commands, workit method skills, and verifier/reviewer/implementer agents",
@@ -40,8 +40,8 @@
     "build": "bun scripts/build.ts"
   },
   "devDependencies": {
-    "@brainervirus/workit-cli": "workspace:*",
-    "@brainervirus/workit-core": "workspace:*"
+    "@workit-dev/cli": "workspace:*",
+    "@workit-dev/core": "workspace:*"
   },
   "engines": {
     "node": ">=24"

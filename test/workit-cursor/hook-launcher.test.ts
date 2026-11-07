@@ -23,7 +23,7 @@ import {
 } from "@/packages/workit-cursor/hooks/launch-runtime.mjs";
 
 const HOOKS_SRC = path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks");
-const PKG = "@brainervirus/workit-cursor";
+const PKG = "@workit-dev/cursor";
 const roots: string[] = [];
 afterAll(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
@@ -235,7 +235,7 @@ test("relative PATH entries are never searched for a global hook bin", () => {
 
 test("a global hook bin reports the workit-cursor version it belongs to", () => {
   const prefix = scratch();
-  const pkg = path.join(prefix, "lib", "node_modules", "@brainervirus", "workit-cursor");
+  const pkg = path.join(prefix, "lib", "node_modules", "@workit-dev", "cursor");
   executable(path.join(pkg, "dist", "workit-hook.js"), "#!/bin/sh\necho '{}'\n");
   writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: PKG, version: "7.1.2" }));
   const bin = path.join(prefix, "bin");

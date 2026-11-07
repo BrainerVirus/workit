@@ -448,12 +448,10 @@ export function workitAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /**
  * The command that runs `workit check <args>`: plain `workit` when it is on
- * PATH, else a pinned `npx -y @brainervirus/workit-cli@<version>` fallback.
+ * PATH, else a pinned `npx -y @workit-dev/cli@<version>` fallback.
  */
 export function checkCommand(args: string, version: string, onPath = workitAvailable()): string {
-  return onPath
-    ? `workit check ${args}`
-    : `npx -y @brainervirus/workit-cli@${version} check ${args}`;
+  return onPath ? `workit check ${args}` : `npx -y @workit-dev/cli@${version} check ${args}`;
 }
 
 // ---------------------------------------------------------------------------

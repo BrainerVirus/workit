@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { workitDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { workitDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { COMPLETION_MARKER, completionScript, type Shell } from "./scripts";
 
 type Env = NodeJS.ProcessEnv;

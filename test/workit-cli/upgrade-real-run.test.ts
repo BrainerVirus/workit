@@ -44,7 +44,7 @@ test("Given an old-form Cursor MCP entry, When upgrade repairs Cursor, Then mcp.
       mcpServers: {
         workit: {
           command: "npx",
-          args: ["-y", "--package=@brainervirus/workit-cursor", "workit-cursor-mcp"],
+          args: ["-y", "--package=@workit-dev/cursor", "workit-cursor-mcp"],
         },
         other: { command: "other" },
       },
@@ -61,9 +61,9 @@ test("Given an old-form Cursor MCP entry, When upgrade repairs Cursor, Then mcp.
       asyncCalls.push(`${command} ${args.join(" ")}`);
       const prefix = args.indexOf("--prefix");
       if (prefix >= 0) {
-        const root = path.join(args[prefix + 1], "node_modules/@brainervirus/workit-cursor");
+        const root = path.join(args[prefix + 1], "node_modules/@workit-dev/cursor");
         write(path.join(root, "package.json"), {
-          name: "@brainervirus/workit-cursor",
+          name: "@workit-dev/cursor",
           version: "2.0.0",
         });
         write(path.join(root, ".cursor-plugin/plugin.json"), { name: "workit" });
@@ -137,7 +137,7 @@ const opencodeHome = () => {
   const home = tempHome();
   write(path.join(home, ".config/workit/config.json"), { locale: "en" });
   write(path.join(home, ".config/opencode/opencode.json"), {
-    plugins: ["@brainervirus/workit-opencode"],
+    plugins: ["@workit-dev/opencode"],
   });
   const calls: string[] = [];
   let version = "1.0.0";
@@ -151,7 +151,7 @@ const opencodeHome = () => {
     if (command === "opencode" && args.join(" ") === "plugin list")
       return {
         status: 0,
-        stdout: `ID      VERSION  SOURCE\nworkit  ${version}    @brainervirus/workit-opencode\n`,
+        stdout: `ID      VERSION  SOURCE\nworkit  ${version}    @workit-dev/opencode\n`,
       };
     return { status: 0, stdout: "" };
   };
@@ -438,8 +438,8 @@ test.skipIf(process.platform === "win32")(
   -e|--check) exit 0 ;;
   *npm-cli.js)
     while [ $# -gt 0 ]; do [ "$1" = "--prefix" ] && prefix="$2"; shift; done
-    mkdir -p "$prefix/node_modules/@brainervirus"
-    cp -r "$FAKE_CURSOR_TEMPLATE" "$prefix/node_modules/@brainervirus/workit-cursor"
+    mkdir -p "$prefix/node_modules/@workit-dev"
+    cp -r "$FAKE_CURSOR_TEMPLATE" "$prefix/node_modules/@workit-dev/cursor"
     echo "$prefix" >> "$FAKE_NPM_LOG" ;;
 esac
 exit 0`,
@@ -454,7 +454,7 @@ exit 0`,
         mcpServers: {
           workit: {
             command: "npx",
-            args: ["-y", "--package=@brainervirus/workit-cursor", "workit-cursor-mcp"],
+            args: ["-y", "--package=@workit-dev/cursor", "workit-cursor-mcp"],
           },
         },
       });

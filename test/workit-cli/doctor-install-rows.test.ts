@@ -99,30 +99,24 @@ test.skipIf(process.platform === "win32")(
       ".cache",
       "opencode",
       "npm",
-      "@brainervirus",
-      "workit-opencode@latest",
+      "@workit-dev",
+      "opencode@latest",
     );
-    const pkg = path.join(
-      spec,
-      "1790643053398",
-      "node_modules",
-      "@brainervirus",
-      "workit-opencode",
-    );
+    const pkg = path.join(spec, "1790643053398", "node_modules", "@workit-dev", "opencode");
     mkdirSync(pkg, { recursive: true });
     writeFileSync(
       path.join(pkg, "package.json"),
-      JSON.stringify({ name: "@brainervirus/workit-opencode", version: "8.9.0" }),
+      JSON.stringify({ name: "@workit-dev/opencode", version: "8.9.0" }),
     );
     const config = path.join(doctor.home, ".config", "opencode", "opencode.json");
     mkdirSync(path.dirname(config), { recursive: true });
-    writeFileSync(config, JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }));
+    writeFileSync(config, JSON.stringify({ plugins: ["@workit-dev/opencode"] }));
 
     const stale = row(doctor.run(), "stale_install");
     expect(stale.status).toBe("fail");
     expect(stale.detail).toContain("8.9.0");
     expect(stale.fix).toContain(spec);
-    expect(stale.fix).toContain("opencode plugin update @brainervirus/workit-opencode");
+    expect(stale.fix).toContain("opencode plugin update @workit-dev/opencode");
   },
 );
 

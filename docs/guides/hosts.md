@@ -232,7 +232,7 @@ Requires OpenCode 2.0.18+ and Node.js 24+. OpenCode (and Pi) run Workit in-proce
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@brainervirus/workit-opencode"]
+  "plugins": ["@workit-dev/opencode"]
 }
 ```
 
@@ -241,7 +241,7 @@ A checkout pin uses `"file:///path/to/workit/packages/workit-opencode"` after
 `_npx` cache paths.
 
 Update with `workit upgrade` (native fallback:
-`opencode plugin update @brainervirus/workit-opencode`). OpenCode 2.x loads
+`opencode plugin update @workit-dev/opencode`). OpenCode 2.x loads
 the new version live, with no restart. OpenCode v2 loads plugins in its
 background service, so Workit runs its OpenCode plugin commands in your home
 directory's location and waits (up to 20 s) until both `opencode api
@@ -278,7 +278,7 @@ Cursor alone); uninstall with `workit uninstall`. Manual MCP config:
         "-y",
         "--prefer-online",
         "--min-release-age=0",
-        "--package=@brainervirus/workit-cursor@latest",
+        "--package=@workit-dev/cursor@latest",
         "workit-cursor-mcp",
         "${workspaceFolder}"
       ]
@@ -389,12 +389,12 @@ already wrote breaks `config.toml`. `workit doctor` checks both:
 ## Pi
 
 ```bash
-pi install npm:@brainervirus/workit-pi
+pi install npm:@workit-dev/pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
 Update with `workit upgrade` (native fallback:
-`pi update --extension npm:@brainervirus/workit-pi`); uninstall with
+`pi update --extension npm:@workit-dev/pi`); uninstall with
 `workit uninstall`.
 
 Pi 1.4.0 loads the extension and skills from the package's `pi` manifest. The
@@ -408,16 +408,16 @@ OS sandbox).
 reads the `packages` in `~/.pi/agent/settings.json` and `.pi/settings.json`
 (the project entry wins) and warns:
 
-- missing: no `@brainervirus/workit-pi` entry, or one Pi has not installed.
-  Fix: `pi install npm:@brainervirus/workit-pi` (add `-l` for a project
+- missing: no `@workit-dev/pi` entry, or one Pi has not installed.
+  Fix: `pi install npm:@workit-dev/pi` (add `-l` for a project
   entry).
 - not loading: the entry's `extensions` filter drops `dist/workit.js`, or the
   package has no built `dist/workit.js`. Fix: remove the filter (or enable the
   extension in `pi config`), or reinstall the package; a local checkout gets
   `cd <checkout> && bun run build`.
 - stale: the package is older than the workit CLI and a newer one is
-  published. Fix: `workit upgrade` (native: `pi update --extension npm:@brainervirus/workit-pi`), or
-  `pi install npm:@brainervirus/workit-pi@<version>` for a pinned entry. When
+  published. Fix: `workit upgrade` (native: `pi update --extension npm:@workit-dev/pi`), or
+  `pi install npm:@workit-dev/pi@<version>` for a pinned entry. When
   the registry is unreachable, or the entry is a local checkout, an older
   package passes and the detail says it was not compared.
 

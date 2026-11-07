@@ -26,14 +26,14 @@ const writeJson = (p: string, value: unknown) =>
 // legacy exact npx pin in the plugin's own mcp.json, and a local-dist hook.
 // The legacy pin is assembled at runtime so the tracked-file selector scan
 // (test/artifacts/manifests.test.ts) never trips on the fixture bytes.
-const LEGACY_PIN = ["@brainervirus/workit-cursor@", "0.8.0"].join("");
+const LEGACY_PIN = ["@workit-dev/cursor@", "0.8.0"].join("");
 const installEnv = (home: string, stub: string, extra: Record<string, string> = {}) =>
   envWithSupportedNode({ HOME: home, WORKIT_DEV: stub, ...extra });
 function makeStaleCursorHome(home: string, pluginDir: string) {
   mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
   mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
   writeJson(path.join(pluginDir, "package.json"), {
-    name: "@brainervirus/workit-cursor",
+    name: "@workit-dev/cursor",
     version: "0.4.0",
   });
   writeJson(path.join(pluginDir, "mcp.json"), {
@@ -117,7 +117,7 @@ test(
           "-y",
           "--prefer-online",
           "--min-release-age=0",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@workit-dev/cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -131,7 +131,7 @@ test(
           "-y",
           "--prefer-online",
           "--min-release-age=0",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@workit-dev/cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -231,7 +231,7 @@ function flockAvailable(): boolean {
 }
 
 function copyCoreSources(stub: string) {
-  mkdirSync(path.join(stub, "node_modules", "@brainervirus"), { recursive: true });
+  mkdirSync(path.join(stub, "node_modules", "@workit-dev"), { recursive: true });
   symlinkSync(
     path.join(repoRoot, "node_modules", "zod"),
     path.join(stub, "node_modules", "zod"),
@@ -239,7 +239,7 @@ function copyCoreSources(stub: string) {
   );
   symlinkSync(
     path.join(stub, "packages/workit-core"),
-    path.join(stub, "node_modules", "@brainervirus", "workit-core"),
+    path.join(stub, "node_modules", "@workit-dev", "core"),
     "dir",
   );
   mkdirSync(path.join(stub, "packages/workit-cli/src/admin"), { recursive: true });
@@ -349,7 +349,7 @@ function makeNestedStub() {
     JSON.stringify({
       plugins: [
         "@dietrichgebert/ponytail",
-        "@brainervirus/workit-opencode",
+        "@workit-dev/opencode",
         `file://${stub}/packages/workit-opencode`,
       ],
     }),
@@ -408,7 +408,7 @@ rsync -a --delete "$WORKIT_DEV/packages/workit-cursor/" "$HOME/.cursor/plugins/l
             "-y",
             "--prefer-online",
             "--min-release-age=0",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@workit-dev/cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -422,7 +422,7 @@ rsync -a --delete "$WORKIT_DEV/packages/workit-cursor/" "$HOME/.cursor/plugins/l
   );
   writeFileSync(
     path.join(cursorPkg, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }),
+    JSON.stringify({ name: "@workit-dev/cursor", version: "0.4.0" }),
   );
   mkdirSync(path.join(cursorPkg, "mcp"), { recursive: true });
   mkdirSync(path.join(cursorPkg, "hooks"), { recursive: true });
@@ -662,7 +662,7 @@ test(
       expect(server.command).toBe("node");
       expect(server.args[0]).toBe(path.join(pluginDir, "dist", "mcp-server.js"));
       expect(server.args[1]).toBe("${workspaceFolder}");
-      expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.5");
+      expect(JSON.stringify(mcp)).not.toContain("@workit-dev/cursor@0.8.5");
 
       const hooks = JSON.parse(
         readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"), "utf8"),
@@ -720,7 +720,7 @@ test(
           "-y",
           "--prefer-online",
           "--min-release-age=0",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@workit-dev/cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -802,8 +802,8 @@ if [ "\${1:-}" = "install" ]; then
   [ "\${2:-}" = "--frozen-lockfile" ] || exit 41
   printf 'install\n' >> "$BUN_LOG"
   [ "\${FAIL_INSTALL:-0}" = "0" ] || exit 42
-  mkdir -p "$PWD/node_modules/@brainervirus" "$PWD/node_modules/@modelcontextprotocol"
-  ln -s "$PWD/packages/workit-core" "$PWD/node_modules/@brainervirus/workit-core"
+  mkdir -p "$PWD/node_modules/@workit-dev" "$PWD/node_modules/@modelcontextprotocol"
+  ln -s "$PWD/packages/workit-core" "$PWD/node_modules/@workit-dev/core"
   ln -s "$REAL_NODE_MODULES/@modelcontextprotocol/sdk" "$PWD/node_modules/@modelcontextprotocol/sdk"
   ln -s "$REAL_NODE_MODULES/zod" "$PWD/node_modules/zod"
   exit 0

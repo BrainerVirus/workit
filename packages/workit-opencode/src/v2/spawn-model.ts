@@ -12,8 +12,8 @@ import {
   leadSwitchNotice,
   resolveRoleModel,
   roleForAgentType,
-} from "@brainervirus/workit-core/src/core/role-models";
-import { recordUsageLimit, redispatchNote } from "@brainervirus/workit-core/src/hooks/model-limit";
+} from "@workit-dev/core/src/core/role-models";
+import { recordUsageLimit, redispatchNote } from "@workit-dev/core/src/hooks/model-limit";
 
 /** What the subagent tool's `model` takes: `providerID/modelID`, optionally `#variant`. */
 const opencodeSubagentModel = (value: string): string | null => {

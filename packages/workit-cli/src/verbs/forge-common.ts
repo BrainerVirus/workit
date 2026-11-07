@@ -2,20 +2,20 @@
 // flag parsing, forge resolution + identity check, envelope mapping, and the
 // human rendering of a PR status document.
 import { readFileSync } from "node:fs";
-import type { ForgeRunner } from "@brainervirus/workit-core/src/forge/exec";
-import type { PrStatusDoc } from "@brainervirus/workit-core/src/forge/report";
-import { evidenceLines } from "@brainervirus/workit-core/src/core/policy/check-evidence";
+import type { ForgeRunner } from "@workit-dev/core/src/forge/exec";
+import type { PrStatusDoc } from "@workit-dev/core/src/forge/report";
+import { evidenceLines } from "@workit-dev/core/src/core/policy/check-evidence";
 import {
   checkIdentity,
   checkPushIdentity,
   resolveForge,
   type PushIdentity,
   type ResolvedForge,
-} from "@brainervirus/workit-core/src/forge/resolve";
-import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
-import type { NpmRunner } from "@brainervirus/workit-core/src/forge/verify";
-import { vcsConfig } from "@brainervirus/workit-core/src/core/vcs-config";
-export { parseDuration } from "@brainervirus/workit-core/src/duration";
+} from "@workit-dev/core/src/forge/resolve";
+import type { ForgeResult } from "@workit-dev/core/src/forge/types";
+import type { NpmRunner } from "@workit-dev/core/src/forge/verify";
+import { vcsConfig } from "@workit-dev/core/src/core/vcs-config";
+export { parseDuration } from "@workit-dev/core/src/duration";
 import { emit, fail, type Io } from "../output";
 
 /** Test seams: a recorded-fixture runner, a virtual clock, a fake npm and stdin. */

@@ -1,8 +1,14 @@
 module.exports = {
   branches: ["main"],
+  // The @workit-dev packages restarted at 1.0.0. semantic-release only reads
+  // tags that match this format, so the v1.0.0..v14.x tags of the
+  // old-scope packages never seed a version: with no workit-dev-v* tag the
+  // next release is 1.0.0. analyze-release-scope.ts and the publish, sync and
+  // backfill scripts share the prefix (TAG_PREFIX).
+  tagFormat: "workit-dev-v${version}",
   plugins: [
     // AR-16: path-gated release decision — prints major|minor|patch only when
-    // product paths changed since the previous v* tag; empty output skips the
+    // product paths changed since the previous workit-dev-v* tag; empty output skips the
     // release entirely (no tag, no publish, no sync PR). Key is
     // analyzeCommitsCmd: @semantic-release/exec v7 renamed it from analyzeCmd
     // and silently ignores the old name.
@@ -82,10 +88,12 @@ module.exports = {
     // before this plugin ran (v8.41.0: tag and packages, no release or
     // notes). A failing publishCmd below still fails the job.
     "@semantic-release/github",
-    // AR-16: publish only packages with payload changes since the PREVIOUS
-    // tag. ${lastRelease.gitTag} is mandatory here: semantic-release creates
-    // the NEW release tag before publish plugins run, so latestTag() inside
-    // the script would resolve to the release being cut and skip everything.
+    // AR-16: publish only packages with payload changes since the release the
+    // registry serves for each. ${lastRelease.gitTag} is mandatory here:
+    // semantic-release creates the NEW release tag before publish plugins run,
+    // so latestTag() inside the script would resolve to the release being cut
+    // and skip everything. It renders empty on the first release (1.0.0),
+    // which ships every package.
     [
       "@semantic-release/exec",
       {

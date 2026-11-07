@@ -9,16 +9,13 @@
 import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  configDir,
-  stateDir as workitStateDir,
-} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { configDir, stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import {
   readYtrackSkillRecord,
   removeYtrackSkill,
   ytrackSkillPathRefusal,
   type SkillHost,
-} from "@brainervirus/workit-core/src/core/ytrack-skill";
+} from "@workit-dev/core/src/core/ytrack-skill";
 import { hostSkillsRoot } from "../upgrade/skill-roots";
 import { ownedCompletionFiles, removeCompletions } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";

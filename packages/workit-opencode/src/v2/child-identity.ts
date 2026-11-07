@@ -5,7 +5,7 @@
 // a task that already exists, so its records are told apart from the lead's.
 // Everything else (task lifecycle, workers, decisions, policy) stays with a
 // validated worker or the lead.
-import type { OperationFamily, TaskStore } from "@brainervirus/workit-core/src/core";
+import type { OperationFamily, TaskStore } from "@workit-dev/core/src/core";
 
 const CHILD_RECORDS: Partial<Record<OperationFamily, ReadonlySet<string>>> = {
   evidence: new Set(["record"]),

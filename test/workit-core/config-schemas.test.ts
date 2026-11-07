@@ -16,7 +16,7 @@ import {
 import { validateWorkspacesDocument } from "@/packages/workit-core/src/core/workspaces";
 
 const SCHEMAS_DIR = path.join(import.meta.dir, "../../packages/workit-core/schemas");
-const URL = "https://unpkg.com/@brainervirus/workit-core/schemas/workspaces.json";
+const URL = "https://unpkg.com/@workit-dev/core/schemas/workspaces.json";
 
 type Json = Record<string, any>;
 const workspaces: Json = configJsonSchema("workspaces.json");
@@ -82,7 +82,7 @@ describe("committed schemas", () => {
     "Given %s's schema, Then it compiles as draft-07, sits at its published URL and uses only keywords doctor's validator knows",
     (file) => {
       const schema: Json = configJsonSchema(file);
-      expect(schema.$id).toBe(`https://unpkg.com/@brainervirus/workit-core/schemas/${file}`);
+      expect(schema.$id).toBe(`https://unpkg.com/@workit-dev/core/schemas/${file}`);
       expect(() => new Ajv({ strict: false }).compile(schema)).not.toThrow();
       const used = new Set(subschemas(schema).flatMap((node) => Object.keys(node)));
       expect([...used].filter((keyword) => !SCHEMA_KEYWORDS.has(keyword))).toEqual([]);

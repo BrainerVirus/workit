@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://unpkg.com/@brainervirus/workit-core/schemas/youtrack.json",
+  "$id": "https://unpkg.com/@workit-dev/core/schemas/youtrack.json",
   "title": "Workit YouTrack settings (youtrack.json in the Workit config dir)",
   "type": "object",
   "properties": {

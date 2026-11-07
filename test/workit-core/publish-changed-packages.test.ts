@@ -5,10 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import {
   changedPackages,
+  cliOptions,
   publishChanged,
   publishOrder,
+  registryBaseTag,
 } from "@/packages/workit-core/scripts/publish-changed-packages";
-import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
+import { npmName, RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // The fixture packages declare no internal dependencies, so the publish order
@@ -29,12 +31,12 @@ function repo({ tagged = true }: { tagged?: boolean } = {}) {
     writeFileSync(path.join(root, "packages", pkg, "src", "i.ts"), "i\n");
     writeFileSync(
       path.join(root, "packages", pkg, "package.json"),
-      `{"name":"@brainervirus/${pkg}","version":"0.8.10"}\n`,
+      `{"name":"${npmName(pkg)}","version":"0.8.10"}\n`,
     );
   }
   g(["add", "-A"]);
   g(["commit", "-q", "-m", "chore: seed"]);
-  if (tagged) g(["tag", "v0.8.10"]);
+  if (tagged) g(["tag", "workit-dev-v0.8.10"]);
   return {
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
@@ -55,7 +57,7 @@ describe("changedPackages", () => {
     const r = repo();
     try {
       r.change("packages/workit-opencode/src/i.ts", "c\n");
-      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-opencode"]);
+      expect(changedPackages(r.root, "workit-dev-v0.8.10")).toEqual(["workit-opencode"]);
     } finally {
       r.cleanup();
     }
@@ -65,7 +67,7 @@ describe("changedPackages", () => {
     try {
       r.change("packages/workit-opencode/src/i.ts", "c\n");
       writeFileSync(path.join(r.root, "packages/workit-opencode/src/i.ts"), "dirty\n");
-      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-opencode"]);
+      expect(changedPackages(r.root, "workit-dev-v0.8.10")).toEqual(["workit-opencode"]);
     } finally {
       r.cleanup();
     }
@@ -75,9 +77,9 @@ describe("changedPackages", () => {
     try {
       r.change(
         "packages/workit-opencode/package.json",
-        `{"name":"@brainervirus/workit-opencode","version":"0.8.11"}\n`,
+        `{"name":"@workit-dev/opencode","version":"0.8.11"}\n`,
       );
-      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-opencode"]);
+      expect(changedPackages(r.root, "workit-dev-v0.8.10")).toEqual(["workit-opencode"]);
     } finally {
       r.cleanup();
     }
@@ -86,7 +88,7 @@ describe("changedPackages", () => {
     const r = repo();
     try {
       r.change(".github/workflows/ci.yml", "on: push\n");
-      expect(changedPackages(r.root, "v0.8.10")).toEqual([]);
+      expect(changedPackages(r.root, "workit-dev-v0.8.10")).toEqual([]);
     } finally {
       r.cleanup();
     }
@@ -98,9 +100,9 @@ describe("changedPackages", () => {
       // ^<new version>, so workit-cursor must publish that version too.
       r.change(
         "packages/workit-cli/package.json",
-        `{"name":"@brainervirus/workit-cli","version":"0.8.10","dependencies":{"@brainervirus/workit-cursor":"workspace:*"}}\n`,
+        `{"name":"@workit-dev/cli","version":"0.8.10","dependencies":{"@workit-dev/cursor":"workspace:*"}}\n`,
       );
-      expect(changedPackages(r.root, "v0.8.10")).toEqual([
+      expect(changedPackages(r.root, "workit-dev-v0.8.10")).toEqual([
         "workit-cli",
         "workit-cursor",
         "workit-claude-code",
@@ -135,7 +137,7 @@ describe("publishChanged", () => {
         ORDER.map((pkg) =>
           pkg === "workit-opencode"
             ? `published workit-opencode @ ${path.join(r.root, "packages", "workit-opencode")}`
-            : `skip ${pkg} (no payload change since v0.8.10)`,
+            : `skip ${pkg} (no payload change since workit-dev-v0.8.10)`,
         ),
       );
       log.mockRestore();
@@ -148,13 +150,16 @@ describe("publishChanged", () => {
     try {
       r.change("packages/workit-core/src/i.ts", "c\n");
       // Every adapter inlines core into its dist/ (BUNDLED_SOURCES).
-      expect(changedPackages(r.root, "v0.8.10")).toEqual([...RELEASE_PACKAGES]);
+      expect(changedPackages(r.root, "workit-dev-v0.8.10")).toEqual([...RELEASE_PACKAGES]);
       const r2 = repo();
       try {
         r2.change("packages/workit-cli/src/i.ts", "c\n");
-        expect(changedPackages(r2.root, "v0.8.10")).toEqual(["workit-cli", "workit-claude-code"]);
+        expect(changedPackages(r2.root, "workit-dev-v0.8.10")).toEqual([
+          "workit-cli",
+          "workit-claude-code",
+        ]);
         r2.change("packages/workit-mcp/src/i.ts", "c\n");
-        expect(changedPackages(r2.root, "v0.8.10")).toEqual([
+        expect(changedPackages(r2.root, "workit-dev-v0.8.10")).toEqual([
           "workit-mcp",
           "workit-cli",
           "workit-cursor",
@@ -177,18 +182,21 @@ describe("publishChanged", () => {
     try {
       r.change("bun.lock", lock({ zod: "4.6.5", oxlint: "1.86.0", ink: "7.1.1" }));
       const r0 = r.root;
-      execFileSync("git", ["tag", "-f", "v0.8.10"], { cwd: r0 });
+      execFileSync("git", ["tag", "-f", "workit-dev-v0.8.10"], { cwd: r0 });
       r.change("bun.lock", lock({ zod: "4.6.5", oxlint: "1.87.0", ink: "7.1.1" }));
-      expect(changedPackages(r0, "v0.8.10")).toEqual([]);
+      expect(changedPackages(r0, "workit-dev-v0.8.10")).toEqual([]);
       r.change("bun.lock", lock({ zod: "4.7.0", oxlint: "1.87.0", ink: "7.1.1" }));
       // Every adapter inlines zod (through core); core ships sources.
-      expect(changedPackages(r0, "v0.8.10")).toEqual(
+      expect(changedPackages(r0, "workit-dev-v0.8.10")).toEqual(
         RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core"),
       );
-      execFileSync("git", ["tag", "-f", "v0.8.10"], { cwd: r0 });
+      execFileSync("git", ["tag", "-f", "workit-dev-v0.8.10"], { cwd: r0 });
       r.change("bun.lock", lock({ zod: "4.7.0", oxlint: "1.87.0", ink: "7.2.0" }));
       // ink is inlined only by the bundled CLI.
-      expect(changedPackages(r0, "v0.8.10")).toEqual(["workit-cli", "workit-claude-code"]);
+      expect(changedPackages(r0, "workit-dev-v0.8.10")).toEqual([
+        "workit-cli",
+        "workit-claude-code",
+      ]);
     } finally {
       r.cleanup();
     }
@@ -235,7 +243,7 @@ describe("publishChanged", () => {
       r.cleanup();
     }
   });
-  test("first-ever release ships everything when no v* tag exists", () => {
+  test("first-ever release ships everything when no workit-dev-v* tag exists", () => {
     const r = repo({ tagged: false });
     try {
       const cwds: string[] = [];
@@ -266,18 +274,18 @@ describe("publishChanged", () => {
       // the NEW release tag on HEAD before publish plugins run — diffing
       // against latestTag() at that point is always empty.
       r.change("packages/workit-opencode/src/i.ts", "c\n");
-      execFileSync("git", ["tag", "v0.9.0"], { cwd: r.root });
+      execFileSync("git", ["tag", "workit-dev-v0.9.0"], { cwd: r.root });
       const calls: string[] = [];
       const result = publishChanged({
         root: r.root,
-        fromTag: "v0.8.10",
+        fromTag: "workit-dev-v0.8.10",
         run: (_cmd, args, opts) => {
           calls.push(`${args.join(" ")} @ ${opts.cwd}`);
         },
       });
       expect(result.published).toEqual(["workit-opencode"]);
       expect(result.skipped).toEqual(ORDER.filter((pkg) => pkg !== "workit-opencode"));
-      expect(result.tag).toBe("v0.8.10");
+      expect(result.tag).toBe("workit-dev-v0.8.10");
       expect(calls[0]).toBe(
         `publish --access public @ ${path.join(r.root, "packages/workit-opencode")}`,
       );
@@ -342,7 +350,7 @@ describe("publishChanged recovers a failed npm publish (v8.41.0)", () => {
     }
   }
   const PUBLISH = "npm publish --access public";
-  const VIEW = "npm view @brainervirus/workit-opencode@0.8.10 version";
+  const VIEW = "npm view @workit-dev/opencode@0.8.10 version";
 
   test("a failed publish whose version is already on the registry counts as published", () => {
     const out = attempt([new Error(TLOG), "0.8.10\n"]);
@@ -383,6 +391,136 @@ describe("publishChanged recovers a failed npm publish (v8.41.0)", () => {
   });
 });
 
+describe("the first @workit-dev release and the registry baseline", () => {
+  // `npm view <name> version` answers from this table; a missing name throws
+  // like npm's E404. Publishes are recorded by package directory.
+  const registry = (versions: Record<string, string>) => {
+    const published: string[] = [];
+    const run = (_cmd: string, args: string[], opts: { cwd: string }) => {
+      if (args[0] === "view") {
+        const version = versions[args[1]];
+        if (version === undefined) throw new Error(`E404 ${args[1]}`);
+        return `${version}\n`;
+      }
+      published.push(path.basename(opts.cwd));
+      return "";
+    };
+    return { run, published };
+  };
+  const all = (version: string) =>
+    Object.fromEntries(RELEASE_PACKAGES.map((pkg) => [npmName(pkg), version]));
+
+  test("only old v* tags: latestTag finds no release, so every package ships", () => {
+    const r = repo({ tagged: false });
+    try {
+      execFileSync("git", ["tag", "v14.6.0"], { cwd: r.root });
+      r.change("packages/workit-opencode/src/i.ts", "c\n");
+      const result = publishChanged({ root: r.root, run: () => "" });
+      expect(result.tag).toBeNull();
+      expect(result.published).toEqual(ORDER);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("the release job without a previous tag (first release) ships everything, never latestTag", () => {
+    expect(cliOptions([], {})).toEqual({
+      fromTag: "",
+      all: false,
+      dryRun: false,
+      registryBaseline: true,
+    });
+    const r = repo();
+    try {
+      // semantic-release already tagged HEAD with the release being cut.
+      execFileSync("git", ["tag", "workit-dev-v1.0.0"], { cwd: r.root });
+      const { run, published } = registry({});
+      publishChanged({ root: r.root, ...cliOptions([], {}), run });
+      expect(published).toEqual(ORDER);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("--all and PUBLISH_ALL=1 ship every package; PUBLISH_DRY_RUN=1 publishes nothing", () => {
+    expect(cliOptions(["workit-dev-v1.0.0", "--all"], {}).all).toBe(true);
+    expect(cliOptions(["workit-dev-v1.0.0"], { PUBLISH_ALL: "1" })).toEqual({
+      fromTag: "workit-dev-v1.0.0",
+      all: true,
+      dryRun: false,
+      registryBaseline: true,
+    });
+    const r = repo();
+    try {
+      const { run, published } = registry(all("0.8.10"));
+      const result = publishChanged({
+        root: r.root,
+        ...cliOptions(["workit-dev-v0.8.10"], { PUBLISH_ALL: "1", PUBLISH_DRY_RUN: "1" }),
+        run,
+      });
+      expect(result.published).toEqual(ORDER);
+      expect(published).toEqual([]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("a package absent from the registry or holding only the 0.0.1 placeholder ships", () => {
+    const r = repo();
+    try {
+      const versions = all("0.8.10");
+      delete versions[npmName("workit-pi")];
+      versions[npmName("workit-codex")] = "0.0.1";
+      const { run } = registry(versions);
+      expect(registryBaseTag(r.root, "workit-pi", run)).toBeNull();
+      expect(registryBaseTag(r.root, "workit-codex", run)).toBeNull();
+      expect(registryBaseTag(r.root, "workit-core", run)).toBe("workit-dev-v0.8.10");
+      const result = publishChanged({
+        root: r.root,
+        fromTag: "workit-dev-v0.8.10",
+        registryBaseline: true,
+        run,
+      });
+      expect(result.published.toSorted()).toEqual(["workit-codex", "workit-pi"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("each package diffs from the tag of the version the registry serves, not the previous release", () => {
+    const r = repo();
+    try {
+      r.change("packages/workit-opencode/src/i.ts", "c\n");
+      execFileSync("git", ["tag", "workit-dev-v0.9.0"], { cwd: r.root });
+      r.change("packages/workit-cursor/src/i.ts", "c\n");
+      // 0.9.0 published everything but workit-opencode, so the registry still
+      // serves 0.8.10 for it: it ships again with the cursor change.
+      const versions = all("0.9.0");
+      versions[npmName("workit-opencode")] = "0.8.10";
+      const { run } = registry(versions);
+      const result = publishChanged({
+        root: r.root,
+        fromTag: "workit-dev-v0.9.0",
+        registryBaseline: true,
+        run,
+      });
+      expect(result.published.toSorted()).toEqual(["workit-cursor", "workit-opencode"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("a registry version with no local release tag ships (published from elsewhere)", () => {
+    const r = repo();
+    try {
+      const { run } = registry(all("0.8.11"));
+      expect(registryBaseTag(r.root, "workit-core", run)).toBeNull();
+    } finally {
+      r.cleanup();
+    }
+  });
+});
+
 describe("publish order (W2.38)", () => {
   // npm installs these groups with a published package; devDependencies never.
   const installDeps = (pkg: string): string[] => {
@@ -391,12 +529,12 @@ describe("publish order (W2.38)", () => {
     ) as Record<string, Record<string, string> | undefined>;
     return ["dependencies", "peerDependencies", "optionalDependencies"].flatMap((group) =>
       Object.keys(manifest[group] ?? {})
-        .filter((name) => name.startsWith("@brainervirus/"))
-        .map((name) => name.slice("@brainervirus/".length)),
+        .filter((name) => name.startsWith("@workit-dev/"))
+        .map((name) => `workit-${name.slice("@workit-dev/".length)}`),
     );
   };
 
-  test("the real packages publish after every @brainervirus package they install, the CLI last", () => {
+  test("the real packages publish after every @workit-dev package they install, the CLI last", () => {
     const order = publishOrder(REPO_ROOT);
     expect(order.toSorted()).toEqual([...RELEASE_PACKAGES].toSorted());
     expect(order.at(-1)).toBe("workit-cli");
@@ -412,14 +550,14 @@ describe("publish order (W2.38)", () => {
     try {
       r.change(
         "packages/workit-mcp/package.json",
-        `{"name":"@brainervirus/workit-mcp","version":"0.8.10","peerDependencies":{"@brainervirus/workit-pi":"workspace:*"}}\n`,
+        `{"name":"@workit-dev/mcp","version":"0.8.10","peerDependencies":{"@workit-dev/pi":"workspace:*"}}\n`,
       );
       const order = publishOrder(r.root);
       expect(order.indexOf("workit-pi")).toBeLessThan(order.indexOf("workit-mcp"));
       expect(order.at(-1)).toBe("workit-cli");
       r.change(
         "packages/workit-pi/package.json",
-        `{"name":"@brainervirus/workit-pi","version":"0.8.10","dependencies":{"@brainervirus/workit-mcp":"workspace:*"}}\n`,
+        `{"name":"@workit-dev/pi","version":"0.8.10","dependencies":{"@workit-dev/mcp":"workspace:*"}}\n`,
       );
       expect(() => publishOrder(r.root)).toThrow(/release dependency cycle/);
     } finally {
@@ -432,7 +570,7 @@ describe("publish order (W2.38)", () => {
     try {
       r.change(
         "packages/workit-cli/package.json",
-        `{"name":"@brainervirus/workit-cli","version":"0.8.10","dependencies":{"@brainervirus/workit-cursor":"workspace:*"}}\n`,
+        `{"name":"@workit-dev/cli","version":"0.8.10","dependencies":{"@workit-dev/cursor":"workspace:*"}}\n`,
       );
       r.change("packages/workit-core/src/i.ts", "c\n");
       const published: string[] = [];
@@ -455,7 +593,7 @@ describe("publish order (W2.38)", () => {
     try {
       r.change(
         "packages/workit-cli/package.json",
-        `{"name":"@brainervirus/workit-cli","version":"0.8.10","dependencies":{"@brainervirus/workit-cursor":"workspace:*"}}\n`,
+        `{"name":"@workit-dev/cli","version":"0.8.10","dependencies":{"@workit-dev/cursor":"workspace:*"}}\n`,
       );
       const published: string[] = [];
       const log = spyOn(console, "log");

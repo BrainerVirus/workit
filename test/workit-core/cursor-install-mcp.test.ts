@@ -87,7 +87,7 @@ test(
         "-y",
         "--prefer-online",
         "--min-release-age=0",
-        "--package=@brainervirus/workit-cursor@latest",
+        "--package=@workit-dev/cursor@latest",
         "workit-cursor-mcp",
         "${workspaceFolder}",
       ]);

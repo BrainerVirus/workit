@@ -19,7 +19,7 @@ import {
 } from "@/test/shared/helpers/packages";
 import { runHook } from "./plugin-helpers";
 
-const PACKAGE = "@brainervirus/workit-claude-code";
+const PACKAGE = "@workit-dev/claude-code";
 const TREE_VERSION = JSON.parse(
   readFileSync(path.join(REPO_ROOT, "packages", "workit-core", "package.json"), "utf8"),
 ).version as string;

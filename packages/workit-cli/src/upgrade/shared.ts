@@ -20,12 +20,12 @@ export const HOSTS: HostId[] = [...LAUNCH_HOSTS, "claude-code"];
 /** Hosts that load an updated plugin without a stopped boundary: OpenCode V2
  *  reloads plugins live; Claude Code loads the new version on its next session. */
 export const LIVE_HOSTS = new Set<HostId>(["opencode", "claude-code"]);
-export const OPENCODE_PACKAGE = "@brainervirus/workit-opencode";
-export const CLAUDE_CODE_PACKAGE = "@brainervirus/workit-claude-code";
+export const OPENCODE_PACKAGE = "@workit-dev/opencode";
+export const CLAUDE_CODE_PACKAGE = "@workit-dev/claude-code";
 export const OPENCODE_UPDATE = `opencode plugin update ${OPENCODE_PACKAGE}`;
 export { CODEX_MARKETPLACE };
 /** Installs the Workit-owned CLI from any shell, whatever Node or npm PATH holds. */
-export const CLI_FIX = "npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes";
+export const CLI_FIX = "npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes";
 
 export type Command = {
   command: string;
@@ -178,7 +178,7 @@ export type UpgradePlan = {
 
 export const fixFor = (host: UpgradeHost, selector = ""): string =>
   host === "pi"
-    ? `pi update --extension ${selector || "npm:@brainervirus/workit-pi"}`
+    ? `pi update --extension ${selector || "npm:@workit-dev/pi"}`
     : host === "codex"
       ? `codex plugin marketplace upgrade ${CODEX_MARKETPLACE} && codex plugin add workit@${CODEX_MARKETPLACE}`
       : host === "claude-code"
@@ -360,7 +360,7 @@ export const piInstalledVersion = (listing: string, selector: string): string | 
   const index = lines.indexOf(selector);
   if (index < 0 || !lines[index + 1] || !path.isAbsolute(lines[index + 1])) return undefined;
   const found = objectOrNull(path.join(lines[index + 1], "package.json"));
-  return found?.name === "@brainervirus/workit-pi" ? found.version : undefined;
+  return found?.name === "@workit-dev/pi" ? found.version : undefined;
 };
 
 export const versionAtLeast = (installed: string, latest: string): boolean => {

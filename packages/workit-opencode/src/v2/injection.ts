@@ -1,10 +1,6 @@
-import {
-  childSessionId,
-  judgeBranch,
-  verdictCommand,
-} from "@brainervirus/workit-core/src/host-session";
-import { standingSinceStart } from "@brainervirus/workit-core/src/hooks/standing";
-import { budgetStanding } from "@brainervirus/workit-core/src/hooks/budget-signal";
+import { childSessionId, judgeBranch, verdictCommand } from "@workit-dev/core/src/host-session";
+import { standingSinceStart } from "@workit-dev/core/src/hooks/standing";
+import { budgetStanding } from "@workit-dev/core/src/hooks/budget-signal";
 import { getWorkitBootstrap } from "../bootstrap";
 import { compactContextFor, unfinishedTaskOfferFor, workerContextFor } from "../runtime";
 import { sameWorkspace } from "../shared/session";

@@ -27,19 +27,15 @@ import {
   type PrStatusDoc,
   type RerunOutcome,
   type WaitVerdict,
-} from "@brainervirus/workit-core/src/forge/report";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
-import type { ForgePrStatus, ForgeResult } from "@brainervirus/workit-core/src/forge/types";
-import { apiJson } from "@brainervirus/workit-core/src/forge/exec";
-import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
-import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
-import { forgeTarget } from "@brainervirus/workit-core/src/core/remotes";
-import {
-  claimCiWaiter,
-  liveCiWaiter,
-  type CiWaiterClaim,
-} from "@brainervirus/workit-core/src/ci-waiter";
-import { headSha, resolveRef } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/forge/report";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
+import type { ForgePrStatus, ForgeResult } from "@workit-dev/core/src/forge/types";
+import { apiJson } from "@workit-dev/core/src/forge/exec";
+import type { ResolvedForge } from "@workit-dev/core/src/forge/resolve";
+import { requireGrant } from "@workit-dev/core/src/autonomy";
+import { forgeTarget } from "@workit-dev/core/src/core/remotes";
+import { claimCiWaiter, liveCiWaiter, type CiWaiterClaim } from "@workit-dev/core/src/ci-waiter";
+import { headSha, resolveRef } from "@workit-dev/core/src/git/rev";
 import { emit, fail, ok, type Io } from "../output";
 import { progressFor } from "../progress";
 import {

@@ -1,4 +1,4 @@
-# @brainervirus/workit-pi
+# @workit-dev/pi
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
@@ -10,11 +10,11 @@ fresh reviewer/investigator processes and scoped implementers. Requires
 Node.js 24+.
 
 ```bash
-pi install npm:@brainervirus/workit-pi
+pi install npm:@workit-dev/pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
-Update with `workit upgrade` (native fallback: `pi update --extension npm:@brainervirus/workit-pi`); uninstall with `workit uninstall`.
+Update with `workit upgrade` (native fallback: `pi update --extension npm:@workit-dev/pi`); uninstall with `workit uninstall`.
 
 Pi discovers the extension and skills from the package's `pi` manifest
 (`./dist/workit.js`, `./skills`). Pi project trust still gates mutations.

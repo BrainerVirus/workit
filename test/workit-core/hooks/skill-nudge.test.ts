@@ -237,7 +237,7 @@ test("G a Workit workspace, delivery commands are pushes, PR/MR create or merge,
       "glab mr merge 4",
       "workit git push",
       "/usr/local/bin/workit ci wait --pr 3",
-      "npx -y @brainervirus/workit-cli pr create --fill",
+      "npx -y @workit-dev/cli pr create --fill",
       "bash -c 'workit pr merge --method squash'",
     ])
       expect(isDeliveryCommand(root, command), command).toBe(true);

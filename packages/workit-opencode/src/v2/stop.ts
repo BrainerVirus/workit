@@ -5,7 +5,7 @@
 // run that continuation starts always ends freely. Child sessions, other
 // checkouts, a run that did not succeed (interrupted, failed) and every
 // failure leave the session idle.
-import { OPENCODE_DESCRIPTOR, stopDecision } from "@brainervirus/workit-core/hooks";
+import { OPENCODE_DESCRIPTOR, stopDecision } from "@workit-dev/core/hooks";
 import { sameWorkspace } from "../shared/session";
 
 type IdleSession = {

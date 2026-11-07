@@ -4,8 +4,8 @@
 // the prompt carries, else the one its role picks. A launch that fits several
 // assignments equally is refused before anything is recorded, naming each
 // worker so the lead can put `WORKER: <id>` in the prompt.
-import { roleForAgentType } from "@brainervirus/workit-core/src/core/role-models";
-import type { TaskRecord } from "@brainervirus/workit-core/src/core";
+import { roleForAgentType } from "@workit-dev/core/src/core/role-models";
+import type { TaskRecord } from "@workit-dev/core/src/core";
 
 type Worker = TaskRecord["workers"][number];
 type LaunchCandidate = { task: TaskRecord; entry: Worker };

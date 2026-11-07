@@ -2,13 +2,9 @@
 // doctor reads them without the launch check's prompt, styles and runners.
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { stateDir } from "@brainervirus/workit-core/src/core/heavy-words";
-import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
-import {
-  isConfigObject,
-  isUpdatesMode,
-  type UpdatesMode,
-} from "@brainervirus/workit-core/src/core/config";
+import { stateDir } from "@workit-dev/core/src/core/heavy-words";
+import { configDir } from "@workit-dev/core/src/core/workit-paths.mjs";
+import { isConfigObject, isUpdatesMode, type UpdatesMode } from "@workit-dev/core/src/core/config";
 
 /** Workit's global config dir, resolved the way `workit upgrade` resolves it. */
 export const workitConfigDir = (env: NodeJS.ProcessEnv): string => configDir(env);
@@ -106,7 +102,7 @@ export const cliVersionOnDisk = (script = process.argv[1]): string | undefined =
         name?: unknown;
         version?: unknown;
       };
-      if (found.name === "@brainervirus/workit-cli" && typeof found.version === "string")
+      if (found.name === "@workit-dev/cli" && typeof found.version === "string")
         return found.version;
     } catch {
       // not here; look one level up

@@ -116,15 +116,12 @@ test("Pi install preserves an existing canonical package pin, not similarly name
     executable(path.join(bin, "node"));
     executable(path.join(bin, "pi"));
     mkdirSync(path.dirname(settings), { recursive: true });
-    writeFileSync(
-      settings,
-      JSON.stringify({ packages: ["npm:@brainervirus/workit-pi-extra@2.0.2"] }),
-    );
+    writeFileSync(settings, JSON.stringify({ packages: ["npm:@workit-dev/pi-extra@2.0.2"] }));
     const options = { home, cwd: home, env: { HOME: home, PATH: bin } };
     expect(planHostInstall("pi", options).some((command) => command.args.includes("install"))).toBe(
       true,
     );
-    writeFileSync(settings, JSON.stringify({ packages: ["npm:@brainervirus/workit-pi@2.0.1"] }));
+    writeFileSync(settings, JSON.stringify({ packages: ["npm:@workit-dev/pi@2.0.1"] }));
     expect(planHostInstall("pi", options)).toEqual([]);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -199,7 +196,7 @@ test("native registration verification follows Codex version caches and Pi objec
     mkdirSync(path.dirname(piSettings), { recursive: true });
     writeFileSync(
       piSettings,
-      JSON.stringify({ packages: [{ source: "npm:@brainervirus/workit-pi@2.0.1" }] }),
+      JSON.stringify({ packages: [{ source: "npm:@workit-dev/pi@2.0.1" }] }),
     );
     expect(isCodexWorkitInstalled(home, { CODEX_HOME: codexHome })).toBe(true);
     expect(isPiWorkitInstalled(home, { PI_CODING_AGENT_DIR: path.dirname(piSettings) })).toBe(true);

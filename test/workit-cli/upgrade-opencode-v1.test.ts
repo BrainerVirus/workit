@@ -11,7 +11,7 @@ test("given OpenCode 1.18.34 listing workit 8.44.0, then readiness returns at on
     if (args[0] === "api") return { status: 1, stdout: "", stderr: 'Error: unknown command "api"' };
     return {
       status: 0,
-      stdout: "ID      VERSION  SOURCE\nworkit  8.44.0   @brainervirus/workit-opencode\n",
+      stdout: "ID      VERSION  SOURCE\nworkit  8.44.0   @workit-dev/opencode\n",
       stderr: "",
     };
   };

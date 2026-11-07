@@ -1,7 +1,7 @@
-# @brainervirus/workit-cli
+# @workit-dev/cli
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@brainervirus/workit-cli.svg)](https://www.npmjs.com/package/@brainervirus/workit-cli)
+[![npm](https://img.shields.io/npm/v/@workit-dev/cli.svg)](https://www.npmjs.com/package/@workit-dev/cli)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 The `workit` command: setup wizard, doctor and upgrades, plus the delivery
@@ -10,13 +10,13 @@ verbs agents use (`check`, `ledger`, `git`, `pr`, `ci`, `stack`,
 CLI is a self-contained Node bundle.
 
 ```bash
-npm i -g @brainervirus/workit-cli
+npm i -g @workit-dev/cli
 workit init        # interactive setup for Claude Code, OpenCode, Cursor, Codex and Pi
 workit doctor      # offline installation health
 workit help        # every verb; `workit help <verb>` for one
 ```
 
-Or run once without installing: `npx @brainervirus/workit-cli init`.
+Or run once without installing: `npx @workit-dev/cli init`.
 `workit upgrade` updates the CLI and every host together (`--preview` only
 looks).
 

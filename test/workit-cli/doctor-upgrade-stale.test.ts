@@ -19,19 +19,19 @@ test("Given a stale Cursor install and a stale OpenCode @latest cache, When upgr
   const cwd = path.join(base, "cwd");
   mkdirSync(cwd, { recursive: true });
   const cache = path.join(home, "oc-cache");
-  write(path.join(cache, "node_modules/@brainervirus/workit-opencode/package.json"), {
-    name: "@brainervirus/workit-opencode",
+  write(path.join(cache, "node_modules/@workit-dev/opencode/package.json"), {
+    name: "@workit-dev/opencode",
     version: "8.40.8",
   });
   write(path.join(home, ".config/opencode/opencode.json"), {
-    plugin: ["@brainervirus/workit-opencode"],
+    plugin: ["@workit-dev/opencode"],
   });
   write(path.join(home, ".cursor/plugins/local/workit/mcp.json"), {
     mcpServers: {
       // An old exact pin, built at runtime: the manifest scan keeps source selectors canonical.
       workit: {
         command: "npx",
-        args: ["-y", ["--package=@brainervirus/workit-cursor", "1.0.0"].join("@")],
+        args: ["-y", ["--package=@workit-dev/cursor", "1.0.0"].join("@")],
       },
     },
   });
@@ -65,11 +65,11 @@ test("Given XDG_CONFIG_HOME, When doctor checks the OpenCode cache, Then it read
   mkdirSync(cwd, { recursive: true });
   const xdg = path.join(home, "xdg-config");
   const cache = path.join(home, "oc-cache");
-  write(path.join(cache, "node_modules/@brainervirus/workit-opencode/package.json"), {
-    name: "@brainervirus/workit-opencode",
+  write(path.join(cache, "node_modules/@workit-dev/opencode/package.json"), {
+    name: "@workit-dev/opencode",
     version: "8.40.8",
   });
-  write(path.join(xdg, "opencode/opencode.json"), { plugin: ["@brainervirus/workit-opencode"] });
+  write(path.join(xdg, "opencode/opencode.json"), { plugin: ["@workit-dev/opencode"] });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,

@@ -16,10 +16,10 @@ import {
 // workspace protocols, core source-subpath imports, split CLI chunks, checkout
 // paths, active vendored shell, or undeclared dependency resolution.
 
-const CORE = "@brainervirus/workit-core";
-const OPENCODE = "@brainervirus/workit-opencode";
-const CURSOR = "@brainervirus/workit-cursor";
-const CLI = "@brainervirus/workit-cli";
+const CORE = "@workit-dev/core";
+const OPENCODE = "@workit-dev/opencode";
+const CURSOR = "@workit-dev/cursor";
+const CLI = "@workit-dev/cli";
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
@@ -191,7 +191,7 @@ test(
       if (pack.packageName === CORE) continue; // source package ships src/*.ts by design
       for (const entry of distJs(pack.tarball)) {
         const js = readTarballFile(pack.tarball, entry);
-        expect(js, `${pack.packageName}/${entry}`).not.toContain("@brainervirus/workit-core/src/");
+        expect(js, `${pack.packageName}/${entry}`).not.toContain("@workit-dev/core/src/");
         // bun bakes relative `// packages/...` source comments (harmless), but no
         // absolute checkout or share paths may leak into packaged runtime JS.
         expect(js, `${pack.packageName}/${entry}`).not.toContain(normalized);

@@ -113,16 +113,16 @@ test("Given a Pi home with an older workit-pi and a newer published version, Whe
   const [major, minor] = cliPkg.version.split(".").map(Number);
   const old = minor > 0 ? `${major}.${minor - 1}.0` : `${major - 1}.0.0`;
   const agentDir = path.join(box.home, ".pi", "agent");
-  const pkgRoot = path.join(agentDir, "npm", "node_modules", "@brainervirus", "workit-pi");
+  const pkgRoot = path.join(agentDir, "npm", "node_modules", "@workit-dev", "pi");
   mkdirSync(path.join(pkgRoot, "dist"), { recursive: true });
   writeFileSync(
     path.join(agentDir, "settings.json"),
-    JSON.stringify({ packages: ["npm:@brainervirus/workit-pi"] }),
+    JSON.stringify({ packages: ["npm:@workit-dev/pi"] }),
   );
   writeFileSync(
     path.join(pkgRoot, "package.json"),
     JSON.stringify({
-      name: "@brainervirus/workit-pi",
+      name: "@workit-dev/pi",
       version: old,
       pi: { extensions: ["./dist/workit.js"] },
     }),
@@ -132,9 +132,9 @@ test("Given a Pi home with an older workit-pi and a newer published version, Whe
   const { report } = doctor(box, [], { WORKIT_DOCTOR_STALE_REGISTRY_VERSION: cliPkg.version });
   const pi = check(report, "pi_extension");
   expect(pi.status, pi.detail).toBe("warn");
-  expect(pi.detail).toContain(`Workit Pi extension stale: @brainervirus/workit-pi ${old}`);
+  expect(pi.detail).toContain(`Workit Pi extension stale: @workit-dev/pi ${old}`);
   expect(pi.detail).toContain(`older than workit ${cliPkg.version}`);
-  expect(pi.fix).toBe("pi update npm:@brainervirus/workit-pi");
+  expect(pi.fix).toBe("pi update npm:@workit-dev/pi");
 }, 30_000);
 
 test("Given a Workit workspace without the hook, When `workit doctor` runs without --fix, Then it warns with the exact fix and writes nothing", () => {

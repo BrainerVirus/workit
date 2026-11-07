@@ -90,7 +90,7 @@ const setup = (cache?: UpdateCache, config?: Record<string, unknown>) => {
     upgradeFails: () =>
       void (outcome = {
         code: 1,
-        failed: [{ host: "cli", fix: "npm install --global @brainervirus/workit-cli@latest" }],
+        failed: [{ host: "cli", fix: "npm install --global @workit-dev/cli@latest" }],
         replacesCli: false,
       }),
     hostFails: () =>
@@ -241,7 +241,7 @@ test("given the registry is offline, then the refresh stays silent and the launc
   writeUpdateCache(t.env, { skipped: "1.5.0" });
   refreshUpdateCache(t.env, {
     run: (command, args) => {
-      expect([command, ...args]).toEqual(["npm", "view", "@brainervirus/workit-cli", "version"]);
+      expect([command, ...args]).toEqual(["npm", "view", "@workit-dev/cli", "version"]);
       return { status: 0, stdout: "2.0.0\n" };
     },
     now: () => NOW,
@@ -296,15 +296,15 @@ test("given --check, then it prints installed vs latest and the apply command, c
   mkdirSync(cursorRoot, { recursive: true });
   writeFileSync(
     path.join(cursorRoot, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cursor", version: "98.0.0" }),
+    JSON.stringify({ name: "@workit-dev/cursor", version: "98.0.0" }),
   );
   let out = "";
   const deps = {
     home: t.home,
     env: t.env,
     run: registry({
-      "@brainervirus/workit-cli": "99.0.0",
-      "@brainervirus/workit-cursor": "98.0.0",
+      "@workit-dev/cli": "99.0.0",
+      "@workit-dev/cursor": "98.0.0",
     }),
     out: { write: (text: string) => void (out += text) },
   };
@@ -325,14 +325,14 @@ test("given --check, then it prints installed vs latest and the apply command, c
     components: [
       {
         component: "cli",
-        package: "@brainervirus/workit-cli",
+        package: "@workit-dev/cli",
         installed: pkg.version,
         latest: "99.0.0",
         status: "update",
       },
       {
         component: "cursor",
-        package: "@brainervirus/workit-cursor",
+        package: "@workit-dev/cursor",
         installed: "98.0.0",
         latest: "98.0.0",
         status: "current",
@@ -376,7 +376,7 @@ const opencodeService =
               id: "workit",
               source: {
                 type: "package",
-                target: "@brainervirus/workit-opencode",
+                target: "@workit-dev/opencode",
                 version: plugin.version,
                 ...(plugin.outdated ? { outdated: true } : {}),
               },
@@ -388,7 +388,7 @@ const opencodeService =
     if (command === "opencode" && args.join(" ") === "plugin list")
       return {
         status: 0,
-        stdout: `ID      VERSION  SOURCE\nworkit  ${plugin.version}   @brainervirus/workit-opencode\n`,
+        stdout: `ID      VERSION  SOURCE\nworkit  ${plugin.version}   @workit-dev/opencode\n`,
       };
     return registry(versions)(command, args);
   };
@@ -397,7 +397,7 @@ const registerOpencode = (home: string) => {
   mkdirSync(path.join(home, ".config/opencode"), { recursive: true });
   writeFileSync(
     path.join(home, ".config/opencode/opencode.json"),
-    JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }),
+    JSON.stringify({ plugin: ["@workit-dev/opencode"] }),
   );
 };
 
@@ -410,7 +410,7 @@ test("given --check with OpenCode, then the installed version and the outdated f
     env: t.env,
     run: opencodeService(
       { version: "8.44.0", outdated: true },
-      { "@brainervirus/workit-cli": pkg.version, "@brainervirus/workit-opencode": "8.44.1" },
+      { "@workit-dev/cli": pkg.version, "@workit-dev/opencode": "8.44.1" },
     ),
     out: { write: (text: string) => void (out += text) },
   };
@@ -424,13 +424,13 @@ test("given --check with OpenCode, then the installed version and the outdated f
       ...deps,
       run: opencodeService(
         { version: "8.44.0", outdated: true },
-        { "@brainervirus/workit-cli": pkg.version, "@brainervirus/workit-opencode": "8.44.0" },
+        { "@workit-dev/cli": pkg.version, "@workit-dev/opencode": "8.44.0" },
       ),
     }),
   ).toBe(0);
   expect(JSON.parse(out).components).toContainEqual({
     component: "opencode",
-    package: "@brainervirus/workit-opencode",
+    package: "@workit-dev/opencode",
     installed: "8.44.0",
     latest: "8.44.0",
     status: "update",
@@ -443,12 +443,12 @@ test("given --check where every probe takes 1 s, then the probes run at once beh
   const run = opencodeService(
     { version: "8.44.1" },
     {
-      "@brainervirus/workit-cli": pkg.version,
-      "@brainervirus/workit-opencode": "8.44.1",
-      "@brainervirus/workit-cursor": "8.44.1",
-      "@brainervirus/workit-codex": "8.44.1",
-      "@brainervirus/workit-pi": "8.44.1",
-      "@brainervirus/workit-claude-code": "8.44.1",
+      "@workit-dev/cli": pkg.version,
+      "@workit-dev/opencode": "8.44.1",
+      "@workit-dev/cursor": "8.44.1",
+      "@workit-dev/codex": "8.44.1",
+      "@workit-dev/pi": "8.44.1",
+      "@workit-dev/claude-code": "8.44.1",
     },
   );
   let probes = 0;

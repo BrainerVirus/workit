@@ -18,7 +18,7 @@ const write = (file: string, text: string, mode = 0o644) => {
   chmodSync(file, mode);
 };
 
-const pkgJson = (version: string) => JSON.stringify({ name: "@brainervirus/workit-cli", version });
+const pkgJson = (version: string) => JSON.stringify({ name: "@workit-dev/cli", version });
 
 /** A home with an owned 9.0.0 (current + launcher linked in ~/.local/bin) and a fnm copy of `copy`. */
 const home = (copy: string | null) => {
@@ -26,7 +26,7 @@ const home = (copy: string | null) => {
   homes.push(dir);
   const root = path.join(dir, ".local/share/workit");
   write(
-    path.join(root, "versions/9.0.0/node_modules/@brainervirus/workit-cli/package.json"),
+    path.join(root, "versions/9.0.0/node_modules/@workit-dev/cli/package.json"),
     pkgJson("9.0.0"),
   );
   symlinkSync(path.join("versions", "9.0.0"), path.join(root, "current"));
@@ -34,7 +34,7 @@ const home = (copy: string | null) => {
   const prefix = path.join(dir, ".local/share/fnm/node-versions/v24.1.0/installation");
   write(path.join(prefix, "bin/node"), "", 0o755);
   if (copy) {
-    const pkg = path.join(prefix, "lib/node_modules/@brainervirus/workit-cli");
+    const pkg = path.join(prefix, "lib/node_modules/@workit-dev/cli");
     write(path.join(pkg, "package.json"), pkgJson(copy));
     write(path.join(pkg, "dist/index.js"), "", 0o755);
     symlinkSync(path.join(pkg, "dist/index.js"), path.join(prefix, "bin/workit"));
@@ -59,14 +59,12 @@ test("Given a workit in another Node's prefix that PATH resolves first, Then doc
   const found = check(h.dir, `${path.join(h.prefix, "bin")}:${h.bin}`);
   expect(found.status).toBe("fail");
   expect(found.detail).toContain(
-    `PATH runs ${h.prefix}/bin/workit -> ${h.prefix}/lib/node_modules/@brainervirus/workit-cli/dist/index.js (workit 8.52.3; fnm global prefix ${h.prefix}; PATH #1)`,
+    `PATH runs ${h.prefix}/bin/workit -> ${h.prefix}/lib/node_modules/@workit-dev/cli/dist/index.js (workit 8.52.3; fnm global prefix ${h.prefix}; PATH #1)`,
   );
   expect(found.detail).toContain(
     `ahead of the launcher ${h.bin}/workit -> ${h.root}/bin/workit (workit 9.0.0)`,
   );
-  expect(found.fix).toContain(
-    `npm uninstall --global --prefix ${h.prefix} @brainervirus/workit-cli`,
-  );
+  expect(found.fix).toContain(`npm uninstall --global --prefix ${h.prefix} @workit-dev/cli`);
 });
 
 test("Given the launcher first but an older copy in a fnm prefix PATH misses, Then doctor still fails on the version", () => {
@@ -92,7 +90,7 @@ test("Given the Claude Code plugin's own bin/workit on PATH (W2.40), When doctor
   write(
     path.join(plugin, "package.json"),
     JSON.stringify({
-      name: "@brainervirus/workit-claude-code",
+      name: "@workit-dev/claude-code",
       version: "8.0.0",
     }),
   );

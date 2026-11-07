@@ -3,8 +3,8 @@ import {
   success,
   type ContractResult as Result,
   type WorkerReport,
-} from "@brainervirus/workit-core/src/core";
-import { workerReportSchema } from "@brainervirus/workit-core/src/core/task-contract";
+} from "@workit-dev/core/src/core";
+import { workerReportSchema } from "@workit-dev/core/src/core/task-contract";
 
 export const MAX_WORKER_LINE_BYTES = 64 * 1024;
 const MAX_WORKER_STDERR_BYTES = 64 * 1024;

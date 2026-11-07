@@ -723,13 +723,13 @@ const LAUNCHERS = new Set([
   "sudo",
   "command",
 ]);
-const WORKIT_BIN = /(?:^|[\\/])workit(?:\.exe)?$|^@brainervirus\/workit-cli$/;
-const WORKIT_PACKAGE = /^@brainervirus\/workit-cli(?:@\S*)?$/;
+const WORKIT_BIN = /(?:^|[\\/])workit(?:\.exe)?$|^@workit-dev\/cli$/;
+const WORKIT_PACKAGE = /^@workit-dev\/cli(?:@\S*)?$/;
 const PACKAGE_RUNNERS = new Set(["npx", "bunx", "pnpx"]);
 
 /**
  * What a `workit check [flags] -- <cmd…>` (or `workit lock run -- <cmd…>`,
- * also through `npx @brainervirus/workit-cli`) runs: the script of `--shell`,
+ * also through `npx @workit-dev/cli`) runs: the script of `--shell`,
  * else the argv, and the `--cwd` it runs in (null: the shell's). Null for any
  * other command.
  */
@@ -816,7 +816,7 @@ export function simpleCommand(
 
 /**
  * The arguments of every workit CLI invocation in a shell command: past env
- * assignments and package runners (`npx -y @brainervirus/workit-cli …`), and
+ * assignments and package runners (`npx -y @workit-dev/cli …`), and
  * inside `bash -c '…'` scripts.
  */
 export function workitInvocations(

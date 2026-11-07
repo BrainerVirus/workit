@@ -2,10 +2,10 @@
 // only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
 // debug/info events stay out of the terminal (they live in the JSONL journal);
 // only warn/error surface so interactive sessions stay clean.
-import { createLogger } from "@brainervirus/workit-core/src/core/logger";
-import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
-import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
-import { setDefaultLockTimeout } from "@brainervirus/workit-core/src/core/store-lock";
+import { createLogger } from "@workit-dev/core/src/core/logger";
+import { EVENT, errorDetail } from "@workit-dev/core/src/core/boundary";
+import { setDiagnosticLogger } from "@workit-dev/core/src/core/config";
+import { setDefaultLockTimeout } from "@workit-dev/core/src/core/store-lock";
 
 export const logger = createLogger({
   stderr: (event) => {

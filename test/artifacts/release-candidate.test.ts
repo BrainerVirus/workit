@@ -19,15 +19,15 @@ import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release
 // packReleaseCandidate() wraps the release-parity pack and asserts the
 // tarballs are pack-local; this suite proves the artifacts themselves.
 
-const CORE = "@brainervirus/workit-core";
-const MCP = "@brainervirus/workit-mcp";
-const OPENCODE = "@brainervirus/workit-opencode";
-const CURSOR = "@brainervirus/workit-cursor";
-const CODEX = "@brainervirus/workit-codex";
-const PI = "@brainervirus/workit-pi";
-const CLI = "@brainervirus/workit-cli";
+const CORE = "@workit-dev/core";
+const MCP = "@workit-dev/mcp";
+const OPENCODE = "@workit-dev/opencode";
+const CURSOR = "@workit-dev/cursor";
+const CODEX = "@workit-dev/codex";
+const PI = "@workit-dev/pi";
+const CLI = "@workit-dev/cli";
 
-const CLAUDE_CODE = "@brainervirus/workit-claude-code";
+const CLAUDE_CODE = "@workit-dev/claude-code";
 const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI, CLAUDE_CODE];
 
 const packedFiles = () => {
@@ -126,7 +126,7 @@ test(
         ...pkg.dependencies,
         ...pkg.devDependencies,
       })) {
-        if (dep.startsWith("@brainervirus/")) {
+        if (dep.startsWith("@workit-dev/")) {
           expect(range, `${name} → ${dep}`).toBe(`^${coreVersion}`);
         }
       }
@@ -226,8 +226,8 @@ test(
       readTarballFile(byName(packs, CORE).tarball, "package.json"),
     ).version;
     const cli = JSON.parse(readTarballFile(byName(packs, CLI).tarball, "package.json"));
-    expect(cli.dependencies["@brainervirus/workit-opencode"]).toBeUndefined();
-    expect(cli.dependencies["@brainervirus/workit-cursor"]).toBe(`^${coreVersion}`);
+    expect(cli.dependencies["@workit-dev/opencode"]).toBeUndefined();
+    expect(cli.dependencies["@workit-dev/cursor"]).toBe(`^${coreVersion}`);
     expect(JSON.stringify(cli.dependencies)).not.toContain("workspace:");
   },
   SLOW_TEST_TIMEOUT_MS,

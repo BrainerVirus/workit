@@ -6,18 +6,18 @@ import {
   readConfig,
   type BranchPreset,
   type ToolkitConfig,
-} from "@brainervirus/workit-core/src/core/config.ts";
+} from "@workit-dev/core/src/core/config.ts";
 import type {
   WorkspaceBranchPolicy,
   WorkspaceConfig,
-} from "@brainervirus/workit-core/src/core/workspaces.ts";
+} from "@workit-dev/core/src/core/workspaces.ts";
 import {
   CHANGELOG_MODES,
   DOCS_MODES,
   PR_TEMPLATE_MODES,
   RELEASE_NOTES_MODES,
   validateWorkspaceGlob,
-} from "@brainervirus/workit-core/src/core/workspaces.ts";
+} from "@workit-dev/core/src/core/workspaces.ts";
 import {
   loadWorkspaces,
   parseList,

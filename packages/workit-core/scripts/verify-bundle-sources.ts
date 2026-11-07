@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 // Release guard: every adapter dist/ must inline the workspace's own
-// @brainervirus sources, never a registry copy. bun build resolves the nearest
-// node_modules first, so an installed packages/<pkg>/node_modules/@brainervirus
+// @workit-dev sources, never a registry copy. bun build resolves the nearest
+// node_modules first, so an installed packages/<pkg>/node_modules/@workit-dev
 // copy silently replaces the tagged source (8.0.0 shipped 7.7.0's core that
 // way). Two checks:
-//  - installs: no packages/*/node_modules/@brainervirus/* entry, and every root
-//    node_modules/@brainervirus/* entry resolves inside packages/ (run before
+//  - installs: no packages/*/node_modules/@workit-dev/* entry, and every root
+//    node_modules/@workit-dev/* entry resolves inside packages/ (run before
 //    the build; it also covers minified bundles, which carry no path headers);
 //  - bundles: bun prefixes each inlined module with a `// <path>` header; a
-//    header under node_modules/@brainervirus/ names a stale copy, and every
+//    header under node_modules/@workit-dev/ names a stale copy, and every
 //    non-minified entry (with its split chunks) must inline core from
 //    packages/workit-core/src/.
 // `--installs-only` runs only the first check (prepareCmd, before the build).
@@ -17,7 +17,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { RELEASE_PACKAGES } from "./analyze-release-scope";
 
 // Separator-agnostic: a Windows build may write `\` in module headers.
-const REGISTRY_COPY = /^\/\/ (.*node_modules[\\/]@brainervirus[\\/].+)$/gmu;
+const REGISTRY_COPY = /^\/\/ (.*node_modules[\\/]@workit-dev[\\/].+)$/gmu;
 const WORKSPACE_CORE = /^\/\/ packages[\\/]workit-core[\\/]src[\\/]/mu;
 /** bun's unminified output averages well under 100 bytes a line; --minify is thousands. */
 const MINIFIED_BYTES_PER_LINE = 1000;
@@ -28,14 +28,14 @@ const rel = (root: string, file: string): string => relative(root, file).split(s
 /** Windows paths compare case-insensitively. */
 const fold = (file: string): string => (process.platform === "win32" ? file.toLowerCase() : file);
 
-/** Installed @brainervirus packages a build could resolve instead of workspace source. */
+/** Installed @workit-dev packages a build could resolve instead of workspace source. */
 export function registryInstalls(root: string): string[] {
   const nested = entries(join(root, "packages")).flatMap((pkg) => {
-    const scope = join(root, "packages", pkg, "node_modules", "@brainervirus");
+    const scope = join(root, "packages", pkg, "node_modules", "@workit-dev");
     return entries(scope).map((name) => rel(root, join(scope, name)));
   });
   const packages = fold(join(realpathSync(root), "packages") + sep);
-  const scope = join(root, "node_modules", "@brainervirus");
+  const scope = join(root, "node_modules", "@workit-dev");
   const hoisted = entries(scope)
     .filter((name) => !fold(realpathSync(join(scope, name))).startsWith(packages))
     .map((name) => rel(root, join(scope, name)));

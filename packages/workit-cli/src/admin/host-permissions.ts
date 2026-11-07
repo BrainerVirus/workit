@@ -32,12 +32,9 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { stateDir as workitStateDir } from "@brainervirus/workit-core/src/core/heavy-words";
-import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
-import {
-  WORKIT_ALLOWED_VERBS,
-  WORKIT_USER_ONLY,
-} from "@brainervirus/workit-core/src/hooks/delivery-verbs";
+import { stateDir as workitStateDir } from "@workit-dev/core/src/core/heavy-words";
+import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
+import { WORKIT_ALLOWED_VERBS, WORKIT_USER_ONLY } from "@workit-dev/core/src/hooks/delivery-verbs";
 import { claudeConfigDir } from "./host-install";
 
 export type PermissionHost = "claude-code" | "codex" | "cursor";

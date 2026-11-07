@@ -7,14 +7,14 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
+import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import {
   HOOK_NODE_FLOOR,
   compareVersions,
   nodeRecord,
   parseNodeVersion,
   resolveHookNode,
-} from "@brainervirus/workit-core/src/core/node-resolve.mjs";
+} from "@workit-dev/core/src/core/node-resolve.mjs";
 
 /** Record this process's node for the hook launchers; best effort, never throws. */
 export const recordHookNode = (

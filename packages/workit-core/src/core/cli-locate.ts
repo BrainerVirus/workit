@@ -16,7 +16,7 @@ import { dataDir, userHome } from "./workit-paths.mjs";
 
 /** The first line after the shebang of every launcher Workit writes. */
 export const LAUNCHER_MARKER = "workit-owned-launcher";
-const CLI_PACKAGE_PATH = ["node_modules", "@brainervirus", "workit-cli"];
+const CLI_PACKAGE_PATH = ["node_modules", "@workit-dev", "cli"];
 
 /**
  * The Workit-owned install root: `WORKIT_INSTALL_ROOT`, else the data dir

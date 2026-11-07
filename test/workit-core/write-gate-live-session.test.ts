@@ -345,7 +345,7 @@ test("G an owned checkout, W git or workit runs through a shell, a substitution,
     "env -i git commit -m x",
     "git.exe commit -m x",
     "npx workit git commit -m x",
-    "npx -y @brainervirus/workit-cli git branch feature/y",
+    "npx -y @workit-dev/cli git branch feature/y",
     "bash -c 'workit git commit -m x'",
     "echo x > .git/hooks/pre-commit",
   ])

@@ -73,7 +73,7 @@ test("root tsconfig typechecks every maintained TS surface", () => {
 
 test("cursor delegates workspace root context to the shared transport", () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server).toContain("@brainervirus/workit-mcp");
+  expect(server).toContain("@workit-dev/mcp");
   expect(server).toContain("cursorContextProvider");
   expect(resolveWorkspaceRoot(undefined)).toBe(process.cwd());
   expect(resolveWorkspaceRoot("/workspace")).toBe("/workspace");

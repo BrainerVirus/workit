@@ -91,7 +91,7 @@ test("given light commands, dev servers and workit itself, when classified, then
     "bun scripts/gen.ts",
     "workit check --heavy -- npm test",
     "workit check --name unit -- bun test test/x.test.ts",
-    "npx -y @brainervirus/workit-cli check -- npm test",
+    "npx -y @workit-dev/cli check -- npm test",
     "tsc --watch",
     "jest --watch",
     "vitest watch",

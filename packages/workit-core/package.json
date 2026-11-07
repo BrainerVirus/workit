@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-core",
+  "name": "@workit-dev/core",
   "version": "13.0.0",
   "private": false,
   "description": "Workit shared core — task, policy, evidence, review, decision, worker, and writer state for agentic coding workflows",

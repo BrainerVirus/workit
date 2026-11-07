@@ -1,4 +1,4 @@
-import { CURSOR_DESCRIPTOR, capabilitiesFor } from "@brainervirus/workit-core/hooks";
+import { CURSOR_DESCRIPTOR, capabilitiesFor } from "@workit-dev/core/hooks";
 
 export type HookAvailability = Partial<
   Record<

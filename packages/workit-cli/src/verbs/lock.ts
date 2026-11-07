@@ -16,12 +16,8 @@
 //   workit lock heavy list | add <pattern> | remove <pattern> | test <cmd…>
 import fs from "node:fs";
 import path from "node:path";
-import {
-  CHECKS_FILE,
-  lightCommand,
-  loadCheckConfig,
-} from "@brainervirus/workit-core/src/check-config";
-import { simpleCommand } from "@brainervirus/workit-core/src/hooks/raw-git";
+import { CHECKS_FILE, lightCommand, loadCheckConfig } from "@workit-dev/core/src/check-config";
+import { simpleCommand } from "@workit-dev/core/src/hooks/raw-git";
 import {
   heavyCommand,
   heavyCommandsFile,
@@ -29,7 +25,7 @@ import {
   machinePatterns,
   parsePattern,
   repoPatterns,
-} from "@brainervirus/workit-core/src/core/heavy";
+} from "@workit-dev/core/src/core/heavy";
 import {
   DEFAULT_MAX_HOLD_MS,
   describeHolder,
@@ -44,21 +40,21 @@ import {
   SILENT_MS,
   type QueueEntry,
   type SlotState,
-} from "@brainervirus/workit-core/src/core/resources";
+} from "@workit-dev/core/src/core/resources";
 import {
   cancelWaiters,
   parseTarget,
   pruneLease,
   reapStuck,
-} from "@brainervirus/workit-core/src/core/heavy-lease";
+} from "@workit-dev/core/src/core/heavy-lease";
 import {
   describeEstimate,
   estimateWait,
   ledgerDurations,
   remainingNote,
   type DurationOf,
-} from "@brainervirus/workit-core/src/core/heavy-eta";
-import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
+} from "@workit-dev/core/src/core/heavy-eta";
+import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 import { emit, fail, ok, type Io } from "../output";
 import { recordReaped, workspaceResources } from "./check";
 

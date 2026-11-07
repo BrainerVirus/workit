@@ -70,7 +70,7 @@ else
   exit 1
 fi
 
-for DEP in @brainervirus/workit-core @brainervirus/workit-mcp @modelcontextprotocol/sdk zod; do
+for DEP in @workit-dev/core @workit-dev/mcp @modelcontextprotocol/sdk zod; do
   if [ ! -e "$SRC/node_modules/$DEP" ]; then
     if [ ! -f "$SRC/bun.lock" ]; then
       echo "FATAL: dependency install requires $SRC/bun.lock" >&2

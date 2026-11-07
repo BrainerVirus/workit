@@ -3,17 +3,14 @@
 // forge, which models, which lease settings apply here?" by reading
 // workspaces.json and vcs.json by hand; this answers from the same resolvers
 // the verbs use (vcsConfig, resolveRoleModel, resolveResourceSettings).
-import { CHECKS_FILE, loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
-import {
-  resolveRuntimeWorkspaceVcs,
-  workspacesPath,
-} from "@brainervirus/workit-core/src/core/workspaces";
-import { ROLE_SELECTORS, resolveRoleModel } from "@brainervirus/workit-core/src/core/role-models";
+import { CHECKS_FILE, loadCheckConfig } from "@workit-dev/core/src/check-config";
+import { resolveRuntimeWorkspaceVcs, workspacesPath } from "@workit-dev/core/src/core/workspaces";
+import { ROLE_SELECTORS, resolveRoleModel } from "@workit-dev/core/src/core/role-models";
 import {
   resolveResourceSettings,
   type ResourceSettings,
-} from "@brainervirus/workit-core/src/core/resources";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/core/resources";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 import { workspaceResources } from "./check";
 import { vcsView, type Sourced } from "./config-vcs";

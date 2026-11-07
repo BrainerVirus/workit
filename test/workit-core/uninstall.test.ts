@@ -276,7 +276,7 @@ test("HOME fallback chain matches setup.ts: explicit home > env.HOME > homedir (
   mkdirSync(path.join(spiedHome, ".config", "opencode"), { recursive: true });
   writeFileSync(
     path.join(spiedHome, ".config", "opencode", "opencode.json"),
-    JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }, null, 2) + "\n",
+    JSON.stringify({ plugin: ["@workit-dev/opencode"] }, null, 2) + "\n",
     "utf8",
   );
   const spy = spyOn(os, "homedir").mockReturnValue(spiedHome);
@@ -396,8 +396,8 @@ test("uninstall removes Workit pins from both the `plugins` and `plugin` keys", 
   try {
     const checkoutPin = "file:///home/dev/workit/packages/workit-opencode";
     f.writeJson(f.opencodeConfig, {
-      plugins: [checkoutPin, "@brainervirus/opencode-commandcode"],
-      plugin: ["@brainervirus/workit-opencode@2", "@other/pkg"],
+      plugins: [checkoutPin, "@workit-dev/opencode-commandcode"],
+      plugin: ["@workit-dev/opencode@2", "@other/pkg"],
       model: "keep",
     });
     const plan = planUninstall(f);
@@ -405,12 +405,12 @@ test("uninstall removes Workit pins from both the `plugins` and `plugin` keys", 
     applyUninstall(plan, f);
     const oc = JSON.parse(readFileSync(f.opencodeConfig, "utf8"));
     expect(oc).toEqual({
-      plugins: ["@brainervirus/opencode-commandcode"],
+      plugins: ["@workit-dev/opencode-commandcode"],
       plugin: ["@other/pkg"],
       model: "keep",
     });
 
-    f.writeJson(f.opencodeConfig, { plugins: "@brainervirus/workit-opencode" });
+    f.writeJson(f.opencodeConfig, { plugins: "@workit-dev/opencode" });
     applyUninstall(planUninstall(f), f);
     expect(JSON.parse(readFileSync(f.opencodeConfig, "utf8"))).toEqual({});
   } finally {

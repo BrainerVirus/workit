@@ -32,11 +32,11 @@ import {
 // unavailable, the packaged adapters load/boot under plain Node without Bun or a
 // monorepo. Everything must resolve package-locally.
 
-const CORE = "@brainervirus/workit-core";
-const OPENCODE = "@brainervirus/workit-opencode";
-const CURSOR = "@brainervirus/workit-cursor";
-const MCP = "@brainervirus/workit-mcp";
-const CLI = "@brainervirus/workit-cli";
+const CORE = "@workit-dev/core";
+const OPENCODE = "@workit-dev/opencode";
+const CURSOR = "@workit-dev/cursor";
+const MCP = "@workit-dev/mcp";
+const CLI = "@workit-dev/cli";
 
 // The isolated npm-install gate fetches third-party runtime deps (zod/
 // @modelcontextprotocol/sdk) from the public registry, so an offline/
@@ -308,7 +308,7 @@ test.skipIf(!npmRegistryOk)(
     const install = tmp("wk-cursor-bin-install-");
     const home = tmp("wk-cursor-bin-home-");
     try {
-      // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
+      // npm resolves the @workit-dev/* workspace deps from the sibling tarballs
       // (file:), so the candidate installs without a published core. The MCP SDK
       // and zod resolve from the registry, exactly as a real install would.
       writeFileSync(
@@ -319,11 +319,11 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cursor": tarballSpec(install, byName(packs, CURSOR)),
-              "@brainervirus/workit-mcp": tarballSpec(install, byName(packs, MCP)),
+              "@workit-dev/cursor": tarballSpec(install, byName(packs, CURSOR)),
+              "@workit-dev/mcp": tarballSpec(install, byName(packs, MCP)),
             },
             overrides: {
-              "@brainervirus/workit-core": tarballSpec(install, byName(packs, CORE)),
+              "@workit-dev/core": tarballSpec(install, byName(packs, CORE)),
             },
           },
           null,

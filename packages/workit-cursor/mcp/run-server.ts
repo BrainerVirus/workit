@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { runStdioServer } from "@brainervirus/workit-mcp/src/index";
-import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
+import { runStdioServer } from "@workit-dev/mcp/src/index";
+import { resolveStateDir } from "@workit-dev/core/src/core/logger";
 import { cursorCapabilities } from "../hooks/workit-hook";
-import type { OperationContext } from "@brainervirus/workit-core/src/core";
+import type { OperationContext } from "@workit-dev/core/src/core";
 
 export { cursorCapabilities } from "../hooks/workit-hook";
 

@@ -2,19 +2,19 @@
 // task engine. Kept out of the per-call hook bundle (workit-hook.ts loads it
 // only for subagentStart, from the cursor-session-start bundle) so every other
 // event pays nothing for the engine.
-import { failure, success } from "@brainervirus/workit-core/src/core/task-contract";
-import { WorkitCore, type OperationContext } from "@brainervirus/workit-core/src/core/task-engine";
-import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
+import { failure, success } from "@workit-dev/core/src/core/task-contract";
+import { WorkitCore, type OperationContext } from "@workit-dev/core/src/core/task-engine";
+import { TaskStore } from "@workit-dev/core/src/core/task-store";
 import type {
   NativeWorkerObservation,
   NativeWorkerVerifier,
-} from "@brainervirus/workit-core/src/core/workers";
+} from "@workit-dev/core/src/core/workers";
 import {
   cursorDeny as deny,
   cursorWorkspaceRoot,
   parseCursorHookInput,
   type CursorHookInput,
-} from "@brainervirus/workit-core/hooks";
+} from "@workit-dev/core/hooks";
 import { cursorCapabilities, type HookAvailability } from "./capabilities";
 
 const hostRef = (handle: string) => ({ kind: "host" as const, host: "cursor" as const, handle });

@@ -4,8 +4,8 @@
 // from the package.json on disk, never from running the binary.
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { scanInstalledNodes } from "@brainervirus/workit-core/src/core/node-resolve.mjs";
-import { isEphemeralCachePath } from "@brainervirus/workit-core/src/core/runtime-identity";
+import { scanInstalledNodes } from "@workit-dev/core/src/core/node-resolve.mjs";
+import { isEphemeralCachePath } from "@workit-dev/core/src/core/runtime-identity";
 import { isOwnedLauncher } from "./owned";
 import { CLI_PACKAGE_NAME, ownedPaths, ownedVersion, packageVersion, realpathOr } from "./paths";
 
@@ -52,7 +52,7 @@ const managerOf = (dir: string): string | null => {
   return null;
 };
 
-/** The global prefix and package dir a path inside `<prefix>/[lib/]node_modules/@brainervirus/workit-cli` belongs to. */
+/** The global prefix and package dir a path inside `<prefix>/[lib/]node_modules/@workit-dev/cli` belongs to. */
 const npmPackageOf = (file: string): { prefix: string; packageDir: string } | null => {
   const parts = file.split(/[\\/]/);
   for (let index = parts.length - PACKAGE_SEGMENTS.length; index >= 0; index -= 1) {
@@ -164,7 +164,7 @@ const wrapperTarget = (
   return null;
 };
 
-const HOST_PLUGIN_PACKAGE = /^@brainervirus\/workit-(?:claude-code|codex|cursor|opencode|pi)$/;
+const HOST_PLUGIN_PACKAGE = /^@workit-dev\/(?:claude-code|codex|cursor|opencode|pi)$/;
 
 /**
  * The host plugin package whose own `bin/workit` this is (#683: the Claude

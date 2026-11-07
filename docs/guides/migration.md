@@ -1,4 +1,32 @@
-# Migration: 2.x to 6.x
+# Migration
+
+## 1.0.0: the packages move to @workit-dev
+
+Workit published as `@brainervirus/workit-<pkg>` up to 14.x. From 1.0.0 the
+same packages publish as `@workit-dev/<pkg>`: `@workit-dev/cli`,
+`@workit-dev/core`, `@workit-dev/claude-code`, `@workit-dev/opencode`,
+`@workit-dev/codex`, `@workit-dev/cursor`, `@workit-dev/pi` and
+`@workit-dev/mcp`. Version numbers restarted at 1.0.0, so 1.0.0 is newer than
+any 14.x. The CLI command is still `workit`, the GitHub repo is still
+`BrainerVirus/workit`, and the Claude Code and Codex plugin id is still
+`workit@workit`.
+
+Move every install at once with the old scope's own upgrade, which knows both
+names:
+
+```bash
+npx -y @brainervirus/workit-cli@latest upgrade
+```
+
+`workit doctor` (row `legacy_scope`) lists each install still on the old
+scope (the Workit-owned CLI, a global npm copy, the OpenCode pin, the Pi
+package, the Cursor MCP server and plugin, the Codex and Claude Code plugins)
+and prints that command. It never compares a 14.x version with a 1.x one.
+
+New installs use the new names: `npx @workit-dev/cli init`.
+
+## 2.x to 6.x
+
 
 Upgrade every host together. A runtime that reads a store record written by a
 newer major stops with "upgrade Workit" instead of guessing. Run `workit upgrade`:
@@ -8,11 +36,11 @@ it shows the plan, asks once and upgrades the CLI and every host
 ## 3.0: OpenCode V1 removed, admin code moved to the CLI
 
 - The plugin exports only the V2 `setup()` entry and needs OpenCode 2.0.18+.
-  Register it as `"plugins": ["@brainervirus/workit-opencode"]`; `workit setup
+  Register it as `"plugins": ["@workit-dev/opencode"]`; `workit setup
   --hosts=opencode` moves a Workit entry out of the deprecated `plugin` key.
 - `workit cutover` and its doctor checks are removed.
 - Setup, doctor, upgrade, host-install and uninstall code moved from
-  `@brainervirus/workit-core` into the CLI; deep imports of those paths break.
+  `@workit-dev/core` into the CLI; deep imports of those paths break.
 
 ## 4.0: event store and implicit tasks
 
@@ -66,9 +94,9 @@ makes the author independent. Each verifier runs under its own session id.
 ## Install and doctor (after 8.12)
 
 - `workit init` finds adapters wherever npm put them, including the nested
-  `node_modules` of a global `npm i -g @brainervirus/workit-cli`, and accepts
+  `node_modules` of a global `npm i -g @workit-dev/cli`, and accepts
   the OpenCode plugin that OpenCode installed itself. The CLI no longer pulls
-  in `@brainervirus/workit-opencode`; OpenCode installs it from the pin.
+  in `@workit-dev/opencode`; OpenCode installs it from the pin.
 - `workit init` no longer reads adapters from the `~/.local/share/workit`
   clone: nothing kept it at the CLI's version.
 - Project files (`.gitignore`, `CHANGELOG.md`, `README.md` and the rest) go to

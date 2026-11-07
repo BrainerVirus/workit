@@ -33,7 +33,7 @@ const world = () => {
   const piRoot = path.join(home, "pi-resolved");
   // The pre-#648 install: workit-cli in a fnm Node's npm global prefix.
   const fnmPrefix = path.join(home, ".local/share/fnm/node-versions/v24.0.0/installation");
-  const cliPkg = path.join(fnmPrefix, "lib/node_modules/@brainervirus/workit-cli/package.json");
+  const cliPkg = path.join(fnmPrefix, "lib/node_modules/@workit-dev/cli/package.json");
   write(path.join(fnmPrefix, "bin/node"), "");
   mkdirSync(path.join(home, "bin"), { recursive: true });
   for (const tool of ["node", "npm"]) {
@@ -44,13 +44,13 @@ const world = () => {
   const codexCache = path.join(home, ".codex/plugins/cache/workit/workit");
   write(path.join(home, ".config/workit/config.json"), { locale: "en" });
   write(path.join(home, ".pi/agent/settings.json"), {
-    packages: ["npm:@brainervirus/workit-pi"],
+    packages: ["npm:@workit-dev/pi"],
   });
   write(path.join(piRoot, "package.json"), {
-    name: "@brainervirus/workit-pi",
+    name: "@workit-dev/pi",
     version: "1.0.0",
   });
-  write(cliPkg, { name: "@brainervirus/workit-cli", version: "1.0.0" });
+  write(cliPkg, { name: "@workit-dev/cli", version: "1.0.0" });
   write(path.join(claudePlugin, ".claude-plugin/plugin.json"), {
     name: "workit",
     repository: "https://github.com/BrainerVirus/workit",
@@ -77,21 +77,21 @@ const world = () => {
     if (command === "npm" && args[0] === "view") return { status: 0, stdout: "2.0.0\n" };
     if (isCliInstall(command, args)) {
       const staging = args[args.indexOf("--prefix") + 1];
-      write(path.join(staging, "node_modules/@brainervirus/workit-cli/package.json"), {
-        name: "@brainervirus/workit-cli",
+      write(path.join(staging, "node_modules/@workit-dev/cli/package.json"), {
+        name: "@workit-dev/cli",
         version: "2.0.0",
       });
       return { status: 0, stdout: "" };
     }
     if (command === "pi" && args[0] === "update")
       write(path.join(piRoot, "package.json"), {
-        name: "@brainervirus/workit-pi",
+        name: "@workit-dev/pi",
         version: "2.0.0",
       });
     if (command === "pi" && args[0] === "list")
       return {
         status: 0,
-        stdout: `npm:@brainervirus/workit-pi\n  ${piRoot}\n`,
+        stdout: `npm:@workit-dev/pi\n  ${piRoot}\n`,
       };
     if (command === "codex") {
       const answer = codexInventoryAnswer(args, [
@@ -99,7 +99,7 @@ const world = () => {
           name: "workit",
           marketplaceName: "workit",
           version: codexVersion,
-          source: { source: "npm", package: "@brainervirus/workit-codex" },
+          source: { source: "npm", package: "@workit-dev/codex" },
         },
       ]);
       if (answer) return answer;
@@ -115,12 +115,12 @@ const world = () => {
     // An older OpenCode 2.x: no `api` operation, its text listing names Workit.
     if (command === "opencode" && args[0] === "api")
       return { status: 1, stdout: "", stderr: 'Error: unknown command "api"\n' };
-    if (command === "opencode" && line === "plugin update @brainervirus/workit-opencode")
+    if (command === "opencode" && line === "plugin update @workit-dev/opencode")
       opencodeVersion = "2.0.0";
     if (command === "opencode" && line === "plugin list")
       return {
         status: 0,
-        stdout: `ID      VERSION  SOURCE\nworkit  ${opencodeVersion}    @brainervirus/workit-opencode\n`,
+        stdout: `ID      VERSION  SOURCE\nworkit  ${opencodeVersion}    @workit-dev/opencode\n`,
       };
     return { status: 0, stdout: "" };
   };
@@ -148,7 +148,7 @@ const world = () => {
   };
 };
 
-/** The owned install's `npm install --prefix <staging> … @brainervirus/workit-cli@<v>`. */
+/** The owned install's `npm install --prefix <staging> … @workit-dev/cli@<v>`. */
 const isCliInstall = (command: string, args: string[]) =>
   command === "node24" && args.includes("install") && args.includes("--prefix");
 
@@ -174,14 +174,13 @@ test("Given a plain `workit upgrade`, When it is confirmed once, Then the CLI, C
     expect(text).toContain("claude-code update 1.0.0 -> 2.0.0");
     expect(
       w.calls.some(
-        (call) =>
-          isCliInstall(call[0], call.slice(1)) && call.at(-1) === "@brainervirus/workit-cli@2.0.0",
+        (call) => isCliInstall(call[0], call.slice(1)) && call.at(-1) === "@workit-dev/cli@2.0.0",
       ),
     ).toBe(true);
     expect(ran(w.calls, "claude plugin marketplace update workit")).toBe(true);
     expect(ran(w.calls, "claude plugin update workit@workit")).toBe(true);
     expect(ran(w.calls, "codex plugin add workit@workit --json")).toBe(true);
-    expect(ran(w.calls, "pi update --extension npm:@brainervirus/workit-pi")).toBe(true);
+    expect(ran(w.calls, "pi update --extension npm:@workit-dev/pi")).toBe(true);
     // Codex agents are refreshed from the cached plugin's launcher.
     expect(w.calls.some((call) => call[0] === "node" && call.at(-1) === "--install-agents")).toBe(
       true,
@@ -362,7 +361,7 @@ test("Given OpenCode with `opencode plugin update`, Then upgrade runs the scoped
   const w = world();
   try {
     write(path.join(w.home, ".config/opencode/opencode.json"), {
-      plugins: ["@brainervirus/workit-opencode", "unrelated-plugin"],
+      plugins: ["@workit-dev/opencode", "unrelated-plugin"],
     });
     const run = (command: string, args: string[]) => {
       if (command === "opencode" && args.join(" ") === "plugin --help") {
@@ -382,7 +381,7 @@ test("Given OpenCode with `opencode plugin update`, Then upgrade runs the scoped
         processes,
       }),
     ).toBe(0);
-    expect(ran(w.calls, "opencode plugin update @brainervirus/workit-opencode")).toBe(true);
+    expect(ran(w.calls, "opencode plugin update @workit-dev/opencode")).toBe(true);
     expect(w.text()).toMatch(/opencode +update 1\.0\.0 -> 2\.0\.0\n/);
     expect(
       w.calls.some((call) => call[0] === "opencode" && call[2] === "update" && call.length === 3),
@@ -398,7 +397,7 @@ test("Given Claude Code and OpenCode already at the published version, When upgr
   const w = world();
   try {
     write(path.join(w.home, ".config/opencode/opencode.json"), {
-      plugins: ["@brainervirus/workit-opencode"],
+      plugins: ["@workit-dev/opencode"],
     });
     const run = (command: string, args: string[]) => {
       if (command === "npm" && args[0] === "view") return { status: 0, stdout: "1.0.0\n" };
@@ -424,7 +423,7 @@ test("Given Cursor registered in mcp.json with its plugin dir missing, Then upgr
       mcpServers: {
         workit: {
           command: "npx",
-          args: ["--package=@brainervirus/workit-cursor", "workit-mcp"],
+          args: ["--package=@workit-dev/cursor", "workit-mcp"],
         },
         other: { command: "other" },
       },
@@ -443,14 +442,14 @@ test("Given Cursor registered in mcp.json with its plugin dir missing, Then upgr
       }),
     );
     const install = plan.entries[0].commands.find((command) => command.args.includes("--prefix"));
-    expect(install?.args.at(-1)).toBe("@brainervirus/workit-cursor@2.0.0");
+    expect(install?.args.at(-1)).toBe("@workit-dev/cursor@2.0.0");
     const run = (command: string, args: string[]) => {
       const prefix = args.indexOf("--prefix");
       if (prefix >= 0) {
         w.calls.push([command, ...args]);
-        const root = path.join(args[prefix + 1], "node_modules/@brainervirus/workit-cursor");
+        const root = path.join(args[prefix + 1], "node_modules/@workit-dev/cursor");
         write(path.join(root, "package.json"), {
-          name: "@brainervirus/workit-cursor",
+          name: "@workit-dev/cursor",
           version: "2.0.0",
         });
         write(path.join(root, ".cursor-plugin/plugin.json"), {
@@ -515,7 +514,7 @@ const OPENCODE_HELP = "Commands:\n  opencode plugin check\n  opencode plugin upd
 const opencodeWorld = (versions: { before: string; after: string }, extraRow = false) => {
   const w = world();
   write(path.join(w.home, ".config/opencode/opencode.json"), {
-    plugins: ["@brainervirus/workit-opencode"],
+    plugins: ["@workit-dev/opencode"],
   });
   let updated = false;
   const run = (command: string, args: string[]) => {
@@ -530,11 +529,11 @@ const opencodeWorld = (versions: { before: string; after: string }, extraRow = f
       return {
         status: 0,
         stdout: `ID           VERSION  SOURCE\n${
-          extraRow ? "commandcode  0.12.17  @brainervirus/opencode-commandcode\n" : ""
-        }workit       ${version}   @brainervirus/workit-opencode\n`,
+          extraRow ? "commandcode  0.12.17  @workit-dev/opencode-commandcode\n" : ""
+        }workit       ${version}   @workit-dev/opencode\n`,
       };
     }
-    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+    if (command === "npm" && line === "view @workit-dev/opencode version")
       return { status: 0, stdout: `${versions.after}\n` };
     if (command === "opencode" && args[1] === "update") updated = true;
     return w.deps.run(command, args);
@@ -591,7 +590,7 @@ test("Given Codex registered in config.toml with its plugin cache missing, When 
                   version: "2.0.0",
                   source: {
                     source: "npm",
-                    package: "@brainervirus/workit-codex",
+                    package: "@workit-dev/codex",
                   },
                 },
               ]
@@ -647,7 +646,7 @@ const codexWithConfig = (
         name: "workit",
         marketplaceName: id.slice("workit@".length),
         version,
-        source: { source: "npm", package: "@brainervirus/workit-codex" },
+        source: { source: "npm", package: "@workit-dev/codex" },
       })),
       [...marketplaces],
     );
@@ -806,14 +805,14 @@ const laggingOpencode = (lag: number) => {
   let listsAfter = 0;
   const run = (command: string, args: string[]) => {
     const line = args.join(" ");
-    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+    if (command === "npm" && line === "view @workit-dev/opencode version")
       return { status: 0, stdout: "8.44.0\n" };
     if (command === "opencode" && args[1] === "update") updated = true;
     if (command === "opencode" && line === "plugin list" && updated && ++listsAfter > lag) {
       w.calls.push([command, ...args]);
       return {
         status: 0,
-        stdout: "ID      VERSION  SOURCE\nworkit  8.44.0   @brainervirus/workit-opencode\n",
+        stdout: "ID      VERSION  SOURCE\nworkit  8.44.0   @workit-dev/opencode\n",
       };
     }
     return base(command, args);
@@ -963,7 +962,7 @@ test("Given the CLI install fails, Then the hosts still upgrade with the current
     expect(seen).toHaveLength(0);
     const text = w.text();
     expect(text).toMatch(
-      /cli +FAILED +npm install of @brainervirus\/workit-cli@2\.0\.0 failed \(EACCES\); current still points to nothing.*hosts upgraded with workit \d+\.\d+\.\d+/,
+      /cli +FAILED +npm install of @workit-dev\/cli@2\.0\.0 failed \(EACCES\); current still points to nothing.*hosts upgraded with workit \d+\.\d+\.\d+/,
     );
     expect(text).toMatch(/pi +updated +1\.0\.0 -> 2\.0\.0/);
     expect(text).toMatch(/claude-code +updated/);
@@ -1071,7 +1070,7 @@ const WORKIT_ROW = {
   name: "workit",
   marketplaceName: "workit",
   version: "1.0.0",
-  source: { source: "npm", package: "@brainervirus/workit-codex" },
+  source: { source: "npm", package: "@workit-dev/codex" },
 };
 
 test("Given Workit installed from a marketplace other than the default and remote marketplaces configured, When upgrade plans, Then only local marketplaces are listed and the row is found and classified as local", () => {
@@ -1273,7 +1272,7 @@ const servicedOpencode = (options: {
 }) => {
   const w = world();
   write(path.join(w.home, ".config/opencode/opencode.json"), {
-    plugins: ["@brainervirus/workit-opencode"],
+    plugins: ["@workit-dev/opencode"],
   });
   let apiCalls = 0;
   let updated = false;
@@ -1314,7 +1313,7 @@ const servicedOpencode = (options: {
                     id: "workit",
                     source: {
                       type: "package",
-                      target: "@brainervirus/workit-opencode",
+                      target: "@workit-dev/opencode",
                       version: version(),
                       ...(updated ? {} : { outdated: true }),
                     },
@@ -1331,7 +1330,7 @@ const servicedOpencode = (options: {
       return warm(where?.cwd)
         ? {
             status: 0,
-            stdout: `ID      VERSION  SOURCE\nworkit  ${version()}   @brainervirus/workit-opencode\n`,
+            stdout: `ID      VERSION  SOURCE\nworkit  ${version()}   @workit-dev/opencode\n`,
           }
         : { status: 0, stdout: "No plugins found\n" };
     }
@@ -1342,13 +1341,13 @@ const servicedOpencode = (options: {
           status: 1,
           stdout: "",
           stderr:
-            "Error: Plugin is not configured: @brainervirus/workit-opencode\n    at <anonymous> (/$bunfs/root/chunk-a.js:6:22917)\n",
+            "Error: Plugin is not configured: @workit-dev/opencode\n    at <anonymous> (/$bunfs/root/chunk-a.js:6:22917)\n",
         };
       if (options.updateError) return { status: 1, stdout: "", stderr: options.updateError };
       updated = true;
       return { status: 0, stdout: "" };
     }
-    if (command === "npm" && line === "view @brainervirus/workit-opencode version")
+    if (command === "npm" && line === "view @workit-dev/opencode version")
       return { status: 0, stdout: `${options.after ?? "2.0.0"}\n` };
     return w.deps.run(command, args);
   };
@@ -1419,8 +1418,7 @@ test("Given the text listing says `No plugins found` for the whole wait, When up
 });
 
 const updates = (calls: string[][]) =>
-  calls.filter((call) => call.join(" ") === "opencode plugin update @brainervirus/workit-opencode")
-    .length;
+  calls.filter((call) => call.join(" ") === "opencode plugin update @workit-dev/opencode").length;
 
 test("Given OpenCode's service lists Workit only after a few readings, When upgrade runs, Then it waits and the update runs once", async () => {
   const { w, run } = servicedOpencode({ bootAfter: 3 });
@@ -1451,9 +1449,9 @@ test("Given OpenCode's service never lists Workit, When upgrade runs, Then the w
     expect(Date.now() - began).toBeLessThan(5_000);
     expect(updates(w.calls)).toBe(0);
     expect(w.text()).toContain(
-      "OpenCode did not finish loading its plugins (opencode api plugin.list never listed @brainervirus/workit-opencode)",
+      "OpenCode did not finish loading its plugins (opencode api plugin.list never listed @workit-dev/opencode)",
     );
-    expect(w.text()).toContain("opencode plugin update @brainervirus/workit-opencode");
+    expect(w.text()).toContain("opencode plugin update @workit-dev/opencode");
     expect(w.text()).not.toMatch(/opencode .*\b\d+\.\d+\.\d+ -> /);
   } finally {
     w.cleanup();
@@ -1467,7 +1465,7 @@ test("Given `opencode plugin update` fails with an Error line followed by stack 
   );
   const { w, run } = servicedOpencode({
     bootAfter: 0,
-    updateError: `Error: Plugin is not configured: @brainervirus/workit-opencode\n${frames.join("\n")}\n`,
+    updateError: `Error: Plugin is not configured: @workit-dev/opencode\n${frames.join("\n")}\n`,
   });
   try {
     await runUpgradeCommand(["--hosts=opencode", "--yes"], {
@@ -1477,7 +1475,7 @@ test("Given `opencode plugin update` fails with an Error line followed by stack 
     });
     expect(updates(w.calls)).toBe(2);
     expect(w.text()).toMatch(
-      /opencode +FAILED +`opencode plugin update @brainervirus\/workit-opencode` failed: Error: Plugin is not configured: @brainervirus\/workit-opencode \| at frame3/,
+      /opencode +FAILED +`opencode plugin update @workit-dev\/opencode` failed: Error: Plugin is not configured: @workit-dev\/opencode \| at frame3/,
     );
   } finally {
     w.cleanup();

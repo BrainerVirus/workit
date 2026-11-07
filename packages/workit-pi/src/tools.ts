@@ -12,8 +12,8 @@ import {
   WorkitCore,
   type OperationFamily,
   type ContractResult as Result,
-} from "@brainervirus/workit-core/src/core";
-import { briefInspectResult } from "@brainervirus/workit-core/src/core/task-evaluation";
+} from "@workit-dev/core/src/core";
+import { briefInspectResult } from "@workit-dev/core/src/core/task-evaluation";
 import {
   handleHook,
   PI_DESCRIPTOR,
@@ -25,13 +25,13 @@ import {
   writePaths,
   type HookEvent,
   type HookInput,
-} from "@brainervirus/workit-core/hooks";
-import { roleSteering } from "@brainervirus/workit-core/src/hooks/steering";
+} from "@workit-dev/core/hooks";
+import { roleSteering } from "@workit-dev/core/src/hooks/steering";
 import {
   escalateToolFailure,
   repeatedCliFailure,
   type FailureMemo,
-} from "@brainervirus/workit-core/src/hooks/repeat-failure";
+} from "@workit-dev/core/src/hooks/repeat-failure";
 import type {
   ExtensionContext,
   AgentToolResult,

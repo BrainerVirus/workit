@@ -15,13 +15,13 @@ import { buildReliabilityReport } from "@/test/shared/helpers/report";
 // doctor checks/fixes, logger event/file counts, install results, and the
 // candidate checksums into one deterministic, pack-only evidence document.
 
-const CORE = "@brainervirus/workit-core";
-const MCP = "@brainervirus/workit-mcp";
-const OPENCODE = "@brainervirus/workit-opencode";
-const CURSOR = "@brainervirus/workit-cursor";
-const CLI = "@brainervirus/workit-cli";
-const CODEX = "@brainervirus/workit-codex";
-const PI = "@brainervirus/workit-pi";
+const CORE = "@workit-dev/core";
+const MCP = "@workit-dev/mcp";
+const OPENCODE = "@workit-dev/opencode";
+const CURSOR = "@workit-dev/cursor";
+const CLI = "@workit-dev/cli";
+const CODEX = "@workit-dev/codex";
+const PI = "@workit-dev/pi";
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
@@ -48,7 +48,7 @@ test(
       CURSOR,
       CODEX,
       PI,
-      "@brainervirus/workit-claude-code",
+      "@workit-dev/claude-code",
     ]);
     for (const c of report.candidate) {
       expect(c.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -72,13 +72,14 @@ test(
     // rows are info (no hook run recorded, no workspace, #419, #433);
     // codex_session_plugin passes (no Codex process running, #561); updates
     // is info (the launch update check's setting, local files only); hook_node
-    // passes (the PATH node meets the floor); legacy_dirs passes (no pre-XDG dir).
+    // passes (the PATH node meets the floor); legacy_dirs passes (no pre-XDG dir);
+    // legacy_scope passes (no pre-1.0.0 install).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 42,
+      passed: 43,
       warned: 1,
       failed: 1,
-      total: 44,
+      total: 45,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -121,13 +122,14 @@ test(
       // block, #297); grant_endpoint and grant_remotes pass (no workspace grants, #431, #549); hook_runs and the three
       // *_grant_rules rows are info (#419, #433); codex_session_plugin passes
       // (no Codex process running, #561); updates is info (the launch update
-      // check's setting, local files only); legacy_dirs passes (no pre-XDG dir).
+      // check's setting, local files only); legacy_dirs passes (no pre-XDG dir);
+      // legacy_scope passes (no pre-1.0.0 install).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 42,
+        passed: 43,
         warned: 1,
         failed: 1,
-        total: 44,
+        total: 45,
         fixes: 1,
       });
     } finally {

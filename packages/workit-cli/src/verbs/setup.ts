@@ -7,7 +7,7 @@ import {
   permissionDiff,
   planHostPermissions,
 } from "../admin/host-permissions";
-import { userHome } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { userHome } from "@workit-dev/core/src/core/workit-paths.mjs";
 import pkg from "../../package.json" with { type: "json" };
 import { completionLines, installCompletion } from "../completion/install";
 import { emit, fail, ok, type Io } from "../output";

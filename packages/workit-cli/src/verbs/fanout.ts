@@ -9,29 +9,29 @@
 import { progressFor } from "../progress";
 import fs from "node:fs";
 import path from "node:path";
-import type { ResolvedForge } from "@brainervirus/workit-core/src/forge/resolve";
+import type { ResolvedForge } from "@workit-dev/core/src/forge/resolve";
 import {
   BRIEF_HOSTS,
   briefHost,
   renderBrief,
   type BriefOutcome,
-} from "@brainervirus/workit-core/src/fanout-brief";
-import { checkFanout, type CheckOutcome } from "@brainervirus/workit-core/src/fanout-check";
-import { fanoutStatus, type StatusOutcome } from "@brainervirus/workit-core/src/fanout-status";
+} from "@workit-dev/core/src/fanout-brief";
+import { checkFanout, type CheckOutcome } from "@workit-dev/core/src/fanout-check";
+import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-status";
 import {
   createSliceWorktree,
   releaseSliceWorktree,
   type CreateOutcome,
   type ReleaseOutcome,
-} from "@brainervirus/workit-core/src/fanout-worktree";
+} from "@workit-dev/core/src/fanout-worktree";
 import {
   planFanout,
   selectFanout,
   type FanoutError,
   type PlanOutcome,
-} from "@brainervirus/workit-core/src/fanout";
-import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/fanout";
+import { currentBranch } from "@workit-dev/core/src/git/rev";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge-common";
 

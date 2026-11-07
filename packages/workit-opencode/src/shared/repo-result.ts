@@ -1,4 +1,4 @@
-import { fail, ok, type run } from "@brainervirus/workit-core/src/core";
+import { fail, ok, type run } from "@workit-dev/core/src/core";
 
 export type RunResult = ReturnType<typeof run>;
 

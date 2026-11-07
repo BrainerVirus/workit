@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { isConfigObject, resolveConfigDir } from "@brainervirus/workit-core/src/core/config";
-import { readWorkspacesResult } from "@brainervirus/workit-core/src/core/workspaces";
+import { isConfigObject, resolveConfigDir } from "@workit-dev/core/src/core/config";
+import { readWorkspacesResult } from "@workit-dev/core/src/core/workspaces";
 
 // WZ-06: typed setup-state reader distinguishing missing from malformed
 // configuration. Purely read-only — nothing here ever writes; Apply decision

@@ -1,7 +1,7 @@
 import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
 import { useState, type Dispatch, type JSX } from "react";
-import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import type { WorkspaceConfig } from "@workit-dev/core/src/core/workspaces.ts";
 import {
   workspaceEditorValue,
   profileEditorValue,

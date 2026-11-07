@@ -18,8 +18,8 @@ test("ephemeral cache paths are recognized by content, not by caller", () => {
   ])
     expect(isEphemeralCachePath(p), p).toBe(true);
   for (const p of [
-    "@brainervirus/workit-opencode",
-    "@brainervirus/workit-opencode@latest",
+    "@workit-dev/opencode",
+    "@workit-dev/opencode@latest",
     "file:///home/u/checkout/packages/workit-opencode",
     "/home/u/.cursor/plugins/local/workit",
     "",

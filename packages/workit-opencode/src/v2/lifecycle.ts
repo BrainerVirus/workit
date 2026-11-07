@@ -3,10 +3,10 @@ import {
   WorkitCore,
   type TaskRecord,
   type WorkspaceRecord,
-} from "@brainervirus/workit-core/src/core";
-import { holdsLiveState } from "@brainervirus/workit-core/src/core/workers";
-import { selectFanout } from "@brainervirus/workit-core/src/fanout";
-import { currentBranch, worktreeTree } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/core";
+import { holdsLiveState } from "@workit-dev/core/src/core/workers";
+import { selectFanout } from "@workit-dev/core/src/fanout";
+import { currentBranch, worktreeTree } from "@workit-dev/core/src/git/rev";
 import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { sameWorkspace } from "../shared/session";
 import { ambiguousLaunch, matchLaunch } from "./launch-match";

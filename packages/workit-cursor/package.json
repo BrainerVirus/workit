@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-cursor",
+  "name": "@workit-dev/cursor",
   "version": "13.0.0",
   "private": false,
   "description": "Workit Cursor plugin — shared MCP transport, native hooks, and sixteen method skills",
@@ -49,8 +49,8 @@
     "build": "bun scripts/build.ts"
   },
   "devDependencies": {
-    "@brainervirus/workit-core": "workspace:*",
-    "@brainervirus/workit-mcp": "workspace:*"
+    "@workit-dev/core": "workspace:*",
+    "@workit-dev/mcp": "workspace:*"
   },
   "engines": {
     "node": ">=24"

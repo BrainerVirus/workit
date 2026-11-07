@@ -47,9 +47,9 @@ import {
   type Grants,
   VERIFICATION_STRICTNESS,
   type VerificationMode,
-} from "@brainervirus/workit-core/src/autonomy";
-import { checkoutRemotes, remotePattern } from "@brainervirus/workit-core/src/core/remotes";
-import { writeFileAtomic } from "@brainervirus/workit-core/src/core/safe-write";
+} from "@workit-dev/core/src/autonomy";
+import { checkoutRemotes, remotePattern } from "@workit-dev/core/src/core/remotes";
+import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import {
   CHANGELOG_MODES,
   DOCS_MODES,
@@ -67,9 +67,9 @@ import {
   validateWorkspacesDocument,
   workspaceMatches,
   type WorkspacesResult,
-} from "@brainervirus/workit-core/src/core/workspaces";
-import { configFilePath } from "@brainervirus/workit-core/src/core/config";
-import { withSchemaRef } from "@brainervirus/workit-core/src/core/config-schemas";
+} from "@workit-dev/core/src/core/workspaces";
+import { configFilePath } from "@workit-dev/core/src/core/config";
+import { withSchemaRef } from "@workit-dev/core/src/core/config-schemas";
 import { closest } from "../help";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";

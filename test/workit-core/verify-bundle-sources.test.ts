@@ -40,13 +40,13 @@ const guard = (root: string, ...flags: string[]) =>
 test("given a CLI bundle that inlined a registry copy of core, the guard fails naming it", () => {
   const root = fixture({
     "packages/workit-cli/dist/index.js":
-      "// packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts\nfunction effectiveOf() {}\n",
+      "// packages/workit-cli/node_modules/@workit-dev/core/src/ledger.ts\nfunction effectiveOf() {}\n",
     "packages/workit-mcp/dist/index.js": CORE_BUNDLE,
   });
   const run = guard(root);
   expect(run.status).toBe(1);
   expect(run.stderr).toContain(
-    "packages/workit-cli/dist/index.js: 1 registry-copy modules, e.g. packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts",
+    "packages/workit-cli/dist/index.js: 1 registry-copy modules, e.g. packages/workit-cli/node_modules/@workit-dev/core/src/ledger.ts",
   );
   expect(run.stderr).not.toContain("workit-mcp/dist");
 });
@@ -54,13 +54,13 @@ test("given a CLI bundle that inlined a registry copy of core, the guard fails n
 test("given Windows-style module headers, the guard still tells a registry copy from workspace core", () => {
   const root = fixture({
     "packages/workit-cli/dist/index.js":
-      "// packages\\workit-cli\\node_modules\\@brainervirus\\workit-core\\src\\ledger.ts\n",
+      "// packages\\workit-cli\\node_modules\\@workit-dev\\core\\src\\ledger.ts\n",
     "packages/workit-mcp/dist/index.js": "// packages\\workit-core\\src\\ledger.ts\n",
   });
   const run = guard(root);
   expect(run.status).toBe(1);
   expect(run.stderr).toContain(
-    "packages/workit-cli/dist/index.js: 1 registry-copy modules, e.g. packages/workit-cli/node_modules/@brainervirus/workit-core/src/ledger.ts",
+    "packages/workit-cli/dist/index.js: 1 registry-copy modules, e.g. packages/workit-cli/node_modules/@workit-dev/core/src/ledger.ts",
   );
   expect(run.stderr).not.toContain("workit-mcp/dist");
 });
@@ -120,28 +120,25 @@ test("given a minified bundle (no headers to read), the bundle check leaves it t
   expect(guard(root).status).toBe(0);
 });
 
-test("given a planted nested node_modules/@brainervirus/workit-core, the install check fails", () => {
+test("given a planted nested node_modules/@workit-dev/core, the install check fails", () => {
   const root = fixture({
-    "packages/workit-cli/node_modules/@brainervirus/workit-core/package.json": "{}",
+    "packages/workit-cli/node_modules/@workit-dev/core/package.json": "{}",
   });
   const run = guard(root, "--installs-only");
   expect(run.status).toBe(1);
   expect(run.stderr).toContain(
-    "packages/workit-cli/node_modules/@brainervirus/workit-core: installed copy outside packages/",
+    "packages/workit-cli/node_modules/@workit-dev/core: installed copy outside packages/",
   );
 });
 
-test("given a hoisted @brainervirus entry outside packages/, the install check fails; a workspace link passes", () => {
-  const root = fixture({ "node_modules/@brainervirus/workit-mcp/package.json": "{}" });
-  symlinkSync(
-    "../../packages/workit-core",
-    path.join(root, "node_modules/@brainervirus/workit-core"),
-  );
+test("given a hoisted @workit-dev entry outside packages/, the install check fails; a workspace link passes", () => {
+  const root = fixture({ "node_modules/@workit-dev/mcp/package.json": "{}" });
+  symlinkSync("../../packages/workit-core", path.join(root, "node_modules/@workit-dev/core"));
   const run = guard(root, "--installs-only");
   expect(run.status).toBe(1);
-  expect(run.stderr).toContain("node_modules/@brainervirus/workit-mcp: installed copy");
-  expect(run.stderr).not.toContain("@brainervirus/workit-core:");
-  rmSync(path.join(root, "node_modules/@brainervirus/workit-mcp"), { recursive: true });
+  expect(run.stderr).toContain("node_modules/@workit-dev/mcp: installed copy");
+  expect(run.stderr).not.toContain("@workit-dev/core:");
+  rmSync(path.join(root, "node_modules/@workit-dev/mcp"), { recursive: true });
   expect(guard(root, "--installs-only").status).toBe(0);
 });
 
@@ -154,11 +151,11 @@ test("given no built bundles, the guard fails instead of passing vacuously", () 
 test("given workspaces-update off, `npm version` in a workspace installs nothing", () => {
   const root = fixture({
     "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["a", "b"] }),
-    "a/package.json": JSON.stringify({ name: "@brainervirus/fixture-a", version: "1.0.0" }),
+    "a/package.json": JSON.stringify({ name: "@workit-dev/fixture-a", version: "1.0.0" }),
     "b/package.json": JSON.stringify({
-      name: "@brainervirus/fixture-b",
+      name: "@workit-dev/fixture-b",
       version: "1.0.0",
-      dependencies: { "@brainervirus/fixture-a": "^1.0.0" },
+      dependencies: { "@workit-dev/fixture-a": "^1.0.0" },
     }),
   });
   const run = spawnSync("npm", ["version", "2.0.0", "--no-git-tag-version"], {

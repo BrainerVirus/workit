@@ -9,12 +9,9 @@ import {
   failure,
   parseAdvertisedOperation,
   type OperationFamily,
-} from "@brainervirus/workit-core/src/core";
-import {
-  changedSourcesSinceLoad,
-  markSourcesLoaded,
-} from "@brainervirus/workit-core/src/core/boundary";
-import { capabilitiesFor, OPENCODE_DESCRIPTOR } from "@brainervirus/workit-core/hooks";
+} from "@workit-dev/core/src/core";
+import { changedSourcesSinceLoad, markSourcesLoaded } from "@workit-dev/core/src/core/boundary";
+import { capabilitiesFor, OPENCODE_DESCRIPTOR } from "@workit-dev/core/hooks";
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
 import { sameWorkspace } from "../shared/session";
 import { WORKIT_TOOL_CATALOG, workitFamilyOf } from "../shared/tools";
@@ -28,7 +25,7 @@ import {
   injectModelSwitch,
 } from "./injection";
 import { evaluateShellPermission } from "./permissions";
-import { childSessionId } from "@brainervirus/workit-core/src/host-session";
+import { childSessionId } from "@workit-dev/core/src/host-session";
 import { childDenial, childMayInspect, childMayRecord, childTaskMissing } from "./child-identity";
 import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
 import {
@@ -50,15 +47,12 @@ import { createStopControl } from "./stop";
 import { registerCommands, registerSkills } from "./registry";
 import { pluginSourceFiles } from "../stale-sources";
 import { opencodeShellEnv, useOwnedCliInOpencode } from "../cli-path";
-import {
-  escalateToolFailure,
-  type FailureMemo,
-} from "@brainervirus/workit-core/src/hooks/repeat-failure";
+import { escalateToolFailure, type FailureMemo } from "@workit-dev/core/src/hooks/repeat-failure";
 import {
   modelKey,
   modelSwitched,
   type SessionModels,
-} from "@brainervirus/workit-core/src/hooks/model-switch";
+} from "@workit-dev/core/src/hooks/model-switch";
 
 /** V2-native session facts a Workit call is bound to. A present `parentID`
  * means a child session: worker lineage is validated by the lifecycle port

@@ -53,8 +53,7 @@ const opencodeRegistersWorkit = (file: string): boolean => {
     .flatMap((value: unknown) => (Array.isArray(value) ? value : []))
     .some(
       (pin: unknown) =>
-        typeof pin === "string" &&
-        /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(pin),
+        typeof pin === "string" && /^(?:npm:)?@workit-dev\/opencode(?:@[^/\s]+)?$/.test(pin),
     );
 };
 
@@ -95,15 +94,15 @@ export const runProbes = async (
       add(...registry(OPENCODE_PACKAGE));
     }
     if (hosts.includes("claude-code")) add(...registry(CLAUDE_CODE_PACKAGE));
-    if (hosts.includes("cursor")) add(...registry("@brainervirus/workit-cursor"));
+    if (hosts.includes("cursor")) add(...registry("@workit-dev/cursor"));
     if (hosts.includes("codex")) {
       // The inventory merges several local commands: one probe, one timeout.
       add("codex", CODEX_INVENTORY_ARGS, () => codexInventory(run));
-      add(...registry("@brainervirus/workit-codex"));
+      add(...registry("@workit-dev/codex"));
     }
     if (hosts.includes("pi")) {
       if (existsSync(paths.piSettings)) add("pi", ["list"]);
-      add(...registry("@brainervirus/workit-pi"));
+      add(...registry("@workit-dev/pi"));
     }
     if (cli) {
       add(...registry(CLI_PACKAGE));

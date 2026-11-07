@@ -8,7 +8,7 @@ import {
   locateWorkitCli,
   useOwnedWorkitCli,
   workitCliEnv,
-} from "@brainervirus/workit-core/src/core/cli-locate";
+} from "@workit-dev/core/src/core/cli-locate";
 
 /** Apply the owned CLI to this process's env at plugin load; returns what was located. */
 export const useOwnedCliInOpencode = (env: NodeJS.ProcessEnv = process.env): LocatedCli =>

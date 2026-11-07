@@ -12,6 +12,14 @@ anything under its `packages/<pkg>/` dir or the sources it bundles. A `docs:`
 or `chore:` change there still ships as a patch. Root docs, tests and tooling
 never release, and only changed packages are published.
 
+Releases are tagged `workit-dev-v<version>` (`tagFormat` in
+`release.config.cjs`; the scripts share `TAG_PREFIX` from
+`analyze-release-scope.ts`). The packages published as `@brainervirus/workit-*`
+up to 14.x, tagged `v<version>`; they moved to `@workit-dev/*` and restarted
+at 1.0.0. semantic-release reads only tags that match `tagFormat`, so the old
+`v*` tags never seed a version. A 14.x maintenance release of the old scope
+comes from its own branch with its own config, never from `main`.
+
 Never edit versions or tags by hand. Because PRs are squash-merged, the PR
 title is the commit semantic-release reads. A breaking change needs `!` in the
 PR title (`fix!: …`); a `BREAKING CHANGE:` footer only counts if it lands in
@@ -24,9 +32,9 @@ manifest-sync commits stay out (`presetConfig.types` in `release.config.cjs`).
 
 The GitHub release (tag, notes) is created before npm publishing, so a
 publish failure can no longer leave a tag without a release. Packages are
-published in dependency order. Each one goes after every `@brainervirus`
+published in dependency order. Each one goes after every `@workit-dev`
 package it installs, and `workit-cli` goes last, so
-`npx @brainervirus/workit-cli@latest upgrade` never resolves a CLI whose host
+`npx @workit-dev/cli@latest upgrade` never resolves a CLI whose host
 packages are not on the registry yet (v13.0.0 hit `ETARGET` for 1m40s). For
 each changed package, `publish-changed-packages.ts` checks a failed
 `npm publish` against the registry (`npm view <name>@<version> version`). A
@@ -48,7 +56,7 @@ marked latest). It needs `gh` authenticated with write access to the repo.
 
 Adapter bundles inline workit-core (and the CLI/MCP sources) at build time.
 `packages/workit-core/scripts/verify-bundle-sources.ts` fails the release when a
-bundle inlined a registry copy from `packages/*/node_modules/@brainervirus`
+bundle inlined a registry copy from `packages/*/node_modules/@workit-dev`
 instead of the tagged source; the release job sets
 `NPM_CONFIG_WORKSPACES_UPDATE=false` so `npm version` never installs one.
 
@@ -77,14 +85,14 @@ Publisher, GitHub Actions):
 
 Add it to each of the eight packages:
 
-- `@brainervirus/workit-core`
-- `@brainervirus/workit-mcp`
-- `@brainervirus/workit-cli`
-- `@brainervirus/workit-opencode`
-- `@brainervirus/workit-cursor`
-- `@brainervirus/workit-codex`
-- `@brainervirus/workit-pi`
-- `@brainervirus/workit-claude-code`
+- `@workit-dev/core`
+- `@workit-dev/mcp`
+- `@workit-dev/cli`
+- `@workit-dev/opencode`
+- `@workit-dev/cursor`
+- `@workit-dev/codex`
+- `@workit-dev/pi`
+- `@workit-dev/claude-code`
 
 Then set each package's Publishing access to require 2FA and disallow
 tokens, and delete the `NPMJS` repository secret and its npm token. npm also
@@ -92,30 +100,29 @@ checks that `repository.url` in each `package.json` names this repo:
 `git+https://github.com/BrainerVirus/workit.git`, with `directory` set to
 `packages/<pkg>` (`test/artifacts/release-orchestration.test.ts` pins it).
 
-Trusted publishing cannot create a package. A new `@brainervirus` name must be
+Trusted publishing cannot create a package. A new `@workit-dev` name must be
 published once by hand (`npm publish --access public` from its tag, logged in
 with 2FA) before its trusted publisher can be added.
 
-### Tags that were cut but not published
+### What each release publishes
 
-When the publish step fails, the tag and GitHub release stay, but the npm
-versions never appear (v14.5.0 to v14.5.4 failed on a rejected token). Never
-delete or move those tags: the next release takes the next version and
-publishes it.
+`publish-changed-packages.ts` diffs each package from the release the
+registry serves for it, not from the previous tag: `npm view <name> version`,
+then the `workit-dev-v<that version>` tag. A package ships when its payload
+changed since that tag, and also when the registry has no version of it, only
+the `0.0.1` placeholder that reserved the name, or a version with no local
+tag. So a release whose publish failed part-way (v14.5.0 to v14.5.4 failed on
+a rejected token) ships the missed packages next time. Never delete or move
+those tags.
 
-The publish step diffs against the previous tag, not against what npm has. A
-package whose only changes landed in the unpublished tags is skipped by the
-next release (unless a package that installs it ships), so npm keeps serving
-its old version. After the next release, compare each package:
+The first release (no previous `workit-dev-v*` tag: semantic-release renders
+`${lastRelease.gitTag}` empty) ships every package. `PUBLISH_ALL=1` or
+`--all` ships every package in any release, and `PUBLISH_DRY_RUN=1` runs the
+selection without publishing:
 
 ```bash
-npm view @brainervirus/<pkg> version   # last version on npm
-git diff --name-only v<that version>..v<next release> -- packages/<pkg>
+PUBLISH_DRY_RUN=1 bun packages/workit-core/scripts/publish-changed-packages.ts ""
 ```
-
-If the diff is not empty, ship it with a follow-up PR that changes something
-under `packages/<pkg>/` (a patch release publishes it), or publish it by hand
-from the release tag with 2FA, in dependency order (see above).
 
 ## Where the version lives
 
@@ -124,17 +131,17 @@ do not go `BEHIND` (strict branch protection would make each one rebase and
 rerun CI). The release job sets the version in its own checkout and does not
 commit it:
 
-1. semantic-release reads the previous release from the `v*` tags, not from
-   any manifest, and picks `vX`.
+1. semantic-release reads the previous release from the `workit-dev-v*` tags,
+   not from any manifest, and picks `X`.
 2. One `@semantic-release/npm` bumper per package writes `X` into each
    `packages/*/package.json`. They never publish.
 3. The prepare step (`rewrite-workspace-deps.ts`) writes `X` into the Codex,
    Cursor and Claude Code `plugin.json` files and turns every internal
    `workspace:*` range into `^X`, then rebuilds the bundles with `X` in them.
-4. semantic-release tags `vX` on the merge commit and creates the GitHub
+4. semantic-release tags `workit-dev-vX` on the merge commit and creates the GitHub
    release.
 5. `publish-changed-packages.ts` checks that every package.json, plugin.json
-   and internal range says the version of the `v*` tag on HEAD. If any of
+   and internal range says the version of the `workit-dev-v*` tag on HEAD. If any of
    them differs, it stops before publishing anything.
 
 The committed manifests on `main` keep the version of the last sync. Nothing

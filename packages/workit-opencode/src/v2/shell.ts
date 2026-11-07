@@ -17,11 +17,8 @@ import {
   shellNudge,
   shellPolicy,
   type HookInput,
-} from "@brainervirus/workit-core/hooks";
-import {
-  repeatedCliFailure,
-  type FailureMemo,
-} from "@brainervirus/workit-core/src/hooks/repeat-failure";
+} from "@workit-dev/core/hooks";
+import { repeatedCliFailure, type FailureMemo } from "@workit-dev/core/src/hooks/repeat-failure";
 
 type Content = { type: string; text?: string };
 type ShellResult = { content?: string | ReadonlyArray<Content> } & Record<string, unknown>;

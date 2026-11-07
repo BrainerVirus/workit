@@ -10,7 +10,7 @@
 //     <lead>:<child> (the shape Claude Code's SubagentStart gives a subagent),
 //     which the ledger accepts because it ends in the child's own
 //     OPENCODE_SESSION_ID.
-import { childSessionId } from "@brainervirus/workit-core/src/host-session";
+import { childSessionId } from "@workit-dev/core/src/host-session";
 
 /**
  * Shell tool calls seen in `execute.before` and not yet created, by command

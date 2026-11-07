@@ -7,7 +7,7 @@
 import path from "node:path";
 
 /** Canonical published OpenCode plugin identity (OpenCode resolves from npm). */
-export const OPENCODE_NPM_PIN = "@brainervirus/workit-opencode";
+export const OPENCODE_NPM_PIN = "@workit-dev/opencode";
 
 export interface MergeResult<T> {
   config: T;
@@ -31,14 +31,14 @@ export function isWorkitPlugin(value: unknown): boolean {
   const s = String(value).replaceAll("\\", "/");
   const url = s.startsWith("file://") || s.startsWith("git+file://");
   const pkgPath =
-    /\/(?:packages\/workit-(?:opencode|cursor)|node_modules\/@brainervirus\/workit-(?:opencode|cursor))(?:\/|$)/.test(
+    /\/(?:packages\/workit-(?:opencode|cursor)|node_modules\/@workit-dev\/(?:opencode|cursor))(?:\/|$)/.test(
       s,
     );
   return (
     named(s, "workit") ||
     named(s, "local/workit") ||
-    named(s, "@brainervirus/workit-opencode") ||
-    named(s, "@brainervirus/workit-cursor") ||
+    named(s, "@workit-dev/opencode") ||
+    named(s, "@workit-dev/cursor") ||
     (url && pkgPath)
   );
 }
@@ -200,7 +200,7 @@ export function mergeCursorHooks(
  * around npm/cli#9765, where npx ignores the user's scoped release-age
  * exclusion. Hooks never use it: they go through the pinned launcher below.
  */
-export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
+export const CURSOR_RUNTIME_PACKAGE = "@workit-dev/cursor@latest";
 
 /**
  * Cursor hook launcher (`packages/workit-cursor/hooks/launch.mjs`, committed

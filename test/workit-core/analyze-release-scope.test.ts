@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   analyzeReleaseScope,
   latestTag,
+  RELEASE_PACKAGES,
 } from "@/packages/workit-core/scripts/analyze-release-scope";
 
 type Repo = {
@@ -41,7 +42,7 @@ function repo(): Repo {
 }
 
 describe("latestTag", () => {
-  test("returns null when no v* tag exists", () => {
+  test("returns null when no workit-dev-v* tag exists", () => {
     const r = repo();
     try {
       expect(latestTag(r.root)).toBeNull();
@@ -49,30 +50,30 @@ describe("latestTag", () => {
       r.cleanup();
     }
   });
-  test("returns the newest semver-sorted v* tag", () => {
+  test("returns the newest semver-sorted workit-dev-v* tag", () => {
     const r = repo();
     try {
       r.commit("chore: a", { "x.txt": "a" });
-      r.tag("v0.8.9");
+      r.tag("workit-dev-v0.8.9");
       r.commit("chore: b", { "x.txt": "b" });
-      r.tag("v0.8.10");
-      expect(latestTag(r.root)).toBe("v0.8.10");
+      r.tag("workit-dev-v0.8.10");
+      expect(latestTag(r.root)).toBe("workit-dev-v0.8.10");
     } finally {
       r.cleanup();
     }
   });
-  test("skips non-semver v* tags and returns the newest real semver tag", () => {
+  test("skips non-semver workit-dev-v* tags and returns the newest real semver tag", () => {
     const r = repo();
     try {
       r.commit("chore: a", { "a.txt": "a\n" });
-      r.tag("v0.8.9");
+      r.tag("workit-dev-v0.8.9");
       r.commit("chore: b", { "b.txt": "b\n" });
       r.tag("vendor-x");
       r.commit("chore: c", { "c.txt": "c\n" });
-      r.tag("v0.8.11");
+      r.tag("workit-dev-v0.8.11");
       r.commit("chore: d", { "d.txt": "d\n" });
-      r.tag("v10");
-      expect(latestTag(r.root)).toBe("v0.8.11");
+      r.tag("workit-dev-v10");
+      expect(latestTag(r.root)).toBe("workit-dev-v0.8.11");
     } finally {
       r.cleanup();
     }
@@ -80,9 +81,26 @@ describe("latestTag", () => {
 });
 
 describe("analyzeReleaseScope", () => {
+  test("old 14.x v* tags never seed a release: the first @workit-dev release ships every package", () => {
+    const r = repo();
+    try {
+      r.commit("feat: a", { "packages/workit-core/src/a.ts": "a\n" });
+      r.tag("v14.6.0");
+      r.commit("docs: tooling only", { "docs/x.md": "x\n" });
+      expect(latestTag(r.root)).toBeNull();
+      // Any releasable level: semantic-release cuts 1.0.0 when no tag matches tagFormat.
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "minor",
+        productPkgs: [...RELEASE_PACKAGES],
+      });
+    } finally {
+      r.cleanup();
+    }
+  });
+
   test("tooling-only commits yield no release", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("fix(ci): workflow tweak", { ".github/workflows/x.yml": "on: push\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({ level: null, productPkgs: [] });
@@ -93,7 +111,7 @@ describe("analyzeReleaseScope", () => {
 
   test("product fix yields patch scoped to its package", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("fix(cli): flag parsing", { "packages/workit-cli/src/index.tsx": "export {};\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({
@@ -107,7 +125,7 @@ describe("analyzeReleaseScope", () => {
 
   test("feat beats fix; BREAKING beats feat", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("fix(core): bug", { "packages/workit-core/src/a.ts": "a\n" });
       r.commit("feat(cursor): thing", { "packages/workit-cursor/hooks/h.ts": "h\n" });
@@ -123,7 +141,7 @@ describe("analyzeReleaseScope", () => {
 
   test("conventional !: breaking syntax yields major", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("feat(cli)!: drop flag", { "packages/workit-cli/src/f.ts": "f\n" });
       expect(analyzeReleaseScope(r.root).level).toBe("major");
@@ -134,7 +152,7 @@ describe("analyzeReleaseScope", () => {
 
   test("breaking syntax on other conventional types yields major", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit(
         "refactor(opencode)!: remove managed actions\n\nBREAKING CHANGE: mutations now use native host tools",
@@ -151,7 +169,7 @@ describe("analyzeReleaseScope", () => {
 
   test("!: inside subject body does not imply breaking", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("fix(cli): parse a!: b", { "packages/workit-cli/src/f.ts": "f\n" });
       expect(analyzeReleaseScope(r.root).level).toBe("patch");
@@ -162,7 +180,7 @@ describe("analyzeReleaseScope", () => {
 
   test("mixed tooling+product counts; squash subjects parse", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("docs: readme", { "README.md": "# x\n" });
       r.commit("fix(workit-cli): title (#42)", { "packages/workit-cli/src/main.ts": "m\n" });
@@ -206,7 +224,7 @@ describe("analyzeReleaseScope", () => {
       // ONLY the merge commit — its file list must survive collection.
       g(["checkout", "-q", "-b", "hotfix"]);
       r.commit("fix(cli): hotfix payload", { "packages/workit-cli/src/e.ts": "e\n" });
-      g(["tag", "v0.8.11"]);
+      g(["tag", "workit-dev-v0.8.11"]);
       g(["checkout", "-q", "main"]);
       r.commit("docs: notes", { "docs/x.md": "x\n" });
       g(["merge", "--no-ff", "-q", "-m", "Merge branch 'hotfix'", "hotfix"]);
@@ -221,7 +239,7 @@ describe("analyzeReleaseScope", () => {
 
   test("payload-only docs commits release as patch", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("docs(skills): pause parked leads", {
         "packages/workit-core/skills/workit-continue/SKILL.md": "# continue\n",
@@ -247,7 +265,7 @@ describe("analyzeReleaseScope", () => {
 
   test("release manifest sync alone yields no release", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("chore(release): sync manifests to v0.8.12 (#99)", {
         "packages/workit-cli/package.json": '{ "version": "0.8.12" }\n',
@@ -267,7 +285,7 @@ describe("analyzeReleaseScope", () => {
     const r = repo();
     try {
       r.commit("chore: lock", { "bun.lock": lock({ zod: "4.6.5", oxlint: "1.86.0" }) });
-      r.tag("v0.9.0");
+      r.tag("workit-dev-v0.9.0");
       r.commit("chore(deps): bump oxlint", {
         "bun.lock": lock({ zod: "4.6.5", oxlint: "1.87.0" }),
       });
@@ -292,7 +310,7 @@ describe("analyzeReleaseScope", () => {
 
   test("non-ASCII paths survive collection without C-quoting", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("fix(cli): café", { "packages/workit-cli/src/café.ts": "c\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({
@@ -306,7 +324,7 @@ describe("analyzeReleaseScope", () => {
 
   test("BREAKING-CHANGE hyphen alias yields major", () => {
     const r = repo();
-    r.tag("v0.8.11");
+    r.tag("workit-dev-v0.8.11");
     try {
       r.commit("fix(cli): boom\n\nBREAKING-CHANGE: dropped flag", {
         "packages/workit-cli/src/h.ts": "h\n",

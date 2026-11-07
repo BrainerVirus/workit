@@ -9,12 +9,12 @@
 // changes left on disk: merged clean worktrees in Workit's places, stale
 // registrations, merged branches whose remote is gone. Dry run unless --apply.
 import { progressFor } from "../progress";
-import { LOG_RETENTION, pruneCheckLogs } from "@brainervirus/workit-core/src/checks";
-import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
+import { LOG_RETENTION, pruneCheckLogs } from "@workit-dev/core/src/checks";
+import { TaskStore } from "@workit-dev/core/src/core/task-store";
 import { emit, fail, ok, type Io } from "../output";
 import { workspaceRootFor } from "../task";
-import { sweepWorktrees, type WorktreeSweep } from "@brainervirus/workit-core/src/core/cleanup";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import { sweepWorktrees, type WorktreeSweep } from "@workit-dev/core/src/core/cleanup";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 
 const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 

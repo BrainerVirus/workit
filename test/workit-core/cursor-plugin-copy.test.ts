@@ -25,7 +25,7 @@ test("copyPluginDir materializes a real directory when the adapter root is a sym
     mkdirSync(path.join(realPkg, "dist"), { recursive: true });
     writeFileSync(
       path.join(realPkg, "package.json"),
-      JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.3" }),
+      JSON.stringify({ name: "@workit-dev/cursor", version: "1.0.3" }),
     );
     writeFileSync(path.join(realPkg, "dist", "mcp-server.js"), "export {};\n");
     writeFileSync(path.join(realPkg, "mcp.json"), '{"mcpServers":{}}\n');
@@ -38,7 +38,7 @@ test("copyPluginDir materializes a real directory when the adapter root is a sym
     expect(copyPluginDir(linkPkg, dest)).toBe("Installed");
     expect(lstatSync(dest).isSymbolicLink()).toBe(false);
     expect(lstatSync(dest).isDirectory()).toBe(true);
-    expect(readFileSync(path.join(dest, "package.json"), "utf8")).toContain("workit-cursor");
+    expect(readFileSync(path.join(dest, "package.json"), "utf8")).toContain("@workit-dev/cursor");
     // realpathSync: macOS tmpdir may be /var vs /private/var
     expect(readFileSync(path.join(dest, ".workit-root"), "utf8").trim()).toBe(
       realpathSync(realPkg),

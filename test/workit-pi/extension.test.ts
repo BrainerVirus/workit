@@ -105,7 +105,7 @@ test("clean Pi package declares stock discovery and the seven families plus read
     readFileSync(path.join(import.meta.dir, "../../packages/workit-pi/package.json"), "utf8"),
   );
   expect(manifest.pi).toEqual({ extensions: ["./dist/workit.js"], skills: ["./skills"] });
-  expect(manifest.dependencies ?? {}).not.toHaveProperty("@brainervirus/workit-core");
+  expect(manifest.dependencies ?? {}).not.toHaveProperty("@workit-dev/core");
   expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^1.4.0");
   const pi = makePi();
   await extension(pi as any);

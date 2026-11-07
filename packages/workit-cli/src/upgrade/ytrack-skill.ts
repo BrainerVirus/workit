@@ -4,14 +4,14 @@
 import {
   configDir as workitConfigDir,
   stateDir as workitStateDir,
-} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+} from "@workit-dev/core/src/core/workit-paths.mjs";
 import {
   syncYtrackSkill,
   youTrackInUse,
   YTRACK_UPGRADE,
   type SkillHost,
-} from "@brainervirus/workit-core/src/core/ytrack-skill";
-import { ytrackRunner } from "@brainervirus/workit-core/src/core/youtrack-ytrack";
+} from "@workit-dev/core/src/core/ytrack-skill";
+import { ytrackRunner } from "@workit-dev/core/src/core/youtrack-ytrack";
 import { detectHosts } from "../admin/detect-hosts";
 import { type Style } from "../style";
 import { type HostOutcome } from "./shared";
