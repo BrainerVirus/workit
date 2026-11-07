@@ -126,6 +126,13 @@ import {
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
 import { hostSkillsRoot } from "../upgrade/skill-roots";
 import { detectHosts } from "./detect-hosts";
+import {
+  isLegacyClaudePlugin,
+  LEGACY_SCOPE,
+  LEGACY_SCOPE_FIX,
+  legacyName,
+  legacyScopeInstalls,
+} from "../install/legacy-scope";
 import { removalCommand, type MigrationCopy } from "../install/migrate";
 import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/paths";
 import { readUpdateCache, readUpdatesMode } from "../update-settings";
@@ -155,6 +162,7 @@ type DoctorCheckId =
   | "hook_issued_sessions"
   | "workit_on_path"
   | "cli_installs"
+  | "legacy_scope"
   | "assets"
   | "launcher"
   | "cursor_hook"
@@ -3400,6 +3408,12 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
   let repair: string | undefined;
   for (const install of installs) {
     const label = `${install.id} ${install.version ?? "(unknown version)"}${install.scope === "user" ? "" : ` (${install.scope} scope)`}`;
+    // A 14.x old-scope plugin is not comparable with a 1.x release: legacy_scope reports it.
+    if (isLegacyClaudePlugin(install.installPath)) {
+      problems.push(`${label} is the old ${LEGACY_SCOPE} package (legacy_scope)`);
+      repair ??= LEGACY_SCOPE_FIX;
+      continue;
+    }
     if (latest && install.version && versionBehind(install.version, latest)) {
       problems.push(`stale_install: ${label} is behind published ${latest}`);
       repair ??= fix(install);
@@ -3946,6 +3960,33 @@ const checkCliInstalls = (res: Resolved): DoctorCheck => {
   };
 };
 
+/**
+ * Installs still on the pre-1.0.0 @brainervirus scope. Their 14.x versions
+ * are never compared with a @workit-dev 1.x release (that reads as newer than
+ * published); the row names each one and the single command that migrates
+ * them all.
+ */
+const checkLegacyScope = (res: Resolved): DoctorCheck => {
+  const found = legacyScopeInstalls({
+    home: res.home,
+    env: res.env,
+    opencodeConfig: res.opencodeConfig,
+    piAgentDir: piAgentDirOf(res),
+    codexHome: codexHomeOf(res),
+    cursorPluginDir: res.cursorPluginDir,
+  });
+  if (found.length === 0)
+    return { id: "legacy_scope", status: "pass", detail: `no ${LEGACY_SCOPE} install` };
+  return {
+    id: "legacy_scope",
+    status: "warn",
+    detail: `Workit moved from ${legacyName("<pkg>")} (14.x) to @workit-dev/<pkg> (1.0.0); still on the old scope, not version-compared: ${found
+      .map((entry) => (entry.version ? `${entry.what} (${entry.version})` : entry.what))
+      .join("; ")}`,
+    fix: LEGACY_SCOPE_FIX,
+  };
+};
+
 /** Always shown per host, "never" when absent; every other recorded event follows by name. */
 const HOOK_RUN_BASELINE = ["SessionStart", "PreToolUse"];
 
@@ -4017,6 +4058,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkHookIssuedSessions,
   checkWorkitOnPath,
   checkCliInstalls,
+  checkLegacyScope,
   checkAssets,
   checkLauncher,
   checkCursorHook,

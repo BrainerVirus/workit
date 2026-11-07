@@ -12,6 +12,7 @@ import { OPENCODE_V1_FIX } from "../admin/doctor";
 import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix";
 import cliPackage from "../../package.json" with { type: "json" };
 import { describeInstall, isOwnedWrapper } from "../install/discover";
+import { isLegacyClaudePlugin } from "../install/legacy-scope";
 import { migrationCopies } from "../install/migrate";
 import { isOwnedLauncher } from "../install/owned";
 import { entryOf, ownedPaths, ownedVersion, realpathOr, versionDir } from "../install/paths";
@@ -211,12 +212,16 @@ export const sources = (
   });
   guard("claude-code", () => {
     // User-scope installs only: a project install belongs to that project.
+    // An old-scope (14.x) plugin's version is not comparable with a 1.x
+    // release, so it is updated, never "already current".
     for (const install of claudeWorkitInstalls(home, paths.env, null))
       result.push({
         host: "claude-code",
         selector: install.id,
         kind: "floating",
-        installedVersion: install.version ?? undefined,
+        installedVersion: isLegacyClaudePlugin(install.installPath)
+          ? undefined
+          : (install.version ?? undefined),
       });
   });
   return result;
