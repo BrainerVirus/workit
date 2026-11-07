@@ -5,7 +5,9 @@
 // subagent or child of one of its leads, a session id handed out under one
 // (`<lead>:<x>`, `<lead>-w-<slice>`), or any session on one of its slice
 // branches; the lead itself is never one, nor is a subagent of the lead whose
-// type is not a Workit worker or judge (W2.27).
+// type is not a Workit worker or judge (W2.27). An agent that its branch, or
+// the worktree it is bound to, ties to slices works only for those fanouts, so
+// a lead running two fanouts never hands one's orders to the other's workers.
 import fs from "node:fs";
 import path from "node:path";
 import { currentBranch } from "../git/rev";
@@ -91,30 +93,67 @@ const workerOfLead = (input: HookInput): boolean =>
   input.session.agentType === null ||
   workitRole(DESCRIPTORS[input.host], input.session.agentType) !== null;
 
-const worksFor = (plan: Plan, input: HookInput, branch: () => string | null): boolean => {
+/** "slice" when its branch ties the agent to one of the plan's slices, "lead" for the lead link alone. */
+const worksFor = (
+  plan: Plan,
+  input: HookInput,
+  branches: readonly string[],
+): "slice" | "lead" | null => {
   const session = input.session.id;
-  if (plan.leads.includes(session) && !input.session.agentId) return false;
+  if (plan.leads.includes(session) && !input.session.agentId) return null;
+  if (branches.some((branch) => plan.branches.includes(branch))) return "slice";
   const lead = leadOf(input);
-  if (lead && plan.leads.includes(lead) && workerOfLead(input)) return true;
-  if (plan.leads.some((each) => session.startsWith(`${each}-w-`))) return true;
-  const current = branch();
-  return current !== null && plan.branches.includes(current);
+  if (lead && plan.leads.includes(lead) && workerOfLead(input)) return "lead";
+  return plan.leads.some((each) => session.startsWith(`${each}-w-`)) ? "lead" : null;
 };
 
-type Standing = { rev: string; orders: Map<string, ReadRow>; rows: readonly ReadRow[] };
+/** The branches of the agent's cwd and of the worktree a `worktree.bound` row binds it to. */
+const agentBranches = (input: HookInput, rows: readonly ReadRow[]): string[] => {
+  const { id, agentId } = input.session;
+  const bound = agentId
+    ? rows.findLast(
+        (row) =>
+          row.type === "worktree.bound" &&
+          row.actor.session === id &&
+          row.actor.agentId === agentId &&
+          typeof row.worktree === "string",
+      )?.worktree
+    : undefined;
+  const dirs = typeof bound === "string" ? [input.cwd, bound] : [input.cwd];
+  return dirs.map((dir) => currentBranch(dir)).filter((branch): branch is string => !!branch);
+};
 
-/** Orders in force now for every fanout this agent works for, keyed by row id. */
+type Standing = {
+  rev: string;
+  orders: Map<string, ReadRow>;
+  rows: readonly ReadRow[];
+  fanouts: Set<string>;
+};
+
+/**
+ * Orders in force now for every fanout this agent works for, keyed by row id:
+ * the fanouts whose slices it sits on, else every fanout its lead link gives.
+ */
 const standingFor = (input: HookInput, store: string, rev: string): Standing => {
   const orders = new Map<string, ReadRow>();
   const ledger = readLedger(input.cwd);
   const rows = ledger.ok ? ledger.value.rows : [];
-  let branch: string | null | undefined;
-  const lazyBranch = () => (branch === undefined ? (branch = currentBranch(input.cwd)) : branch);
-  for (const plan of readPlans(store))
-    if (worksFor(plan, input, lazyBranch))
-      for (const row of activeStanding(rows, plan.name, plan.leads.length ? plan.leads : null))
-        orders.set(row.id, row);
-  return { rev, orders, rows };
+  const branches = agentBranches(input, rows);
+  const matched = readPlans(store).map((plan) => ({
+    plan,
+    how: worksFor(plan, input, branches),
+  }));
+  const tied = matched.some(({ how }) => how === "slice");
+  const plans = matched.filter(({ how }) => (tied ? how === "slice" : how !== null));
+  for (const { plan } of plans)
+    for (const row of activeStanding(rows, plan.name, plan.leads.length ? plan.leads : null))
+      orders.set(row.id, row);
+  return {
+    rev,
+    orders,
+    rows,
+    fanouts: new Set(plans.map(({ plan }) => plan.name)),
+  };
 };
 
 /** The same store path the launchers' fast paths compute, so they read the same seen file. */
@@ -122,7 +161,11 @@ const located = (input: HookInput) => {
   const store = input.session.id ? gitStoreDir(input.cwd) : null;
   const rev = store ? readStandingRev(store) : null;
   if (!store || rev === null) return null;
-  return { store, rev, file: standingSeenFile(store, input.session.id, input.session.agentId) };
+  return {
+    store,
+    rev,
+    file: standingSeenFile(store, input.session.id, input.session.agentId),
+  };
 };
 
 /**
@@ -134,7 +177,10 @@ export const seedStanding = (input: HookInput): void => {
     const where = located(input);
     if (!where) return;
     const now = standingFor(input, where.store, where.rev);
-    writeStandingSeen(where.file, { rev: where.rev, ids: [...now.orders.keys()] });
+    writeStandingSeen(where.file, {
+      rev: where.rev,
+      ids: [...now.orders.keys()],
+    });
   } catch {
     // Without a baseline the first delta recaps every order in force.
   }
@@ -147,10 +193,11 @@ const changedSince = (now: Standing, ids: readonly string[]): string | null => {
   const known = new Set(ids);
   const added = [...now.orders.values()].filter((row) => !known.has(row.id));
   const byId = new Map(now.rows.map((row) => [row.id, row]));
+  // An order of a fanout this agent no longer works for was not lifted.
   const dropped = ids
     .filter((id) => !now.orders.has(id))
     .map((id) => byId.get(id))
-    .filter((row): row is ReadRow => row !== undefined);
+    .filter((row): row is ReadRow => row !== undefined && now.fanouts.has(fanoutOf(row)));
   if (!added.length && !dropped.length) return null;
   const fanouts = [...new Set([...added, ...dropped].map(fanoutOf))].join(", ");
   const lines = [
@@ -181,7 +228,10 @@ export const standingDelta = (input: HookInput): string | null => {
     const seen = readStandingSeen(where.file);
     if (seen.rev === where.rev) return null;
     const now = standingFor(input, where.store, where.rev);
-    writeStandingSeen(where.file, { rev: where.rev, ids: [...now.orders.keys()] });
+    writeStandingSeen(where.file, {
+      rev: where.rev,
+      ids: [...now.orders.keys()],
+    });
     return changedSince(now, seen.ids);
   } catch {
     return null;
