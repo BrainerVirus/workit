@@ -609,6 +609,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A closed output reader (`workit … | head -1`) no longer logs `uncaught_failure: write EPIPE` or prints a stack trace: the verb finishes quietly with its own exit code.
 - A heavy check whose workit process died keeps its machine lease while its command still runs, a recycled process group no longer holds a lease, and a nested check under an orphaned parent reuses the outer lease instead of queueing behind it.
 - Tests no longer fail by shard order on Windows: every test file runs isolated (its own env, cwd and globals), tracker reads in tests use an empty config instead of the machine's, and test repos skip git auto-maintenance.
 - `workit check` no longer hangs when the runtime loses a command's exit event: once the command's output closes, its own exit status settles the run.
