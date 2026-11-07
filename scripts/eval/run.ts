@@ -60,7 +60,12 @@ type RunResult = {
 };
 
 const out = (repo: string, ...args: string[]): string =>
-  spawnSync("git", args, { cwd: repo, encoding: "utf8" }).stdout?.trim() ?? "";
+  spawnSync("git", args, {
+    cwd: repo,
+    encoding: "utf8",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  }).stdout?.trim() ?? "";
 
 /** The last release tag plus a hash of every plugin-facing file as it is on disk now. */
 const workitVersion = (repo = REPO): string => {
@@ -163,6 +168,8 @@ const ensureSkills = (pluginDir: string): void => {
   const build = spawnSync("bun", [path.join(pluginDir, "scripts", "build.ts"), "--skills-only"], {
     cwd: REPO,
     stdio: "inherit",
+    timeout: 120_000,
+    killSignal: "SIGKILL",
   });
   if (build.status !== 0) throw new Error("building the plugin skills failed");
 };
@@ -184,6 +191,7 @@ const runCase = (spec: EvalCase, key: string, version: string, opts: Options): R
       input: promptFor(spec, world),
       encoding: "utf8",
       timeout: opts.timeoutMs,
+      killSignal: "SIGKILL",
       maxBuffer: 256 * 1024 * 1024,
     });
     const transcript = sanitize(run.stdout ?? "", world);
@@ -236,7 +244,8 @@ const writeSummary = (dir: string): void => {
   });
   // Results are committed, so they must pass the repo's format check as written.
   const oxfmt = path.join(REPO, "node_modules", ".bin", "oxfmt");
-  if (existsSync(oxfmt)) spawnSync(oxfmt, [dir], { cwd: REPO, stdio: "ignore" });
+  if (existsSync(oxfmt))
+    spawnSync(oxfmt, [dir], { cwd: REPO, stdio: "ignore", timeout: 60_000, killSignal: "SIGKILL" });
 };
 
 const line = (status: string, result: RunResult): string => {

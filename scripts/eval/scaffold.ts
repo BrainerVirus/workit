@@ -14,7 +14,12 @@ export type World = {
 };
 
 const git = (cwd: string, ...args: string[]): void => {
-  const run = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const run = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
   if (run.status !== 0) throw new Error(`scaffold: git ${args.join(" ")}: ${run.stderr}`);
 };
 
