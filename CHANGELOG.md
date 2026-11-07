@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`workit upgrade` moves every install to the `@workit-dev` npm scope**
+  (14.x bridge). Once `@workit-dev/cli` 1.0.0 is on npm, the CLI, OpenCode,
+  Pi, Cursor, Codex and Claude Code move from `@brainervirus/workit-*` to
+  `@workit-dev/*`. The move goes by package name, never by version. The old CLI
+  install is removed only after the new one runs through PATH, and a second run
+  changes nothing. Below 1.0.0 the plan says the new scope is not released yet.
+  `workit doctor` row `old_scope` lists what is still on the old scope.
+- The 14.x line releases from `release/14.x` and publishes all 8 packages.
+
 ### Fixed (retro 2026-11-07)
 
 - **Implementer confinement follows shell variables, loops and inline
