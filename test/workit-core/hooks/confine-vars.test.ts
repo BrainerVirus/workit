@@ -146,6 +146,10 @@ test("Given an implementer, When a variable or loop names the lead's checkout, T
     `W=${wt}; if true; then W=${lead}; fi; touch $W/x`,
     `W=${wt}; while true; do touch $W/x; W=${lead}; done`,
     `W=${wt}; cd ${lead} && eval "W=${lead}"; touch $W/x`,
+    `for f in a; do python3 -c "open('${lead}/src/core.ts','w')"; done`,
+    `for f in a; do cd ${lead}; touch $f; done`,
+    `if true; then cd ${wt}; fi; touch x`,
+    `perl -Mstrict -e 'unlink "${lead}/src/core.ts"'`,
   ])
     expect(denied(command, id), command).toContain("workit worktree confinement");
 });

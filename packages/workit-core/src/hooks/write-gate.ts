@@ -245,7 +245,7 @@ const opaqueWrites = (
     if (at < 0) return null;
     return inlineWrites(scriptOf(input.length - args.length + at + 1), name) ? ["."] : null;
   };
-  if (name === "perl") return inline(/^-[a-zA-Z]*[eE][a-zA-Z]*$/);
+  if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
   if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
     return inline(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/);
   return shellScript(words) === null ? null : ["."];
@@ -771,6 +771,7 @@ const segmentTargets = (
     untrusted.all ? [] : [...inherited].filter(([key]) => !untrusted.names.has(key)),
   );
   let loops = new Map<string, string[]>();
+  let nesting = 0;
   const groups: Array<{
     dir: string | undefined;
     stack: Array<string | undefined>;
@@ -806,6 +807,9 @@ const segmentTargets = (
     }
     const body = commandWords(segment.words);
     const keywords = segment.words.length - body.length;
+    for (const keyword of segment.words.slice(0, keywords))
+      if (OPENS.has(keyword)) nesting++;
+      else if (CLOSES.has(keyword)) nesting = Math.max(0, nesting - 1);
     const loop = segment.words.slice(0, keywords).lastIndexOf("for");
     if (loop >= 0) {
       const [name = "", keyword, ...items] = segment.words.slice(loop + 1);
@@ -832,10 +836,11 @@ const segmentTargets = (
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
     // A directory change inside a loop or conditional body may or may not run.
     const moves = CD.has(name) || PUSHD.has(name) || POPD.has(name);
-    if (moves && keywords > 0) {
-      if (strict) dir = UNKNOWN_DIR;
+    if (moves && strict && nesting > 0) {
+      dir = UNKNOWN_DIR;
       continue;
     }
+    if (moves && keywords > 0) continue;
     if (CD.has(name)) {
       dir = cdInto(dir, words, strict, vars);
       continue;
