@@ -85,7 +85,8 @@ test("Given `workit lock wait` on two busy slots past its first limit, When a sl
   expect(result.envelope.data.requeuedAfterMs).toBeGreaterThanOrEqual(500);
   expect(result.stderr).toContain("re-queued once for up to 1s more");
   expect(result.stderr).not.toContain("stayed busy");
-  expect(result.envelope.data.waitedMs).toBeGreaterThanOrEqual(800);
+  // The slot frees inside the second window: after the re-queue, not before it.
+  expect(result.envelope.data.waitedMs).toBeGreaterThan(result.envelope.data.requeuedAfterMs);
 });
 
 test("Given two busy slots that never free, When `workit lock wait` reaches its second limit, Then it gives up busy with the two-limit wording and an estimate", async () => {
