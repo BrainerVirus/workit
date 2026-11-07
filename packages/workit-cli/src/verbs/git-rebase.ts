@@ -150,7 +150,7 @@ function rebaseOnto(
         ok: false,
         code: "failed",
         error: `rebase_conflict: ${branch} conflicts with ${base} (${short(baseSha)}) in ${conflicts.join(", ")}; the rebase was aborted and ${branch} is unchanged at ${short(previous)}`,
-        unblock: `merge ${base} into ${branch} and resolve ${conflicts.join(", ")}, or rebase by hand, then: workit git push`,
+        unblock: `merge ${base} into ${branch}, resolve ${conflicts.join(", ")} and push with workit git push; or rebase by hand and push with workit git push --force-with-lease`,
         conflicts,
       };
     return failure(
