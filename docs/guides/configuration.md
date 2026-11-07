@@ -538,13 +538,23 @@ per host.
   `workit:verifier` on the verifier role and `general-purpose` on `default`.
   A full Claude id (`claude-sonnet-5-5`) is applied as its family alias,
   since the Agent tool takes only aliases; a value it cannot take is skipped
-  with a note naming it. A spawn is never denied over its model.
+  with a note naming it. Outside auto mode the hook fills a missing model or
+  effort and its note names what to pass next time. Auto mode refuses a call a
+  hook rewrote, so there a spawn missing its role's model or effort (or one
+  that sets `isolation`) is denied once. The denial names the exact Agent args
+  to pass (`subagent_type`, `model`, `effort`, `run_in_background` and any
+  other arg kept), and the retry with them runs as written. A spawn that
+  already names its role's model and effort is never changed. The session
+  contract has one "Agent spawn model/effort" line that lists each agent type's
+  model and effort, so the first spawn can pass them.
   `workit models show --report [--days n]` lists the models subagents actually
   ran on (default last 7 days) and flags a role that ran on a non-default one.
   The fanout brief also names `model:` and `effort:` under TIER and a
-  `verifier:` line; `workit fanout status` names the model per spawnable
-  slice; the skills tell the lead to pass the model (and `effort`) from
-  `workit models show` on each Agent call. A user-level `~/.claude/agents/`
+  `verifier:` line. For a Claude Code lead it adds a `SPAWN:` line and a
+  `verifier SPAWN:` line with the exact Agent args (including
+  `run_in_background: true`). `workit fanout status` names the model per
+  spawnable slice, and the skills tell the lead to pass the model (and
+  `effort`) from `workit models show` on each Agent call. A user-level `~/.claude/agents/`
   file cannot replace the plugin's `workit:verifier`, `workit:reviewer` or
   `workit:implementer`: plugin agents are namespaced and a user agent is a
   different name, so the per-call `model` is the mechanism.
@@ -571,7 +581,10 @@ Move a tier by renaming `fanout.tierModels.hard` to
 `models.roles.implementer.hard`.
 
 `workit fanout brief` adds the `model:` line under `TIER:` (and `effort:`),
-and `workit fanout status` names the model next to each slice it lists to
+plus the `SPAWN:` lines for a Claude Code lead. Its VERIFY section also gets a
+`checks:` line that names each configured check a verdict records
+(`workit check <name>`) and that the slice's VERIFY does not already run.
+`workit fanout status` names the model next to each slice it lists to
 spawn (`spawnModels` in `--json`). The lead's host comes from its environment
 (`WORKIT_HOST` or the host's own session variable).
 

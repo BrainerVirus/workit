@@ -204,7 +204,9 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       // A model switch (#435): the compact contract again, once.
       const text =
         input.model && modelSwitchedOnDisk(input)
-          ? [invariantBootstrap(), turn].filter(Boolean).join("\n")
+          ? [invariantBootstrap({ cwd: input.cwd, host: input.host }), turn]
+              .filter(Boolean)
+              .join("\n")
           : turn;
       return withContextLine(
         text ? { kind: "context", text } : NONE,
@@ -353,7 +355,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       // Host permission policy owns other tools; a skill load is recorded.
       if (event.skill) recordSkillLoad(input, event.skill, "tool");
       if (event.agentInput && input.host === "claude_code") {
-        const spawn = spawnDecision(descriptor, input.cwd, event.agentInput);
+        const spawn = spawnDecision(descriptor, input.cwd, event.agentInput, input.permissionMode);
         // A spawn the gate lets through queues its tool-call budget, or
         // none; the launcher does so for one its fast path allows.
         if (spawn.kind !== "deny") deps.budget?.spawn(input, event.agentInput);

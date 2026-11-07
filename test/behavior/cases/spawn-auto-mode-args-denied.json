@@ -1,0 +1,24 @@
+{
+  "id": "spawn-auto-mode-args-denied",
+  "source": "retro 2026-11-07 R1: 15 auto-mode refusals of hook-rewritten Agent spawns (9cc82662:main:2127,5975,7049,10110; 7c5eb874:main:3615,24174-24183); a re-issue dropped run_in_background (7c5eb874:main:3626)",
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "permission_mode": "auto",
+      "tool_name": "Agent",
+      "tool_input": {
+        "description": "verify",
+        "subagent_type": "workit:verifier",
+        "run_in_background": true,
+        "prompt": "verify feature/x"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": [
+      "spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: true"
+    ]
+  }
+}

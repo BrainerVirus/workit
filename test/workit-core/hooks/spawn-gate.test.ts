@@ -30,9 +30,10 @@ type Out = {
 };
 const BRIEF =
   "MODE: new\nGOAL: g\nWORKTREE: /w/slice  (made by `workit fanout worktree create slice`; yours alone)\n";
-const spawn = (input: Record<string, unknown>): Out =>
+const spawn = (input: Record<string, unknown>, mode = "default"): Out =>
   dispatchHook(claudeCodeAdapter, {
     ...fixture("claude-code", "pre-tool-use-bash", cwd),
+    permission_mode: mode,
     tool_name: "Agent",
     tool_input: { description: "d", ...input },
   }).json;
@@ -74,7 +75,10 @@ test("G an implementer spawn without a brief, W PreToolUse runs, T it is denied 
   expect(out.hookSpecificOutput?.permissionDecisionReason).toContain(
     "`workit fanout worktree create <slice>`",
   );
-  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("workit fanout brief <slice>");
+  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain(
+    "`workit fanout brief <slice>`",
+  );
+  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("Even for one slice");
 });
 
 test("G an implementer prompt that points at its brief (WORKER, TIER, TIMEBOX and WORKTREE lines, render the rest), W PreToolUse runs, T it is accepted as a brief", () => {
@@ -176,4 +180,42 @@ test("G every agent type and either isolation mode, W PreToolUse runs, T isolati
       expect(input, label).not.toHaveProperty("isolation");
       expect(input?.prompt, label).toBe(BRIEF);
     }
+});
+
+test("G auto mode and a spawn with isolation, W PreToolUse runs, T it is denied with the same args without isolation (never rewritten), and that retry runs as written (retro 2026-11-07 R1)", () => {
+  const out = spawn(
+    {
+      subagent_type: "workit:implementer",
+      prompt: BRIEF,
+      model: "opus",
+      isolation: "worktree",
+      run_in_background: true,
+    },
+    "auto",
+  ).hookSpecificOutput;
+  expect(out?.updatedInput).toBeUndefined();
+  expect(out?.permissionDecision).toBe("deny");
+  expect(out?.permissionDecisionReason).toContain(
+    'spawn again with exactly subagent_type: "workit:implementer", model: "opus", run_in_background: true (description and prompt as written and no isolation)',
+  );
+  expect(
+    spawn(
+      {
+        subagent_type: "workit:implementer",
+        prompt: BRIEF,
+        model: "opus",
+        run_in_background: true,
+      },
+      "auto",
+    ).hookSpecificOutput,
+  ).toBeUndefined();
+});
+
+test("G auto mode and a spawn with isolation and no model, W PreToolUse runs, T one deny drops isolation and names the role model", () => {
+  const reason = spawn(
+    { subagent_type: "workit:implementer", prompt: BRIEF, isolation: "worktree" },
+    "auto",
+  ).hookSpecificOutput?.permissionDecisionReason;
+  expect(reason).toContain('model: "sonnet"');
+  expect(reason).toContain("no isolation");
 });

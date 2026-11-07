@@ -15,5 +15,8 @@
       }
     }
   },
-  "expect": { "kind": ["update-input"], "require": ["removed isolation"] }
+  "expect": {
+    "kind": ["update-input"],
+    "require": ["removed isolation"]
+  }
 }

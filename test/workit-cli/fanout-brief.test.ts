@@ -903,6 +903,8 @@ const verifyLines = (text: string): string[] => {
 };
 
 const skillSlice = (scope: string[]) => slice("a", scope, { verify: ["workit check lint"] });
+const checksLine = (...names: string[]) =>
+  `  checks: ${names.map((name) => `workit check ${name}`).join("; ")}  (the configured checks a verdict records: run each by name, never ad hoc)`;
 
 test("fanout brief: given a SCOPE under packages/x/skills/** and a checks config with a skills group, when rendered, then VERIFY adds `workit check skills`", async () => {
   const { root, cwd } = repo();
@@ -918,6 +920,7 @@ test("fanout brief: given a SCOPE under packages/x/skills/** and a checks config
   expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
     "VERIFY: workit check lint",
     "  skills: workit check skills  (SCOPE touches skills or agents; targeted tests miss these gates)",
+    checksLine("unit"),
   ]);
 });
 
@@ -969,7 +972,7 @@ test("fanout brief: given a SCOPE under skills, no skills check and Workit's own
   ]);
 });
 
-test("fanout brief: given a SCOPE touching no skills or agents (a skills.ts file included), when rendered, then VERIFY is only the slice's own line", async () => {
+test("fanout brief: given a SCOPE touching no skills or agents (a skills.ts file included), when rendered, then VERIFY adds no skills gate, only the configured check it does not run", async () => {
   const { root, cwd } = repo();
   mkdirSync(path.join(cwd, ".workit"));
   writeFileSync(
@@ -979,7 +982,10 @@ test("fanout brief: given a SCOPE touching no skills or agents (a skills.ts file
   expect(
     (await plan(cwd, root, "plain", [skillSlice(["src/skills.ts", "test/agents.test.ts"])])).code,
   ).toBe(0);
-  expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check lint"]);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
+    "VERIFY: workit check lint",
+    checksLine("skills"),
+  ]);
 });
 
 test("fanout brief: given a skills slice whose VERIFY already runs `workit check skills`, when rendered, then no second skills line is added", async () => {
@@ -994,7 +1000,7 @@ test("fanout brief: given a skills slice whose VERIFY already runs `workit check
   expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check skills"]);
 });
 
-test("fanout brief: given a SCOPE of docs/agents/release.md only and a skills check, when rendered, then no skills line is added (prose about agents is not a definition)", async () => {
+test("fanout brief: given a SCOPE of docs/agents/release.md only and a skills check, when rendered, then no skills gate line is added (prose about agents is not a definition)", async () => {
   const { root, cwd } = repo();
   mkdirSync(path.join(cwd, ".workit"));
   writeFileSync(
@@ -1005,7 +1011,10 @@ test("fanout brief: given a SCOPE of docs/agents/release.md only and a skills ch
     (await plan(cwd, root, "docs", [skillSlice(["docs/agents/release.md", "docs/skills/x.md"])]))
       .code,
   ).toBe(0);
-  expect(verifyLines((await brief(cwd, "a")).text)).toEqual(["VERIFY: workit check lint"]);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
+    "VERIFY: workit check lint",
+    checksLine("skills"),
+  ]);
 });
 
 test("fanout brief: given a lead checkout with no skills check and a slice worktree whose branch defines one, when rendered, then the skills line is `workit check skills` (the worker runs its worktree's checks)", async () => {
@@ -1080,4 +1089,59 @@ test("fanout brief: given --host on the command line, then the router accepts it
   expect(code).toBe(2);
   expect(stderr).toContain("claude_code");
   expect(stderr).toContain("codex");
+});
+
+// ---------------------------------------------------------------------------
+// spawn args and configured checks (retro 2026-11-07 R1, R2, R5)
+
+test("fanout brief: given a Claude Code lead and a made worktree, when rendered, then a SPAWN line names subagent_type, model, effort and run_in_background true, and every command names the absolute worktree path, never a shell variable", async () => {
+  const { root, cwd } = repo();
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({
+      models: {
+        roles: {
+          implementer: { hard: { claude_code: { model: "opus", effort: "high" } } },
+          verifier: { claude_code: { model: "sonnet", effort: "medium" } },
+        },
+      },
+    }),
+  );
+  try {
+    await plan(cwd, root, "spawn", [slice("a", ["a.ts"], { tier: "hard" })]);
+    const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+    expect(created.code, created.stderr + created.stdout).toBe(0);
+    const { text } = await briefOn(cwd, "claude_code", "a");
+    const lines = text.split("\n");
+    expect(lines.filter((line) => line.startsWith("SPAWN: "))).toEqual([
+      'SPAWN: Agent subagent_type: "workit:implementer", model: "opus", effort: "high", run_in_background: true, description: "a", prompt: this brief, or its WORKER, TIER, TIMEBOX and WORKTREE lines plus "Run `workit fanout brief a` and follow it exactly."',
+    ]);
+    expect(text).toContain(
+      '  verifier SPAWN: Agent subagent_type: "workit:verifier", model: "sonnet", effort: "medium", run_in_background: true',
+    );
+    const wt = managedWt("a");
+    expect(path.isAbsolute(wt)).toBe(true);
+    const cwdFlags = [...text.matchAll(/--cwd (\S+)/gu)].map((match) => match[1]);
+    expect(cwdFlags.length).toBeGreaterThan(0);
+    for (const flag of cwdFlags) expect(flag).toBe(wt);
+    expect(text).not.toMatch(/\$[A-Za-z_{]/u);
+    const codex = await briefOn(cwd, "codex_cli", "a");
+    expect(codex.text).not.toContain("SPAWN");
+  } finally {
+    rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
+  }
+});
+
+test("fanout brief: given a repo with configured checks test and lint and a slice that runs neither by name, when rendered, then VERIFY names `workit check test` and `workit check lint`", async () => {
+  const { root, cwd } = repo();
+  mkdirSync(path.join(cwd, ".workit"));
+  writeFileSync(
+    path.join(cwd, ".workit", "checks.json"),
+    JSON.stringify({ checks: { test: "true", lint: "true" } }),
+  );
+  await plan(cwd, root, "checks", [slice("a", ["a.ts"], { verify: ["bun test a.test.ts"] })]);
+  expect(verifyLines((await brief(cwd, "a")).text)).toEqual([
+    "VERIFY: bun test a.test.ts",
+    checksLine("test", "lint"),
+  ]);
 });
