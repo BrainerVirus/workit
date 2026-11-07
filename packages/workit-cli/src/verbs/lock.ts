@@ -34,6 +34,8 @@ import {
   leaseDir,
   leaseQueue,
   leaseSlots,
+  leaseWake,
+  liveHolders,
   parseWait,
   readGrants,
   resolveResourceSettings,
@@ -230,8 +232,6 @@ async function cancel(args: string[], io: Io): Promise<number> {
   );
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 function timeoutOf(args: string[]): number | null | Error {
   const at = args.findIndex((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
   if (at < 0) return null;
@@ -242,37 +242,84 @@ function timeoutOf(args: string[]): number | null | Error {
   );
 }
 
+/**
+ * Wait for a free slot without taking one, woken when a slot frees (as a
+ * queued heavy check is). Like a heavy check's wait, `resources.wait` is
+ * waited once more at its limit, with an estimate; `--timeout` is one hard
+ * bound.
+ */
 async function wait(args: string[], io: Io): Promise<number> {
   const timeout = timeoutOf(args);
   if (timeout instanceof Error) return emit(io, fail("invalid_input", timeout.message));
   const settings = await settingsFor(io);
-  const limit = timeout ?? settings.waitMs;
+  const maxHold = settings.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
+  let limit = timeout ?? settings.waitMs;
+  let requeuedAfterMs: number | null = null;
   const dir = leaseDir(io.env);
+  const durationOf = ledgerDurations();
+  const wake = leaseWake(dir);
   const started = Date.now();
   let told = false;
-  for (;;) {
-    const slots = leaseSlots(dir, settings.slots);
-    const busy = held(slots);
-    const waitedMs = Date.now() - started;
-    if (busy.length < slots.length)
-      return emit(io, ok({ free: true, waitedMs, slots }), () => [
-        `workit: the heavy-check lease has a free slot${waitedMs ? ` after ${formatWait(waitedMs)}` : ""}`,
-      ]);
-    if (waitedMs >= limit)
-      return emit(
-        io,
-        fail("busy", `the heavy-check lease stayed busy for ${formatWait(waitedMs)}`, {
-          data: { free: false, waitedMs, slots },
-          unblock: "workit lock status",
-        }),
+  try {
+    for (;;) {
+      const holders = [...liveHolders(dir, settings.slots, {}, maxHold).values()];
+      const waitedMs = Date.now() - started;
+      const again =
+        requeuedAfterMs === null ? "" : ` (re-queued once after ${formatWait(requeuedAfterMs)})`;
+      if (holders.length < settings.slots)
+        return emit(
+          io,
+          ok({
+            free: true,
+            waitedMs,
+            requeuedAfterMs,
+            slots: leaseSlots(dir, settings.slots, {}, maxHold),
+          }),
+          () => [
+            `workit: the heavy-check lease has a free slot${waitedMs ? ` after ${formatWait(waitedMs)}${again}` : ""}`,
+          ],
+        );
+      const heldBy = holders.map((holder) => describeHolder(holder)).join("; ");
+      const estimate = describeEstimate(
+        estimateWait({ slots: settings.slots, holders, ahead: [], durationOf }),
       );
-    if (!told) {
-      told = true;
-      io.stderr(
-        `workit: waiting for the heavy-check lease: held by ${busy.flatMap((slot) => (slot.holder ? [describeHolder(slot.holder)] : [])).join("; ")}\n`,
-      );
+      if (waitedMs >= limit) {
+        if (timeout === null && requeuedAfterMs === null && settings.waitMs > 0) {
+          requeuedAfterMs = waitedMs;
+          limit = waitedMs + settings.waitMs;
+          io.stderr(
+            `workit: waited ${formatWait(waitedMs)} for a free heavy-check lease slot: re-queued once for up to ${formatWait(settings.waitMs)} more; ${estimate}; held by ${heldBy}\n`,
+          );
+        } else
+          return emit(
+            io,
+            fail(
+              "busy",
+              timeout === null
+                ? `the heavy-check lease stayed busy for ${formatWait(waitedMs)}${again}; ${estimate}; held by ${heldBy}`
+                : `the heavy-check lease stayed busy for ${formatWait(waitedMs)}, the whole --timeout; ${estimate}; held by ${heldBy}`,
+              {
+                data: {
+                  free: false,
+                  waitedMs,
+                  requeuedAfterMs,
+                  slots: leaseSlots(dir, settings.slots, {}, maxHold),
+                },
+                unblock: "workit lock status",
+              },
+            ),
+          );
+      }
+      if (!told) {
+        told = true;
+        io.stderr(
+          `workit: waiting for a free heavy-check lease slot (${settings.slots}): held by ${heldBy}; up to ${formatWait(limit)}${timeout === null && settings.waitMs > 0 ? ", then once more" : ""}; ${estimate}\n`,
+        );
+      }
+      await wake.pause(Math.min(1000, Math.max(1, limit - waitedMs)));
     }
-    await sleep(Math.min(1000, Math.max(1, limit - waitedMs)));
+  } finally {
+    wake.close();
   }
 }
 
