@@ -17,6 +17,8 @@ import { dataDir, userHome } from "./workit-paths.mjs";
 /** The first line after the shebang of every launcher Workit writes. */
 export const LAUNCHER_MARKER = "workit-owned-launcher";
 const CLI_PACKAGE_PATH = ["node_modules", "@brainervirus", "workit-cli"];
+/** The same CLI on the new npm scope, which `workit upgrade` moves `current` to. */
+const NEW_CLI_PACKAGE_PATH = ["node_modules", "@workit-dev", "cli"];
 
 /**
  * The Workit-owned install root: `WORKIT_INSTALL_ROOT`, else the data dir
@@ -109,7 +111,14 @@ export const locateWorkitCli = (options: LocateOptions = {}): LocatedCli => {
       args: [],
       binDir: path.dirname(launcher),
     };
-  const current = ownedCurrentEntry(env, platform);
+  const moved = path.join(
+    installRoot(env, platform),
+    "current",
+    ...NEW_CLI_PACKAGE_PATH,
+    "dist",
+    "index.js",
+  );
+  const current = exists(moved) ? moved : ownedCurrentEntry(env, platform);
   if (exists(current))
     return {
       source: "owned-current",

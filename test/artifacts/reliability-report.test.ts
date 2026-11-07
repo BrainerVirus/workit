@@ -72,13 +72,14 @@ test(
     // rows are info (no hook run recorded, no workspace, #419, #433);
     // codex_session_plugin passes (no Codex process running, #561); updates
     // is info (the launch update check's setting, local files only); hook_node
-    // passes (the PATH node meets the floor); legacy_dirs passes (no pre-XDG dir).
+    // passes (the PATH node meets the floor); legacy_dirs passes (no pre-XDG dir); old_scope passes (no
+    // @brainervirus install in the fixture).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 42,
+      passed: 43,
       warned: 1,
       failed: 1,
-      total: 44,
+      total: 45,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -121,13 +122,14 @@ test(
       // block, #297); grant_endpoint and grant_remotes pass (no workspace grants, #431, #549); hook_runs and the three
       // *_grant_rules rows are info (#419, #433); codex_session_plugin passes
       // (no Codex process running, #561); updates is info (the launch update
-      // check's setting, local files only); legacy_dirs passes (no pre-XDG dir).
+      // check's setting, local files only); legacy_dirs passes (no pre-XDG dir); old_scope passes (no
+      // @brainervirus install in the fixture).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 42,
+        passed: 43,
         warned: 1,
         failed: 1,
-        total: 44,
+        total: 45,
         fixes: 1,
       });
     } finally {

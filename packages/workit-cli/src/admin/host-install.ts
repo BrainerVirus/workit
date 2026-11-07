@@ -94,6 +94,8 @@ export type HostInstallOptions = {
   alreadyInstalled?: boolean;
   targetDir?: string;
   mode?: "install" | "upgrade";
+  /** Cursor: the adapter package to stage (the new scope during the scope migration). */
+  packageName?: string;
 };
 
 /** Claude Code reads the git-hosted marketplace at the repo root
@@ -564,6 +566,7 @@ export function planHostInstall(
       throw new Error("npm CLI could not be resolved; install Node.js 24+ and npm, then retry");
     const stage = path.join(home, ".cursor", "plugins", "local", ".workit-package-bootstrap");
     const target = options.targetDir ?? path.join(home, ".cursor", "plugins", "local", "workit");
+    const cursorPackage = options.packageName ?? "@brainervirus/workit-cursor";
     return [
       nodePrerequisite({ home, cwd, env }),
       {
@@ -575,13 +578,13 @@ export function planHostInstall(
           stage,
           "--no-save",
           "--package-lock=false",
-          `@brainervirus/workit-cursor@${version}`,
+          `${cursorPackage}@${version}`,
         ],
         cwd,
         purpose: upgrading
           ? "Download the current Workit Cursor adapter for the managed local plugin directory"
           : "Download the Workit Cursor adapter package for the managed local plugin directory",
-        packageRoot: path.join(stage, "node_modules", "@brainervirus", "workit-cursor"),
+        packageRoot: path.join(stage, "node_modules", ...cursorPackage.split("/")),
         packageTarget: target,
       },
     ];

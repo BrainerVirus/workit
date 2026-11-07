@@ -1,3 +1,4 @@
+import { newPackage } from "./scope";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -108,6 +109,9 @@ export const runProbes = async (
     if (cli) {
       add(...registry(CLI_PACKAGE));
     }
+    // The scope move (14.x bridge): the new scope's CLI decides whether to move, each host's its target.
+    if (cli || hosts.length) add(...registry(newPackage("cli")));
+    for (const host of hosts) add(...registry(newPackage(host)));
     // OpenCode's service: the real env (its plugin commands talk to the running
     // service), and its own readiness bound instead of the one-probe timeout.
     const ready =

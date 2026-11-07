@@ -164,7 +164,8 @@ const wrapperTarget = (
   return null;
 };
 
-const HOST_PLUGIN_PACKAGE = /^@brainervirus\/workit-(?:claude-code|codex|cursor|opencode|pi)$/;
+const HOST_PLUGIN_PACKAGE =
+  /^(?:@brainervirus\/workit-|@workit-dev\/)(?:claude-code|codex|cursor|opencode|pi)$/;
 
 /**
  * The host plugin package whose own `bin/workit` this is (#683: the Claude

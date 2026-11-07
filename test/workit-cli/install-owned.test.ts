@@ -174,11 +174,15 @@ test("Given two fnm Nodes each holding workit 8.52.3 and PATH resolving one, Whe
     env: { PATH, WORKIT_NODE: NODE },
     run: (command: string, args: string[]) =>
       command === "npm" && args[0] === "view"
-        ? { status: 0, stdout: "9.0.0\n" }
+        ? args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "9.0.0\n" }
         : { status: 0, stdout: "" },
     runAsync: async (command: string, args: string[]) =>
       command === "npm" && args[0] === "view"
-        ? { status: 0, stdout: "9.0.0\n" }
+        ? args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "9.0.0\n" }
         : fakeNpm()(command, args),
     installNode: () => installNode,
     removeCopies: async () => false,
@@ -223,7 +227,9 @@ const migrationWorld = () => {
     run: () => ({ status: 0, stdout: "" }),
     runAsync: async (command: string, args: string[]) =>
       command === "npm" && args[0] === "view"
-        ? { status: 0, stdout: "9.0.0\n" }
+        ? args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "9.0.0\n" }
         : fakeNpm(calls)(command, args),
     installNode: () => installNode,
     doctor: () => ({ checks: [] }),
@@ -375,7 +381,9 @@ const wrapperWorld = (wrapperText?: string) => {
     run: () => ({ status: 0, stdout: "" }),
     runAsync: async (command: string, args: string[]) =>
       command === "npm" && args[0] === "view"
-        ? { status: 0, stdout: "9.0.0\n" }
+        ? args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "9.0.0\n" }
         : fakeNpm(calls)(command, args),
     installNode: () => installNode,
     doctor: () => ({ checks: [] }),
@@ -546,11 +554,15 @@ test.skipIf(process.platform === "win32")(
         env,
         run: (command: string, args: string[]) =>
           command === "npm" && args[0] === "view"
-            ? { status: 0, stdout: "9.0.0\n" }
+            ? args[1]?.startsWith("@workit-dev/")
+              ? { status: 1, stdout: "" }
+              : { status: 0, stdout: "9.0.0\n" }
             : { status: 0, stdout: "" },
         runAsync: async (command: string, args: string[]) =>
           command === "npm" && args[0] === "view"
-            ? { status: 0, stdout: "9.0.0\n" }
+            ? args[1]?.startsWith("@workit-dev/")
+              ? { status: 1, stdout: "" }
+              : { status: 0, stdout: "9.0.0\n" }
             : fakeNpm()(command, args),
         installNode: () => installNode,
         removeCopies: async () => true,

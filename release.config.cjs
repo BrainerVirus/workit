@@ -1,5 +1,10 @@
 module.exports = {
-  branches: ["main"],
+  // The 14.x bridge: this maintenance line releases from release/14.x only and
+  // continues the v${version} tags (main moved to the @workit-dev scope with its
+  // own tag format). A lone maintenance branch is no release branch to
+  // semantic-release, so release/14.x is a release branch here and the
+  // verifyReleaseCmd below holds it to 14.x.
+  branches: [{ name: "release/14.x" }],
   plugins: [
     // AR-16: path-gated release decision — prints major|minor|patch only when
     // product paths changed since the previous v* tag; empty output skips the
@@ -10,6 +15,9 @@ module.exports = {
       "@semantic-release/exec",
       {
         analyzeCommitsCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
+        // A breaking change here would leave the 14.x line: refuse it.
+        verifyReleaseCmd:
+          'node -e "process.exit(/^14\\./.test(process.argv[1]) ? 0 : 1)" "${nextRelease.version}"',
       },
     ],
     // Conventional Commits preset formats notes; analyze-release-scope owns
@@ -82,15 +90,16 @@ module.exports = {
     // before this plugin ran (v8.41.0: tag and packages, no release or
     // notes). A failing publishCmd below still fails the job.
     "@semantic-release/github",
-    // AR-16: publish only packages with payload changes since the PREVIOUS
-    // tag. ${lastRelease.gitTag} is mandatory here: semantic-release creates
-    // the NEW release tag before publish plugins run, so latestTag() inside
-    // the script would resolve to the release being cut and skip everything.
+    // AR-16 normally publishes only packages with payload changes since the
+    // PREVIOUS tag (${lastRelease.gitTag}: semantic-release creates the NEW
+    // tag before publish plugins run). The bridge publishes all 8 with --all:
+    // 14.4.1+ never reached npm, and every old package must carry the
+    // migrating `workit upgrade` as its latest.
     [
       "@semantic-release/exec",
       {
         publishCmd:
-          "bun packages/workit-core/scripts/publish-changed-packages.ts ${lastRelease.gitTag}",
+          "bun packages/workit-core/scripts/publish-changed-packages.ts --all ${lastRelease.gitTag}",
       },
     ],
   ],

@@ -296,9 +296,13 @@ if (import.meta.main) {
       throw new Error(`release ${releaseTag} manifests disagree:\n  ${problems.join("\n  ")}`);
     console.log(`every published manifest carries ${releaseTag}`);
   }
+  // `--all` (or PUBLISH_ALL=1) ships every package whatever changed: the 14.x
+  // bridge republishes all 8 so each old package's latest migrates.
+  const all = process.argv.includes("--all") || process.env.PUBLISH_ALL === "1";
+  const fromTag = process.argv.slice(2).find((arg) => arg !== "--all");
   publishChanged({
     root,
     dryRun,
-    ...(process.argv[2] !== undefined ? { fromTag: process.argv[2] } : {}),
+    ...(all ? { fromTag: "" } : fromTag !== undefined ? { fromTag } : {}),
   });
 }

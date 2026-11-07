@@ -230,7 +230,8 @@ async function upgradeOnce(
   const result = await applyUpgrade(
     plan,
     { ...deps, progress },
-    continued || !reexec ? { removeCopies } : { handoff, removeCopies },
+    // The scope move finishes here: the new-scope CLI does not know the old hosts' names.
+    continued || !reexec || plan.scope ? { removeCopies } : { handoff, removeCopies },
   );
   if (result.handedOff !== undefined) return result.handedOff;
   if (continued?.length) {
