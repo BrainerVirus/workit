@@ -1,6 +1,8 @@
 // What Workit tells an agent about git, by role: one source for the
 // SubagentStart text (handle.ts) and the raw-git nudge set (raw-git.ts), so
 // the two cannot disagree (#428).
+import { gateCheckNames, loadCheckConfig } from "../check-config";
+import { neededChecks } from "../core/policy/check-evidence";
 import type { HostDescriptor } from "./descriptor";
 import { hostIsolated } from "./worktree-confine";
 
@@ -58,4 +60,15 @@ export const agentSteering = (
     descriptor.subagents.worktreeIsolation === "native" &&
     (role === "implementer" ? hostIsolated(cwd, agent.id) : CLAUDE_WORKTREE.test(cwd));
   return roleSteering(role, isolated);
+};
+
+/**
+ * The configured checks a judge runs before a verified verdict, as exact
+ * commands: `ledger verdict` refuses one while any is missing or red on the
+ * head (#509). Null when the repository configures none.
+ */
+export const judgeChecksLine = (cwd: string): string | null => {
+  const names = neededChecks("full", gateCheckNames(loadCheckConfig(cwd), "verification"));
+  if (!names.length) return null;
+  return `Before a verified or tests-verified verdict, run each configured check on the candidate head, by name and one per call: ${names.map((name) => `\`workit check ${name}\``).join(", ")} (with \`--cwd <checkout>\` when the candidate is checked out elsewhere). The verdict is refused while any of them has no fresh passing run on that head; an ad-hoc \`workit check -- <cmd>\` does not stand in for one.`;
 };

@@ -534,7 +534,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           : refusal.unblock,
       }),
     );
-  // A verified verdict needs the configured checks: a red one refuses it, a missing one warns (#509).
+  // A verified verdict needs the configured checks: a red or missing one refuses it (#509).
   const evidence =
     values.self !== true && (rest[0] === "verified" || rest[0] === "tests-verified")
       ? verdictCheckEvidence(io.cwd, target.value, values.base ?? null)
@@ -553,8 +553,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
     );
   const missingChecks = evidence?.needed.filter((item) => item.status === "missing") ?? [];
   if (missingChecks.length)
-    io.stderr(
-      `warning: no fresh run on ${evidence?.head.slice(0, 12)} of the configured check${missingChecks.length === 1 ? "" : "s"} ${missingChecks.map((item) => item.name).join(", ")}; the verdict records it as missing\n`,
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `check_missing: no fresh run on ${evidence?.head.slice(0, 12)} of the configured check${missingChecks.length === 1 ? "" : "s"} ${missingChecks.map((item) => item.name).join(", ")}; a ${rest[0]} verdict cannot be recorded`,
+        {
+          unblock: `${checkCommands(missingChecks.map((item) => item.name))} on this head, then record again`,
+        },
+      ),
     );
   // Bound: the id's own subagent presented the token its hook gave it.
   const bound = claimed !== null && issuedTokenMatches(io.cwd, claimed, token);
@@ -600,6 +607,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
     ].join("\n"),
   );
 }
+
+/** The exact commands that run `names`, one `workit check` each. */
+const checkCommands = (names: readonly string[]): string =>
+  names.map((name) => `workit check ${name}`).join("; ");
 
 /** The evidence of the target branch's head, or null when its head or the ledger cannot be read. */
 function verdictCheckEvidence(

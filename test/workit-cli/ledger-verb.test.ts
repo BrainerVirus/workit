@@ -741,17 +741,29 @@ test("G a red packaging run on the head, T `verified` is refused with exit 3 nam
   expect(refused.json().error).toContain('"packaging" is failing');
 });
 
-test("G packaging never run, T `verified` records with a warning and the evidence snapshot on the row", async () => {
+test("G packaging never run, T `verified` is refused with exit 3 naming the exact `workit check packaging` and no row is written", async () => {
   const root = packagingRepo();
   checkRow(root, "test", "passed");
-  const result = await verified(root);
+  const refused = await verified(root);
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toStartWith("check_missing:");
+  expect(refused.json().error).toContain("packaging");
+  expect(refused.json().unblock).toStartWith("workit check packaging on this head");
+  const listed = await run(root, ["ledger", "list", "--type", "verdict", "--json"]);
+  expect(JSON.stringify(listed.json().data ?? [])).not.toContain('"verified"');
+});
+
+test("G neither configured check run, T `tests-verified` is refused naming one `workit check` per missing check", async () => {
+  const root = packagingRepo();
+  const refused = await run(root, ["ledger", "verdict", "tests-verified", "--how", "x", "--json"]);
+  expect(refused.code).toBe(3);
+  expect(refused.json().unblock).toStartWith("workit check test; workit check packaging");
+});
+
+test("G packaging never run, T a `failed` verdict still records", async () => {
+  const root = packagingRepo();
+  const result = await run(root, ["ledger", "verdict", "failed", "--how", "x", "--json"]);
   expect(result.code).toBe(0);
-  expect(result.stderr).toContain("packaging");
-  expect(result.json().data.checkEvidence).toContainEqual({
-    name: "packaging",
-    status: "missing",
-    via: null,
-  });
 });
 
 test("G every configured check fresh on the head, T `verified` records without a check warning", async () => {
@@ -761,4 +773,8 @@ test("G every configured check fresh on the head, T `verified` records without a
   const result = await verified(root);
   expect(result.code).toBe(0);
   expect(result.stderr).not.toContain("configured check");
+  expect(result.json().data.checkEvidence).toEqual([
+    { name: "test", status: "fresh", via: "local" },
+    { name: "packaging", status: "fresh", via: "local" },
+  ]);
 });
