@@ -455,3 +455,161 @@ export function checkCommand(args: string, version: string, onPath = workitAvail
     ? `workit check ${args}`
     : `npx -y @brainervirus/workit-cli@${version} check ${args}`;
 }
+
+// ---------------------------------------------------------------------------
+// light commands (#418, #326): formatters and file-scoped linters finish in
+// seconds, so they never take the heavy-check lease, even with --heavy, and
+// the shell hook leaves them alone.
+
+type ToolRule = "any" | ReadonlySet<string>;
+const only = (...names: string[]): ToolRule => new Set(names);
+
+/** Formatters: light whatever they format. */
+const FORMATTERS: Record<string, ToolRule> = {
+  oxfmt: "any",
+  prettier: "any",
+  dprint: only("fmt", "check"),
+  biome: only("format"),
+  black: "any",
+  isort: "any",
+  yapf: "any",
+  autopep8: "any",
+  ruff: only("format"),
+  gofmt: "any",
+  goimports: "any",
+  rustfmt: "any",
+  "clang-format": "any",
+  shfmt: "any",
+  stylua: "any",
+  taplo: only("fmt", "format"),
+  cargo: only("fmt"),
+  go: only("fmt"),
+  deno: only("fmt"),
+  mix: only("format"),
+  terraform: only("fmt"),
+  zig: only("fmt"),
+};
+
+/** Linters: light only when every target is a file. */
+const FILE_LINTERS: Record<string, ToolRule> = {
+  eslint: "any",
+  oxlint: "any",
+  stylelint: "any",
+  tslint: "any",
+  biome: only("lint", "check"),
+  ruff: only("check"),
+  deno: only("lint"),
+  flake8: "any",
+  pylint: "any",
+  shellcheck: "any",
+  markdownlint: "any",
+  "markdownlint-cli2": "any",
+  hadolint: "any",
+  yamllint: "any",
+  actionlint: "any",
+  rubocop: "any",
+};
+
+/** Package scripts that only format. */
+const FORMAT_SCRIPT = /^(?:format|fmt|prettier)(?:$|[:_.-])/iu;
+const RUNNERS = new Set(["npx", "bunx", "pnpx"]);
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const PM_EXEC = new Set(["exec", "x", "dlx"]);
+const PM_RUN = new Set(["run", "run-script"]);
+const PYTHON_RUNNERS = new Set(["uv", "poetry", "pipenv", "pdm", "hatch", "rye"]);
+
+export type LightCommand = { kind: "formatter" | "file-lint"; tool: string; reason: string };
+
+const toolName = (word: string | undefined): string =>
+  (word?.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/u, "");
+
+const firstPositional = (words: readonly string[], from: number): number => {
+  let index = from;
+  while (index < words.length && words[index].startsWith("-")) {
+    if (words[index] === "--") return index + 1;
+    index += 1;
+  }
+  return index;
+};
+
+/** A target that names one file: an extension, no glob, not a directory under `cwd`. */
+function fileTarget(word: string, cwd: string | undefined): boolean {
+  if (/[*?[\]{}]/u.test(word) || word.endsWith("/") || word.endsWith(path.sep)) return false;
+  if (!/\.[A-Za-z0-9]+$/u.test(path.basename(word))) return false;
+  if (!cwd) return true;
+  try {
+    return !fs.statSync(path.resolve(cwd, word)).isDirectory();
+  } catch {
+    return true;
+  }
+}
+
+/** The subcommand a tool's rule names, or null when the rule is `any`. */
+const subcommandOf = (rule: ToolRule, words: readonly string[]): string | null | undefined => {
+  if (rule === "any") return null;
+  const at = firstPositional(words, 1);
+  return rule.has(words[at] ?? "") ? words[at] : undefined;
+};
+
+function classify(
+  words: readonly string[],
+  cwd: string | undefined,
+  depth: number,
+): LightCommand | null {
+  if (depth > 4 || !words.length) return null;
+  const name = toolName(words[0]);
+  const inner = (from: number) => classify(words.slice(from), cwd, depth + 1);
+  if (RUNNERS.has(name)) return inner(firstPositional(words, 1));
+  if (PYTHON_RUNNERS.has(name) && words[firstPositional(words, 1)] === "run")
+    return inner(firstPositional(words, firstPositional(words, 1) + 1));
+  if (/^python[\d.]*$/u.test(name)) {
+    const at = words.indexOf("-m");
+    return at > 0 ? inner(at + 1) : null;
+  }
+  if (PACKAGE_MANAGERS.has(name)) {
+    const at = firstPositional(words, 1);
+    const command = words[at] ?? "";
+    if (PM_EXEC.has(command)) return inner(firstPositional(words, at + 1));
+    const script = PM_RUN.has(command) ? words[firstPositional(words, at + 1)] : command;
+    if (script && FORMAT_SCRIPT.test(script))
+      return {
+        kind: "formatter",
+        tool: `${name} ${script}`,
+        reason: `\`${name} ${PM_RUN.has(command) ? `${command} ` : ""}${script}\` only formats`,
+      };
+    return name === "npm" || PM_RUN.has(command) ? null : inner(at);
+  }
+  const formatter = FORMATTERS[name];
+  if (formatter) {
+    const sub = subcommandOf(formatter, words);
+    if (sub !== undefined) {
+      const tool = sub ? `${name} ${sub}` : name;
+      return { kind: "formatter", tool, reason: `${tool} is a formatter` };
+    }
+  }
+  const linter = FILE_LINTERS[name];
+  if (!linter) return null;
+  const sub = subcommandOf(linter, words);
+  if (sub === undefined) return null;
+  const targets = words
+    .slice(sub ? words.indexOf(sub) + 1 : 1)
+    .filter((word) => !word.startsWith("-") && !/^\d+$/u.test(word));
+  if (!targets.length || !targets.every((word) => fileTarget(word, cwd))) return null;
+  const tool = sub ? `${name} ${sub}` : name;
+  return {
+    kind: "file-lint",
+    tool,
+    reason: `${tool} lints ${targets.length} named file${targets.length === 1 ? "" : "s"}`,
+  };
+}
+
+/**
+ * Is `argv` a light command: a formatter, or a linter whose every target is a
+ * file (`eslint a.ts b.ts`, not `eslint src` or `eslint "src/**"`)? Package
+ * runners (`npx`, `bunx`, `pnpm exec`, `uv run`, `python -m`) and format
+ * scripts (`bun run format`) are seen through. `cwd` resolves targets so a
+ * directory named like a file is not one.
+ */
+export function lightCommand(argv: readonly string[], cwd?: string): LightCommand | null {
+  return classify(argv, cwd, 0);
+}
