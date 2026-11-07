@@ -331,7 +331,7 @@ export function verifyMerged(
             : { note: `${short(mergeSha)} is not reachable from ${pr.base}` }),
       });
     }
-    const landed = landedBranch(resolved, pr.base);
+    const landed = landedBranch(cwd, resolved, pr.base);
     if (!landed.ok)
       observations.push({
         kind: "merge_on_trunk",

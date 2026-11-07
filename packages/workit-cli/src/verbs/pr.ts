@@ -1143,7 +1143,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
       actor,
     }),
   };
-  const landedBase = landedBaseGuard(gated.forge, connected.data);
+  const landedBase = landedBaseGuard(gated.forge, connected.data, io.cwd);
   const result = await progressFor(io).run(
     `Merging PR #${pr}`,
     () =>

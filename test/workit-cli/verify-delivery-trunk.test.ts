@@ -45,12 +45,12 @@ const run = async (argv: string[], cwd: string) => {
   return { code, stdout, stderr, json: () => JSON.parse(stdout) };
 };
 
-const setup = (kind: "github" | "gitlab") => {
+const setup = (kind: "github" | "gitlab", branches = ["feature/a", "feature/b"]) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
   );
-  const forge = makeStackForge(kind, ["feature/a", "feature/b"]);
+  const forge = makeStackForge(kind, branches);
   forges.push(forge);
   writeFileSync(
     path.join(configDir, "workspaces.json"),
@@ -66,7 +66,7 @@ const setup = (kind: "github" | "gitlab") => {
     }),
   );
   Object.assign(forgeDeps, { runner: forge.runner, sleep: async () => {}, now: () => 0 });
-  forge.git("switch", "-q", "feature/b");
+  forge.git("switch", "-q", branches[1]);
   return forge;
 };
 
@@ -157,4 +157,13 @@ test("verify-delivery merge (#752): given PR 11 merged into main, then it is del
   const result = await run(["verify-delivery", "merge", "--pr", "11", "--json"], forge.cwd);
   expect(result.code, result.stdout).toBe(0);
   expect(result.json().data.delivered).toBe(true);
+});
+
+test("verify-delivery merge (#752 review): given staging was promoted to main through PR 11, then a feature PR merged into the long-lived staging afterwards is delivered on staging", async () => {
+  const forge = setup("github", ["staging", "feature/y"]);
+  mergeFrozen(forge, 11);
+  recordMerge(forge, 12, "staging", forge.mergeExternally(12));
+  const result = await run(["verify-delivery", "merge", "--pr", "12", "--json"], forge.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({ delivered: true, trunk: "staging" });
 });

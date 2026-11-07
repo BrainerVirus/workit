@@ -47,13 +47,13 @@ const run = async (argv: string[], cwd: string, session = "author-1") => {
   return { code, stdout, stderr, json: () => JSON.parse(stdout) };
 };
 
-/** PR 11 feature/a -> main and PR 12 feature/b -> feature/a; feature/b verified by another session. */
-const setup = async (kind: "github" | "gitlab") => {
+/** PR 11 feature/a -> main and PR 12 feature/b -> feature/a (or `branches`); the child verified by another session. */
+const setup = async (kind: "github" | "gitlab", branches = ["feature/a", "feature/b"]) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
   );
-  const forge = makeStackForge(kind, ["feature/a", "feature/b"]);
+  const forge = makeStackForge(kind, branches);
   forges.push(forge);
   writeFileSync(
     path.join(configDir, "workspaces.json"),
@@ -71,9 +71,9 @@ const setup = async (kind: "github" | "gitlab") => {
   );
   Object.assign(forgeDeps, { runner: forge.runner, sleep: async () => {}, now: () => 0 });
   Object.assign(mergeGateDeps, { sleep: () => {} });
-  forge.git("switch", "-q", "feature/b");
+  forge.git("switch", "-q", branches[1]);
   const verdict = await run(
-    ["ledger", "verdict", "verified", "--how", "exercised the CLI", "--branch", "feature/b"],
+    ["ledger", "verdict", "verified", "--how", "exercised the CLI", "--branch", branches[1]],
     forge.cwd,
     "reviewer-2",
   );
@@ -116,4 +116,13 @@ test("pr merge (#752): given the parent PR is still open, then a PR based on its
   expect(result.code, result.stdout).toBe(0);
   expect(result.json().data).toMatchObject({ number: 12, base: "feature/a" });
   expect(forge.writes).toEqual(["merge 12"]);
+});
+
+test("pr merge (#752 review): given staging was promoted to main through PR 11 and is untouched since, then a feature PR into the long-lived staging merges (not base_landed)", async () => {
+  const forge = await setup("github", ["staging", "feature/y"]);
+  forge.mergeExternally(11);
+  const result = await run(["pr", "merge", "--pr", "12", "--keep-branch", "--json"], forge.cwd);
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data).toMatchObject({ number: 12, base: "staging" });
+  expect(forge.writes).toEqual(["merge 11 (external)", "merge 12"]);
 });
