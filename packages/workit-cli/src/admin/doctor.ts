@@ -1602,8 +1602,16 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   // freshness guarantee (`--prefer-online` and the npm release-age workaround
   // are mandatory).
   const canonical = cursorMcpServerEntry("").args;
+  // The same entry after `workit upgrade` moved it to the new npm scope.
+  const moved = canonical.map((arg) =>
+    arg.startsWith("--package=") ? `--package=${newPackage("cursor")}@latest` : arg,
+  );
   if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
-    if (args.length !== canonical.length || args.some((a, i) => a !== canonical[i]))
+    if (
+      ![canonical, moved].some(
+        (form) => args.length === form.length && args.every((a, i) => a === form[i]),
+      )
+    )
       return "invalid";
     return { kind: "npx" };
   }

@@ -96,7 +96,6 @@ export const refuseScope = (plan: UpgradePlan, release: ScopeRelease): void => {
   plan.skipped.push({
     host: SCOPE_ROW,
     reason: `not moving to ${NEW_SCOPE}/*: ${reason}; staying on ${LEGACY_SCOPE}/workit-*`,
-    fix: SCOPE_FIX,
   });
 };
 
