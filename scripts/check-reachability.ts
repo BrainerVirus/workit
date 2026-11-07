@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Dead-file guard for @brainervirus/workit-core. knip cannot police core: its
+// Dead-file guard for @workit-dev/core. knip cannot police core: its
 // package.json `exports: { "./src/*": "./src/*.ts" }` makes every core source
 // file a public entry. This bundles every real runtime entry point with a
 // metafile and fails when a core source file is reachable from none of them

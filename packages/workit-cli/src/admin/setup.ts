@@ -23,7 +23,7 @@ import {
   resolveConfigDir,
   type BranchPreset,
   type ToolkitConfig,
-} from "@brainervirus/workit-core/src/core/config";
+} from "@workit-dev/core/src/core/config";
 import { readSetupState, type SetupState } from "./setup-state";
 import {
   readWorkspacesResult,
@@ -31,14 +31,11 @@ import {
   validateWorkspaceGlob,
   workspacesRevision,
   type WorkspaceConfig,
-} from "@brainervirus/workit-core/src/core/workspaces";
-import {
-  isConfigSchemaFile,
-  withSchemaRef,
-} from "@brainervirus/workit-core/src/core/config-schemas";
-import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore";
-import { planHygieneFiles, projectTarget } from "@brainervirus/workit-core/src/core/hygiene";
-import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
+} from "@workit-dev/core/src/core/workspaces";
+import { isConfigSchemaFile, withSchemaRef } from "@workit-dev/core/src/core/config-schemas";
+import { GITIGNORE_ENTRIES } from "@workit-dev/core/src/core/gitignore";
+import { planHygieneFiles, projectTarget } from "@workit-dev/core/src/core/hygiene";
+import { packageRoot } from "@workit-dev/core/src/core/package-root";
 import {
   cursorHooksEntry,
   cursorMcpServerEntry,
@@ -52,7 +49,7 @@ import {
 } from "./registration";
 import { runDoctor, type DoctorReport } from "./doctor";
 import { CODEX_MARKETPLACE } from "../upgrade/codex-marketplace";
-import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write";
+import { writeFileExclusive } from "@workit-dev/core/src/core/safe-write";
 import {
   findYtrack,
   ytrackHostName,
@@ -60,7 +57,7 @@ import {
   ytrackMissingUnblock,
   ytrackReadiness,
   ytrackRunner,
-} from "@brainervirus/workit-core/src/core/youtrack-ytrack";
+} from "@workit-dev/core/src/core/youtrack-ytrack";
 
 import {
   isCodexWorkitInstalled,
@@ -761,18 +758,18 @@ const isAdapter = (root: string, platform: Platform): boolean => {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
       name?: string;
     };
-    return pkg.name === `@brainervirus/workit-${platform}`;
+    return pkg.name === `@workit-dev/${platform}`;
   } catch {
     return false;
   }
 };
 
-/** Every directory Node would load `@brainervirus/workit-<platform>` from for
+/** Every directory Node would load `@workit-dev/<platform>` from for
  *  the running CLI, nearest first. It probes the package directory itself, so
  *  a package without a resolvable main (Cursor) or behind an exports map that
  *  hides package.json (OpenCode) still counts. */
 const nodeResolvedAdapters = (platform: Platform): string[] => {
-  const name = `@brainervirus/workit-${platform}`;
+  const name = `@workit-dev/${platform}`;
   const require = createRequire(path.join(packageRoot(), "package.json"));
   return (require.resolve.paths(name) ?? []).map((dir) => path.join(dir, name));
 };
@@ -798,8 +795,8 @@ function adapterRoot(
     "local",
     ".workit-package-bootstrap",
     "node_modules",
-    "@brainervirus",
-    "workit-cursor",
+    "@workit-dev",
+    "cursor",
   );
   if (platform === "cursor" && preferInstalledAdapter) candidates.push(stagedCursor);
   if (res.dev) {
@@ -1098,7 +1095,7 @@ function applyCursorMcp(root: string, res: ResolvedApply): SetupResultEntry {
   const previousArgs = Array.isArray(current.args) ? current.args.map(String) : [];
   const previousPackage = previousArgs.find(
     (arg) =>
-      arg.startsWith("--package=@brainervirus/workit-cursor@") &&
+      arg.startsWith("--package=@workit-dev/cursor@") &&
       arg !== `--package=${CURSOR_RUNTIME_PACKAGE}`,
   );
   if (previousPackage) {
@@ -1335,7 +1332,7 @@ export function applySetupPreview(
         platform,
         file: mutation.path,
         status: "Failed",
-        detail: `@brainervirus/workit-${platform} package not found — set WORKIT_DEV to your checkout or install the package`,
+        detail: `@workit-dev/${platform} package not found — set WORKIT_DEV to your checkout or install the package`,
       });
       continue;
     }

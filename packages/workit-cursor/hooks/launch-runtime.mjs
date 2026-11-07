@@ -13,7 +13,7 @@ import {
 import path from "node:path";
 import { stateDir } from "./workit-paths.mjs";
 
-const CURSOR_HOOK_PACKAGE = "@brainervirus/workit-cursor";
+const CURSOR_HOOK_PACKAGE = "@workit-dev/cursor";
 
 /** npm bin name -> bundled entry under dist/. */
 const CURSOR_HOOK_BINS = {

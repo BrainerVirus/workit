@@ -2,16 +2,13 @@ import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
 import { ConfirmInput } from "@inkjs/ui";
 import { useCallback, useEffect, useState, type JSX } from "react";
-import { mergePreset, readConfig } from "@brainervirus/workit-core/src/core/config.ts";
+import { mergePreset, readConfig } from "@workit-dev/core/src/core/config.ts";
 import {
   resolveWorkspaceFromEntries,
   resolveWorkspacePolicy,
-} from "@brainervirus/workit-core/src/core/workspaces.ts";
-import {
-  detectBranchPolicy,
-  repoBranchPreset,
-} from "@brainervirus/workit-core/src/core/branch-policy.ts";
-import { projectTarget, type ProjectTarget } from "@brainervirus/workit-core/src/core/hygiene.ts";
+} from "@workit-dev/core/src/core/workspaces.ts";
+import { detectBranchPolicy, repoBranchPreset } from "@workit-dev/core/src/core/branch-policy.ts";
+import { projectTarget, type ProjectTarget } from "@workit-dev/core/src/core/hygiene.ts";
 import { buildSetupPreview, parseList, type SetupMutation } from "../logic";
 import { resolveBasePath } from "../wizard-state";
 import { SelectList } from "./select-list";

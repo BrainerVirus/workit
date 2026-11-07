@@ -11,8 +11,8 @@ import {
   type Entry,
   type TaskRecord,
   type Worker,
-} from "@brainervirus/workit-core/src/core";
-import type { NativeWorkerVerifier } from "@brainervirus/workit-core/src/core/workers";
+} from "@workit-dev/core/src/core";
+import type { NativeWorkerVerifier } from "@workit-dev/core/src/core/workers";
 import { createContextTool } from "./context";
 
 type SessionLookup = {

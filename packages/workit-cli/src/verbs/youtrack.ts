@@ -15,22 +15,22 @@
 import { progressFor } from "../progress";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { youTrackWorkDateMs } from "@brainervirus/workit-core/src/core/youtrack";
-import { ISSUE_RE } from "@brainervirus/workit-core/src/core/youtrack-tools";
+import { youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
+import { ISSUE_RE } from "@workit-dev/core/src/core/youtrack-tools";
 import {
   withMarker,
   writeOnce,
   youTrackMarker,
   type MarkerWhere,
   type OnceOutcome,
-} from "@brainervirus/workit-core/src/core/youtrack-writes";
+} from "@workit-dev/core/src/core/youtrack-writes";
 import {
   youTrackBackend,
   youTrackWriteGate,
   type IssueView,
   type WriteResult,
   type YouTrackBackend,
-} from "@brainervirus/workit-core/src/core/youtrack-backend";
+} from "@workit-dev/core/src/core/youtrack-backend";
 import { emit, fail, ok, type Io } from "../output";
 import { parseFlags, positiveInt, usage } from "./forge-common";
 

@@ -1,7 +1,7 @@
 import { inkColor, StableTextInput } from "./ink-style";
 import { Box, Text } from "ink";
 import type { JSX } from "react";
-import { matchWorkspace } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { matchWorkspace } from "@workit-dev/core/src/core/workspaces.ts";
 import { workspaceEditorValue } from "../logic";
 import { resolveBasePath } from "../wizard-state";
 import { SelectList } from "./select-list";

@@ -1,7 +1,7 @@
 # Workit
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@brainervirus/workit-cli.svg?label=workit-cli)](https://www.npmjs.com/package/@brainervirus/workit-cli)
+[![npm](https://img.shields.io/npm/v/@workit-dev/cli.svg?label=workit-cli)](https://www.npmjs.com/package/@workit-dev/cli)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **Workflow rails for agentic coding.** The agent decides *what* to do; the
@@ -44,7 +44,7 @@ with none, install Node 24 or run `workit setup` from a Node 24 shell. The setup
 ones you pick with their native commands, and writes your global config:
 
 ```bash
-npx @brainervirus/workit-cli init
+npx @workit-dev/cli init
 workit doctor          # after the CLI install below
 workit setup           # optional: let agents run Workit's delivery verbs without a prompt
 ```
@@ -63,7 +63,7 @@ updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
 host); the native commands below are the fallback.
 
 A CLI older than 8.38.0 has no `--yes` (it fails with `unknown option --yes`).
-Update the CLI once with `npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes`
+Update the CLI once with `npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes`
 (or, on the old CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
 `workit upgrade`.
 
@@ -100,12 +100,12 @@ Skills appear as `/workit:<name>`, plus `verifier`, `reviewer` and
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@brainervirus/workit-opencode"]
+  "plugins": ["@workit-dev/opencode"]
 }
 ```
 
 Update: `workit upgrade` (fallback:
-`opencode plugin update @brainervirus/workit-opencode`; other plugins stay as
+`opencode plugin update @workit-dev/opencode`; other plugins stay as
 they are). OpenCode 2.x loads the new version live, with no restart. Use the
 `plugins` key; `workit setup --hosts=opencode` moves an entry out of the
 deprecated `plugin` key. Uninstall: `workit uninstall`, or remove the entry
@@ -119,7 +119,7 @@ use `"plugins": ["file:///path/to/workit/packages/workit-opencode"]`.
 <details>
 <summary><strong>Cursor</strong></summary>
 
-Run `npx @brainervirus/workit-cli init` and select Cursor: it installs the
+Run `npx @workit-dev/cli init` and select Cursor: it installs the
 plugin (MCP server, session hook, contract rule, skills). Update:
 `workit upgrade` (fallback: `workit upgrade --hosts=cursor`), which also
 reinstalls missing plugin files. Uninstall: `workit uninstall`. Manual MCP
@@ -148,12 +148,12 @@ Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 <summary><strong>Pi</strong> (1.4.0)</summary>
 
 ```bash
-pi install npm:@brainervirus/workit-pi
+pi install npm:@workit-dev/pi
 pi install ./packages/workit-pi -l --approve   # local checkout
 ```
 
 Update: `workit upgrade` (fallback: `pi update --extension
-npm:@brainervirus/workit-pi`). Uninstall: `workit uninstall`.
+npm:@workit-dev/pi`). Uninstall: `workit uninstall`.
 
 </details>
 
@@ -161,7 +161,7 @@ npm:@brainervirus/workit-pi`). Uninstall: `workit uninstall`.
 <summary><strong>CLI only</strong></summary>
 
 ```bash
-npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes
+npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes
 workit help
 ```
 

@@ -29,7 +29,7 @@ const values = (): SetupPreviewInput => ({
 });
 
 test("published node_modules adapter roots resolve to the npm OpenCode pin", () => {
-  const root = path.join(tempDir("wk-oc-nm-"), "node_modules", "@brainervirus", "workit-opencode");
+  const root = path.join(tempDir("wk-oc-nm-"), "node_modules", "@workit-dev", "opencode");
   mkdirSync(path.join(root, "dist"), { recursive: true });
   writeFileSync(path.join(root, "dist", "plugin.js"), "export default {};\n");
   try {
@@ -82,7 +82,7 @@ test("setup preserves an existing explicit OpenCode package version pin", () => 
   const dir = tempDir("wk-oc-pinned-cfg-");
   const file = path.join(home, ".config", "opencode", "opencode.json");
   const original = JSON.stringify({
-    plugins: ["@brainervirus/workit-opencode@2.0.1", "other-plugin"],
+    plugins: ["@workit-dev/opencode@2.0.1", "other-plugin"],
   });
   try {
     mkdirSync(path.dirname(file), { recursive: true });
@@ -110,7 +110,7 @@ test("setup preserves an existing OpenCode v2 plugins array pin byte-for-byte", 
   const dir = tempDir("wk-oc-v2-pinned-cfg-");
   const file = path.join(home, ".config", "opencode", "opencode.json");
   const original = JSON.stringify({
-    plugins: ["@brainervirus/workit-opencode@2.0.1", "other-plugin"],
+    plugins: ["@workit-dev/opencode@2.0.1", "other-plugin"],
     model: "provider/model",
   });
   try {
@@ -140,10 +140,7 @@ test("setup moves a Workit entry from the deprecated plugin key to plugins", () 
   const file = path.join(home, ".config", "opencode", "opencode.json");
   try {
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(
-      file,
-      JSON.stringify({ plugin: ["@brainervirus/workit-opencode", "other-plugin"] }),
-    );
+    writeFileSync(file, JSON.stringify({ plugin: ["@workit-dev/opencode", "other-plugin"] }));
     const result = applySetupPreview(
       buildSetupPreview(values(), { dir, cwd: dir, env: {}, home }),
       {
@@ -156,7 +153,7 @@ test("setup moves a Workit entry from the deprecated plugin key to plugins", () 
     );
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
     const cfg = JSON.parse(readFileSync(file, "utf8"));
-    expect(cfg.plugins).toEqual(["@brainervirus/workit-opencode"]);
+    expect(cfg.plugins).toEqual(["@workit-dev/opencode"]);
     expect(cfg.plugin).toEqual(["other-plugin"]);
     const entry = result.entries.find((e) => e.platform === "opencode");
     expect(entry?.detail).toContain('deprecated "plugin" key');

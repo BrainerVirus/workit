@@ -9,15 +9,15 @@
 //   workit git push --release <main|develop|v-tag>…  (repeatable)
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { requireGrant } from "@brainervirus/workit-core/src/autonomy";
-import { pushTarget } from "@brainervirus/workit-core/src/core/remotes";
+import { requireGrant } from "@workit-dev/core/src/autonomy";
+import { pushTarget } from "@workit-dev/core/src/core/remotes";
 import {
   allowedKinds,
   BRANCH_KINDS,
   branchPolicySnapshotFor,
   suggestBranchName,
   type BranchKind,
-} from "@brainervirus/workit-core/src/core/branch";
+} from "@workit-dev/core/src/core/branch";
 import {
   executePush,
   executeReleasePush,
@@ -28,19 +28,16 @@ import {
   type BranchOutcome,
   type CommitOutcome,
   type ReleasePushOutcome,
-} from "@brainervirus/workit-core/src/git/ops";
-import { gitStage, gitUnstage, type StageOutcome } from "@brainervirus/workit-core/src/git/stage";
-import { workspaceTrailers } from "@brainervirus/workit-core/src/core/workspaces";
-import { actorFromEnv, appendObserved } from "@brainervirus/workit-core/src/ledger";
-import {
-  releaseNotesForTag,
-  type ReleaseNotesDecision,
-} from "@brainervirus/workit-core/src/git/release";
-import { currentBranch, pushRemoteName } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/git/ops";
+import { gitStage, gitUnstage, type StageOutcome } from "@workit-dev/core/src/git/stage";
+import { workspaceTrailers } from "@workit-dev/core/src/core/workspaces";
+import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
+import { releaseNotesForTag, type ReleaseNotesDecision } from "@workit-dev/core/src/git/release";
+import { currentBranch, pushRemoteName } from "@workit-dev/core/src/git/rev";
 import { findSubcommand, findVerb } from "./registry";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
-import { success, type ForgeResult } from "@brainervirus/workit-core/src/forge/types";
+import { success, type ForgeResult } from "@workit-dev/core/src/forge/types";
 import { connect, forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 
 const BRANCH_USAGE =

@@ -11,7 +11,7 @@
       "description": "Session and per-turn task context, branch policy on git shell commands, the workit method skills, and verifier/reviewer/implementer agents",
       "source": {
         "source": "npm",
-        "package": "@brainervirus/workit-claude-code"
+        "package": "@workit-dev/claude-code"
       },
       "homepage": "https://github.com/BrainerVirus/workit#readme",
       "license": "MIT",

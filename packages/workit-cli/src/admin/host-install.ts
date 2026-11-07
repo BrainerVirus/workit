@@ -185,8 +185,8 @@ export const isPiWorkitInstalled = (
           : entry;
       const value = String(source).replaceAll("\\", "/").replace(/\/+$/, "");
       return (
-        /^npm:@brainervirus\/workit-pi(?:@[^/]+)?$/.test(value) ||
-        value === "@brainervirus/workit-pi" ||
+        /^npm:@workit-dev\/pi(?:@[^/]+)?$/.test(value) ||
+        value === "@workit-dev/pi" ||
         /(?:^|\/)packages\/workit-pi$/.test(value)
       );
     });
@@ -195,8 +195,8 @@ export const isPiWorkitInstalled = (
   }
 };
 
-const OPENCODE_PLUGIN_SCOPE = "@brainervirus";
-const OPENCODE_PLUGIN_NAME = "workit-opencode";
+const OPENCODE_PLUGIN_SCOPE = "@workit-dev";
+const OPENCODE_PLUGIN_NAME = "opencode";
 
 const packageVersionAt = (root: string, name: string): string | null => {
   try {
@@ -275,7 +275,7 @@ const isCanonicalCodexPackage = (root: string): boolean => {
       const repository =
         typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url;
       if (
-        (manifest.name === "workit" || manifest.name === "@brainervirus/workit-codex") &&
+        (manifest.name === "workit" || manifest.name === "@workit-dev/codex") &&
         repository?.replace(/\.git$/, "").toLowerCase() === "https://github.com/brainervirus/workit"
       )
         return true;
@@ -546,8 +546,8 @@ export function planHostInstall(
       {
         ...base,
         args: upgrading
-          ? [...base.args, "update", "--extension", "npm:@brainervirus/workit-pi"]
-          : [...base.args, "install", `npm:@brainervirus/workit-pi@${version}`],
+          ? [...base.args, "update", "--extension", "npm:@workit-dev/pi"]
+          : [...base.args, "install", `npm:@workit-dev/pi@${version}`],
         purpose: upgrading
           ? "Update the Workit Pi package"
           : "Install the Workit Pi package in personal Pi settings",
@@ -575,13 +575,13 @@ export function planHostInstall(
           stage,
           "--no-save",
           "--package-lock=false",
-          `@brainervirus/workit-cursor@${version}`,
+          `@workit-dev/cursor@${version}`,
         ],
         cwd,
         purpose: upgrading
           ? "Download the current Workit Cursor adapter for the managed local plugin directory"
           : "Download the Workit Cursor adapter package for the managed local plugin directory",
-        packageRoot: path.join(stage, "node_modules", "@brainervirus", "workit-cursor"),
+        packageRoot: path.join(stage, "node_modules", "@workit-dev", "cursor"),
         packageTarget: target,
       },
     ];

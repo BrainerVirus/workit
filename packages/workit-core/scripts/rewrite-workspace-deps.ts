@@ -36,7 +36,7 @@ for (const pkg of [
   if (groups.length === 0) continue;
   for (const deps of groups)
     for (const name of Object.keys(deps)) {
-      if (name.startsWith("@brainervirus/")) deps[name] = `^${core.version}`;
+      if (name.startsWith("@workit-dev/")) deps[name] = `^${core.version}`;
     }
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }

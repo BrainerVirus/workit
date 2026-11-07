@@ -14,7 +14,7 @@ import {
 
 const node = "node";
 
-const PI = "@brainervirus/workit-pi";
+const PI = "@workit-dev/pi";
 
 // Unpacks the Pi tarball from a fresh sandbox build of the current source
 // (shared, cached helper) into <stage>/extract/package, so stock Pi never
@@ -347,11 +347,8 @@ test("npm installs the packed package without workspace protocol dependencies", 
     );
     expect(installed.status, installed.stderr || installed.stdout).toBe(0);
     expect(
-      readFileSync(
-        path.join(consumer, "node_modules/@brainervirus/workit-pi/package.json"),
-        "utf8",
-      ),
-    ).toContain('"name": "@brainervirus/workit-pi"');
+      readFileSync(path.join(consumer, "node_modules/@workit-dev/pi/package.json"), "utf8"),
+    ).toContain('"name": "@workit-dev/pi"');
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }

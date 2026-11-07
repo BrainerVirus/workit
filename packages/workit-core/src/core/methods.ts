@@ -138,7 +138,7 @@ Autonomy contract:
   reconcile every requested item and observe it (\`workit verify-delivery\`).
 
 Read-only git and gh run raw; mutations go through workit verbs
-(\`workit git|pr|ci|check|help\`; else \`npx -y @brainervirus/workit-cli\`).
+(\`workit git|pr|ci|check|help\`; else \`npx -y @workit-dev/cli\`).
 Other checkout: \`workit <verb> --cwd <dir> …\` (verb first: host rules match it); one workit
 verb per shell call, never \`cd <dir> && workit\`. zsh-safe: no \`echo =====\`
 (\`printf '%s\\n' ---\`), quote globs and URLs, no variable named \`status\` or \`path\`.

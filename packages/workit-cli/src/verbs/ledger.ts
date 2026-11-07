@@ -43,7 +43,7 @@
 // ref; it is never guessed from other rows.
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import { prStatusReport } from "@brainervirus/workit-core/src/forge/report";
+import { prStatusReport } from "@workit-dev/core/src/forge/report";
 import {
   VERDICT_RESULTS,
   actorFromEnv,
@@ -68,27 +68,19 @@ import {
   type ReadRow,
   type RecordContext,
   type VerdictRow,
-} from "@brainervirus/workit-core/src/ledger";
-import {
-  checkVerdictsCovered,
-  type CoveredCheck,
-} from "@brainervirus/workit-core/src/verdict-cover";
-import {
-  planLeads,
-  readFanout,
-  selectFanout,
-  type FanoutFile,
-} from "@brainervirus/workit-core/src/fanout";
-import { currentBranch, headSha, resolveRef } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/ledger";
+import { checkVerdictsCovered, type CoveredCheck } from "@workit-dev/core/src/verdict-cover";
+import { planLeads, readFanout, selectFanout, type FanoutFile } from "@workit-dev/core/src/fanout";
+import { currentBranch, headSha, resolveRef } from "@workit-dev/core/src/git/rev";
 import {
   issuedTokenMatches,
   namesOwnDerivedSession,
   sessionClaimRefusal,
-} from "@brainervirus/workit-core/src/host-session";
+} from "@workit-dev/core/src/host-session";
 import {
   verdictEvidence,
   type CheckEvidenceDoc,
-} from "@brainervirus/workit-core/src/core/policy/check-evidence";
+} from "@workit-dev/core/src/core/policy/check-evidence";
 import { connect } from "./forge-common";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";

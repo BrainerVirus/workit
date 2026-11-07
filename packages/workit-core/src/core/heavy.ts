@@ -193,7 +193,7 @@ function positional(words: string[], from: number, values: ReadonlySet<string> =
 const baseName = (word: string | undefined): string =>
   (word?.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/u, "");
 
-const WORKIT = /^(?:workit|@brainervirus\/workit-cli(?:@.*)?)$/u;
+const WORKIT = /^(?:workit|@workit-dev\/cli(?:@.*)?)$/u;
 const PYTHONS = /^(?:python[\d.]*|py)$/u;
 
 const NPM_INSTALL = new Set([

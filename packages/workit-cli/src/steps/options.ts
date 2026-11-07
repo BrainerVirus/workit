@@ -3,7 +3,7 @@ import {
   mergePreset,
   type BranchPreset,
   type ToolkitConfig,
-} from "@brainervirus/workit-core/src/core/config.ts";
+} from "@workit-dev/core/src/core/config.ts";
 import {
   parseList,
   type WorkspaceEditorField,

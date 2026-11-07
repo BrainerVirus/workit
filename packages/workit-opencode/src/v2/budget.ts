@@ -6,7 +6,7 @@ import {
   claimSpawnBudget,
   noteSpawnBudget,
   tickBudget,
-} from "@brainervirus/workit-core/src/hooks/budget-signal";
+} from "@workit-dev/core/src/hooks/budget-signal";
 
 const claimed = new Set<string>();
 

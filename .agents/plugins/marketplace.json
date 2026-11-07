@@ -8,7 +8,7 @@
       "name": "workit",
       "source": {
         "source": "npm",
-        "package": "@brainervirus/workit-codex",
+        "package": "@workit-dev/codex",
         "version": "latest",
         "registry": "https://registry.npmjs.org"
       },

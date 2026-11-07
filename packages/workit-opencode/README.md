@@ -1,7 +1,7 @@
-# @brainervirus/workit-opencode
+# @workit-dev/opencode
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@brainervirus/workit-opencode.svg)](https://www.npmjs.com/package/@brainervirus/workit-opencode)
+[![npm](https://img.shields.io/npm/v/@workit-dev/opencode.svg)](https://www.npmjs.com/package/@workit-dev/opencode)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 [Workit](https://github.com/BrainerVirus/workit) for OpenCode 2.0.18+: the seven task families,
@@ -12,12 +12,12 @@ context injection on session start and after compaction. Requires Node.js 24+.
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@brainervirus/workit-opencode"]
+  "plugins": ["@workit-dev/opencode"]
 }
 ```
 
 Update with `workit upgrade` (native fallback:
-`opencode plugin update @brainervirus/workit-opencode`); OpenCode 2.x loads the
+`opencode plugin update @workit-dev/opencode`); OpenCode 2.x loads the
 new version live, with no restart. Uninstall with `workit uninstall`.
 
 Local checkout: run `bun packages/workit-opencode/scripts/build.ts`, then pin

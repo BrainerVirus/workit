@@ -16,17 +16,17 @@ import {
   verifyReleased,
   type DeliveryEndpoint,
   type DeliveryReport,
-} from "@brainervirus/workit-core/src/forge/verify";
-import { TaskStore } from "@brainervirus/workit-core/src/core/task-store";
-import { closeDeliveredTasks } from "@brainervirus/workit-core/src/core/task-delivery";
+} from "@workit-dev/core/src/forge/verify";
+import { TaskStore } from "@workit-dev/core/src/core/task-store";
+import { closeDeliveredTasks } from "@workit-dev/core/src/core/task-delivery";
 import {
   cleanupAfterMerge,
   remoteBranchGone,
   type MergeCleanup,
-} from "@brainervirus/workit-core/src/core/cleanup";
-import { actorFromEnv, readLedger } from "@brainervirus/workit-core/src/ledger";
-import { isProtectedBranch } from "@brainervirus/workit-core/src/core/repo-context";
-import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/core/cleanup";
+import { actorFromEnv, readLedger } from "@workit-dev/core/src/ledger";
+import { isProtectedBranch } from "@workit-dev/core/src/core/repo-context";
+import { currentBranch } from "@workit-dev/core/src/git/rev";
 import { emit, fail, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, positiveInt, usage } from "./forge-common";
 

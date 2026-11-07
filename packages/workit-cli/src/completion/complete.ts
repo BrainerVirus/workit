@@ -37,17 +37,17 @@ const names = (list: unknown, key: "name" | "id"): string[] =>
 const defaultSources: CompleteSources = {
   // Imported on use so the cold path (help, --version) never loads core.
   checks: async (cwd) => {
-    const { loadCheckConfig } = await import("@brainervirus/workit-core/src/check-config");
+    const { loadCheckConfig } = await import("@workit-dev/core/src/check-config");
     const config = loadCheckConfig(cwd);
     return [...config.checks.map((check) => check.name), ...Object.keys(config.groups)];
   },
   workspaces: async () => {
-    const { configFilePath } = await import("@brainervirus/workit-core/src/core/config");
+    const { configFilePath } = await import("@workit-dev/core/src/core/config");
     const file = readJson(configFilePath("workspaces.json")) as { workspaces?: unknown } | null;
     return names(file?.workspaces, "name");
   },
   slices: async (cwd) => {
-    const { fanoutsDir } = await import("@brainervirus/workit-core/src/fanout");
+    const { fanoutsDir } = await import("@workit-dev/core/src/fanout");
     const dir = fanoutsDir(cwd);
     if (!dir.ok) return [];
     let files: string[];

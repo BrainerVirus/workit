@@ -7,12 +7,12 @@ import {
   cursorDeny as deny,
   dispatchHook,
   runAdapterHook,
-} from "@brainervirus/workit-core/hooks";
+} from "@workit-dev/core/hooks";
 
-import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
-import { useOwnedWorkitCli } from "@brainervirus/workit-core/src/core/cli-locate";
+import { PROCESS_START } from "@workit-dev/core/src/hooks/deadline";
+import { useOwnedWorkitCli } from "@workit-dev/core/src/core/cli-locate";
 
-export { parseCursorHookInput, type CursorHookInput } from "@brainervirus/workit-core/hooks";
+export { parseCursorHookInput, type CursorHookInput } from "@workit-dev/core/hooks";
 export { cursorCapabilities } from "./capabilities";
 
 /**

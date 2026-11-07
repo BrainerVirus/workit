@@ -24,9 +24,9 @@ import {
   type Enforcement,
   type ModelRole,
   type ModelTier,
-} from "@brainervirus/workit-core/src/core/role-models";
-import { exhaustedProviders, shortTime } from "@brainervirus/workit-core/src/core/model-fallback";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/core/role-models";
+import { exhaustedProviders, shortTime } from "@workit-dev/core/src/core/model-fallback";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =

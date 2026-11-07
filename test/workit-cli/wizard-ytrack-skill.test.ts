@@ -63,7 +63,7 @@ const world = (extra: Record<string, string> = {}) => {
   );
   const settings = path.join(home, ".pi", "agent", "settings.json");
   mkdirSync(path.dirname(settings), { recursive: true });
-  writeFileSync(settings, JSON.stringify({ packages: ["npm:@brainervirus/workit-pi"] }));
+  writeFileSync(settings, JSON.stringify({ packages: ["npm:@workit-dev/pi"] }));
   const env: NodeJS.ProcessEnv = {
     HOME: home,
     XDG_CONFIG_HOME: path.join(home, ".config"),

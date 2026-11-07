@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
+import { resolveStateDir } from "@workit-dev/core/src/core/logger";
 
 const parts = (version: string): number[] | null => {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version);

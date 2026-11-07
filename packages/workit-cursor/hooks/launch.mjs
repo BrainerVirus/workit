@@ -6,7 +6,7 @@
 //
 // Resolution order (first match wins; no step ever resolves `@latest`):
 //   1. local: the plugin's own bundled hook, <plugin>/dist/<entry>.js;
-//   2. local: `<bin>` on PATH (a global `@brainervirus/workit-cursor` install);
+//   2. local: `<bin>` on PATH (a global `@workit-dev/cursor` install);
 //   3. npx-pinned: `npx -y --prefer-offline --package=<pkg>@<plugin version>`,
 //      the version read from this plugin's package.json;
 //   4. missing: nothing runnable.

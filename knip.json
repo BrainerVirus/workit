@@ -35,7 +35,7 @@
     "packages/workit-cli": {
       "entry": ["src/main.ts!", "scripts/build.ts!", "scripts/doctor-check.ts!"],
       "project": ["src/**/*.{ts,tsx}!", "scripts/**/*.ts!"],
-      "ignoreDependencies": ["@brainervirus/workit-cursor", "@brainervirus/workit-opencode"],
+      "ignoreDependencies": ["@workit-dev/cursor", "@workit-dev/opencode"],
       "ignoreUnresolved": ["scripts/build.ts"]
     },
     "packages/workit-opencode": {
@@ -64,12 +64,12 @@
     "packages/workit-pi": {
       "entry": ["extensions/workit.ts!", "src/worker.ts!", "scripts/build.ts!"],
       "project": ["src/**/*.ts!", "extensions/**/*.ts!", "scripts/**/*.ts!"],
-      "ignoreDependencies": ["@brainervirus/workit-core"]
+      "ignoreDependencies": ["@workit-dev/core"]
     },
     "packages/workit-claude-code": {
       "entry": ["src/hook.ts!", "src/run.ts!", "scripts/build.ts!"],
       "project": ["src/**/*.ts!", "scripts/**/*.ts!"],
-      "ignoreDependencies": ["@brainervirus/workit-cli"]
+      "ignoreDependencies": ["@workit-dev/cli"]
     },
     "packages/workit-mcp": {
       "entry": ["scripts/build.ts!"],

@@ -4,7 +4,7 @@ import {
   flatOperationJsonSchema,
   operationDescription,
   type OperationFamily,
-} from "@brainervirus/workit-core/src/core";
+} from "@workit-dev/core/src/core";
 
 /** One V2 tool registration: exact name, description, and JSON Schema input.
  * The catalog is shared by every non-SDK V2 surface (and future hosts) so the

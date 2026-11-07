@@ -49,14 +49,14 @@ import {
   type VerificationMode,
   type GrantValue,
   type Grants,
-} from "@brainervirus/workit-core/src/autonomy";
+} from "@workit-dev/core/src/autonomy";
 import {
   describeReleaseTracks,
   releaseTracksReport,
-} from "@brainervirus/workit-core/src/core/release-tracks";
-import { pushTarget } from "@brainervirus/workit-core/src/core/remotes";
-import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models";
-import { pushRemoteName } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/core/release-tracks";
+import { pushTarget } from "@workit-dev/core/src/core/remotes";
+import { roleModelIssues } from "@workit-dev/core/src/core/role-models";
+import { pushRemoteName } from "@workit-dev/core/src/git/rev";
 import {
   CHANGELOG_MODES,
   DEFAULT_CHANGELOG_PATH,
@@ -72,12 +72,9 @@ import {
   workspaceTierModelIssues,
   type ChangelogMode,
   type DocsMode,
-} from "@brainervirus/workit-core/src/core/workspaces";
-import { resolvePrTemplate } from "@brainervirus/workit-core/src/core/pr-template";
-import {
-  isChangelogGlob,
-  resolveChangelogPaths,
-} from "@brainervirus/workit-core/src/core/changelog-gate";
+} from "@workit-dev/core/src/core/workspaces";
+import { resolvePrTemplate } from "@workit-dev/core/src/core/pr-template";
+import { isChangelogGlob, resolveChangelogPaths } from "@workit-dev/core/src/core/changelog-gate";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
 import { createStyle, type Style } from "../style";

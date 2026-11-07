@@ -31,14 +31,14 @@ import {
 // preserved credentials, and installers that fail loudly on required failures.
 // Pack-only: no publish, tag, or marketplace operation anywhere in this gate.
 
-const CORE = "@brainervirus/workit-core";
-const MCP = "@brainervirus/workit-mcp";
-const OPENCODE = "@brainervirus/workit-opencode";
-const CURSOR = "@brainervirus/workit-cursor";
-const CODEX = "@brainervirus/workit-codex";
-const PI = "@brainervirus/workit-pi";
-const CLI = "@brainervirus/workit-cli";
-const CLAUDE_CODE = "@brainervirus/workit-claude-code";
+const CORE = "@workit-dev/core";
+const MCP = "@workit-dev/mcp";
+const OPENCODE = "@workit-dev/opencode";
+const CURSOR = "@workit-dev/cursor";
+const CODEX = "@workit-dev/codex";
+const PI = "@workit-dev/pi";
+const CLI = "@workit-dev/cli";
+const CLAUDE_CODE = "@workit-dev/claude-code";
 const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI, CLAUDE_CODE];
 
 // The isolated npm-install gate fetches third-party runtime deps (ink/react/
@@ -202,7 +202,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
       "-y",
       "--prefer-online",
       "--min-release-age=0",
-      "--package=@brainervirus/workit-cursor@latest",
+      "--package=@workit-dev/cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);
@@ -331,7 +331,7 @@ test(
       mkdirSync(path.join(stub, "packages", "workit-cursor", "mcp"), { recursive: true });
       mkdirSync(path.join(stub, "packages", "workit-cursor", "scripts"), { recursive: true });
       mkdirSync(path.join(stub, "packages", "workit-cursor", "dist"), { recursive: true });
-      for (const dependency of ["@brainervirus/workit-core", "@modelcontextprotocol/sdk", "zod"]) {
+      for (const dependency of ["@workit-dev/core", "@modelcontextprotocol/sdk", "zod"]) {
         mkdirSync(path.join(stub, "node_modules", dependency), { recursive: true });
       }
       writeFileSync(
@@ -391,10 +391,10 @@ test.skipIf(!npmRegistryOk)(
     const home = tmp("wk-npm-cli-home-");
     try {
       const byName = (name: string) => packs.find((p) => p.packageName === name)!;
-      // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
+      // npm resolves the @workit-dev/* workspace deps from the sibling tarballs
       // (file:), so no unpublished package has to exist on the registry. The
       // third-party runtime deps (ink/react/@inkjs/ui) resolve from the registry,
-      // exactly as a real `npm install @brainervirus/workit-cli` would.
+      // exactly as a real `npm install @workit-dev/cli` would.
       writeFileSync(
         path.join(install, "package.json"),
         JSON.stringify(
@@ -403,13 +403,13 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cli": tarballSpec(install, byName(CLI)),
+              "@workit-dev/cli": tarballSpec(install, byName(CLI)),
             },
             overrides: {
-              "@brainervirus/workit-core": tarballSpec(install, byName(CORE)),
-              "@brainervirus/workit-cursor": tarballSpec(install, byName(CURSOR)),
-              "@brainervirus/workit-opencode": tarballSpec(install, byName(OPENCODE)),
-              "@brainervirus/workit-mcp": tarballSpec(install, byName(MCP)),
+              "@workit-dev/core": tarballSpec(install, byName(CORE)),
+              "@workit-dev/cursor": tarballSpec(install, byName(CURSOR)),
+              "@workit-dev/opencode": tarballSpec(install, byName(OPENCODE)),
+              "@workit-dev/mcp": tarballSpec(install, byName(MCP)),
             },
           },
           null,

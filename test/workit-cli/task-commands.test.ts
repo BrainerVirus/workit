@@ -443,7 +443,7 @@ test("handoff rejects a mutation between export and inspect", async () => {
 
 test("packed task list runs on Node without a Bun runtime", () => {
   const packs = packWorkspacePackages();
-  const packageInfo = packs.find((pack) => pack.packageName === "@brainervirus/workit-cli")!;
+  const packageInfo = packs.find((pack) => pack.packageName === "@workit-dev/cli")!;
   const install = mkdtempSync(path.join(os.tmpdir(), "wk-task-packed-"));
   try {
     const nodeModules = path.join(install, "node_modules");

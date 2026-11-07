@@ -7,7 +7,7 @@ import {
   ISSUE_CLOSE_REASONS,
   type ForgeIssue,
   type IssueCloseReason,
-} from "@brainervirus/workit-core/src/forge/issue-forge";
+} from "@workit-dev/core/src/forge/issue-forge";
 import {
   closeIssue,
   commentOnIssue,
@@ -17,8 +17,8 @@ import {
   type CommentOutcome,
   type CreateOutcome,
   type Recorded,
-} from "@brainervirus/workit-core/src/forge/issue-ops";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/forge/issue-ops";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { emit, ok, type Io } from "../output";
 import { connect, forgeDeps, forgeFail, parseFlags, usage } from "./forge-common";
 

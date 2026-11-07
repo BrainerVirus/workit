@@ -12,7 +12,7 @@ import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { extractTarball, packWorkspacePackages } from "@/test/shared/helpers/packages";
 
 // Packaging tier: starts the MCP launcher shipped in the packed Codex tarball.
-const CODEX = "@brainervirus/workit-codex";
+const CODEX = "@workit-dev/codex";
 const CORE_SKILLS = path.resolve(import.meta.dir, "../../packages/workit-core/skills");
 
 const initializedRoot = () => {

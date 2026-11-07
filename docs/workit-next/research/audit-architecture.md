@@ -105,7 +105,7 @@ Measured bloat in this repo (`bun -e` over `.workit/tasks`):
   - `unfinishedTaskOffer` has five near-identical implementations: `workit-cursor/hooks/workit-hook.ts:233`, `workit-codex/hooks/workit-hook.ts:300`, `workit-pi/src/context.ts:108`, `workit-opencode/src/runtime.ts:47`, plus a V1 call site. Each one filters `listTasks()` by host and session, slices the top 3 and builds the same `<workit-history-offer>` string.
   - `activeTask`, `isRecord`/`nonEmpty`, the hook input parsers, and capability tables are duplicated between the Cursor and Codex hooks. After normalizing host names, the two files still differ in 614 lines, but their structure is the same (parse → capabilities → SessionStart context → PreToolUse decision).
   - The session-matching predicate `provenance.session.kind==="host" && host===X && handle===S` is open-coded in at least 8 places across `runtime.ts`, `v1/server.ts`, `pi/context.ts`, and both hooks.
-- Adapters import deep core paths (`@brainervirus/workit-core/src/core/authority`, `/workers`, `/boundary`, `/logger`, `/external-action-effects`). That leaves core without a public API boundary, which is also why knip cannot see dead exports.
+- Adapters import deep core paths (`@workit-dev/core/src/core/authority`, `/workers`, `/boundary`, `/logger`, `/external-action-effects`). That leaves core without a public API boundary, which is also why knip cannot see dead exports.
 - OpenCode carries two complete adapters (V1 `server.ts` 744 and V2 `plugin.ts` + `lifecycle.ts` 985) with parallel receipt, dispatch and injection logic.
 - **Parity gap:** the shell branch-policy denial (`route-intent.ts`) is wired in OpenCode V1 (`v1/server.ts:569`), V2 (`v2/permissions.ts`) and Codex (`workit-hook.ts:398`), but not in Cursor or Pi.
 

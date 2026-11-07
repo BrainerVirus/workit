@@ -8,7 +8,7 @@
 // one; package plugins are global, so the location does not change what is
 // updated), the api call names it with `x-opencode-directory`, and readiness
 // needs both the api and `plugin list` in that location to list Workit.
-import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
+import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix";
 import {
   OPENCODE_PACKAGE,
   versionAtLeast,
@@ -45,8 +45,7 @@ export type OpencodePlugin = {
 };
 
 const isWorkitTarget = (target: unknown): boolean =>
-  typeof target === "string" &&
-  /^(?:npm:)?@brainervirus\/workit-opencode(?:@[^/\s]+)?$/.test(target);
+  typeof target === "string" && /^(?:npm:)?@workit-dev\/opencode(?:@[^/\s]+)?$/.test(target);
 
 /** An `opencode api` that does not know the operation (an older 2.x), not a service still starting. */
 const lacksApi = (result: CommandResult): boolean =>

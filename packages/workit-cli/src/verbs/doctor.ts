@@ -5,11 +5,8 @@
 // Workit-Session trailer to plain git commits, in a Workit workspace only.
 import pkg from "../../package.json" with { type: "json" };
 import { fixChecksConfig, fixSessionHook, runDoctor, type DoctorReport } from "../admin/doctor";
-import { lintKnowledge } from "@brainervirus/workit-core/src/knowledge";
-import {
-  clearStaleMetadataLock,
-  inspectMetadataLock,
-} from "@brainervirus/workit-core/src/core/store-lock";
+import { lintKnowledge } from "@workit-dev/core/src/knowledge";
+import { clearStaleMetadataLock, inspectMetadataLock } from "@workit-dev/core/src/core/store-lock";
 import { emit, fail, type Io } from "../output";
 import { progressFor } from "../progress";
 import { createStyle, wrap, type Style } from "../style";

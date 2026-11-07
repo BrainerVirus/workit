@@ -1040,7 +1040,7 @@ test("G one main session, W repeated raw push / commit, T each nudge kind shows 
     for (const [index, command] of [
       "gh pr view 5 && workit pr merge --pr 5",
       "workit git commit -m 'feat: z' && git push",
-      "npx -y @brainervirus/workit-cli pr create --fill; gh pr view",
+      "npx -y @workit-dev/cli pr create --fill; gh pr view",
       "bash -c 'workit ci wait --pr 5 && gh pr view 5'",
     ].entries())
       expect(say(command, `s-verb-${index}`), command).not.toMatch(/(?:^|\n)workit: /);

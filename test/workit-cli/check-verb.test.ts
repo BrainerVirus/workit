@@ -175,7 +175,7 @@ test("G `workit check -- bun test` exiting 1, T failing evidence with exit code,
   expect(data.stillUnsatisfied).toEqual([
     expect.objectContaining({
       ruleId: "check:test",
-      unblock: expect.stringMatching(/^(workit|npx -y @brainervirus\/workit-cli@\S+) check test$/),
+      unblock: expect.stringMatching(/^(workit|npx -y @workit-dev\/cli@\S+) check test$/),
     }),
   ]);
 

@@ -25,13 +25,13 @@ import {
 
 // Task 14 packed gate: the CLI setup flow runs against EXTRACTED tarballs with
 // the repository node_modules unavailable. buildSetupPreview/applySetupPreview
-// are bundled into the extracted @brainervirus/workit-cli package (as the CLI
+// are bundled into the extracted @workit-dev/cli package (as the CLI
 // build does) and resolve the adapter packages as node_modules siblings; the CLI binary is exercised as
 // a subprocess for the non-interactive surface (help, non-TTY guidance, doctor).
 
-const CORE = "@brainervirus/workit-core";
-const OPENCODE = "@brainervirus/workit-opencode";
-const CLI = "@brainervirus/workit-cli";
+const CORE = "@workit-dev/core";
+const OPENCODE = "@workit-dev/opencode";
+const CLI = "@workit-dev/cli";
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
@@ -53,7 +53,7 @@ function installDeclaredClosure(
     installed.add(pack.packageName);
     const meta = JSON.parse(readTarballFile(pack.tarball, "package.json"));
     for (const [name, spec] of Object.entries(meta.dependencies ?? {})) {
-      if (name.startsWith("@brainervirus/")) {
+      if (name.startsWith("@workit-dev/")) {
         queue.push(byName(packs, name));
       } else {
         hoisted.add(name);
@@ -181,7 +181,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     // file:// into node_modules / dlx cache).
     const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
     const oc = JSON.parse(readFileSync(opencodeCfg, "utf8"));
-    expect(oc.plugins).toContain("@brainervirus/workit-opencode");
+    expect(oc.plugins).toContain("@workit-dev/opencode");
 
     // Cursor: settings + mcp + the plugin package copied package-locally
     const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
@@ -200,7 +200,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
       "-y",
       "--prefer-online",
       "--min-release-age=0",
-      "--package=@brainervirus/workit-cursor@latest",
+      "--package=@workit-dev/cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);

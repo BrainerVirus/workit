@@ -20,7 +20,7 @@ workit upgrade --set-updates=auto   # prompt (default) | auto | off
 ```
 
 A CLI older than 8.38.0 has no `--yes` and fails with `unknown option --yes`.
-Update it once with `npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes` (or, on the old
+Update it once with `npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes` (or, on the old
 CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
 `workit upgrade`.
 
@@ -55,7 +55,7 @@ when `COLORTERM` is `truecolor` or `24bit`, else the 256-color palette when
 One run covers the global CLI (a managed npm global install; links and npx are
 left alone), the Claude Code plugin (`claude plugin marketplace update` and
 `claude plugin update`), Codex (and its agent files), Pi, Cursor, OpenCode
-(`opencode plugin update @brainervirus/workit-opencode`, on an OpenCode that
+(`opencode plugin update @workit-dev/opencode`, on an OpenCode that
 has it; V2 loads it live), and the permission blocks `workit setup` already
 wrote. A registered Cursor whose plugin files are missing is reinstalled with
 the same installer `workit init` uses, without touching workspaces or other
@@ -171,8 +171,8 @@ globs to hosting (GitHub/GitLab), trackers, branch/commit policy and
 [grants](grants.md); the narrowest glob wins.
 
 Each file has a JSON Schema, generated from the schemas Workit validates with
-and shipped in `@brainervirus/workit-core` under `schemas/`. With the first key
-`"$schema": "https://unpkg.com/@brainervirus/workit-core/schemas/workspaces.json"`
+and shipped in `@workit-dev/core` under `schemas/`. With the first key
+`"$schema": "https://unpkg.com/@workit-dev/core/schemas/workspaces.json"`
 (or `config.json`, `vcs.json`, `youtrack.json`), VS Code and other editors
 complete keys and allowed values (`changelog`: `off | update | create`), show
 each field's description on hover and underline an unknown key or a bad value.

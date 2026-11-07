@@ -24,9 +24,9 @@ manifest-sync commits stay out (`presetConfig.types` in `release.config.cjs`).
 
 The GitHub release (tag, notes) is created before npm publishing, so a
 publish failure can no longer leave a tag without a release. Packages are
-published in dependency order. Each one goes after every `@brainervirus`
+published in dependency order. Each one goes after every `@workit-dev`
 package it installs, and `workit-cli` goes last, so
-`npx @brainervirus/workit-cli@latest upgrade` never resolves a CLI whose host
+`npx @workit-dev/cli@latest upgrade` never resolves a CLI whose host
 packages are not on the registry yet (v13.0.0 hit `ETARGET` for 1m40s). For
 each changed package, `publish-changed-packages.ts` checks a failed
 `npm publish` against the registry (`npm view <name>@<version> version`). A
@@ -48,7 +48,7 @@ marked latest). It needs `gh` authenticated with write access to the repo.
 
 Adapter bundles inline workit-core (and the CLI/MCP sources) at build time.
 `packages/workit-core/scripts/verify-bundle-sources.ts` fails the release when a
-bundle inlined a registry copy from `packages/*/node_modules/@brainervirus`
+bundle inlined a registry copy from `packages/*/node_modules/@workit-dev`
 instead of the tagged source; the release job sets
 `NPM_CONFIG_WORKSPACES_UPDATE=false` so `npm version` never installs one.
 
@@ -77,14 +77,14 @@ Publisher, GitHub Actions):
 
 Add it to each of the eight packages:
 
-- `@brainervirus/workit-core`
-- `@brainervirus/workit-mcp`
-- `@brainervirus/workit-cli`
-- `@brainervirus/workit-opencode`
-- `@brainervirus/workit-cursor`
-- `@brainervirus/workit-codex`
-- `@brainervirus/workit-pi`
-- `@brainervirus/workit-claude-code`
+- `@workit-dev/core`
+- `@workit-dev/mcp`
+- `@workit-dev/cli`
+- `@workit-dev/opencode`
+- `@workit-dev/cursor`
+- `@workit-dev/codex`
+- `@workit-dev/pi`
+- `@workit-dev/claude-code`
 
 Then set each package's Publishing access to require 2FA and disallow
 tokens, and delete the `NPMJS` repository secret and its npm token. npm also
@@ -92,7 +92,7 @@ checks that `repository.url` in each `package.json` names this repo:
 `git+https://github.com/BrainerVirus/workit.git`, with `directory` set to
 `packages/<pkg>` (`test/artifacts/release-orchestration.test.ts` pins it).
 
-Trusted publishing cannot create a package. A new `@brainervirus` name must be
+Trusted publishing cannot create a package. A new `@workit-dev` name must be
 published once by hand (`npm publish --access public` from its tag, logged in
 with 2FA) before its trusted publisher can be added.
 
@@ -109,7 +109,7 @@ next release (unless a package that installs it ships), so npm keeps serving
 its old version. After the next release, compare each package:
 
 ```bash
-npm view @brainervirus/<pkg> version   # last version on npm
+npm view @workit-dev/<pkg> version   # last version on npm
 git diff --name-only v<that version>..v<next release> -- packages/<pkg>
 ```
 

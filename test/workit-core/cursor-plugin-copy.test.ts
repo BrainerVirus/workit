@@ -25,7 +25,7 @@ test("copyPluginDir materializes a real directory when the adapter root is a sym
     mkdirSync(path.join(realPkg, "dist"), { recursive: true });
     writeFileSync(
       path.join(realPkg, "package.json"),
-      JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.3" }),
+      JSON.stringify({ name: "@workit-dev/cursor", version: "1.0.3" }),
     );
     writeFileSync(path.join(realPkg, "dist", "mcp-server.js"), "export {};\n");
     writeFileSync(path.join(realPkg, "mcp.json"), '{"mcpServers":{}}\n');

@@ -199,7 +199,7 @@ test("Given a Codex plugin that predates bundled agents, When doctor runs, Then 
 
 // --- Pi ----------------------------------------------------------------------
 
-const PI = "@brainervirus/workit-pi";
+const PI = "@workit-dev/pi";
 const piHome = (
   opts: { entry?: unknown; version?: string; dist?: boolean; project?: boolean } = {},
 ) => {
@@ -213,7 +213,7 @@ const piHome = (
       path.join(settingsDir, "settings.json"),
       JSON.stringify({ packages: [opts.entry] }),
     );
-  const root = path.join(settingsDir, "npm", "node_modules", "@brainervirus", "workit-pi");
+  const root = path.join(settingsDir, "npm", "node_modules", "@workit-dev", "pi");
   if (opts.version) {
     mkdirSync(path.join(root, "dist"), { recursive: true });
     writeFileSync(

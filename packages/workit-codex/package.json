@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-codex",
+  "name": "@workit-dev/codex",
   "version": "13.0.0",
   "private": false,
   "description": "Workit Codex CLI/desktop plugin — shared MCP transport, hooks, method skills, and verifier/reviewer/implementer agents",
@@ -41,8 +41,8 @@
     "build": "bun scripts/build.ts"
   },
   "devDependencies": {
-    "@brainervirus/workit-core": "workspace:*",
-    "@brainervirus/workit-mcp": "workspace:*"
+    "@workit-dev/core": "workspace:*",
+    "@workit-dev/mcp": "workspace:*"
   },
   "engines": {
     "node": ">=24"

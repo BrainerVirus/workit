@@ -1,7 +1,7 @@
-# @brainervirus/workit-core
+# @workit-dev/core
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@brainervirus/workit-core.svg)](https://www.npmjs.com/package/@brainervirus/workit-core)
+[![npm](https://img.shields.io/npm/v/@workit-dev/core.svg)](https://www.npmjs.com/package/@workit-dev/core)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 The shared core of [Workit](https://github.com/BrainerVirus/workit): task event store, run ledger,
@@ -20,5 +20,5 @@ new host adapter.
 | `templates/` | Contract and issue-update templates |
 
 Exports: `./src/core.ts` and `./src/*.ts` subpaths. Setup, doctor, upgrade and
-uninstall live in `@brainervirus/workit-cli`. There is no build step; adapters
+uninstall live in `@workit-dev/cli`. There is no build step; adapters
 bundle core. Development: [AGENTS.md](https://github.com/BrainerVirus/workit/blob/main/AGENTS.md).

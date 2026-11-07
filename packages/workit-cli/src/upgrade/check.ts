@@ -1,7 +1,7 @@
 // `workit upgrade --check` (installed vs latest, nothing changed) and
 // `workit upgrade --set-updates=<mode>` (the launch check's global setting).
 import path from "node:path";
-import { isUpdatesMode, UPDATES_MODES } from "@brainervirus/workit-core/src/core/config";
+import { isUpdatesMode, UPDATES_MODES } from "@workit-dev/core/src/core/config";
 import pkg from "../../package.json" with { type: "json" };
 import { createStyle } from "../style";
 import {
@@ -92,7 +92,7 @@ export async function runUpdateCheck(json: boolean, deps: UpgradeDeps): Promise<
     if (!versionBy.has(source.host) || source.installedVersion)
       versionBy.set(source.host, versionBy.get(source.host) ?? source.installedVersion);
   for (const host of HOSTS) {
-    const name = `@brainervirus/workit-${host}`;
+    const name = `@workit-dev/${host}`;
     const unreadable = unreadableBy.get(host);
     if (unreadable) {
       components.push({

@@ -10,10 +10,10 @@
 //
 // The `workit task <action> --payload …` family grammar keeps working; these
 // forms are routed here by verbs/family.ts.
-import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import { checkRoot } from "@workit-dev/core/src/check-config";
 import { emit, fail, ok, type EnvelopeCode, type Io } from "../output";
 import { runTaskCommand } from "../task";
-import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
+import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 
 const USAGE =
   'workit task status [--all] | task start "<objective>" | task note "<text>" [--next "<t>"] [--objective "<t>"] | task close [--outcome verified|limited|stopped] [--summary "<t>"] [--confirm] | task adopt <id>';
@@ -101,7 +101,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (flags instanceof Error)
     return emit(io, fail("invalid_input", flags.message, { unblock: USAGE }));
   // The engine pulls zod; load it only for these verbs.
-  const { TaskStore, WorkitCore } = await import("@brainervirus/workit-core/src/core");
+  const { TaskStore, WorkitCore } = await import("@workit-dev/core/src/core");
   const root = rootFor(io);
   const store = new TaskStore(root);
   const actor = hostSessionFromEnv(io.env).session ?? "cli";

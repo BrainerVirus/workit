@@ -3,14 +3,14 @@
 // module and hand it argv + io. `--version` and `help` load nothing else, and
 // only `init`/`uninstall` ever load ink/react (through index.tsx).
 import path from "node:path";
-import { gitRedirectRefusal, gitRedirectsIn } from "@brainervirus/workit-core/src/git/env-redirect";
-import { configFilePath } from "@brainervirus/workit-core/src/core/config";
-import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+import { gitRedirectRefusal, gitRedirectsIn } from "@workit-dev/core/src/git/env-redirect";
+import { configFilePath } from "@workit-dev/core/src/core/config";
+import { createLogger } from "@workit-dev/core/src/core/logger";
 import {
   migrateLegacyDirs,
   stateDir as workitStateDir,
-} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
-import { sessionClaimRefusal } from "@brainervirus/workit-core/src/host-session";
+} from "@workit-dev/core/src/core/workit-paths.mjs";
+import { sessionClaimRefusal } from "@workit-dev/core/src/host-session";
 import pkg from "../package.json" with { type: "json" };
 import {
   checkFlags,
@@ -89,7 +89,7 @@ Global flags:
 
 Exit codes: 0 ok · 1 failed · 2 usage · 3 blocked · 4 busy/pending · 5 unavailable
 
-Run \`npx @brainervirus/workit-cli init\` to configure platforms, YouTrack, VCS and project hygiene.
+Run \`npx @workit-dev/cli init\` to configure platforms, YouTrack, VCS and project hygiene.
 `;
 }
 

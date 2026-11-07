@@ -21,7 +21,7 @@ const plan = {
     latest: "8.41.0",
     root: "/r",
     installed: "8.40.8",
-    entry: "/r/versions/8.41.0/node_modules/@brainervirus/workit-cli/dist/index.js",
+    entry: "/r/versions/8.41.0/node_modules/@workit-dev/cli/dist/index.js",
     install: true,
     copies: ["/n/bin/workit (workit 8.40.8; fnm global prefix /n; PATH #1)"],
   },

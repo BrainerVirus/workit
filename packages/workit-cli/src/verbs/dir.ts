@@ -6,12 +6,8 @@
 //   workit dir config|state|data|cache|runtime   per user (core/workit-paths.mjs)
 //
 // Read-only but for creating a missing per-clone directory.
-import { WORKIT_DIR_KINDS, workitDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
-import {
-  REPO_DIR_KINDS,
-  isRepoDirKind,
-  repoDir,
-} from "@brainervirus/workit-core/src/core/repo-paths";
+import { WORKIT_DIR_KINDS, workitDir } from "@workit-dev/core/src/core/workit-paths.mjs";
+import { REPO_DIR_KINDS, isRepoDirKind, repoDir } from "@workit-dev/core/src/core/repo-paths";
 import { emit, fail, ok, type Io } from "../output";
 
 const KINDS = [...REPO_DIR_KINDS, ...WORKIT_DIR_KINDS];

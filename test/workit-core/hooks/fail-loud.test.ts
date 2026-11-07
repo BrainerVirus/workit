@@ -120,7 +120,7 @@ const cursorPlugin = (engines?: string) => {
   writeFileSync(
     path.join(root, "package.json"),
     JSON.stringify({
-      name: "@brainervirus/workit-cursor",
+      name: "@workit-dev/cursor",
       version: "1.2.3",
       ...(engines ? { engines: { node: engines } } : {}),
     }),

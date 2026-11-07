@@ -6,19 +6,16 @@ import type {
   WorkerReport,
   Worker,
   WorkitCore,
-} from "@brainervirus/workit-core/src/core";
+} from "@workit-dev/core/src/core";
 import {
   OPERATION_FAMILIES,
   failure,
   type ContractResult as Result,
-} from "@brainervirus/workit-core/src/core";
-import {
-  resolveRoleModel,
-  uniformImplementerModel,
-} from "@brainervirus/workit-core/src/core/role-models";
-import { bindBudget } from "@brainervirus/workit-core/src/hooks/budget-signal";
-import { seedStanding } from "@brainervirus/workit-core/src/hooks/standing";
-import { childSessionId } from "@brainervirus/workit-core/src/host-session";
+} from "@workit-dev/core/src/core";
+import { resolveRoleModel, uniformImplementerModel } from "@workit-dev/core/src/core/role-models";
+import { bindBudget } from "@workit-dev/core/src/hooks/budget-signal";
+import { seedStanding } from "@workit-dev/core/src/hooks/standing";
+import { childSessionId } from "@workit-dev/core/src/host-session";
 import {
   appendBoundedStderr,
   MAX_WORKER_LINE_BYTES,

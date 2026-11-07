@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-mcp",
+  "name": "@workit-dev/mcp",
   "version": "13.0.0",
   "private": false,
   "description": "Workit shared MCP transport for the eight task and policy operation families",
@@ -43,8 +43,8 @@
     "build": "bun scripts/build.ts"
   },
   "dependencies": {
-    "@brainervirus/workit-core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.0",
+    "@workit-dev/core": "workspace:*",
     "zod": "4.6.5"
   },
   "engines": {

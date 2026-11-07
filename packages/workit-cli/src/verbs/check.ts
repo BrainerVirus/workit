@@ -61,15 +61,15 @@ import {
   splitCommand,
   type CheckConfig,
   type LightCommand,
-} from "@brainervirus/workit-core/src/check-config";
+} from "@workit-dev/core/src/check-config";
 import {
   TAIL_LINES,
   redactLog,
   runCheckCommand,
   storeLog,
   tailLines,
-} from "@brainervirus/workit-core/src/checks";
-import { worktreeSignal, worktreeTree } from "@brainervirus/workit-core/src/git/rev";
+} from "@workit-dev/core/src/checks";
+import { worktreeSignal, worktreeTree } from "@workit-dev/core/src/git/rev";
 import pkg from "../../package.json" with { type: "json" };
 import {
   MAX_LINE_BYTES,
@@ -78,10 +78,10 @@ import {
   codeKey,
   storeRoot,
   type CodeKey,
-} from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/ledger";
 import { emit, fail, type EnvelopeCode, type Io } from "../output";
 import { progressFor, type ProgressStep } from "../progress";
-import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
+import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 import {
   acquireLease,
   describeHolder,
@@ -101,17 +101,17 @@ import {
   type QueueStatus,
   type Reclaimed,
   type ResourceSettings,
-} from "@brainervirus/workit-core/src/core/resources";
-import { startHeartbeat } from "@brainervirus/workit-core/src/core/heavy-lease";
+} from "@workit-dev/core/src/core/resources";
+import { startHeartbeat } from "@workit-dev/core/src/core/heavy-lease";
 import {
   describeEstimate,
   estimateWait,
   holdLimit,
   ledgerDurations,
   type WaitEstimate,
-} from "@brainervirus/workit-core/src/core/heavy-eta";
+} from "@workit-dev/core/src/core/heavy-eta";
 import { announce, BACKGROUND_HINT } from "./forge-common";
-import { configDir } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { configDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 
 const USAGE =
   'workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
@@ -271,7 +271,7 @@ async function recordInTask(
     error: null,
   };
   // The engine pulls zod; load it only here.
-  const { TaskStore, WorkitCore } = await import("@brainervirus/workit-core/src/core");
+  const { TaskStore, WorkitCore } = await import("@workit-dev/core/src/core");
   const store = new TaskStore(storeDir);
   let taskId = requested;
   let created = false;
@@ -452,7 +452,7 @@ export async function workspaceResources(
   const env = io.env;
   const dir = configDir(env);
   try {
-    const { resolveWorkspaceFrom } = await import("@brainervirus/workit-core/src/core/workspaces");
+    const { resolveWorkspaceFrom } = await import("@workit-dev/core/src/core/workspaces");
     const workspace = resolveWorkspaceFrom(
       io.cwd,
       dir,

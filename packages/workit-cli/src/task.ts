@@ -1,20 +1,20 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { checkRoot } from "@brainervirus/workit-core/src/check-config";
+import { checkRoot } from "@workit-dev/core/src/check-config";
 import {
   DEFAULT_VERIFICATION,
   resolveAutonomy,
   type VerificationMode,
-} from "@brainervirus/workit-core/src/autonomy";
-import { currentJudgment } from "@brainervirus/workit-core/src/core/policy/current-judgment";
-import { judgeTokens } from "@brainervirus/workit-core/src/core/policy/judgment";
+} from "@workit-dev/core/src/autonomy";
+import { currentJudgment } from "@workit-dev/core/src/core/policy/current-judgment";
+import { judgeTokens } from "@workit-dev/core/src/core/policy/judgment";
 import {
   branchLane,
   laneNeed,
   untrackedRiskPathsWarning,
-} from "@brainervirus/workit-core/src/core/policy/lane";
-import { closeDeliveredTasks } from "@brainervirus/workit-core/src/core/task-delivery";
-import { sameDirectoryIdentity } from "@brainervirus/workit-core/src/core/task-store";
+} from "@workit-dev/core/src/core/policy/lane";
+import { closeDeliveredTasks } from "@workit-dev/core/src/core/task-delivery";
+import { sameDirectoryIdentity } from "@workit-dev/core/src/core/task-store";
 import {
   OPERATION_FAMILIES,
   TaskStore,
@@ -27,30 +27,22 @@ import {
   type Constraint,
   type OperationFamily,
   type OperationContext,
-} from "@brainervirus/workit-core/src/core";
+} from "@workit-dev/core/src/core";
 import {
   canonicalJson,
   type Result,
   type TaskSummary,
-} from "@brainervirus/workit-core/src/core/task-contract";
-import { boundTaskSummary } from "@brainervirus/workit-core/src/core/task-evaluation";
+} from "@workit-dev/core/src/core/task-contract";
+import { boundTaskSummary } from "@workit-dev/core/src/core/task-evaluation";
 import {
   acceptedEvidenceText,
   type ResolveDisposition,
-} from "@brainervirus/workit-core/src/core/finding-evidence";
-import { findingIssueText } from "@brainervirus/workit-core/src/core/finding-queue";
-import {
-  parseOperation,
-  type ErrorCode,
-  type Ref,
-} from "@brainervirus/workit-core/src/core/task-contract";
-import {
-  commentOnIssue,
-  createIssue,
-  issueTarget,
-} from "@brainervirus/workit-core/src/forge/issue-ops";
-import type { ForgeResult } from "@brainervirus/workit-core/src/forge/types";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/core/finding-evidence";
+import { findingIssueText } from "@workit-dev/core/src/core/finding-queue";
+import { parseOperation, type ErrorCode, type Ref } from "@workit-dev/core/src/core/task-contract";
+import { commentOnIssue, createIssue, issueTarget } from "@workit-dev/core/src/forge/issue-ops";
+import type { ForgeResult } from "@workit-dev/core/src/forge/types";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { connect } from "./verbs/forge-common";
 
 export const TASK_FAMILIES = OPERATION_FAMILIES;

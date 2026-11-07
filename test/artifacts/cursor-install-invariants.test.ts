@@ -24,8 +24,8 @@ import {
   REPO_ROOT,
 } from "@/test/shared/helpers/packages";
 
-const CURSOR = "@brainervirus/workit-cursor";
-const CLI = "@brainervirus/workit-cli";
+const CURSOR = "@workit-dev/cursor";
+const CLI = "@workit-dev/cli";
 const WORKIT = [...WORKIT_METHOD_SKILLS].toSorted();
 
 const skillManifests = (root: string): string[] =>

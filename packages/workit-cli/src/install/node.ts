@@ -9,7 +9,7 @@ import {
   compareVersions,
   parseNodeVersion,
   resolveHookNode,
-} from "@brainervirus/workit-core/src/core/node-resolve.mjs";
+} from "@workit-dev/core/src/core/node-resolve.mjs";
 import { realpathOr } from "./paths";
 
 export type InstallNode = { node: string; npmCli: string; version: string | null };

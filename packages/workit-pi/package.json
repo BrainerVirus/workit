@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-pi",
+  "name": "@workit-dev/pi",
   "version": "13.0.0",
   "description": "Workit native extension for Pi — tools, method skills, and session continuity",
   "keywords": [

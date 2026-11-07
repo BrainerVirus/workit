@@ -1,7 +1,7 @@
-# @brainervirus/workit-cursor
+# @workit-dev/cursor
 
 [![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@brainervirus/workit-cursor.svg)](https://www.npmjs.com/package/@brainervirus/workit-cursor)
+[![npm](https://img.shields.io/npm/v/@workit-dev/cursor.svg)](https://www.npmjs.com/package/@workit-dev/cursor)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/BrainerVirus/workit/blob/main/LICENSE)
 
 [Workit](https://github.com/BrainerVirus/workit) for Cursor: the shared MCP server, one native hook
@@ -11,7 +11,7 @@ commands. Requires Node.js 24+ and network access on first run.
 ## Install
 
 ```bash
-npx @brainervirus/workit-cli init   # select Cursor
+npx @workit-dev/cli init   # select Cursor
 ```
 
 The wizard copies the plugin into `~/.cursor/plugins/local/workit` (a real
@@ -22,7 +22,7 @@ Update with `workit upgrade` (it reinstalls missing plugin files); uninstall wit
 ## Runtime
 
 The MCP server runs through
-`npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest …`,
+`npx -y --prefer-online --min-release-age=0 --package=@workit-dev/cursor@latest …`,
 so manifests carry no repository-relative `dist` paths (the age override works
 around npm/cli#9765). MCP is read-only for unattested callers; mutations run
 through the `workit` CLI.

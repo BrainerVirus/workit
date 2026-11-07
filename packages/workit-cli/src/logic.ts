@@ -7,7 +7,7 @@ import {
   mergeConfigValues,
   type BranchPreset,
   type ToolkitConfig,
-} from "@brainervirus/workit-core/src/core/config.ts";
+} from "@workit-dev/core/src/core/config.ts";
 import {
   loadWorkspacesFrom,
   readWorkspacesResult,
@@ -16,12 +16,12 @@ import {
   type WorkspaceConfig,
   type WorkspaceProfile,
   type ReleaseTrack,
-} from "@brainervirus/workit-core/src/core/workspaces.ts";
-import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
-import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
+} from "@workit-dev/core/src/core/workspaces.ts";
+import { ensureProjectGitignore } from "@workit-dev/core/src/core/gitignore.ts";
+import { ensureHygieneFiles, hygieneFiles } from "@workit-dev/core/src/core/hygiene.ts";
 import type { VcsProvider } from "./admin/setup";
-import { applyWorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspace-branch-policy.ts";
-import type { WorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { applyWorkspaceBranchPolicy } from "@workit-dev/core/src/core/workspace-branch-policy.ts";
+import type { WorkspaceBranchPolicy } from "@workit-dev/core/src/core/workspaces.ts";
 
 export function validateLocale(locale: string): string | null {
   if (!LOCALE_RE.test(locale)) {

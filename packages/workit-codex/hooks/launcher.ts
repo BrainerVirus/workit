@@ -65,13 +65,13 @@ if (tooOld) {
 // Loaded after the floor check: a static import would evaluate the runtime first.
 // The owned CLI first on this process's PATH, before anything probes for
 // `workit` (core/cli-locate: owned launcher, else owned current, else PATH).
-const { useOwnedWorkitCli } = await import("@brainervirus/workit-core/src/core/cli-locate");
+const { useOwnedWorkitCli } = await import("@workit-dev/core/src/core/cli-locate");
 useOwnedWorkitCli();
-const { maybeHeavy, stateDir } = await import("@brainervirus/workit-core/src/core/heavy-words");
-const { standingPending } = await import("@brainervirus/workit-core/src/hooks/standing-signal");
-const { recordHookRun } = await import("@brainervirus/workit-core/src/hooks/hook-runs");
+const { maybeHeavy, stateDir } = await import("@workit-dev/core/src/core/heavy-words");
+const { standingPending } = await import("@workit-dev/core/src/hooks/standing-signal");
+const { recordHookRun } = await import("@workit-dev/core/src/hooks/hook-runs");
 // The worker tool-call budget: every PreToolUse counts, quiet or not.
-const { observeHookBudget } = await import("@brainervirus/workit-core/src/hooks/budget-signal");
+const { observeHookBudget } = await import("@workit-dev/core/src/hooks/budget-signal");
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);

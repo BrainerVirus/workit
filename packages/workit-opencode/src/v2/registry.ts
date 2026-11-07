@@ -4,7 +4,7 @@ import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
   renderSkillText,
-} from "@brainervirus/workit-core/src/core/skill-manifests";
+} from "@workit-dev/core/src/core/skill-manifests";
 import { skillsRoot } from "../shared/assets";
 
 type SkillDefinition = {

@@ -11,8 +11,8 @@
 //                       [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]
 //                       (a pre-flight judges every PR first; any refusal lands nothing)
 import { progressFor } from "../progress";
-import type { MergeMethod } from "@brainervirus/workit-core/src/forge/types";
-import { actorFromEnv } from "@brainervirus/workit-core/src/ledger";
+import type { MergeMethod } from "@workit-dev/core/src/forge/types";
+import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import {
   landStack,
   planStack,
@@ -30,7 +30,7 @@ import {
   type StackResult,
   type StatusOutcome,
   type SyncOutcome,
-} from "@brainervirus/workit-core/src/stack";
+} from "@workit-dev/core/src/stack";
 import { emit, fail, ok, type Io } from "../output";
 import {
   connect,

@@ -1,15 +1,12 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TaskStore, type OperationContext } from "@brainervirus/workit-core/src/core";
-import { useOwnedWorkitCli } from "@brainervirus/workit-core/src/core/cli-locate";
-import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix.ts";
-import { McpCapabilityUnavailableError, runStdioServer } from "@brainervirus/workit-mcp/src/server";
+import { TaskStore, type OperationContext } from "@workit-dev/core/src/core";
+import { useOwnedWorkitCli } from "@workit-dev/core/src/core/cli-locate";
+import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix.ts";
+import { McpCapabilityUnavailableError, runStdioServer } from "@workit-dev/mcp/src/server";
 import { codexCapabilities, detectCodexSurface, type CodexHost } from "../hooks/workit-hook";
-import {
-  resolveRoleModel,
-  uniformImplementerModel,
-} from "@brainervirus/workit-core/src/core/role-models";
+import { resolveRoleModel, uniformImplementerModel } from "@workit-dev/core/src/core/role-models";
 import {
   codexHomeFor,
   codexHomeOfInstall,

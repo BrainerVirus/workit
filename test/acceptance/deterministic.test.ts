@@ -175,7 +175,7 @@ test("CA-31 toolchain evidence records actual Node, Bun, compiler, schema, and S
     expect(hostVersionIsProbed(evidence.hosts[host])).toBe(true);
   }
   expect(evidence.hosts.opencode).toContain("@opencode/plugin@2.0.18");
-  expect(evidence.hosts.cursor).toContain("@brainervirus/workit-cursor@");
+  expect(evidence.hosts.cursor).toContain("@workit-dev/cursor@");
   expect(evidence.hosts.codex_cli).toContain("codex-cli@0.153.");
   expect(evidence.hosts.codex_desktop).toContain("codex-desktop@");
   expect(evidence.hosts.pi).toContain("@earendil-works/pi-coding-agent@1.4.0");

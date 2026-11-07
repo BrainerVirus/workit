@@ -68,7 +68,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
 
   writeFileSync(
     path.join(dev, "packages", "workit-core", "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-core", version: "1.0.0" }),
+    JSON.stringify({ name: "@workit-dev/core", version: "1.0.0" }),
   );
   for (const skill of WORKIT_METHOD_SKILLS) {
     writeFileSync(path.join(dev, "packages/workit-core/skills", skill, "SKILL.md"), "# skill\n");
@@ -116,19 +116,19 @@ export const makeDoctorFixture = (): DoctorFixture => {
     JSON.stringify({
       name,
       version: "1.0.0",
-      dependencies: { "@brainervirus/workit-core": "workspace:*", ...extra },
+      dependencies: { "@workit-dev/core": "workspace:*", ...extra },
     });
   writeFileSync(
     path.join(dev, "packages", "workit-opencode", "package.json"),
-    adapter("@brainervirus/workit-opencode", { "@opencode/plugin": "2.0.18" }),
+    adapter("@workit-dev/opencode", { "@opencode/plugin": "2.0.18" }),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "package.json"),
-    adapter("@brainervirus/workit-cursor"),
+    adapter("@workit-dev/cursor"),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cli", "package.json"),
-    adapter("@brainervirus/workit-cli"),
+    adapter("@workit-dev/cli"),
   );
 
   writeFileSync(
@@ -157,7 +157,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
             "-y",
             "--prefer-online",
             "--min-release-age=0",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@workit-dev/cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -200,7 +200,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
             "-y",
             "--prefer-online",
             "--min-release-age=0",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@workit-dev/cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],

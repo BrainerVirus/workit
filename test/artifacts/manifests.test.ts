@@ -19,8 +19,8 @@ import {
 // and the pinned toolchain/support-matrix constants declared in CI and in the
 // package metadata stay in sync with SUPPORT_MATRIX. Deno is never advertised.
 
-const CURSOR = "@brainervirus/workit-cursor";
-const OPENCODE = "@brainervirus/workit-opencode";
+const CURSOR = "@workit-dev/cursor";
+const OPENCODE = "@workit-dev/opencode";
 
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- caller-typed JSON fixture reader
@@ -31,7 +31,7 @@ const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 // any selector is missed. Every active Cursor runtime selector carries both,
 // and only the doctor's intentional negative-rejection fixture may carry
 // variants.
-const CURSOR_RUNTIME_SELECTOR = /--package=@brainervirus\/workit-cursor@([^\s"'${}`]+)/g;
+const CURSOR_RUNTIME_SELECTOR = /--package=@workit-dev\/cursor@([^\s"'${}`]+)/g;
 const CURSOR_RUNTIME_FLAG = "--prefer-online";
 const CURSOR_DOCTOR_NEGATIVE_VARIANTS = [
   "latest",
@@ -62,7 +62,7 @@ test(
         "-y",
         "--prefer-online",
         "--min-release-age=0",
-        "--package=@brainervirus/workit-cursor@latest",
+        "--package=@workit-dev/cursor@latest",
         "workit-cursor-mcp",
         "${workspaceFolder}",
       ]);
@@ -168,7 +168,7 @@ test(
           continue;
         }
         if (fixture && CURSOR_DOCTOR_NEGATIVE_VARIANTS.includes(selector)) continue;
-        stale.push(`${file}: @brainervirus/workit-cursor@${selector}`);
+        stale.push(`${file}: @workit-dev/cursor@${selector}`);
       }
     }
     expect(stale).toEqual([]);
@@ -177,9 +177,9 @@ test(
     // @latest selector must fail the per-match scan. The bare selector is
     // assembled at runtime so the fixture bytes never trip the scan of this
     // file itself.
-    const bare = ["npx -y --package=@brainervirus/workit-cursor@", "latest"].join("");
+    const bare = ["npx -y --package=@workit-dev/cursor@", "latest"].join("");
     const mixed =
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-mcp\n" +
+      "npx -y --prefer-online --package=@workit-dev/cursor@latest workit-cursor-mcp\n" +
       bare +
       " workit-cursor-session-start\n";
     const scan = (text: string) => {
@@ -191,22 +191,20 @@ test(
       return found;
     };
     expect(scan(mixed)).toHaveLength(1);
-    expect(scan("npx -y --prefer-online --package=@brainervirus/workit-cursor@latest x")).toEqual(
-      [],
-    );
+    expect(scan("npx -y --prefer-online --package=@workit-dev/cursor@latest x")).toEqual([]);
 
     // The canonical constant itself must stay the exact reviewed selector — a
     // bump to the shared constant alone would otherwise dodge the --package= scan
     // above.
     expect(read("packages/workit-cli/src/admin/registration.ts")).toContain(
-      `CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest"`,
+      `CURSOR_RUNTIME_PACKAGE = "@workit-dev/cursor@latest"`,
     );
 
     // Removing a negative-rejection variant must break loudly, never silently
     // narrow the allowlist.
     const doctor = read("test/workit-core/doctor.test.ts");
     for (const variant of CURSOR_DOCTOR_NEGATIVE_VARIANTS) {
-      expect(doctor, variant).toContain(`@brainervirus/workit-cursor@${variant}`);
+      expect(doctor, variant).toContain(`@workit-dev/cursor@${variant}`);
     }
   },
   { timeout: 60_000 },
@@ -327,10 +325,10 @@ test(
         devDependencies?: Record<string, string>;
       }>(`packages/${dir}/package.json`);
       const runtime = Object.keys(pkg.dependencies ?? {}).filter((name) =>
-        name.startsWith("@brainervirus/"),
+        name.startsWith("@workit-dev/"),
       );
       expect(runtime, dir).toEqual(dir === "workit-cli" ? [CURSOR] : []);
-      expect(pkg.devDependencies?.["@brainervirus/workit-core"], dir).toBe("workspace:*");
+      expect(pkg.devDependencies?.["@workit-dev/core"], dir).toBe("workspace:*");
     }
   },
   { timeout: 60_000 },

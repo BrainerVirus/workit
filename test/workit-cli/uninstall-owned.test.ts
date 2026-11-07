@@ -52,8 +52,8 @@ const present = (file: string): boolean => {
 const ownedInstall = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => {
   const paths = ownedPaths(env, platform);
   write(
-    path.join(paths.versions, "9.0.0", "node_modules/@brainervirus/workit-cli/package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cli", version: "9.0.0" }),
+    path.join(paths.versions, "9.0.0", "node_modules/@workit-dev/cli/package.json"),
+    JSON.stringify({ name: "@workit-dev/cli", version: "9.0.0" }),
   );
   symlinkSync(path.join(paths.versions, "9.0.0"), paths.current, "junction");
   if (platform === "win32")
@@ -262,8 +262,8 @@ test("Given bin/ and versions/ are links to directories outside the install, Whe
   write(path.join(outsideBin, "workit.cmd"), `rem ${LAUNCHER_MARKER}\r\n`);
   write(path.join(outsideBin, "other.cmd"), "keep\n");
   write(
-    path.join(outsideVersions, "1.0.0", "node_modules/@brainervirus/workit-cli/package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cli", version: "1.0.0" }),
+    path.join(outsideVersions, "1.0.0", "node_modules/@workit-dev/cli/package.json"),
+    JSON.stringify({ name: "@workit-dev/cli", version: "1.0.0" }),
   );
   rmSync(path.dirname(paths.launcher), { recursive: true });
   rmSync(paths.current);
@@ -295,8 +295,8 @@ test("Given WORKIT_INSTALL_ROOT is the home dir, an ancestor of it or a filesyst
   const doc = path.join(home, "versions", "mine", "doc");
   write(doc, "mine\n");
   write(
-    path.join(home, "versions", "9.0.0", "node_modules/@brainervirus/workit-cli/package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cli", version: "9.0.0" }),
+    path.join(home, "versions", "9.0.0", "node_modules/@workit-dev/cli/package.json"),
+    JSON.stringify({ name: "@workit-dev/cli", version: "9.0.0" }),
   );
   for (const root of [home, path.dirname(home), path.parse(home).root]) {
     const env = { HOME: home, WORKIT_INSTALL_ROOT: root };

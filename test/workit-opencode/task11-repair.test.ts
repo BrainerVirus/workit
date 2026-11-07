@@ -17,12 +17,12 @@ test("doctor checks the OpenCode SDK pin in devDependencies", () => {
     for (const name of ["workit-cursor", "workit-cli"])
       writeFileSync(
         join(root, "packages", name, "package.json"),
-        JSON.stringify({ dependencies: { "@brainervirus/workit-core": "workspace:*" } }),
+        JSON.stringify({ dependencies: { "@workit-dev/core": "workspace:*" } }),
       );
     writeFileSync(
       join(root, "packages", "workit-opencode", "package.json"),
       JSON.stringify({
-        dependencies: { "@brainervirus/workit-core": "workspace:*" },
+        dependencies: { "@workit-dev/core": "workspace:*" },
         devDependencies: { "@opencode/plugin": "1.0.0" },
       }),
     );

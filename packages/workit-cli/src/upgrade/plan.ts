@@ -9,7 +9,7 @@ import { readSetupState } from "../admin/setup-state";
 import { type HostId } from "../admin/detect-hosts";
 import { claudeWorkitInstalls, hostCommand, planHostInstall } from "../admin/host-install";
 import { OPENCODE_V1_FIX } from "../admin/doctor";
-import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
+import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix";
 import cliPackage from "../../package.json" with { type: "json" };
 import { describeInstall, isOwnedWrapper } from "../install/discover";
 import { migrationCopies } from "../install/migrate";
@@ -51,12 +51,12 @@ const classify = (host: HostId, selector: string): Source => ({
   host,
   selector,
   kind:
-    selector === `@brainervirus/workit-${host}` ||
-    selector === `@brainervirus/workit-${host}@latest` ||
-    selector === `npm:@brainervirus/workit-${host}` ||
-    selector === `npm:@brainervirus/workit-${host}@latest`
+    selector === `@workit-dev/${host}` ||
+    selector === `@workit-dev/${host}@latest` ||
+    selector === `npm:@workit-dev/${host}` ||
+    selector === `npm:@workit-dev/${host}@latest`
       ? "floating"
-      : new RegExp(`^(?:npm:)?@brainervirus/workit-${host}@[^/]+$`).test(selector)
+      : new RegExp(`^(?:npm:)?@workit-dev/${host}@[^/]+$`).test(selector)
         ? "pinned"
         : "local",
 });
@@ -102,7 +102,7 @@ export const sources = (
     const args: unknown[] = mcp?.mcpServers?.workit?.args ?? [];
     const arg = args.find((value) => typeof value === "string" && value.startsWith("--package="));
     const selector = typeof arg === "string" ? arg.slice(10) : "local";
-    if (cursor?.name === "@brainervirus/workit-cursor") {
+    if (cursor?.name === "@workit-dev/cursor") {
       result.push({
         ...classify("cursor", selector),
         installedVersion: cursor.version,
@@ -127,11 +127,11 @@ export const sources = (
     for (const entry of pi?.packages ?? []) {
       const source = typeof entry === "string" ? entry : entry?.source;
       if (typeof source !== "string") continue;
-      const npm = /^(?:npm:)?@brainervirus\/workit-pi(?:@[^/]+)?$/.test(source);
+      const npm = /^(?:npm:)?@workit-dev\/pi(?:@[^/]+)?$/.test(source);
       const local =
         path.isAbsolute(source) &&
         source.replaceAll("\\", "/").endsWith("/packages/workit-pi") &&
-        object(path.join(source, "package.json"))?.name === "@brainervirus/workit-pi";
+        object(path.join(source, "package.json"))?.name === "@workit-dev/pi";
       if (!npm && !local) continue;
       const found = classify("pi", source);
       if (found.kind === "floating") {
@@ -166,7 +166,7 @@ export const sources = (
     }
     if (!Array.isArray(installed)) throw new Error("Codex plugin inventory is malformed");
     const fromNpm = (plugin: Record<string, any>) =>
-      plugin.source?.source === "npm" && plugin.source?.package === "@brainervirus/workit-codex";
+      plugin.source?.source === "npm" && plugin.source?.package === "@workit-dev/codex";
     // An npm install under the old marketplace name is moved to workit@workit
     // as one migration, whatever else is registered.
     const legacy = installed.find(
@@ -178,7 +178,7 @@ export const sources = (
     if (legacy || codexPluginRegistered(paths.codexConfig, CODEX_LEGACY_MARKETPLACE)) {
       result.push({
         host: "codex",
-        selector: "@brainervirus/workit-codex",
+        selector: "@workit-dev/codex",
         kind: legacy ? "floating" : "repair",
         migrate: true,
         ...(legacy?.version ? { installedVersion: legacy.version } : {}),
@@ -205,7 +205,7 @@ export const sources = (
     )
       result.push({
         host: "codex",
-        selector: "@brainervirus/workit-codex",
+        selector: "@workit-dev/codex",
         kind: "repair",
       });
   });
@@ -408,7 +408,7 @@ export function previewUpgrade(
       });
       continue;
     }
-    const latest = registryVersion(run, `@brainervirus/workit-${source.host}`);
+    const latest = registryVersion(run, `@workit-dev/${source.host}`);
     if (!latest) {
       plan.failed.push({
         host: source.host,
@@ -496,7 +496,7 @@ export const planCli = (
   const copies = migrationCopies(env);
   const script = deps.cliEntry ?? process.argv[1];
   const packaged = Boolean(
-    script && /[\\/]node_modules[\\/]@brainervirus[\\/]workit-cli[\\/]/.test(realpathOr(script)),
+    script && /[\\/]node_modules[\\/]@workit-dev[\\/]cli[\\/]/.test(realpathOr(script)),
   );
   if (!owned && !copies.length && !packaged) {
     plan.skipped.push({

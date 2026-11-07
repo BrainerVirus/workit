@@ -11,7 +11,7 @@ import {
   SLOW_TEST_TIMEOUT_MS,
 } from "@/test/shared/helpers/packages";
 
-const OPENCODE = "@brainervirus/workit-opencode";
+const OPENCODE = "@workit-dev/opencode";
 const WORKIT = [...WORKIT_METHOD_SKILLS].toSorted();
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>

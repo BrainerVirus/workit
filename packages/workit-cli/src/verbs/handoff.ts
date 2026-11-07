@@ -20,7 +20,7 @@ import {
   recordHandoff,
   storeRoot,
   type HandoffBrief,
-} from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE = "workit handoff [--note <text>] [--next <text>] [--record] [--last <n>] [--json]";

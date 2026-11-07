@@ -1,5 +1,5 @@
 {
-  "name": "@brainervirus/workit-opencode",
+  "name": "@workit-dev/opencode",
   "version": "13.0.0",
   "private": false,
   "description": "Workit OpenCode plugin — native tools, adaptive policy, and sixteen method skills",
@@ -40,8 +40,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@brainervirus/workit-core": "workspace:*",
-    "@opencode/plugin": "2.0.18"
+    "@opencode/plugin": "2.0.18",
+    "@workit-dev/core": "workspace:*"
   },
   "engines": {
     "node": ">=24"

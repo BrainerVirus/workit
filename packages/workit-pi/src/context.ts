@@ -3,7 +3,7 @@ import {
   TaskStore,
   type Capability,
   type OperationContext,
-} from "@brainervirus/workit-core/src/core";
+} from "@workit-dev/core/src/core";
 import {
   capabilitiesFor,
   PI_DESCRIPTOR,
@@ -11,10 +11,10 @@ import {
   standingDelta,
   unfinishedTaskOffer as historyOffer,
   type HookInput,
-} from "@brainervirus/workit-core/hooks";
-import { modelKey } from "@brainervirus/workit-core/src/hooks/model-switch";
+} from "@workit-dev/core/hooks";
+import { modelKey } from "@workit-dev/core/src/hooks/model-switch";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { budgetLine, tickBudget } from "@brainervirus/workit-core/src/hooks/budget-signal";
+import { budgetLine, tickBudget } from "@workit-dev/core/src/hooks/budget-signal";
 
 export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capability[] =>
   capabilitiesFor(PI_DESCRIPTOR, { ui: ctx?.hasUI === true });

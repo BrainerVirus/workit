@@ -5,9 +5,9 @@ import {
   dispatchHook,
   runAdapterHook,
   type CodexHost,
-} from "@brainervirus/workit-core/hooks";
-import { PROCESS_START } from "@brainervirus/workit-core/src/hooks/deadline";
-import { budgetHooks } from "@brainervirus/workit-core/src/hooks/budget-signal";
+} from "@workit-dev/core/hooks";
+import { PROCESS_START } from "@workit-dev/core/src/hooks/deadline";
+import { budgetHooks } from "@workit-dev/core/src/hooks/budget-signal";
 
 export {
   detectCodexSurface,
@@ -15,7 +15,7 @@ export {
   type CodexHookEvent,
   type CodexHookInput,
   type CodexHost,
-} from "@brainervirus/workit-core/hooks";
+} from "@workit-dev/core/hooks";
 
 type Availability = Partial<
   Record<"sessionStart" | "preToolUse" | "subagentStart" | "subagentStop", boolean>

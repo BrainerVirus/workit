@@ -24,12 +24,8 @@ import {
 import { parseSource } from "../test-audit/ast";
 import { BaselineFailed, runMutation, type MutationReport } from "../test-audit/mutate";
 import type { Finding, Level, RuleId } from "../test-audit/rules";
-import { loadCheckConfig } from "@brainervirus/workit-core/src/check-config";
-import {
-  auditMockUse,
-  MOCK_RULES,
-  type MockRuleId,
-} from "@brainervirus/workit-core/src/test-audit-mocks";
+import { loadCheckConfig } from "@workit-dev/core/src/check-config";
+import { auditMockUse, MOCK_RULES, type MockRuleId } from "@workit-dev/core/src/test-audit-mocks";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =

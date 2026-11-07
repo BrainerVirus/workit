@@ -1,12 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { currentJudgment } from "@brainervirus/workit-core/src/core/policy/current-judgment";
-import {
-  branchLane,
-  REVIEW_LANES,
-  type ReviewLane,
-} from "@brainervirus/workit-core/src/core/policy/lane";
-import { commentStyle } from "@brainervirus/workit-core/src/deslop/lex";
+import { currentJudgment } from "@workit-dev/core/src/core/policy/current-judgment";
+import { branchLane, REVIEW_LANES, type ReviewLane } from "@workit-dev/core/src/core/policy/lane";
+import { commentStyle } from "@workit-dev/core/src/deslop/lex";
 import {
   DESLOP_CLASSES,
   DESLOP_PASSES,
@@ -17,9 +13,9 @@ import {
   type DeslopClass,
   type DeslopFinding,
   type LaneRaise,
-} from "@brainervirus/workit-core/src/deslop/scan";
-import { defaultBase } from "@brainervirus/workit-core/src/git/default-base";
-import { actorFromEnv, appendObserved, codeKey } from "@brainervirus/workit-core/src/ledger";
+} from "@workit-dev/core/src/deslop/scan";
+import { defaultBase } from "@workit-dev/core/src/git/default-base";
+import { actorFromEnv, appendObserved, codeKey } from "@workit-dev/core/src/ledger";
 import { changedLines, git, resolveBase, TEST_FILE, toPosix } from "../test-audit/audit";
 import { emit, fail, ok, type Envelope, type Io } from "../output";
 import { auditTests, type TestAuditReport } from "./test-audit";

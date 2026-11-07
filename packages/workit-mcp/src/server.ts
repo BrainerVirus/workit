@@ -19,19 +19,13 @@ import {
   operationDescription,
   parseAdvertisedOperation,
   type OperationContext,
-} from "@brainervirus/workit-core/src/core";
-import {
-  changedSourcesSinceLoad,
-  markSourcesLoaded,
-} from "@brainervirus/workit-core/src/core/boundary";
-import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
-import { briefInspectResult } from "@brainervirus/workit-core/src/core/task-evaluation";
-import {
-  escalateToolFailure,
-  type FailureMemo,
-} from "@brainervirus/workit-core/src/hooks/repeat-failure";
-import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
-import { readExternalContext } from "@brainervirus/workit-core/src/core/context-read";
+} from "@workit-dev/core/src/core";
+import { changedSourcesSinceLoad, markSourcesLoaded } from "@workit-dev/core/src/core/boundary";
+import type { Host, Result } from "@workit-dev/core/src/core/task-contract";
+import { briefInspectResult } from "@workit-dev/core/src/core/task-evaluation";
+import { escalateToolFailure, type FailureMemo } from "@workit-dev/core/src/hooks/repeat-failure";
+import { redactSecrets } from "@workit-dev/core/src/core/logger";
+import { readExternalContext } from "@workit-dev/core/src/core/context-read";
 
 export type McpHost = Extract<Host, "cursor" | "codex_cli" | "codex_desktop">;
 export type NativeContextProvider = { current(): Promise<OperationContext> };

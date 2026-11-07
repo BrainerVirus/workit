@@ -38,7 +38,7 @@ const fixture = () => {
   writeFileSync(
     host,
     JSON.stringify({
-      plugins: ["@brainervirus/workit-opencode", "unrelated-plugin"],
+      plugins: ["@workit-dev/opencode", "unrelated-plugin"],
       permission: { shell: "ask" },
     }),
   );
@@ -47,10 +47,10 @@ const fixture = () => {
   const piRoot = path.join(home, "pi-resolved");
   mkdirSync(path.dirname(piSettings), { recursive: true });
   mkdirSync(piRoot);
-  writeFileSync(piSettings, JSON.stringify({ packages: ["npm:@brainervirus/workit-pi"] }));
+  writeFileSync(piSettings, JSON.stringify({ packages: ["npm:@workit-dev/pi"] }));
   writeFileSync(
     path.join(piRoot, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-pi", version: "2.0.2" }),
+    JSON.stringify({ name: "@workit-dev/pi", version: "2.0.2" }),
   );
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
@@ -58,10 +58,10 @@ const fixture = () => {
     if (command === "pi" && args[0] === "update")
       writeFileSync(
         path.join(piRoot, "package.json"),
-        JSON.stringify({ name: "@brainervirus/workit-pi", version: "2.1.0" }),
+        JSON.stringify({ name: "@workit-dev/pi", version: "2.1.0" }),
       );
     if (command === "pi" && args[0] === "list")
-      return { status: 0, stdout: `npm:@brainervirus/workit-pi\n  ${piRoot}\n` };
+      return { status: 0, stdout: `npm:@workit-dev/pi\n  ${piRoot}\n` };
     return { status: 0, stdout: "" };
   };
   return {
@@ -83,7 +83,7 @@ test("upgrade previews without writes, applies one scoped native update and pres
     expect(f.calls.some((call) => call[0] === "opencode")).toBe(false);
     expect(JSON.parse(readFileSync(f.config, "utf8")).trustedPaths).toEqual(["/old"]);
     expect(plan.entries[0]?.commands).toEqual([
-      { command: "pi", args: ["update", "--extension", "npm:@brainervirus/workit-pi"] },
+      { command: "pi", args: ["update", "--extension", "npm:@workit-dev/pi"] },
     ]);
     expect((await applyUpgrade(plan, f.deps)).ok).toBe(true);
     expect(readFileSync(f.host, "utf8")).toBe(before);
@@ -100,16 +100,13 @@ test("upgrade previews without writes, applies one scoped native update and pres
 test("local and exact pins stay unchanged; stale previews and running hosts block updates", async () => {
   const f = fixture();
   try {
-    for (const pin of [
-      "file:///checkout/packages/workit-opencode",
-      "@brainervirus/workit-opencode@2.0.2",
-    ]) {
+    for (const pin of ["file:///checkout/packages/workit-opencode", "@workit-dev/opencode@2.0.2"]) {
       writeFileSync(f.host, JSON.stringify({ plugins: [pin] }));
       const plan = previewUpgrade(["opencode"], f.deps);
       expect(plan.entries).toEqual([]);
       expect(plan.skipped).toHaveLength(1);
     }
-    writeFileSync(f.host, JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }));
+    writeFileSync(f.host, JSON.stringify({ plugins: ["@workit-dev/opencode"] }));
     const plan = previewUpgrade(["pi"], f.deps);
     const open = await applyUpgrade(plan, {
       ...f.deps,
@@ -122,10 +119,7 @@ test("local and exact pins stay unchanged; stale previews and running hosts bloc
       fix: "workit upgrade --hosts=pi",
     });
     expect(f.calls.some((call) => call[0] === "pi" && call[1] === "update")).toBe(false);
-    writeFileSync(
-      f.host,
-      JSON.stringify({ plugins: ["@brainervirus/workit-opencode"], model: "changed" }),
-    );
+    writeFileSync(f.host, JSON.stringify({ plugins: ["@workit-dev/opencode"], model: "changed" }));
     expect((await applyUpgrade(plan, f.deps)).error).toContain("configuration changed");
   } finally {
     f.cleanup();
@@ -189,11 +183,11 @@ test("Pi verification rejects a source-only listing and requires the resolved pa
     mkdirSync(resolved);
     writeFileSync(
       settings,
-      JSON.stringify({ packages: ["npm:@brainervirus/workit-pi", "npm:other-workit-pi"] }),
+      JSON.stringify({ packages: ["npm:@workit-dev/pi", "npm:other-workit-pi"] }),
     );
     writeFileSync(
       path.join(resolved, "package.json"),
-      JSON.stringify({ name: "@brainervirus/workit-pi", version: "2.0.2" }),
+      JSON.stringify({ name: "@workit-dev/pi", version: "2.0.2" }),
     );
     let updated = false;
     const deps = {
@@ -206,9 +200,7 @@ test("Pi verification rejects a source-only listing and requires the resolved pa
         }
         return {
           status: 0,
-          stdout: updated
-            ? "npm:@brainervirus/workit-pi"
-            : `npm:@brainervirus/workit-pi\n  ${resolved}\n`,
+          stdout: updated ? "npm:@workit-dev/pi" : `npm:@workit-dev/pi\n  ${resolved}\n`,
         };
       },
     };
@@ -223,13 +215,13 @@ test("Pi verification rejects a source-only listing and requires the resolved pa
 /** A fnm Node whose npm global prefix holds workit-cli `version` (the pre-#648 install). */
 const fnmCopy = (home: string, node: string, version: string) => {
   const prefix = path.join(home, ".local/share/fnm/node-versions", node, "installation");
-  const pkg = path.join(prefix, "lib/node_modules/@brainervirus/workit-cli");
+  const pkg = path.join(prefix, "lib/node_modules/@workit-dev/cli");
   mkdirSync(path.join(pkg, "dist"), { recursive: true });
   mkdirSync(path.join(prefix, "bin"), { recursive: true });
   writeFileSync(path.join(prefix, "bin/node"), "");
   writeFileSync(
     path.join(pkg, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cli", version }),
+    JSON.stringify({ name: "@workit-dev/cli", version }),
   );
   writeFileSync(path.join(pkg, "dist/index.js"), `console.log("${version}")\n`);
   return { prefix, pkg };
@@ -252,11 +244,11 @@ const cliDeps = (
     if (command === "node24" && args[1] === "install") {
       if (options.failInstall) return { status: 1, stdout: "", stderr: "EACCES" };
       const staging = args[args.indexOf("--prefix") + 1];
-      const pkg = path.join(staging, "node_modules/@brainervirus/workit-cli");
+      const pkg = path.join(staging, "node_modules/@workit-dev/cli");
       mkdirSync(pkg, { recursive: true });
       writeFileSync(
         path.join(pkg, "package.json"),
-        JSON.stringify({ name: "@brainervirus/workit-cli", version: options.installs ?? "2.1.0" }),
+        JSON.stringify({ name: "@workit-dev/cli", version: options.installs ?? "2.1.0" }),
       );
       return { status: 0, stdout: "" };
     }
@@ -286,7 +278,7 @@ test("Given a CLI in a fnm prefix and no terminal, When `workit upgrade --cli` a
     const cli = JSON.parse(output).hosts.find((row: { host: string }) => row.host === "cli");
     expect(cli.status).toBe("updated");
     expect(cli.details.join("\n")).toContain(
-      `npm uninstall --global --prefix ${copy.prefix} @brainervirus/workit-cli`,
+      `npm uninstall --global --prefix ${copy.prefix} @workit-dev/cli`,
     );
     expect(readFileSync(f.host, "utf8")).toContain("unrelated-plugin");
   } finally {
@@ -326,7 +318,7 @@ test("Codex current inventory skips updates and other marketplaces remain untouc
         version: "2.1.0",
         source: {
           source: "npm",
-          package: "@brainervirus/workit-codex",
+          package: "@workit-dev/codex",
           version: "latest",
         },
       },
@@ -389,9 +381,9 @@ test("Cursor package drift rejects a reviewed plan before installation", async (
   try {
     const pkg = path.join(f.home, ".cursor/plugins/local/workit/package.json");
     mkdirSync(path.dirname(pkg), { recursive: true });
-    writeFileSync(pkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "2.0.2" }));
+    writeFileSync(pkg, JSON.stringify({ name: "@workit-dev/cursor", version: "2.0.2" }));
     const plan = previewUpgrade([], f.deps);
-    writeFileSync(pkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "2.0.3" }));
+    writeFileSync(pkg, JSON.stringify({ name: "@workit-dev/cursor", version: "2.0.3" }));
     expect((await applyUpgrade(plan, f.deps)).error).toContain("configuration changed");
   } finally {
     f.cleanup();
@@ -402,11 +394,11 @@ test("Given an owned 2.0.2, When the 2.1.0 install fails, Then current still poi
   const f = fixture();
   try {
     const root = path.join(f.home, ".local/share/workit");
-    const old = path.join(root, "versions/2.0.2/node_modules/@brainervirus/workit-cli");
+    const old = path.join(root, "versions/2.0.2/node_modules/@workit-dev/cli");
     mkdirSync(old, { recursive: true });
     writeFileSync(
       path.join(old, "package.json"),
-      JSON.stringify({ name: "@brainervirus/workit-cli", version: "2.0.2" }),
+      JSON.stringify({ name: "@workit-dev/cli", version: "2.0.2" }),
     );
     symlinkSync(path.join("versions", "2.0.2"), path.join(root, "current"));
     let output = "";
@@ -454,7 +446,7 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
     expect(plan.ok).toBe(true);
     expect(plan.entries).toEqual([]);
     expect(plan.skipped[0]?.reason).toContain("no `opencode plugin update`");
-    expect(plan.skipped[0]?.fix).toBe("opencode plugin update @brainervirus/workit-opencode");
+    expect(plan.skipped[0]?.fix).toBe("opencode plugin update @workit-dev/opencode");
     let output = "";
     expect(
       await runLaunchCommand(["opencode", "--auto-upgrade", "--", "--version"], {
@@ -466,7 +458,7 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
         },
       }),
     ).toBe(0);
-    expect(output).toContain("opencode plugin update @brainervirus/workit-opencode");
+    expect(output).toContain("opencode plugin update @workit-dev/opencode");
     // Only probes and the launch itself; never a plugin update.
     const opencodeCalls = f.calls.filter((call) => call[0] === "opencode");
     expect(opencodeCalls.at(-1)).toEqual(["opencode", "--version"]);
@@ -483,7 +475,7 @@ test("OpenCode unsupported scoped update is visible and never falls back to upda
 test("conflicting Workit registrations stop upgrade without changing either source", async () => {
   const f = fixture();
   try {
-    const pins = ["@brainervirus/workit-opencode", "@brainervirus/workit-opencode@2.0.1"];
+    const pins = ["@workit-dev/opencode", "@workit-dev/opencode@2.0.1"];
     writeFileSync(f.host, JSON.stringify({ plugins: pins }));
     const plan = previewUpgrade(["opencode"], f.deps);
     expect(plan.ok).toBe(false);

@@ -14,7 +14,7 @@ import { readConfigFromDir } from "@/packages/workit-core/src/core/config";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
-const SCHEMA = "https://unpkg.com/@brainervirus/workit-core/schemas/workspaces.json";
+const SCHEMA = "https://unpkg.com/@workit-dev/core/schemas/workspaces.json";
 
 let configHome: ConfigHome;
 beforeAll(() => {

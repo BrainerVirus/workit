@@ -14,7 +14,7 @@ These rules are guarded by tests; the failure names what to fix.
   `packages/workit-core/src/core/operation-input.ts`, not nested objects.
   Guard: `test/workit-mcp/server.test.ts`.
 - The Cursor MCP launcher shape (`npx -y --prefer-online
-  --min-release-age=0 --package=@brainervirus/workit-cursor@latest …`, see
+  --min-release-age=0 --package=@workit-dev/cursor@latest …`, see
   npm/cli#9765) and the hook launcher (`node "${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs" <bin>`,
   pinned, `failClosed: false`, never `@latest`) are defined in
   `packages/workit-cli/src/admin/registration.ts` and checked by the doctor,

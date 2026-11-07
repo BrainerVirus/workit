@@ -2,10 +2,10 @@
 // implicit task (design §4.1, D3), so `workit task status` shows the work
 // without an explicit start. Best effort: the verb's own result never
 // depends on it.
-import { checkRoot } from "@brainervirus/workit-core/src/check-config";
-import { currentBranch } from "@brainervirus/workit-core/src/git/rev";
+import { checkRoot } from "@workit-dev/core/src/check-config";
+import { currentBranch } from "@workit-dev/core/src/git/rev";
 import type { Io } from "../output";
-import { hostSessionFromEnv } from "@brainervirus/workit-core/src/host-session";
+import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 
 export async function ensureImplicitTask(
   io: Io,
@@ -14,7 +14,7 @@ export async function ensureImplicitTask(
   try {
     // Only the checked-out branch has an implicit task here.
     if (branch !== null && branch !== currentBranch(io.cwd)) return null;
-    const { TaskStore } = await import("@brainervirus/workit-core/src/core/task-store");
+    const { TaskStore } = await import("@workit-dev/core/src/core/task-store");
     const store = new TaskStore(io.env.WORKIT_WORKSPACE_ROOT || checkRoot(io.cwd));
     const actor = hostSessionFromEnv(io.env).session ?? "cli";
     const found = store.implicitTask({

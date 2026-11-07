@@ -27,7 +27,7 @@ launchers use the same order.
 From any shell with Node 24+:
 
 ```bash
-npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes
+npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes
 ```
 
 Make sure `~/.local/bin` is on PATH and comes before any version manager's directories. The
@@ -58,7 +58,7 @@ listed or removed.
 
 ## Moving from an npm global install
 
-The first upgrade under this layout looks for other copies: `@brainervirus/workit-cli` in
+The first upgrade under this layout looks for other copies: `@workit-dev/cli` in
 each fnm, nvm, mise or asdf Node's npm global prefix, a volta package, and a hand-written
 wrapper on PATH that runs one (it names a workit-cli package, or execs another `workit` by
 path, such as `exec <fnm node> <fnm prefix>/bin/workit "$@"`). Only the script its `exec`

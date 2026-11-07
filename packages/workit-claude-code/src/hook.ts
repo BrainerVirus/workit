@@ -7,8 +7,8 @@
 // per-turn task context only when it changed (descriptor turnResend on-change).
 import { appendFileSync } from "node:fs";
 import { stalePluginNotice } from "./stale-plugin";
-import { budgetHooks, type BudgetHooks } from "@brainervirus/workit-core/src/hooks/budget-signal";
-import { claudeCodeAdapter, type HostAdapter } from "@brainervirus/workit-core/hooks";
+import { budgetHooks, type BudgetHooks } from "@workit-dev/core/src/hooks/budget-signal";
+import { claudeCodeAdapter, type HostAdapter } from "@workit-dev/core/hooks";
 import {
   dispatchWithin,
   hookBudget,
@@ -16,8 +16,8 @@ import {
   readWithin,
   skippedHook,
   type HookDeadline,
-} from "@brainervirus/workit-core/src/hooks/deadline";
-import { recordHookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
+} from "@workit-dev/core/src/hooks/deadline";
+import { recordHookRun } from "@workit-dev/core/src/hooks/hook-runs";
 
 type Sink = { write(chunk: string): unknown };
 

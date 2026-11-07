@@ -18,13 +18,13 @@ import {
   type TaskRecord,
   type WorkspaceRecord,
   type Worker,
-} from "@brainervirus/workit-core/src/core";
+} from "@workit-dev/core/src/core";
 import {
   changedTurnContext,
   PI_DESCRIPTOR,
   seedTurnContext,
   stopDecision,
-} from "@brainervirus/workit-core/hooks";
+} from "@workit-dev/core/hooks";
 import {
   piContext,
   standingNotice,
@@ -36,8 +36,8 @@ import {
   unfinishedTaskOffer,
   workitContext,
 } from "../src/context";
-import { resolveIdRef } from "@brainervirus/workit-core/src/core/task-contract";
-import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
+import { resolveIdRef } from "@workit-dev/core/src/core/task-contract";
+import { WORKIT_SKILL_ALIASES } from "@workit-dev/core/src/core/skill-manifests";
 import {
   enforceToolPolicy,
   observeToolResult,

@@ -3,8 +3,8 @@
 // SubagentStart get a systemMessage and additionalContext naming the cause and
 // the fix; every other event gets `{}`. Each failure records a hook-runs
 // failure row that `workit doctor` reads.
-import { handleBelowFloor } from "@brainervirus/workit-core/src/core/node-resolve.mjs";
-import { recordHookFailure } from "@brainervirus/workit-core/src/hooks/hook-runs";
+import { handleBelowFloor } from "@workit-dev/core/src/core/node-resolve.mjs";
+import { recordHookFailure } from "@workit-dev/core/src/hooks/hook-runs";
 
 const LOUD_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "SubagentStart"]);
 const SUBAGENT_NOTE =

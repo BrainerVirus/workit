@@ -1,5 +1,5 @@
-import { TaskStore } from "@brainervirus/workit-core/src/core";
-import { sessionCompactContext, unfinishedTaskOffer } from "@brainervirus/workit-core/hooks";
+import { TaskStore } from "@workit-dev/core/src/core";
+import { sessionCompactContext, unfinishedTaskOffer } from "@workit-dev/core/hooks";
 
 export const compactContextFor = (root: string, sessionID: string): string | null => {
   try {

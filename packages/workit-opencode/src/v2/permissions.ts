@@ -6,7 +6,7 @@ import {
   shellGate,
   shellPolicy,
   writeGate,
-} from "@brainervirus/workit-core/hooks";
+} from "@workit-dev/core/hooks";
 
 export type PermissionEvaluationEvent = {
   sessionID?: string;

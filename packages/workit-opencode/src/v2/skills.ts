@@ -1,7 +1,7 @@
 // OpenCode V2 skill routing: a Workit skill load through the skill tool is
 // recorded for the session, and a new user prompt naming a skill's trigger
 // gets one system line naming the skill (core hooks/skill-nudge.ts).
-import { promptNudge, recordSkillLoad, type HookInput } from "@brainervirus/workit-core/hooks";
+import { promptNudge, recordSkillLoad, type HookInput } from "@workit-dev/core/hooks";
 
 const hookInput = (root: string, sessionID: string, subagent: boolean): HookInput => ({
   host: "opencode",

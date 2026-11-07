@@ -24,35 +24,28 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  configuredGrants,
-  entryMismatch,
-  remoteFindings,
-} from "@brainervirus/workit-core/src/autonomy";
-import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix";
-import { inspectMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
-import {
-  bundleHashOfFile,
-  isEphemeralCachePath,
-} from "@brainervirus/workit-core/src/core/runtime-identity";
-import { EVENT } from "@brainervirus/workit-core/src/core/boundary";
+import { configuredGrants, entryMismatch, remoteFindings } from "@workit-dev/core/src/autonomy";
+import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix";
+import { inspectMetadataLock } from "@workit-dev/core/src/core/store-lock";
+import { bundleHashOfFile, isEphemeralCachePath } from "@workit-dev/core/src/core/runtime-identity";
+import { EVENT } from "@workit-dev/core/src/core/boundary";
 import {
   describeReleaseTracks,
   releaseTracksReport,
-} from "@brainervirus/workit-core/src/core/release-tracks";
-import { repoBranchPreset } from "@brainervirus/workit-core/src/core/branch-policy";
+} from "@workit-dev/core/src/core/release-tracks";
+import { repoBranchPreset } from "@workit-dev/core/src/core/branch-policy";
 import {
   getDiagnosticLogger,
   isConfigObject,
   readConfigFromDir,
-} from "@brainervirus/workit-core/src/core/config";
+} from "@workit-dev/core/src/core/config";
 import {
   CONFIG_SCHEMA_BASE_URL,
   configSchemaIssues,
   type ConfigSchemaFile,
-} from "@brainervirus/workit-core/src/core/config-schemas";
+} from "@workit-dev/core/src/core/config-schemas";
 import { hookNodeReport } from "./hook-node";
-import { resolveStateDir } from "@brainervirus/workit-core/src/core/logger";
+import { resolveStateDir } from "@workit-dev/core/src/core/logger";
 import {
   LEGACY_MARKER_INFIX,
   configDir as workitConfigDir,
@@ -61,15 +54,15 @@ import {
   legacyWorktreesDir,
   stateDir as workitStateDir,
   worktreesDir,
-} from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+} from "@workit-dev/core/src/core/workit-paths.mjs";
 import {
   CHECKS_FILE,
   LEGACY_CHECKS_FILE,
   checkRoot,
   ensureWorkitDir,
-} from "@brainervirus/workit-core/src/check-config";
-import { probeScope, type ScopeProbe } from "@brainervirus/workit-core/src/core/heavy-scope";
-import { packageRoot } from "@brainervirus/workit-core/src/core/package-root";
+} from "@workit-dev/core/src/check-config";
+import { probeScope, type ScopeProbe } from "@workit-dev/core/src/core/heavy-scope";
+import { packageRoot } from "@workit-dev/core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
   OPENCODE_NPM_PIN,
@@ -85,8 +78,8 @@ import {
   workspaceOverlaps,
   workspaceTrailers,
   type WorkspaceConfig,
-} from "@brainervirus/workit-core/src/core/workspaces";
-import { roleModelIssues } from "@brainervirus/workit-core/src/core/role-models";
+} from "@workit-dev/core/src/core/workspaces";
+import { roleModelIssues } from "@workit-dev/core/src/core/role-models";
 import {
   CLAUDE_MARKETPLACE_NAME,
   claudeConfigDir,
@@ -97,7 +90,7 @@ import {
 import {
   validateCursorSkills,
   WORKIT_METHOD_SKILLS,
-} from "@brainervirus/workit-core/src/core/skill-manifests";
+} from "@workit-dev/core/src/core/skill-manifests";
 import {
   SESSION_HOOK_NAME,
   helperIn,
@@ -108,9 +101,9 @@ import {
   type SessionHookInstall,
   type SessionHookRemoval,
   type SessionHookStatus,
-} from "@brainervirus/workit-core/src/git/session-hook";
-import { readHookRuns, type HookRun } from "@brainervirus/workit-core/src/hooks/hook-runs";
-import { issueTrackerOf } from "@brainervirus/workit-core/src/core/vcs-config";
+} from "@workit-dev/core/src/git/session-hook";
+import { readHookRuns, type HookRun } from "@workit-dev/core/src/hooks/hook-runs";
+import { issueTrackerOf } from "@workit-dev/core/src/core/vcs-config";
 import {
   YTRACK_INSTALL,
   findYtrack,
@@ -119,7 +112,7 @@ import {
   ytrackLogin,
   ytrackRunner,
   ytrackStatus,
-} from "@brainervirus/workit-core/src/core/youtrack-ytrack";
+} from "@workit-dev/core/src/core/youtrack-ytrack";
 import {
   installedSkillVersion,
   readYtrackSkillRecord,
@@ -129,7 +122,7 @@ import {
   YTRACK_UPGRADE,
   ytrackSkillSupport,
   type SkillHost,
-} from "@brainervirus/workit-core/src/core/ytrack-skill";
+} from "@workit-dev/core/src/core/ytrack-skill";
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
 import { hostSkillsRoot } from "../upgrade/skill-roots";
 import { detectHosts } from "./detect-hosts";
@@ -794,8 +787,7 @@ const checkVersions = (res: Resolved): DoctorCheck => {
     const pkg = readJson(path.join(res.dev, "packages", name, "package.json"));
     // Adapters bundle core into dist/, so it is a devDependency (N19).
     const dep =
-      pkg?.dependencies?.["@brainervirus/workit-core"] ??
-      pkg?.devDependencies?.["@brainervirus/workit-core"];
+      pkg?.dependencies?.["@workit-dev/core"] ?? pkg?.devDependencies?.["@workit-dev/core"];
     if (typeof dep === "string") refs.add(dep);
   }
   if (refs.size === 0) {
@@ -830,7 +822,7 @@ const checkVersions = (res: Resolved): DoctorCheck => {
     id: "versions",
     status: "fail",
     detail: problems.join("; "),
-    fix: "Align every adapter to the same @brainervirus/workit-core version (rewrite-workspace-deps.ts) or reinstall",
+    fix: "Align every adapter to the same @workit-dev/core version (rewrite-workspace-deps.ts) or reinstall",
   };
 };
 
@@ -1271,7 +1263,7 @@ const checkCodexAgents = (res: Resolved): DoctorCheck => {
 // paths resolve against the settings file's directory, and an object entry's
 // `extensions` patterns filter what loads (`!x` excludes, `+x`/`-x` force).
 
-const PI_PACKAGE = "@brainervirus/workit-pi";
+const PI_PACKAGE = "@workit-dev/pi";
 const PI_EXTENSION = "dist/workit.js";
 
 type PiEntry = {
@@ -1942,7 +1934,7 @@ const staleEntry = (entry: string): "ok" | "stale" | "missing-file" | "fragile-c
     const target = entry.replace(/^file:\/\//, "").replace(/^file:/, "");
     return existsSync(target) ? "ok" : "missing-file";
   }
-  // Registry package names (e.g. @brainervirus/workit-opencode) are the
+  // Registry package names (e.g. @workit-dev/opencode) are the
   // published pin shape — OpenCode resolves them; not labelled stale.
   return "ok";
 };
@@ -1969,7 +1961,7 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
       id: "stale_pin",
       status: "fail",
       detail: "no workit plugin registered in the opencode config",
-      fix: 'Run `workit init` and select OpenCode — pin "@brainervirus/workit-opencode"',
+      fix: 'Run `workit init` and select OpenCode — pin "@workit-dev/opencode"',
     };
   }
   const first = staleEntry(entries[0]);
@@ -1986,7 +1978,7 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
       id: "stale_pin",
       status: "fail",
       detail: `workit pin points at a package-manager cache path: ${entries[0]}`,
-      fix: 'Run `workit init` and select OpenCode — pin should be "@brainervirus/workit-opencode"',
+      fix: 'Run `workit init` and select OpenCode — pin should be "@workit-dev/opencode"',
     };
   }
   if (first === "missing-file") {
@@ -2031,9 +2023,9 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
 //     `@latest` installs skip the probe entirely: the selector resolves fresh
 //     at launch, so the installed package.json version is metadata, not a
 //     freshness signal.
-// OpenCode npm pins (`@brainervirus/workit-opencode` / `@…@latest`) are different:
+// OpenCode npm pins (`@workit-dev/opencode` / `@…@latest`) are different:
 // OpenCode freezes the first resolved version under
-// `~/.cache/opencode/packages/@brainervirus/workit-opencode@latest` and does not
+// `~/.cache/opencode/packages/@workit-dev/opencode@latest` and does not
 // re-resolve on later launches. Doctor compares that cache to the published
 // package (same CA-04 fail-open seam) and tells the user to delete the cache
 // directory so OpenCode can resolve `@latest` again. Exact `@version` pins and
@@ -2095,8 +2087,8 @@ const installedOpenCodeCache = (res: Resolved): { version: string; dir: string }
       path.join(
         res.opencodePackageCacheDir,
         "node_modules",
-        "@brainervirus",
-        "workit-opencode",
+        "@workit-dev",
+        "opencode",
         "package.json",
       ),
     );
@@ -2106,9 +2098,9 @@ const installedOpenCodeCache = (res: Resolved): { version: string; dir: string }
   }
   const found = openCodeInstalledPlugin(res.home, res.env);
   if (!found) return null;
-  // workit-opencode@latest/[<stamp>/]node_modules/@brainervirus/workit-opencode
+  // opencode@latest/[<stamp>/]node_modules/@workit-dev/opencode
   let dir = path.dirname(path.dirname(path.dirname(found.root)));
-  if (path.basename(dir) !== "workit-opencode@latest") dir = path.dirname(dir);
+  if (path.basename(dir) !== "opencode@latest") dir = path.dirname(dir);
   return { version: found.version, dir };
 };
 
@@ -2228,7 +2220,7 @@ const checkCursorStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?
   const canonicalMcp = cursorMcpServerEntry("").args.find((a) => a.startsWith("--package="));
   const mcpSelectors = pluginMcpSelectors(res);
   const legacyPin = (mcpSelectors ?? []).find(
-    (s) => s !== canonicalMcp && s.includes("@brainervirus/workit-cursor@"),
+    (s) => s !== canonicalMcp && s.includes("@workit-dev/cursor@"),
   );
   if (legacyPin) {
     return {
@@ -2246,7 +2238,7 @@ const checkCursorStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?
     hookCmd !== null &&
     !isCanonicalCursorHook(hookCmd, res) &&
     !hookCmd.startsWith("node ") &&
-    hookCmd.includes("@brainervirus/workit-cursor@");
+    hookCmd.includes("@workit-dev/cursor@");
   if (staleHook) {
     return {
       id: "stale_install",
@@ -3376,7 +3368,7 @@ export const fixChecksConfig = (options: DoctorOptions = {}): ChecksConfigFix =>
   return { action: "moved", detail: `${LEGACY_CHECKS_FILE} -> ${CHECKS_FILE}` };
 };
 
-const CLAUDE_PLUGIN_PACKAGE = "@brainervirus/workit-claude-code";
+const CLAUDE_PLUGIN_PACKAGE = "@workit-dev/claude-code";
 
 const versionBehind = (version: string, latest: string): boolean =>
   version !== latest && semverAtLeast(latest, version);
@@ -3643,7 +3635,7 @@ const checkHookIssuedSessions = (res: Resolved): DoctorCheck => {
   };
 };
 
-const CLI_PACKAGE = "@brainervirus/workit-cli";
+const CLI_PACKAGE = "@workit-dev/cli";
 const SEMVER = /\d+\.\d+\.\d+/;
 
 // One probe per binary identity per process: a long-lived caller re-running
@@ -3870,7 +3862,7 @@ const ago = (ms: number): string => {
   return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 };
 
-const OWNED_FIX = "npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes";
+const OWNED_FIX = "npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes";
 
 /** The command that backs up and removes one other install (a link is only removed). */
 const removalFor = (res: Resolved, install: FoundInstall, index: number): string => {

@@ -8,14 +8,11 @@
 // (`@file` reads it from a file, `-` from stdin).
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  changelogApply,
-  changelogApplyPreview,
-} from "@brainervirus/workit-core/src/core/changelog";
+import { changelogApply, changelogApplyPreview } from "@workit-dev/core/src/core/changelog";
 import {
   installChangelogDriver,
   mergeChangelogFiles,
-} from "@brainervirus/workit-core/src/core/changelog-merge";
+} from "@workit-dev/core/src/core/changelog-merge";
 import { emit, fail, ok, type Io } from "../output";
 import { parseFlags, usage } from "./forge-common";
 

@@ -7,19 +7,11 @@
 //   launcherDir()   the directory on PATH that holds the `workit` launcher link
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import {
-  installRoot,
-  launcherDir,
-  ownedLauncherPath,
-} from "@brainervirus/workit-core/src/core/cli-locate";
+import { installRoot, launcherDir, ownedLauncherPath } from "@workit-dev/core/src/core/cli-locate";
 
-export {
-  LAUNCHER_MARKER,
-  installRoot,
-  launcherDir,
-} from "@brainervirus/workit-core/src/core/cli-locate";
+export { LAUNCHER_MARKER, installRoot, launcherDir } from "@workit-dev/core/src/core/cli-locate";
 
-export const CLI_PACKAGE_NAME = "@brainervirus/workit-cli";
+export const CLI_PACKAGE_NAME = "@workit-dev/cli";
 
 /** Every location derived from the two roots above. */
 export const ownedPaths = (
@@ -49,7 +41,7 @@ export const packageDirOf = (prefixDir: string): string =>
 export const entryOf = (prefixDir: string): string =>
   path.join(packageDirOf(prefixDir), "dist", "index.js");
 
-/** The `@brainervirus/workit-cli` version a package directory holds, or null. */
+/** The `@workit-dev/cli` version a package directory holds, or null. */
 export const packageVersion = (packageDir: string): string | null => {
   try {
     const found = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")) as {

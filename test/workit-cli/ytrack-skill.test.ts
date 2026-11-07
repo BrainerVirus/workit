@@ -86,7 +86,7 @@ const world = (options: { youtrack?: boolean; pi?: boolean } = {}) => {
   if (options.pi) {
     const settings = path.join(home, ".pi", "agent", "settings.json");
     mkdirSync(path.dirname(settings), { recursive: true });
-    writeFileSync(settings, JSON.stringify({ packages: ["npm:@brainervirus/workit-pi"] }));
+    writeFileSync(settings, JSON.stringify({ packages: ["npm:@workit-dev/pi"] }));
   }
   const env = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
     HOME: home,
@@ -240,7 +240,7 @@ const upgrade = async (w: ReturnType<typeof world>, extra: Record<string, string
   mkdirSync(piRoot, { recursive: true });
   writeFileSync(
     path.join(piRoot, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-pi", version: "1.0.0" }),
+    JSON.stringify({ name: "@workit-dev/pi", version: "1.0.0" }),
   );
   const out: string[] = [];
   const code = await runUpgradeCommand(["--hosts=pi", "--yes", "--json"], {
@@ -250,7 +250,7 @@ const upgrade = async (w: ReturnType<typeof world>, extra: Record<string, string
       command === "npm" && args[0] === "view"
         ? { status: 0, stdout: "1.0.0\n" }
         : command === "pi" && args[0] === "list"
-          ? { status: 0, stdout: `npm:@brainervirus/workit-pi\n  ${piRoot}\n` }
+          ? { status: 0, stdout: `npm:@workit-dev/pi\n  ${piRoot}\n` }
           : { status: 0, stdout: "" },
     processes: (): HostProcess[] => [],
     confirm: async () => true,

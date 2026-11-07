@@ -35,15 +35,15 @@ const OTHER_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "other");
 
 test("isWorkitPlugin matches every Workit identity, never unrelated plugins or the old name", () => {
   for (const id of [
-    "@brainervirus/workit-opencode",
-    "@brainervirus/workit-opencode@1.0.0",
-    "@brainervirus/workit-cursor",
-    "@brainervirus/workit-cursor@2.0.0",
+    "@workit-dev/opencode",
+    "@workit-dev/opencode@1.0.0",
+    "@workit-dev/cursor",
+    "@workit-dev/cursor@2.0.0",
     "file:///work/packages/workit-opencode/src/plugin.ts",
     "file:///work/packages/workit-opencode",
     "file:///work/packages/workit-cursor",
-    "file:///x/node_modules/@brainervirus/workit-opencode",
-    "file:///x/node_modules/@brainervirus/workit-opencode/dist/plugin.js",
+    "file:///x/node_modules/@workit-dev/opencode",
+    "file:///x/node_modules/@workit-dev/opencode/dist/plugin.js",
     "file:///x/packages/workit-opencode/src/plugin.ts",
     "workit",
     "local/workit",
@@ -55,10 +55,10 @@ test("isWorkitPlugin matches every Workit identity, never unrelated plugins or t
     "@dietrichgebert/ponytail",
     "@opencode-ai/plugin",
     "my-plugin",
-    "@brainervirus/workit-opencode-helper",
-    "@brainervirus/workit-cursor-tools",
-    "@brainervirus/workit-opencode-extra",
-    "@brainervirus/workit-cursor-legacy",
+    "@workit-dev/opencode-helper",
+    "@workit-dev/cursor-tools",
+    "@workit-dev/opencode-extra",
+    "@workit-dev/cursor-legacy",
     OLD_NAME,
     `local/${OLD_NAME}`,
     `${OLD_NAME}-opencode@git+file:///old/checkout`,
@@ -69,22 +69,22 @@ test("isWorkitPlugin matches every Workit identity, never unrelated plugins or t
 });
 
 // AR-04: prefix-shared names are unrelated packages, never Workit identities.
-test("isWorkitPlugin rejects prefix-shared @brainervirus names, still accepts exact names", () => {
+test("isWorkitPlugin rejects prefix-shared @workit-dev names, still accepts exact names", () => {
   for (const id of [
-    "@brainervirus/workit-opencode",
-    "@brainervirus/workit-opencode@0.4.0",
-    "@brainervirus/workit-opencode@^0.4.0",
-    "@brainervirus/workit-cursor",
-    "@brainervirus/workit-cursor@0.4.0",
+    "@workit-dev/opencode",
+    "@workit-dev/opencode@0.4.0",
+    "@workit-dev/opencode@^0.4.0",
+    "@workit-dev/cursor",
+    "@workit-dev/cursor@0.4.0",
   ]) {
     expect(isWorkitPlugin(id), id).toBe(true);
   }
   for (const id of [
-    "@brainervirus/workit-opencode-helper",
-    "@brainervirus/workit-cursor-tools",
-    "@brainervirus/workit-opencode-extra",
-    "@brainervirus/workit-cursor-legacy",
-    "@brainervirus/workit-cursor-tools@1.0.0",
+    "@workit-dev/opencode-helper",
+    "@workit-dev/cursor-tools",
+    "@workit-dev/opencode-extra",
+    "@workit-dev/cursor-legacy",
+    "@workit-dev/cursor-tools@1.0.0",
   ]) {
     expect(isWorkitPlugin(id), id).toBe(false);
   }
@@ -104,7 +104,7 @@ test("isWorkitPlugin preserves unrelated plugin ids that merely contain workit (
 });
 
 test("mergeOpenCodePlugins preserves unrelated workit-containing ids (D3)", () => {
-  const existing = ["some-workit-helper", "@brainervirus/workit-opencode", PIN];
+  const existing = ["some-workit-helper", "@workit-dev/opencode", PIN];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
   expect(config).toEqual([PIN, "some-workit-helper"]);
   expect(changed).toEqual(["plugins"]);
@@ -113,17 +113,13 @@ test("mergeOpenCodePlugins preserves unrelated workit-containing ids (D3)", () =
 // AR-04: prefix-shared helper packages survive a registration merge unchanged.
 test("mergeOpenCodePlugins preserves prefix-shared helper packages (AR-04)", () => {
   const existing = [
-    "@brainervirus/workit-opencode-helper",
-    "@brainervirus/workit-cursor-tools",
-    "@brainervirus/workit-opencode",
+    "@workit-dev/opencode-helper",
+    "@workit-dev/cursor-tools",
+    "@workit-dev/opencode",
     PIN,
   ];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
-  expect(config).toEqual([
-    PIN,
-    "@brainervirus/workit-opencode-helper",
-    "@brainervirus/workit-cursor-tools",
-  ]);
+  expect(config).toEqual([PIN, "@workit-dev/opencode-helper", "@workit-dev/cursor-tools"]);
   expect(changed).toEqual(["plugins"]);
 });
 
@@ -131,7 +127,7 @@ test("mergeOpenCodePlugins dedups every Workit identity to a single pin", () => 
   const existing = [
     "@dietrichgebert/ponytail",
     "file:///old/checkout/packages/workit-opencode",
-    "@brainervirus/workit-opencode",
+    "@workit-dev/opencode",
     PIN,
   ];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
@@ -147,7 +143,7 @@ test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-f
     plugins: [
       "@dietrichgebert/ponytail",
       "file:///old/checkout/packages/workit-opencode",
-      "@brainervirus/workit-opencode",
+      "@workit-dev/opencode",
       PIN,
     ],
   };
@@ -206,14 +202,14 @@ test("mergeOpenCodeConfig reports no changes when the config is already canonica
 test("mergeOpenCodeConfig tolerates a missing config and a string plugin field", () => {
   const { config } = mergeOpenCodeConfig(undefined, PIN);
   expect(config.plugins).toEqual([PIN]);
-  const str = mergeOpenCodeConfig({ plugin: "@brainervirus/workit-opencode" }, PIN);
+  const str = mergeOpenCodeConfig({ plugin: "@workit-dev/opencode" }, PIN);
   expect(str.config.plugins).toEqual([PIN]);
   expect(str.config.plugin).toBeUndefined();
 });
 
 test("mergeOpenCodeConfig moves a Workit entry out of the deprecated plugin key", () => {
   const { config, changed } = mergeOpenCodeConfig(
-    { plugin: ["@brainervirus/workit-opencode", "<other>"] },
+    { plugin: ["@workit-dev/opencode", "<other>"] },
     PIN,
   );
   expect(config.plugins).toEqual([PIN]);
@@ -418,7 +414,7 @@ test("cursorHookDrift flags divergent enforcement events, not absent ones", () =
 
 test("cursorHookDrift flags the legacy fail-closed npx @latest entries an older install carries", () => {
   const legacy =
-    "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook";
+    "npx -y --prefer-online --min-release-age=0 --package=@workit-dev/cursor@latest workit-cursor-hook";
   expect(
     cursorHookDrift({
       version: 1,
@@ -500,7 +496,7 @@ test("generated Cursor hook config never resolves @latest, never shells to npx, 
           preToolUse: [
             {
               command:
-                "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+                "npx -y --prefer-online --min-release-age=0 --package=@workit-dev/cursor@latest workit-cursor-hook",
               failClosed: true,
             },
           ],

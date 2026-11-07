@@ -1,10 +1,7 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import {
-  parseContextRead,
-  readExternalContext,
-} from "@brainervirus/workit-core/src/core/context-read";
-import { failure } from "@brainervirus/workit-core/src/core/task-contract";
+import { parseContextRead, readExternalContext } from "@workit-dev/core/src/core/context-read";
+import { failure } from "@workit-dev/core/src/core/task-contract";
 import type { NativeTool } from "./workit";
 
 export const createContextTool = (): NativeTool => ({

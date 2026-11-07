@@ -1,6 +1,6 @@
 /** Dual-artifact matrix lanes (docs/archive/opencode-v2/plan.md step 5b-6).
  *
- * One packed @brainervirus/workit-opencode artifact drives two lanes:
+ * One packed @workit-dev/opencode artifact drives two lanes:
  * - `v2-native`: pinned V2 image, native config (`plugins`), packed dist entry;
  * - `v2-v1`: pinned V2 image, V1-shaped config copy (`plugin` key), packed dist
  *   entry. Workit 3 retired the V1 `server()` entry, so there is no V1 lane.
@@ -32,7 +32,7 @@ import {
 } from "@/packages/workit-core/src/core/skill-manifests";
 
 const ENABLED = HARNESS_ENABLED;
-const OPENCODE = "@brainervirus/workit-opencode";
+const OPENCODE = "@workit-dev/opencode";
 
 const WORKIT_TOOL_NAMES = [
   "workit_task",

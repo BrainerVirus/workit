@@ -1,4 +1,4 @@
-import { invariantBootstrap } from "@brainervirus/workit-core/src/core";
+import { invariantBootstrap } from "@workit-dev/core/src/core";
 const marker = "<workit-contract>";
 
 let cached: string | null | undefined;

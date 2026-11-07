@@ -4,7 +4,7 @@ name: Release
 # red commit can never publish.
 # npm auth is trusted publishing (GitHub Actions OIDC): no npm token reaches
 # this workflow. npmjs.com trusts the CALLING workflow (ci.yml) for each
-# @brainervirus package; docs/agents/release.md lists the exact settings.
+# @workit-dev package; docs/agents/release.md lists the exact settings.
 on:
   workflow_call:
 
@@ -87,7 +87,7 @@ jobs:
           # in a workspace reinstalls it. After the verify-time rewrite the
           # adapters ask for ^<previous version>; on a major bump the
           # workspace no longer satisfies that, so npm installs the previous
-          # release into packages/*/node_modules/@brainervirus and the
+          # release into packages/*/node_modules/@workit-dev and the
           # prepare-time build bundles it (8.0.0 shipped 7.7.0's core).
           NPM_CONFIG_WORKSPACES_UPDATE: "false"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

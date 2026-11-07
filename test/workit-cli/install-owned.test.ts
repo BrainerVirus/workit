@@ -48,13 +48,10 @@ const write = (file: string, text: string, mode = 0o644) => {
   chmodSync(file, mode);
 };
 
-/** What `npm install --prefix <dir> @brainervirus/workit-cli@<v>` leaves: a package whose entry prints <v>. */
+/** What `npm install --prefix <dir> @workit-dev/cli@<v>` leaves: a package whose entry prints <v>. */
 const stagePackage = (prefixDir: string, version: string) => {
-  const pkg = path.join(prefixDir, "node_modules/@brainervirus/workit-cli");
-  write(
-    path.join(pkg, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cli", version }),
-  );
+  const pkg = path.join(prefixDir, "node_modules/@workit-dev/cli");
+  write(path.join(pkg, "package.json"), JSON.stringify({ name: "@workit-dev/cli", version }));
   write(path.join(pkg, "dist/index.js"), `console.log(${JSON.stringify(version)});\n`);
 };
 
@@ -66,7 +63,7 @@ const fakeNpm =
     const prefix = args[args.indexOf("--prefix") + 1];
     if (args[1] === "install") stagePackage(prefix, args.at(-1)!.split("@").at(-1)!);
     if (args[1] === "uninstall")
-      rmSync(path.join(prefix, "lib/node_modules/@brainervirus/workit-cli"), {
+      rmSync(path.join(prefix, "lib/node_modules/@workit-dev/cli"), {
         recursive: true,
         force: true,
       });
@@ -80,20 +77,14 @@ const fnmNode = (home: string, node: string, version: string) => {
   const prefix = path.join(home, ".local/share/fnm/node-versions", node, "installation");
   mkdirSync(path.join(prefix, "bin"), { recursive: true });
   symlinkSync(NODE, path.join(prefix, "bin/node"));
-  const pkg = path.join(prefix, "lib/node_modules/@brainervirus/workit-cli");
-  write(
-    path.join(pkg, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cli", version }),
-  );
+  const pkg = path.join(prefix, "lib/node_modules/@workit-dev/cli");
+  write(path.join(pkg, "package.json"), JSON.stringify({ name: "@workit-dev/cli", version }));
   write(
     path.join(pkg, "dist/index.js"),
     `#!/usr/bin/env node\nconsole.log(${JSON.stringify(version)});\n`,
     0o755,
   );
-  symlinkSync(
-    "../lib/node_modules/@brainervirus/workit-cli/dist/index.js",
-    path.join(prefix, "bin/workit"),
-  );
+  symlinkSync("../lib/node_modules/@workit-dev/cli/dist/index.js", path.join(prefix, "bin/workit"));
   return { prefix, bin: path.join(prefix, "bin"), pkg };
 };
 
@@ -256,7 +247,7 @@ test("Given the migration at a terminal and the answer y, Then each copy is back
       "--global",
       "--prefix",
       copy.prefix,
-      "@brainervirus/workit-cli",
+      "@workit-dev/cli",
     ]);
   const backups = path.join(report.backup, "cli-copies");
   const saved = readdirSync(backups).toSorted();
@@ -318,9 +309,7 @@ test("Given a non-TTY shell (no removeCopies seam), Then nothing is removed and 
   expect(text).toContain(
     `cp -R ${w.first.pkg} ${path.join(w.home, ".local/state/workit/upgrades")}`,
   );
-  expect(text).toContain(
-    `npm uninstall --global --prefix ${w.first.prefix} @brainervirus/workit-cli`,
-  );
+  expect(text).toContain(`npm uninstall --global --prefix ${w.first.prefix} @workit-dev/cli`);
   expect(w.calls.some((call) => call.includes("uninstall"))).toBe(false);
 });
 
@@ -356,13 +345,13 @@ const wrapperWorld = (wrapperText?: string) => {
       `#!/bin/sh\nexec "${path.join(fnm.bin, "node")}" "${path.join(fnm.bin, "workit")}" "$@"\n`,
     0o755,
   );
-  // The npx cache copy `npx -y @brainervirus/workit-cli@latest upgrade` runs.
+  // The npx cache copy `npx -y @workit-dev/cli@latest upgrade` runs.
   const npx = path.join(home, ".npm", "_npx", "4b6b", "node_modules");
   stagePackage(path.dirname(npx), "9.0.0");
   mkdirSync(path.join(npx, ".bin"), { recursive: true });
-  symlinkSync("../@brainervirus/workit-cli/dist/index.js", path.join(npx, ".bin", "workit"));
+  symlinkSync("../@workit-dev/cli/dist/index.js", path.join(npx, ".bin", "workit"));
   write(
-    path.join(npx, "@brainervirus/workit-cli/dist/index.js"),
+    path.join(npx, "@workit-dev/cli/dist/index.js"),
     `#!/usr/bin/env node\nconsole.log("9.0.0");\n`,
     0o755,
   );
@@ -411,15 +400,7 @@ test.skipIf(process.platform === "win32")(
     expect(asked[0]).toContain("Back up and remove the 2 other workit installs");
     expect(text).not.toContain("_npx");
     expect(w.calls.filter((call) => call.includes("uninstall"))).toEqual([
-      [
-        NODE,
-        "npm-cli.js",
-        "uninstall",
-        "--global",
-        "--prefix",
-        w.fnm.prefix,
-        "@brainervirus/workit-cli",
-      ],
+      [NODE, "npm-cli.js", "uninstall", "--global", "--prefix", w.fnm.prefix, "@workit-dev/cli"],
     ]);
     expect(existsSync(w.fnm.pkg)).toBe(false);
     const report = JSON.parse(text);
@@ -601,10 +582,10 @@ test("A host plugin launcher is only the plugin's bin/workit (workit.cmd on Wind
   const plugin = path.join(tempHome(), "plugin");
   write(
     path.join(plugin, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-claude-code", version: "8.0.0" }),
+    JSON.stringify({ name: "@workit-dev/claude-code", version: "8.0.0" }),
   );
   expect(hostLauncherOf(path.join(plugin, "bin", "workit"), "linux")).toEqual({
-    name: "@brainervirus/workit-claude-code",
+    name: "@workit-dev/claude-code",
     version: "8.0.0",
   });
   expect(hostLauncherOf(path.join(plugin, "bin", "workit.cmd"), "win32")?.version).toBe("8.0.0");

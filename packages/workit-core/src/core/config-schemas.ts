@@ -35,7 +35,7 @@ export const CONFIG_SCHEMA_FILES = [
 ] as const;
 export type ConfigSchemaFile = (typeof CONFIG_SCHEMA_FILES)[number];
 
-export const CONFIG_SCHEMA_BASE_URL = "https://unpkg.com/@brainervirus/workit-core/schemas/";
+export const CONFIG_SCHEMA_BASE_URL = "https://unpkg.com/@workit-dev/core/schemas/";
 
 /** The published URL of a config file's schema, what `"$schema"` points at. */
 export const configSchemaUrl = (file: ConfigSchemaFile): string =>

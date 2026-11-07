@@ -86,7 +86,7 @@ function makeFixture(): Fixture {
     `${JSON.stringify(
       {
         $schema: "https://opencode.ai/config.json",
-        plugin: ["@brainervirus/workit-opencode", "other-plugin"],
+        plugin: ["@workit-dev/opencode", "other-plugin"],
       },
       null,
       2,

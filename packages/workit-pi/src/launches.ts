@@ -8,7 +8,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveStore } from "@brainervirus/workit-core/src/store/paths";
+import { resolveStore } from "@workit-dev/core/src/store/paths";
 
 export type LaunchAttempt = {
   taskId: string;

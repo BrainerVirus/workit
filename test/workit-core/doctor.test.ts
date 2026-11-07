@@ -105,9 +105,9 @@ test("reports stale_install when a local-dist install is behind the current runt
   writeConfig(
     pluginPkg,
     JSON.stringify({
-      name: "@brainervirus/workit-cursor",
+      name: "@workit-dev/cursor",
       version: "0.3.0",
-      dependencies: { "@brainervirus/workit-core": "workspace:*" },
+      dependencies: { "@workit-dev/core": "workspace:*" },
     }),
   );
   // A local-dist install (node hook, no mcp.json selector) runs the installed
@@ -151,7 +151,7 @@ test("reports stale_install for a legacy exact npx pin in the plugin mcp.json", 
           args: [
             "-y",
             "--prefer-online",
-            "--package=@brainervirus/workit-cursor@0.8.5",
+            "--package=@workit-dev/cursor@0.8.5",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -198,9 +198,9 @@ test("reports stale_install when a same-version local-dist install runs differen
   writeConfig(
     pluginPkg,
     JSON.stringify({
-      name: "@brainervirus/workit-cursor",
+      name: "@workit-dev/cursor",
       version: "1.0.0",
-      dependencies: { "@brainervirus/workit-core": "workspace:*" },
+      dependencies: { "@workit-dev/core": "workspace:*" },
     }),
   );
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
@@ -290,7 +290,7 @@ test("canonical @latest install with an old plugin package.json version is not s
   // CA-01/CA-04: a canonical `@latest` install resolves fresh at launch, so the
   // installed package.json version is metadata — never a `stale_install` fail.
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.0.1" }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@workit-dev/cursor", version: "0.0.1" }));
   try {
     const report = run();
     expect(report.exitCode).toBe(0);
@@ -333,7 +333,7 @@ test("Given a dev checkout whose local-dist install is behind npm latest, When d
   writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
   // The dev checkout's workit-cursor is 1.0.0 (main is not synced); npm has 9.9.9.
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@workit-dev/cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -382,7 +382,7 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
   // The synced bytes keep a valid node launcher entry (shebang + syntax).
   writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: RUNTIME }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@workit-dev/cursor", version: RUNTIME }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -422,7 +422,7 @@ test("local-dist install behind the published runtime is stale_install fail when
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
   const originalHooks = readFileSync(hooksFile, "utf8");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: RUNTIME }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@workit-dev/cursor", version: RUNTIME }));
   // A local-dist install (node hook, no mcp.json selector) is the only shape
   // that consults the registry; the version seam keeps the probe spawn-free.
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
@@ -479,7 +479,7 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
   // The synced bytes keep a valid node launcher entry (shebang + syntax).
   writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: RUNTIME }));
+  writeConfig(pluginPkg, JSON.stringify({ name: "@workit-dev/cursor", version: RUNTIME }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -527,10 +527,10 @@ test("opencode @latest cache behind published runtime is stale_install fail", ()
     ".cache",
     "opencode",
     "packages",
-    "@brainervirus",
-    "workit-opencode@latest",
+    "@workit-dev",
+    "opencode@latest",
   );
-  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@workit-dev", "opencode");
   mkdirSync(pkgDir, { recursive: true });
   writeConfig(
     path.join(pkgDir, "package.json"),
@@ -564,7 +564,7 @@ test("opencode @latest cache behind published runtime is stale_install fail", ()
 
 test("opencode @latest cache matching published runtime passes", () => {
   const cacheRoot = path.join(fixture.root, "oc-cache-ok");
-  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@workit-dev", "opencode");
   mkdirSync(pkgDir, { recursive: true });
   writeConfig(
     path.join(pkgDir, "package.json"),
@@ -618,7 +618,7 @@ test("opencode exact version pin skips registry comparison", () => {
 
 test("opencode cache registry-unreachable yields warning, not stale_install", () => {
   const cacheRoot = path.join(fixture.root, "oc-cache-unreachable");
-  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@workit-dev", "opencode");
   mkdirSync(pkgDir, { recursive: true });
   writeConfig(
     path.join(pkgDir, "package.json"),
@@ -651,7 +651,7 @@ test("opencode cache registry-unreachable yields warning, not stale_install", ()
 
 test("cli host reports OpenCode @latest cache lag after cursor checks pass", () => {
   const cacheRoot = path.join(fixture.root, "oc-cache-cli");
-  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@workit-dev", "opencode");
   mkdirSync(pkgDir, { recursive: true });
   writeConfig(
     path.join(pkgDir, "package.json"),
@@ -719,7 +719,7 @@ test("detects a stale git+file workit pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugins: ["@brainervirus/workit-opencode@git+file:///legacy"],
+      plugins: ["@workit-dev/opencode@git+file:///legacy"],
     }),
   );
   const report = run();
@@ -778,7 +778,7 @@ test("cursor host never inspects the opencode config for stale pins", () => {
   writeConfig(
     fixture.opencodeConfig,
     JSON.stringify({
-      plugins: ["@brainervirus/workit-opencode@git+file:///legacy"],
+      plugins: ["@workit-dev/opencode@git+file:///legacy"],
     }),
   );
   try {
@@ -813,7 +813,7 @@ test("detects mixed core versions across adapters and clears once aligned", () =
         ...original,
         dependencies: {
           ...original.dependencies,
-          "@brainervirus/workit-core": "^0.3.0",
+          "@workit-dev/core": "^0.3.0",
         },
       }),
     );
@@ -973,7 +973,7 @@ test("cursor launcher syntax validation never executes valid plugin code", () =>
   // it node --check parses the ESM dist as CJS and the precondition is void.
   writeConfig(
     path.join(fixture.pluginDir, "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0", type: "module" }),
+    JSON.stringify({ name: "@workit-dev/cursor", version: "1.0.0", type: "module" }),
   );
   writeConfig(
     installed,
@@ -1046,7 +1046,7 @@ test(
             "-y",
             "--prefer-online",
             "--min-release-age=0",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@workit-dev/cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -1059,26 +1059,21 @@ test(
         [
           "-y",
           "--prefer-online",
-          "--package=@brainervirus/workit-cursor@0.8.5",
+          "--package=@workit-dev/cursor@0.8.5",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
       ],
       [
         "bare @latest without --prefer-online",
-        [
-          "-y",
-          "--package=@brainervirus/workit-cursor@latest",
-          "workit-cursor-mcp",
-          "${workspaceFolder}",
-        ],
+        ["-y", "--package=@workit-dev/cursor@latest", "workit-cursor-mcp", "${workspaceFolder}"],
       ],
       [
         "@latest-alpha",
         [
           "-y",
           "--prefer-online",
-          "--package=@brainervirus/workit-cursor@latest-alpha",
+          "--package=@workit-dev/cursor@latest-alpha",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -1088,7 +1083,7 @@ test(
         [
           "-y",
           "--prefer-online",
-          "--package=@brainervirus/workit-cursor@0.8.5-alpha",
+          "--package=@workit-dev/cursor@0.8.5-alpha",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -1098,26 +1093,21 @@ test(
         [
           "-y",
           "--prefer-online",
-          "--package=@brainervirus/workit-cursor@0.8.50",
+          "--package=@workit-dev/cursor@0.8.50",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
       ],
       [
         "missing ${workspaceFolder}",
-        [
-          "-y",
-          "--prefer-online",
-          "--package=@brainervirus/workit-cursor@latest",
-          "workit-cursor-mcp",
-        ],
+        ["-y", "--prefer-online", "--package=@workit-dev/cursor@latest", "workit-cursor-mcp"],
       ],
       [
         "extra args",
         [
           "-y",
           "--prefer-online",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@workit-dev/cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
           "extra",
@@ -1128,7 +1118,7 @@ test(
         [
           "-y",
           "--prefer-online",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@workit-dev/cursor@latest",
           "workit-cursor-mcp-foo",
           "${workspaceFolder}",
         ],
@@ -1137,7 +1127,7 @@ test(
         "wrong position: --prefer-online after --package",
         [
           "-y",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@workit-dev/cursor@latest",
           "--prefer-online",
           "workit-cursor-mcp",
           "${workspaceFolder}",
@@ -1179,33 +1169,33 @@ test(
     const hookVariants: Array<[string, string]> = [
       [
         "legacy npx @latest launcher",
-        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+        "npx -y --prefer-online --min-release-age=0 --package=@workit-dev/cursor@latest workit-cursor-session-start",
       ],
       [
         "exact pin @0.8.5",
-        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+        "npx -y --prefer-online --package=@workit-dev/cursor@0.8.5 workit-cursor-session-start",
       ],
       [
         "bare @latest without --prefer-online",
-        "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+        "npx -y --package=@workit-dev/cursor@latest workit-cursor-session-start",
       ],
       [
         "@latest-alpha",
-        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
+        "npx -y --prefer-online --package=@workit-dev/cursor@latest-alpha workit-cursor-session-start",
       ],
       [
         "@0.8.5-alpha",
-        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5-alpha workit-cursor-session-start",
+        "npx -y --prefer-online --package=@workit-dev/cursor@0.8.5-alpha workit-cursor-session-start",
       ],
       [
         "@0.8.50",
-        "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start",
+        "npx -y --prefer-online --package=@workit-dev/cursor@0.8.50 workit-cursor-session-start",
       ],
       [
         "extra-token",
-        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start extra",
+        "npx -y --prefer-online --package=@workit-dev/cursor@latest workit-cursor-session-start extra",
       ],
-      ["missing-executable", "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest"],
+      ["missing-executable", "npx -y --prefer-online --package=@workit-dev/cursor@latest"],
     ];
     try {
       for (const [label, command] of hookVariants) {
@@ -1313,7 +1303,7 @@ test("detects duplicate opencode registration and clears once deduplicated", () 
     fixture.opencodeConfig,
     JSON.stringify({
       plugins: [
-        "@brainervirus/workit-opencode@git+file:///legacy",
+        "@workit-dev/opencode@git+file:///legacy",
         `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`,
       ],
     }),
@@ -1517,17 +1507,14 @@ test("stale_pin fails fragile pnpm dlx file:// pins", () => {
     fixture.opencodeConfig,
     JSON.stringify({
       plugins: [
-        "file:///Users/me/Library/Caches/pnpm/dlx/abc/node_modules/@brainervirus/workit-opencode/dist/plugin.js",
+        "file:///Users/me/Library/Caches/pnpm/dlx/abc/node_modules/@workit-dev/opencode/dist/plugin.js",
       ],
     }),
   );
   const report = run();
   expect(check(report, "stale_pin").status).toBe("fail");
   expect(check(report, "stale_pin").detail).toContain("cache path");
-  writeConfig(
-    fixture.opencodeConfig,
-    JSON.stringify({ plugins: ["@brainervirus/workit-opencode"] }),
-  );
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugins: ["@workit-dev/opencode"] }));
   expect(check(run(), "stale_pin").status).toBe("pass");
 });
 
@@ -1668,7 +1655,7 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
         ...original,
         dependencies: {
           ...original.dependencies,
-          "@brainervirus/workit-core": "^0.3.0",
+          "@workit-dev/core": "^0.3.0",
         },
       }),
     );
@@ -1997,7 +1984,7 @@ test(
   () => {
     const opencodeCachePkg = path.join(
       fixture.home,
-      ".cache/opencode/packages/@brainervirus/workit-opencode@latest/node_modules/@brainervirus/workit-opencode/package.json",
+      ".cache/opencode/packages/@workit-dev/opencode@latest/node_modules/@workit-dev/opencode/package.json",
     );
     const fakeRoot = mkdtempSync(path.join(tmpdir(), "wk-doctor-workit-"));
     const pathWithout = (process.env.PATH ?? "")
@@ -2021,7 +2008,7 @@ test(
     try {
       writeConfig(
         opencodeCachePkg,
-        JSON.stringify({ name: "@brainervirus/workit-opencode", version: "9.2.0" }),
+        JSON.stringify({ name: "@workit-dev/opencode", version: "9.2.0" }),
       );
       const baseline = withFake("9.2.0");
       const current = check(baseline, "workit_on_path");
@@ -2035,8 +2022,8 @@ test(
       const stale = check(older, "workit_on_path");
       expect(stale.status).toBe("warn");
       expect(stale.detail).toContain("9.1.4");
-      expect(stale.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0 upgrade --cli");
-      expect(stale.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0");
+      expect(stale.fix).toContain("npx -y @workit-dev/cli@9.2.0 upgrade --cli");
+      expect(stale.fix).toContain("npx -y @workit-dev/cli@9.2.0");
       expect(older.exitCode).toBe(baseline.exitCode);
       expect(older.fixes.map((f) => f.id)).not.toContain("workit_on_path");
 
@@ -2044,7 +2031,7 @@ test(
       const absent = check(missing, "workit_on_path");
       expect(absent.status).toBe("warn");
       expect(absent.detail).toBe("no workit on PATH");
-      expect(absent.fix).toContain("npx -y @brainervirus/workit-cli@9.2.0 upgrade --cli");
+      expect(absent.fix).toContain("npx -y @workit-dev/cli@9.2.0 upgrade --cli");
       expect(missing.exitCode).toBe(baseline.exitCode);
 
       const broken = withScript("broken", win ? "exit /b 3" : "exit 3");
@@ -2069,7 +2056,7 @@ test("cursor_hook reports the local launcher mode and its probe latency", () => 
 
 // Assembled at runtime so the tracked-file selector scan (manifests.test.ts)
 // never trips on the fixture bytes.
-const PINNED = ["@brainervirus/workit-cursor@", "4.5.6"].join("");
+const PINNED = ["@workit-dev/cursor@", "4.5.6"].join("");
 
 test(
   "cursor_hook reports npx-pinned (probed offline) and missing modes as warnings",
@@ -2082,7 +2069,7 @@ test(
     rmSync(bundled);
     writeConfig(
       pluginPkg,
-      JSON.stringify({ name: "@brainervirus/workit-cursor", version: PINNED.split("@").pop() }),
+      JSON.stringify({ name: "@workit-dev/cursor", version: PINNED.split("@").pop() }),
     );
     // A spawnable npx stub per platform: a .cmd shim on Windows (the launcher
     // runs it through cmd.exe), a shell script elsewhere.
@@ -2175,7 +2162,7 @@ test("cursor_hook reports stale when a registered hook does not run the launcher
         beforeShellExecution: [
           {
             command:
-              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+              "npx -y --prefer-online --min-release-age=0 --package=@workit-dev/cursor@latest workit-cursor-hook",
             failClosed: true,
           },
         ],

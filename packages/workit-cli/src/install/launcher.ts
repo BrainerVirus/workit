@@ -2,7 +2,7 @@
 // as core/node-resolve.mjs (WORKIT_NODE, the node `workit setup`/`upgrade`
 // recorded, then the version-manager installs), never just whichever Node the
 // shell's version manager put first, and runs <install root>/current.
-import { STATE_DIR_SH } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
+import { STATE_DIR_SH } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { LAUNCHER_MARKER, entryOf } from "./paths";
 
 const FLOOR_MAJOR = 24;
@@ -19,7 +19,7 @@ export const launcherScript = (options: { root: string; installNode: string }): 
 root=${shSingle(options.root)}
 entry=${shSingle(entryOf(`${options.root}/current`))}
 if [ ! -f "$entry" ]; then
-  echo "workit: no current install under $root; reinstall with: npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes" >&2
+  echo "workit: no current install under $root; reinstall with: npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes" >&2
   exit 127
 fi
 vnum() {
