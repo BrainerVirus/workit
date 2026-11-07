@@ -610,7 +610,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `workit stack status` reads a parent whose PR squash-merged as landed (not `no_pr`), and `stack sync` retargets the child PR onto the trunk even when the stack was recorded without PR numbers.
-- `workit pr merge` refuses a PR whose base branch already landed (`base_landed`, with the retarget command), and `workit verify-delivery merge` reports delivered only when the change reached the trunk its base landed on (the #752 merge into a stale parent).
+- `workit pr merge` refuses a PR whose short-lived base (a stacked parent or a work branch) already landed and has not moved since (`base_landed`, with the retarget command), and `workit verify-delivery merge` reports delivered only when the change reached the trunk its base landed on (the #752 merge into a stale parent).
 - A closed output reader (`workit … | head -1`) no longer logs `uncaught_failure: write EPIPE` or prints a stack trace: the verb finishes quietly with its own exit code.
 - A heavy check whose workit process died keeps its machine lease while its command still runs, a recycled process group no longer holds a lease, and a nested check under an orphaned parent reuses the outer lease instead of queueing behind it.
 - Tests no longer fail by shard order on Windows: every test file runs isolated (its own env, cwd and globals), tracker reads in tests use an empty config instead of the machine's, and test repos skip git auto-maintenance.

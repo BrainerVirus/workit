@@ -480,10 +480,14 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   and removes a clean worktree that `workit fanout worktree create` made on
   it; a dirty one is kept and named. An explicit `--delete-branch` refuses a
   protected or base branch before merging. `stack land` never deletes.
-- `pr merge` refuses a PR whose base branch already landed in another branch
-  (a stacked parent squash-merged with `--keep-branch`): `base_landed`, exit 3,
+- `pr merge` refuses a PR whose short-lived base (a stacked parent or a work
+  branch such as `feature/` or `fix/`) already landed in another branch and has
+  not moved since (a parent squash-merged with `--keep-branch`): `base_landed`,
+  exit 3,
   with `workit pr edit --pr <n> --base <trunk>` as the unblock, so a child never
-  merges into a stale parent. `workit verify-delivery merge` on such a PR is
+  merges into a stale parent. Long-lived bases (the default target, develop,
+  staging, release/* and hotfix/*, protected or release-track branches) are never
+  judged. `workit verify-delivery merge` on such a PR is
   delivered only when the change reached that trunk (`merge_on_trunk`).
 - `pr merge` also reads the CI of the base branch's head (a protected target
   only). A failing check there refuses the merge (`base_red`, exit 3), naming
