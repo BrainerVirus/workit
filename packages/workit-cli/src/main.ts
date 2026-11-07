@@ -30,6 +30,7 @@ import {
   emit,
   fail,
   flushStreams,
+  ignoreBrokenPipes,
   ok,
   withFailureLine,
   type EnvelopeCode,
@@ -509,6 +510,7 @@ const unknown = (io: Io, command: string): number =>
   );
 
 if (import.meta.main) {
+  ignoreBrokenPipes();
   // The detached child update-check.ts starts: refresh the version cache, print nothing.
   if (process.env.WORKIT_UPDATE_REFRESH === "1") {
     (await import("./update-check")).refreshUpdateCache(process.env);
