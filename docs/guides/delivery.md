@@ -30,11 +30,11 @@ workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, 
 workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (per preset, below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
 workit git stage --patch <file|->                # stage selected hunks (a unified diff) in the index only
-workit git stage -- <paths> / workit git unstage -- <paths>   # whole paths in or out of the index
+workit git stage -- <paths> / workit git unstage -- <paths>   # whole paths in or out of the index (`git add` is an alias of `stage`)
 workit git commit --staged -m "fix: y"          # exactly the index, nothing added
 workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last commit; -F <file|-> reads the message
 workit git commit --allow-empty -m "chore: retrigger"
-workit git push [--set-upstream] [--force-with-lease]
+workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
 ```
 
@@ -401,7 +401,7 @@ workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
 workit pr threads                      # unresolved review threads, one line each with its id
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
-workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending
+workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
@@ -510,6 +510,14 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - `ci wait --timeout` bounds the whole command, from resolving the forge and
   checking the account to the last poll. A conflicting PR stops the wait at
   once (`blocked: conflicts`): CI does not run on it.
+- One `ci wait` per PR and head runs at a time. A wait records itself under
+  `<git common dir>/workit/ci-waits/` until it ends; a second `ci wait` on the
+  same PR and head while that one is live exits busy (4, `data.state:
+  in_flight`) naming the running wait, without polling. Wait for that one
+  instead of starting another. A wait whose process died, whose deadline
+  passed or that watches another head does not count. While a wait is live,
+  the Stop hook lets the session stop with a notice instead of asking for
+  another wait.
 - `pr status` and each `ci wait` poll record an open PR's checks summary
   (`passing`, `failing` or `pending`) at its head as a `pr.status` ledger row,
   only when it changed, and the PR's state once it is merged or closed (a

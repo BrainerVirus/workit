@@ -13,6 +13,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (retro 2026-11-07)
+
+- **Implementer confinement follows shell variables, loops and read-only
+  inline scripts** (#744). `W=<worktree>; workit git --cwd $W commit` and
+  `workit check --cwd $W …` are judged against the worktree, not the lead's
+  checkout. A plain `NAME=<literal>` set earlier in the same command,
+  `$(mktemp …)` (the path it prints) and a `for` over literal words resolve; a
+  loop or conditional untrusts only the names assigned inside its body. An
+  inline `python3 -c`/`node -e` script counts as a writer only when it names a
+  write, process or dynamic-code call, opens a file for writing, or its text
+  cannot be known. A variable Workit cannot resolve is denied by name, with
+  the command reprinted with the path spelled out for the retry. Writes into
+  the lead's checkout are still denied.
+- **Formatters skip the check lease, and a lease wait re-queues once** (#745).
+  `workit check --heavy -- <cmd>` runs a formatter (`oxfmt`, `prettier`,
+  `cargo fmt`, `bun run format`) or a linter whose every target is a file at
+  once and says why; the shell heavy gate leaves them alone on every host. At
+  its wait limit a heavy check keeps its queue place for one more limit and
+  prints the estimated wait, then fails with the exact retry command. `workit
+  fanout plan` warns when a wave has more full-suite slices than lease slots.
+- **Auto mode: a spawn missing its role args is denied with the exact Agent
+  args** (#746). Claude Code's auto mode refuses a spawn a hook rewrote, so a
+  spawn missing its role's `model`/`effort`, or one setting `isolation`, is
+  now denied once with the args to pass (`run_in_background` kept). Other
+  modes still fill them in. `workit fanout brief` gives a Claude Code lead
+  `SPAWN:` lines and a `checks:` line.
+- **Stop honours a live `ci wait`** (#748). The Stop hook no longer asks for a
+  `workit ci wait` while one for the same PR and head is already running; it
+  lets the stop through with a notice. A second `ci wait` on that PR and head
+  exits busy (4, `data.state: in_flight`) naming the running one, without
+  polling.
+
+### Added (retro 2026-11-07)
+
+- **CLI grammar aliases** (#743). `workit git add` is an alias of
+  `workit git stage`, and `workit git push [-u] origin <current branch>`
+  pushes like `workit git push` (another branch name is still refused).
+  `workit grant show` prints the workspace-remote note after the grant table.
+  A raw `pkill -f <pattern>` gets a nudge toward `pgrep -f '[p]attern'`,
+  never a deny.
+
+### Changed (retro 2026-11-07)
+
+- **Model evals run locally on the Claude Code subscription** (#749).
+  `bun scripts/eval/run.ts --model haiku --tier smoke` runs each case in
+  `evals/cases/` as a headless `claude -p` against this checkout, grades the
+  transcript's tool calls (never a model), caches results per case, model and
+  Workit version, and caps model runs with `--budget-runs` (default 3). The CI
+  `claude-eval.yml` workflow and the `claude plugin eval` suite are removed.
+  See [docs/agents/eval.md](docs/agents/eval.md).
+
 ### Added (config JSON Schemas)
 
 - `workspaces.json`, `config.json`, `vcs.json` and `youtrack.json` have JSON
