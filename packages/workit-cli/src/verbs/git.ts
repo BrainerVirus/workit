@@ -50,6 +50,7 @@ const STAGE_USAGE = "workit git stage --patch <file|-> | [--] <paths…> [--json
 const UNSTAGE_USAGE = "workit git unstage [--] <paths…> [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]] [--json]";
+const REBASE_USAGE = "workit git rebase [--onto <base>] [--json]";
 const USAGE = "workit git branch|commit|stage|unstage|push|rebase|trailers ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
@@ -585,6 +586,18 @@ function publishTagReleases(
   return success({ forgeReleases, notes });
 }
 
+function rebaseCommand(argv: string[], io: Io): number {
+  const flags = parseFlags(argv, { onto: "value" });
+  if (typeof flags === "string") return usage(io, flags, REBASE_USAGE);
+  if (flags.positionals.length)
+    return usage(
+      io,
+      `unexpected argument ${flags.positionals[0]} (workit rebases the current branch: --onto <base> picks another base)`,
+      REBASE_USAGE,
+    );
+  return rebase(flags.values.onto ?? null, io);
+}
+
 /**
  * `workit git trailers`: `on` or `off`, whether commits in this workspace
  * carry the Workit-Session trailer. The session hook's helper asks this.
@@ -620,7 +633,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sub === "stage") return stage(rest, io);
   if (sub === "unstage") return unstage(rest, io);
   if (sub === "push") return push(rest, io);
-  if (sub === "rebase") return rebase(rest, io);
+  if (sub === "rebase") return rebaseCommand(rest, io);
   if (sub === "trailers") return trailers(rest, io);
   return usage(
     io,

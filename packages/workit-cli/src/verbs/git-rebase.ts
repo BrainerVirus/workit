@@ -20,9 +20,7 @@ import {
 import { failure, success, type ForgeResult } from "@workit-dev/core/src/forge/types";
 import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import { emit, ok, type Io } from "../output";
-import { forgeFail, parseFlags, usage } from "./forge-common";
-
-const REBASE_USAGE = "workit git rebase [--onto <base>] [--json]";
+import { forgeFail } from "./forge-common";
 
 const short = (sha: string): string => sha.slice(0, 12);
 
@@ -196,16 +194,9 @@ function rebaseOnto(
   });
 }
 
-export function rebase(argv: string[], io: Io): number {
-  const flags = parseFlags(argv, { onto: "value" });
-  if (typeof flags === "string") return usage(io, flags, REBASE_USAGE);
-  if (flags.positionals.length)
-    return usage(
-      io,
-      `unexpected argument ${flags.positionals[0]} (workit rebases the current branch: --onto <base> picks another base)`,
-      REBASE_USAGE,
-    );
-  const result = rebaseOnto(io.cwd, io, flags.values.onto ?? null);
+/** `workit git rebase` once git.ts has parsed `--onto`. */
+export function rebase(onto: string | null, io: Io): number {
+  const result = rebaseOnto(io.cwd, io, onto);
   if (!result.ok) {
     const data =
       "conflicts" in result
