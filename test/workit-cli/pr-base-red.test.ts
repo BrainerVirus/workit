@@ -78,11 +78,14 @@ const baseChecks = (nodes: Node[] | null) =>
     },
   });
 
-/** A docs-only READY PR (lane none: no verdict needed) whose base checks are `nodes`. */
+const previousKey = `graphql branch-checks ${JSON.stringify({ owner: "o", name: "r", ref: "refs/heads/main~1" })}`;
+
+/** A docs-only READY PR (lane none: no verdict needed) whose base checks are `nodes`, and `previous` on the base commit before. */
 const setup = (
   nodes: Node[] | null,
   extra: Record<string, Reply> = {},
   status: string | null = null,
+  previous: Node[] | null = null,
 ) => {
   writeFileSync(
     path.join(configDir, "config.json"),
@@ -106,6 +109,9 @@ const setup = (
     "graphql status": () =>
       merged ? fixture("github/pr-merged.json") : (status ?? fixture("github/pr-passing.json")),
     "graphql branch-checks": baseChecks(nodes),
+    [previousKey]: baseChecks(previous),
+    "GET repos/o/r/branches/main~1": replyError("HTTP 404 Branch not found"),
+    "GET repos/o/r/rules/branches/main~1": "[]",
     ...extra,
     "PUT repos/o/r/pulls/12/merge": () => {
       merged = true;
@@ -155,6 +161,52 @@ test("given a base whose head CI failed, when merging, then it is refused as bas
   expect(result.json().unblock).toContain("--base-red-ok --reason");
   expect(merges(runner.calls)).toEqual([]);
   expect(rows(repo.cwd, "pr.merge.intent")).toEqual([]);
+});
+
+test("given main red in a job that passed on the previous main run, when merging, then the refusal says likely flaky and prints the exact rerun command", async () => {
+  const { repo, runner } = setup(
+    [checkRun("unit", "COMPLETED", "SUCCESS"), checkRun("fast checks", "COMPLETED", "FAILURE")],
+    {},
+    null,
+    [checkRun("unit", "COMPLETED", "SUCCESS"), checkRun("fast checks", "COMPLETED", "SUCCESS")],
+  );
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  const out = result.json();
+  expect(out.error).toContain(RUN_URL);
+  expect(out.error).toContain("likely flaky: CI / fast checks");
+  expect(out.error).not.toContain("is broken");
+  expect(out.unblock).toStartWith(
+    'workit ci rerun --ref main --check "CI / fast checks" --reason flake',
+  );
+  expect(out.data).toMatchObject({ reason: "base_red", baseRedCause: "flaky" });
+  expect(merges(runner.calls)).toEqual([]);
+});
+
+test("given main red in a job that also failed on the previous main run, when merging, then the refusal says main is broken and suggests no rerun", async () => {
+  const { repo, runner } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")], {}, null, [
+    checkRun("fast checks", "COMPLETED", "FAILURE"),
+  ]);
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  const out = result.json();
+  expect(out.error).toContain("main is broken: CI / fast checks");
+  expect(out.error).not.toContain("likely flaky");
+  expect(out.unblock).not.toContain("ci rerun");
+  expect(out.unblock).toContain("--base-red-ok --reason");
+  expect(out.data).toMatchObject({ reason: "base_red", baseRedCause: "broken" });
+  expect(merges(runner.calls)).toEqual([]);
+});
+
+test("given the previous main run cannot be read, when merging onto a red main, then the refusal says it cannot tell and keeps the generic rerun", async () => {
+  const { repo } = setup([checkRun("fast checks", "COMPLETED", "FAILURE")], {
+    [previousKey]: replyError("HTTP 502 bad gateway"),
+  });
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json().error).toContain("flake or not is unknown");
+  expect(result.json().unblock).toContain("workit ci rerun --ref main --failed --reason flake");
+  expect(result.json().data.baseRedCause).toBe("unknown");
 });
 
 test("given a base whose CI is still running, when merging, then it merges with a one-line note", async () => {
