@@ -3,7 +3,7 @@
 // recorded, then the version-manager installs), never just whichever Node the
 // shell's version manager put first, and runs <install root>/current.
 import { STATE_DIR_SH } from "@brainervirus/workit-core/src/core/workit-paths.mjs";
-import { LAUNCHER_MARKER, entryOf } from "./paths";
+import { CLI_PACKAGE_NAME, LAUNCHER_MARKER, entryOf } from "./paths";
 
 const FLOOR_MAJOR = 24;
 
@@ -14,12 +14,17 @@ const shSingle = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'
  * version >= 24); the PATH `node` when it is >= 24; the highest >= 24 under
  * fnm, nvm, volta, mise or asdf; last, the node that installed this version.
  */
-export const launcherScript = (options: { root: string; installNode: string }): string => `#!/bin/sh
+export const launcherScript = (options: {
+  root: string;
+  installNode: string;
+  /** The CLI package `current` holds (the new scope after the scope migration). */
+  name?: string;
+}): string => `#!/bin/sh
 # ${LAUNCHER_MARKER} 1: written by \`workit upgrade\`; runs the Workit-owned install.
 root=${shSingle(options.root)}
-entry=${shSingle(entryOf(`${options.root}/current`))}
+entry=${shSingle(entryOf(`${options.root}/current`, options.name))}
 if [ ! -f "$entry" ]; then
-  echo "workit: no current install under $root; reinstall with: npx -y @brainervirus/workit-cli@latest upgrade --cli --hosts=none --yes" >&2
+  echo "workit: no current install under $root; reinstall with: npx -y ${options.name ?? CLI_PACKAGE_NAME}@latest upgrade --cli --hosts=none --yes" >&2
   exit 127
 fi
 vnum() {
@@ -73,12 +78,16 @@ exec "$pick" "$entry" "$@"
  * The Windows launcher (a .cmd: no version-manager scan in batch). Order:
  * %WORKIT_NODE%, the node that installed this version, then the PATH `node`.
  */
-export const launcherCmd = (options: { root: string; installNode: string }): string =>
+export const launcherCmd = (options: {
+  root: string;
+  installNode: string;
+  name?: string;
+}): string =>
   [
     "@echo off",
     `rem ${LAUNCHER_MARKER} 1: written by workit upgrade; runs the Workit-owned install.`,
     "setlocal",
-    `set "WORKIT_ENTRY=${entryOf(`${options.root}\\current`).replaceAll("/", "\\")}"`,
+    `set "WORKIT_ENTRY=${entryOf(`${options.root}\\current`, options.name).replaceAll("/", "\\")}"`,
     'set "WORKIT_PICK="',
     'if defined WORKIT_NODE if exist "%WORKIT_NODE%" set "WORKIT_PICK=%WORKIT_NODE%"',
     `if not defined WORKIT_PICK if exist "${options.installNode}" set "WORKIT_PICK=${options.installNode}"`,

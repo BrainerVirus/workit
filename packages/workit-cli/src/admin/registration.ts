@@ -31,7 +31,7 @@ export function isWorkitPlugin(value: unknown): boolean {
   const s = String(value).replaceAll("\\", "/");
   const url = s.startsWith("file://") || s.startsWith("git+file://");
   const pkgPath =
-    /\/(?:packages\/workit-(?:opencode|cursor)|node_modules\/@brainervirus\/workit-(?:opencode|cursor))(?:\/|$)/.test(
+    /\/(?:packages\/workit-(?:opencode|cursor)|node_modules\/(?:@brainervirus\/workit-|@workit-dev\/)(?:opencode|cursor))(?:\/|$)/.test(
       s,
     );
   return (
@@ -39,6 +39,9 @@ export function isWorkitPlugin(value: unknown): boolean {
     named(s, "local/workit") ||
     named(s, "@brainervirus/workit-opencode") ||
     named(s, "@brainervirus/workit-cursor") ||
+    // The same packages on the new npm scope (`workit upgrade` migrates to it).
+    named(s, "@workit-dev/opencode") ||
+    named(s, "@workit-dev/cursor") ||
     (url && pkgPath)
   );
 }

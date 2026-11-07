@@ -42,7 +42,7 @@ export type CommandResult = {
 /** Where a command runs (OpenCode's plugin commands act on the cwd's location). */
 export type RunOptions = { cwd?: string };
 /** `ytrack`: the ytrack agent skill in each host's skills directory. */
-export type UpgradeHost = HostId | "cli" | "permissions" | "ytrack";
+export type UpgradeHost = HostId | "cli" | "permissions" | "ytrack" | "migrate scope";
 
 /** The last few lines of a command's stderr, for a failed row's reason. */
 export const stderrTail = (text: string | undefined, lines = 5): string =>
@@ -135,6 +135,8 @@ export type Source = {
   kind: "floating" | "pinned" | "local" | "repair";
   /** Codex: registered under the old marketplace name; the upgrade re-registers it. */
   migrate?: boolean;
+  /** The npm scope the registration names: the old `@brainervirus/workit-*` or the new `@workit-dev/*`. */
+  scope?: "legacy" | "new";
 };
 export type PlanEntry = {
   host: HostId;
@@ -148,6 +150,8 @@ export type PlanEntry = {
   repair?: boolean;
   installedVersion?: string;
   fix: string;
+  /** A move from the old npm scope to the new one (by package name, never by version). */
+  scope?: { from: string; to: string };
 };
 export type UpgradePlan = {
   ok: boolean;
@@ -170,7 +174,11 @@ export type UpgradePlan = {
     install: boolean;
     /** Other installs found (`which -a` style), each migrated after a y/N at a terminal. */
     copies: string[];
+    /** The package installed: set to the new scope's CLI when the run moves to it. */
+    package?: string;
   };
+  /** The new scope's CLI version this run moves to, when it moves anything. */
+  scope?: { version: string };
   migrations: { id: string; file: string; description: string }[];
   /** Advisories that do not block the upgrade (e.g. an OpenCode 1.x host). */
   warnings?: string[];
@@ -355,12 +363,16 @@ export function errorText(error: unknown): string {
 
 // Pi lists the configured source followed by its resolved package directory.
 // Confirm the package identity and version rather than accepting a source name alone.
-export const piInstalledVersion = (listing: string, selector: string): string | undefined => {
+export const piInstalledVersion = (
+  listing: string,
+  selector: string,
+  name = "@brainervirus/workit-pi",
+): string | undefined => {
   const lines = listing.split(/\r?\n/).map((line) => line.trim());
   const index = lines.indexOf(selector);
   if (index < 0 || !lines[index + 1] || !path.isAbsolute(lines[index + 1])) return undefined;
   const found = objectOrNull(path.join(lines[index + 1], "package.json"));
-  return found?.name === "@brainervirus/workit-pi" ? found.version : undefined;
+  return found?.name === name ? found.version : undefined;
 };
 
 export const versionAtLeast = (installed: string, latest: string): boolean => {

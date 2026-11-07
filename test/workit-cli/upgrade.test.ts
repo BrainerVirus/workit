@@ -54,7 +54,10 @@ const fixture = () => {
   );
   const run = (command: string, args: string[]) => {
     calls.push([command, ...args]);
-    if (command === "npm") return { status: 0, stdout: "2.1.0\n" };
+    if (command === "npm")
+      return args[1]?.startsWith("@workit-dev/")
+        ? { status: 1, stdout: "" }
+        : { status: 0, stdout: "2.1.0\n" };
     if (command === "pi" && args[0] === "update")
       writeFileSync(
         path.join(piRoot, "package.json"),

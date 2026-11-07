@@ -51,7 +51,9 @@ test("Given an old-form Cursor MCP entry, When upgrade repairs Cursor, Then mcp.
     });
     const sync = (command: string, args: string[]): CommandResult =>
       command === "npm" && args[0] === "view"
-        ? { status: 0, stdout: "2.0.0\n" }
+        ? args[1]?.startsWith("@workit-dev/")
+          ? { status: 1, stdout: "" }
+          : { status: 0, stdout: "2.0.0\n" }
         : { status: 0, stdout: "" };
     const deps = { home, run: sync, processes: () => [] };
     const plan = previewUpgrade(["cursor"], deps);
@@ -104,7 +106,9 @@ test("Given a failing Cursor install command, Then the row carries the stderr ta
       processes: () => [],
       run: (command: string, args: string[]): CommandResult =>
         command === "npm" && args[0] === "view"
-          ? { status: 0, stdout: "2.0.0\n" }
+          ? args[1]?.startsWith("@workit-dev/")
+            ? { status: 1, stdout: "" }
+            : { status: 0, stdout: "2.0.0\n" }
           : { status: 0, stdout: "" },
     };
     const plan = previewUpgrade(["cursor"], deps);
@@ -446,7 +450,8 @@ exit 0`,
       );
       const npmCli = script(
         path.join(home, "npm-lib/node_modules/npm/bin/npm-cli.js"),
-        'echo "2.0.0"',
+        // The new npm scope is not published in this world.
+        'case "$2" in @workit-dev/*) exit 1 ;; esac\necho "2.0.0"',
       );
       symlinkSync(npmCli, path.join(bin, "npm"));
       write(path.join(home, ".config/workit/config.json"), { locale: "en" });
