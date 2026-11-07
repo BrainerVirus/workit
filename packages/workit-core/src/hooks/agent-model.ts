@@ -1,11 +1,11 @@
 // Role models on a Claude Code subagent spawn (#420, #654): a spawn runs on
 // its role's model (and effort) from the role config. A model the spawn names
 // wins over a built-in default, and over a configured one only with
-// `models.allowLeadOverride`. A spawn that lacks its role's values is denied
-// once with the exact Agent args to pass, never rewritten: Claude Code's auto
-// mode refuses a call a hook rewrote through `updatedInput` (retro 2026-11-07
-// R1), and the spawn hook is not told the session's permission mode. A type
-// with no role, or a value the Agent tool cannot take, runs as written.
+// `models.allowLeadOverride`. A spawn that lacks its role's values is filled
+// through PreToolUse `updatedInput` with a note naming them for next time,
+// except under auto mode, which refuses a hook-rewritten call (retro
+// 2026-11-07 R1): there it is denied once with the exact Agent args to pass.
+// A type with no role, or a value the Agent tool cannot take, runs as written.
 // Before choosing, the hook reads this project's recent transcripts for a
 // usage limit (model-limit.ts, #655): a role whose list names a model of
 // another provider then runs on it, and the lead learns which worker to
@@ -34,28 +34,31 @@ const spawnArgsText = (input: Record<string, unknown>): string =>
     .map((key) => `${key}: ${JSON.stringify(input[key])}`)
     .join(", ");
 
-/** What an earlier gate changed on the spawn: the keys it removed and why. */
-export type SpawnChange = { dropped: string[]; reasons: string[] };
+/**
+ * What an earlier gate changed on the spawn: the keys it removed, why (for a
+ * deny) and the note for a rewrite.
+ */
+export type SpawnChange = { dropped: string[]; reasons: string[]; notes: string[] };
 
-const NO_CHANGE: SpawnChange = { dropped: [], reasons: [] };
+const NO_CHANGE: SpawnChange = { dropped: [], reasons: [], notes: [] };
 
 /**
  * One deny with the exact args of the spawn Workit would run, the same text
- * every time, so the lead retries once in any permission mode and the retry
- * passes as written.
+ * every time, so the lead retries once and the retry passes as written.
  */
 const respawn = (
   input: Record<string, unknown>,
-  change: SpawnChange,
+  reasons: string[],
+  dropped: string[],
   limits: string,
 ): HookDecision => {
   const args = spawnArgsText(input);
-  const without = change.dropped.length ? ` and no ${change.dropped.join(" or ")}` : "";
+  const without = dropped.length ? ` and no ${dropped.join(" or ")}` : "";
   return {
     kind: "deny",
     reason: [
       `workit spawn args: spawn again with exactly ${args} (description and prompt as written${without}).`,
-      ...change.reasons,
+      ...reasons,
       "Workit denies instead of rewriting the spawn: Claude Code's auto mode refuses a hook-rewritten spawn.",
       limits,
     ]
@@ -65,17 +68,45 @@ const respawn = (
   };
 };
 
+/** The exact values the lead's next spawn should pass (W2.21), so it runs as written. */
+const withNextSpawn = (text: string, input: Record<string, unknown>): string => {
+  if (text.includes("Next time pass")) return text;
+  const values = [
+    given(input.model) ? `model: ${String(input.model)}` : null,
+    given(input.effort) ? `effort: ${String(input.effort)}` : null,
+  ].filter(Boolean);
+  return values.length
+    ? `${text} Next time pass ${values.join(", ")} on the spawn, so it runs as written.`
+    : text;
+};
+
+export type SpawnOptions = {
+  env?: NodeJS.ProcessEnv;
+  /** What the spawn gate already changed (isolation). */
+  change?: SpawnChange;
+  /** The session's permission mode (Claude Code `permission_mode`). */
+  permissionMode?: string | null;
+};
+
+/**
+ * A spawn missing its role's model or effort: under auto mode a deny naming
+ * the exact args (retro 2026-11-07 R1: auto mode refuses an `updatedInput`
+ * rewrite), in any other mode an `updatedInput` fill with a note naming them.
+ */
 export const agentModelDecision = (
   cwd: string,
   tool: Record<string, unknown>,
-  env: NodeJS.ProcessEnv = process.env,
-  change: SpawnChange = NO_CHANGE,
+  options: SpawnOptions = {},
 ): HookDecision => {
+  const env = options.env ?? process.env;
+  const change = options.change ?? NO_CHANGE;
+  const auto = options.permissionMode === "auto";
   const limits = scanClaudeTranscripts(cwd, env).join("\n");
   const changed = change.dropped.length > 0;
   const asWritten = (note: string | null): HookDecision => {
-    if (changed) return respawn(tool, change, limits);
-    const text = [note, limits].filter(Boolean).join("\n");
+    if (changed && auto) return respawn(tool, change.reasons, change.dropped, limits);
+    const text = [...change.notes, note, limits].filter(Boolean).join("\n");
+    if (changed) return { kind: "update-input", input: tool, text };
     return text ? { kind: "context", text } : { kind: "none" };
   };
   // The host fixes the model itself: nothing to fill, and `model` is not in its schema.
@@ -92,19 +123,27 @@ export const agentModelDecision = (
     input.effort === tool.effort ? null : `effort ${String(input.effort)}`,
   ].filter(Boolean);
   if (!needs.length) return asWritten(choice.note);
+  if (!auto) {
+    const note =
+      choice.note ??
+      `Workit set effort ${String(input.effort)} on this spawn: its role's configured effort.`;
+    return {
+      kind: "update-input",
+      input,
+      text: [...change.notes, withNextSpawn(note, input), limits].filter(Boolean).join("\n"),
+    };
+  }
   const replaced = given(tool.model) && input.model !== tool.model;
   return respawn(
     input,
-    {
-      dropped: change.dropped,
-      reasons: [
-        ...change.reasons,
-        `It needs ${needs.join(" and ")}: ${choice.basis ?? "its role"}.`,
-        replaced
-          ? `That replaces model ${String(tool.model)}: a configured role model wins unless "allowLeadOverride": true is set under models in workspaces.json.`
-          : "",
-      ].filter(Boolean),
-    },
+    [
+      ...change.reasons,
+      `It needs ${needs.join(" and ")}: ${choice.basis ?? "its role"}.`,
+      replaced
+        ? `That replaces model ${String(tool.model)}: a configured role model wins unless "allowLeadOverride": true is set under models in workspaces.json.`
+        : "",
+    ].filter(Boolean),
+    change.dropped,
     limits,
   );
 };

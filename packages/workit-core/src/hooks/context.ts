@@ -284,7 +284,7 @@ export const sessionContextText = (
     const listed = store.listTaskIndex();
     // Hooks never migrate (hot path, possibly a live 2.x writer): say how.
     if (migrationPending(listed))
-      return `<workit-contract>\n${invariantBootstrap()}\n${MIGRATION_PENDING_NOTE}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
+      return `<workit-contract>\n${invariantBootstrap({ cwd: input.cwd, host: input.host })}\n${MIGRATION_PENDING_NOTE}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
     if (!listed.ok) throw new Error(listed.error);
     const entry =
       currentTaskEntry(listed.data, session, descriptor.context.task) ??
@@ -300,7 +300,7 @@ export const sessionContextText = (
   } catch {
     compact = "\n[workit diagnostic: task state unavailable]";
   }
-  return `<workit-contract>\n${invariantBootstrap()}${compact}${offer ? `\n${offer}` : ""}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
+  return `<workit-contract>\n${invariantBootstrap({ cwd: input.cwd, host: input.host })}${compact}${offer ? `\n${offer}` : ""}${options.addendum ? `\n${options.addendum}` : ""}\n</workit-contract>`;
 };
 
 /** The checkout holding `cwd` and its branch, read from the git dir (no spawn). */

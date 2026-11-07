@@ -449,37 +449,30 @@ export const claudeSpawnArgs = (
 /** Claude Code's spawn for each role: its agent type, or the prompt line that selects it. */
 const CLAUDE_SPAWNS: Array<{ label: string; selector: RoleSelector }> = [
   ...(["hard", "standard", "mundane"] as const).map((tier) => ({
-    label: `workit:implementer TIER: ${tier}`,
+    label: tier === "hard" ? "workit:implementer hard" : tier,
     selector: { role: "implementer" as const, tier },
   })),
   { label: "workit:verifier", selector: { role: "verifier" } },
   { label: "workit:reviewer", selector: { role: "reviewer" } },
   { label: "Explore", selector: { role: "explore" } },
-  {
-    label: "general-purpose with a ROLE: decider line",
-    selector: { role: "decider" },
-  },
-  {
-    label: "general-purpose with a ROLE: babysit line",
-    selector: { role: "babysit" },
-  },
+  { label: "ROLE: decider", selector: { role: "decider" } },
+  { label: "ROLE: babysit", selector: { role: "babysit" } },
   { label: "general-purpose", selector: { role: "default" } },
 ];
 
 /**
- * One line naming the exact `model` and `effort` of every Claude Code agent
- * type Workit assigns a role, so the lead's first spawn needs no correction
- * (retro 2026-11-07 R1). Null when no role has a model.
+ * One line naming the `model`/`effort` of every Claude Code agent type
+ * Workit assigns a role (a `ROLE:` prompt line on general-purpose), so the
+ * lead's first spawn needs no correction (retro 2026-11-07 R1). Null when no
+ * role has a model.
  */
 export const claudeSpawnTable = (cwd: string, dir?: string): string | null => {
   const rows = CLAUDE_SPAWNS.flatMap(({ label, selector }) => {
     const args = claudeSpawnArgs(cwd, selector, dir);
-    return args
-      ? [`${label} model ${args.model}${args.effort ? ` effort ${args.effort}` : ""}`]
-      : [];
+    return args ? [`${label} ${args.model}${args.effort ? `/${args.effort}` : ""}`] : [];
   });
   return rows.length
-    ? `Agent spawn args (pass these on the first spawn, and run_in_background: true for a worker; a spawn missing them is denied once with the exact args): ${rows.join("; ")}. A workit:implementer prompt is the text of \`workit fanout brief <slice>\` (after \`workit fanout worktree create <slice>\`), even for one slice.`
+    ? `Agent spawn model/effort (pass them, workers with run_in_background: true): ${rows.join(", ")}. Implementer prompt: \`workit fanout brief <slice>\` after \`workit fanout worktree create <slice>\`, even for one slice.`
     : null;
 };
 

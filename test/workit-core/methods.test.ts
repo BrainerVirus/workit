@@ -543,21 +543,13 @@ test("Given a SessionStart in a workspace with models.roles, When the contract r
       }),
     );
     const contract = invariantBootstrap({ cwd, host: "claude_code" });
-    const lines = contract.split("\n").filter((line) => line.startsWith("Agent spawn args"));
+    const lines = contract
+      .split("\n")
+      .filter((line) => line.startsWith("Agent spawn model/effort"));
     expect(lines).toHaveLength(1);
-    const [line] = lines;
-    for (const row of [
-      "workit:implementer TIER: hard model opus effort high",
-      "workit:implementer TIER: standard model sonnet",
-      "workit:implementer TIER: mundane model haiku",
-      "workit:verifier model sonnet effort medium",
-      "workit:reviewer model opus",
-      "Explore model haiku",
-      "general-purpose with a ROLE: decider line model fable effort high",
-    ])
-      expect(line, row).toContain(row);
-    expect(line).toContain("run_in_background: true");
-    expect(line).toContain("`workit fanout brief <slice>`");
+    expect(lines[0]).toBe(
+      "Agent spawn model/effort (pass them, workers with run_in_background: true): workit:implementer hard opus/high, standard sonnet, mundane haiku, workit:verifier sonnet/medium, workit:reviewer opus, Explore haiku, ROLE: decider fable/high, ROLE: babysit haiku. Implementer prompt: `workit fanout brief <slice>` after `workit fanout worktree create <slice>`, even for one slice.",
+    );
     expect(contract.startsWith(invariantBootstrap())).toBe(true);
     for (const host of ["codex_cli", "opencode", "cursor", "pi"])
       expect(invariantBootstrap({ cwd, host }), host).toBe(invariantBootstrap());
