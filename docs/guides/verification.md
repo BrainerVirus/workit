@@ -64,7 +64,8 @@ workit check --heavy -- npx jest     # an ad-hoc heavy command
 workit lock status                   # who holds the lease, who waits, which holder looks stuck?
 workit lock reap                     # free a stuck? holder's slot (or: workit lock reap <pid|session|dir>)
 workit lock cancel                   # drop this session's queued checks (or: <pid|session|dir>)
-workit lock wait --timeout 300       # wait for a free slot without taking it
+workit lock wait                     # wait for a free slot without taking it (re-queues once at resources.wait)
+workit lock wait --timeout 300       # the same, with one hard bound
 workit check test --no-lease --reason "machine idle, bisecting a hang"
 workit check test --wait 45m         # a queued check waits its turn (default 30 min); --no-wait exits 4 at once
 ```
@@ -73,6 +74,12 @@ The shell hook catches the raw form, after every other Workit gate (branch
 policy, raw git, the before-write and live-session gates) passed on it. Those
 gates also judge what `workit check … -- <cmd>` runs, so wrapping a command
 never gets it past them.
+
+A freed slot wakes the queue at once: a release ends every waiter's poll
+sleep, and each waiter takes the lowest free slot its own workspace's
+`resources.slots` allows, so a waiter limited to fewer slots never holds back
+one that can use the free slot. A holder killed outright is reclaimed on the
+next poll.
 
 - **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
   build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
