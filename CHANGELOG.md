@@ -504,6 +504,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit fanout brief <slice> --host <host>` renders the brief for the worker's host (model lines, attribution); with WORKIT_HOST unset, `cli` or misspelled, a warning names the valid hosts (#292).
 - `workit pr merge --allow-failing <check> --reason <why>` merges past a failing optional check (never a required one), recording a `merge.waived` row (#269).
 - `workit stack land --allow-failing <check> --reason <why>` lets a failing optional check through on each PR it lands (one waiver row per PR), and stack land re-reads a PR whose mergeability is still being computed, through the same gate as `workit pr merge`.
+- `workit git rebase [--onto <base>]` updates the current branch onto its freshly fetched base, aborts cleanly on a conflict and names the paths, records the rewrite and prints the `workit git push --force-with-lease` next step; the ship skill uses it instead of a raw rebase.
 
 ### Changed
 
