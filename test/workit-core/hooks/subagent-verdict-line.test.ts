@@ -2,7 +2,8 @@
 // command, so its first step is the verdict, not `workit ledger verdict --help`.
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { appendObserved } from "@/packages/workit-core/src/ledger";
 import { sessionClaimRefusal } from "@/packages/workit-core/src/host-session";
@@ -105,6 +106,29 @@ test("Given a verifier and a reviewer spawned on Codex, When they start, Then th
     'workit ledger verdict <verified|failed|blocked> --kind review --branch feature/x --how "<what you ran and saw>"',
   );
   expect(codex(root, "workit-verifier", "agent-3")).not.toMatch(/--token|--session/u);
+});
+
+test("Given a repo whose configured checks are test and lint, When a verifier or reviewer starts on Claude Code or Codex, Then its context names `workit check test` and `workit check lint`", () => {
+  const root = repo();
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ scripts: { test: "x", lint: "y", check: "z" } }),
+  );
+  for (const text of [
+    claude(root, "workit:verifier", "agent-1"),
+    claude(root, "workit:reviewer", "agent-2"),
+    codex(root, "workit-verifier", "agent-3"),
+  ]) {
+    expect(text).toContain("`workit check test`");
+    expect(text).toContain("`workit check lint`");
+    expect(text).not.toContain("`workit check check`");
+    expect(text).toContain("or cite green CI on the head");
+  }
+  expect(claude(root, "workit:implementer", "agent-4")).not.toContain("`workit check test`");
+});
+
+test("Given a repo with no configured checks, When a verifier starts, Then its context names no check to run", () => {
+  expect(claude(repo(), "workit:verifier")).not.toContain("configured check");
 });
 
 test("Given SubagentStart fired again for an id already issued, When the judge starts, Then it gets no command (one without the token is refused) and is told to spawn a fresh verifier", () => {
