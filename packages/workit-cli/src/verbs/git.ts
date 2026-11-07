@@ -36,6 +36,8 @@ import {
   releaseNotesForTag,
   type ReleaseNotesDecision,
 } from "@brainervirus/workit-core/src/git/release";
+import { currentBranch, pushRemoteName } from "@brainervirus/workit-core/src/git/rev";
+import { findSubcommand, findVerb } from "./registry";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 import { success, type ForgeResult } from "@brainervirus/workit-core/src/forge/types";
@@ -368,12 +370,17 @@ async function push(
       );
     return releasePush(release, io, options);
   }
-  if (flags.positionals.length)
-    return usage(
-      io,
-      `unexpected argument ${flags.positionals[0]} (workit pushes the current branch)`,
-      PUSH_USAGE,
-    );
+  const named = flags.positionals;
+  if (named.length) {
+    const onBranch = currentBranch(io.cwd);
+    const remote = pushRemoteName(io.cwd, onBranch);
+    if (named.length !== 2 || named[0] !== remote || named[1] !== onBranch)
+      return usage(
+        io,
+        `unexpected argument ${named[0]} (workit pushes the current branch to its push remote: workit git push [-u])`,
+        PUSH_USAGE,
+      );
+  }
   const expect = flags.values.expect ?? null;
   if (
     (expect !== null || flags.booleans.has("overwrite-unintegrated")) &&
@@ -600,7 +607,9 @@ export async function runFinishPush(argv: string[], io: Io): Promise<number> {
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  const [sub, ...rest] = argv;
+  const [word, ...rest] = argv;
+  const git = findVerb("git");
+  const sub = word !== undefined && git ? (findSubcommand(git, word)?.name ?? word) : word;
   if (sub !== undefined && READ_ONLY.has(sub))
     return usage(
       io,

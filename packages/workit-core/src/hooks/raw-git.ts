@@ -1932,6 +1932,20 @@ const unseenNudges = (input: HookInput, nudges: Map<string, string>, store: stri
   return fresh.map((kind) => nudges.get(kind) as string);
 };
 
+/** `pkill -f` matches the full command lines, its own shell's included. */
+const pkillSelfMatch = (command: string, dialect: ShellDialect): string | null => {
+  for (const words of commandLines(command, dialect)) {
+    if (words[0]?.split("/").pop() !== "pkill") continue;
+    const args = words.slice(1);
+    if (!args.some((arg) => arg === "--full" || /^-[A-Za-z]*f[A-Za-z]*$/.test(arg))) continue;
+    const pattern = args.find((arg) => !arg.startsWith("-"));
+    if (!pattern || /\[[^\]]\]/.test(pattern)) continue;
+    const bracketed = pattern.replace(/[A-Za-z0-9]/, (char) => `[${char}]`);
+    return `workit: ${quote(`pkill -f ${pattern}`)} also matches the shell running it and kills it (exit 144). List with ${quote(`pgrep -f '${bracketed}'`)} and kill those pids, or ${quote(`pkill -f '${bracketed}'`)}: a bracketed first character no longer matches this command line.`;
+  }
+  return null;
+};
+
 /**
  * The pre-tool decision for a shell command: deny a gate bypass inside a
  * Workit workspace, else a nudge (as context) for routine raw delivery
@@ -1973,10 +1987,13 @@ export function rawGitPre(
       const nudge = nudgeFor(action, input.host, input.session.id);
       if (nudge && !nudges.has(nudgeKind(action))) nudges.set(nudgeKind(action), nudge);
     }
-    if (options.nudge === false || !store || nudges.size === 0) return NONE;
-    if (workitInvocations(command, dialect).length > 0) return NONE;
+    const pkill = options.nudge === false ? null : pkillSelfMatch(command, dialect);
+    const pkillNote: HookDecision = pkill ? { kind: "context", text: pkill } : NONE;
+    if (options.nudge === false || !store || nudges.size === 0) return pkillNote;
+    if (workitInvocations(command, dialect).length > 0) return pkillNote;
     const shown = unseenNudges(input, nudges, store);
-    return shown.length ? { kind: "context", text: shown.join("\n") } : NONE;
+    const texts = [...shown, ...(pkill ? [pkill] : [])];
+    return texts.length ? { kind: "context", text: texts.join("\n") } : NONE;
   } catch (error) {
     return error instanceof ShellAnalysisError ? analysisDenial(error) : NONE;
   }
