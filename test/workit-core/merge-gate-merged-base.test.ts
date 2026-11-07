@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import {
+  landedBaseGuard,
   landedBranch,
-  mergedBaseGate,
 } from "@/packages/workit-core/src/forge/merge-gate-merged-base";
 import type { ResolvedForge } from "@/packages/workit-core/src/forge/resolve";
 import {
@@ -55,6 +55,12 @@ const resolvedWith = (prs: Pr[], baseTips: Record<string, string>, broken = fals
     },
   }) as unknown as ResolvedForge;
 
+/** What `pr merge` sees: its first read of PR `number` through the guard. */
+const gate = (resolved: ResolvedForge, number: number) => {
+  const guard = landedBaseGuard(resolved.forge, resolved);
+  return { read: guard.forge.prStatus(number), refusal: guard.refusal() };
+};
+
 const A_MERGED: Pr = { number: 11, branch: "feature/a", base: "main", state: "merged", head: "a1" };
 const B_OPEN: Pr = {
   number: 12,
@@ -65,11 +71,8 @@ const B_OPEN: Pr = {
 };
 
 test("Given feature/a squash-merged into main at a1 and still at a1, When PR 12 into feature/a is gated, Then it is refused as base_landed with the retarget command", () => {
-  const refusal = mergedBaseGate(
-    "/nonexistent",
-    resolvedWith([A_MERGED, B_OPEN], { "feature/a": "a1" }),
-    12,
-  );
+  const { read, refusal } = gate(resolvedWith([A_MERGED, B_OPEN], { "feature/a": "a1" }), 12);
+  expect(read).toMatchObject({ ok: false, code: "blocked" });
   expect(refusal?.data).toEqual({
     reason: "base_landed",
     pr: 12,
@@ -81,9 +84,7 @@ test("Given feature/a squash-merged into main at a1 and still at a1, When PR 12 
 });
 
 test("Given feature/a moved to a2 after its PR merged at a1, When PR 12 is gated, Then the base is live and nothing is refused", () => {
-  expect(
-    mergedBaseGate("/nonexistent", resolvedWith([A_MERGED, B_OPEN], { "feature/a": "a2" }), 12),
-  ).toBeNull();
+  expect(gate(resolvedWith([A_MERGED, B_OPEN], { "feature/a": "a2" }), 12).refusal).toBeNull();
 });
 
 test("Given feature/a has a newer open PR besides the merged one, When it is read, Then it has not landed", () => {
@@ -100,17 +101,11 @@ test("Given develop merged into main through a PR, When a PR into develop is gat
     state: "open",
     head: "x1",
   };
-  expect(
-    mergedBaseGate("/nonexistent", resolvedWith([release, feature], { develop: "d1" }), 21),
-  ).toBeNull();
+  expect(gate(resolvedWith([release, feature], { develop: "d1" }), 21).refusal).toBeNull();
 });
 
 test("Given the PR lookup fails, When PR 12 is gated, Then the gate does not refuse (the merge gate reads the PR again)", () => {
   expect(
-    mergedBaseGate(
-      "/nonexistent",
-      resolvedWith([A_MERGED, B_OPEN], { "feature/a": "a1" }, true),
-      12,
-    ),
+    gate(resolvedWith([A_MERGED, B_OPEN], { "feature/a": "a1" }, true), 12).refusal,
   ).toBeNull();
 });

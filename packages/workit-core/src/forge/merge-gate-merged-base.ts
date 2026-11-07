@@ -1,7 +1,6 @@
 import { isProtectedBranch } from "../core/repo-context";
-import { selectPr } from "./report";
 import type { ResolvedForge } from "./resolve";
-import { success, type ForgeResult } from "./types";
+import { failure, success, type Forge, type ForgePrStatus, type ForgeResult } from "./types";
 
 /** A branch that already landed on another branch through its own PR/MR. */
 export type LandedBranch = {
@@ -54,36 +53,54 @@ export type MergedBaseRefusal = {
  * `pr merge` must not merge into a base that already landed and has not
  * moved since (#752): the change would stay on a dead branch and never reach
  * the trunk. A base with commits after its PR merged is a live branch and
- * passes. A read that fails never refuses (the merge gate reads the PR again).
+ * passes. A read that fails never refuses (the merge gate goes on as before).
  */
 export function mergedBaseGate(
-  cwd: string,
   resolved: ResolvedForge,
-  pr: number | null,
+  status: ForgePrStatus,
 ): MergedBaseRefusal | null {
+  if (status.state !== "open") return null;
+  let landed: ForgeResult<LandedBranch | null>;
   try {
-    const number = selectPr(cwd, resolved, { pr, branch: null });
-    if (!number.ok) return null;
-    const status = resolved.forge.prStatus(number.data);
-    if (!status.ok || status.data.state !== "open") return null;
-    const landed = landedBranch(resolved, status.data.base);
-    if (!landed.ok || !landed.data) return null;
-    if (status.data.baseSha !== null && status.data.baseSha !== landed.data.head) return null;
-    const noun = resolved.forge.kind === "github" ? "PR #" : "MR !";
-    const { base } = status.data;
-    const trunk = landed.data.into;
-    return {
-      error: `base_landed: ${base} already landed on ${trunk} (${noun}${landed.data.pr}); merging ${noun}${number.data} into ${base} would leave its change off ${trunk}`,
-      unblock: `workit pr edit --pr ${number.data} --base ${trunk}  # retarget it onto ${trunk} (in a workit stack: workit stack sync restacks and retargets it), then workit pr merge --pr ${number.data} once CI is green`,
-      data: {
-        reason: "base_landed",
-        pr: number.data,
-        base,
-        landedOn: trunk,
-        landedPr: landed.data.pr,
-      },
-    };
+    landed = landedBranch(resolved, status.base);
   } catch {
     return null;
   }
+  if (!landed.ok || !landed.data) return null;
+  if (status.baseSha !== null && status.baseSha !== landed.data.head) return null;
+  const noun = resolved.forge.kind === "github" ? "PR #" : "MR !";
+  const { base, number } = status;
+  const trunk = landed.data.into;
+  return {
+    error: `base_landed: ${base} already landed on ${trunk} (${noun}${landed.data.pr}); merging ${noun}${number} into ${base} would leave its change off ${trunk}`,
+    unblock: `workit pr edit --pr ${number} --base ${trunk}  # retarget it onto ${trunk} (in a workit stack: workit stack sync restacks and retargets it), then workit pr merge --pr ${number} once CI is green`,
+    data: { reason: "base_landed", pr: number, base, landedOn: trunk, landedPr: landed.data.pr },
+  };
+}
+
+/**
+ * \`forge\` as \`pr merge\` reads it: the first open PR it reads is judged by
+ * \`mergedBaseGate\` on that same read (no extra PR read), and a refusal is
+ * returned as a \`blocked\` read, so nothing merges; \`refusal\` keeps it for
+ * the envelope.
+ */
+export function landedBaseGuard(
+  forge: Forge,
+  resolved: ResolvedForge,
+): { forge: Forge; refusal: () => MergedBaseRefusal | null } {
+  let judged = false;
+  let refusal: MergedBaseRefusal | null = null;
+  return {
+    refusal: () => refusal,
+    forge: {
+      ...forge,
+      prStatus(number) {
+        const status = forge.prStatus(number);
+        if (judged || !status.ok || status.data.state !== "open") return status;
+        judged = true;
+        refusal = mergedBaseGate(resolved, status.data);
+        return refusal ? failure("blocked", refusal.error, refusal.unblock) : status;
+      },
+    },
+  };
 }

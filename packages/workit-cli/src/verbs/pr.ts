@@ -42,7 +42,7 @@ import {
   type CreateOutcome,
 } from "@workit-dev/core/src/forge/pr-ops";
 import { mergeGateForge, prStatusReport } from "@workit-dev/core/src/forge/report";
-import { mergedBaseGate } from "@workit-dev/core/src/forge/merge-gate-merged-base";
+import { landedBaseGuard } from "@workit-dev/core/src/forge/merge-gate-merged-base";
 import type { MergeMethod } from "@workit-dev/core/src/forge/types";
 import { currentBranch, GIT_TIMEOUTS, headSha } from "@workit-dev/core/src/git/rev";
 import { configDir } from "@workit-dev/core/src/core/config";
@@ -1132,12 +1132,6 @@ async function merge(argv: string[], io: Io): Promise<number> {
   );
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
-  const landedBase = mergedBaseGate(io.cwd, connected.data, pr);
-  if (landedBase)
-    return emit(
-      io,
-      fail("blocked", landedBase.error, { unblock: landedBase.unblock, data: landedBase.data }),
-    );
   const actor = actorFromEnv(io.env);
   const gated = {
     ...connected.data,
@@ -1149,12 +1143,13 @@ async function merge(argv: string[], io: Io): Promise<number> {
       actor,
     }),
   };
+  const landedBase = landedBaseGuard(gated.forge, connected.data);
   const result = await progressFor(io).run(
     `Merging PR #${pr}`,
     () =>
       mergePullRequest(
         io.cwd,
-        gated,
+        { ...gated, forge: landedBase.forge },
         {
           pr,
           method,
@@ -1182,11 +1177,13 @@ async function merge(argv: string[], io: Io): Promise<number> {
         unblock: forgeBusy
           ? `the forge is still computing mergeability; wait a minute, then workit pr merge${pr ? ` --pr ${pr}` : ""} again (workit pr status shows when it settles)`
           : result.unblock,
-        data: refusal
-          ? { ...refusal, ...(forgeBusy ? { babysit: "wait-forge" } : {}) }
-          : "recorded" in result && result.recorded
-            ? { recorded: result.recorded }
-            : waiverReason(result.error),
+        data:
+          landedBase.refusal()?.data ??
+          (refusal
+            ? { ...refusal, ...(forgeBusy ? { babysit: "wait-forge" } : {}) }
+            : "recorded" in result && result.recorded
+              ? { recorded: result.recorded }
+              : waiverReason(result.error)),
       }),
     );
   }
