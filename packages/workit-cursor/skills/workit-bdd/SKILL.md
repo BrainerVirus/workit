@@ -10,13 +10,17 @@ description: Turn requirements into Given/When/Then scenarios, agree the test se
    unhappy paths callers depend on (denied, empty, invalid, timeout).
 2. **Agree the seam.** The highest stable interface the scenario can be
    observed through: a CLI verb, a public function, an HTTP route; ideally one
-   per feature. Do not test at a seam nobody agreed to.
+   per feature. Do not test at a seam nobody agreed to. Note what each seam
+   catches and misses (a unit seam misses wiring; a CLI seam misses nothing
+   the user sees but runs slower) and cover each miss once, elsewhere.
 3. **Name tests after scenarios.** The name is the Given/When/Then sentence;
    the body is arrange, act, assert. Expected values come from the scenario (a
    literal from a worked example, the spec, an external contract), never from
    the code under test. No tautological tests: a test must fail if the
    behavior breaks, never restate the implementation.
-4. **Build in vertical slices.** Write one vertical RED slice that fails for
+4. **Build in vertical slices, never horizontal ones** (every test first,
+   then every implementation: tests written ahead of any code assert guessed
+   internals). Write one vertical RED slice that fails for
    the missing behavior and run it through the CLI so the failure is observed:
    `workit check test`. Make the smallest change, run the same check GREEN,
    then take the next scenario. Any edit makes the observation stale; re-run
