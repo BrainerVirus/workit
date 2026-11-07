@@ -1,6 +1,7 @@
 {
   "checks": {
     "lint": ["bun", "run", "lint"],
+    "repo-rules": ["bun", "run", "lint:rules"],
     "format": ["bun", "run", "format:check"],
     "typecheck": ["bun", "run", "typecheck"],
     "test": ["bun", "run", "test"],
