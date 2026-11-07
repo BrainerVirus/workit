@@ -234,3 +234,20 @@ test("Given workit help pr create, Then its usage offers no flag that skips the 
   expect(help.stdout).toContain("workit pr create ");
   expect(help.stdout).not.toMatch(/--(?:no-template|skip-template|no-pr-template)\b/u);
 });
+
+test("Given a template Verification box naming a configured check that never ran on the head, When pr create runs with that box ticked, Then the PR opens with it unticked and a note says why", async () => {
+  const template =
+    "## Summary\n<!-- what -->\n\n## Verification\n- [ ] `bun run lint`\n- [ ] Exercised on the CLI\n";
+  const { repo, runner } = setup({
+    ".github/pull_request_template.md": template,
+    ".workit/checks.json": JSON.stringify({ checks: { lint: ["bun", "run", "lint"] } }),
+  });
+  const body =
+    "## Summary\nFixes x\n\n## Verification\n- [x] `bun run lint`\n- [x] Exercised on the CLI\n";
+  const result = await create(repo, body);
+  expect(result.code, result.stderr).toBe(0);
+  const posted = JSON.stringify(opened(runner.calls)[0]);
+  expect(posted).toContain("- [ ] `bun run lint`");
+  expect(posted).toContain("- [x] Exercised on the CLI");
+  expect(result.stderr).toContain("unticked");
+});
