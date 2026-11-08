@@ -1211,6 +1211,41 @@ function prBinding(ctx: Pick<Ctx, "resolved">, entry: StackEntry, doc: PrStatusD
   return null;
 }
 
+/**
+ * The PR of a branch the stack file has no number for (a stack recorded
+ * without the forge, as `fanout worktree create` records it): its open PR,
+ * else the one that merged. A closed PR is not adopted.
+ */
+function lookupPr(ctx: Pick<Ctx, "resolved">, branch: string): ForgeResult<number | null> {
+  const found = ctx.resolved.forge.findPr(branch, {
+    owner: ctx.resolved.headRepo.split("/")[0] ?? null,
+    projectId: ctx.resolved.headProjectId,
+    sha: null,
+  });
+  if (!found.ok) return found;
+  const ref = found.data;
+  return {
+    ok: true,
+    data: ref && ref.headBranch === branch && ref.state !== "closed" ? ref.number : null,
+  };
+}
+
+/**
+ * Without a PR only git can tell a branch landed: its tip is on the trunk, or
+ * its own change is one trunk commit (a squash merge). A branch with no
+ * commits of its own is empty, not merged.
+ */
+function landedByGit(cwd: string, entry: StackEntry, trunkSha: string | null): boolean {
+  const tip = branchTip(cwd, entry.branch);
+  return (
+    tip !== null &&
+    trunkSha !== null &&
+    hasOwnCommits(cwd, tip, entry.lastParentHead) &&
+    (isAncestor(cwd, tip, trunkSha) ||
+      squashedOnTrunk(cwd, entry.lastParentHead as string, tip, trunkSha))
+  );
+}
+
 /** The stack was planned against this forge repository. */
 export function repoMismatch(ctx: Pick<Ctx, "resolved">, stack: StackFile): StackError | null {
   const { kind, repo } = ctx.resolved.forge;
@@ -1360,20 +1395,30 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
   let next: string | null = null;
   let parentName = stack.trunk;
   let parentSha = trunkSha;
-  let mergedSeen = false;
+  const landed: string[] = [];
+  let landedTip: string | null = null;
   for (const entry of stack.branches) {
+    let pr = entry.pr;
+    if (!pr && !entry.merged) {
+      const found = lookupPr(ctx, entry.branch);
+      if (!found.ok) return fromForge(found);
+      pr = found.data;
+    }
     let doc: PrStatusDoc | null = null;
-    if (entry.pr) {
-      const read = statusDoc(ctx, entry.pr);
+    if (pr) {
+      const read = statusDoc(ctx, pr);
       if (!read.ok) return fromForge(read);
       doc = read.data;
     }
-    const merged = entry.merged !== null || doc?.state === "merged";
+    const merged =
+      entry.merged !== null ||
+      doc?.state === "merged" ||
+      (!pr && landedByGit(ctx.cwd, entry, trunkSha));
     const head = branchTip(ctx.cwd, entry.branch);
     const row: BranchStatus = {
       branch: entry.branch,
       parent: parentName,
-      pr: entry.pr,
+      pr,
       merged,
       head,
       onParent: merged || !head || !parentSha ? null : isAncestor(ctx.cwd, parentSha, head),
@@ -1398,21 +1443,32 @@ export function stackStatus(ctx: Ctx, stack: StackFile): StackResult<StatusOutco
     };
     branches.push(row);
     if (merged) {
-      mergedSeen = true;
+      landed.push(entry.branch);
+      landedTip = head;
       continue;
     }
     if (verdict === null) {
-      // The root-most open branch decides the stack's verdict.
-      const stale = row.onParent === false || row.baseMatches === false;
-      if (mergedSeen && stale) {
+      // The root-most open branch decides the stack's verdict. A squash merge
+      // leaves the landed parent's own commits in the child until a restack.
+      const carriesLanded =
+        landedTip !== null &&
+        head !== null &&
+        isAncestor(ctx.cwd, landedTip, head) &&
+        !(trunkSha && isAncestor(ctx.cwd, landedTip, trunkSha));
+      const restack = row.onParent === false || carriesLanded;
+      if (landed.length && (restack || row.baseMatches === false)) {
+        const moves = [
+          ...(restack ? [`restack ${entry.branch}`] : []),
+          ...(row.baseMatches === false && pr ? [`retarget ${noun(ctx.resolved, pr)}`] : []),
+        ];
         verdict = "ADVANCE";
-        reason = "a parent merged; the rest is not restacked or retargeted yet";
-        next = "workit stack sync";
+        reason = `${landed.join(", ")} landed on ${stack.trunk}; ${entry.branch} is not restacked or retargeted onto ${stack.trunk} yet`;
+        next = `workit stack sync  # sync the child onto ${stack.trunk}: ${moves.join(" and ")}`;
       } else {
         const q = qualify(
           ctx,
           stack,
-          entry,
+          { ...entry, pr },
           doc,
           row.verdict,
           grant,
@@ -1496,6 +1552,11 @@ function detectMerged(
   for (const entry of stack.branches) {
     if (entry.merged) continue;
     let merged = false;
+    if (!entry.pr && ctx) {
+      const found = lookupPr(ctx, entry.branch);
+      if (!found.ok) return fromForge(found);
+      entry.pr = found.data;
+    }
     if (entry.pr && ctx) {
       const read = statusDoc(ctx, entry.pr);
       if (!read.ok) return fromForge(read);
@@ -1508,17 +1569,7 @@ function detectMerged(
         );
       state.docs.set(entry.pr, read.data);
       merged = read.data.state === "merged";
-    } else {
-      // Without a PR only git can tell: the tip is on the trunk, or its own
-      // change is one trunk commit (a squash merge). A branch with no commits
-      // of its own is empty, not merged.
-      const tip = branchTip(cwd, entry.branch);
-      merged =
-        tip !== null &&
-        hasOwnCommits(cwd, tip, entry.lastParentHead) &&
-        (isAncestor(cwd, tip, trunkSha) ||
-          squashedOnTrunk(cwd, entry.lastParentHead as string, tip, trunkSha));
-    }
+    } else merged = landedByGit(cwd, entry, trunkSha);
     if (merged) {
       entry.merged = {
         pr: entry.pr,

@@ -6,7 +6,9 @@
 //   pushed    the push remote's branch tip equals the expected SHA (ls-remote)
 //   pr        the PR/MR exists, is open or merged, and its head is that SHA
 //   merged    the forge reports the PR/MR merged; when workit merged it, the
-//             recorded merge commit is reachable from the base's remote tip
+//             recorded merge commit is reachable from the base's remote tip;
+//             a base that already landed elsewhere (a squash-merged stack
+//             parent) must have carried the change on to that trunk
 //   released  the tag exists on the remote (pointing at --sha when given),
 //             and the npm version is published (gitHead == the tag's commit)
 //
@@ -27,6 +29,7 @@ import {
   resolveRef,
 } from "../git/rev";
 import { appendObserved, readLedger, type LedgerActor } from "../ledger";
+import { landedBranch, type LandedBranch } from "./merge-gate-merged-base";
 import { selectPr } from "./report";
 import type { ResolvedForge } from "./resolve";
 import { redactText } from "./redact";
@@ -40,6 +43,7 @@ export type Observation = {
     | "pr_state"
     | "pr_head"
     | "merge_on_base"
+    | "merge_on_trunk"
     | "tag"
     | "npm_version"
     | "npm_git_head";
@@ -54,6 +58,8 @@ export type DeliveryReport = {
   branch: string | null;
   sha: string | null;
   pr: number | null;
+  /** merged: the branch the change must reach (the base, or where the base landed). */
+  trunk?: string;
   delivered: boolean;
   observations: Observation[];
   recorded?: { id: string } | { error: string };
@@ -219,7 +225,62 @@ export function verifyPr(
   );
 }
 
-/** The forge reports the PR/MR merged, and a recorded merge commit is on the base. */
+/** `sha` is in the history of the remote tip `tip` (both fetched by id when missing). */
+function reachable(cwd: string, remote: string, sha: string, tip: string): boolean | null {
+  for (const id of [sha, tip]) if (!hasCommit(cwd, id)) fetchRefs(cwd, remote, [id]);
+  if (!hasCommit(cwd, sha) || !hasCommit(cwd, tip)) return null;
+  const counts = aheadBehind(cwd, tip, sha);
+  return counts === null ? null : counts.ahead === 0;
+}
+
+/**
+ * The base already landed on `landed.into` (#752): the change (its merge
+ * commit, else its head) is delivered only when that trunk has it, directly or
+ * through the head the base landed with.
+ */
+function trunkObservation(
+  cwd: string,
+  resolved: ResolvedForge,
+  base: string,
+  landed: LandedBranch,
+  change: string,
+): ForgeResult<Observation> {
+  const trunk = landed.into;
+  const tip = remoteRefTip(cwd, resolved.baseRemote, `refs/heads/${trunk}`);
+  if (!tip.ok) return failure(tip.code, tip.error);
+  const noun = resolved.forge.kind === "github" ? "PR #" : "MR !";
+  const landedOn = `${base} already landed on ${trunk} (${noun}${landed.pr})`;
+  if (!tip.sha)
+    return success({
+      kind: "merge_on_trunk",
+      expected: change,
+      observed: null,
+      ok: false,
+      note: `${landedOn}, and ${trunk} does not exist on the remote`,
+    });
+  const onTrunk =
+    reachable(cwd, resolved.baseRemote, change, tip.sha) ||
+    reachable(cwd, resolved.baseRemote, change, landed.head);
+  return success({
+    kind: "merge_on_trunk",
+    expected: change,
+    observed: tip.sha,
+    ok: onTrunk === true,
+    ...(onTrunk === true
+      ? {}
+      : {
+          note:
+            onTrunk === null
+              ? `${landedOn}; ${short(change)} or the ${trunk} tip could not be fetched`
+              : `${landedOn}; ${short(change)} is not reachable from ${trunk}`,
+        }),
+  });
+}
+
+/**
+ * The forge reports the PR/MR merged, a recorded merge commit is on the
+ * base, and a base that already landed carried it on to its trunk.
+ */
 export function verifyMerged(
   cwd: string,
   resolved: ResolvedForge,
@@ -233,6 +294,7 @@ export function verifyMerged(
   const observations: Observation[] = [
     { kind: "pr_state", expected: "merged", observed: pr.state, ok: pr.state === "merged" },
   ];
+  let trunk = pr.base;
   if (pr.state === "merged") {
     const ledger = readLedger(cwd);
     const row = ledger.ok
@@ -269,11 +331,39 @@ export function verifyMerged(
             : { note: `${short(mergeSha)} is not reachable from ${pr.base}` }),
       });
     }
+    const landed = landedBranch(cwd, resolved, pr.base);
+    if (!landed.ok)
+      observations.push({
+        kind: "merge_on_trunk",
+        expected: null,
+        observed: null,
+        ok: false,
+        note: `cannot tell whether ${pr.base} already landed elsewhere: ${landed.error}`,
+      });
+    else if (landed.data) {
+      trunk = landed.data.into;
+      const observed = trunkObservation(
+        cwd,
+        resolved,
+        pr.base,
+        landed.data,
+        mergeSha ?? pr.head.sha,
+      );
+      if (!observed.ok) return observed;
+      observations.push(observed.data);
+    }
   }
   return success(
     finish(
       cwd,
-      { expect: "merged", branch: pr.head.branch, sha: pr.head.sha, pr: pr.number, observations },
+      {
+        expect: "merged",
+        branch: pr.head.branch,
+        sha: pr.head.sha,
+        pr: pr.number,
+        trunk,
+        observations,
+      },
       input.actor,
     ),
   );

@@ -212,6 +212,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ...(localCleanup ? cleanupLines(localCleanup, data.branch) : []),
     ]);
   const failed = report.observations.filter((entry) => !entry.ok);
+  const offTrunk = failed.some((entry) => entry.kind === "merge_on_trunk" && entry.expected);
   // Human mode: the observations too; the reason is the error line's, once.
   if (!io.json) for (const line of render(report, false)) io.stdout(`${line}\n`);
   return emit(
@@ -226,9 +227,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
             ? "workit git push"
             : expect === "pr"
               ? "workit git push && workit pr create --fill"
-              : expect === "merged"
-                ? "workit pr status  # then workit pr merge when READY and granted"
-                : "check the release workflow; the tag/package is not published",
+              : offTrunk
+                ? `the change is not on ${report.trunk}: land it there with a PR into ${report.trunk} (a branch carrying it, then workit pr create --base ${report.trunk})`
+                : expect === "merged"
+                  ? "workit pr status  # then workit pr merge when READY and granted"
+                  : "check the release workflow; the tag/package is not published",
       },
     ),
   );

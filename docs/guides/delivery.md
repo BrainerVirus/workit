@@ -480,6 +480,15 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   and removes a clean worktree that `workit fanout worktree create` made on
   it; a dirty one is kept and named. An explicit `--delete-branch` refuses a
   protected or base branch before merging. `stack land` never deletes.
+- `pr merge` refuses a PR whose short-lived base (a stacked parent or a work
+  branch such as `feature/` or `fix/`) already landed in another branch and has
+  not moved since (a parent squash-merged with `--keep-branch`): `base_landed`,
+  exit 3,
+  with `workit pr edit --pr <n> --base <trunk>` as the unblock, so a child never
+  merges into a stale parent. Long-lived bases (the default target, develop,
+  staging, release/* and hotfix/*, protected or release-track branches) are never
+  judged. `workit verify-delivery merge` on such a PR is
+  delivered only when the change reached that trunk (`merge_on_trunk`).
 - `pr merge` also reads the CI of the base branch's head (a protected target
   only). A failing check there refuses the merge (`base_red`, exit 3), naming
   the failing checks and the run URL, so a PR never lands silently on a red
@@ -794,7 +803,10 @@ workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--othe
   commits are refused.
 - `sync` also notices a parent landed by squash on its own (its change has
   the same patch-id as one trunk commit) and rebases the child onto the trunk
-  with only the child's commits.
+  with only the child's commits. It also finds the parent's merged PR when the
+  stack was recorded without PR numbers (as `fanout worktree create` records
+  it) and retargets the child PR onto the trunk (`retargeted PR #n <parent> ->
+  <trunk>`); `stack status` reads that parent as landed and names `stack sync`.
 - `land --others-pr --reason <why>` lands PRs another author opened, as
   `workit pr merge --others-pr` does; without it they are refused.
 - `land --allow-failing <check> --reason <why>` (repeatable) passes a failing
