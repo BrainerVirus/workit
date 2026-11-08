@@ -53,6 +53,7 @@ import {
 } from "@workit-dev/core/src/core/workspaces";
 import {
   checkPrBody,
+  honestPrBody,
   resolvePrTemplate,
   templateLabel,
   type PrTemplate,
@@ -816,6 +817,9 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
   });
   if (!planned.ok) return usage(io, planned.error, CREATE_USAGE);
   const links = planned.data.links;
+  const honest = honestPrBody(io.cwd, body ?? "", prTemplate?.template);
+  for (const item of honest.unchecked)
+    io.stderr(`note: unticked "${item}": no fresh workit check on the head backs it\n`);
   const actor = actorFromEnv(io.env);
   const result = await progressFor(io).run(
     "Opening the pull request",
@@ -826,7 +830,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
         {
           base,
           title,
-          body: withIssueLines(body ?? "", links),
+          body: withIssueLines(honest.body, links),
           draft: flags.booleans.has("draft"),
           actor,
           labels: flags.lists.label ?? [],

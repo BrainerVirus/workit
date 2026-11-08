@@ -168,6 +168,8 @@ export type LaneAssessment = {
 
 export type FileKind = "doc" | "cosmetic" | "generated" | "lockfile" | "test" | "behavior";
 
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 const basename = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
 
 /** Prose for people: a doc extension (or a bare LICENSE-style name), not agent instructions. */
@@ -253,6 +255,11 @@ export function computeLane(input: LaneInput): LaneAssessment {
     .filter((entry) => entry.kind !== "lockfile")
     .reduce((sum, entry) => sum + entry.file.added + entry.file.deleted, 0);
   const opaque = behavior.filter((entry) => entry.kind === "lockfile" || entry.file.binary);
+  const diffLines = input.files.reduce((sum, file) => sum + file.added + file.deleted, 0);
+  const counted =
+    diffLines === lines && input.files.length === behavior.length
+      ? ""
+      : ` counted (the whole diff is ${plural(diffLines, "line")} in ${plural(input.files.length, "file")}; docs, comments, formatting, generated copies and lockfile lines are not counted)`;
   const result = (lane: ReviewLane, reasons: string[]): LaneAssessment => ({
     lane,
     reasons,
@@ -273,9 +280,9 @@ export function computeLane(input: LaneInput): LaneAssessment {
         : "no changes",
     ]);
   if (lines >= fullMinLines)
-    return result("full", [`large diff: ${lines} lines (≥ ${fullMinLines})`]);
+    return result("full", [`large diff: ${lines} lines (≥ ${fullMinLines})${counted}`]);
   if (lines > selfMaxLines)
-    return result("focused", [`${lines} lines changed (> ${selfMaxLines})`]);
+    return result("focused", [`${lines} lines changed (> ${selfMaxLines})${counted}`]);
   if (behavior.length > selfMaxFiles)
     return result("focused", [`${behavior.length} behavior files changed (> ${selfMaxFiles})`]);
   // A lockfile or a binary has no lines to read: the author cannot vouch for it alone.
@@ -287,7 +294,7 @@ export function computeLane(input: LaneInput): LaneAssessment {
         .join(", ")}${opaque.length > 3 ? ", …" : ""}`,
     ]);
   return result("self", [
-    `small change: ${lines} line${lines === 1 ? "" : "s"} in ${behavior.length} file${behavior.length === 1 ? "" : "s"}, no risk path`,
+    `small change: ${plural(lines, "line")} in ${plural(behavior.length, "file")}${counted}, no risk path`,
   ]);
 }
 

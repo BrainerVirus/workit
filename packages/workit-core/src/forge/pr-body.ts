@@ -18,18 +18,17 @@ export function parseGhIssue(value: string): string {
   return m ? m[1] : String(value).trim().replace(/^#/, "");
 }
 
-// RL-03/CA-25/AR-08: a branch-derived numeric issue id must be a bare number at
-// a segment or dash boundary — and never part of a date segment. Year-first
-// (feature/2024-01-15/x) and day-first (feature/15-01-2024/x) dates are both
-// skipped — a complete date anywhere in a segment (release-2024-01-15,
-// v2-2024-01-15-fix) — so no date digit ever closes an issue. Deliberate
-// numeric issue branches (feature/42-title, feature/2024-fix) keep linking.
+// RL-03/CA-25/AR-08: a branch-derived numeric issue id is the number a path
+// segment starts with (feature/42-title, 42-title), never digits inside a
+// free-text slug (docs/retro-1107-wave1 names no issue) and never part of a
+// date: year-first (feature/2024-01-15/x) and day-first (feature/15-01-2024/x)
+// dates are skipped, a complete date anywhere in a segment included.
 export function deriveGhIssueFromBranch(branch: string): string {
   for (const segment of branch.split("/")) {
     if (/^\d{4}-\d/.test(segment)) continue; // year-first date-like segment (incl. year-month)
     if (/\d{4}-\d{1,2}-\d{1,2}/.test(segment)) continue; // complete year-first date anywhere
     if (/\d{1,2}-\d{1,2}-\d{4}/.test(segment)) continue; // complete day-first date anywhere
-    const m = /(?:^|-)(\d+)(?:-|$)/.exec(segment);
+    const m = /^(\d+)(?:-|$)/.exec(segment);
     if (m) return m[1];
   }
   return "";

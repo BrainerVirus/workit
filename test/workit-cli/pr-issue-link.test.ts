@@ -202,6 +202,19 @@ test("pr create: given no --issue and a branch feature/42-x, then the legacy lin
   ]);
 });
 
+test("pr create: given branch docs/retro-1107-wave1 and no --issue, then digits inside the slug close no issue: no Closes #1107", async () => {
+  const { repo, runner } = setup("github", githubRoutes());
+  onBranch(repo, "docs/retro-1107-wave1");
+  workspace(repo, { vcs: { provider: "github" }, issues: { provider: "github", link: true } });
+  const result = await run(
+    ["pr", "create", "--base", "main", "--title", "docs: retro", "--body", "Why: y"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(0);
+  expect(postedBody(runner.calls)).toBe("Why: y");
+  expect(linkedRows(repo.cwd)).toEqual([]);
+});
+
 test("pr create: given an old config with youtrack.link_issues true, then a branch id links like issues { provider: youtrack, link: true }", async () => {
   const { repo, runner } = setup("github", githubRoutes());
   onBranch(repo, "feature/IRPT-740-x");

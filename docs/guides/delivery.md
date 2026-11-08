@@ -645,6 +645,11 @@ only a suggestion. The check:
   (any level, case ignored). Headings in code fences or comments do not count.
 - An HTML comment (`<!-- … -->`) copied from the template counts as unfilled:
   replace it with the content it asks for. Checkboxes need not be ticked.
+- A ticked box in a verification section that names commands in backticks
+  (`- [x] \`bun run lint\``) keeps its tick only when every command is a
+  configured check that passed on the head in `workit check`; otherwise
+  `pr create` unticks it and prints a note. Boxes that name no command, and
+  other sections, stay as written. Workit never ticks a box itself.
 
 A body that misses a heading or keeps a comment exits 3 with
 `pr_template_unfilled` (`data.reason`, `missingHeadings` and `leftComments` in

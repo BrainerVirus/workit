@@ -1019,6 +1019,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `workit upgrade` and `workit setup` no longer say zsh's $fpath lacks the completion directory when ~/.zshrc adds it; the hint is styled and says when zsh could not be asked.
 - `workit pr merge --allow-failing` no longer records a `merge.waived` row when the merge is refused or fails; the waiver is written once the forge accepts the merge.
 - A queued heavy check takes a freed lease slot at once: a release wakes waiters instead of waiting out the poll, and a waiter whose workspace allows fewer slots no longer holds back waiters that can use the free one (the "slot 1: free while 3 waiters queue" stall). `workit lock wait` wakes the same way and, like a heavy check, re-queues once at `resources.wait` before giving up.
+- `workit pr create` no longer adds `Closes #<n>` for digits inside a branch slug (only a segment-leading number such as `feature/42-x` links), and unticks template verification checkboxes that no fresh `workit check` on the head backs.
+- Review lane reasons name the whole diff when docs, comments or generated lines are left out of the count.
 
 ### Removed
 

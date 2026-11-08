@@ -1,14 +1,19 @@
 import { afterEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   WORKIT_PR_TEMPLATE,
   checkPrBody,
+  honestPrBody,
   markdownHeadings,
   resolvePrTemplate,
+  uncheckUnbacked,
   type PrTemplate,
 } from "@/packages/workit-core/src/core/pr-template";
+import type { NamedCheck } from "@/packages/workit-core/src/check-config";
+import { actorFromEnv, appendObserved } from "@/packages/workit-core/src/ledger";
 
 // Which template a PR body fills (`prTemplate`) and what `workit pr create`
 // counts as unfilled: a missing template heading, or a template comment left in.
@@ -134,4 +139,112 @@ test("Given both headings at any level and case, the comment replaced and the ch
 test("Given an empty body, When Workit's template applies, Then all three of its headings are missing", () => {
   const workit = picked(repoWith({}), "workit");
   expect(checkPrBody("", workit).missingHeadings).toEqual(["Summary", "Evidence", "Merge danger"]);
+});
+
+const REPO_TEMPLATE = `## What and why
+
+## Verification
+
+<!-- Evidence, not claims. -->
+
+- [ ] \`bun run lint\`, \`bun run typecheck\`
+- [ ] \`bun run test\` (and \`bun run test:packaging\` if packaging changed)
+- [ ] Exercised on the affected host(s) or CLI:
+
+## Checklist
+
+- [ ] README updated
+`;
+
+const named = (name: string, ...argv: string[]): NamedCheck => ({ name, argv, accepts: [argv] });
+const CHECKS = [
+  named("lint", "bun", "run", "lint"),
+  named("typecheck", "bun", "run", "typecheck"),
+  named("test", "bun", "run", "test"),
+];
+const repoTemplate = (): PrTemplate => {
+  const cwd = repoWith({ ".github/pull_request_template.md": REPO_TEMPLATE });
+  return picked(cwd, "auto");
+};
+const TICKED = `## What and why
+
+x
+
+## Verification
+
+- [x] \`bun run lint\`, \`bun run typecheck\`
+- [x] \`bun run test\` (and \`bun run test:packaging\` if packaging changed)
+- [x] Exercised on the affected host(s) or CLI:
+
+\`\`\`text
+- [x] \`bun run test\` quoted in a fence stays as written
+\`\`\`
+
+## Checklist
+
+- [x] README updated`;
+
+test("Given Verification checkboxes the body ticks and no fresh workit check on the head, When the body is gated, Then they go back to - [ ]; a box naming no command and other sections stay as the agent wrote them", () => {
+  const gated = uncheckUnbacked(TICKED, repoTemplate(), { checks: CHECKS, fresh: new Set() });
+  expect(gated.body).toContain("- [ ] `bun run lint`, `bun run typecheck`");
+  expect(gated.body).toContain("- [ ] `bun run test` (and");
+  expect(gated.body).toContain("- [x] Exercised on the affected host(s) or CLI:");
+  expect(gated.body).toContain("- [x] `bun run test` quoted in a fence stays as written");
+  expect(gated.body).toContain("- [x] README updated");
+  expect(gated.unchecked).toHaveLength(2);
+});
+
+test("Given fresh passes for some named checks, When gated, Then a box keeps its tick only when every command it names (outside the parenthesised aside) passed on the head", () => {
+  const partial = uncheckUnbacked(TICKED, repoTemplate(), {
+    checks: CHECKS,
+    fresh: new Set(["lint", "test"]),
+  });
+  expect(partial.body).toContain("- [ ] `bun run lint`, `bun run typecheck`");
+  expect(partial.body).toContain("- [x] `bun run test` (and");
+  const all = uncheckUnbacked(TICKED, repoTemplate(), {
+    checks: CHECKS,
+    fresh: new Set(["lint", "typecheck", "test"]),
+  });
+  expect(all).toEqual({ body: TICKED, unchecked: [] });
+});
+
+test("Given a command no configured check runs, When its box is ticked, Then nothing backs it and it is unticked", () => {
+  const gated = uncheckUnbacked(TICKED, repoTemplate(), {
+    checks: [named("lint", "bun", "run", "lint")],
+    fresh: new Set(["lint"]),
+  });
+  expect(gated.body).toContain("- [ ] `bun run lint`, `bun run typecheck`");
+});
+
+test("Given a real repo whose ledger has a clean passing workit check lint on HEAD and a lint pass on an older commit only, When pr create gates the body, Then the lint box keeps its tick and the test box does not", () => {
+  const cwd = repoWith({
+    ".github/pull_request_template.md": REPO_TEMPLATE,
+    ".workit/checks.json": JSON.stringify({
+      checks: {
+        lint: ["bun", "run", "lint"],
+        typecheck: ["bun", "run", "typecheck"],
+        test: ["bun", "run", "test"],
+      },
+    }),
+  });
+  const git = (...args: string[]) =>
+    spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], {
+      cwd,
+      encoding: "utf8",
+    }).stdout.trim();
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("commit", "-q", "-m", "chore: base");
+  const old = git("rev-parse", "HEAD");
+  git("commit", "-q", "--allow-empty", "-m", "chore: head");
+  const head = git("rev-parse", "HEAD");
+  const actor = actorFromEnv({});
+  const row = (fields: Record<string, unknown>) =>
+    expect(appendObserved(cwd, { type: "check", actor, dirty: false, ...fields }).ok).toBe(true);
+  for (const name of ["lint", "typecheck"]) row({ name, head, result: "passed" });
+  row({ name: "test", head: old, result: "passed" });
+  const gated = honestPrBody(cwd, TICKED, picked(cwd, "auto"));
+  expect(gated.body).toContain("- [x] `bun run lint`, `bun run typecheck`");
+  expect(gated.body).toContain("- [ ] `bun run test` (and");
+  expect(honestPrBody(cwd, TICKED, null)).toEqual({ body: TICKED, unchecked: [] });
 });

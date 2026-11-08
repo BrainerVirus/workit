@@ -697,3 +697,39 @@ test("lockfile-only and binary-only changes are focused, not self", () => {
   expect(lane([file("bun.lock", 4)])).toBe("focused");
   expect(lane([file("assets/logo.png", 0, { binary: true })])).toBe("focused");
 });
+
+const lines = (count: number, tag: string) =>
+  Array.from({ length: count }, (_, i) => `export const ${tag}${i} = ${i};\n`).join("");
+
+test("from git: the lane reads the whole PR range (3 commits, 109 lines in 4 files), not its last commit (9 lines in 2 files)", () => {
+  const root = repoWith({ "README.md": "base\n" });
+  write(root, "src/a.ts", lines(60, "a"));
+  commitAll(root);
+  write(root, "src/b.ts", lines(40, "b"));
+  commitAll(root);
+  write(root, "src/c.ts", lines(5, "c"));
+  write(root, "src/d.ts", lines(4, "d"));
+  const head = commitAll(root);
+  expect(git(root, "show", "--shortstat", "--format=", "HEAD")).toContain("2 files changed, 9");
+  const assessed = branchLane(root, { base: "main", head });
+  expect(assessed).toMatchObject({ lane: "focused", lines: 109, files: 4 });
+  expect(assessed.reasons[0]).toBe(`109 lines changed (> ${LANE_THRESHOLDS.selfMaxLines})`);
+});
+
+test("from git: a lane that leaves docs out says so and names the whole diff (#753: 9 counted lines of 119 in 4 files)", () => {
+  const root = repoWith({ "README.md": "base\n" });
+  write(root, "CHANGELOG.md", "x\n".repeat(82));
+  write(root, "docs/guides/delivery.md", "y\n".repeat(28));
+  commitAll(root);
+  write(root, "AGENTS.md", "rule\n");
+  write(root, "docs/agents/hosts.md", "z\n".repeat(8));
+  const head = commitAll(root);
+  const assessed = branchLane(root, { base: "main", head });
+  expect(assessed).toMatchObject({ lane: "self", lines: 9, files: 2 });
+  expect(assessed.reasons[0]).toBe(
+    "small change: 9 lines in 2 files counted (the whole diff is 119 lines in 4 files; docs, comments, formatting, generated copies and lockfile lines are not counted), no risk path",
+  );
+  expect(computeLane({ files: [file("src/a.ts", 3), file("src/b.ts", 2)] }).reasons[0]).toBe(
+    "small change: 5 lines in 2 files, no risk path",
+  );
+});

@@ -311,7 +311,9 @@ YouTrack, a GitLab one in GitLab issues.
   `gitlab.com`). An issue tracker on the other forge needs `repo`.
 - `link` (default `false`): with no `--issue`, derive the issue from the branch
   name (`feature/42-login` is `#42`, `feature/IRPT-740-x` is `IRPT-740`; a
-  YouTrack id needs a base URL). A named issue always links.
+  YouTrack id needs a base URL). Only a number that starts a path segment
+  links: digits inside a slug (`docs/retro-1107-wave1`) never do. A named issue
+  always links.
 - `relation` (default `closes`): `Closes #42` or `Refs #42`; `pr create --refs`
   picks `refs` for one PR. Any other value is reported as a note by
   `pr create` and read as `closes`; it never invalidates the file.
