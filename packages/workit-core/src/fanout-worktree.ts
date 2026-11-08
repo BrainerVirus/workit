@@ -562,6 +562,8 @@ export function createSliceWorktree(
       return fanoutFail("failed", `cannot read ${target}: ${(error as Error).message}`);
   }
 
+  const landed = landedBranch(cwd, plan, slice, input.forge);
+  if (landed) return landed;
   const notes: string[] = [];
   let mode: CreateOutcome["mode"] = "resume";
   let stack: CreateOutcome["stack"] = null;
@@ -706,6 +708,48 @@ function dependenciesLanded(
     );
   }
   return `${landed.join(", ")}: started from ${plan.trunk}, not from ${slice.base}'s pre-merge tip`;
+}
+
+/**
+ * An existing slice branch (local or remote) that already landed, by its
+ * merged PR or git's trunk and squash checks, is old work under a reused
+ * name: refused, naming the first free `<branch>-<n>`. A branch with commits
+ * newer than its merged head is not landed and is resumed.
+ */
+function landedBranch(
+  cwd: string,
+  plan: FanoutFile,
+  slice: Slice,
+  forge: (() => ResolvedForge | null) | undefined,
+): FanoutResult<never> | null {
+  const head = branchRef(cwd, slice.branch);
+  const trunk = trunkRef(cwd, plan.trunk);
+  if (!head || !trunk) return null;
+  const ledger = readLedger(cwd);
+  const rows = ledger.ok ? ledger.value.rows : [];
+  const landing = detectLanding(
+    { cwd, trunk, forge: forgeBreaker(forge?.() ?? null).forge },
+    slice,
+    {
+      head,
+      createdFrom: sliceStart(cwd, rows, plan.name, slice),
+      parentHead: null,
+      fanout: plan.name,
+      since: slice.hashSince || plan.createdAt || null,
+      sliceHash: slice.hash || null,
+      rows,
+    },
+  );
+  if (!landing.landed) return null;
+  let free = `${slice.branch}-2`;
+  for (let n = 3; branchRef(cwd, free); n++) free = `${slice.branch}-${n}`;
+  const how = landing.pr ? `PR #${landing.pr.number} merged` : `landed (${landing.how})`;
+  return fanoutFail(
+    "blocked",
+    `${slice.branch} already ${how} on ${plan.trunk}: a slice never reuses a landed branch`,
+    `set slice ${slice.id}'s branch to ${free} in the plan, then workit fanout plan <plan.json> and workit fanout worktree create ${slice.id}`,
+    { branch: slice.branch, landed: landing.how, pr: landing.pr?.number ?? null, freeBranch: free },
+  );
 }
 
 const worktreeFailed = (stderr: string) =>
