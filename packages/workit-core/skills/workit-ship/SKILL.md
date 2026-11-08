@@ -41,7 +41,7 @@ the same check. Fix round and recheck both failed: a decider (workit-fanout).
    and the stop point unless merge is granted.
 3. **Conflicts or a required rebase.** Rewrite only a branch this session or
    its stack created (yours in `workit ledger list --type commit.recorded` or
-   `workit stack status`): rebase onto the base, `workit git push
+   `workit stack status`): `workit git rebase`, then `workit git push
    --force-with-lease` (`workit stack sync` in a stack). Anyone else's branch:
    report that a rebase is needed and stop.
 4. **Review threads** (`workit pr threads`). Check each claim in the code; fix
