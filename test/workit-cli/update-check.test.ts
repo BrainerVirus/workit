@@ -226,7 +226,7 @@ test("given the registry is offline, then the refresh stays silent and the launc
     }),
     now: () => NOW,
   });
-  expect(readUpdateCache(t.env)).toEqual({ checkedAt: NOW });
+  expect(readUpdateCache(t.env)).toEqual({ checkedAt: NOW, package: "@workit-dev/cli" });
   expect(await launchUpdateCheck(context(), t.deps())).toBeUndefined();
   expect(t.calls).toEqual({ ask: [], upgrade: 0, reexec: [], refresh: 0 });
   expect(t.written).toEqual([]);
@@ -250,6 +250,7 @@ test("given the registry is offline, then the refresh stays silent and the launc
     skipped: "1.5.0",
     checkedAt: NOW,
     latest: "2.0.0",
+    package: "@workit-dev/cli",
   });
 });
 
@@ -556,4 +557,27 @@ test("given an upgrade that leaves the CLI package as it was, then it never re-e
   expect(await launchUpdateCheck(context(), t.deps())).toBeUndefined();
   expect(t.calls.upgrade).toBe(1);
   expect(t.calls.reexec).toEqual([]);
+});
+
+test("given a cache written for no package, then no update is offered and a refresh starts", async () => {
+  const t = setup();
+  mkdirSync(path.dirname(t.cacheFile), { recursive: true });
+  writeFileSync(t.cacheFile, JSON.stringify({ checkedAt: NOW - HOUR, latest: "14.7.0" }));
+  expect(await launchUpdateCheck(context(), t.deps({ installed: "1.0.0" }))).toBeUndefined();
+  expect(t.calls.ask).toEqual([]);
+  expect(t.calls.refresh).toBe(1);
+  expect(readUpdateCache(t.env).package).toBe("@workit-dev/cli");
+  expect(readUpdateCache(t.env).latest).toBeUndefined();
+});
+
+test("given a fresh lookup, then the written cache names @workit-dev/cli", () => {
+  const t = setup();
+  refreshUpdateCache(t.env, {
+    run: () => ({ status: 0, stdout: "1.2.0\n", stderr: "" }),
+    now: () => NOW,
+  });
+  expect(JSON.parse(readFileSync(t.cacheFile, "utf8"))).toMatchObject({
+    package: "@workit-dev/cli",
+    latest: "1.2.0",
+  });
 });

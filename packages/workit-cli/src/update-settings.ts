@@ -9,7 +9,12 @@ import { isConfigObject, isUpdatesMode, type UpdatesMode } from "@workit-dev/cor
 /** Workit's global config dir, resolved the way `workit upgrade` resolves it. */
 export const workitConfigDir = (env: NodeJS.ProcessEnv): string => configDir(env);
 
+/** The package a cache answer is about; a cache for another (or no) package is ignored. */
+const UPDATE_CACHE_PACKAGE = "@workit-dev/cli";
+
 export type UpdateCache = {
+  /** The package `latest` was looked up for. */
+  package?: string;
   /** When the registry was last asked (a failed lookup counts: offline stays quiet). */
   checkedAt?: number;
   /** The newest published CLI version, when the last lookup succeeded. */
@@ -27,7 +32,8 @@ const cacheFile = (env: NodeJS.ProcessEnv, dir = stateDir(env)): string =>
 export const readUpdateCache = (env: NodeJS.ProcessEnv, dir?: string): UpdateCache => {
   try {
     const data: unknown = JSON.parse(readFileSync(cacheFile(env, dir), "utf8"));
-    return isConfigObject(data) ? (data as UpdateCache) : {};
+    if (!isConfigObject(data)) return {};
+    return (data as UpdateCache).package === UPDATE_CACHE_PACKAGE ? (data as UpdateCache) : {};
   } catch {
     return {};
   }
@@ -39,7 +45,7 @@ export const writeUpdateCache = (env: NodeJS.ProcessEnv, cache: UpdateCache): vo
     const file = cacheFile(env);
     mkdirSync(path.dirname(file), { recursive: true });
     const temp = `${file}.${process.pid}.tmp`;
-    writeFileSync(temp, JSON.stringify(cache) + "\n", "utf8");
+    writeFileSync(temp, JSON.stringify({ ...cache, package: UPDATE_CACHE_PACKAGE }) + "\n", "utf8");
     renameSync(temp, file);
   } catch {
     // silent by design
