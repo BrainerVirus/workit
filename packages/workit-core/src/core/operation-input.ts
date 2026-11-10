@@ -580,6 +580,8 @@ function invalidOperation(
   const own = actionKeys(family, action)!;
   const fields: { path: string; reason: string }[] = [];
   const sentence: string[] = [];
+  const foreign: string[] = [];
+  const takes = `it takes ${[...own.accepted].join(", ")}`;
   for (const issue of error.issues) {
     if (issue.code === "unrecognized_keys") {
       for (const key of issue.keys) {
@@ -588,9 +590,10 @@ function invalidOperation(
         );
         const reason = home
           ? `${key} belongs to action: ${home}`
-          : `${key} is not a field of ${family} ${action}; it takes ${[...own.accepted].join(", ")}`;
+          : `${key} is not a field of ${family} ${action}; ${takes}`;
         fields.push({ path: key, reason });
-        sentence.push(reason);
+        if (home) sentence.push(reason);
+        else foreign.push(key);
       }
       continue;
     }
@@ -604,6 +607,11 @@ function invalidOperation(
     fields.push({ path: issue.path.join("."), reason });
     sentence.push(reason);
   }
+  // One sentence for every unknown key, so the accepted list prints once.
+  if (foreign.length)
+    sentence.push(
+      `${foreign.join(", ")} ${foreign.length === 1 ? "is not a field" : "are not fields"} of ${family} ${action}; ${takes}`,
+    );
   const example = JSON.stringify(exampleOperation(family, action));
   return failure("invalid_input", `${[...new Set(sentence)].join("; ")}. Example: ${example}`, {
     fields,
@@ -629,4 +637,20 @@ export function parseAdvertisedOperation(
   const parsed = advertisedOperationSchemas[family].safeParse(request);
   if (parsed.success) return success(null, null, request);
   return invalidOperation(family, request, parsed.error as unknown as ZodErrorLike);
+}
+
+/**
+ * The engine's invalid_input for a normalized request the strict contract
+ * refused: the per-key fix and example payload the tool hosts return, so the
+ * CLI names them too (retro 2026-11-10 B5). Null when only the strict
+ * contract refuses it.
+ */
+export function explainInvalidOperation(
+  family: OperationFamily,
+  request: unknown,
+): Result<never> | null {
+  const parsed = advertisedOperationSchemas[family].safeParse(request);
+  return parsed.success
+    ? null
+    : invalidOperation(family, request, parsed.error as unknown as ZodErrorLike);
 }

@@ -736,7 +736,19 @@ engine matches evidence as follows:
 
 When a resolve is refused, the error states the rule and lists the evidence
 ids in the task that fit it. If none fit, it gives the
-`workit evidence record` command to run.
+`workit evidence record` command to run. The CLI and every tool host return
+the same text.
+
+A helper (a worker launched by OpenCode or Pi) can resolve a finding it
+recorded itself, as `fixed` or `dismissed`, citing only evidence it recorded
+itself. So a reviewer that records a finding and then a passing check closes
+the finding in one call. A finding recorded by someone else, and any deferral
+or reopening, is left to the lead.
+
+A payload with wrong keys is refused with the fix for each key and one valid
+payload for that action (`Example: {"action":"resolve",…}`). A worker
+assignment outside the task scope is refused with the first path that does
+not fit and the lead paths it was checked against.
 
 ### Babysitting a PR
 
