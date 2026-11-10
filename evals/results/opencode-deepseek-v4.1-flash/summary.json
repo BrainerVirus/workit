@@ -1,6 +1,6 @@
 {
   "passed": 3,
-  "total": 4,
+  "total": 5,
   "cases": [
     {
       "case": "check-configured",
@@ -18,6 +18,16 @@
       "provider": "free",
       "failures": [],
       "turns": 4,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+      "graderVersion": 1
+    },
+    {
+      "case": "release-verbs",
+      "pass": false,
+      "provider": "free",
+      "failures": ["forbid", "forbid", "forbid", "at-most"],
+      "turns": 15,
       "costUsd": 0,
       "workitVersion": "workit-dev-v1.1.1+1769f18bec",
       "graderVersion": 1
