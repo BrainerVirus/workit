@@ -27,8 +27,9 @@
 // its worktree. Liveness still reads every row. Its siblings keep their runs.
 //
 // `fanIn: "integration"` is the one-PR mode: the trunk is an integration
-// branch (never origin's default branch), workers merge its tip into their
-// branch before reporting, and the lead fast-forwards it.
+// branch (never origin's default branch), workers rebase their branch onto
+// its tip (`workit git rebase --onto <trunk>`) before reporting, and the lead
+// fast-forwards it.
 //
 // The CLI never spawns, waits or wakes anything: it only records and checks.
 import { spawnSync } from "node:child_process";
@@ -45,6 +46,7 @@ import {
   storeRoot,
   type LedgerActor,
 } from "./ledger";
+import { detectLanding, inSliceRun, sliceStart } from "./fanout-landed";
 import { CHECKS_FILE, lightCommand, loadCheckConfig, splitCommand } from "./check-config";
 import { heavyCommand } from "./core/heavy";
 import { resolveResourceSettings } from "./core/resources";
@@ -1074,8 +1076,63 @@ function listFanouts(cwd: string): FanoutResult<FanoutFile[]> {
 }
 
 /**
+ * Every slice finished in its current run: merged (a `pr.merged` or
+ * `pr.merge.verified` row for its branch, at its tip while the branch is still
+ * there; `workit pr merge` deletes it by default), landed on the trunk as git
+ * alone reads it, or released (`fanout worktree release` removed its worktree)
+ * with no commits of its own beyond the trunk. Release keeps the branch and
+ * needs no merge, so a released branch with unlanded commits keeps the plan
+ * active. No forge call: a gone branch with no merge row, or a squash merge
+ * git cannot see, leaves the plan active, never silently retired.
+ */
+function planFinished(
+  cwd: string,
+  plan: FanoutFile,
+  rows: readonly Record<string, unknown>[],
+): boolean {
+  if (plan.slices.length === 0) return false;
+  const trunk = trunkRef(cwd, plan.trunk);
+  const ctx = trunk ? { cwd, trunk, forge: null } : null;
+  return plan.slices.every((slice) => {
+    const head = branchRef(cwd, slice.branch);
+    const merged = rows.some(
+      (row) =>
+        (row.type === "pr.merged" || row.type === "pr.merge.verified") &&
+        row.branch === slice.branch &&
+        (head === null || row.head === head) &&
+        inSliceRun(row, slice),
+    );
+    if (merged) return true;
+    if (!head || !ctx) return false;
+    const released = rows.some(
+      (row) =>
+        row.type === "fanout.worktree.released" &&
+        row.fanout === plan.name &&
+        row.slice === slice.id &&
+        row.outcome === "removed" &&
+        inSliceRun(row, slice),
+    );
+    if (released) {
+      const ahead = gitRun(cwd, ["rev-list", "--count", `${ctx.trunk}..${head}`]);
+      if (ahead.ok && ahead.stdout.trim() === "0") return true;
+    }
+    const parent = plan.slices.find((other) => other.branch === slice.base);
+    return detectLanding(ctx, slice, {
+      head,
+      createdFrom: sliceStart(cwd, rows, plan.name, slice),
+      parentHead: parent ? branchRef(cwd, parent.branch) : null,
+      fanout: plan.name,
+      since: slice.hashSince || plan.createdAt || null,
+      sliceHash: slice.hash || null,
+      rows,
+    }).landed;
+  });
+}
+
+/**
  * The plan `name`, else the one with the current branch as a slice, else the
- * one `session` leads, else the only one. Several left: the error names
+ * one `session` leads, else the only one. Where several match, a finished plan
+ * (`planFinished`) drops out (#775). Several left: the error names
  * `--fanout <name>` and the candidates (#641).
  */
 export function selectFanout(
@@ -1093,20 +1150,42 @@ export function selectFanout(
   }
   const all = listFanouts(cwd);
   if (!all.ok) return all;
-  const holding = all.data.filter((plan) => plan.slices.some((slice) => slice.branch === current));
-  if (holding.length === 1) return { ok: true, data: holding[0] };
-  const led = session ? all.data.filter((plan) => plan.leadSession === session) : [];
-  if (holding.length === 0 && led.length === 1) return { ok: true, data: led[0] };
-  if (all.data.length === 1) return { ok: true, data: all.data[0] };
   if (all.data.length === 0)
     return fanoutFail(
       "not_found",
       "no fanout plan is recorded here",
       "workit fanout plan <plan.json>",
     );
-  const candidates = (holding.length > 1 ? holding : led.length > 1 ? led : all.data).map(
-    (plan) => plan.name,
+  let rows: readonly Record<string, unknown>[] | null = null;
+  const finished = new Map<string, boolean>();
+  const isFinished = (plan: FanoutFile): boolean => {
+    if (!finished.has(plan.name)) {
+      if (!rows) {
+        const ledger = readLedger(cwd);
+        rows = ledger.ok ? ledger.value.rows : [];
+      }
+      finished.set(plan.name, planFinished(cwd, plan, rows));
+    }
+    return finished.get(plan.name) === true;
+  };
+  // Narrow a tie to the active plans; all finished keeps the tie.
+  const active = (plans: FanoutFile[]): FanoutFile[] => {
+    if (plans.length < 2) return plans;
+    const live = plans.filter((plan) => !isFinished(plan));
+    return live.length ? live : plans;
+  };
+  const holding = active(
+    all.data.filter((plan) => plan.slices.some((slice) => slice.branch === current)),
   );
+  if (holding.length === 1) return { ok: true, data: holding[0] };
+  const led =
+    holding.length === 0 && session
+      ? active(all.data.filter((plan) => plan.leadSession === session))
+      : [];
+  if (led.length === 1) return { ok: true, data: led[0] };
+  const pool = holding.length > 1 ? holding : led.length > 1 ? led : active(all.data);
+  if (pool.length === 1) return { ok: true, data: pool[0] };
+  const candidates = pool.map((plan) => plan.name);
   return fanoutFail(
     "invalid_input",
     `several fanout plans match; pick one with --fanout <name>: ${candidates.join(", ")}`,
