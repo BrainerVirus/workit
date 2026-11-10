@@ -74,3 +74,31 @@ test("Given workit check list in a repo with configured checks, When it runs, Th
     unblock: "workit check lint|test",
   });
 });
+
+test.each([
+  [["git", "pull"], 'unknown git subcommand "pull"', "workit git rebase"],
+  [["git", "merge", "main"], 'unknown git subcommand "merge"', "workit git rebase"],
+  [["git", "checkout", "x"], 'unknown git subcommand "checkout"', "workit git branch <name>"],
+  [["git", "status", "--short"], 'unknown git subcommand "status"', "workit handoff"],
+  [["ci", "wait", "--ref", "main"], "unknown option --ref", "workit ci wait --branch <branch>"],
+  [
+    ["task", "list", "--limit", "5"],
+    "unknown option --limit",
+    "workit task list prints every task",
+  ],
+  [["help", "review"], 'unknown command "review"', "workit ledger verdict"],
+])(
+  "Given workit %p, When it runs, Then the unblock names the working command",
+  async (argv, error, hint) => {
+    const result = await run([...argv, "--json"]);
+    expect(result.code).toBe(2);
+    expect(result.json().error).toBe(error);
+    expect(result.json().unblock).toContain(hint);
+  },
+);
+
+test("Given workit git push origin <branch>, When it runs, Then the error names workit git push", async () => {
+  const result = await run(["git", "push", "origin", "feature/x", "--json"], scratch);
+  expect(result.code).toBe(2);
+  expect(result.json().error).toContain("workit git push [-u]");
+});

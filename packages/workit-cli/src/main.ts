@@ -271,6 +271,14 @@ export async function main(
         );
       return help(routed, sub ? subcommandHelp(entry, sub) : verbHelp(entry));
     }
+    const guessed = subcommandGuess(entry, args);
+    if (guessed)
+      return emit(
+        routed,
+        fail("invalid_input", `unknown ${entry.name} subcommand "${firstWord(args)}"`, {
+          unblock: guessed,
+        }),
+      );
     const ended = endOfOptions(routed, entry, args);
     if (typeof ended === "number") return ended;
     const checked = checkFlags(entry, ended);
@@ -477,6 +485,14 @@ function endOfOptions(io: Io, entry: VerbEntry, args: string[]): string[] | numb
     );
   return args.slice(0, end);
 }
+
+/** The registered fix for a git-style subcommand this verb does not have, if the first word is one. */
+const subcommandGuess = (entry: VerbEntry, args: readonly string[]): string | undefined => {
+  const word = firstWord(args);
+  const guesses = entry.subcommandGuesses;
+  if (word === undefined || !guesses || !Object.hasOwn(guesses, word)) return undefined;
+  return findSubcommand(entry, word) ? undefined : guesses[word];
+};
 
 /** The positional words of `help <verb> [<sub>]`. */
 const words = (args: readonly string[]): string[] => args.filter((arg) => !arg.startsWith("-"));
