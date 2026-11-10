@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import os from "node:os";
 import path from "node:path";
 import { cancelWaiters } from "@/packages/workit-core/src/core/heavy-lease";
+import { spawnHeavyTimeout, windowsScaled } from "@/test/shared/timeouts";
 import {
   acquireLease,
   bootId,
@@ -110,7 +111,8 @@ const queued = (dir: string) => {
   }
 };
 
-const until = async (condition: () => boolean, ms = 5_000) => {
+/** Real time a queue file may take to appear; Windows runners spawn about 3x slower. */
+const until = async (condition: () => boolean, ms = windowsScaled(5_000)) => {
   const deadline = Date.now() + ms;
   while (!condition()) {
     if (Date.now() > deadline) throw new Error("timed out waiting");
@@ -122,57 +124,65 @@ const release = (result: AcquireResult) => {
   if (result.ok) result.lease.release();
 };
 
-test("Given a slot held by a process that is then SIGKILLed and 2 waiters queued, When the holder dies, Then the first waiter takes the slot within 5 s of polling", async () => {
-  const dir = leasesDir();
-  const clock = fakeClock();
-  const holder = await holderProcess();
-  hold(dir, 0, holderRecord(holder.pid));
-  let firstAt: number | null = null;
-  const first = acquireLease(waiter(dir, clock, { check: "first", session: "s-first" })).then(
-    (result) => {
-      firstAt = clock.at();
-      return result;
-    },
-  );
-  await until(() => queued(dir) === 1);
-  const second = acquireLease(waiter(dir, clock, { check: "second", session: "s-second" }));
-  await until(() => queued(dir) === 2);
-  await holder.kill();
-  const diedAt = clock.at();
-  const got = await first;
-  expect(got.ok).toBe(true);
-  expect((firstAt ?? Infinity) - diedAt).toBeLessThanOrEqual(5_000);
-  release(got);
-  expect((await second).ok).toBe(true);
-}, 20_000);
+test(
+  "Given a slot held by a process that is then SIGKILLed and 2 waiters queued, When the holder dies, Then the first waiter takes the slot within 5 s of polling",
+  async () => {
+    const dir = leasesDir();
+    const clock = fakeClock();
+    const holder = await holderProcess();
+    hold(dir, 0, holderRecord(holder.pid));
+    let firstAt: number | null = null;
+    const first = acquireLease(waiter(dir, clock, { check: "first", session: "s-first" })).then(
+      (result) => {
+        firstAt = clock.at();
+        return result;
+      },
+    );
+    await until(() => queued(dir) === 1);
+    const second = acquireLease(waiter(dir, clock, { check: "second", session: "s-second" }));
+    await until(() => queued(dir) === 2);
+    await holder.kill();
+    const diedAt = clock.at();
+    const got = await first;
+    expect(got.ok).toBe(true);
+    expect((firstAt ?? Infinity) - diedAt).toBeLessThanOrEqual(5_000);
+    release(got);
+    expect((await second).ok).toBe(true);
+  },
+  spawnHeavyTimeout() + 5_000,
+);
 
-test("Given a waiter ahead whose workspace allows one slot, When the holder of slot 1 is SIGKILLed, Then a two-slot waiter behind it takes slot 1 within 5 s of polling", async () => {
-  const dir = leasesDir();
-  const clock = fakeClock();
-  hold(dir, 0, holderRecord(process.pid, { processStart: null, session: "s-busy" }));
-  const holder = await holderProcess();
-  hold(dir, 1, holderRecord(holder.pid));
-  const narrow = acquireLease(
-    waiter(dir, clock, { slots: 1, check: "narrow", session: "s-narrow" }),
-  );
-  await until(() => queued(dir) === 1);
-  let wideAt: number | null = null;
-  const wide = acquireLease(
-    waiter(dir, clock, { slots: 2, check: "wide", session: "s-wide" }),
-  ).then((result) => {
-    wideAt = clock.at();
-    return result;
-  });
-  await until(() => queued(dir) === 2);
-  await holder.kill();
-  const diedAt = clock.at();
-  const got = await wide;
-  expect(got.ok && got.lease.slot).toBe(1);
-  expect((wideAt ?? Infinity) - diedAt).toBeLessThanOrEqual(5_000);
-  release(got);
-  cancelWaiters(dir, { session: "s-narrow" }, "test");
-  expect(await narrow).toMatchObject({ ok: false, reason: "cancelled" });
-}, 20_000);
+test(
+  "Given a waiter ahead whose workspace allows one slot, When the holder of slot 1 is SIGKILLed, Then a two-slot waiter behind it takes slot 1 within 5 s of polling",
+  async () => {
+    const dir = leasesDir();
+    const clock = fakeClock();
+    hold(dir, 0, holderRecord(process.pid, { processStart: null, session: "s-busy" }));
+    const holder = await holderProcess();
+    hold(dir, 1, holderRecord(holder.pid));
+    const narrow = acquireLease(
+      waiter(dir, clock, { slots: 1, check: "narrow", session: "s-narrow" }),
+    );
+    await until(() => queued(dir) === 1);
+    let wideAt: number | null = null;
+    const wide = acquireLease(
+      waiter(dir, clock, { slots: 2, check: "wide", session: "s-wide" }),
+    ).then((result) => {
+      wideAt = clock.at();
+      return result;
+    });
+    await until(() => queued(dir) === 2);
+    await holder.kill();
+    const diedAt = clock.at();
+    const got = await wide;
+    expect(got.ok && got.lease.slot).toBe(1);
+    expect((wideAt ?? Infinity) - diedAt).toBeLessThanOrEqual(5_000);
+    release(got);
+    cancelWaiters(dir, { session: "s-narrow" }, "test");
+    expect(await narrow).toMatchObject({ ok: false, reason: "cancelled" });
+  },
+  spawnHeavyTimeout() + 5_000,
+);
 
 /** Real time, except that a poll longer than the settle step ends only when the waiter is woken. */
 const stalledPolls = (): Clock & { polls: () => number } => {
