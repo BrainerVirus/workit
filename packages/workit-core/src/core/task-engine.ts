@@ -1523,6 +1523,16 @@ export class WorkitCore {
           "permission_denied",
           "helpers resolve only the findings they recorded; the lead resolves this one",
         );
+      if (finding.data.leadOwned)
+        return failure(
+          "permission_denied",
+          "the lead now owns this finding (it reopened, dismissed or deferred it); report it to the lead",
+        );
+      if (finding.data.disposition !== "open")
+        return failure(
+          "permission_denied",
+          `finding is already ${finding.data.disposition}; a helper resolves only its open findings`,
+        );
       if (input.disposition !== "fixed" && input.disposition !== "dismissed")
         return failure(
           "permission_denied",
@@ -1628,11 +1638,18 @@ export class WorkitCore {
       (current, mutation) => {
         const existing = current.findings.find((entry) => entry.id === input.findingId);
         if (!existing) return failure("not_found", "finding not found");
+        // A lead resolve of a helper's finding takes it over for good: the
+        // helper cannot resolve it again after a lead reopen or judgment.
+        const owner =
+          helperId === null && existing.provenance.workerId !== null
+            ? { leadOwned: true as const }
+            : {};
         const data =
           input.disposition === "open"
-            ? { ...existing.data, disposition: "open" as const, resolution: null }
+            ? { ...existing.data, ...owner, disposition: "open" as const, resolution: null }
             : {
                 ...existing.data,
+                ...owner,
                 disposition: input.disposition,
                 resolution: {
                   reason: input.reason,

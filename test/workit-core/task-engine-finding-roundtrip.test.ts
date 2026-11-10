@@ -257,3 +257,31 @@ test("Given lead paths [apps/**] and a worker scope [apps/web/**, lib/x/**], Whe
   if (refused.ok) throw new Error("expected a refusal");
   expect(JSON.stringify(refused)).not.toContain("apps/web/**");
 });
+
+test("Given a helper's finding the lead reopened or dismissed, When the helper resolves it again, Then it is refused because the lead now owns it", () => {
+  const world = started();
+  const reviewer = runningReviewer(world);
+  const reopened = recordFinding(reviewer, world.taskId);
+  const check = recordEvidence(reviewer, world.taskId);
+  expect(resolve(reviewer, world.taskId, reopened, [check])).toMatchObject({ ok: true });
+  // A helper resolves only while its finding is open.
+  expect(resolve(reviewer, world.taskId, reopened, [check], "dismissed")).toMatchObject({
+    ok: false,
+    code: "permission_denied",
+  });
+  expect(resolve(world.lead, world.taskId, reopened, [], "open")).toMatchObject({ ok: true });
+  const again = resolve(reviewer, world.taskId, reopened, [recordEvidence(reviewer, world.taskId)]);
+  expect(again).toMatchObject({ ok: false, code: "permission_denied" });
+  if (again.ok) throw new Error("expected a refusal");
+  expect(again.error).toContain("the lead now owns this finding");
+
+  const dismissed = recordFinding(reviewer, world.taskId);
+  const leadNote = recordEvidence(world.lead, world.taskId, "investigation");
+  expect(resolve(world.lead, world.taskId, dismissed, [leadNote], "dismissed")).toMatchObject({
+    ok: true,
+  });
+  const late = resolve(reviewer, world.taskId, dismissed, [recordEvidence(reviewer, world.taskId)]);
+  expect(late).toMatchObject({ ok: false, code: "permission_denied" });
+  if (late.ok) throw new Error("expected a refusal");
+  expect(late.error).toContain("the lead now owns this finding");
+});

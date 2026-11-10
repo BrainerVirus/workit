@@ -591,6 +591,8 @@ export const findingSchema = z
       .object({ reason: text, evidenceIds: z.array(id), decisionIds: z.array(id) })
       .strict()
       .nullable(),
+    /** Set when the lead resolved a helper's finding; the helper cannot resolve it again. */
+    leadOwned: z.literal(true).optional(),
   })
   .strict();
 export type Finding = z.infer<typeof findingSchema>;
