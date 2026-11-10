@@ -1027,6 +1027,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - A lead running two fanouts no longer hands one fanout's standing orders to the other fanout's workers.
 - The launch update check and `workit doctor` no longer offer or show a latest CLI version cached for another package (such as 14.7.0 after moving to `@workit-dev/cli`): the cache records its package and is refetched when it does not match.
 - A fanout plan whose slices have all landed or been released no longer counts as a candidate, so `workit ledger standing add` needs no `--fanout` while only one plan is active (#775)
+- `workit git pull|merge|checkout|status`, `ci wait --ref`, `task list --limit` and `help review` now name the exact command that does the job
 
 ### Removed
 
