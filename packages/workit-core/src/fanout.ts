@@ -1076,9 +1076,12 @@ function listFanouts(cwd: string): FanoutResult<FanoutFile[]> {
 }
 
 /**
- * Every slice released (`fanout worktree release` removed its worktree in its
- * current run) or landed on the trunk as git alone reads it. No forge call: a
- * squash merge git cannot see leaves the plan active, never silently retired.
+ * Every slice landed on the trunk as git alone reads it, or released
+ * (`fanout worktree release` removed its worktree in its current run) with no
+ * commits of its own beyond the trunk. Release keeps the branch and needs no
+ * merge, so a released branch with unlanded commits keeps the plan active. No
+ * forge call: a squash merge git cannot see, or a branch that is gone, leaves
+ * the plan active, never silently retired.
  */
 function planFinished(
   cwd: string,
@@ -1087,8 +1090,11 @@ function planFinished(
 ): boolean {
   if (plan.slices.length === 0) return false;
   const trunk = trunkRef(cwd, plan.trunk);
-  const ctx = trunk ? { cwd, trunk, forge: null } : null;
+  if (!trunk) return false;
+  const ctx = { cwd, trunk, forge: null };
   return plan.slices.every((slice) => {
+    const head = branchRef(cwd, slice.branch);
+    if (!head) return false;
     const released = rows.some(
       (row) =>
         row.type === "fanout.worktree.released" &&
@@ -1097,9 +1103,10 @@ function planFinished(
         row.outcome === "removed" &&
         inSliceRun(row, slice),
     );
-    if (released) return true;
-    const head = branchRef(cwd, slice.branch);
-    if (!ctx || !head) return false;
+    if (released) {
+      const ahead = gitRun(cwd, ["rev-list", "--count", `${trunk}..${head}`]);
+      if (ahead.ok && ahead.stdout.trim() === "0") return true;
+    }
     const parent = plan.slices.find((other) => other.branch === slice.base);
     return detectLanding(ctx, slice, {
       head,

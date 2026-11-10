@@ -115,6 +115,23 @@ test("given one landed plan and one active plan, when ledger standing add runs w
   expect(listed.json().data.fanout).toBe("wave-two");
 });
 
+test("given a released slice whose branch holds unlanded commits, then its plan stays a candidate and standing add without --fanout refuses naming both", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "wave-one");
+  const created = await run(cwd, ["fanout", "worktree", "create", "wave-one-a", "--json"]);
+  expect(created.code, created.stderr + created.stdout).toBe(0);
+  const worktree = created.json().data.path as string;
+  writeFileSync(path.join(worktree, "wave-one.ts"), "export {};\n");
+  git(worktree, "add", "wave-one.ts");
+  git(worktree, "commit", "-qm", "feat: wave-one");
+  const released = await run(cwd, ["fanout", "worktree", "release", "wave-one-a", "--json"]);
+  expect(released.code, released.stderr + released.stdout).toBe(0);
+  await plan(cwd, root, "wave-two");
+  const refused = await run(cwd, ["ledger", "standing", "add", "Never push", "--json"]);
+  expect(refused.code, refused.stdout).toBe(2);
+  expect(refused.json().error).toContain("pick one with --fanout <name>: wave-one, wave-two");
+});
+
 test("given one released plan and one active plan, when ledger standing add runs without --fanout, then the order is recorded for the active plan", async () => {
   const { root, cwd } = repo();
   await plan(cwd, root, "wave-one");
