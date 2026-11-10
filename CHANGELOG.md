@@ -1029,6 +1029,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - A fanout plan whose slices have all landed or been released no longer counts as a candidate, so `workit ledger standing add` needs no `--fanout` while only one plan is active (#775)
 - `workit git pull|merge|checkout|status`, `ci wait --ref`, `task list --limit` and `help review` now name the exact command that does the job
 - A configured check that is red on the merge base as well as the head no longer refuses `tests-verified`; the verdict row records `pre-existing red: <check> (base <sha>)` and `workit pr status` shows it (#771)
+- A helper closes the finding it recorded with its own evidence in one call; a refused resolve, wrong payload keys and an out-of-scope worker assignment now name the fix (#317, #647)
 
 ### Removed
 
