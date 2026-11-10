@@ -131,6 +131,7 @@ test("given a minimal example per action, then it is accepted", () => {
       const example = exampleOperation(family, action);
       for (const key of ["findingId", "workerId", "decisionId"])
         if (key in example) example[key] = "01234567-89ab-4cde-8f01-23456789abcd";
+      if ("evidenceIds" in example) example.evidenceIds = ["01234567-89ab-4cde-8f01-23456789abcd"];
       const parsed = parseAdvertisedOperation(family, example, "opencode");
       expect(parsed.ok, `${family} ${action}: ${JSON.stringify(parsed)}`).toBe(true);
     }

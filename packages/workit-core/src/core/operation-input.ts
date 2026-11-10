@@ -545,6 +545,11 @@ export function actionKeys(family: OperationFamily, action: string): ActionKeys 
   return out;
 }
 
+/** Example fields that beat the enum's first value: the call agents actually make. */
+const EXAMPLE_FIELDS: Partial<Record<string, Record<string, unknown>>> = {
+  "finding.resolve": { disposition: "fixed", evidenceIds: ["<evidenceId>"] },
+};
+
 /** A minimal valid flat payload for one action: required scalars with placeholders. */
 export function exampleOperation(family: OperationFamily, action: string): Record<string, unknown> {
   const keys = actionKeys(family, action);
@@ -553,7 +558,7 @@ export function exampleOperation(family: OperationFamily, action: string): Recor
     example[name] = FLAT[family].fields[name]?.enum?.[0] ?? `<${name}>`;
   if (family === "policy" && !keys?.required.length && action !== "explain")
     example.riskTier = "normal";
-  return example;
+  return { ...example, ...EXAMPLE_FIELDS[`${family}.${action}`] };
 }
 
 const oneOf = (values: readonly string[]): string => values.join(" | ");

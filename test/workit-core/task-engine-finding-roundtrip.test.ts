@@ -226,6 +226,9 @@ test.each([
     const payload = JSON.parse(example!) as Record<string, unknown>;
     expect(payload).toMatchObject({ action });
     expect(payload).toHaveProperty(needed);
+    // The resolve example is the call a reviewer makes: fixed, with its evidence.
+    if (action === "resolve")
+      expect(payload).toMatchObject({ disposition: "fixed", evidenceIds: ["<evidenceId>"] });
     for (const key of Object.keys(keys)) expect(refused.error).toContain(key);
   },
 );

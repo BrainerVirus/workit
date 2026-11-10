@@ -160,5 +160,7 @@ test("Given the retro's wrong finding payloads, When the CLI refuses them, Then 
     const example = JSON.parse(error.match(/Example: (\{.*\})$/u)![1]) as Record<string, unknown>;
     expect(example.action).toBe(action);
     expect(Object.keys(example)).toContain(action === "record" ? "claim" : "findingId");
+    if (action === "resolve")
+      expect(example).toMatchObject({ disposition: "fixed", evidenceIds: ["<evidenceId>"] });
   }
 });
