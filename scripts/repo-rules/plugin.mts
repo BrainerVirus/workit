@@ -183,6 +183,24 @@ export const RULES: Record<string, RepoRule> = {
       };
     },
   },
+  "no-fixed-date-clock": {
+    cited:
+      "#785: lease-wake and resources-queue started a fake clock at a fixed 2026 date; lease staleness ages tickets against real Date.now(), so the tests broke days later",
+    fix: "start an advancing fake clock at Date.now(), or pass the fixed time to the code under test explicitly (a const NOW handed to a `now` parameter)",
+    only: TESTS,
+    visit: (report) => ({
+      VariableDeclaration(declaration) {
+        if (declaration.kind !== "let") return;
+        for (const declarator of children(declaration, "declarations")) {
+          const init = child(declarator, "init");
+          if (init?.type !== "CallExpression" || calleeName(init) !== "Date.parse") continue;
+          const arg = children(init, "arguments")[0] ?? null;
+          if (arg?.type === "Literal" && typeof arg.value === "string")
+            report(declarator, "an advancing test clock starts at a fixed date");
+        }
+      },
+    }),
+  },
   "exit-after-flush": {
     cited: "#535: `process.exit(await main(...))` cut off output piped to the host",
     fix: "`await flushStreams()` (packages/workit-cli/src/output.ts) right before process.exit, or set process.exitCode and return",

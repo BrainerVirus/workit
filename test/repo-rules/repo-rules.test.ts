@@ -48,6 +48,18 @@ test("retries stop at the cap", async () => {
 `,
   },
   {
+    rule: "no-fixed-date-clock",
+    file: "test/workit-core/lease-wake.test.ts",
+    line: 3,
+    // a31a5616 (#764): the lease-wake fake clock, before #785.
+    source: `import type { Clock } from "@/packages/workit-core/src/core/resources";
+export const fakeClock = (): Clock => {
+  let now = Date.parse("2026-11-07T18:00:00Z");
+  return { now: () => now, sleep: async (ms) => void (now += ms) };
+};
+`,
+  },
+  {
     rule: "exit-after-flush",
     file: "packages/workit-cli/src/main.ts",
     line: 3,
@@ -73,6 +85,12 @@ test("retries stop at the cap", () => {
   const attempts = 8;
   expect(attempts).toBeLessThan(9);
 });
+`,
+  "test/workit-core/lease-wake-fixed.test.ts": `const NOW = Date.parse("2026-11-07T18:00:00Z");
+export const fakeClock = () => {
+  let now = Date.now();
+  return { now: () => now, base: NOW };
+};
 `,
   "packages/workit-cli/src/main-fixed.ts": `declare const flushStreams: () => Promise<void>;
 export async function run(code: number) {
@@ -122,7 +140,7 @@ test("Given each cited past mistake and an empty baseline, When the repo rules r
     expect(hit, `${entry.rule} on ${entry.file}:${entry.line}`).toContain(`workit/${entry.rule}: `);
     expect(hit).toContain(" Fix: ");
   }
-  expect(err).toContain("repo rules: 4 new hits.");
+  expect(err).toContain("repo rules: 5 new hits.");
 });
 
 test("Given the fixed shapes and files outside a rule's paths, When the repo rules run, Then none of them is reported", () => {
@@ -173,9 +191,10 @@ test("Given a baselined hit that was fixed, When the repo rules run, Then they p
 
   const shrunk = run("--write");
   expect(shrunk.code).toBe(0);
-  expect(shrunk.out).toBe("repo rules: baseline 7 -> 4 hits");
+  expect(shrunk.out).toBe("repo rules: baseline 8 -> 5 hits");
   expect(readBaseline()).toEqual({
     "exit-after-flush": { "packages/workit-cli/src/main.ts": 1 },
+    "no-fixed-date-clock": { "test/workit-core/lease-wake.test.ts": 1 },
     "no-wall-clock-assert": { "test/workit-core/revision-retry.test.ts": 1 },
     "spawn-env-path": { "packages/workit-core/src/core/pr-env.ts": 1 },
     "spawn-timeout": { "packages/workit-core/src/core/pr-create.ts": 1 },

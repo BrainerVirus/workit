@@ -35,7 +35,9 @@ const leasesDir = () => {
 
 /** Simulated time: each sleep moves it forward and yields one macrotask. */
 const fakeClock = (): Clock & { at: () => number } => {
-  let now = Date.parse("2026-11-07T18:00:00Z");
+  // Starts at the real time: a ticket's age is real now minus its startedAt, and
+  // without a process start time (Windows) an old start reads as a stale ticket.
+  let now = Date.now();
   return {
     now: () => now,
     at: () => now,
