@@ -665,8 +665,7 @@ export const VERBS: readonly VerbEntry[] = [
         "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
       switch:
         "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
-      status:
-        "workit handoff prints the branch, HEAD and dirty state; workit task status shows the task",
+      status: "read-only git needs no workit verb: run git status --short directly",
     },
     summary:
       "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",

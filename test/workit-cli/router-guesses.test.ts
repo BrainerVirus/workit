@@ -79,7 +79,11 @@ test.each([
   [["git", "pull"], 'unknown git subcommand "pull"', "workit git rebase"],
   [["git", "merge", "main"], 'unknown git subcommand "merge"', "workit git rebase"],
   [["git", "checkout", "x"], 'unknown git subcommand "checkout"', "workit git branch <name>"],
-  [["git", "status", "--short"], 'unknown git subcommand "status"', "workit handoff"],
+  [
+    ["git", "status", "--short"],
+    'unknown git subcommand "status"',
+    "run git status --short directly",
+  ],
   [["ci", "wait", "--ref", "main"], "unknown option --ref", "workit ci wait --branch <branch>"],
   [
     ["task", "list", "--limit", "5"],
