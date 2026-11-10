@@ -693,7 +693,10 @@ const gateReading = (cwd: string, row: VerdictRow): GateReading | null => {
  * commands would pick. `plan` is null only for a --fanout with no plan file
  * (its orders can still be listed and cleared).
  */
-function standingFanout(io: Io, values: Values): { name: string; plan: FanoutFile | null } | Error {
+function standingFanout(
+  io: Io,
+  values: Values,
+): { name: string; plan: FanoutFile | null } | (Error & { candidates?: string[] }) {
   if (values.fanout !== undefined) {
     const name = values.fanout.trim();
     if (!name) return new Error("--fanout needs a plan name");
@@ -707,12 +710,20 @@ function standingFanout(io: Io, values: Values): { name: string; plan: FanoutFil
     io.env.WORKIT_SESSION_ID?.trim() || null,
   );
   if (selected.ok) return { name: selected.data.name, plan: selected.data };
-  return new Error(
-    selected.error.includes("--fanout")
-      ? selected.error
-      : `${selected.error}; pass --fanout <name>`,
+  const candidates = selected.data?.candidates;
+  return Object.assign(
+    new Error(
+      selected.error.includes("--fanout")
+        ? selected.error
+        : `${selected.error}; pass --fanout <name>`,
+    ),
+    Array.isArray(candidates) && candidates.length ? { candidates: candidates.map(String) } : {},
   );
 }
+
+/** The order as one shell word: double-quoted unless the text would expand there. */
+const quoteOrder = (text: string): string =>
+  /[$`\\"!]/u.test(text) ? `'${text.replaceAll("'", "'\\''")}'` : `"${text}"`;
 
 async function standing(io: Io, values: Values, args: string[]): Promise<number> {
   const [action, ...rest] = args;
@@ -729,8 +740,19 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
     return usage(io, `--stop and --clear go with standing add, not standing ${action}`);
   if (values.stop && values.clear) return usage(io, "pass --stop or --clear, not both");
   const target = standingFanout(io, values);
-  if (target instanceof Error)
-    return emit(io, fail("invalid_input", target.message, { unblock: STANDING_USAGE }));
+  if (target instanceof Error) {
+    const order = action === "add" && !values.stop && !values.clear ? rest.join(" ").trim() : "";
+    const first = target.candidates?.[0];
+    return emit(
+      io,
+      fail("invalid_input", target.message, {
+        unblock:
+          order && first
+            ? `workit ledger standing add ${quoteOrder(order)} --fanout ${first}  # or another of: ${target.candidates?.join(", ")}`
+            : STANDING_USAGE,
+      }),
+    );
+  }
   const fanout = target.name;
   const lead = target.plan?.leadSession ?? null;
   const leads = target.plan ? planLeads(target.plan) : null;
