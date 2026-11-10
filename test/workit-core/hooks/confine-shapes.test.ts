@@ -120,7 +120,7 @@ test("Given an implementer, When it runs workit git --cwd $PWD after a literal c
     `cd ${wt}; W=$PWD; workit git --cwd $W commit -m x -- a.ts`,
     `cd ${wt} && workit git --cwd "\${PWD}" stage -- a.ts`,
     `cd ${wt} && touch $PWD/a.ts`,
-    `cd ${path.join(wt, "src")} && cd .. && workit git --cwd $PWD commit -m x -- a.ts`,
+    `cd ${path.join(wt, "src")}\ncd ..\nworkit git --cwd $PWD commit -m x -- a.ts`,
   ])
     allowed(command, id);
   expect(denied(`cd ${lead} && workit git --cwd $PWD commit -m x -- a.ts`, id)).toContain(
@@ -192,4 +192,111 @@ test("Given an implementer, When a write takes its paths from a command substitu
   const inline = denied(`cd ${wt} && sed -i s/x/y/ $(grep -rl x .)`, id);
   expect(inline).toContain("built from $(grep -rl x .), which");
   expect(inline).toContain("Run `grep -rl x .` first");
+});
+
+// Fix round on verdict mwbailf0: shapes the verifier showed writing the lead's
+// checkout while judged inside the worktree.
+const unresolvable = (command: string, id: string) => {
+  const reason = denied(command, id);
+  expect(reason, command).toContain("which Workit cannot resolve");
+  return reason;
+};
+
+test("Given an implementer, When the command assigns IFS, Then for-list and variable path words are unresolvable and denied with the retry", () => {
+  const id = "impl-shapes-ifs";
+  allowed(`touch ${wt}/a.ts`, id);
+  const core = path.join(lead, "src", "core.ts");
+  for (const command of [
+    `IFS=Z; W=${wt}/xZ${lead}/src/c; for f in $W; do touch $f; done`,
+    `IFS=Z; W=${wt}/xZ${lead}/src/c; touch $W`,
+    `cd ${wt} && IFS=Z; for f in $PWD/xZ${core}; do sed -i s/a/b/ $f; done`,
+    `cd ${wt} && IFS=:; for f in a:${core}; do touch $f; done`,
+  ])
+    expect(unresolvable(command, id), command).toContain("Retry as:");
+  allowed(`IFS=Z; touch ${wt}/a.ts`, id);
+});
+
+test("Given an implementer, When $PWD follows a cd that may not run in sequence or may land elsewhere, Then a write under $PWD is denied; after a literal cd that starts its own segment it is allowed", () => {
+  const id = "impl-shapes-cd";
+  allowed(`touch ${wt}/a.ts`, id);
+  for (const command of [`cd ${wt}; touch $PWD/a.ts`, `cd ${wt}\ntouch $PWD/a.ts`])
+    allowed(command, id);
+  for (const command of [
+    `cd ${wt} || cd ${lead}; touch $PWD/x`,
+    `cd ${lead} || cd ${wt}; touch $PWD/x`,
+    `cd ${lead} && false && cd ${wt}; touch $PWD/x`,
+    `cd ${lead}; cd ${wt} & touch $PWD/x`,
+    `cd ${lead} | cd ${wt}; touch $PWD/x`,
+    `cd ${wt} && command cd ${lead} && touch $PWD/x`,
+    `cd ${wt} && builtin cd ${lead} && touch $PWD/x`,
+    `cd ${wt}/nonexistent; touch $PWD/x`,
+    `cd ${lead} && cd ${wt}/nonexistent; touch $PWD/x`,
+    `cd ${wt}; CDPATH=${lead}; cd src; touch $PWD/x`,
+    `f() { cd ${lead}; }; cd ${wt}; f; touch $PWD/x`,
+    `cd() { builtin cd ${lead}; }; cd ${wt}; touch $PWD/x`,
+    `pushd ${lead}; pushd ${wt}; pushd; touch $PWD/x`,
+    `cd ${lead}; pushd ${wt}; pushd +1; touch $PWD/x`,
+    `cd ${lead}; pushd ${wt}; popd +0; touch $PWD/x`,
+    `cd ${lead}; pushd -n ${wt}; touch $PWD/x`,
+  ])
+    expect(denied(command, id), command).toContain("workit worktree confinement");
+});
+
+test("Given an implementer, When a for list holds a quoted literal word with whitespace, Then the loop variable is unresolvable and denied with the retry", () => {
+  const id = "impl-shapes-quoted";
+  allowed(`touch ${wt}/a.ts`, id);
+  const core = path.join(lead, "src", "core.ts");
+  for (const command of [
+    `cd ${wt} && for f in "a.ts ${core}"; do sed -i s/a/b/ $f; done`,
+    `cd ${wt} && for f in $'a.ts\n${core}'; do sed -i s/a/b/ $f; done`,
+    `cd ${wt} && for f in a"b ${core}"; do touch $f; done`,
+  ])
+    expect(unresolvable(command, id), command).toContain("Retry as:");
+  allowed(`cd ${wt} && for f in "a.ts" 'b.ts'; do touch $f; done`, id);
+});
+
+test("Given an implementer, When curl writes through --output-dir, a log or state file, an abbreviated option or %output, Then each file is judged; a config file, a format file or a variable command name is unresolvable", () => {
+  const id = "impl-shapes-curl-writes";
+  allowed(`touch ${wt}/a.ts`, id);
+  const core = path.join(lead, "src", "core.ts");
+  for (const command of [
+    `cd ${wt} && curl --output-dir ${wt} -o b.ts localhost:1/x`,
+    `cd ${wt} && curl --trace trace.log --stderr err.log localhost:1/x`,
+    `curl --cookie a=b -w '%{http_code}' --etag-compare ${core} localhost:1/x`,
+  ])
+    allowed(command, id);
+  for (const command of [
+    `cd ${wt} && curl --output-dir ${lead}/src -o core.ts localhost:1/x`,
+    `cd ${wt} && curl --output-dir ${lead}/src -O localhost:1/x`,
+    `cd ${wt} && curl --output-dir=${lead}/src --remote-name localhost:1/x`,
+    ...[
+      "trace",
+      "trace-ascii",
+      "stderr",
+      "libcurl",
+      "hsts",
+      "alt-svc",
+      "etag-save",
+      "dump-h",
+      "cookie-j",
+      "out",
+    ].map((option) => `curl --${option} ${core} localhost:1/x`),
+    `curl -w '%output{${core}}' localhost:1/x`,
+    `curl --write-out '%output{>>${core}}' localhost:1/x`,
+  ])
+    expect(denied(command, id), command).toContain(`${lead}`);
+  for (const command of [
+    `cd ${wt} && curl -K a.cfg localhost:1/x`,
+    `cd ${wt} && curl -sK a.cfg localhost:1/x`,
+    `cd ${wt} && curl --config a.cfg localhost:1/x`,
+    `cd ${wt} && curl -w @a.fmt localhost:1/x`,
+    `cd ${wt} && echo 'output="${core}"' | curl -K - localhost:1/x`,
+  ])
+    expect(unresolvable(command, id), command).not.toContain("Retry as:");
+  expect(unresolvable(`cd ${wt} && curl -sK a.cfg localhost:1/x`, id)).toContain(
+    "built from curl -K <config>, which",
+  );
+  expect(unresolvable(`c=curl; $c -o ${core} localhost:1/x`, id)).toContain(
+    `Retry as: \`c=curl; <absolute path of $c> -o ${core} localhost:1/x\``,
+  );
 });
