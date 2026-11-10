@@ -33,7 +33,14 @@ export type CheckEvidenceDoc = {
   satisfied: boolean;
 };
 
-export type LocalCheckRow = { name: string; head: string; dirty: boolean; passed: boolean };
+export type LocalCheckRow = {
+  name: string;
+  head: string;
+  dirty: boolean;
+  passed: boolean;
+  /** The configured command ran (`workit check <name>`), not an ad-hoc `--name <name> -- <cmd>`. */
+  configured?: boolean;
+};
 export type CiCheck = { name: string; state: "passing" | "failing" | "pending" };
 
 /** The aggregate `check` script repeats the others; it is never asked for on its own. */
@@ -62,6 +69,7 @@ export function localCheckRows(rows: readonly Record<string, unknown>[]): LocalC
       head: String(row.head ?? ""),
       dirty: row.dirty === true,
       passed: row.result === "passed",
+      configured: row.configured === true,
     }));
 }
 
@@ -85,17 +93,23 @@ export function verdictEvidence(
   });
 }
 
-/** The last clean local run of `name` on `sha`. */
+/** The last clean local run of `name` on `sha`; `configured` keeps only runs of the configured command. */
 const lastRun = (
   local: readonly LocalCheckRow[],
   name: string,
   sha: string,
+  configured = false,
 ): LocalCheckRow | undefined =>
-  local.findLast((row) => row.name === name && row.head === sha && !row.dirty);
+  local.findLast(
+    (row) => row.name === name && row.head === sha && !row.dirty && (!configured || row.configured),
+  );
 
 /**
- * A red check, kept failing unless its last local run on the merge base failed
- * too. A head that is its own merge base has no base to compare with.
+ * A red check, kept failing unless the last local run of its configured
+ * command on the merge base failed too: an ad-hoc `--name <name> -- false`
+ * there cannot excuse it. A head that is its own merge base has no base to
+ * compare with. Runs record pass/fail only, so a new failure inside a check
+ * already red on the base is not told apart.
  */
 function againstBase(
   red: CheckEvidence,
@@ -104,7 +118,7 @@ function againstBase(
 ): CheckEvidence {
   const { base } = range;
   if (!base || base === range.head) return red;
-  const run = lastRun(local, red.name, base);
+  const run = lastRun(local, red.name, base, true);
   const result = run ? (run.passed ? "passed" : "failed") : "missing";
   return {
     ...red,
@@ -149,7 +163,7 @@ export function checkEvidence(input: {
 
 /** The note a verdict row and a status render carry for a pre-existing red check. */
 export const preExistingNote = (item: CheckEvidence): string =>
-  `pre-existing red: ${item.name} (base ${item.base?.sha.slice(0, 12) ?? "?"})`;
+  `pre-existing red: ${item.name} (base ${item.base?.sha.slice(0, 12) ?? "?"}; failures not compared)`;
 
 /** The status words after a check's name. */
 function evidenceState(item: CheckEvidence): string {

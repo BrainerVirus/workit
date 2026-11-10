@@ -65,14 +65,21 @@ const repo = (): { root: string; base: string; head: string } => {
   return { root, base, head: git(root, "rev-parse", "HEAD") };
 };
 
-/** A CLI-observed `workit check <name>` run on `sha`. */
-const ran = (root: string, name: string, sha: string, result: "passed" | "failed") =>
+/** A CLI-observed `workit check <name>` run on `sha`; ad-hoc is `workit check --name <name> -- <cmd>`. */
+const ran = (
+  root: string,
+  name: string,
+  sha: string,
+  result: "passed" | "failed",
+  configured = true,
+) =>
   appendObserved(root, {
     type: "check",
     actor: { host: "cli", session: "claude-session-1", agentId: null },
     branch: "feature/x",
     head: sha,
     name,
+    configured,
     result,
   });
 
@@ -114,7 +121,9 @@ test("Given lint red on the merge base and on the head with a recorded run on bo
   ]);
   const text = await testsVerified(root, false);
   expect(text.code).toBe(0);
-  expect(text.stdout).toContain(`pre-existing red: lint (base ${base.slice(0, 12)})`);
+  expect(text.stdout).toContain(
+    `pre-existing red: lint (base ${base.slice(0, 12)}; failures not compared)`,
+  );
 });
 
 test("Given lint green on the merge base and red on the head, When tests-verified is recorded, Then check_failing refuses it as before", async () => {
@@ -144,10 +153,28 @@ test("Given lint red on the head and no run on the merge base, When tests-verifi
   );
 });
 
+test("Given an ad-hoc red run named lint on the merge base and a configured red lint on the head, When tests-verified is recorded, Then check_failing still refuses it", async () => {
+  const { root, base, head } = repo();
+  ran(root, "lint", base, "failed", false);
+  ran(root, "test", head, "passed");
+  ran(root, "lint", head, "failed");
+  const refused = await testsVerified(root, true);
+  expect(refused.code).not.toBe(0);
+  const out = JSON.parse(refused.stdout);
+  expect(out.error).toStartWith(`check_failing: the configured check "lint" is failing on`);
+  expect(out.error).toContain(`no run on the merge base ${base.slice(0, 12)}`);
+});
+
 test("Given a later green run on the merge base after a red one, When the evidence is read, Then the last base run decides and the head's red is failing", () => {
   const head = "a".repeat(40);
   const base = "b".repeat(40);
-  const run = (sha: string, passed: boolean) => ({ name: "lint", head: sha, dirty: false, passed });
+  const run = (sha: string, passed: boolean) => ({
+    name: "lint",
+    head: sha,
+    dirty: false,
+    passed,
+    configured: true,
+  });
   const doc = checkEvidence({
     lane: "focused",
     head,

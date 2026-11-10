@@ -650,7 +650,11 @@ export const ledgerDeps: { headCi: (io: Io, branch: string | null, head: string)
   headCi,
 };
 
-/** The commands that record a run of `name` on the merge base `sha`, in a disposable worktree. */
+/**
+ * The commands that record a run of `name` on the merge base `sha`, in a
+ * disposable worktree. Raw git: no workit verb makes a detached worktree at a
+ * commit (`fanout worktree create` makes a slice branch).
+ */
 const baseRunCommand = (sha: string, name: string): string =>
   `run it on the merge base: git worktree add --detach <new dir> ${sha.slice(0, 12)}; workit check --cwd <new dir> ${name}; git worktree remove --force <new dir>`;
 
