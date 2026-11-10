@@ -298,6 +298,7 @@ test("Given an implementer, When curl writes through --output-dir, a log or stat
     "built from curl -K <config>, which",
   );
   expect(unresolvable(`c=curl; $c -o ${core} localhost:1/x`, id)).toContain(
-    `Retry as: \`c=curl; <absolute path of $c> -o ${core} localhost:1/x\``,
+    // The retry reprints the command as sent, in its shell's spelling (`C:/…` in Git Bash).
+    posix(`Retry as: \`c=curl; <absolute path of $c> -o ${core} localhost:1/x\``),
   );
 });
