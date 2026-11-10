@@ -1,0 +1,21 @@
+{
+  "case": "worktree-commit-pwd",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v1.1.3+aae31e9a2e",
+  "key": "a86bb1e43226c93b",
+  "date": "2026-11-10T23:15:12.807Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 9793,
+    "costUsd": 0.0037325,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 2,
+    "failures": []
+  }
+}

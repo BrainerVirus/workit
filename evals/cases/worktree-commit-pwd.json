@@ -1,0 +1,53 @@
+{
+  "id": "worktree-commit-pwd",
+  "source": "issue #772, retro 2026-11-10 A6 (`cd <wt>; workit git --cwd $PWD commit` denied 6 times)",
+  "tier": "full",
+  "prompt": "My change is in the git worktree at {{worktree}} (branch feature/wt-notes). In a single shell command, cd into that worktree and commit notes.md there with the message 'docs: notes', passing the directory you are then in to workit as --cwd \"$PWD\".",
+  "scaffold": {
+    "branch": "feature/base",
+    "worktree": "feature/wt-notes",
+    "dirty": {
+      "notes.md": "# Notes\n"
+    }
+  },
+  "maxTurns": 8,
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Bash(cd *)",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(grep *)",
+    "Bash(echo *)",
+    "Bash(pwd)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit\\s+git\\b[^\\n]*\\bcommit\\b",
+        "why": "the commit is made with workit git, as `cd <worktree> && workit git --cwd $PWD commit` or with the literal path"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "--cwd\\s+[\"']?\\$(?!\\{?PWD\\b)",
+        "why": "a variable other than $PWD after a literal cd: use the literal worktree path"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "docs: notes|committed",
+        "flags": "i",
+        "why": "the commit landed and is reported"
+      }
+    ]
+  }
+}

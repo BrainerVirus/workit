@@ -4,7 +4,7 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskStore } from "../core/task-store";
@@ -255,10 +255,85 @@ const opaqueWrites = (
       }),
     ];
   };
+  if (name === "curl") return curlOutputs(args);
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
   if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
     return inline(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/);
   return shellScript(words) === null ? null : ["."];
+};
+
+// curl's long options that name a file it writes, matched by any prefix curl
+// accepts (`--dump-h`); `--output-dir` is where `-o` and `-O` save, `-K` and
+// `-w @file` read options Workit cannot see. `--cookie` itself only reads.
+const CURL_LONG = [
+  "output",
+  "output-dir",
+  "cookie-jar",
+  "dump-header",
+  "trace",
+  "trace-ascii",
+  "stderr",
+  "libcurl",
+  "hsts",
+  "alt-svc",
+  "etag-save",
+  "config",
+  "write-out",
+  "remote-name",
+  "remote-name-all",
+];
+const CURL_SHORT_LONG: Record<string, string> = {
+  o: "output",
+  c: "cookie-jar",
+  D: "dump-header",
+  K: "config",
+  w: "write-out",
+};
+// Short options that take a value (the rest of the word, else the next word).
+const CURL_SHORT = /^-([^-AbcCdDeEFHKmoPQrtTuUwxXyYz]*)(?:([AbcCdDeEFHKmoPQrtTuUwxXyYz])(.*))?$/s;
+
+/**
+ * The files `curl` writes (`-o` under `--output-dir`, `-c`, `-D`, traces, state
+ * files, `-w '%output{…}'`), the directory `-O` saves in ("." where it runs),
+ * and an unresolvable target for options read from a file; null when it only prints.
+ */
+const curlOutputs = (args: readonly string[]): string[] | null => {
+  const files: string[] = [];
+  const named: string[] = [];
+  const dirs: string[] = [];
+  let remote = false;
+  for (let index = 0; index < args.length; index++) {
+    const long = /^--([\w.-]+)(?:=(.*))?$/s.exec(args[index]);
+    const short = long ? null : CURL_SHORT.exec(args[index]);
+    if (short?.[1].includes("O")) remote = true;
+    const option = long
+      ? long[1] === "cookie"
+        ? undefined
+        : (CURL_LONG.find((name) => name === long[1]) ??
+          CURL_LONG.find((name) => name.startsWith(long[1])))
+      : CURL_SHORT_LONG[short?.[2] ?? ""];
+    if (option?.startsWith("remote-name")) remote = true;
+    if (option === undefined || option.startsWith("remote-name")) {
+      if (short?.[2] && !short[3]) index++;
+      continue;
+    }
+    const value = (long ? long[2] : short?.[3]) || args[++index];
+    if (option === "config" || (option === "write-out" && value?.startsWith("@")))
+      files.push(unknownVarTarget(`curl ${option === "config" ? "-K <config>" : "-w @<format>"}`));
+    else if (value === undefined || value === "-") continue;
+    else if (option === "output") named.push(value);
+    else if (option === "output-dir") dirs.push(value);
+    else if (option === "write-out")
+      for (const match of value.matchAll(/%output\{(?:>>)?([^}]*)\}/g)) files.push(match[1]);
+    else files.push(value);
+  }
+  for (const name of named) {
+    // A relative name saves under `--output-dir`; an absolute one may too.
+    if (dirs.length === 0 || /^[/~$]|^[A-Za-z]:[\\/]/.test(name)) files.push(name);
+    files.push(...dirs.map((dir) => `${dir}/${name}`));
+  }
+  if (remote) files.push(...(dirs.length ? dirs : ["."]));
+  return files.length > 0 ? files : null;
 };
 
 /**
@@ -417,6 +492,13 @@ const MUTATING_WORKIT_GIT = new Set(["commit", "branch", "stage", "unstage"]);
 
 /** A placeholder file name that stands for its directory (an unknown write, a git command). */
 const DIR_TARGET = ".workit-live-target";
+
+/**
+ * For an implementer's confinement: a placeholder file name, then the command's
+ * name (URI-encoded), standing for the directory a writer Workit cannot see
+ * into (an interpreter's inline script, a `-c` shell, `curl -O`) runs in.
+ */
+export const OPAQUE_TARGET = ".workit-runs-";
 
 /** A one-command override: `WORKIT_LIVE_SESSION=override <command>`. */
 const OVERRIDE = "WORKIT_LIVE_SESSION=override";
@@ -593,7 +675,8 @@ const TRANSPARENT = new Set(["builtin", "command", "time", "!"]);
  * assignment (`+=`, `a[i]=`), a binder (`read`, `unset`, `declare -n`,
  * `printf -v`…) or `${N:=…}` can change. A `for` variable is followed
  * apart, in `segmentTargets`. Only a plain `NAME=literal` that runs in
- * sequence, or `export NAME=literal`, is substituted.
+ * sequence, or `export NAME=literal`, is substituted. None is after an IFS
+ * assignment.
  */
 const untrustedVars = (
   segments: readonly Segment[],
@@ -613,6 +696,14 @@ const untrustedVars = (
       else if (CLOSES.has(keyword)) depth = Math.max(0, depth - 1);
     }
     const words = segment.words.slice(start);
+    // A changed IFS splits every expansion where it likes, except in a `read` it prefixes.
+    const at = words.findIndex((word) => !/^\w+=/.test(word));
+    const ifs = (word: string) => /\bIFS\b/.test(word);
+    if (
+      segment.subs?.some(ifs) ||
+      words.some((w, i) => ifs(w) && !(i < at && words[at] === "read"))
+    )
+      all = true;
     if (depth > 0) for (const [key] of assignmentsOf(words)) names.add(key);
     const lead = words.findIndex((word) => !/^\w+\+?=|^\w+\[.*\]\+?=/.test(word));
     const first = lead < 0 ? undefined : words[lead];
@@ -641,7 +732,7 @@ const untrustedVars = (
 /**
  * Where a variable reference stands in a path Workit cannot resolve: a write
  * under it is denied by `confineImplementer`, naming the references
- * (URI-encoded, one path segment).
+ * (each URI-encoded, joined by `+`, in one path segment).
  */
 export const UNKNOWN_VAR = path.resolve(path.parse(process.cwd()).root, ".workit-unknown-var");
 
@@ -657,8 +748,13 @@ export const unresolvedRefs = (text: string): string[] => [
   ),
 ];
 
-const unknownVarTarget = (text: string): string =>
-  path.join(UNKNOWN_VAR, encodeURIComponent(unresolvedRefs(text).join(" ") || text));
+const unknownVarTarget = (text: string): string => {
+  const refs = unresolvedRefs(text);
+  return path.join(
+    UNKNOWN_VAR,
+    (refs.length > 0 ? refs : [text]).map(encodeURIComponent).join("+"),
+  );
+};
 
 /** Literal-pattern parameter operators: `/`, `//`, `%`, `%%`, `#`, `##`; null for any other. */
 const applyOperator = (value: string, operator: string): string | null => {
@@ -794,6 +890,42 @@ const segmentTargets = (
       name === undefined || new RegExp(`(?<!\\\\)\\$(?:${name}(?!\\w)|\\{${name}\\b)`).test(command)
     );
   };
+  // A `for` word Workit can know: whitespace or a glob in it (even quoted) splits `$name`.
+  const listWord = (word: string): string | null =>
+    unresolvedRefs(word).length > 0 || /[\s*?[]/.test(word) ? null : word;
+  /** The words a `for` list item built from variables stands for; null for any it cannot know. */
+  const listWords = (item: string): Array<string | null> =>
+    expansions(item, vars, loops).map((text) => listWord(homeExpanded(text)));
+  // `$PWD` names the directory a literal `cd` moved to when that `cd` starts its own
+  // `;` or newline segment (`plain`) and lands in a directory that exists; a CDPATH
+  // or a function (`f() …`, which may be `cd`) leaves it unknown.
+  const redefined =
+    untrusted.all ||
+    Boolean(process.env.CDPATH) ||
+    /\bCDPATH\b/.test(command) ||
+    segments.some(
+      (s, i) =>
+        s.words.length > 0 &&
+        segments[i + 1]?.group === "open" &&
+        segments[i + 2]?.group === "close",
+    );
+  const moved = (plain: boolean) => {
+    if (
+      plain &&
+      !redefined &&
+      !untrusted.names.has("PWD") &&
+      dir !== undefined &&
+      dir !== UNKNOWN_DIR &&
+      statSync(dir, { throwIfNoEntry: false })?.isDirectory()
+    )
+      vars.set("PWD", dir);
+    else vars.delete("PWD");
+  };
+  const lost = () => {
+    dir = strict ? UNKNOWN_DIR : undefined;
+    stack = [];
+    moved(false);
+  };
   const assigned = (value: string): string | null => {
     const made = mktempPath(value, dir);
     if (made !== null) return made;
@@ -819,11 +951,18 @@ const segmentTargets = (
     if (loop >= 0) {
       const [name = "", keyword, ...items] = segment.words.slice(loop + 1);
       const expanding = new Set(segment.expands ?? []);
-      const literal =
-        keyword === "in" && items.every((_, index) => !expanding.has(loop + 3 + index));
+      const list = items.flatMap((item, index) =>
+        expanding.has(loop + 3 + index) ? listWords(item) : [listWord(homeExpanded(item))],
+      );
       vars.delete(name);
-      if (literal && !untrusted.all && !untrusted.names.has(name))
-        loops.set(name, items.map(homeExpanded));
+      if (
+        keyword === "in" &&
+        list.length <= MAX_EXPANSIONS &&
+        !list.includes(null) &&
+        !untrusted.all &&
+        !untrusted.names.has(name)
+      )
+        loops.set(name, list as string[]);
       else loops.delete(name);
       continue;
     }
@@ -837,31 +976,66 @@ const segmentTargets = (
           if (resolved === null) vars.delete(key);
           else vars.set(key, resolved);
         }
+    const moving = (word = "") => {
+      const verb = (word.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+      return CD.has(verb) || PUSHD.has(verb) || POPD.has(verb);
+    };
     const name = (words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
     // A directory change inside a loop or conditional body may or may not run.
-    const moves = CD.has(name) || PUSHD.has(name) || POPD.has(name);
+    const moves = moving(name);
     if (moves && strict && nesting > 0) {
       dir = UNKNOWN_DIR;
+      moved(false);
       continue;
     }
-    if (moves && keywords > 0) continue;
+    if (moves && keywords > 0) {
+      moved(false);
+      continue;
+    }
+    // `command cd`, `builtin cd`: Workit does not follow where they land.
+    const wrapper = words.findIndex((word) => !TRANSPARENT.has(word) && !PREFIXES.has(word));
+    if (wrapper > 0 && moving(words[wrapper])) {
+      lost();
+      continue;
+    }
+    const plain = !segment.conditional;
     if (CD.has(name)) {
       dir = cdInto(dir, words, strict, vars);
+      moved(plain);
+      continue;
+    }
+    // `pushd` with no directory, `+N`/`-N` or an option, or `popd` with any, rotates the stack.
+    const rotates = words.length < 2 || words.slice(1).some((word) => /^[-+]/.test(word));
+    if (dialect === "posix" && (PUSHD.has(name) ? rotates : POPD.has(name) && words.length > 1)) {
+      lost();
       continue;
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
       dir = cdInto(dir, words, strict, vars);
+      moved(plain);
       continue;
     }
     if (POPD.has(name)) {
       dir = stack.length ? stack.pop() : strict ? UNKNOWN_DIR : undefined;
+      moved(plain);
       continue;
     }
     const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+    const unPwd = () => new Map([...vars].filter(([key]) => key !== "PWD"));
     if (inner !== null && dir !== undefined)
       for (const runIn of workitRunDir(dir, words, atAll))
-        targets.push(...segmentTargets(runIn, inner, "posix", depth + 1, strict, vars));
+        targets.push(
+          // `$PWD` in a command run elsewhere is not this directory.
+          ...segmentTargets(
+            runIn,
+            inner,
+            "posix",
+            depth + 1,
+            strict,
+            runIn === dir ? vars : unPwd(),
+          ),
+        );
     if (strict && dir !== undefined) {
       const runIn = dir;
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
@@ -870,18 +1044,33 @@ const segmentTargets = (
       const scriptOf = (index: number): string | undefined => {
         const word = body[index];
         if (word === undefined || !expanding.has(keywords + index)) return word;
+        // A loop variable stands for each of its words: the paths in any of them count.
         const all = expansions(word, vars, loops);
-        const open = all.length === 1 ? unresolvedRefs(all[0]).filter(unescaped) : [];
-        return all.length === 1 && open.length === 0 ? all[0] : undefined;
+        return all.some((text) => unresolvedRefs(text).some(unescaped))
+          ? undefined
+          : all.join("\n");
       };
       const opaque = segment.unanalyzable
         ? ["."]
         : inner === null
           ? opaqueWrites(body, scriptOf)
           : null;
+      // Named by the command it runs, past wrappers such as `env` or `sudo`.
+      const ran = words.findIndex((word) => word === "xargs" || !PREFIXES.has(word));
+      const runner = words[ran];
+      // A command named by a variable (`c=curl; $c -o …`) may write anything.
+      if (
+        runner !== undefined &&
+        expanding.has(keywords + lead + ran) &&
+        unresolvedRefs(homeExpanded(runner)).length > 0
+      )
+        targets.push(unknownVarTarget(runner));
+      const here = segment.unanalyzable
+        ? DIR_TARGET
+        : `${OPAQUE_TARGET}${encodeURIComponent(runner?.split(/[\\/]/).at(-1) ?? "a command")}`;
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
-          targets.push(file === "." ? path.join(resolved, DIR_TARGET) : resolved);
+          targets.push(file === "." ? path.join(resolved, here) : resolved);
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       if (ln >= 0 && words.slice(0, ln).every((word) => PREFIXES.has(word)))
         targets.push(...linkSources(words.slice(ln + 1), at));
