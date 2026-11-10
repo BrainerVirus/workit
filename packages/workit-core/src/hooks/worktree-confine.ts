@@ -185,8 +185,13 @@ const runnerAt = (target: string): string | null => {
     : null;
 };
 
-const shown = (target: string): string =>
-  /^\.workit-(?:live-target$|runs-)/.test(path.basename(target)) ? path.dirname(target) : target;
+/** A target as the agent spelled it, in the platform's separators (Git Bash spells `C:/…`). */
+const shown = (target: string): string => {
+  const named = /^\.workit-(?:live-target$|runs-)/.test(path.basename(target))
+    ? path.dirname(target)
+    : target;
+  return path.sep === "\\" ? named.replaceAll("/", "\\") : named;
+};
 
 const unboundDeny = (input: HookInput, target: string): HookDecision => {
   const unblock =
