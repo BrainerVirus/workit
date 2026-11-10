@@ -27,7 +27,7 @@ import { appendHookObserved } from "../ledger";
 import type { HookDecision, HookInput } from "./protocol";
 import { inWorkitWorkspace, rawInvocations, skipWorkitGlobals, workitInvocations } from "./raw-git";
 import type { ShellDialect } from "./shell-words";
-import { shellMutationTargets, UNKNOWN_DIR, UNKNOWN_VAR } from "./write-gate";
+import { OPAQUE_TARGET, shellMutationTargets, UNKNOWN_DIR, UNKNOWN_VAR } from "./write-gate";
 
 /** Written by `workit fanout worktree create` into git's admin dir for the worktree. */
 export const FANOUT_TOKEN_FILE = "workit-fanout-token";
@@ -177,8 +177,16 @@ export const hostIsolated = (cwd: string, agentId: string | null): boolean => {
   }
 };
 
+/** The command a placeholder target stands for (`python3` running in its directory), else null. */
+const runnerAt = (target: string): string | null => {
+  const base = path.basename(target);
+  return base.startsWith(OPAQUE_TARGET)
+    ? decodeURIComponent(base.slice(OPAQUE_TARGET.length))
+    : null;
+};
+
 const shown = (target: string): string =>
-  path.basename(target) === ".workit-live-target" ? path.dirname(target) : target;
+  /^\.workit-(?:live-target$|runs-)/.test(path.basename(target)) ? path.dirname(target) : target;
 
 const unboundDeny = (input: HookInput, target: string): HookDecision => {
   const unblock =
@@ -191,10 +199,11 @@ const unboundDeny = (input: HookInput, target: string): HookDecision => {
 };
 
 const outsideDeny = (input: HookInput, worktree: string, target: string): HookDecision => {
-  const unblock = `Edit only under ${worktree} and run git there, one verb per call: \`workit git --cwd ${worktree} commit -m … -- <paths>\`, \`workit check --cwd ${worktree} <name>\` (or \`git -C ${worktree} …\`); a command whose writes Workit cannot see is judged by the directory it runs in. Anything outside it is a follow-up for your report.`;
+  const runner = runnerAt(target);
+  const unblock = `${runner === null ? "" : `Run \`${runner}\` from your worktree: \`cd ${worktree} && …\`. `}Edit only under ${worktree} and run git there, one verb per call: \`workit git --cwd ${worktree} commit -m … -- <paths>\`, \`workit check --cwd ${worktree} <name>\` (or \`git -C ${worktree} …\`); a command whose writes Workit cannot see is judged by the directory it runs in. Anything outside it is a follow-up for your report.`;
   return {
     kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} is bound to the worktree ${worktree}, and ${shown(target)} is outside it. ${unblock}`,
+    reason: `workit worktree confinement: implementer ${input.session.agentId} is bound to the worktree ${worktree}, and ${runner === null ? `${shown(target)} is` : `\`${runner}\` runs in ${shown(target)},`} outside it. ${unblock}`,
     unblock,
   };
 };
@@ -231,19 +240,41 @@ const unknownVarDeny = (
   const refs = [
     ...new Set(
       targets.flatMap((target) =>
-        decodeURIComponent(path.relative(UNKNOWN_VAR, path.resolve(target)).split(path.sep)[0])
-          .split(" ")
-          .filter(Boolean),
+        path
+          .relative(UNKNOWN_VAR, path.resolve(target))
+          .split(path.sep)[0]
+          .split("+")
+          .filter(Boolean)
+          .map(decodeURIComponent),
       ),
     ),
   ];
+  let text = command ?? "";
+  const first: string[] = [];
+  // A command substitution, used as is or through `F=$(…)` (whose assignment
+  // leaves the retry): the agent runs it first and spells out what it prints.
+  const named = refs.map((ref) => {
+    const name = /^\$(\w+)$/.exec(ref)?.[1];
+    const set = name
+      ? new RegExp(
+          `(^|[\\s;&|(])${name}=("?)(\\$\\([^()]*\\)|\`[^\`]*\`)\\2[ \\t]*(?:&&|;|\\n)?[ \\t]*`,
+        ).exec(text)
+      : null;
+    const sub = set?.[3] ?? (/^(?:\$\(|`)/.test(ref) ? ref : null);
+    if (sub === null) return ref;
+    if (set) text = text.replace(set[0], set[1]);
+    first.push(`Run \`${sub.slice(sub.startsWith("`") ? 1 : 2, -1).trim()}\` first, then`);
+    return sub === ref ? ref : `${ref} (set by \`${sub}\`)`;
+  });
   const wt = worktree ?? "<worktree>";
-  const named = refs.join(", ");
-  const retry = command === undefined ? "" : ` Retry as: \`${literalForm(command, refs)}\`.`;
-  const unblock = `Spell the path out instead of ${named}: Workit follows only a plain \`NAME=<literal>\` set earlier in the same command, \`$(mktemp …)\` and a \`for\` over literal words.${retry} Write under ${wt} (\`workit git --cwd ${wt} …\`, \`workit check --cwd ${wt} …\`) or a temp dir.`;
+  const retry =
+    command === undefined
+      ? ""
+      : ` ${first.length ? `${first.join(" ")} retry` : "Retry"} as: \`${literalForm(text, refs)}\`.`;
+  const unblock = `Spell the path out instead of ${refs.join(", ")}: Workit follows only a plain \`NAME=<literal>\` set earlier in the same command, \`$(mktemp …)\`, \`$PWD\` after a literal \`cd\` and a \`for\` over literal words.${retry} Write under ${wt} (\`workit git --cwd ${wt} …\`, \`workit check --cwd ${wt} …\`) or a temp dir.`;
   return {
     kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named}, which Workit cannot resolve (a command substitution, a loop over unknown words, a conditional or a binder such as read or eval sets it), so it cannot tell whether the write stays in its worktree. ${unblock}`,
+    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve (a command substitution, a loop over unknown words, a conditional or a binder such as read or eval sets it), so it cannot tell whether the write stays in its worktree. ${unblock}`,
     unblock,
   };
 };

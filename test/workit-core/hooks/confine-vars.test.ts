@@ -178,7 +178,7 @@ test("Given an implementer, When an inline python3 -c or node -e runs in its wor
   // An escaped `\$` is literal text, not a variable (the hook helper above turns `\` into `/`).
   expect(
     shellMutationTargets(wt, `python3 -c "import json;print(m['\\$schema'])"`, "posix", true),
-  ).toEqual([path.join(wt, ".workit-live-target")]);
+  ).toEqual([path.join(wt, ".workit-runs-python3")]);
 });
 
 test("Given an implementer, When an inline script runs in the lead's checkout or names a path in it, Then it is denied, however the write is spelled", () => {
