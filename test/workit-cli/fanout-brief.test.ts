@@ -11,7 +11,9 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { main } from "@/packages/workit-cli/src/main";
+import { checkFlags, firstWord } from "@/packages/workit-cli/src/help";
+import { main, parseGlobals } from "@/packages/workit-cli/src/main";
+import { findSubcommand, findVerb } from "@/packages/workit-cli/src/verbs/registry";
 import { briefHost, renderBrief } from "@/packages/workit-core/src/fanout-brief";
 import { selectFanout } from "@/packages/workit-core/src/fanout";
 import { readLedger } from "@/packages/workit-core/src/ledger";
@@ -354,7 +356,7 @@ test("fanout brief: given a race of two attempts at one slice, when each is rend
   expect(bad.code).toBe(2);
 });
 
-test("fanout brief: given an integration-branch fanout, when rendered, then the worker merges the integration tip before reporting and nothing else; integration mode on origin's default branch is refused", async () => {
+test("fanout brief: given an integration-branch fanout, when rendered, then the worker rebases onto the integration tip with workit git rebase before reporting and nothing else; integration mode on origin's default branch is refused", async () => {
   const { root, cwd } = repo();
   const onMain = await plan(cwd, root, "one-pr", [slice("a", ["a.ts"])], {
     fanIn: "integration",
@@ -373,9 +375,8 @@ test("fanout brief: given an integration-branch fanout, when rendered, then the 
   const data = await brief(cwd, "a");
   expect(data.base).toBe("feature/usage");
   expect(data.text).toContain(
-    "FAN-IN: integration branch feature/usage. Before you report, merge its tip into your branch\n  (`git merge --no-edit feature/usage`)",
+    "FAN-IN: integration branch feature/usage. Before you report, run `workit git rebase --onto feature/usage`\n  and re-run VERIFY, so the lead's merge is a fast-forward. A conflict aborts the rebase: report its paths.\n  No other rebase, and no merge, retarget, push or force-push.",
   );
-  expect(data.text).toContain("No other merge, and no rebase, retarget or force-push.");
   expect(data.text).not.toContain("one PR per slice");
 });
 
@@ -1145,3 +1146,80 @@ test("fanout brief: given a repo with configured checks test and lint and a slic
     checksLine("test", "lint"),
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// every workit command a brief prints runs (#770)
+
+/** Each `workit …` command the brief names: backticked spans and the bare `checks:` list. */
+const workitCommands = (text: string): string[] => [
+  ...[...text.matchAll(/`(workit [^`]+)`/gu)].map((match) => match[1]),
+  ...[...text.matchAll(/(?<![`\w])(workit check [\w.-]+)(?=;|  \()/gu)].map((match) => match[1]),
+];
+
+/** Why the router would refuse `command` before its verb runs; null when it parses. */
+const refusal = (command: string): string | null => {
+  const words = [...command.matchAll(/"[^"]*"|'[^']*'|\S+/gu)]
+    .map((match) => match[0])
+    .filter((word) => word !== "…");
+  const parsed = parseGlobals(words.slice(1));
+  if (parsed.error) return parsed.error;
+  const [verb = "", ...args] = parsed.rest;
+  const entry = findVerb(verb);
+  if (!entry || entry.planned) return `unknown verb ${verb}`;
+  const word = firstWord(args);
+  if (entry.subcommands && !entry.optionalSubcommand && !entry.passthrough)
+    if (word === undefined || !findSubcommand(entry, word)) return `unknown subcommand ${word}`;
+  const checked = checkFlags(entry, args);
+  return "error" in checked ? checked.error : null;
+};
+
+test("refusal: given commands the router refuses, then each is named; the ones it takes pass", () => {
+  expect(refusal("workit git merge --no-edit feature/usage")).toBe("unknown subcommand merge");
+  expect(refusal("workit merge feature/usage")).toBe("unknown verb merge");
+  expect(refusal("workit git rebase --no-edit")).toBe("unknown option --no-edit");
+  expect(refusal("workit git rebase --onto feature/usage")).toBeNull();
+  expect(refusal("workit git --cwd /wt commit -m <msg> -- <paths>")).toBeNull();
+  expect(refusal('workit ledger ruling "<what>" --why "<why>"')).toBeNull();
+});
+
+test.each([
+  ["claude_code", "prs"],
+  ["claude_code", "integration"],
+  ["codex_cli", "prs"],
+  ["codex_cli", "integration"],
+  ["opencode", "prs"],
+  ["opencode", "integration"],
+  ["cursor", "prs"],
+  ["cursor", "integration"],
+  ["pi", "prs"],
+  ["pi", "integration"],
+])(
+  "fanout brief: given a %s lead and %s fan-in, when the brief is rendered before and after its worktree exists and on resume, then every workit command in it parses against the verb table and none is a raw git merge",
+  async (host, fanIn) => {
+    const { root, cwd } = repo();
+    git(cwd, "branch", "feature/usage", "main");
+    const extra = fanIn === "integration" ? { fanIn, trunk: "feature/usage" } : {};
+    const made = await plan(cwd, root, "usage", [slice("a", ["a.ts"])], extra);
+    expect(made.code, made.stderr + made.stdout).toBe(0);
+    const texts = [(await briefOn(cwd, host, "a")).text];
+    const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+    expect(created.code, created.stderr + created.stdout).toBe(0);
+    texts.push((await briefOn(cwd, host, "a")).text);
+    texts.push((await briefOn(cwd, host, "a", "--mode", "resume")).text);
+    for (const text of texts) {
+      const commands = workitCommands(text);
+      expect(commands.length).toBeGreaterThan(5);
+      expect(
+        commands.flatMap((command) => {
+          const why = refusal(command);
+          return why ? [`${command}: ${why}`] : [];
+        }),
+      ).toEqual([]);
+      expect(text).not.toMatch(/\bgit merge\b/u);
+      const fanInStep = commands.filter((command) =>
+        command.endsWith(" rebase --onto feature/usage"),
+      );
+      expect(fanInStep.length).toBe(fanIn === "integration" ? 1 : 0);
+    }
+  },
+);

@@ -1,0 +1,45 @@
+{
+  "id": "fanout-fanin",
+  "source": "issue #770 (integration fan-in brief named raw `git merge --no-edit`, no workit verb)",
+  "tier": "smoke",
+  "prompt": "You are worker a of an integration-mode fanout, in the git worktree {{worktree}} (branch feature/wt-a). Your slice is committed and VERIFY passed. The FAN-IN section of your brief reads:\n\nFAN-IN: integration branch feature/usage. Before you report, run `workit git --cwd {{worktree}} rebase --onto feature/usage`\n  and re-run VERIFY, so the lead's merge is a fast-forward. A conflict aborts the rebase: report its paths.\n  No other rebase, and no merge, retarget, push or force-push.\n\nDo the fan-in step now, then report in one line. Skip re-running VERIFY.",
+  "scaffold": {
+    "branch": "feature/usage",
+    "commits": [
+      {
+        "message": "feat: usage endpoint",
+        "files": {
+          "src/usage.ts": "export const usage = () => 0;\n"
+        }
+      }
+    ],
+    "worktree": "feature/wt-a"
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? rebase( --cwd \\S+)? --onto feature/usage\\b",
+        "why": "the fan-in step runs the workit rebase verb onto the integration tip"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? merge\\b",
+        "why": "workit git has no merge subcommand"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "(^|[;&|]\\s*)git( -C \\S+)? merge\\b",
+        "why": "no raw git merge: the brief's fan-in is a workit verb"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bpush\\b",
+        "why": "the worker never pushes"
+      }
+    ]
+  }
+}
