@@ -44,9 +44,11 @@ import {
   type WorkspaceRecord,
   taskRecordSchema,
   scopeCovers as bindingCovers,
+  scopeGap,
 } from "./task-contract";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
-import { normalizeOperationInput } from "./operation-input";
+import { explainInvalidOperation, normalizeOperationInput } from "./operation-input";
+import { acceptedEvidenceText, type ResolveDisposition } from "./finding-evidence";
 import { latestJudgment } from "./policy/derive";
 import {
   givenReason,
@@ -116,6 +118,13 @@ export type ObserveCheckRequest = {
   /** Omit to retry over concurrent writers (S2b); a value is strict compare-and-swap. */
   expectedRevision?: string;
   observation: CheckObservation;
+};
+
+/** parseOperation whose invalid_input names each key's fix and one valid payload (B5). */
+const parseRequest = (family: OperationFamily, request: unknown) => {
+  const parsed = parseOperation(family, request);
+  if (parsed.ok || parsed.code !== "invalid_input") return parsed;
+  return explainInvalidOperation(family, request) ?? parsed;
 };
 
 const provenance = (
@@ -769,7 +778,7 @@ export class WorkitCore {
     if (!root.ok) return root;
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot control task state");
-    const parsed = parseOperation("state", request);
+    const parsed = parseRequest("state", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     if (input.action === "export") {
@@ -842,7 +851,7 @@ export class WorkitCore {
   private taskOnce(request: unknown): Result<TaskSummary | TaskBrief | TaskListItem[] | TaskView> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const parsed = parseOperation("task", request);
+    const parsed = parseRequest("task", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     if (this.context.readOnlyChild) {
@@ -963,7 +972,7 @@ export class WorkitCore {
   private policyOnce(request: unknown): Result<Policy | null> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const parsed = parseOperation("policy", request);
+    const parsed = parseRequest("policy", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     const task = this.store.readTask(input.taskId);
@@ -1091,7 +1100,7 @@ export class WorkitCore {
   private evidenceOnce(request: unknown): Result<Entry<Evidence>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const parsed = parseOperation("evidence", request);
+    const parsed = parseRequest("evidence", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     const task = this.store.readTask(input.taskId);
@@ -1324,7 +1333,7 @@ export class WorkitCore {
   private recordDecision(request: unknown): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const parsed = parseOperation("decision", request);
+    const parsed = parseRequest("decision", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     const stated = input.action === "record" && input.response === "stated";
@@ -1438,7 +1447,7 @@ export class WorkitCore {
   private findingOnce(request: unknown): Result<Entry<Finding>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const parsed = parseOperation("finding", request);
+    const parsed = parseRequest("finding", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     const task = this.store.readTask(input.taskId);
@@ -1494,7 +1503,6 @@ export class WorkitCore {
       if (!changed.ok) return changed;
       return success(changed.data.revision, null, changed.data.findings.at(-1)!);
     }
-    if (helper?.ok) return failure("permission_denied", "helpers cannot resolve findings");
     const findingRef = resolveIdRef(
       "finding",
       input.findingId,
@@ -1506,13 +1514,62 @@ export class WorkitCore {
     if (!finding) return failure("not_found", "finding not found");
     if (!input.reason.trim())
       return failure("invalid_input", "finding resolution requires a reason");
+    const helperId = helper?.ok ? helper.data.id : null;
+    if (helperId !== null) {
+      // #317/#319: a helper closes the finding it recorded with evidence it
+      // recorded; anyone else's finding, a deferral or a reopen is the lead's.
+      if (finding.provenance.workerId !== helperId)
+        return failure(
+          "permission_denied",
+          "helpers resolve only the findings they recorded; the lead resolves this one",
+        );
+      if (finding.data.leadOwned)
+        return failure(
+          "permission_denied",
+          "the lead now owns this finding (it reopened, dismissed or deferred it); report it to the lead",
+        );
+      if (finding.data.disposition !== "open")
+        return failure(
+          "permission_denied",
+          `finding is already ${finding.data.disposition}; a helper resolves only its open findings`,
+        );
+      if (input.disposition !== "fixed" && input.disposition !== "dismissed")
+        return failure(
+          "permission_denied",
+          "helpers resolve their own findings as fixed or dismissed; deferring or reopening is the lead's",
+        );
+    }
+    // A refusal over evidence names what the disposition accepts and the ids
+    // that fit (#317). The CLI adds this itself across the checkout's tasks.
+    const refuse = (code: "invalid_input" | "permission_denied", message: string) => {
+      if (
+        input.disposition === "open" ||
+        (helperId === null && this.context.caller.host === "workit_cli")
+      )
+        return failure(code, message);
+      const pool =
+        helperId === null
+          ? task.data
+          : { evidence: task.data.evidence.filter((e) => e.provenance.workerId === helperId) };
+      const text = acceptedEvidenceText(pool, finding, input.disposition as ResolveDisposition);
+      return failure(code, `${message}; ${text}`, { guidance: text });
+    };
     const evidence = task.data.evidence.filter((entry) => input.evidenceIds.includes(entry.id));
     const decisions = task.data.decisions.filter((entry) => input.decisionIds.includes(entry.id));
     if (
       evidence.length !== input.evidenceIds.length ||
       decisions.length !== input.decisionIds.length
     )
-      return failure("invalid_input", "finding resolution references an unknown record");
+      return refuse("invalid_input", "finding resolution references an unknown record");
+    if (helperId !== null) {
+      if (evidence.length === 0)
+        return refuse("permission_denied", "a helper's resolution requires its own evidence");
+      if (evidence.some((entry) => entry.provenance.workerId !== helperId))
+        return refuse(
+          "permission_denied",
+          "a helper resolves with evidence it recorded, not another session's",
+        );
+    }
     if (input.disposition === "fixed") {
       const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
       if (!current.ok) return current;
@@ -1529,10 +1586,10 @@ export class WorkitCore {
         );
       });
       if (!verified)
-        return failure("permission_denied", "fixed findings require passing verification evidence");
+        return refuse("permission_denied", "fixed findings require passing verification evidence");
     }
     if (input.disposition === "dismissed" && evidence.length === 0)
-      return failure("permission_denied", "dismissal requires supporting evidence");
+      return refuse("permission_denied", "dismissal requires supporting evidence");
     if (input.disposition === "dismissed") {
       const relevant = evidence.every((entry) => {
         if (entry.data.result === "missing" || entry.data.result === "skipped") return false;
@@ -1547,7 +1604,7 @@ export class WorkitCore {
         return candidateMatches && (referenceMatches || entry.data.claim === finding.data.claim);
       });
       if (!relevant)
-        return failure("permission_denied", "dismissal evidence is unrelated to the finding");
+        return refuse("permission_denied", "dismissal evidence is unrelated to the finding");
     }
     if (input.disposition === "deferred") {
       const workspace = this.store.readWorkspace();
@@ -1570,9 +1627,9 @@ export class WorkitCore {
           ),
       );
       if (!allowed)
-        return failure(
+        return refuse(
           "permission_denied",
-          "deferred findings require an approved limitation decision that references an acceptanceAllowed requirement and covers the finding scope",
+          "deferred findings require an approved limitation decision",
         );
     }
     const changed = this.store.mutateTask(
@@ -1581,11 +1638,18 @@ export class WorkitCore {
       (current, mutation) => {
         const existing = current.findings.find((entry) => entry.id === input.findingId);
         if (!existing) return failure("not_found", "finding not found");
+        // A lead resolve of a helper's finding takes it over for good: the
+        // helper cannot resolve it again after a lead reopen or judgment.
+        const owner =
+          helperId === null && existing.provenance.workerId !== null
+            ? { leadOwned: true as const }
+            : {};
         const data =
           input.disposition === "open"
-            ? { ...existing.data, disposition: "open" as const, resolution: null }
+            ? { ...existing.data, ...owner, disposition: "open" as const, resolution: null }
             : {
                 ...existing.data,
+                ...owner,
                 disposition: input.disposition,
                 resolution: {
                   reason: input.reason,
@@ -1629,7 +1693,7 @@ export class WorkitCore {
   private workerOnce(request: unknown): Result<Entry<Worker>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
-    const parsed = parseOperation("worker", request);
+    const parsed = parseRequest("worker", request);
     if (!parsed.ok) return parsed;
     const input = parsed.data;
     const task = this.store.readTask(input.taskId);
@@ -1643,19 +1707,25 @@ export class WorkitCore {
       if (helperId !== null) return failure("permission_denied", "helpers cannot assign workers");
       if (task.data.status !== "active")
         return failure("invalid_transition", "paused or closed tasks cannot assign workers");
-      if (!bindingCovers(task.data.intent.data.scope, input.assignment.scope))
-        return failure("permission_denied", "worker assignment is outside task scope", {
+      const gap = scopeGap(task.data.intent.data.scope, input.assignment.scope);
+      if (gap) {
+        // #647: name the one path that does not fit and the lead globs it was checked against.
+        const leadScope = task.data.intent.data.scope;
+        const lead = leadScope.paths.join(", ") || "(none)";
+        const reason =
+          gap.exclusion === null
+            ? `${gap.path} is not inside lead paths ${lead}`
+            : `${gap.path} reaches lead exclusion ${gap.exclusion}; add ${gap.exclusion} to the worker exclusions`;
+        const excluded = leadScope.exclusions.length
+          ? `; lead exclusions are ${leadScope.exclusions.join(", ")}`
+          : "";
+        return failure("permission_denied", `worker assignment is outside task scope: ${reason}`, {
           fields: [
-            {
-              path: "assignment.scope",
-              reason: `paths ${JSON.stringify(input.assignment.scope.paths)} must be contained by lead paths ${JSON.stringify(task.data.intent.data.scope.paths)}`,
-            },
-            {
-              path: "task.intent.scope",
-              reason: `lead paths are ${JSON.stringify(task.data.intent.data.scope.paths)}`,
-            },
+            { path: "assignment.scope", reason },
+            { path: "task.intent.scope", reason: `lead paths are ${lead}${excluded}` },
           ],
         });
+      }
       if (
         input.assignment.decisionIds.some(
           (id: string) => !task.data.decisions.some((entry) => entry.id === id),

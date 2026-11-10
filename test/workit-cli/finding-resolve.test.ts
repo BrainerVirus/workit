@@ -144,3 +144,23 @@ test("Given a finding in another branch's task of the checkout, When resolved wi
   expect(resolved.code, JSON.stringify(resolved.json())).toBe(0);
   expect(resolved.json().data.data.disposition).toBe("dismissed");
 });
+
+test("Given the retro's wrong finding payloads, When the CLI refuses them, Then each error prints one valid example payload for its action", async () => {
+  const root = checkout();
+  const findingId = await recordFinding(root);
+  for (const [action, body] of [
+    ["resolve", { id: findingId, resolution: "fixed" }],
+    ["resolve", { findingId, disposition: "resolved", reason: "r" }],
+    ["record", { severity: "high", title: "t", file: "src/a.ts", branch: "feature/x" }],
+  ] as const) {
+    const refused = await cli(root, ["finding", action, ...payload(body)]);
+    expect(refused.code).toBe(1);
+    const error = refused.json().error as string;
+    expect(error).not.toContain("operation input is invalid");
+    const example = JSON.parse(error.match(/Example: (\{.*\})$/u)![1]) as Record<string, unknown>;
+    expect(example.action).toBe(action);
+    expect(Object.keys(example)).toContain(action === "record" ? "claim" : "findingId");
+    if (action === "resolve")
+      expect(example).toMatchObject({ disposition: "fixed", evidenceIds: ["<evidenceId>"] });
+  }
+});

@@ -104,7 +104,14 @@ export const scopeSchema = z
   .strict();
 export type Scope = z.infer<typeof scopeSchema>;
 
-export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
+/**
+ * The first part of `inner` that `outer` does not contain (#647): an inner
+ * path no outer path covers, or an outer exclusion that cuts into an inner
+ * path the inner scope does not exclude too. Null when contained.
+ */
+export type ScopeGap = { path: string; exclusion: string | null };
+
+export const scopeGap = (outer: Scope, inner: Scope): ScopeGap | null => {
   // Scope paths may carry trailing slashes; normalize so `docs/` covers `docs/x`.
   const strip = (value: string): string => (value.length > 1 ? value.replace(/\/+$/, "") : value);
   const normOuter: Scope = {
@@ -124,17 +131,20 @@ export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
     innerExclusions.some(
       (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
     );
-  return (
-    innerPaths.every(covers) &&
-    !normOuter.exclusions.some((excludedPath) =>
-      innerPaths.some(
-        (base) =>
-          (base === "." || excludedPath === base || excludedPath.startsWith(`${base}/`)) &&
-          !innerExcludes(excludedPath),
-      ),
-    )
-  );
+  const uncovered = innerPaths.find((path) => !covers(path));
+  if (uncovered !== undefined) return { path: uncovered, exclusion: null };
+  for (const excludedPath of normOuter.exclusions) {
+    const base = innerPaths.find(
+      (path) =>
+        (path === "." || excludedPath === path || excludedPath.startsWith(`${path}/`)) &&
+        !innerExcludes(excludedPath),
+    );
+    if (base !== undefined) return { path: base, exclusion: excludedPath };
+  }
+  return null;
 };
+
+export const scopeCovers = (outer: Scope, inner: Scope): boolean => scopeGap(outer, inner) === null;
 
 export const refSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("file"), path: pathValue, digest: nullableDigest }).strict(),
@@ -581,6 +591,8 @@ export const findingSchema = z
       .object({ reason: text, evidenceIds: z.array(id), decisionIds: z.array(id) })
       .strict()
       .nullable(),
+    /** Set when the lead resolved a helper's finding; the helper cannot resolve it again. */
+    leadOwned: z.literal(true).optional(),
   })
   .strict();
 export type Finding = z.infer<typeof findingSchema>;
