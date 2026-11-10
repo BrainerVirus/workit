@@ -46,6 +46,8 @@ export type VerbEntry = {
   /** `flagAliases` and `flagHints` for a verb without subcommands. */
   flagAliases?: Readonly<Record<string, string>>;
   flagHints?: Readonly<Record<string, string>>;
+  /** Subcommands agents guess from git that do not exist here: the word to the one-line fix. */
+  subcommandGuesses?: Readonly<Record<string, string>>;
   /** Paragraphs `workit help <verb>` prints after the summary. */
   notes?: readonly string[];
   /** The slice that implements this verb; set while it is a stub. */
@@ -168,7 +170,20 @@ const familySubcommands = (name: Family): SubcommandEntry[] => {
             : name === "worker" && action !== "assign"
               ? `workit worker ${action} [<workerId>]`
               : `workit ${name} ${action}`;
-      return { name: action, usage, summary, engineFlags: FAMILY_OPTIONS };
+      return {
+        name: action,
+        usage,
+        summary,
+        engineFlags: FAMILY_OPTIONS,
+        ...(name === "task" && action === "list"
+          ? {
+              flagHints: {
+                limit:
+                  "workit task list prints every task and takes only --status all; pipe the output through head to cut it",
+              },
+            }
+          : {}),
+      };
     });
   return [...implicit, ...grammar];
 };
@@ -614,6 +629,9 @@ export const VERBS: readonly VerbEntry[] = [
         usage:
           "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
         summary: "Wait for CI on the PR head; exit 0 green, 1 red, 3 blocked, 4 still pending",
+        flagHints: {
+          ref: "workit ci wait --branch <branch> waits for a branch's CI (--ref belongs to ci rerun)",
+        },
       },
       {
         name: "rerun",
@@ -639,6 +657,16 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "git",
     group: "delivery",
+    subcommandGuesses: {
+      pull: "workit git rebase brings the trunk's new commits into this branch (workit help git rebase)",
+      merge:
+        "workit git rebase brings the trunk into this branch; workit pr merge lands a PR (workit help git rebase)",
+      checkout:
+        "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
+      switch:
+        "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
+      status: "read-only git needs no workit verb: run git status --short directly",
+    },
     summary:
       "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",
     subcommands: [
@@ -1046,6 +1074,8 @@ export const VERB_GUESSES: Readonly<Record<string, string>> = {
   stage: "did you mean workit git stage? (workit help git stage)",
   merge: "did you mean workit pr merge? (workit help pr merge)",
   verify: "did you mean workit verify-delivery? (workit help verify-delivery)",
+  review:
+    "the review skill (/workit:review) reviews a diff; workit ledger verdict <result> --how <evidence> records the verdict (workit help ledger verdict)",
   checks:
     "did you mean workit check <name>? (a name that is not configured lists the configured ones)",
 };
