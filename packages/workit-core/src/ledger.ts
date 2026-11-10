@@ -190,8 +190,11 @@ export type VerdictRow = RowCommon & {
   /** The issued session's own subagent presented the token its hook bound the id to. */
   sessionBound?: boolean;
   evidenceRefs: string[];
-  /** The configured checks' evidence on the head when an independent verified verdict was recorded (#509). */
-  checkEvidence?: { name: string; status: string; via: string | null }[];
+  /**
+   * The configured checks' evidence on the head when an independent verified verdict was recorded (#509);
+   * `base` is the merge base a `pre-existing` red check also failed on (#771).
+   */
+  checkEvidence?: { name: string; status: string; via: string | null; base?: string }[];
   /** Untracked files in the judged worktree when the verdict was recorded (they do not block it). */
   untracked?: string[];
   untrackedCount?: number;
@@ -2451,7 +2454,7 @@ export function recordVerdict(
     surface?: string | null;
     self?: boolean;
     evidenceRefs?: string[];
-    checkEvidence?: { name: string; status: string; via: string | null }[];
+    checkEvidence?: { name: string; status: string; via: string | null; base?: string }[];
     /**
      * A role id derived from another session (`--as`): the session it was
      * derived from. `null` means it was derived from no session, which makes

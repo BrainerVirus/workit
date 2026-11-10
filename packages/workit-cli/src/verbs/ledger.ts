@@ -78,6 +78,7 @@ import {
   sessionClaimRefusal,
 } from "@workit-dev/core/src/host-session";
 import {
+  preExistingNote,
   verdictEvidence,
   type CheckEvidenceDoc,
 } from "@workit-dev/core/src/core/policy/check-evidence";
@@ -534,17 +535,20 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ? verdictCheckEvidence(io.cwd, target.value, values.base ?? null)
       : null;
   const redCheck = evidence?.needed.find((item) => item.status === "failing");
-  if (redCheck)
+  if (redCheck) {
+    // No run on the merge base: name the run that tells a pre-existing red (#771).
+    const unknownBase = redCheck.base?.result === "missing" ? redCheck.base.sha : null;
     return emit(
       io,
       fail(
         "blocked",
-        `check_failing: the configured check "${redCheck.name}" is failing on ${evidence?.head.slice(0, 12)} (${redCheck.via ?? "local"} run); a ${rest[0]} verdict cannot be recorded`,
+        `check_failing: the configured check "${redCheck.name}" is failing on ${evidence?.head.slice(0, 12)} (${redCheck.via ?? "local"} run)${unknownBase ? `, and no run on the merge base ${unknownBase.slice(0, 12)} tells whether it was red there already` : ""}; a ${rest[0]} verdict cannot be recorded`,
         {
-          unblock: `fix it, then workit check ${redCheck.name} on this head, or record failed/blocked`,
+          unblock: `${unknownBase ? `${baseRunCommand(unknownBase, redCheck.name)}, then record again (red there too is pre-existing and does not refuse); or ` : ""}fix it, then workit check ${redCheck.name} on this head, or record failed/blocked`,
         },
       ),
     );
+  }
   const missingChecks = evidence?.needed.filter((item) => item.status === "missing") ?? [];
   // A check with no local run is covered when the head's forge CI is green, as the merge gate reads it.
   const ci =
@@ -582,10 +586,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
         evidenceRefs: values.evidence,
         ...(covered.length
           ? {
-              checkEvidence: covered.map(({ name, status, via }) => ({
+              checkEvidence: covered.map(({ name, status, via, base }) => ({
                 name,
                 status,
                 via,
+                ...(status === "pre-existing" && base ? { base: base.sha } : {}),
               })),
             }
           : {}),
@@ -606,6 +611,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   return fromResult(io, withGate, (row) =>
     [
       `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)} as ${actor.session ?? "no session"}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
+      ...covered.filter((item) => item.status === "pre-existing").map(preExistingNote),
       row.gate
         ? `gate: ${row.branch} ${row.gate.accepted ? `accepted (verdict ${row.gate.verdictId ?? "?"})` : `not accepted (${row.gate.reasons.join(", ")})`}`
         : "gate: unknown (ledger unreadable)",
@@ -643,6 +649,14 @@ function headCi(io: Io, branch: string | null, head: string): HeadCi {
 export const ledgerDeps: { headCi: (io: Io, branch: string | null, head: string) => HeadCi } = {
   headCi,
 };
+
+/**
+ * The commands that record a run of `name` on the merge base `sha`, in a
+ * disposable worktree. Raw git: no workit verb makes a detached worktree at a
+ * commit (`fanout worktree create` makes a slice branch).
+ */
+const baseRunCommand = (sha: string, name: string): string =>
+  `run it on the merge base: git worktree add --detach <new dir> ${sha.slice(0, 12)}; workit check --cwd <new dir> ${name}; git worktree remove --force <new dir>`;
 
 /** The exact commands that run `names`, one `workit check` each. */
 const checkCommands = (names: readonly string[]): string =>
