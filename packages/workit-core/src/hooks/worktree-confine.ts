@@ -267,14 +267,19 @@ const unknownVarDeny = (
     return sub === ref ? ref : `${ref} (set by \`${sub}\`)`;
   });
   const wt = worktree ?? "<worktree>";
+  // `curl -K <config>` names no reference to spell out.
+  const literal = literalForm(
+    text,
+    refs.filter((ref) => /^[$`]/.test(ref)),
+  );
   const retry =
-    command === undefined
+    command === undefined || literal === command
       ? ""
-      : ` ${first.length ? `${first.join(" ")} retry` : "Retry"} as: \`${literalForm(text, refs)}\`.`;
+      : ` ${first.length ? `${first.join(" ")} retry` : "Retry"} as: \`${literal}\`.`;
   const unblock = `Spell the path out instead of ${refs.join(", ")}: Workit follows only a plain \`NAME=<literal>\` set earlier in the same command, \`$(mktemp …)\`, \`$PWD\` after a literal \`cd\` and a \`for\` over literal words.${retry} Write under ${wt} (\`workit git --cwd ${wt} …\`, \`workit check --cwd ${wt} …\`) or a temp dir.`;
   return {
     kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve (a command substitution, a loop over unknown words, a conditional or a binder such as read or eval sets it), so it cannot tell whether the write stays in its worktree. ${unblock}`,
+    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve (a command substitution, a loop over unknown or split words, a conditional, a binder such as read or eval, or an options file sets it), so it cannot tell whether the write stays in its worktree. ${unblock}`,
     unblock,
   };
 };
