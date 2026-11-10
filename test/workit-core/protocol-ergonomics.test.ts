@@ -110,11 +110,16 @@ test("worker scope denials identify both conflicting scopes", () => {
         stoppingCondition: "report",
       },
     });
+    // #647: the worker side names the path that does not fit, the lead side its paths.
     expect(denied).toMatchObject({
       ok: false,
       code: "permission_denied",
+      error: "worker assignment is outside task scope: other is not inside lead paths src",
       details: {
-        fields: [{ path: "assignment.scope" }, { path: "task.intent.scope" }],
+        fields: [
+          { path: "assignment.scope", reason: "other is not inside lead paths src" },
+          { path: "task.intent.scope", reason: "lead paths are src" },
+        ],
       },
     });
   } finally {

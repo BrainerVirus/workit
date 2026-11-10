@@ -1693,13 +1693,20 @@ export class WorkitCore {
       const gap = scopeGap(task.data.intent.data.scope, input.assignment.scope);
       if (gap) {
         // #647: name the one path that does not fit and the lead globs it was checked against.
-        const lead = task.data.intent.data.scope.paths.join(", ") || "(none)";
+        const leadScope = task.data.intent.data.scope;
+        const lead = leadScope.paths.join(", ") || "(none)";
         const reason =
           gap.exclusion === null
             ? `${gap.path} is not inside lead paths ${lead}`
             : `${gap.path} reaches lead exclusion ${gap.exclusion}; add ${gap.exclusion} to the worker exclusions`;
+        const excluded = leadScope.exclusions.length
+          ? `; lead exclusions are ${leadScope.exclusions.join(", ")}`
+          : "";
         return failure("permission_denied", `worker assignment is outside task scope: ${reason}`, {
-          fields: [{ path: "assignment.scope", reason }],
+          fields: [
+            { path: "assignment.scope", reason },
+            { path: "task.intent.scope", reason: `lead paths are ${lead}${excluded}` },
+          ],
         });
       }
       if (
