@@ -43,7 +43,7 @@ const ACTIONS: Record<string, string[]> = {
 type Rule = { action: string; resource: string; effect: "allow" | "deny" };
 
 /** Deny everything, then allow the case's tools; the last matching rule wins. Workit's own tools stay allowed. */
-export const permissionsFor = (tools: string[]): Rule[] => [
+const permissionsFor = (tools: string[]): Rule[] => [
   { action: "*", resource: "*", effect: "deny" },
   { action: "workit_*", resource: "*", effect: "allow" },
   ...tools.flatMap((tool): Rule[] => {
