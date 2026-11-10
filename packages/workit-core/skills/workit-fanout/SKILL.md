@@ -54,7 +54,7 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    landed. Then `workit ledger check --branch <b>` per slice, land in `fanout
    status` order, release the worktrees you made, and `workit ledger standing
    clear`. Only you touch topology: workers never rebase, retarget or merge,
-   except the integration-tip merge in integration mode. Then ship
+   except the integration-tip rebase (integration mode). Then ship
    (workit-ship) up to `defaultEndpoint` from `workit grant show`.
 
 ## Example

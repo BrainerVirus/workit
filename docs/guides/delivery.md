@@ -922,10 +922,11 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   orders in force warns and lists them, with `workit ledger standing clear
 --fanout <n>` to drop them if they belong to an earlier run.
 - `"fanIn": "integration"` is the one-PR mode: the trunk is an integration
-  branch (planning refuses it on origin's default branch), each worker merges
-  the integration tip into its branch before reporting, and the lead lands
-  slices with fast-forward merges, then ships the integration branch as one
-  PR. The default, `"prs"`, is one PR per slice, and workers never merge.
+  branch (planning refuses it on origin's default branch), each worker rebases
+  onto the integration tip (`workit git rebase --onto`) before reporting, and
+  the lead lands slices with fast-forward merges, then ships the integration
+  branch as one PR. The default, `"prs"`, is one PR per slice, and workers
+  never merge.
 - `ledger standing add "<order>"` records a standing order (a `standing` row)
   for the fanout that `--fanout` names, else the one `fanout` commands would
   pick; `add --fanout` must name an existing plan. An order is one line (a
