@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { appendObserved } from "@/packages/workit-core/src/ledger";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
 let configHome: ConfigHome;
@@ -113,6 +114,72 @@ test("given one landed plan and one active plan, when ledger standing add runs w
   const listed = await run(cwd, ["ledger", "standing", "list", "--json"], "other-3");
   expect(listed.code, listed.stderr + listed.stdout).toBe(0);
   expect(listed.json().data.fanout).toBe("wave-two");
+});
+
+const revParse = (cwd: string, ref: string) =>
+  spawnSync("git", ["rev-parse", ref], { cwd, encoding: "utf8" }).stdout.trim();
+
+/** What `workit pr merge` records: a squash merge of `branch` at `head`. */
+const mergedRow = (cwd: string, branch: string, head: string) => {
+  const actor = { host: "cli", session: "lead-1", agentId: null };
+  const merged = appendObserved(cwd, {
+    type: "pr.merged",
+    actor,
+    branch,
+    head,
+    pr: 7,
+    base: "main",
+    mergeSha: revParse(cwd, "main"),
+    method: "squash",
+  });
+  expect(merged.ok).toBe(true);
+};
+
+/** A commit on the plan's one slice branch, never merged into main. */
+const commitOnSlice = (cwd: string, name: string) => {
+  git(cwd, "switch", "-q", "-c", `feature/${name}-a`);
+  writeFileSync(path.join(cwd, `${name}.ts`), "export {};\n");
+  git(cwd, "add", "-A");
+  git(cwd, "commit", "-qm", `feat: ${name}`);
+  git(cwd, "switch", "-q", "main");
+};
+
+test("given a slice whose PR merged and whose branch was then deleted, then its plan is retired and standing add goes to the active plan", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "wave-one");
+  commitOnSlice(cwd, "wave-one");
+  mergedRow(cwd, "feature/wave-one-a", revParse(cwd, "feature/wave-one-a"));
+  git(cwd, "branch", "-q", "-D", "feature/wave-one-a");
+  await plan(cwd, root, "wave-two");
+  const added = await run(cwd, ["ledger", "standing", "add", "Never push", "--json"]);
+  expect(added.code, added.stderr + added.stdout).toBe(0);
+  expect(added.json().data.fanout).toBe("wave-two");
+});
+
+test("given a merged slice whose branch has commits newer than the merged head, then its plan stays a candidate", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "wave-one");
+  commitOnSlice(cwd, "wave-one");
+  mergedRow(cwd, "feature/wave-one-a", revParse(cwd, "feature/wave-one-a"));
+  git(cwd, "switch", "-q", "feature/wave-one-a");
+  writeFileSync(path.join(cwd, "wave-one.ts"), "export const more = 1;\n");
+  git(cwd, "commit", "-qam", "feat: more");
+  git(cwd, "switch", "-q", "main");
+  await plan(cwd, root, "wave-two");
+  const refused = await run(cwd, ["ledger", "standing", "add", "Never push", "--json"]);
+  expect(refused.code, refused.stdout).toBe(2);
+  expect(refused.json().error).toContain("pick one with --fanout <name>: wave-one, wave-two");
+});
+
+test("given a slice branch deleted with no merge row, then its plan stays a candidate", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "wave-one");
+  commitOnSlice(cwd, "wave-one");
+  git(cwd, "branch", "-q", "-D", "feature/wave-one-a");
+  await plan(cwd, root, "wave-two");
+  const refused = await run(cwd, ["ledger", "standing", "add", "Never push", "--json"]);
+  expect(refused.code, refused.stdout).toBe(2);
+  expect(refused.json().error).toContain("wave-one, wave-two");
 });
 
 test("given a released slice whose branch holds unlanded commits, then its plan stays a candidate and standing add without --fanout refuses naming both", async () => {

@@ -1076,12 +1076,14 @@ function listFanouts(cwd: string): FanoutResult<FanoutFile[]> {
 }
 
 /**
- * Every slice landed on the trunk as git alone reads it, or released
- * (`fanout worktree release` removed its worktree in its current run) with no
- * commits of its own beyond the trunk. Release keeps the branch and needs no
- * merge, so a released branch with unlanded commits keeps the plan active. No
- * forge call: a squash merge git cannot see, or a branch that is gone, leaves
- * the plan active, never silently retired.
+ * Every slice finished in its current run: merged (a `pr.merged` or
+ * `pr.merge.verified` row for its branch, at its tip while the branch is still
+ * there; `workit pr merge` deletes it by default), landed on the trunk as git
+ * alone reads it, or released (`fanout worktree release` removed its worktree)
+ * with no commits of its own beyond the trunk. Release keeps the branch and
+ * needs no merge, so a released branch with unlanded commits keeps the plan
+ * active. No forge call: a gone branch with no merge row, or a squash merge
+ * git cannot see, leaves the plan active, never silently retired.
  */
 function planFinished(
   cwd: string,
@@ -1090,11 +1092,18 @@ function planFinished(
 ): boolean {
   if (plan.slices.length === 0) return false;
   const trunk = trunkRef(cwd, plan.trunk);
-  if (!trunk) return false;
-  const ctx = { cwd, trunk, forge: null };
+  const ctx = trunk ? { cwd, trunk, forge: null } : null;
   return plan.slices.every((slice) => {
     const head = branchRef(cwd, slice.branch);
-    if (!head) return false;
+    const merged = rows.some(
+      (row) =>
+        (row.type === "pr.merged" || row.type === "pr.merge.verified") &&
+        row.branch === slice.branch &&
+        (head === null || row.head === head) &&
+        inSliceRun(row, slice),
+    );
+    if (merged) return true;
+    if (!head || !ctx) return false;
     const released = rows.some(
       (row) =>
         row.type === "fanout.worktree.released" &&
@@ -1104,7 +1113,7 @@ function planFinished(
         inSliceRun(row, slice),
     );
     if (released) {
-      const ahead = gitRun(cwd, ["rev-list", "--count", `${trunk}..${head}`]);
+      const ahead = gitRun(cwd, ["rev-list", "--count", `${ctx.trunk}..${head}`]);
       if (ahead.ok && ahead.stdout.trim() === "0") return true;
     }
     const parent = plan.slices.find((other) => other.branch === slice.base);
