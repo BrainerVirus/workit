@@ -153,12 +153,12 @@ Only when the user wants one PR for the whole fanout:
    <trunk>`) and plan with `"fanIn": "integration"` and `--trunk
    <integration>`. Planning refuses integration mode on origin's default
    branch.
-2. Every brief then tells the worker to merge the integration tip into its
-   branch before reporting (the fast-forward rule). That merge is the only
-   one a worker makes, and only in this mode.
+2. Every brief then tells the worker to run `workit git rebase --onto
+   <integration>` before reporting (the fast-forward rule): its only rebase,
+   and only in this mode. A conflict comes back to you.
 3. Land each verified slice with `git merge --ff-only <slice-branch>` in the
    integration checkout. Not a fast-forward (the tip moved since the worker
-   merged)? Resume the worker to merge again; never a merge commit of your own.
+   rebased)? Resume the worker to rebase again; never a merge commit of your own.
 4. `workit fanout check` gates against the integration branch; a slice whose
    tip is on it reads as landed. When all have landed, ship the integration
    branch as one PR (workit-ship).

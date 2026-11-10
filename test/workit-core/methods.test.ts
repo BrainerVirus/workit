@@ -323,7 +323,7 @@ test("agent-critical delivery rules stay stated", () => {
     ],
     ["workit-fanout", skillText("workit-fanout"), "refuse to spawn while a field is empty"],
     // Fanout v2: one retry, then escalate; a rolling window; batch verifiers;
-    // the panel and the integration-tip merge only where they are allowed.
+    // the panel and the integration-tip rebase only where they are allowed.
     ["workit-fanout", skillText("workit-fanout"), "gets one retry with a fresh brief"],
     [
       "workit-fanout",
@@ -357,7 +357,7 @@ test("agent-critical delivery rules stay stated", () => {
     [
       "workit-fanout",
       skillText("workit-fanout"),
-      "except the integration-tip merge in integration mode",
+      "except the integration-tip rebase (integration mode)",
     ],
     ["fanout orchestration", fanoutOrchestration(), "| mundane | `haiku` |"],
     ["fanout orchestration", fanoutOrchestration(), "| explore, babysit | `haiku` |"],
@@ -381,11 +381,7 @@ test("agent-critical delivery rules stay stated", () => {
       fanoutOrchestration(),
       "`independent`, and any slice at high risk: a separate verifier session",
     ],
-    [
-      "fanout orchestration",
-      fanoutOrchestration(),
-      "That merge is the only one a worker makes, and only in this mode",
-    ],
+    ["fanout orchestration", fanoutOrchestration(), "its only rebase, and only in this mode"],
     ["fanout orchestration", fanoutOrchestration(), "Only when the user wants one PR"],
     ["workit-verify-app", skillText("workit-verify-app"), "Prove it end-to-end once"],
     ["workit-retro", skillText("workit-retro"), "never start it yourself"],

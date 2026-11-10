@@ -21,7 +21,7 @@ TIER: <mundane | standard | hard: how much model the slice needs>
 TIMEBOX: <wall clock, N tool calls (hard: 180, else 120) and the call by which the full gates ran (60%); past it without a new commit you will be replaced>
 SCRATCH: <your own temp dir: the one `fanout worktree create` printed, else `mktemp -d`; never a shared path>
 FORBIDDEN: <no edits outside SCOPE; no new dependencies; ...>
-FAN-IN: <one PR per slice: no rebase, retarget, merge or force-push | integration: merge the integration tip before reporting, nothing else>
+FAN-IN: <one PR per slice: no rebase, retarget, merge or force-push | integration: rebase onto the integration tip, nothing else>
 REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,
   each ACCEPTANCE line met / not met, rulings you made (`workit ledger ruling`),
   anything out of scope as a follow-up, not a diff.

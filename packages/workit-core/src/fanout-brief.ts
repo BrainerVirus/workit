@@ -19,9 +19,9 @@
 // RULES name it: every git and check command runs as `workit <verb> --cwd <worktree> …`.
 // The lead must have a WORKIT_SESSION_ID: worker ids derive from it. A
 // worker id longer than the ledger's 128 characters hashes its slice part. The fan-in line follows the plan's `fanIn`:
-// one PR per slice forbids every merge; integration mode has the worker merge
-// the integration tip before reporting, and nothing else. It only reads, apart
-// from hiding `.workit-scratch/` in the repository's info/exclude.
+// one PR per slice forbids every merge; integration mode has the worker rebase
+// onto the integration tip (`workit git rebase --onto`) before reporting, and
+// nothing else. It only reads, apart from hiding `.workit-scratch/` in the repository's info/exclude.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -398,9 +398,9 @@ export function renderBrief(
   const fanIn =
     plan.fanIn === "integration"
       ? [
-          `FAN-IN: integration branch ${plan.trunk}. Before you report, merge its tip into your branch`,
-          `  (\`git merge --no-edit ${plan.trunk}\`), resolve conflicts inside SCOPE and re-run VERIFY, so the`,
-          "  lead's merge is a fast-forward. No other merge, and no rebase, retarget or force-push.",
+          `FAN-IN: integration branch ${plan.trunk}. Before you report, run \`workit git${exists ? ` --cwd ${planned}` : ""} rebase --onto ${plan.trunk}\``,
+          "  and re-run VERIFY, so the lead's merge is a fast-forward. A conflict aborts the rebase: report its paths.",
+          "  No other rebase, and no merge, retarget, push or force-push.",
         ]
       : [
           "FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.",
