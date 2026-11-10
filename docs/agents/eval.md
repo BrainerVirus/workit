@@ -2,8 +2,10 @@
 
 Workit has to work on weak models and after a model switch. The bench measures
 that on real models, locally, against cases taken from real agent failures.
-It never runs in CI: it needs a Claude login and spends subscription usage
-(ledger decision mw6gvdys). The deterministic replay of hook and CLI output is
+It never runs in CI: it needs a Claude or OpenCode login and spends
+subscription usage (ledger decision mw6gvdys). It has two legs, Claude Code
+(the default) and [OpenCode](#opencode-leg); Codex, Cursor and Pi are skipped
+here, and the replay and hook tests cover their parity. The deterministic replay of hook and CLI output is
 layer 0 in [testing.md](testing.md#agent-behaviour-eval).
 
 ## Run it
@@ -12,6 +14,7 @@ layer 0 in [testing.md](testing.md#agent-behaviour-eval).
 bun scripts/eval/run.ts --model haiku --tier smoke            # the smoke cases, up to 3 model runs
 bun scripts/eval/run.ts --model claude-haiku-4-5 --tier full --budget-runs 12
 bun scripts/eval/run.ts --model haiku --cases spawn-implementer --force
+bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash --tier smoke
 bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored transcripts, no model
 ```
 
@@ -33,6 +36,38 @@ see (skills, hooks, verb output); `full` (every case) on Haiku 4.5 and Haiku
 baseline. Sonnet and Opus are optional. A smoke run on Haiku costs cents of
 subscription-equivalent usage; the printed `$` is Claude Code's
 `total_cost_usd`.
+
+## OpenCode leg
+
+`--host opencode --model <m>` runs the same cases through `opencode run`
+(OpenCode 2.x) with the same grader. Each case first runs on the free provider
+(`opencode/<m>-free`). When it stops on a rate or quota limit (`provider.free-limit`,
+`provider.quota`, HTTP 429), the case is run again in a fresh world on the
+paid go provider (`opencode-go/<m>`), and so are the cases after it. The result
+records `provider: free` or `go`, plus the limits seen. When both are limited,
+the case is recorded `skipped: "limit"`, never as a pass: it is not graded, it
+is never a cache hit, `--replay` leaves it alone, `summary.json` counts it under
+`skipped`, and the run exits 1. Any other provider error (an expired key, say)
+fails the case with `run-error`.
+
+Results go to `evals/results/opencode-<m>/`, apart from the Claude Code
+results. The Workit version hashes `packages/workit-opencode` instead of
+`packages/workit-claude-code`. Before the first run the runner builds the
+plugin (`packages/workit-opencode/scripts/build.ts`), and every case pins it:
+
+```bash
+opencode run --standalone --format json --auto --archived --model <provider>/<m>   # prompt on stdin
+```
+
+The world gets its own `XDG_CONFIG_HOME/opencode/opencode.json`. It holds the
+`file://` plugin pin, `agents.build.steps` from `maxTurns`, and `permissions`
+(deny everything, then allow the Workit tools and the case's tools, mapped from
+the Claude names: `Bash(x *)` becomes `shell` on `x *`, `Agent` becomes
+`subagent`). Your OpenCode login stays (OpenCode's data dir). Your config,
+plugins, MCP servers, Claude Code skills and `OPENCODE_*` variables do not.
+`PWD` is the world repo, and `WORKIT_INSTALL_ROOT` points inside the world, so
+`workit` is this checkout's CLI and not an installed one. Sessions are created
+archived in your OpenCode database. `permissionMode` does not apply.
 
 ## What a run does
 
@@ -76,6 +111,8 @@ issue or `test/behavior/cases` file).
 | `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths |
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
 | `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `dontAsk`, the list above |
+| `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
+| `expect.atMost` | `{tool?, pattern, max, why}`: at most `max` calls match |
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
 | `expect.require`, `expect.forbid` | `{tool?, pattern, why}`: a regex on the Bash command, or on the JSON input for other tools |
 
@@ -91,12 +128,16 @@ patterns on the first real run and re-grade with `--replay`.
 ## Grading
 
 `scripts/eval/grade.ts` reads only tool calls and their results, so stored
-transcripts re-grade with no model. Every case fails on:
+transcripts re-grade with no model. It reads both transcript formats. An
+OpenCode call is graded under the Claude name (`shell` is `Bash`, `subagent`
+is `Agent`, `read`/`edit`/`write`/`glob`/`grep`/`skill` are capitalized), and a
+call in another session counts as a subagent's. Every case fails on:
 
 - `spawn-refused`: an Agent (or Task) call refused by a hook or permission.
 - `raw-git-push`: a Bash `git push` (any segment of a chain); `workit git push`
   is fine.
 - `repeated-failing-call`: the same tool and input failing a second time.
+- `run-error` (OpenCode): the run stopped on a provider error.
 
 plus its own `configuredCheck`, `require` and `forbid`. Each failure names the
 call (`#4 Agent(workit:implementer: add hello)`). Changing a rule bumps

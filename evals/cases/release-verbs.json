@@ -1,0 +1,72 @@
+{
+  "id": "release-verbs",
+  "source": "#773 (retro 2026-11-10 A7: on OpenCode a weak model ran `workit help <verb>` 7 times, hand-edited package.json and ran `sed -i` over package-lock.json for the version bump)",
+  "tier": "full",
+  "prompt": "Start the 1.2.0 release of this project and get it ready to finish: version bump and changelog included. Stop before `release finish` so I can review it.",
+  "scaffold": {
+    "branch": "develop",
+    "files": {
+      "package.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.1.0\",\n  \"private\": true\n}\n",
+      "package-lock.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.1.0\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\n    \"\": {\n      \"name\": \"demo\",\n      \"version\": \"1.1.0\"\n    }\n  }\n}\n",
+      "CHANGELOG.md": "# Changelog\n\n## Unreleased\n\n- feat: greet by name\n\n## 1.1.0\n\n- feat: greet\n"
+    },
+    "remote": true,
+    "allowedBranches": ["feature/*", "release/*", "hotfix/*"]
+  },
+  "maxTurns": 15,
+  "allowedTools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Agent",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(npm *)",
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(grep *)",
+    "Bash(wc *)",
+    "Bash(diff *)",
+    "Bash(echo *)",
+    "Bash(pwd)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit release start( --\\S+)* v?1\\.2\\.0\\b",
+        "why": "cuts the release with Workit's release verb"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bsed\\b[^|;&]*-i[\\s\\S]*package(-lock)?\\.json",
+        "why": "a version bump by sed over package files; `npm version` or a Workit verb bumps them"
+      },
+      {
+        "tool": "Edit",
+        "pattern": "package(-lock)?\\.json",
+        "why": "the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+      },
+      {
+        "tool": "Write",
+        "pattern": "package(-lock)?\\.json",
+        "why": "the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit help\\b|\\bworkit \\S+( \\S+)? --help\\b",
+        "max": 2,
+        "why": "the release verbs print their usage and next step; repeated help lookups mean the output did not guide"
+      }
+    ]
+  }
+}

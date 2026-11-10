@@ -74,7 +74,11 @@ export const makeWorld = (spec: EvalCase): World => {
   writeFileSync(
     path.join(config, "config.json"),
     JSON.stringify({
-      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+      branchPolicy: {
+        preset: "custom",
+        allowed: scaffold.allowedBranches ?? ["feature/*"],
+        protected: ["main"],
+      },
     }),
   );
   return { dir, repo, worktree, state, config };

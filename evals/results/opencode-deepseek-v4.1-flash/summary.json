@@ -1,0 +1,56 @@
+{
+  "passed": 3,
+  "total": 5,
+  "cases": [
+    {
+      "case": "check-configured",
+      "pass": true,
+      "provider": "free",
+      "failures": [],
+      "turns": 5,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+      "graderVersion": 1
+    },
+    {
+      "case": "commit-stage-file",
+      "pass": true,
+      "provider": "free",
+      "failures": [],
+      "turns": 4,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+      "graderVersion": 1
+    },
+    {
+      "case": "release-verbs",
+      "pass": false,
+      "provider": "free",
+      "failures": ["forbid", "forbid", "forbid", "at-most"],
+      "turns": 15,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+      "graderVersion": 1
+    },
+    {
+      "case": "session-context",
+      "pass": false,
+      "provider": "go",
+      "failures": ["answer"],
+      "turns": 1,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+      "graderVersion": 1
+    },
+    {
+      "case": "spawn-implementer",
+      "pass": true,
+      "provider": "go",
+      "failures": [],
+      "turns": 10,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+      "graderVersion": 1
+    }
+  ]
+}

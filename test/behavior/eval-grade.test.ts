@@ -239,3 +239,110 @@ describe("Given a saved transcript", () => {
     expect(grade(transcript([], { result: "Yes: <workit-contract>." }), asks).pass).toBe(true);
   });
 });
+
+describe("Given a saved `opencode run --format json` transcript", () => {
+  const line = (type: string, part: Record<string, unknown>, at: number, session = "ses_root") =>
+    JSON.stringify({ type, timestamp: at, sessionID: session, part });
+  const shell = (id: string, command: string, status: string, output: string, session?: string) =>
+    line(
+      "tool_use",
+      {
+        id,
+        type: "tool",
+        tool: "shell",
+        state:
+          status === "error"
+            ? { status, input: { command }, error: output }
+            : { status, input: { command }, output },
+      },
+      2000,
+      session,
+    );
+
+  test("When it ran shell and subagent calls, Then they grade as Bash and Agent with the same rules", () => {
+    const opencode = [
+      line("step_start", { type: "step-start" }, 1000),
+      shell("c1", "git push origin HEAD", "error", "Permission denied: shell"),
+      shell("c2", "git push origin HEAD", "error", "Permission denied: shell"),
+      line(
+        "tool_use",
+        {
+          id: "c3",
+          type: "tool",
+          tool: "subagent",
+          state: {
+            status: "error",
+            input: { agent: "workit-implementer", description: "add hello" },
+            error: "denied by the Workit spawn hook",
+          },
+        },
+        2500,
+      ),
+      shell("c4", "workit check test", "completed", "passed", "ses_child"),
+      line("step_finish", { type: "step-finish", reason: "tool-calls", cost: 0.002 }, 3000),
+      line("step_start", { type: "step-start" }, 3100),
+      line("text", { type: "text", text: "Pushed." }, 3200),
+      line("step_finish", { type: "step-finish", reason: "stop", cost: 0.001 }, 4000),
+    ].join("\n");
+    const graded = grade(
+      opencode,
+      spec({
+        scaffold: { checks: { test: ["true"] } },
+        expect: {
+          configuredCheck: true,
+          answer: [{ pattern: "^Pushed\\.$", why: "says what it did" }],
+        },
+      }),
+    );
+    expect(graded.calls).toBe(4);
+    expect(graded.failures.map((failure) => failure.rule)).toEqual([
+      "spawn-refused",
+      "raw-git-push",
+      "raw-git-push",
+      "repeated-failing-call",
+    ]);
+    expect(graded.failures[0]?.detail).toBe(
+      "#3 Agent(workit-implementer: add hello) was refused: denied by the Workit spawn hook",
+    );
+    expect(usageOf(opencode)).toEqual({ turns: 2, durationMs: 3000, costUsd: 0.003, stop: "stop" });
+  });
+
+  test("When the run stopped on a provider error, Then it fails with run-error, never passes", () => {
+    const stopped = JSON.stringify({
+      type: "error",
+      timestamp: 1,
+      sessionID: "ses_root",
+      error: { type: "provider.auth", status: 401, message: "This API key has expired." },
+    });
+    expect(grade(stopped, spec()).failures).toEqual([
+      {
+        rule: "run-error",
+        detail: "the run stopped on: provider.auth 401 This API key has expired.",
+      },
+    ]);
+    expect(usageOf(stopped).stop).toBe("error");
+  });
+});
+
+test("Given expect.atMost, When more calls match than allowed, Then the case fails naming them", () => {
+  const helps = spec({
+    expect: {
+      atMost: [{ tool: "Bash", pattern: "\\bworkit help\\b", max: 2, why: "the verbs guide" }],
+    },
+  });
+  const calls = (count: number) =>
+    transcript(
+      Array.from({ length: count }, (_, at) => ({
+        name: "Bash",
+        input: { command: `workit help release ${at}` },
+        result: "usage: …",
+      })),
+    );
+  expect(grade(calls(2), helps).pass).toBe(true);
+  expect(grade(calls(3), helps).failures).toEqual([
+    {
+      rule: "at-most",
+      detail: "3 calls match /\\bworkit help\\b/, at most 2: the verbs guide (#1, #2, #3)",
+    },
+  ]);
+});

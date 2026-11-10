@@ -1,0 +1,34 @@
+{
+  "case": "session-context",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+  "key": "69fd93bb703577d7",
+  "date": "2026-11-10T21:37:39.937Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 1,
+    "durationMs": 5094,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 0,
+    "failures": [
+      {
+        "rule": "answer",
+        "detail": "the final answer does not match /workit-contract/: the contract tag is quoted from context, not guessed"
+      }
+    ]
+  }
+}

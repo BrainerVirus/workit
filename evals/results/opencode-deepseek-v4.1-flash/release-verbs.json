@@ -1,0 +1,40 @@
+{
+  "case": "release-verbs",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+  "key": "4f89acc6c6cd6df3",
+  "date": "2026-11-10T21:42:57.387Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 15,
+    "durationMs": 48456,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 18,
+    "failures": [
+      {
+        "rule": "forbid",
+        "detail": "#13 Edit({\"path\":\"<world>/repo/package.json\",\"oldString\":\"\\\"version\\\": \\\"1.1.0\\\"\",\"newString\":\"\\\"version\\\": \\\"1.2.0\\\"\"}) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#14 Edit({\"path\":\"<world>/repo/package-lock.json\",\"oldString\":\" \\\"version\\\": \\\"1.1.0\\\",\",\"newString\":\" \\\"version\\\": \\\"1.2.0\\\",\"}) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#15 Edit({\"newString\":\" \\\"version\\\": \\\"1.2.0\\\"\",\"oldString\":\" \\\"version\\\": \\\"1.1.0\\\"\",\"path\":\"<world>/repo/package-lock.json\"}) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+      },
+      {
+        "rule": "at-most",
+        "detail": "4 calls match /\\bworkit help\\b|\\bworkit \\S+( \\S+)? --help\\b/, at most 2: the release verbs print their usage and next step; repeated help lookups mean the output did not guide (#5, #7, #8, #12)"
+      }
+    ]
+  }
+}
