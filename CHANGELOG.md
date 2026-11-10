@@ -1026,6 +1026,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `workit fanout worktree create` refuses a slice branch that already landed (merged PR, squash or on trunk) and names a free `<branch>-<n>` to put in the plan; a branch with newer commits is still resumed.
 - A lead running two fanouts no longer hands one fanout's standing orders to the other fanout's workers.
 - The launch update check and `workit doctor` no longer offer or show a latest CLI version cached for another package (such as 14.7.0 after moving to `@workit-dev/cli`): the cache records its package and is refetched when it does not match.
+- A fanout plan whose slices have all landed or been released no longer counts as a candidate, so `workit ledger standing add` needs no `--fanout` while only one plan is active (#775)
 
 ### Removed
 
