@@ -27,8 +27,9 @@
 // its worktree. Liveness still reads every row. Its siblings keep their runs.
 //
 // `fanIn: "integration"` is the one-PR mode: the trunk is an integration
-// branch (never origin's default branch), workers merge its tip into their
-// branch before reporting, and the lead fast-forwards it.
+// branch (never origin's default branch), workers rebase their branch onto
+// its tip (`workit git rebase --onto <trunk>`) before reporting, and the lead
+// fast-forwards it.
 //
 // The CLI never spawns, waits or wakes anything: it only records and checks.
 import { spawnSync } from "node:child_process";
