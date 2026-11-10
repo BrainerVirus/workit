@@ -34,7 +34,7 @@ const PLUGINS: Record<Host, string> = {
   "claude-code": path.join(REPO, "packages", "workit-claude-code"),
   opencode: path.join(REPO, "packages", "workit-opencode"),
 };
-/** The Claude Code plugin's `workit` shim runs this checkout's CLI; both hosts put it first on PATH. */
+/** The Claude Code plugin's `workit` shim runs this checkout's CLI; the OpenCode leg puts it first on PATH too. */
 const CLI_BIN = path.join(PLUGINS["claude-code"], "bin");
 /** What an agent sees from Workit: core (hooks, CLI text, skills), the CLI and the host's plugin. */
 const pluginFacing = (host: Host): string[] => [
@@ -139,7 +139,7 @@ const sanitize = (text: string, world: World): string =>
     .replaceAll(os.userInfo().username, "<user>");
 
 /** The subscription login only: no API key, no parent session, Workit isolated to the world. */
-const childEnv = (world: World): Record<string, string> => {
+const childEnv = (world: World, binDir: string): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined || key.startsWith("WORKIT_")) continue;
@@ -157,7 +157,7 @@ const childEnv = (world: World): Record<string, string> => {
   }
   env.WORKIT_STATE_DIR = world.state;
   env.WORKIT_CONFIG_DIR = world.config;
-  env.PATH = `${CLI_BIN}${path.delimiter}${env.PATH ?? ""}`;
+  env.PATH = `${binDir}${path.delimiter}${env.PATH ?? ""}`;
   return env;
 };
 
@@ -279,7 +279,7 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
         spec,
         opts,
         opencodeArgs(provider),
-        opencodeEnv(childEnv(world), config, world),
+        opencodeEnv(childEnv(world, CLI_BIN), config, world),
         world,
       );
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
@@ -304,7 +304,7 @@ const runCase = (spec: EvalCase, key: string, version: string, opts: Options): R
           spec,
           opts,
           claudeArgs(spec, opts.model, opts.pluginDir),
-          childEnv(world),
+          childEnv(world, path.join(opts.pluginDir, "bin")),
           world,
         ),
         limit: null,
@@ -320,7 +320,7 @@ const runCase = (spec: EvalCase, key: string, version: string, opts: Options): R
   const graded = grade(run.transcript, spec);
   const result: RunResult = {
     case: spec.id,
-    host: opts.host,
+    ...(opts.host === "opencode" ? { host: opts.host } : {}),
     model: opts.model,
     ...(skipped ? { skipped: "limit" as const } : {}),
     ...(run.provider && !skipped ? { provider: run.provider.name } : {}),
