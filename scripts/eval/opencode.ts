@@ -18,7 +18,7 @@ export const providersFor = (model: string): Provider[] => [
 ];
 
 const LIMIT =
-  /provider\.quota|\b429\b|FreeUsageLimit|rate.?limit|quota|usage limit|too many requests/i;
+  /provider\.(quota|free-limit)|\b429\b|FreeUsageLimit|rate.?limit|quota|usage limit|too many requests/i;
 
 /** The rate or quota limit a run stopped on, or null when it was not limited. */
 export const limitOf = (transcript: string, stderr: string): string | null => {

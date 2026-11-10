@@ -41,8 +41,8 @@ subscription-equivalent usage; the printed `$` is Claude Code's
 
 `--host opencode --model <m>` runs the same cases through `opencode run`
 (OpenCode 2.x) with the same grader. Each case first runs on the free provider
-(`opencode/<m>-free`). When it stops on a rate or quota limit (`provider.quota`,
-HTTP 429, `FreeUsageLimitError`), the case is run again in a fresh world on the
+(`opencode/<m>-free`). When it stops on a rate or quota limit (`provider.free-limit`,
+`provider.quota`, HTTP 429), the case is run again in a fresh world on the
 paid go provider (`opencode-go/<m>`), and so are the cases after it. The result
 records `provider: free` or `go`, plus the limits seen. When both are limited,
 the case is recorded `skipped: "limit"`, never as a pass: it is not graded, it

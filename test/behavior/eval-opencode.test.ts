@@ -50,10 +50,11 @@ const LIMIT_EVENT = JSON.stringify({
   type: "error",
   timestamp: 2,
   sessionID: "ses_1",
+  // As OpenCode 2.2.7 reported it in the first real smoke run.
   error: {
-    type: "provider.quota",
+    type: "provider.free-limit",
     status: 429,
-    message: "FreeUsageLimitError: free usage limit reached",
+    message: "Free usage limit reached. Connect a provider or subscribe to OpenCode Go.",
   },
 });
 
@@ -194,7 +195,8 @@ test("Given the free provider answers with its limit, When a case runs, Then it 
     expect(result.limits).toEqual([
       {
         provider: "free",
-        error: "provider.quota 429 FreeUsageLimitError: free usage limit reached",
+        error:
+          "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go.",
       },
     ]);
   }
@@ -221,7 +223,7 @@ test("Given both providers are limited, Then the case is recorded skipped (limit
   expect(summary).toMatchObject({ passed: 0, total: 2, skipped: 2 });
   expect(summary.cases[0]).toMatchObject({ case: "a-smoke", pass: false, skipped: "limit" });
   const text = printed.join("\n");
-  expect(text).toContain("skipped (limit) a-smoke\n    free: provider.quota 429");
+  expect(text).toContain("skipped (limit) a-smoke\n    free: provider.free-limit 429");
   expect(text).toContain(
     "skipped (limit): 2 case(s) not graded, every provider reported its limit: a-smoke, b-smoke",
   );
