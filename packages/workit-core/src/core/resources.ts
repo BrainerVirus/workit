@@ -735,14 +735,15 @@ export type LeaseWake = {
  * Wakes a lease waiter when a slot is released or taken or the queue moves,
  * so a freed slot is taken without waiting out the poll. The poll still bounds
  * every wait: a holder killed outright releases nothing, and a platform
- * without file watching only polls.
+ * without file watching only polls. The waiter's own ticket (`own`) never
+ * wakes it: a late watch event for its own write would only add a settle.
  */
-export function leaseWake(dir: string, clock: Clock = realClock): LeaseWake {
+export function leaseWake(dir: string, clock: Clock = realClock, own?: string): LeaseWake {
   let changed = false;
   let wake: (() => void) | null = null;
   const watchers: fs.FSWatcher[] = [];
   const onChange = (_event: string, name: string | Buffer | null) => {
-    if (name !== null && !WAKE_NAME.test(String(name))) return;
+    if (name !== null && (String(name) === own || !WAKE_NAME.test(String(name)))) return;
     changed = true;
     wake?.();
   };
@@ -1114,7 +1115,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   const holding = () =>
     liveHolders(options.dir, slotRange(options.dir, options.slots), options.probe, maxHold);
   // Watching starts before the first read, so a release right after it still wakes this waiter.
-  const wake = leaseWake(options.dir, clock);
+  const wake = leaseWake(options.dir, clock, name);
   try {
     for (;;) {
       const waited = clock.now() - started;
