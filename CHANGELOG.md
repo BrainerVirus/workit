@@ -611,6 +611,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit ledger standing add` with several active fanout plans refuses with the exact `--fanout` retry, and `workit fanout plan` prints that command when another plan is active (#775)
 - An integration-mode fanout brief's fan-in step runs `workit git rebase --onto <trunk>` instead of a raw `git merge`, and a test checks every workit command a brief prints against the verb table (#770)
 - `workit stack status` reads a parent whose PR squash-merged as landed (not `no_pr`), and `stack sync` retargets the child PR onto the trunk even when the stack was recorded without PR numbers.
 - `workit pr merge` refuses a PR whose short-lived base (a stacked parent or a work branch) already landed and has not moved since (`base_landed`, with the retarget command), and `workit verify-delivery merge` reports delivered only when the change reached the trunk its base landed on (the #752 merge into a stale parent).
