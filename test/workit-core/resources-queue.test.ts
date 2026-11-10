@@ -141,7 +141,8 @@ test("G a held lease and a fake clock, W a check waits out a 30 min wait, T it p
   const dir = leasesDir();
   const holder = await acquireLease(options(dir, { check: "suite", cwd: "/repo/suite" }));
   if (!holder.ok) throw new Error(holder.reason);
-  let now = Date.parse("2026-10-28T10:00:00Z");
+  // The real time: staleness ages a ticket against real now, not this clock.
+  let now = Date.now();
   const statuses: QueueStatus[] = [];
   const got = await acquireLease(
     options(dir, {
