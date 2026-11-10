@@ -9,6 +9,7 @@ import {
   checkEvidence,
   type CheckEvidenceDoc,
   type CiCheck,
+  laneMergeBase,
   localCheckRows,
 } from "../core/policy/check-evidence";
 import type { ResolvedForge } from "./resolve";
@@ -343,7 +344,14 @@ export function evidenceFor(
   const ciChecks: CiCheck[] = ci.flatMap((check) =>
     check.state === "skipped" ? [] : [{ name: check.name, state: check.state }],
   );
-  return checkEvidence({ lane: lane.lane, head: status.head.sha, configured, local, ci: ciChecks });
+  return checkEvidence({
+    lane: lane.lane,
+    head: status.head.sha,
+    base: laneMergeBase(cwd, lane),
+    configured,
+    local,
+    ci: ciChecks,
+  });
 }
 
 export function buildStatusDoc(
