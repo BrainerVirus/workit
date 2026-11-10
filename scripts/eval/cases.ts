@@ -26,6 +26,8 @@ export type EvalCase = {
     worktree?: string;
     /** A bare `origin` remote the branch can be pushed to. */
     remote?: boolean;
+    /** Branch policy patterns Workit allows; `feature/*` when absent. */
+    allowedBranches?: string[];
     /** Committed in order on the case's branch, after `files`. */
     commits?: { message: string; files: Record<string, string> }[];
   };
@@ -37,6 +39,8 @@ export type EvalCase = {
     configuredCheck?: boolean;
     require?: CallPattern[];
     forbid?: CallPattern[];
+    /** At most `max` calls match the pattern. */
+    atMost?: (CallPattern & { max: number })[];
     /** Regexes the final answer must match. */
     answer?: { pattern: string; flags?: string; why: string }[];
   };

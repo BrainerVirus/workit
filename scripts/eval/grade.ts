@@ -1,6 +1,7 @@
-// Model-free grading of a `claude -p --output-format stream-json` transcript.
-// It reads only the tool calls and their results, so a stored transcript is
-// re-graded (replayed) with no model call. Bump GRADER_VERSION whenever a rule
+// Model-free grading of a `claude -p --output-format stream-json` or an
+// `opencode run --format json` transcript. It reads only the tool calls and
+// their results, so a stored transcript is re-graded (replayed) with no model
+// call. Bump GRADER_VERSION whenever a rule
 // changes, so `run.ts --replay --check` shows which stored grades drifted.
 import type { CallPattern, EvalCase } from "./cases";
 
@@ -45,6 +46,18 @@ type Event = {
   duration_ms?: number;
   total_cost_usd?: number;
   result?: string;
+  // OpenCode `run --format json` events.
+  sessionID?: string;
+  timestamp?: number;
+  part?: {
+    id?: string;
+    tool?: string;
+    text?: string;
+    reason?: string;
+    cost?: number;
+    state?: { status?: string; input?: Record<string, unknown>; output?: unknown; error?: unknown };
+  };
+  error?: { type?: string; message?: string; status?: number };
 };
 
 const events = (transcript: string): Event[] =>
@@ -73,10 +86,51 @@ const textOf = (content: unknown): string => {
   return "";
 };
 
+/** OpenCode's built-in tools under the Claude Code names the cases use. */
+const OPENCODE_TOOLS: Record<string, string> = {
+  shell: "Bash",
+  subagent: "Agent",
+  read: "Read",
+  edit: "Edit",
+  write: "Write",
+  glob: "Glob",
+  grep: "Grep",
+  skill: "Skill",
+};
+
+const isOpencode = (list: Event[]): boolean => list.some((event) => event.sessionID !== undefined);
+
+/** The calls of the first session; a call in another session ran in a subagent. */
+const opencodeCalls = (list: Event[]): ToolCall[] => {
+  const root = list.find((event) => event.sessionID)?.sessionID;
+  const calls: ToolCall[] = [];
+  for (const event of list) {
+    const part = event.part;
+    if (event.type !== "tool_use" || !part?.tool || !part.id) continue;
+    const state = part.state ?? {};
+    const failed = state.status === "error";
+    const call: ToolCall = {
+      index: 0,
+      id: part.id,
+      name: OPENCODE_TOOLS[part.tool] ?? part.tool,
+      input: state.input ?? {},
+      parent: event.sessionID === root ? null : (event.sessionID ?? null),
+      failed,
+      result: textOf(failed ? state.error : state.output),
+    };
+    const seen = calls.findIndex((each) => each.id === call.id);
+    if (seen === -1) calls.push(call);
+    else calls[seen] = call;
+  }
+  return calls.map((call, at) => ({ ...call, index: at + 1 }));
+};
+
 const toolCalls = (transcript: string): ToolCall[] => {
+  const list = events(transcript);
+  if (isOpencode(list)) return opencodeCalls(list);
   const calls: ToolCall[] = [];
   const byId = new Map<string, ToolCall>();
-  for (const event of events(transcript))
+  for (const event of list)
     for (const block of blocks(event)) {
       if (event.type === "assistant" && block.type === "tool_use" && block.id && block.name) {
         const call: ToolCall = {
@@ -101,8 +155,53 @@ const toolCalls = (transcript: string): ToolCall[] => {
   return calls;
 };
 
+const rootEvents = (list: Event[]): Event[] => {
+  const root = list.find((event) => event.sessionID)?.sessionID;
+  return list.filter((event) => event.sessionID === root);
+};
+
+/** The provider error an OpenCode run stopped on, e.g. an expired key or a quota. */
+const opencodeError = (list: Event[]): string | null => {
+  const error = list.findLast((event) => event.type === "error")?.error;
+  if (!error) return null;
+  return [error.type, error.status, error.message].filter((part) => part !== undefined).join(" ");
+};
+
+const opencodeUsage = (list: Event[]): Usage => {
+  const root = rootEvents(list);
+  const steps = root.filter((event) => event.type === "step_finish");
+  const times = root.flatMap((event) => (event.timestamp === undefined ? [] : [event.timestamp]));
+  const costs = steps.flatMap((event) =>
+    typeof event.part?.cost === "number" ? [event.part.cost] : [],
+  );
+  return {
+    turns: steps.length,
+    durationMs: times.length > 0 ? Math.max(...times) - Math.min(...times) : null,
+    costUsd: costs.length > 0 ? costs.reduce((sum, cost) => sum + cost, 0) : null,
+    stop: opencodeError(list) === null ? (steps.at(-1)?.part?.reason ?? null) : "error",
+  };
+};
+
+/** The text of the last step of the first session. */
+const opencodeAnswer = (list: Event[]): string => {
+  const root = rootEvents(list);
+  const start = root.findLastIndex((event) => event.type === "step_start");
+  return root
+    .slice(Math.max(start, 0))
+    .flatMap((event) => (event.type === "text" && event.part?.text ? [event.part.text] : []))
+    .join("\n");
+};
+
+/** The error an OpenCode transcript stopped on, as `<type> <status> <message>`; null for none or a Claude transcript. */
+export const runErrorOf = (transcript: string): string | null => {
+  const list = events(transcript);
+  return isOpencode(list) ? opencodeError(list) : null;
+};
+
 export const usageOf = (transcript: string): Usage => {
-  const result = events(transcript).findLast((event) => event.type === "result");
+  const list = events(transcript);
+  if (isOpencode(list)) return opencodeUsage(list);
+  const result = list.findLast((event) => event.type === "result");
   return {
     turns: result?.num_turns ?? null,
     durationMs: result?.duration_ms ?? null,
@@ -121,7 +220,7 @@ const label = (call: ToolCall): string => {
   const where = call.parent ? " in a subagent" : "";
   const shown =
     call.name === "Agent" || call.name === "Task"
-      ? `${String(call.input.subagent_type ?? "general-purpose")}: ${String(call.input.description ?? "")}`
+      ? `${String(call.input.subagent_type ?? call.input.agent ?? "general-purpose")}: ${String(call.input.description ?? "")}`
       : subject(call).replaceAll(/\s+/g, " ").slice(0, 120);
   return `#${call.index} ${call.name}(${shown})${where}`;
 };
@@ -159,9 +258,16 @@ const matches = (call: ToolCall, want: CallPattern): boolean =>
   new RegExp(want.pattern).test(subject(call));
 
 export const grade = (transcript: string, spec: EvalCase): Grade => {
+  const list = events(transcript);
   const calls = toolCalls(transcript);
-  const answer = events(transcript).findLast((event) => event.type === "result")?.result ?? "";
+  const opencode = isOpencode(list);
+  const answer = opencode
+    ? opencodeAnswer(list)
+    : (list.findLast((event) => event.type === "result")?.result ?? "");
   const failures: Failure[] = [];
+
+  const stopped = opencode ? opencodeError(list) : null;
+  if (stopped) failures.push({ rule: "run-error", detail: `the run stopped on: ${stopped}` });
 
   for (const call of calls)
     if ((call.name === "Agent" || call.name === "Task") && call.failed && REFUSAL.test(call.result))
@@ -211,6 +317,15 @@ export const grade = (transcript: string, spec: EvalCase): Grade => {
         rule: "forbid",
         detail: `${label(call)} matches /${want.pattern}/: ${want.why}`,
       });
+
+  for (const want of spec.expect?.atMost ?? []) {
+    const hits = calls.filter((each) => matches(each, want));
+    if (hits.length > want.max)
+      failures.push({
+        rule: "at-most",
+        detail: `${hits.length} calls match /${want.pattern}/, at most ${want.max}: ${want.why} (${hits.map((call) => `#${call.index}`).join(", ")})`,
+      });
+  }
 
   for (const want of spec.expect?.answer ?? [])
     if (!new RegExp(want.pattern, want.flags).test(answer))
