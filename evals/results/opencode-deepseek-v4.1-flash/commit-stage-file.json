@@ -1,0 +1,23 @@
+{
+  "case": "commit-stage-file",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.1.1+1769f18bec",
+  "key": "a9872d13c9395914",
+  "date": "2026-11-10T21:37:27.180Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 7712,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 3,
+    "failures": []
+  }
+}
