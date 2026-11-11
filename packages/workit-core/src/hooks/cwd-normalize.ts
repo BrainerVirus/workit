@@ -49,7 +49,7 @@ export const cwdRewrite = (command: string): string | null => {
   if (!dir || !rest || dir.startsWith("-")) return null;
   // `2>&1` is the only redirect, `|` the only operator: no `&`, `;`, `<`, `>`, backtick or
   // newline outside quotes (a quoted `<email>` trailer is text; substitutions fail `clean`).
-  if (/[&;<>`\n]/u.test(rest.replaceAll("2>&1", "").replaceAll(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "")))
+  if (/[&;<>`\n]/u.test(rest.replaceAll("2>&1", "").replaceAll(/'[^']*'|"([^"\\]|\\.)*"/gu, "")))
     return null;
   const segments = segmentsOf(rest);
   const [head, ...filters] = segments;
@@ -62,7 +62,7 @@ export const cwdRewrite = (command: string): string | null => {
   const at = head.words.indexOf("--cwd");
   if (at >= 0) {
     const bare = dir.replace(/^(['"])(.*)\1$/u, "$2");
-    return bare.startsWith("/") && head.words[at + 1] === bare ? rest : null;
+    return bare[0] === "/" && head.words[at + 1] === bare ? rest : null;
   }
   if (head.words.some((w) => w.startsWith("--cwd="))) return null;
   const args = rest.slice("workit".length).trimStart();
@@ -89,7 +89,7 @@ export const verbFirst = (command: string): string | null => {
 
 /** `git [-C dir] <verb> …` that changes the repo; a listing (`branch`, `tag -l`, `stash list`) does not. */
 const MUTATING_GIT =
-  /^git(?: -\S+| -[Cc] \S+)* (?:commit|push|add|switch|checkout|merge|rebase|reset|cherry-pick|revert|branch .*(?:-[dDmM]|--delete|--move)\b|tag (?!-l\b|--list)|stash(?! (?:list|show)\b))/u;
+  /^git( -\S+| -[Cc] \S+)* (commit|push|add|switch|checkout|merge|rebase|reset|cherry-pick|revert|branch .*(-[dDmM]|--delete|--move)\b|tag (?!-l\b|--list)|stash(?! (list|show)\b))/u;
 
 /**
  * For `cd <literal dir> && workit … || git <mutating verb> …` (or `;`), the

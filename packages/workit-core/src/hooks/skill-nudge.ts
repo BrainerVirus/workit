@@ -43,42 +43,41 @@ const SKILL_HOST: Record<HostId, SkillHost> = {
  * phrases only. Ordered by precedence: a broken thing is debug work before
  * it is a feature or a plan.
  */
-const PROMPT_INTENTS: ReadonlyArray<readonly [WorkitSkill, RegExp]> = [
+const PROMPT_INTENTS = (
   [
-    "workit-debug",
-    /\b(flaky|regressed|(?:is|introduced) a regression|regression (?:in|after|since|from)|(?:is|are|got|looks) broken|debug (?:this|it|the|why)|fix (?:the|this|a) bug)\b/i,
-  ],
-  [
-    "workit-continue",
-    /\b(pick up where|where (?:were|did) we|resume (?:the|this|my|our|work|where)|hand ?off)\b/i,
-  ],
-  [
-    "workit-review",
-    /\b(blast radius|code review|review (?:the|this|my|PR|pr|#\d+|branch|diff|changes))\b/i,
-  ],
-  [
-    "workit-ship",
-    /\b(ship (?:it|this|the)|babysit|open (?:a|the) (?:PR|pr|MR|mr)(?=\s*$|\s+(?:for|to|on|with|and|against|into|from|after|once)\b|[.!,;])|merge (?:the|this|my) (?:PR|pr|MR|mr|branch)|(?:get|until|make) CI (?:is )?green)\b/i,
-  ],
-  ["workit-bdd", /\b(BDD|TDD|acceptance criteria|Given\/When\/Then)(?![\w/])/],
-  ["workit-test-audit", /\b(test audit|audit the tests|tautolog\w*|weak tests)\b/i],
-  ["workit-deslop", /\b(deslop|slop|dead code)\b/i],
-  [
-    "workit-fanout",
-    /\b(fan(?: |-)?out|parallelize|parallel agents|agent swarm|swarm of agents)\b/i,
-  ],
-  ["workit-verify-app", /\b(verify the app|smoke test|prove it works)\b/i],
-  ["workit-retro", /\b((?:a|the) retro(?![-\w]|\.\w)|retrospective)/i],
-  ["workit-architecture", /\b(deepen (?:the )?modules|architecture (?:review|pass|audit))\b/i],
-  [
-    "workit-shape",
-    /\b(brainstorm\w*|grill me|should we|let'?s plan|plan (?:out|how|the|a|for)|(?:write|draft) (?:a|the) spec)\b/i,
-  ],
-  [
-    "workit-implement",
-    /\b(implement (?:the|this|a|it)|add (?:a|the) feature|build (?:a|an|the) (?:new )?(?:feature|command|verb|page|endpoint|component|cli|tool))\b/i,
-  ],
-];
+    [
+      "debug",
+      /\b(flaky|regressed|(is|introduced) a regression|regression (in|after|since|from)|(is|are|got|looks) broken|debug (this|it|the|why)|fix (the|this|a) bug)\b/i,
+    ],
+    [
+      "continue",
+      /\b(pick up where|where (were|did) we|resume (the|this|my|our|work|where)|hand ?off)\b/i,
+    ],
+    [
+      "review",
+      /\b(blast radius|code review|review (the|this|my|PR|pr|#\d+|branch|diff|changes))\b/i,
+    ],
+    [
+      "ship",
+      /\b(ship (it|this|the)|babysit|open (a|the) (PR|pr|MR|mr)(?=\s*$|\s+(for|to|on|with|and|against|into|from|after|once)\b|[.!,;])|merge (the|this|my) (PR|pr|MR|mr|branch)|(get|until|make) CI (is )?green)\b/i,
+    ],
+    ["bdd", /\b(BDD|TDD|acceptance criteria|Given\/When\/Then)(?![\w/])/],
+    ["test-audit", /\b(test audit|audit the tests|tautolog\w*|weak tests)\b/i],
+    ["deslop", /\b(deslop|slop|dead code)\b/i],
+    ["fanout", /\b(fan( |-)?out|parallelize|parallel agents|agent swarm|swarm of agents)\b/i],
+    ["verify-app", /\b(verify the app|smoke test|prove it works)\b/i],
+    ["retro", /\b((a|the) retro(?![-\w]|\.\w)|retrospective)/i],
+    ["architecture", /\b(deepen (the )?modules|architecture (review|pass|audit))\b/i],
+    [
+      "shape",
+      /\b(brainstorm\w*|grill me|should we|let'?s plan|plan (out|how|the|a|for)|(write|draft) (a|the) spec)\b/i,
+    ],
+    [
+      "implement",
+      /\b(implement (the|this|a|it)|add (a|the) feature|build (a|an|the) (new )?(feature|command|verb|page|endpoint|component|cli|tool))\b/i,
+    ],
+  ] as const
+).map(([name, pattern]): [WorkitSkill, RegExp] => [`workit-${name}`, pattern]);
 
 /** The workit skill a loaded name refers to (`workit:shape`, `workit-shape`, `wk-shape`). */
 export const workitSkillOf = (name: string): WorkitSkill | null => {
@@ -133,26 +132,14 @@ const SKILL_FILE = /(?:^|[\\/])(workit-[a-z-]+)[\\/]SKILL\.md$/;
 export const skillFileIn = (file: string): string | null => SKILL_FILE.exec(file)?.[1] ?? null;
 
 /** Commands that read a file for the agent: a shell-loaded skill is one of these on its SKILL.md. */
-const READERS = new Set([
-  "cat",
-  "sed",
-  "head",
-  "tail",
-  "less",
-  "more",
-  "bat",
-  "nl",
-  "get-content",
-  "gc",
-  "type",
-]);
+const READERS = new Set("cat sed head tail less more bat nl get-content gc type".split(" "));
 
 /** The workit skill whose SKILL.md a shell command reads (Codex, Cursor); never git, grep or an editor. */
 export const skillReadIn = (command: string, dialect: ShellDialect = "posix"): string | null => {
   for (const { words } of segmentsOf(command, dialect)) {
     if (!READERS.has((words[0]?.split(/[\\/]/).at(-1) ?? "").toLowerCase())) continue;
     // `sed -i` edits the file; it does not load it.
-    if (words.some((word) => /^(?:-i(?:\.\w+)?|--in-place(?:=.*)?)$/.test(word))) continue;
+    if (words.some((word) => /^(-i(\.\w+)?|--in-place(=.*)?)$/.test(word))) continue;
     for (const word of words.slice(1)) {
       const skill = skillFileIn(word);
       if (skill) return skill;
@@ -206,9 +193,11 @@ const nudgeOnce = (
 };
 
 const nudgeText = (input: HookInput, skill: WorkitSkill, why: string): string =>
-  USER_INVOKED.has(skill)
-    ? `Workit: ${why} looks like ${skill} work, which the user starts; offer it (/${skill.replace(/^workit-/, "wk-")}) rather than loading it.`
-    : `Workit: ${why} looks like ${skill} work; if it is, ${skillLoadWording(SKILL_HOST[input.host], skill)} first.`;
+  `Workit: ${why} looks like ${skill} work${
+    USER_INVOKED.has(skill)
+      ? `, which the user starts; offer it (/${skill.replace(/^workit-/, "wk-")}) rather than loading it.`
+      : `; if it is, ${skillLoadWording(SKILL_HOST[input.host], skill)} first.`
+  }`;
 
 /** A skill the prompt already loads: `/wk-shape`, `/workit:shape`, Pi's expanded
  * `/skill:` block, or OpenCode's rewritten `/wk-*` command. */
@@ -225,7 +214,7 @@ const promptLoads = (prompt: string): string | null =>
  * "regressed" is not a request for workit-debug.
  */
 export const relayedMessage = (prompt: string): boolean =>
-  /^\s*(?:Another Claude session sent a message\b|<agent-message\s+from=|\[SYSTEM NOTIFICATION\b|<task-notification>)/.test(
+  /^\s*(Another Claude session sent a message\b|<agent-message\s+from=|\[SYSTEM NOTIFICATION\b|<task-notification>)/.test(
     prompt,
   );
 
@@ -253,7 +242,7 @@ export function promptNudge(input: HookInput, prompt: string | null | undefined)
   }
 }
 
-const WORKIT_DELIVERY = /^(?:pr (?:create|merge)|ci wait|git push)\b/;
+const WORKIT_DELIVERY = /^(pr (create|merge)|ci wait|git push)\b/;
 /** Does the command run a workit delivery verb (also inside `bash -c '…'`), never help or a dry run? */
 const runsWorkitDelivery = (command: string, dialect: ShellDialect): boolean =>
   workitInvocations(command, dialect).some(
