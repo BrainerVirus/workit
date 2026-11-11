@@ -1,0 +1,24 @@
+{
+  "case": "stop-hold",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.4.1+17dd8d6864",
+  "key": "f465957ab10931e8",
+  "date": "2026-11-11T13:56:10.404Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 16192,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 7,
+    "failures": []
+  }
+}

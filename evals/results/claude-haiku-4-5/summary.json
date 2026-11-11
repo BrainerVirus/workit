@@ -1,5 +1,5 @@
 {
-  "passed": 2,
+  "passed": 3,
   "total": 4,
   "cases": [
     {
@@ -13,12 +13,42 @@
     },
     {
       "case": "stop-hold",
-      "pass": false,
+      "pass": true,
+      "passes": 2,
       "failures": ["require"],
-      "turns": 4,
-      "costUsd": 0.0334333,
-      "workitVersion": "workit-dev-v1.2.1+193ff38c14",
-      "graderVersion": 1
+      "turns": 13,
+      "costUsd": 0.11835690000000001,
+      "workitVersion": "workit-dev-v1.4.1+12ce2ceff3",
+      "graderVersion": 1,
+      "runs": [
+        {
+          "case": "stop-hold",
+          "pass": false,
+          "failures": ["require"],
+          "turns": 3,
+          "costUsd": 0.032944,
+          "workitVersion": "workit-dev-v1.4.1+12ce2ceff3",
+          "graderVersion": 1
+        },
+        {
+          "case": "stop-hold",
+          "pass": true,
+          "failures": [],
+          "turns": 5,
+          "costUsd": 0.042191400000000004,
+          "workitVersion": "workit-dev-v1.4.1+12ce2ceff3",
+          "graderVersion": 1
+        },
+        {
+          "case": "stop-hold",
+          "pass": true,
+          "failures": [],
+          "turns": 5,
+          "costUsd": 0.0432215,
+          "workitVersion": "workit-dev-v1.4.1+12ce2ceff3",
+          "graderVersion": 1
+        }
+      ]
     },
     {
       "case": "unborn-first-commit",
