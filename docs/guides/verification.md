@@ -508,6 +508,25 @@ replace that session's own standing failure on the same code prints why and
 the `--supersedes` to use. An author's own `failed --self` never blocks an
 independent pass, but `ledger check` shows it as a warning.
 
+**A verdict is filed in the repo whose branch it judges.** `ledger verdict
+--branch <b>` refuses with `branch_not_in_repo` when this repo has no branch
+`<b>`, and names the sibling checkout that has it (`workit --cwd <that repo>
+ledger verdict …`). A `--pr <n>` verdict without `--branch` is refused while
+the checkout is on another branch than the PR's (`branch_mismatch`, naming
+both): add `--branch <the PR's branch>`, or record it from the PR's own repo.
+Nothing is written on either refusal.
+
+**Voiding a stray verdict.** A verdict that is wrong on its face (filed for
+another repo's PR, or on the wrong branch) is voided by the user, never an
+agent: `workit ledger void <id|#n> --reason "<why>"` from their own terminal.
+It is a user-only call, like `grant set` and `release notes approve`: the CLI
+refuses a non-interactive shell or one with an agent marker set
+(`void_refused`), Claude Code asks, and Codex, Cursor and Pi deny it. The gates
+stop counting the voided verdict; `ledger list` still shows it, as
+`(voided: <reason>)`. A `pr merge --unverified` or `stack land --unverified`
+refused over a failed verdict names this command with the verdict's id, and so
+does `ledger verdict <branch>`.
+
 **Integrity.** Each row the CLI writes carries `prevHash`/`rowHash`, a sha256
 chain over the file. `workit ledger verify-integrity` lists rows outside it
 (`unsigned`: appended by hand; `hash_mismatch`: edited; `broken_link`: a row

@@ -776,7 +776,7 @@ test("pr merge: given merge: true and a current independent failed verdict, then
   expect(result.code).toBe(3);
   expect(result.json()).toMatchObject({ data: { reason: "failed_verdict" } });
   expect(result.json().error).toContain("--unverified never merges over a rejection");
-  expect(result.json().unblock).toBe("a new independent verdict on the head supersedes it");
+  expect(result.json().unblock).toContain("workit ledger void");
   expect(writes(runner.calls)).toEqual([]);
   expect(rows(repo.cwd, "merge.unverified")).toEqual([]);
 });

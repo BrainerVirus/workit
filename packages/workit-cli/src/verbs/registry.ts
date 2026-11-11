@@ -922,6 +922,12 @@ export const VERBS: readonly VerbEntry[] = [
           "Rows outside the CLI's hash chain (hand-written or changed); reports, never blocks",
       },
       {
+        name: "void",
+        usage: 'workit ledger void <verdict id|#n> --reason "<why>"',
+        summary:
+          "The user, at a terminal, voids a verdict that is wrong on its face (wrong repo or branch); gates stop counting it. Refused in an agent shell",
+      },
+      {
         name: "standing",
         flagAliases: { name: "fanout" },
         usage: `workit ledger standing add "<order>" | standing add --stop ["<note>"] | standing add --clear | standing list | standing clear [<id>]  [--fanout <name>] [--supersedes <id>] [--session <id> [--token <t>] | --as <role>]`,

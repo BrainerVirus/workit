@@ -36,6 +36,7 @@ import { spawnSync } from "node:child_process";
 import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
 import {
   appendObserved,
+  failedVerdictUnblock,
   tamperedUnblock,
   readLedger,
   unboundRecovery,
@@ -883,7 +884,9 @@ export async function mergePullRequest(
   if (!covered && bypass && check.accepted.reasons.includes("failing_verdict"))
     return refuse(
       `failed_verdict: ${label} has a current independent failed verdict${typeof check.accepted.verdict?.id === "string" ? ` (${check.accepted.verdict.id})` : ""}; --unverified never merges over a rejection`,
-      "a new independent verdict on the head supersedes it",
+      failedVerdictUnblock(
+        typeof check.accepted.verdict?.id === "string" ? check.accepted.verdict.id : null,
+      ),
       { reason: "failed_verdict", verdict: summary },
     );
   if (!covered && bypass) {
