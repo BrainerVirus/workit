@@ -40,8 +40,8 @@
       },
       {
         "tool": "Write",
-        "pattern": ".",
-        "why": "nothing is written"
+        "pattern": "\"file_path\":\"[^\"]*(add\\.ts|spec|plan)",
+        "why": "no code, spec or plan is written (a memory note of the feedback is fine)"
       }
     ],
     "answer": [

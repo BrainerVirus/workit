@@ -1,21 +1,21 @@
 {
   "case": "route-complaint",
   "model": "claude-haiku-4-5",
-  "workitVersion": "workit-dev-v1.4.1+088c37af23",
-  "key": "106bc70f42aec65f",
-  "date": "2026-11-11T13:55:41.042Z",
+  "workitVersion": "workit-dev-v1.4.1+d958f8cb03",
+  "key": "498f66121b7a4f5a",
+  "date": "2026-11-11T14:30:26.694Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 2,
-    "durationMs": 6008,
-    "costUsd": 0.0250825,
+    "turns": 6,
+    "durationMs": 14221,
+    "costUsd": 0.04099200000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
     "pass": true,
-    "calls": 1,
+    "calls": 5,
     "failures": []
   }
 }
