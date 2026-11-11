@@ -366,20 +366,28 @@ Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
 Host-approval channel limits (proposed, not shipped:
 [host-approval.md](../workit-next/host-approval.md); #419, #649, #768, #774).
 Every host keeps the terminal fallback: the spec's proposed approve verb, run
-by the user at a real TTY.
+by the user at a real TTY (L, D18: a pseudo-terminal passes it). The
+issued-registry guard does not cover `<state>/approvals/` yet; the first PR
+extends it.
 
-- **Claude Code:** no hook sees a rejected prompt, so a no leaves the request
-  to expire (L). U: whether a hook `ask` prompts under `bypassPermissions`;
-  until probed, that mode records nothing.
-- **OpenCode:** U: whether a `subagent` spawn passes `permission.evaluate`;
-  until probed, a model override uses request and approve.
+- **Claude Code:** a grant proves the call ran after an ask, not that a person
+  answered, and no hook sees a reject (L). U: whether auto mode,
+  `bypassPermissions`, an SDK `canUseTool` callback or
+  `--permission-prompt-tool` answer an ask without a person; until probed,
+  those modes record nothing.
+- **OpenCode:** U: `permission.asked`/`permission.replied` are in the
+  installed types but unused by Workit, `question` has no reply event there,
+  and a `subagent` spawn may not pass `permission.evaluate`; fallback-only
+  until probed.
 - **Codex:** the hook can deny but not ask; prompts come only from prefix
   rules, so inline asks deny and name the request id (L). U: the
   `permission_mode` values under `approval_policy = never` and how a "don't
   ask again" answer caches; fallback-only until probed.
 - **Cursor:** `afterShellExecution` is offered but not registered (X). U:
   whether auto-run skips an `ask`; fallback-only until probed.
-- **Pi:** no UI in print or RPC mode (`hasUI` false), so fallback only (L).
+- **Pi:** records only in the TUI. Print mode has no dialog (`hasUI` false);
+  in RPC mode the dialog goes to the RPC client, which may be a program, so
+  RPC is fallback-only (L).
 
 ## Design background
 

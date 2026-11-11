@@ -29,9 +29,9 @@ A yes typed in chat must not count: that makes the gate agent-asserted, which #6
 4. **Every host has the mechanism or a recorded limit**, and every refusal prints the terminal
    fallback that works on all of them.
 
-Trust model (D18): this stops honest mistakes and accidental self-approval. A determined agent with
-arbitrary shell writes can forge a file; the hard boundary stays the host's prompt on the approval
-call and host permissions on Workit's state dir.
+Trust model (D18): this stops honest mistakes and accidental self-approval, not a determined agent.
+The hard boundary stays the host's prompt on the approval call and host permissions on Workit's
+state dir.
 
 ## Two forms
 
@@ -65,28 +65,36 @@ select). Several ids in one `workit approve` call give one prompt listing each t
 multi-repo release).
 
 Requests and approvals live in one registry in the user state dir (`<state dir>/approvals/`, see
-[file-locations](../agents/file-locations.md)), so one call can cover several repos. The
-issued-registry write guard (#292) covers that path, and each consumed approval is mirrored as an
-`approval.consumed` row in the repo's ledger for audit.
+[file-locations](../agents/file-locations.md)), so one call can cover several repos; each consumed
+approval is mirrored as an `approval.consumed` row in the repo's ledger. **Deliverable:** the
+issued-registry write guard (#292, `underIssued` in `hooks/write-gate.ts`) matches only
+`<state>/issued*` today, so the first PR extends it to `<state>/approvals/`, with a test beside the
+issued-registry ones that an agent edit, redirect, `tee`, `cp` or `mv` into it is denied on each
+host. Like that guard it reads edit paths and recognizable shell writes only: a hand-edit guard,
+not a sandbox ([hosts.md](../agents/hosts.md#host-parity), issued-registry limits).
 
 ## Recording the answer, per host
 
 The prompted call `workit approve <id>…` writes nothing in an agent shell: it prints the request
 and "the host records your answer". Host-side code writes `approval.granted { id, hash, host,
 session, toolUseId, at, expires }` (15 minutes), or `approval.rejected` where the host reports a
-no. Workit's host rules for `workit approve` are anchored at the verb, like #798.
+no. Host rules for `workit approve` are anchored at the verb, like #798. A hook acts only on one
+simple `workit approve <ids>` call: a chain, a substitution, a leading `cd` or an env prefix is
+denied with the plain form to run. The `asked` row holds one hash per id; a grant is written only
+when that call exited 0 (Pi: from the dialog answer), one per id read from argv words, never text.
 
 | Host | Request and approve | Inline ask | Recorded limit and fallback |
 | --- | --- | --- | --- |
-| Claude Code | `PreToolUse` answers `permissionDecision: "ask"` for `workit approve` with the rendered request as the reason, and writes `asked { toolUseId, ids, hash }` only when `permission_mode` prompts (not `bypassPermissions` or `dontAsk`); `PostToolUse` for the same `toolUseId` writes the grant. Setup adds `ask` `Bash(workit approve *)` (ask beats allow, also in auto mode) | `PreToolUse` `ask` on the call (Agent spawn, Bash), reason rendered from a request it writes itself | No hook sees a reject, so a no leaves the request pending until it expires (L). U: whether a hook `ask` prompts under `bypassPermissions`; until probed that mode records nothing |
-| OpenCode | `permission.evaluate` turns `workit approve` into `ask` (never `allow`, like the user-only calls today); the plugin matches `permission.asked` to the request and writes the grant on `permission.replied` `once` or `always` (both mean once) or the rejection on `reject`. Approve / Reject / Edit through `question` where the plugin raises it, recorded on `question.replied`/`question.rejected` | `permission.evaluate` `ask` for a shell call it gates; U: whether a `subagent` spawn passes through `permission.evaluate`, else spawns use request and approve | None known beyond the U item |
+| Claude Code | `PreToolUse` answers `permissionDecision: "ask"` for `workit approve` with the rendered request as the reason and writes `asked { toolUseId, ids, hashes }`; `PostToolUse` for the same `toolUseId` writes the grants. Setup adds `ask` `Bash(workit approve *)` | `PreToolUse` `ask` on the call (Agent spawn, Bash), reason rendered from a request it writes itself | L: a grant proves the call ran after an ask, not that a person answered, and no hook sees a reject (the request expires). U: whether auto mode, `bypassPermissions`, an SDK `canUseTool` callback or `--permission-prompt-tool` answer an ask without a person; until probed no grant is recorded in those modes (`asked` is written only in `default`, `acceptEdits` or `plan`) |
+| OpenCode | `permission.evaluate` answers `ask` for `workit approve` on every call (never `allow`), so a stored `always` never skips it; the plugin writes the grant on `permission.replied` `once` or `always` (both once) or the rejection on `reject`, matched through `permission.asked`. U: both events are in the installed `@opencode/schema` types, but nothing in Workit consumes them yet. U: Approve / Reject / Edit through `question` (no reply event in the installed plugin types) | `permission.evaluate` `ask` for a shell call it gates; U: whether a `subagent` spawn passes through `permission.evaluate`, else spawns use request and approve | Fallback-only until the U items are probed |
 | Codex | Workit's `rules/workit.rules` gets a `prompt` rule for `workit approve` (the `PreToolUse` hook no longer denies it); `PostToolUse` writes the grant only when the hook input's `permission_mode` shows a mode that prompts | L: the hook can deny but not ask; prompts come only from prefix rules, so inline cases deny and name the request id | U: which `permission_mode` values Codex sends under `approval_policy = never` and whether a "don't ask again" answer caches by prefix; until probed Codex is fallback-only (L) |
 | Cursor | `beforeShellExecution` answers `permission: "ask"` for `workit approve`; `afterShellExecution` (X today: offered, not registered) writes the grant | `beforeShellExecution` `ask` for shell calls; L: no spawn hook can ask, and role models are advisory there, so #768 has nothing to override | U: whether auto-run ("run everything") skips an `ask`; the IDE's handling is unverified (#635). Until both are probed Cursor is fallback-only |
-| Pi | The `tool_call` hook intercepts `workit approve`, shows `ctx.ui.select` (Approve / Reject / Edit) with the rendered request, writes the answer, and blocks the shell call with a result naming it | `tool_call` → `ctx.ui.confirm` before the call runs | L: no UI in print or RPC mode (`hasUI` false): fallback only |
+| Pi | The `tool_call` hook intercepts `workit approve`, shows `ctx.ui.select` (Approve / Reject / Edit) with the rendered request, writes the answer, and blocks the shell call with a result naming it | `tool_call` → `ctx.ui.confirm` before the call runs | Records only in the TUI (`ctx.mode`). L: print mode has no dialog (`hasUI` false); in RPC mode `hasUI` is true but the dialog goes to the RPC client, which may be a program, so RPC is fallback-only |
 
-**Fallback, every host:** `workit approve <id>…` run by the user in a real terminal (TTY, no agent
-marker, today's #615 check) shows the same rendered request and records
-`via: terminal`. Every refusal prints this line; a host with a channel adds "or approve it when
+**Fallback, every host:** `workit approve <id>…` run by the user in a real terminal shows the
+same rendered request and records `via: terminal` after today's #615 checks: a TTY, no agent
+marker, then y at the confirm prompt (as `grant set` and `release notes approve` do). L (D18,
+`verbs/grant.ts`): an agent that allocates a pseudo-terminal and scrubs the markers passes it. Every refusal prints this line; a host with a channel adds "or approve it when
 your host asks". A host that is fallback-only says so in `workit doctor` (`host_approval`).
 
 ## How a CLI verb checks an approval
@@ -126,11 +134,11 @@ Claude Code hook fixture tests):
   approved via `host:<host>:<session>` and `workit git push --release <tag>` publishes with no
   terminal command.
 - Given the same draft, When an agent shell runs `workit approve <id>` with no host prompt (hooks
-  off, or `bypassPermissions`), Then no grant is written and the push stays refused with the
-  approve line.
+  off, auto mode, `bypassPermissions`) or inside a chain (`cd x && workit approve <id>`), Then no
+  grant is written and the push stays refused with the approve line.
 - Given an approved draft edited by one byte, When the push runs, Then it refuses `approval_stale`
   naming both sha prefixes and a new id.
-- Given the prompt offers Edit (OpenCode `question`, Pi `select`), When the user picks it, Then
+- Given the prompt offers Edit (Pi `select`; OpenCode `question` once probed), When the user picks it, Then
   the request is marked stale, the draft path is printed, and the next `show` writes a new request.
 - Given a consumed approval, When the agent runs the same push again, Then nothing is approved by
   it (`approval_consumed`), and Given `releaseNotes: off|auto`, Then nothing asks.
