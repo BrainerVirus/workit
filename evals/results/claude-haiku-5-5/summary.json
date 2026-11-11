@@ -1,7 +1,16 @@
 {
-  "passed": 8,
-  "total": 8,
+  "passed": 10,
+  "total": 10,
   "cases": [
+    {
+      "case": "branch-before-edit",
+      "pass": true,
+      "failures": [],
+      "turns": 10,
+      "costUsd": 0.006486110000000001,
+      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
+      "graderVersion": 1
+    },
     {
       "case": "fanout-fanin",
       "pass": true,
@@ -45,6 +54,15 @@
       "turns": 5,
       "costUsd": 0.00462434,
       "workitVersion": "workit-dev-v1.2.1+193ff38c14",
+      "graderVersion": 1
+    },
+    {
+      "case": "unborn-first-commit",
+      "pass": true,
+      "failures": [],
+      "turns": 5,
+      "costUsd": 0.003992230000000001,
+      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
       "graderVersion": 1
     },
     {

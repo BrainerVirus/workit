@@ -1,7 +1,16 @@
 {
-  "passed": 1,
-  "total": 2,
+  "passed": 2,
+  "total": 4,
   "cases": [
+    {
+      "case": "branch-before-edit",
+      "pass": false,
+      "failures": ["require"],
+      "turns": 4,
+      "costUsd": 0.033184200000000004,
+      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
+      "graderVersion": 1
+    },
     {
       "case": "stop-hold",
       "pass": false,
@@ -9,6 +18,15 @@
       "turns": 4,
       "costUsd": 0.0334333,
       "workitVersion": "workit-dev-v1.2.1+193ff38c14",
+      "graderVersion": 1
+    },
+    {
+      "case": "unborn-first-commit",
+      "pass": true,
+      "failures": [],
+      "turns": 4,
+      "costUsd": 0.03345000000000001,
+      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
       "graderVersion": 1
     },
     {
