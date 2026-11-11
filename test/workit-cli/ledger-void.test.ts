@@ -191,3 +191,25 @@ test("the verdict read names the void path for a failing verdict", async () => {
   const read = await run(root, ["ledger", "verdict", "feature/x"], userEnv());
   expect(read.stdout).toContain(`workit ledger void ${stray} --reason`);
 });
+
+// #792 item 22: a voided verdict retires nothing, so the failure it superseded stands again.
+test("voiding a superseding pass brings back the failure it retired", async () => {
+  const root = featureRepo();
+  const verdict = async (result: string, extra: string[] = []): Promise<string> => {
+    const recorded = await run(
+      root,
+      ["ledger", "verdict", result, "--kind", "live", "--how", "ran it", ...extra, "--json"],
+      reviewer,
+    );
+    expect(recorded.code).toBe(0);
+    return recorded.json().data.id as string;
+  };
+  await verdict("verified");
+  const failed = await verdict("failed");
+  const pass = await verdict("verified", ["--supersedes", failed]);
+  expect(await gateReasons(root)).toEqual([]);
+
+  expect((await voidVerdict(root, [pass, "--reason", "wrong branch"], userEnv())).code).toBe(0);
+
+  expect(await gateReasons(root)).toContain("failing_verdict");
+});
