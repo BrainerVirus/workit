@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { main } from "@/scripts/eval/run";
+import { main, readOnlyCdChain } from "@/scripts/eval/run";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -245,4 +245,28 @@ test("Given a case with scaffold commits and no allowed tools, Then the repo has
   expect(call).toContain("commits=2 ");
   expect(call).not.toContain("--allowedTools");
   expect(call).toContain("--permission-mode dontAsk --disallowedTools WebFetch WebSearch");
+});
+
+// #793: the bench's PreToolUse hook allows only a `cd` chain that reads.
+test.each([
+  "cd /w/wt && git status --short && git branch --show-current && git log --oneline -3 && ls -la notes.md",
+  "cd /w/wt && git diff",
+])("Given `%s`, Then the bench allows it as a read-only cd chain", (command) => {
+  expect(readOnlyCdChain(command)).toBe(true);
+});
+
+test.each([
+  "cd /w/wt && git commit -m x",
+  "cd /w/wt && git add notes.md && git status",
+  "cd /w/wt && git status; rm -rf x",
+  "cd /w/wt && git status > out",
+  "cd /w/wt && git log | tee x",
+  "cd $W && git status",
+  "cd /w/wt && git diff --output=x",
+  "cd /w/wt && git branch new",
+  "cd /w/wt",
+  "git status && cd /w/wt",
+  "cd /w/wt && git status & rm x",
+])("Given `%s`, Then the bench hook leaves it to the host", (command) => {
+  expect(readOnlyCdChain(command)).toBe(false);
 });
