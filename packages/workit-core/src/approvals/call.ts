@@ -65,4 +65,4 @@ export const approveCallIn = (
 
 /** The deny reason for a `workit approve` call inside something else. */
 export const approveCallDeny = (fix: string): string =>
-  `Run \`${fix}\` as its own call: no chain, substitution, leading cd, env prefix or redirect around it, so the host can show the request and record the user's answer.`;
+  `Run \`${fix}\` as its own call: no chain, pipe, substitution, leading cd, env prefix or redirect around it, so the host can show the request and record the user's answer.`;
