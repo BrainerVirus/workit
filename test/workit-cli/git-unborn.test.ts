@@ -58,6 +58,8 @@ test("Given git init -b develop and a file, When workit git branch --kind featur
   const cwd = unbornRepo();
   const branched = await run(["git", "branch", "--kind", "feature", "--slug", "scaffold"], cwd);
   expect(branched.code, branched.out).toBe(0);
+  expect(branched.out).toContain("switched to new branch feature/scaffold with no commit yet");
+  expect(branched.out).not.toContain("(none)");
   expect(git(cwd, "symbolic-ref", "--short", "HEAD")).toBe("feature/scaffold");
 
   const committed = await run(["git", "commit", "-m", "chore: scaffold", "--", "README.md"], cwd);
