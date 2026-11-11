@@ -5,7 +5,9 @@
 // session's branch (the checked-out branch, on which this session recorded a
 // commit or opened a PR):
 //   (a) unpushed: a commit this session recorded, not on the push remote,
-//       while the effective endpoint is pr, green or merged;
+//       while the effective endpoint is pr, green or merged, and the user
+//       has not held the branch (`workit git hold`: "not yet", until the
+//       next push or `--clear`);
 //   (b) checks: the branch's open PR has failing or pending checks recorded
 //       for its current head (`pr.status` rows) while the endpoint is green
 //       or merged; a live `workit ci wait` on that PR and head (ci-waiter.ts),
@@ -40,7 +42,7 @@ import { liveCiWaiter, type CiWaiter } from "../ci-waiter";
 import { currentJudgment } from "../core/policy/current-judgment";
 import { branchLane, laneNeed } from "../core/policy/lane";
 import { currentBranch, pushRemoteName } from "../git/rev";
-import { checkVerdicts, readLedger, type ReadRow } from "../ledger";
+import { branchHold, checkVerdicts, readLedger, type ReadRow } from "../ledger";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision, HookInput } from "./protocol";
 import { guardedBranch, inWorkitWorkspace } from "./raw-git";
@@ -228,7 +230,7 @@ const unpushed = (
   if (count === 0) return null;
   return {
     kind: "unpushed",
-    reason: `${branch} has ${count} commit(s) of this session not on ${remote}, and this workspace's endpoint is \`${endpoint}\` (\`workit grant show\`): push them with \`workit git push\`${endpoint === "pr" ? ", then open or update the PR (`workit pr create --fill`)" : ""}.`,
+    reason: `${branch} has ${count} commit(s) of this session not on ${remote}, and this workspace's endpoint is \`${endpoint}\` (\`workit grant show\`): push them with \`workit git push\`${endpoint === "pr" ? ", then open or update the PR (`workit pr create --fill`)" : ""}. If the user said not yet, record it once with \`workit git hold --why "<their words>"\` and stop.`,
   };
 };
 
@@ -356,7 +358,7 @@ export function stopObligation(
     if (landed(input.cwd, branch, rows, head, commits)) return null;
     const autonomy = resolveAutonomy(input.cwd);
     const endpoint = autonomy.effectiveEndpoint;
-    if (endpoint !== "commit") {
+    if (endpoint !== "commit" && !branchHold(rows, branch)) {
       const left = unpushed(input.cwd, branch, endpoint, commits, mergedHeads(rows));
       if (left) return { ...left, head };
     }
