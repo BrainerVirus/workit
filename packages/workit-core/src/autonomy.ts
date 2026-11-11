@@ -5,7 +5,8 @@
 //
 // - Grants live only in the matched workspace entry of the user's
 //   `~/.config/workit/workspaces.json`, where `~` is the OS account's home
-//   (neither $HOME nor config-dir overrides redirect them; see grantsDir):
+//   (neither $HOME nor config-dir overrides redirect them; see grantsDir;
+//   only a bench world reads its own, capped at the defaults, see evalWorld):
 //     "autonomy": { "push": true, "pr": true, "merge": false | true | "verified",
 //                   "release": false, "rerun": true }
 //   never in a repo file. `workit grant set` raises only from an interactive
@@ -31,7 +32,7 @@
 // - Protected-branch pushes stay denied by the git verbs (except the git-flow
 //   release push above), and the host
 //   permission prompt applies in addition: a host deny always wins.
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { configFilePath, resolveConfigDir } from "./core/config";
@@ -76,13 +77,50 @@ const accountHome = (): string => {
  */
 export const grantsHome = { resolve: accountHome };
 
-/** The default config dir (core/workit-paths.mjs) for the account home, with no override. */
-export const grantsDir = (): string => workitConfigDir({ HOME: grantsHome.resolve() });
+/** The variable the local bench (scripts/eval/scaffold.ts) sets to its throwaway world. */
+export const EVAL_WORLD_ENV = "WORKIT_EVAL_WORLD";
+/** The file that marks a directory as a bench world. */
+export const EVAL_WORLD_MARKER = ".workit-eval-world";
+
+const realOrNull = (file: string): string | null => {
+  try {
+    return realpathSync(file);
+  } catch {
+    return null;
+  }
+};
+
+const within = (dir: string, file: string): boolean => {
+  const rel = path.relative(dir, file);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+};
+
+/**
+ * The bench world `cwd` runs in, or null (#792). Its `config/` holds the
+ * world's grants, read only while WORKIT_EVAL_WORLD names a marked directory
+ * under the OS temp dir and `cwd` is inside it, so a session outside a world
+ * never reads them; and they never raise a grant above the D4 defaults
+ * (capAtDefaults), so setting the variable gives an agent nothing it lacked.
+ */
+export const evalWorld = (cwd: string = process.cwd()): string | null => {
+  const raw = process.env[EVAL_WORLD_ENV];
+  if (!raw || !path.isAbsolute(raw)) return null;
+  const [world, tmp, here] = [raw, os.tmpdir(), cwd].map(realOrNull);
+  if (!world || !tmp || !here || world === tmp || !within(tmp, world) || !within(world, here))
+    return null;
+  return existsSync(path.join(world, EVAL_WORLD_MARKER)) ? world : null;
+};
+
+/** The default config dir (core/workit-paths.mjs) for the account home, with no override; a bench world's own config inside one. */
+export const grantsDir = (cwd?: string): string => {
+  const world = evalWorld(cwd);
+  return world ? path.join(world, "config") : workitConfigDir({ HOME: grantsHome.resolve() });
+};
 
 /** Why grants fell back to the defaults, or null when the real file is used. */
-export const grantsOverride = (): string | null => {
+export const grantsOverride = (cwd?: string): string | null => {
   const configured = path.resolve(resolveConfigDir());
-  return configured === path.resolve(grantsDir())
+  return configured === path.resolve(grantsDir(cwd))
     ? null
     : `the config directory is redirected to ${configured} (WORKIT_CONFIG, WORKIT_CONFIG_DIR or XDG_CONFIG_HOME), but that override does not apply to grants: grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply until grants are set there`;
 };
@@ -448,11 +486,13 @@ function capAt(
 
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
-  const override = grantsOverride();
+  const override = grantsOverride(cwd);
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
   const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
-  let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name));
+  const world = evalWorld(cwd);
+  let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(cwd), name));
+  if (world) autonomy = capAtDefaults(autonomy, world);
   if (name)
     autonomy = capAt(autonomy, cwd, `WORKIT_WORKSPACE_NAME=${name}`, "a name never raises grants");
   const above = checkoutsAbove(cwd);
@@ -465,6 +505,40 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
       true,
     );
   return capAtRemotes(autonomy, cwd, target);
+}
+
+/**
+ * A bench world's grants never exceed the D4 defaults: it may set the
+ * endpoint (bounded by the grants, as anywhere) and lower grants, never
+ * raise one or loosen verification.
+ */
+function capAtDefaults(autonomy: Autonomy, world: string): Autonomy {
+  const grants = { ...autonomy.grants };
+  const lowered: string[] = [];
+  for (const kind of GRANT_KINDS)
+    if (raises(kind, DEFAULT_GRANTS[kind], grants[kind])) {
+      grants[kind] = DEFAULT_GRANTS[kind];
+      lowered.push(kind);
+    }
+  const looser =
+    VERIFICATION_STRICTNESS.indexOf(autonomy.verification) >
+    VERIFICATION_STRICTNESS.indexOf(DEFAULT_VERIFICATION);
+  if (looser) lowered.push("verification");
+  if (lowered.length === 0) return autonomy;
+  const { endpoint, reason } = effectiveEndpoint(autonomy.defaultEndpoint, {
+    workspace: autonomy.workspace,
+    grants,
+    configured: autonomy.configured,
+    accountConfigured: autonomy.accountConfigured,
+  });
+  return {
+    ...autonomy,
+    grants,
+    verification: looser ? DEFAULT_VERIFICATION : autonomy.verification,
+    effectiveEndpoint: endpoint,
+    endpointReason: reason,
+    note: `eval world ${world}: ${lowered.join(", ")} capped at the D4 defaults; a bench world never raises grants`,
+  };
 }
 
 /**
