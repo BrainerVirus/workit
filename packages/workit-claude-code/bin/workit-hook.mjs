@@ -174,7 +174,7 @@ const mayBypass = (command) =>
     /--unverified|--overwrite-unintegrated/.test(command.replace(/['"\\`]/g, "")));
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
-// What an implementer's confinement also judges (hooks/worktree-confine.ts):
+// What an agent's confinement also judges (hooks/worktree-confine.ts):
 // writers the edit analysis cannot see, `-c` scripts, `$(…)` and Workit's
 // lead-owned fanout verbs.
 const IMPLEMENTER_GATED =
@@ -443,16 +443,16 @@ const fastAllow = (() => {
     if (budgetDue) return false;
     if (mentionsIssued(JSON.stringify(value.tool_input ?? {}))) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
-    // An implementer's writes are confined to its Workit worktree with or
-    // without a task store (hooks/worktree-confine.ts).
-    const implementer = value.agent_type === "workit:implementer";
+    // An implementer's writes are confined to its Workit worktree, a verifier's
+    // or reviewer's to its scratch dir, with or without a task store
+    // (hooks/worktree-confine.ts).
+    const confined = /^workit:(?:implementer|verifier|reviewer)$/.test(value.agent_type ?? "");
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (WORKIT_DELIVERY.test(command) || WORKIT_REORDER.test(command) || mayBypass(command))
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
-      if (!MAYBE_GATED.test(command) && !(implementer && IMPLEMENTER_GATED.test(command)))
-        return true;
-      return !implementer && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
+      if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;
+      return !confined && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
     // A spawn with isolation (any type) or an implementer without a brief meets the
     // spawn gate (hooks/spawn-gate.ts, the same WORKTREE test). One that names its
@@ -473,7 +473,7 @@ const fastAllow = (() => {
     }
     // Read, Grep and Glob reach this hook only to be counted against a budget.
     if (READS.has(value.tool_name)) return true;
-    return EDITS.has(value.tool_name) && !implementer && !hasTaskStore(String(value.cwd ?? "."));
+    return EDITS.has(value.tool_name) && !confined && !hasTaskStore(String(value.cwd ?? "."));
   } catch {
     return false;
   }

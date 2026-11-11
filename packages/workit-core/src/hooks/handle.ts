@@ -38,8 +38,13 @@ import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
-import { confineImplementer, confineImplementerShell } from "./worktree-confine";
-import { agentSteering, judgeChecksLine, workitRole } from "./steering";
+import {
+  confineImplementer,
+  confineImplementerShell,
+  confineJudge,
+  confineJudgeShell,
+} from "./worktree-confine";
+import { agentSteering, judgeChecksLine, workitRole, type WorkitRole } from "./steering";
 import type { HookDecision, HookEventKind, HookInput, HostAdapter, RenderedHook } from "./protocol";
 
 /**
@@ -62,11 +67,11 @@ const resendsOnChange = (descriptor: HostDescriptor): boolean =>
 /** Sessions already offered unfinished tasks in this process. */
 const offered = new Set<string>();
 
-/** A tool call made by a Workit implementer subagent (the host names its agent type). */
-const implementerAgent = (input: HookInput, descriptor: HostDescriptor): boolean =>
-  Boolean(input.session.agentId) &&
-  input.session.agentType !== null &&
-  workitRole(descriptor, input.session.agentType) === "implementer";
+/** The Workit role of the subagent making a tool call (the host names its agent type). */
+const agentRole = (input: HookInput, descriptor: HostDescriptor): WorkitRole | null =>
+  input.session.agentId && input.session.agentType !== null
+    ? workitRole(descriptor, input.session.agentType)
+    : null;
 
 /**
  * W2.19: a subagent that stops on a provider usage limit marks that provider
@@ -242,9 +247,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
             unblock: null,
           };
       }
-      // An implementer subagent stays in its Workit worktree (#310).
-      if (canDeny && implementerAgent(input, descriptor)) {
-        const confined = confineImplementerShell(input, event.command, event.dialect);
+      // An implementer stays in its Workit worktree (#310), a judge in its scratch dir (#790).
+      const role = canDeny ? agentRole(input, descriptor) : null;
+      if (role) {
+        const confined = (role === "implementer" ? confineImplementerShell : confineJudgeShell)(
+          input,
+          event.command,
+          event.dialect,
+        );
         if (confined.kind === "deny") return confined;
       }
       // The before-write gate and the live-session guard (#274).
@@ -329,8 +339,13 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       return NONE;
     case "write.pre": {
       if (!usable(descriptor.events["write.pre"].support)) return NONE;
-      if (implementerAgent(input, descriptor)) {
-        const confined = confineImplementer(input, liveTargets(input.cwd, event.paths));
+      const role = agentRole(input, descriptor);
+      if (role) {
+        const targets = liveTargets(input.cwd, event.paths);
+        const confined =
+          role === "implementer"
+            ? confineImplementer(input, targets)
+            : confineJudge(input, targets);
         if (confined.kind === "deny") return confined;
       }
       return writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport));

@@ -19,6 +19,11 @@
 // An agent the host isolated itself (a real linked worktree at Claude Code's
 // `<repo>/.claude/worktrees/agent-<id>`) is left to the host. Reads only the
 // filesystem; fails open on any error.
+//
+// A verifier or reviewer (a judge, #790) writes only in a scratch dir:
+// `.workit-scratch/` at the root of a git checkout. Every other write target,
+// in a repository or not, is denied naming the scratch dir, and so is an
+// unquoted heredoc whose body runs a command substitution.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -26,7 +31,7 @@ import { resolveStateDir } from "../core/logger";
 import { appendHookObserved } from "../ledger";
 import type { HookDecision, HookInput } from "./protocol";
 import { inWorkitWorkspace, rawInvocations, skipWorkitGlobals, workitInvocations } from "./raw-git";
-import type { ShellDialect } from "./shell-words";
+import { segmentsOf, type ShellDialect } from "./shell-words";
 import { OPAQUE_TARGET, shellMutationTargets, UNKNOWN_DIR, UNKNOWN_VAR } from "./write-gate";
 
 /** Written by `workit fanout worktree create` into git's admin dir for the worktree. */
@@ -453,4 +458,111 @@ export function confineImplementerShell(
     shellMutationTargets(input.cwd, command, dialect, true),
     command,
   );
+}
+
+// --- judges: verifiers and reviewers write only in a scratch dir (#790) ----
+
+/** A judge's scratch dir, at a checkout root (fanout-worktree.ts SCRATCH_DIR). */
+const SCRATCH = ".workit-scratch";
+const SHELL_NAMES = /^(?:sh|bash|zsh|dash|ksh|mksh|ash)$/;
+
+/** Whether the real path `real` is in the scratch dir at the root of its own checkout. */
+const inScratch = (real: string): boolean => {
+  const checkout = checkoutOf(real);
+  return checkout !== null && within(real, path.join(checkout.root, SCRATCH));
+};
+
+/**
+ * An unquoted heredoc whose body holds `$(…)` or a backtick: the shell runs
+ * that command while it writes the file, whatever the file is (#790).
+ */
+const substitutingHeredoc = (command: string): boolean => {
+  for (const match of command.matchAll(/(?<!<)<<-?[ \t]*([^\s<>;&|()]+)/g)) {
+    const delimiter = match[1];
+    if (/['"\\]/.test(delimiter)) continue;
+    const newline = command.indexOf("\n", match.index + match[0].length);
+    if (newline < 0) continue;
+    const lines = command.slice(newline + 1).split("\n");
+    const end = lines.findIndex((line) => line.trim() === delimiter);
+    if (/\$\(|`/.test((end < 0 ? lines : lines.slice(0, end)).join("\n"))) return true;
+  }
+  return false;
+};
+
+/** What a shell fed its script on standard input (`bash <<'EOF'`, `sh <<< …`) writes. */
+const stdinScriptTargets = (cwd: string, command: string): string[] =>
+  segmentsOf(command).flatMap(({ words: [name = "", ...options], stdin = [] }) =>
+    SHELL_NAMES.test(path.basename(name)) && options.every((word) => word.startsWith("-"))
+      ? stdin.flatMap((body) => shellMutationTargets(cwd, body, "posix", true))
+      : [],
+  );
+
+const judgeDeny = (input: HookInput, what: string): HookDecision => {
+  const role = input.session.agentType?.endsWith("reviewer") ? "reviewer" : "verifier";
+  const root = checkoutOf(input.cwd)?.root;
+  const scratch = root
+    ? path.join(root, SCRATCH)
+    : `${SCRATCH}/ at the root of the checkout you judge`;
+  const unblock = `Write only under ${scratch} (mkdir -p it): put a generated case in a file there with a quoted heredoc (<<'EOF') and never run it in the shell. Reads, \`workit check\` and \`workit ledger verdict|finding\` stay allowed; a change the candidate needs is a finding, not an edit.`;
+  return {
+    kind: "deny",
+    reason: `workit scratch confinement: ${role} ${input.session.agentId} may write only in its scratch dir ${scratch}, and ${what}. ${unblock}`,
+    unblock,
+  };
+};
+
+/**
+ * Judge a verifier's or reviewer's edit or command by the absolute paths it
+ * changes: each must be in a checkout's scratch dir. A path built from a
+ * variable or a directory change Workit cannot resolve is denied too.
+ */
+export function confineJudge(input: HookInput, targets: readonly string[]): HookDecision {
+  try {
+    if (!input.session.agentId) return NONE;
+    for (const target of targets) {
+      const resolved = path.resolve(target);
+      if (within(resolved, UNKNOWN_VAR) || within(resolved, UNKNOWN_DIR))
+        return judgeDeny(
+          input,
+          "it writes to a path Workit cannot resolve (a variable, a command substitution or `cd -`): spell the path out",
+        );
+      if (inScratch(canonical(target))) continue;
+      const runner = runnerAt(target);
+      return judgeDeny(
+        input,
+        runner === null
+          ? `${shown(target)} is outside it`
+          : `\`${runner}\` runs in ${shown(target)}, outside it`,
+      );
+    }
+    return NONE;
+  } catch {
+    return NONE;
+  }
+}
+
+/**
+ * Judge a verifier's or reviewer's shell command: every path it may change
+ * (the strict analysis), the script a shell reads on standard input, and an
+ * unquoted heredoc that runs a command substitution.
+ */
+export function confineJudgeShell(
+  input: HookInput,
+  command: string,
+  dialect: ShellDialect = "posix",
+): HookDecision {
+  try {
+    if (!input.session.agentId) return NONE;
+    if (dialect === "posix" && substitutingHeredoc(command))
+      return judgeDeny(
+        input,
+        "an unquoted heredoc runs the `$(…)` or backtick command in its body: quote the delimiter (<<'EOF')",
+      );
+    return confineJudge(input, [
+      ...shellMutationTargets(input.cwd, command, dialect, true),
+      ...(dialect === "posix" ? stdinScriptTargets(input.cwd, command) : []),
+    ]);
+  } catch {
+    return NONE;
+  }
 }
