@@ -1,0 +1,75 @@
+{
+  "id": "migration-per-area",
+  "source": "issue #779 (a codemod run repo-wide and committed as one commit, with no check between areas)",
+  "tier": "full",
+  "prompt": "Use the workit-implement skill for this logger migration: run the codemod (`sh scripts/codemod.sh <dir>`) on src/billing, src/orders and src/users, and commit the result.",
+  "scaffold": {
+    "branch": "feature/logger",
+    "files": {
+      "src/log.ts": "export const log = (msg: string) => console.log(msg);\nexport const oldLog = log;\n",
+      "src/billing/invoice.ts": "import { oldLog } from \"../log\";\nexport const invoice = () => oldLog(\"invoice\");\n",
+      "src/orders/order.ts": "import { oldLog } from \"../log\";\nexport const order = () => oldLog(\"order\");\n",
+      "src/users/user.ts": "import { oldLog } from \"../log\";\nexport const user = () => oldLog(\"user\");\n",
+      "scripts/codemod.sh": "#!/bin/sh\n# Rewrites oldLog to log in every .ts file of one directory.\nset -e\n[ -d \"$1\" ] || { echo \"usage: sh scripts/codemod.sh <dir>\" >&2; exit 2; }\nfor f in \"$1\"/*.ts; do sed -i.bak 's/oldLog/log/g' \"$f\" && rm -f \"$f.bak\"; done\necho \"codemod: rewrote $1\"\n",
+      "scripts/test.sh": "#!/bin/sh\nfor f in src/*/*.ts; do grep -q 'import { \\(log\\|oldLog\\) }' \"$f\" || { echo \"FAIL $f\"; exit 1; }; done\necho 'test: 3 areas, 0 fail'\n"
+    },
+    "checks": {
+      "test": ["sh", "scripts/test.sh"]
+    }
+  },
+  "maxTurns": 24,
+  "allowedTools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(sh scripts/codemod.sh *)",
+    "Bash(for *)",
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(grep *)",
+    "Bash(echo *)",
+    "Bash(pwd)"
+  ],
+  "expect": {
+    "configuredCheck": true,
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b[^&;|\\n]*src/billing\\b",
+        "why": "billing is committed on its own"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b[^&;|\\n]*src/orders\\b",
+        "why": "orders is committed on its own"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b[^&;|\\n]*src/users\\b",
+        "why": "users is committed on its own"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b[^&;|\\n]*(--all|\\s-a\\b|\\s-am\\b)|\\bgit add (-A|--all|\\.|src/?)(\\s|$)",
+        "why": "one repo-wide commit: commit each area's paths after its check"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b[^&;|\\n]*src/(billing|orders|users)\\b[^&;|\\n]*src/(billing|orders|users)\\b",
+        "why": "two areas in one commit"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bfor\\s+\\w+\\s+in\\b[^;\\n]*src/\\w+[^;\\n]*src/\\w+[^\\n]*codemod\\.sh|codemod\\.sh\\s+\\S*src/?(\\s|$)|codemod\\.sh\\s+[\"']?\\S*\\$",
+        "why": "the codemod runs on every area at once: one area, its check and its commit come first"
+      }
+    ]
+  }
+}
