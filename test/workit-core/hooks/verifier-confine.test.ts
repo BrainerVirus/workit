@@ -5,10 +5,11 @@
 // no command below is ever run.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { markerFile, type LiveMarker } from "@/packages/workit-core/src/core/live-session";
 import {
   claudeCodeAdapter,
   codexAdapter,
@@ -486,6 +487,11 @@ test("Given a judge, When a wrapper, compound command, alias, function or anothe
       "echo x | xargs workit gc --apply",
       "find . -name x -exec workit gc --apply {} ';'",
       "alias w='workit gc --apply'; w",
+      "alias w=workit; w gc --apply",
+      'alias w="workit"; w gc --apply',
+      "alias w=workit && w gc --apply",
+      "alias n=npx; n @workit-dev/cli gc --apply",
+      'f() { workit "$@"; }; f gc --apply',
       "f() { workit gc --apply; }; f",
       "function f { workit gc --apply; }; f",
       "npm exec @workit-dev/cli -- gc --apply",
@@ -511,6 +517,50 @@ test("Given a judge, When a wrapper, compound command, alias, function or anothe
     "bun packages/workit-cli/src/index.tsx ledger list",
     "grep -rn workit packages/workit-cli/src/main.ts",
     "bun test test/workit-cli/main.test.ts test/workit-core/hooks/a.test.ts",
-    "alias ll='ls -l'",
+    "alias ll='ls -l'; ll src",
+    "alias w=workit; w ledger list",
   ]);
+});
+
+test("Given another host's live session owns the lead checkout (no pid to compare, as on Windows), When a Claude Code or Codex judge writes in its scratch dir, Then the live-session guard neither denies it nor claims the checkout for the judge", () => {
+  const top = realpathSync.native(lead);
+  const file = markerFile(top);
+  const marker: LiveMarker = {
+    version: 1,
+    session: "other-lead",
+    leads: ["other-lead"],
+    host: "cursor",
+    pid: null,
+    pidStart: null,
+    machine: "other-machine",
+    checkout: top,
+    heartbeatAt: new Date().toISOString(),
+  };
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(marker));
+  try {
+    // The guard is on: the lead itself is refused.
+    expect(write(path.join(lead, "src", "core.ts"), { type: null })?.permissionDecision).toBe(
+      "deny",
+    );
+    expect(write(path.join(scratch, "case.ts"))?.permissionDecision).toBeUndefined();
+    expect(bash(`echo x > ${path.join(scratch, "out.txt")}`)?.permissionDecision).toBeUndefined();
+    const patch = (
+      dispatchHook(
+        codexAdapter,
+        fixture("codex", "pre-tool-use-apply-patch", lead, {
+          agent_id: "codex-ver",
+          agent_type: "workit-verifier",
+          tool_input: {
+            command: `*** Begin Patch\n*** Add File: ${path.join(scratch, "x.ts")}\n+x\n*** End Patch\n`,
+          },
+        }),
+        {},
+      ).json as Specific
+    ).hookSpecificOutput;
+    expect(patch?.permissionDecision).toBeUndefined();
+    expect(JSON.parse(readFileSync(file, "utf8")).session).toBe("other-lead");
+  } finally {
+    rmSync(file, { force: true });
+  }
 });

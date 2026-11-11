@@ -548,27 +548,42 @@ const CLI_ENTRY =
 
 /**
  * The arguments of each workit CLI call in `command`: past wrappers (`time`,
- * `env`, `exec`), compound commands, `xargs`, `find -exec`, alias bodies and
- * package runners or interpreters that start the CLI by package or path.
+ * `env`, `exec`), compound commands, `xargs`, `find -exec`, aliases (their
+ * bodies, and their uses expanded) and package runners or interpreters that
+ * start the CLI by package or path.
  */
-const workitCalls = (command: string, depth = 0): string[][] =>
-  commandLines(command).flatMap((words) => {
-    const name = path.basename(words[0] ?? "").toLowerCase();
-    if (name === "alias")
-      return words.flatMap((word) =>
-        depth < 4 && /^\w[\w-]*=/.test(word)
-          ? workitCalls(word.slice(word.indexOf("=") + 1), depth + 1)
-          : [],
-      );
-    let at = /^workit(?:\.exe|\.cmd)?$/.test(name)
-      ? 0
-      : CLI_RUNNERS.test(name)
-        ? words.findIndex((word, index) => index > 0 && CLI_ENTRY.test(word))
-        : -1;
-    if (at < 0) return [];
-    while (words[at + 1] === "--" || CLI_ENTRY.test(words[at + 1] ?? "")) at++;
-    return [words.slice(at + 1)];
-  });
+const workitCalls = (
+  command: string,
+  depth = 0,
+  aliases = new Map<string, string>(),
+): string[][] =>
+  depth > 4
+    ? []
+    : commandLines(command).flatMap((words) => {
+        const name = path.basename(words[0] ?? "").toLowerCase();
+        if (name === "alias")
+          return words.flatMap((word) => {
+            const set = /^([\w-]+)=(.*)$/s.exec(word);
+            if (!set) return [];
+            aliases.set(set[1], set[2]);
+            return workitCalls(set[2], depth + 1, aliases);
+          });
+        const body = aliases.get(words[0] ?? "");
+        if (body !== undefined)
+          return workitCalls(
+            [body, ...words.slice(1).map((word) => `'${word.replaceAll("'", `'\\''`)}'`)].join(" "),
+            depth + 1,
+            aliases,
+          );
+        let at = /^workit(?:\.exe|\.cmd)?$/.test(name)
+          ? 0
+          : CLI_RUNNERS.test(name)
+            ? words.findIndex((word, index) => index > 0 && CLI_ENTRY.test(word))
+            : -1;
+        if (at < 0) return [];
+        while (words[at + 1] === "--" || CLI_ENTRY.test(words[at + 1] ?? "")) at++;
+        return [words.slice(at + 1)];
+      });
 
 const JUDGE_JOB = Object.entries(JUDGE_VERBS)
   .map(([verb, subs]) => `workit ${verb}${subs === true ? "" : ` ${subs.join("|")}`}`)

@@ -257,9 +257,11 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         );
         if (confined.kind === "deny") return confined;
       }
-      // The before-write gate and the live-session guard (#274).
+      // The before-write gate and the live-session guard (#274); a judge, held
+      // to its scratch dir above, neither meets nor claims a live checkout.
+      const owner = role === "judge" ? null : liveOwner(input, descriptor.transport);
       const gate = usable(descriptor.events["write.pre"].support)
-        ? shellGate(input.cwd, event.command, liveOwner(input, descriptor.transport), event.dialect)
+        ? shellGate(input.cwd, event.command, owner, event.dialect)
         : NONE;
       if (gate.kind === "deny") return gate;
       // A heavy command runs under the machine lease: rewritten where the
@@ -348,7 +350,11 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
             : confineJudge(input, targets);
         if (confined.kind === "deny") return confined;
       }
-      return writeGate(input.cwd, event.paths, liveOwner(input, descriptor.transport));
+      return writeGate(
+        input.cwd,
+        event.paths,
+        role === "judge" ? null : liveOwner(input, descriptor.transport),
+      );
     }
     case "subagent.start":
       if (workitRole(descriptor, event.agentType) === "judge")
