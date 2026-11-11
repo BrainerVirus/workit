@@ -84,3 +84,32 @@ test("Given an agent's ledger void, When each host's hook runs, Then Claude Code
   ) as { block?: boolean } | undefined;
   expect(pi?.block).toBe(true);
 });
+
+const claudeAsks = (root: string, command: string): string | undefined =>
+  (
+    dispatchHook(claudeCodeAdapter, {
+      hook_event_name: "PreToolUse",
+      session_id: "session-1",
+      cwd: root,
+      transcript_path: "/tmp/transcript.jsonl",
+      permission_mode: "default",
+      tool_name: "Bash",
+      tool_input: { command },
+      tool_use_id: "toolu_1",
+    }).json.hookSpecificOutput as { permissionDecision?: string } | undefined
+  )?.permissionDecision;
+
+test("Given a call that only mentions a user-only call or bypass flag in quoted text, When Claude Code's PreToolUse runs, Then it does not ask; a real call with --cwd first still asks", () => {
+  const root = repo();
+  expect(
+    claudeAsks(
+      root,
+      'workit ledger verdict verified --how "mentions release notes approve and ledger void"',
+    ),
+  ).not.toBe("ask");
+  expect(
+    claudeAsks(root, `workit changelog apply --entries '{"Fixed":["pr merge --unverified"]}'`),
+  ).not.toBe("ask");
+  expect(claudeAsks(root, "workit --cwd /a ledger void x")).toBe("ask");
+  expect(claudeAsks(root, "workit release notes approve 1.0.0")).toBe("ask");
+});

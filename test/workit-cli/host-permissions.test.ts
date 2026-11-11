@@ -87,16 +87,13 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
   expect(value.permissions.allow.filter((e: string) => e === "Bash(workit git *)")).toHaveLength(1);
   expect(value.permissions.allow).toContain("Bash(workit ledger *)");
   expect(value.permissions.ask).toEqual([
-    "Bash(workit * --unverified*)",
-    "Bash(workit * --overwrite-unintegrated*)",
+    "Bash(workit pr merge *--unverified*)",
+    "Bash(workit stack land *--unverified*)",
+    "Bash(workit git push *--overwrite-unintegrated*)",
     "Bash(workit release notes approve*)",
-    "Bash(workit * release notes approve*)",
     "Bash(workit grant set*)",
-    "Bash(workit * grant set*)",
     "Bash(workit grant raise*)",
-    "Bash(workit * grant raise*)",
     "Bash(workit ledger void*)",
-    "Bash(workit * ledger void*)",
   ]);
   expect(value.autoMode.environment.slice(0, 2)).toEqual([
     "$defaults",
@@ -336,7 +333,9 @@ test("Given a delivery call, Then the Claude Code allow rules match it and a byp
     CLAUDE_ASK.some((rule) => claudeMatches(rule, "workit pr merge --unverified --reason x")),
   ).toBe(true);
   expect(
-    CLAUDE_ASK.some((rule) => claudeMatches(rule, "workit stack land --overwrite-unintegrated")),
+    CLAUDE_ASK.some((rule) =>
+      claudeMatches(rule, "workit git push --force-with-lease --overwrite-unintegrated"),
+    ),
   ).toBe(true);
 });
 
@@ -554,4 +553,66 @@ test("Given Codex and Cursor, When rules are written, Then Codex prompts and Cur
     'pattern = ["workit","grant","raise"],\n    decision = "prompt"',
   );
   expect(CURSOR_DENY).toContain("Shell(workit release notes approve)");
+});
+
+// A command that only mentions a user-only call or a bypass flag in its text
+// (a verdict's --how, a changelog entry) is no such call: no ask rule may match
+// it. The real calls still ask: anchored rules here, the PreToolUse hook for a
+// global option before the verb (hooks/delivery-verbs-ledger-void.test.ts).
+const MENTIONS = [
+  'workit ledger verdict verified --how "mentions release notes approve and ledger void"',
+  `workit changelog apply --entries '{"Fixed":["pr merge --unverified"]}'`,
+  'workit pr create --body "never use git push --overwrite-unintegrated or grant set here"',
+];
+
+test("Given a command that only mentions a user-only call or bypass flag, Then no Claude Code ask rule matches it", () => {
+  for (const command of MENTIONS)
+    expect(
+      CLAUDE_ASK.filter((rule) => claudeMatches(rule, command)),
+      command,
+    ).toEqual([]);
+});
+
+test("Given a real user-only call or bypass flag, Then a Claude Code ask rule matches it, and its --cwd form meets no allow rule", () => {
+  for (const command of [
+    "workit release notes approve 1.0.0",
+    "workit ledger void mwbe83fk --reason x",
+    "workit grant set ws merge=true",
+    "workit pr merge --unverified --reason x",
+    "workit stack land --unverified --reason x",
+    "workit git push --force-with-lease --overwrite-unintegrated",
+  ])
+    expect(
+      CLAUDE_ASK.some((rule) => claudeMatches(rule, command)),
+      command,
+    ).toBe(true);
+  expect(
+    CLAUDE_ALLOW.filter((rule) => claudeMatches(rule, "workit --cwd /a ledger void x")),
+  ).toEqual([]);
+});
+
+test("Given mid-command ask globs an older Workit wrote and one the user wrote, When setup refreshes, Then only Workit's are removed, and uninstall keeps the user's", async () => {
+  const { env, home, settings } = sandbox();
+  const userGlob = "Bash(workit * grant set*)";
+  writeFileSync(settings, JSON.stringify({ permissions: { ask: [userGlob] } }, null, 2) + "\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const old = ["Bash(workit * --unverified*)", "Bash(workit * ledger void*)"];
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  value.permissions.ask.push(...old);
+  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+  editRecord(env, (record) => {
+    const host = record.hosts["claude-code"];
+    host.owned.lists["permissions.ask"].push(...old);
+    host.offered["permissions.ask"].push(...old);
+  });
+
+  const plan = planHostPermissions({ home, env, hosts: ["claude-code"], refreshOnly: true });
+  expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
+  const ask = JSON.parse(readFileSync(settings, "utf8")).permissions.ask as string[];
+  expect(ask).toContain(userGlob);
+  for (const entry of old) expect(ask).not.toContain(entry);
+  expect(ask.filter((rule) => rule.startsWith("Bash(workit * ") && rule !== userGlob)).toEqual([]);
+
+  expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
+  expect(JSON.parse(readFileSync(settings, "utf8")).permissions.ask).toEqual([userGlob]);
 });
