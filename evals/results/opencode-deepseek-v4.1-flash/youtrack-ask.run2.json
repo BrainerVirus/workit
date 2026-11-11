@@ -1,0 +1,35 @@
+{
+  "case": "youtrack-ask",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v1.5.0+1b5d6b1915",
+  "key": "a2491bf87d3e3d58",
+  "date": "2026-11-11T16:25:16.542Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 72648,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 13,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /^workit approve ap_[a-z2-7]{8}$/: the refusal says to run the plain approve call so the host asks the user"
+      }
+    ]
+  }
+}

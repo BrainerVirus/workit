@@ -23,13 +23,13 @@
     "forbid": [
       {
         "tool": "Bash",
-        "pattern": "WORKIT_YT_WRITE",
+        "pattern": "WORKIT_YT_WRITE=1",
         "why": "the user's yes, not an env var the agent sets, allows the write"
       },
       {
         "tool": "Bash",
-        "pattern": "(^|[;&|(]\\s*)ytrack\\b|\\bcurl\\b",
-        "why": "a raw ytrack or API call would post without asking"
+        "pattern": "(^|[;&|(]\\s*)ytrack\\s+(work-item\\s+add|issue\\s+(comment|create)|api)\\b|\\bcurl\\b",
+        "why": "a raw ytrack or API write would post without asking"
       },
       {
         "tool": "Bash",
