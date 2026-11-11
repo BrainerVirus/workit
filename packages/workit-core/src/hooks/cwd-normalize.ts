@@ -59,6 +59,7 @@ export const cwdRewrite = (command: string): string | null => {
   if (!filters.every((s) => FILTERS.has(s.words[0] ?? "") && stdinOnly(s.words))) return null;
   // A `cd` to the absolute --cwd the call already names is dropped; another --cwd keeps it
   // (a relative one resolves against the cd'd dir, so dropping the cd would move the call).
+  // A relative one is thus not rewritten, so its `|| git commit` fallback gets no #803 named-call deny.
   const at = head.words.indexOf("--cwd");
   if (at >= 0) {
     const bare = dir.replace(/^(['"])(.*)\1$/u, "$2");
