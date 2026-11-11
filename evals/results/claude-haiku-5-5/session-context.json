@@ -1,0 +1,21 @@
+{
+  "case": "session-context",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v1.2.1+53b91504e7",
+  "key": "677d86264de6566a",
+  "date": "2026-11-11T12:08:16.776Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 1,
+    "durationMs": 2369,
+    "costUsd": 0.0021142300000000004,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 0,
+    "failures": []
+  }
+}
