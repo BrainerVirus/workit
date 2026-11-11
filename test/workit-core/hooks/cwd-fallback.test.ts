@@ -46,21 +46,42 @@ const ONE_CALL = `workit git --cwd /tmp/wt commit -m "docs: notes" -- notes.md 2
 test.each([
   [FALLBACK, ONE_CALL],
   [
-    `cd /tmp/wt && workit git commit -m "a || b" -- n.md 2>&1; echo "exit=$?"; git log --oneline -2`,
+    `cd /tmp/wt && workit git commit -m "a || b" -- n.md 2>&1; git commit -m "a || b" -- n.md`,
     `workit git --cwd /tmp/wt commit -m "a || b" -- n.md 2>&1`,
   ],
-  ["cd /tmp/wt && workit git status && workit git push", "workit git --cwd /tmp/wt status"],
-  ["cd /tmp/wt && workit pr status | tail -3 || true", "workit pr --cwd /tmp/wt status | tail -3"],
+  ["cd /tmp/wt && workit git push || git push origin HEAD", "workit git --cwd /tmp/wt push"],
+  [
+    "cd /tmp/wt && workit git commit -m x -- n.md || git add n.md && git commit -m x",
+    "workit git --cwd /tmp/wt commit -m x -- n.md",
+  ],
+  [
+    "cd /tmp/wt && workit git status; git -C /tmp/wt switch main",
+    "workit git --cwd /tmp/wt status",
+  ],
+  ["cd /tmp/wt && workit git status || git branch -D old", "workit git --cwd /tmp/wt status"],
 ])("`%s` splits to the one call `%s`", (command, call) => {
   expect(cdWorkitSplit(command)).toBe(call);
 });
 
+// Only a raw mutating git fallback after `||` or `;` is denied; these ran before #793 and still do.
 test.each([
   ["cd /tmp/wt && workit git commit -m x -- n.md 2>&1 | tail -3"],
   ["cd /tmp/wt && git status && git log"],
   ["cd $W && workit git commit -m x || git commit -m x"],
   ["workit git --cwd /tmp/wt commit -m x || git commit -m x"],
   ["cd /tmp/wt && workit git commit -m $(cat f) || git commit"],
+  ["cd /a && workit git status && workit git log"],
+  ["cd /a && workit check lint && workit check test"],
+  ["cd /a && workit git status && echo done"],
+  ["cd /a && workit git status; echo $?"],
+  ["cd /a && workit git status | tee out.txt"],
+  ["cd /a && workit git status 2>&1 || echo no"],
+  ["cd /a && workit git commit -m x && git log | head"],
+  ["cd /a && workit git status\nworkit git log"],
+  ["cd /a && workit git status || git log --oneline -3"],
+  ["cd /a && workit git status; git branch --show-current"],
+  ["cd /a && workit git status || git stash list"],
+  ["cd /a && workit git commit -m x && git commit -m y"],
 ])("`%s` is not a split", (command) => {
   expect(cdWorkitSplit(command)).toBeNull();
 });
