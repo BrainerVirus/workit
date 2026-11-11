@@ -25,12 +25,11 @@ description: Build a requested change in small verified steps - follow local pat
    Heavy work runs under one machine-wide lease: an ad-hoc suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
    lease waits and names its holder (`workit lock status`). A tool warning is a finding: fix it in this PR, or record the false positive with evidence; pre-existing ones get their own PR.
 5. Prove the feature on its real surface with the project's `verify-<app>`
-   skill; none yet? Write one (read the `workit-verify-app` skill's SKILL.md and follow it). Tests show branch behavior,
-   not that the feature works. The report carries what you observed: a UI
+   skill; none yet? Write one (read the `workit-verify-app` skill's SKILL.md and follow it). The report carries what you observed: a UI
    change a screenshot or console/network check (chrome devtools or
    agent-browser), an API a quoted real response. App not runnable? Say so
    plainly, never claim success.
-6. Commit: `workit git commit -m "<type>: <what>" -- <paths>`; Co-Authored-By goes in with `--trailer "Co-Authored-By: <name> <email>"`. Host note: a Workit worktree (`workit fanout worktree create`) takes `workit git --cwd <worktree> …`; a Claude Code host-isolated one (`.claude/worktrees/agent-<id>`) takes plain git (its SubagentStart text: isolation refuses a git wrapper). One file holding two changes: stage one change's hunks with `workit git stage --patch <file>` (a `git diff -- <file>` cut to them), then `workit git commit -m "<msg>" --staged` (exactly the index); a path staged in part commits only its staged hunks (`--whole` takes the file).
+6. Commit: `workit git commit -m "<type>: <what>" -- <paths>`; Co-Authored-By goes in with `--trailer "Co-Authored-By: <name> <email>"`. Host note: a Workit worktree (`workit fanout worktree create`) takes `workit git --cwd <worktree> …`; a Claude Code host-isolated one (`.claude/worktrees/agent-<id>`) takes plain git. One file holding two changes: stage one change's hunks with `workit git stage --patch <file>` (a `git diff -- <file>` cut to them), then `workit git commit -m "<msg>" --staged` (exactly the index); a path staged in part commits only its staged hunks (`--whole` takes the file).
    No endpoint named? Stop here and state the next command. Hand delivery to
    ship, which pushes and opens the PR with its body shape (read the `workit-ship` skill's SKILL.md and follow it), only
    when that was requested, or the request implies delivery and the effective
@@ -48,7 +47,7 @@ description: Build a requested change in small verified steps - follow local pat
 
 Independent slices that could run in parallel: fan them out (read the `workit-fanout` skill's SKILL.md and follow it).
 One `implementer` slice: `workit fanout worktree create <slice>` before spawning,
-then `workit fanout brief <slice>`; no host isolation (Workit's hooks confine it).
+then `workit fanout brief <slice>`; no host isolation.
 
 Stay inline by default (workspace `delegation: inline-first`). Hand work off
 only past the thresholds: an explorer after about 3 tool calls or 10k tokens

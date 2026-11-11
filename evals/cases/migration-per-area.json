@@ -67,7 +67,7 @@
       },
       {
         "tool": "Bash",
-        "pattern": "\\bfor\\s+\\w+\\s+in\\b[^;\\n]*src/\\w+[^;\\n]*src/\\w+[^\\n]*codemod\\.sh|codemod\\.sh\\s+\\S*src/?(\\s|$)",
+        "pattern": "\\bfor\\s+\\w+\\s+in\\b[^;\\n]*src/\\w+[^;\\n]*src/\\w+[^\\n]*codemod\\.sh|codemod\\.sh\\s+\\S*src/?(\\s|$)|codemod\\.sh\\s+[\"']?\\S*\\$",
         "why": "the codemod runs on every area at once: one area, its check and its commit come first"
       }
     ]

@@ -1,21 +1,21 @@
 {
   "case": "migration-per-area",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.1.7+d701d4b101",
-  "key": "5b14e4ed37885e85",
-  "date": "2026-11-11T00:05:53.946Z",
+  "workitVersion": "workit-dev-v1.1.7+9a27d28480",
+  "key": "c0f975d46e5df376",
+  "date": "2026-11-11T00:21:24.086Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 9,
-    "durationMs": 17369,
-    "costUsd": 0.00605315,
+    "turns": 12,
+    "durationMs": 18051,
+    "costUsd": 0.0072123299999999994,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
     "pass": true,
-    "calls": 7,
+    "calls": 10,
     "failures": []
   }
 }
