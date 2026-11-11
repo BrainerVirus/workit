@@ -998,6 +998,7 @@ export function gitCommit(
   args.push("-m", finalMessage);
   let keptPartial: string[] = [];
   let partialIndex: string | null = null;
+  let addArgs: string[] = [];
   if (paths.length) {
     if (paths.some((value) => value.startsWith("-") || !value.trim()))
       return failure("invalid_input", "paths must not be empty or start with -");
@@ -1016,13 +1017,14 @@ export function gitCommit(
           [...tracked].some((file) => file === value || file.startsWith(`${value}/`))),
     );
     if (addable.length) {
-      const added = git(cwd, [
+      addArgs = [
         "add",
         "-A",
         "--",
         ...addable,
         ...keptPartial.map((file) => `:(exclude,top,literal)${file}`),
-      ]);
+      ];
+      const added = git(cwd, addArgs);
       if (!added.ok) return failure("failed", `git add failed: ${gitError(added)}`);
     }
     if (changeRequired && git(cwd, ["diff", "--cached", "--quiet", "HEAD", "--", ...paths]).ok)
@@ -1074,6 +1076,10 @@ export function gitCommit(
     if (partialIndex) rmSync(partialIndex, { force: true });
   }
   if (!committed.ok) {
+    // A path staged whole stays staged whole: a refusing hook's formatter
+    // rewrite is staged too, so the retry does not read it as staged in part
+    // and commit the stale copy through a private index (#792).
+    if (addArgs.length) git(cwd, addArgs);
     const output = gitOutput(committed);
     const refusal = hookRefusal(output);
     return failure(

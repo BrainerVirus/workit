@@ -113,6 +113,30 @@ test("a prompt asks for a skill only in so many words: common words alone never 
     expect((promptTrigger(text)?.skill as string | null | undefined) ?? null, text).toBe(skill);
 });
 
+// #792 item 23: a phrase the user quotes or complains about is not a request.
+test("a prompt that quotes a trigger or complains about the agent is not routed; a real request still is", () => {
+  const cases: Array<[string, string | null]> = [
+    ["why are you asking so much? grill me and give me feedback, not twenty questions", null],
+    ["you keep asking me things; I said grill me once, not every turn", null],
+    ["stop asking questions, just pick one", null],
+    [`what does "grill me" do in this repo?`, null],
+    ["the hook fires on `should we` in my notes", null],
+    ["the word 'brainstorm' shows up in the log", null],
+    ["“grill me” is a phrase in the README", null],
+    ["grill me on the cache design", "workit-shape"],
+    [`grill me on "cache keys" before we build`, "workit-shape"],
+    ["let's brainstorm, don't skip the hard choices", "workit-shape"],
+    ["why is the login test flaky", "workit-debug"],
+    // Only the complaint clause is dropped: a request after it still routes.
+    ["stop doing that and debug the failure", "workit-debug"],
+    ["stop asking questions and implement the login page", "workit-implement"],
+    ["why would you do that? it's broken, debug it", "workit-debug"],
+    ["why do you think the build is broken, debug the failure", "workit-debug"],
+  ];
+  for (const [text, skill] of cases)
+    expect((promptTrigger(text)?.skill as string | null | undefined) ?? null, text).toBe(skill);
+});
+
 test("skill names resolve from the Skill tool, slash aliases and canonical names, and nothing else", () => {
   expect(workitSkillOf("workit:shape")).toBe("workit-shape");
   expect(workitSkillOf("/wk-debug")).toBe("workit-debug");

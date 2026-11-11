@@ -1,0 +1,59 @@
+{
+  "id": "route-complaint",
+  "source": "issue #792 item 23: the prompt-routing hook steered a complaint that quoted 'grill me' into workit-shape",
+  "tier": "full",
+  "prompt": "Why are you asking so many questions every turn? Earlier I said grill me and give me feedback, I meant once on the design, not on every small step. No questions now: read add.ts and tell me in two sentences what add() does.",
+  "scaffold": {
+    "files": {
+      "add.ts": "export const add = (a: number, b: number) => a - b;\n"
+    }
+  },
+  "maxTurns": 8,
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Read",
+        "pattern": "add\\.ts",
+        "why": "the actual request is to read add.ts"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Skill",
+        "pattern": "shape",
+        "why": "a complaint about questions is not a request to start a shaping session"
+      },
+      {
+        "tool": "Edit",
+        "pattern": ".",
+        "why": "nothing is edited"
+      },
+      {
+        "tool": "Write",
+        "pattern": "\"file_path\":\"[^\"]*(add\\.ts|spec|plan)",
+        "why": "no code, spec or plan is written (a memory note of the feedback is fine)"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "a - b|subtract",
+        "flags": "i",
+        "why": "the answer says add() subtracts"
+      },
+      {
+        "pattern": "^(?![\\s\\S]*\\bQ1\\b)",
+        "why": "no numbered grilling questions"
+      }
+    ]
+  }
+}

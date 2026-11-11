@@ -1868,19 +1868,22 @@ function checkVerdictsOnce(
     }
     return reasons;
   };
-  // Only a trusted verdict retires another: an unverified row or one acting
-  // as an unissued or unbound session never supersedes (N13, mv83zyg6 P1).
-  const retired = new Set<string>();
+  // A verdict the user voided (`ledger void`, #759) is no verdict at all, so
+  // it retires nothing either (#792); voids are read first, so row order never
+  // changes the result. Only a trusted verdict retires another: an unverified
+  // row or one acting as an unissued or unbound session never supersedes (N13,
+  // mv83zyg6 P1).
+  const voided = verdictVoids(rows, { chained: true });
+  const retired = new Set(voided.keys());
   for (const row of rows)
     if (
       row.type === "verdict" &&
       row.supersedes &&
       !row.supersedeIgnored &&
+      !voided.has(row.id) &&
       trustReasons(cwd, row).length === 0
     )
       retired.add(row.supersedes);
-  // A verdict the user voided (`ledger void`, #759) is no verdict at all.
-  for (const id of verdictVoids(rows, { chained: true }).keys()) retired.add(id);
   // Verdict precedence follows when each verdict was recorded. Local rows keep
   // their ledger order; a row imported from the mirror (#311) is appended
   // whenever a gate first sees it, so it is placed after the last local row

@@ -1,0 +1,23 @@
+{
+  "case": "route-complaint",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.4.1+2b1bbf91e6",
+  "key": "761c935d5ec55f36",
+  "date": "2026-11-11T14:29:56.670Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 6047,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 3,
+    "failures": []
+  }
+}

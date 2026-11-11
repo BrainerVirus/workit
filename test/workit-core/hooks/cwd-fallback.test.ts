@@ -125,6 +125,9 @@ test.each([
 test.each([
   ["cd /tmp/a && workit git commit --cwd /tmp/b -m x"],
   ["cd /tmp/a && workit git commit --cwd /tmp/a -m x; rm y"],
+  // A relative --cwd resolves against the cd'd dir: dropping the cd would change where it runs.
+  ["cd sub && workit --cwd sub git status"],
+  ["cd sub && workit git --cwd sub status"],
 ])("`%s` keeps its cd", (command) => {
   expect(cwdRewrite(command)).toBeNull();
 });
