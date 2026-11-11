@@ -313,10 +313,12 @@ function askFirst(
   const session = io.env.WORKIT_SESSION_ID || null;
   const used = consumeApproval(fields, { session, verb });
   if (used.ok) return null;
-  // The yes went to a run that did not post (it failed before landing): this
-  // run needs its own, so it gets a new request rather than a dead end.
+  // approval_consumed: the yes went to a run that did not land, so this run
+  // gets its own request rather than a dead end. The line names only what
+  // happened and the approve line: "needs the user's yes" read to weak models
+  // as "do not run workit approve yourself".
   const request = used.request ?? createApprovalRequest(fields, { session });
-  const message = used.request ? used.message : `${used.message}. ${approveLine([request.id])}`;
+  const message = `${used.code}: nothing was posted. ${approveLine([request.id])}`;
   return emit(
     io,
     fail("blocked", message, {
