@@ -57,9 +57,13 @@ export const cwdRewrite = (command: string): string | null => {
   if (!segments.every(clean)) return null;
   if (!segments.slice(0, -1).every((s) => s.pipe)) return null;
   if (!filters.every((s) => FILTERS.has(s.words[0] ?? "") && stdinOnly(s.words))) return null;
-  // A `cd` to the --cwd the call already names is dropped; another --cwd keeps it.
+  // A `cd` to the absolute --cwd the call already names is dropped; another --cwd keeps it
+  // (a relative one resolves against the cd'd dir, so dropping the cd would move the call).
   const at = head.words.indexOf("--cwd");
-  if (at >= 0) return head.words[at + 1] === dir.replace(/^(['"])(.*)\1$/u, "$2") ? rest : null;
+  if (at >= 0) {
+    const bare = dir.replace(/^(['"])(.*)\1$/u, "$2");
+    return bare.startsWith("/") && head.words[at + 1] === bare ? rest : null;
+  }
   if (head.words.some((w) => w.startsWith("--cwd="))) return null;
   const args = rest.slice("workit".length).trimStart();
   const verb = VERB_FIRST.exec(args);
