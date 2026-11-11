@@ -82,7 +82,9 @@ test.each(["default", "acceptEdits", "plan"])(
   "Given %s mode, When the agent runs exactly workit approve <id> and the call succeeds, Then the hook asks with the stored request and records one grant",
   (mode) => {
     const request = createApprovalRequest(fields("/r/.git"), { session: "s0" });
-    const pre = askAndRun(`workit approve ${request.id}`, { permission_mode: mode });
+    const pre = askAndRun(`workit approve ${request.id}`, {
+      permission_mode: mode,
+    });
     expect(pre?.permissionDecision).toBe("ask");
     expect(pre?.permissionDecisionReason).toContain(request.id);
     expect(pre?.permissionDecisionReason).toContain("workit git push origin main");
@@ -107,7 +109,9 @@ test("Given two ids in one call, When it succeeds, Then each id read from argv g
 test("Given a call that exited non-zero, a PostToolUse with no ask before it, or an ask on another call, Then no grant is recorded", () => {
   const request = createApprovalRequest(fields("/r/.git"), { session: "s0" });
   const command = `workit approve ${request.id}`;
-  askAndRun(command, {}, CLI_ENV, { tool_response: { stdout: "", exit_code: 1 } });
+  askAndRun(command, {}, CLI_ENV, {
+    tool_response: { stdout: "", exit_code: 1 },
+  });
   expect(existsSync(grantFile(request.id))).toBe(false);
   hook("PostToolUse", command, { tool_use_id: "toolu_never_asked" });
   expect(existsSync(grantFile(request.id))).toBe(false);
