@@ -42,7 +42,7 @@ const writeAll = (root: string, files: Record<string, string> = {}): void => {
  * nothing), so a run never reads or posts to a real YouTrack with the user's
  * login, and reads are the same on every run.
  */
-export const FAKE_YTRACK = `#!/bin/sh
+const FAKE_YTRACK = `#!/bin/sh
 # workit-eval fake ytrack
 refuse() { echo "workit eval: the fake ytrack refuses writes ($*)" >&2; exit 2; }
 for arg in "$@"; do
