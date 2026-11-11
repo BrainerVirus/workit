@@ -96,8 +96,11 @@ subscription and never writes to the calling session's ledger. The plugin's
 `packages/workit-claude-code/skills/` is missing the runner builds it
 (`build.ts --skills-only`). Default tools: Read, Edit, Write, Glob, Grep,
 Skill, Agent and Bash limited to `workit`, `git` and read-only `cd`, `ls`, `cat`,
-`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd` (so `cd <dir> && git status`
-runs, as on a real host); anything else (a whole
+`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd`. Claude Code asks before
+any `cd` chain with git, and dontAsk would deny it, so the bench's own
+PreToolUse hook (`--settings`) allows `cd <dir> && <read-only>…` (git `status`,
+`log`, `diff`, `show`, `rev-parse`, `branch --show-current`, or the read-only
+commands above), as a real host would; anything else (a whole
 chain, when one part is not allowed) is denied, and the denial shows in the
 transcript.
 

@@ -163,6 +163,60 @@ const childEnv = (world: World, binDir: string): Record<string, string> => {
   return env;
 };
 
+/** A segment after the `cd` that only reads: the default tools' read-only commands and read-only git verbs. */
+const READ_ONLY_SEGMENT =
+  /^(?:git\s+(?:status|log|diff|show|rev-parse)\b(?!.*--output)|git\s+branch\s+--show-current|(?:ls|cat|head|tail|grep|wc|diff|echo|pwd)\b)/u;
+
+/**
+ * `cd <dir> && <read-only>…`: Claude Code asks before any `cd` chain with git,
+ * and dontAsk turns that ask into a denial a real host would not show (#793).
+ * No other shell syntax, so a write cannot ride along.
+ */
+export const readOnlyCdChain = (command: string): boolean => {
+  if (/[;|<>`$()&\n]/u.test(command.replaceAll("&&", " "))) return false;
+  const [first = "", ...rest] = command.split("&&").map((part) => part.trim());
+  return (
+    /^cd\s+\S+$/u.test(first) &&
+    rest.length > 0 &&
+    rest.every((part) => READ_ONLY_SEGMENT.test(part))
+  );
+};
+
+/** The bench's PreToolUse hook: allow a read-only `cd` chain, stay silent on anything else. */
+const readOnlyCdHook = (input: string): string => {
+  let command: unknown;
+  try {
+    command = (JSON.parse(input) as { tool_input?: { command?: unknown } }).tool_input?.command;
+  } catch {
+    return "";
+  }
+  if (typeof command !== "string" || !readOnlyCdChain(command)) return "";
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      permissionDecisionReason: "a read-only cd chain, as a real host allows",
+    },
+  });
+};
+
+const HOOK_FLAG = "--read-only-cd-hook";
+const benchSettings = JSON.stringify({
+  hooks: {
+    PreToolUse: [
+      {
+        matcher: "Bash",
+        hooks: [
+          {
+            type: "command",
+            command: `${JSON.stringify(process.execPath)} ${JSON.stringify(import.meta.path)} ${HOOK_FLAG}`,
+          },
+        ],
+      },
+    ],
+  },
+});
+
 /** An empty list allows nothing: the flag is left out, since it needs at least one tool. */
 const allowed = (tools: string[]): string[] =>
   tools.length > 0 ? ["--allowedTools", ...tools] : [];
@@ -188,6 +242,8 @@ const claudeArgs = (spec: EvalCase, model: string, pluginDir: string): string[] 
   "--disallowedTools",
   "WebFetch",
   "WebSearch",
+  "--settings",
+  benchSettings,
 ];
 
 /** OpenCode loads the plugin's built dist/, so the default pin is rebuilt from the sources each run. */
@@ -435,6 +491,11 @@ const USAGE =
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
 
 export const main = (argv: string[], print: (text: string) => void = console.log): number => {
+  if (argv[0] === HOOK_FLAG) {
+    const decision = readOnlyCdHook(readFileSync(0, "utf8"));
+    if (decision) print(decision);
+    return 0;
+  }
   const { values } = parseArgs({
     args: argv,
     options: {
