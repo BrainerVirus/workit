@@ -1,5 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -212,7 +220,13 @@ test("Given WORKIT_YT_WRITE=1 and no ytrack, When workit youtrack create or note
   const note = await callWith(["note", "ABC-1", "--markdown", "Hi"], env);
   expect(note.code).not.toBe(0);
   expect(note.json().unblock).toContain("ytrack auth login --host yt.example.test");
-  expect(note.json().data.steps).toEqual([{ step: "comment", status: "failed" }]);
+  expect(note.json().data.steps).toEqual([
+    {
+      step: "comment",
+      status: "failed",
+      note: "your existing entries could not be read, so duplicates were not checked",
+    },
+  ]);
 });
 
 test.skipIf(process.platform === "win32")(
@@ -426,4 +440,30 @@ test("Given the default, When workit youtrack create runs, Then it asks first an
   userApproves(first.json().data.approval);
   expect((await call(args, ASK)).code).toBe(0);
   expect(created).toBe(1);
+});
+
+test("Given your entries cannot be read, When a write asks first, Then the request the user approves says duplicates were not checked", async () => {
+  fakeYouTrack(() => false);
+  current.ownEntries = async () => null;
+  const out = await call(["time", "ABC-20", "--minutes", "30"], ASK);
+  expect(out.code).toBe(3);
+  const id = out.json().data.approval;
+  const stored = JSON.parse(
+    readFileSync(
+      path.join(process.env.WORKIT_STATE_DIR!, "approvals", "requests", `${id}.json`),
+      "utf8",
+    ),
+  );
+  expect(stored.subject.duplicates).toBe(
+    "not checked: your existing entries on ABC-20 could not be read",
+  );
+});
+
+test("Given your entries cannot be read in auto mode, Then the write goes ahead and its step notes duplicates were not checked", async () => {
+  const server = fakeYouTrack(() => false);
+  current.ownEntries = async () => null;
+  const out = await call(["time", "ABC-21", "--minutes", "30"], AUTO);
+  expect(out.code).toBe(0);
+  expect(out.json().data.steps[0].note).toContain("duplicates were not checked");
+  expect(server.workItems).toHaveLength(1);
 });

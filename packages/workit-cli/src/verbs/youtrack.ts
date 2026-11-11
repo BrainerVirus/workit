@@ -187,12 +187,15 @@ export async function run(
     note?: string;
   }[] = [];
   const todo: number[] = [];
+  /** Steps whose duplicate check could not read the user's entries. */
+  const unchecked = new Set<number>();
   for (const [index, entry] of steps.entries()) {
     if ((await markerPresent(issueId, youTrackMarker(entry.request), entry.where, yt)) === true) {
       results.push({ step: entry.label, status: "already_done" });
       continue;
     }
     const duplicate = entry.wanted ? await findDuplicate(issueId, entry.wanted, yt) : null;
+    if (duplicate === undefined) unchecked.add(index);
     if (duplicate)
       return emit(
         io,
@@ -221,7 +224,12 @@ export async function run(
         action: `workit youtrack ${sub} ${issueId}${minutes ? ` --minutes ${minutes}` : ""}`,
         on: { issue: issueId },
         effect,
-        subject,
+        subject: unchecked.size
+          ? {
+              ...subject,
+              duplicates: `not checked: your existing entries on ${issueId} could not be read`,
+            }
+          : subject,
       }),
       `youtrack ${sub}`,
       { issueId, steps: results, earlier },
@@ -248,14 +256,20 @@ export async function run(
       { signals: true },
     );
     if (outcome.status !== "unknown") forgetPending(marker);
+    const notes = [
+      ...("precheck" in outcome && outcome.precheck === "inconclusive"
+        ? [
+            "the issue has more items than one read-back page, so an earlier copy could not be ruled out before writing",
+          ]
+        : []),
+      ...(unchecked.has(index)
+        ? ["your existing entries could not be read, so duplicates were not checked"]
+        : []),
+    ];
     results.push({
       step: entry.label,
       status: outcome.status,
-      ...("precheck" in outcome && outcome.precheck === "inconclusive"
-        ? {
-            note: "the issue has more items than one read-back page, so an earlier copy could not be ruled out before writing",
-          }
-        : {}),
+      ...(notes.length ? { note: notes.join("; ") } : {}),
     });
     if (outcome.status === "failed" || outcome.status === "unknown") {
       const unblock = (outcome.data as { unblock?: unknown } | undefined)?.unblock;
