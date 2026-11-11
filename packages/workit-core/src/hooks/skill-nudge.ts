@@ -92,19 +92,21 @@ export const workitSkillOf = (name: string): WorkitSkill | null => {
 };
 
 /** Quoted text: a code block, `code`, "…", “…” or a 'word' (not an apostrophe). */
-const QUOTED = /```[\s\S]*?```|`[^`\n]*`|"[^"\n]*"|“[^”\n]*”|(?<!\w)'[^'\n]*'(?!\w)/g;
+const QUOTED = /```[\s\S]*?```|["`“][^"`”\n]*["`”]|\B'[^'\n]*'\B/g;
 
-/** A prompt about the agent's own conduct: it names a trigger, it does not ask for one. */
-const COMPLAINT =
-  /\b(?:why (?:are|do|did|would|does) you|you keep|stop (?:asking|doing|saying))\b/i;
+/** A clause about the agent's own conduct, up to the next clause: it names a trigger, never asks. */
+const COMPLAINT = /\b(why \w+ you|you keep|stop \w+ing)\b.*?(?=\b(and|but)\b|[?.,;\n]|$)/gi;
 
 /** The skill a prompt asks for, by precedence, with the phrase that did. */
 export const promptTrigger = (prompt: string): { skill: WorkitSkill; trigger: string } | null => {
-  // Quoted words are mentioned, not asked with (#792).
-  const text = prompt.slice(0, 4000).replace(QUOTED, " ");
-  if (COMPLAINT.test(text)) return null;
+  // Quoted words are mentioned, not asked with; a complaint about asking is no shape request (#792).
+  let asking = false;
+  const text = prompt
+    .slice(0, 4000)
+    .replace(QUOTED, " ")
+    .replace(COMPLAINT, (clause) => ((asking ||= /ask|quest/i.test(clause)), " "));
   for (const [skill, pattern] of PROMPT_INTENTS) {
-    const match = pattern.exec(text);
+    const match = !(asking && skill === "workit-shape") && pattern.exec(text);
     if (match) return { skill, trigger: match[1] ?? match[0] };
   }
   return null;

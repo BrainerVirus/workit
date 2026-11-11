@@ -127,6 +127,11 @@ test("a prompt that quotes a trigger or complains about the agent is not routed;
     [`grill me on "cache keys" before we build`, "workit-shape"],
     ["let's brainstorm, don't skip the hard choices", "workit-shape"],
     ["why is the login test flaky", "workit-debug"],
+    // Only the complaint clause is dropped: a request after it still routes.
+    ["stop doing that and debug the failure", "workit-debug"],
+    ["stop asking questions and implement the login page", "workit-implement"],
+    ["why would you do that? it's broken, debug it", "workit-debug"],
+    ["why do you think the build is broken, debug the failure", "workit-debug"],
   ];
   for (const [text, skill] of cases)
     expect((promptTrigger(text)?.skill as string | null | undefined) ?? null, text).toBe(skill);
