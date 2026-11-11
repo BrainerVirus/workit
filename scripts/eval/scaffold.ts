@@ -13,7 +13,7 @@ export type World = {
   state: string;
   config: string;
   /** The case gave the world a workspace: the runner sets WORKIT_EVAL_WORLD. */
-  workspace: boolean;
+  workspace?: boolean;
 };
 
 const git = (cwd: string, ...args: string[]): void => {
