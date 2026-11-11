@@ -7,6 +7,11 @@ import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { guardRealState } from "./real-state-guard";
+
+// Fail the run if a test left a worktree in the real state dir (a child given
+// an env without this run's WORKIT_STATE_DIR). Before the env below changes.
+guardRealState();
 
 // A host shell running the suite (OpenCode, Pi, Codex, a Claude Code-launched
 // host) exports its own session id, which the CLI treats as the real session:

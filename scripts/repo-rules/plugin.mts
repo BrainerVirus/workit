@@ -201,6 +201,32 @@ export const RULES: Record<string, RepoRule> = {
       },
     }),
   },
+  "test-own-state": {
+    cited:
+      "#787: confine-shapes ran `fanout worktree create` from a cwd where bun skipped the bunfig preload, and left worktrees in the real ~/.local/state/workit",
+    fix: 'add `import "@/test/shared/state-isolation";` first, so the file has its own WORKIT_STATE_DIR even without the preload',
+    only: TESTS,
+    skip: /^test\/shared\//u,
+    visit: (report) => {
+      let isolated = false;
+      return {
+        ImportDeclaration(declaration) {
+          const source = child(declaration, "source")?.value;
+          if (typeof source === "string" && source.endsWith("shared/state-isolation"))
+            isolated = true;
+        },
+        ArrayExpression(array) {
+          if (isolated) return;
+          const words = children(array, "elements").map((element) =>
+            element.type === "Literal" ? element.value : null,
+          );
+          const at = words.indexOf("worktree");
+          if (at >= 0 && words[at + 1] === "create")
+            report(array, "a test makes a Workit worktree without importing its own state dir");
+        },
+      };
+    },
+  },
   "exit-after-flush": {
     cited: "#535: `process.exit(await main(...))` cut off output piped to the host",
     fix: "`await flushStreams()` (packages/workit-cli/src/output.ts) right before process.exit, or set process.exitCode and return",

@@ -4,6 +4,9 @@
 // a resolved variable or `$PWD`, an inline script looping over files, a
 // read-only `curl | python3 -c` run from the lead's checkout, and a command
 // substitution, which stays refused with a retry that spells it out.
+// Own state dir even when bun skips the bunfig preload (run from another cwd):
+// `fanout worktree create` below would otherwise land in the real one.
+import "@/test/shared/state-isolation";
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";

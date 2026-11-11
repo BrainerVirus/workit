@@ -9,6 +9,7 @@
     "workit/spawn-env-path": "error",
     "workit/no-wall-clock-assert": "error",
     "workit/no-fixed-date-clock": "error",
-    "workit/exit-after-flush": "error"
+    "workit/exit-after-flush": "error",
+    "workit/test-own-state": "error"
   }
 }
