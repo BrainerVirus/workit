@@ -1,0 +1,21 @@
+{
+  "case": "unborn-first-commit",
+  "model": "claude-haiku-4-5",
+  "workitVersion": "workit-dev-v1.2.1+44d1fff088",
+  "key": "ad4034a8557c63bd",
+  "date": "2026-11-11T12:08:56.234Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 10206,
+    "costUsd": 0.03345000000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 3,
+    "failures": []
+  }
+}

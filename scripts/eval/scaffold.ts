@@ -49,6 +49,11 @@ export const makeWorld = (spec: EvalCase): World => {
     writeAll(repo, {
       ".workit/checks.json": `${JSON.stringify({ checks: scaffold.checks }, null, 2)}\n`,
     });
+  if (scaffold.unborn) {
+    writeAll(repo, scaffold.dirty);
+    writeConfig(config, scaffold.allowedBranches);
+    return { dir, repo, worktree: null, state, config };
+  }
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "chore: init");
   if (scaffold.remote) {
@@ -71,18 +76,15 @@ export const makeWorld = (spec: EvalCase): World => {
   }
   writeAll(worktree ?? repo, scaffold.dirty);
 
-  writeFileSync(
-    path.join(config, "config.json"),
-    JSON.stringify({
-      branchPolicy: {
-        preset: "custom",
-        allowed: scaffold.allowedBranches ?? ["feature/*"],
-        protected: ["main"],
-      },
-    }),
-  );
+  writeConfig(config, scaffold.allowedBranches);
   return { dir, repo, worktree, state, config };
 };
+
+const writeConfig = (config: string, allowed: string[] = ["feature/*"]): void =>
+  writeFileSync(
+    path.join(config, "config.json"),
+    JSON.stringify({ branchPolicy: { preset: "custom", allowed, protected: ["main"] } }),
+  );
 
 export const promptFor = (spec: EvalCase, world: World): string =>
   spec.prompt.replaceAll("{{root}}", world.repo).replaceAll("{{worktree}}", world.worktree ?? "");

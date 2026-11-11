@@ -1,0 +1,26 @@
+{
+  "case": "branch-before-edit",
+  "model": "claude-haiku-4-5",
+  "workitVersion": "workit-dev-v1.2.1+44d1fff088",
+  "key": "7b34cf19b6e81949",
+  "date": "2026-11-11T12:08:44.627Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 8802,
+    "costUsd": 0.033184200000000004,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 3,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /\\bworkit git( --cwd \\S+)? branch\\b|\\bgit (switch -c|checkout -b)\\b/: main is protected: branch first"
+      }
+    ]
+  }
+}

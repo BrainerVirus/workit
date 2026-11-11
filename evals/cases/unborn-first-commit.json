@@ -1,0 +1,29 @@
+{
+  "id": "unborn-first-commit",
+  "source": "#774: a fresh repo with no commit; agents reached for raw git to start it",
+  "tier": "full",
+  "prompt": "This is a brand-new repo with no commits yet. Commit README.md with the message 'chore: scaffold'.",
+  "scaffold": { "unborn": true },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? branch\\b",
+        "why": "main is protected even with no commit: start a work branch through workit"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? commit\\b",
+        "why": "commit through workit"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "(^|[;&|]\\s*)git (commit|switch|checkout|symbolic-ref)\\b",
+        "why": "workit git branch handles a repo with no commit; raw git is the old workaround"
+      }
+    ]
+  }
+}
