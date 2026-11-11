@@ -298,9 +298,15 @@ YouTrack, a GitLab one in GitLab issues.
   "glob": "/home/you/projects/work/**",
   "vcs": { "provider": "github" },
   "issues": { "provider": "youtrack", "link": true, "relation": "closes", "backlink": false },
-  "youtrack": { "baseUrl": "https://you.youtrack.cloud" }
+  "youtrack": { "baseUrl": "https://you.youtrack.cloud", "writes": "ask" }
 }
 ```
+
+- `youtrack.writes` (default `ask`, in every workspace that does not set it):
+  each `workit youtrack note|time|meeting|create` waits for your yes through
+  `workit approve` ([YouTrack](youtrack.md#writes-ask-you-first)). `auto` posts
+  without asking and needs `WORKIT_YT_WRITE=1` instead; set it yourself, in
+  your own terminal.
 
 - `provider`: `github`, `gitlab` or `youtrack`. A bare `--issue 42` (and a
   number from the branch) is an issue on this tracker when it is `github` or
@@ -322,10 +328,10 @@ YouTrack, a GitLab one in GitLab issues.
   with the workspace's verified credential, a YouTrack issue through its API.
   An issue on another forge host is not commented on; it is reported as
   `skipped` with a note. Your
-  host's permission prompt for `workit pr create` is what allows the comment,
-  as with `workit youtrack note`, and a YouTrack comment also needs
-  `WORKIT_YT_WRITE=1` in the environment, the same gate as `workit
-  youtrack note`. A failed comment is reported and never undoes the PR.
+  host's permission prompt for `workit pr create` is what allows the comment.
+  A YouTrack backlink does not go through `youtrack.writes` yet: it still
+  needs `WORKIT_YT_WRITE=1` in the environment. A failed comment is reported
+  and never undoes the PR.
 
 An issue on another forge than the PR's cannot be closed from it, so it gets a
 `Related to: <issue URL>` line instead of `Closes`.
