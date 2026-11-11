@@ -1,0 +1,46 @@
+{
+  "id": "stop-hold",
+  "source": "issue #769 (20 Stop blocks in one session after the user said no PR yet)",
+  "tier": "full",
+  "prompt": "Commit the change in src/a.ts on this branch as `feat: add a`. No PR yet: do not push it, I want to review it locally first. Record that on the branch so Workit stops asking you to push it.",
+  "scaffold": {
+    "branch": "feature/hold",
+    "files": {
+      "src/a.ts": "export const a = 1;\n"
+    },
+    "dirty": {
+      "src/a.ts": "export const a = 2;\n"
+    },
+    "remote": true
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? hold\\b.*--why\\b",
+        "why": "records the user's not-yet with workit git hold --why"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? hold\\b.*--why\\b",
+        "max": 1,
+        "why": "records the hold once"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit git( --cwd \\S+)? push\\b",
+        "why": "the user said not to push yet"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit pr( --cwd \\S+)? create\\b",
+        "why": "the user said no PR yet"
+      }
+    ]
+  }
+}

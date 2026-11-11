@@ -668,7 +668,7 @@ export const VERBS: readonly VerbEntry[] = [
       status: "read-only git needs no workit verb: run git status --short directly",
     },
     summary:
-      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",
+      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
     subcommands: [
       {
         name: "branch",
@@ -709,6 +709,12 @@ export const VERBS: readonly VerbEntry[] = [
         usage: "workit git rebase [--onto <base>]",
         summary:
           "Replay the current branch onto its freshly fetched base (the default base, or --onto); a conflict aborts and names the paths, a rewrite is recorded and prints the leased push",
+      },
+      {
+        name: "hold",
+        usage: 'workit git hold --why "<the user\'s words>" | --clear',
+        summary:
+          'Record the user\'s "not yet" for this branch: the Stop hook stops asking to push or open a PR until the next push or --clear (grants nothing)',
       },
       {
         name: "trailers",

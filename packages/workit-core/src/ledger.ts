@@ -119,6 +119,25 @@ export const PR_ROW_TYPES: ReadonlySet<string> = new Set([
   "pr.linked",
 ]);
 
+/** Row types `workit git hold` writes: the user's "not yet" for a branch, and its end. */
+export const HOLD_ROW_TYPES: ReadonlySet<string> = new Set(["branch.hold", "branch.hold.cleared"]);
+
+/**
+ * The branch's live hold (`workit git hold`): the newest `branch.hold` the CLI
+ * wrote for it, unless a later `branch.hold.cleared` or a push that moved the
+ * branch (`push.verified`) ended it. A hold grants nothing and never changes
+ * the endpoint; the Stop hook only stops asking to push or open a PR.
+ */
+export function branchHold(rows: readonly ReadRow[], branch: string): ReadRow | null {
+  let hold: ReadRow | null = null;
+  for (const row of rows) {
+    if (row.branch !== branch || row.observer !== "workit_cli") continue;
+    if (row.type === "branch.hold") hold = row;
+    else if (row.type === "branch.hold.cleared" || row.type === "push.verified") hold = null;
+  }
+  return hold;
+}
+
 /** Who wrote a row. Unverified: the environment says so (D18). */
 export type LedgerActor = {
   host: string;
@@ -2767,6 +2786,7 @@ const OBSERVED_ONLY: ReadonlySet<string> = new Set([
   "merge.unverified",
   "policy.judged",
   "verdict.voided",
+  ...HOLD_ROW_TYPES,
   ...PR_ROW_TYPES,
 ]);
 
@@ -2852,6 +2872,12 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "fanout.planned":
       summary = `${text("fanout")}: ${typeof row.slices === "number" ? row.slices : "?"} slice(s)`;
+      break;
+    case "branch.hold":
+      summary = `held: no push or PR until the user asks (why: ${text("why")})`;
+      break;
+    case "branch.hold.cleared":
+      summary = "hold cleared";
       break;
     case "delivery.verified":
       summary = `${text("expect")} delivered at ${(row.head ?? "?").slice(0, 12)}`;

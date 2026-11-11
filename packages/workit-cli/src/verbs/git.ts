@@ -4,6 +4,7 @@
 //   workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]
 //   workit git commit (-m <msg> | -F <file|->) [--trailer "K: v"]… [--amend [--no-edit]] [--allow-empty] [--all | --staged | [--whole] [--] <paths…>]
 //   workit git stage --patch <file|-> | [--] <paths…>;  workit git unstage [--] <paths…>
+//   workit git hold --why "<the user's words>" | --clear  (git-hold.ts)
 //   workit git trailers  (prints on|off: whether this workspace writes Workit-Session trailers)
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
 //   workit git push --release <main|develop|v-tag>…  (repeatable)
@@ -32,7 +33,7 @@ import {
 } from "@workit-dev/core/src/git/ops";
 import { gitStage, gitUnstage, type StageOutcome } from "@workit-dev/core/src/git/stage";
 import { workspaceTrailers } from "@workit-dev/core/src/core/workspaces";
-import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
+import { actorFromEnv, appendObserved, branchHold, readLedger } from "@workit-dev/core/src/ledger";
 import { releaseNotesForTag, type ReleaseNotesDecision } from "@workit-dev/core/src/git/release";
 import { currentBranch, pushRemoteName } from "@workit-dev/core/src/git/rev";
 import { findSubcommand, findVerb } from "./registry";
@@ -41,6 +42,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { success, type ForgeResult } from "@workit-dev/core/src/forge/types";
 import { connect, forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
 import { rebase } from "./git-rebase";
+import { hold } from "./git-hold";
 
 const BRANCH_USAGE =
   "workit git branch <name> | --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry] [--json]";
@@ -51,7 +53,9 @@ const UNSTAGE_USAGE = "workit git unstage [--] <paths…> [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]] [--json]";
 const REBASE_USAGE = "workit git rebase [--onto <base>] [--json]";
-const USAGE = "workit git branch|commit|stage|unstage|push|rebase|trailers ... (workit help git)";
+const HOLD_USAGE = 'workit git hold --why "<the user\'s words>" | --clear [--json]';
+const USAGE =
+  "workit git branch|commit|stage|unstage|push|rebase|hold|trailers ... (workit help git)";
 
 const short = (sha: string | null): string => (sha ? sha.slice(0, 12) : "(none)");
 
@@ -414,6 +418,8 @@ async function push(
         data: { reason: grant.reason },
       }),
     );
+  const ledger = readLedger(io.cwd);
+  const held = ledger.ok && branchHold(ledger.value.rows, plan.data.branch) !== null;
   const result = executePush(io.cwd, plan.data, {
     forceWithLease: flags.booleans.has("force-with-lease"),
     overwriteUnintegrated: flags.booleans.has("overwrite-unintegrated"),
@@ -434,12 +440,15 @@ async function push(
         ]
       : [];
   for (const warning of warnings) io.stderr(`warning: ${warning}\n`);
-  const envelope = ok({ ...result.data, identity: checked });
+  // The push.verified row ends a `workit git hold` on the branch.
+  const holdCleared = held && result.data.pushed;
+  const envelope = ok({ ...result.data, identity: checked, holdCleared });
   return emit(io, warnings.length ? { ...envelope, warnings } : envelope, (data) => [
     data.pushed
       ? `pushed ${data.branch} ${short(data.previous)} -> ${short(data.sha)} to ${data.remote}${data.forced ? " (force-with-lease)" : ""}; remote tip verified`
       : `nothing to push: ${data.remote}/${data.branch} is already at ${short(data.sha)}`,
     ...(data.upstream ? [`upstream: ${data.remote}/${data.branch}`] : []),
+    ...(data.holdCleared ? [`the hold on ${data.branch} ended with this push`] : []),
   ]);
 }
 
@@ -598,6 +607,17 @@ function rebaseCommand(argv: string[], io: Io): number {
   return rebase(flags.values.onto ?? null, io);
 }
 
+function holdCommand(argv: string[], io: Io): number {
+  const flags = parseFlags(argv, { why: "value", clear: "boolean" });
+  if (typeof flags === "string") return usage(io, flags, HOLD_USAGE);
+  if (flags.positionals.length)
+    return usage(io, `unexpected argument ${flags.positionals[0]}`, HOLD_USAGE);
+  const why = flags.values.why?.trim() || null;
+  if (flags.booleans.has("clear") === (why !== null))
+    return usage(io, "pass either --why with the user's words or --clear", HOLD_USAGE);
+  return hold(why, io, HOLD_USAGE);
+}
+
 /**
  * `workit git trailers`: `on` or `off`, whether commits in this workspace
  * carry the Workit-Session trailer. The session hook's helper asks this.
@@ -634,6 +654,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sub === "unstage") return unstage(rest, io);
   if (sub === "push") return push(rest, io);
   if (sub === "rebase") return rebaseCommand(rest, io);
+  if (sub === "hold") return holdCommand(rest, io);
   if (sub === "trailers") return trailers(rest, io);
   return usage(
     io,
