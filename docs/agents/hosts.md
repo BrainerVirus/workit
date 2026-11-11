@@ -363,6 +363,23 @@ Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
 - **Older leases** (no `pgidStart`) keep the earlier rule: their group holds
   them only within the age bound.
 
+Host-approval channel limits (proposed, not shipped:
+[host-approval.md](../workit-next/host-approval.md); #419, #649, #768, #774).
+Every host keeps the terminal fallback, `workit approve <id>` at a real TTY:
+
+- **Claude Code:** no hook sees a rejected prompt, so a no leaves the request
+  to expire (L). U: whether a hook `ask` prompts under `bypassPermissions`;
+  until probed, that mode records nothing.
+- **OpenCode:** U: whether a `subagent` spawn passes `permission.evaluate`;
+  until probed, a model override uses request and approve.
+- **Codex:** the hook can deny but not ask; prompts come only from prefix
+  rules, so inline asks deny and name the request id (L). U: the
+  `permission_mode` values under `approval_policy = never` and how a "don't
+  ask again" answer caches; fallback-only until probed.
+- **Cursor:** `afterShellExecution` is offered but not registered (X). U:
+  whether auto-run skips an `ask`; fallback-only until probed.
+- **Pi:** no UI in print or RPC mode (`hasUI` false), so fallback only (L).
+
 ## Design background
 
 `docs/workit-next/` holds the research, spec, slice plan and design for the
