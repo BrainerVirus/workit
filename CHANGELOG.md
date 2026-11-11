@@ -510,6 +510,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In a repo with no commit yet, `workit git branch` starts the first work branch and `workit git commit` makes the first commit there; a commit refused on the protected unborn branch names `workit git branch --kind feature --slug <slug>`.
 - The local eval bench can give a test world a workspace (endpoint, lower grants, capped at the defaults) and run each case `--repeat N` times, passing only when at least two thirds of the runs pass.
 - `workit approve <id>`: the first piece of the host-approval channel. Requests are stored under the Workit state dir (agents cannot write there), Claude Code asks the user natively and records their yes once, Pi records it from its TUI dialog, other hosts and agent-free terminals use a confirmed terminal fallback; a grant expires and is consumed once. No verb uses it yet.
+- YouTrack writes (`workit youtrack note|time|meeting|create`) ask the user first by default through `workit approve`; set `youtrack.writes: auto` on a workspace to keep the old `WORKIT_YT_WRITE=1` gate. An identical comment or work item by the same user is refused with `duplicate_entry`, and after an interrupted write the next call reports whether it landed.
 
 ### Changed
 
