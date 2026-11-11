@@ -2,15 +2,15 @@
   "case": "youtrack-ask",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.5.0+db1db7841c",
-  "key": "625d9ecc503e7678",
-  "date": "2026-11-11T16:22:38.312Z",
+  "workitVersion": "workit-dev-v1.5.0+4a621d9cfe",
+  "key": "8185fced96a664a2",
+  "date": "2026-11-11T16:38:02.480Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 4,
-    "durationMs": 17604,
-    "costUsd": 0.0036267900000000004,
+    "durationMs": 8090,
+    "costUsd": 0.00347027,
     "stop": "success"
   },
   "grade": {

@@ -2,26 +2,21 @@
   "case": "youtrack-ask",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.5.0+db1db7841c",
-  "key": "625d9ecc503e7678",
-  "date": "2026-11-11T16:22:15.345Z",
+  "workitVersion": "workit-dev-v1.5.0+4a621d9cfe",
+  "key": "8185fced96a664a2",
+  "date": "2026-11-11T16:37:53.001Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 15227,
-    "costUsd": 0.0031499199999999996,
+    "turns": 4,
+    "durationMs": 8345,
+    "costUsd": 0.0034200999999999997,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": false,
-    "calls": 2,
-    "failures": [
-      {
-        "rule": "require",
-        "detail": "no call matches /^workit approve ap_[a-z2-7]{8}$/: the refusal says to run the plain approve call so the host asks the user"
-      }
-    ]
+    "pass": true,
+    "calls": 3,
+    "failures": []
   }
 }
