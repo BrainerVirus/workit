@@ -7,10 +7,10 @@ agent never calls the YouTrack API by hand.
 
 ```sh
 workit youtrack show ABC-123 --json
-WORKIT_YT_WRITE=1 workit youtrack create --project ABC --summary "Crash on start" --file notes.md
-WORKIT_YT_WRITE=1 workit youtrack note ABC-123 --markdown "Fixed in #42" --minutes 30
-WORKIT_YT_WRITE=1 workit youtrack time ABC-123 --minutes 45 --text "Code review"
-WORKIT_YT_WRITE=1 workit youtrack meeting ABC-123 --minutes 30 --text "Planning"
+workit youtrack create --project ABC --summary "Crash on start" --file notes.md
+workit youtrack note ABC-123 --markdown "Fixed in #42" --minutes 30
+workit youtrack time ABC-123 --minutes 45 --text "Code review"
+workit youtrack meeting ABC-123 --minutes 30 --text "Planning"
 ```
 
 ## Set up ytrack
@@ -113,9 +113,31 @@ write flag.
 project with that short name or name, and prints its id and URL. The
 description comes from `--description <text>` or `--file <path>`.
 
-Every write (`create`, `note`, `time`, `meeting`) is refused unless
-`WORKIT_YT_WRITE=1` is set. A comment or work item carries a marker and is read
-back before writing, so a retry never posts twice.
+## Writes ask you first
+
+Every write (`create`, `note`, `time`, `meeting`) waits for your yes, in every
+workspace. The first run records a request and refuses with
+`approval_needed`; nothing is posted. The agent runs `workit approve <id>`,
+your host shows the issue, the text, the minutes and the day, and the agent's
+next run uses your yes once. See [Approvals](approvals.md) for how each host
+asks and for the terminal fallback. A changed text or length needs a new yes.
+
+Before asking, Workit reads the issue back:
+
+- A comment or work item carries a marker, so a retry of a write that landed
+  reports `already_done` and posts nothing.
+- A comment, or a work item with the same text, minutes and day, that you
+  already have on the issue is refused with `duplicate_entry` and its id.
+- A call that was interrupted or lost its reply is settled by the next
+  `note`, `time` or `meeting` call, which reports whether it landed
+  (`earlier` in `--json`).
+
+To post without asking in one workspace, set this yourself in its entry in
+`workspaces.json`; writes there then need `WORKIT_YT_WRITE=1` instead:
+
+```json
+{ "name": "work", "glob": "/home/*/work/**", "youtrack": { "writes": "auto" } }
+```
 
 ## How the verbs run ytrack
 
