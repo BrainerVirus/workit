@@ -2,7 +2,7 @@
 // and expiry, host and terminal grants, and the one-time consume a later
 // consumer verb calls right before its side effect.
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -17,7 +17,7 @@ import {
   type ApprovalFields,
 } from "@/packages/workit-core/src/approvals/store";
 
-const base = mkdtempSync(path.join(tmpdir(), "workit-approvals-store-"));
+const base = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-approvals-store-")));
 const saved = process.env.WORKIT_STATE_DIR;
 let run = 0;
 beforeEach(() => {
