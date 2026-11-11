@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { EVAL_WORLD_MARKER } from "./world-grants";
+import { EVAL_WORLD_MARKER } from "../../packages/workit-core/src/core/eval-world";
 import type { EvalCase } from "./cases";
 
 /** A throwaway world for one run: the repo, an optional worktree, Workit state and config. */

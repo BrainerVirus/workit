@@ -37,6 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
+import { evalWorldEntry } from "./core/eval-world";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -81,16 +82,26 @@ export const grantsHome = { resolve: accountHome };
 export const grantsDir = (): string => workitConfigDir({ HOME: grantsHome.resolve() });
 
 /**
- * A bench world's entry for `cwd` (#792): scripts/eval/world-grants.ts, which
- * holds the rules, loaded only from a source checkout under Bun; a bundle (a
- * hook, an installed package) never has it and gets null.
+ * The bench world's entry for `cwd` (#792, core/eval-world.ts), cut down to
+ * what may apply: its name, glob, endpoint and the grants it sets strictly
+ * below the D4 defaults; never a raised grant, verification or vcs (a forge
+ * account). resolveAutonomy uses it only where no real entry matches.
  */
 const benchWorld = (cwd: string): WorkspaceConfig | null => {
-  try {
-    return require(`${import.meta.dirname}/../../../scripts/eval/world-grants`).worldEntry(cwd);
-  } catch {
-    return null;
+  const entry = evalWorldEntry(cwd);
+  if (!entry) return null;
+  const { grants } = configuredGrants(entry);
+  const lowered: Partial<Grants> = {};
+  for (const kind of GRANT_KINDS) {
+    const value = grants[kind];
+    if (value !== undefined && raises(kind, value, DEFAULT_GRANTS[kind])) lowered[kind] = value;
   }
+  return {
+    name: entry.name,
+    glob: entry.glob,
+    ...(entry.defaultEndpoint ? { defaultEndpoint: entry.defaultEndpoint } : {}),
+    autonomy: lowered,
+  };
 };
 
 /** Why grants fell back to the defaults, or null when the real file is used. */
@@ -463,7 +474,7 @@ function capAt(
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const world = benchWorld(cwd);
-  const override = !world && grantsOverride();
+  const override = world ? null : grantsOverride();
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
   const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;

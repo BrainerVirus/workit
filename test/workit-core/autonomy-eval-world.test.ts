@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { DEFAULT_GRANTS, resolveAutonomy } from "@/packages/workit-core/src/autonomy";
-import { EVAL_WORLD_ENV, EVAL_WORLD_MARKER } from "@/scripts/eval/world-grants";
+import { EVAL_WORLD_ENV, EVAL_WORLD_MARKER } from "@/packages/workit-core/src/core/eval-world";
 
 // #792 item 27: the bench gives its throwaway world a workspace (endpoint,
 // grants) through WORKIT_EVAL_WORLD. Any shell can set that variable, and
