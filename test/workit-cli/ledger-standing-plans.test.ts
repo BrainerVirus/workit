@@ -131,3 +131,43 @@ test("given two fanout plans with different leads, then each lead's session defa
   expect(stranger.code).toBe(2);
   expect(stranger.json().error).toContain("pick one with --fanout <name>: wave-one, wave-two");
 });
+
+test("given two active plans, then standing add refuses with the exact retry naming both plans", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "wave-one", "lead-1");
+  await plan(cwd, root, "wave-two", "lead-1");
+  const result = await run(cwd, ["ledger", "standing", "add", "Never push", "--json"]);
+  expect(result.code).toBe(2);
+  const unblock = result.json().unblock as string;
+  expect(unblock).toContain('workit ledger standing add "Never push" --fanout wave-one');
+  expect(unblock).toContain("wave-two");
+});
+
+test("given another active plan, then fanout plan prints the standing-order command with --fanout <new>", async () => {
+  const { root, cwd } = repo();
+  await plan(cwd, root, "wave-one", "lead-1");
+  const file = path.join(root, "wave-two.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      name: "wave-two",
+      trunk: "main",
+      slices: [
+        {
+          id: "wave-two-a",
+          branch: "feature/wave-two-a",
+          tier: "mundane",
+          reason: "parallel",
+          scope: ["wave-two.ts"],
+          goal: "GET /wave-two answers 200",
+          acceptance: ["Given the app, When GET /wave-two, Then the status is 200"],
+          verify: ["workit check test"],
+          forbidden: ["no new packages"],
+        },
+      ],
+    }),
+  );
+  const result = await run(cwd, ["fanout", "plan", file]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toContain('workit ledger standing add "<order>" --fanout wave-two');
+});

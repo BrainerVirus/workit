@@ -172,6 +172,16 @@ function plan(argv: string[], io: Io): number {
     renderBlockedPlan(io, result);
     return code;
   }
+  // Another active plan makes a bare `ledger standing add` ambiguous (#775).
+  const rivals = selectFanout(io.cwd, null, null, null);
+  const others =
+    !rivals.ok && Array.isArray(rivals.data?.candidates)
+      ? rivals.data.candidates.map(String).filter((name) => name !== result.data.name)
+      : [];
+  if (others.length)
+    result.data.notes.push(
+      `other active plans (${others.join(", ")}): add a standing order for this one with workit ledger standing add "<order>" --fanout ${result.data.name}`,
+    );
   return emit(io, ok(result.data), (data: PlanOutcome) => [
     `${data.created ? "planned" : "re-planned"} fanout ${data.name} on ${data.trunk}${data.fanIn === "integration" ? " (integration branch: one PR)" : ""}: ${data.slices.length} slice${data.slices.length === 1 ? "" : "s"}`,
     ...data.slices.map(
