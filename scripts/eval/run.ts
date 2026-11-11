@@ -163,9 +163,54 @@ const childEnv = (world: World, binDir: string): Record<string, string> => {
   return env;
 };
 
-/** A segment after the `cd` that only reads: the default tools' read-only commands and read-only git verbs. */
-const READ_ONLY_SEGMENT =
-  /^(?:git\s+(?:status|log|diff|show|rev-parse)\b(?!.*--output)|git\s+branch\s+--show-current|(?:ls|cat|head|tail|grep|wc|diff|echo|pwd)\b)/u;
+/**
+ * Commands a segment after the `cd` may run, each with every option it may
+ * take: anything else (an abbreviated long option, `--output`, `--ext-diff`,
+ * `--no-index`, `grep -f`) is not read-only for sure. `-<n>` counts pass.
+ */
+const READ_ONLY_FLAGS: Record<string, string[]> = {
+  "git status": ["-s", "--short", "-b", "--branch", "--porcelain"],
+  "git log": [
+    "--oneline",
+    "-n",
+    "--graph",
+    "--decorate",
+    "--stat",
+    "--all",
+    "--format=",
+    "--pretty=",
+  ],
+  "git diff": ["--stat", "--cached", "--staged", "--name-only", "--name-status", "--shortstat"],
+  "git show": ["--stat", "--name-only", "--oneline", "--format=", "--pretty="],
+  "git rev-parse": ["--abbrev-ref", "--show-toplevel", "--git-dir"],
+  ls: ["-l", "-a", "-la", "-al", "-1", "-lh"],
+  cat: ["-n"],
+  head: ["-n"],
+  tail: ["-n"],
+  grep: ["-n", "-i", "-v", "-c", "-l", "-E", "-F", "-w"],
+  wc: ["-l", "-w", "-c"],
+  diff: ["-u"],
+  echo: [],
+  pwd: [],
+};
+
+const readOnlySegment = (segment: string): boolean => {
+  if (segment === "git branch --show-current") return true;
+  const words = segment.split(/\s+/u);
+  const git = words[0] === "git";
+  const flags = READ_ONLY_FLAGS[git ? `git ${words[1]}` : (words[0] ?? "")];
+  return (
+    flags !== undefined &&
+    words
+      .slice(git ? 2 : 1)
+      .every(
+        (word) =>
+          !word.startsWith("-") ||
+          /^-\d+$/u.test(word) ||
+          flags.some((flag) => (flag.endsWith("=") ? word.startsWith(flag) : word === flag)),
+      )
+  );
+};
 
 /**
  * `cd <dir> && <read-only>…`: Claude Code asks before any `cd` chain with git,
@@ -175,11 +220,7 @@ const READ_ONLY_SEGMENT =
 export const readOnlyCdChain = (command: string): boolean => {
   if (/[;|<>`$()&\n]/u.test(command.replaceAll("&&", " "))) return false;
   const [first = "", ...rest] = command.split("&&").map((part) => part.trim());
-  return (
-    /^cd\s+\S+$/u.test(first) &&
-    rest.length > 0 &&
-    rest.every((part) => READ_ONLY_SEGMENT.test(part))
-  );
+  return /^cd\s+\S+$/u.test(first) && rest.length > 0 && rest.every(readOnlySegment);
 };
 
 /** The bench's PreToolUse hook: allow a read-only `cd` chain, stay silent on anything else. */

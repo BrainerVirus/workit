@@ -267,6 +267,12 @@ test.each([
   "cd /w/wt",
   "git status && cd /w/wt",
   "cd /w/wt && git status & rm x",
+  "cd /w/wt && git diff --outp=x",
+  "cd /w/wt && git show --out=f",
+  "cd /w/wt && git diff --ext-diff",
+  "cd /w/wt && git diff --no-index a b",
+  "cd /w/wt && grep -f patterns notes.md",
+  "cd /w/wt && git log --output=x",
 ])("Given `%s`, Then the bench hook leaves it to the host", (command) => {
   expect(readOnlyCdChain(command)).toBe(false);
 });
