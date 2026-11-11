@@ -365,7 +365,8 @@ Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
 
 Host-approval channel limits (proposed, not shipped:
 [host-approval.md](../workit-next/host-approval.md); #419, #649, #768, #774).
-Every host keeps the terminal fallback, `workit approve <id>` at a real TTY:
+Every host keeps the terminal fallback: the spec's proposed approve verb, run
+by the user at a real TTY.
 
 - **Claude Code:** no hook sees a rejected prompt, so a no leaves the request
   to expire (L). U: whether a hook `ask` prompts under `bypassPermissions`;
