@@ -1051,6 +1051,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The prompt-routing hook no longer nudges toward a skill when the user only quotes a trigger phrase or complains about the agent.
 - Retrying `workit git commit -- <paths>` after a pre-commit hook rewrote and refused the paths commits the rewritten files instead of failing.
 - A redundant `cd` before `workit --cwd <dir>` is dropped only for an absolute dir, so the rewrite never changes where a relative command runs.
+- A raw `git commit` onto a protected branch is denied and names `workit git branch --kind feature --slug <slug>`; a raw `cd <worktree> && git add … && git commit …` is denied with the exact `workit git --cwd <worktree> commit -m … -- <paths>` call to run instead.
 
 ### Removed
 
