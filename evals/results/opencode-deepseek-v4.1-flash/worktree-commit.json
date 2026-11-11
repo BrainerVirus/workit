@@ -2,28 +2,22 @@
   "case": "worktree-commit",
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
-  "provider": "go",
-  "limits": [
-    {
-      "provider": "free",
-      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
-    }
-  ],
-  "workitVersion": "workit-dev-v1.2.1+9ca8804811",
-  "key": "fd6a202c7235ff1e",
-  "date": "2026-11-11T12:27:17.240Z",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.2.2+b7a6ff2886",
+  "key": "8f1091500353d987",
+  "date": "2026-11-11T13:12:48.516Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 5,
-    "durationMs": 24314,
+    "turns": 6,
+    "durationMs": 11975,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 1,
     "pass": true,
-    "calls": 5,
+    "calls": 7,
     "failures": []
   }
 }
