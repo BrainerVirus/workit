@@ -2,6 +2,8 @@
 // friends. A grant-gated verb run with one of them set could act on a
 // repository whose grants were never read, so it is refused before it loads;
 // read-only verbs keep working (dotfile repositories use GIT_DIR daily).
+// Own state dir even when bun skips the bunfig preload (run from another cwd).
+import "@/test/shared/state-isolation";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
