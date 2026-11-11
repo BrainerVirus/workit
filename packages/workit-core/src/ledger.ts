@@ -1869,16 +1869,18 @@ function checkVerdictsOnce(
     return reasons;
   };
   // A verdict the user voided (`ledger void`, #759) is no verdict at all, so
-  // it retires nothing either (#792). Only a trusted verdict retires another:
-  // an unverified row or one acting as an unissued or unbound session never
-  // supersedes (N13, mv83zyg6 P1).
-  const retired = new Set(verdictVoids(rows, { chained: true }).keys());
+  // it retires nothing either (#792); voids are read first, so row order never
+  // changes the result. Only a trusted verdict retires another: an unverified
+  // row or one acting as an unissued or unbound session never supersedes (N13,
+  // mv83zyg6 P1).
+  const voided = verdictVoids(rows, { chained: true });
+  const retired = new Set(voided.keys());
   for (const row of rows)
     if (
       row.type === "verdict" &&
       row.supersedes &&
       !row.supersedeIgnored &&
-      !retired.has(row.id) &&
+      !voided.has(row.id) &&
       trustReasons(cwd, row).length === 0
     )
       retired.add(row.supersedes);

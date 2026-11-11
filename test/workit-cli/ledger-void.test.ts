@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { ledgerDeps } from "@/packages/workit-cli/src/verbs/ledger";
+import { checkVerdicts, readLedger } from "@/packages/workit-core/src/ledger";
 
 // #759: the user voids a verdict that is wrong on its face (filed on the wrong
 // repo or branch) from a terminal; an agent shell never can.
@@ -212,4 +213,39 @@ test("voiding a superseding pass brings back the failure it retired", async () =
   expect((await voidVerdict(root, [pass, "--reason", "wrong branch"], userEnv())).code).toBe(0);
 
   expect(await gateReasons(root)).toContain("failing_verdict");
+});
+
+// A mirror import can place a superseder ahead of the row it retires: the gate reads the same.
+test("a supersede chain gates the same whatever order its rows arrive in", async () => {
+  const root = featureRepo();
+  const verdict = async (result: string, extra: string[] = []): Promise<string> =>
+    (
+      await run(
+        root,
+        ["ledger", "verdict", result, "--kind", "live", "--how", "ran it", ...extra, "--json"],
+        reviewer,
+      )
+    ).json().data.id as string;
+  const failed = await verdict("failed");
+  const pass = await verdict("verified", ["--supersedes", failed]);
+  const recheck = await verdict("verified", ["--supersedes", pass]);
+  const read = readLedger(root, { integrity: true });
+  if (!read.ok) throw new Error("ledger unreadable");
+  const rows = read.value.rows;
+  const last = rows.findIndex((row) => row.id === recheck);
+  const reordered = [...rows];
+  const [moved] = reordered.splice(last, 1);
+  reordered.splice(
+    reordered.findIndex((row) => row.id === pass),
+    0,
+    moved,
+  );
+  expect(reordered.findIndex((row) => row.id === recheck)).toBeLessThan(
+    reordered.findIndex((row) => row.id === pass),
+  );
+  for (const order of [rows, reordered])
+    expect(checkVerdicts(root, "feature/x", order).accepted).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
 });
