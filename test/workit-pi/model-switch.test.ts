@@ -33,7 +33,9 @@ test("Given a Pi session, When model_select reports a change, Then the contract 
     noteModelSelect({ model: strong, previousModel: undefined }, ctx as never);
     expect(modelSwitchContract(ctx as never)).toBeNull();
     noteModelSelect({ model: flash, previousModel: strong }, ctx as never);
-    expect(modelSwitchContract(ctx as never)).toBe(invariantBootstrap());
+    expect(modelSwitchContract(ctx as never)).toBe(
+      `<workit-contract>\n${invariantBootstrap()}\n</workit-contract>`,
+    );
     expect(modelSwitchContract(ctx as never)).toBeNull();
     noteModelSelect({ model: flash, previousModel: flash }, ctx as never);
     expect(modelSwitchContract(ctx as never)).toBeNull();

@@ -1,0 +1,23 @@
+{
+  "case": "worktree-commit",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.2.2+b7a6ff2886",
+  "key": "8f1091500353d987",
+  "date": "2026-11-11T13:12:48.516Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 11975,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 7,
+    "failures": []
+  }
+}

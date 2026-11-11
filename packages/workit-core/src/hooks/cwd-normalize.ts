@@ -47,15 +47,20 @@ export const cwdRewrite = (command: string): string | null => {
   const dir = match?.[1];
   const rest = match?.[2];
   if (!dir || !rest || dir.startsWith("-")) return null;
-  // `2>&1` is the only redirect, `|` the only operator: no `&`, `;`, `<`, `>`, backtick or newline.
-  if (/[&;<>`\n]/u.test(rest.replaceAll("2>&1", ""))) return null;
+  // `2>&1` is the only redirect, `|` the only operator: no `&`, `;`, `<`, `>`, backtick or
+  // newline outside quotes (a quoted `<email>` trailer is text; substitutions fail `clean`).
+  if (/[&;<>`\n]/u.test(rest.replaceAll("2>&1", "").replaceAll(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "")))
+    return null;
   const segments = segmentsOf(rest);
   const [head, ...filters] = segments;
   if (!head || head.words[0] !== "workit") return null;
-  if (head.words.some((w) => w === "--cwd" || w.startsWith("--cwd="))) return null;
   if (!segments.every(clean)) return null;
   if (!segments.slice(0, -1).every((s) => s.pipe)) return null;
   if (!filters.every((s) => FILTERS.has(s.words[0] ?? "") && stdinOnly(s.words))) return null;
+  // A `cd` to the --cwd the call already names is dropped; another --cwd keeps it.
+  const at = head.words.indexOf("--cwd");
+  if (at >= 0) return head.words[at + 1] === dir.replace(/^(['"])(.*)\1$/u, "$2") ? rest : null;
+  if (head.words.some((w) => w.startsWith("--cwd="))) return null;
   const args = rest.slice("workit".length).trimStart();
   const verb = VERB_FIRST.exec(args);
   if (!verb?.[2] || !VERBS.has(verb[2])) return `workit --cwd ${dir} ${args}`.trimEnd();
@@ -76,4 +81,32 @@ export const verbFirst = (command: string): string | null => {
   const segments = segmentsOf(command);
   if (segments.length !== 1 || !segments.every(clean)) return null;
   return `${lead} ${verb}${globals}${command.slice(whole.length)}`;
+};
+
+/** `git [-C dir] <verb> …` that changes the repo; a listing (`branch`, `tag -l`, `stash list`) does not. */
+const MUTATING_GIT =
+  /^git(?: -\S+| -[Cc] \S+)* (?:commit|push|add|switch|checkout|merge|rebase|reset|cherry-pick|revert|branch .*(?:-[dDmM]|--delete|--move)\b|tag (?!-l\b|--list)|stash(?! (?:list|show)\b))/u;
+
+/**
+ * For `cd <literal dir> && workit … || git <mutating verb> …` (or `;`), the
+ * raw-git fallback #793 is about: the leading workit call as one `--cwd`
+ * call. Null for every other shape, which keeps its earlier handling.
+ */
+export const cdWorkitSplit = (command: string): string | null => {
+  const match = COMPOUND.exec(command);
+  const dir = match?.[1];
+  const rest = match?.[2];
+  if (!dir || !rest || cwdRewrite(command) !== null) return null;
+  const whole = segmentsOf(rest);
+  // A cut inside quotes changes the words of a segment it keeps: not a call boundary.
+  const boundary = (head: string): boolean =>
+    segmentsOf(head).every((s, at) => s.words.join("\0") === whole[at]?.words.join("\0"));
+  for (const op of rest.matchAll(/\|\||;/gu)) {
+    const head = rest.slice(0, op.index).trimEnd();
+    const call = cwdRewrite(`cd ${dir} && ${head}`);
+    if (!call || !boundary(head)) continue;
+    const next = segmentsOf(rest.slice(op.index + op[0].length))[0];
+    return next && MUTATING_GIT.test(next.words.join(" ")) ? call : null;
+  }
+  return null;
 };
