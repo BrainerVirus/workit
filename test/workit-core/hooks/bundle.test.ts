@@ -61,7 +61,10 @@ const HOOK_ENTRIES = [
 // follow-up) lowers it. Confinement of IFS, untrusted cd and curl's write options (#787) takes core run to 517,577 B.
 // Judge scratch confinement (#790: stdin-fed scripts, eval, the judge verb table, wget/tar/
 // unzip/mkfifo and git output writers, workit wrappers and entries) takes core run to ~526 KB, so the ceiling is 528 KB.
-const BUDGET = 528_000;
+// Wave 7 (#792 items 23/26/27/28, approvals core per docs/workit-next/host-approval.md): each slice
+// trims first; together they need ~8 KB more, so the ceiling is 540 KB. The read-only TaskStore
+// split for hooks (#807) is the fix that lowers it again.
+const BUDGET = 540_000;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
