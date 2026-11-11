@@ -96,6 +96,19 @@ const GRANT_KEYS = new Set(["autonomy", "autoApprove", "defaultEndpoint", "verif
 const REMOTES_KEY = "remotes";
 const remotesOf = (entry: Entry): string[] =>
   Array.isArray(entry.remotes) ? (entry.remotes as string[]) : [];
+/**
+ * `youtrack.writes: auto` lets an agent post to YouTrack without the user's
+ * yes (#780): turning it on is the user's, at their own terminal, like a grant.
+ */
+const autoWrites = (entry: Record<string, unknown>): boolean => {
+  const youtrack = entry.youtrack;
+  return (
+    typeof youtrack === "object" &&
+    youtrack !== null &&
+    (youtrack as { writes?: unknown }).writes === "auto"
+  );
+};
+
 /** Keys that decide where an entry's grants apply. */
 const SCOPE_KEYS = new Set(["name", "glob"]);
 /** The top-level keys `set` changes: the schema's non-grant, non-scope keys. */
@@ -464,6 +477,12 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
         ]),
       )
     : {};
+  // An agent never inherits `youtrack.writes: auto`: the copy asks (#780).
+  const notCopied: string[] = [];
+  if (autoWrites(inherited) && (!deps.interactive() || agentMarker(io.env))) {
+    delete (inherited.youtrack as { writes?: unknown }).writes;
+    notCopied.push("youtrack.writes");
+  }
   // Capped at every entry, not only the overlapping ones (see the header).
   const shadowed = intersectingEntries(glob, entries);
   const remotes = await askRemotes(glob, io, deps);
@@ -486,6 +505,7 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       backup: result.backup,
       workspace: entry,
       inherited: Object.keys(inherited),
+      notCopied,
       shadows: shadowed.map((item) => item.name),
       grants: ceiling.grants,
       defaultEndpoint: ceiling.endpoint,
@@ -495,6 +515,11 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       `${style.bold(name)} ${style.dim(`(${glob})`)} ${style.raise("added")} to ${written(data.path, data.backup)}`,
       ...(data.inherited.length
         ? [`  from ${style.bold(from ?? "")}: ${data.inherited.join(", ")}`]
+        : []),
+      ...(data.notCopied.length
+        ? [
+            `  not copied: youtrack.writes auto (writes here ask first; the user can set it: workit workspace set ${name} youtrack.writes=auto)`,
+          ]
         : []),
       ...(data.shadows.length
         ? [`  overlaps: ${data.shadows.map((item) => style.bold(item)).join(", ")}`]
@@ -675,6 +700,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
         },
       ),
     );
+  const wasAuto = !global && autoWrites(entry);
   const moves: { key: string; from: unknown; to: unknown }[] = [];
   for (const change of changes) {
     let target: Record<string, unknown> = entry;
@@ -693,6 +719,30 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
     });
     if (change.value === null) delete target[last];
     else target[last] = change.value;
+  }
+  if (!global && !wasAuto && autoWrites(entry)) {
+    const command = `workit workspace set ${name} ${specs.map((spec) => `'${spec}'`).join(" ")}`;
+    const agent = agentMarker(io.env);
+    if (!deps.interactive() || agent)
+      return emit(
+        io,
+        fail(
+          "blocked",
+          `grant_raise_refused: youtrack.writes=auto lets an agent post to YouTrack in "${name}" without asking the user; turning it on needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
+          {
+            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${command}`,
+          },
+        ),
+      );
+    const answer = await askOrCancel(io, () =>
+      confirmWith(
+        deps,
+        `Let agents post to YouTrack in workspace "${name}" without asking you (youtrack.writes=auto)?`,
+      ),
+    );
+    if (answer === null) return cancelled(io);
+    if (!answer)
+      return emit(io, fail("blocked", "youtrack.writes change not confirmed; nothing was written"));
   }
   const result = global ? save(current, entries, topLevel) : save(current, entries);
   if (!result.ok) return emit(io, fail("invalid_input", result.error));

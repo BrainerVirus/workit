@@ -29,6 +29,7 @@ export const APPROVAL_KINDS = [
   "live-session",
   "discard-work",
   "secrets",
+  "youtrack-write",
 ] as const;
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
 

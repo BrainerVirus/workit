@@ -69,6 +69,15 @@ export type WriteResult =
 /** The texts on an issue; `complete` is false when older items may be missing. */
 export type Texts = { texts: string[]; complete: boolean };
 
+/** A comment or work item by the current user, for the duplicate check (#780). */
+export type OwnEntry = {
+  id: string;
+  text: string;
+  minutes?: number;
+  /** As read: ytrack documents YYYY-MM-DD; an epoch or ISO timestamp is normalised by the caller. */
+  date?: string | number;
+};
+
 export interface YouTrackBackend {
   readonly kind: BackendKind;
   showIssue(issueId: string): Promise<IssueOutcome<IssueView>>;
@@ -77,6 +86,8 @@ export interface YouTrackBackend {
   addWorkItem(issueId: string, item: WorkItemInput): Promise<WriteResult>;
   /** Comment or work item texts, for the marker read-back; null when unreadable. */
   texts(issueId: string, where: "comments" | "workItems"): Promise<Texts | null>;
+  /** The current user's comments or work items on the issue; null when unreadable. */
+  ownEntries(issueId: string, where: "comments" | "workItems"): Promise<OwnEntry[] | null>;
 }
 
 const isObj = (value: unknown): value is Obj =>
@@ -113,7 +124,10 @@ function fields(raw: unknown): { name: string; value: unknown }[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((field): field is Obj => isObj(field) && typeof field.name === "string")
-    .map((field) => ({ name: field.name as string, value: plainValue(field.value) }));
+    .map((field) => ({
+      name: field.name as string,
+      value: plainValue(field.value),
+    }));
 }
 
 /** Normalize `ytrack issue view --json …` into one shape. */
@@ -158,7 +172,11 @@ function ranJson(run: YtrackRun, args: string[], input?: string): Ran {
   try {
     return { ok: true, json: JSON.parse(out.stdout) as unknown };
   } catch {
-    return { ok: false, status: out.status, error: `${what} printed invalid JSON` };
+    return {
+      ok: false,
+      status: out.status,
+      error: `${what} printed invalid JSON`,
+    };
   }
 }
 
@@ -210,7 +228,11 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
       const json = isObj(ran.json) ? ran.json : {};
       return {
         ok: true,
-        data: { issueId: String(json.idReadable ?? ""), url: str(json.url), source: "ytrack" },
+        data: {
+          issueId: String(json.idReadable ?? ""),
+          url: str(json.url),
+          source: "ytrack",
+        },
       };
     },
     async addComment(issueId, text) {
@@ -243,7 +265,12 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
       const json = isObj(ran.json) ? ran.json : {};
       return {
         ok: true,
-        data: { issueId, workItemId: json.id, minutes: item.minutes, dateMs: item.dateMs },
+        data: {
+          issueId,
+          workItemId: json.id,
+          minutes: item.minutes,
+          dateMs: item.dateMs,
+        },
       };
     },
     async texts(issueId, where) {
@@ -261,6 +288,38 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
         ),
         complete: true,
       };
+    },
+    async ownEntries(issueId, where) {
+      if (where === "workItems") {
+        const ran = ranJson(run, [
+          "work-item",
+          "list",
+          issueId,
+          "--author",
+          "me",
+          "--json",
+          "id,text,date,duration",
+        ]);
+        if (!ran.ok || !Array.isArray(ran.json)) return null;
+        return ran.json.filter(isObj).map((item) => ({
+          id: String(item.id ?? ""),
+          text: str(item.text) ?? "",
+          ...(isObj(item.duration) && typeof item.duration.minutes === "number"
+            ? { minutes: item.duration.minutes }
+            : {}),
+          ...(typeof item.date === "string" || typeof item.date === "number"
+            ? { date: item.date }
+            : {}),
+        }));
+      }
+      const me = ranJson(run, ["api", "/users/me", "--fields", "login"]);
+      const login = me.ok && isObj(me.json) ? str(me.json.login) : null;
+      if (!login) return null;
+      const ran = ranJson(run, ["issue", "view", issueId, "--json", "comments"]);
+      if (!ran.ok || !isObj(ran.json)) return null;
+      return comments(ran.json.comments)
+        .filter((comment) => comment.author === login)
+        .map((comment) => ({ id: comment.id, text: comment.text }));
     },
   };
 }

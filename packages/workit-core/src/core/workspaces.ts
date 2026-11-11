@@ -328,6 +328,12 @@ export const workspaceConfigSchema = z
           .boolean()
           .optional()
           .describe("Legacy alias of `issues: { provider: youtrack, link: true }`."),
+        writes: z
+          .enum(["ask", "auto"])
+          .optional()
+          .describe(
+            "ask (default): each workit youtrack write waits for the user's yes. auto: posts without asking, behind WORKIT_YT_WRITE=1.",
+          ),
       })
       .passthrough()
       .optional()

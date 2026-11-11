@@ -162,6 +162,12 @@ export function youTrackWorkDateMs(dateRaw: string):
   }
 }
 
+/** The timezone that decides a work item's day (youtrack.json `timezone`, else TZ), read-only. */
+export const youTrackWorkTimezone = (): string => {
+  const read = readYouTrackContextConfig();
+  return effectiveWorkTimezone("error" in read ? null : read.data).timezone;
+};
+
 /** youtrack.json's baseUrl without trailing slashes, read-only; null when unset. */
 export const youTrackBaseUrl = (): string | null => {
   const read = readYouTrackContextConfig();

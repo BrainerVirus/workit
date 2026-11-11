@@ -97,7 +97,11 @@ const YTRACK_ISSUE = {
   url: `${BASE}/issue/ABC-1`,
   customFields: [
     { name: "State", kind: "state", value: "Open" },
-    { name: "Assignee", kind: "user", value: { login: "jdoe", fullName: "J Doe" } },
+    {
+      name: "Assignee",
+      kind: "user",
+      value: { login: "jdoe", fullName: "J Doe" },
+    },
     { name: "Tags", kind: "enum", value: ["a", "b"] },
   ],
   comments: [
@@ -140,7 +144,12 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
           { name: "Tags", value: ["a", "b"] },
         ],
         comments: [
-          { id: "4-1", text: "Reproduced", author: "jroe", created: "2026-10-01T10:00:00Z" },
+          {
+            id: "4-1",
+            text: "Reproduced",
+            author: "jroe",
+            created: "2026-10-01T10:00:00Z",
+          },
         ],
         source: "ytrack",
       },
@@ -165,7 +174,10 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
   });
 
   test("Given ytrack, When an issue is created, Then issue create gets the description on stdin", async () => {
-    answer("issue-create", { idReadable: "ABC-7", url: `${BASE}/issue/ABC-7` });
+    answer("issue-create", {
+      idReadable: "ABC-7",
+      url: `${BASE}/issue/ABC-7`,
+    });
     const result = await youTrackBackend(env()).createIssue({
       project: "ABC",
       summary: "New",
@@ -177,7 +189,11 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
     expect(stdin("issue-create")).toBe("Body");
     expect(result).toEqual({
       ok: true,
-      data: { issueId: "ABC-7", url: `${BASE}/issue/ABC-7`, source: "ytrack" },
+      data: {
+        issueId: "ABC-7",
+        url: `${BASE}/issue/ABC-7`,
+        source: "ytrack",
+      },
     });
   });
 
@@ -185,7 +201,11 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
     answer("issue-view", { comments: [] });
     answer("issue-comment", { id: "4-9" });
     const backend = youTrackBackend(env());
-    const marker = youTrackMarker({ operation: "note", issueId: "ABC-1", markdown: "Hi" });
+    const marker = youTrackMarker({
+      operation: "note",
+      issueId: "ABC-1",
+      markdown: "Hi",
+    });
     const outcome = await writeOnce(
       "ABC-1",
       marker,
@@ -205,7 +225,11 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
   });
 
   test("Given the marker is already on the issue, When the write is retried, Then ytrack writes nothing", async () => {
-    const marker = youTrackMarker({ operation: "time", issueId: "ABC-1", minutes: 5 });
+    const marker = youTrackMarker({
+      operation: "time",
+      issueId: "ABC-1",
+      minutes: 5,
+    });
     answer("work-item-list", [{ id: "1", text: withMarker("review", marker) }]);
     const outcome = await writeOnce(
       "ABC-1",
@@ -230,7 +254,46 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
     expect(calls()).toEqual([
       "work-item add ABC-1 --duration 90 --date 2026-10-06 --text Code review --json id,date,duration",
     ]);
-    expect(result).toMatchObject({ ok: true, data: { workItemId: "115-3", minutes: 90 } });
+    expect(result).toMatchObject({
+      ok: true,
+      data: { workItemId: "115-3", minutes: 90 },
+    });
+  });
+
+  test("Given ytrack, When the duplicate check reads own work items, Then it asks ytrack for the current user's items with minutes and day", async () => {
+    answer("work-item-list", [
+      {
+        id: "115-3",
+        text: "review",
+        date: "2026-10-03",
+        duration: { minutes: 30 },
+      },
+    ]);
+    expect(await youTrackBackend(env()).ownEntries("ABC-1", "workItems")).toEqual([
+      { id: "115-3", text: "review", minutes: 30, date: "2026-10-03" },
+    ]);
+    expect(calls()).toEqual(["work-item list ABC-1 --author me --json id,text,date,duration"]);
+  });
+
+  test("Given ytrack, When the duplicate check reads own comments, Then only the current user's comments count", async () => {
+    mkdirSync(path.join(stub, "api-", "users"), { recursive: true });
+    answer("api-/users/me", { login: "me.dev" });
+    answer("issue-view", {
+      comments: [
+        { id: "4-1", text: "Mine", author: { login: "me.dev" } },
+        { id: "4-2", text: "Mine", author: { login: "someone" } },
+      ],
+    });
+    expect(await youTrackBackend(env()).ownEntries("ABC-1", "comments")).toEqual([
+      { id: "4-1", text: "Mine" },
+    ]);
+    expect(calls()).toEqual(["api /users/me --fields login", "issue view ABC-1 --json comments"]);
+  });
+
+  test("Given ytrack cannot name the current user, When own comments are read, Then the check is inconclusive (null), not empty", async () => {
+    mkdirSync(path.join(stub, "api-", "users"), { recursive: true });
+    answer("api-/users/me", {}, 1, "boom");
+    expect(await youTrackBackend(env()).ownEntries("ABC-1", "comments")).toBeNull();
   });
 
   test("Given ytrack exit 4 or 2 on a write, Then it is not_applied; exit 1 is unknown", async () => {
@@ -242,9 +305,13 @@ describe.skipIf(process.platform === "win32")("ytrack backend (stub on PATH)", (
       unblock: "ytrack auth login --host yt.example.test",
     });
     answer("issue-comment", {}, 2);
-    expect(await backend.addComment("ABC-1", "x")).toMatchObject({ outcome: "not_applied" });
+    expect(await backend.addComment("ABC-1", "x")).toMatchObject({
+      outcome: "not_applied",
+    });
     answer("issue-comment", {}, 1, "timeout");
-    expect(await backend.addComment("ABC-1", "x")).toMatchObject({ outcome: "unknown" });
+    expect(await backend.addComment("ABC-1", "x")).toMatchObject({
+      outcome: "unknown",
+    });
   });
 
   test("Given ytrack, When its status is read for the doctor, Then version and the active host's auth state come back without a token", () => {
@@ -311,7 +378,9 @@ test("Given no ytrack on PATH, When a YouTrack call runs, Then it is unavailable
     unblock,
   });
   expect(await backend.texts("ABC-1", "comments")).toBeNull();
-  expect(ytrackStatus(ytrackRunner({ PATH: empty }))).toEqual({ installed: false });
+  expect(ytrackStatus(ytrackRunner({ PATH: empty }))).toEqual({
+    installed: false,
+  });
 });
 
 test("Given no WORKIT_YT_WRITE, When a write is gated, Then it is blocked naming the flag", () => {
@@ -340,5 +409,9 @@ test("Given a configured YouTrack URL, When ytrack's hosts are matched, Then onl
   expect(ytrackHostAuth(status, "https://acme.youtrack.cloud/").auth).toBe("ok");
   expect(ytrackHostAuth(status, "old.example.com").auth).toBe("rejected");
   expect(ytrackHostAuth(status, "new.example.com").auth).toBe("logged_out");
-  expect(ytrackHostAuth(status, null)).toEqual({ auth: "ok", login: "jdoe", error: null });
+  expect(ytrackHostAuth(status, null)).toEqual({
+    auth: "ok",
+    login: "jdoe",
+    error: null,
+  });
 });

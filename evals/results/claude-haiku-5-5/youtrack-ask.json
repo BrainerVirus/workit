@@ -1,0 +1,21 @@
+{
+  "case": "youtrack-ask",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v1.5.0+227c2536ab",
+  "key": "9e533a7fb074c874",
+  "date": "2026-11-11T17:13:39.782Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 7577,
+    "costUsd": 0.0033870800000000006,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 3,
+    "failures": []
+  }
+}

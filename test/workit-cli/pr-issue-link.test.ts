@@ -382,7 +382,35 @@ const youTrackServer = () => {
   return { url: `http://127.0.0.1:${server.port}`, requests, comments, stop: () => server.stop() };
 };
 
-test("pr create: given backlink true and a YouTrack issue, then without WORKIT_YT_WRITE=1 nothing is written, and without ytrack the backlink fails naming the install and no token is sent", async () => {
+test("pr create: given backlink true, a YouTrack issue and the default youtrack.writes ask, then the PR opens and the backlink is pending with the youtrack note call, even with WORKIT_YT_WRITE=1", async () => {
+  const yt = youTrackServer();
+  const previous = process.env.WORKIT_YT_WRITE;
+  try {
+    const { repo } = setup("github", githubRoutes());
+    writeFileSync(
+      path.join(configHome.configDir, "youtrack.json"),
+      JSON.stringify({ baseUrl: yt.url }),
+    );
+    workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+    process.env.WORKIT_YT_WRITE = "1";
+    const out = await run(createIssue("IRPT-74"), repo.cwd);
+    expect(out.code).toBe(0);
+    expect(out.json().data.backlinks).toEqual([
+      {
+        issue: "IRPT-74",
+        status: "pending",
+        note: "YouTrack writes ask the user first: run workit youtrack note IRPT-74 --markdown 'Linked from PR #12: https://github.com/o/r/pull/12'",
+      },
+    ]);
+    expect(yt.requests).toEqual([]);
+  } finally {
+    if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
+    else process.env.WORKIT_YT_WRITE = previous;
+    await yt.stop();
+  }
+});
+
+test("pr create: given backlink true, a YouTrack issue and youtrack.writes auto, then without WORKIT_YT_WRITE=1 nothing is written, and without ytrack the backlink fails naming the install and no token is sent", async () => {
   const yt = youTrackServer();
   const previous = process.env.WORKIT_YT_WRITE;
   try {
@@ -394,7 +422,10 @@ test("pr create: given backlink true and a YouTrack issue, then without WORKIT_Y
       path.join(configHome.configDir, "youtrack.json"),
       JSON.stringify({ baseUrl: yt.url, tokenFile: token }),
     );
-    workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+    workspace(repo, {
+      issues: { provider: "youtrack", backlink: true },
+      youtrack: { writes: "auto" },
+    });
 
     delete process.env.WORKIT_YT_WRITE;
     const refused = await run(createIssue("IRPT-74"), repo.cwd);
@@ -463,7 +494,7 @@ if (args[0] === "issue" && args[1] === "view") {
 };
 
 test.skipIf(process.platform === "win32")(
-  "pr create: given backlink true, a YouTrack issue and ytrack on PATH, then ytrack posts one comment with the PR URL and a retry reports already_done",
+  "pr create: given backlink true, a YouTrack issue, youtrack.writes auto and ytrack on PATH, then ytrack posts one comment with the PR URL and a retry reports already_done",
   async () => {
     const stub = ytrackStub();
     const previous = {
@@ -477,7 +508,10 @@ test.skipIf(process.platform === "win32")(
         path.join(configHome.configDir, "youtrack.json"),
         JSON.stringify({ baseUrl: "https://yt.example.test" }),
       );
-      workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+      workspace(repo, {
+        issues: { provider: "youtrack", backlink: true },
+        youtrack: { writes: "auto" },
+      });
       process.env.WORKIT_YT_WRITE = "1";
       delete process.env.WORKIT_NO_YTRACK;
       process.env.PATH = [stub.dir, previous.path ?? ""].join(path.delimiter);

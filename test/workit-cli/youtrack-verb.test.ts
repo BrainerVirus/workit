@@ -1,9 +1,18 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
-import { run } from "@/packages/workit-cli/src/verbs/youtrack";
+import { run, type YouTrackDeps } from "@/packages/workit-cli/src/verbs/youtrack";
+import { recordApprovalGrant } from "@/packages/workit-core/src/approvals/store";
 import type {
   WriteResult,
   YouTrackBackend,
@@ -17,7 +26,15 @@ let dir = "";
 const saved = {
   WORKIT_YOUTRACK_CONFIG: process.env.WORKIT_YOUTRACK_CONFIG,
   WORKIT_YT_WRITE: process.env.WORKIT_YT_WRITE,
+  WORKIT_CONFIG: process.env.WORKIT_CONFIG,
+  WORKIT_STATE_DIR: process.env.WORKIT_STATE_DIR,
 };
+let stateRun = 0;
+// Each test gets its own approvals registry and pending-write journal.
+beforeEach(() => {
+  stateRun += 1;
+  process.env.WORKIT_STATE_DIR = path.join(dir, `state-${stateRun}`);
+});
 const realFetch = globalThis.fetch;
 
 beforeAll(() => {
@@ -32,6 +49,9 @@ beforeAll(() => {
   );
   process.env.WORKIT_YOUTRACK_CONFIG = path.join(dir, "youtrack.json");
   process.env.WORKIT_YT_WRITE = "1";
+  // No workspace covers the test dir: the default (ask) applies unless a test passes auto.
+  mkdirSync(path.join(dir, "config"), { recursive: true });
+  process.env.WORKIT_CONFIG = path.join(dir, "config");
 });
 afterAll(() => {
   for (const [key, value] of Object.entries(saved))
@@ -45,40 +65,60 @@ afterEach(() => {
 
 /** An in-memory YouTrack behind the backend seam; `dropResponse` loses a write's reply after it applied. */
 let current: YouTrackBackend;
-const fakeYouTrack = (dropResponse: () => boolean) => {
-  const comments: { id: string; text: string }[] = [];
-  const workItems: { id: string; text: string }[] = [];
+type Entry = { id: string; text: string; minutes?: number; date?: string };
+/** Every entry is the current user's; `crash` makes a write land and then kill the call. */
+const fakeYouTrack = (dropResponse: () => boolean, crash: () => boolean = () => false) => {
+  const comments: Entry[] = [];
+  const workItems: Entry[] = [];
   const posts: string[] = [];
-  const write = (list: typeof comments, kind: string, text: string): WriteResult => {
+  const write = (list: Entry[], kind: string, entry: Omit<Entry, "id">): WriteResult => {
     posts.push(kind);
-    list.push({ id: `${list.length + 1}`, text });
-    if (dropResponse()) return { ok: false, error: "socket hang up (timeout)", outcome: "unknown" };
+    list.push({ id: `${kind}-${list.length + 1}`, ...entry });
+    if (crash()) throw new Error("interrupted");
+    if (dropResponse())
+      return {
+        ok: false,
+        error: "socket hang up (timeout)",
+        outcome: "unknown",
+      };
     return { ok: true, data: { id: `${list.length}` } };
   };
   current = {
     kind: "ytrack",
     showIssue: async () => ({ ok: false, code: "failed", error: "not used" }),
-    createIssue: async () => ({ ok: false, code: "failed", error: "not used" }),
-    addComment: async (_issueId, text) => write(comments, "comment", text),
-    addWorkItem: async (_issueId, item) => write(workItems, "workItem", item.text),
+    createIssue: async () => ({
+      ok: true,
+      data: { issueId: "ABC-99", url: null, source: "ytrack" },
+    }),
+    addComment: async (_issueId, text) => write(comments, "comment", { text }),
+    addWorkItem: async (_issueId, item) =>
+      write(workItems, "workItem", {
+        text: item.text,
+        minutes: item.minutes,
+        date: new Date(item.dateMs).toISOString().slice(0, 10),
+      }),
     texts: async (_issueId, where) => ({
       texts: (where === "comments" ? comments : workItems).map((item) => item.text),
       complete: true,
     }),
+    ownEntries: async (_issueId, where) => (where === "comments" ? comments : workItems),
   };
   return { comments, workItems, posts };
 };
 
-const call = async (argv: string[]) => {
+const AUTO: YouTrackDeps = { writes: () => "auto" };
+const ASK: YouTrackDeps = { writes: () => "ask" };
+
+const call = async (argv: string[], deps: YouTrackDeps = AUTO, env: NodeJS.ProcessEnv = {}) => {
   let stdout = "";
   const io: Io = {
     json: true,
     cwd: dir,
-    env: { WORKIT_YT_WRITE: "1" },
+    env: { WORKIT_YT_WRITE: "1", ...env },
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
-  const code = await run(argv, io, () => current);
+  const code = await run(argv, io, () => current, deps);
   return { code, json: () => JSON.parse(stdout) };
 };
 
@@ -127,7 +167,7 @@ test("Given --date auto, When the same time entry is retried, Then the marker ig
 // `workit youtrack show|create` (#263): agents read and create issues through
 // Workit and ytrack; there is no token-file client to fall back to.
 
-const callWith = async (argv: string[], env: NodeJS.ProcessEnv) => {
+const callWith = async (argv: string[], env: NodeJS.ProcessEnv, deps: YouTrackDeps = AUTO) => {
   let stdout = "";
   const io: Io = {
     json: true,
@@ -136,7 +176,7 @@ const callWith = async (argv: string[], env: NodeJS.ProcessEnv) => {
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
-  const code = await run(argv, io);
+  const code = await run(argv, io, undefined, deps);
   return { code, stdout, json: () => JSON.parse(stdout) };
 };
 
@@ -160,7 +200,7 @@ test("Given no ytrack, When workit youtrack show runs, Then it fails naming the 
   expect(out.stdout).not.toContain("legacy-test-token");
 });
 
-test("Given no WORKIT_YT_WRITE, When workit youtrack create runs, Then it is refused naming the gate and nothing is sent", async () => {
+test("Given writes: auto and no WORKIT_YT_WRITE, When workit youtrack create runs, Then it is refused naming the gate and nothing is sent", async () => {
   const posts: string[] = [];
   globalThis.fetch = (async (input: string | URL) => {
     posts.push(String(input));
@@ -180,7 +220,13 @@ test("Given WORKIT_YT_WRITE=1 and no ytrack, When workit youtrack create or note
   const note = await callWith(["note", "ABC-1", "--markdown", "Hi"], env);
   expect(note.code).not.toBe(0);
   expect(note.json().unblock).toContain("ytrack auth login --host yt.example.test");
-  expect(note.json().data.steps).toEqual([{ step: "comment", status: "failed" }]);
+  expect(note.json().data.steps).toEqual([
+    {
+      step: "comment",
+      status: "failed",
+      note: "your existing entries could not be read, so duplicates were not checked",
+    },
+  ]);
 });
 
 test.skipIf(process.platform === "win32")(
@@ -208,7 +254,7 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-test("Given no WORKIT_YT_WRITE, When workit youtrack note runs, Then it is refused naming the gate and nothing is read or sent", async () => {
+test("Given writes: auto and no WORKIT_YT_WRITE, When workit youtrack note runs, Then it is refused naming the gate and nothing is read or sent", async () => {
   const urls: string[] = [];
   globalThis.fetch = (async (input: string | URL) => {
     urls.push(String(input));
@@ -218,4 +264,206 @@ test("Given no WORKIT_YT_WRITE, When workit youtrack note runs, Then it is refus
   expect(out.code).toBe(3);
   expect(out.json().error).toContain("WORKIT_YT_WRITE=1");
   expect(urls).toHaveLength(0);
+});
+
+// #780: every write asks the user first by default, through the approval
+// channel; an identical entry is refused; an interrupted write is reported.
+
+const requests = (): string[] => {
+  try {
+    return readdirSync(path.join(process.env.WORKIT_STATE_DIR!, "approvals", "requests")).map(
+      (name) => name.replace(/\.json$/, ""),
+    );
+  } catch {
+    return [];
+  }
+};
+
+/** The user's yes at their own terminal (`workit approve <id>`, via: terminal). */
+const userApproves = (id: string) => {
+  const granted = recordApprovalGrant({
+    id,
+    host: "terminal",
+    session: null,
+    toolUseId: null,
+    via: "terminal",
+  });
+  expect(granted.ok).toBe(true);
+};
+
+test("Given the default, When the agent runs workit youtrack time X-1 --minutes 30, Then a request is recorded and nothing is posted until the user approves; the re-run posts once", async () => {
+  const server = fakeYouTrack(() => false);
+  const args = ["time", "X-1", "--minutes", "30"];
+  // No WORKIT_YT_WRITE: the user's yes is the gate in ask mode.
+  const first = await call(args, ASK, { WORKIT_YT_WRITE: "" });
+  expect(first.code).toBe(3);
+  const refusal = first.json();
+  expect(refusal.data).toMatchObject({
+    reason: "approval_needed",
+    posted: false,
+  });
+  expect(refusal.error).toContain(`approve: run \`workit approve ${refusal.data.approval}\` now`);
+  expect(requests()).toEqual([refusal.data.approval]);
+  expect(server.posts).toHaveLength(0);
+  // Asking again without a yes still posts nothing.
+  expect((await call(args, ASK)).code).toBe(3);
+  expect(server.posts).toHaveLength(0);
+
+  userApproves(refusal.data.approval);
+  const posted = await call(args, ASK);
+  expect(posted.code).toBe(0);
+  expect(posted.json().data.steps).toEqual([{ step: "time", status: "done" }]);
+  expect(server.workItems).toHaveLength(1);
+
+  // The same command again: the marker shows it landed, so nothing is asked or posted.
+  const again = await call(args, ASK);
+  expect(again.code).toBe(0);
+  expect(again.json().data.steps).toEqual([{ step: "time", status: "already_done" }]);
+  expect(server.posts).toHaveLength(1);
+});
+
+test("Given an approved write, When the agent changes the minutes, Then the yes does not cover it and a new request is written", async () => {
+  const server = fakeYouTrack(() => false);
+  const first = await call(["time", "X-2", "--minutes", "30"], ASK);
+  userApproves(first.json().data.approval);
+  const changed = await call(["time", "X-2", "--minutes", "45"], ASK);
+  expect(changed.code).toBe(3);
+  expect(changed.json().data.reason).toBe("approval_stale");
+  expect(changed.json().data.approval).not.toBe(first.json().data.approval);
+  expect(server.posts).toHaveLength(0);
+});
+
+test("Given a yes used by a run whose write did not land, When the agent re-runs, Then it gets a new request to approve and posts nothing", async () => {
+  const server = fakeYouTrack(() => false);
+  current.addWorkItem = async () => ({
+    ok: false,
+    error: "logged out",
+    outcome: "not_applied",
+  });
+  const args = ["time", "X-3", "--minutes", "30"];
+  userApproves((await call(args, ASK)).json().data.approval);
+  expect((await call(args, ASK)).code).not.toBe(0);
+  const retry = await call(args, ASK);
+  expect(retry.code).toBe(3);
+  expect(retry.json().data.reason).toBe("approval_consumed");
+  expect(retry.json().error).toContain(`workit approve ${retry.json().data.approval}`);
+  expect(server.posts).toHaveLength(0);
+});
+
+test("Given an identical work item by the same user, When the same time is logged, Then it is refused with duplicate_entry and the entry id, before any ask", async () => {
+  const server = fakeYouTrack(() => false);
+  server.workItems.push({
+    id: "115-3",
+    text: "review",
+    minutes: 30,
+    date: "2026-10-03",
+  });
+  const out = await call(
+    ["time", "ABC-7", "--minutes", "30", "--text", "review", "--date", "2026-10-03"],
+    ASK,
+  );
+  expect(out.code).toBe(3);
+  expect(out.json().error).toStartWith("duplicate_entry: ABC-7 already has your work item 115-3");
+  expect(out.json().data).toMatchObject({
+    reason: "duplicate_entry",
+    entryId: "115-3",
+  });
+  expect(requests()).toEqual([]);
+  expect(server.posts).toHaveLength(0);
+  // Other minutes are a different entry.
+  const other = await call(
+    ["time", "ABC-7", "--minutes", "45", "--text", "review", "--date", "2026-10-03"],
+    AUTO,
+  );
+  expect(other.code).toBe(0);
+});
+
+test("Given an identical comment by the same user, When the note is posted again, Then it is refused with duplicate_entry in auto mode too", async () => {
+  const server = fakeYouTrack(() => false);
+  server.comments.push({ id: "4-17", text: "Deployed to staging" });
+  const out = await call(["note", "ABC-8", "--markdown", "Deployed to staging\n"], AUTO);
+  expect(out.code).toBe(3);
+  expect(out.json().data).toMatchObject({
+    reason: "duplicate_entry",
+    entryId: "4-17",
+  });
+  expect(server.posts).toHaveLength(0);
+});
+
+test("Given a call interrupted after its write landed, When the next call runs, Then it reports that the earlier write landed", async () => {
+  let crash = true;
+  const server = fakeYouTrack(
+    () => false,
+    () => crash,
+  );
+  await expect(call(["time", "ABC-9", "--minutes", "20", "--text", "fix"], AUTO)).rejects.toThrow(
+    "interrupted",
+  );
+  crash = false;
+  const next = await call(["note", "ABC-10", "--markdown", "Unrelated"], AUTO);
+  expect(next.code).toBe(0);
+  expect(next.json().data.earlier).toEqual([
+    expect.objectContaining({ issueId: "ABC-9", step: "time", landed: true }),
+  ]);
+  // Settled once: the call after that has nothing to report.
+  const later = await call(["note", "ABC-11", "--markdown", "Later"], AUTO);
+  expect(later.json().data.earlier).toEqual([]);
+  expect(server.workItems).toHaveLength(1);
+});
+
+test("Given a call killed before its write landed, When the next call runs, Then it reports that the earlier write did not land", async () => {
+  fakeYouTrack(() => false);
+  const landed = current.addWorkItem;
+  current.addWorkItem = async () => {
+    throw new Error("killed before sending");
+  };
+  await expect(call(["time", "ABC-12", "--minutes", "20"], AUTO)).rejects.toThrow("killed");
+  current.addWorkItem = landed;
+  const next = await call(["note", "ABC-13", "--markdown", "Hi"], AUTO);
+  expect(next.json().data.earlier).toEqual([
+    expect.objectContaining({ issueId: "ABC-12", landed: false }),
+  ]);
+});
+
+test("Given the default, When workit youtrack create runs, Then it asks first and creates the issue only after the yes", async () => {
+  fakeYouTrack(() => false);
+  let created = 0;
+  const create = current.createIssue;
+  current.createIssue = async (input) => {
+    created += 1;
+    return create(input);
+  };
+  const args = ["create", "--project", "ABC", "--summary", "New"];
+  const first = await call(args, ASK);
+  expect(first.code).toBe(3);
+  expect(created).toBe(0);
+  userApproves(first.json().data.approval);
+  expect((await call(args, ASK)).code).toBe(0);
+  expect(created).toBe(1);
+});
+
+test("Given your entries cannot be read, When a write asks first, Then the request the user approves says duplicates were not checked", async () => {
+  fakeYouTrack(() => false);
+  current.ownEntries = async () => null;
+  const out = await call(["time", "ABC-20", "--minutes", "30"], ASK);
+  expect(out.code).toBe(3);
+  const id = out.json().data.approval;
+  const stored = JSON.parse(
+    readFileSync(
+      path.join(process.env.WORKIT_STATE_DIR!, "approvals", "requests", `${id}.json`),
+      "utf8",
+    ),
+  );
+  expect(stored.subject.duplicates).toBe(
+    "not checked: your existing entries on ABC-20 could not be read",
+  );
+});
+
+test("Given your entries cannot be read in auto mode, Then the write goes ahead and its step notes duplicates were not checked", async () => {
+  const server = fakeYouTrack(() => false);
+  current.ownEntries = async () => null;
+  const out = await call(["time", "ABC-21", "--minutes", "30"], AUTO);
+  expect(out.code).toBe(0);
+  expect(out.json().data.steps[0].note).toContain("duplicates were not checked");
+  expect(server.workItems).toHaveLength(1);
 });
