@@ -104,7 +104,10 @@ afterAll(() => {
 });
 
 type Specific = {
-  hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+  hookSpecificOutput?: {
+    permissionDecision?: string;
+    permissionDecisionReason?: string;
+  };
 };
 type Agent = { id?: string; type?: string | null };
 
@@ -309,7 +312,10 @@ test("Given a judge, When a shell or interpreter runs a script fed by a pipe, st
   ];
   denies(fed, "dispatch it from a test");
   denies(fed, "workit scratch confinement: verifier ver-x", { id: "ver-x" });
-  denies(["echo 'touch ~/x' | bash"], "reviewer rev-x", { id: "rev-x", type: "workit:reviewer" });
+  denies(["echo 'touch ~/x' | bash"], "reviewer rev-x", {
+    id: "rev-x",
+    type: "workit:reviewer",
+  });
   allows([
     `bash <<'EOF'\ncat ${path.join(lead, "src", "core.ts")}\nEOF`,
     `bun test ${path.join(scratch, "case.test.ts")}`,
@@ -563,4 +569,55 @@ test("Given another host's live session owns the lead checkout (no pid to compar
   } finally {
     rmSync(file, { force: true });
   }
+});
+
+test("Given a verifier or reviewer, When it writes a probe in the candidate worktree's .workit-scratch (from the lead's cwd or the candidate's), Then it is allowed; elsewhere in the candidate it is still denied", () => {
+  const probe = path.join(wt, ".workit-scratch", "x.test.ts");
+  for (const type of ["workit:verifier", "workit:reviewer"])
+    for (const cwd of [lead, wt]) {
+      const agent = { id: `judge-${cwd === wt ? "wt" : "lead"}`, type };
+      const at = (tool: string, toolInput: Record<string, unknown>) => {
+        const payload = fixture("claude-code", "pre-tool-use-write", cwd, {
+          tool_name: tool,
+          tool_input: toolInput,
+        });
+        payload.agent_id = agent.id;
+        payload.agent_type = type;
+        return (dispatchHook(claudeCodeAdapter, payload, {}).json as Specific).hookSpecificOutput;
+      };
+      for (const [tool, toolInput] of [
+        ["Write", { file_path: probe, content: "x" }],
+        ["Bash", { command: posix(`mkdir -p ${path.dirname(probe)}`) }],
+        [
+          "Bash",
+          {
+            command: posix(`cat > ${probe} <<'EOF'\nimport { test } from "bun:test";\nEOF`),
+          },
+        ],
+        [
+          "Bash",
+          {
+            command: posix(`workit check --cwd ${wt} --name probe -- bun test ${probe}`),
+          },
+        ],
+        ["Bash", { command: posix(`bun test ${probe}`) }],
+        ["Bash", { command: posix(`touch ${probe}`) }],
+        ["Bash", { command: posix(`printf x > ${probe}`) }],
+        ["Bash", { command: posix(`cd ${wt} && bun test .workit-scratch/x.test.ts`) }],
+        ["Edit", { file_path: probe, old_string: "a", new_string: "b" }],
+      ] as const)
+        expect(
+          at(tool, toolInput)?.permissionDecision,
+          `${type} ${cwd} ${JSON.stringify(toolInput)}`,
+        ).toBeUndefined();
+      for (const target of [path.join(wt, "a.ts"), path.join(wt, "src", "x.test.ts")]) {
+        const out = at("Write", { file_path: target, content: "x" });
+        expect(out?.permissionDecision, target).toBe("deny");
+        // From the lead's cwd the deny names the candidate's scratch dir too.
+        if (cwd === lead)
+          expect(out?.permissionDecisionReason).toContain(
+            `${named} or ${path.join(realpathSync.native(wt), ".workit-scratch")}`,
+          );
+      }
+    }
 });
