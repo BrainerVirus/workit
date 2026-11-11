@@ -4,7 +4,7 @@ Some Workit actions need your yes even when an agent runs them. When a Workit
 verb needs one and finds none, it writes a request and refuses:
 
 ```text
-approval_needed: workit git push --release 4.5.0 needs the user's yes. approve: you (the agent) run exactly `workit approve ap_k3m7q2xa` now, as its own call with no cd, pipe or redirect; the host then asks the user and records the yes (or the user runs it in their own terminal)
+approval_needed: workit git push --release 4.5.0 needs the user's yes. approve: run `workit approve ap_k3m7q2xa` now with your shell tool, as its own call with no cd, pipe or redirect; never ask the user to type it: your call makes the host ask them, and only their answer approves
 ```
 
 The agent then runs `workit approve ap_k3m7q2xa`. Your host shows you what

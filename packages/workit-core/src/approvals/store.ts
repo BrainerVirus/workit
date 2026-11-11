@@ -233,7 +233,7 @@ export const renderApprovalRequest = (request: ApprovalRequest): string =>
 
 /** The line every refusal prints: the fallback that works on every host. */
 export const approveLine = (ids: readonly string[]): string =>
-  `approve: you (the agent) run exactly \`workit approve ${ids.join(" ")}\` now, as its own call with no cd, pipe or redirect; the host then asks the user and records the yes (or the user runs it in their own terminal)`;
+  `approve: run \`workit approve ${ids.join(" ")}\` now with your shell tool, as its own call with no cd, pipe or redirect; never ask the user to type it: your call makes the host ask them, and only their answer approves`;
 
 /**
  * A host ask on one tool call (Claude Code PreToolUse): one hash per id with a

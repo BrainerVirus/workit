@@ -366,10 +366,9 @@ export const VERBS: readonly VerbEntry[] = [
     name: "approve",
     group: "setup",
     usage: "workit approve <id>…",
-    summary:
-      "Show approval requests a Workit verb wrote; the host records the user's yes to its prompt, or the user confirms at a terminal",
+    summary: "Ask the user to approve a Workit request; their yes is recorded once",
     notes: [
-      "In an agent shell it records nothing: run exactly `workit approve <id>…` as its own call so the host asks the user (Claude Code, Pi); elsewhere the user runs it in their own terminal.",
+      "Agent: run exactly `workit approve <id>…` as its own call; the host shows the user the request and records their answer (Claude Code, Pi). Elsewhere it prints the line for the user's own terminal.",
     ],
     examples: ["workit approve ap_7k2m9q4x"],
     load: () => import("./approve"),
