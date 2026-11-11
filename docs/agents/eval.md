@@ -126,7 +126,7 @@ issue or `test/behavior/cases` file).
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
 | `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `dontAsk`, the list above |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
-| `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`, `verification`, `vcs`), so `workit grant show` and the Stop hook see it; grants above the D4 defaults are capped |
+| `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`), so `workit grant show` and the Stop hook see it. Only its endpoint and the grants it lowers below the D4 defaults count, and only where no real workspace matches (`scripts/eval/world-grants.ts`). Read from a source checkout only: the OpenCode leg's built plugin does not see it |
 | `expect.atMost` | `{tool?, pattern, max, why}`: at most `max` calls match |
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
 | `expect.require`, `expect.forbid` | `{tool?, pattern, why}`: a regex on the Bash command, or on the JSON input for other tools |

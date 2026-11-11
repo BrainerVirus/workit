@@ -34,13 +34,13 @@ export type EvalCase = {
     commits?: { message: string; files: Record<string, string> }[];
     /**
      * The world's workspace entry (name `eval`, covering the world), read
-     * through WORKIT_EVAL_WORLD; grants above the D4 defaults are capped.
+     * through WORKIT_EVAL_WORLD: its endpoint and the grants it lowers below
+     * the D4 defaults count; a raised grant or looser verification does not.
      */
     workspace?: {
       defaultEndpoint?: "commit" | "pr" | "green" | "merged";
       autonomy?: Record<string, boolean | "verified">;
       verification?: "proportional" | "self" | "independent";
-      vcs?: Record<string, string>;
     };
   };
   maxTurns?: number;

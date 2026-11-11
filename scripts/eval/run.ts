@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/autonomy";
+import { EVAL_WORLD_ENV } from "./world-grants";
 import { loadCases, selectCases, type EvalCase, type Tier } from "./cases";
 import { grade, usageOf, type Grade, type Usage } from "./grade";
 import {
