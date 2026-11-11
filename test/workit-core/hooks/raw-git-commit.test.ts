@@ -116,6 +116,11 @@ const decisionOn = (host: Host, root: string, command: string): string | null =>
   }
 };
 
+/** Single-quoted for a posix shell (Windows paths keep their backslashes). */
+const sq = (value: string) => `'${value}'`;
+/** A path as the deny prints it: bare when shell-safe, else single-quoted. */
+const asWord = (value: string) => (/^[\w./@%+:,=-]+$/u.test(value) ? value : sq(value));
+
 const BRANCH_FIRST = "workit git branch --kind feature --slug <slug>";
 
 for (const host of ["claude_code", "codex", "cursor", "opencode", "pi"] as const)
@@ -189,23 +194,23 @@ for (const store of [true, false])
   test(`G a linked worktree (${store ? "Workit workspace" : "config-declared policy"}), W cd <wt> && git add && git commit, T it is denied with the exact workit git --cwd call`, async () => {
     await withProtectedMain(() => {
       const { root, wt } = withWorktree(store);
-      const call = `workit git --cwd ${wt} commit -m 'docs: notes' -- notes.md`;
+      const call = `workit git --cwd ${asWord(wt)} commit -m 'docs: notes' -- notes.md`;
       for (const command of [
-        `cd ${wt} && git add -- notes.md && git commit -m "docs: notes"`,
-        `cd ${wt} && git add notes.md && git commit -m 'docs: notes'`,
-        `cd ${wt} && git add notes.md && git commit --message='docs: notes'`,
+        `cd ${sq(wt)} && git add -- notes.md && git commit -m "docs: notes"`,
+        `cd ${sq(wt)} && git add notes.md && git commit -m 'docs: notes'`,
+        `cd ${sq(wt)} && git add notes.md && git commit --message='docs: notes'`,
       ])
         expect(claude(root, command)?.permissionDecisionReason, command).toContain(call);
       expect(
-        claude(root, `cd ${wt} && git add -A && git commit -m 'docs: notes'`)
+        claude(root, `cd ${sq(wt)} && git add -A && git commit -m 'docs: notes'`)
           ?.permissionDecisionReason,
-      ).toContain(`workit git --cwd ${wt} commit -m 'docs: notes' --all`);
+      ).toContain(`workit git --cwd ${asWord(wt)} commit -m 'docs: notes' --all`);
       // Read-only git through the cd, a commit that stages nothing first (the
       // live-session guard's own advice), and raw git inside the worktree keep running.
       for (const [cwd, command] of [
-        [root, `cd ${wt} && git commit -m x`],
-        [root, `cd ${wt} && git status`],
-        [root, `cd ${wt} && git log -3`],
+        [root, `cd ${sq(wt)} && git commit -m x`],
+        [root, `cd ${sq(wt)} && git status`],
+        [root, `cd ${sq(wt)} && git log -3`],
         [wt, "git add notes.md && git commit -m 'docs: notes'"],
         [root, "git add README.md && git commit -m 'docs: x'"],
       ] as const)
@@ -218,27 +223,27 @@ for (const store of [true, false])
 test("G a linked worktree, W cd-chain commits whose workit call is provably equivalent, T the deny names that exact call", async () => {
   await withProtectedMain(() => {
     const { root, wt } = withWorktree(true);
-    const heredoc = `cd ${wt} && git add notes.md && git commit -m "$(cat <<'EOF'\ndocs: notes\n\nWhy $it matters.\n\nCo-Authored-By: A <a@b.c>\nEOF\n)"`;
+    const heredoc = `cd ${sq(wt)} && git add notes.md && git commit -m "$(cat <<'EOF'\ndocs: notes\n\nWhy $it matters.\n\nCo-Authored-By: A <a@b.c>\nEOF\n)"`;
     const exact: Array<[string, string]> = [
       [
-        `cd ${wt} && git add notes.md && git commit -m 'docs: a' -m 'body b'`,
-        `workit git --cwd ${wt} commit -m 'docs: a' -m 'body b' -- notes.md`,
+        `cd ${sq(wt)} && git add notes.md && git commit -m 'docs: a' -m 'body b'`,
+        `workit git --cwd ${asWord(wt)} commit -m 'docs: a' -m 'body b' -- notes.md`,
       ],
       [
         heredoc,
-        `workit git --cwd ${wt} commit -m 'docs: notes\n\nWhy $it matters.\n\nCo-Authored-By: A <a@b.c>' -- notes.md`,
+        `workit git --cwd ${asWord(wt)} commit -m 'docs: notes\n\nWhy $it matters.\n\nCo-Authored-By: A <a@b.c>' -- notes.md`,
       ],
       [
-        `cd ${wt} && git add . && git commit -m 'docs: notes'`,
-        `workit git --cwd ${wt} commit -m 'docs: notes' -- .`,
+        `cd ${sq(wt)} && git add . && git commit -m 'docs: notes'`,
+        `workit git --cwd ${asWord(wt)} commit -m 'docs: notes' -- .`,
       ],
       [
-        `cd ${wt} && git add --all && git commit -m 'docs: notes'`,
-        `workit git --cwd ${wt} commit -m 'docs: notes' --all`,
+        `cd ${sq(wt)} && git add --all && git commit -m 'docs: notes'`,
+        `workit git --cwd ${asWord(wt)} commit -m 'docs: notes' --all`,
       ],
       [
-        `cd ${wt} && git add notes.md && git commit --allow-empty -m 'docs: notes'`,
-        `workit git --cwd ${wt} commit -m 'docs: notes' --allow-empty -- notes.md`,
+        `cd ${sq(wt)} && git add notes.md && git commit --allow-empty -m 'docs: notes'`,
+        `workit git --cwd ${asWord(wt)} commit -m 'docs: notes' --allow-empty -- notes.md`,
       ],
     ];
     for (const [command, call] of exact)
@@ -251,7 +256,7 @@ test("G a linked worktree, W cd-chain commits whose workit call is provably equi
 test("G a linked worktree, W a cd-chain commit no workit call reproduces exactly, T no decision", async () => {
   await withProtectedMain(() => {
     const { root, wt } = withWorktree(true);
-    const add = `cd ${wt} && git add notes.md && `;
+    const add = `cd ${sq(wt)} && git add notes.md && `;
     for (const command of [
       `${add}git commit -m "fix $X"`,
       `${add}git commit -m "a \`b\`"`,
@@ -270,12 +275,12 @@ test("G a linked worktree, W a cd-chain commit no workit call reproduces exactly
       `${add}git commit -q -m 'docs: notes'`,
       `${add}git commit -am 'docs: notes'`,
       `${add}git commit -m 'docs: notes' -- notes.md`,
-      `cd ${wt} && git add -p notes.md && git commit -m 'docs: notes'`,
-      `cd ${wt} && git add -u && git commit -m 'docs: notes'`,
-      `cd ${wt} && git add 'n*.md' && git commit -m 'docs: notes'`,
-      `cd ${wt} && git add notes.md; git commit -m 'docs: notes'`,
-      `cd ${wt} && git add notes.md || git commit -m 'docs: notes'`,
-      `cd ${wt} && git add notes.md && git commit -m 'docs: notes' && git push`,
+      `cd ${sq(wt)} && git add -p notes.md && git commit -m 'docs: notes'`,
+      `cd ${sq(wt)} && git add -u && git commit -m 'docs: notes'`,
+      `cd ${sq(wt)} && git add 'n*.md' && git commit -m 'docs: notes'`,
+      `cd ${sq(wt)} && git add notes.md; git commit -m 'docs: notes'`,
+      `cd ${sq(wt)} && git add notes.md || git commit -m 'docs: notes'`,
+      `cd ${sq(wt)} && git add notes.md && git commit -m 'docs: notes' && git push`,
     ])
       expect(claude(root, command)?.permissionDecision, command).toBeUndefined();
     // A file already staged outside the named paths would be left out of the workit commit.
@@ -284,8 +289,8 @@ test("G a linked worktree, W a cd-chain commit no workit call reproduces exactly
     expect(claude(root, `${add}git commit -m 'docs: notes'`)?.permissionDecision).toBeUndefined();
     // `git add -A` takes it along, as `--all` does.
     expect(
-      claude(root, `cd ${wt} && git add -A && git commit -m 'docs: notes'`)
+      claude(root, `cd ${sq(wt)} && git add -A && git commit -m 'docs: notes'`)
         ?.permissionDecisionReason,
-    ).toContain(`workit git --cwd ${wt} commit -m 'docs: notes' --all`);
+    ).toContain(`workit git --cwd ${asWord(wt)} commit -m 'docs: notes' --all`);
   });
 });
