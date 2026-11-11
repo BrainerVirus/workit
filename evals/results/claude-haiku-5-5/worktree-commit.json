@@ -1,26 +1,21 @@
 {
   "case": "worktree-commit",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.2.1+53b91504e7",
-  "key": "03cc98e56487ec4f",
-  "date": "2026-11-11T12:08:49.650Z",
+  "workitVersion": "workit-dev-v1.2.1+0941f62f0c",
+  "key": "4d4028a4810c9d67",
+  "date": "2026-11-11T12:26:44.190Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 7209,
-    "costUsd": 0.00335171,
+    "turns": 5,
+    "durationMs": 9527,
+    "costUsd": 0.0038301400000000005,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": false,
-    "calls": 2,
-    "failures": [
-      {
-        "rule": "forbid",
-        "detail": "#2 Bash(cd <world>/wt && workit git commit --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>\" -m \"docs: notes\") matches /\\bcd\\s+\\S+\\s*&&[\\s\\S]*\\bcommit\\b/: a `cd … &&` chain before the commit: run one verb with --cwd"
-      }
-    ]
+    "pass": true,
+    "calls": 4,
+    "failures": []
   }
 }

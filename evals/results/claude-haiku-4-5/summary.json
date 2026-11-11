@@ -1,23 +1,14 @@
 {
   "passed": 1,
-  "total": 2,
+  "total": 1,
   "cases": [
     {
-      "case": "branch-before-edit",
-      "pass": false,
-      "failures": ["require"],
-      "turns": 4,
-      "costUsd": 0.033184200000000004,
-      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
-      "graderVersion": 1
-    },
-    {
-      "case": "unborn-first-commit",
+      "case": "worktree-commit",
       "pass": true,
       "failures": [],
-      "turns": 4,
-      "costUsd": 0.03345000000000001,
-      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
+      "turns": 2,
+      "costUsd": 0.028548200000000003,
+      "workitVersion": "workit-dev-v1.2.1+0941f62f0c",
       "graderVersion": 1
     }
   ]

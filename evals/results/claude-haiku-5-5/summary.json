@@ -3,15 +3,6 @@
   "total": 7,
   "cases": [
     {
-      "case": "branch-before-edit",
-      "pass": true,
-      "failures": [],
-      "turns": 10,
-      "costUsd": 0.006486110000000001,
-      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
-      "graderVersion": 1
-    },
-    {
       "case": "fanout-fanin",
       "pass": true,
       "failures": [],
@@ -39,12 +30,12 @@
       "graderVersion": 1
     },
     {
-      "case": "unborn-first-commit",
+      "case": "session-context",
       "pass": true,
       "failures": [],
-      "turns": 5,
-      "costUsd": 0.003992230000000001,
-      "workitVersion": "workit-dev-v1.2.1+44d1fff088",
+      "turns": 1,
+      "costUsd": 0.0021094300000000002,
+      "workitVersion": "workit-dev-v1.2.1+0941f62f0c",
       "graderVersion": 1
     },
     {
@@ -63,6 +54,15 @@
       "turns": 3,
       "costUsd": 0.0037325,
       "workitVersion": "workit-dev-v1.1.3+aae31e9a2e",
+      "graderVersion": 1
+    },
+    {
+      "case": "worktree-commit",
+      "pass": true,
+      "failures": [],
+      "turns": 5,
+      "costUsd": 0.0038301400000000005,
+      "workitVersion": "workit-dev-v1.2.1+0941f62f0c",
       "graderVersion": 1
     }
   ]
