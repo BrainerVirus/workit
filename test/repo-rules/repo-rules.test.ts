@@ -70,6 +70,21 @@ if (import.meta.main) {
 }
 `,
   },
+  {
+    rule: "test-own-state",
+    file: "test/workit-core/hooks/confine-shapes.test.ts",
+    line: 6,
+    // 2cc5e9bc (#787): its beforeAll, relying on the bunfig preload alone.
+    source: `import { beforeAll } from "bun:test";
+import { main } from "@/packages/workit-cli/src/main";
+declare const cli: (cwd: string, argv: string[]) => Promise<{ path: string }>;
+declare const lead: string;
+beforeAll(async () => {
+  await cli(lead, ["fanout", "worktree", "create", "a", "--json"]);
+  void main;
+});
+`,
+  },
 ];
 
 const FIXED: Record<string, string> = {
@@ -97,6 +112,10 @@ export async function run(code: number) {
   await flushStreams();
   process.exit(code);
 }
+`,
+  "test/workit-core/hooks/confine-shapes-fixed.test.ts": `import "@/test/shared/state-isolation";
+declare const cli: (cwd: string, argv: string[]) => Promise<unknown>;
+export const make = () => cli("/", ["fanout", "worktree", "create", "a"]);
 `,
   // Outside a rule's paths: tests may spawn without a timeout, packages may time.
   "test/workit-core/spawn-in-test.test.ts": `import { spawnSync } from "node:child_process";
@@ -140,7 +159,7 @@ test("Given each cited past mistake and an empty baseline, When the repo rules r
     expect(hit, `${entry.rule} on ${entry.file}:${entry.line}`).toContain(`workit/${entry.rule}: `);
     expect(hit).toContain(" Fix: ");
   }
-  expect(err).toContain("repo rules: 5 new hits.");
+  expect(err).toContain("repo rules: 6 new hits.");
 });
 
 test("Given the fixed shapes and files outside a rule's paths, When the repo rules run, Then none of them is reported", () => {
@@ -191,13 +210,14 @@ test("Given a baselined hit that was fixed, When the repo rules run, Then they p
 
   const shrunk = run("--write");
   expect(shrunk.code).toBe(0);
-  expect(shrunk.out).toBe("repo rules: baseline 8 -> 5 hits");
+  expect(shrunk.out).toBe("repo rules: baseline 9 -> 6 hits");
   expect(readBaseline()).toEqual({
     "exit-after-flush": { "packages/workit-cli/src/main.ts": 1 },
     "no-fixed-date-clock": { "test/workit-core/lease-wake.test.ts": 1 },
     "no-wall-clock-assert": { "test/workit-core/revision-retry.test.ts": 1 },
     "spawn-env-path": { "packages/workit-core/src/core/pr-env.ts": 1 },
     "spawn-timeout": { "packages/workit-core/src/core/pr-create.ts": 1 },
+    "test-own-state": { "test/workit-core/hooks/confine-shapes.test.ts": 1 },
   });
 });
 

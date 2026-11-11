@@ -87,5 +87,19 @@
     "scripts/install-hooks.ts": 2,
     "scripts/react-doctor.ts": 1,
     "scripts/test.ts": 1
+  },
+  "test-own-state": {
+    "test/workit-cli/completion.test.ts": 1,
+    "test/workit-cli/fanout-brief.test.ts": 7,
+    "test/workit-cli/fanout-merged-branch.test.ts": 3,
+    "test/workit-cli/fanout-squash.test.ts": 1,
+    "test/workit-cli/fanout-status.test.ts": 21,
+    "test/workit-cli/ledger-standing-retire.test.ts": 1,
+    "test/workit-core/fanout-worktree-deps.test.ts": 1,
+    "test/workit-core/fanout-worktree-stack.test.ts": 1,
+    "test/workit-core/hooks/confine-vars.test.ts": 1,
+    "test/workit-core/hooks/verifier-confine.test.ts": 1,
+    "test/workit-core/hooks/worktree-confine.test.ts": 2,
+    "test/workit-core/hooks/write-gate-workit-git.test.ts": 1
   }
 }
