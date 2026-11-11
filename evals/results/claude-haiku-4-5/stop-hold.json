@@ -1,26 +1,21 @@
 {
   "case": "stop-hold",
   "model": "claude-haiku-4-5",
-  "workitVersion": "workit-dev-v1.4.1+12ce2ceff3",
-  "key": "e295525fec401d96",
-  "date": "2026-11-11T13:55:01.416Z",
+  "workitVersion": "workit-dev-v1.4.1+92b288a228",
+  "key": "5448a64f27458b67",
+  "date": "2026-11-11T14:46:23.996Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 16213,
-    "costUsd": 0.032944,
+    "turns": 5,
+    "durationMs": 28836,
+    "costUsd": 0.0454357,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": false,
-    "calls": 2,
-    "failures": [
-      {
-        "rule": "require",
-        "detail": "no call matches /\\bworkit git( --cwd \\S+)? hold\\b.*--why\\b/: records the user's not-yet with workit git hold --why"
-      }
-    ]
+    "pass": true,
+    "calls": 3,
+    "failures": []
   }
 }

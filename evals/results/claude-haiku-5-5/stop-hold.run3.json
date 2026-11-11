@@ -2,15 +2,15 @@
   "case": "stop-hold",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.4.1+b580e13470",
-  "key": "ee40e6d545aad835",
-  "date": "2026-11-11T14:26:07.917Z",
+  "workitVersion": "workit-dev-v1.4.1+92b288a228",
+  "key": "08208ddd1c93cf6b",
+  "date": "2026-11-11T14:46:57.817Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 5,
-    "durationMs": 17991,
-    "costUsd": 0.004779879999999999,
+    "turns": 6,
+    "durationMs": 20399,
+    "costUsd": 0.004752419999999999,
     "stop": "success"
   },
   "grade": {

@@ -3,26 +3,21 @@
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
   "provider": "free",
-  "workitVersion": "workit-dev-v1.4.1+17dd8d6864",
-  "key": "f465957ab10931e8",
-  "date": "2026-11-11T13:55:49.050Z",
+  "workitVersion": "workit-dev-v1.4.1+36e8e8da7d",
+  "key": "486a77ed622ed412",
+  "date": "2026-11-11T14:46:30.300Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 7,
-    "durationMs": 54060,
+    "durationMs": 29208,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": false,
-    "calls": 10,
-    "failures": [
-      {
-        "rule": "require",
-        "detail": "no call matches /\\bworkit git( --cwd \\S+)? hold\\b.*--why\\b/: records the user's not-yet with workit git hold --why"
-      }
-    ]
+    "pass": true,
+    "calls": 7,
+    "failures": []
   }
 }
