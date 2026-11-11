@@ -37,7 +37,15 @@ workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
 workit git rebase [--onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>); a conflict aborts and lists the paths; then push --force-with-lease
+workit git hold --why "<the user's words>" | --clear   # the user said not yet: the Stop hook stops asking to push or open a PR for this branch
 ```
+
+When the user says not yet ("no PR yet", "don't push"), record it once with
+`workit git hold --why "<their words>"`. The Stop hook then stops asking to
+push or open a PR for the branch, across new commits, until a
+`workit git push` moves the branch or `workit git hold --clear` ends it. A hold
+grants nothing and leaves the endpoint as it is (`workit grant show`); it only
+silences the push and PR reminder.
 
 ### Branch kinds per preset
 
