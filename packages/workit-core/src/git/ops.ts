@@ -418,6 +418,12 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
   const baseSha = baseRef
     ? git(cwd, ["rev-parse", "--verify", "-q", `${baseRef}^{commit}`]).stdout.trim()
     : "";
+  // A brand-new repository (#774): nothing to branch from yet, so the work
+  // branch starts unborn and takes the first commit. An explicit --base other
+  // than the unborn branch itself still has to resolve.
+  const unborn = currentBranch(cwd);
+  if ((!baseRef || !baseSha) && !headSha(cwd) && unborn && (!explicitBase || base === unborn))
+    return unbornBranch(cwd, name, base, unborn, notes, releaseTrack, route);
   if (!baseRef || !baseSha)
     return failure(
       "not_found",
@@ -458,6 +464,40 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
     notes,
     releaseTrack,
     flow: route,
+  });
+}
+
+/** Points the unborn HEAD at `name`: the index and working tree stay as they are. */
+function unbornBranch(
+  cwd: string,
+  name: string,
+  base: string,
+  previous: string,
+  notes: string[],
+  releaseTrack: ResolvedReleaseTrack | null,
+  flow: FlowRoute | null,
+): ForgeResult<BranchOutcome> {
+  const pointed = git(cwd, ["symbolic-ref", "HEAD", `refs/heads/${name}`]);
+  if (!pointed.ok)
+    return failure(
+      "failed",
+      `git symbolic-ref HEAD refs/heads/${name} failed: ${gitError(pointed)}`,
+      `workit git branch ${name}  # retry; if it keeps failing, run git status and fix what it names`,
+    );
+  recordBranchBase(cwd, name, base);
+  return success({
+    branch: name,
+    previous,
+    base,
+    baseRef: `refs/heads/${base}`,
+    baseSha: "",
+    carried: dirtEntries(cwd).length > 0,
+    notes: [
+      ...notes,
+      `${previous} has no commit yet: ${name} starts unborn and its first commit is the repository's root`,
+    ],
+    releaseTrack,
+    flow,
   });
 }
 
@@ -858,7 +898,9 @@ export function gitCommit(
     return failure(
       "blocked",
       `protected_branch: ${branch} is protected by the workspace branch policy; workit never commits to it`,
-      "workit git branch <feature/name>  # then commit there",
+      headSha(cwd)
+        ? "workit git branch <feature/name>  # then commit there"
+        : `workit git branch --kind feature --slug <slug>  # ${branch} has no commit yet: the work branch takes the first one`,
     );
   const previous = input.amend ? headSha(cwd) : null;
   if (input.amend && !previous)

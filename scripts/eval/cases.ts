@@ -28,6 +28,8 @@ export type EvalCase = {
     remote?: boolean;
     /** Branch policy patterns Workit allows; `feature/*` when absent. */
     allowedBranches?: string[];
+    /** `main` has no commit yet: `files` and `dirty` stay uncommitted; `remote`, `branch`, `commits` and `worktree` are ignored. */
+    unborn?: boolean;
     /** Committed in order on the case's branch, after `files`. */
     commits?: { message: string; files: Record<string, string> }[];
   };

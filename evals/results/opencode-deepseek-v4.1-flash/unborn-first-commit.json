@@ -1,0 +1,23 @@
+{
+  "case": "unborn-first-commit",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.2.1+258deb4147",
+  "key": "7794f54b3612e428",
+  "date": "2026-11-11T12:09:12.345Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 7,
+    "durationMs": 12074,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 6,
+    "failures": []
+  }
+}

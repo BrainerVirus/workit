@@ -111,7 +111,7 @@ async function branch(argv: string[], io: Io): Promise<number> {
   });
   if (!result.ok) return forgeFail(io, result);
   return emit(io, ok(result.data), (data: BranchOutcome) => [
-    `switched to new branch ${data.branch} from ${data.baseRef} (${short(data.baseSha)})${data.carried ? ", carrying uncommitted changes" : ""}`,
+    `switched to new branch ${data.branch} ${data.baseSha ? `from ${data.baseRef} (${short(data.baseSha)})` : "with no commit yet"}${data.carried ? ", carrying uncommitted changes" : ""}`,
     ...(data.releaseTrack?.name
       ? [`release track: ${data.releaseTrack.name} (${data.releaseTrack.detail})`]
       : []),
