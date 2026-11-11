@@ -2,21 +2,30 @@
   "case": "youtrack-ask",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.5.0+4a621d9cfe",
-  "key": "8185fced96a664a2",
-  "date": "2026-11-11T16:38:02.480Z",
+  "workitVersion": "workit-dev-v1.5.0+227c2536ab",
+  "key": "9e533a7fb074c874",
+  "date": "2026-11-11T17:14:01.041Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 4,
-    "durationMs": 8090,
-    "costUsd": 0.00347027,
+    "durationMs": 8170,
+    "costUsd": 0.0033902900000000007,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": true,
+    "pass": false,
     "calls": 3,
-    "failures": []
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /^workit approve ap_[a-z2-7]{8}$/: the refusal says to run the plain approve call so the host asks the user"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#3 Bash(workit approve ap_owgiz2h3 2>&1) matches /workit approve ap_[^\\n]*(&&|\\|\\||;|\\||\\$\\(|`|>)|(&&|\\|\\||;|\\|)\\s*workit approve ap_|^\\s*\\S+=\\S*\\s+workit approve|workit --cwd \\S+ approve/: a chain, substitution, env prefix or --cwd around workit approve is denied: the host records nothing"
+      }
+    ]
   }
 }
