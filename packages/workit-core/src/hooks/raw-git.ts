@@ -1976,6 +1976,17 @@ const messageOf = (segment: Segment, index: number): string | null => {
   return match[3].replace(/\n+$/u, "");
 };
 
+/** Do two git dirs name one directory? win32 folds separators and drive-letter case. */
+export const sameGitDir = (
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean => {
+  if (platform !== "win32") return path.posix.resolve(a) === path.posix.resolve(b);
+  const fold = (value: string) => path.win32.resolve(value).toLowerCase();
+  return fold(a) === fold(b);
+};
+
 /**
  * `cd <worktree> && git add … && git commit -m …` from outside that linked
  * worktree: the `workit git --cwd <worktree> commit` call that makes the same
@@ -1988,7 +1999,12 @@ const messageOf = (segment: Segment, index: number): string | null => {
  */
 const cdCommitCall = (input: HookInput, command: string, target: string, repo: Repo) => {
   const { top, git, dir: store } = repo.location;
-  if (!top || !git || git.gitDir === path.dirname(store) || repoAt(input.cwd)?.location.top === top)
+  if (
+    !top ||
+    !git ||
+    sameGitDir(git.gitDir, path.dirname(store)) ||
+    repoAt(input.cwd)?.location.top === top
+  )
     return null;
   // Quoted text aside, the only operator is `&&`: no `;`, `||`, pipe, redirect or substitution.
   const bare = command.replaceAll(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "").replaceAll("&&", "");
