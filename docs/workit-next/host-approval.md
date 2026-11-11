@@ -147,22 +147,22 @@ and a fallback-only host test that asserts the deny names the request id and the
 - No hook or rule ever answers `allow` for `workit approve` or a user-only call, on any host.
 - Grants stay the delivery ceiling: an approval is one action, never a grant change by other means.
 
-## Open choices for the maintainer
+## Decisions (maintainer, 2026-11-11: all recommendations accepted)
 
 1. **Two steps or a one-call ticket on Claude Code?** `PreToolUse` could answer `ask` and add a
-   hook-minted ticket through `updatedInput`, so the consumer verb runs once. Recommended: two
+   hook-minted ticket through `updatedInput`, so the consumer verb runs once. Decided: two
    steps everywhere for CLI verbs (ruling mwc2mk56): Cursor cannot rewrite, Codex prompts only via
    prefix rules, and one record path is easier to keep honest.
-2. **Expiry.** Recommended: request 30 minutes, grant 15 minutes after the yes, both
+2. **Expiry.** Decided: request 30 minutes, grant 15 minutes after the yes, both
    configurable only in user config.
-3. **OpenCode `always`.** Recommended: recorded as once; Workit never stores a standing approval.
+3. **OpenCode `always`.** Decided: recorded as once; Workit never stores a standing approval.
 4. **Can a grant pre-approve a kind** (for example `first-push` in a personal workspace)?
-   Recommended: only where a grant already describes the effect (`releaseNotes: auto`, `merge`);
+   Decided: only where a grant already describes the effect (`releaseNotes: auto`, `merge`);
    never `config`, `secrets` or `discard-work`.
-5. **Rejection on yes/no hosts.** Recommended: no row; the request expires and the agent reports
+5. **Rejection on yes/no hosts.** Decided: no row; the request expires and the agent reports
    the denied call. Only OpenCode and Pi record `approval.rejected`.
-6. **Order of delivery.** Recommended: Claude Code, OpenCode and Pi first; Codex and Cursor stay
+6. **Order of delivery.** Decided: Claude Code, OpenCode and Pi first; Codex and Cursor stay
    fallback-only until the U probes above pass, recorded in
    [hosts.md](../agents/hosts.md#host-parity).
-7. **Cross-session grants.** Recommended: accepted when the hash matches (the user may approve in
+7. **Cross-session grants.** Decided: accepted when the hash matches (the user may approve in
    a terminal or another session), with both sessions in the ledger row.
