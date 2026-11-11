@@ -124,16 +124,15 @@ export const CHANGELOG_DRIVER_COMMAND =
 export const gitattributesPath = (root: string): string => path.join(root, ".gitattributes");
 
 /**
- * Merge the three files git hands a merge driver, writing the result over
- * `ours`. Returns the exit code git expects: 0 clean, 1 conflict markers left.
+ * Three-way merge of changelog text: the Unreleased bodies merge entry by entry
+ * and the rest goes through `git merge-file`. `clean` is false when conflict
+ * markers are left in `text`.
  */
-export const mergeChangelogFiles = (files: {
-  base: string;
-  ours: string;
-  theirs: string;
-}): { code: 0 | 1; error?: string } => {
-  const read = (file: string) => fs.readFileSync(file, "utf8");
-  const [base, ours, theirs] = [read(files.base), read(files.ours), read(files.theirs)];
+export const mergeChangelogText = (
+  base: string,
+  ours: string,
+  theirs: string,
+): { clean: boolean; text: string } | { error: string } => {
   const merged = withMergedUnreleased(base, ours, theirs) ?? { base, ours, theirs };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workit-changelog-merge-"));
   try {
@@ -159,12 +158,42 @@ export const mergeChangelogFiles = (files: {
       ],
       { timeoutMs: 30_000 },
     );
-    if (run.status === null || run.status > 127) return { code: 1, error: gitError(run) };
-    fs.writeFileSync(files.ours, fs.readFileSync(o));
-    return { code: run.status === 0 ? 0 : 1 };
+    if (run.status === null || run.status > 127) return { error: gitError(run) };
+    return { clean: run.status === 0, text: fs.readFileSync(o, "utf8") };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+};
+
+/**
+ * Merge the three files git hands a merge driver, writing the result over
+ * `ours`. Returns the exit code git expects: 0 clean, 1 conflict markers left.
+ */
+export const mergeChangelogFiles = (files: {
+  base: string;
+  ours: string;
+  theirs: string;
+}): { code: 0 | 1; error?: string } => {
+  const read = (file: string) => fs.readFileSync(file, "utf8");
+  const result = mergeChangelogText(read(files.base), read(files.ours), read(files.theirs));
+  if ("error" in result) return { code: 1, error: result.error };
+  fs.writeFileSync(files.ours, result.text, "utf8");
+  return { code: result.clean ? 0 : 1 };
+};
+
+/**
+ * Settle a conflicted changelog path during a rebase or merge without the
+ * driver installed: merge its index stages and stage the result. False (and
+ * nothing touched) when a stage is missing or the merge leaves markers.
+ */
+export const resolveChangelogConflict = (root: string, file: string): boolean => {
+  const stage = (n: number) => git(root, ["show", `:${n}:${file}`]);
+  const [base, ours, theirs] = [stage(1), stage(2), stage(3)];
+  if (!base.ok || !ours.ok || !theirs.ok) return false;
+  const result = mergeChangelogText(base.stdout, ours.stdout, theirs.stdout);
+  if ("error" in result || !result.clean) return false;
+  fs.writeFileSync(path.join(root, file), result.text, "utf8");
+  return git(root, ["add", "--", file]).ok;
 };
 
 /**
