@@ -7,7 +7,7 @@
 //     a shell command that names git, gh or glab, or one that may be heavy
 //     (the heavy-command gate's cheap pre-check) can be denied or nudged;
 //   - unless a standing-order revision this agent has not seen is pending,
-//     or the agent is a workit-implementer (worktree confinement).
+//     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
 import { readFileSync } from "node:fs";
@@ -113,8 +113,13 @@ const quietEvent = (): string | null => {
       return null;
     const tool = value.tool_name.toLowerCase();
     if (event === "PreToolUse" && WRITE_TOOLS.has(tool.replace(/[_-]/g, ""))) return null;
-    // An implementer's shell writes are confined to its Workit worktree (hooks/worktree-confine.ts).
-    if (event === "PreToolUse" && value.agent_type === "workit-implementer") return null;
+    // An implementer's shell writes are confined to its Workit worktree, a
+    // verifier's or reviewer's to its scratch dir (hooks/worktree-confine.ts).
+    if (
+      event === "PreToolUse" &&
+      /^workit-(?:implementer|verifier|reviewer)$/.test(String(value.agent_type ?? ""))
+    )
+      return null;
     const shell = SHELL_TOOLS.has(tool);
     const command = value.tool_input?.command;
     const text = Array.isArray(command) ? command.join(" ") : String(command ?? "");

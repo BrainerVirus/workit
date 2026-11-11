@@ -19,15 +19,33 @@
 // An agent the host isolated itself (a real linked worktree at Claude Code's
 // `<repo>/.claude/worktrees/agent-<id>`) is left to the host. Reads only the
 // filesystem; fails open on any error.
+//
+// A verifier or reviewer (a judge, #790) writes only in a scratch dir:
+// `.workit-scratch/` at the root of a git checkout. Every other write target,
+// in a repository or not, is denied naming the scratch dir, and so is an
+// unquoted heredoc whose body runs a command substitution.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../core/logger";
 import { appendHookObserved } from "../ledger";
 import type { HookDecision, HookInput } from "./protocol";
-import { inWorkitWorkspace, rawInvocations, skipWorkitGlobals, workitInvocations } from "./raw-git";
-import type { ShellDialect } from "./shell-words";
-import { OPAQUE_TARGET, shellMutationTargets, UNKNOWN_DIR, UNKNOWN_VAR } from "./write-gate";
+import {
+  commandLines,
+  inWorkitWorkspace,
+  rawInvocations,
+  skipWorkitGlobals,
+  workitCheckTail,
+  workitInvocations,
+} from "./raw-git";
+import { segmentsOf, type ShellDialect } from "./shell-words";
+import {
+  configWrites,
+  OPAQUE_TARGET,
+  shellMutationTargets,
+  UNKNOWN_DIR,
+  UNKNOWN_VAR,
+} from "./write-gate";
 
 /** Written by `workit fanout worktree create` into git's admin dir for the worktree. */
 export const FANOUT_TOKEN_FILE = "workit-fanout-token";
@@ -343,10 +361,6 @@ const MUTATING_REMOTE = new Set([
   "set-branches",
   "prune",
 ]);
-const CONFIG_READ = /^(?:--get(?:-all|-regexp|-urlmatch)?|--list|-l|get|list)$/;
-const CONFIG_WRITE =
-  /^(?:--(?:unset(?:-all)?|add|replace-all|rename-section|remove-section|edit)|-e|set|unset|rename-section|remove-section|edit)$/;
-const CONFIG_VALUE = /^(?:--file|-f|--blob|--type|--default|--comment)$/;
 
 /**
  * Whether git `args` (the subcommand first) change what the lead owns: the
@@ -394,15 +408,8 @@ const leadOwnedGit = (args: readonly string[]): boolean => {
       return names[0] === "drop" || names[0] === "clear";
     case "remote":
       return MUTATING_REMOTE.has(names[0] ?? "");
-    case "config": {
-      if (rest.some((arg) => CONFIG_READ.test(arg))) return false;
-      if (rest.some((arg) => CONFIG_WRITE.test(arg))) return true;
-      let operands = 0;
-      for (let index = 0; index < rest.length; index++)
-        if (CONFIG_VALUE.test(rest[index])) index++;
-        else if (!rest[index].startsWith("-")) operands++;
-      return operands > 1;
-    }
+    case "config":
+      return configWrites(rest);
     default:
       return false;
   }
@@ -453,4 +460,327 @@ export function confineImplementerShell(
     shellMutationTargets(input.cwd, command, dialect, true),
     command,
   );
+}
+
+// --- judges: verifiers and reviewers write only in a scratch dir (#790) ----
+
+/** A judge's scratch dir, at a checkout root (fanout-worktree.ts SCRATCH_DIR). */
+const SCRATCH = ".workit-scratch";
+const SHELL_NAMES = /^(?:sh|bash|zsh|dash|ksh|mksh|ash)$/;
+const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php)$/;
+/** A script operand that is standard input or a process substitution. */
+const FED = /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$|^<\(/;
+/** Words before the command they run (`env -i`, `sudo -u me`, `builtin`, `then`). */
+const LEADS =
+  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|timeout|stdbuf|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+=.*|[-\d].*)$/s;
+/** Commands a judge's refusal reads (a lead's option value is never one of them). */
+const RUNS =
+  /^(?:sh|bash|zsh|dash|ksh|mksh|ash|python[\d.]*|node|bun|deno|ruby|perl|php|eval|source|\.|workit)$/;
+/** Interpreter options that run an inline script, a module, or nothing (help, version, `--test`). */
+const INLINE = /^-[a-zA-Z]*[ceEpm]$|^--(?:eval|print|test|version|help)$|^-[hvV]$/;
+/** Interpreter options that take the next word. */
+const VALUED = /^-[WXIrC]$|^--(?:require|import|loader|conditions|input-type)$/;
+
+/** The git common dir of the checkout at `root`: what its linked worktrees share. */
+const commonDir = (root: string): string => {
+  const dotGit = path.join(root, ".git");
+  if (!fs.statSync(dotGit).isFile()) return canonical(dotGit);
+  const admin = path.resolve(
+    root,
+    /^gitdir:\s*(.+)$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim() ?? "",
+  );
+  const common = path.join(admin, "commondir");
+  return canonical(
+    fs.existsSync(common) ? path.resolve(admin, fs.readFileSync(common, "utf8").trim()) : admin,
+  );
+};
+
+/**
+ * Whether the real path `real` is in the scratch dir at the root of its
+ * checkout, and that checkout is one of repository `repo`'s (its common dir;
+ * null outside every repository: any).
+ */
+const inScratch = (real: string, repo: string | null): boolean => {
+  const checkout = checkoutOf(real);
+  return (
+    checkout !== null &&
+    within(real, path.join(checkout.root, SCRATCH)) &&
+    (repo === null || commonDir(checkout.root) === repo)
+  );
+};
+
+/** The workit verbs a judge runs, with their allowed subverbs (true: all); any other verb, a new one too, is denied. */
+const JUDGE_VERBS: Readonly<Record<string, true | readonly string[]>> = {
+  check: true,
+  dir: true,
+  help: true,
+  "test-audit": true,
+  ledger: ["verdict", "finding", "list", "check", "ruling"],
+  pr: ["status"],
+  ci: ["wait", "logs"],
+  fanout: ["status", "brief"],
+  models: ["show"],
+  lock: ["status"],
+};
+
+const HELP = /^(?:--help|-h)$/;
+
+/** The call when workit `args` are outside a judge's job, else null; help is only right after workit or the verb. */
+const judgeVerbRefused = (args: readonly string[]): string | null => {
+  const { rest } = skipWorkitGlobals(args);
+  const end = rest.indexOf("--");
+  const call = end < 0 ? rest : rest.slice(0, end);
+  const [verb, sub = ""] = call;
+  if (verb === undefined || verb === "--version" || HELP.test(verb) || HELP.test(sub)) return null;
+  const allowed = Object.hasOwn(JUDGE_VERBS, verb) ? JUDGE_VERBS[verb] : [];
+  const ok =
+    allowed === true
+      ? !(verb === "test-audit" && call.some((arg) => /^--mutate(?:=|$)/.test(arg)))
+      : allowed.includes(sub);
+  return ok ? null : `workit ${call.join(" ")}`;
+};
+
+/** Package runners and interpreters that can start the workit CLI. */
+const CLI_RUNNERS = /^(?:npx|bunx|pnpx|npm|pnpm|yarn|bun|node|nodejs|deno|tsx|ts-node)$/;
+/** The workit CLI: its bin, its package, or its entry file (packages/workit-cli, the installed package). */
+const CLI_ENTRY =
+  /(?:^|[=\\/])(?:workit(?:\.(?:exe|cmd|[cm]?js))?|@workit-dev\/cli(?:@\S*)?)$|(?:workit-cli|@workit-dev[\\/]cli)[\\/](?:src[\\/](?:index|main)|dist[\\/]index)\.[cm]?[jt]sx?$/;
+
+/**
+ * The arguments of each workit CLI call in `command`: past wrappers (`time`,
+ * `env`, `exec`), compound commands, `xargs`, `find -exec`, aliases (their
+ * bodies, and their uses expanded) and package runners or interpreters that
+ * start the CLI by package or path.
+ */
+const workitCalls = (
+  command: string,
+  depth = 0,
+  aliases = new Map<string, string>(),
+): string[][] =>
+  depth > 4
+    ? []
+    : commandLines(command).flatMap((words) => {
+        const name = path.basename(words[0] ?? "").toLowerCase();
+        if (name === "alias")
+          return words.flatMap((word) => {
+            const set = /^([\w-]+)=(.*)$/s.exec(word);
+            if (!set) return [];
+            aliases.set(set[1], set[2]);
+            return workitCalls(set[2], depth + 1, aliases);
+          });
+        const body = aliases.get(words[0] ?? "");
+        if (body !== undefined)
+          return workitCalls(
+            [body, ...words.slice(1).map((word) => `'${word.replaceAll("'", `'\\''`)}'`)].join(" "),
+            depth + 1,
+            aliases,
+          );
+        let at = /^workit(?:\.exe|\.cmd)?$/.test(name)
+          ? 0
+          : CLI_RUNNERS.test(name)
+            ? words.findIndex((word, index) => index > 0 && CLI_ENTRY.test(word))
+            : -1;
+        if (at < 0) return [];
+        while (words[at + 1] === "--" || CLI_ENTRY.test(words[at + 1] ?? "")) at++;
+        return [words.slice(at + 1)];
+      });
+
+const JUDGE_JOB = Object.entries(JUDGE_VERBS)
+  .map(([verb, subs]) => `workit ${verb}${subs === true ? "" : ` ${subs.join("|")}`}`)
+  .join(", ");
+
+/**
+ * Why a judge may not run `command` (#790), or null: a shell or interpreter
+ * reading a script Workit cannot see (piped, on stdin, a process
+ * substitution), `eval`, or a workit verb outside its job; in `$(…)`, `-c`
+ * scripts and `workit check --` too. A shell fed a heredoc with no directory
+ * change before it is read instead: its script goes to `fed`.
+ */
+const judgeRefusal = (command: string, fed: string[], depth = 0): string | null => {
+  let moved = false;
+  for (const segment of segmentsOf(command)) {
+    const nested = (script: string | undefined) =>
+      script !== undefined && depth < 4 ? judgeRefusal(script, fed, depth + 1) : null;
+    for (const sub of segment.subs ?? []) {
+      const why = nested(sub);
+      if (why) return why;
+    }
+    const { words } = segment;
+    const runs = (word = "") => RUNS.test(path.basename(word).toLowerCase());
+    let at = 0;
+    while (
+      at < words.length &&
+      (LEADS.test(words[at]) || (/^-\w$/.test(words[at - 1] ?? "") && !runs(words[at])))
+    )
+      at++;
+    const name = path.basename(words[at] ?? "").toLowerCase();
+    const args = words.slice(at + 1);
+    const unseen = `\`${words.join(" ").slice(0, 80)}\` runs a script Workit cannot read (piped, on stdin, a process substitution or eval): write the case to a file in ${SCRATCH} and dispatch it from a test instead`;
+    if (/^(?:cd|chdir|pushd|popd)$/.test(name)) moved = true;
+    if (name === "eval" || ((name === "source" || name === ".") && FED.test(args[0] ?? "")))
+      return unseen;
+    if (SHELL_NAMES.test(name)) {
+      let operand: string | undefined;
+      let stdin = false;
+      let inline: number | undefined;
+      for (let index = 0; index < args.length && inline === undefined; index++) {
+        const arg = args[index];
+        if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(arg)) inline = index + 1;
+        else if (/^[-+][oO]$/.test(arg)) index++;
+        else if (arg === "--" || !/^[-+]/.test(arg)) {
+          operand = arg === "--" ? args[index + 1] : arg;
+          break;
+        } else if (/^-[a-zA-Z]*s/.test(arg)) stdin = true;
+      }
+      if (inline !== undefined) {
+        const why = nested(args[inline]);
+        if (why) return why;
+      } else if (operand === undefined || stdin || FED.test(operand)) {
+        if (!segment.stdin?.length || moved || (operand !== undefined && !stdin)) return unseen;
+        fed.push(...segment.stdin);
+        for (const body of segment.stdin) {
+          const why = nested(body);
+          if (why) return why;
+        }
+      }
+    }
+    if (INTERPRETERS.test(name) && !args.some((arg) => INLINE.test(arg))) {
+      const operand = args.find(
+        (arg, index) =>
+          (arg === "-" || !arg.startsWith("-")) && !VALUED.test(args[index - 1] ?? ""),
+      );
+      if (FED.test(operand ?? "") || (operand === undefined && !/^(?:bun|deno)$/.test(name)))
+        return unseen;
+    }
+    const tail = workitCheckTail(words.slice(at));
+    if (tail) {
+      const why = nested(
+        "script" in tail
+          ? tail.script
+          : tail.argv.map((word) => `'${word.replaceAll("'", `'\\''`)}'`).join(" "),
+      );
+      if (why) return why;
+    }
+  }
+  for (const args of workitCalls(command)) {
+    const call = judgeVerbRefused(args);
+    if (call) return `\`${call}\` is not a judge's job: a judge runs only ${JUDGE_JOB}`;
+  }
+  return null;
+};
+
+/**
+ * An unquoted heredoc whose body holds `$(…)` or a backtick: the shell runs
+ * that command while it writes the file, whatever the file is (#790).
+ */
+const substitutingHeredoc = (command: string): boolean => {
+  for (const match of command.matchAll(/(?<!<)<<-?[ \t]*([^\s<>;&|()]+)/g)) {
+    const delimiter = match[1];
+    if (/['"\\]/.test(delimiter)) continue;
+    const newline = command.indexOf("\n", match.index + match[0].length);
+    if (newline < 0) continue;
+    const lines = command.slice(newline + 1).split("\n");
+    const end = lines.findIndex((line) => line.trim() === delimiter);
+    // `$((…))` is arithmetic, not a command (a `$(` inside it still is).
+    if (/\$\((?!\()|`/.test((end < 0 ? lines : lines.slice(0, end)).join("\n"))) return true;
+  }
+  return false;
+};
+
+const judgeDeny = (input: HookInput, what: string): HookDecision => {
+  const role = input.session.agentType?.endsWith("reviewer") ? "reviewer" : "verifier";
+  const root = checkoutOf(input.cwd)?.root;
+  const scratch = root
+    ? path.join(root, SCRATCH)
+    : `${SCRATCH}/ at the root of the checkout you judge`;
+  const unblock = `Write only under ${scratch} (mkdir -p it): put a generated case in a file there with a quoted heredoc (<<'EOF') and never run it in the shell. Reads, \`workit check\` and \`workit ledger verdict|finding\` stay allowed; a change the candidate needs is a finding, not an edit.`;
+  return {
+    kind: "deny",
+    reason: `workit scratch confinement: ${role} ${input.session.agentId} may write only in its scratch dir ${scratch}, and ${what}. ${unblock}`,
+    unblock,
+  };
+};
+
+/**
+ * Judge a verifier's or reviewer's edit or command by the absolute paths it
+ * changes: each must be in the scratch dir of a checkout of the judged
+ * repository (the hook cwd's). A path built from a variable or a directory
+ * change Workit cannot resolve is denied too.
+ */
+export function confineJudge(input: HookInput, targets: readonly string[]): HookDecision {
+  try {
+    if (!input.session.agentId) return NONE;
+    const judged = checkoutOf(input.cwd);
+    const repo = judged ? commonDir(judged.root) : null;
+    for (const target of targets) {
+      const resolved = path.resolve(target);
+      if (within(resolved, UNKNOWN_VAR) || within(resolved, UNKNOWN_DIR))
+        return judgeDeny(
+          input,
+          "it writes to a path Workit cannot resolve (a variable, a command substitution or `cd -`): spell the path out",
+        );
+      if (inScratch(canonical(target), repo)) continue;
+      const runner = runnerAt(target);
+      return judgeDeny(
+        input,
+        runner === null
+          ? `${shown(target)} is outside it`
+          : `\`${runner}\` runs in ${shown(target)}, outside it`,
+      );
+    }
+    return NONE;
+  } catch {
+    return NONE;
+  }
+}
+
+/**
+ * Judge a verifier's or reviewer's shell command: a script it cannot read or
+ * a workit verb outside its job (`judgeRefusal`), an unquoted heredoc that
+ * runs a command substitution, then every path it may change (the strict
+ * analysis, a heredoc a shell reads, git's ref, config and worktree writes).
+ */
+export function confineJudgeShell(
+  input: HookInput,
+  command: string,
+  dialect: ShellDialect = "posix",
+): HookDecision {
+  try {
+    if (!input.session.agentId) return NONE;
+    const fed: string[] = [];
+    let refused: string | null;
+    try {
+      refused = dialect === "posix" ? judgeRefusal(command, fed) : null;
+    } catch {
+      refused = "Workit cannot read this command: split it into simpler ones";
+    }
+    if (refused) return judgeDeny(input, refused);
+    if (dialect === "posix" && substitutingHeredoc(command))
+      return judgeDeny(
+        input,
+        "an unquoted heredoc runs the `$(…)` or backtick command in its body: quote the delimiter (<<'EOF')",
+      );
+    let git: string[] = [];
+    try {
+      git = rawInvocations(command, dialect).flatMap(({ tool, dir, args }) =>
+        tool === "git" && (args[0] === "push" || leadOwnedGit(args))
+          ? [
+              path.join(
+                dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? "."),
+                `${OPAQUE_TARGET}git`,
+              ),
+            ]
+          : [],
+      );
+    } catch {
+      // The strict analysis below still judges the command.
+    }
+    return confineJudge(input, [
+      ...shellMutationTargets(input.cwd, command, dialect, true),
+      ...fed.flatMap((body) => shellMutationTargets(input.cwd, body, "posix", true)),
+      ...git,
+    ]);
+  } catch {
+    return NONE;
+  }
 }

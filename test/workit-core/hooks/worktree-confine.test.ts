@@ -201,10 +201,9 @@ test("Given an implementer bound to W, When it runs git and shell writes, Then r
   }
 });
 
-test("Given the lead, a judge, or an implementer Claude Code isolated itself, When they edit the lead's checkout, Then confinement does not apply", () => {
+test("Given the lead, an unknown agent type, or an implementer Claude Code isolated itself, When they edit the lead's checkout, Then worktree confinement does not apply (a judge's scratch confinement: verifier-confine.test.ts)", () => {
   const file = path.join(lead, "src", "core.ts");
   expect(write(file, { type: null })?.permissionDecision).toBeUndefined();
-  expect(write(file, { id: "rev-1", type: "workit:reviewer" })?.permissionDecision).toBeUndefined();
   expect(write(file, { id: "x-1", type: "implementer" })?.permissionDecision).toBeUndefined();
   const isolated = path.join(lead, ".claude", "worktrees", "agent-iso-1");
   git(lead, "worktree", "add", "-q", "--detach", isolated);

@@ -1035,6 +1035,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - A helper closes the finding it recorded with its own evidence in one call; a refused resolve, wrong payload keys and an out-of-scope worker assignment now name the fix (#317, #647)
 - A lease waiter ignores the watch event for its own queue ticket, so a late macOS file event no longer pushes a timed-out wait 50 ms past its limit
 - Implementer confinement follows `$PWD` after a literal `cd` and `for` lists built from resolved words; plain `curl` and `docker exec` are not writes; a denial names the command Workit cannot see into or the command substitution, with a retry (#772)
+- A verifier or reviewer subagent writes only in `.workit-scratch/` at a checkout root; writes elsewhere, and unquoted heredocs that run `$(…)`, are denied naming the scratch dir (#790)
 
 ### Removed
 
