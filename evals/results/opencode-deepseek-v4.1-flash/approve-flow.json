@@ -1,0 +1,23 @@
+{
+  "case": "approve-flow",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.4.1+49ab5b1f90",
+  "key": "fac6197256a10e79",
+  "date": "2026-11-11T14:30:36.913Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 73218,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 4,
+    "failures": []
+  }
+}

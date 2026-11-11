@@ -951,7 +951,7 @@ test("G OpenCode and Pi shell calls around a raw commit, T recorded for the sess
       sessionManager: { getSessionId: () => "pi-1" },
     };
     const input = { command: "git commit -m 'feat: e'" };
-    enforceToolPolicy({ toolName: "bash", toolCallId: "t1", input } as never, ctx as never);
+    void enforceToolPolicy({ toolName: "bash", toolCallId: "t1", input } as never, ctx as never);
     const sha2 = commitFile(root, "e.txt");
     const result = observeToolResult(
       {

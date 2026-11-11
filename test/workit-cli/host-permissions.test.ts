@@ -94,6 +94,7 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
     "Bash(workit grant set*)",
     "Bash(workit grant raise*)",
     "Bash(workit ledger void*)",
+    "Bash(workit approve*)",
   ]);
   expect(value.autoMode.environment.slice(0, 2)).toEqual([
     "$defaults",
@@ -218,6 +219,7 @@ test("Given a Codex home, When setup and uninstall run, Then Workit's rules file
     "workit grant set",
     "workit grant raise",
     "workit ledger void",
+    "workit approve",
   ]);
   applyUninstall(planUninstall({ home, env }), { home, env });
   expect(existsSync(file)).toBe(false);
@@ -553,6 +555,9 @@ test("Given Codex and Cursor, When rules are written, Then Codex prompts and Cur
     'pattern = ["workit","grant","raise"],\n    decision = "prompt"',
   );
   expect(CURSOR_DENY).toContain("Shell(workit release notes approve)");
+  // Host-approval channel: Codex and Cursor are fallback-only until probed (hosts.md).
+  expect(codexRulesText()).toContain('pattern = ["workit","approve"],\n    decision = "prompt"');
+  expect(CURSOR_DENY).toContain("Shell(workit approve)");
 });
 
 // A command that only mentions a user-only call or a bypass flag in its text
@@ -563,6 +568,7 @@ const MENTIONS = [
   'workit ledger verdict verified --how "mentions release notes approve and ledger void"',
   `workit changelog apply --entries '{"Fixed":["pr merge --unverified"]}'`,
   'workit pr create --body "never use git push --overwrite-unintegrated or grant set here"',
+  'workit ledger decision "ran workit approve ap_aaaaaaaa" --why x',
 ];
 
 test("Given a command that only mentions a user-only call or bypass flag, Then no Claude Code ask rule matches it", () => {
@@ -577,6 +583,7 @@ test("Given a real user-only call or bypass flag, Then a Claude Code ask rule ma
   for (const command of [
     "workit release notes approve 1.0.0",
     "workit ledger void mwbe83fk --reason x",
+    "workit approve ap_aaaaaaaa ap_bbbbbbbb",
     "workit grant set ws merge=true",
     "workit pr merge --unverified --reason x",
     "workit stack land --unverified --reason x",

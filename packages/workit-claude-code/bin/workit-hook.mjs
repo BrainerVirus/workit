@@ -166,6 +166,10 @@ const WORKIT_DELIVERY =
 // The runtime moves the verb first (`cd <dir> && workit …`, `workit --cwd
 // <dir> <verb>`) so Workit's enumerated allow rules match (hooks/cwd-normalize.ts).
 const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*--cwd[\s=])/;
+// `workit approve` (the host-approval channel, workit-core approvals/call.ts)
+// goes to the runtime on both events: PreToolUse asks with the rendered
+// request or denies a wrapped call, PostToolUse records the grant.
+const WORKIT_APPROVE = /\bworkit(?:-cli)?\b[\s\S]*\bapprove\b/;
 // A Workit call that may carry a bypass flag, however quoted, goes to the
 // runtime, which asks the user (hooks/delivery-verbs.ts workitBypassFlag).
 const mayBypass = (command) =>
@@ -438,7 +442,9 @@ const fastAllow = (() => {
     )
       return false;
     if (value?.hook_event_name === "PostToolUse")
-      return typeof command === "string" && !/\bcommit\b/.test(command);
+      return (
+        typeof command === "string" && !/\bcommit\b/.test(command) && !WORKIT_APPROVE.test(command)
+      );
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (budgetDue) return false;
     if (mentionsIssued(JSON.stringify(value.tool_input ?? {}))) return false;
@@ -448,7 +454,12 @@ const fastAllow = (() => {
     // (hooks/worktree-confine.ts).
     const confined = /^workit:(?:implementer|verifier|reviewer)$/.test(value.agent_type ?? "");
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
-      if (WORKIT_DELIVERY.test(command) || WORKIT_REORDER.test(command) || mayBypass(command))
+      if (
+        WORKIT_DELIVERY.test(command) ||
+        WORKIT_REORDER.test(command) ||
+        WORKIT_APPROVE.test(command) ||
+        mayBypass(command)
+      )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
       if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;

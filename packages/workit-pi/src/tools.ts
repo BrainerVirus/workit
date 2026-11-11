@@ -27,6 +27,14 @@ import {
   type HookInput,
 } from "@workit-dev/core/hooks";
 import { roleSteering } from "@workit-dev/core/src/hooks/steering";
+import { approveCallDeny, approveCallIn } from "@workit-dev/core/src/approvals/call";
+import {
+  liveApprovalRequest,
+  recordApprovalAsked,
+  recordApprovalGrant,
+  recordApprovalRejected,
+  renderApprovalRequest,
+} from "@workit-dev/core/src/approvals/store";
 import {
   escalateToolFailure,
   repeatedCliFailure,
@@ -154,10 +162,94 @@ const hookInput = (ctx: ExtensionContext, event: HookEvent): HookInput => ({
   event,
 });
 
+type Blocked = { block: true; reason: string };
+
+const APPROVE = "Approve once";
+const REJECT = "Reject";
+const EDIT = "Edit";
+
+/**
+ * `workit approve <id>…` in Pi's TUI (host-approval spec): the dialog shows
+ * each request as Workit stored it, the answer is recorded here, in the
+ * host's runtime, and the shell call is blocked with a result naming it.
+ * Print mode has no dialog and RPC sends it to a client that may be a
+ * program, so both fall through to the shared gate (the user runs it in a
+ * terminal). Never throws: a failure records nothing.
+ */
+const approveInDialog = async (
+  ids: readonly string[],
+  event: ToolCallEvent,
+  ctx: ExtensionContext,
+): Promise<Blocked> => {
+  try {
+    const session = hookInput(ctx, { kind: "context.turn" }).session.id || null;
+    const found = ids.map((id) => liveApprovalRequest(id));
+    const shown = found.map((item) =>
+      item.ok ? renderApprovalRequest(item.request) : item.reason,
+    );
+    const live = found.flatMap((item) => (item.ok ? [item.request.id] : []));
+    if (live.length === 0)
+      return { block: true, reason: `Nothing to approve: ${shown.join("; ")}` };
+    const choice = await ctx.ui.select(`Workit asks you to approve:\n${shown.join("\n")}`, [
+      APPROVE,
+      REJECT,
+      EDIT,
+    ]);
+    if (choice === APPROVE) {
+      const toolUseId = event.toolCallId ?? `pi-${Date.now()}`;
+      recordApprovalAsked({
+        toolUseId,
+        session: session ?? "",
+        host: "pi",
+        ids: live,
+      });
+      const recorded = live.filter(
+        (id) =>
+          recordApprovalGrant({
+            id,
+            host: "pi",
+            session: session ?? "",
+            toolUseId,
+            via: "host",
+          }).ok,
+      );
+      return {
+        block: true,
+        reason: `The user approved ${recorded.join(" ")} in Pi's dialog: recorded, one use each, for 15 minutes. Run the refused verb again; do not run workit approve again.`,
+      };
+    }
+    if (choice === REJECT || choice === EDIT) {
+      for (const id of live)
+        recordApprovalRejected({
+          id,
+          host: "pi",
+          session,
+          edit: choice === EDIT,
+        });
+      return {
+        block: true,
+        reason:
+          choice === EDIT
+            ? `The user chose Edit for ${live.join(" ")}: change what the request names, then run the verb again; it writes a new request.`
+            : `The user rejected ${live.join(" ")}. Do not retry it; report that the action was not approved.`,
+      };
+    }
+    return {
+      block: true,
+      reason: `The user dismissed the approval dialog for ${live.join(" ")}: nothing was recorded.`,
+    };
+  } catch (error) {
+    return {
+      block: true,
+      reason: `Workit could not record the approval: ${String(error)}`,
+    };
+  }
+};
+
 export const enforceToolPolicy = (
   event: ToolCallEvent,
   ctx: ExtensionContext,
-): { block: true; reason: string } | undefined => {
+): Blocked | Promise<Blocked> | undefined => {
   // The shared hook handler: branch policy, raw git/forge gate bypasses and
   // the before-write gate (S17). Pi's tool_call can only block, so a raw-git
   // nudge is added to the tool result instead (observeToolResult).
@@ -174,8 +266,16 @@ export const enforceToolPolicy = (
   };
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
+    const approve = typeof command === "string" ? approveCallIn(command) : null;
+    if (approve && !approve.plain) return { block: true, reason: approveCallDeny(approve.fix) };
+    if (approve?.plain && ctx.mode === "tui" && ctx.hasUI)
+      return approveInDialog(approve.ids, event, ctx);
     return typeof command === "string"
-      ? gate({ kind: "shell.pre", command, toolUseId: event.toolCallId ?? null })
+      ? gate({
+          kind: "shell.pre",
+          command,
+          toolUseId: event.toolCallId ?? null,
+        })
       : undefined;
   }
   if (event.toolName === "read") {
@@ -240,7 +340,9 @@ export const observeToolResult = (
       (text): text is string => text !== null,
     );
     return extra.length > 0
-      ? { content: [...event.content, { type: "text", text: extra.join("\n\n") }] }
+      ? {
+          content: [...event.content, { type: "text", text: extra.join("\n\n") }],
+        }
       : undefined;
   } catch {
     return undefined;

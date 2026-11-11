@@ -1,0 +1,21 @@
+{
+  "case": "approve-flow",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v1.4.1+c5540ff90f",
+  "key": "f68d4cf6e561158c",
+  "date": "2026-11-11T14:26:59.271Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 7937,
+    "costUsd": 0.00272666,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 1,
+    "failures": []
+  }
+}

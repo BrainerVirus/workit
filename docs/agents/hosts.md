@@ -238,7 +238,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | Raw delivery grant deny (#589: raw `git push`, tag push, `gh\|glab` PR/MR create/edit, release, merge against the target's grant; `hooks/raw-git.ts` `grantRefusal`) | N `PreToolUse` | N permission `evaluate` | N `PreToolUse` | N `beforeShellExecution` (deny) | N `tool_call` |
 | Before-write gate | N `Edit`/`Write`/`MultiEdit`/`NotebookEdit` and shell writes | N permission `evaluate` | N `PreToolUse` on `apply_patch` (files from the patch) and shell writes | P `preToolUse` (a write with no readable path is gated as code) | N `tool_call` |
 | Live-session guard (#274) | N `PreToolUse` (edits and shell); owner pid = the hook's parent process | N permission `evaluate` (edits and shell); owner pid = the server process, which runs every child session | N `PreToolUse` (`apply_patch` and shell); X: a per-command `workdir`, if the payload carries one, is not read | P `preToolUse` + `beforeShellExecution`; L: a subagent's tool events carry no parent conversation, so it is matched by the Cursor process | N `tool_call` (edits and bash); a worker's `WORKIT_SESSION_ID` names its lead |
-| Issued-registry guard (#292): agent writes under `<state>/issued*` | N `PreToolUse` on edit tools and shell writes (also under `workit check -- bash -c`) | N permission `evaluate` (edits and shell) | N `PreToolUse` on `apply_patch` and shell; L: `write_stdin` and specialized shell paths are not interceptable | P `preToolUse` + `beforeShellExecution`; a write with no readable path is not matched | N `tool_call` (edits and bash) | 
+| Issued-registry guard (#292): agent writes under `<state>/issued*` and `<state>/approvals/` (host-approval requests and grants) | N `PreToolUse` on edit tools and shell writes (also under `workit check -- bash -c`) | N permission `evaluate` (edits and shell) | N `PreToolUse` on `apply_patch` and shell; L: `write_stdin` and specialized shell paths are not interceptable | P `preToolUse` + `beforeShellExecution`; a write with no readable path is not matched | N `tool_call` (edits and bash) | 
 | Heavy-command gate (#325, ruling mvid5onk) | N `PreToolUse` after every Workit gate: one simple heavy command (output shaping is not a chain: any redirects and one trailing `\| tail\|head\|grep …` filter stay outside the wrapped command, `workit check --heavy -- bun test 2>&1 \| tail -50`) gets `updatedInput` `workit check --heavy -- <cmd>` (the CLI caps the lease wait at 100 s in a Claude Code shell) with no `permissionDecision` (claude 2.1.306 applies it, then its own permission flow); a real chain (`&&`, `;`, several heavy parts) is denied with the split, which names the first heavy segment to run; a command a deny/ask rule names, or one only a `workit` allow would cover (not under `bypassPermissions`), runs as typed, with no note (#429). Rules read: managed-settings.json, `$CLAUDE_CONFIG_DIR`/`~/.claude/settings.json`, project `.claude/settings.json` and `settings.local.json`. L: `--settings`, `--allowedTools`/`--disallowedTools`, SDK `canUseTool` and server-managed policy are unreadable | N `execute.before` runs the permission hook's gates on the original, then rewrites one simple heavy command to `workit check --heavy -- <cmd>` (before the shell-session correlation notes it); `permission.evaluate` denies an allowed chain with heavy parts (ask and deny stand). Rules read: global, project and `.opencode/` `opencode.json(c)` up to the git top, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`: `permission.bash`/`shell` and every `agent.*.permission` | X: `PreToolUse` supports `updatedInput` rewrites (learn.chatgpt.com/docs/hooks), unused here; it denies one heavy command (shaped as above) with the exact `workit check --heavy -- <cmd>` and a chain with the split. Rules read: `~/.codex/rules/*.rules` and project `.codex/rules/*.rules` (`prefix_rule`); a rule it cannot parse means pass through. `workit setup` allows `workit check <test|lint|typecheck|build|format|docs>` and `workit lock status|wait` here, on Cursor and in Claude Code (never `check --`) | L: `beforeShellExecution` answers only allow/deny/ask: denies with the exact rewrite or the split. Rules read: `~/.cursor/cli-config.json` and project `.cursor/cli.json` `Shell(x)`. L: the IDE allowlist/denylist is unreadable | N `tool_call` after the gates: mutates `event.input.command` for one simple heavy command, blocks a chain with the split (Pi has no permission rules to read) |
 | Hook deadline under load (#309); each host's deadline sits below its own timeout (`HOST_DEADLINES`; `WORKIT_HOOK_DEADLINE_MS` overrides all) | N: `hooks.json` timeouts 15 s (prompt, tool, subagent) and 20 s (`SessionStart`, `Stop`); deadline 8 s, 16 s for `SessionStart` and `Stop`; past it the hook answers `additionalContext` naming the skip | L: in-process plugin, no host timeout to beat (the server awaits the hook); no deadline applied | N: `Stop` `timeout: 20`, deadline 16 s; unset hooks keep Codex's default timeout (600 s per the Codex hooks docs, not read from the binary), deadline 45 s | N: no `timeout` set, so Cursor's 60 s default holds (`DEFAULT_HOOK_TIMEOUT_SECONDS`, cursor-agent 2026.09.26); deadline 45 s on every event, `subagentStart` included (`agent_message` on `beforeShellExecution`) | L: in-process extension, no host timeout; no deadline applied |
 | `cd <dir> && workit …` normalised to `workit <verb> --cwd <dir> …` (#388, #297, `hooks/cwd-normalize.ts`) | N `PreToolUse` `updatedInput`, no `permissionDecision`, so `Bash(workit <verb> *)` matches; the verb goes first for an allowed verb (else `workit --cwd <dir> …`), and a plain `workit [--json] --cwd <literal dir> <allowed verb> …` is reordered the same way (`--session` before the verb is left alone); only `cd <literal dir> && workit … [2>&1] [\| tail\|head\|grep …]`, anything else (`cd $VAR`, `cd -`, `;`, `\|\|`, another segment) runs as typed; a heavy-gate rewrite wins (a workit command is never heavy itself) | N: the shell hook already strips the `cd` | X: `PreToolUse` supports `updatedInput` (learn.chatgpt.com/docs/hooks), unused here: nothing is denied or rewritten, the contract text (`workit <verb> --cwd <dir>`) carries it | L: `beforeShellExecution` cannot rewrite: contract text only | N: no permission layer, nothing to normalise |
@@ -363,31 +363,48 @@ Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
 - **Older leases** (no `pgidStart`) keep the earlier rule: their group holds
   them only within the age bound.
 
-Host-approval channel limits (proposed, not shipped:
-[host-approval.md](../workit-next/host-approval.md); #419, #649, #768, #774).
-Every host keeps the terminal fallback: the spec's proposed approve verb, run
-by the user at a real TTY (L, D18: a pseudo-terminal passes it). The
-issued-registry guard does not cover `<state>/approvals/` yet; the first PR
-extends it.
+Host-approval channel limits ([host-approval.md](../workit-next/host-approval.md);
+#419, #649, #768, #774). The first PR ships the registry, `workit approve`, the
+Claude Code and Pi recording and the consume API (`approvals/store.ts`); no
+consumer verb uses it yet. Every host keeps the terminal fallback: the user runs
+`workit approve <id>…` at a real TTY (L, D18: a pseudo-terminal passes it). The
+issued-registry guard covers `<state>/approvals/` too ([Host parity](#host-parity)).
+A host acts only on one plain `workit approve <id>…` call (`approvals/call.ts`):
+a chain, substitution, leading `cd`, env prefix, redirect or `--cwd` is denied
+with the plain form (Claude Code, Pi; Codex, Cursor and OpenCode deny or ask on
+the user-only call as before).
 
-- **Claude Code:** a grant proves the call ran after an ask, not that a person
-  answered, and no hook sees a reject (L). U: whether auto mode,
-  `bypassPermissions`, an SDK `canUseTool` callback or
-  `--permission-prompt-tool` answer an ask without a person; until probed,
-  those modes record nothing.
-- **OpenCode:** U: `permission.asked`/`permission.replied` are in the
-  installed types but unused by Workit, `question` has no reply event there,
-  and a `subagent` spawn may not pass `permission.evaluate`; fallback-only
-  until probed.
-- **Codex:** the hook can deny but not ask; prompts come only from prefix
-  rules, so inline asks deny and name the request id (L). U: the
-  `permission_mode` values under `approval_policy = never` and how a "don't
-  ask again" answer caches; fallback-only until probed.
-- **Cursor:** `afterShellExecution` is offered but not registered (X). U:
-  whether auto-run skips an `ask`; fallback-only until probed.
-- **Pi:** records only in the TUI. Print mode has no dialog (`hasUI` false);
-  in RPC mode the dialog goes to the RPC client, which may be a program, so
-  RPC is fallback-only (L).
+- **Claude Code:** N. `PreToolUse` asks with the request rendered from the
+  store and writes `asked` (one hash per id) in `default`, `acceptEdits` and
+  `plan` only; `PostToolUse` of the same `tool_use_id` writes one grant per id
+  from argv. Claude Code fires `PostToolUse` only for a call that succeeded
+  (a failure is `PostToolUseFailure`, not registered); a sent non-zero
+  `exit_code` records nothing. The adapter's parse sets the approve step and
+  its render applies it (`dispatchHook` runs both in one synchronous call);
+  the launcher's fast path sends every `workit approve` call to the runtime on
+  both events (`bin/workit-hook.mjs` `WORKIT_APPROVE`). Setup adds the `ask` rule `Bash(workit approve*)`. L: a grant proves the call
+  ran after an ask, not that a person answered, and no hook sees a reject. U:
+  whether auto mode, `bypassPermissions`, `dontAsk`, an SDK `canUseTool`
+  callback or `--permission-prompt-tool` answer an ask without a person; until
+  probed they record nothing (an `sdk-*` `CLAUDE_CODE_ENTRYPOINT`, which
+  `claude -p` and the SDKs set, records nothing either).
+- **OpenCode:** fallback-only. The user-only call is asked as before; the CLI
+  records nothing in its shell. U: `permission.asked`/`permission.replied` are
+  in the installed types but unused by Workit, `question` has no reply event
+  there, and a `subagent` spawn may not pass `permission.evaluate`.
+- **Codex:** fallback-only. The rules file prompts on `workit approve` and the
+  `PreToolUse` hook denies it as a user-only call. L: the hook can deny but not
+  ask; prompts come only from prefix rules. U: the `permission_mode` values
+  under `approval_policy = never` and how a "don't ask again" answer caches.
+- **Cursor:** fallback-only. `Shell(workit approve)` is a `permissions.deny`
+  entry and `beforeShellExecution` denies it. `afterShellExecution` is offered
+  but not registered (X). U: whether auto-run skips an `ask`.
+- **Pi:** N in the TUI: the `tool_call` hook shows `ctx.ui.select` (Approve once
+  / Reject / Edit) with the stored request, writes the grant (or the rejection;
+  Edit closes the request) and blocks the shell call with a result naming the
+  answer; a dismissed dialog records nothing. Print mode has no dialog
+  (`hasUI` false); in RPC mode the dialog goes to the RPC client, which may be
+  a program, so RPC is fallback-only (L): the shared gate denies the call.
 
 ## Design background
 

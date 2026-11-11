@@ -340,7 +340,7 @@ test("hosts that load skills as files: a SKILL.md read is the load (Codex shell,
       sessionManager: { getSessionId: () => "pi-1" },
       isProjectTrusted: () => true,
     } as never;
-    enforceToolPolicy(
+    void enforceToolPolicy(
       { toolName: "read", input: { path: "/x/skills/workit-review/SKILL.md" } } as never,
       ctx,
     );
