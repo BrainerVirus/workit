@@ -507,6 +507,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit git rebase [--onto <base>]` updates the current branch onto its freshly fetched base, aborts cleanly on a conflict and names the paths, records the rewrite and prints the `workit git push --force-with-lease` next step; the ship skill uses it instead of a raw rebase.
 - The local weak-model bench runs its cases on OpenCode (`--host opencode`, DeepSeek 4.1 Flash on the free provider, then go when the free limit hits), records the provider per case, and records a case skipped (limit) when both are limited (#488)
 - `workit git hold --why "<words>"` records a user's "not yet" on a branch: the Stop hook stops asking to push or open a PR until the next push, which clears the hold (or `workit git hold --clear`).
+- In a repo with no commit yet, `workit git branch` starts the first work branch and `workit git commit` makes the first commit there; a commit refused on the protected unborn branch names `workit git branch --kind feature --slug <slug>`.
 
 ### Changed
 
