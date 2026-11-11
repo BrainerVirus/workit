@@ -9,7 +9,7 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
-import { cwdRewrite, verbFirst } from "./cwd-normalize";
+import { cdWorkitSplit, cwdRewrite, verbFirst } from "./cwd-normalize";
 import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
@@ -226,6 +226,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const canDeny = usable(descriptor.shellPolicy.deny);
       const policy = canDeny ? shellPolicy(input.cwd, event.command, event.dialect) : NONE;
       if (policy.kind !== "none") return policy;
+      // `cd <dir> && workit … || git …` (#793): no single --cwd rewrite, so name it.
+      const split = canDeny ? cdWorkitSplit(event.command) : null;
+      if (split)
+        return {
+          kind: "deny",
+          reason: `Run one workit verb per call, with no raw-git fallback: \`${split}\`. If it fails, fix what its error names; do not retry with raw git.`,
+          unblock: null,
+        };
       // Without a post-tool event, the previous raw commit is recorded now.
       const postTool = usable(descriptor.events["shell.post"].support);
       if (!postTool) settlePendingCommit(input);

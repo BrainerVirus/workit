@@ -77,3 +77,34 @@ export const verbFirst = (command: string): string | null => {
   if (segments.length !== 1 || !segments.every(clean)) return null;
   return `${lead} ${verb}${globals}${command.slice(whole.length)}`;
 };
+
+const rewriteOrNull = (command: string): string | null => {
+  try {
+    return cwdRewrite(command);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * For `cd <literal dir> && workit … <;|&&|‖|> …` that {@link cwdRewrite}
+ * cannot take whole (a raw-git fallback, a second call; #793): the longest
+ * leading workit call that it can, as one `--cwd` call. Null otherwise.
+ */
+export const cdWorkitSplit = (command: string): string | null => {
+  const match = COMPOUND.exec(command);
+  const dir = match?.[1];
+  const rest = match?.[2];
+  if (!dir || !rest || rewriteOrNull(command) !== null) return null;
+  const whole = segmentsOf(rest);
+  // A cut inside quotes changes the words of a segment it keeps: not a call boundary.
+  const boundary = (head: string): boolean =>
+    segmentsOf(head).every((s, at) => s.words.join("\0") === whole[at]?.words.join("\0"));
+  const cuts = [...rest.matchAll(/\|\||&&|;|\n|\|/gu)].map((op) => op.index).toReversed();
+  for (const cut of cuts) {
+    const head = rest.slice(0, cut).trimEnd();
+    const call = rewriteOrNull(`cd ${dir} && ${head}`);
+    if (call && boundary(head)) return call;
+  }
+  return null;
+};
