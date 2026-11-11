@@ -1,6 +1,8 @@
 # Host-approval channel: spec
 
-Status: proposed (2026-11-11) · Issues: #419, #649, #768, #774 · Builds on #615 (user-only calls) and #798 (ask rules anchored at the verb)
+Status: decided (2026-11-11); first PR shipped: the approvals guard, the request store and consume
+API (`packages/workit-core/src/approvals/`), `workit approve`, Claude Code and Pi recording; no
+consumer is wired yet · Issues: #419, #649, #768, #774 · Builds on #615 (user-only calls) and #798 (ask rules anchored at the verb)
 
 ## Problem
 
