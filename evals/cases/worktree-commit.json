@@ -27,8 +27,8 @@
       },
       {
         "tool": "Bash",
-        "pattern": "\\bcd\\s+\\S+\\s*&&",
-        "why": "a `cd \u2026 &&` chain: run one verb with --cwd"
+        "pattern": "\\bcd\\s+\\S+\\s*&&[\\s\\S]*\\bcommit\\b",
+        "why": "a `cd \u2026 &&` chain before the commit: run one verb with --cwd"
       }
     ]
   }

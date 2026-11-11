@@ -52,6 +52,8 @@ const DEFAULT_TOOLS = [
   "Agent",
   "Bash(workit *)",
   "Bash(git *)",
+  // Real hosts allow `cd <dir> && git status`; each chained part still needs its own rule (#793).
+  "Bash(cd *)",
   "Bash(ls *)",
   "Bash(cat *)",
   "Bash(head *)",
