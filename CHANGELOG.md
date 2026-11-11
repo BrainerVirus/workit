@@ -1046,6 +1046,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - OpenCode and Pi give the model the same closed `<workit-contract>` block Claude Code does.
 - A `cd <dir> && workit …` chain with a raw-git fallback is denied with the exact single `workit <verb> --cwd <dir> …` call to run instead, so a weak model retries correctly instead of giving up.
 - A `cd <dir> && workit …` call is rewritten to `workit <verb> --cwd <dir> …` even when a quoted argument holds `<` or `>` (such as a `Co-Authored-By: … <email>` trailer) or the call already passes the same `--cwd`, so these commits no longer prompt or get denied.
+- Voiding a verdict that superseded a failed one brings the failed verdict back instead of an older accepted one.
+- The prompt-routing hook no longer nudges toward a skill when the user only quotes a trigger phrase or complains about the agent.
+- Retrying `workit git commit -- <paths>` after a pre-commit hook rewrote and refused the paths commits the rewritten files instead of failing.
+- A redundant `cd` before `workit --cwd <dir>` is dropped only for an absolute dir, so the rewrite never changes where a relative command runs.
 
 ### Removed
 
