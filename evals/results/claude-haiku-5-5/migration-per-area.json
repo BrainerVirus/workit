@@ -1,0 +1,21 @@
+{
+  "case": "migration-per-area",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v1.1.7+d243275f09",
+  "key": "036f26635f7e7ce0",
+  "date": "2026-11-11T00:04:16.807Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 11,
+    "durationMs": 19792,
+    "costUsd": 0.0072915,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 9,
+    "failures": []
+  }
+}
