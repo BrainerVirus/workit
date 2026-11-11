@@ -31,6 +31,7 @@ import { resolveStateDir } from "../core/logger";
 import { appendHookObserved } from "../ledger";
 import type { HookDecision, HookInput } from "./protocol";
 import {
+  commandLines,
   inWorkitWorkspace,
   rawInvocations,
   skipWorkitGlobals,
@@ -522,21 +523,52 @@ const JUDGE_VERBS: Readonly<Record<string, true | readonly string[]>> = {
   lock: ["status"],
 };
 
-/** The call when workit `args` are outside a judge's job, else null. */
+const HELP = /^(?:--help|-h)$/;
+
+/** The call when workit `args` are outside a judge's job, else null; help is only right after workit or the verb. */
 const judgeVerbRefused = (args: readonly string[]): string | null => {
   const { rest } = skipWorkitGlobals(args);
   const end = rest.indexOf("--");
   const call = end < 0 ? rest : rest.slice(0, end);
   const [verb, sub = ""] = call;
-  if (verb === undefined || verb === "--version" || call.some((arg) => /^(?:--help|-h)$/.test(arg)))
-    return null;
+  if (verb === undefined || verb === "--version" || HELP.test(verb) || HELP.test(sub)) return null;
   const allowed = Object.hasOwn(JUDGE_VERBS, verb) ? JUDGE_VERBS[verb] : [];
   const ok =
     allowed === true
-      ? !(verb === "test-audit" && call.includes("--mutate"))
+      ? !(verb === "test-audit" && call.some((arg) => /^--mutate(?:=|$)/.test(arg)))
       : allowed.includes(sub);
   return ok ? null : `workit ${call.join(" ")}`;
 };
+
+/** Package runners and interpreters that can start the workit CLI. */
+const CLI_RUNNERS = /^(?:npx|bunx|pnpx|npm|pnpm|yarn|bun|node|nodejs|deno|tsx|ts-node)$/;
+/** The workit CLI: its bin, its package, or its entry file (packages/workit-cli, the installed package). */
+const CLI_ENTRY =
+  /(?:^|[=\\/])(?:workit(?:\.(?:exe|cmd|[cm]?js))?|@workit-dev\/cli(?:@\S*)?)$|(?:workit-cli|@workit-dev[\\/]cli)[\\/](?:src[\\/](?:index|main)|dist[\\/]index)\.[cm]?[jt]sx?$/;
+
+/**
+ * The arguments of each workit CLI call in `command`: past wrappers (`time`,
+ * `env`, `exec`), compound commands, `xargs`, `find -exec`, alias bodies and
+ * package runners or interpreters that start the CLI by package or path.
+ */
+const workitCalls = (command: string, depth = 0): string[][] =>
+  commandLines(command).flatMap((words) => {
+    const name = path.basename(words[0] ?? "").toLowerCase();
+    if (name === "alias")
+      return words.flatMap((word) =>
+        depth < 4 && /^\w[\w-]*=/.test(word)
+          ? workitCalls(word.slice(word.indexOf("=") + 1), depth + 1)
+          : [],
+      );
+    let at = /^workit(?:\.exe|\.cmd)?$/.test(name)
+      ? 0
+      : CLI_RUNNERS.test(name)
+        ? words.findIndex((word, index) => index > 0 && CLI_ENTRY.test(word))
+        : -1;
+    if (at < 0) return [];
+    while (words[at + 1] === "--" || CLI_ENTRY.test(words[at + 1] ?? "")) at++;
+    return [words.slice(at + 1)];
+  });
 
 const JUDGE_JOB = Object.entries(JUDGE_VERBS)
   .map(([verb, subs]) => `workit ${verb}${subs === true ? "" : ` ${subs.join("|")}`}`)
@@ -615,7 +647,7 @@ const judgeRefusal = (command: string, fed: string[], depth = 0): string | null 
       if (why) return why;
     }
   }
-  for (const args of workitInvocations(command)) {
+  for (const args of workitCalls(command)) {
     const call = judgeVerbRefused(args);
     if (call) return `\`${call}\` is not a judge's job: a judge runs only ${JUDGE_JOB}`;
   }

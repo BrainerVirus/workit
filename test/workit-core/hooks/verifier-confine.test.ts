@@ -5,7 +5,7 @@
 // no command below is ever run.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -25,6 +25,8 @@ let root: string;
 let lead: string;
 let wt: string;
 let scratch: string;
+// The scratch dir as the hook names it: its real path (macOS /private/var, Windows long names).
+let named: string;
 let other: string;
 const stateBefore = process.env.WORKIT_STATE_DIR;
 
@@ -87,6 +89,7 @@ beforeAll(async () => {
   await cli(["fanout", "plan", plan, "--json"]);
   wt = (await cli(["fanout", "worktree", "create", "a", "--json"])).path;
   scratch = path.join(lead, ".workit-scratch");
+  named = path.join(realpathSync.native(lead), ".workit-scratch");
   other = path.join(root, "other");
   mkdirSync(path.join(other, ".workit-scratch"), { recursive: true });
   git(other, "init", "-q", "-b", "main");
@@ -157,7 +160,7 @@ test("Given a verifier, When it writes outside its scratch dir (a cd to ~ then t
     const out = call();
     expect(out?.permissionDecision, call.toString()).toBe("deny");
     expect(out?.permissionDecisionReason, call.toString()).toContain(
-      `workit scratch confinement: verifier ver-out may write only in its scratch dir ${scratch}`,
+      `workit scratch confinement: verifier ver-out may write only in its scratch dir ${named}`,
     );
   }
 });
@@ -180,7 +183,7 @@ test("Given a verifier, When an unquoted heredoc body runs a command substitutio
   for (const command of ["bash <<'EOF'\ntouch ~/x\nEOF", "sh -e <<< 'rm ~/x'"]) {
     const out = bash(command, agent);
     expect(out?.permissionDecision, command).toBe("deny");
-    expect(out?.permissionDecisionReason, command).toContain(`scratch dir ${scratch}`);
+    expect(out?.permissionDecisionReason, command).toContain(`scratch dir ${named}`);
   }
   expect(
     bash(`bash <<'EOF'\ncat ${path.join(lead, "src", "core.ts")}\nEOF`, agent)?.permissionDecision,
@@ -193,7 +196,7 @@ test("Given a reviewer, Then the same rules hold: outside its scratch dir denied
     const out = call();
     expect(out?.permissionDecision, call.toString()).toBe("deny");
     expect(out?.permissionDecisionReason, call.toString()).toContain(
-      `workit scratch confinement: reviewer rev-1 may write only in its scratch dir ${scratch}`,
+      `workit scratch confinement: reviewer rev-1 may write only in its scratch dir ${named}`,
     );
   }
   for (const call of inside(agent))
@@ -218,7 +221,7 @@ test("Given a Codex workit-verifier, When it patches the lead's checkout or runs
   });
   const denied = codex("pre-tool-use-apply-patch", patch(path.join(lead, "src", "x.ts")));
   expect(denied?.permissionDecision).toBe("deny");
-  expect(denied?.permissionDecisionReason).toContain(`scratch dir ${scratch}`);
+  expect(denied?.permissionDecisionReason).toContain(`scratch dir ${named}`);
   expect(
     codex("pre-tool-use-apply-patch", patch(path.join(scratch, "x.ts")))?.permissionDecision,
   ).toBeUndefined();
@@ -264,7 +267,7 @@ test("Given a Claude Code verifier in a checkout without tasks, When it edits or
     const denied = pre(tool, input, true).hookSpecificOutput;
     expect(denied?.permissionDecision, label).toBe("deny");
     expect(denied?.permissionDecisionReason, label).toContain(
-      `workit scratch confinement: verifier ver-launch may write only in its scratch dir ${path.join(cwd, ".workit-scratch")}`,
+      `workit scratch confinement: verifier ver-launch may write only in its scratch dir ${path.join(realpathSync.native(cwd), ".workit-scratch")}`,
     );
     expect(pre(tool, input, false), label).toEqual({});
   }
@@ -388,7 +391,7 @@ test("Given a judge, When it runs writers that name their output elsewhere (mkfi
       `git -C ${lead} log --output /tmp/f`,
       "bash -ce 'touch ~/x'",
     ],
-    `scratch dir ${scratch}`,
+    `scratch dir ${named}`,
   );
   allows([
     `mkfifo ${path.join(scratch, "p")}`,
@@ -426,7 +429,7 @@ test("Given a judge, When it writes in another repository's .workit-scratch, The
       `echo x > ${path.join(other, ".workit-scratch", "x")}`,
       `cd ${other} && echo x > .workit-scratch/x`,
     ],
-    `scratch dir ${scratch}`,
+    `scratch dir ${named}`,
   );
   const out = write(path.join(other, ".workit-scratch", "x"), { id: "ver-x" });
   expect(out?.permissionDecision).toBe("deny");
@@ -439,4 +442,75 @@ test("Given a judge, When an unquoted heredoc holds $((…)) arithmetic, Then it
     [`cat > ${path.join(scratch, "x")} <<EOF\n$(( $(touch ~/q) + 1 ))\nEOF`],
     "quote the delimiter",
   );
+});
+
+test("Given a judge, When a help or version flag sits deeper in a workit call outside its job, Then it is still denied; only one right after workit or the verb asks for help", () => {
+  denies(
+    [
+      "workit gc --worktrees --apply --note -h",
+      "workit pr create --body '--help'",
+      "workit pr merge 1 --help",
+      "workit git push -h origin",
+      "workit gc --apply --version",
+    ],
+    "a judge runs only",
+  );
+  allows(["workit --help", "workit -h", "workit --version", "workit gc --help", "workit pr -h"]);
+});
+
+test("Given a judge, When it runs test-audit with any --mutate form, Then it is denied", () => {
+  denies(
+    [
+      "workit test-audit --mutate=1 --diff",
+      "workit test-audit --diff --mutate=true",
+      "workit test-audit --mutate",
+    ],
+    "a judge runs only",
+  );
+  allows(["workit test-audit --diff"]);
+});
+
+test("Given a judge, When a wrapper, compound command, alias, function or another entry to the workit CLI runs a verb outside its job, Then it is denied; the same wrappers around its own verbs pass", () => {
+  denies(
+    [
+      "time workit gc --apply",
+      "nohup workit gc --apply",
+      "! workit gc --apply",
+      "command workit gc --apply",
+      "exec workit gc --apply",
+      "env FOO=1 workit gc --apply",
+      "{ workit gc --apply; }",
+      "if true; then workit gc --apply; fi",
+      "while true; do workit gc --apply; done",
+      "( workit gc --apply )",
+      "echo x | xargs workit gc --apply",
+      "find . -name x -exec workit gc --apply {} ';'",
+      "alias w='workit gc --apply'; w",
+      "f() { workit gc --apply; }; f",
+      "function f { workit gc --apply; }; f",
+      "npm exec @workit-dev/cli -- gc --apply",
+      "npm exec --package=@workit-dev/cli -- workit gc --apply",
+      "npx --package @workit-dev/cli workit gc --apply",
+      "bunx @workit-dev/cli@latest gc --apply",
+      "pnpm dlx @workit-dev/cli gc --apply",
+      "bun run workit gc --apply",
+      "node node_modules/@workit-dev/cli/dist/index.js gc --apply",
+      "bun packages/workit-cli/src/index.tsx gc --apply",
+      "bun ./packages/workit-cli/src/main.ts gc --apply",
+      "/home/me/.local/bin/workit gc --apply",
+    ],
+    "a judge runs only",
+  );
+  allows([
+    "time workit check lint",
+    "nohup workit ledger list",
+    "if true; then workit ledger list; fi",
+    "npx --package @workit-dev/cli workit check lint",
+    "npm exec @workit-dev/cli -- ledger list",
+    "bun run workit ledger list",
+    "bun packages/workit-cli/src/index.tsx ledger list",
+    "grep -rn workit packages/workit-cli/src/main.ts",
+    "bun test test/workit-cli/main.test.ts test/workit-core/hooks/a.test.ts",
+    "alias ll='ls -l'",
+  ]);
 });
