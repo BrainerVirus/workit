@@ -1041,6 +1041,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - A verifier or reviewer subagent writes only in `.workit-scratch/` at a checkout root; writes elsewhere, and unquoted heredocs that run `$(…)`, are denied naming the scratch dir (#790)
 - A verdict is refused for a branch its repo does not have (`branch_not_in_repo`) or for a `--pr` from another branch's checkout, and the user can void a stray verdict with `workit ledger void <id> --reason` (user-only on every host: Claude Code asks, Codex, Cursor and Pi deny; `workit setup`/`upgrade` add the rule); `pr merge`/`stack land --unverified` name that path (#759)
 - Claude Code ask rules are anchored at their verb, so a command that only mentions a user-only verb in its text (a verdict note, a changelog entry, a PR body) no longer prompts; setup and upgrade remove the older Workit-written globs and keep the user's own.
+- OpenCode and Pi give the model the same closed `<workit-contract>` block Claude Code does.
+- A `cd <dir> && workit …` chain with a raw-git fallback is denied with the exact single `workit <verb> --cwd <dir> …` call to run instead, so a weak model retries correctly instead of giving up.
 
 ### Removed
 
