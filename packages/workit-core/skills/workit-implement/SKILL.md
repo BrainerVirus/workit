@@ -18,13 +18,11 @@ description: Build a requested change in small verified steps - follow local pat
    acceptance as Given/When/Then and see a test fail first (workit-bdd).
    Mechanical change: the existing checks are enough. A codemod or schematic
    goes one area at a time: run it on one directory, `workit check`, commit
-   that directory, then the next; never loop it over all areas. No tautological tests:
-   a test must fail if the behavior breaks, never restate the implementation.
+   that directory, then the next; never loop it over all areas. No tautological tests: a test must fail if the behavior breaks, never restate the implementation.
 4. Run the real checks, local-first: the targeted test or check for the file
    you touched while you work, then the full configured set once at the end
    (`workit check test`, plus `lint` and `typecheck` when the repo has them).
-   Heavy work runs under one machine-wide lease: an ad-hoc
-   suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
+   Heavy work runs under one machine-wide lease: an ad-hoc suite is `workit check --heavy -- <cmd>`, never a hand-made flock; a busy
    lease waits and names its holder (`workit lock status`). A tool warning is a finding: fix it in this PR, or record the false positive with evidence; pre-existing ones get their own PR.
 5. Prove the feature on its real surface with the project's `verify-<app>`
    skill; none yet? Write one (workit-verify-app). Tests show branch behavior,
