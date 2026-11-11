@@ -95,6 +95,8 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
     "Bash(workit * grant set*)",
     "Bash(workit grant raise*)",
     "Bash(workit * grant raise*)",
+    "Bash(workit ledger void*)",
+    "Bash(workit * ledger void*)",
   ]);
   expect(value.autoMode.environment.slice(0, 2)).toEqual([
     "$defaults",
@@ -218,6 +220,7 @@ test("Given a Codex home, When setup and uninstall run, Then Workit's rules file
     "workit release notes approve",
     "workit grant set",
     "workit grant raise",
+    "workit ledger void",
   ]);
   applyUninstall(planUninstall({ home, env }), { home, env });
   expect(existsSync(file)).toBe(false);
