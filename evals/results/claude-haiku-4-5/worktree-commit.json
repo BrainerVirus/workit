@@ -1,15 +1,15 @@
 {
   "case": "worktree-commit",
   "model": "claude-haiku-4-5",
-  "workitVersion": "workit-dev-v1.2.1+0941f62f0c",
-  "key": "05cdc8270f2e43a1",
-  "date": "2026-11-11T12:26:26.573Z",
+  "workitVersion": "workit-dev-v1.4.1+c22cccc36c",
+  "key": "ec3dce23f83b77ab",
+  "date": "2026-11-11T14:05:03.735Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 9774,
-    "costUsd": 0.028548200000000003,
+    "durationMs": 10848,
+    "costUsd": 0.0277872,
     "stop": "success"
   },
   "grade": {

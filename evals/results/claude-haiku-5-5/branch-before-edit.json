@@ -1,21 +1,21 @@
 {
   "case": "branch-before-edit",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.2.1+44d1fff088",
-  "key": "3a3586ea221b7b11",
-  "date": "2026-11-11T12:08:20.949Z",
+  "workitVersion": "workit-dev-v1.4.1+c22cccc36c",
+  "key": "55aef052f449c58f",
+  "date": "2026-11-11T14:06:40.651Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 10,
-    "durationMs": 24882,
-    "costUsd": 0.006486110000000001,
+    "turns": 8,
+    "durationMs": 16841,
+    "costUsd": 0.005048540000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
     "pass": true,
-    "calls": 9,
+    "calls": 7,
     "failures": []
   }
 }
