@@ -3,7 +3,8 @@
 // For each slice branch it reads what git says, never what a worker reported:
 // - scope: `git diff --name-only <base>...<branch>` against the slice's
 //   manifest (its scope and owns, minus files another slice owns); any other
-//   file is an out-of-scope edit;
+//   file is an out-of-scope edit, except the workspace changelog paths: the
+//   lead writes that entry on every slice (#791);
 // - trunk: `git merge-tree --write-tree` of the branch with the trunk;
 // - siblings: the same merge between every pair of slice branches, so two
 //   PRs that would conflict once the first lands are caught before either
@@ -18,6 +19,8 @@
 // is ready when none of the above fired and every slice it depends on is
 // ready or landed. Verdicts are reported (`workit ledger check`) but gated by
 // `workit pr merge`, not here. Refs are read as they are locally: fetch first.
+import { isChangelogPath } from "./core/changelog-gate";
+import { workspaceChangelog } from "./core/workspaces";
 import type { ResolvedForge } from "./forge/resolve";
 import { checkVerdicts, readLedger, type ReadRow } from "./ledger";
 import {
@@ -150,6 +153,7 @@ export function checkFanout(
   const trunkCase = caseIndex(
     nulList(gitRun(cwd, ["ls-tree", "-r", "-z", "--name-only", trunk]).stdout),
   );
+  const changelogs = workspaceChangelog(cwd).paths;
   const checks = new Map<string, SliceCheck>();
   const changedBy = new Map<string, string[]>();
   for (const slice of plan.slices) {
@@ -158,7 +162,13 @@ export function checkFanout(
       slice.id,
       landing.landed
         ? landedCheck(slice, tips.get(slice.id) ?? null, landing)
-        : inspect(cwd, plan, slice, { trunk, trunkCase, tips, landings, rows }, changedBy),
+        : inspect(
+            cwd,
+            plan,
+            slice,
+            { trunk, trunkCase, tips, landings, rows, changelogs },
+            changedBy,
+          ),
     );
   }
 
@@ -333,6 +343,8 @@ type InspectContext = {
   tips: ReadonlyMap<string, string | null>;
   landings: ReadonlyMap<string, SliceLanding>;
   rows: readonly ReadRow[];
+  /** The workspace changelog paths: lead-owned, never out of scope. */
+  changelogs: readonly string[];
 };
 
 /** Files at `rev`, or null when it cannot be listed. */
@@ -418,7 +430,9 @@ function inspect(
   changedBy.set(slice.id, changed);
   check.changed = changed.length;
   if (changed.length === 0) check.reasons.push(`no changes beyond ${slice.base}`);
-  check.outOfScope = changed.filter((file) => !inScope(plan, slice, file)).toSorted();
+  check.outOfScope = changed
+    .filter((file) => !isChangelogPath(ctx.changelogs, file) && !inScope(plan, slice, file))
+    .toSorted();
   if (check.outOfScope.length)
     check.reasons.push(`edits outside its scope: ${check.outOfScope.join(", ")}`);
   check.caseCollisions = trunkCaseCollisions(cwd, ctx, head, changed);

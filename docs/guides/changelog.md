@@ -26,3 +26,13 @@ again changes nothing.
   nothing is lost silently.
 
 `workit` must be on the `PATH` of the process that runs git.
+
+## Without the driver
+
+`workit git rebase` applies the same merge itself, so a branch rebases without the driver too.
+When every conflict is in a configured changelog path and merges cleanly as above, it stages the
+merge, continues and names the file in its output. Any other conflict aborts the rebase and
+leaves the branch where it was.
+
+`workit fanout check` never reports a configured changelog path as out of a slice's scope: the
+lead writes that entry on each slice branch.

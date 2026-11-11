@@ -201,6 +201,14 @@ const globRe = (pattern: string): RegExp => {
   return new RegExp(`^${source}$`, "u");
 };
 
+/**
+ * Whether repo-relative `file` is a changelog `paths` names: a plain path, a
+ * glob match, or the root file when every entry is a glob (as `expand` reads them).
+ */
+export const isChangelogPath = (paths: readonly string[], file: string): boolean =>
+  paths.some((one) => (isChangelogGlob(one) ? globRe(one).test(file) : one === file)) ||
+  (paths.every(isChangelogGlob) && file === DEFAULT_CHANGELOG_PATH);
+
 /** One changelog a `changelogPath` entry names; `pkg` is its directory when a glob matched it. */
 type ChangelogFile = { file: string; pkg: string | null };
 

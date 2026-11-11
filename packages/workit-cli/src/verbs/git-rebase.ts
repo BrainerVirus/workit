@@ -1,7 +1,12 @@
 // `workit git rebase [--onto <base>]`: replay the current branch onto its
 // freshly fetched base. A conflict aborts the rebase, so the branch is left
-// exactly where it was; a rewrite is recorded and names the leased push.
+// exactly where it was; a rewrite is recorded and names the leased push. A
+// conflict only in the workspace changelog that merges entry by entry (both
+// sides appended under Unreleased) is settled and the rebase goes on (#791).
 import { isProtectedTarget } from "@workit-dev/core/src/core/branch";
+import { isChangelogPath } from "@workit-dev/core/src/core/changelog-gate";
+import { resolveChangelogConflict } from "@workit-dev/core/src/core/changelog-merge";
+import { workspaceChangelog } from "@workit-dev/core/src/core/workspaces";
 import { defaultBase } from "@workit-dev/core/src/git/default-base";
 import {
   git,
@@ -33,6 +38,8 @@ type RebaseOutcome = {
   rebased: boolean;
   /** Commits on the branch after the base, once rebased. */
   commits: number;
+  /** Changelog paths whose Unreleased-only conflict was merged on the way. */
+  changelogMerged: string[];
   /** The command that publishes the result; null when nothing changed. */
   next: string | null;
   recorded: { id: string } | { error: string } | null;
@@ -81,6 +88,32 @@ const conflictedPaths = (cwd: string): string[] =>
     .map((line) => line.trim())
     .filter(Boolean);
 
+/**
+ * While the rebase stops on conflicts that are all in changelog paths and
+ * each merges cleanly, stage the merges and continue. Returns the last run
+ * and the paths it settled; any other conflict is left for the caller.
+ */
+function continueThroughChangelog(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  first: ReturnType<typeof git>,
+): { run: ReturnType<typeof git>; merged: string[] } {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok) return { run: first, merged: [] };
+  const root = top.stdout.trim();
+  const { paths } = workspaceChangelog(root);
+  const merged = new Set<string>();
+  let run = first;
+  while (!run.ok && operationInProgress(cwd)?.operation === "rebase") {
+    const conflicts = conflictedPaths(cwd);
+    if (!conflicts.length || !conflicts.every((file) => isChangelogPath(paths, file))) break;
+    if (!conflicts.every((file) => resolveChangelogConflict(root, file))) break;
+    for (const file of conflicts) merged.add(file);
+    run = git(cwd, ["rebase", "--continue"], { env, timeoutMs: GIT_TIMEOUTS.worktree });
+  }
+  return { run, merged: [...merged] };
+}
+
 /** A conflict: the rebase was aborted; `conflicts` names the paths. */
 type RebaseConflict = {
   ok: false;
@@ -124,14 +157,13 @@ function rebaseOnto(
       `${branch} is its own base (${base}); rebase a feature branch onto it instead`,
     );
 
-  const run = git(
+  const env = { ...io.env, GIT_EDITOR: "true" };
+  const started = git(
     cwd,
     ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "--quiet", base],
-    {
-      env: { ...io.env, GIT_EDITOR: "true" },
-      timeoutMs: GIT_TIMEOUTS.worktree,
-    },
+    { env, timeoutMs: GIT_TIMEOUTS.worktree },
   );
+  const { run, merged: changelogMerged } = continueThroughChangelog(cwd, env, started);
   if (!run.ok) {
     const conflicts = conflictedPaths(cwd);
     const stopped = operationInProgress(cwd) !== null;
@@ -189,6 +221,7 @@ function rebaseOnto(
     head,
     rebased,
     commits,
+    changelogMerged,
     next,
     recorded,
   });
@@ -208,6 +241,11 @@ export function rebase(onto: string | null, io: Io): number {
     data.rebased
       ? [
           `rebased ${data.branch} onto ${data.base} (${short(data.baseSha)}): ${short(data.previous)} -> ${short(data.head)}, ${data.commits} commit${data.commits === 1 ? "" : "s"}`,
+          ...(data.changelogMerged.length
+            ? [
+                `changelog: kept both sides' Unreleased entries in ${data.changelogMerged.join(", ")}`,
+              ]
+            : []),
           ...(data.recorded && "error" in data.recorded
             ? [`ledger: not recorded (${data.recorded.error})`]
             : []),

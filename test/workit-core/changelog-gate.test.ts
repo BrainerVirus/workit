@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   changelogGate,
+  isChangelogPath,
   nonUserFacingType,
   resolveChangelogPaths,
   unreleasedBullets,
@@ -391,4 +392,13 @@ test("Given a ** glob, When the changelog paths resolve, Then each matched track
   ]);
   expect(resolveChangelogPaths(cwd, ["projects/?/CHANGELOG.md"])).toHaveLength(2);
   expect(resolveChangelogPaths(cwd, ["projects/*.md"])).toEqual(["CHANGELOG.md"]);
+});
+
+test("isChangelogPath: a plain path matches itself, a glob matches inside one segment, and all-glob settings also mean the root file", () => {
+  expect(isChangelogPath(["CHANGELOG.md"], "CHANGELOG.md")).toBe(true);
+  expect(isChangelogPath(["CHANGELOG.md"], "docs/CHANGELOG.md")).toBe(false);
+  expect(isChangelogPath(["packages/*/CHANGELOG.md"], "packages/api/CHANGELOG.md")).toBe(true);
+  expect(isChangelogPath(["packages/*/CHANGELOG.md"], "packages/a/b/CHANGELOG.md")).toBe(false);
+  expect(isChangelogPath(["packages/*/CHANGELOG.md"], "CHANGELOG.md")).toBe(true);
+  expect(isChangelogPath(["docs/CHANGES.md"], "CHANGELOG.md")).toBe(false);
 });
