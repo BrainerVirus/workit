@@ -329,9 +329,10 @@ YouTrack, a GitLab one in GitLab issues.
   An issue on another forge host is not commented on; it is reported as
   `skipped` with a note. Your
   host's permission prompt for `workit pr create` is what allows the comment.
-  A YouTrack backlink does not go through `youtrack.writes` yet: it still
-  needs `WORKIT_YT_WRITE=1` in the environment. A failed comment is reported
-  and never undoes the PR.
+  A YouTrack backlink follows `youtrack.writes`: with `ask` (the default) the
+  PR opens and the backlink is reported `pending` with the `workit youtrack
+  note` command that asks you and posts it once; with `auto` it posts behind
+  `WORKIT_YT_WRITE=1`. A failed comment is reported and never undoes the PR.
 
 An issue on another forge than the PR's cannot be closed from it, so it gets a
 `Related to: <issue URL>` line instead of `Closes`.

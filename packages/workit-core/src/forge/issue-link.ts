@@ -13,7 +13,13 @@
 import { vcsConfig, type IssueTracker } from "../core/vcs-config";
 import { youTrackBaseUrl } from "../core/youtrack";
 import { defaultOperations, ISSUE_RE, unwrap } from "../core/youtrack-tools";
-import { withMarker, writeOnce, youTrackMarker, type OnceOutcome } from "../core/youtrack-writes";
+import {
+  withMarker,
+  writeOnce,
+  youTrackMarker,
+  youTrackWritesMode,
+  type OnceOutcome,
+} from "../core/youtrack-writes";
 import { sliceIssuesFor } from "../fanout";
 import { appendObserved, type LedgerActor, type ReadRow } from "../ledger";
 import type { ForgeRunner } from "./exec";
@@ -344,7 +350,8 @@ export function linkedIssues(
 
 export type BacklinkOutcome = {
   issue: string;
-  status: OnceOutcome["status"] | "skipped";
+  /** pending: a YouTrack backlink waiting for the user's yes (youtrack.writes ask). */
+  status: OnceOutcome["status"] | "skipped" | "pending";
   note?: string;
 };
 
@@ -395,14 +402,18 @@ function issueForge(
   return link.tracker === "github" ? createGitHubForge(options) : createGitLabForge(options);
 }
 
+const shellQuote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
+
 /**
  * The tracker backlink (`issues.backlink: true`): a comment with the PR URL
  * on each linked issue, posted at most once: a marker naming the PR is read
  * back first. Forge issues on the PR's host go through the workspace's
  * verified credential; one on another forge host is skipped (no account is
- * verified there). YouTrack goes through its API behind WORKIT_YT_WRITE=1,
- * like `workit youtrack note`. A failure is reported per issue and never
- * undoes the PR.
+ * verified there). A YouTrack backlink asks first like every YouTrack write
+ * (#780): with `youtrack.writes` ask (the default) it is pending and names
+ * the `workit youtrack note` call that asks the user and posts it once; with
+ * `auto` it posts behind WORKIT_YT_WRITE=1. A failure or a pending backlink is
+ * reported per issue and never undoes the PR.
  */
 export async function postBacklinks(
   cwd: string,
@@ -418,6 +429,14 @@ export async function postBacklinks(
   for (const link of links) {
     const issue = label(link);
     if (link.tracker === "youtrack") {
+      if (youTrackWritesMode(cwd) === "ask") {
+        out.push({
+          issue,
+          status: "pending",
+          note: `YouTrack writes ask the user first: run workit youtrack note ${link.id} --markdown ${shellQuote(text)}`,
+        });
+        continue;
+      }
       if (env.WORKIT_YT_WRITE !== "1") {
         out.push({
           issue,
