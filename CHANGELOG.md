@@ -614,6 +614,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit git rebase` settles a conflict that is only both sides adding Unreleased changelog entries by keeping both, with no merge driver installed; `workit fanout check` no longer reports the configured changelog file as out of scope.
 - Tests that make Workit worktrees load their own state dir even when `bun test` runs outside the repo root, and the test preload fails any run that leaves a worktree in the real `~/.local/state/workit`
 - `workit ledger standing add` with several active fanout plans refuses with the exact `--fanout` retry, and `workit fanout plan` prints that command when another plan is active (#775)
 - An integration-mode fanout brief's fan-in step runs `workit git rebase --onto <trunk>` instead of a raw `git merge`, and a test checks every workit command a brief prints against the verb table (#770)
