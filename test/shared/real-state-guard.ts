@@ -1,9 +1,9 @@
-// Imported first by the state-isolation preload: fails the run when a test
-// made a worktree under the developer's real Workit state dir. A test that
-// hands a child (or main's io.env) an env without the throwaway
-// WORKIT_STATE_DIR resolves the real one, and its `fanout worktree create`
-// leaves `<state>/worktrees/<repo>-<hash>/<slice>` behind for good, pointing
-// at a temp repo that is deleted after the run.
+// Called by the state-isolation preload before it swaps WORKIT_STATE_DIR:
+// fails the run when a test left a worktree under the developer's real Workit
+// state dir. bun skips the bunfig preload when `bun test` runs from another
+// cwd, so a test without its own state dir resolves the real one there, and
+// its `fanout worktree create` leaves `<state>/worktrees/<repo>-<hash>/<slice>`
+// behind for good, pointing at a temp repo deleted after the run.
 import { afterAll } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
@@ -11,7 +11,7 @@ import path from "node:path";
 import { workitDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 /** The state dir Workit resolves without WORKIT_STATE_DIR: $XDG_STATE_HOME or ~/.local/state, /workit. */
-export const realStateDir = (env: NodeJS.ProcessEnv = process.env): string =>
+const realStateDir = (env: NodeJS.ProcessEnv = process.env): string =>
   workitDir("state", { ...env, WORKIT_STATE_DIR: undefined });
 
 const list = (dir: string): string[] => {
@@ -25,7 +25,7 @@ const list = (dir: string): string[] => {
 };
 
 /** Every `worktrees/<repo>/<slug>` dir under `stateDir`. */
-export const worktreeDirs = (stateDir: string): Set<string> =>
+const worktreeDirs = (stateDir: string): Set<string> =>
   new Set(list(path.join(stateDir, "worktrees")).flatMap(list));
 
 const tempRoots = (): string[] => {
@@ -57,14 +57,14 @@ const fromTempRepo = (worktree: string, roots: string[]): boolean => {
  * repo. Live sessions add their own worktrees there during a run; only one
  * whose repository sits in the temp dir is a test's.
  */
-export const leakedWorktrees = (stateDir: string, before: Set<string>): string[] => {
+const leakedWorktrees = (stateDir: string, before: Set<string>): string[] => {
   const roots = tempRoots();
   return [...worktreeDirs(stateDir)]
     .filter((dir) => !before.has(dir) && fromTempRepo(dir, roots))
     .toSorted();
 };
 
-export const leakMessage = (stateDir: string, leaked: string[]): string =>
+const leakMessage = (stateDir: string, leaked: string[]): string =>
   [
     `A test wrote ${leaked.length} worktree(s) into the real Workit state dir ${stateDir}:`,
     ...leaked.map((dir) => `  ${dir}`),
