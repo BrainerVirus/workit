@@ -151,7 +151,7 @@ const sanitize = (text: string, world: World): string =>
     .replaceAll(os.userInfo().username, "<user>");
 
 /** The subscription login only: no API key, no parent session, Workit isolated to the world. */
-const childEnv = (world: World, binDir: string): Record<string, string> => {
+export const childEnv = (world: World, binDir: string): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined || key.startsWith("WORKIT_")) continue;
@@ -170,7 +170,12 @@ const childEnv = (world: World, binDir: string): Record<string, string> => {
   env.WORKIT_STATE_DIR = world.state;
   env.WORKIT_CONFIG_DIR = world.config;
   if (world.workspace) env[EVAL_WORLD_ENV] = world.dir;
-  env.PATH = `${binDir}${path.delimiter}${env.PATH ?? ""}`;
+  // The fake ytrack leads PATH; a real one further down would still find no
+  // login (its config dir is the world's) and no reachable host.
+  for (const key of Object.keys(env)) if (key.startsWith("YTRACK_")) delete env[key];
+  env.YTRACK_CONFIG_DIR = path.join(world.dir, "ytrack-config");
+  env.YTRACK_HOST = "https://youtrack.invalid";
+  env.PATH = [world.bin, binDir, env.PATH ?? ""].join(path.delimiter);
   return env;
 };
 

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EVAL_WORLD_MARKER } from "../../packages/workit-core/src/core/eval-world";
@@ -12,6 +12,8 @@ export type World = {
   worktree: string | null;
   state: string;
   config: string;
+  /** Leads the child's PATH: the fake `ytrack` (FAKE_YTRACK), so no run reaches a real YouTrack. */
+  bin: string;
   /** The case gave the world a workspace: the runner sets WORKIT_EVAL_WORLD. */
   workspace?: boolean;
 };
@@ -34,13 +36,38 @@ const writeAll = (root: string, files: Record<string, string> = {}): void => {
   }
 };
 
+/**
+ * The world's `ytrack`: canned reads (an issue with no comments, no work
+ * items, the user `eval`) and every write refused as cancelled (exit 2, sent
+ * nothing), so a run never reads or posts to a real YouTrack with the user's
+ * login, and reads are the same on every run.
+ */
+export const FAKE_YTRACK = `#!/bin/sh
+# workit-eval fake ytrack
+refuse() { echo "workit eval: the fake ytrack refuses writes ($*)" >&2; exit 2; }
+for arg in "$@"; do
+  case "$arg" in -X|--method|-f|-F|--field|--raw-field|--input) refuse "$@" ;; esac
+done
+case "$1 $2" in
+  "work-item list"|"work-item ls") echo '[]' ;;
+  "issue view")
+    printf '{"idReadable":"%s","summary":"Demo issue","description":null,"state":"Open","url":null,"customFields":[],"comments":[]}\n' "$3" ;;
+  "api /users/me"|"api users/me"|"api /api/users/me") echo '{"login":"eval"}' ;;
+  "auth status") echo "Logged in to youtrack.invalid as eval (workit eval fake)" ;;
+  "version "*|"--version "*) echo "ytrack workit-eval-fake" ;;
+  *) refuse "$@" ;;
+esac
+`;
+
 export const makeWorld = (spec: EvalCase): World => {
   const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), `workit-eval-${spec.id}-`)));
-  const [repo, state, config] = ["repo", "state", "config"].map((name) => {
+  const [repo, state, config, bin] = ["repo", "state", "config", "bin"].map((name) => {
     const sub = path.join(dir, name);
     mkdirSync(sub);
     return sub;
-  }) as [string, string, string];
+  }) as [string, string, string, string];
+  writeFileSync(path.join(bin, "ytrack"), FAKE_YTRACK);
+  chmodSync(path.join(bin, "ytrack"), 0o755);
   const scaffold = spec.scaffold ?? {};
 
   git(repo, "init", "-q", "-b", "main");
@@ -55,7 +82,15 @@ export const makeWorld = (spec: EvalCase): World => {
   if (scaffold.unborn) {
     writeAll(repo, scaffold.dirty);
     writeConfig(dir, config, spec);
-    return { dir, repo, worktree: null, state, config, workspace: Boolean(scaffold.workspace) };
+    return {
+      dir,
+      repo,
+      worktree: null,
+      state,
+      config,
+      bin,
+      workspace: Boolean(scaffold.workspace),
+    };
   }
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "chore: init");
@@ -80,7 +115,7 @@ export const makeWorld = (spec: EvalCase): World => {
   writeAll(worktree ?? repo, scaffold.dirty);
 
   writeConfig(dir, config, spec);
-  return { dir, repo, worktree, state, config, workspace: Boolean(scaffold.workspace) };
+  return { dir, repo, worktree, state, config, bin, workspace: Boolean(scaffold.workspace) };
 };
 
 const writeConfig = (dir: string, config: string, spec: EvalCase): void => {
