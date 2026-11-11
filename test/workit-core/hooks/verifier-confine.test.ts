@@ -25,6 +25,7 @@ let root: string;
 let lead: string;
 let wt: string;
 let scratch: string;
+let other: string;
 const stateBefore = process.env.WORKIT_STATE_DIR;
 
 const git = (cwd: string, ...args: string[]): string => {
@@ -86,6 +87,9 @@ beforeAll(async () => {
   await cli(["fanout", "plan", plan, "--json"]);
   wt = (await cli(["fanout", "worktree", "create", "a", "--json"])).path;
   scratch = path.join(lead, ".workit-scratch");
+  other = path.join(root, "other");
+  mkdirSync(path.join(other, ".workit-scratch"), { recursive: true });
+  git(other, "init", "-q", "-b", "main");
 });
 
 afterAll(() => {
@@ -246,6 +250,15 @@ test("Given a Claude Code verifier in a checkout without tasks, When it edits or
     ["Write", { file_path: path.join(cwd, "a.ts"), content: "x" }],
     ["Bash", { command: "echo x > /tmp/other/x" }],
     ["Bash", { command: `chmod 600 ${posix(path.join(cwd, "a.ts"))}` }],
+    ...[
+      "mkfifo /tmp/zz",
+      "eval true",
+      "source <(echo x)",
+      ". /dev/stdin <<'EOF'\nx\nEOF",
+      "wget -O /tmp/f http://x",
+      "tar xf a.tar -C /tmp",
+      "unzip a.zip -d /tmp",
+    ].map((command) => ["Bash", { command }] as const),
   ] as const) {
     const label = `${tool} ${JSON.stringify(input)}`;
     const denied = pre(tool, input, true).hookSpecificOutput;
@@ -255,4 +268,175 @@ test("Given a Claude Code verifier in a checkout without tasks, When it edits or
     );
     expect(pre(tool, input, false), label).toEqual({});
   }
+});
+
+const denies = (commands: readonly string[], text: string, agent: Agent = { id: "ver-x" }) => {
+  for (const command of commands) {
+    const out = bash(command, agent);
+    expect(out?.permissionDecision, command).toBe("deny");
+    expect(out?.permissionDecisionReason, command).toContain(text);
+  }
+};
+const allows = (commands: readonly string[], agent: Agent = { id: "ver-x" }) => {
+  for (const command of commands)
+    expect(bash(command, agent)?.permissionDecision, command).toBeUndefined();
+};
+
+test("Given a judge, When a shell or interpreter runs a script fed by a pipe, stdin, a process substitution or eval, Then it is denied, saying to write the case to a scratch file and dispatch it from a test", () => {
+  const fed = [
+    "echo 'touch ~/x' | bash",
+    "printf 'touch ~/x' | sh -s",
+    "echo 'touch ~/x' | bash -s --",
+    "echo 'touch ~/x' | env bash",
+    "(echo 'touch ~/x') | sudo -u me bash",
+    `echo "open('/tmp/f','w')" | python3 -`,
+    "python3 <<'EOF'\nopen('/tmp/f','w')\nEOF",
+    "node <<'EOF'\nrequire('fs').writeFileSync('/tmp/f','x')\nEOF",
+    "bash /dev/stdin <<'EOF'\ntouch ~/x\nEOF",
+    ". /dev/stdin <<'EOF'\ntouch ~/x\nEOF",
+    "source <(echo 'touch ~/x')",
+    ". <(echo 'touch ~/x')",
+    "bash <(echo 'touch ~/x')",
+    `eval "echo x > ~/f"`,
+    "builtin eval true",
+    "echo $(echo 'touch ~/x' | bash)",
+    `bash -c "echo 'touch ~/x' | sh"`,
+    `bash -ec "echo 'touch ~/x' | sh"`,
+  ];
+  denies(fed, "dispatch it from a test");
+  denies(fed, "workit scratch confinement: verifier ver-x", { id: "ver-x" });
+  denies(["echo 'touch ~/x' | bash"], "reviewer rev-x", { id: "rev-x", type: "workit:reviewer" });
+  allows([
+    `bash <<'EOF'\ncat ${path.join(lead, "src", "core.ts")}\nEOF`,
+    `bun test ${path.join(scratch, "case.test.ts")}`,
+    `python3 ${path.join(scratch, "case.py")}`,
+    "node --version",
+    "git log --oneline | head -5",
+  ]);
+});
+
+test("Given a judge, When it runs a workit verb outside its own job, Then it is denied; its own verbs stay allowed", () => {
+  denies(
+    [
+      `workit changelog apply --cwd ${lead}`,
+      "workit gc --worktrees --apply",
+      "workit fanout worktree create a",
+      "workit fanout worktree remove a",
+      "workit fanout plan plan.json",
+      "workit git push",
+      "workit git commit -m x",
+      `workit --cwd ${wt} git branch x`,
+      "workit git stage a.ts",
+      "workit grant add x",
+      "workit pr create",
+      "workit pr merge 1",
+      "workit pr edit 1",
+      "workit pr reply 1 x",
+      "workit issue create x",
+      "workit issue comment 1 x",
+      "workit test-audit --mutate --diff",
+      "workit some-future-verb",
+      "bash -c 'workit gc --apply'",
+      "echo $(workit pr create)",
+    ],
+    "a judge runs only",
+  );
+  allows([
+    "workit check lint",
+    `workit check --cwd ${wt} --name t -- bun test a.test.ts`,
+    "workit ledger list --branch feature/a",
+    "workit ledger check",
+    "workit ledger ruling x --why y --cost-if-wrong z",
+    "workit ledger finding add x --severity minor",
+    "workit --json pr status",
+    "workit pr status 796",
+    "workit ci wait",
+    "workit ci logs",
+    "workit help",
+    "workit fanout status",
+    "workit fanout brief a --fanout wave",
+    "workit dir",
+    "workit test-audit --diff",
+    "workit --version",
+  ]);
+});
+
+test("Given a judge, When it runs writers that name their output elsewhere (mkfifo, wget, tar, unzip, git init/config/branch/fetch/gc/clone and git output files), Then each is denied outside scratch and allowed inside it", () => {
+  denies(
+    [
+      "mkfifo /tmp/zz",
+      "wget -O /tmp/f http://x",
+      "wget --output-document=/tmp/f http://x",
+      "wget http://x",
+      "tar xf a.tar -C /tmp",
+      "tar -xf a.tar",
+      "tar czf /tmp/a.tgz src",
+      "unzip a.zip -d /tmp",
+      "unzip a.zip",
+      "git init /tmp/zzz",
+      "git config user.name x",
+      "git config --global user.name x",
+      "git branch -D x",
+      "git branch topic",
+      "git fetch",
+      "git gc",
+      `git clone ${lead} /tmp/c`,
+      "git format-patch -o /tmp/d HEAD~1",
+      "git archive -o /tmp/a.tar HEAD",
+      "git bundle create /tmp/b HEAD",
+      "git diff --output=/tmp/f",
+      `git -C ${lead} log --output /tmp/f`,
+      "bash -ce 'touch ~/x'",
+    ],
+    `scratch dir ${scratch}`,
+  );
+  allows([
+    `mkfifo ${path.join(scratch, "p")}`,
+    `wget -O ${path.join(scratch, "f")} http://x`,
+    `tar xf a.tar -C ${scratch}`,
+    "tar tf a.tar",
+    "unzip -l a.zip",
+    `git init ${path.join(scratch, "r")}`,
+    `git clone ${lead} ${path.join(scratch, "c")}`,
+    "git config --get user.name",
+    "git branch --show-current",
+    "git branch -a --contains HEAD",
+    "git format-patch --stdout HEAD~1",
+    `git diff --output=${path.join(scratch, "d.diff")}`,
+  ]);
+});
+
+test("Given a bound implementer, When it runs those writers against the lead's checkout, Then the shared list denies them too; in its own worktree they pass", () => {
+  const agent = { id: "impl-writers", type: "workit:implementer" };
+  expect(write(path.join(wt, "a.ts"), agent)?.permissionDecision).toBeUndefined();
+  for (const command of [
+    `git -C ${lead} fetch`,
+    `wget -O ${path.join(lead, "x")} http://x`,
+    `tar xf a.tar -C ${path.join(lead, "src")}`,
+    `mkfifo ${path.join(lead, "p")}`,
+  ])
+    expect(bash(command, agent)?.permissionDecision, command).toBe("deny");
+  for (const command of [`git -C ${wt} fetch`, `wget -O ${path.join(wt, "x")} http://x`])
+    expect(bash(command, agent)?.permissionDecision, command).toBeUndefined();
+});
+
+test("Given a judge, When it writes in another repository's .workit-scratch, Then it is denied: only the judged checkout's scratch counts", () => {
+  denies(
+    [
+      `echo x > ${path.join(other, ".workit-scratch", "x")}`,
+      `cd ${other} && echo x > .workit-scratch/x`,
+    ],
+    `scratch dir ${scratch}`,
+  );
+  const out = write(path.join(other, ".workit-scratch", "x"), { id: "ver-x" });
+  expect(out?.permissionDecision).toBe("deny");
+  allows([`echo x > ${path.join(wt, ".workit-scratch", "x")}`]);
+});
+
+test("Given a judge, When an unquoted heredoc holds $((…)) arithmetic, Then it is allowed; a command substitution inside it is still denied", () => {
+  allows([`cat > ${path.join(scratch, "x")} <<EOF\n$((1+1)) $(( 2 * 3 ))\nEOF`]);
+  denies(
+    [`cat > ${path.join(scratch, "x")} <<EOF\n$(( $(touch ~/q) + 1 ))\nEOF`],
+    "quote the delimiter",
+  );
 });

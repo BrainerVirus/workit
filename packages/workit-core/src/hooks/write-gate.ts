@@ -171,7 +171,7 @@ const shellScript = (words: readonly string[]): string | null => {
   // Options may come before `-c` (`bash --norc -c`, `sh -e -c`); the script follows it.
   for (let index = 1; index < words.length; index++) {
     const word = words[index];
-    if (/^-[a-z]*c$/.test(word)) return words[index + 1] ?? null;
+    if (/^-[a-z]*c[a-z]*$/.test(word)) return words[index + 1] ?? null;
     if (/^[-+][oO]$/.test(word)) index++;
     else if (!/^[-+]/.test(word)) return null;
   }
@@ -212,7 +212,18 @@ const opaqueWrites = (
   const files = operands(args);
   const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
   const listed = (named: string[]) => (named.length ? named : ["."]);
-  if (name === "unlink" || name === "shred") return listed(files);
+  if (name === "unlink" || name === "shred" || name === "mkfifo") return listed(files);
+  if (name === "wget") return wgetOutputs(args);
+  if (name === "tar") return tarOutputs(args);
+  if (name === "unzip")
+    return has(/^-[a-zA-Z]*[lptvzZ]/)
+      ? null
+      : listed(
+          args.flatMap((arg, at) =>
+            arg.startsWith("-d") ? [arg.slice(2) || args[at + 1] || "."] : [],
+          ),
+        );
+  if (name === "git") return gitOutputs(args);
   // The mode or owner comes first, unless `--reference` names it.
   if (/^(?:chmod|chown|chgrp|chattr)$/.test(name))
     return listed(has(/^--reference/) ? files : files.slice(1));
@@ -334,6 +345,130 @@ const curlOutputs = (args: readonly string[]): string[] | null => {
   }
   if (remote) files.push(...(dirs.length ? dirs : ["."]));
   return files.length > 0 ? files : null;
+};
+
+/** The value of the first option matching `option` (`-oX`, `-o X`, `--opt=X`, `--opt X`). */
+const valueOf = (args: readonly string[], option: RegExp): string | undefined => {
+  const at = args.findIndex((arg) => option.test(arg));
+  return at < 0 ? undefined : option.exec(args[at])?.[1] || args[at + 1];
+};
+
+/** `wget`'s `-O` (not `-`) and log files, else the directory it saves in (`-P`, "."). */
+const wgetOutputs = (args: readonly string[]): string[] => {
+  const named = valueOf(args, /^(?:-[a-zA-Z]*O|--output-document=?)(.*)$/s);
+  const logs = [/^-[a-zA-Z]*[oa](.*)$/s, /^--(?:output-file|append-output)=?(.*)$/s].flatMap(
+    (option) => valueOf(args, option) ?? [],
+  );
+  if (named === undefined)
+    return [...logs, valueOf(args, /^(?:-[a-zA-Z]*P|--directory-prefix=?)(.*)$/s) ?? "."];
+  return named === "-" ? logs : [...logs, named];
+};
+
+/** `tar`: where it extracts (`-C`, else "."), the archive it creates or changes (`-f`); null to list. */
+const tarOutputs = (args: readonly string[]): string[] | null => {
+  // Old-style letters (`tar xzf a.tgz`) or short options (`-xzf`); `-C` takes a directory.
+  const letters = args
+    .filter((arg, at) => (at === 0 && !arg.startsWith("-")) || /^-[a-zA-Z]+$/.test(arg))
+    .join("")
+    .replaceAll("C", "");
+  const long = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
+  const extract = /x/.test(letters) || long(/^--(?:extract|get)$/);
+  const creates = /[cruA]/.test(letters) || long(/^--(?:create|append|update|concatenate|delete)$/);
+  if (!extract && !creates) return null;
+  const files: string[] = [];
+  if (extract) {
+    const dirs = args.flatMap((arg, at) =>
+      /^-C|^--directory(?:=|$)/.test(arg)
+        ? [arg.replace(/^-C|^--directory=?/, "") || args[at + 1] || "."]
+        : [],
+    );
+    files.push(...(dirs.length ? dirs : ["."]));
+  }
+  const old = args[0] !== undefined && !args[0].startsWith("-") && args[0].includes("f");
+  const archive = old ? args[1] : valueOf(args, /^(?:-[a-zA-Z]*f|--file=?)(.*)$/s);
+  if (creates && archive !== undefined && archive !== "-") files.push(archive);
+  return files;
+};
+
+const CONFIG_READ = /^(?:--get(?:-all|-regexp|-urlmatch)?|--list|-l|get|list)$/;
+const CONFIG_WRITE =
+  /^(?:--(?:unset(?:-all)?|add|replace-all|rename-section|remove-section|edit)|-e|set|unset|rename-section|remove-section|edit)$/;
+const CONFIG_VALUE = /^(?:--file|-f|--blob|--type|--default|--comment)$/;
+
+/** Whether `git config <rest>` writes (rather than reads) a value. */
+export const configWrites = (rest: readonly string[]): boolean => {
+  if (rest.some((arg) => CONFIG_READ.test(arg))) return false;
+  if (rest.some((arg) => CONFIG_WRITE.test(arg))) return true;
+  let named = 0;
+  for (let index = 0; index < rest.length; index++)
+    if (CONFIG_VALUE.test(rest[index])) index++;
+    else if (!rest[index].startsWith("-")) named++;
+  return named > 1;
+};
+
+/** git options before the subcommand, and `git clone|init` options, that take the next word. */
+const GIT_VALUE =
+  /^(?:-[Ccbouj]|--(?:git-dir|work-tree|namespace|config-env|branch|origin|config|depth|reference(?:-if-able)?|template|separate-git-dir|upload-pack|jobs|filter|initial-branch|object-format))$/;
+
+/**
+ * What git writes outside the edit analysis (#790): `init` and `clone` their
+ * directory, `format-patch` its patches, `archive -o`, `bundle create`, any
+ * `--output`, a `config` write its file, and `fetch`, `gc` and `branch`
+ * writes the repository ("."); paths are under `-C`. Null for the rest.
+ */
+const gitOutputs = (args: readonly string[]): string[] | null => {
+  let at = 0;
+  let base: string | undefined;
+  for (; args[at]?.startsWith("-"); at += GIT_VALUE.test(args[at]) ? 2 : 1)
+    if (args[at] === "-C") base = args[at + 1];
+  const [sub = "", ...rest] = args.slice(at);
+  if (rest.some((arg) => arg === "--help" || arg === "-h")) return null;
+  const names = rest.filter(
+    (arg, index) => !arg.startsWith("-") && !GIT_VALUE.test(rest[index - 1] ?? ""),
+  );
+  const has = (pattern: RegExp) => rest.some((arg) => pattern.test(arg));
+  const files: string[] = [];
+  const output = valueOf(
+    rest,
+    sub === "archive" ? /^(?:-o|--output=?)(.*)$/s : /^--output=?(.*)$/s,
+  );
+  if (output !== undefined) files.push(output);
+  if (sub === "init") files.push(names[0] ?? ".");
+  if (sub === "clone")
+    files.push(
+      names[1] ??
+        names[0]
+          ?.replace(/(?:\.git)?[\\/]*$/, "")
+          .split(/[\\/:]/)
+          .at(-1) ??
+        ".",
+    );
+  if (sub === "format-patch" && !has(/^--stdout$/))
+    files.push(valueOf(rest, /^(?:-o|--output-directory=?)(.*)$/s) ?? ".");
+  if (sub === "bundle" && names[0] === "create" && names[1]) files.push(names[1]);
+  if (sub === "config" && configWrites(rest))
+    files.push(
+      has(/^--global$/)
+        ? "~/.gitconfig"
+        : has(/^--system$/)
+          ? "/etc/gitconfig"
+          : (valueOf(rest, /^(?:-f|--file=?)(.*)$/s) ?? "."),
+    );
+  const branchWrite =
+    has(/^-[a-zA-Z]*[dDfmMcCu]|^--(?:delete|force|move|copy|set-upstream|unset-upstream|edit)/) ||
+    (names.length > 0 &&
+      !has(
+        /^-[a-zA-Z]*[lavr]|^--(?:list|all|remotes|verbose|show|contains|no-contains|merged|no-merged|points-at|format|sort)/,
+      ));
+  if (sub === "fetch" || sub === "gc" || (sub === "branch" && branchWrite)) files.push(".");
+  if (base === undefined) return files.length ? files : null;
+  const under = (file: string) =>
+    file === "."
+      ? `${base}/${OPAQUE_TARGET}git`
+      : /^[/~$]|^[A-Za-z]:[\\/]/.test(file)
+        ? file
+        : `${base}/${file}`;
+  return files.length ? files.map(under) : null;
 };
 
 /**

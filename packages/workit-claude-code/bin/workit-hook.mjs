@@ -175,10 +175,10 @@ const mayBypass = (command) =>
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 // What an agent's confinement also judges (hooks/worktree-confine.ts):
-// writers the edit analysis cannot see, `-c` scripts, `$(…)` and Workit's
-// lead-owned fanout verbs.
+// writers the edit analysis cannot see, `-c` scripts, `$(…)`, Workit's verbs
+// and, for a judge, scripts fed on stdin or by eval.
 const IMPLEMENTER_GATED =
-  /\b(?:unlink|chmod|chown|chgrp|shred|chattr|setfacl|rsync|find|xargs|g?awk|python[\d.]*|node|bun|deno|ruby|php|sh|bash|zsh|dash|ksh|workit)\b|\$\(|`/i;
+  /\b(?:unlink|chmod|chown|chgrp|shred|chattr|setfacl|rsync|find|xargs|g?awk|python[\d.]*|node|bun|deno|ruby|php|sh|bash|zsh|dash|ksh|workit|mkfifo|wget|tar|unzip|eval|source)\b|\$\(|`|<\(|\/dev\/(?:stdin|fd)/i;
 const SHELLS = new Set(["Bash", "PowerShell"]);
 const HEAVY_WORDS = new Set(
   (
