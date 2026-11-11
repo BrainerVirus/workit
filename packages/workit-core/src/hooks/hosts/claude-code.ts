@@ -1,5 +1,12 @@
 // Claude Code: command hooks mapped onto the protocol. The plugin that
 // registers them ships separately; this is the field mapping only.
+import { approveCallDeny, approveCallIn } from "../../approvals/call";
+import {
+  liveApprovalRequest,
+  recordApprovalAsked,
+  recordApprovalGrant,
+  renderApprovalRequest,
+} from "../../approvals/store";
 import type { HostDescriptor } from "../descriptor";
 import type {
   HookDecision,
@@ -78,7 +85,11 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     // Plugin agents are namespaced: `workit:implementer`, never a bare `workit-implementer`.
     agentPrefix: "workit:",
   },
-  provenance: { sessionId: "native", agentIdOnTool: "native", postToolObserve: "native" },
+  provenance: {
+    sessionId: "native",
+    agentIdOnTool: "native",
+    postToolObserve: "native",
+  },
   interaction: { questions: "undocumented", writeBoundary: "partial" },
   stopControl: "native",
   shellAvailable: "native",
@@ -161,10 +172,19 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
   switch (name) {
     case "SessionStart":
       return SOURCES.has(value.source as SessionSource)
-        ? { ok: true, event: { kind: "session.start", source: value.source as SessionSource } }
+        ? {
+            ok: true,
+            event: {
+              kind: "session.start",
+              source: value.source as SessionSource,
+            },
+          }
         : { ok: false, error: "SessionStart source is required" };
     case "UserPromptSubmit":
-      return { ok: true, event: { kind: "context.turn", prompt: optionalText(value.prompt) } };
+      return {
+        ok: true,
+        event: { kind: "context.turn", prompt: optionalText(value.prompt) },
+      };
     case "PreToolUse": {
       if (!nonEmpty(value.tool_name)) return { ok: false, error: "tool_name is required" };
       if (isWriteTool(value.tool_name))
@@ -199,7 +219,10 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
           },
         };
       if (!SHELL_TOOLS.has(value.tool_name))
-        return { ok: true, event: { kind: "tool.pre", tool: value.tool_name, toolUseId } };
+        return {
+          ok: true,
+          event: { kind: "tool.pre", tool: value.tool_name, toolUseId },
+        };
       const command = toolCommand(value);
       return command
         ? {
@@ -212,7 +235,10 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
               toolInput: value.tool_input as Record<string, unknown>,
             },
           }
-        : { ok: false, error: `tool_input.command is required for ${value.tool_name}` };
+        : {
+            ok: false,
+            error: `tool_input.command is required for ${value.tool_name}`,
+          };
     }
     case "PostToolUse": {
       const command = toolCommand(value);
@@ -257,7 +283,10 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
     case "PreCompact":
       return {
         ok: true,
-        event: { kind: "compact.pre", trigger: value.trigger === "manual" ? "manual" : "auto" },
+        event: {
+          kind: "compact.pre",
+          trigger: value.trigger === "manual" ? "manual" : "auto",
+        },
       };
     case "Stop":
       return {
@@ -287,7 +316,7 @@ const CONTEXT_EVENTS = new Set([
  * 2.1.306: a hook result with updatedInput and no permissionBehavior is
  * yielded as the input to run).
  */
-const render = (decision: HookDecision, native: string | null) => {
+const renderDecision = (decision: HookDecision, native: string | null) => {
   if (
     (decision.kind === "rewrite" || decision.kind === "update-input") &&
     native === "PreToolUse" &&
@@ -327,7 +356,12 @@ const render = (decision: HookDecision, native: string | null) => {
     };
   if (decision.kind === "context" && native !== null && CONTEXT_EVENTS.has(native))
     return {
-      json: { hookSpecificOutput: { hookEventName: native, additionalContext: decision.text } },
+      json: {
+        hookSpecificOutput: {
+          hookEventName: native,
+          additionalContext: decision.text,
+        },
+      },
       exitCode: 0,
     };
   // PreCompact has no hookSpecificOutput; the common systemMessage field
@@ -335,13 +369,118 @@ const render = (decision: HookDecision, native: string | null) => {
   if (decision.kind === "notice")
     return { json: { systemMessage: decision.userMessage }, exitCode: 0 };
   if (decision.kind === "continue" && (native === "Stop" || native === "SubagentStop"))
-    return { json: { decision: "block", reason: decision.reason }, exitCode: 0 };
+    return {
+      json: { decision: "block", reason: decision.reason },
+      exitCode: 0,
+    };
   return { json: {}, exitCode: 0 };
+};
+
+// --- the host-approval channel (docs/workit-next/host-approval.md) ---------
+
+/**
+ * Permission modes where an ask reaches a person. Auto mode, bypassPermissions
+ * and the SDK's prompt tools may answer an ask without one; until probed, no
+ * grant is recorded there (spec: Recording the answer, Claude Code U).
+ */
+const ASKING_MODES = new Set(["default", "acceptEdits", "plan"]);
+/** `claude -p`, the SDKs and `--permission-prompt-tool` run under an `sdk-*` entrypoint. */
+const personAsked = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): boolean =>
+  ASKING_MODES.has(String(raw.permission_mode)) &&
+  !String(env.CLAUDE_CODE_ENTRYPOINT ?? "").startsWith("sdk");
+
+/** The ask for a plain `workit approve <id>…`: every request rendered from the store. */
+const approveAsk = (ids: readonly string[]): string =>
+  [
+    "Workit asks you to approve:",
+    ...ids.map((id) => {
+      const found = liveApprovalRequest(id);
+      return found.ok ? renderApprovalRequest(found.request) : found.reason;
+    }),
+    "Yes records your approval of exactly this (one use, 15 minutes); No records nothing.",
+  ].join("\n");
+
+/**
+ * What a `workit approve` call does to this dispatch: PreToolUse answers the
+ * ask (or denies a call wrapped in anything) and notes the ask in the store;
+ * PostToolUse of the same tool call records one grant per id read from argv.
+ */
+type ApproveStep = (decision: HookDecision) => HookDecision;
+
+const approveStepOf = (
+  native: ClaudeHookEvent,
+  raw: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+): ApproveStep | null => {
+  if (native !== "PreToolUse" && native !== "PostToolUse") return null;
+  if (!SHELL_TOOLS.has(String(raw.tool_name))) return null;
+  const command = toolCommand(raw);
+  const call = command ? approveCallIn(command, dialectOf(raw)) : null;
+  if (!call) return null;
+  const session = optionalText(raw.session_id);
+  const toolUseId = optionalText(raw.tool_use_id);
+  const asked = personAsked(raw, env);
+  if (native === "PreToolUse")
+    return (decision) => {
+      // Another gate's deny wins; nothing is asked or noted.
+      if (decision.kind === "deny") return decision;
+      if (!call.plain)
+        return {
+          kind: "deny",
+          reason: approveCallDeny(call.fix),
+          unblock: call.fix,
+        };
+      if (asked && session && toolUseId)
+        recordApprovalAsked({
+          toolUseId,
+          session,
+          host: "claude_code",
+          ids: call.ids,
+        });
+      return { kind: "ask", reason: approveAsk(call.ids) };
+    };
+  // Claude Code fires PostToolUse only for a call that succeeded (a failed
+  // one is PostToolUseFailure, not registered); an exit code it does send must be 0.
+  const response = isRecord(raw.tool_response) ? raw.tool_response : {};
+  const exitCode = typeof response.exit_code === "number" ? response.exit_code : 0;
+  const ran = exitCode === 0 && response.interrupted !== true;
+  return (decision) => {
+    if (call.plain && asked && session && toolUseId && ran)
+      for (const id of call.ids)
+        recordApprovalGrant({
+          id,
+          host: "claude_code",
+          session,
+          toolUseId,
+          via: "host",
+        });
+    return decision;
+  };
+};
+
+/**
+ * The approve step of the payload being dispatched. dispatchHook runs parse,
+ * the shared handler and render in one synchronous call, so parse sets it and
+ * render takes it; any parse resets it.
+ */
+let approveStep: ApproveStep | null = null;
+
+const render = (decision: HookDecision, native: string | null) => {
+  const step = approveStep;
+  approveStep = null;
+  let final = decision;
+  try {
+    if (step) final = step(decision);
+  } catch {
+    // The store failing never blocks a call: the request stays unapproved.
+  }
+  return renderDecision(final, native);
 };
 
 export const claudeCodeAdapter: HostAdapter = {
   descriptor: CLAUDE_CODE_DESCRIPTOR,
-  parse(raw) {
+  parse(raw, env = process.env) {
+    approveStep = null;
     const native =
       isRecord(raw) && Object.hasOwn(EVENTS, String(raw.hook_event_name))
         ? (raw.hook_event_name as ClaudeHookEvent)
@@ -358,6 +497,7 @@ export const claudeCodeAdapter: HostAdapter = {
     if (!cwd) return fail("cwd must be an existing absolute directory");
     const event = eventOf(native, raw);
     if (!event.ok) return fail(event.error);
+    approveStep = approveStepOf(native, raw, env);
     return {
       ok: true,
       native,
