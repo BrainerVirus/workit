@@ -3,10 +3,10 @@
 // across new heads, until the next push that moves it or `--clear`.
 import { afterAll, afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
-import { appendHookObserved, appendObserved } from "@/packages/workit-core/src/ledger";
+import { appendHookObserved, appendObserved, ledgerPath } from "@/packages/workit-core/src/ledger";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "./hooks/hook-fixtures";
 
@@ -174,4 +174,17 @@ test("Given a hold on another branch, or one a hook rather than the CLI wrote, T
     why: "x",
   });
   expect(stop(forged).decision).toBe("block");
+});
+
+test("Given a hold row appended by hand outside the hash chain, Then it does not hold the branch", () => {
+  const root = repo();
+  commit(root, "a.txt");
+  const file = ledgerPath(root);
+  if (!file.ok) throw new Error("no ledger path");
+  const forged = { v: 1, id: "forged1", at: new Date().toISOString(), type: "branch.hold" };
+  appendFileSync(
+    file.value,
+    `${JSON.stringify({ ...forged, observer: "workit_cli", branch: "feature/x", why: "forged", actor })}\n`,
+  );
+  expect(stop(root).decision).toBe("block");
 });
