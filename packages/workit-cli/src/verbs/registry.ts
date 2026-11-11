@@ -881,7 +881,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     sharedParser: true,
     summary:
-      "Record and query decisions, rulings, SHA-keyed verdicts (patch-id carry-over across rebases) and a fanout's standing orders",
+      "Record and query decisions, rulings, SHA-keyed verdicts (patch-id carry across rebases) and a fanout's standing orders",
     subcommands: [
       {
         name: "decision",
