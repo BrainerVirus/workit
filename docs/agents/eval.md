@@ -69,6 +69,10 @@ plugins, MCP servers, Claude Code skills and `OPENCODE_*` variables do not.
 `workit` is this checkout's CLI and not an installed one. Sessions are created
 archived in your OpenCode database. `permissionMode` does not apply.
 
+The model gets the same closed `<workit-contract>` block on both hosts
+(maintainer decision on #793), so a case such as `session-context` asks the
+same question of each and never takes a per-host answer.
+
 ## What a run does
 
 Each case gets a throwaway world under the OS temp dir: a git repo on the
@@ -91,8 +95,9 @@ subscription and never writes to the calling session's ledger. The plugin's
 `bin/` leads `PATH`, so `workit` is this checkout's CLI. When
 `packages/workit-claude-code/skills/` is missing the runner builds it
 (`build.ts --skills-only`). Default tools: Read, Edit, Write, Glob, Grep,
-Skill, Agent and Bash limited to `workit`, `git` and read-only `ls`, `cat`,
-`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd`; anything else (a whole
+Skill, Agent and Bash limited to `workit`, `git` and read-only `cd`, `ls`, `cat`,
+`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd` (so `cd <dir> && git status`
+runs, as on a real host); anything else (a whole
 chain, when one part is not allowed) is denied, and the denial shows in the
 transcript.
 
