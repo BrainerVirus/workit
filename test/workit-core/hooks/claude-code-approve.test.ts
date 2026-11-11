@@ -161,3 +161,13 @@ test("Given a command that only mentions workit approve, When Claude Code's PreT
     expect(pre?.permissionDecision, command).not.toBe("ask");
   }
 });
+
+test("Given workit approve with no live request id, When Claude Code's PreToolUse runs, Then there is no ask and nothing is recorded; one live id among them keeps the ask", () => {
+  const pre = askAndRun("workit approve ap_zzzzzzzz ap_yyyyyyyy");
+  expect(pre?.permissionDecision).not.toBe("ask");
+  expect(existsSync(grantFile("ap_zzzzzzzz"))).toBe(false);
+  const request = createApprovalRequest(fields("/r/.git"), { session: "s0" });
+  const mixed = hook("PreToolUse", `workit approve ap_zzzzzzzz ${request.id}`);
+  expect(mixed?.permissionDecision).toBe("ask");
+  expect(mixed?.permissionDecisionReason).toContain("workit git push origin main");
+});
