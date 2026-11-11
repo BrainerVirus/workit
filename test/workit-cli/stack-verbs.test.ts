@@ -511,7 +511,7 @@ test("stack land: given merge: true and a current independent failed verdict on 
     stoppedAt: {
       pr: 11,
       reason: "failed_verdict",
-      unblock: "a new independent verdict on the head supersedes it",
+      unblock: expect.stringContaining("workit ledger void"),
     },
   });
   expect(forge.writes).toEqual([]);

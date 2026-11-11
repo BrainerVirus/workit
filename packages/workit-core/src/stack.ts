@@ -73,6 +73,7 @@ import {
 } from "./git/rev";
 import {
   appendObserved,
+  failedVerdictUnblock,
   diffHash,
   rangeKeys,
   readLedger,
@@ -1146,6 +1147,8 @@ export type BranchStatus = {
     basis: VerdictBasis;
     reasons: string[];
     verdictId: string | null;
+    /** The current independent failed verdict, when one blocks the branch (its void path is named). */
+    failedVerdictId?: string;
     lane: ReviewLane | null;
     need: LaneNeed;
     /** The verdict higher in the stack that covers this branch, when it has none of its own. */
@@ -1272,6 +1275,9 @@ const verdictOf = (
   const check = checkVerdictsCovered(cwd, branch, rows);
   // Without a PR there is no base to diff against: the gate stays independent.
   const gate = doc ? prLaneGate(cwd, check, { branch, base: doc.base, head: doc.head.sha }) : null;
+  const failed = check.accepted.reasons.includes("failing_verdict")
+    ? check.accepted.verdict?.id
+    : undefined;
   return {
     accepted: check.accepted.accepted,
     satisfied: gate ? gate.satisfied : check.accepted.accepted,
@@ -1282,6 +1288,7 @@ const verdictOf = (
       : typeof check.accepted.verdict?.id === "string" && check.accepted.accepted
         ? check.accepted.verdict.id
         : null,
+    ...(typeof failed === "string" ? { failedVerdictId: failed } : {}),
     lane: gate?.lane.lane ?? null,
     need: gate?.need ?? "non-author",
     cover: check.cover,
@@ -1354,8 +1361,8 @@ export function qualify(
   if (bypass && allowUnverified && verdict.reasons.includes("failing_verdict"))
     return stop(
       "failed_verdict",
-      `${label} has a current independent failed verdict for ${doc.head.sha.slice(0, 12)}; --unverified never lands over a rejection`,
-      "a new independent verdict on the head supersedes it",
+      `${label} has a current independent failed verdict${verdict.failedVerdictId ? ` (${verdict.failedVerdictId})` : ""} for ${doc.head.sha.slice(0, 12)}; --unverified never lands over a rejection`,
+      failedVerdictUnblock(verdict.failedVerdictId ?? null),
     );
   if (!(bypass && allowUnverified) && !verdict.satisfied) {
     const bypassHint = allowUnverified

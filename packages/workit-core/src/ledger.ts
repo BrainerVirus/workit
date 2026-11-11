@@ -194,7 +194,12 @@ export type VerdictRow = RowCommon & {
    * The configured checks' evidence on the head when an independent verified verdict was recorded (#509);
    * `base` is the merge base a `pre-existing` red check also failed on (#771).
    */
-  checkEvidence?: { name: string; status: string; via: string | null; base?: string }[];
+  checkEvidence?: {
+    name: string;
+    status: string;
+    via: string | null;
+    base?: string;
+  }[];
   /** Untracked files in the judged worktree when the verdict was recorded (they do not block it). */
   untracked?: string[];
   untrackedCount?: number;
@@ -1259,6 +1264,64 @@ export type VerdictCheck = {
 const isLiveVerdict = (row: ReadRow, retired: ReadonlySet<string>): boolean =>
   row.type === "verdict" && typeof row.result === "string" && !retired.has(row.id);
 
+const VOID_TYPE = "verdict.voided";
+
+export type VerdictVoid = {
+  id: string;
+  at: string;
+  reason: string;
+  by: string | null;
+};
+
+/** A `ledger void` row: the verdict it voids (`target`) and why. */
+export type VerdictVoidRow = RowCommon & {
+  type: "verdict.voided";
+  observer: "workit_cli";
+  target: string;
+  targetResult: string | null;
+  targetKind: string;
+  reason: string;
+};
+
+/**
+ * The verdicts the user voided (`workit ledger void`, #759), by verdict id.
+ * Only a row `ledger void` wrote counts; with `chained`, only one that
+ * verifies in the hash chain (a gate's reading), so a hand-appended void
+ * retires nothing.
+ */
+export function verdictVoids(
+  rows: readonly ReadRow[],
+  options: { chained?: boolean } = {},
+): Map<string, VerdictVoid> {
+  const voids = new Map<string, VerdictVoid>();
+  for (const row of rows)
+    if (
+      row.type === VOID_TYPE &&
+      row.observer === "workit_cli" &&
+      typeof row.target === "string" &&
+      (options.chained ? row.integrity === "verified" : row.integrity !== "unverified") &&
+      !voids.has(row.target)
+    )
+      voids.set(row.target, {
+        id: row.id,
+        at: row.at,
+        reason: str(row.reason) ?? "",
+        by: row.actor.session,
+      });
+  return voids;
+}
+
+/**
+ * The command a user runs to void verdict `id`, from `cwd` when given (never
+ * an agent: the CLI refuses an agent shell).
+ */
+export const voidCommand = (id: string, cwd?: string): string =>
+  `workit${cwd ? ` --cwd ${cwd}` : ""} ledger void ${id} --reason "<why it is wrong on its face>"`;
+
+/** The unblock of a merge or land refused over a failed verdict: fix and re-verify, or void a stray one. */
+export const failedVerdictUnblock = (id: string | null): string =>
+  `fix the change and have a non-author verify the new head, or the failing verdict's own session re-records with --supersedes; if it is wrong on its face (filed for another repo or branch), the user voids it in their own terminal: ${voidCommand(id ?? "<verdict id>")}`;
+
 /** Sessions recorded in `Workit-Session:` trailers of `base...head` commits. */
 function trailerSessions(cwd: string, base: string | null, head: string | null): string[] {
   if (!base || !head || !safeRef(base) || !safeRef(head)) return [];
@@ -1797,6 +1860,8 @@ function checkVerdictsOnce(
       trustReasons(cwd, row).length === 0
     )
       retired.add(row.supersedes);
+  // A verdict the user voided (`ledger void`, #759) is no verdict at all.
+  for (const id of verdictVoids(rows, { chained: true }).keys()) retired.add(id);
   // Verdict precedence follows when each verdict was recorded. Local rows keep
   // their ledger order; a row imported from the mirror (#311) is appended
   // whenever a gate first sees it, so it is placed after the last local row
@@ -1988,7 +2053,7 @@ export function verdictMirrorPath(cwd: string): string | null {
   return path.join(resolveStateDir(), "verdicts", key, "ledger.jsonl");
 }
 
-/** Append a recorded verdict to the mirror (best effort: the local row is the record). */
+/** Append a recorded verdict or void to the mirror (best effort: the local row is the record). */
 function mirrorVerdict(cwd: string, row: Record<string, unknown>): void {
   const file = verdictMirrorPath(cwd);
   const local = ledgerPath(cwd);
@@ -2033,7 +2098,10 @@ function importMirroredVerdicts(cwd: string, branch: string): ReadRow[] {
   const mirror = readLedgerAt(cwd, file, { integrity: true });
   if (!mirror.ok) return [];
   const candidates = mirror.value.rows.filter(
-    (row) => row.type === "verdict" && row.branch === branch && row.integrity === "verified",
+    (row) =>
+      (row.type === "verdict" || row.type === VOID_TYPE) &&
+      row.branch === branch &&
+      row.integrity === "verified",
   );
   const added = new Set<string>();
   try {
@@ -2061,7 +2129,10 @@ function importMirroredVerdicts(cwd: string, branch: string): ReadRow[] {
           } = row;
           const written = appendLine(
             local.value,
-            (previous) => ({ ok: true, value: sealed(fields, id, at, previous).line }),
+            (previous) => ({
+              ok: true,
+              value: sealed(fields, id, at, previous).line,
+            }),
             { heldLock: true },
           );
           if (!written.ok) return false;
@@ -2439,6 +2510,95 @@ function dirtyElsewhere(cwd: string, branch: string, head: string): boolean {
   return false;
 }
 
+const MAX_SIBLINGS = 200;
+
+/**
+ * Checkouts next to `cwd`'s main checkout (the workspace's other repos) that
+ * have a local branch `branch`; at most MAX_SIBLINGS directories are read.
+ */
+function siblingsWithBranch(cwd: string, branch: string): string[] {
+  const commonDir = gitDirs(cwd)?.commonDir;
+  if (!commonDir || path.basename(commonDir) !== ".git") return [];
+  const main = path.dirname(commonDir);
+  const parent = path.dirname(main);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(parent, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .slice(0, MAX_SIBLINGS)
+    .map((entry) => path.join(parent, entry.name))
+    .filter(
+      (dir) =>
+        dir !== main &&
+        fs.existsSync(path.join(dir, ".git")) &&
+        resolveCommit(dir, `refs/heads/${branch}`) !== null,
+    );
+}
+
+/**
+ * Refuse a verdict for `branch` when this repository has no such branch
+ * (#759): a verdict about another repo's branch must never land here. Null
+ * when the branch exists, or is the checked-out branch (an unborn branch says
+ * so where its head is read).
+ */
+export function branchNotInRepo(cwd: string, branch: string): LedgerError | null {
+  if (branchHead(cwd, branch) !== null || currentBranch(cwd) === branch) return null;
+  const top = gitDirs(cwd)?.top ?? cwd;
+  const siblings = siblingsWithBranch(cwd, branch);
+  return err(
+    "invalid_input",
+    `branch_not_in_repo: ${top} has no branch ${branch}${siblings.length ? ` (${siblings.join(", ")} has it)` : ""}; a verdict is filed in the repo whose branch it judges, so nothing was recorded`,
+    `record it in that repo: workit --cwd ${siblings.length === 1 ? siblings[0] : `<the checkout that has ${branch}>`} ledger verdict <result> --how "<what you ran>" --branch ${branch}`,
+  );
+}
+
+/**
+ * Void a verdict that is wrong on its face (filed on the wrong repo or
+ * branch, #759): the gates stop counting it, and it stays in the ledger with
+ * the reason. The caller (the CLI) admits only the user at a terminal.
+ */
+export function recordVerdictVoid(
+  context: RecordContext,
+  input: { target: string; reason?: string },
+): LedgerResult<VerdictVoidRow> {
+  const reason = required(input.reason, "--reason");
+  if (!reason.ok) return reason;
+  const ledger = readLedger(context.cwd);
+  if (!ledger.ok) return ledger;
+  const target = findSupersedeTarget(ledger.value.rows, input.target);
+  if (!target)
+    return err("not_found", `no ledger row ${input.target}`, "workit ledger list --type verdict");
+  if (target.type !== "verdict")
+    return err("invalid_input", `${target.id} is a ${target.type} row, not a verdict`);
+  const already = verdictVoids(ledger.value.rows).get(target.id);
+  if (already)
+    return err(
+      "invalid_input",
+      `verdict ${target.id} is already voided (${already.id}: ${already.reason})`,
+    );
+  const recorded = appendRaw<VerdictVoidRow>(
+    context.cwd,
+    {
+      observer: "workit_cli",
+      type: VOID_TYPE,
+      actor: context.actor,
+      branch: target.branch,
+      head: target.head,
+      target: target.id,
+      targetResult: str(target.result),
+      targetKind: str(target.kind) ?? "review",
+      reason: reason.value,
+    },
+    { now: context.now },
+  );
+  if (recorded.ok) mirrorVerdict(context.cwd, recorded.value);
+  return recorded;
+}
+
 /**
  * Record an agent-asserted verdict on a branch's committed head. Refused on a
  * dirty worktree (the head would not be what was judged) and, for an author
@@ -2454,7 +2614,12 @@ export function recordVerdict(
     surface?: string | null;
     self?: boolean;
     evidenceRefs?: string[];
-    checkEvidence?: { name: string; status: string; via: string | null; base?: string }[];
+    checkEvidence?: {
+      name: string;
+      status: string;
+      via: string | null;
+      base?: string;
+    }[];
     /**
      * A role id derived from another session (`--as`): the session it was
      * derived from. `null` means it was derived from no session, which makes
@@ -2489,6 +2654,8 @@ export function recordVerdict(
       "HEAD is detached; name the branch the verdict is for",
       "pass --branch <branch>",
     );
+  const missing = branchNotInRepo(context.cwd, branch);
+  if (missing) return missing;
   const ledger = readLedger(context.cwd);
   if (!ledger.ok) return ledger;
   const key = codeKey(context.cwd, { branch, base: context.base });
@@ -2599,6 +2766,7 @@ const OBSERVED_ONLY: ReadonlySet<string> = new Set([
   "check",
   "merge.unverified",
   "policy.judged",
+  "verdict.voided",
   ...PR_ROW_TYPES,
 ]);
 
@@ -2626,6 +2794,9 @@ export function summarizeRow(row: ReadRow): RowSummary {
       break;
     case "verdict":
       summary = `${text("result")} [${text("kind") || "review"}] at ${(row.head ?? "?").slice(0, 12)}${row.self === true ? ` (self${text("selfReason") === "no_session" ? ": no session" : ""})` : ""}${text("sessionSource") === "flag" ? ` (session ${row.actor.session ?? "?"} named by --session)` : ""}: ${text("how")}`;
+      break;
+    case "verdict.voided":
+      summary = `voided verdict ${text("target")} (${text("targetResult") || "?"}; reason: ${text("reason")})`;
       break;
     case "policy.judged": {
       const lifted = Array.isArray(row.lifted) ? row.lifted.map(String) : [];

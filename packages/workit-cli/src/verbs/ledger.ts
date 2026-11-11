@@ -12,6 +12,10 @@
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
 //   workit ledger check    [--pr n|--branch b]
 //   workit ledger verify-integrity                    # rows outside the CLI's hash chain
+//   workit ledger void <verdict id|#n> --reason "<why>"
+//                          # the user, at a terminal, voids a verdict that is
+//                          # wrong on its face (wrong repo or branch, #759); the
+//                          # gates stop counting it. An agent shell is refused.
 //   workit ledger standing add "<order>" | list | clear [<id>]  [--fanout <name>]
 //                          # the lead's standing orders for a fanout's workers,
 //                          # recorded only by the session that first made the
@@ -40,7 +44,9 @@
 // `sessionBound: true`. Every recorded verdict prints what the gates read
 // for its branch (accepted, or not and why). `--pr`
 // must resolve to a branch through the CLI's own PR rows or a fetched forge
-// ref; it is never guessed from other rows.
+// ref; it is never guessed from other rows. A verdict names a branch this
+// repo has (branch_not_in_repo otherwise, #759), and a `--pr` verdict without
+// `--branch` is refused while the checkout is on another branch.
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import { prStatusReport } from "@workit-dev/core/src/forge/report";
@@ -60,9 +66,13 @@ import {
   recordRuling,
   recordStanding,
   recordVerdict,
+  recordVerdictVoid,
+  branchNotInRepo,
   summarizeRow,
   supersedeAllowed,
   unboundRecovery,
+  verdictVoids,
+  voidCommand,
   type LedgerRead,
   type LedgerResult,
   type ReadRow,
@@ -83,16 +93,19 @@ import {
   type CheckEvidenceDoc,
 } from "@workit-dev/core/src/core/policy/check-evidence";
 import { connect } from "./forge-common";
+import { agentMarker } from "./grant";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 
 const USAGE =
-  "workit ledger decision|ruling|verdict|standing|list|check ... (workit help ledger for the grammar)";
+  "workit ledger decision|ruling|verdict|void|standing|list|check ... (workit help ledger for the grammar)";
+const VOID_USAGE = 'workit ledger void <verdict id|#n> --reason "<why>" [--json]';
 const STANDING_USAGE =
   'workit ledger standing add "<order>" | add --stop ["<note>"] | add --clear | list | clear [<id>]  [--fanout <name>] [--json]';
 
 const OPTIONS = {
   why: { type: "string" },
+  reason: { type: "string" },
   "cost-if-wrong": { type: "string" },
   ref: { type: "string", multiple: true },
   by: { type: "string" },
@@ -120,6 +133,7 @@ const OPTIONS = {
 
 type Values = {
   why?: string;
+  reason?: string;
   "cost-if-wrong"?: string;
   ref?: string[];
   by?: string;
@@ -173,7 +187,10 @@ const actorFor = (io: Io, values: Values): Acting | Error => {
     if (!ROLE_SAFE.test(values.as)) return new Error("--as takes a lowercase role, e.g. verifier");
     const prefix = (actor.session ?? actor.host).slice(0, 96);
     return {
-      actor: { ...actor, session: `${prefix}:${values.as}:${randomBytes(4).toString("hex")}` },
+      actor: {
+        ...actor,
+        session: `${prefix}:${values.as}:${randomBytes(4).toString("hex")}`,
+      },
       source: "as",
       derivedFrom: actor.session,
     };
@@ -242,6 +259,11 @@ const verdictLines = (check: CoveredCheck): string[] => {
       `reverify: focused (${check.reverify.files.join(", ")}): re-check only the change since ${check.reverify.since.slice(0, 12)}`,
     );
   for (const warning of check.warnings) lines.push(`warning: ${warning}`);
+  const failing = check.accepted.verdict?.id;
+  if (check.accepted.reasons.includes("failing_verdict") && typeof failing === "string")
+    lines.push(
+      `void: only if ${failing} is wrong on its face (wrong repo or branch), the user runs in their own terminal: ${voidCommand(failing)}`,
+    );
   if (!check.accepted.accepted && check.accepted.reasons.includes("no_verdict"))
     lines.push(
       `next: workit ledger verdict verified|failed --how "<what you ran>" --branch ${check.branch}  # a non-author session records it`,
@@ -266,7 +288,10 @@ const shadowedWhy = (cwd: string, row: VerdictRow): string | null => {
     const scope = branchScope(cwd, row.branch);
     const problem = supersedeAllowed(row, effective, (target) =>
       typeof target.at === "string"
-        ? scope({ branch: typeof target.branch === "string" ? target.branch : null, at: target.at })
+        ? scope({
+            branch: typeof target.branch === "string" ? target.branch : null,
+            at: target.at,
+          })
         : false,
     );
     const stands = `your ${String(effective.result)} verdict ${effective.id} on the same code still stands, so this ${row.result} verdict is not the one ${row.branch} reads`;
@@ -331,7 +356,12 @@ function targetBranch(
 export async function run(argv: string[], io: Io): Promise<number> {
   let parsed: { values: Values; positionals: string[] };
   try {
-    parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
+    parsed = parseArgs({
+      args: argv,
+      options: OPTIONS,
+      allowPositionals: true,
+      strict: true,
+    });
   } catch (error) {
     return usage(io, (error as Error).message);
   }
@@ -359,6 +389,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       "show",
       "check",
       "verify-integrity",
+      "void",
     ].includes(sub)
   )
     return usage(io, `unknown ledger subcommand "${sub}"`);
@@ -375,7 +406,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
   // mistake, it does not stop a forger.
   if (sub === "verify-integrity") {
     if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
-    const integrity = ledger.value.integrity ?? { chained: 0, legacy: 0, unverified: [] };
+    const integrity = ledger.value.integrity ?? {
+      chained: 0,
+      legacy: 0,
+      unverified: [],
+    };
     return emit(
       io,
       ok({
@@ -391,11 +426,16 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   if (sub === "list" || sub === "show") {
     if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
+    // A voided verdict stays listed, with who voided it and why (#759).
+    const voids = verdictVoids(rows);
     const listed = filterRows(rows, {
       branch: values.branch,
       pr,
       type: values.type,
       last: last ?? 50,
+    }).map((row) => {
+      const voided = voids.get(row.id);
+      return voided ? { ...row, voided } : row;
     });
     // Findings live in the task record, not the ledger: say so instead of a bare empty list.
     const note =
@@ -416,11 +456,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
           : data.rows.length
             ? data.rows.map((row) => {
                 const line = summarizeRow(row);
-                return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}${line.summary === line.type ? "" : `  ${line.summary}`}`;
+                const voidedBy = voids.get(row.id);
+                const voided = voidedBy ? ` (voided: ${voidedBy.reason})` : "";
+                return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}${voided}${line.summary === line.type ? "" : `  ${line.summary}`}`;
               })
             : "ledger is empty",
     );
   }
+
+  if (sub === "void") return voidVerdict(io, values, rest);
 
   const isRead =
     sub === "check" ||
@@ -445,6 +489,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   const target = targetBranch(io, rows, values.branch, pr);
   if (!target.ok) return failed(io, target);
+  if (sub === "verdict") {
+    const misfiled = misfiledVerdict(io.cwd, target.value, values.branch, pr);
+    if (misfiled)
+      return emit(io, fail("invalid_input", misfiled.error, { unblock: misfiled.unblock }));
+  }
   if (values.head !== undefined) {
     const actual = target.value === null ? headSha(io.cwd) : resolveRef(io.cwd, target.value);
     const wanted = values.head.trim().toLowerCase();
@@ -519,7 +568,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const refusal =
     claimed === null
       ? null
-      : sessionClaimRefusal(io.env, claimed, io.cwd, { token, flag: acting.source === "flag" });
+      : sessionClaimRefusal(io.env, claimed, io.cwd, {
+          token,
+          flag: acting.source === "flag",
+        });
   if (refusal)
     return emit(
       io,
@@ -606,7 +658,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (shadowed) io.stderr(`warning: ${shadowed}\n`);
   // What the gates read now, so a verdict that does not count never passes silently.
   const withGate: LedgerResult<VerdictRow & { gate: GateReading | null }> = verdict.ok
-    ? { ok: true, value: { ...verdict.value, gate: gateReading(io.cwd, verdict.value) } }
+    ? {
+        ok: true,
+        value: { ...verdict.value, gate: gateReading(io.cwd, verdict.value) },
+      }
     : verdict;
   return fromResult(io, withGate, (row) =>
     [
@@ -642,13 +697,84 @@ function headCi(io: Io, branch: string | null, head: string): HeadCi {
       state: `not run (PR #${doc.number} is at ${doc.head.sha.slice(0, 12)})`,
       pr: doc.number,
     };
-  return { green: doc.checks.state === "passing", state: doc.checks.state, pr: doc.number };
+  return {
+    green: doc.checks.state === "passing",
+    state: doc.checks.state,
+    pr: doc.number,
+  };
 }
 
-/** Test seam: the forge read of a head's CI. */
-export const ledgerDeps: { headCi: (io: Io, branch: string | null, head: string) => HeadCi } = {
+/** Test seams: the forge read of a head's CI, and whether a person is at the terminal. */
+export const ledgerDeps: {
+  headCi: (io: Io, branch: string | null, head: string) => HeadCi;
+  interactive: () => boolean;
+} = {
   headCi,
+  interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
 };
+
+/**
+ * Why a verdict for `target` would be filed in the wrong place (#759), or
+ * null: a branch this repo does not have, or a `--pr` without `--branch`
+ * while this checkout is on another branch.
+ */
+function misfiledVerdict(
+  cwd: string,
+  target: string | null,
+  branchFlag: string | undefined,
+  pr: number | undefined,
+): { error: string; unblock?: string } | null {
+  if (target === null) return null;
+  const missing = branchNotInRepo(cwd, target);
+  if (missing) return missing;
+  const here = currentBranch(cwd);
+  if (pr === undefined || branchFlag !== undefined || here === null || here === target) return null;
+  return {
+    error: `branch_mismatch: PR ${pr} is branch ${target}, but this checkout is on ${here}; a --pr verdict names its branch when recorded from another branch's checkout, so nothing was recorded`,
+    unblock: `if you judged ${target} of this repo, add --branch ${target}; if PR ${pr} belongs to another repo, record it there: workit --cwd <that repo's checkout> ledger verdict <result> --how "<what you ran>" --pr ${pr}`,
+  };
+}
+
+/**
+ * `workit ledger void <id> --reason "<why>"`: the user's act, like approving
+ * release notes: never an agent shell, never headless (#759).
+ */
+async function voidVerdict(io: Io, values: Values, args: string[]): Promise<number> {
+  if (args.length !== 1)
+    return emit(
+      io,
+      fail("invalid_input", "ledger void takes one verdict id", {
+        unblock: VOID_USAGE,
+      }),
+    );
+  const agent = agentMarker(io.env);
+  if (!ledgerDeps.interactive() || agent)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `void_refused: voiding a verdict needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; a verdict is never voided headless`,
+        {
+          unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${voidCommand(args[0], io.cwd)}`,
+        },
+      ),
+    );
+  const voided = recordVerdictVoid(
+    { cwd: io.cwd, actor: actorFromEnv(io.env) },
+    { target: args[0], reason: values.reason },
+  );
+  if (!voided.ok) return failed(io, voided);
+  const { branch } = voided.value;
+  const row = { ...voided.value, gate: gateReading(io.cwd, { branch }) };
+  return emit(io, ok(row), (data) =>
+    [
+      `voided verdict ${data.target} (${data.targetResult ?? "?"} on ${branch ?? "no branch"}): ${data.reason}`,
+      data.gate
+        ? `gate: ${branch} ${data.gate.accepted ? `accepted (verdict ${data.gate.verdictId ?? "?"})` : `not accepted (${data.gate.reasons.join(", ")})`}`
+        : "gate: unknown",
+    ].join("\n"),
+  );
+}
 
 /**
  * The commands that record a run of `name` on the merge base `sha`, in a
@@ -674,10 +800,14 @@ function verdictCheckEvidence(
   return verdictEvidence(cwd, { head, base, rows: ledger.value.rows });
 }
 
-type GateReading = { accepted: boolean; reasons: string[]; verdictId: string | null };
+type GateReading = {
+  accepted: boolean;
+  reasons: string[];
+  verdictId: string | null;
+};
 
 /** The merge gates' reading of `row`'s branch right after it was recorded. */
-const gateReading = (cwd: string, row: VerdictRow): GateReading | null => {
+const gateReading = (cwd: string, row: { branch: string | null }): GateReading | null => {
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok || !row.branch) return null;
   const { accepted } = checkVerdicts(cwd, row.branch, ledger.value.rows);
@@ -800,7 +930,12 @@ async function standing(io: Io, values: Values, args: string[]): Promise<number>
   if (action === "add")
     return fromResult(
       io,
-      recordStanding(context, { fanout, lead, what: rest.join(" "), stop: values.stop === true }),
+      recordStanding(context, {
+        fanout,
+        lead,
+        what: rest.join(" "),
+        stop: values.stop === true,
+      }),
       (row) =>
         row.stop
           ? `recorded stop line ${row.id} for fanout ${fanout}; running workers stop and report on their next tool call`

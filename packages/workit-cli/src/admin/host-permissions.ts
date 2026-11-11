@@ -58,15 +58,24 @@ export const CLAUDE_ALLOW: readonly string[] = [
   "Bash(workit --version)",
 ];
 // Ask beats allow, so a bypass flag or a user-only call (WORKIT_USER_ONLY, #615)
-// still reaches the user (also in auto mode). The `workit * …` form covers a
-// `--cwd <dir>` before the verb.
+// still reaches the user (also in auto mode). Each rule is anchored at the verb
+// that takes it: a `*` reads quoted text too, so `workit * ledger void*` asked
+// on a verdict whose --how only mentions it. A global option before the verb
+// is the PreToolUse hook's to ask (it reads words, not text).
 export const CLAUDE_ASK: readonly string[] = [
+  "Bash(workit pr merge *--unverified*)",
+  "Bash(workit stack land *--unverified*)",
+  "Bash(workit git push *--overwrite-unintegrated*)",
+  ...WORKIT_USER_ONLY.map((words) => `Bash(workit ${words.join(" ")}*)`),
+];
+/**
+ * The mid-command ask globs Workit wrote before they were anchored (#759): a
+ * refresh drops each one only where the ownership record says Workit added it.
+ */
+const RETIRED_CLAUDE_ASK: readonly string[] = [
   "Bash(workit * --unverified*)",
   "Bash(workit * --overwrite-unintegrated*)",
-  ...WORKIT_USER_ONLY.flatMap((words) => [
-    `Bash(workit ${words.join(" ")}*)`,
-    `Bash(workit * ${words.join(" ")}*)`,
-  ]),
+  ...WORKIT_USER_ONLY.map((words) => `Bash(workit * ${words.join(" ")}*)`),
 ];
 const AUTO_MODE_ENVIRONMENT =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in the Workit config dir, outside the agent's reach.";
@@ -203,14 +212,29 @@ const dropPrior = (config: Json, host: "claude-code" | "cursor"): void => {
   }
 };
 
+/** Drop the retired ask globs Workit itself wrote (`ownedAsk`); a user's same entry stays. */
+const dropRetired = (config: Json, ownedAsk: readonly string[]): void => {
+  const retired = new Set(RETIRED_CLAUDE_ASK.filter((entry) => ownedAsk.includes(entry)));
+  const at = valueAt(config, "permissions.ask");
+  const list = at?.parent[at.key];
+  if (at && retired.size && Array.isArray(list))
+    at.parent[at.key] = list.filter((entry) => !retired.has(entry as string));
+};
+
 /**
  * Claude Code user settings with Workit's block. `shell` (a bash path) is set
  * as `env.CLAUDE_CODE_SHELL` only when no value is set; `skip` leaves out the
  * entries an earlier write offered (the upgrade refresh).
  */
-function mergeClaudeSettings(settings: Json, shell: string | null, skip: Skip = {}): HostMerge {
+function mergeClaudeSettings(
+  settings: Json,
+  shell: string | null,
+  skip: Skip = {},
+  ownedAsk: readonly string[] = [],
+): HostMerge {
   const config = clone(settings);
   const owned = emptyOwned();
+  dropRetired(config, ownedAsk);
   const error =
     appendList(config, "permissions.allow", CLAUDE_ALLOW, owned, [], skip) ??
     appendList(config, "permissions.ask", CLAUDE_ASK, owned, [], skip) ??
@@ -291,7 +315,11 @@ const PRIOR_ENTRIES: Record<"claude-code" | "cursor", Record<string, readonly st
 
 /** Every entry any shipped Workit version offered at `dotted`: the one set uninstall may remove. */
 const offeredAt = (host: "claude-code" | "cursor", dotted: string): ReadonlySet<string> =>
-  new Set([...(CANONICAL[host].lists[dotted] ?? []), ...(PRIOR_ENTRIES[host][dotted] ?? [])]);
+  new Set([
+    ...(CANONICAL[host].lists[dotted] ?? []),
+    ...(PRIOR_ENTRIES[host][dotted] ?? []),
+    ...(host === "claude-code" && dotted === "permissions.ask" ? RETIRED_CLAUDE_ASK : []),
+  ]);
 
 /** The containers a merge may create, per host. */
 const CREATED_PATHS: Record<"claude-code" | "cursor", ReadonlySet<string>> = {
@@ -635,9 +663,10 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
           ? findBash(paths.env)
           : options.bash
         : null;
+      const ownedAsk = previous?.owned.lists["permissions.ask"];
       const merged =
         host === "claude-code"
-          ? mergeClaudeSettings(parsed, bash, skip)
+          ? mergeClaudeSettings(parsed, bash, skip, Array.isArray(ownedAsk) ? ownedAsk : [])
           : mergeCursorCliConfig(parsed, skip);
       if (merged.error) {
         plan.blocked.push(`${target.file}: ${merged.error}; left untouched`);
@@ -764,7 +793,7 @@ export function applyHostPermissions(
       const previous = record.hosts[change.host];
       record.hosts[change.host] = {
         file: change.file,
-        owned: unionOwned(previous?.owned, change.owned),
+        owned: forgetDropped(unionOwned(previous?.owned, change.owned), change),
         offered: unionLists(previous?.offered, change.offered),
       };
       entries.push({ host: change.host, file: change.file, status: "written" });
@@ -780,6 +809,32 @@ export function applyHostPermissions(
   if (entries.some((e) => e.status === "written")) writeOwnership(record, paths.stateDir);
   return entries;
 }
+
+/**
+ * `owned` without the retired ask globs the write dropped, so a user who adds
+ * the same entry later never has it removed as Workit's.
+ */
+const forgetDropped = (owned: OwnedEntries, change: PermissionChange): OwnedEntries => {
+  const ask = owned.lists["permissions.ask"];
+  if (change.host !== "claude-code" || !ask) return owned;
+  let kept: unknown = [];
+  try {
+    const after: unknown = JSON.parse(change.after);
+    kept = isRecord(after) && isRecord(after.permissions) ? after.permissions.ask : [];
+  } catch {
+    return owned;
+  }
+  const present = new Set(Array.isArray(kept) ? kept : []);
+  return {
+    ...owned,
+    lists: {
+      ...owned.lists,
+      "permissions.ask": ask.filter(
+        (entry) => !RETIRED_CLAUDE_ASK.includes(entry) || present.has(entry),
+      ),
+    },
+  };
+};
 
 /** Remove Workit's Codex rules file (exact path only). */
 export const removeCodexRules = (file: string, options: PermissionPaths = {}): boolean => {

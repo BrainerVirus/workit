@@ -881,7 +881,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     sharedParser: true,
     summary:
-      "Record and query decisions, rulings, SHA-keyed verdicts (patch-id carry-over across rebases) and a fanout's standing orders",
+      "Record and query decisions, rulings, SHA-keyed verdicts (patch-id carry across rebases) and a fanout's standing orders",
     subcommands: [
       {
         name: "decision",
@@ -920,6 +920,12 @@ export const VERBS: readonly VerbEntry[] = [
         usage: "workit ledger verify-integrity",
         summary:
           "Rows outside the CLI's hash chain (hand-written or changed); reports, never blocks",
+      },
+      {
+        name: "void",
+        usage: 'workit ledger void <verdict id|#n> --reason "<why>"',
+        summary:
+          "The user, at a terminal, voids a verdict that is wrong on its face (wrong repo or branch); gates stop counting it. Refused in an agent shell",
       },
       {
         name: "standing",
