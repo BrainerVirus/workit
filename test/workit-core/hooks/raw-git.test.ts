@@ -476,7 +476,8 @@ test("G a Workit workspace, W routine raw delivery commands, T they run with a n
 test("G a repository Workit does not manage, W gh pr merge or a push onto main, T no decision", async () => {
   await withProtectedMain(() => {
     const root = repo({ store: false });
-    for (const command of ["gh pr merge 5", "git push origin HEAD:main", "git commit -m x"])
+    // A raw commit on main is denied even here: the config names main protected (raw-git-commit.test.ts).
+    for (const command of ["gh pr merge 5", "git push origin HEAD:main"])
       expect(claude(root, command).json, command).toEqual({});
   });
 });
