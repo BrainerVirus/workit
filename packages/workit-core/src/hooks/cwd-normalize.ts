@@ -47,8 +47,10 @@ export const cwdRewrite = (command: string): string | null => {
   const dir = match?.[1];
   const rest = match?.[2];
   if (!dir || !rest || dir.startsWith("-")) return null;
-  // `2>&1` is the only redirect, `|` the only operator: no `&`, `;`, `<`, `>`, backtick or newline.
-  if (/[&;<>`\n]/u.test(rest.replaceAll("2>&1", ""))) return null;
+  // `2>&1` is the only redirect, `|` the only operator: no `&`, `;`, `<`, `>`, backtick or
+  // newline outside quotes (a quoted `<email>` trailer is text; substitutions fail `clean`).
+  if (/[&;<>`\n]/u.test(rest.replaceAll("2>&1", "").replaceAll(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "")))
+    return null;
   const segments = segmentsOf(rest);
   const [head, ...filters] = segments;
   if (!head || head.words[0] !== "workit") return null;

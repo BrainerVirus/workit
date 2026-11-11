@@ -128,3 +128,22 @@ test.each([
 ])("`%s` keeps its cd", (command) => {
   expect(cwdRewrite(command)).toBeNull();
 });
+
+// The bench's Haiku commit carried a Co-Authored-By trailer: `<…>` inside quotes is not a redirect.
+test("a quoted `<email>` trailer does not block the rewrite", () => {
+  expect(
+    cwdRewrite(
+      `cd /tmp/wt && workit git commit -m "docs: notes" --trailer "Co-Authored-By: X <x@y>" -- n.md`,
+    ),
+  ).toBe(
+    `workit git --cwd /tmp/wt commit -m "docs: notes" --trailer "Co-Authored-By: X <x@y>" -- n.md`,
+  );
+});
+
+test.each([
+  [`cd /tmp/wt && workit git status > "out"`],
+  [`cd /tmp/wt && workit git commit -m "a" ; rm x`],
+  [`cd /tmp/wt && workit git commit -m 'a' & rm x`],
+])("`%s` is still not rewritten", (command) => {
+  expect(cwdRewrite(command)).toBeNull();
+});
