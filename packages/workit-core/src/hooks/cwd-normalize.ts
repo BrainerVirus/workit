@@ -78,43 +78,9 @@ export const verbFirst = (command: string): string | null => {
   return `${lead} ${verb}${globals}${command.slice(whole.length)}`;
 };
 
-const rewriteOrNull = (command: string): string | null => {
-  try {
-    return cwdRewrite(command);
-  } catch {
-    return null;
-  }
-};
-
-const MUTATING_GIT = new Set([
-  "commit",
-  "push",
-  "add",
-  "switch",
-  "checkout",
-  "merge",
-  "rebase",
-  "reset",
-  "tag",
-  "branch",
-  "stash",
-  "cherry-pick",
-  "revert",
-]);
-
-/** `git [-C dir] [-c k=v] <verb> …` that changes the repo; a listing (`branch`, `tag -l`, `stash list`) does not. */
-const mutatingGit = (words: readonly string[]): boolean => {
-  if (words[0] !== "git") return false;
-  let at = 1;
-  while (words[at]?.startsWith("-")) at += words[at] === "-C" || words[at] === "-c" ? 2 : 1;
-  const verb = words[at] ?? "";
-  const args = words.slice(at + 1);
-  if (!MUTATING_GIT.has(verb)) return false;
-  if (verb === "branch") return args.some((w) => /^-[dDmM]$|^--(delete|move)$/u.test(w));
-  if (verb === "tag") return args.length > 0 && !args.some((w) => w === "-l" || w === "--list");
-  if (verb === "stash") return !["list", "show"].includes(args[0] ?? "");
-  return true;
-};
+/** `git [-C dir] <verb> …` that changes the repo; a listing (`branch`, `tag -l`, `stash list`) does not. */
+const MUTATING_GIT =
+  /^git(?: -\S+| -[Cc] \S+)* (?:commit|push|add|switch|checkout|merge|rebase|reset|cherry-pick|revert|branch .*(?:-[dDmM]|--delete|--move)\b|tag (?!-l\b|--list)|stash(?! (?:list|show)\b))/u;
 
 /**
  * For `cd <literal dir> && workit … || git <mutating verb> …` (or `;`), the
@@ -125,17 +91,17 @@ export const cdWorkitSplit = (command: string): string | null => {
   const match = COMPOUND.exec(command);
   const dir = match?.[1];
   const rest = match?.[2];
-  if (!dir || !rest || rewriteOrNull(command) !== null) return null;
+  if (!dir || !rest || cwdRewrite(command) !== null) return null;
   const whole = segmentsOf(rest);
   // A cut inside quotes changes the words of a segment it keeps: not a call boundary.
   const boundary = (head: string): boolean =>
     segmentsOf(head).every((s, at) => s.words.join("\0") === whole[at]?.words.join("\0"));
   for (const op of rest.matchAll(/\|\||;/gu)) {
     const head = rest.slice(0, op.index).trimEnd();
-    const call = rewriteOrNull(`cd ${dir} && ${head}`);
+    const call = cwdRewrite(`cd ${dir} && ${head}`);
     if (!call || !boundary(head)) continue;
     const next = segmentsOf(rest.slice(op.index + op[0].length))[0];
-    return next && mutatingGit(next.words) ? call : null;
+    return next && MUTATING_GIT.test(next.words.join(" ")) ? call : null;
   }
   return null;
 };
