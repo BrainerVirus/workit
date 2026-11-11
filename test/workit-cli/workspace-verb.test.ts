@@ -1017,3 +1017,53 @@ test("Given workspace set releaseNotes=review on the workspace and on a release 
   expect((await run(["set", "work", "releaseNotes=null"])).code).toBe(0);
   expect(byName("work").releaseNotes).toBeUndefined();
 });
+
+// #780 review: youtrack.writes=auto lets agents post to YouTrack without the
+// user's yes, so loosening it is the user's, at their own terminal; tightening
+// (ask) stays open to an agent.
+test("set youtrack.writes=auto from an agent shell or headless is refused with the terminal unblock and changes nothing", async () => {
+  const before = readFileSync(file(), "utf8");
+  for (const spec of [
+    "youtrack.writes=auto",
+    'youtrack={"baseUrl":"https://yt.example","writes":"auto"}',
+  ]) {
+    const asked: string[] = [];
+    const agent = await run(["set", "work", spec], root, AGENT_ENV, terminal("y", asked));
+    expect(agent.json().code, spec).toBe("blocked");
+    expect(agent.json().error, spec).toContain("grant_raise_refused");
+    expect(agent.json().unblock, spec).toContain("in a terminal outside the agent host");
+    expect(agent.json().unblock, spec).toContain("workit workspace set work");
+    expect(asked, spec).toEqual([]);
+    expect((await run(["set", "work", spec], root, {}, headless)).json().error, spec).toContain(
+      "grant_raise_refused",
+    );
+    expect(readFileSync(file(), "utf8"), spec).toBe(before);
+  }
+});
+
+test("set youtrack.writes=ask from an agent shell is accepted; removing an auto is a tightening too", async () => {
+  expect((await run(["set", "work", "youtrack.writes=ask"])).code).toBe(0);
+  expect(byName("work").youtrack.writes).toBe("ask");
+  seed([{ ...WORK(), youtrack: { baseUrl: "https://yt.example", writes: "auto" } }]);
+  expect((await run(["set", "work", "youtrack.writes=null"])).code).toBe(0);
+  expect(byName("work").youtrack.writes).toBeUndefined();
+});
+
+test("set youtrack.writes=auto at the user's terminal needs a y", async () => {
+  expect((await run(["set", "work", "youtrack.writes=auto"], root, {}, terminal("n"))).code).toBe(
+    3,
+  );
+  expect(byName("work").youtrack.writes).toBeUndefined();
+  expect((await run(["set", "work", "youtrack.writes=auto"], root, {}, terminal("y"))).code).toBe(
+    0,
+  );
+  expect(byName("work").youtrack.writes).toBe("auto");
+});
+
+test("add --from a parent with youtrack.writes=auto in an agent shell inherits ask, and says so", async () => {
+  seed([{ ...WORK(), youtrack: { baseUrl: "https://yt.example", writes: "auto" } }]);
+  const result = await run(["add", "kit", "--glob", `${root}/work/libs/kit/**`, "--from", "work"]);
+  expect(result.code).toBe(0);
+  expect(byName("kit").youtrack).toEqual({ baseUrl: "https://yt.example" });
+  expect(result.json().data.notCopied).toEqual(["youtrack.writes"]);
+});
