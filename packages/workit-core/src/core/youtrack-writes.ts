@@ -5,9 +5,15 @@
 // skipped (`already_done`); after a write with an unknown outcome (a timeout
 // after the server applied it), the read-back settles it instead of a retry
 // posting a duplicate.
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import path from "node:path";
+import type { ApprovalFields, ApprovalKind } from "../approvals/store";
+import { resolveStateDir } from "./logger";
+import { writeFileAtomic } from "./safe-write";
 import { sha256 } from "./task-contract";
+import { resolveRuntimeWorkspaceVcs } from "./workspaces";
 import { youTrackBaseUrl } from "./youtrack";
-import { youTrackBackend, type YouTrackBackend } from "./youtrack-backend";
+import { youTrackBackend, type OwnEntry, type YouTrackBackend } from "./youtrack-backend";
 
 export type MarkerWhere = "comments" | "workItems";
 
@@ -62,7 +68,11 @@ export async function writeOnce(
   if (result.ok) return { status: "done", data: result.data, ...precheck };
   const outcome = (result.data as { outcome?: unknown } | undefined)?.outcome;
   if (outcome === "not_applied")
-    return { status: "failed", error: result.error ?? "not applied", data: result.data };
+    return {
+      status: "failed",
+      error: result.error ?? "not applied",
+      data: result.data,
+    };
   const settled = await markerPresent(issueId, marker, where, backend);
   if (settled === true) return { status: "settled", ...precheck };
   return {
@@ -70,4 +80,146 @@ export async function writeOnce(
     error: result.error ?? "YouTrack write failed",
     data: result.data,
   };
+}
+
+// ------------------------------------------------- asking first (#780)
+
+/**
+ * `ask` (the default, every workspace): each write needs the user's yes
+ * through the approval channel. `auto` is the opt-out a user sets in the
+ * workspace entry (`youtrack: { writes: "auto" }`); it keeps the
+ * WORKIT_YT_WRITE gate alone.
+ */
+export type YouTrackWritesMode = "ask" | "auto";
+
+export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
+  const youtrack = resolveRuntimeWorkspaceVcs(cwd)?.youtrack;
+  return youtrack &&
+    typeof youtrack === "object" &&
+    (youtrack as { writes?: unknown }).writes === "auto"
+    ? "auto"
+    : "ask";
+};
+
+/** The approval-channel kind for a YouTrack write (rendered in the host's prompt). */
+const YOUTRACK_WRITE_KIND = "youtrack-write" as unknown as ApprovalKind;
+
+/** What the user approves for one `workit youtrack` write: the issue, the text, the minutes, the day. */
+export const youTrackApprovalFields = (input: {
+  action: string;
+  /** `{ issue }` for a comment or work item, `{ project }` for a new issue. */
+  on: Record<string, string>;
+  effect: string;
+  subject: Record<string, unknown>;
+}): ApprovalFields => ({
+  kind: YOUTRACK_WRITE_KIND,
+  action: input.action,
+  target: { tracker: youTrackBaseUrl() ?? "ytrack:default", ...input.on },
+  effect: input.effect,
+  subject: input.subject,
+});
+
+// ------------------------------------------------- duplicate entries (#780)
+
+const MARKER_TAIL = /\s*<!-- workit-action:[0-9a-f]{64} -->\s*$/u;
+
+/** An entry's text without Workit's marker. */
+export const withoutMarker = (text: string): string => text.replace(MARKER_TAIL, "").trim();
+
+export type Wanted =
+  | { where: "comments"; text: string }
+  | { where: "workItems"; text: string; minutes: number; date: string };
+
+/**
+ * The current user's entry that already says what `wanted` would post (same
+ * text, and for a work item the same minutes and day), or null. `undefined`
+ * when the entries could not be read.
+ */
+export async function findDuplicate(
+  issueId: string,
+  wanted: Wanted,
+  backend: YouTrackBackend,
+): Promise<OwnEntry | null | undefined> {
+  const entries = await backend.ownEntries(issueId, wanted.where);
+  if (!entries) return undefined;
+  const text = wanted.text.trim();
+  return (
+    entries.find(
+      (entry) =>
+        withoutMarker(entry.text) === text &&
+        (wanted.where === "comments" ||
+          (entry.minutes === wanted.minutes && entry.date === wanted.date)),
+    ) ?? null
+  );
+}
+
+// ------------------------------------------------- interrupted writes (#780)
+
+/** A write that started and has no known outcome yet. */
+export type PendingWrite = {
+  issueId: string;
+  step: string;
+  action: string;
+  where: MarkerWhere;
+  marker: string;
+  at: string;
+};
+
+const PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const pendingDir = (): string => path.join(resolveStateDir(), "youtrack", "pending");
+const pendingFile = (marker: string): string =>
+  path.join(pendingDir(), `${sha256(marker).slice(0, 32)}.json`);
+
+/** Note a write before it is sent, so a killed or timed-out call is settled next time. */
+export const rememberPending = (write: Omit<PendingWrite, "at">): void => {
+  mkdirSync(pendingDir(), { recursive: true });
+  writeFileAtomic(
+    pendingFile(write.marker),
+    `${JSON.stringify({ ...write, at: new Date().toISOString() }, null, 2)}\n`,
+  );
+};
+
+export const forgetPending = (marker: string): void => {
+  rmSync(pendingFile(marker), { force: true });
+};
+
+export type EarlierWrite = Omit<PendingWrite, "marker" | "where"> & {
+  /** true: it landed; false: it did not; null: still unknown (kept for the next call). */
+  landed: boolean | null;
+};
+
+/**
+ * Read back every write an earlier call started but never settled (an
+ * interrupt, a crash, a lost reply) and say whether it landed. Settled ones
+ * are forgotten; unknown ones stay for the next call.
+ */
+export async function settlePending(backend: YouTrackBackend): Promise<EarlierWrite[]> {
+  let names: string[];
+  try {
+    names = readdirSync(pendingDir()).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out: EarlierWrite[] = [];
+  for (const name of names) {
+    const file = path.join(pendingDir(), name);
+    let entry: PendingWrite;
+    try {
+      entry = JSON.parse(readFileSync(file, "utf8")) as PendingWrite;
+    } catch {
+      rmSync(file, { force: true });
+      continue;
+    }
+    const landed = await markerPresent(entry.issueId, entry.marker, entry.where, backend);
+    if (landed !== null || Date.now() - Date.parse(entry.at) > PENDING_MAX_AGE_MS)
+      rmSync(file, { force: true });
+    out.push({
+      issueId: entry.issueId,
+      step: entry.step,
+      action: entry.action,
+      at: entry.at,
+      landed,
+    });
+  }
+  return out;
 }
