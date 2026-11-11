@@ -91,10 +91,18 @@ export const workitSkillOf = (name: string): WorkitSkill | null => {
     : null;
 };
 
+/** Quoted text: a code block, `code`, "…", “…” or a 'word' (not an apostrophe). */
+const QUOTED = /```[\s\S]*?```|`[^`\n]*`|"[^"\n]*"|“[^”\n]*”|(?<!\w)'[^'\n]*'(?!\w)/g;
+
+/** A prompt about the agent's own conduct: it names a trigger, it does not ask for one. */
+const COMPLAINT =
+  /\b(?:why (?:are|do|did|would|does) you|you keep|stop (?:asking|doing|saying))\b/i;
+
 /** The skill a prompt asks for, by precedence, with the phrase that did. */
 export const promptTrigger = (prompt: string): { skill: WorkitSkill; trigger: string } | null => {
-  // Code blocks and quoted output carry words the user did not ask with.
-  const text = prompt.replace(/```[\s\S]*?```/g, " ").slice(0, 4000);
+  // Quoted words are mentioned, not asked with (#792).
+  const text = prompt.slice(0, 4000).replace(QUOTED, " ");
+  if (COMPLAINT.test(text)) return null;
   for (const [skill, pattern] of PROMPT_INTENTS) {
     const match = pattern.exec(text);
     if (match) return { skill, trigger: match[1] ?? match[0] };
