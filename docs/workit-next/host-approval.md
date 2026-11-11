@@ -52,7 +52,7 @@ grants nothing), so the agent may also create one ahead of time
 | Field | Content |
 | --- | --- |
 | `id` | `ap_` + 8 random base32 characters; printed, never derived from content |
-| `kind` | `release-notes`, `spawn-model`, `first-push`, `config`, `force-push`, `live-session`, `discard-work`, `secrets` |
+| `kind` | `release-notes`, `spawn-model`, `first-push`, `config`, `force-push`, `live-session`, `discard-work`, `secrets`, `youtrack-write` |
 | `action` | The verb or call, as the user would read it: `workit git push --release 4.5.0` |
 | `target` | Repo (realpath of the git common dir), branch or version, remote URL where one applies |
 | `effect` | One sentence on what happens on yes: "publishes the forge release 4.5.0 with this draft" |

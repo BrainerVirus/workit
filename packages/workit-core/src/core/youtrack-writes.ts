@@ -7,7 +7,7 @@
 // posting a duplicate.
 import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import type { ApprovalFields, ApprovalKind } from "../approvals/store";
+import type { ApprovalFields } from "../approvals/store";
 import { resolveStateDir } from "./logger";
 import { writeFileAtomic } from "./safe-write";
 import { sha256 } from "./task-contract";
@@ -101,9 +101,6 @@ export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
     : "ask";
 };
 
-/** The approval-channel kind for a YouTrack write (rendered in the host's prompt). */
-const YOUTRACK_WRITE_KIND = "youtrack-write" as unknown as ApprovalKind;
-
 /** What the user approves for one `workit youtrack` write: the issue, the text, the minutes, the day. */
 export const youTrackApprovalFields = (input: {
   action: string;
@@ -112,7 +109,7 @@ export const youTrackApprovalFields = (input: {
   effect: string;
   subject: Record<string, unknown>;
 }): ApprovalFields => ({
-  kind: YOUTRACK_WRITE_KIND,
+  kind: "youtrack-write",
   action: input.action,
   target: { tracker: youTrackBaseUrl() ?? "ytrack:default", ...input.on },
   effect: input.effect,
