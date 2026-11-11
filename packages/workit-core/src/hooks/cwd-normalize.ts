@@ -52,10 +52,13 @@ export const cwdRewrite = (command: string): string | null => {
   const segments = segmentsOf(rest);
   const [head, ...filters] = segments;
   if (!head || head.words[0] !== "workit") return null;
-  if (head.words.some((w) => w === "--cwd" || w.startsWith("--cwd="))) return null;
   if (!segments.every(clean)) return null;
   if (!segments.slice(0, -1).every((s) => s.pipe)) return null;
   if (!filters.every((s) => FILTERS.has(s.words[0] ?? "") && stdinOnly(s.words))) return null;
+  // A `cd` to the --cwd the call already names is dropped; another --cwd keeps it.
+  const at = head.words.indexOf("--cwd");
+  if (at >= 0) return head.words[at + 1] === dir.replace(/^(['"])(.*)\1$/u, "$2") ? rest : null;
+  if (head.words.some((w) => w.startsWith("--cwd="))) return null;
   const args = rest.slice("workit".length).trimStart();
   const verb = VERB_FIRST.exec(args);
   if (!verb?.[2] || !VERBS.has(verb[2])) return `workit --cwd ${dir} ${args}`.trimEnd();

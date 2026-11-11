@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { cdWorkitSplit } from "@/packages/workit-core/src/hooks/cwd-normalize";
+import { cdWorkitSplit, cwdRewrite } from "@/packages/workit-core/src/hooks/cwd-normalize";
 import {
   claudeCodeAdapter,
   codexAdapter,
@@ -106,4 +106,25 @@ test("a rewritable cd chain is still rewritten, not denied", () => {
   ).hookSpecificOutput;
   expect(output?.permissionDecision).toBeUndefined();
   expect(output?.updatedInput?.command).toBe("workit git --cwd /tmp/wt commit -m x -- n.md");
+});
+
+// The Haiku 5.5 bench call: a `cd` before a workit call that already names the same --cwd.
+test.each([
+  [
+    `cd /tmp/wt && workit git commit --cwd /tmp/wt -m "docs: notes" -- notes.md 2>&1`,
+    `workit git commit --cwd /tmp/wt -m "docs: notes" -- notes.md 2>&1`,
+  ],
+  [
+    `cd "/tmp/my wt" && workit git --cwd "/tmp/my wt" status`,
+    `workit git --cwd "/tmp/my wt" status`,
+  ],
+])("a redundant cd in `%s` is dropped", (command, expected) => {
+  expect(cwdRewrite(command)).toBe(expected);
+});
+
+test.each([
+  ["cd /tmp/a && workit git commit --cwd /tmp/b -m x"],
+  ["cd /tmp/a && workit git commit --cwd /tmp/a -m x; rm y"],
+])("`%s` keeps its cd", (command) => {
+  expect(cwdRewrite(command)).toBeNull();
 });
