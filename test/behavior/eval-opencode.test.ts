@@ -273,6 +273,7 @@ test("Given a parent shell elsewhere, Then the OpenCode child's PWD is the world
     worktree: null,
     state: "/w/state",
     config: "/w/config",
+    bin: "/w/bin",
   };
   const env = opencodeEnv(
     {
