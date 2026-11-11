@@ -668,7 +668,7 @@ export const VERBS: readonly VerbEntry[] = [
       status: "read-only git needs no workit verb: run git status --short directly",
     },
     summary:
-      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and a verified remote tip",
+      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
     subcommands: [
       {
         name: "branch",
