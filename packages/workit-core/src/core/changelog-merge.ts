@@ -84,7 +84,8 @@ export const mergeUnreleasedBody = (base: string, ours: string, theirs: string):
     const heading = (mine ?? theirsOne)!.heading;
     out += `${withNewline(heading)}\n${prose}${blocks.flat().join("")}\n`;
   }
-  return out;
+  // The joins above add bare LF; a CRLF file keeps CRLF throughout.
+  return ours.includes("\r\n") ? out.replace(/\r?\n/gu, "\r\n") : out;
 };
 
 /**
