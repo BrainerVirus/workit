@@ -172,7 +172,7 @@ const READ_ONLY_SEGMENT =
  * and dontAsk turns that ask into a denial a real host would not show (#793).
  * No other shell syntax, so a write cannot ride along.
  */
-export const readOnlyCdChain = (command: string): boolean => {
+const readOnlyCdChain = (command: string): boolean => {
   if (/[;|<>`$()&\n]/u.test(command.replaceAll("&&", " "))) return false;
   const [first = "", ...rest] = command.split("&&").map((part) => part.trim());
   return (
