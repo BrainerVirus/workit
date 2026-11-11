@@ -12,7 +12,7 @@ import { resolveStateDir } from "./logger";
 import { writeFileAtomic } from "./safe-write";
 import { sha256 } from "./task-contract";
 import { resolveRuntimeWorkspaceVcs } from "./workspaces";
-import { youTrackBaseUrl } from "./youtrack";
+import { youTrackBaseUrl, youTrackWorkTimezone } from "./youtrack";
 import { youTrackBackend, type OwnEntry, type YouTrackBackend } from "./youtrack-backend";
 
 export type MarkerWhere = "comments" | "workItems";
@@ -127,15 +127,46 @@ export type Wanted =
   | { where: "comments"; text: string }
   | { where: "workItems"; text: string; minutes: number; date: string };
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/u;
+
+/**
+ * A work item's day as YYYY-MM-DD, or null. A day stays as it is; an epoch
+ * (number or digits) or an ISO timestamp at UTC midnight is YouTrack's work
+ * date, so its UTC day; any other timestamp is read in `timezone`.
+ */
+export const workItemDay = (value: unknown, timezone: string): string | null => {
+  if (typeof value === "string" && DAY.test(value)) return value;
+  const ms =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/u.test(value)
+        ? Number(value)
+        : typeof value === "string"
+          ? Date.parse(value)
+          : Number.NaN;
+  if (!Number.isFinite(ms)) return null;
+  const date = new Date(ms);
+  if (ms % 86_400_000 === 0) return date.toISOString().slice(0, 10);
+  const day = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+  return DAY.test(day) ? day : null;
+};
+
 /**
  * The current user's entry that already says what `wanted` would post (same
  * text, and for a work item the same minutes and day), or null. `undefined`
- * when the entries could not be read.
+ * when the entries could not be read: the caller says duplicates were not
+ * checked, never that there are none.
  */
 export async function findDuplicate(
   issueId: string,
   wanted: Wanted,
   backend: YouTrackBackend,
+  timezone: string = youTrackWorkTimezone(),
 ): Promise<OwnEntry | null | undefined> {
   const entries = await backend.ownEntries(issueId, wanted.where);
   if (!entries) return undefined;
@@ -145,7 +176,7 @@ export async function findDuplicate(
       (entry) =>
         withoutMarker(entry.text) === text &&
         (wanted.where === "comments" ||
-          (entry.minutes === wanted.minutes && entry.date === wanted.date)),
+          (entry.minutes === wanted.minutes && workItemDay(entry.date, timezone) === wanted.date)),
     ) ?? null
   );
 }

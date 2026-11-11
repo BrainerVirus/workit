@@ -74,7 +74,8 @@ export type OwnEntry = {
   id: string;
   text: string;
   minutes?: number;
-  date?: string;
+  /** As read: ytrack documents YYYY-MM-DD; an epoch or ISO timestamp is normalised by the caller. */
+  date?: string | number;
 };
 
 export interface YouTrackBackend {
@@ -306,7 +307,9 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
           ...(isObj(item.duration) && typeof item.duration.minutes === "number"
             ? { minutes: item.duration.minutes }
             : {}),
-          ...(str(item.date) ? { date: str(item.date) as string } : {}),
+          ...(typeof item.date === "string" || typeof item.date === "number"
+            ? { date: item.date }
+            : {}),
         }));
       }
       const me = ranJson(run, ["api", "/users/me", "--fields", "login"]);
