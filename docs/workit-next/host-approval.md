@@ -171,6 +171,7 @@ and a fallback-only host test that asserts the deny names the request id and the
    the denied call. Only OpenCode and Pi record `approval.rejected`.
 6. **Order of delivery.** Decided: Claude Code, OpenCode and Pi first; Codex and Cursor stay
    fallback-only until the U probes above pass, recorded in
-   [hosts.md](../agents/hosts.md#host-parity).
+   [hosts.md](../agents/hosts.md#host-parity). The same rule applies to OpenCode's U items:
+   first in order means its probes run first, not that it records before they pass.
 7. **Cross-session grants.** Decided: accepted when the hash matches (the user may approve in
    a terminal or another session), with both sessions in the ledger row.
