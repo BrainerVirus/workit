@@ -456,7 +456,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
           : data.rows.length
             ? data.rows.map((row) => {
                 const line = summarizeRow(row);
-                const voided = "voided" in row ? ` (voided: ${row.voided.reason})` : "";
+                const voidedBy = voids.get(row.id);
+                const voided = voidedBy ? ` (voided: ${voidedBy.reason})` : "";
                 return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${line.labels.length ? ` (${line.labels.join(", ")})` : ""}${voided}${line.summary === line.type ? "" : `  ${line.summary}`}`;
               })
             : "ledger is empty",
@@ -763,11 +764,11 @@ async function voidVerdict(io: Io, values: Values, args: string[]): Promise<numb
     { target: args[0], reason: values.reason },
   );
   if (!voided.ok) return failed(io, voided);
-  const branch = typeof voided.value.branch === "string" ? voided.value.branch : null;
+  const { branch } = voided.value;
   const row = { ...voided.value, gate: gateReading(io.cwd, { branch }) };
   return emit(io, ok(row), (data) =>
     [
-      `voided verdict ${String(data.target)} (${String(data.targetResult)} on ${branch ?? "no branch"}): ${String(data.reason)}`,
+      `voided verdict ${data.target} (${data.targetResult ?? "?"} on ${branch ?? "no branch"}): ${data.reason}`,
       data.gate
         ? `gate: ${branch} ${data.gate.accepted ? `accepted (verdict ${data.gate.verdictId ?? "?"})` : `not accepted (${data.gate.reasons.join(", ")})`}`
         : "gate: unknown",

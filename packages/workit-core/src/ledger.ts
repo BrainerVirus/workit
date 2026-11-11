@@ -1273,6 +1273,16 @@ export type VerdictVoid = {
   by: string | null;
 };
 
+/** A `ledger void` row: the verdict it voids (`target`) and why. */
+export type VerdictVoidRow = RowCommon & {
+  type: "verdict.voided";
+  observer: "workit_cli";
+  target: string;
+  targetResult: string | null;
+  targetKind: string;
+  reason: string;
+};
+
 /**
  * The verdicts the user voided (`workit ledger void`, #759), by verdict id.
  * Only a row `ledger void` wrote counts; with `chained`, only one that
@@ -2551,7 +2561,7 @@ export function branchNotInRepo(cwd: string, branch: string): LedgerError | null
 export function recordVerdictVoid(
   context: RecordContext,
   input: { target: string; reason?: string },
-): LedgerResult<Record<string, unknown>> {
+): LedgerResult<VerdictVoidRow> {
   const reason = required(input.reason, "--reason");
   if (!reason.ok) return reason;
   const ledger = readLedger(context.cwd);
@@ -2567,9 +2577,10 @@ export function recordVerdictVoid(
       "invalid_input",
       `verdict ${target.id} is already voided (${already.id}: ${already.reason})`,
     );
-  const recorded = appendObserved(
+  const recorded = appendRaw<VerdictVoidRow>(
     context.cwd,
     {
+      observer: "workit_cli",
       type: VOID_TYPE,
       actor: context.actor,
       branch: target.branch,
