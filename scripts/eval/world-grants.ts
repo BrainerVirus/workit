@@ -30,7 +30,11 @@ const inside = (dir: string, file: string): boolean => {
   return !rel.startsWith("..") && !path.isAbsolute(rel);
 };
 
-/** The world's `eval` entry, cut down to what may apply, when `cwd` is in a marked world under the temp dir. */
+/**
+ * The world's `eval` entry, cut down to what may apply, when `cwd` is in a
+ * marked world under the temp dir. autonomy.ts requires it by path.
+ * @public
+ */
 export const worldEntry = (cwd: string): WorkspaceConfig | null => {
   const raw = process.env[EVAL_WORLD_ENV];
   if (!raw || !path.isAbsolute(raw)) return null;
