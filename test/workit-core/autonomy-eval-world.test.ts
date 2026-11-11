@@ -15,7 +15,9 @@ import { EVAL_WORLD_ENV, EVAL_WORLD_MARKER } from "@/packages/workit-core/src/co
 let configHome: ConfigHome;
 let world = "";
 let real = "";
-const SAVED = [EVAL_WORLD_ENV, "WORKIT_CONFIG", "TMPDIR"] as const;
+// os.tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows.
+const TMP_VARS = ["TMPDIR", "TEMP", "TMP"] as const;
+const SAVED = [EVAL_WORLD_ENV, "WORKIT_CONFIG", ...TMP_VARS] as const;
 const saved = Object.fromEntries(SAVED.map((key) => [key, process.env[key]]));
 
 const gitInit = (dir: string) => {
@@ -93,7 +95,7 @@ test("Given a bench world that denies push, Then push is denied and the endpoint
 test("Given TMPDIR points at a checkout a real workspace covers and a marked world inside it, When that world resolves grants, Then the real grants win", () => {
   const inside = path.join(real, "repo", "w");
   mkdirSync(inside, { recursive: true });
-  process.env.TMPDIR = path.join(real, "repo");
+  for (const name of TMP_VARS) process.env[name] = path.join(real, "repo");
   makeWorld(inside, { defaultEndpoint: "pr", autonomy: { push: true } });
   const autonomy = resolveAutonomy(path.join(inside, "repo"));
   expect(autonomy.workspace).toBe("real");
@@ -125,9 +127,9 @@ test("Given a world without the marker, outside the temp dir or named by a relat
   } finally {
     writeFileSync(path.join(world, EVAL_WORLD_MARKER), "");
   }
-  process.env.TMPDIR = repo;
+  for (const name of TMP_VARS) process.env[name] = repo;
   expect(endpoint()).toBe("commit");
-  delete process.env.TMPDIR;
+  for (const name of TMP_VARS) delete process.env[name];
   process.env[EVAL_WORLD_ENV] = path.relative(process.cwd(), world);
   expect(endpoint()).toBe("commit");
 });
