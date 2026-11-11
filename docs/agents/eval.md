@@ -14,6 +14,7 @@ layer 0 in [testing.md](testing.md#agent-behaviour-eval).
 bun scripts/eval/run.ts --model haiku --tier smoke            # the smoke cases, up to 3 model runs
 bun scripts/eval/run.ts --model claude-haiku-4-5 --tier full --budget-runs 12
 bun scripts/eval/run.ts --model haiku --cases spawn-implementer --force
+bun scripts/eval/run.ts --model claude-haiku-5-5 --tier full --cases stop-hold --repeat 3
 bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash --tier smoke
 bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored transcripts, no model
 ```
@@ -23,6 +24,11 @@ bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored 
 - `--budget-runs n` (default 3) caps how many `claude -p` runs one invocation
   starts. Cases past the cap are listed as `incomplete`; run again to continue,
   cached cases cost nothing.
+- `--repeat n` (default 1) runs each case n times in fresh worlds. Run 1 is
+  stored as `<case>.json`, run k as `<case>.run<k>.json` (each with its
+  transcript); a case passes when at least two thirds of its runs pass (2 of
+  3). Each run counts against `--budget-runs`, and its `summary.json` row
+  lists every run under `runs`.
 - A result is reused when its key matches: the case file, the model and the
   Workit version (`<last release tag>+<hash of packages/workit-core,
   packages/workit-cli/src and packages/workit-claude-code on disk>`). An edit to
@@ -120,6 +126,7 @@ issue or `test/behavior/cases` file).
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
 | `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `dontAsk`, the list above |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
+| `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`, `verification`, `vcs`), so `workit grant show` and the Stop hook see it; grants above the D4 defaults are capped |
 | `expect.atMost` | `{tool?, pattern, max, why}`: at most `max` calls match |
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
 | `expect.require`, `expect.forbid` | `{tool?, pattern, why}`: a regex on the Bash command, or on the JSON input for other tools |

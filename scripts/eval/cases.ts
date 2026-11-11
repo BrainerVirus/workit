@@ -32,6 +32,16 @@ export type EvalCase = {
     unborn?: boolean;
     /** Committed in order on the case's branch, after `files`. */
     commits?: { message: string; files: Record<string, string> }[];
+    /**
+     * The world's workspace entry (name `eval`, covering the world), read
+     * through WORKIT_EVAL_WORLD; grants above the D4 defaults are capped.
+     */
+    workspace?: {
+      defaultEndpoint?: "commit" | "pr" | "green" | "merged";
+      autonomy?: Record<string, boolean | "verified">;
+      verification?: "proportional" | "self" | "independent";
+      vcs?: Record<string, string>;
+    };
   };
   maxTurns?: number;
   permissionMode?: string;

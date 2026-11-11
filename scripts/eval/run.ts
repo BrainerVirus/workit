@@ -6,7 +6,7 @@
  * checkout. Never runs in CI. See docs/agents/eval.md.
  *
  *   bun scripts/eval/run.ts --model haiku [--tier smoke|full] [--cases a,b]
- *     [--budget-runs 3] [--force] [--bin claude] [--timeout-s 300]
+ *     [--budget-runs 3] [--repeat 1] [--force] [--bin claude] [--timeout-s 300]
  *   bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash [...]
  *   bun scripts/eval/run.ts --replay [--host opencode] [--model haiku] [--check]
  */
@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/autonomy";
 import { loadCases, selectCases, type EvalCase, type Tier } from "./cases";
 import { grade, usageOf, type Grade, type Usage } from "./grade";
 import {
@@ -67,6 +68,8 @@ const DEFAULT_TOOLS = [
 
 type RunResult = {
   case: string;
+  /** Which of a case's `--repeat` runs this is, from 2 (run 1 leaves it out). */
+  run?: number;
   host?: Host;
   model: string;
   /** The OpenCode provider that ran the case. */
@@ -118,6 +121,13 @@ const resultName = (host: Host, model: string): string =>
 const modelDir = (results: string, name: string): string =>
   path.join(results, name.replaceAll(/[^\w.-]/g, "_"));
 
+/** Run 1 keeps the plain `<case>` file names; run k > 1 is `<case>.run<k>`. */
+const runBase = (id: string, run: number): string => (run === 1 ? id : `${id}.run${run}`);
+const RUN_SUFFIX = /\.run\d+$/u;
+
+/** A case passes when at least two thirds of its runs do: 1 of 1, 2 of 3, 4 of 5. */
+export const passesNeeded = (runs: number): number => Math.ceil((2 * runs) / 3);
+
 const readResult = (file: string): RunResult | null => {
   try {
     return JSON.parse(readFileSync(file, "utf8")) as RunResult;
@@ -159,6 +169,7 @@ const childEnv = (world: World, binDir: string): Record<string, string> => {
   }
   env.WORKIT_STATE_DIR = world.state;
   env.WORKIT_CONFIG_DIR = world.config;
+  if (world.workspace) env[EVAL_WORLD_ENV] = world.dir;
   env.PATH = `${binDir}${path.delimiter}${env.PATH ?? ""}`;
   return env;
 };
@@ -392,7 +403,13 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
   return last;
 };
 
-const runCase = (spec: EvalCase, key: string, version: string, opts: Options): RunResult => {
+const runCase = (
+  spec: EvalCase,
+  key: string,
+  version: string,
+  opts: Options,
+  index = 1,
+): RunResult => {
   let run: Attempt;
   if (opts.host === "opencode") run = runOpencode(spec, opts);
   else {
@@ -414,11 +431,13 @@ const runCase = (spec: EvalCase, key: string, version: string, opts: Options): R
   }
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, `${spec.id}.transcript.jsonl`), run.transcript);
+  const base = runBase(spec.id, index);
+  writeFileSync(path.join(dir, `${base}.transcript.jsonl`), run.transcript);
   const skipped = opts.host === "opencode" && (run.provider === undefined || run.limit !== null);
   const graded = grade(run.transcript, spec);
   const result: RunResult = {
     case: spec.id,
+    ...(index > 1 ? { run: index } : {}),
     ...(opts.host === "opencode" ? { host: opts.host } : {}),
     model: opts.model,
     ...(skipped ? { skipped: "limit" as const } : {}),
@@ -432,32 +451,71 @@ const runCase = (spec: EvalCase, key: string, version: string, opts: Options): R
     usage: usageOf(run.transcript),
     grade: skipped ? { ...graded, pass: false } : graded,
   };
-  writeJson(path.join(dir, `${spec.id}.json`), result);
+  writeJson(path.join(dir, `${base}.json`), result);
   return result;
+};
+
+type Row = {
+  case: string;
+  pass: boolean;
+  skipped?: "limit";
+  provider?: Provider["name"];
+  failures: string[];
+  turns: number | null;
+  costUsd: number | null;
+  workitVersion: string;
+  graderVersion: Grade["graderVersion"];
+};
+
+const rowOf = (result: RunResult): Row => ({
+  case: result.case,
+  pass: result.grade.pass,
+  ...(result.skipped ? { skipped: result.skipped } : {}),
+  ...(result.provider ? { provider: result.provider } : {}),
+  failures: result.grade.failures.map((failure) => failure.rule),
+  turns: result.usage.turns,
+  costUsd: result.usage.costUsd,
+  workitVersion: result.workitVersion,
+  graderVersion: result.grade.graderVersion,
+});
+
+/** One case's row: a single run as is; repeated runs pass on two thirds, each run listed. */
+const caseRow = (runs: RunResult[]): Row & { passes?: number; runs?: Row[] } => {
+  const [first] = runs as [RunResult, ...RunResult[]];
+  if (runs.length === 1) return rowOf(first);
+  const rows = runs.map(rowOf);
+  const passes = rows.filter((row) => row.pass && !row.skipped).length;
+  const sum = (key: "turns" | "costUsd") =>
+    rows.some((row) => row[key] === null)
+      ? null
+      : rows.reduce((total, row) => total + (row[key] ?? 0), 0);
+  return {
+    case: first.case,
+    pass: passes >= passesNeeded(rows.length),
+    ...(rows.every((row) => row.skipped) ? { skipped: "limit" as const } : {}),
+    passes,
+    failures: [...new Set(rows.flatMap((row) => row.failures))],
+    turns: sum("turns"),
+    costUsd: sum("costUsd"),
+    workitVersion: first.workitVersion,
+    graderVersion: first.grade.graderVersion,
+    runs: rows,
+  };
 };
 
 const writeSummary = (dir: string): void => {
   if (!existsSync(dir)) return;
-  const rows = readdirSync(dir)
-    .filter((name) => name.endsWith(".json") && name !== "summary.json")
-    .toSorted()
-    .flatMap((name) => {
-      const result = readResult(path.join(dir, name));
-      if (!result) return [];
-      return [
-        {
-          case: result.case,
-          pass: result.grade.pass,
-          ...(result.skipped ? { skipped: result.skipped } : {}),
-          ...(result.provider ? { provider: result.provider } : {}),
-          failures: result.grade.failures.map((failure) => failure.rule),
-          turns: result.usage.turns,
-          costUsd: result.usage.costUsd,
-          workitVersion: result.workitVersion,
-          graderVersion: result.grade.graderVersion,
-        },
-      ];
-    });
+  const byCase = new Map<string, RunResult[]>();
+  for (const name of readdirSync(dir)
+    .filter((each) => each.endsWith(".json") && each !== "summary.json")
+    .toSorted()) {
+    const result = readResult(path.join(dir, name));
+    if (!result) continue;
+    byCase.set(result.case, [...(byCase.get(result.case) ?? []), result]);
+  }
+  const rows = [...byCase.values()].map((runs) =>
+    caseRow(runs.toSorted((a, b) => (a.run ?? 1) - (b.run ?? 1))),
+  );
   const skipped = rows.filter((row) => row.skipped).length;
   writeJson(path.join(dir, "summary.json"), {
     passed: rows.filter((row) => row.pass).length,
@@ -501,12 +559,13 @@ const replay = (
   let drift = 0;
   for (const dir of dirs.filter((each) => existsSync(each))) {
     for (const file of readdirSync(dir).filter((each) => each.endsWith(".transcript.jsonl"))) {
-      const id = file.slice(0, -".transcript.jsonl".length);
+      const base = file.slice(0, -".transcript.jsonl".length);
+      const id = base.replace(RUN_SUFFIX, "");
       const spec = byId.get(id);
-      const json = path.join(dir, `${id}.json`);
+      const json = path.join(dir, `${base}.json`);
       const stored = readResult(json);
       if (!spec || !stored) {
-        print(`skip ${path.basename(dir)}/${id}: no case or no result`);
+        print(`skip ${path.basename(dir)}/${base}: no case or no result`);
         continue;
       }
       // A limited run was never graded; re-grading its stub could turn it into a pass.
@@ -515,7 +574,7 @@ const replay = (
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
       print(
-        `drift ${path.basename(dir)}/${id}: ${stored.grade.pass ? "pass" : "fail"} -> ${fresh.pass ? "pass" : "fail"}`,
+        `drift ${path.basename(dir)}/${base}: ${stored.grade.pass ? "pass" : "fail"} -> ${fresh.pass ? "pass" : "fail"}`,
       );
       if (!check) writeJson(json, { ...stored, grade: fresh });
     }
@@ -526,7 +585,7 @@ const replay = (
 };
 
 const USAGE =
-  "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--force]\n" +
+  "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--force]\n" +
   "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]";
 
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
@@ -545,6 +604,7 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       tier: { type: "string", default: "smoke" },
       cases: { type: "string" },
       "budget-runs": { type: "string", default: "3" },
+      repeat: { type: "string", default: "1" },
       force: { type: "boolean", default: false },
       replay: { type: "boolean", default: false },
       check: { type: "boolean", default: false },
@@ -578,9 +638,12 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     );
 
   const budget = Number(values["budget-runs"]);
+  const repeat = Number(values.repeat);
   const tier = values.tier as Tier;
   if (
     !values.model ||
+    !Number.isInteger(repeat) ||
+    repeat < 1 ||
     (tier !== "smoke" && tier !== "full") ||
     !Number.isInteger(budget) ||
     budget < 0
@@ -612,24 +675,44 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       host === "opencode" ? `opencode/${opts.model}` : opts.model,
       version,
     );
-    const cached = readResult(path.join(dir, `${spec.id}.json`));
-    if (!values.force && cached?.key === key && !cached.skipped) {
-      if (!cached.grade.pass) failed += 1;
-      print(line(cached.grade.pass ? "cached pass" : "cached FAIL", cached));
-      continue;
+    // Runs past this --repeat belong to an older invocation: they would skew the two-thirds rule.
+    for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+      const match = /^(.+)\.run(\d+)\.(json|transcript\.jsonl)$/u.exec(name);
+      if (match?.[1] === spec.id && Number(match[2]) > repeat) rmSync(path.join(dir, name));
     }
-    if (runs >= budget) {
+    const outcomes: RunResult[] = [];
+    for (let run = 1; run <= repeat; run += 1) {
+      const cached = readResult(path.join(dir, `${runBase(spec.id, run)}.json`));
+      if (!values.force && cached?.key === key && !cached.skipped) {
+        outcomes.push(cached);
+        print(line(cached.grade.pass ? "cached pass" : "cached FAIL", cached));
+        continue;
+      }
+      if (runs >= budget) break;
+      // With every provider at its limit the case is recorded skipped without a run.
+      const callsModel = host !== "opencode" || opts.providers.length > 0;
+      if (callsModel && runs === 0) ensurePlugin(host, opts.pluginDir);
+      if (callsModel) runs += 1;
+      const result = runCase(spec, key, version, opts, run);
+      outcomes.push(result);
+      print(line(result.grade.pass ? "pass" : "FAIL", result));
+    }
+    if (outcomes.length < repeat) {
       skipped.push(spec.id);
       continue;
     }
-    // With every provider at its limit the case is recorded skipped without a run.
-    const callsModel = host !== "opencode" || opts.providers.length > 0;
-    if (callsModel && runs === 0) ensurePlugin(host, opts.pluginDir);
-    if (callsModel) runs += 1;
-    const result = runCase(spec, key, version, opts);
-    if (result.skipped) limited.push(spec.id);
-    else if (!result.grade.pass) failed += 1;
-    print(line(result.grade.pass ? "pass" : "FAIL", result));
+    const graded = outcomes.filter((result) => !result.skipped);
+    if (graded.length === 0) {
+      limited.push(spec.id);
+      continue;
+    }
+    const passes = graded.filter((result) => result.grade.pass).length;
+    const pass = passes >= passesNeeded(repeat);
+    if (!pass) failed += 1;
+    if (repeat > 1)
+      print(
+        `${pass ? "pass" : "FAIL"} ${spec.id}: ${passes} of ${repeat} run(s) passed (needs ${passesNeeded(repeat)})`,
+      );
   }
   writeSummary(dir);
   print(

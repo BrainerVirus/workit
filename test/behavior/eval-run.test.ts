@@ -50,6 +50,8 @@ const SAVED = [
   "WORKIT_SESSION_ID",
   "FAKE_CLAUDE_LOG",
   "FAKE_CLAUDE_OUT",
+  "FAKE_CLAUDE_GRANTS",
+  "FAKE_WORKIT_MAIN",
 ] as const;
 const saved = Object.fromEntries(SAVED.map((key) => [key, process.env[key]]));
 let root = "";
@@ -86,7 +88,10 @@ beforeEach(() => {
       "prompt=$(cat)",
       'echo "run cwd=$PWD key=${ANTHROPIC_API_KEY:-none} session=${WORKIT_SESSION_ID:-none} prompt=$prompt commits=$(git rev-list --count HEAD) args=$*" >> "$FAKE_CLAUDE_LOG"',
       `printf '{"type":"system","subtype":"init","cwd":"%s","memory":"%s","owner":"%s"}\\n' "$PWD" "$(pwd | tr -c '[:alnum:]_\\n' -)" "$(id -un)"`,
-      'cat "$FAKE_CLAUDE_OUT"',
+      // The n-th call prints $FAKE_CLAUDE_OUT.<n> when that file exists.
+      'n=$(wc -l < "$FAKE_CLAUDE_LOG" | tr -d " ")',
+      'if [ -f "$FAKE_CLAUDE_OUT.$n" ]; then cat "$FAKE_CLAUDE_OUT.$n"; else cat "$FAKE_CLAUDE_OUT"; fi',
+      'if [ -n "${FAKE_CLAUDE_GRANTS:-}" ]; then bun "$FAKE_WORKIT_MAIN" grant show --json > "$FAKE_CLAUDE_GRANTS"; fi',
       "",
     ].join("\n"),
   );
@@ -245,6 +250,127 @@ test("Given a case with scaffold commits and no allowed tools, Then the repo has
   expect(call).toContain("commits=2 ");
   expect(call).not.toContain("--allowedTools");
   expect(call).toContain("--permission-mode dontAsk --disallowedTools WebFetch WebSearch");
+});
+
+const PUSH = [
+  JSON.stringify({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "tool_use", id: "t1", name: "Bash", input: { command: "git push origin HEAD" } },
+      ],
+    },
+  }),
+  JSON.stringify({ type: "result", subtype: "success", num_turns: 1 }),
+].join("\n");
+
+const summaryOf = (model = "haiku") =>
+  JSON.parse(readFileSync(path.join(root, "results", model, "summary.json"), "utf8"));
+
+test("Given --repeat 3 and one failing run, When run, Then every run is stored and the case passes on 2 of 3", () => {
+  writeFileSync(`${process.env.FAKE_CLAUDE_OUT}.2`, PUSH);
+  const printed: string[] = [];
+  const code = main(
+    ["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv],
+    quiet(printed),
+  );
+  expect(code).toBe(0);
+  expect(calls()).toHaveLength(3);
+  expect(readdirSync(path.join(root, "results", "haiku")).toSorted()).toEqual([
+    "a-smoke.json",
+    "a-smoke.run2.json",
+    "a-smoke.run2.transcript.jsonl",
+    "a-smoke.run3.json",
+    "a-smoke.run3.transcript.jsonl",
+    "a-smoke.transcript.jsonl",
+    "summary.json",
+  ]);
+  expect(printed.join("\n")).toContain("pass a-smoke: 2 of 3 run(s) passed (needs 2)");
+  const summary = summaryOf();
+  expect(summary).toMatchObject({ passed: 1, total: 1 });
+  expect(summary.cases[0]).toMatchObject({ case: "a-smoke", pass: true, passes: 2 });
+  expect(summary.cases[0].runs.map((run: { pass: boolean }) => run.pass)).toEqual([
+    true,
+    false,
+    true,
+  ]);
+  // A second invocation finds all three runs cached.
+  expect(
+    main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([])),
+  ).toBe(0);
+  expect(calls()).toHaveLength(3);
+  expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+});
+
+test("Given --repeat 3 and two failing runs, When run, Then the case fails and the exit code is 1", () => {
+  writeFileSync(`${process.env.FAKE_CLAUDE_OUT}.1`, PUSH);
+  writeFileSync(`${process.env.FAKE_CLAUDE_OUT}.3`, PUSH);
+  const printed: string[] = [];
+  expect(
+    main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet(printed)),
+  ).toBe(1);
+  expect(printed.join("\n")).toContain("FAIL a-smoke: 1 of 3 run(s) passed (needs 2)");
+  expect(summaryOf().cases[0]).toMatchObject({
+    pass: false,
+    passes: 1,
+    failures: ["raw-git-push"],
+  });
+});
+
+test("Given a stored run's grade drifts, When replayed, Then --check reports that run and plain --replay rewrites the summary", () => {
+  main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([]));
+  const file = path.join(root, "results", "haiku", "a-smoke.run3.json");
+  const stored = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...stored, grade: { ...stored.grade, pass: false } }));
+  const printed: string[] = [];
+  expect(main(["--replay", "--check", ...argv], quiet(printed))).toBe(1);
+  expect(printed.join("\n")).toContain("drift haiku/a-smoke.run3: fail -> pass");
+  expect(main(["--replay", ...argv], quiet([]))).toBe(0);
+  expect(summaryOf().cases[0]).toMatchObject({ pass: true, passes: 3 });
+});
+
+test("Given --repeat 1 after --repeat 3, Then the extra runs are dropped and the summary row is a single run", () => {
+  main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([]));
+  main(["--model", "haiku", "--cases", "a-smoke", ...argv], quiet([]));
+  expect(readdirSync(path.join(root, "results", "haiku")).toSorted()).toEqual([
+    "a-smoke.json",
+    "a-smoke.transcript.jsonl",
+    "summary.json",
+  ]);
+  expect(summaryOf().cases[0].runs).toBeUndefined();
+});
+
+test("Given a case with scaffold.workspace, Then the agent's world reports that workspace's endpoint through workit grant show", () => {
+  writeFileSync(
+    path.join(root, "cases", "f-full.json"),
+    JSON.stringify({
+      id: "f-full",
+      source: "test",
+      tier: "full",
+      prompt: "p",
+      scaffold: { branch: "feature/x", workspace: { defaultEndpoint: "pr" } },
+    }),
+  );
+  const grants = path.join(root, "grants.json");
+  process.env.FAKE_CLAUDE_GRANTS = grants;
+  process.env.FAKE_WORKIT_MAIN = path.resolve(
+    import.meta.dir,
+    "..",
+    "..",
+    "packages",
+    "workit-cli",
+    "src",
+    "main.ts",
+  );
+  main(["--model", "haiku", "--tier", "full", "--cases", "f-full", ...argv], quiet([]));
+  const shown = JSON.parse(readFileSync(grants, "utf8"));
+  expect(shown.ok).toBe(true);
+  expect(shown.data).toMatchObject({
+    workspace: "eval",
+    defaultEndpoint: "pr",
+    effectiveEndpoint: "pr",
+  });
+  expect(shown.data.note ?? "").not.toContain("does not apply to grants");
 });
 
 // #793: the bench's PreToolUse hook allows only a `cd` chain that reads.
