@@ -3,21 +3,21 @@
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
   "provider": "free",
-  "workitVersion": "workit-dev-v1.2.1+dd6fca8eaa",
-  "key": "dbc2ab5960df544f",
-  "date": "2026-11-11T12:25:15.838Z",
+  "workitVersion": "workit-dev-v1.4.1+36e8e8da7d",
+  "key": "486a77ed622ed412",
+  "date": "2026-11-11T14:46:30.300Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 10,
-    "durationMs": 55439,
+    "turns": 7,
+    "durationMs": 29208,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 1,
     "pass": true,
-    "calls": 13,
+    "calls": 7,
     "failures": []
   }
 }

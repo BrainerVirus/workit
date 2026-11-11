@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EVAL_WORLD_MARKER } from "../../packages/workit-core/src/core/eval-world";
 import type { EvalCase } from "./cases";
 
 /** A throwaway world for one run: the repo, an optional worktree, Workit state and config. */
@@ -11,6 +12,8 @@ export type World = {
   worktree: string | null;
   state: string;
   config: string;
+  /** The case gave the world a workspace: the runner sets WORKIT_EVAL_WORLD. */
+  workspace?: boolean;
 };
 
 const git = (cwd: string, ...args: string[]): void => {
@@ -51,8 +54,8 @@ export const makeWorld = (spec: EvalCase): World => {
     });
   if (scaffold.unborn) {
     writeAll(repo, scaffold.dirty);
-    writeConfig(config, scaffold.allowedBranches);
-    return { dir, repo, worktree: null, state, config };
+    writeConfig(dir, config, spec);
+    return { dir, repo, worktree: null, state, config, workspace: Boolean(scaffold.workspace) };
   }
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "chore: init");
@@ -76,15 +79,23 @@ export const makeWorld = (spec: EvalCase): World => {
   }
   writeAll(worktree ?? repo, scaffold.dirty);
 
-  writeConfig(config, scaffold.allowedBranches);
-  return { dir, repo, worktree, state, config };
+  writeConfig(dir, config, spec);
+  return { dir, repo, worktree, state, config, workspace: Boolean(scaffold.workspace) };
 };
 
-const writeConfig = (config: string, allowed: string[] = ["feature/*"]): void =>
+const writeConfig = (dir: string, config: string, spec: EvalCase): void => {
+  const { allowedBranches: allowed = ["feature/*"], workspace } = spec.scaffold ?? {};
   writeFileSync(
     path.join(config, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "custom", allowed, protected: ["main"] } }),
   );
+  if (!workspace) return;
+  writeFileSync(path.join(dir, EVAL_WORLD_MARKER), "");
+  writeFileSync(
+    path.join(config, "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "eval", glob: `${dir}/**`, ...workspace }] }),
+  );
+};
 
 export const promptFor = (spec: EvalCase, world: World): string =>
   spec.prompt.replaceAll("{{root}}", world.repo).replaceAll("{{worktree}}", world.worktree ?? "");

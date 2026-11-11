@@ -11,7 +11,10 @@
     "dirty": {
       "src/a.ts": "export const a = 2;\n"
     },
-    "remote": true
+    "remote": true,
+    "workspace": {
+      "defaultEndpoint": "pr"
+    }
   },
   "maxTurns": 10,
   "expect": {

@@ -1,0 +1,22 @@
+{
+  "case": "stop-hold",
+  "run": 3,
+  "model": "claude-haiku-4-5",
+  "workitVersion": "workit-dev-v1.4.1+92b288a228",
+  "key": "5448a64f27458b67",
+  "date": "2026-11-11T14:47:16.351Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 24522,
+    "costUsd": 0.0423817,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 3,
+    "failures": []
+  }
+}

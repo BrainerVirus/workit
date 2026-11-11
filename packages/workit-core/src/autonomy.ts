@@ -5,7 +5,8 @@
 //
 // - Grants live only in the matched workspace entry of the user's
 //   `~/.config/workit/workspaces.json`, where `~` is the OS account's home
-//   (neither $HOME nor config-dir overrides redirect them; see grantsDir):
+//   (neither $HOME nor config-dir overrides redirect them; see grantsDir;
+//   a bench world outside every workspace only lowers them, see benchWorld):
 //     "autonomy": { "push": true, "pr": true, "merge": false | true | "verified",
 //                   "release": false, "rerun": true }
 //   never in a repo file. `workit grant set` raises only from an interactive
@@ -36,6 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
+import { evalWorldEntry } from "./core/eval-world";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -78,6 +80,29 @@ export const grantsHome = { resolve: accountHome };
 
 /** The default config dir (core/workit-paths.mjs) for the account home, with no override. */
 export const grantsDir = (): string => workitConfigDir({ HOME: grantsHome.resolve() });
+
+/**
+ * The bench world's entry for `cwd` (#792, core/eval-world.ts), cut down to
+ * what may apply: its name, glob, endpoint and the grants it sets strictly
+ * below the D4 defaults; never a raised grant, verification or vcs (a forge
+ * account). resolveAutonomy uses it only where no real entry matches.
+ */
+const benchWorld = (cwd: string): WorkspaceConfig | null => {
+  const entry = evalWorldEntry(cwd);
+  if (!entry) return null;
+  const { grants } = configuredGrants(entry);
+  const lowered: Partial<Grants> = {};
+  for (const kind of GRANT_KINDS) {
+    const value = grants[kind];
+    if (value !== undefined && raises(kind, value, DEFAULT_GRANTS[kind])) lowered[kind] = value;
+  }
+  return {
+    name: entry.name,
+    glob: entry.glob,
+    ...(entry.defaultEndpoint ? { defaultEndpoint: entry.defaultEndpoint } : {}),
+    autonomy: lowered,
+  };
+};
 
 /** Why grants fell back to the defaults, or null when the real file is used. */
 export const grantsOverride = (): string | null => {
@@ -448,11 +473,13 @@ function capAt(
 
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
-  const override = grantsOverride();
+  const world = benchWorld(cwd);
+  const override = world ? null : grantsOverride();
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
   const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
-  let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name));
+  // A real entry always wins over a bench world.
+  let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name) ?? world);
   if (name)
     autonomy = capAt(autonomy, cwd, `WORKIT_WORKSPACE_NAME=${name}`, "a name never raises grants");
   const above = checkoutsAbove(cwd);
