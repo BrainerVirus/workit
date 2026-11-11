@@ -1043,6 +1043,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Claude Code ask rules are anchored at their verb, so a command that only mentions a user-only verb in its text (a verdict note, a changelog entry, a PR body) no longer prompts; setup and upgrade remove the older Workit-written globs and keep the user's own.
 - OpenCode and Pi give the model the same closed `<workit-contract>` block Claude Code does.
 - A `cd <dir> && workit …` chain with a raw-git fallback is denied with the exact single `workit <verb> --cwd <dir> …` call to run instead, so a weak model retries correctly instead of giving up.
+- A `cd <dir> && workit …` call is rewritten to `workit <verb> --cwd <dir> …` even when a quoted argument holds `<` or `>` (such as a `Co-Authored-By: … <email>` trailer) or the call already passes the same `--cwd`, so these commits no longer prompt or get denied.
 
 ### Removed
 
