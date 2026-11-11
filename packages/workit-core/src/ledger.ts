@@ -1311,9 +1311,12 @@ export function verdictVoids(
   return voids;
 }
 
-/** The command a user runs to void verdict `id` (never an agent: the CLI refuses an agent shell). */
-export const voidCommand = (id: string): string =>
-  `workit ledger void ${id} --reason "<why it is wrong on its face>"`;
+/**
+ * The command a user runs to void verdict `id`, from `cwd` when given (never
+ * an agent: the CLI refuses an agent shell).
+ */
+export const voidCommand = (id: string, cwd?: string): string =>
+  `workit${cwd ? ` --cwd ${cwd}` : ""} ledger void ${id} --reason "<why it is wrong on its face>"`;
 
 /** The unblock of a merge or land refused over a failed verdict: fix and re-verify, or void a stray one. */
 export const failedVerdictUnblock = (id: string | null): string =>

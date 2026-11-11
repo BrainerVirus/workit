@@ -130,6 +130,11 @@ test("an agent shell cannot void a verdict, and neither can a headless one; noth
   expect(agent.code).not.toBe(0);
   expect(agent.json().error).toContain("void_refused");
   expect(agent.json().error).toContain("CLAUDECODE");
+  // One command the user can paste as is: `workit` appears once, before --cwd.
+  const command = `workit --cwd ${root} ledger void ${stray} --reason "<why it is wrong on its face>"`;
+  expect(agent.json().unblock).toBe(
+    `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${command}`,
+  );
 
   terminal = false;
   const headless = await voidVerdict(root, [stray, "--reason", "wrong repo"], userEnv());

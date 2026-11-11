@@ -755,7 +755,7 @@ async function voidVerdict(io: Io, values: Values, args: string[]): Promise<numb
         "blocked",
         `void_refused: voiding a verdict needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; a verdict is never voided headless`,
         {
-          unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): workit --cwd ${io.cwd} ${voidCommand(args[0])}`,
+          unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${voidCommand(args[0], io.cwd)}`,
         },
       ),
     );
