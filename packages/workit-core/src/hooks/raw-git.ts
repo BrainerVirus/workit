@@ -1959,46 +1959,88 @@ const policyDeclared = (): boolean => {
   }
 };
 
-/** `-A`/`--all` on `git add`, `-a` (in a cluster: `-am`) on `git commit`. */
-const ALL_FLAG = /^(?:--all|-[a-zA-Z]*[aA][a-zA-Z]*)$/u;
 const word = (text: string) => (/^[\w./@%+:,=-]+$/u.test(text) ? text : shellQuote(text));
 
+/** `cat <<'EOF' … EOF` (quoted delimiter: no expansion), the usual commit message body. */
+const HEREDOC = /^cat <<(['"])(\w+)\1\n([\s\S]*)\n\2\n?$/u;
+
+/** One commit message word as git receives it, or null when the shell would change it. */
+const messageOf = (segment: Segment, index: number): string | null => {
+  const text = segment.words[index];
+  if (text === undefined) return null;
+  if (!segment.expands?.includes(index)) return text;
+  const sub = segment.subs?.find((each) => text === `$(${each})`);
+  const match = sub === undefined ? null : HEREDOC.exec(sub);
+  if (!match || match[3].split("\n").includes(match[2])) return null;
+  // Command substitution drops the trailing newlines.
+  return match[3].replace(/\n+$/u, "");
+};
+
 /**
- * `cd <worktree> && git add … && git commit …` from outside that linked
- * worktree: the exact single `workit git --cwd <worktree> commit` call that
- * replaces it, or null. No host allow rule matches the compound, so it meets
- * a generic host denial otherwise (#792).
+ * `cd <worktree> && git add … && git commit -m …` from outside that linked
+ * worktree: the `workit git --cwd <worktree> commit` call that makes the same
+ * commit, or null. No host allow rule matches the compound, so it meets a
+ * generic host denial otherwise (#792). Only a shape the call provably
+ * reproduces is named: `&&` alone, `git add` with literal paths, `.`, `-A` or
+ * `--all`, `git commit` with literal or quoted-heredoc `-m` values and
+ * `--allow-empty`, and with paths nothing else already staged. Anything else
+ * keeps the host's own decision.
  */
-const cdCommitCall = (
-  input: HookInput,
-  command: string,
-  dialect: ShellDialect,
-  commit: RawInvocation,
-  repo: Repo,
-): string | null => {
-  const [verb, dir, ...more] = commandLines(command, dialect)[0] ?? [];
+const cdCommitCall = (input: HookInput, command: string, target: string, repo: Repo) => {
   const { top, git, dir: store } = repo.location;
-  const target = path.resolve(input.cwd, commit.dir ?? ".");
-  if (!CD.has(verb ?? "") || !dir || more.length || target !== path.resolve(input.cwd, dir))
-    return null;
   if (!top || !git || git.gitDir === path.dirname(store) || repoAt(input.cwd)?.location.top === top)
     return null;
-  const args = commit.args;
-  const at = args.findIndex((arg) => arg === "--message" || /^-[a-zA-Z]*m$/u.test(arg));
-  const inline = args.find((arg) => /^(?:--message=|-[a-zA-Z]*m.)/u.test(arg));
-  const message = at > 0 ? args[at + 1] : inline?.replace(/^(?:--message=|-[a-zA-Z]*?m)/u, "");
-  // A chain that stages first (`git add`): a bare `cd <wt> && git commit` keeps the host's own decision.
-  const staged = rawInvocations(command, dialect).filter(
-    (raw) => raw.tool === "git" && raw.args[0] === "add" && raw.dir === commit.dir,
-  );
-  if (!staged.length) return null;
-  const adds = staged.flatMap((raw) => raw.args.slice(1));
-  const end = args.indexOf("--");
-  const paths = [...adds, ...(end < 0 ? [] : args.slice(end + 1))].filter((arg) => arg[0] !== "-");
-  const scope = [...adds, ...args].some((arg) => ALL_FLAG.test(arg))
-    ? "--all"
-    : `-- ${paths.length ? [...new Set(paths)].map(word).join(" ") : "<paths>"}`;
-  return `workit git --cwd ${word(target)} commit -m ${shellQuote(message ?? "<msg>")} ${scope}`;
+  // Quoted text aside, the only operator is `&&`: no `;`, `||`, pipe, redirect or substitution.
+  const bare = command.replaceAll(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "").replaceAll("&&", "");
+  if (/[;|&<>`$()\n\\]/u.test(bare)) return null;
+  const [cd, ...rest] = segmentsOf(command);
+  const commit = rest.at(-1);
+  if (cd?.words[0] !== "cd" || cd.words.length !== 2 || cd.expands?.length || !commit) return null;
+  if (path.resolve(input.cwd, cd.words[1]) !== target) return null;
+  if (rest.some((each) => each.redirects.length || each.stdin?.length || each.group)) return null;
+  const adds = rest.slice(0, -1);
+  if (!adds.length || commit.words[0] !== "git" || commit.words[1] !== "commit") return null;
+  const paths: string[] = [];
+  let all = false;
+  for (const add of adds) {
+    const [tool, verb, ...args] = add.words;
+    if (tool !== "git" || verb !== "add" || add.expands?.length || add.subs?.length) return null;
+    const named = args.filter((arg) => !["-A", "--all", "--"].includes(arg));
+    if (named.some((arg) => arg.startsWith("-") || /[*?[\]]/u.test(arg))) return null;
+    if (!named.length && !args.some((arg) => arg === "-A" || arg === "--all")) return null;
+    if (named.length) paths.push(...named);
+    else all = true;
+  }
+  const messages: string[] = [];
+  let allowEmpty = false;
+  for (let index = 2; index < commit.words.length; index++) {
+    const arg = commit.words[index];
+    let message: string | null = null;
+    if (arg === "--allow-empty") {
+      allowEmpty = true;
+      continue;
+    }
+    if (arg === "-m" || arg === "--message") message = messageOf(commit, ++index);
+    else if (!commit.expands?.includes(index) && /^(?:-m|--message=)./u.test(arg))
+      message = arg.replace(/^(?:-m|--message=)/u, "");
+    if (!message || message.startsWith("-")) return null;
+    messages.push(message);
+  }
+  if (!messages.length) return null;
+  // `-- <paths>` commits those paths only: the raw commit takes the whole index.
+  if (!all) {
+    const staged = spawnSync("git", ["diff", "--cached", "--quiet"], {
+      cwd: target,
+      timeout: 5_000,
+    });
+    if (staged.status !== 0) return null;
+  }
+  return [
+    `workit git --cwd ${word(target)} commit`,
+    ...messages.map((message) => `-m ${shellQuote(message)}`),
+    ...(allowEmpty ? ["--allow-empty"] : []),
+    all ? "--all" : `-- ${[...new Set(paths)].map(word).join(" ")}`,
+  ].join(" ");
 };
 
 /**
@@ -2027,7 +2069,10 @@ const commitRefusal = (
   } catch {}
   if (guarded && !switches)
     return `workit: raw ${quote("git commit")} on ${repo.branch}, a protected branch. Branch first: ${quote("workit git branch --kind feature --slug <slug>")} (uncommitted changes come along), then ${quote("workit git commit -m '<msg>' -- <paths>")}.`;
-  const call = action.amend ? null : cdCommitCall(input, command, dialect, invocation, repo);
+  const call =
+    action.amend || dialect !== "posix" || typeof invocation.dir !== "string"
+      ? null
+      : cdCommitCall(input, command, path.resolve(input.cwd, invocation.dir), repo);
   return call && `workit: no ${quote("cd … &&")} chain; run ${quote(call)}.`;
 };
 

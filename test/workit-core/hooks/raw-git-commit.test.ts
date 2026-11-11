@@ -212,3 +212,80 @@ for (const store of [true, false])
         expect(claude(cwd, command)?.permissionDecision, command).toBeUndefined();
     });
   });
+
+// Verifier mwc8hg8b: the cd-chain deny names a call only when it is provably
+// the same commit; every other shape keeps the host's own decision.
+test("G a linked worktree, W cd-chain commits whose workit call is provably equivalent, T the deny names that exact call", async () => {
+  await withProtectedMain(() => {
+    const { root, wt } = withWorktree(true);
+    const heredoc = `cd ${wt} && git add notes.md && git commit -m "$(cat <<'EOF'\ndocs: notes\n\nWhy $it matters.\n\nCo-Authored-By: A <a@b.c>\nEOF\n)"`;
+    const exact: Array<[string, string]> = [
+      [
+        `cd ${wt} && git add notes.md && git commit -m 'docs: a' -m 'body b'`,
+        `workit git --cwd ${wt} commit -m 'docs: a' -m 'body b' -- notes.md`,
+      ],
+      [
+        heredoc,
+        `workit git --cwd ${wt} commit -m 'docs: notes\n\nWhy $it matters.\n\nCo-Authored-By: A <a@b.c>' -- notes.md`,
+      ],
+      [
+        `cd ${wt} && git add . && git commit -m 'docs: notes'`,
+        `workit git --cwd ${wt} commit -m 'docs: notes' -- .`,
+      ],
+      [
+        `cd ${wt} && git add --all && git commit -m 'docs: notes'`,
+        `workit git --cwd ${wt} commit -m 'docs: notes' --all`,
+      ],
+      [
+        `cd ${wt} && git add notes.md && git commit --allow-empty -m 'docs: notes'`,
+        `workit git --cwd ${wt} commit -m 'docs: notes' --allow-empty -- notes.md`,
+      ],
+    ];
+    for (const [command, call] of exact)
+      expect(claude(root, command)?.permissionDecisionReason, command).toBe(
+        `workit: no \`cd … &&\` chain; run \`${call}\`.`,
+      );
+  });
+});
+
+test("G a linked worktree, W a cd-chain commit no workit call reproduces exactly, T no decision", async () => {
+  await withProtectedMain(() => {
+    const { root, wt } = withWorktree(true);
+    const add = `cd ${wt} && git add notes.md && `;
+    for (const command of [
+      `${add}git commit -m "fix $X"`,
+      `${add}git commit -m "a \`b\`"`,
+      `${add}git commit -m "$(cat <<EOF\ndocs: $X\nEOF\n)"`,
+      `${add}git commit -m "$(cat <<'EOF'\ndocs: a\nEOF\nrm -rf x\nEOF\n)"`,
+      `${add}git commit -F msg.txt`,
+      `${add}git commit -F-`,
+      `${add}git commit -C HEAD`,
+      `${add}git commit -t tpl.txt`,
+      `${add}git commit`,
+      `${add}git commit -s -m 'docs: notes'`,
+      `${add}git commit --signoff -m 'docs: notes'`,
+      `${add}git commit --author 'A <a@b.c>' -m 'docs: notes'`,
+      `${add}git commit -e -m 'docs: notes'`,
+      `${add}git commit --no-verify -m 'docs: notes'`,
+      `${add}git commit -q -m 'docs: notes'`,
+      `${add}git commit -am 'docs: notes'`,
+      `${add}git commit -m 'docs: notes' -- notes.md`,
+      `cd ${wt} && git add -p notes.md && git commit -m 'docs: notes'`,
+      `cd ${wt} && git add -u && git commit -m 'docs: notes'`,
+      `cd ${wt} && git add 'n*.md' && git commit -m 'docs: notes'`,
+      `cd ${wt} && git add notes.md; git commit -m 'docs: notes'`,
+      `cd ${wt} && git add notes.md || git commit -m 'docs: notes'`,
+      `cd ${wt} && git add notes.md && git commit -m 'docs: notes' && git push`,
+    ])
+      expect(claude(root, command)?.permissionDecision, command).toBeUndefined();
+    // A file already staged outside the named paths would be left out of the workit commit.
+    writeFileSync(path.join(wt, "other.md"), "x\n");
+    git(wt, "add", "other.md");
+    expect(claude(root, `${add}git commit -m 'docs: notes'`)?.permissionDecision).toBeUndefined();
+    // `git add -A` takes it along, as `--all` does.
+    expect(
+      claude(root, `cd ${wt} && git add -A && git commit -m 'docs: notes'`)
+        ?.permissionDecisionReason,
+    ).toContain(`workit git --cwd ${wt} commit -m 'docs: notes' --all`);
+  });
+});
