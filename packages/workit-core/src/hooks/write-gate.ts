@@ -1069,7 +1069,12 @@ const segmentTargets = (
   };
   for (const segment of segments) {
     if (segment.group === "open") {
-      groups.push({ dir, stack: [...stack], vars: new Map(vars), loops: new Map(loops) });
+      groups.push({
+        dir,
+        stack: [...stack],
+        vars: new Map(vars),
+        loops: new Map(loops),
+      });
       continue;
     }
     if (segment.group === "close") {
@@ -1344,61 +1349,101 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
 export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
   paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
-// --- the issued-registry guard (#292) ---------------------------------------
+// --- the issued-registry and approvals guard (#292) ------------------------
+
+/** The registries only Workit's hooks and the CLI write, by their dir under the state dir. */
+type Registry = "issued" | "approvals";
 
 /**
- * The files an agent tool call writes under `<state>/issued*`: the issued-id
- * records and their token hashes. Only the hook and the CLI write there; an
- * agent that could would forge an issued session or token by hand.
+ * The first of `targets` an agent tool call writes under `<state>/issued*`
+ * (the issued-id records and their token hashes) or `<state>/approvals/` (the
+ * host-approval requests and grants), with its registry. Only the hook and the
+ * CLI write there; an agent that could would forge an issued session, a
+ * token or the user's yes by hand.
  */
-const issuedTarget = (cwd: string, targets: readonly string[]): string | null => {
+const registryTarget = (
+  cwd: string,
+  targets: readonly string[],
+): { file: string; registry: Registry } | null => {
   const state = resolveStateDir();
-  const found = targets.find((target) =>
-    underIssued(state, cwd, homeExpanded(target), process.platform, canonical),
-  );
-  return found ?? null;
+  for (const target of targets) {
+    const registry = underRegistry(state, cwd, homeExpanded(target), process.platform, canonical);
+    if (registry) return { file: target, registry };
+  }
+  return null;
 };
 
 /**
- * Whether `target` (resolved against `cwd`) is `<state>/issued*` or inside
- * it. Pure over `platform`, so Windows shapes are testable anywhere: mixed
- * `\` and `/`, drive-letter case, and the `/c/Users/...` form a POSIX shell
- * on Windows uses. `real` resolves symlinks and 8.3 short names (RUNNER~1) on
- * the live platform.
+ * Which guarded registry `target` (resolved against `cwd`) is or is inside:
+ * `<state>/issued*` or `<state>/approvals`. Pure over `platform`, so Windows
+ * shapes are testable anywhere: mixed `\` and `/`, drive-letter case, and the
+ * `/c/Users/...` form a POSIX shell on Windows uses. `real` resolves symlinks
+ * and 8.3 short names (RUNNER~1) on the live platform.
  */
+export const underRegistry = (
+  state: string,
+  cwd: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+  real: (file: string) => string = (file) => file,
+): Registry | null => {
+  const win = platform === "win32";
+  const p = win ? path.win32 : path.posix;
+  const fold = (value: string) => (win || platform === "darwin" ? value.toLowerCase() : value);
+  const named = win ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target;
+  const relative = p.relative(fold(real(p.resolve(state))), fold(real(p.resolve(cwd, named))));
+  if (relative.startsWith("..") || p.isAbsolute(relative)) return null;
+  const first = relative.split(p.sep)[0];
+  if (first.startsWith("issued")) return "issued";
+  return first === "approvals" ? "approvals" : null;
+};
+
+/** Whether `target` is `<state>/issued*` or inside it (see underRegistry). */
 export const underIssued = (
   state: string,
   cwd: string,
   target: string,
   platform: NodeJS.Platform = process.platform,
   real: (file: string) => string = (file) => file,
-): boolean => {
-  const win = platform === "win32";
-  const p = win ? path.win32 : path.posix;
-  const fold = (value: string) => (win || platform === "darwin" ? value.toLowerCase() : value);
-  const named = win ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target;
-  const relative = p.relative(fold(real(p.resolve(state))), fold(real(p.resolve(cwd, named))));
-  if (relative.startsWith("..") || p.isAbsolute(relative)) return false;
-  return relative.split(p.sep)[0].startsWith("issued");
-};
+): boolean => underRegistry(state, cwd, target, platform, real) === "issued";
 
 /**
  * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
  * `> C:\state\issued\x` loses its separators. On Windows, a command that
- * writes and spells out the registry path is denied.
+ * writes and spells out a registry path is denied.
  */
-const unquotedWindowsIssued = (command: string): boolean => {
-  if (process.platform !== "win32" || !command.includes("\\")) return false;
+const unquotedWindowsRegistry = (command: string): Registry | null => {
+  if (process.platform !== "win32" || !command.includes("\\")) return null;
   const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
-  return flat(command).includes(`${flat(resolveStateDir())}/issued`) && shellWrites(command).writes;
+  const text = flat(command);
+  const state = flat(resolveStateDir());
+  const registry: Registry | null = text.includes(`${state}/issued`)
+    ? "issued"
+    : text.includes(`${state}/approvals`)
+      ? "approvals"
+      : null;
+  return registry && shellWrites(command).writes ? registry : null;
 };
 
-const issuedDeny = (file: string): HookDecision => {
-  const unblock =
-    "Issued ids and tokens are written only by Workit's SubagentStart hook. Run the verifier or reviewer agent so the host issues its own session; never edit the issued registries by hand.";
+const REGISTRY_DENY: Record<Registry, { label: string; unblock: string }> = {
+  issued: {
+    label: "issued-registry guard",
+    unblock:
+      "Issued ids and tokens are written only by Workit's SubagentStart hook. Run the verifier or reviewer agent so the host issues its own session; never edit the issued registries by hand.",
+  },
+  approvals: {
+    label: "approvals guard",
+    unblock:
+      "Approval requests and the user's yes are written only by Workit: run `workit approve <id>` as its own call so the host asks the user, or ask the user to run it in their own terminal; never edit the approvals registry by hand.",
+  },
+};
+
+const registryDeny = ({ file, registry }: { file: string; registry: Registry }): HookDecision => {
+  const { label, unblock } = REGISTRY_DENY[registry];
+  const what = registry === "issued" ? "issued-session state" : "host-approval state";
   return {
     kind: "deny",
-    reason: `workit issued-registry guard: ${file} is under Workit's issued-session state. ${unblock}`,
+    reason: `workit ${label}: ${file} is under Workit's ${what}. ${unblock}`,
     unblock,
   };
 };
@@ -1417,8 +1462,8 @@ export function writeGate(
   owner?: LiveOwner | null,
   deps?: LiveDeps,
 ): HookDecision {
-  const forged = paths?.length ? issuedTarget(cwd, paths) : null;
-  if (forged) return issuedDeny(forged);
+  const forged = paths?.length ? registryTarget(cwd, paths) : null;
+  if (forged) return registryDeny(forged);
   if (!owner) return beforeWriteGate(cwd, paths);
   const targets = liveTargets(cwd, paths);
   const live = liveGate(owner, targets, deps);
@@ -1443,10 +1488,11 @@ export function shellGate(
   deps?: LiveDeps,
 ): HookDecision {
   try {
+    const windows = unquotedWindowsRegistry(command);
     const forged =
-      issuedTarget(cwd, segmentTargets(cwd, command, dialect)) ??
-      (unquotedWindowsIssued(command) ? "the issued registry" : null);
-    if (forged) return issuedDeny(forged);
+      registryTarget(cwd, segmentTargets(cwd, command, dialect)) ??
+      (windows ? { file: `the ${windows} registry`, registry: windows } : null);
+    if (forged) return registryDeny(forged);
   } catch {
     // Fail open, like the other shell analyses here.
   }
