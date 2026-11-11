@@ -82,10 +82,12 @@ test("Given the user declines at the terminal, Then nothing is recorded", async 
   expect(existsSync(grantFile(request.id))).toBe(false);
 });
 
-test.each([
+const NO_TTY: ApproveDeps = { interactive: () => false, confirm: async () => true };
+
+test.each<[string, NodeJS.ProcessEnv, ApproveDeps]>([
   ["an agent shell", { CLAUDECODE: "1" }, terminal(true)],
   ["a Codex shell", { CODEX_SANDBOX: "seatbelt" }, terminal(true)],
-  ["no TTY", {}, { interactive: () => false, confirm: async () => true }],
+  ["no TTY", {}, NO_TTY],
 ])(
   "Given %s, When workit approve runs, Then it shows the request, asks nothing and records nothing",
   async (_name, env, deps) => {
