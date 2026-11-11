@@ -54,6 +54,7 @@ const PARSERS: Record<string, string[]> = {
   gc: ["verbs/gc.ts"],
   uninstall: ["verbs/uninstall.ts"],
   grant: ["verbs/grant.ts"],
+  approve: ["verbs/approve.ts"],
   config: ["verbs/config.ts"],
   workspace: ["verbs/workspace.ts"],
   ...Object.fromEntries(TASK_FAMILY_NAMES.map((name) => [name, ["task.ts#parseTaskArgs"]])),

@@ -325,6 +325,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   deslop: [[], ["scan", "--bogus"], ["scan", "--diff", "no-such-base"], ["result"]],
   knowledge: [[], ["bogus"], ["lint"]],
   grant: [["bogus"], ["set"], ["set", "w", "merge=verified"]],
+  approve: [[], ["bogus"], ["ap_aaaaaaaa"]],
   config: [[], ["bogus"], ["show", "extra"]],
   workspace: [["bogus"], ["add"], ["set", "nope", "defaultEndpoint=merged"]],
   youtrack: [[], ["note"]],
