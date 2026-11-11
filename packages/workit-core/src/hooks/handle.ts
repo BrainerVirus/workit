@@ -85,7 +85,11 @@ const usageLimitOnStop = (input: HookInput, agentId: string | null, text: string
     // A provider error is one short line; a worker's report that discusses limits is not one.
     if (text.length > LIMIT_TEXT_MAX || !parseUsageLimit(text)) return;
     if (!firstSighting(`subagent-stop:${input.session.id}:${agentId ?? ""}`)) return;
-    recordUsageLimit(text, { cwd: input.cwd, host: input.host, model: input.model ?? null });
+    recordUsageLimit(text, {
+      cwd: input.cwd,
+      host: input.host,
+      model: input.model ?? null,
+    });
   } catch {
     // The transcript scan on the next spawn notices the limit instead.
   }
@@ -237,8 +241,6 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       // Without a post-tool event, the previous raw commit is recorded now.
       const postTool = usable(descriptor.events["shell.post"].support);
       if (!postTool) settlePendingCommit(input);
-      const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
-      if (raw.kind === "deny") return raw;
       // Only the user runs these (#615): a host rule cannot see a global
       // option before the verb, so the words are read here.
       const userOnly = userOnlyWorkitCall(event.command, event.dialect);
@@ -265,6 +267,9 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         );
         if (confined.kind === "deny") return confined;
       }
+      // After confinement: an implementer outside its worktree first hears where to work.
+      const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
+      if (raw.kind === "deny") return raw;
       // The before-write gate and the live-session guard (#274); a judge, held
       // to its scratch dir above, neither meets nor claims a live checkout.
       const owner = role === "judge" ? null : liveOwner(input, descriptor.transport);
@@ -369,7 +374,11 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         trackJudge(input, event.agentId, true);
       seedStanding({
         ...input,
-        session: { ...input.session, agentId: event.agentId, agentType: event.agentType },
+        session: {
+          ...input.session,
+          agentId: event.agentId,
+          agentType: event.agentType,
+        },
       });
       deps.budget?.start(input, event.agentId, event.agentType);
       return {

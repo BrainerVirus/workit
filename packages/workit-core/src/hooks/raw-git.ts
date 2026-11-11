@@ -29,6 +29,7 @@ import path from "node:path";
 import { releaseBranch, resolveBranchPolicyFor, validateBranchNameFor } from "../core/branch";
 import { grantsMatter, rawGrantDenial, type GrantKind } from "../autonomy";
 import { releaseTagPrefixOf } from "../core/branch-policy";
+import { readConfigTyped } from "../core/config";
 import { pushTarget, remoteKey, type LazyTarget } from "../core/remotes";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import { appendHookObserved, readLedger } from "../ledger";
@@ -1873,7 +1874,10 @@ const actionsIn = (
             invocation.env ?? {},
           )
             ? {
-                repo: { dir: path.resolve(cwd, invocation.dir ?? "."), branch: null } as Repo,
+                repo: {
+                  dir: path.resolve(cwd, invocation.dir ?? "."),
+                  branch: null,
+                } as Repo,
                 workit: false,
               }
             : null));
@@ -1946,6 +1950,132 @@ const pkillSelfMatch = (command: string, dialect: ShellDialect): string | null =
   return null;
 };
 
+/** The user's config.json names protected branches: they hold in every repository (#792). */
+const policyDeclared = (): boolean => {
+  try {
+    return !!readConfigTyped().config?.branchPolicy?.protected?.length;
+  } catch {
+    return false;
+  }
+};
+
+const word = (text: string) => (/^[\w./@%+:,=-]+$/u.test(text) ? text : shellQuote(text));
+
+/** `cat <<'EOF' … EOF` (quoted delimiter: no expansion), the usual commit message body. */
+const HEREDOC = /^cat <<(['"])(\w+)\1\n([\s\S]*)\n\2\n?$/u;
+
+/** One commit message word as git receives it, or null when the shell would change it. */
+const messageOf = (segment: Segment, index: number): string | null => {
+  const text = segment.words[index];
+  if (text === undefined) return null;
+  if (!segment.expands?.includes(index)) return text;
+  const sub = segment.subs?.find((each) => text === `$(${each})`);
+  const match = sub === undefined ? null : HEREDOC.exec(sub);
+  if (!match || match[3].split("\n").includes(match[2])) return null;
+  // Command substitution drops the trailing newlines.
+  return match[3].replace(/\n+$/u, "");
+};
+
+/**
+ * `cd <worktree> && git add … && git commit -m …` from outside that linked
+ * worktree: the `workit git --cwd <worktree> commit` call that makes the same
+ * commit, or null. No host allow rule matches the compound, so it meets a
+ * generic host denial otherwise (#792). Only a shape the call provably
+ * reproduces is named: `&&` alone, `git add` with literal paths, `.`, `-A` or
+ * `--all`, `git commit` with literal or quoted-heredoc `-m` values and
+ * `--allow-empty`, and with paths nothing else already staged. Anything else
+ * keeps the host's own decision.
+ */
+const cdCommitCall = (input: HookInput, command: string, target: string, repo: Repo) => {
+  const { top, git, dir: store } = repo.location;
+  if (!top || !git || git.gitDir === path.dirname(store) || repoAt(input.cwd)?.location.top === top)
+    return null;
+  // Quoted text aside, the only operator is `&&`: no `;`, `||`, pipe, redirect or substitution.
+  const bare = command.replaceAll(/'[^']*'|"(?:[^"\\]|\\.)*"/gu, "").replaceAll("&&", "");
+  if (/[;|&<>`$()\n\\]/u.test(bare)) return null;
+  const [cd, ...rest] = segmentsOf(command);
+  const commit = rest.at(-1);
+  if (cd?.words[0] !== "cd" || cd.words.length !== 2 || cd.expands?.length || !commit) return null;
+  if (path.resolve(input.cwd, cd.words[1]) !== target) return null;
+  if (rest.some((each) => each.redirects.length || each.stdin?.length || each.group)) return null;
+  const adds = rest.slice(0, -1);
+  if (!adds.length || commit.words[0] !== "git" || commit.words[1] !== "commit") return null;
+  const paths: string[] = [];
+  let all = false;
+  for (const add of adds) {
+    const [tool, verb, ...args] = add.words;
+    if (tool !== "git" || verb !== "add" || add.expands?.length || add.subs?.length) return null;
+    const named = args.filter((arg) => !["-A", "--all", "--"].includes(arg));
+    if (named.some((arg) => arg.startsWith("-") || /[*?[\]]/u.test(arg))) return null;
+    if (!named.length && !args.some((arg) => arg === "-A" || arg === "--all")) return null;
+    if (named.length) paths.push(...named);
+    else all = true;
+  }
+  const messages: string[] = [];
+  let allowEmpty = false;
+  for (let index = 2; index < commit.words.length; index++) {
+    const arg = commit.words[index];
+    let message: string | null = null;
+    if (arg === "--allow-empty") {
+      allowEmpty = true;
+      continue;
+    }
+    if (arg === "-m" || arg === "--message") message = messageOf(commit, ++index);
+    else if (!commit.expands?.includes(index) && /^(?:-m|--message=)./u.test(arg))
+      message = arg.replace(/^(?:-m|--message=)/u, "");
+    if (!message || message.startsWith("-")) return null;
+    messages.push(message);
+  }
+  if (!messages.length) return null;
+  // `-- <paths>` commits those paths only: the raw commit takes the whole index.
+  if (!all) {
+    const staged = spawnSync("git", ["diff", "--cached", "--quiet"], {
+      cwd: target,
+      timeout: 5_000,
+    });
+    if (staged.status !== 0) return null;
+  }
+  return [
+    `workit git --cwd ${word(target)} commit`,
+    ...messages.map((message) => `-m ${shellQuote(message)}`),
+    ...(allowEmpty ? ["--allow-empty"] : []),
+    all ? "--all" : `-- ${[...new Set(paths)].map(word).join(" ")}`,
+  ].join(" ");
+};
+
+/**
+ * Why a raw commit is refused, or null: onto a protected branch (workit
+ * never commits there, as `workit git commit` reads it), or a `cd <worktree>
+ * && … git commit` chain. Judged in a Workit workspace, and wherever the
+ * user's config names protected branches. A command that switches branch or
+ * runs workit first commits elsewhere: its branch is not judged.
+ */
+const commitRefusal = (
+  input: HookInput,
+  command: string,
+  dialect: ShellDialect,
+  { action, repo, invocation, workit }: Located,
+): string | null => {
+  if (action.kind !== "commit" || !(workit || policyDeclared())) return null;
+  const switches =
+    workitInvocations(command, dialect).length > 0 ||
+    rawInvocations(command, dialect).some((raw) =>
+      ["switch", "checkout", "worktree"].includes(raw.args[0] ?? ""),
+    );
+  let guarded = false;
+  try {
+    guarded =
+      !!repo.branch && resolveBranchPolicyFor(repo.dir).protected.has(repo.branch.toLowerCase());
+  } catch {}
+  if (guarded && !switches)
+    return `workit: raw ${quote("git commit")} on ${repo.branch}, a protected branch. Branch first: ${quote("workit git branch --kind feature --slug <slug>")} (uncommitted changes come along), then ${quote("workit git commit -m '<msg>' -- <paths>")}.`;
+  const call =
+    action.amend || dialect !== "posix" || typeof invocation.dir !== "string"
+      ? null
+      : cdCommitCall(input, command, path.resolve(input.cwd, invocation.dir), repo);
+  return call && `workit: no ${quote("cd … &&")} chain; run ${quote(call)}.`;
+};
+
 /**
  * The pre-tool decision for a shell command: deny a gate bypass inside a
  * Workit workspace, else a nudge (as context) for routine raw delivery
@@ -1974,6 +2104,10 @@ export function rawGitPre(
     // Grants first (#589): a resolved "not granted" denies; only a crash fails open.
     for (const { action, repo, invocation } of located) {
       const refused = grantRefusal(action, repo, invocation, cache);
+      if (refused) return deny(refused);
+    }
+    for (const found of located) {
+      const refused = commitRefusal(input, command, dialect, found);
       if (refused) return deny(refused);
     }
     for (const { action, repo, invocation, workit } of located) {
