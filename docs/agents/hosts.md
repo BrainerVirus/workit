@@ -380,8 +380,9 @@ the user-only call as before).
   from argv. Claude Code fires `PostToolUse` only for a call that succeeded
   (a failure is `PostToolUseFailure`, not registered); a sent non-zero
   `exit_code` records nothing. The adapter's parse sets the approve step and
-  its render applies it (`dispatchHook` runs both in one synchronous call).
-  Setup adds the `ask` rule `Bash(workit approve*)`. L: a grant proves the call
+  its render applies it (`dispatchHook` runs both in one synchronous call);
+  the launcher's fast path sends every `workit approve` call to the runtime on
+  both events (`bin/workit-hook.mjs` `WORKIT_APPROVE`). Setup adds the `ask` rule `Bash(workit approve*)`. L: a grant proves the call
   ran after an ask, not that a person answered, and no hook sees a reject. U:
   whether auto mode, `bypassPermissions`, `dontAsk`, an SDK `canUseTool`
   callback or `--permission-prompt-tool` answer an ask without a person; until
