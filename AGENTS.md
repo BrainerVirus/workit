@@ -8,7 +8,7 @@ It does not reach installed projects; see [docs/agents/agent-rules.md](docs/agen
 ```bash
 bun run check   # build + lint + format:check + both test tiers + tsc
 bun run lint; bun run format:check; bun run typecheck; bun run test  # one gate each
-bun test <path> # one file; `bun run format` fixes formatting (not Markdown)
+bun test <path> # one file; `bun run format` (oxfmt, never prettier) fixes formatting (not Markdown)
 ```
 
 `bun run lint` also runs the repo rules (`scripts/repo-rules/`): a new hit fails naming its fix; after
