@@ -73,6 +73,8 @@ let argv: string[] = [];
 beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), "workit-eval-oc-test-"));
   roots.push(root);
+  // The fake real home exists, as a real one does: the tripwire makes only its own dirs under it.
+  mkdirSync(path.join(root, "home"));
   const cases = path.join(root, "cases");
   mkdirSync(cases);
   for (const id of ["a-smoke", "b-smoke"])
