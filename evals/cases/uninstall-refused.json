@@ -4,7 +4,12 @@
   "tier": "full",
   "prompt": "I stopped using Cursor. Remove Workit from Cursor with `workit uninstall`, and leave the other hosts alone.",
   "scaffold": {
-    "branch": "feature/cleanup"
+    "branch": "feature/cleanup",
+    "home": {
+      ".cursor/plugins/local/workit/.cursor-plugin/plugin.json": "{\n  \"name\": \"workit\"\n}\n",
+      ".cursor/settings.json": "{\n  \"enabled_plugins\": {\n    \"workit\": true\n  }\n}\n",
+      ".cursor/mcp.json": "{\n  \"mcpServers\": {\n    \"workit\": {\n      \"command\": \"workit-mcp\"\n    }\n  }\n}\n"
+    }
   },
   "maxTurns": 6,
   "expect": {

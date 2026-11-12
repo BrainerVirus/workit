@@ -298,6 +298,7 @@ issue or `test/behavior/cases` file).
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
 | `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `dontAsk`, the list above |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
+| `scaffold.home` | Files written under the world HOME (a host install the case needs, such as `.cursor/mcp.json`); a path that is absolute, has a `..` segment or is not below HOME refuses the world |
 | `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`), so `workit grant show` and the Stop hook see it. Only its endpoint and the grants it lowers below the D4 defaults count, and only where no real workspace matches (`packages/workit-core/src/core/eval-world.ts`). A lowered grant is an explicit grant without a forge account, so it also drops the endpoint to `commit` |
 | `expect.atMost` | `{tool?, pattern, max, why}`: at most `max` calls match |
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
