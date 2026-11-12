@@ -31,8 +31,9 @@ import {
   confined,
   confinementLine,
   binaryOf,
-  linkedPackages,
+  linkedReads,
   linkedRoots,
+  linkedStores,
   readableDirs,
   toolchainDir,
   writableDirs,
@@ -272,6 +273,13 @@ export const childEnv = (world: World, binDir: string): Record<string, string> =
   env.YTRACK_CONFIG_DIR = path.join(world.dir, "ytrack-config");
   env.YTRACK_HOST = "https://youtrack.invalid";
   env.PATH = [world.bin, binDir, env.PATH ?? ""].join(path.delimiter);
+  // In a linked worktree a package runs from the main checkout's store, and bun
+  // finds a `node_modules` only in the listing of the dir that holds it: the
+  // main checkout, which a host may not read. NODE_PATH names the store instead,
+  // so a linked package finds its own dependencies as in a plain checkout.
+  const stores = linkedStores(path.join(REPO, "node_modules"));
+  if (stores.length > 0)
+    env.NODE_PATH = [...stores, ...(env.NODE_PATH ? [env.NODE_PATH] : [])].join(path.delimiter);
   return env;
 };
 
@@ -399,15 +407,17 @@ const HOST_CONFIG = [".claude", ".claude.json", ".codex", ".cursor", ".config/op
 
 /**
  * What a host (or the probe) may read besides what it may write: the system
- * dirs, this Workit checkout and the toolchains it runs (bun, node, git, the
- * host binary), never the real home, its Workit dirs or host config dirs.
+ * dirs, this Workit checkout, the packages its `node_modules` link to with
+ * the store they sit in (a linked worktree's main checkout `node_modules`,
+ * never that checkout's source) and the toolchains it runs (bun, node, git,
+ * the host binary), never the real home, its Workit dirs or host config dirs.
  */
 const readRules = (opts: Options): string[] => {
   const pathEnv = process.env.PATH ?? "";
   return readableDirs(
     [
       REPO,
-      ...linkedPackages(path.join(REPO, "node_modules")),
+      ...linkedReads(path.join(REPO, "node_modules")),
       ...[process.execPath, "node", "git", opts.bin]
         .map((binary) => toolchainDir(binary, pathEnv))
         .filter((dir): dir is string => dir !== null),

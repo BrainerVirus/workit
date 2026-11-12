@@ -15,6 +15,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -145,6 +146,72 @@ test("Given the read rules, Then a dir holding the real home or a guarded path i
   );
   expect(confine.toolchainDir("no-such-tool", bin)).toBeNull();
 });
+
+// A linked worktree: its packages are symlinks into the main checkout's `node_modules`, and a
+// package there imports its own dependencies from that store, linked into the worktree or not.
+test.skipIf(!landlock)(
+  "Given a linked worktree under Landlock, Then a package linked from the main checkout's store imports its own dependency from that store; the main checkout's source stays unreadable",
+  () => {
+    const store = path.join(root, "main", "node_modules");
+    const worktree = path.join(root, "wt");
+    for (const [name, body] of [
+      ["pkg", 'module.exports = require("dep").value + "-pkg";'],
+      ["dep", 'module.exports = { value: "dep" };'],
+    ] as const) {
+      mkdirSync(path.join(store, name), { recursive: true });
+      writeFileSync(
+        path.join(store, name, "package.json"),
+        JSON.stringify({ name, main: "index.js" }),
+      );
+      writeFileSync(path.join(store, name, "index.js"), body);
+    }
+    mkdirSync(path.join(root, "main", "src"), { recursive: true });
+    writeFileSync(path.join(root, "main", "src", "secret.txt"), "main checkout source");
+    writeFileSync(path.join(root, "main", "notes.txt"), "an untracked file");
+    mkdirSync(path.join(worktree, "node_modules"), { recursive: true });
+    // Only `pkg` is linked: `dep` is reached through the store alone.
+    symlinkSync(path.join(store, "pkg"), path.join(worktree, "node_modules", "pkg"));
+    writeFileSync(path.join(worktree, "run.js"), 'console.log(require("pkg"));');
+    mkdirSync(path.join(root, "world"));
+
+    const linked = confine.linkedReads(path.join(worktree, "node_modules"));
+    expect(linked).toContain(store);
+    const reads = confine.readableDirs(
+      [worktree, ...linked, confine.toolchainDir(process.execPath, process.env.PATH ?? "") ?? ""],
+      [home],
+    );
+    // The store is readable; the main checkout that holds it is not a rule.
+    expect(reads).toContain(store);
+    expect(reads).not.toContain(path.join(root, "main"));
+    // bun finds a store only in the listing of the dir that holds it, which stays unreadable:
+    // the runner names the store in NODE_PATH (run.ts `childEnv`).
+    expect(confine.linkedStores(path.join(worktree, "node_modules"))).toEqual([store]);
+    const run = (cmd: string[]): { status: number | null; out: string } => {
+      const [bin = "", ...args] = confine.confined([path.join(root, "world")], [], cmd, reads);
+      const done = spawnSync(bin, args, {
+        cwd: path.join(root, "world"),
+        encoding: "utf8",
+        env: { ...process.env, NODE_PATH: store },
+      });
+      return { status: done.status, out: `${done.stdout}${done.stderr}` };
+    };
+    expect(run([process.execPath, path.join(worktree, "run.js")])).toEqual({
+      status: 0,
+      out: "dep-pkg\n",
+    });
+    for (const file of [
+      path.join(root, "main", "src", "secret.txt"),
+      path.join(root, "main", "notes.txt"),
+    ]) {
+      const read = run(["cat", file]);
+      expect(read.status, file).not.toBe(0);
+      expect(read.out, file).toContain("Permission denied");
+    }
+    // A store that holds the home or a guarded path is dropped like any other dir.
+    expect(confine.readableDirs([store], [path.join(store, "dep")])).not.toContain(store);
+  },
+  30_000,
+);
 
 /** Each line prints `<read> ok` or `<read> denied`. */
 const READS = (r: string): string => {

@@ -216,7 +216,7 @@ export const binaryOf = (binary: string, pathEnv: string): string | null => {
  * worktree links its packages to the main checkout's): read rules follow
  * the resolved path, not the link.
  */
-export const linkedPackages = (dir: string): string[] => {
+const linkedPackages = (dir: string): string[] => {
   const entries = (at: string): string[] => {
     try {
       return readdirSync(at).map((name) => path.join(at, name));
@@ -229,6 +229,33 @@ export const linkedPackages = (dir: string): string[] => {
     .filter((entry) => lstatSync(entry, { throwIfNoEntry: false })?.isSymbolicLink() === true)
     .map(real);
 };
+
+/**
+ * The stores a `node_modules` dir's symlinked packages sit in: for a package
+ * that resolves into another `node_modules` (a linked worktree's into the
+ * main checkout's), the outermost `node_modules` of its resolved path. A
+ * package there imports its own dependencies from that store whether this
+ * dir links them or not (`ink` imports `react`). A store holds installed
+ * packages, never the checkout around it (its source, its untracked files);
+ * a package linked from a checkout's own source (a workspace package) has
+ * none.
+ */
+export const linkedStores = (dir: string): string[] => {
+  const marker = `${path.sep}node_modules${path.sep}`;
+  return [
+    ...new Set(
+      linkedPackages(dir).flatMap((target) => {
+        const at = target.indexOf(marker);
+        return at === -1 ? [] : [target.slice(0, at + marker.length - 1)];
+      }),
+    ),
+  ];
+};
+
+/** What a host reads through a `node_modules` dir's symlinked packages: each resolved package and the store it sits in. */
+export const linkedReads = (dir: string): string[] => [
+  ...new Set([...linkedPackages(dir), ...linkedStores(dir)]),
+];
 
 /**
  * The checkouts or stores the symlinked packages of a `node_modules` dir live
