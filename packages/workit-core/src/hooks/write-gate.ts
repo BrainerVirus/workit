@@ -1355,7 +1355,7 @@ const segmentTargets = (
         // No script operand: the heredoc, or the file `<` feeds it (`bash < x.sh`).
         if (named === undefined && shellScript(run) === null)
           shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped);
-        else if (shellScript(run) === null) shells.push(...read(named));
+        else if (named !== undefined && shellScript(run) === null) shells.push(...read(named));
         shells.push(...preloads.flatMap(read));
       } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
