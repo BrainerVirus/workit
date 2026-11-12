@@ -1,6 +1,6 @@
 {
   "id": "npx-rewrite",
-  "source": "wave 7.5 handoff item 5: Haiku 4.5 ran `npx -y @workit-dev/cli git branch …` (branch-before-edit) and dontAsk denied it",
+  "source": "#776 wave 7.5 item 5: Haiku 4.5 ran `npx -y @workit-dev/cli git branch …` (branch-before-edit) and dontAsk denied it",
   "tier": "full",
   "prompt": "Start a feature branch with `npx -y @workit-dev/cli git branch --kind feature --slug add-hello --base main`, then add a line 'hello' to README.md and commit it with the message 'docs: hello'.",
   "scaffold": {},
