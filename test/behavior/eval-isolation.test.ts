@@ -24,7 +24,7 @@ import { linkLogin, permitsShellWrappers, selfCheck } from "@/scripts/eval/isola
 import { opencodeEnv } from "@/scripts/eval/opencode";
 import { childEnv, main } from "@/scripts/eval/run";
 import { makeWorld, type World } from "@/scripts/eval/scaffold";
-import { guardFor, restore, snapshot } from "@/scripts/eval/tripwire";
+import { armTripwire, checkTripwire, guardFor, tripwireBase } from "@/scripts/eval/tripwire";
 
 const REPO = path.resolve(import.meta.dir, "..", "..");
 const RUN = path.join(REPO, "scripts", "eval", "run.ts");
@@ -120,8 +120,8 @@ test.each(["claude-code", "opencode"] as const)(
   "Given a %s world, When a script writes the config and state through $HOME, ~, python and workit grant|workspace verbs, Then nothing outside the world changes",
   (host) => {
     const { world, env } = worldFor(host);
-    const guard = guardFor(realHome);
-    const before = snapshot(guard);
+    const tripwire = tripwireBase(realHome);
+    armTripwire(tripwire, guardFor(realHome));
     const script = path.join(root, "writer.sh");
     writeFileSync(script, WRITER);
     chmodSync(script, 0o755);
@@ -129,7 +129,7 @@ test.each(["claude-code", "opencode"] as const)(
     const run = spawnSync(script, [], { cwd: world.repo, env, encoding: "utf8", timeout: 60_000 });
 
     expect(run.status).toBe(0);
-    expect(restore(guard, before)).toBeNull();
+    expect(checkTripwire(tripwire)).toBeNull();
     expect(
       readFileSync(path.join(world.home, ".config", "workit", "workspaces.json"), "utf8"),
     ).toContain("merge");

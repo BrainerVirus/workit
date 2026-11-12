@@ -36,7 +36,19 @@ import {
   type Host,
 } from "./isolation";
 import { makeWorld, promptFor, type World } from "./scaffold";
-import { accountHome, guardFor, restore, snapshot, tripDetail, type Guard } from "./tripwire";
+import {
+  accountHome,
+  acquire,
+  armTripwire,
+  checkTripwire,
+  guardFor,
+  leftover,
+  release,
+  tripDetail,
+  tripwireBase,
+  type Guard,
+  type Trip,
+} from "./tripwire";
 
 const REPO = path.resolve(import.meta.dir, "..", "..");
 const PLUGINS: Record<Host, string> = {
@@ -95,7 +107,7 @@ type RunResult = {
   /** The world failed the isolation self-check: the case never started, and the run failed. */
   refused?: "isolation";
   /** The run changed a real guarded file (tripwire.ts): put back, and the run failed. */
-  outsideWrite?: { restored: string[]; added: string[] };
+  outsideWrite?: Omit<Trip, "rescued"> & { rescued: string | null };
 };
 
 const out = (repo: string, ...args: string[]): string =>
@@ -383,6 +395,8 @@ type Options = {
   limits: NonNullable<RunResult["limits"]>;
   /** The real config and state files the tripwire guards. */
   guard: Guard;
+  /** The tripwire's lock, on-disk snapshot and rescued bytes (tripwire.ts). */
+  tripwire: string;
   /** The account home the host's login is linked from. */
   realHome: string;
 };
@@ -471,15 +485,15 @@ const runCase = (
   opts: Options,
   index = 1,
 ): RunResult => {
-  const before = snapshot(opts.guard);
+  armTripwire(opts.tripwire, opts.guard);
   let run: Attempt;
   try {
     run = opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts);
   } catch (error) {
-    restore(opts.guard, before);
+    checkTripwire(opts.tripwire);
     throw error;
   }
-  const trip = restore(opts.guard, before);
+  const trip = checkTripwire(opts.tripwire);
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
@@ -735,11 +749,69 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       ? guardFor(path.resolve(values["real-home"]))
       : guardFor(accountHome(), process.env),
     realHome: path.resolve(values["real-home"] ?? accountHome()),
+    tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
   };
-  const selected = selectCases(cases, tier, values.cases?.split(",").filter(Boolean));
+  const holder = acquire(opts.tripwire);
+  if (holder !== null) {
+    print(
+      `another bench run (pid ${holder}) holds the tripwire at ${opts.tripwire}: two runs would restore each other's snapshot. Wait for it, or stop it.`,
+    );
+    return 4;
+  }
+  const onSignal = (signal: NodeJS.Signals): void => {
+    const trip = checkTripwire(opts.tripwire);
+    if (trip) print(`STOPPED by ${signal}: ${tripDetail(trip, "the interrupted run")}`);
+    release(opts.tripwire);
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  for (const signal of SIGNALS) process.on(signal, onSignal);
+  try {
+    if (leftover(opts.tripwire)) {
+      const trip = checkTripwire(opts.tripwire);
+      if (trip) {
+        print(
+          `RECOVERED: a bench run ended without its tripwire check (crash or SIGKILL) and changed real Workit files: ${tripDetail(trip, "unknown (the run did not finish)")}. No run starts.`,
+        );
+        return 3;
+      }
+      print(
+        "recovered: a leftover tripwire snapshot (a run that did not finish) found nothing changed",
+      );
+    }
+    return bench(opts, print, {
+      selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
+      repeat,
+      budget,
+      force: values.force,
+    });
+  } finally {
+    for (const signal of SIGNALS) process.off(signal, onSignal);
+    release(opts.tripwire);
+  }
+};
+
+const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/** Every selected case, `repeat` runs each, under the tripwire `main` holds. */
+const bench = (
+  opts: Options,
+  print: (text: string) => void,
+  {
+    selected,
+    repeat,
+    budget,
+    force,
+  }: {
+    selected: EvalCase[];
+    repeat: number;
+    budget: number;
+    force: boolean;
+  },
+): number => {
+  const { host } = opts;
   const version = workitVersion(host);
   const label = host === "opencode" ? `opencode ${opts.model}` : opts.model;
-  const dir = modelDir(results, resultName(host, opts.model));
+  const dir = modelDir(opts.results, resultName(host, opts.model));
   let runs = 0;
   let failed = 0;
   const limited: string[] = [];
@@ -758,7 +830,7 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     const outcomes: RunResult[] = [];
     for (let run = 1; run <= repeat; run += 1) {
       const cached = readResult(path.join(dir, `${runBase(spec.id, run)}.json`));
-      if (!values.force && cached?.key === key && !cached.skipped) {
+      if (!force && cached?.key === key && !cached.skipped) {
         outcomes.push(cached);
         print(line(cached.grade.pass ? "cached pass" : "cached FAIL", cached));
         continue;
