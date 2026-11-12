@@ -326,3 +326,12 @@ test("G an interpreter fed its script on stdin, W the heredoc spells a guarded p
   }
   expect(decide(`python3 <<'PY'\nprint("hi")\nPY`).kind).toBe("none");
 });
+
+test("G a target that is no valid glob ('x[', 'x[z-a]') before a guarded write, W the gate runs, T the registry check still denies", () => {
+  for (const kind of KINDS)
+    for (const odd of ["'x['", "'x[z-a]'", "x[z-a]"]) {
+      const command = `touch ${sh(path.dirname(kind.dir))}/${odd} && echo '{}' > ${sh(kind.file)}`;
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+    }
+  expect(decide(`touch ${sh(elsewhere)}/'x[' && echo '{}' > out.json`).kind).toBe("none");
+});

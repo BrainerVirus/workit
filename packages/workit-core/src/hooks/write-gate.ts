@@ -1370,7 +1370,8 @@ export const shellMutationTargets = (
       ...segmentTargets(cwd, command, dialect, 0, strict, env),
       ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
     ];
-  } catch {
+  } catch (error) {
+    if (strict === "registry") throw error;
     return [];
   }
 };
@@ -1464,15 +1465,21 @@ const configDirs = (): string[] => [resolveConfigDir(), grantsDir()];
 const globbed = (cwd: string, target: string, state: string, configs: string[]): string[] => {
   if (!/[*?[]/.test(target)) return [];
   const pattern = path.resolve(cwd, target).split(path.sep);
-  const segment = (glob: string, name: string) =>
-    new RegExp(
-      `^${glob
-        .replace(/[.+^$(){}|\\]/g, "\\$&")
-        .replace(/\[!/g, "[^")
-        .replaceAll("*", ".*")
-        .replaceAll("?", ".")}$`,
-      CASE_INSENSITIVE ? "i" : "",
-    ).test(name);
+  const segment = (glob: string, name: string) => {
+    try {
+      return new RegExp(
+        `^${glob
+          .replace(/[.+^$(){}|\\]/g, "\\$&")
+          .replace(/\[!/g, "[^")
+          .replaceAll("*", ".*")
+          .replaceAll("?", ".")}$`,
+        CASE_INSENSITIVE ? "i" : "",
+      ).test(name);
+    } catch {
+      // `x[`, `x[z-a]`: no glob the shell expands, so it names no guarded file.
+      return false;
+    }
+  };
   const hit = (file: string, below: boolean) => {
     const parts = canonical(file).split(path.sep);
     return (
@@ -1730,7 +1737,26 @@ export function shellGate(
       (windows ? { file: `the ${windows} registry`, registry: windows } : null);
     if (forged) return registryDeny(forged);
   } catch {
-    // Fail open, like the other shell analyses here.
+    // The registry check is never dropped: a command it could not analyse that
+    // names a guarded path is denied.
+    const text = command
+      .replace(/['"\\]/g, "")
+      .replaceAll("\\", "/")
+      .toLowerCase();
+    if (
+      /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(text) ||
+      [resolveStateDir(), ...configDirs()].some((dir) =>
+        text.includes(dir.replaceAll("\\", "/").toLowerCase()),
+      )
+    ) {
+      const unblock =
+        "Split the command so each write is a plain command Workit can read; a change to the user's Workit config is theirs to make: ask them to run `workit grant set <ws> <kind>=<value>` in a terminal outside this host.";
+      return {
+        kind: "deny",
+        reason: `workit registry guard: Workit could not analyse this command, and it names Workit's issued or approvals registry or the user's workspaces.json. ${unblock}`,
+        unblock,
+      };
+    }
   }
   const writes = shellWrites(command);
   let targets: string[] = [];
