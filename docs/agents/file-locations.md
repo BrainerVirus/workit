@@ -34,6 +34,27 @@ everything.
 `APPDATA` and `LOCALAPPDATA` fall back to `<profile>\AppData\Roaming` and
 `<profile>\AppData\Local` when unset.
 
+### The account home (grants)
+
+Grants, and the user's own ssh and git config that the remote checks trust,
+are read under the account home (`packages/workit-core/src/core/account-home.ts`),
+which no variable a caller sets moves:
+
+| Runtime | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| node | `os.userInfo()` (`getpwuid_r`) | `os.userInfo()` (`getpwuid_r`) | `os.userInfo()` (the process token's profile dir) |
+| bun | the `/etc/passwd` line of the uid (`#` lines skipped), else `/usr/bin/getent passwd <uid>` | the `/etc/passwd` line of the uid, else `/usr/bin/id -P` | `C:\Windows\System32\whoami.exe /user` for the SID, then `reg.exe query` of its `ProfileList` `ProfileImagePath` |
+
+Bun's `os.userInfo()` follows `HOME` (`USERPROFILE` on Windows), so bun uses
+the record directly. An account absent from `/etc/passwd` (LDAP, NIS, sssd)
+goes through `getent`, with a 3 s timeout. Each program runs by absolute path
+with a fixed env (none, or `SystemRoot` on Windows) and no shell. On Windows
+only `%SystemDrive%` and `%SystemRoot%` in `ProfileImagePath` are expanded,
+from `C:\Windows`; any other variable fails closed. When no record answers
+there is no account home: no grants are read (the D4 defaults apply), `grant
+set` refuses, and no fallback path is built. The bench's isolation self-check
+judges the `workit` first on the run's `PATH` ([eval.md](eval.md#isolation-and-the-tripwire)).
+
 ### Shell completion files
 
 `workit setup` and `workit upgrade` write the completion script for `$SHELL`
