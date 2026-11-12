@@ -372,7 +372,11 @@ issued-registry guard covers `<state>/approvals/` too ([Host parity](#host-parit
 A host acts only on one plain `workit approve <id>…` call (`approvals/call.ts`):
 a chain, substitution, leading `cd`, env prefix, redirect or `--cwd` is denied
 with the plain form (Claude Code, Pi; Codex, Cursor and OpenCode deny or ask on
-the user-only call as before).
+the user-only call as before). `consumeApproval` accepts only a terminal grant
+(`host: terminal`, no `toolUseId` or `observer`) or a Claude Code or Pi grant
+whose `asked` row names the same host and hash. L (D18): the `asked` row is a
+hand-edit check, not proof; a forger who writes both files or calls the store
+library passes it, and real unforgeability needs another OS principal.
 
 - **Claude Code:** N. `PreToolUse` asks with the request rendered from the
   store and writes `asked` (one hash per id) in `default`, `acceptEdits` and
@@ -387,24 +391,30 @@ the user-only call as before).
   whether auto mode, `bypassPermissions`, `dontAsk`, an SDK `canUseTool`
   callback or `--permission-prompt-tool` answer an ask without a person; until
   probed they record nothing (an `sdk-*` `CLAUDE_CODE_ENTRYPOINT`, which
-  `claude -p` and the SDKs set, records nothing either).
+  `claude -p` and the SDKs set, records nothing either). L: the grant's
+  `asked` row (host `claude_code`) catches a hand edit, not a forger.
 - **OpenCode:** fallback-only. The user-only call is asked as before; the CLI
   records nothing in its shell. U: `permission.asked`/`permission.replied` are
   in the installed types but unused by Workit, `question` has no reply event
-  there, and a `subagent` spawn may not pass `permission.evaluate`.
+  there, and a `subagent` spawn may not pass `permission.evaluate`. A grant
+  naming `opencode` is refused.
 - **Codex:** fallback-only. The rules file prompts on `workit approve` and the
   `PreToolUse` hook denies it as a user-only call. L: the hook can deny but not
   ask; prompts come only from prefix rules. U: the `permission_mode` values
   under `approval_policy = never` and how a "don't ask again" answer caches.
+  A grant naming `codex` is refused.
 - **Cursor:** fallback-only. `Shell(workit approve)` is a `permissions.deny`
   entry and `beforeShellExecution` denies it. `afterShellExecution` is offered
-  but not registered (X). U: whether auto-run skips an `ask`.
+  but not registered (X). U: whether auto-run skips an `ask`. A grant naming
+  `cursor` is refused.
 - **Pi:** N in the TUI: the `tool_call` hook shows `ctx.ui.select` (Approve once
   / Reject / Edit) with the stored request, writes the grant (or the rejection;
   Edit closes the request) and blocks the shell call with a result naming the
   answer; a dismissed dialog records nothing. Print mode has no dialog
   (`hasUI` false); in RPC mode the dialog goes to the RPC client, which may be
   a program, so RPC is fallback-only (L): the shared gate denies the call.
+  The hook writes an `asked` row (host `pi`) before the grant; L: it catches a
+  hand edit, not a forger.
 
 ## Design background
 

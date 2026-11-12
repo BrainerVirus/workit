@@ -33,7 +33,11 @@ A yes typed in chat must not count: that makes the gate agent-asserted, which #6
 
 Trust model (D18): this stops honest mistakes and accidental self-approval, not a determined agent.
 The hard boundary stays the host's prompt on the approval call and host permissions on Workit's
-state dir.
+state dir. Per host: on Claude Code and Pi the `asked` row a grant needs is a hand-edit check,
+not proof: it catches a grant file written or edited alone, but a forger who writes both files or
+calls the store library is outside D18. A terminal grant is a field check only, and OpenCode,
+Codex and Cursor grants are refused outright. Real unforgeability needs the recorder to run as
+another OS principal than the agent.
 
 ## Two forms
 
@@ -102,9 +106,11 @@ your host asks". A host that is fallback-only says so in `workit doctor` (`host_
 ## How a CLI verb checks an approval
 
 1. Compute the request for this run (same fields as above, from current state).
-2. Look for a grant whose `hash` equals the computed hash, not expired, not consumed, written by
-   host-side code (`observer: host_hook`, with a matching `asked` record on Claude Code) or
-   `via: terminal`.
+2. Look for a grant whose `hash` equals the computed hash, not expired, not consumed, and from a
+   path that records one: `via: terminal` with `host: terminal`, no `toolUseId` and no
+   `observer`; or `via: host`, `observer: host_hook` from Claude Code or Pi, with an `asked` row
+   on the same session and `toolUseId` that names the same host and shows this hash. A host grant
+   naming OpenCode, Codex, Cursor or any other host is refused: they record none.
 3. None, but a grant for an older hash of the same `kind` and `target`: refuse `approval_stale`,
    naming the approved and current hash prefixes and the new `workit approve <id>`.
 4. Found: append `approval.consumed { id, verb, head }` under the store lock immediately before the

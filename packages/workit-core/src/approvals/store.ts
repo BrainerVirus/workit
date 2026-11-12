@@ -327,14 +327,23 @@ export const recordApprovalRejected = (
   write(fileOf("rejected", input.id), { ...input, at: now.toISOString() });
 };
 
-/** A grant written by host-side code after its ask, or at the user's terminal. */
+/** The hosts whose own code records an ask row and then the grant on the same call. */
+const ASKING_HOSTS = new Set(["claude_code", "pi"]);
+
+/**
+ * A grant only from a path that records one: `workit approve` at the user's
+ * terminal, or a Claude Code or Pi grant with the same host's ask row behind
+ * it. The ask row catches a hand-edited grant, not a forger who writes both
+ * files (D18).
+ */
 const trusted = (grant: ApprovalGrant): boolean => {
-  if (grant.via === "terminal") return true;
-  if (grant.via !== "host" || grant.observer !== "host_hook") return false;
-  if (grant.host !== "claude_code") return true;
+  if (grant.via === "terminal")
+    return grant.host === "terminal" && grant.toolUseId === null && grant.observer === null;
+  if (grant.via !== "host" || grant.observer !== "host_hook" || !ASKING_HOSTS.has(grant.host))
+    return false;
   const asked =
     grant.session && grant.toolUseId ? readApprovalAsked(grant.session, grant.toolUseId) : null;
-  return asked?.hashes[grant.id] === grant.hash;
+  return asked?.host === grant.host && asked.hashes[grant.id] === grant.hash;
 };
 
 const grants = (): ApprovalGrant[] => {

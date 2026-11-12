@@ -153,6 +153,83 @@ test("Given a host grant without the ask record behind it, When the consumer run
   });
 });
 
+const grantFile = (id: string) =>
+  path.join(process.env.WORKIT_STATE_DIR!, "approvals", "grants", `${id}.json`);
+
+/** Hand-edit a recorded grant: the D18 case the cross-check catches. */
+const editGrant = (id: string, fields: Record<string, unknown>) => {
+  const grant = JSON.parse(readFileSync(grantFile(id), "utf8"));
+  writeFileSync(grantFile(id), JSON.stringify({ ...grant, ...fields }));
+};
+
+/** A host grant the way Pi records one: the ask row, then the grant on the same call id. */
+const piYes = (id: string, now: Date) => {
+  recordApprovalAsked({ toolUseId: "pi-call", session: "pi-session", host: "pi", ids: [id] }, now);
+  return recordApprovalGrant(
+    { id, host: "pi", session: "pi-session", toolUseId: "pi-call", via: "host" },
+    { now },
+  );
+};
+
+test("Given a Pi grant with its ask row, When the consumer runs, Then it is accepted", () => {
+  const request = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
+  expect(piYes(request.id, T0).ok).toBe(true);
+  expect(consumeApproval(draft("aaa"), use, at(1000)).ok).toBe(true);
+});
+
+test("Given a Pi grant without its ask row, When the consumer runs, Then it is refused", () => {
+  const request = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
+  piYes(request.id, T0);
+  rmSync(path.join(process.env.WORKIT_STATE_DIR!, "approvals", "asked"), { recursive: true });
+  expect(consumeApproval(draft("aaa"), use, at(1000))).toMatchObject({
+    ok: false,
+    code: "approval_needed",
+  });
+});
+
+test.each(["opencode", "codex", "cursor", "made_up"])(
+  "Given a host grant whose host is %s, When the consumer runs, Then it is refused",
+  (host) => {
+    const request = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
+    recordApprovalAsked(
+      { toolUseId: "toolu_1", session: "lead-session", host, ids: [request.id] },
+      T0,
+    );
+    const recorded = recordApprovalGrant(
+      { id: request.id, host, session: "lead-session", toolUseId: "toolu_1", via: "host" },
+      { now: T0 },
+    );
+    expect(recorded.ok).toBe(true);
+    expect(consumeApproval(draft("aaa"), use, at(1000)).ok).toBe(false);
+  },
+);
+
+test("Given a claude_code or pi grant whose ask row names another host, When the consumer runs, Then it is refused", () => {
+  const cc = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
+  hostYes(cc.id, T0);
+  editGrant(cc.id, { host: "pi" });
+  expect(consumeApproval(draft("aaa"), use, at(1000)).ok).toBe(false);
+
+  const pi = createApprovalRequest(draft("bbb"), { session: "s1", now: T0 });
+  piYes(pi.id, T0);
+  editGrant(pi.id, { host: "claude_code" });
+  expect(consumeApproval(draft("bbb"), use, at(1000)).ok).toBe(false);
+});
+
+test.each([
+  ["a host other than terminal", { host: "claude_code" }],
+  ["a toolUseId", { toolUseId: "toolu_1" }],
+  ["an observer", { observer: "host_hook" }],
+])("Given a terminal grant with %s, When the consumer runs, Then it is refused", (_, fields) => {
+  const request = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
+  recordApprovalGrant(
+    { id: request.id, host: "terminal", session: null, toolUseId: null, via: "terminal" },
+    { now: T0 },
+  );
+  editGrant(request.id, fields);
+  expect(consumeApproval(draft("aaa"), use, at(1000)).ok).toBe(false);
+});
+
 test("Given a grant from another session (the user's terminal), When the hash matches, Then it is accepted and both sessions are named", () => {
   const request = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
   const terminal = recordApprovalGrant(

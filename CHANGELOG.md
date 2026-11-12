@@ -1064,6 +1064,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - **Breaking:** Workit's built-in YouTrack token-file client. YouTrack now requires [ytrack](https://github.com/BrainerVirus/youtrack-cli) installed and logged in to the configured host (`ytrack auth login --host <host>`); every YouTrack call goes through it, whose token stays in the OS keyring. Setup no longer asks for or writes a token; it checks ytrack and names `ytrack auth login --host <host>` when needed. Doctor warns if a leftover `youtrack.token` exists (Workit never reads it; delete it). The `tokenFile` and `tokenDefaults` keys in youtrack.json are ignored.
 
+### Security
+
+- An approval is accepted only from a path that records one: a terminal grant, or a Claude Code or Pi grant with a matching ask row from the same host. A grant that names OpenCode, Codex, Cursor or an unknown host is refused; the ask row catches hand edits, not forgery (docs/agents/hosts.md)
+
 ## [0.6.0] - 2026-08-10
 
 ### Added
