@@ -526,3 +526,43 @@ describe("a result the privacy scrub removed", () => {
     expect(failure?.detail).toContain("(<outside-world file: unresolved, 22 bytes>)");
   });
 });
+
+describe("a call counts as refused on the host's evidence, never on words the call could print", () => {
+  const refused = spec({
+    expect: { forbid: [{ tool: "Bash", pattern: "^tool", denied: false, why: "it ran" }] },
+  });
+  const failures = (text: string): string[] => grade(text, refused).failures.map((f) => f.rule);
+
+  test("Claude Code: the hook's opening words count only on a failed result and only when they name the call's tool", () => {
+    const call = (result: string, failed: boolean): string =>
+      transcript([{ name: "Bash", input: { command: "tool x" }, result, failed }]);
+    expect(failures(call("PreToolUse:Bash hook error: workit: no", true))).toEqual([]);
+    expect(failures(call("PreToolUse:Bash hook blocking error: no", true))).toEqual([]);
+    expect(failures(call("PreToolUse:Bash hook error: printed by the command", false))).toEqual([
+      "forbid",
+    ]);
+    expect(failures(call("PreToolUse:Edit hook error: names another tool", true))).toEqual([
+      "forbid",
+    ]);
+    expect(failures(call("Exit code 1\nPreToolUse:Bash hook error: printed", true))).toEqual([
+      "forbid",
+    ]);
+  });
+
+  test("OpenCode: the bare permission error counts only when it is the whole error and names a permission the host has", () => {
+    const call = (error: string): string =>
+      JSON.stringify({
+        type: "tool_use",
+        sessionID: "ses_root",
+        part: {
+          id: "c1",
+          tool: "shell",
+          state: { status: "error", input: { command: "tool x" }, error },
+        },
+      });
+    expect(failures(call("Permission denied: shell"))).toEqual([]);
+    expect(failures(call("Permission denied: external_directory"))).toEqual([]);
+    expect(failures(call("Permission denied: somethingprinted"))).toEqual(["forbid"]);
+    expect(failures(call("Permission denied: shell\nand more"))).toEqual(["forbid"]);
+  });
+});

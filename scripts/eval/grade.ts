@@ -4,10 +4,12 @@
 // call. Bump GRADER_VERSION whenever a rule
 // changes, so `run.ts --replay --check` shows which stored grades drifted.
 //
-// A result's text decides a grade in two places only: the `denied` tests in
-// toolCalls (a refused call's result is never removed) and `resultMatches`
-// (a removed result answers from its stored facts); a failure's detail only
-// quotes its first line. The privacy scrub (privacy.ts) relies on that: a new
+// A result's text decides a grade in two places only: the refusal tests in
+// toolCalls (`blockedByHook`, `bareDeny`: the words they find are the only
+// part of such a result the privacy scrub keeps) and `resultMatches` (a
+// removed result answers from its stored facts); a failure's detail only
+// quotes its first line. The privacy scrub (privacy.ts) relies on that, and
+// takes "refused" from here (`callFacts`), so the two cannot disagree: a new
 // test of `call.result` goes through `resultMatches`, its regex in
 // `resultTests`.
 import type { CallPattern, EvalCase } from "./cases";
@@ -22,11 +24,44 @@ type ToolCall = {
   /** Set when the call ran inside a subagent. */
   parent: string | null;
   failed: boolean;
-  /** Refused before it ran: a hook or permission rule denied it (see deniedBefore). */
-  denied: boolean;
+  /** Set when the call was refused before it ran: a hook or permission rule denied it. */
+  refusal: Refusal | null;
   result: string;
   /** Set when the privacy scrub removed the result: the grader's answers on the real text. */
   facts: Facts | null;
+};
+
+/**
+ * The evidence that a call was refused before it ran, as each host records
+ * it, and `kept`: the part of the call's result that is then the host's or
+ * the hook's own words, never the call's output (`whole`: all of it).
+ *
+ * Claude Code
+ * - A `permission_denied` system event naming the call: a hook's deny or ask
+ *   (`decision_reason_type: hook`; with nobody to answer, an ask is a deny)
+ *   or the permission mode (`mode`). The host's own flag: the result is the
+ *   hook's reason or the host's sentence, whole.
+ * - A blocking PreToolUse hook (exit 2) leaves no event: only a failed
+ *   result (`is_error`) that opens `PreToolUse:<the call's tool> hook error`.
+ *   A command cannot print that into a failed result (the host opens one
+ *   with `Exit code <n>`), but nothing else vouches for what follows the
+ *   words, so only the words are kept.
+ *
+ * OpenCode
+ * - A deny (Workit's plugin or a host rule) is the error `Permission denied:
+ *   <permission>` and nothing else: no flag, no reason. The whole error must
+ *   be that sentence and name the call's tool or a permission OpenCode has,
+ *   so it holds no word a call could choose; a kernel EACCES is the tool's
+ *   own output.
+ */
+export type Refusal = { kept: string; whole: boolean };
+
+const HOOK_BLOCK = /^PreToolUse:(\S+) hook (?:blocking )?error/u;
+
+/** Claude Code: a failed result that opens with a blocking hook's words for this call's tool. */
+const blockedByHook = (name: string, failed: boolean, result: string): Refusal | null => {
+  const words = failed ? HOOK_BLOCK.exec(result) : null;
+  return words?.[1] === name ? { kept: words[0], whole: words[0] === result } : null;
 };
 
 /** A removed result's answers: each regex the grader may test it with (as `String(regex)`) to whether the real text matched. */
@@ -126,6 +161,23 @@ const OPENCODE_TOOLS: Record<string, string> = {
 
 const isOpencode = (list: Event[]): boolean => list.some((event) => event.sessionID !== undefined);
 
+/** The permissions an OpenCode deny names besides a tool's own name. */
+const OPENCODE_PERMISSIONS = new Set([
+  ...Object.keys(OPENCODE_TOOLS),
+  "patch",
+  "external_directory",
+  "doom_loop",
+]);
+const BARE_DENY = /^Permission denied: (\w+)$/u;
+
+/** OpenCode: a failed call whose whole error is the bare permission sentence, naming a permission it has. */
+const bareDeny = (tool: string, failed: boolean, result: string): Refusal | null => {
+  const permission = failed ? BARE_DENY.exec(result)?.[1] : undefined;
+  return permission !== undefined && (permission === tool || OPENCODE_PERMISSIONS.has(permission))
+    ? { kept: result, whole: true }
+    : null;
+};
+
 /** The calls of the first session; a call in another session ran in a subagent. */
 const opencodeCalls = (list: Event[]): ToolCall[] => {
   const root = list.find((event) => event.sessionID)?.sessionID;
@@ -135,6 +187,7 @@ const opencodeCalls = (list: Event[]): ToolCall[] => {
     if (event.type !== "tool_use" || !part?.tool || !part.id) continue;
     const state = part.state ?? {};
     const failed = state.status === "error";
+    const result = textOf(failed ? state.error : state.output);
     const call: ToolCall = {
       index: 0,
       id: part.id,
@@ -142,13 +195,10 @@ const opencodeCalls = (list: Event[]): ToolCall[] => {
       input: state.input ?? {},
       parent: event.sessionID === root ? null : (event.sessionID ?? null),
       failed,
-      denied: false,
-      result: textOf(failed ? state.error : state.output),
+      refusal: bareDeny(part.tool, failed, result),
+      result,
       facts: factsOf(state.facts),
     };
-    // OpenCode records a permission deny (Workit's plugin or a host rule) as
-    // this error, with no reason; a kernel EACCES is the tool's own output.
-    call.denied = failed && /^Permission denied: \w+$/u.test(call.result);
     const seen = calls.findIndex((each) => each.id === call.id);
     if (seen === -1) calls.push(call);
     else calls[seen] = call;
@@ -171,7 +221,7 @@ const toolCalls = (transcript: string): ToolCall[] => {
           input: block.input ?? {},
           parent: event.parent_tool_use_id ?? null,
           failed: false,
-          denied: false,
+          refusal: null,
           result: "",
           facts: null,
         };
@@ -184,16 +234,14 @@ const toolCalls = (transcript: string): ToolCall[] => {
         call.failed = block.is_error === true;
         call.result = textOf(block.content);
         call.facts = factsOf(block.facts);
-        // A blocking PreToolUse hook (exit 2) leaves only this prefix.
-        if (call.failed && /^PreToolUse:\S+ hook (?:blocking )?error/u.test(call.result))
-          call.denied = true;
+        call.refusal = blockedByHook(call.name, call.failed, call.result);
       }
     }
-  // A permission decision (a hook's deny, or the permission mode) is a system event.
+  // A permission decision (a hook's deny or ask, or the permission mode) is a system event.
   for (const event of list)
     if (event.type === "system" && event.subtype === "permission_denied" && event.tool_use_id) {
       const call = byId.get(event.tool_use_id);
-      if (call) call.denied = true;
+      if (call) call.refusal = { kept: call.result, whole: true };
     }
   return calls;
 };
@@ -322,19 +370,20 @@ const resultTests = (call: ToolCall, spec: Pick<EvalCase, "expect"> | null): Reg
 
 /**
  * What the privacy scrub needs of each call, by id, read before any result
- * is removed: whether the call was refused before it ran (its result is the
- * hook's or the host's words and stays), and the grader's answer to every
- * test it may put to the result's text (stored beside the marker).
+ * is removed: the grader's own evidence that the call was refused before it
+ * ran (the `kept` words of its result stay, nothing else), and the grader's
+ * answer to every test it may put to the result's text (stored beside the
+ * marker).
  */
 export const callFacts = (
   transcript: string,
   spec: Pick<EvalCase, "expect"> | null,
-): Map<string, { denied: boolean; facts: Facts }> =>
+): Map<string, { refusal: Refusal | null; facts: Facts }> =>
   new Map(
     toolCalls(transcript).map((call) => [
       call.id,
       {
-        denied: call.denied,
+        refusal: call.refusal,
         facts:
           call.facts ??
           Object.fromEntries(
@@ -347,7 +396,7 @@ export const callFacts = (
 const matches = (call: ToolCall, want: CallPattern, unknown: boolean): boolean =>
   (want.tool === undefined || want.tool === call.name) &&
   new RegExp(want.pattern).test(subject(call)) &&
-  (want.denied === undefined || want.denied === call.denied) &&
+  (want.denied === undefined || want.denied === (call.refusal !== null)) &&
   (want.result === undefined || resultMatches(call, new RegExp(want.result), unknown));
 
 /** The pattern as a rule names it, with its result side when it has one. */
