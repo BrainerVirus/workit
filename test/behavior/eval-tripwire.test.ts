@@ -485,8 +485,12 @@ test("Given a runner SIGKILLed after an outside write, When the bench starts aga
   killPids();
   expect(digest).toMatch(/^[0-9a-f]{16}$/u);
 
+  const world = path.dirname(file(root, "starts.log").trim());
+  expect(existsSync(world)).toBe(true);
   expect(await main(argv(fakeClaude(false)), () => {})).toBe(3);
   expect(file(ws)).toBe(EVIL);
+  // Decision test 11, last part: the killed runner's world is gone after the next start.
+  expect(existsSync(world)).toBe(false);
   expect(await main(settle("--tripwire-restore", "0000000000000000"), () => {})).toBe(3);
   expect(file(ws)).toBe(EVIL);
 
@@ -559,3 +563,89 @@ test("Given a host that changes the real workspaces.json and keeps running, Then
   const stored = JSON.parse(readFileSync(result("a-case"), "utf8"));
   expect(stored.grade.failures[0].rule).toBe("outside_write");
 }, 30_000);
+
+// Decision test 9
+test("Given six runners starting at one instant over a dead holder, 12 rounds, Then never more than one holds the tripwire", async () => {
+  const script = path.join(root, "acquire.ts");
+  writeFileSync(
+    script,
+    [
+      `import { acquire } from ${JSON.stringify(path.join(REPO, "scripts", "eval", "tripwire.ts"))};`,
+      "const [dir, at] = [process.argv[2] ?? '', Number(process.argv[3])];",
+      "while (Date.now() < at) {}",
+      "console.log(acquire(dir) === null ? 'HELD' : 'refused');",
+      "await Bun.sleep(1500);",
+      "",
+    ].join("\n"),
+  );
+  for (let round = 0; round < 12; round += 1) {
+    const dir = path.join(root, `lock-${round}`);
+    mkdirSync(path.join(dir, "holders"), { recursive: true });
+    writeFileSync(path.join(dir, "holders", "999999.1"), "");
+    const at = Date.now() + 700;
+    const outs = await Promise.all(
+      Array.from(
+        { length: 6 },
+        () =>
+          new Promise<string>((resolve) => {
+            const child = spawn(process.execPath, [script, dir, String(at)], {
+              stdio: ["ignore", "pipe", "ignore"],
+            });
+            let out = "";
+            child.stdout?.on("data", (chunk) => (out += String(chunk)));
+            child.on("close", () => resolve(out.trim()));
+          }),
+      ),
+    );
+    expect(outs.filter((out) => out === "HELD").length).toBeLessThanOrEqual(1);
+  }
+}, 120_000);
+
+test("Given a holder entry naming this live pid with a wrong start time, Then acquire takes the tripwire over", () => {
+  mkdirSync(path.join(base, "holders"), { recursive: true });
+  writeFileSync(path.join(base, "holders", `${process.pid}.wrong-start`), "");
+  expect(tripwire.acquire(base)).toBeNull();
+  expect(readdirSync(path.join(base, "holders"))).toEqual([tripwire.runnerIdentity()]);
+  tripwire.release(base);
+});
+
+// Decision test 10
+test("Given seven rescued dirs, two older than 7 days, When a bench starts, Then at most 5 remain and none is older than 7 days", async () => {
+  const rescued = path.join(base, "rescued");
+  const week = 7 * 24 * 3600 * 1000;
+  for (let index = 0; index < 7; index += 1) {
+    const dir = path.join(rescued, `r${index}`);
+    mkdirSync(dir, { recursive: true });
+    const when = new Date(Date.now() - (index < 2 ? week + 3_600_000 : index * 60_000));
+    utimesSync(dir, when, when);
+  }
+  expect(await main(argv(fakeClaude(false)), () => {})).toBe(0);
+  const left = readdirSync(rescued);
+  expect(left.length).toBeLessThanOrEqual(5);
+  for (const name of left)
+    expect(Date.now() - statSync(path.join(rescued, name)).mtimeMs).toBeLessThan(week);
+});
+
+// Decision test 11
+test("Given a dead runner's world, a live runner's world and a symlinked lookalike in tmpdir, When a bench starts, Then only the dead one is removed and the symlink's target is intact", async () => {
+  const tmp = os.tmpdir();
+  const deadWorld = mkdtempSync(path.join(tmp, "workit-eval-x-"));
+  mkdirSync(path.join(deadWorld, "home"));
+  writeFileSync(path.join(deadWorld, "home", ".claude.json"), "{}");
+  writeFileSync(path.join(deadWorld, tripwire.RUNNER_MARKER), "999999.1");
+  const liveWorld = mkdtempSync(path.join(tmp, "workit-eval-x-"));
+  writeFileSync(path.join(liveWorld, tripwire.RUNNER_MARKER), tripwire.runnerIdentity());
+  const target = path.join(root, "target");
+  mkdirSync(target);
+  writeFileSync(path.join(target, "keep.txt"), "keep");
+  writeFileSync(path.join(target, tripwire.RUNNER_MARKER), "999999.1");
+  const lookalike = path.join(tmp, `workit-eval-y-${path.basename(root)}`);
+  symlinkSync(target, lookalike);
+  roots.push(liveWorld, lookalike);
+
+  expect(await main(argv(fakeClaude(false)), () => {})).toBe(0);
+
+  expect(existsSync(deadWorld)).toBe(false);
+  expect(existsSync(liveWorld)).toBe(true);
+  expect(file(target, "keep.txt")).toBe("keep");
+});

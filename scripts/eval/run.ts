@@ -46,9 +46,11 @@ import {
   ensureBase,
   guardFor,
   inspectJournal,
+  pruneRescued,
   release,
   restoreJournal,
   restoredChanged,
+  sweepWorlds,
   tripDetail,
   tripwireBase,
   writeJournal,
@@ -873,6 +875,9 @@ const tripwired = async (
     return 4;
   }
   try {
+    // A dead runner's worlds (its login copies included) and old rescued bytes go first.
+    for (const dir of sweepWorlds()) print(`tripwire: removed a dead bench run's world ${dir}`);
+    pruneRescued(opts.tripwire);
     if (settleFlags.discard) {
       dropJournal(opts.tripwire);
       print("tripwire: the leftover journal is dropped; nothing was restored");

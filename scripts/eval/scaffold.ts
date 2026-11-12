@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { EVAL_WORLD_MARKER } from "../../packages/workit-core/src/core/eval-world";
 import type { EvalCase } from "./cases";
+import { RUNNER_MARKER, runnerIdentity } from "./tripwire";
 
 /** A throwaway world for one run: the repo, an optional worktree, Workit state and config. */
 export type World = {
@@ -70,6 +71,8 @@ export const makeWorld = (spec: EvalCase): World => {
       return sub;
     },
   ) as [string, string, string, string, string];
+  // The runner that made the world: a later start removes it once that runner is dead.
+  writeFileSync(path.join(dir, RUNNER_MARKER), runnerIdentity());
   writeFileSync(path.join(bin, "ytrack"), FAKE_YTRACK);
   chmodSync(path.join(bin, "ytrack"), 0o755);
   const scaffold = spec.scaffold ?? {};
