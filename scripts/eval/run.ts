@@ -50,6 +50,8 @@ import {
 import {
   accountOf,
   committedLeaks,
+  envCredentials,
+  hostCredentials,
   privateKinds,
   privateStrings,
   PrivateSetUnreadable,
@@ -57,6 +59,7 @@ import {
   scrubOutsideReads,
   workitVocabulary,
   type Account,
+  type PrivateKind,
   type PrivateSet,
   type Scrub,
 } from "./privacy";
@@ -524,6 +527,25 @@ type Options = {
   account: Account;
   /** The real account's private strings, in memory only: a result holding one is not written. */
   privateSet: PrivateSet;
+  /**
+   * Every credential the bench host could reach, as read so far: the login
+   * files at start, before and after each run and in each world before it
+   * goes, and the secret-named variables of each host's environment. In
+   * memory only: a result holding one is not written.
+   */
+  credentials: Set<string>;
+  /** The login files the current run could not read (file and reason): its result is not written. */
+  unreadLogins: string[];
+};
+
+/** Add the credentials the host's login under `home` holds now; an unreadable login file is remembered. */
+const noteCredentials = (opts: Options, home: string): void => {
+  try {
+    for (const value of hostCredentials(home, opts.host)) opts.credentials.add(value);
+  } catch (error) {
+    if (!(error instanceof PrivateSetUnreadable)) throw error;
+    opts.unreadLogins.push(error.message);
+  }
 };
 
 type Attempt = {
@@ -625,11 +647,14 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
         opts.pluginDir,
       );
       const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
+      for (const value of envCredentials(env)) opts.credentials.add(value);
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
       const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
     } finally {
+      // What the host wrote into its world's login never reaches the real home.
+      noteCredentials(opts, world.home);
       opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
       rmSync(world.dir, { recursive: true, force: true });
     }
@@ -644,6 +669,7 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
+    for (const value of envCredentials(env)) opts.credentials.add(value);
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
     return {
@@ -651,6 +677,8 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
       limit: null,
     };
   } finally {
+    // A token the host rotated by rename sits in the world until it is carried back.
+    noteCredentials(opts, world.home);
     opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
     rmSync(world.dir, { recursive: true, force: true });
   }
@@ -666,6 +694,9 @@ const runCase = async (
 ): Promise<{ result: RunResult | null; trip: Trip | null }> => {
   const snapshot = opts.snapshot;
   if (!snapshot) throw new Error("the tripwire is not armed");
+  // The value a refresh during the run rotates away.
+  opts.unreadLogins.length = 0;
+  noteCredentials(opts, opts.realHome);
   let run: Attempt;
   try {
     run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
@@ -714,13 +745,24 @@ const runCase = async (
   const json = path.join(dir, `${base}.json`);
   // A trip names the real files it found changed: under `~`, as in the transcript.
   const stored = JSON.parse(scrubAccount(JSON.stringify(result), opts.account)) as RunResult;
-  const leaked = privateContent(
-    {
-      [path.relative(REPO, transcript) || transcript]: run.transcript,
-      [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
-    },
-    opts.privateSet,
-  );
+  // The value a refresh during the run left: read again at write time.
+  noteCredentials(opts, opts.realHome);
+  const [unread] = opts.unreadLogins;
+  const leaked = unread
+    ? `cannot read ${unread}, so the host's credential is unknown; nothing was written`
+    : privateContent(
+        {
+          [path.relative(REPO, transcript) || transcript]: run.transcript,
+          [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
+        },
+        new Map([
+          ...opts.privateSet,
+          ...[...opts.credentials].map((value): [string, PrivateKind] => [
+            value,
+            "host credential",
+          ]),
+        ]),
+      );
   if (leaked) {
     result.grade = {
       ...result.grade,
@@ -959,6 +1001,7 @@ export const main = async (
   }
   // A real account file that exists but cannot be read would leave the set short: nothing runs.
   let privateSet: PrivateSet = new Map();
+  let credentials: string[] = [];
   if (!settling)
     try {
       privateSet = privateStrings(
@@ -966,6 +1009,7 @@ export const main = async (
         workitVocabulary(REPO),
         values["real-home"] ? undefined : process.env,
       );
+      credentials = hostCredentials(path.resolve(values["real-home"] ?? accountHome()), host);
     } catch (error) {
       if (!(error instanceof PrivateSetUnreadable)) throw error;
       print(`private set: cannot read ${error.message}; fix or remove it, nothing runs`);
@@ -986,6 +1030,8 @@ export const main = async (
     realHome: path.resolve(values["real-home"] ?? accountHome()),
     account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
     privateSet,
+    credentials: new Set(credentials),
+    unreadLogins: [],
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),

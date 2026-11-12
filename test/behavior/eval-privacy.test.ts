@@ -3,6 +3,7 @@
 // projects map or a real Workit config; the runner scrubs a transcript and
 // refuses a file that still holds a private string. Every fixture here is
 // invented, and the "real" home is a temp dir.
+import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -19,6 +20,8 @@ import { loadCases, type EvalCase } from "@/scripts/eval/cases";
 import { grade } from "@/scripts/eval/grade";
 import {
   committedLeaks,
+  envCredentials,
+  hostCredentials,
   pathClass,
   privateKinds,
   privateStrings,
@@ -645,4 +648,135 @@ test("a stored transcript scrubbed twice is the same transcript", () => {
         expect(scrubOutsideReads(stored, { bounded, spec }), where).toBe(stored);
     },
   );
+});
+
+// ------------------------------------------------------------ host credentials
+
+// Invented values: no real credential is read into a test.
+const ACCESS = "fake-access-token-AAAA1111bbbb2222";
+const REFRESH = "fake-refresh-token-CCCC3333dddd4444";
+const ZEN_KEY = "fake-zen-key-GGGG7777hhhh8888";
+const GO_KEY = "fake-go-key-IIII9999jjjj0000";
+const AUTH_KEY = "fake-auth-key-KKKK1111llll2222";
+
+const loginHome = (): string => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "workit-privacy-login-"));
+  temps.push(home);
+  mkdirSync(path.join(home, ".claude"));
+  mkdirSync(path.join(home, ".local", "share", "opencode"), { recursive: true });
+  return home;
+};
+
+test("a host's credentials are every string of 20+ characters its login files hold; plan names, scopes and short ids are not", () => {
+  const home = loginHome();
+  const file = path.join(home, ".claude", ".credentials.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      claudeAiOauth: {
+        accessToken: ACCESS,
+        refreshToken: REFRESH,
+        expiresAt: 1_900_000_000_000,
+        scopes: ["user:inference", "user:profile"],
+        subscriptionType: "max",
+      },
+    }),
+  );
+  expect(hostCredentials(home, "claude-code").toSorted()).toEqual([ACCESS, REFRESH].toSorted());
+  // A login file that is not JSON: each word of it.
+  writeFileSync(file, `${ACCESS}\n`);
+  expect(hostCredentials(home, "claude-code")).toEqual([ACCESS]);
+
+  const db = new Database(path.join(home, ".local", "share", "opencode", "opencode.db"));
+  db.run("CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT)");
+  db.run("CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT)");
+  db.run("INSERT INTO credential VALUES ('c1', 'opencode', ?)", [ZEN_KEY]);
+  db.run("INSERT INTO credential VALUES ('c2', 'opencode-go', ?)", [
+    JSON.stringify({ type: "api", key: GO_KEY }),
+  ]);
+  db.run("INSERT INTO kv VALUES ('model', 'opencode/some-model-name-example')");
+  db.close();
+  writeFileSync(
+    path.join(home, ".local", "share", "opencode", "auth.json"),
+    JSON.stringify({ "opencode-go": { type: "api", key: AUTH_KEY } }),
+  );
+  const found = hostCredentials(home, "opencode");
+  for (const key of [ZEN_KEY, GO_KEY, AUTH_KEY]) expect(found).toContain(key);
+  expect(found).not.toContain("opencode/some-model-name-example");
+  expect(found.filter((value) => value.length < 20)).toEqual([]);
+  // The other host's login is not this host's.
+  expect(found).not.toContain(ACCESS);
+  expect(hostCredentials(loginHome(), "claude-code")).toEqual([]);
+  expect(hostCredentials(loginHome(), "opencode")).toEqual([]);
+});
+
+test("a login file that exists but cannot be read stops the bench, naming the file and never its content", () => {
+  const home = loginHome();
+  const db = path.join(home, ".local", "share", "opencode", "opencode.db");
+  writeFileSync(db, `not a database ${ZEN_KEY}`);
+  let message = "";
+  try {
+    hostCredentials(home, "opencode");
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toContain(db);
+  expect(message).not.toContain(ZEN_KEY);
+  if (process.getuid?.() !== 0) {
+    const file = path.join(home, ".claude", ".credentials.json");
+    writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: ACCESS } }));
+    chmodSync(file, 0o000);
+    expect(() => hostCredentials(home, "claude-code")).toThrow(/\.credentials\.json: EACCES/u);
+  }
+});
+
+test("an API key the runner passes in the host's environment is a credential; a path, a socket and a short value are not", () => {
+  expect(
+    envCredentials({
+      FAKE_PROVIDER_API_KEY: ZEN_KEY,
+      GH_TOKEN: GO_KEY,
+      npm_config_authToken: AUTH_KEY,
+      SHORT_TOKEN: "abc",
+      SSH_AUTH_SOCK: "/run/user/1000/keyring/ssh-example",
+      GNOME_KEYRING_CONTROL: "/run/user/1000/keyring-example",
+      PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin",
+    }).toSorted(),
+  ).toEqual([ZEN_KEY, GO_KEY, AUTH_KEY].toSorted());
+});
+
+test("the world's own login paths are host config: a call that names one loses its result, reads confined or not", () => {
+  for (const login of [
+    "<world>/home/.claude/.credentials.json",
+    "<world>/home/.claude.json",
+    "<world>/home/.claude",
+    "<world>/home/.local/share/opencode/opencode.db",
+    "<world>/home/.local/share/opencode/auth.json",
+  ])
+    expect(pathClass(login), login).toBe("host config");
+  expect(pathClass("<world>/home/notes.txt")).toBeNull();
+  const steps: Step[] = [
+    {
+      tool: "Read",
+      input: { file_path: "<world>/home/.claude/.credentials.json" },
+      result: ACCESS,
+    },
+    {
+      tool: "Bash",
+      input: { command: "cat <world>/home/.local/share/opencode/auth.json" },
+      result: AUTH_KEY,
+    },
+    {
+      tool: "Bash",
+      input: { command: "cd <world>/home/.claude && cat .credentials.json" },
+      result: REFRESH,
+    },
+  ];
+  for (const host of HOSTS)
+    for (const bounded of REGIMES) {
+      const stored = scrubOutsideReads(runOf(host, steps, "done"), { bounded, spec: null });
+      const where = `${host} bounded=${bounded}`;
+      for (const secret of [ACCESS, AUTH_KEY, REFRESH]) expect(stored, where).not.toContain(secret);
+      expect(stored.match(/<outside-world file: host config, \d+ bytes>/gu), where).toHaveLength(3);
+      expect(stored.match(/"facts":\{\}/gu), where).toHaveLength(3);
+    }
 });

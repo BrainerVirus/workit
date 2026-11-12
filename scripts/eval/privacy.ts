@@ -3,9 +3,10 @@
 // names, (2) removes tool results, leaving a marker with the path class and
 // byte length, and (3) refuses to write a file that still holds a string from
 // the real account (its Workit config values, its host's project paths, its
-// git identity, its home). The private set lives in memory only: never
-// written, never logged; a refusal names the file and the kind of string,
-// never it.
+// git identity, its home) or a credential the bench host could reach (its
+// login files, a key in its environment). The private set lives in memory
+// only: never written, never logged; a refusal names the file and the kind
+// of string, never it.
 //
 // (2) does not decide what a call read: no reader of a command's text can (a
 // glob, a quote, a script the model wrote, an interpreter). The kernel does.
@@ -14,6 +15,7 @@
 // the world. When nothing confined them, no result of a call that ran stays.
 // A removed result keeps the grader's own answers about its text (grade.ts
 // `callFacts`), so removing it never changes a grade.
+import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
@@ -21,6 +23,7 @@ import path from "node:path";
 import { workitDir } from "../../packages/workit-core/src/core/workit-paths.mjs";
 import type { EvalCase } from "./cases";
 import { callFacts, type Facts } from "./grade";
+import type { Host } from "./isolation";
 
 // ------------------------------------------------------------ spellings
 
@@ -90,6 +93,13 @@ const RANK: PathClass[] = [
   "system",
 ];
 
+/**
+ * The world's own copy of the host's login (isolation.ts `linkLogin`): the
+ * host must read it to sign in, so the kernel allows it; a call that names
+ * it never keeps its result.
+ */
+const WORLD_LOGIN = /^<world>\/home\/(?:\.claude(?:\.json)?|\.local\/share\/opencode)(?:\/|$)/u;
+
 /** The world's project dir: a host call's cwd unless the call says otherwise. */
 const WORLD_CWD = "<world>/repo";
 
@@ -141,6 +151,7 @@ const resolveName = (raw: string, cwd: string | null): { inside: string } | { ki
   if (name === null) return { kind: byTail(raw) };
   if (name === "" || name.startsWith("//") || DEV.test(name)) return { inside: name };
   if (name.split("/").includes("..")) return { kind: byTail(name) };
+  if (WORLD_LOGIN.test(name)) return { kind: "host config" };
   if (name.startsWith("<world>") || name.startsWith("<workit>")) return { inside: name };
   if (name.startsWith("/") || name.startsWith("~") || /^[A-Za-z]:[\\/]/u.test(name))
     return { kind: CLASSES.find(([pattern]) => pattern.test(name))?.[1] ?? "system" };
@@ -153,6 +164,8 @@ export const pathClass = (raw: string, cwd: string | null = WORLD_CWD): PathClas
   const resolved = resolveName(raw, cwd);
   return "kind" in resolved ? resolved.kind : null;
 };
+
+const PLACEHOLDER = /^<(?:world|workit)>/u;
 
 /** A shell script's segments (split on `&&`, `||`, `;`, `|`, `&`, newlines, parentheses) as words, quotes removed. */
 const segments = (script: string): string[][] => {
@@ -213,7 +226,10 @@ const shellClasses = (script: string, start: string | null): PathClass[] => {
         .map((each) => each.slice(each.indexOf("=") + 1)),
       ...(command.includes("/") ? [command] : []),
       ...rest.flatMap((each) => {
-        const word = each.replace(/^\d*[<>]+/u, "");
+        // A redirection's target; a `<world>` or `<workit>` placeholder is a path, not one.
+        const word = PLACEHOLDER.test(each)
+          ? each
+          : each.replace(/^\d*(?:[<>]+(?=<(?:world|workit)>)|[<>]+)/u, "");
         if (word === "" || word.startsWith("&")) return [];
         if (word.startsWith("-"))
           return word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : [];
@@ -375,7 +391,8 @@ export type PrivateKind =
   | "host project path"
   | "git user name"
   | "git user email"
-  | "home path";
+  | "home path"
+  | "host credential";
 export type PrivateSet = Map<string, PrivateKind>;
 
 /** Workit's own vocabulary (enums, presets, model names, default branches): public, never a leak. */
@@ -530,6 +547,106 @@ export const privateStrings = (
   add(realHome, "home path", 2);
   return set;
 };
+
+// ------------------------------------------------------------ host credentials
+
+/**
+ * The shortest string that counts as a credential. Every token and API key
+ * in use is longer (an OAuth token runs to about a hundred characters, a
+ * provider key to 32 or more); what else a login file holds is mostly
+ * shorter (a plan name, a scope, a provider id, `api`, `oauth`), and the few
+ * longer non-secrets reach a transcript only when the file itself was
+ * printed, which is the leak. A shorter floor would refuse runs over
+ * ordinary words.
+ */
+const CREDENTIAL_FLOOR = 20;
+
+/**
+ * Where a host keeps its login under a home: what a bench world links or
+ * seeds from the real one (isolation.ts `HOST_LOGIN`, `seedOpencodeDb`) and
+ * what the host may write there itself (OpenCode's auth file).
+ */
+const LOGIN: Record<Host, { files: string[]; dbs: string[] }> = {
+  "claude-code": { files: [".claude/.credentials.json"], dbs: [] },
+  opencode: {
+    files: [".local/share/opencode/auth.json"],
+    dbs: [".local/share/opencode/opencode.db"],
+  },
+};
+
+/** Every string value under `value` (never a key); a string that is itself JSON is opened too. */
+const stringsIn = (value: unknown, into: Set<string>): void => {
+  if (typeof value === "string") {
+    into.add(value);
+    if (!/^\s*[[{]/u.test(value)) return;
+    try {
+      stringsIn(JSON.parse(value), into);
+    } catch {
+      // Not JSON after all: the string itself is the value.
+    }
+  } else if (value instanceof Uint8Array) into.add(Buffer.from(value).toString("utf8"));
+  else if (Array.isArray(value)) for (const each of value) stringsIn(each, into);
+  else if (record(value)) for (const each of Object.values(value as Json)) stringsIn(each, into);
+};
+
+/**
+ * The secrets of an OpenCode db's `credential` rows: their `value` column
+ * (the provider key; ids and labels are not secrets), or every column of a
+ * table without one. None when the file or the table is missing.
+ */
+const credentialRows = (file: string): unknown[] => {
+  if (!existsSync(file)) return [];
+  try {
+    const db = new Database(file, { readonly: true });
+    try {
+      const table = db
+        .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential'")
+        .get();
+      return table
+        ? db
+            .query<Json, []>('SELECT * FROM "credential"')
+            .all()
+            .flatMap((row) => ("value" in row ? [row.value] : Object.values(row)))
+        : [];
+    } finally {
+      db.close();
+    }
+  } catch {
+    // SQLite's message may quote the file: only the reason goes out.
+    throw new PrivateSetUnreadable(`${file}: not a readable SQLite database`);
+  }
+};
+
+/**
+ * The credentials a host's login under `home` holds now, in memory only:
+ * every string value of CREDENTIAL_FLOOR+ characters in its login files (each
+ * word of one that is not JSON) and in its db's `credential` rows. A login
+ * file that exists but cannot be read throws PrivateSetUnreadable.
+ */
+export const hostCredentials = (home: string, host: Host): string[] => {
+  const found = new Set<string>();
+  for (const rel of LOGIN[host].files) {
+    const text = readAccountFile(path.join(home, rel));
+    if (text === null) continue;
+    try {
+      stringsIn(JSON.parse(text), found);
+    } catch {
+      for (const word of text.split(/\s+/u)) found.add(word);
+    }
+  }
+  for (const rel of LOGIN[host].dbs) stringsIn(credentialRows(path.join(home, rel)), found);
+  return [...found].filter((value) => value.length >= CREDENTIAL_FLOOR);
+};
+
+/** A variable whose name says it holds a secret: a key, a token, a secret, a password. */
+const SECRET_NAME =
+  /(?:^|[^a-z])(?:api_?key|key|token|secret|password|passwd|credentials?)(?:$|[^a-z])|authtoken/iu;
+
+/** The credentials in an environment a host is given: the values of secret-named variables, of CREDENTIAL_FLOOR+ characters. */
+export const envCredentials = (env: Record<string, string>): string[] =>
+  Object.entries(env)
+    .filter(([name, value]) => SECRET_NAME.test(name) && value.length >= CREDENTIAL_FLOOR)
+    .map(([, value]) => value);
 
 /** The kinds of private string `text` still holds (as is or JSON-escaped); never the strings. */
 export const privateKinds = (text: string, set: PrivateSet): PrivateKind[] => {

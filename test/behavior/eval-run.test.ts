@@ -326,6 +326,105 @@ test("Given cached results for case+model+version, When run again, Then no model
   expect(calls()).toHaveLength(5);
 });
 
+// Invented values: no real credential is read into a test.
+const OLD_TOKEN = "fake-access-token-OLD0000aaaa1111";
+const NEW_TOKEN = "fake-access-token-NEW9999zzzz8888";
+const credentialOf = (token: string): string =>
+  JSON.stringify({ claudeAiOauth: { accessToken: token, subscriptionType: "max" } });
+const writeCredential = (token: string): string => {
+  const file = path.join(root, "home", ".claude", ".credentials.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, credentialOf(token), { mode: 0o600 });
+  return file;
+};
+const saying = (text: string): string =>
+  [
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } }),
+    CLEAN,
+  ].join("\n");
+const written = (): string[] =>
+  existsSync(path.join(root, "results", "haiku"))
+    ? readdirSync(path.join(root, "results", "haiku")).filter((name) => name.startsWith("a-smoke"))
+    : [];
+
+test("Given a transcript holding the host's credential, When run, Then it fails as private_content naming the kind, never the value, and nothing is written", async () => {
+  writeCredential(OLD_TOKEN);
+  writeFileSync(path.join(root, "out.jsonl"), saying(`The token is ${OLD_TOKEN}.`));
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  const said = printed.join("\n");
+  expect(said).toContain("private_content: ");
+  expect(said).toContain("a-smoke.transcript.jsonl holds host credential");
+  expect(said).toContain("nothing was written");
+  expect(said).not.toContain(OLD_TOKEN);
+  expect(written()).toEqual([]);
+});
+
+test("Given an API key in the runner's environment, When the transcript holds it, Then the run fails as private_content", async () => {
+  process.env.FAKE_PROVIDER_API_KEY = NEW_TOKEN;
+  try {
+    writeFileSync(path.join(root, "out.jsonl"), saying(`env says ${NEW_TOKEN}`));
+    const printed: string[] = [];
+    expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+    expect(printed.join("\n")).toContain("a-smoke.transcript.jsonl holds host credential");
+    expect(printed.join("\n")).not.toContain(NEW_TOKEN);
+    expect(written()).toEqual([]);
+  } finally {
+    delete process.env.FAKE_PROVIDER_API_KEY;
+  }
+});
+
+test("Given the host refreshed its credential mid-run, When the transcript holds the old or the new value, Then either fails as private_content", async () => {
+  // A host that rotates its token through the world's link (in place) or over it (by rename).
+  const rotating = (how: "in-place" | "rename"): string => {
+    const bin = path.join(root, `claude-${how}`);
+    const target = '"$HOME/.claude/.credentials.json"';
+    writeFileSync(
+      bin,
+      [
+        "#!/bin/sh",
+        "cat > /dev/null",
+        'echo run >> "$FAKE_CLAUDE_LOG"',
+        how === "in-place"
+          ? `printf '%s' '${credentialOf(NEW_TOKEN)}' > ${target}`
+          : `printf '%s' '${credentialOf(NEW_TOKEN)}' > "$HOME/.claude/next" && mv "$HOME/.claude/next" ${target}`,
+        'cat "$FAKE_CLAUDE_OUT"',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  };
+  for (const how of ["in-place", "rename"] as const)
+    for (const token of [OLD_TOKEN, NEW_TOKEN]) {
+      const real = writeCredential(OLD_TOKEN);
+      writeFileSync(path.join(root, "out.jsonl"), saying(`The token is ${token}.`));
+      const printed: string[] = [];
+      const exit = await main(
+        ["--model", "haiku", "--budget-runs", "1", ...argv, "--bin", rotating(how)],
+        quiet(printed),
+      );
+      const where = `${how}, ${token === OLD_TOKEN ? "old" : "new"} value`;
+      expect(readFileSync(real, "utf8"), where).toBe(credentialOf(NEW_TOKEN));
+      expect(exit, where).toBe(1);
+      expect(printed.join("\n"), where).toContain("holds host credential");
+      expect(printed.join("\n"), where).not.toContain(token);
+      expect(written(), where).toEqual([]);
+    }
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  "Given a credential file that exists but cannot be read, When run, Then nothing runs and the exit code is 4",
+  async () => {
+    chmodSync(writeCredential(OLD_TOKEN), 0o000);
+    const printed: string[] = [];
+    expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(4);
+    expect(printed.join("\n")).toMatch(/private set: cannot read .*\.credentials\.json: EACCES/u);
+    expect(printed.join("\n")).not.toContain(OLD_TOKEN);
+    expect(calls()).toEqual([]);
+  },
+);
+
 test("Given a failing transcript, When run, Then the exit code is 1 and the stored grade names the call", async () => {
   writeFileSync(
     process.env.FAKE_CLAUDE_OUT ?? "",

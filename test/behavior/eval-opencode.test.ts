@@ -2,6 +2,7 @@
 // --host opencode) with a fake `opencode` binary: the plugin pin, the free ->
 // go provider fallback, skipped (limit), the result layout and replay. No
 // model is called here; docs/agents/eval.md.
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -302,4 +303,62 @@ test("Given a parent shell elsewhere, Then the OpenCode child's PWD is the world
     OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "1",
   });
+});
+
+// Invented values: no real credential is read into a test.
+const SEEDED_KEY = "fake-zen-key-SEED0000aaaa1111";
+const REFRESHED_KEY = "fake-zen-key-NEXT9999zzzz8888";
+const sayingKey = (key: string): string =>
+  [
+    event("step_start", { type: "step-start" }, 1000),
+    event("text", { type: "text", text: `The provider key is ${key}.` }, 1100),
+    event("step_finish", { type: "step-finish", reason: "stop", cost: 0 }, 1200),
+  ].join("\n");
+const storedRuns = (): string[] =>
+  existsSync(path.join(root, "results", "opencode-flash"))
+    ? readdirSync(path.join(root, "results", "opencode-flash")).filter((name) =>
+        name.startsWith("a-smoke"),
+      )
+    : [];
+
+test("Given a transcript holding a provider key seeded into the world, When run, Then it fails as private_content naming the kind, never the value, and nothing is written", async () => {
+  const data = path.join(root, "home", ".local", "share", "opencode");
+  mkdirSync(data, { recursive: true });
+  const db = new Database(path.join(data, "opencode.db"));
+  db.run("CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT)");
+  db.run("INSERT INTO credential VALUES ('c1', 'opencode', ?)", [SEEDED_KEY]);
+  db.close();
+  writeFileSync(path.join(root, "out.jsonl"), sayingKey(SEEDED_KEY));
+  const printed: string[] = [];
+  expect(await main(["--cases", "a-smoke", ...argv], (text) => printed.push(text))).toBe(1);
+  const said = printed.join("\n");
+  expect(said).toContain("private_content: ");
+  expect(said).toContain("a-smoke.transcript.jsonl holds host credential");
+  expect(said).not.toContain(SEEDED_KEY);
+  expect(storedRuns()).toEqual([]);
+});
+
+test("Given OpenCode wrote a new key into its world mid-run, When the transcript holds it, Then the run fails as private_content", async () => {
+  // The world's data dir never reaches the real home: only a read of the world before it goes sees the key.
+  const bin = path.join(root, "opencode-refresh");
+  writeFileSync(
+    bin,
+    [
+      "#!/bin/sh",
+      "cat > /dev/null",
+      'mkdir -p "$XDG_DATA_HOME/opencode"',
+      `printf '%s' '${JSON.stringify({ opencode: { type: "oauth", access: REFRESHED_KEY } })}' > "$XDG_DATA_HOME/opencode/auth.json"`,
+      'cat "$FAKE_OC_OUT"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(bin, 0o755);
+  writeFileSync(path.join(root, "out.jsonl"), sayingKey(REFRESHED_KEY));
+  const printed: string[] = [];
+  expect(
+    await main(["--cases", "a-smoke", ...argv, "--bin", bin], (text) => printed.push(text)),
+  ).toBe(1);
+  expect(printed.join("\n")).toContain("a-smoke.transcript.jsonl holds host credential");
+  expect(printed.join("\n")).not.toContain(REFRESHED_KEY);
+  expect(storedRuns()).toEqual([]);
 });
