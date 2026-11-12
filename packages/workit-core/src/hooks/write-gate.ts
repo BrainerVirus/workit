@@ -1287,6 +1287,13 @@ const segmentTargets = (
       // `/dev/stdin` (like `-`) is the heredoc the command feeds it, never the hook's own stdin.
       const operand = args.find((arg) => !arg.startsWith("-") && arg !== "run");
       const named = operand === "/dev/stdin" ? undefined : operand;
+      // What a literal producer pipes in: `echo`/`printf` words, `cat` of a heredoc or files.
+      const maker = feeder ? commandWords(feeder.words) : [];
+      const piped: string[] = /^(?:echo|printf)$/.test(maker[0] ?? "")
+        ? [maker.slice(maker[0] === "printf" ? 2 : 1).join("\n")]
+        : maker[0] === "cat"
+          ? [...(feeder?.stdin ?? []), ...operands(maker.slice(1)).flatMap(read)]
+          : [];
       const inputs = (segment.inputs ?? []).filter((file) => file !== "/dev/null");
       // `eval`, `trap '<script>' SIG` and `alias n='<script>'` hold shell text.
       const shells: string[] =
@@ -1300,7 +1307,8 @@ const segmentTargets = (
       const others: string[] = [];
       if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
         // No script operand: the heredoc, or the file `<` feeds it (`bash < x.sh`).
-        if (named === undefined) shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read));
+        if (named === undefined)
+          shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped);
         else if (shellScript(run) === null) shells.push(...read(named));
       } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
@@ -1309,7 +1317,7 @@ const segmentTargets = (
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
         others.push(
           ...(named === undefined
-            ? [...(segment.stdin ?? []), ...inputs.flatMap(read)]
+            ? [...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped]
             : read(named)),
         );
       } else if (/[\\/]/.test(run[0] ?? ""))

@@ -497,3 +497,23 @@ test("G a write behind a wrapper with options, `!`, a target-directory option, a
   }
   expect(decide("timeout 5 nice cp x.json y.json").kind).toBe("none");
 });
+
+test("G a shell or interpreter fed by a literal echo, printf or cat <<EOF pipe, W the piped text writes a guarded file, T denied; other piped text passes", () => {
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    for (const command of [
+      `cat << 'EOF' | python3\nopen('${f}','w').write('{}')\nEOF`,
+      `echo "echo '{}' > ${f}" | bash`,
+      `printf '%s\\n' "cp x.json ${f}" | sh -s`,
+      `cat << 'EOF' | bash\necho {} > ${f}\nEOF`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+    expect(decide(`echo "${f}" | cat`).kind).toBe("none");
+  }
+  for (const command of [
+    `echo "echo hi" | bash`,
+    `cat << 'EOF' | python3\nprint(1)\nEOF`,
+    `printf '%s\\n' "ls" | sh -s`,
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});
