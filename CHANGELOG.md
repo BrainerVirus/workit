@@ -1063,6 +1063,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - A raw `git commit` onto a protected branch is denied and names `workit git branch --kind feature --slug <slug>`; a raw `cd <worktree> && git add … && git commit …` is denied with the exact `workit git --cwd <worktree> commit -m … -- <paths>` call to run instead.
 - An agent that runs `npx -y @workit-dev/cli <verb> …` where `workit` is on PATH now gets the same `workit <verb> …` call: rewritten on Claude Code, OpenCode and Pi, and denied with that exact call on Codex and Cursor, so the allow rules match and a weak model is not stopped by a prompt
 - `workit --session=<v> approve <id>` and `workit --token <v> approve <id>` reach the approve step in the Claude Code hook launcher
+- On Windows, copying the config `workspaces.json` or an issued file out to another path is no longer denied
 
 ### Removed
 
@@ -1073,6 +1074,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Grants are read from the account home in the OS record on every runtime. When Workit ran from source under Bun, an agent that set `HOME` could move where grants were read and written; the installed Node build was not affected
 - An approval is accepted only from a path that records one: a terminal grant, or a Claude Code or Pi grant with a matching ask row from the same host. A grant that names OpenCode, Codex, Cursor or an unknown host is refused; the ask row catches hand edits, not forgery (docs/agents/hosts.md)
 - An agent session can no longer raise its own grants or set `youtrack.writes: auto` by writing the Workit config dir: an edit or shell write to `workspaces.json` (or to the config dir itself) is denied on every host whose hooks deny, and names `workit grant set` or `workit workspace set` for the user to run in a terminal
+- The guard on the approvals dir now works on Claude Code and Codex for the common spellings (`~/.local/state/workit/approvals/…`, `$HOME/…`, `cd <state> && … > approvals/…`): the launchers used to skip the check
+- The guard on the issued registry, the approvals dir and the config `workspaces.json` also denies writes it used to miss: `bash -c` and script files (shell, Python, Node, tsx), scripts fed by a pipe or heredoc, `rsync` and other writers, `git -C <dir> checkout`, editor write commands, paths spelled through env vars, globs or built from the home dir, hardlinks, and wrappers such as `sudo -u`, `env -i` and `timeout`. It is steering, not a sandbox: docs/agents/hosts.md lists what a hook cannot see
 
 ## [0.6.0] - 2026-08-10
 
