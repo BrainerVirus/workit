@@ -628,3 +628,27 @@ test("G a glob whose segments do not start with a dot, W it would reach a guarde
   ])
     expect(decide(command).kind, command).toBe("deny");
 });
+
+test("G an editor -c or +cmd made of |-separated parts, W any part is not a safe command, T it counts as a write", () => {
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    for (const command of [
+      `vim -c 'set ro | wq' ${f}`,
+      `vim -c 'colorscheme x|w' ${f}`,
+      `vim -c 'syntax on|x' ${f}`,
+      `vim -c '/foo/w' ${f}`,
+      `vim -c wq ${f}`,
+      `vim +wq ${f}`,
+      `vim '+set ro|wq' ${f}`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+    for (const command of [
+      `vim -c 'set ro' ${f}`,
+      `vim -c 5 ${f}`,
+      `vim -c '/foo' ${f}`,
+      `vim -c 'syntax on' ${f}`,
+      `vim -c 'set ro | syntax on' ${f}`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("none");
+  }
+});

@@ -195,8 +195,18 @@ const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$
 const isConfigDir = (file: string): boolean =>
   configDirs().some((dir) => canonical(dir) === canonical(file));
 
-/** An editor command that cannot write: `set`, `syntax`, `colorscheme`, a search or a line number. */
-const INERT_EDIT = /^:?(?:se(?:t)?|sy(?:ntax)?|colo(?:rscheme)?)\b|^[/?]|^\d+$/;
+/**
+ * An editor command that cannot write: every `|`-separated part is `set`,
+ * `syntax`, `colorscheme`, a bare search or a line number.
+ */
+const inertEdit = (command: string): boolean =>
+  command
+    .split("|")
+    .every((part) =>
+      /^:?(?:se(?:t)?|sy(?:ntax)?|colo(?:rscheme)?)(?:\s|$)|^[/?][^/?]*[/?]?$|^\d+$/.test(
+        part.trim(),
+      ),
+    );
 
 /** Options that take a value, by interpreter (the shape of WRAPPERS); a preload option's value runs too. */
 const SCRIPT_OPTIONS: Array<[RegExp, RegExp]> = [
@@ -1400,8 +1410,8 @@ const segmentTargets = (
           args.some(
             (arg, index) =>
               /^(?:-[a-zA-Z]*[se]|--(?:batch|eval|script))$/.test(arg) ||
-              (/^(?:-c|--cmd)$/.test(arg) && !INERT_EDIT.test(args[index + 1] ?? "")) ||
-              (arg.startsWith("+") && !INERT_EDIT.test(arg.slice(1) || "1")),
+              (/^(?:-c|--cmd)$/.test(arg) && !inertEdit(args[index + 1] ?? "")) ||
+              (arg.startsWith("+") && !inertEdit(arg.slice(1) || "1")),
           ))
       )
         for (const file of operands(args)) targets.push(...atAll(file));
