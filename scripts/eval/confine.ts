@@ -1,20 +1,31 @@
 #!/usr/bin/env bun
 /**
- * Write confinement for a bench host (#822, decision 2 for #823): Landlock,
- * which needs no user namespace and no addon, through `bun:ffi` syscalls.
+ * Write and read confinement for a bench host (#822, decision 2 for #823):
+ * Landlock, which needs no user namespace and no addon, through `bun:ffi`.
  *
- *   bun scripts/eval/confine.ts --rw <dir>… --file <file>… -- <cmd> <args…>
+ *   bun scripts/eval/confine.ts --rw <dir>… --file <file>… [--ro <dir>…] -- <cmd> <args…>
  *   bun scripts/eval/confine.ts --abi
  *
  * This process and everything it starts may write (write, truncate, create,
  * remove, rename, link, mknod) only under the `--rw` dirs, and only write or
- * truncate the `--file` files; reads stay unrestricted. Any failure (not
+ * truncate the `--file` files. With any `--ro`, reads (read, list, execute)
+ * are confined too: to the `--ro` and `--rw` dirs and the `--file` files;
+ * without one, reads stay unrestricted. Any failure (not
  * Linux, an arch without these syscall numbers, no glibc, Landlock ABI below
  * 3, a rule that cannot be added, restrict_self) exits 126 without running
  * the command.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, openSync, realpathSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -26,6 +37,10 @@ const SYS = { create: 444n, add: 445n, restrict: 446n };
 const PR_SET_NO_NEW_PRIVS = 38;
 /** LANDLOCK_ACCESS_FS_*: write_file, remove_dir/file, make_char/dir/reg/sock/fifo/block/sym, refer, truncate. */
 const WRITE_FILE = 1n << 1n;
+/** LANDLOCK_ACCESS_FS_EXECUTE, READ_FILE, READ_DIR. */
+const READS = (1n << 0n) | (1n << 2n) | (1n << 3n);
+const READ_FILE = 1n << 2n;
+const EXECUTE = 1n << 0n;
 const TRUNCATE = 1n << 14n;
 const DIR_WRITES = (() => {
   let all = WRITE_FILE | TRUNCATE | (1n << 13n);
@@ -57,12 +72,13 @@ const libc = async (): Promise<Libc> => {
 
 const abiOf = (c: Libc): number => Number(c.syscall(SYS.create, 0n, 0n, 1n, 0n, 0n));
 
-const confineSelf = async (rw: string[], files: string[]): Promise<number> => {
+const confineSelf = async (rw: string[], files: string[], ro: string[]): Promise<number> => {
   const c = await libc();
   const abi = abiOf(c);
   if (abi < 3) throw new Refused(`Landlock ABI ${abi} (needs 3, kernel 6.2+)`);
   const { ptr } = await import("bun:ffi");
-  const attr = new BigUint64Array([DIR_WRITES]);
+  const reads = ro.length > 0 ? READS : 0n;
+  const attr = new BigUint64Array([DIR_WRITES | reads]);
   const ruleset = Number(c.syscall(SYS.create, BigInt(ptr(attr)), 8n, 0n, 0n, 0n));
   if (ruleset < 0) throw new Refused("landlock_create_ruleset failed");
   const allow = (target: string, access: bigint): void => {
@@ -89,8 +105,11 @@ const confineSelf = async (rw: string[], files: string[]): Promise<number> => {
       closeSync(fd);
     }
   };
-  for (const dir of rw) allow(dir, DIR_WRITES);
-  for (const file of files) allow(file, WRITE_FILE | TRUNCATE);
+  for (const dir of rw) allow(dir, DIR_WRITES | reads);
+  for (const file of files) allow(file, WRITE_FILE | TRUNCATE | (reads === 0n ? 0n : READ_FILE));
+  // A read-only file (a host binary outside every readable dir) takes the file rights only.
+  for (const dir of ro)
+    allow(dir, statSync(dir, { throwIfNoEntry: false })?.isFile() ? READ_FILE | EXECUTE : READS);
   if (c.prctl(PR_SET_NO_NEW_PRIVS, 1n, 0n, 0n, 0n) !== 0)
     throw new Refused("prctl(PR_SET_NO_NEW_PRIVS) failed");
   if (Number(c.syscall(SYS.restrict, BigInt(ruleset), 0n, 0n, 0n, 0n)) !== 0)
@@ -107,16 +126,16 @@ const launch = async (argv: string[]): Promise<number> => {
   }
   const split = argv.indexOf("--");
   if (split < 0 || split === argv.length - 1)
-    throw new Refused("usage: --rw <dir>… --file <file>… -- <cmd> <args…>");
-  const rw: string[] = [];
-  const files: string[] = [];
+    throw new Refused("usage: --rw <dir>… --file <file>… [--ro <dir>…] -- <cmd> <args…>");
+  const lists: Record<string, string[]> = { "--rw": [], "--file": [], "--ro": [] };
   for (let index = 0; index < split; index += 2) {
     const [flag, value] = [argv[index], argv[index + 1]];
-    if ((flag !== "--rw" && flag !== "--file") || value === undefined || index + 1 >= split)
+    const list = lists[flag];
+    if (!list || value === undefined || index + 1 >= split)
       throw new Refused(`unknown argument ${flag}`);
-    (flag === "--rw" ? rw : files).push(value);
+    list.push(value);
   }
-  await confineSelf(rw, files);
+  await confineSelf(lists["--rw"] ?? [], lists["--file"] ?? [], lists["--ro"] ?? []);
   const [cmd = "", ...args] = argv.slice(split + 1);
   // Async, so the host's lifetime is bounded by the runner, which kills this whole group.
   return new Promise<number>((resolve, reject) => {
@@ -160,17 +179,98 @@ export const writableDirs = (world: string | null, protectedPaths: string[]): st
   );
 };
 
-/** The launcher argv in front of `cmd`. */
-export const confined = (dirs: string[], files: string[], cmd: string[]): string[] => [
+/** System dirs a host reads: binaries, libraries, certificates, /proc, /sys and the runtime dirs. */
+const SYSTEM_READS = [
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/lib",
+  "/lib32",
+  "/lib64",
+  "/libx32",
+  "/etc",
+  "/opt",
+  "/proc",
+  "/sys",
+  "/run",
+  "/snap",
+  "/nix",
+  "/var/lib",
+  "/var/cache",
+];
+
+/** A binary as `PATH` finds it, symlinks resolved; null when it is not there. */
+export const binaryOf = (binary: string, pathEnv: string): string | null => {
+  const found = path.isAbsolute(binary)
+    ? binary
+    : pathEnv
+        .split(path.delimiter)
+        .filter(Boolean)
+        .map((dir) => path.join(dir, binary))
+        .find((file) => existsSync(file));
+  return found ? real(found) : null;
+};
+
+/**
+ * Where the symlinked packages of a `node_modules` dir resolve (a Workit
+ * worktree links its packages to the main checkout's): read rules follow
+ * the resolved path, not the link.
+ */
+export const linkedPackages = (dir: string): string[] => {
+  const entries = (at: string): string[] => {
+    try {
+      return readdirSync(at).map((name) => path.join(at, name));
+    } catch {
+      return [];
+    }
+  };
+  return entries(dir)
+    .flatMap((entry) => (path.basename(entry).startsWith("@") ? entries(entry) : [entry]))
+    .filter((entry) => lstatSync(entry, { throwIfNoEntry: false })?.isSymbolicLink() === true)
+    .map(real);
+};
+
+/** The install dir of a binary on `PATH`: its resolved dir, or that dir's parent when it is a `bin`. */
+export const toolchainDir = (binary: string, pathEnv: string): string | null => {
+  const found = binaryOf(binary, pathEnv);
+  if (!found) return null;
+  const dir = path.dirname(found);
+  return path.basename(dir) === "bin" ? path.dirname(dir) : dir;
+};
+
+/**
+ * The dirs a host may read besides the ones it may write: the system dirs,
+ * then `extra` (the Workit checkout, the toolchains), minus any dir that
+ * holds a protected path (the real home, the real Workit dirs, the host
+ * config dirs, the tripwire base): Landlock has no deny rule, so such a dir
+ * would open them all.
+ */
+export const readableDirs = (extra: string[], protectedPaths: string[]): string[] => {
+  const guarded = protectedPaths.map(real);
+  return [
+    ...new Set([...SYSTEM_READS, ...extra].filter((dir) => existsSync(dir)).map(real)),
+  ].filter((dir) => !guarded.some((each) => insideOrEqual(dir, each)));
+};
+
+/** The launcher argv in front of `cmd`; `reads` (any) confines reads to them and the writable rules. */
+export const confined = (
+  dirs: string[],
+  files: string[],
+  cmd: string[],
+  reads: string[] = [],
+): string[] => [
   process.execPath,
   CONFINE,
   ...dirs.flatMap((dir) => ["--rw", dir]),
   ...files.flatMap((file) => ["--file", file]),
+  ...reads.flatMap((dir) => ["--ro", dir]),
   "--",
   ...cmd,
 ];
 
-export type Confinement = { on: true; abi: number } | { on: false; reason: string };
+export type Confinement =
+  | { on: true; abi: number; reads: { on: true } | { on: false; reason: string } }
+  | { on: false; reason: string };
 
 /**
  * Once per bench start: confinement is on only if the launcher, with the
@@ -182,6 +282,7 @@ export const checkConfinement = (
   identity: string,
   dirs: string[],
   files: string[],
+  reads: { dirs: string[]; secret: string } | null = null,
 ): Confinement => {
   const abi = spawnSync(process.execPath, [CONFINE, "--abi"], {
     encoding: "utf8",
@@ -210,13 +311,25 @@ export const checkConfinement = (
   if (run.status === 0) return { on: false, reason: "the canary write did not fail" };
   if (run.status === 126)
     return { on: false, reason: run.stderr.trim().replace(/^confine: /u, "") };
-  return { on: true, abi: Number(abi.stdout.trim()) };
+  const on = { on: true as const, abi: Number(abi.stdout.trim()) };
+  if (!reads) return { ...on, reads: { on: false, reason: "not asked" } };
+  // Reads are confined only if, with the run's rules, the secret (the real home) cannot be listed.
+  const list = spawnSync(
+    process.execPath,
+    confined(dirs, files, ["ls", "-a", reads.secret], reads.dirs).slice(1),
+    { encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL" },
+  );
+  if (list.status === 126)
+    return { ...on, reads: { on: false, reason: list.stderr.trim().replace(/^confine: /u, "") } };
+  return list.status === 0
+    ? { ...on, reads: { on: false, reason: "the real home could be listed" } }
+    : { ...on, reads: { on: true } };
 };
 
 export const confinementLine = (confinement: Confinement): string =>
   confinement.on
-    ? `write confinement: on (Landlock ABI ${confinement.abi})`
-    : `write confinement: off (${confinement.reason})`;
+    ? `write confinement: on (Landlock ABI ${confinement.abi})\nread confinement: ${confinement.reads.on ? "on" : `off (${confinement.reads.reason})`}`
+    : `write confinement: off (${confinement.reason})\nread confinement: off (no Landlock)`;
 
 if (import.meta.main) {
   let code: number;

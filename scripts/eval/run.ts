@@ -30,6 +30,10 @@ import {
   checkConfinement,
   confined,
   confinementLine,
+  binaryOf,
+  linkedPackages,
+  readableDirs,
+  toolchainDir,
   writableDirs,
   type Confinement,
 } from "./confine";
@@ -366,11 +370,42 @@ const writeRules = (opts: Options, world: World | null): { dirs: string[]; files
   files: loginFiles(opts.host, opts.realHome),
 });
 
+/** The host config dirs a bench host never reads (its credential file is a write rule, readable). */
+const HOST_CONFIG = [".claude", ".claude.json", ".codex", ".cursor", ".config/opencode", ".pi"];
+
+/**
+ * What a host (or the probe) may read besides what it may write: the system
+ * dirs, this Workit checkout and the toolchains it runs (bun, node, git, the
+ * host binary), never the real home, its Workit dirs or host config dirs.
+ */
+const readRules = (opts: Options): string[] => {
+  const pathEnv = process.env.PATH ?? "";
+  return readableDirs(
+    [
+      REPO,
+      ...linkedPackages(path.join(REPO, "node_modules")),
+      ...[process.execPath, "node", "git", opts.bin]
+        .map((binary) => toolchainDir(binary, pathEnv))
+        .filter((dir): dir is string => dir !== null),
+      // The host binary itself, when its dir holds a protected path and is left out.
+      ...[binaryOf(opts.bin, pathEnv)].filter((file): file is string => file !== null),
+    ],
+    [
+      opts.realHome,
+      ...opts.guard.watched,
+      ...opts.guard.reported,
+      opts.tripwire,
+      ...HOST_CONFIG.map((rel) => path.join(opts.realHome, rel)),
+      path.join(opts.realHome, ".local", "share", "opencode"),
+    ],
+  );
+};
+
 /** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
 const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
   if (!opts.confinement.on) return cmd;
   const { dirs, files } = writeRules(opts, world);
-  return confined(dirs, files, cmd);
+  return confined(dirs, files, cmd, opts.confinement.reads.on ? readRules(opts) : []);
 };
 const benchSettings = JSON.stringify({
   hooks: {
@@ -1078,7 +1113,10 @@ const bench = async (
   if (opts.confineMode === "off") opts.confinement = { on: false, reason: "--confine off" };
   else {
     const { dirs, files } = writeRules(opts, null);
-    opts.confinement = checkConfinement(opts.tripwire, runnerIdentity(), dirs, files);
+    opts.confinement = checkConfinement(opts.tripwire, runnerIdentity(), dirs, files, {
+      dirs: readRules(opts),
+      secret: opts.realHome,
+    });
   }
   print(confinementLine(opts.confinement));
   const version = workitVersion(host);

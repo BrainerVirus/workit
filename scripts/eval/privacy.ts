@@ -89,7 +89,7 @@ const SHELLS = new Set(["Bash", "shell", "bash"]);
 const GLOBS = new Set(["Glob", "glob"]);
 
 /** The most private class among the paths a call reads or lists, or null when all are inside. */
-export const callClass = (tool: string, input: Record<string, unknown>): PathClass | null => {
+const callClass = (tool: string, input: Record<string, unknown>): PathClass | null => {
   const names = PATH_KEYS.map((key) => input[key]);
   if (GLOBS.has(tool)) names.push(input.pattern);
   if (SHELLS.has(tool)) names.push(...pathsIn(String(input.command ?? "")));
@@ -117,7 +117,7 @@ const textOf = (content: unknown): string => {
   return content === undefined || content === null ? "" : JSON.stringify(content);
 };
 
-export const marker = (kind: PathClass, content: unknown): string =>
+const marker = (kind: PathClass, content: unknown): string =>
   `<outside-world file: ${kind}, ${Buffer.byteLength(textOf(content))} bytes>`;
 
 type Json = Record<string, unknown>;

@@ -125,6 +125,64 @@ test.skipIf(!landlock)(
   },
 );
 
+test("Given the read rules, Then a dir holding the real home or a guarded path is never readable; system dirs and the toolchains are", () => {
+  mkdirSync(path.join(root, "toolchain"), { recursive: true });
+  const dirs = confine.readableDirs(
+    [root, path.join(root, "toolchain"), "/nonexistent-toolchain"],
+    [home, path.join(home, ".claude")],
+  );
+  expect(dirs).not.toContain(root);
+  expect(dirs).toContain(path.join(root, "toolchain"));
+  expect(dirs).not.toContain("/nonexistent-toolchain");
+  expect(dirs).toContain("/usr");
+  expect(dirs).toContain("/etc");
+  const bin = path.join(root, "toolchain", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, "tool"), "");
+  expect(confine.toolchainDir("tool", `/nonexistent${path.delimiter}${bin}`)).toBe(
+    path.join(root, "toolchain"),
+  );
+  expect(confine.toolchainDir("no-such-tool", bin)).toBeNull();
+});
+
+/** Each line prints `<read> ok` or `<read> denied`. */
+const READS = (r: string): string => {
+  const reads: [string, string][] = [
+    ["real-config", `cat ${r}/.config/workit/workspaces.json`],
+    ["real-home", `ls ${r}`],
+    ["host-config", `cat ${r}/.claude.json`],
+    ["host-dir", `ls ${r}/.claude`],
+    ["real-state", `ls ${r}/.local/state/workit`],
+    ["world", 'ls "$(dirname "$PWD")"'],
+    ["credential", 'cat "$HOME/.claude/.credentials.json"'],
+    ["system", "cat /etc/hostname"],
+  ];
+  return reads
+    .map(
+      ([name, cmd]) =>
+        `if ( ${cmd} ) >/dev/null 2>&1; then echo "${name} ok"; else echo "${name} denied"; fi`,
+    )
+    .join("\n");
+};
+
+test.skipIf(!landlock)(
+  "Given Landlock, When the host reads the real Workit config, home, state or host config, Then each read is denied; the world, its credential and system files stay readable",
+  async () => {
+    const lines: string[] = [];
+    expect(await main(argv(fakeClaude(READS(home))), (text) => lines.push(text))).toBe(0);
+    const transcript = readFileSync(
+      path.join(root, "results", "haiku", "a-case.transcript.jsonl"),
+      "utf8",
+    );
+    for (const read of ["real-config", "real-home", "host-config", "host-dir", "real-state"])
+      expect(transcript).toContain(`${read} denied`);
+    for (const read of ["world", "credential", "system"])
+      expect(transcript).toContain(`${read} ok`);
+    expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
+  },
+  30_000,
+);
+
 const RESULT = JSON.stringify({ type: "result", subtype: "success", num_turns: 1 });
 
 const fakeClaude = (body: string): string => {
