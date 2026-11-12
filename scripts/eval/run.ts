@@ -412,6 +412,8 @@ type Options = {
   watchMs: number;
   /** The signal that asked the bench to stop, once one has. */
   stop: string | null;
+  /** A live restore failed for some path: the journal is kept for --tripwire-restore. */
+  keepJournal: boolean;
   /** The host running now, in its own process group. */
   child: RunningHost | null;
   /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
@@ -560,6 +562,7 @@ const runCase = async (
     throw error;
   }
   const trip = checkSnapshot(opts.tripwire, snapshot);
+  if (trip && trip.failed.length > 0) opts.keepJournal = true;
   if (opts.stop) return { result: null, trip };
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
@@ -829,6 +832,7 @@ export const main = async (
     snapshot: null,
     watchMs: Number(values["watch-ms"]),
     stop: null,
+    keepJournal: false,
     child: null,
     carried: [],
   };
@@ -892,7 +896,14 @@ const tripwired = async (
       print(
         `tripwire-restore: restored ${done.restored.join(", ") || "nothing (no file differed)"}${done.rescued ? `; the bytes it replaced are saved in ${done.rescued} (delete it once read; it may hold token bytes)` : ""}`,
       );
-      return 0;
+      if (done.failed.length === 0) return 0;
+      print(
+        [
+          "tripwire-restore: these were NOT restored; the journal is kept, fix them and run it again:",
+          ...done.failed.map((failure) => `  failed ${failure}`),
+        ].join("\n"),
+      );
+      return 3;
     }
     const left = inspectJournal(opts.tripwire, opts.guard);
     if (left && left.problems.length === 0 && left.changed.length === 0) {
@@ -925,7 +936,11 @@ const tripwired = async (
     for (const signal of SIGNALS) process.on(signal, onSignal);
     try {
       const code = await run();
-      dropJournal(opts.tripwire);
+      if (opts.keepJournal)
+        print(
+          `tripwire: a restore failed, so the journal stays; settle it with --tripwire-restore ${opts.snapshot.digest}`,
+        );
+      else dropJournal(opts.tripwire);
       return opts.stop ? (SIGNAL_EXIT[opts.stop] ?? 1) : code;
     } finally {
       for (const signal of SIGNALS) process.off(signal, onSignal);

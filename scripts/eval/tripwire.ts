@@ -23,6 +23,9 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants,
+  fchmodSync,
+  futimesSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -32,7 +35,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -195,7 +197,14 @@ const walk = (root: string, visit: (file: string, stat: Stat) => void): void => 
         stat.isSymbolicLink() &&
         statSync(file, { throwIfNoEntry: false })?.isDirectory() === true);
     if (!dir) return;
-    for (const name of readdirSync(file).toSorted()) go(path.join(file, name), false);
+    let names: string[];
+    try {
+      names = readdirSync(file).toSorted();
+    } catch {
+      // Unreadable (mode 0): the dir itself is still visited and compared.
+      return;
+    }
+    for (const name of names) go(path.join(file, name), false);
   };
   go(root, true);
 };
@@ -251,6 +260,39 @@ export const armSnapshot = (guard: Guard): Snapshot => {
   };
 };
 
+/** The guarded root `file` is under (the longest), or null. */
+const rootOf = (roots: string[], file: string): string | null => {
+  let found: string | null = null;
+  for (const root of roots) {
+    const rel = path.relative(root, file);
+    if (
+      (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) &&
+      root.length > (found?.length ?? -1)
+    )
+      found = root;
+  }
+  return found;
+};
+
+/** The dirs strictly between `root` and `file`, outermost first. */
+const between = (root: string, file: string): string[] => {
+  const dirs: string[] = [];
+  for (
+    let dir = path.dirname(file);
+    dir.length > root.length && dir.startsWith(root);
+    dir = path.dirname(dir)
+  )
+    dirs.unshift(dir);
+  return dirs;
+};
+
+/** The first dir between the root and `file` that is a symlink on the real filesystem, or null. */
+const linkAbove = (roots: string[], file: string): string | null => {
+  const root = rootOf(roots, file);
+  if (!root) return null;
+  return between(root, file).find((dir) => lstat(dir)?.isSymbolicLink() === true) ?? null;
+};
+
 const differs = (entry: Described | undefined, file: string): boolean => {
   const stat = lstat(file);
   if (!entry || !stat) return entry !== undefined || stat !== undefined;
@@ -265,8 +307,9 @@ const differs = (entry: Described | undefined, file: string): boolean => {
 const changedUnder = (roots: string[], entries: Map<string, Described>): string[] => {
   const now: string[] = [];
   for (const root of roots) walk(root, (file) => now.push(file));
-  return [...new Set([...entries.keys(), ...now])].filter((file) =>
-    differs(entries.get(file), file),
+  // A path reached through a symlink planted above it is never trusted as unchanged.
+  return [...new Set([...entries.keys(), ...now])].filter(
+    (file) => linkAbove(roots, file) !== null || differs(entries.get(file), file),
   );
 };
 
@@ -299,6 +342,8 @@ export type Trip = {
   reported: { added: string[]; changed: string[]; missing: string[] };
   /** Where the bytes the run left were saved before the restore, or null. */
   rescued: string | null;
+  /** `<path>: <error>` for each path that could not be put back; the rest still was. */
+  failed: string[];
 };
 
 const writeSecret = (file: string, bytes: Uint8Array | string): void => {
@@ -309,7 +354,9 @@ const writeSecret = (file: string, bytes: Uint8Array | string): void => {
 const rescueDir = (base: string): string =>
   path.join(base, "rescued", `${new Date().toISOString().replaceAll(":", "-")}-${process.pid}`);
 
-const rescue = (into: string, file: string): void => {
+const rescue = (roots: string[], into: string, file: string): void => {
+  // Never read through a planted link: those bytes are not the run's to keep.
+  if (linkAbove(roots, file)) return;
   const stat = lstat(file);
   if (!stat || stat.isDirectory()) return;
   const copy = path.join(into, file);
@@ -323,11 +370,29 @@ type Restorable =
   | { type: "link"; target: string }
   | { type: "dir"; mode: number };
 
-const putBack = (file: string, entry: Restorable): void => {
+/**
+ * Make every dir between the root and `file` a real dir: a missing one is
+ * created, a symlink one is refused (the restore never writes through a link,
+ * one made earlier in the same restore included).
+ */
+const realParents = (roots: string[], file: string): void => {
+  const root = rootOf(roots, file);
+  if (!root) throw new Error("outside the guarded roots");
+  for (const dir of between(root, file)) {
+    const stat = lstat(dir);
+    if (!stat) mkdirSync(dir);
+    else if (stat.isSymbolicLink()) throw new Error(`a symlink above it: ${dir}`);
+    else if (!stat.isDirectory()) throw new Error(`not a directory above it: ${dir}`);
+  }
+};
+
+const putBack = (roots: string[], file: string, entry: Restorable): void => {
+  realParents(roots, file);
   const stat = lstat(file);
   if (entry.type === "dir") {
-    if (stat && !stat.isDirectory()) rmSync(file, { force: true });
-    mkdirSync(file, { recursive: true });
+    if (stat && !stat.isDirectory()) rmSync(file, { recursive: true, force: true });
+    if (!lstat(file)) mkdirSync(file);
+    if (!lstat(file)?.isDirectory()) throw new Error("not a directory after mkdir");
     chmodSync(file, entry.mode);
     return;
   }
@@ -336,38 +401,55 @@ const putBack = (file: string, entry: Restorable): void => {
     symlinkSync(entry.target, file);
     return;
   }
-  // In place, so the inode (and every hard link to it) gets the bytes back.
+  // In place, so the inode (and every hard link to it) gets the bytes back;
+  // O_NOFOLLOW, and the mode and times set on the fd, so no link is followed.
   if (stat && !stat.isFile()) rmSync(file, { recursive: true, force: true });
-  const fd = openSync(file, "w", entry.mode);
+  const fd = openSync(
+    file,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+    entry.mode,
+  );
   try {
     writeSync(fd, entry.bytes);
+    fchmodSync(fd, entry.mode);
+    futimesSync(fd, entry.atimeMs / 1000, entry.mtimeMs / 1000);
   } finally {
     closeSync(fd);
   }
-  chmodSync(file, entry.mode);
-  utimesSync(file, entry.atimeMs / 1000, entry.mtimeMs / 1000);
 };
 
-/** Rescue the current bytes of `changed`, remove created paths, put snapshot paths back. */
+/**
+ * Rescue the current bytes of `changed`, remove created paths (deepest
+ * first), put snapshot paths back (parents first). A path that fails is
+ * reported and the rest still restored.
+ */
 const settle = (
   base: string,
+  roots: string[],
   changed: string[],
   entryOf: (file: string) => Restorable | undefined,
-): string | null => {
-  if (changed.length === 0) return null;
+): { rescued: string | null; failed: string[] } => {
+  const failed: string[] = [];
+  if (changed.length === 0) return { rescued: null, failed };
   const rescued = rescueDir(base);
   mkdirSync(rescued, { recursive: true, mode: 0o700 });
-  for (const file of changed) rescue(rescued, file);
-  // Created paths go deepest first; snapshot paths come back parents first.
+  const attempt = (file: string, step: () => void): void => {
+    try {
+      step();
+    } catch (error) {
+      failed.push(`${file}: ${(error as Error).message}`);
+    }
+  };
+  for (const file of changed) attempt(file, () => rescue(roots, rescued, file));
   for (const file of changed
     .filter((each) => !entryOf(each))
     .toSorted((a, b) => b.length - a.length))
-    rmSync(file, { recursive: true, force: true });
+    attempt(file, () => rmSync(file, { recursive: true, force: true }));
   for (const file of changed.toSorted((a, b) => a.length - b.length)) {
     const entry = entryOf(file);
-    if (entry) putBack(file, entry);
+    if (entry) attempt(file, () => putBack(roots, file, entry));
   }
-  return rescued;
+  return { rescued, failed };
 };
 
 /** Compare with the in-memory snapshot and put every restored path back. Null when nothing changed. */
@@ -382,10 +464,12 @@ export const checkSnapshot = (base: string, snapshot: Snapshot): Trip | null => 
     missing: [...snapshot.reported.keys()].filter((file) => !now.has(file)),
   };
   // The bench stops on any trip, so the reported trees need no new baseline.
-  const rescued = settle(base, changed, (file) => snapshot.restored.get(file));
+  const { rescued, failed } = settle(base, snapshot.guard.restored, changed, (file) =>
+    snapshot.restored.get(file),
+  );
   const count =
     changed.length + reported.added.length + reported.changed.length + reported.missing.length;
-  return count === 0 ? null : { restored: changed, reported, rescued };
+  return count === 0 ? null : { restored: changed, reported, rescued, failed };
 };
 
 // ---------------------------------------------------------------- journal (a crash report)
@@ -463,6 +547,12 @@ export const inspectJournal = (base: string, guard: Guard): Leftover | null => {
       problems.push(`outside the guarded set: ${file}`);
       continue;
     }
+    // Links are kept as links, never written through: nothing may sit under one.
+    const root = rootOf(guard.restored, path.normalize(file)) ?? "";
+    if (between(root, path.normalize(file)).some((above) => entries.get(above)?.type === "link")) {
+      problems.push(`under a recorded symlink: ${file}`);
+      continue;
+    }
     if (entry.type !== "file") continue;
     const blob = path.join(dir, "blobs", String(entry.blob ?? ""));
     let bytes: Uint8Array | null = null;
@@ -491,7 +581,7 @@ export const restoreJournal = (
   base: string,
   guard: Guard,
   digest: string,
-): { restored: string[]; rescued: string | null } | { refused: string } => {
+): { restored: string[]; rescued: string | null; failed: string[] } | { refused: string } => {
   const left = inspectJournal(base, guard);
   if (!left) return { refused: "no leftover journal" };
   if (left.problems.length > 0) return { refused: left.problems.join("; ") };
@@ -513,9 +603,10 @@ export const restoreJournal = (
       sha: String(entry.sha),
     };
   };
-  const rescued = settle(base, left.changed, entryOf);
-  dropJournal(base);
-  return { restored: left.changed, rescued };
+  const { rescued, failed } = settle(base, guard.restored, left.changed, entryOf);
+  // A partial restore keeps the journal, so it can be settled again.
+  if (failed.length === 0) dropJournal(base);
+  return { restored: left.changed, rescued, failed };
 };
 
 // ---------------------------------------------------------------- housekeeping
@@ -579,6 +670,7 @@ export const tripDetail = (trip: Trip, transcript: string): string =>
     trip.reported.missing.length > 0
       ? `missing (not restored: a live session may have consumed them) ${trip.reported.missing.join(", ")}`
       : "",
+    trip.failed.length > 0 ? `NOT restored (the journal is kept): ${trip.failed.join("; ")}` : "",
     `transcript ${transcript}`,
   ]
     .filter(Boolean)

@@ -10,6 +10,7 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -647,4 +648,115 @@ test("Given a dead runner's world, a live runner's world and a symlinked lookali
   expect(existsSync(deadWorld)).toBe(false);
   expect(existsSync(liveWorld)).toBe(true);
   expect(file(target, "keep.txt")).toBe("keep");
+});
+
+// Round 4 (verdict mwd2p43s): confinement through symlinks, failures that do not abort, the digest alone.
+
+/** The verifier's probe: a link entry to an outside dir, and a file entry under it with a matching blob. */
+const forgeLinkEscape = (): string => {
+  const outsideDir = path.join(root, "outside");
+  mkdirSync(outsideDir);
+  const dir = path.join(base, "journal");
+  const manifest = JSON.parse(file(dir, "manifest.json"));
+  manifest.entries[path.join(config, "sym")] = { type: "link", target: outsideDir };
+  writeFileSync(path.join(dir, "blobs", "x"), "pwned");
+  manifest.entries[path.join(config, "sym", "target")] = {
+    type: "file",
+    mode: 0o644,
+    sha: sha("pwned"),
+    blob: "x",
+    atimeMs: 0,
+    mtimeMs: 0,
+  };
+  writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+  return outsideDir;
+};
+
+test("Given a journal whose file entry sits under a recorded symlink to an outside dir, When restored with that journal's own digest, Then it is refused before anything is written", async () => {
+  armed();
+  const outsideDir = forgeLinkEscape();
+  const digest = tripwire.inspectJournal(base, tripwire.guardFor(home))?.digest ?? "";
+  const lines: string[] = [];
+
+  const exit = await main(settle("--tripwire-restore", digest), (text) => lines.push(text));
+
+  expect(exit).toBe(3);
+  expect(lines.join("\n")).toContain(
+    `under a recorded symlink: ${path.join(config, "sym", "target")}`,
+  );
+  expect(existsSync(path.join(outsideDir, "target"))).toBe(false);
+  expect(existsSync(path.join(config, "sym"))).toBe(false);
+});
+
+test.each([false, true])(
+  "Given the agent replaced templates/ with a symlink to an outside dir (outside holds an identical pr.md: %p), When the live check restores, Then nothing is written outside and templates/ is a real dir with its files",
+  (twin) => {
+    const outsideDir = path.join(root, "outside");
+    mkdirSync(outsideDir);
+    if (twin) writeFileSync(path.join(outsideDir, "pr.md"), "# PR");
+    const snapshot = armed();
+    rmSync(path.join(config, "templates"), { recursive: true });
+    symlinkSync(outsideDir, path.join(config, "templates"));
+
+    const trip = check(snapshot);
+
+    expect(readdirSync(outsideDir)).toEqual(twin ? ["pr.md"] : []);
+    expect(lstatSync(path.join(config, "templates")).isDirectory()).toBe(true);
+    expect(file(config, "templates", "pr.md")).toBe("# PR");
+    expect(trip?.restored).toContain(path.join(config, "templates"));
+    expect(trip?.failed).toEqual([]);
+  },
+);
+
+/** A created dir the restore cannot remove (mode 0), next to a changed vcs.json. */
+const unremovable = (): string => {
+  const locked = path.join(config, "locked");
+  mkdirSync(locked);
+  writeFileSync(path.join(locked, "x"), "x");
+  chmodSync(locked, 0);
+  writeFileSync(path.join(config, "vcs.json"), '{"github":{"token":"x"}}');
+  return locked;
+};
+
+test("Given one path the live restore cannot fix, Then every other path is still restored and the failed one is reported", () => {
+  const snapshot = armed();
+  const locked = unremovable();
+  try {
+    const trip = check(snapshot);
+    expect(file(config, "vcs.json")).toBe('{"github":{}}');
+    expect(trip?.failed.map((each) => each.split(":")[0])).toEqual([locked]);
+  } finally {
+    chmodSync(locked, 0o700);
+  }
+});
+
+test("Given one path the journal restore cannot fix, Then the rest is restored, the failure is named, the exit is non-zero and the journal stays", async () => {
+  const snapshot = armed();
+  const locked = unremovable();
+  const lines: string[] = [];
+  try {
+    const exit = await main(settle("--tripwire-restore", snapshot.digest), (text) =>
+      lines.push(text),
+    );
+    expect(exit).toBe(3);
+    expect(file(config, "vcs.json")).toBe('{"github":{}}');
+    expect(lines.join("\n")).toContain(`failed ${locked}`);
+    expect(existsSync(path.join(base, "journal", "manifest.json"))).toBe(true);
+  } finally {
+    chmodSync(locked, 0o700);
+  }
+});
+
+test("Given a valid, unforged journal, When restored with a digest that is wrong, a prefix, empty or one character longer, Then the digest alone refuses each and nothing is written; the printed digest restores", async () => {
+  const snapshot = armed();
+  writeFileSync(ws, EVIL);
+  const wrong = snapshot.digest.replace(/^./u, (c) => (c === "0" ? "1" : "0"));
+  for (const given of [wrong, snapshot.digest.slice(0, 8), "", `${snapshot.digest}0`]) {
+    const lines: string[] = [];
+    expect(await main(settle("--tripwire-restore", given), (text) => lines.push(text))).toBe(3);
+    expect(lines.join("\n")).toContain(`digest ${snapshot.digest} is not ${given}`);
+    expect(file(ws)).toBe(EVIL);
+  }
+  expect(await main(settle("--tripwire-restore", snapshot.digest), () => {})).toBe(0);
+  expect(file(ws)).toBe(ORIGINAL);
 });
