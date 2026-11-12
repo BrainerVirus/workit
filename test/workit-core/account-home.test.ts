@@ -1,15 +1,18 @@
 // The account home (core/account-home.ts, #822 F1): grants and the user's own
 // ssh and git config are read from the OS account record, which no variable a
 // caller sets redirects, under node and under bun on every platform.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { accountHome, NO_HOME, type AccountIo } from "@/packages/workit-core/src/core/account-home";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE = path.join(ROOT, "packages", "workit-core", "src");
-const FAKE = path.join(ROOT, ".workit-scratch-fake-home");
+const FAKE = mkdtempSync(path.join(os.tmpdir(), "wk-fake-home-"));
+afterAll(() => rmSync(FAKE, { recursive: true, force: true }));
 
 /** Every variable a caller could point at a home of its own. */
 const fakeEnv = (): Record<string, string> => {
