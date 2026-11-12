@@ -28,6 +28,7 @@ import {
   type Provider,
 } from "./opencode";
 import { makeWorld, promptFor, type World } from "./scaffold";
+import { accountHome, guardFor, restore, snapshot, tripDetail, type Guard } from "./tripwire";
 
 const REPO = path.resolve(import.meta.dir, "..", "..");
 type Host = "claude-code" | "opencode";
@@ -84,6 +85,8 @@ type RunResult = {
   timedOut: boolean;
   usage: Usage;
   grade: Grade;
+  /** The run changed a real guarded file (tripwire.ts): put back, and the run failed. */
+  outsideWrite?: { restored: string[]; added: string[] };
 };
 
 const out = (repo: string, ...args: string[]): string =>
@@ -343,6 +346,8 @@ type Options = {
   providers: Provider[];
   /** The limits the dropped providers reported. */
   limits: NonNullable<RunResult["limits"]>;
+  /** The real config and state files the tripwire guards. */
+  guard: Guard;
 };
 
 type Attempt = {
@@ -408,6 +413,24 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
   return last;
 };
 
+const runClaude = (spec: EvalCase, opts: Options): Attempt => {
+  const world = makeWorld(spec);
+  try {
+    return {
+      ...attempt(
+        spec,
+        opts,
+        claudeArgs(spec, opts.model, opts.pluginDir),
+        childEnv(world, path.join(opts.pluginDir, "bin")),
+        world,
+      ),
+      limit: null,
+    };
+  } finally {
+    rmSync(world.dir, { recursive: true, force: true });
+  }
+};
+
 const runCase = (
   spec: EvalCase,
   key: string,
@@ -415,31 +438,28 @@ const runCase = (
   opts: Options,
   index = 1,
 ): RunResult => {
+  const before = snapshot(opts.guard);
   let run: Attempt;
-  if (opts.host === "opencode") run = runOpencode(spec, opts);
-  else {
-    const world = makeWorld(spec);
-    try {
-      run = {
-        ...attempt(
-          spec,
-          opts,
-          claudeArgs(spec, opts.model, opts.pluginDir),
-          childEnv(world, path.join(opts.pluginDir, "bin")),
-          world,
-        ),
-        limit: null,
-      };
-    } finally {
-      rmSync(world.dir, { recursive: true, force: true });
-    }
+  try {
+    run = opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts);
+  } catch (error) {
+    restore(opts.guard, before);
+    throw error;
   }
+  const trip = restore(opts.guard, before);
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
-  writeFileSync(path.join(dir, `${base}.transcript.jsonl`), run.transcript);
-  const skipped = opts.host === "opencode" && (run.provider === undefined || run.limit !== null);
+  const transcript = path.join(dir, `${base}.transcript.jsonl`);
+  writeFileSync(transcript, run.transcript);
+  const skipped =
+    trip === null && opts.host === "opencode" && (run.provider === undefined || run.limit !== null);
   const graded = grade(run.transcript, spec);
+  if (trip)
+    graded.failures.unshift({
+      rule: "outside_write",
+      detail: `the run changed real Workit files outside its world: ${tripDetail(trip, path.relative(REPO, transcript) || transcript)}`,
+    });
   const result: RunResult = {
     case: spec.id,
     ...(index > 1 ? { run: index } : {}),
@@ -454,7 +474,8 @@ const runCase = (
     exit: run.exit,
     timedOut: run.timedOut,
     usage: usageOf(run.transcript),
-    grade: skipped ? { ...graded, pass: false } : graded,
+    grade: skipped || trip ? { ...graded, pass: false } : graded,
+    ...(trip ? { outsideWrite: trip } : {}),
   };
   writeJson(path.join(dir, `${base}.json`), result);
   return result;
@@ -574,7 +595,8 @@ const replay = (
         continue;
       }
       // A limited run was never graded; re-grading its stub could turn it into a pass.
-      if (stored.skipped) continue;
+      // An outside write fails the run whatever its transcript says.
+      if (stored.skipped || stored.outsideWrite) continue;
       const fresh = grade(readFileSync(path.join(dir, file), "utf8"), spec);
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
@@ -616,6 +638,8 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       bin: { type: "string" },
       "plugin-dir": { type: "string" },
       "timeout-s": { type: "string", default: "300" },
+      // Test seam: guard this home's config and state instead of the account's.
+      "guard-home": { type: "string" },
       results: { type: "string", default: path.join(REPO, "evals", "results") },
       "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
       help: { type: "boolean", default: false },
@@ -665,6 +689,9 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     results,
     providers: host === "opencode" ? providersFor(values.model) : [],
     limits: [],
+    guard: values["guard-home"]
+      ? guardFor(path.resolve(values["guard-home"]))
+      : guardFor(accountHome(), process.env),
   };
   const selected = selectCases(cases, tier, values.cases?.split(",").filter(Boolean));
   const version = workitVersion(host);
@@ -701,6 +728,13 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       const result = runCase(spec, key, version, opts, run);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
+      if (result.outsideWrite) {
+        writeSummary(dir);
+        print(
+          `STOPPED: ${spec.id} wrote real Workit files outside its world (put back; see outside_write above). No further run starts.`,
+        );
+        return 3;
+      }
     }
     if (outcomes.length < repeat) {
       skipped.push(spec.id);
