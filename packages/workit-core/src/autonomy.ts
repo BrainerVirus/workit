@@ -37,7 +37,7 @@ import path from "node:path";
 import { accountHome } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
-import { evalWorldEntry } from "./core/eval-world";
+import { evalWorld, evalWorldEntry } from "./core/eval-world";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -71,7 +71,18 @@ import {
 export const grantsHome = { resolve: accountHome };
 
 /** The default config dir (core/workit-paths.mjs) for the account home, with no override. */
-export const grantsDir = (): string => workitConfigDir({ HOME: grantsHome.resolve() });
+const accountGrantsDir = (): string => workitConfigDir({ HOME: grantsHome.resolve() });
+
+/**
+ * Where grants are shown from and written to: the account's dir, or inside a
+ * bench world the cwd is in (core/eval-world.ts), whose entry only ever
+ * lowers what the account's file gives (benchWorld). Authority is always read
+ * from the account's file.
+ */
+export const grantsDir = (): string => {
+  const world = evalWorld(process.cwd());
+  return world ? path.join(world, "config") : accountGrantsDir();
+};
 
 /**
  * The bench world's entry for `cwd` (#792, core/eval-world.ts), cut down to
@@ -310,6 +321,8 @@ export type Autonomy = EndpointView & {
    * capped the grants.
    */
   note?: string;
+  /** The bench world whose entry applied, lowered (benchWorld): no real entry matched. */
+  world?: string;
   /** The unblock of each grant a cap lowered: it names the capping entry. */
   unblocks?: Partial<Record<GrantKind, string>>;
 };
@@ -418,7 +431,7 @@ function capAt(
   try {
     if (where instanceof Error) throw where;
     folder = autonomyOf(
-      typeof where === "string" ? resolveWorkspaceFrom(where, grantsDir()) : where.entry,
+      typeof where === "string" ? resolveWorkspaceFrom(where, accountGrantsDir()) : where.entry,
     );
   } catch (error) {
     // Its entries tie (the only resolver error once `named` resolved), or git
@@ -471,7 +484,9 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   if (override) return { ...autonomyOf(null), note: override };
   const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
   // A real entry always wins over a bench world.
-  let autonomy = autonomyOf(resolveWorkspaceFrom(cwd, grantsDir(), name) ?? world);
+  const real = resolveWorkspaceFrom(cwd, accountGrantsDir(), name);
+  let autonomy = autonomyOf(real ?? world);
+  if (!real && world) autonomy.world = evalWorld(cwd) ?? undefined;
   if (name)
     autonomy = capAt(autonomy, cwd, `WORKIT_WORKSPACE_NAME=${name}`, "a name never raises grants");
   const above = checkoutsAbove(cwd);
@@ -494,7 +509,7 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
  * error or an unreadable URL caps at nothing.
  */
 function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Autonomy {
-  const claiming = loadWorkspacesFrom(grantsDir()).filter((entry) => entry.remotes?.length);
+  const claiming = loadWorkspacesFrom(accountGrantsDir()).filter((entry) => entry.remotes?.length);
   if (claiming.length === 0) return autonomy;
   // The action's own target when the verb names it (a fork pushes to its own
   // origin with the folder's grants); every remote otherwise.
@@ -530,7 +545,7 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Aut
  */
 export const grantsMatter = (kind: GrantKind): boolean =>
   !grantsOverride() &&
-  loadWorkspacesFrom(grantsDir()).some((entry) => {
+  loadWorkspacesFrom(accountGrantsDir()).some((entry) => {
     const autonomy = autonomyOf(entry);
     return (
       entry.remotes?.length ||
@@ -540,13 +555,13 @@ export const grantsMatter = (kind: GrantKind): boolean =>
   });
 
 /** Whether any workspace claims remotes (then targets are worth resolving). */
-export const remotesClaimed = (dir: string = grantsDir()): boolean =>
+export const remotesClaimed = (dir: string = accountGrantsDir()): boolean =>
   loadWorkspacesFrom(dir).some((entry) => entry.remotes?.length);
 
 /** The entries whose `remotes` claim one of a target's URLs (grant show). */
 export function targetClaims(
   target: GrantTarget,
-  dir: string = grantsDir(),
+  dir: string = accountGrantsDir(),
 ): { url: string; workspace: string; pattern: string }[] | Error {
   if (target instanceof Error) return target;
   const claiming = loadWorkspacesFrom(dir).filter((entry) => entry.remotes?.length);
@@ -574,7 +589,7 @@ const claimsOf = (remotes: CheckoutRemote[], dir: string) => {
 /** The entries whose `remotes` claim one of `cwd`'s remote URLs (grant show, doctor). */
 export function remoteClaims(
   cwd: string,
-  dir: string = grantsDir(),
+  dir: string = accountGrantsDir(),
 ): { remote: string; url: string; workspace: string; pattern: string }[] | Error {
   if (!remotesClaimed(dir)) return [];
   const remotes = checkoutRemotes(cwd);
@@ -591,7 +606,7 @@ export function remoteClaims(
  */
 export function remoteFindings(
   cwd: string,
-  dir: string = grantsDir(),
+  dir: string = accountGrantsDir(),
 ): { warnings: string[]; notes: string[] } {
   let own: WorkspaceConfig | null = null;
   try {
@@ -743,7 +758,7 @@ export function rawGrantDenial(
   const claims = targetClaims(lazy());
   if (claims instanceof Error)
     return { error: `${kind}: ${claims.message}`, unblock: "name a target workit can resolve" };
-  const entries = loadWorkspacesFrom(grantsDir());
+  const entries = loadWorkspacesFrom(accountGrantsDir());
   const strict = claims.find(({ workspace: name }) => {
     const entry = entries.find((item) => item.name === name);
     return entry && autonomyOf(entry).grants[kind] === false;
