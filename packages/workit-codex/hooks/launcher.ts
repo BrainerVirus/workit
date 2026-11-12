@@ -84,14 +84,14 @@ const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
 
 /**
  * Text that may name a state registry, the config dir or its workspaces.json
- * (the guards in write-gate.ts judge it); `.config/workit` catches `~` and
- * `$HOME` spellings of the default dir.
+ * (the guards in write-gate.ts judge it); `.config/workit` and `state/workit`
+ * catch `~` and `$HOME` spellings of the default dirs.
  */
 const guarded = (text: string): boolean => {
   const flat = (s: string) => s.replaceAll("\\", "/").toLowerCase();
   const all = flat(text);
   return (
-    /issued|workspaces\.json|\.config\/workit/.test(all) ||
+    /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(all) ||
     [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env))))
   );
 };

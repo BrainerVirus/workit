@@ -290,16 +290,17 @@ const hasTaskStore = (cwd) => {
 
 /**
  * Text that may name a state registry or the config dir's workspaces.json
- * (the guards in write-gate.ts judge it): the config dir by its last two
- * parts, so `~/.config/workit` and `$HOME/...` match too.
+ * (the guards in write-gate.ts judge it): the state and config dirs by their
+ * last two parts, so `~/.local/state/workit`, `~/.config/workit` and
+ * `$HOME/...` match too.
  */
 const mentionsGuarded = (text) => {
   const flat = (value) => value.replaceAll("\\", "/").toLowerCase();
   const tail = (dir) => flat(dir).split("/").slice(-2).join("/");
   return (
-    /issued|workspaces\.json/i.test(text) ||
-    [stateDir(), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some((part) =>
-      flat(text).includes(flat(part)),
+    /issued|approvals|workspaces\.json/i.test(text) ||
+    [tail(stateDir()), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some((part) =>
+      flat(text).includes(part),
     )
   );
 };
