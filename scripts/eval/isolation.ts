@@ -204,7 +204,7 @@ export const probe = (): Record<string, string> => {
   const paths: Record<string, string> = {
     home: os.homedir(),
     config: resolveConfigDir(),
-    grants: shownGrantsDir(),
+    grants: shownGrantsDir() ?? "none: no account home",
     state: resolveStateDir(),
     approvals: approvalsDir(),
     issued: path.join(resolveStateDir(), "issued"),

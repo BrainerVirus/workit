@@ -26,7 +26,11 @@ const SCP_LIKE = /^(?:[^@/\\]+@)?([^/\\:]+):(.+)$/u;
  * swap `read` in-process.
  */
 export const sshSeam: { read: () => SshConfig } = {
-  read: () => readSshConfig(accountHome()),
+  // No account home: no user ssh_config, so no alias resolves.
+  read: () => {
+    const home = accountHome();
+    return home === null ? { text: "", home: "" } : readSshConfig(home);
+  },
 };
 
 /**
@@ -305,6 +309,8 @@ const userLevel = (scope: string, origin: string): boolean => {
   if (scope !== "global" || !origin.startsWith("file:")) return false;
   const file = realOrSelf(origin.slice("file:".length));
   const home = userGitSeam.home();
+  // No account home: no config file is the user's own.
+  if (home === null) return false;
   return [path.join(home, ".gitconfig"), path.join(home, ".config", "git", "config")]
     .map(realOrSelf)
     .includes(file);

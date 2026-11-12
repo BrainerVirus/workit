@@ -272,7 +272,8 @@ test.skipIf(!landlock).each(["claude-code", "opencode"] as const)(
   (host) => {
     const { world, env } = worldFor(host, { ...SPEC, scaffold: { workspace: {} } });
     const snapshot = armSnapshot(guardFor(realHome));
-    const accountDir = workitConfigDir({ HOME: accountHome() });
+    // No account record: guard a dir that cannot exist, still outside every writable one.
+    const accountDir = workitConfigDir({ HOME: accountHome() ?? path.join(root, "no-account") });
     const accountFile = path.join(accountDir, "workspaces.json");
     const accountBefore = read(accountFile);
     const script = path.join(root, "writer.sh");

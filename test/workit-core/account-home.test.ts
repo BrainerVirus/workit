@@ -3,11 +3,24 @@
 // caller sets redirects, under node and under bun on every platform.
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { accountHome, NO_HOME, type AccountIo } from "@/packages/workit-core/src/core/account-home";
+import { useConfigHome } from "../shared/grant-home";
+import {
+  grantsDir,
+  grantsHome,
+  listGrants,
+  resolveAutonomy,
+  writeGrants,
+} from "@/packages/workit-core/src/autonomy";
+import { resolveConfigDir } from "@/packages/workit-core/src/core/config";
+import {
+  accountHome,
+  childEnv,
+  type AccountIo,
+} from "@/packages/workit-core/src/core/account-home";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE = path.join(ROOT, "packages", "workit-core", "src");
@@ -108,11 +121,67 @@ test("Given node, Then the home is os.userInfo() (the account record) on every p
     );
 });
 
-test("Given no account record answers, Then the home is one no user can create, so no grants are read", () => {
-  expect(accountHome("linux", io({ passwd: () => "" }))).toBe(NO_HOME);
-  expect(accountHome("win32", io({}))).toBe(NO_HOME);
+test("Given no account record answers, Then there is no account home: no path is built", () => {
+  expect(accountHome("linux", io({ passwd: () => "" }))).toBeNull();
+  expect(accountHome("darwin", io({ passwd: () => "" }))).toBeNull();
+  expect(accountHome("win32", io({}))).toBeNull();
   const throwing = () => {
     throw new Error("no record");
   };
-  expect(accountHome("linux", io({ bun: false, userInfo: throwing }))).toBe(NO_HOME);
+  expect(accountHome("linux", io({ bun: false, userInfo: throwing }))).toBeNull();
+  expect(accountHome("win32", io({ bun: false, userInfo: throwing }))).toBeNull();
+});
+
+test("Given /etc/passwd comment lines that look like the uid's record, Then they are skipped", () => {
+  const passwd = () => "#me:x:1000:1000::/planted:/bin/sh\nme:x:1000:1000::/home/me:/bin/sh\n";
+  expect(accountHome("linux", io({ passwd }))).toBe("/home/me");
+  expect(accountHome("linux", io({ passwd: () => "# x:x:1000:1:/planted\n" }))).toBeNull();
+});
+
+test("Given the lookup programs, Then they get a fixed minimal env, never the caller's", () => {
+  expect(childEnv("linux")).toEqual({});
+  expect(childEnv("darwin")).toEqual({});
+  expect(childEnv("win32")).toEqual({ SystemRoot: "C:\\Windows" });
+});
+
+const profile = (value: string) => (file: string) =>
+  file.endsWith("whoami.exe")
+    ? '"host\\me","S-1-5-21-9"\r\n'
+    : `    ProfileImagePath    REG_EXPAND_SZ    ${value}\r\n`;
+
+test("Given a REG_EXPAND_SZ ProfileImagePath, Then only %SystemDrive% and %SystemRoot% expand, from the system dir, and anything else fails closed", () => {
+  expect(accountHome("win32", io({ run: profile("%SystemDrive%\\Users\\me") }))).toBe(
+    "C:\\Users\\me",
+  );
+  expect(accountHome("win32", io({ run: profile("%SystemRoot%\\Profiles\\me") }))).toBe(
+    "C:\\Windows\\Profiles\\me",
+  );
+  for (const value of ["%USERPROFILE%", "%HOMEDRIVE%\\Users\\me", "Users\\me", "\\\\srv\\me"])
+    expect(accountHome("win32", io({ run: profile(value) })), value).toBeNull();
+});
+
+test("Given no account home, Then no grants are read or written, and the write guard's dir is the config dir", () => {
+  const configHome = useConfigHome("wk-no-account-");
+  const saved = grantsHome.resolve;
+  try {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wk-no-account-repo-"));
+    writeFileSync(
+      path.join(configHome.configDir, "workspaces.json"),
+      JSON.stringify({ workspaces: [{ name: "w", glob: `${dir}/**`, autonomy: { merge: true } }] }),
+    );
+    expect(resolveAutonomy(dir).workspace).toBe("w");
+    grantsHome.resolve = () => null;
+    const autonomy = resolveAutonomy(dir);
+    expect(autonomy.workspace).toBeNull();
+    expect(autonomy.grants.merge).toBe(false);
+    expect(autonomy.note).toContain("no OS account record");
+    expect(listGrants().error).toContain("no OS account record");
+    const written = writeGrants("w", [{ kind: "merge", value: false }]);
+    expect(written.ok).toBe(false);
+    expect(grantsDir()).toBe(resolveConfigDir());
+    rmSync(dir, { recursive: true, force: true });
+  } finally {
+    grantsHome.resolve = saved;
+    configHome.restore();
+  }
 });
