@@ -163,7 +163,7 @@ const quietEvent = (): string | null => {
           }
         }));
     // A script run the registry guard reads at hook time: a shell, an interpreter, `.` or a path.
-    return /\b(?:git|gh|glab|node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/.test(
+    return /\b(?:git|gh|glab|node|tsx|ts-node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/.test(
       text,
     ) ||
       guarded(text) ||

@@ -184,6 +184,9 @@ const WRAPPERS: Record<string, string> = {
   setsid: "",
   builtin: "",
   "!": "",
+  // `npx tsx x.ts`: the package's binary runs the script.
+  npx: "p",
+  bunx: "p",
 };
 
 /** The command a wrapper runs, past its options, values, assignments and a leading number; null with no wrapper. */

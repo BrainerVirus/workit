@@ -531,3 +531,20 @@ test("G a script piped from printf, W the script is the format string itself, T 
   }
   expect(decide(`printf 'echo hi > out.txt\\n' | sh`).kind).toBe("none");
 });
+
+test("G a TypeScript script that writes a guarded file, W tsx or ts-node runs it through npx or bunx, T denied", () => {
+  for (const kind of KINDS) {
+    writeFileSync(
+      path.join(root, "evil.ts"),
+      `import fs from "node:fs";\nfs.writeFileSync("${sh(kind.file)}", "{}");\n`,
+    );
+    for (const command of [
+      "npx tsx evil.ts",
+      "bunx tsx evil.ts",
+      "npx -y ts-node evil.ts",
+      "npx --yes tsx evil.ts",
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  expect(decide("npx tsx x.json").kind).toBe("none");
+});

@@ -316,7 +316,9 @@ const GUARD_SPELLING =
 
 // A script run the registry guard reads at hook time (write-gate.ts): a shell,
 // an interpreter or `.`/`source` given a file, or a command spelled as a path.
-const SCRIPT_RUNNERS = new Set("node bash sh zsh dash ksh ruby perl php source".split(" "));
+const SCRIPT_RUNNERS = new Set(
+  "node tsx ts-node bash sh zsh dash ksh ruby perl php source".split(" "),
+);
 // After a wrapper or keyword too (`time ./x.sh`, `sudo ./x.sh`, `if ./x.sh`).
 const RUNS_PATH =
   /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/u;

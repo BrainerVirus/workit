@@ -146,3 +146,19 @@ test("Given a neutral name that is a symlink to a guarded file or dir, a script 
     expect(run(command, { WORKIT_CONFIG_DIR: wc }).permissionDecision, command).toBe("deny");
   expect(run("echo ok > plain-2.txt").permissionDecision).toBeUndefined();
 }, 60_000);
+
+test("Given a TypeScript script that writes a guarded file, When tsx or ts-node runs it, directly or through npx or bunx, Then the runtime denies it", () => {
+  const grant = path.join(state, "approvals", "grants", "ts.json").replaceAll("\\", "/");
+  writeFileSync(
+    path.join(root, "evil.ts"),
+    `import fs from "node:fs";\nfs.writeFileSync("${grant}", "{}");\n`,
+  );
+  for (const command of [
+    "tsx evil.ts",
+    "ts-node evil.ts",
+    "npx tsx evil.ts",
+    "bunx tsx evil.ts",
+    "npx ts-node evil.ts",
+  ])
+    expect(run(command).permissionDecision, command).toBe("deny");
+}, 60_000);
