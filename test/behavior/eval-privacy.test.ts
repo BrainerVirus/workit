@@ -350,3 +350,9 @@ test("an account file that exists but cannot be parsed or read stops the private
   temps.push(bare);
   expect([...privateStrings(bare, workitVocabulary(REPO)).values()]).toEqual(["home path"]);
 });
+
+test("the bench's own docs carry no home path the committed scan would flag", () => {
+  expect(
+    committedLeaks(readFileSync(path.join(REPO, "docs", "agents", "eval.md"), "utf8")),
+  ).toEqual([]);
+});

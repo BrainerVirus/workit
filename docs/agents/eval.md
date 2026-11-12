@@ -148,9 +148,14 @@ result file (`scripts/eval/privacy.ts`):
   `private set: cannot read <file>: <reason>`, never its content); a missing
   one is fine.
 - **Committed check.** `test/behavior/eval-privacy.test.ts` fails when any file
-  under `evals/results/` holds an absolute path under `/home/<name>/` or
-  `/Users/<name>/` (the placeholders and invented `me`/`user`/`example` aside),
-  a host config's `projects` map, or a workspace glob under the real home.
+  under `evals/results/` holds an absolute path under a home dir (`/home/…`
+  or `/Users/…`; the placeholders and the invented names `me`, `user` and
+  `example` aside), a host config's `projects` map, or a workspace glob under
+  the real home.
+- **Known false refusal.** A private config value that is an ordinary word
+  (it also appears in public text such as the README) makes a run that quotes
+  that text fail as `private_content`. That is the safe direction; rerun the
+  case.
 
 ## Isolation and the tripwire
 
