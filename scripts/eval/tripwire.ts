@@ -102,7 +102,11 @@ export const startOf = (pid: number): string | null => {
     return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
   } catch {
     if (process.platform === "linux") return null;
-    const run = spawnSync(PS, ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+    const run = spawnSync(PS, ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 5000,
+      killSignal: "SIGKILL",
+    });
     const start = run.status === 0 ? run.stdout.trim().replaceAll(/\s+/gu, "_") : "";
     return start || null;
   }
@@ -112,7 +116,7 @@ export const startOf = (pid: number): string | null => {
 export const runnerIdentity = (): string => `${process.pid}.${startOf(process.pid) ?? "0"}`;
 
 /** The identity names a process that is still the same process. */
-export const identityAlive = (identity: string): boolean => {
+const identityAlive = (identity: string): boolean => {
   const cut = identity.indexOf(".");
   const pid = Number(identity.slice(0, cut));
   return Number.isInteger(pid) && pid > 0 && startOf(pid) === identity.slice(cut + 1);

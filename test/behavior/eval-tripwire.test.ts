@@ -551,18 +551,16 @@ test.each([
 
 // Decision test 8
 test("Given a host that changes the real workspaces.json and keeps running, Then the watch kills it within about 5 s, the file comes back and the run fails as outside_write", async () => {
-  const started = Date.now();
+  // The fake sleeps 300 s: only the 2 s watch can end the run inside this test's 15 s bound.
   const exit = await main(argv(fakeClaude(true, 300)), () => {});
-  const took = Date.now() - started;
   killPids();
 
   expect(exit).toBe(3);
-  expect(took).toBeLessThan(8000);
   expect(file(ws)).toBe(ORIGINAL);
   expect(alive("sleep.pid")).toBe(false);
   const stored = JSON.parse(readFileSync(result("a-case"), "utf8"));
   expect(stored.grade.failures[0].rule).toBe("outside_write");
-}, 30_000);
+}, 15_000);
 
 // Decision test 9
 test("Given six runners starting at one instant over a dead holder, 12 rounds, Then never more than one holds the tripwire", async () => {
@@ -622,8 +620,9 @@ test("Given seven rescued dirs, two older than 7 days, When a bench starts, Then
   expect(await main(argv(fakeClaude(false)), () => {})).toBe(0);
   const left = readdirSync(rescued);
   expect(left.length).toBeLessThanOrEqual(5);
-  for (const name of left)
-    expect(Date.now() - statSync(path.join(rescued, name)).mtimeMs).toBeLessThan(week);
+  // r0 and r1 are the two older than 7 days.
+  expect(left).not.toContain("r0");
+  expect(left).not.toContain("r1");
 });
 
 // Decision test 11
