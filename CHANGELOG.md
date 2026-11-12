@@ -1070,6 +1070,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Security
 
+- Grants are read from the account home in the OS record on every runtime. When Workit ran from source under Bun, an agent that set `HOME` could move where grants were read and written; the installed Node build was not affected
 - An approval is accepted only from a path that records one: a terminal grant, or a Claude Code or Pi grant with a matching ask row from the same host. A grant that names OpenCode, Codex, Cursor or an unknown host is refused; the ask row catches hand edits, not forgery (docs/agents/hosts.md)
 - An agent session can no longer raise its own grants or set `youtrack.writes: auto` by writing the Workit config dir: an edit or shell write to `workspaces.json` (or to the config dir itself) is denied on every host whose hooks deny, and names `workit grant set` or `workit workspace set` for the user to run in a terminal
 
