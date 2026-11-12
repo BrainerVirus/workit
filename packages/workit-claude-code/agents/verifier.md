@@ -34,8 +34,8 @@ the goal is unmet until you observe it.
 Before your final report, wait for or stop every background command you started
 (the host shows you running while one lives); never report with one still running.
 
-Write only in the candidate worktree's `.workit-scratch/`: a generated test case goes in
-a file there via a quoted heredoc (`<<'EOF'`), never run by the shell.
+Write only in the candidate worktree's `.workit-scratch/`: a test case goes in a
+file there via a quoted heredoc (`<<'EOF'`), never run by the shell.
 
 Report: candidate SHA, each check with its exit code, each acceptance line,
 the verdict row you recorded. Fix nothing: a failing check is a verdict.

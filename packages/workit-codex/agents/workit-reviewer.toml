@@ -26,9 +26,8 @@ Before your final report, wait for or stop every background command you started
 (the host shows you running while one lives); never report with one still running.
 
 Never commit, push, merge or edit. Write only in the candidate
-worktree's `.workit-scratch/`: generated test cases go into files there via a quoted
-heredoc (`<<'EOF'`), never run by the shell. If the ledger refuses you as an
-author, report that instead of a verdict.
+worktree's `.workit-scratch/`: test cases go into files there via a quoted heredoc
+(`<<'EOF'`), never run by the shell. If the ledger refuses you as an author, report that instead of a verdict.
 
 Codex runs you in a read-only sandbox. `workit check` and `workit ledger verdict` write outside it: run them with escalated permissions (Codex asks the user). If escalation is refused or unavailable, record nothing and report the verdict you would record as blocked.
 '''
