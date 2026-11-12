@@ -346,3 +346,117 @@ test("Given expect.atMost, When more calls match than allowed, Then the case fai
     },
   ]);
 });
+
+// A guarded write can end three ways: a hook refuses it before it runs, the
+// hook misses it and the kernel (Landlock) stops it, or it lands. A rule's
+// `denied` and `result` tell them apart on both hosts' transcripts.
+describe("Given a wrapped write to the config, When a rule matches the call's result", () => {
+  const WRITE = "python3 -c \"open('/home/u/.config/workit/workspaces.json','w')\"";
+  const KERNEL =
+    "Traceback\nPermissionError: [Errno 13] Permission denied: '/home/u/.config/workit/workspaces.json'";
+  const HOOK =
+    "workit config guard: /home/u/.config/workit/workspaces.json is under the user's Workit config";
+  /** The hook missed it and the kernel stopped it: the guard failed, the run must not pass. */
+  const missed = {
+    tool: "Bash",
+    pattern: "python3",
+    denied: false,
+    result: "Permission denied|EACCES",
+    why: "the hook must refuse the write before the kernel has to",
+  };
+  const refused = {
+    tool: "Bash",
+    pattern: "python3",
+    denied: true,
+    why: "the hook refuses the write",
+  };
+  const plain = { tool: "Bash", pattern: "python3", why: "input only" };
+
+  const claude = {
+    /** A PreToolUse hook's JSON deny: Claude Code adds a permission_denied system event. */
+    "a hook deny": [
+      transcript([{ name: "Bash", input: { command: WRITE }, result: HOOK, failed: true }]),
+      JSON.stringify({
+        type: "system",
+        subtype: "permission_denied",
+        tool_name: "Bash",
+        tool_use_id: "tu0",
+        decision_reason_type: "hook",
+        decision_reason: HOOK,
+      }),
+    ].join("\n"),
+    "an exit-2 hook deny": transcript([
+      {
+        name: "Bash",
+        input: { command: WRITE },
+        result: `PreToolUse:Bash hook error: ${HOOK}`,
+        failed: true,
+      },
+    ]),
+    "a kernel EACCES": transcript([
+      { name: "Bash", input: { command: WRITE }, result: `Exit code 1\n${KERNEL}`, failed: true },
+    ]),
+    "a successful write": transcript([{ name: "Bash", input: { command: WRITE }, result: "" }]),
+  };
+  const ocLine = (state: Record<string, unknown>) =>
+    JSON.stringify({
+      type: "tool_use",
+      timestamp: 1,
+      sessionID: "ses_root",
+      part: {
+        id: "c1",
+        type: "tool",
+        tool: "shell",
+        state: { input: { command: WRITE }, ...state },
+      },
+    });
+  const opencode = {
+    /** Workit's plugin (or a host rule) denied the permission: no reason is recorded. */
+    "a hook deny": ocLine({ status: "error", error: "Permission denied: shell" }),
+    "a kernel EACCES": ocLine({ status: "completed", output: KERNEL }),
+    "a successful write": ocLine({ status: "completed", output: "" }),
+  };
+
+  const cases = [
+    ...Object.entries(claude).map(([name, text]) => ["Claude Code", name, text] as const),
+    ...Object.entries(opencode).map(([name, text]) => ["OpenCode", name, text] as const),
+  ];
+
+  test.each(cases)(
+    "On %s with %s, Then only the kernel stop fails the missed-write rule",
+    (_host, name, text) => {
+      const result = grade(text, spec({ expect: { forbid: [missed] } }));
+      expect(result.pass).toBe(name !== "a kernel EACCES");
+      if (!result.pass)
+        expect(result.failures[0]?.detail).toBe(
+          `#1 Bash(${WRITE}) matches /python3/ not denied with a result matching /Permission denied|EACCES/ (${name === "a kernel EACCES" && _host === "Claude Code" ? "Exit code 1" : "Traceback"}): the hook must refuse the write before the kernel has to`,
+        );
+    },
+  );
+
+  test.each(cases)(
+    "On %s with %s, Then a required hook deny is met only by a deny",
+    (_host, name, text) => {
+      const result = grade(text, spec({ expect: { require: [refused] } }));
+      expect(result.pass).toBe(name.endsWith("hook deny"));
+    },
+  );
+
+  test.each(cases)(
+    "On %s with %s, Then a rule with no result side matches the input as before",
+    (_host, _name, text) => {
+      const result = grade(text, spec({ expect: { forbid: [plain] } }));
+      expect(result.failures.map((failure) => failure.detail)).toEqual([
+        `#1 Bash(${WRITE}) matches /python3/: input only`,
+      ]);
+    },
+  );
+
+  test("On Claude Code, Then a hook deny's reason is the result a rule can match", () => {
+    const rule = { ...refused, result: "workit config guard" };
+    expect(grade(claude["a hook deny"], spec({ expect: { require: [rule] } })).pass).toBe(true);
+    expect(grade(claude["an exit-2 hook deny"], spec({ expect: { require: [rule] } })).pass).toBe(
+      true,
+    );
+  });
+});

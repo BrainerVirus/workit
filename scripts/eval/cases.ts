@@ -3,8 +3,23 @@ import path from "node:path";
 
 export type Tier = "smoke" | "full";
 
-/** A regex one tool call must (require) or must not (forbid) match. */
-export type CallPattern = { tool?: string; pattern: string; why: string };
+/**
+ * A regex one tool call must (require) or must not (forbid) match: its
+ * command (Bash) or input. `result` and `denied` narrow it by what came back
+ * (scripts/eval/grade.ts); without them a rule matches the input alone.
+ */
+export type CallPattern = {
+  tool?: string;
+  pattern: string;
+  /** A regex the call's result text (its output, or the error or deny reason) must match too. */
+  result?: string;
+  /**
+   * true: only calls refused before they ran (a hook or permission rule
+   * denied them); false: only calls that ran, whatever they returned.
+   */
+  denied?: boolean;
+  why: string;
+};
 
 export type EvalCase = {
   id: string;

@@ -7,9 +7,9 @@
 // and a pattern ending in `/*` claims everything under that owner or group.
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
 import { readSshConfig, resolveSshHost, type SshConfig } from "../git/rev";
+import { accountHome } from "./account-home";
 
 const FORGE_SCHEMES = new Set(["ssh", "git", "http", "https", "git+ssh", "ssh+git"]);
 const SSH_SCHEMES = new Set(["ssh", "git+ssh", "ssh+git"]);
@@ -20,21 +20,17 @@ const SSH_443: Record<string, string> = {
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/u;
 const SCP_LIKE = /^(?:[^@/\\]+@)?([^/\\:]+):(.+)$/u;
 
-const accountHome = (): string => {
-  try {
-    return os.userInfo().homedir;
-  } catch {
-    return os.homedir();
-  }
-};
-
 /**
  * The ssh_config aliases resolve through, as deriveForge resolves them: the
  * account's own ~/.ssh/config (ssh reads the passwd home, never $HOME). Tests
  * swap `read` in-process.
  */
 export const sshSeam: { read: () => SshConfig } = {
-  read: () => readSshConfig(accountHome()),
+  // No account home: no user ssh_config, so no alias resolves.
+  read: () => {
+    const home = accountHome();
+    return home === null ? { text: "", home: "" } : readSshConfig(home);
+  },
 };
 
 /**
@@ -313,6 +309,8 @@ const userLevel = (scope: string, origin: string): boolean => {
   if (scope !== "global" || !origin.startsWith("file:")) return false;
   const file = realOrSelf(origin.slice("file:".length));
   const home = userGitSeam.home();
+  // No account home: no config file is the user's own.
+  if (home === null) return false;
   return [path.join(home, ".gitconfig"), path.join(home, ".config", "git", "config")]
     .map(realOrSelf)
     .includes(file);

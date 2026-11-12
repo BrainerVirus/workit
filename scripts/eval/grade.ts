@@ -15,6 +15,8 @@ type ToolCall = {
   /** Set when the call ran inside a subagent. */
   parent: string | null;
   failed: boolean;
+  /** Refused before it ran: a hook or permission rule denied it (see deniedBefore). */
+  denied: boolean;
   result: string;
 };
 
@@ -46,6 +48,8 @@ type Event = {
   duration_ms?: number;
   total_cost_usd?: number;
   result?: string;
+  /** Claude Code's `permission_denied` system event names the refused call. */
+  tool_use_id?: string;
   // OpenCode `run --format json` events.
   sessionID?: string;
   timestamp?: number;
@@ -116,8 +120,12 @@ const opencodeCalls = (list: Event[]): ToolCall[] => {
       input: state.input ?? {},
       parent: event.sessionID === root ? null : (event.sessionID ?? null),
       failed,
+      denied: false,
       result: textOf(failed ? state.error : state.output),
     };
+    // OpenCode records a permission deny (Workit's plugin or a host rule) as
+    // this error, with no reason; a kernel EACCES is the tool's own output.
+    call.denied = failed && /^Permission denied: \w+$/u.test(call.result);
     const seen = calls.findIndex((each) => each.id === call.id);
     if (seen === -1) calls.push(call);
     else calls[seen] = call;
@@ -140,6 +148,7 @@ const toolCalls = (transcript: string): ToolCall[] => {
           input: block.input ?? {},
           parent: event.parent_tool_use_id ?? null,
           failed: false,
+          denied: false,
           result: "",
         };
         calls.push(call);
@@ -150,7 +159,16 @@ const toolCalls = (transcript: string): ToolCall[] => {
         if (!call) continue;
         call.failed = block.is_error === true;
         call.result = textOf(block.content);
+        // A blocking PreToolUse hook (exit 2) leaves only this prefix.
+        if (call.failed && /^PreToolUse:\S+ hook (?:blocking )?error/u.test(call.result))
+          call.denied = true;
       }
+    }
+  // A permission decision (a hook's deny, or the permission mode) is a system event.
+  for (const event of list)
+    if (event.type === "system" && event.subtype === "permission_denied" && event.tool_use_id) {
+      const call = byId.get(event.tool_use_id);
+      if (call) call.denied = true;
     }
   return calls;
 };
@@ -255,7 +273,13 @@ const checkName = (segment: string): string | null => {
 
 const matches = (call: ToolCall, want: CallPattern): boolean =>
   (want.tool === undefined || want.tool === call.name) &&
-  new RegExp(want.pattern).test(subject(call));
+  new RegExp(want.pattern).test(subject(call)) &&
+  (want.denied === undefined || want.denied === call.denied) &&
+  (want.result === undefined || new RegExp(want.result).test(call.result));
+
+/** The pattern as a rule names it, with its result side when it has one. */
+const shown = (want: CallPattern): string =>
+  `/${want.pattern}/${want.denied === undefined ? "" : want.denied ? " denied" : " not denied"}${want.result === undefined ? "" : ` with a result matching /${want.result}/`}`;
 
 export const grade = (transcript: string, spec: EvalCase): Grade => {
   const list = events(transcript);
@@ -309,13 +333,13 @@ export const grade = (transcript: string, spec: EvalCase): Grade => {
 
   for (const want of spec.expect?.require ?? [])
     if (!calls.some((call) => matches(call, want)))
-      failures.push({ rule: "require", detail: `no call matches /${want.pattern}/: ${want.why}` });
+      failures.push({ rule: "require", detail: `no call matches ${shown(want)}: ${want.why}` });
 
   for (const want of spec.expect?.forbid ?? [])
     for (const call of calls.filter((each) => matches(each, want)))
       failures.push({
         rule: "forbid",
-        detail: `${label(call)} matches /${want.pattern}/: ${want.why}`,
+        detail: `${label(call)} matches ${shown(want)}${want.result === undefined ? "" : ` (${firstLine(call.result)})`}: ${want.why}`,
       });
 
   for (const want of spec.expect?.atMost ?? []) {
@@ -323,7 +347,7 @@ export const grade = (transcript: string, spec: EvalCase): Grade => {
     if (hits.length > want.max)
       failures.push({
         rule: "at-most",
-        detail: `${hits.length} calls match /${want.pattern}/, at most ${want.max}: ${want.why} (${hits.map((call) => `#${call.index}`).join(", ")})`,
+        detail: `${hits.length} calls match ${shown(want)}, at most ${want.max}: ${want.why} (${hits.map((call) => `#${call.index}`).join(", ")})`,
       });
   }
 

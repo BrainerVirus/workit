@@ -1,10 +1,17 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
-import { DEFAULT_GRANTS, resolveAutonomy } from "@/packages/workit-core/src/autonomy";
+import {
+  DEFAULT_GRANTS,
+  grantsDir,
+  shownGrantsDir,
+  listGrants,
+  resolveAutonomy,
+  writeGrants,
+} from "@/packages/workit-core/src/autonomy";
 import { EVAL_WORLD_ENV, EVAL_WORLD_MARKER } from "@/packages/workit-core/src/core/eval-world";
 
 // #792 item 27: the bench gives its throwaway world a workspace (endpoint,
@@ -132,4 +139,71 @@ test("Given a world without the marker, outside the temp dir or named by a relat
   for (const name of TMP_VARS) delete process.env[name];
   process.env[EVAL_WORLD_ENV] = path.relative(process.cwd(), world);
   expect(endpoint()).toBe("commit");
+});
+
+// #822 F2: the grants dir follows a validated world without HOME or the
+// account record redirecting, and it only ever lowers what the account gives.
+const inDir = <T>(dir: string, run: () => T): T => {
+  const before = process.cwd();
+  process.chdir(dir);
+  try {
+    return run();
+  } finally {
+    process.chdir(before);
+  }
+};
+
+test("Given a bench world and a cwd in it, When grants are shown or written, Then the grants dir is the world's config and the account's file is untouched", () => {
+  makeWorld(world, { defaultEndpoint: "pr" });
+  const repo = path.join(world, "repo");
+  const accountFile = path.join(configHome.configDir, "workspaces.json");
+  const before = readFileSync(accountFile, "utf8");
+  inDir(repo, () => {
+    expect(shownGrantsDir()).toBe(path.join(world, "config"));
+    // What the write guard protects and every grant is read from stays the account's.
+    expect(grantsDir()).toBe(configHome.configDir);
+    expect(listGrants().path).toBe(path.join(world, "config", "workspaces.json"));
+    const written = writeGrants("eval", [{ kind: "push", value: false }]);
+    expect(written.ok && written.path).toBe(path.join(world, "config", "workspaces.json"));
+    const resolved = resolveAutonomy(repo);
+    expect(resolved.world).toBe(world);
+    expect(resolved.grants.push).toBe(false);
+  });
+  expect(readFileSync(accountFile, "utf8")).toBe(before);
+});
+
+test("Given a bench world whose own file raises grants, When its repo resolves them, Then they only ever lower the account's defaults", () => {
+  makeWorld(world, { autonomy: { merge: true, push: true, release: true } });
+  const repo = path.join(world, "repo");
+  inDir(repo, () => {
+    expect(shownGrantsDir()).toBe(path.join(world, "config"));
+    const resolved = resolveAutonomy(repo);
+    expect(resolved.grants).toEqual({ ...DEFAULT_GRANTS });
+    expect(resolved.configured).toEqual([]);
+  });
+});
+
+test("Given the variable without a marker, or a cwd outside the world, Then the account's grants dir is used", () => {
+  makeWorld(world, { defaultEndpoint: "pr" });
+  expect(shownGrantsDir()).toBe(configHome.configDir);
+  inDir(path.join(real, "repo"), () => expect(shownGrantsDir()).toBe(configHome.configDir));
+  rmSync(path.join(world, EVAL_WORLD_MARKER));
+  try {
+    inDir(path.join(world, "repo"), () => expect(shownGrantsDir()).toBe(configHome.configDir));
+  } finally {
+    writeFileSync(path.join(world, EVAL_WORLD_MARKER), "");
+  }
+});
+
+test("Given an agent makes a world around a real checkout's grants, When it resolves grants there, Then the real entry still caps them", () => {
+  const inside = path.join(real, "repo", "w2");
+  mkdirSync(inside, { recursive: true });
+  for (const name of TMP_VARS) process.env[name] = path.join(real, "repo");
+  makeWorld(inside, { autonomy: { push: true } });
+  inDir(path.join(inside, "repo"), () => {
+    const resolved = resolveAutonomy(path.join(inside, "repo"));
+    expect(resolved.workspace).toBe("real");
+    expect(resolved.grants.push).toBe(false);
+    expect(resolved.world).toBeUndefined();
+  });
 });

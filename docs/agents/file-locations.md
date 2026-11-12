@@ -25,7 +25,7 @@ everything.
 
 | Kind    | Linux and macOS                                            | Windows                                    | Env override (first wins)                           | What lives there                                                                                                                                                                                          | Written by                                                                                    |
 | ------- | ---------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| config  | `$XDG_CONFIG_HOME/workit`, else `~/.config/workit`         | `%APPDATA%\workit`                         | `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME` | `workspaces.json` (grants, roles; the hooks' write gate denies an agent's write to it, [configuration](../guides/configuration.md)), `config.json`, `vcs.json`, `youtrack.json`, `rules/`. Grants are read only from the default dir under the account home, never an override (D15); a bench world (`WORKIT_EVAL_WORLD`, [eval.md](eval.md)) counts only where no real workspace matches, and only for its endpoint and lowered grants. A bench run gets a world `HOME`, so none of these resolve to yours ([isolation](eval.md#isolation-and-the-tripwire)). | the user, `workit init`, `workit setup`, `workit grant`, `workit upgrade` (update settings)    |
+| config  | `$XDG_CONFIG_HOME/workit`, else `~/.config/workit`         | `%APPDATA%\workit`                         | `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME` | `workspaces.json` (grants, roles; the hooks' write gate denies an agent's write to it, [configuration](../guides/configuration.md)), `config.json`, `vcs.json`, `youtrack.json`, `rules/`. Grants are read only from the default dir under the account home, which comes from the OS account record on every runtime and never from `HOME`, `USERPROFILE` or an override (D15, `core/account-home.ts`); a bench world (`WORKIT_EVAL_WORLD`, [eval.md](eval.md)) shows and writes grants in its own `config/` dir and counts only where no real workspace matches, and only for its endpoint and lowered grants. A bench run gets a world `HOME`, so none of these resolve to yours ([isolation](eval.md#isolation-and-the-tripwire)). | the user, `workit init`, `workit setup`, `workit grant`, `workit upgrade` (update settings)    |
 | state   | `$XDG_STATE_HOME/workit`, else `~/.local/state/workit`     | `%LOCALAPPDATA%\workit`                    | `WORKIT_STATE_DIR`, `XDG_STATE_HOME`                | `logs/`, `node.json` (the hook Node), `heavy-commands.json`, `hook-runs/`, `hook-skips.jsonl`, `leases/`, `issued/`, `approvals/` (approval requests and the user's grants, which agents may not write), `model-limits.json`, `notices/`, `ytrack-skill.json` (the ytrack skill dirs Workit installed, so uninstall removes only those), `upgrades/` (config backups), heartbeats, and managed worktrees in `worktrees/<repo>/<slice>` (`<repo>-<hash>` when another checkout with that name already has worktrees there); they hold uncommitted work, so they are state | the CLI, every host's hooks and launchers, `workit setup` and `workit upgrade`               |
 | data    | `$XDG_DATA_HOME/workit`, else `~/.local/share/workit`      | `%LOCALAPPDATA%\workit` (install in `install\`) | `WORKIT_INSTALL_ROOT` (the install root), `XDG_DATA_HOME` | the owned CLI install: `versions/`, `current`, `bin/workit`                                                                                                                                   | `workit upgrade --cli`; the dev share-clone installers (`install-*.sh`, via `workit_data_dir`; `install-cursor-plugin.sh` embeds `DATA_DIR_SH` because it runs piped) |
 | cache   | `$XDG_CACHE_HOME/workit`, else `~/.cache/workit`           | `%LOCALAPPDATA%\workit\cache`              | `XDG_CACHE_HOME`                                    | reserved: regenerable files. Worktrees from before the move stay in `~/.cache/workit-wt` (never moved; cleanup and `workit gc --worktrees --apply` sweep merged ones and remove the dir once empty; `workit doctor` `legacy_dirs` reports it as info until then) | nothing yet                                                                                   |
@@ -33,6 +33,27 @@ everything.
 
 `APPDATA` and `LOCALAPPDATA` fall back to `<profile>\AppData\Roaming` and
 `<profile>\AppData\Local` when unset.
+
+### The account home (grants)
+
+Grants, and the user's own ssh and git config that the remote checks trust,
+are read under the account home (`packages/workit-core/src/core/account-home.ts`),
+which no variable a caller sets moves:
+
+| Runtime | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| node | `os.userInfo()` (`getpwuid_r`) | `os.userInfo()` (`getpwuid_r`) | `os.userInfo()` (the process token's profile dir) |
+| bun | the `/etc/passwd` line of the uid (`#` lines skipped), else `/usr/bin/getent passwd <uid>` | the `/etc/passwd` line of the uid, else `/usr/bin/id -P` | `C:\Windows\System32\whoami.exe /user` for the SID, then `reg.exe query` of its `ProfileList` `ProfileImagePath` |
+
+Bun's `os.userInfo()` follows `HOME` (`USERPROFILE` on Windows), so bun uses
+the record directly. An account absent from `/etc/passwd` (LDAP, NIS, sssd)
+goes through `getent`, with a 3 s timeout. Each program runs by absolute path
+with a fixed env (none, or `SystemRoot` on Windows) and no shell. On Windows
+only `%SystemDrive%` and `%SystemRoot%` in `ProfileImagePath` are expanded,
+from `C:\Windows`; any other variable fails closed. When no record answers
+there is no account home: no grants are read (the D4 defaults apply), `grant
+set` refuses, and no fallback path is built. The bench's isolation self-check
+judges the `workit` first on the run's `PATH` ([eval.md](eval.md#isolation-and-the-tripwire)).
 
 ### Shell completion files
 

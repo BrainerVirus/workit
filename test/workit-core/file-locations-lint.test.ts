@@ -114,11 +114,6 @@ const ALLOW: Allow[] = [
     why: "Codex's home",
   },
   {
-    file: ["packages/workit-core/src/autonomy.ts", "packages/workit-core/src/core/remotes.ts"],
-    match: "return os.homedir();",
-    why: "the account home fallback (grants D15, ssh_config); the grants dir itself comes from configDir",
-  },
-  {
     file: "packages/workit-core/src/autonomy.ts",
     match: "WORKIT_CONFIG_DIR or XDG_CONFIG_HOME",
     why: "a message naming the overrides",
