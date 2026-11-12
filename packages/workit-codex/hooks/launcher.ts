@@ -5,8 +5,10 @@
 //   - PostToolUse: only a raw `git commit` is recorded;
 //   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
 //     a shell command that names git, gh, glab, a state registry or the
-//     config file, or one that may be heavy (the heavy-command gate's cheap
-//     pre-check) can be denied or nudged;
+//     config file, runs a script (a shell, an interpreter, `.` or a path),
+//     writes through a glob, an env var or a hard link (the registry guard),
+//     or may be heavy (the heavy-command gate's cheap pre-check) can be
+//     denied or nudged;
 //   - unless a standing-order revision this agent has not seen is pending,
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads

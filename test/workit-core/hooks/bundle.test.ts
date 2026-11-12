@@ -179,9 +179,10 @@ test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab
     );
     expect(built.status, built.stderr).toBe(0);
     const entry = path.join(out, "dist", "workit-hook.js");
-    // A Workit ceiling, not a Codex limit: 2026-11-12 (#818) the entry sends
-    // writes naming the approvals or state dir to the runtime, 4,116 B measured, plus 256 B.
-    expect(statSync(entry).size).toBeLessThanOrEqual(4_372);
+    // A Workit ceiling, not a Codex limit: 2026-11-12 (#818) the entry sends the
+    // registry guard writes that name the approvals or state dir, a glob, an env var
+    // or a hard link, and script runs; 4,669 B measured, plus 256 B.
+    expect(statSync(entry).size).toBeLessThanOrEqual(4_925);
     const repo = path.join(out, "repo");
     spawnSync("git", ["init", "-q", "-b", "feature/x", repo]);
     mkdirSync(path.join(repo, ".git", "workit"));
