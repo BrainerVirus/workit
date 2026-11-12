@@ -50,7 +50,7 @@ const OPENCODE_ROWS = ["__drizzle_migrations", "migration", "kv", "credential"];
  * kv and migration rows: no session, message or project from the real home,
  * and no write ever reaches the real db. Static API keys, so a copy holds.
  */
-export const seedOpencodeDb = (home: string, realHome: string): boolean => {
+const seedOpencodeDb = (home: string, realHome: string): boolean => {
   const real = path.join(realHome, ".local", "share", "opencode", "opencode.db");
   if (!existsSync(real)) return false;
   const into = path.join(home, ".local", "share", "opencode", "opencode.db");
