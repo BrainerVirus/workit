@@ -4,7 +4,15 @@
 // whose write gate denies it (#818).
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -107,4 +115,34 @@ test("Given a script file that writes a guarded file, When a shell, an interpret
   ])
     expect(run(command).permissionDecision, command).toBe("deny");
   expect(run("bash ok.sh").permissionDecision).toBeUndefined();
+}, 60_000);
+
+test("Given a neutral name that is a symlink to a guarded file or dir, a script run after a wrapper, a quoted marker or an env-var glob, When the hook runs, Then the runtime denies the write", () => {
+  const grants = path.join(state, "approvals", "grants");
+  writeFileSync(path.join(grants, "b.json"), "{}");
+  symlinkSync(path.join(grants, "b.json"), path.join(root, "presym.json"));
+  symlinkSync(grants, path.join(root, "presymdir"), "junction");
+  writeFileSync(
+    path.join(root, "wrapped.sh"),
+    `#!/bin/sh\necho '{}' > ${path.join(grants, "b.json").replaceAll("\\\\", "/")}\n`,
+    { mode: 0o755 },
+  );
+  for (const command of [
+    "echo '{}' > presym.json",
+    "cp x.json presymdir/new.json",
+    "time ./wrapped.sh",
+    "exec ./wrapped.sh",
+    "sudo ./wrapped.sh",
+    "if ./wrapped.sh; then :; fi",
+    `echo '{}' > ~/.local/state/work""it/appro""vals/grants/a.json`,
+  ])
+    expect(run(command).permissionDecision, command).toBe("deny");
+  const wc = path.join(base, "wcd");
+  mkdirSync(wc, { recursive: true });
+  for (const command of [
+    "truncate -s 0 $WORKIT_CONFIG_DIR/work*.json",
+    "chmod 600 $WORKIT_CONFIG_DIR/w*.json",
+  ])
+    expect(run(command, { WORKIT_CONFIG_DIR: wc }).permissionDecision, command).toBe("deny");
+  expect(run("echo ok > plain-2.txt").permissionDecision).toBeUndefined();
 }, 60_000);

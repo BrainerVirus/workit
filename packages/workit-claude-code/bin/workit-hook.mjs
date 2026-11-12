@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -297,11 +298,13 @@ const hasTaskStore = (cwd) => {
 const mentionsGuarded = (text) => {
   const flat = (value) => value.replaceAll("\\", "/").toLowerCase();
   const tail = (dir) => flat(dir).split("/").slice(-2).join("/");
-  return (
-    /issued|approvals|workspaces\.json/i.test(text) ||
-    [tail(stateDir()), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some((part) =>
-      flat(text).includes(part),
-    )
+  // As written, and with quotes and backslashes gone (`work""spaces.json`, `work\spaces.json`).
+  return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
+    (all) =>
+      /issued|approvals|workspaces\.json/.test(all) ||
+      [tail(stateDir()), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some(
+        (part) => all.includes(part),
+      ),
   );
 };
 
@@ -314,17 +317,26 @@ const GUARD_SPELLING =
 // A script run the registry guard reads at hook time (write-gate.ts): a shell,
 // an interpreter or `.`/`source` given a file, or a command spelled as a path.
 const SCRIPT_RUNNERS = new Set("node bash sh zsh dash ksh ruby perl php source".split(" "));
-const RUNS_PATH = /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:\.\s+\S|\.{0,2}\/)/u;
+// After a wrapper or keyword too (`time ./x.sh`, `sudo ./x.sh`, `if ./x.sh`).
+const RUNS_PATH =
+  /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/u;
 
-/** Does a word name a regular file with more than one link (maybe a guarded file's second name)? */
+/**
+ * Does a word name a guarded file by a second name: a regular file with more
+ * than one link, or a path whose real path (through a symlink, or a symlinked
+ * dir for a file not made yet) names a guarded dir?
+ */
 const hardLinkNamed = (words, cwd) =>
   words.slice(0, 64).some((word) => {
+    if (typeof word !== "string" || !word) return false;
+    const file = path.resolve(cwd, word);
     try {
-      const stat =
-        typeof word === "string" &&
-        word &&
-        statSync(path.resolve(cwd, word), { throwIfNoEntry: false });
-      return Boolean(stat?.isFile() && stat.nlink > 1);
+      const stat = statSync(file, { throwIfNoEntry: false });
+      if (stat?.isFile() && stat.nlink > 1) return true;
+      const real = stat
+        ? realpathSync(file)
+        : path.join(realpathSync(path.dirname(file)), path.basename(file));
+      return real !== file && mentionsGuarded(real);
     } catch {
       return false;
     }

@@ -13,7 +13,7 @@
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,10 +91,11 @@ const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
  */
 const guarded = (text: string): boolean => {
   const flat = (s: string) => s.replaceAll("\\", "/").toLowerCase();
-  const all = flat(text);
-  return (
-    /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(all) ||
-    [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env))))
+  // As written, and with quotes and backslashes gone (`work""spaces.json`).
+  return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
+    (all) =>
+      /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(all) ||
+      [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env)))),
   );
 };
 
@@ -141,20 +142,28 @@ const quietEvent = (): string | null => {
     // A write that may name a guarded file only once the runtime expands it (a
     // glob, a variable) or through a second name (a word naming a hard link).
     const writes =
-      /[>]|\b(?:cp|mv|rm|tee|ln|install|rsync|touch|sed|dd|curl|tar)\b/.test(text) &&
+      /[>]|\b(?:cp|mv|rm|rmdir|mkdir|tee|ln|install|rsync|touch|sed|perl|dd|curl|wget|tar|unzip|truncate|patch|chmod|chown|chgrp|chattr|find|xargs|unlink|g?awk|shred|mkfifo)\b/.test(
+        text,
+      ) &&
       (/(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/.test(
         text,
       ) ||
         text.split(/[\s;&|()<>`'"]+/).some((word) => {
+          // A hard link, or a symlink (or symlinked dir) whose real path is guarded.
+          const file = path.resolve(String(value.cwd), word);
           try {
-            const stat = statSync(path.resolve(String(value.cwd), word));
-            return stat.isFile() && stat.nlink > 1;
+            const stat = statSync(file, { throwIfNoEntry: false });
+            if (stat?.isFile() && stat.nlink > 1) return true;
+            const real = stat
+              ? realpathSync(file)
+              : path.join(realpathSync(path.dirname(file)), path.basename(file));
+            return real !== file && guarded(real);
           } catch {
             return false;
           }
         }));
     // A script run the registry guard reads at hook time: a shell, an interpreter, `.` or a path.
-    return /\b(?:git|gh|glab|node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:\.\s+\S|\.{0,2}\/)/.test(
+    return /\b(?:git|gh|glab|node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/.test(
       text,
     ) ||
       guarded(text) ||

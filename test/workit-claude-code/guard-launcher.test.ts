@@ -4,7 +4,15 @@
 // with no task store (#818).
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PLUGIN_DIR, runHook } from "./plugin-helpers";
@@ -103,4 +111,31 @@ test("Given a script file that writes a guarded file, When a shell, an interpret
   ])
     expect(decide("Bash", { command })?.permissionDecision, command).toBe("deny");
   expect(decide("Bash", { command: "bash ok.sh" })?.permissionDecision).toBeUndefined();
+}, 60_000);
+
+test("Given a neutral name that is a symlink to a guarded file or dir, a script run after a wrapper, a quoted marker or an env-var glob, When the hook runs, Then the runtime denies the write", () => {
+  const grants = path.join(state, "approvals", "grants");
+  writeFileSync(path.join(grants, "b.json"), "{}");
+  symlinkSync(path.join(grants, "b.json"), path.join(repo, "presym.json"));
+  symlinkSync(grants, path.join(repo, "presymdir"), "junction");
+  writeFileSync(
+    path.join(repo, "wrapped.sh"),
+    `#!/bin/sh\necho '{}' > ${path.join(grants, "b.json").replaceAll("\\\\", "/")}\n`,
+    { mode: 0o755 },
+  );
+  for (const command of [
+    "echo '{}' > presym.json",
+    "cp x.json presymdir/new.json",
+    "time ./wrapped.sh",
+    "exec ./wrapped.sh",
+    "sudo ./wrapped.sh",
+    "if ./wrapped.sh; then :; fi",
+    `echo '{}' > ~/.local/state/work""it/appro""vals/grants/a.json`,
+  ])
+    expect(decide("Bash", { command: command })?.permissionDecision, command).toBe("deny");
+  expect(
+    decide("Write", { file_path: path.join(repo, "presym.json"), content: "{}" })
+      ?.permissionDecision,
+  ).toBe("deny");
+  expect(decide("Bash", { command: "echo ok > plain-2.txt" })).toBeUndefined();
 }, 60_000);
