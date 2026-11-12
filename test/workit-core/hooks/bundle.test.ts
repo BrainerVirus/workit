@@ -72,8 +72,9 @@ const HOOK_ENTRIES = [
 // Cursor 516,096 B, Codex 515,708 B, so the ceiling was core run plus 2,000 B. Its fix round
 // (verdict mwdbd0km: --help, aliases, nesting, faithful mapping, respellings) adds 2,996 B:
 // core run 530,043 B, Claude Code 523,506 B, Cursor 519,092 B, Codex 518,704 B; the ceiling is
-// core run plus 2,000 B.
-const BUDGET = 532_043;
+// core run plus 2,000 B. The one-approval `workit youtrack update` routing (chained writes on one
+// issue joined into one call) adds 3,974 B: core run 536,017 B; the ceiling is core run plus 2,000 B.
+const BUDGET = 538_017;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
