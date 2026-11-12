@@ -211,7 +211,7 @@ export const childEnv = (world: World, binDir: string): Record<string, string> =
   isolateHome(env, world.home);
   env.WORKIT_STATE_DIR = world.state;
   env.WORKIT_CONFIG_DIR = world.config;
-  if (world.workspace) env[EVAL_WORLD_ENV] = world.dir;
+  env[EVAL_WORLD_ENV] = world.dir;
   // The fake ytrack leads PATH; a real one further down would still find no
   // login (its config dir is the world's) and no reachable host.
   for (const key of Object.keys(env)) if (key.startsWith("YTRACK_")) delete env[key];

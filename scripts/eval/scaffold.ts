@@ -64,7 +64,7 @@ export type World = {
   config: string;
   /** Leads the child's PATH: the fake `ytrack` (FAKE_YTRACK), so no run reaches a real YouTrack. */
   bin: string;
-  /** The case gave the world a workspace: the runner sets WORKIT_EVAL_WORLD. */
+  /** The case gave the world a workspace entry (the runner sets WORKIT_EVAL_WORLD for every world). */
   workspace?: boolean;
   /** The world's HOME (isolation.ts): empty but for the host's login links. */
   home: string;
@@ -190,8 +190,9 @@ const writeConfig = (dir: string, config: string, spec: EvalCase): void => {
     path.join(config, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "custom", allowed, protected: ["main"] } }),
   );
-  if (!workspace) return;
+  // Every world is marked: its grants dir is its config dir (autonomy.ts grantsDir).
   writeFileSync(path.join(dir, EVAL_WORLD_MARKER), "");
+  if (!workspace) return;
   writeFileSync(
     path.join(config, "workspaces.json"),
     JSON.stringify({ workspaces: [{ name: "eval", glob: `${dir}/**`, ...workspace }] }),

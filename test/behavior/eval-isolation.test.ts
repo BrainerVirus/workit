@@ -24,7 +24,15 @@ import {
 import os from "node:os";
 import path from "node:path";
 import type { EvalCase } from "@/scripts/eval/cases";
-import { carryBack, linkLogin, permitsShellWrappers, selfCheck } from "@/scripts/eval/isolation";
+import { accountHome } from "@/packages/workit-core/src/core/account-home";
+import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
+import {
+  carryBack,
+  grantShowProof,
+  linkLogin,
+  permitsShellWrappers,
+  selfCheck,
+} from "@/scripts/eval/isolation";
 import { opencodeEnv } from "@/scripts/eval/opencode";
 import { childEnv, main } from "@/scripts/eval/run";
 import { makeWorld, type World } from "@/scripts/eval/scaffold";
@@ -78,8 +86,8 @@ afterEach(() => {
 
 type HostEnv = { host: "claude-code" | "opencode"; world: World; env: Record<string, string> };
 
-const worldFor = (host: HostEnv["host"]): HostEnv => {
-  const world = makeWorld(SPEC);
+const worldFor = (host: HostEnv["host"], spec: EvalCase = SPEC): HostEnv => {
+  const world = makeWorld(spec);
   worlds.push(world);
   linkLogin(world.home, host, realHome);
   const env = childEnv(world, CLI_BIN);
@@ -104,9 +112,62 @@ test.each(["claude-code", "opencode"] as const)(
     expect(check.ok).toBe(true);
     for (const key of ["home", "config", "grants", "state", "approvals", "issued"])
       expect(check.paths[key]?.startsWith(`${world.dir}/`)).toBe(true);
-    expect(check.paths.grants).toBe(path.join(world.home, ".config", "workit"));
-    for (const verb of ["dir config", "dir state", "grant show --json", "workspace list --json"])
+    expect(check.paths.grants).toBe(path.join(world.dir, "config"));
+    for (const verb of [
+      "dir config",
+      "dir state",
+      "grant show --all --json",
+      "workspace list --json",
+    ])
       expect(Object.keys(check.paths).some((key) => key.startsWith(`workit ${verb} #`))).toBe(true);
+    // The file the spawned CLI lists grants from and `grant set` writes.
+    expect(Object.values(check.paths)).toContain(path.join(world.dir, "config", "workspaces.json"));
+  },
+);
+
+test.each(["claude-code", "opencode"] as const)(
+  "Given a %s world with a scaffold workspace, When the self-check runs, Then the spawned CLI resolves the world's entry and the world passes",
+  (host) => {
+    const { world, env } = worldFor(host, {
+      ...SPEC,
+      scaffold: { workspace: { defaultEndpoint: "pr" } },
+    });
+    const check = selfCheck(world.dir, world.repo, env, [
+      process.execPath,
+      RUN,
+      "--isolation-probe",
+    ]);
+
+    expect(check.outside).toEqual([]);
+    expect(check.ok).toBe(true);
+    // Only a bench world entry sets `world`: the CLI resolved this one.
+    expect(Object.entries(check.paths)).toContainEqual(["workit grant show --json #1", world.dir]);
+  },
+);
+
+const answer = (data: Record<string, unknown>) => JSON.stringify({ ok: true, code: "ok", data });
+
+test.each([
+  ["the world's entry", { workspace: "eval", accountConfigured: false, world: "/w" }, null],
+  ["no workspace", { workspace: null, accountConfigured: false }, null],
+  ["a real workspace", { workspace: "personal", accountConfigured: false }, "is not this world's"],
+  [
+    "a real entry named like the world's",
+    { workspace: "eval", accountConfigured: false },
+    "is not",
+  ],
+  ["a forge account", { workspace: "eval", accountConfigured: true, world: "/w" }, "forge account"],
+  ["another world", { workspace: "eval", accountConfigured: false, world: "/x" }, "is not"],
+] as const)("Given grant show answers for %s, Then grantShowProof says %p", (_name, data, want) => {
+  const wrong = grantShowProof(answer(data), "/w");
+  if (want === null) expect(wrong).toBeNull();
+  else expect(wrong).toContain(want);
+});
+
+test.each(["", "ok", '{"ok":false,"error":"x"}', "/w/config", '{"ok":true}'])(
+  "Given grant show prints %p, Then it is no proof",
+  (text) => {
+    expect(grantShowProof(text, "/w")).toContain("not a Workit answer");
   },
 );
 
@@ -168,6 +229,9 @@ test("Given the host refreshed its credential by rename over the link, Then the 
   expect(statSync(real).mode & 0o777).toBe(0o600);
 });
 
+const read = (file: string): string | null =>
+  existsSync(file) ? readFileSync(file, "utf8") : null;
+
 const WRITER = `#!/bin/sh
 # Every way #822's agent could reach the config: $HOME, ~, python, the CLI.
 mkdir -p "$HOME/.config/workit" ~/.local/state/workit/approvals/grants ~/.local/state/workit/issued
@@ -188,6 +252,8 @@ test.each(["claude-code", "opencode"] as const)(
   (host) => {
     const { world, env } = worldFor(host);
     const snapshot = armSnapshot(guardFor(realHome));
+    const accountFile = path.join(workitConfigDir({ HOME: accountHome() }), "workspaces.json");
+    const accountBefore = read(accountFile);
     const script = path.join(root, "writer.sh");
     writeFileSync(script, WRITER);
     chmodSync(script, 0o755);
@@ -196,6 +262,8 @@ test.each(["claude-code", "opencode"] as const)(
 
     expect(run.status).toBe(0);
     expect(checkSnapshot(snapshot)).toBeNull();
+    // The account's own file (the OS record's home, which HOME does not move) is never written.
+    expect(read(accountFile)).toBe(accountBefore);
     expect(
       readFileSync(path.join(world.home, ".config", "workit", "workspaces.json"), "utf8"),
     ).toContain("merge");
@@ -294,8 +362,20 @@ test("Given a case that permits python3 and a world whose workit prints no path,
   expect(stored.grade.failures[0].detail).toContain("no path in its output");
 });
 
+/** A `workit` answer for every verb: a grant view of no workspace and the world's grants file. */
+const PASSING = String.raw`{\"ok\":true,\"data\":{\"workspace\":null,\"accountConfigured\":false,\"path\":\"$WORKIT_CONFIG_DIR/workspaces.json\"}}`;
+
+test("Given a case that permits python3 and a world whose workit resolves the real account's grants, When run, Then the host never starts", async () => {
+  const real = String.raw`{\"ok\":true,\"data\":{\"workspace\":\"personal\",\"accountConfigured\":true,\"path\":\"$WORKIT_CONFIG_DIR/workspaces.json\"}}`;
+  const { starts } = await bench(real, []);
+  expect(starts).toBe(0);
+  const stored = JSON.parse(readFileSync(path.join(root, "results", "haiku", "wrap.json"), "utf8"));
+  expect(stored.refused).toBe("isolation");
+  expect(stored.grade.failures[0].detail).toContain("workit grant show --json: failed:");
+});
+
 test("Given a case that permits python3 and a world that passes the self-check, When run, Then the host starts", async () => {
-  const { exit, starts } = await bench("$WORKIT_CONFIG_DIR", []);
+  const { exit, starts } = await bench(PASSING, []);
   expect(starts).toBe(1);
   expect(exit).toBe(0);
 });
@@ -303,7 +383,7 @@ test("Given a case that permits python3 and a world that passes the self-check, 
 // Decision 2, test 8
 test("Given write confinement is off, When a case permits python3, Then it is refused as isolation; with --unconfined it runs and the summary says confinement is off", async () => {
   const refused: string[] = [];
-  const first = await bench("$WORKIT_CONFIG_DIR", refused, ["--confine", "off"]);
+  const first = await bench(PASSING, refused, ["--confine", "off"]);
   expect(first.starts).toBe(0);
   const stored = JSON.parse(readFileSync(path.join(root, "results", "haiku", "wrap.json"), "utf8"));
   expect(stored.refused).toBe("isolation");
@@ -311,7 +391,7 @@ test("Given write confinement is off, When a case permits python3, Then it is re
   expect(refused.join("\n")).toContain("write confinement: off (--confine off)");
 
   const ran: string[] = [];
-  const second = await bench("$WORKIT_CONFIG_DIR", ran, ["--confine", "off", "--unconfined"]);
+  const second = await bench(PASSING, ran, ["--confine", "off", "--unconfined"]);
   expect(second.starts).toBe(1);
   expect(ran.join("\n")).toMatch(
     /graded; write confinement off \(--confine off\): detection only/u,

@@ -2,11 +2,12 @@
 // HOME, so `~`, $HOME and every Workit path derived from them (config, grants,
 // state, approvals/, the issued registry) resolve inside the world. Only the
 // host's own login is linked in from the real home, so `claude` and `opencode`
-// still sign in. The grants dir follows the account home, which Workit reads
-// from the OS record (autonomy.ts grantsHome): under bun, which runs the CLI
-// and hooks from this checkout and the OpenCode binary, that record follows
-// $HOME too. The self-check proves it per world before a case that permits a
-// shell wrapper starts; the tripwire (tripwire.ts) catches the rest.
+// still sign in. Grants are the exception HOME cannot move (the account home
+// comes from the OS record, core/account-home.ts): every world is marked and
+// named by WORKIT_EVAL_WORLD, so its grants dir is its own config dir and its
+// entry only lowers the account's (autonomy.ts grantsDir, benchWorld). The
+// self-check proves it per world before a case that permits a shell wrapper
+// starts; the tripwire (tripwire.ts) catches the rest.
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
 import {
@@ -25,6 +26,7 @@ import { approvalsDir } from "../../packages/workit-core/src/approvals/store";
 import { grantsDir } from "../../packages/workit-core/src/autonomy";
 import { resolveConfigDir } from "../../packages/workit-core/src/core/config";
 import { resolveStateDir } from "../../packages/workit-core/src/core/logger";
+import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
 import type { EvalCase } from "./cases";
 
 export type Host = "claude-code" | "opencode";
@@ -160,23 +162,54 @@ const inside = (dir: string, file: string): boolean => {
 /** Whatever `workit` the agent's PATH finds. */
 const AGENT_CLI = "workit";
 
+/**
+ * Why `workit grant show --json` in the world's repo is not the world's own
+ * answer, or null: it must be a Workit answer with no forge account, for no
+ * workspace or for the world's entry (`world` set to this world, which only a
+ * bench world entry sets). A real workspace or account fails.
+ */
+export const grantShowProof = (text: string, world: string): string | null => {
+  let data: { workspace?: unknown; accountConfigured?: unknown; world?: unknown } | undefined;
+  try {
+    const answer = JSON.parse(text) as { ok?: unknown; data?: typeof data };
+    data = answer.ok === true ? answer.data : undefined;
+  } catch {
+    // Not JSON: judged below.
+  }
+  if (!data || typeof data !== "object") return `not a Workit answer: ${text.trim().slice(0, 200)}`;
+  if (data.accountConfigured !== false)
+    return "it names a forge account: the real account's grants";
+  if (data.workspace === null) return null;
+  return typeof data.world === "string" && path.resolve(data.world) === path.resolve(world)
+    ? null
+    : `workspace ${JSON.stringify(data.workspace)} is not this world's entry: the real account's grants`;
+};
+
+/**
+ * The CLI verbs the probe runs. `grant show --all --json` prints the file
+ * grants are listed from and `grant set` writes (autonomy.ts grantsDir);
+ * `grant show --json` is judged by grantShowProof, then by its paths.
+ */
+const PROBE_VERBS = [
+  ["dir", "config"],
+  ["dir", "state"],
+  ["grant", "show", "--all", "--json"],
+  ["grant", "show", "--json"],
+  ["workspace", "list", "--json"],
+];
+
 /** The `--isolation-probe` side: the real resolvers in this process, and what the `workit` on PATH says. */
 export const probe = (): Record<string, string> => {
+  const world = process.env[EVAL_WORLD_ENV] ?? "";
   const paths: Record<string, string> = {
     home: os.homedir(),
-    accountHome: os.userInfo().homedir,
     config: resolveConfigDir(),
     grants: grantsDir(),
     state: resolveStateDir(),
     approvals: approvalsDir(),
     issued: path.join(resolveStateDir(), "issued"),
   };
-  for (const args of [
-    ["dir", "config"],
-    ["dir", "state"],
-    ["grant", "show", "--json"],
-    ["workspace", "list", "--json"],
-  ]) {
+  for (const args of PROBE_VERBS) {
     const run = spawnSync(AGENT_CLI, args, { encoding: "utf8", timeout: 30_000 });
     const text = `${run.stdout ?? ""}${run.stderr ?? ""}`;
     const label = `workit ${args.join(" ")}`;
@@ -185,8 +218,12 @@ export const probe = (): Record<string, string> => {
       continue;
     }
     const found = text.match(/(?<![\w.~-])\/[\w.@+~-]+(?:\/[\w.@+~*-]+)*/gu) ?? [];
-    // Each verb prints the dir or file it resolved: no path is no proof.
-    if (found.length === 0) paths[label] = `no path in its output: ${text.trim().slice(0, 200)}`;
+    const shown = args.length === 3 && args[1] === "show";
+    const wrong = shown ? grantShowProof(run.stdout ?? "", world) : null;
+    if (wrong) paths[label] = `failed: ${wrong}`;
+    // Every other verb prints the dir or file it resolved: no path is no proof.
+    else if (found.length === 0 && !shown)
+      paths[label] = `no path in its output: ${text.trim().slice(0, 200)}`;
     for (const [index, each] of found.entries()) paths[`${label} #${index + 1}`] = each;
   }
   return paths;
