@@ -514,6 +514,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A raw `ytrack` write an agent runs (`ytrack issue comment`, `ytrack work-item add`, `ytrack issue create|update|delete`, `ytrack api` with a write method) now asks first by default on every host: it is denied with the exact `workit youtrack …` call to run, or asked natively on Claude Code when no Workit verb covers it. Wrapped and respelled forms get the same answer; reads are untouched; `youtrack.writes: auto` turns it off
 - Every YouTrack write Workit makes now asks first by default: the YouTrack tool calls (`ytrackWrite`) and the PR backlink go through the same approval as `workit youtrack note|time`, so one yes covers either path; `youtrack.writes: auto` keeps the old behaviour
 - A YouTrack backlink that was pending when `workit pr create` ran is posted once after the yes, on the next `workit pr create` or `workit pr edit`, and never twice
 - `workit stack land` checks every PR before merging any: when one would be refused (verdict, required check, another author, base, mergeability), nothing merges and every refused PR is named; `--max N` lands just the first N. `--allow-failing` applies only to the PRs whose head runs that check.
