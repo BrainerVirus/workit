@@ -1378,8 +1378,12 @@ const segmentTargets = (
       // What a literal producer pipes in: `echo`/`printf` words (a printf format
       // too, which may be the script itself), `cat` of a heredoc or files.
       const maker = feeder ? commandWords(feeder.words) : [];
+      const [format = "", ...values] = maker.slice(1);
+      let filled = 0;
+      // printf's `%s`, `%b`, `%q` take its arguments in order; the arguments count on their own too.
+      const printed = format.replace(/%[sbq]/g, () => values[filled++] ?? "");
       const piped: string[] = /^(?:echo|printf)$/.test(maker[0] ?? "")
-        ? [maker.slice(1).join("\n").replaceAll("\\n", "\n")]
+        ? [[maker[0] === "printf" ? printed : format, ...values].join("\n").replaceAll("\\n", "\n")]
         : maker[0] === "cat"
           ? [...(feeder?.stdin ?? []), ...operands(maker.slice(1)).flatMap(read)]
           : [];

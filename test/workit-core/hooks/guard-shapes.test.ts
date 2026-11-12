@@ -696,3 +696,16 @@ test("G interpreter code that takes the bare config dir or a registry root, W an
   ])
     expect(decide(command).kind, command).toBe("none");
 });
+
+test("G a printf format with %s, %b or %q directives piped into a shell, W an argument fills the guarded path, T denied", () => {
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    for (const command of [
+      `printf 'echo x > %s' '${f}' | sh`,
+      `printf 'cp %s %b\\n' x.json '${f}' | bash`,
+      `printf 'echo x > %q' '${f}' | sh`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  expect(decide(`printf 'echo x > %s' out.txt | sh`).kind).toBe("none");
+});
