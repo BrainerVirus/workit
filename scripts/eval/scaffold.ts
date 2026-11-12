@@ -17,7 +17,7 @@ import type { EvalCase } from "./cases";
 import { identityAlive, runnerIdentity } from "./tripwire";
 
 /** The marker a world carries: the identity of the runner that made it. */
-export const RUNNER_MARKER = ".runner";
+const RUNNER_MARKER = ".runner";
 const WORLD_MAX_AGE_MS = 24 * 3600 * 1000;
 
 /**
