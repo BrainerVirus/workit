@@ -51,7 +51,14 @@ const parse = (argv: readonly string[]): Args | string => {
 export async function run(argv: string[], io: Io): Promise<number> {
   if (argv.every((arg) => arg === "--json")) {
     const agent = agentSessionVar(io.env);
-    if (agent) return refuseAgent(io, agent, "workit uninstall");
+    // The picker names no host: hand over the named form the user's request maps to.
+    if (agent)
+      return refuseAgent(
+        io,
+        agent,
+        "workit uninstall --hosts=<hosts> --yes",
+        " (`--hosts=<hosts> --preview` shows what it removes)",
+      );
     if (io.json)
       return emit(
         io,
@@ -72,10 +79,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
  * An agent never removes Workit: one line handing the user the command for
  * their own terminal, before any plan is read or printed.
  */
-const refuseAgent = (io: Io, agent: string, command: string): number => {
+const refuseAgent = (io: Io, agent: string, command: string, hint = ""): number => {
   const refusal = fail(
     "blocked",
-    `an agent cannot run this (${agent} is set): hand the user \`${command}\` to run in their own terminal`,
+    `an agent cannot run this (${agent} is set): hand the user \`${command}\` to run in their own terminal${hint}`,
     { unblock: command },
   );
   if (io.json) return emit(io, refusal);

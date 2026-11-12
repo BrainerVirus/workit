@@ -88,9 +88,9 @@ for (const [host, marker] of Object.entries(MARKERS)) {
     const { code, envelope } = await run(uninstall, [], scratch, marker);
     expect(code).toBe(3);
     expect(envelope.error).toBe(
-      `an agent cannot run this (${marker} is set): hand the user \`workit uninstall\` to run in their own terminal`,
+      `an agent cannot run this (${marker} is set): hand the user \`workit uninstall --hosts=<hosts> --yes\` to run in their own terminal (\`--hosts=<hosts> --preview\` shows what it removes)`,
     );
-    expect(envelope.unblock).toBe("workit uninstall");
+    expect(envelope.unblock).toBe("workit uninstall --hosts=<hosts> --yes");
   });
 }
 
