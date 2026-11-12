@@ -184,6 +184,67 @@ test("Given a run, Then the stored transcript names no temp path, project slug o
   });
 });
 
+test("Given a run that read the real Workit config, Then the stored transcript keeps only the path class and length", async () => {
+  const realConfig = path.join(root, "home", ".config", "workit", "workspaces.json");
+  const content = '{"workspaces":[{"name":"acme-example"}]}';
+  writeFileSync(
+    path.join(root, "out.jsonl"),
+    [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: realConfig } }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "r1", content }] },
+        tool_use_result: { type: "text", file: { filePath: realConfig, content } },
+      }),
+      CLEAN,
+    ].join("\n"),
+  );
+  await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
+  const stored = readFileSync(
+    path.join(root, "results", "haiku", "a-smoke.transcript.jsonl"),
+    "utf8",
+  );
+  expect(stored).not.toContain("acme-example");
+  expect(stored).toContain('"file_path":"~/.config/workit/workspaces.json"');
+  expect(stored).toContain(
+    `"content":"<outside-world file: real config, ${content.length} bytes>"`,
+  );
+});
+
+test("Given a transcript still holding a value of the real Workit config, When run, Then it fails as private_content naming the kind and nothing is written", async () => {
+  mkdirSync(path.join(root, "home", ".config", "workit"), { recursive: true });
+  writeFileSync(
+    path.join(root, "home", ".config", "workit", "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "acme-example", glob: "~/code/acme-example/**" }] }),
+  );
+  writeFileSync(
+    path.join(root, "out.jsonl"),
+    [
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Your workspace acme-example is set." }] },
+      }),
+      CLEAN,
+    ].join("\n"),
+  );
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  const said = printed.join("\n");
+  expect(said).toContain("private_content: ");
+  expect(said).toContain("a-smoke.transcript.jsonl holds real Workit config value");
+  expect(said).toContain("nothing was written");
+  expect(said).not.toContain("acme-example");
+  const written = existsSync(path.join(root, "results", "haiku"))
+    ? readdirSync(path.join(root, "results", "haiku"))
+    : [];
+  expect(written.filter((name) => name.startsWith("a-smoke"))).toEqual([]);
+});
+
 test("Given cached results for case+model+version, When run again, Then no model call is made", async () => {
   await main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet([]));
   expect(calls()).toHaveLength(3);

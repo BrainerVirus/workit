@@ -343,7 +343,9 @@ test("Given the host rewrote the real workspaces.json, Then the bench stops with
   expect(file(ws)).toBe(EVIL);
   const stored = JSON.parse(readFileSync(result("a-case"), "utf8"));
   expect(stored.grade.failures[0].rule).toBe("outside_write");
-  expect(stored.grade.failures[0].detail).toContain(ws);
+  // The stored result names the real file under `~`, never the account's home.
+  expect(stored.grade.failures[0].detail).toContain(`~${ws.slice(home.length)}`);
+  expect(stored.grade.failures[0].detail).not.toContain(home);
   expect(existsSync(result("b-case"))).toBe(false);
   expect(out).toContain(`  ${ws}`);
   expect(out).toMatch(/was: file, mode 600/u);

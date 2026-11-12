@@ -13,7 +13,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
@@ -44,6 +43,17 @@ import {
   selfCheck,
   type Host,
 } from "./isolation";
+import {
+  accountOf,
+  committedLeaks,
+  privateKinds,
+  privateStrings,
+  scrubAccount,
+  scrubOutsideReads,
+  workitVocabulary,
+  type Account,
+  type PrivateSet,
+} from "./privacy";
 import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
 import {
   accountHome,
@@ -122,7 +132,7 @@ type RunResult = {
   usage: Usage;
   grade: Grade;
   /** The world failed the isolation self-check: the case never started, and the run failed. */
-  refused?: "isolation";
+  refused?: "isolation" | "private_content";
   /** The run changed a real watched file (tripwire.ts): reported, nothing put back, and the run failed. */
   outsideWrite?: Trip;
 };
@@ -182,14 +192,30 @@ const writeJson = (file: string, value: unknown): void => {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 };
 
-/** Path- and user-free transcripts: the world (also as Claude's project slug), the checkout, HOME and the login name become placeholders. */
-const sanitize = (text: string, world: World): string =>
-  text
-    .replaceAll(world.dir, "<world>")
-    .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
-    .replaceAll(REPO, "<workit>")
-    .replaceAll(os.homedir(), "~")
-    .replaceAll(os.userInfo().username, "<user>");
+/**
+ * Path- and user-free transcripts: the world (also as Claude's project slug),
+ * the checkout, the account's home, user and host become placeholders, and a
+ * read outside the world keeps only its path class and length (privacy.ts).
+ */
+const sanitize = (text: string, world: World, account: Account): string =>
+  scrubOutsideReads(
+    scrubAccount(
+      text
+        .replaceAll(world.dir, "<world>")
+        .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
+        .replaceAll(REPO, "<workit>"),
+      account,
+    ),
+  );
+
+/** Why `files` (name to text) may not be written: each file with the kinds of private string it holds. */
+const privateContent = (files: Record<string, string>, set: PrivateSet): string | null => {
+  const found = Object.entries(files).flatMap(([name, text]) => {
+    const kinds = [...privateKinds(text, set), ...committedLeaks(text)];
+    return kinds.length > 0 ? [`${name} holds ${[...new Set(kinds)].join(", ")}`] : [];
+  });
+  return found.length > 0 ? `${found.join("; ")}; nothing was written` : null;
+};
 
 /** The subscription login only: no API key, no parent session, Workit isolated to the world. */
 export const childEnv = (world: World, binDir: string): Record<string, string> => {
@@ -455,6 +481,10 @@ type Options = {
   carried: string[];
   /** The account home the host's login is linked from. */
   realHome: string;
+  /** The account's home, user and host spellings the transcripts lose. */
+  account: Account;
+  /** The real account's private strings, in memory only: a result holding one is not written. */
+  privateSet: PrivateSet;
 };
 
 type Attempt = {
@@ -532,7 +562,7 @@ const attempt = async (
   clearInterval(watch);
   killGroup(child);
   opts.child = null;
-  return { transcript: sanitize(stdout, world), stderr, exit, timedOut };
+  return { transcript: sanitize(stdout, world, opts.account), stderr, exit, timedOut };
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
@@ -605,7 +635,6 @@ const runCase = async (
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
   const transcript = path.join(dir, `${base}.transcript.jsonl`);
-  writeFileSync(transcript, run.transcript);
   const skipped =
     trip === null &&
     !run.refused &&
@@ -636,7 +665,27 @@ const runCase = async (
     ...(run.refused ? { refused: "isolation" as const } : {}),
     ...(trip ? { outsideWrite: trip } : {}),
   };
-  writeJson(path.join(dir, `${base}.json`), result);
+  const json = path.join(dir, `${base}.json`);
+  // A trip names the real files it found changed: under `~`, as in the transcript.
+  const stored = JSON.parse(scrubAccount(JSON.stringify(result), opts.account)) as RunResult;
+  const leaked = privateContent(
+    {
+      [path.relative(REPO, transcript) || transcript]: run.transcript,
+      [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
+    },
+    opts.privateSet,
+  );
+  if (leaked) {
+    result.grade = {
+      ...result.grade,
+      pass: false,
+      failures: [{ rule: "private_content", detail: leaked }, ...result.grade.failures],
+    };
+    result.refused = "private_content";
+    return { result, trip };
+  }
+  writeFileSync(transcript, run.transcript);
+  writeJson(json, stored);
   return { result, trip };
 };
 
@@ -875,6 +924,12 @@ export const main = async (
       ? guardFor(path.resolve(values["real-home"]))
       : guardFor(accountHome(), process.env),
     realHome: path.resolve(values["real-home"] ?? accountHome()),
+    account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
+    privateSet: privateStrings(
+      path.resolve(values["real-home"] ?? accountHome()),
+      workitVocabulary(REPO),
+      values["real-home"] ? undefined : process.env,
+    ),
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),
