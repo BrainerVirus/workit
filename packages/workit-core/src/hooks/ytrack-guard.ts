@@ -180,7 +180,7 @@ export const ytrackGate = (
     };
   const why = `A raw ytrack write posts to YouTrack without the user's yes (#780).`;
   const run = calls.length
-    ? ` Run ${calls.join(", then ")} instead: it asks the user first; when it refuses with approval_needed, run the \`workit approve <id>\` it names as its own call.`
+    ? ` Run ${calls.join(", then ")} instead: it asks the user first. When it answers approval_needed, run exactly the \`workit approve <id>\` it names, now, with nothing around it (no 2>&1, pipe or echo), so the host asks the user; then rerun the workit call once.`
     : "";
   const user = bare.length
     ? ` No workit youtrack verb covers ${bare.join(", ")}: ask the user, and if they agree they run it in their own terminal.`
