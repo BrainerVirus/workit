@@ -57,6 +57,28 @@ post nothing; `auto`, which the user sets, keeps the `WORKIT_YT_WRITE=1` gate
 (`youTrackWriteGate`). A pending PR backlink posts once on the next
 `workit pr create` or `workit pr edit` of that PR. Both run in the CLI, so
 every host behaves the same; only how the host shows the ask differs.
+
+A raw `ytrack` write an agent runs itself asks first too (`hooks/ytrack-guard.ts`,
+wired in `hooks/handle.ts`): `issue comment|create|edit|update|delete|command`
+(not `--dry-run`), `work-item add|edit|update|delete`, and `ytrack api` with
+`-X`/`--method` POST, PUT, PATCH or DELETE (`-XPOST`, `=` forms) or a body
+(`-f`, `-F`, `--field`, `--input`) without a read method. It finds them through
+`raw-git.ts` `commandLines` (chains, pipes, `cd`, env prefixes, wrappers,
+`bash -c`, eval, heredoc-fed shells, substitutions, variables) plus
+`workit check -- …`, `npx`/`bunx`/`pnpm dlx` and full-path spellings; the npx
+`workit` form is normalised first (#816), so it gets the same answer. A write
+`workit youtrack note|time|meeting|create` covers is denied naming that exact
+call; reads, `ytrack api` GET and `youtrack.writes: auto` pass.
+
+- **Claude Code:** N. The launcher sends any command whose text names `ytrack`
+  to the runtime; a write no verb covers gets `permissionDecision: "ask"`.
+- **Codex:** N. The hook entry sends it to the runtime; a write no verb covers
+  is denied, handing the command to the user's terminal (the hook cannot ask).
+- **Cursor:** N. `beforeShellExecution` denies the same way.
+- **Pi:** N. The `tool_call` hook blocks the same way (it drops an ask).
+- **OpenCode:** N. `permission.evaluate` (`v2/permissions.ts`) denies the same
+  way, after `execute.before` rewrote an npx workit call.
+
 `findYtrack` ignores `PATH` when `WORKIT_NO_YTRACK=1`,
 which the test preload sets, so a test never spawns a developer's real ytrack:
 tests use a stub `ytrack` on a `PATH` in an env they build.
@@ -341,12 +363,38 @@ Hook run limits (#433):
 Issued-registry guard limits (#292):
 
 - It judges agent tool calls only; the CLI and the `SubagentStart` hook write
-  the registries unhindered. It reads edit paths and recognizable shell writes
-  (redirects, `tee`, `cp`, `mv`, `rm`, `sed -i`, `touch`, through `cd`, `~`,
-  `$HOME` and `workit check -- bash -c`). An interpreter (`python -c`), an
-  unexpanded other variable or a command substitution is not seen (L, every
-  host), so this is a guard against hand edits, not a sandbox (#329 moves the
-  state into the DB).
+  the registries unhindered. It is a guard against hand edits, not a sandbox
+  (#329 moves the state into the DB). What survived the second attempt (ledger
+  decision mwcyh6ku, #818), every host:
+  - (L) A program that computes the guarded path at run time (a script that
+    joins or decodes it, a binary, a package script, `make`) is not seen by any
+    hook on any host; only the host OS sandbox stops it.
+  - (L) A shell script produced at run time (`bash -c "$(…)"`, `curl … | bash`)
+    or changed after the hook read it is not judged.
+  - (L) A path the command computes at run time (`$(…)`, a `read` variable,
+    text piped from a program that is not a literal `echo`, `printf` or `cat`)
+    is not resolved.
+  - (L) A variable whose value in the command shell differs from the hook's own
+    environment is not resolved.
+  - (L) A hard link made and written inside a program Workit cannot read is not
+    seen.
+  - (L) A command handed to a scheduler (`at`, `crontab`, `systemd-run`) is not
+    judged.
+  - (L) An archive extracted into a directory above a guarded path is judged by
+    its destination only; its contents are not read.
+  - (L) On Claude Code in a repo with no task store, and on Codex, the launcher
+    sends a command to the runtime by its text; a write whose text hides every
+    marker is not seen.
+  - (L) Tool calls no Workit hook is registered for are not guarded: MCP server
+    tools, Claude Code Monitor, Codex `write_stdin`, Cursor edits that name no
+    path, tools from other Pi extensions; and every hook fails open when its
+    runtime cannot load (#820).
+  - (L, #815) Any proof kept in files the agent's OS user can write is
+    forgeable by that user.
+  - (P) Removing a directory above a guarded path is not denied; it can only
+    remove grants or approvals.
+  - (P) An inline interpreter that only reads a guarded file is denied: use
+    `workit grant show`, `cat` or `jq`.
 - The Claude Code launcher's fast path and the Codex launcher's quiet path
   send any edit or shell command whose text names `issued` or the state dir to
   the runtime, so a checkout with no task store is guarded too. Windows paths
