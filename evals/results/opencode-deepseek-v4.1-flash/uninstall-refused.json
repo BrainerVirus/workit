@@ -9,14 +9,14 @@
       "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
     }
   ],
-  "workitVersion": "workit-dev-v1.9.1+58702e830e",
-  "key": "711f93c1cee33a2b",
-  "date": "2026-11-12T13:24:24.926Z",
+  "workitVersion": "workit-dev-v1.9.1+457b8a4c68",
+  "key": "a655572cd4fc56a5",
+  "date": "2026-11-12T14:08:52.829Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 16188,
+    "durationMs": 21811,
     "costUsd": 0,
     "stop": "stop"
   },

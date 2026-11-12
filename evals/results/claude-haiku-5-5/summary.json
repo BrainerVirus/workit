@@ -236,8 +236,8 @@
       "passes": 3,
       "failures": [],
       "turns": 9,
-      "costUsd": 0.00909032,
-      "workitVersion": "workit-dev-v1.9.1+52a86369ba",
+      "costUsd": 0.00902515,
+      "workitVersion": "workit-dev-v1.9.1+d1ccd77392",
       "graderVersion": 1,
       "runs": [
         {
@@ -245,8 +245,8 @@
           "pass": true,
           "failures": [],
           "turns": 3,
-          "costUsd": 0.0030268700000000005,
-          "workitVersion": "workit-dev-v1.9.1+52a86369ba",
+          "costUsd": 0.0029933,
+          "workitVersion": "workit-dev-v1.9.1+d1ccd77392",
           "graderVersion": 1
         },
         {
@@ -254,8 +254,8 @@
           "pass": true,
           "failures": [],
           "turns": 3,
-          "costUsd": 0.0030347800000000004,
-          "workitVersion": "workit-dev-v1.9.1+52a86369ba",
+          "costUsd": 0.00302576,
+          "workitVersion": "workit-dev-v1.9.1+d1ccd77392",
           "graderVersion": 1
         },
         {
@@ -263,8 +263,8 @@
           "pass": true,
           "failures": [],
           "turns": 3,
-          "costUsd": 0.0030286700000000002,
-          "workitVersion": "workit-dev-v1.9.1+52a86369ba",
+          "costUsd": 0.00300609,
+          "workitVersion": "workit-dev-v1.9.1+d1ccd77392",
           "graderVersion": 1
         }
       ]
