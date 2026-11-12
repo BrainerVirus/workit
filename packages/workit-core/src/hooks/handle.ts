@@ -9,7 +9,8 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
-import { cdWorkitSplit, cwdRewrite, verbFirst } from "./cwd-normalize";
+import { cdWorkitSplit, cwdRewrite, npxWorkit, verbFirst } from "./cwd-normalize";
+import { workitOnPath } from "../core/heavy";
 import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
@@ -289,14 +290,20 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const rewrites = usable(descriptor.shellPolicy.rewrite);
       if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
       const lease = plan.kind === "rewrite" && rewrites ? plan : null;
+      // `npx @workit-dev/cli …` runs as the `workit …` on PATH, which the allow rules match.
+      const npx = lease ? null : npxWorkit(event.command);
+      const npxCall = npx && workitOnPath() ? npx : null;
+      if (npxCall && !rewrites && canDeny)
+        return { kind: "deny", reason: `Run \`${npxCall}\`: workit is on PATH.`, unblock: npxCall };
       // `cd <dir> && workit …` becomes `workit <verb> --cwd <dir> …` (issue
       // #388), and `workit --cwd <dir> <verb>` puts the verb first (#297), so
       // Workit's enumerated allow rules match. A workit command is never heavy
       // itself, so the lease plan wins when set.
       const cwdCommand =
-        !lease && rewrites && input.host === "claude_code"
+        (rewrites && npxCall) ||
+        (!lease && rewrites && input.host === "claude_code"
           ? (cwdRewrite(event.command) ?? verbFirst(event.command))
-          : null;
+          : null);
       const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.

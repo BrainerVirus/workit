@@ -88,6 +88,27 @@ export const verbFirst = (command: string): string | null => {
   return `${lead} ${verb}${globals}${command.slice(whole.length)}`;
 };
 
+// `[cd <dir> && ]npx [-y|--yes] @workit-dev/cli[@ver]` at the head of the command.
+const NPX = new RegExp(
+  String.raw`^(\s*(?:cd\s+(?:${DIR})\s*&&\s*)?)npx(?:\s+(?:-y|--yes))*\s+@workit-dev\/cli(?:@[\w.-]+)?(?=\s|$)`,
+  "u",
+);
+
+/**
+ * `npx -y @workit-dev/cli …` as the `workit …` call it runs (then through
+ * cwdRewrite / verbFirst), for a caller that saw `workit` on PATH; null for
+ * any other shape, or when a package-runner call would remain.
+ */
+export const npxWorkit = (command: string): string | null => {
+  const match = NPX.exec(command);
+  if (!match) return null;
+  const call = `${match[1]}workit${command.slice(match[0].length)}`;
+  const left = segmentsOf(call).some(
+    (s) => s.unanalyzable || s.words.some((w) => /^(npx|@workit-dev\/cli(@\S*)?)$/u.test(w)),
+  );
+  return left ? null : (cwdRewrite(call) ?? verbFirst(call) ?? call);
+};
+
 /** `git [-C dir] <verb> …` that changes the repo; a listing (`branch`, `tag -l`, `stash list`) does not. */
 const MUTATING_GIT =
   /^git( -\S+| -[Cc] \S+)* (commit|push|add|switch|checkout|merge|rebase|reset|cherry-pick|revert|branch .*(-[dDmM]|--delete|--move)\b|tag (?!-l\b|--list)|stash(?! (list|show)\b))/u;
