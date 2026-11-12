@@ -13,13 +13,13 @@
  * 3, a rule that cannot be added, restrict_self) exits 126 without running
  * the command.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, openSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 /** This launcher, for the runner to put in front of a host. */
-export const CONFINE = import.meta.path;
+const CONFINE = import.meta.path;
 
 /** Landlock syscalls: the generic table, the same on x86_64 and arm64. */
 const SYS = { create: 444n, add: 445n, restrict: 446n };
@@ -118,9 +118,14 @@ const launch = async (argv: string[]): Promise<number> => {
   }
   await confineSelf(rw, files);
   const [cmd = "", ...args] = argv.slice(split + 1);
-  const run = spawnSync(cmd, args, { stdio: "inherit" });
-  if (run.error) throw new Refused(`cannot run ${cmd}: ${run.error.message}`);
-  return run.status ?? 128 + (os.constants.signals[run.signal ?? "SIGKILL"] ?? 9);
+  // Async, so the host's lifetime is bounded by the runner, which kills this whole group.
+  return new Promise<number>((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: "inherit" });
+    child.on("error", (error) => reject(new Refused(`cannot run ${cmd}: ${error.message}`)));
+    child.on("close", (code, signal) =>
+      resolve(code ?? 128 + (os.constants.signals[signal ?? "SIGKILL"] ?? 9)),
+    );
+  });
 };
 
 // ---------------------------------------------------------------- the runner's side
