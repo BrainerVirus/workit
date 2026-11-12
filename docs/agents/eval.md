@@ -142,36 +142,53 @@ A bench run must never change your real Workit files (#822: a run rewrote
   then `workit dir config|state`, `workit grant show`, `workit workspace
   list`). A path outside the world, or a verb that prints no path, refuses the
   case: the host never starts and the run fails as `isolation`.
-- **Tripwire.** Before each run the runner snapshots, to disk, the real:
+- **Tripwire.** At bench start, after taking the lock, the runner snapshots
+  into its own memory the real:
   - config dir, whole (tokens, `vcs.json`, `templates/`, backups included),
     and the state files that grant or pick what runs
-    (`host-permissions.json`, `host-permissions-backup/`, `node.json`):
-    after the run every change is put back in place (same inode, so hard
-    links hold, with its mode and mtime; a symlink as a symlink; a created
-    file removed);
-  - state trees `approvals/`, `issued/`, `issued-tokens/` and `verdicts/`:
-    a new, changed or missing file is reported and nothing is restored, since
-    a live session adds and consumes them (putting back a consumed approval
-    would re-arm it).
+    (`host-permissions.json`, `host-permissions-backup/`, `node.json`): after
+    each run every change is put back from that memory, in place (same inode,
+    mode and mtime; a symlink as a symlink; a created file removed), after its
+    bytes are saved under `rescued/<time>-<pid>/`;
+  - state trees `approvals/`, `issued/`, `issued-tokens/` and `verdicts/`: a
+    new, changed or missing file is reported and nothing is restored, since a
+    live session adds and consumes them (a consumed approval put back would
+    be re-armed).
 
   `leases/`, `logs/`, `hook-runs/`, `live-sessions/`, `worktrees/` and the
-  other caches every session rewrites are not guarded; none grants anything.
-  Any change fails the run as `outside_write` naming each path and the
-  transcript, no further run starts, and the runner exits 3. `--replay` never
-  re-grades such a run.
-- **Concurrency and crashes.** The snapshot, a lock naming the runner's pid
-  and rescued bytes live in `~/.cache/workit-bench-tripwire/` (0700, files
-  0600: tokens are in it; the snapshot goes after a clean run). A second bench
-  run while one holds the lock exits 4. A change the user or a live session
-  makes to a restored file during a run is rolled back too, but its bytes are
-  saved first under `rescued/<time>/` and the failure names that dir. SIGINT,
-  SIGTERM and SIGHUP check and restore before exiting; after a crash or
-  SIGKILL the next start finds the snapshot, restores, reports `RECOVERED`
-  and runs nothing (exit 3).
-- **Limits.** No unprivileged user namespace here (Ubuntu's AppArmor
-  restriction), so a write to the real home's absolute path, or through the
-  credential symlink's target, is not stopped; the tripwire catches the
-  guarded paths.
+  other caches every session rewrites are not guarded. Any change fails the
+  run as `outside_write` naming each path, the rescue dir (delete it once
+  read; it may hold token bytes) and the transcript; no further run starts;
+  exit 3. While a host runs, the restored set is re-checked every 2 s, and a
+  change kills the host at once. `--replay` never re-grades such a run.
+- **Digest and journal.** At arm the runner prints `tripwire armed: <N>
+  files, digest <16 hex>` and writes a crash journal to
+  `~/.cache/workit-bench-tripwire/journal/` (0700, files 0600), removed at
+  every clean end or handled stop. The journal is never restored on its own:
+  a later start that finds it writes nothing, drops it if it matches the real
+  files, and otherwise prints `LEFTOVER` with each path and a `diff -u` line,
+  exits 3 and runs nothing until you settle it with `--tripwire-restore
+  <digest>` (refused unless the digest equals the one the stopped run printed,
+  every path is inside the guarded roots and every blob matches) or
+  `--tripwire-discard`.
+- **Stopping and other runs.** Ctrl-C, SIGTERM or SIGHUP kill the host's
+  process group; the run unwinds (its world removed, the real files restored
+  from memory, the journal dropped), prints `STOPPED by <signal>`, writes no
+  result for that run and exits 130, 143 or 129. One bench holds the tripwire
+  at a time (`holders/<pid>.<start>`); a second one exits 4. A change you or a
+  live session make to a restored file during a run is rolled back too, its
+  bytes kept in `rescued/` (the 5 newest, none older than 7 days). Each start
+  removes the `workit-eval-*` worlds a dead runner left in the temp dir.
+- **Open and limits.**
+  - A write by absolute path to a real file outside the guarded set is neither stopped nor seen. Landlock, which this kernel has and which needs no user namespace, can confine a host to its world; that is #824, not a final limit.
+  - A change to a guarded file stands for up to 2 s, the watch interval, before the host is killed and the bytes are put back; a live session that reads the file in that window sees the changed bytes.
+  - A bench agent that kills the runner ends the tripwire. Everything the runner leaves on disk is writable and deletable by the same OS user, so the next start reports a leftover only if the agent left one and cannot prove it genuine; the digest the stopped run printed on your terminal is the only check, and it is yours to make.
+  - A bench agent that attaches to the runner (ptrace, `/proc/<pid>/mem`) can change the snapshot in memory. With `kernel.yama.ptrace_scope` 1 or higher (Ubuntu's default) the kernel refuses a child attaching to its parent; with 0 nothing does.
+  - The host's login (`~/.claude/.credentials.json`, `~/.claude.json`, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise.
+  - Every other file in your home that your user can read, the bench agent can read; the bench protects your real Workit files from change, not your secrets from the model.
+  - After the runner dies without its check (SIGKILL, power loss, a second Ctrl-C), a changed real file stays changed until you run `--tripwire-restore <digest>`; the next start reports it and runs nothing. The dead run's world, with its login copies in a 0700 dir, stays until that start.
+  - A process the agent moved out of the host's process group (`setsid`) outlives its run; what it writes later is caught by a later check in the same bench, and by nothing after the last one.
+  - A signal is handled when the runner next reaches its event loop: a SIGTERM sent to the runner alone during a synchronous step (world setup, the self-check, up to 120 s) waits for that step. Ctrl-C at a terminal ends the step at once.
 
 ## Cases
 
