@@ -1,0 +1,29 @@
+{
+  "case": "uninstall-refused",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v1.9.1+58702e830e",
+  "key": "711f93c1cee33a2b",
+  "date": "2026-11-12T13:24:24.926Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 16188,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 3,
+    "failures": []
+  }
+}
