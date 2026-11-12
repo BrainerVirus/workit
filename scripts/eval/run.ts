@@ -11,7 +11,7 @@
  *   bun scripts/eval/run.ts --replay [--host opencode] [--model haiku] [--check]
  */
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -31,7 +31,9 @@ import {
   confined,
   confinementLine,
   binaryOf,
-  linkedPackages,
+  linkedEnv,
+  linkedReads,
+  linkedRoots,
   readableDirs,
   toolchainDir,
   writableDirs,
@@ -53,14 +55,22 @@ import {
   committedLeaks,
   envCredentials,
   hostCredentials,
-  privateKinds,
+  privateHits,
   privateStrings,
   PrivateSetUnreadable,
+  refusalKinds,
+  rootSpellings,
+  safeRoots,
   scrubAccount,
   scrubOutsideReads,
+  scrubRoots,
+  shownHit,
+  unscrubRoots,
   workitVocabulary,
   type Account,
+  type Origins,
   type PrivateSet,
+  type Root,
   type Scrub,
 } from "./privacy";
 import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
@@ -68,6 +78,7 @@ import {
   accountHome,
   acquire,
   armSnapshot,
+  adopt,
   checkSnapshot,
   dropJournal,
   ensureBase,
@@ -79,8 +90,9 @@ import {
   TripwireRefused,
   tripDetail,
   tripwireBase,
-  watchedChanged,
+  watchedFindings,
   writeJournal,
+  type Finding,
   type Guard,
   type Snapshot,
   type Trip,
@@ -144,7 +156,26 @@ type RunResult = {
   refused?: "isolation" | "private_content";
   /** The run changed a real watched file (tripwire.ts): reported, nothing put back, and the run failed. */
   outsideWrite?: Trip;
+  /**
+   * Guarded paths another process changed while this run was under way
+   * (write confinement was on, so not this bench): reported, the run went
+   * on. Each path under `~`, with what happened to it.
+   */
+  outsideChanges?: OutsideChange[];
 };
+
+type OutsideChange = { path: string; change: "created" | "changed" | "removed" };
+
+/** A trip as the result file records it: each path and what happened to it, no content. */
+const changesOf = (trip: Trip): OutsideChange[] => [
+  ...trip.findings.map((finding): OutsideChange => ({
+    path: finding.path,
+    change: finding.was === "absent" ? "created" : finding.now === "absent" ? "removed" : "changed",
+  })),
+  ...trip.reported.added.map((file): OutsideChange => ({ path: file, change: "created" })),
+  ...trip.reported.changed.map((file): OutsideChange => ({ path: file, change: "changed" })),
+  ...trip.reported.missing.map((file): OutsideChange => ({ path: file, change: "removed" })),
+];
 
 const out = (repo: string, ...args: string[]): string =>
   spawnSync("git", args, {
@@ -203,26 +234,67 @@ const writeJson = (file: string, value: unknown): void => {
 
 /**
  * Path- and user-free transcripts: the world (also as Claude's project slug),
- * the checkout, the account's home, user and host become placeholders, and a
- * tool result that may hold what a call read outside the world keeps only its
- * path class, its length and the grader's answers about it (privacy.ts).
+ * the checkout, the roots the bench links to or runs a toolchain from, the
+ * account's home, user and host become placeholders, and a tool result that
+ * may hold what a call read outside the world keeps only its path class, its
+ * length and the grader's answers about it (privacy.ts).
  */
-const sanitize = (text: string, world: World, account: Account, scrub: Scrub): string =>
-  scrubOutsideReads(
+const sanitize = (
+  text: string,
+  world: World,
+  account: Account,
+  roots: Root[],
+  scrub: Scrub,
+): { transcript: string; unrooted: string } => {
+  // The roots become placeholders last: the refusal looks at the text before
+  // they do (`unrooted`), so a placeholder never hides a private value that
+  // starts with a root or contains one (privacy.ts `refusalKinds`).
+  // The checkout goes first (the outside-read scrub reads `<workit>` as inside),
+  // as a whole path only: a sibling dir keeps its own name.
+  const unrooted = scrubOutsideReads(
     scrubAccount(
-      text
-        .replaceAll(world.dir, "<world>")
-        .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
-        .replaceAll(REPO, "<workit>"),
+      scrubRoots(
+        text
+          .replaceAll(world.dir, "<world>")
+          .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>"),
+        [CHECKOUT],
+      ),
       account,
     ),
     scrub,
   );
+  return { transcript: scrubRoots(unrooted, roots), unrooted };
+};
 
-/** Why `files` (name to text) may not be written: each file with the kinds of private string it holds. */
-const privateContent = (files: Record<string, string>, set: PrivateSet): string | null => {
+/** The checkout as a root: `<workit>` wherever a transcript names it as a whole path. */
+const CHECKOUT: Root = { dir: REPO, as: "<workit>" };
+
+/**
+ * What the refusal looks at and lets through: `text` with `<workit>` put
+ * back as the checkout's path (under `~` when the home holds it), and the
+ * roots that count as the bench's own, the checkout among them. A private
+ * value under the checkout, or beside any root, is then still seen.
+ */
+const refusalView = (text: string, opts: Options): { text: string; roots: Root[] } => {
+  const shown = { dir: scrubAccount(REPO, opts.account), as: CHECKOUT.as };
+  return {
+    text: unscrubRoots(text, [shown]),
+    roots: [...opts.roots, shown, ...rootSpellings([CHECKOUT], opts.account.homes)],
+  };
+};
+
+/**
+ * Why `files` (name to text) may not be written: each file with the kinds of
+ * private string it holds. The transcript's text is the one before its roots
+ * became placeholders: only a root named as a whole path is let through.
+ */
+const privateContent = (
+  files: Record<string, string>,
+  set: PrivateSet,
+  roots: Root[],
+): string | null => {
   const found = Object.entries(files).flatMap(([name, text]) => {
-    const kinds = [...privateKinds(text, set), ...committedLeaks(text)];
+    const kinds = [...refusalKinds(text, set, roots), ...committedLeaks(text)];
     return kinds.length > 0 ? [`${name} holds ${[...new Set(kinds)].join(", ")}`] : [];
   });
   return found.length > 0 ? `${found.join("; ")}; nothing was written` : null;
@@ -255,6 +327,8 @@ export const childEnv = (world: World, binDir: string): Record<string, string> =
   env.YTRACK_CONFIG_DIR = path.join(world.dir, "ytrack-config");
   env.YTRACK_HOST = "https://youtrack.invalid";
   env.PATH = [world.bin, binDir, env.PATH ?? ""].join(path.delimiter);
+  // In a linked worktree a package resolves as in a plain checkout (confine.ts `linkedEnv`).
+  Object.assign(env, linkedEnv(path.join(REPO, "node_modules"), env));
   return env;
 };
 
@@ -364,7 +438,7 @@ const prepare = (
     : `the case permits a shell wrapper and the world failed the isolation self-check: ${check.outside.join("; ")}`;
 };
 
-const REFUSED = { transcript: "", exit: null, timedOut: false, limit: null };
+const REFUSED = { transcript: "", unrooted: "", exit: null, timedOut: false, limit: null };
 
 /** What a host (or the probe) may write: its world, /dev, the temp dirs and its own credential file. */
 const writeRules = (opts: Options, world: World | null): { dirs: string[]; files: string[] } => ({
@@ -380,33 +454,138 @@ const writeRules = (opts: Options, world: World | null): { dirs: string[]; files
 /** The host config dirs a bench host never reads (its credential file is a write rule, readable). */
 const HOST_CONFIG = [".claude", ".claude.json", ".codex", ".cursor", ".config/opencode", ".pi"];
 
+/** The account's own paths: no dir that is one, holds one or lies above one is readable or a placeholder. */
+const guardedPaths = (opts: Options): string[] => [
+  opts.realHome,
+  ...opts.account.homes,
+  ...opts.guard.watched,
+  ...opts.guard.reported,
+  opts.tripwire,
+  ...HOST_CONFIG.map((rel) => path.join(opts.realHome, rel)),
+  path.join(opts.realHome, ".local", "share", "opencode"),
+];
+
 /**
  * What a host (or the probe) may read besides what it may write: the system
- * dirs, this Workit checkout and the toolchains it runs (bun, node, git, the
- * host binary), never the real home, its Workit dirs or host config dirs.
+ * dirs, this Workit checkout, the packages its `node_modules` link to with
+ * the store they sit in (a linked worktree's main checkout `node_modules`,
+ * never that checkout's source) and the toolchains it runs (bun, node, git,
+ * the host binary), never the real home, its Workit dirs or host config dirs.
  */
 const readRules = (opts: Options): string[] => {
   const pathEnv = process.env.PATH ?? "";
   return readableDirs(
     [
       REPO,
-      ...linkedPackages(path.join(REPO, "node_modules")),
+      ...linkedReads(path.join(REPO, "node_modules")),
       ...[process.execPath, "node", "git", opts.bin]
         .map((binary) => toolchainDir(binary, pathEnv))
         .filter((dir): dir is string => dir !== null),
       // The host binary itself, when its dir holds a protected path and is left out.
       ...[binaryOf(opts.bin, pathEnv)].filter((file): file is string => file !== null),
     ],
-    [
-      opts.realHome,
-      ...opts.guard.watched,
-      ...opts.guard.reported,
-      opts.tripwire,
-      ...HOST_CONFIG.map((rel) => path.join(opts.realHome, rel)),
-      path.join(opts.realHome, ".local", "share", "opencode"),
-    ],
+    guardedPaths(opts),
   );
 };
+
+/**
+ * The dirs the bench itself puts a host in besides its world and this
+ * checkout, each with the placeholder a transcript shows (privacy.ts `Root`):
+ * the checkouts or stores this checkout's `node_modules` link into (a linked
+ * worktree's main checkout, `<linked>`), and each toolchain's install dir the
+ * read rules allow under the real home (`<toolchain:bun>`), each in every
+ * spelling (`rootSpellings`). A path under one is the bench's own doing (an
+ * error raised inside a linked package names it, and the model repeats it),
+ * and it can spell a host project path or a workspace's name without holding
+ * either.
+ */
+const benchRoots = (opts: Options): Root[] => {
+  const roots = new Map<string, string>();
+  const outside = (dir: string): boolean => dir !== REPO && !dir.startsWith(`${REPO}${path.sep}`);
+  for (const dir of linkedRoots(path.join(REPO, "node_modules")).filter(outside))
+    roots.set(dir, roots.size === 0 ? "<linked>" : `<linked-${roots.size + 1}>`);
+  const pathEnv = process.env.PATH ?? "";
+  const readable = new Set(readRules(opts));
+  const toolchains: [string, string][] = [
+    ["bun", process.execPath],
+    ["node", "node"],
+    ["git", "git"],
+    [path.basename(opts.bin), opts.bin],
+  ];
+  for (const [name, binary] of toolchains) {
+    const dir = toolchainDir(binary, pathEnv);
+    if (
+      dir &&
+      readable.has(dir) &&
+      dir.startsWith(`${opts.realHome}${path.sep}`) &&
+      !roots.has(dir)
+    )
+      roots.set(dir, `<toolchain:${name}>`);
+  }
+  // Never the home, a dir above it or one that holds a guarded path (`safeRoots`).
+  return rootSpellings(
+    safeRoots(
+      [...roots].map(([dir, as]) => ({ dir, as })),
+      guardedPaths(opts),
+    ),
+    opts.account.homes,
+  );
+};
+
+/**
+ * Whether a change to a guarded path was made by another process: Landlock
+ * write confinement was applied to the run, the change is one its rights
+ * govern (content, kind, presence: `governed`, never a mode or link count),
+ * and the path is not one the run's ruleset let this bench write. Then the
+ * kernel refused this bench that write, so it did not make it.
+ */
+const notOurs = (
+  opts: Options,
+  confinedRun: boolean,
+  change: Pick<Finding, "path" | "governed">,
+): boolean => {
+  if (!confinedRun || !change.governed) return false;
+  const { dirs, files } = writeRules(opts, null);
+  const inside = (dir: string): boolean => {
+    const rel = path.relative(dir, change.path);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  return !files.includes(change.path) && !dirs.some(inside);
+};
+
+/** A trip split in two: what another process changed (`notOurs`), and what stops the bench as before. */
+const splitTrip = (
+  opts: Options,
+  confinedRun: boolean,
+  trip: Trip,
+): { other: Trip | null; own: Trip | null } => {
+  const mine = (file: string): boolean =>
+    !notOurs(opts, confinedRun, { path: file, governed: true });
+  const part = (keep: (ours: boolean) => boolean): Trip | null => {
+    const kept = {
+      findings: trip.findings.filter((finding) => keep(!notOurs(opts, confinedRun, finding))),
+      reported: {
+        added: trip.reported.added.filter((file) => keep(mine(file))),
+        changed: trip.reported.changed.filter((file) => keep(mine(file))),
+        missing: trip.reported.missing.filter((file) => keep(mine(file))),
+      },
+    };
+    const count =
+      kept.findings.length +
+      kept.reported.added.length +
+      kept.reported.changed.length +
+      kept.reported.missing.length;
+    return count === 0 ? null : kept;
+  };
+  return { other: part((ours) => !ours), own: part((ours) => ours) };
+};
+
+/** How many paths a trip names. */
+const tripCount = (trip: Trip): number =>
+  trip.findings.length +
+  trip.reported.added.length +
+  trip.reported.changed.length +
+  trip.reported.missing.length;
 
 /** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
 const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
@@ -517,6 +696,8 @@ type Options = {
   stop: string | null;
   /** A run changed real Workit files: the journal stays as the user's recovery copy. */
   keepJournal: boolean;
+  /** Changes to guarded paths another process made during this bench (`notOurs`): reported, never a stop. */
+  otherChanges: number;
   /** The host running now, in its own process group. */
   child: RunningHost | null;
   /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
@@ -535,16 +716,23 @@ type Options = {
    * one is not written.
    */
   reachable: PrivateSet;
+  /** Where each private string came from (a file and key path, never a value): a refusal's diagnosis names it. */
+  origins: Origins;
+  /** The salt of this bench start's hit ids: an id says "the same value", never which. */
+  salt: string;
   /** The login files the current run could not read (file and reason): its result is not written. */
   unreadLogins: string[];
+  /** The roots a transcript shows as placeholders besides the world and the checkout (`benchRoots`). */
+  roots: Root[];
 };
 
 /** Add the credentials and account ids the host's login under `home` holds now; an unreadable login file is remembered. */
 const noteCredentials = (opts: Options, home: string): void => {
+  const origins = { to: opts.origins, home: home === opts.realHome ? "~" : "<world>/home" };
   try {
-    for (const value of hostCredentials(home, opts.host))
+    for (const value of hostCredentials(home, opts.host, origins))
       opts.reachable.set(value, "host credential");
-    for (const value of accountIds(home, opts.host))
+    for (const value of accountIds(home, opts.host, origins))
       if (!opts.reachable.has(value)) opts.reachable.set(value, "account id");
   } catch (error) {
     if (!(error instanceof PrivateSetUnreadable)) throw error;
@@ -556,6 +744,8 @@ type Attempt = {
   /** The world failed the isolation self-check, so the case never started. */
   refused?: string;
   transcript: string;
+  /** The transcript before its roots became placeholders: what the refusal looks at, in memory only. */
+  unrooted: string;
   exit: number | null;
   timedOut: boolean;
   provider?: Provider;
@@ -613,8 +803,10 @@ const attempt = async (
     killGroup(child);
   }, opts.timeoutMs);
   const snapshot = opts.snapshot;
+  // A change this bench could not have made (see `notOurs`) does not end the run.
+  const ours = (finding: Finding): boolean => !notOurs(opts, opts.confinement.on, finding);
   const watch = setInterval(() => {
-    if (snapshot && watchedChanged(snapshot)) killGroup(child);
+    if (snapshot && watchedFindings(snapshot).some(ours)) killGroup(child);
   }, opts.watchMs);
   const exit = await new Promise<number | null>((resolve) => {
     child.on("error", (error) => {
@@ -630,7 +822,7 @@ const attempt = async (
   // Only Landlock read confinement says what the host could read.
   const bounded = opts.confinement.on && opts.confinement.reads.on;
   return {
-    transcript: sanitize(stdout, world, opts.account, { bounded, spec }),
+    ...sanitize(stdout, world, opts.account, opts.roots, { bounded, spec }),
     stderr,
     exit,
     timedOut,
@@ -639,7 +831,7 @@ const attempt = async (
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
 const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
-  let last: Attempt = { transcript: "", exit: null, timedOut: false, limit: null };
+  let last: Attempt = { ...REFUSED };
   while (opts.providers.length > 0) {
     const [provider] = opts.providers;
     const world = makeWorld(spec);
@@ -651,7 +843,8 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
         opts.pluginDir,
       );
       const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
-      for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
+      for (const value of envCredentials(env, opts.origins))
+        opts.reachable.set(value, "host credential");
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
       const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
@@ -673,7 +866,8 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
-    for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
+    for (const value of envCredentials(env, opts.origins))
+      opts.reachable.set(value, "host credential");
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
     return {
@@ -688,14 +882,18 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   }
 };
 
-/** One run: its result, or null when a signal stopped it (no result is written), and what the tripwire found. */
+/**
+ * One run: its result, or null when a signal stopped it (no result is
+ * written), what the tripwire found, and for a `private_content` refusal
+ * where each hit is (for the terminal only: it is in no stored file).
+ */
 const runCase = async (
   spec: EvalCase,
   key: string,
   version: string,
   opts: Options,
   index = 1,
-): Promise<{ result: RunResult | null; trip: Trip | null }> => {
+): Promise<{ result: RunResult | null; trip: Trip | null; hits?: string[]; other?: Trip }> => {
   const snapshot = opts.snapshot;
   if (!snapshot) throw new Error("the tripwire is not armed");
   // The value a refresh during the run rotates away.
@@ -705,13 +903,26 @@ const runCase = async (
   try {
     run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
   } catch (error) {
-    if (checkSnapshot(snapshot)) opts.keepJournal = true;
+    // Only a change this bench could have made keeps the journal; another
+    // process's is reported by the last check (`holdTripwire`).
+    const during = checkSnapshot(snapshot);
+    if (during && splitTrip(opts, opts.confinement.on, during).own) opts.keepJournal = true;
     throw error;
   }
-  const trip = checkSnapshot(snapshot);
+  const found = checkSnapshot(snapshot);
+  // The ruleset the run really had: the launcher exits 126 without the host when it cannot apply it.
+  const confinedRun = opts.confinement.on && !run.refused && run.exit !== 126;
+  const { other, own: trip } = found
+    ? splitTrip(opts, confinedRun, found)
+    : { other: null, own: null };
+  // Another process's change is reported and taken as the new state; it stops nothing.
+  if (other) {
+    adopt(snapshot, other);
+    opts.otherChanges += tripCount(other);
+  }
   // Nothing is put back: the journal stays as the user's recovery copy.
   if (trip) opts.keepJournal = true;
-  if (opts.stop) return { result: null, trip };
+  if (opts.stop) return { result: null, trip, ...(other ? { other } : {}) };
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
@@ -745,22 +956,30 @@ const runCase = async (
     grade: skipped || trip || run.refused ? { ...graded, pass: false } : graded,
     ...(run.refused ? { refused: "isolation" as const } : {}),
     ...(trip ? { outsideWrite: trip } : {}),
+    ...(other ? { outsideChanges: changesOf(other) } : {}),
   };
   const json = path.join(dir, `${base}.json`);
   // A trip names the real files it found changed: under `~`, as in the transcript.
-  const stored = JSON.parse(scrubAccount(JSON.stringify(result), opts.account)) as RunResult;
+  // Like the transcript, the result is looked at before its roots become placeholders.
+  const unrooted = scrubAccount(JSON.stringify(result), opts.account);
+  const stored = JSON.parse(scrubRoots(unrooted, opts.roots)) as RunResult;
   // The value a refresh during the run left: read again at write time.
   noteCredentials(opts, opts.realHome);
   const [unread] = opts.unreadLogins;
+  // What the refusal looks at: both files before their roots became placeholders,
+  // with the checkout's placeholder put back (`refusalView`).
+  const view = refusalView("", opts);
+  const files = {
+    [path.relative(REPO, transcript) || transcript]: refusalView(run.unrooted, opts).text,
+    [path.relative(REPO, json) || json]: refusalView(
+      `${JSON.stringify(JSON.parse(unrooted), null, 2)}\n`,
+      opts,
+    ).text,
+  };
+  const privates = new Map([...opts.privateSet, ...opts.reachable]);
   const leaked = unread
     ? `cannot read ${unread}, so the host's credential is unknown; nothing was written`
-    : privateContent(
-        {
-          [path.relative(REPO, transcript) || transcript]: run.transcript,
-          [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
-        },
-        new Map([...opts.privateSet, ...opts.reachable]),
-      );
+    : privateContent(files, privates, view.roots);
   if (leaked) {
     result.grade = {
       ...result.grade,
@@ -768,11 +987,14 @@ const runCase = async (
       failures: [{ rule: "private_content", detail: leaked }, ...result.grade.failures],
     };
     result.refused = "private_content";
-    return { result, trip };
+    const hits = unread
+      ? []
+      : privateHits(files, privates, opts.origins, opts.salt, view.roots).map(shownHit);
+    return { result, trip, hits, ...(other ? { other } : {}) };
   }
   writeFileSync(transcript, run.transcript);
   writeJson(json, stored);
-  return { result, trip };
+  return { result, trip, ...(other ? { other } : {}) };
 };
 
 type Row = {
@@ -785,6 +1007,8 @@ type Row = {
   costUsd: number | null;
   workitVersion: string;
   graderVersion: Grade["graderVersion"];
+  /** Guarded paths another process changed during the run(s): reported, never a failure. */
+  outsideChanges?: number;
 };
 
 const rowOf = (result: RunResult): Row => ({
@@ -797,6 +1021,7 @@ const rowOf = (result: RunResult): Row => ({
   costUsd: result.usage.costUsd,
   workitVersion: result.workitVersion,
   graderVersion: result.grade.graderVersion,
+  ...(result.outsideChanges ? { outsideChanges: result.outsideChanges.length } : {}),
 });
 
 /** One case's row: a single run as is; repeated runs pass on two thirds, each run listed. */
@@ -819,6 +1044,9 @@ const caseRow = (runs: RunResult[]): Row & { passes?: number; runs?: Row[] } => 
     costUsd: sum("costUsd"),
     workitVersion: first.workitVersion,
     graderVersion: first.grade.graderVersion,
+    ...(rows.some((row) => row.outsideChanges)
+      ? { outsideChanges: rows.reduce((total, row) => total + (row.outsideChanges ?? 0), 0) }
+      : {}),
     runs: rows,
   };
 };
@@ -841,6 +1069,9 @@ const writeSummary = (dir: string): void => {
     passed: rows.filter((row) => row.pass).length,
     total: rows.length,
     ...(skipped > 0 ? { skipped } : {}),
+    ...(rows.some((row) => row.outsideChanges)
+      ? { outsideChanges: rows.reduce((total, row) => total + (row.outsideChanges ?? 0), 0) }
+      : {}),
     cases: rows,
   });
   // Results are committed, so they must pass the repo's format check as written.
@@ -1000,16 +1231,20 @@ export const main = async (
   // A real account file that exists but cannot be read would leave the set short: nothing runs.
   let privateSet: PrivateSet = new Map();
   const reachable: PrivateSet = new Map();
+  const origins: Origins = new Map();
   if (!settling)
     try {
       privateSet = privateStrings(
         path.resolve(values["real-home"] ?? accountHome()),
         workitVocabulary(REPO),
         values["real-home"] ? undefined : process.env,
+        origins,
       );
       const home = path.resolve(values["real-home"] ?? accountHome());
-      for (const value of accountIds(home, host)) reachable.set(value, "account id");
-      for (const value of hostCredentials(home, host)) reachable.set(value, "host credential");
+      const from = { to: origins, home: "~" };
+      for (const value of accountIds(home, host, from)) reachable.set(value, "account id");
+      for (const value of hostCredentials(home, host, from))
+        reachable.set(value, "host credential");
     } catch (error) {
       if (!(error instanceof PrivateSetUnreadable)) throw error;
       print(`private set: cannot read ${error.message}; fix or remove it, nothing runs`);
@@ -1031,7 +1266,10 @@ export const main = async (
     account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
     privateSet,
     reachable,
+    origins,
+    salt: randomBytes(16).toString("hex"),
     unreadLogins: [],
+    roots: [],
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),
@@ -1040,9 +1278,11 @@ export const main = async (
     unconfined: values.unconfined,
     stop: null,
     keepJournal: false,
+    otherChanges: 0,
     child: null,
     carried: [],
   };
+  opts.roots = benchRoots(opts);
   return tripwired(
     opts,
     print,
@@ -1143,12 +1383,40 @@ const holdTripwire = async (
     };
     for (const signal of SIGNALS) process.on(signal, onSignal);
     try {
-      const code = await run();
+      let code = 1;
+      let thrown: { error: unknown } | null = null;
+      try {
+        code = await run();
+      } catch (error) {
+        thrown = { error };
+      }
+      // One more look before the journal goes: a change after the last run's
+      // check, or during a run that threw, is otherwise never seen. No host is
+      // alive, so the policy is the bench's: confined or not.
+      const late = opts.keepJournal ? null : checkSnapshot(opts.snapshot);
+      if (late) {
+        const { other, own } = splitTrip(opts, opts.confinement.on, late);
+        if (other) {
+          opts.otherChanges += tripCount(other);
+          print(otherChange(other, true));
+        }
+        if (own) {
+          opts.keepJournal = true;
+          code = 3;
+          print(
+            [
+              `STOPPED: real Workit files changed after the last run's check. Nothing was put back. ${tripDetail(own, "none (no run was under way)")}`,
+              ...findingLines(own.findings),
+            ].join("\n"),
+          );
+        }
+      }
       if (opts.keepJournal)
         print(
           `tripwire: real Workit files changed, so the journal stays at ${opts.tripwire}/journal as your recovery copy`,
         );
       else dropJournal(opts.tripwire);
+      if (thrown) throw thrown.error;
       return opts.stop ? (SIGNAL_EXIT[opts.stop] ?? 1) : code;
     } finally {
       for (const signal of SIGNALS) process.off(signal, onSignal);
@@ -1220,10 +1488,18 @@ const bench = async (
       // A signal is handled when the runner reaches its event loop: give it the chance.
       await new Promise((resolve) => setImmediate(resolve));
       if (opts.stop) return stopped(opts, null, print);
-      const { result, trip } = await runCase(spec, key, version, opts, run);
+      const { result, trip, hits, other } = await runCase(spec, key, version, opts, run);
+      if (other) print(otherChange(other));
       if (!result) return stopped(opts, trip, print);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
+      if (hits && hits.length > 0)
+        print(
+          [
+            "    where (shown here only, in no file; no value is shown; an id is salted per bench start: equal ids are one value):",
+            ...hits.map((hit) => `      ${hit}`),
+          ].join("\n"),
+        );
       if (opts.carried.length > 0)
         print(
           `    the host refreshed its login by rename; written back to ${opts.carried.splice(0).join(", ")}`,
@@ -1258,7 +1534,7 @@ const bench = async (
   }
   writeSummary(dir);
   print(
-    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}`,
+    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}${opts.otherChanges > 0 ? `; ${opts.otherChanges} outside change(s) by another process, reported above` : ""}`,
   );
   if (limited.length > 0)
     print(
@@ -1272,6 +1548,26 @@ const bench = async (
     print(`results: ${path.relative(REPO, dir) || dir}; commit them with the change they measure`);
   return failed > 0 || limited.length > 0 ? 1 : 0;
 };
+
+/**
+ * The report of a change another process made (`notOurs`): what changed and
+ * where the copy taken at arm is, for the terminal. The run goes on; `late`
+ * is the last check, after the last run, which no result records.
+ */
+const otherChange = (trip: Trip, late = false): string =>
+  [
+    `outside change, not this bench's: write confinement was on, so this change was made by another process; ${late ? "it came after the last run's check, so no result records it, and the next bench starts" : "the run goes on, its result is written and the next bench starts"}. ${[
+      trip.reported.added.length > 0 ? `added ${trip.reported.added.join(", ")}` : "",
+      trip.reported.changed.length > 0 ? `changed ${trip.reported.changed.join(", ")}` : "",
+      trip.reported.missing.length > 0 ? `missing ${trip.reported.missing.join(", ")}` : "",
+      trip.findings.length > 0
+        ? "nothing was put back; a file's copy from the bench start stays in the journal until this bench ends:"
+        : "",
+    ]
+      .filter(Boolean)
+      .join("; ")}`,
+    ...findingLines(trip.findings.map((finding) => ({ ...finding, commands: [] }))),
+  ].join("\n");
 
 /** A signal stopped the bench: say what the tripwire found; `tripwired` exits with the signal's code. */
 const stopped = (opts: Options, trip: Trip | null, print: (text: string) => void): number => {

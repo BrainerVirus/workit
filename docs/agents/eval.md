@@ -119,7 +119,29 @@ result file (`scripts/eval/privacy.ts`):
 - **Placeholders.** The world path (and Claude's project slug of it) becomes
   `<world>`, the checkout `<workit>`, the account's home in every absolute
   spelling (the OS record's, the runtime's, resolved) `~` (`<home>` as a
-  project slug), the login name `<user>` and the host name `<host>`.
+  project slug), the login name `<user>` and the host name `<host>`. The
+  dirs the bench itself puts a host in become placeholders too: a checkout or
+  store this checkout's `node_modules` link into is `<linked>` (a linked
+  worktree's packages are symlinks into the main checkout), and a
+  toolchain's install dir the read rules allow under your home is
+  `<toolchain:bun>`, `<toolchain:node>`, `<toolchain:git>` or
+  `<toolchain:<host binary>>`, each in every spelling (its path, and that path
+  under `~`, `$HOME` and `${HOME}`). Such a path is the bench's own doing: it
+  can spell one of your host's project paths or a workspace's name without
+  holding either. Three rules keep a placeholder from hiding anything of
+  yours. A root is replaced only where it stands as a whole path: not before
+  and not after a character a path segment goes on with (a letter, a digit,
+  `_`, `.`, `@`, `+`, `~`, `-`), so `<root>/x` and `"<root>"` are the root and
+  `<root>-client`, `<root>x` and `/mnt<root>` stay as written. The refusal
+  looks at the text before the roots become placeholders and lets through
+  only a string that lies wholly inside a root named that way (the root
+  itself, a part of it): a private value that starts with a root, contains
+  one or sits beside one is still refused. And a root is never your home, a
+  dir above it or a dir that holds a guarded path: such a store gets no
+  placeholder. The checkout's `<workit>` follows the first two rules as well:
+  it goes in as a whole path only, and the refusal puts it back to look, so a
+  private value under the checkout or beside it is still refused. A call that
+  names a root's path is outside the world.
 - **Scrub.** The scrub does not decide what a call read: nothing that reads a
   command's text can (a glob, a quote, a script the model wrote, a path an
   interpreter builds). The kernel does, so there are two regimes:
@@ -216,10 +238,48 @@ result file (`scripts/eval/privacy.ts`):
   or `/Users/…`; the placeholders and the invented names `me`, `user` and
   `example` aside), a host config's `projects` map, or a workspace glob under
   the real home.
+- **Diagnosing a refusal.** A `private_content` refusal prints, on the
+  terminal only (it is in no file, and nothing of the run is written), where
+  each hit is, without the value:
+
+  ```
+  where (shown here only, in no file; no value is shown; an id is salted per bench start: equal ids are one value):
+    <case>.transcript.jsonl: event 9, user result of Bash call (14 chars; starts with workit): host project path, 41 chars, id 3f9a1c2e, from ~/.claude.json: projects, key 3 of 9 (as a ~ path)
+    <case>.transcript.jsonl: event 12, assistant (the model's text): real Workit config value, 12 chars, id 0b7d44a1, from ~/.config/workit/workspaces.json: workspaces[0].name
+  ```
+
+  A line names the file, the event (its 1-based line in the transcript; a key
+  path in the result file), the event's type and the field (a tool's input, a
+  call's result, the model's text, the answer text, or a key path), the kind,
+  the value's length, an id (the first 8 hex of a sha256 salted per bench
+  start: two hits with one id are one value, and an id means nothing in
+  another bench start) and where the runner read the value from.
+
+  A line holds structure only, never text a model or you wrote: no excerpt of
+  a command, a path or a result. A call is named by its tool, and a shell call
+  by its command's length and its first word when that word is on a fixed
+  list of commands (`workit`, `git`, `ls`, `cat` and the like; otherwise `a
+  command not on the list`). An event type, a tool and a key are named only
+  when they are on the fixed lists of the two transcript formats and the
+  result file (`scripts/eval/privacy.ts`); anything else is `an event`, `a
+  tool` or the key's position, `{key 2}`. An origin names only well-known
+  files (`~/.config/workit/workspaces.json`, `~/.claude.json`,
+  `~/.gitconfig`, the hosts' login files) with the key path, the `projects`
+  key's position, the git key or the database row and column; a file in a
+  place you chose is named by its class (`the Workit config dir's
+  workspaces.json`, `a git config file included from ~/.gitconfig, include
+  1`), a key you chose by its position, and an environment secret as `a
+  variable named as a secret`. A shape
+  the committed check refuses (a home path, a projects map) has a place and a
+  kind only. Read it as: the same id in a tool's result and then in the
+  model's text is one value the model repeated; a path-length value whose
+  origin is a `projects` key, sitting in an error message, is a path the
+  bench itself produced, which belongs in the placeholders above.
 - **Known false refusal.** A private config value that is an ordinary word
   (it also appears in public text such as the README) makes a run that quotes
-  that text fail as `private_content`. That is the safe direction; rerun the
-  case.
+  that text fail as `private_content`. That is the safe direction; the
+  diagnosis shows it as a `real Workit config value` of a word's length whose
+  origin is a name or label key. Rerun the case.
 
 ## Isolation and the tripwire
 
@@ -258,23 +318,27 @@ A bench run must never change your real Workit files (#822: a run rewrote
   world, a verb that prints no path, or a `grant show` that names a real
   workspace or account refuses the case: the host never starts and the run
   fails as `isolation`.
-- **Tripwire.** The tripwire only detects. It never writes, removes or renames anything in your home. On a change it kills the host, fails the run as `outside_write`, stops the bench with exit 3, and prints for each path what was there, what is there now, where the original copy is, and for the simple cases the command to put it back.
+- **Tripwire.** The tripwire only detects. It never writes, removes or renames anything in your home. On a change this bench could have made it kills the host, fails the run as `outside_write`, stops the bench with exit 3, and prints for each path what was there, what is there now, where the original copy is, and for the simple cases the command to put it back.
+  - A change another process made is reported and stops nothing. That is decided from the run itself: Landlock write confinement was applied to it (the bench start printed `write confinement: on`, the case was not refused, the launcher did not exit 126), the change is one Landlock's rights govern (a guarded path's content, kind or presence changed; its mode and link count did not), and the path is not one the run's ruleset made writable. The kernel refused this bench that write, so another process made it: a second session recording a verdict, you editing your config. The runner prints `outside change, not this bench's: write confinement was on, so this change was made by another process; …` with what changed and, for a watched file, where its copy from the bench start is (in the journal, until this bench ends). The host is not killed, the run's result is written as usual and records the change (`outsideChanges`: each path under `~` with `created`, `changed` or `removed`, no content; `summary.json` counts them per case and in total), the change becomes the state later checks compare with, the journal is dropped at the end as for a clean run, and the summary line counts them (`; 1 outside change(s) by another process, reported above`). The exit code does not change.
+  - One more check runs after the last run and before the journal is dropped, and also when a run threw. A change it finds is handled by the same rule with the bench's own confinement: another process's change is reported (no result records it: no run was under way); anything else prints `STOPPED: real Workit files changed after the last run's check`, keeps the journal and exits 3.
+  - Everything else stops as before: any change without write confinement (no Landlock, `--confine off`, a refused case, a launcher that could not apply the rules); and with it, a mode change, a link count change, a replaced root, an unreachable path, a file over 64 MB, or a change to a guarded path the ruleset made writable.
   - Watched: the config dir, whole (tokens, `vcs.json`, `templates/`, backups included), and the state files that grant or pick what runs (`host-permissions.json`, `host-permissions-backup/`, `node.json`). At bench start, after taking the lock, the runner snapshots them into its own memory and re-checks them after each run and every 2 s while a host runs.
   - Reported the same way: the state trees `approvals/`, `issued/`, `issued-tokens/` and `verdicts/`, which live sessions also change.
   - Not watched: `leases/`, `logs/`, `hook-runs/`, `live-sessions/`, `worktrees/` and the other caches every session rewrites.
   - Reading is as careful as writing is absent: a root whose kind, link target or device and inode changed is reported as `root replaced` and not walked; below a root nothing is followed; a file is read only when it opens with `O_NOFOLLOW|O_NONBLOCK` as a regular file; files over 64 MB are compared by size; a created dir is reported, not entered; at most 50 created paths are listed per root.
   - Commands are printed only for simple cases: a changed or deleted regular file with one link and an unchanged parent chain gets `diff -u` and `rm -f -- … && cp -- <original> … && chmod …`; a mode change gets `chmod`; a created file, symlink or FIFO gets `rm --`; anything else gets `ls -la` and the original's path.
   - `--replay` never re-grades an `outside_write` run.
-- **Digest and journal.** At arm the runner prints `tripwire armed: <N> files, digest <16 hex>` and writes the journal, your recovery copy, to `~/.cache/workit-bench-tripwire/journal/` (0700, files 0600), removed at a clean end. A changed file stays changed until you act. The bench will not start while a leftover differs; it drops the leftover once nothing differs, or on `--tripwire-discard`. A start that finds a leftover writes nothing and prints `LEFTOVER` in the same format; it prints no command for a journal it cannot trust (unreadable, a path outside the watched roots, a blob that does not match), and the journal's digest proves nothing unless it equals the line the stopped run printed.
-- **Stopping and other runs.** Ctrl-C, SIGTERM or SIGHUP kill the host's process group; the run unwinds (its world removed, the real files checked against memory), prints `STOPPED by <signal>`, writes no result for that run and exits 130, 143 or 129; the journal stays only when something changed. One bench holds the tripwire at a time (`holders/<pid>.<start>`); a second one exits 4. Every dir the tripwire uses under `~/.cache/workit-bench-tripwire/` (the base, `holders/`, `journal/`, `blobs/`) must be a real directory you own; a symlink, a file or another owner's dir stops the start with exit 4 and nothing is created or removed there. It removes only by unlinking, so a link planted in its dir loses only itself, and in `holders/` it unlinks only regular files named `<pid>.<start>` of dead runners. Each start removes the `workit-eval-*` worlds a dead runner left in the temp dir. The start-time sweep also removes a directory named `workit-eval-*` under the temp dir that has no `.runner` marker and is older than 24 h, even if the runner did not make it. The sweep skips symlinks and dirs you do not own, reads a `.runner` marker only when it is a regular file, never follows a link inside a world, and reports a world it cannot remove without stopping the start.
+- **Digest and journal.** At arm the runner prints `tripwire armed: <N> files, digest <16 hex>` and writes the journal, your recovery copy, to `~/.cache/workit-bench-tripwire/journal/` (0700, files 0600), removed at a clean end (a bench that only reported another process's changes ends clean). A changed file stays changed until you act. After a stop the bench will not start while a leftover differs; it drops the leftover once nothing differs, or on `--tripwire-discard`. A start that finds a leftover writes nothing and prints `LEFTOVER` in the same format; it prints no command for a journal it cannot trust (unreadable, a path outside the watched roots, a blob that does not match), and the journal's digest proves nothing unless it equals the line the stopped run printed.
+- **Stopping and other runs.** Ctrl-C, SIGTERM or SIGHUP kill the host's process group; the run unwinds (its world removed, the real files checked against memory), prints `STOPPED by <signal>`, writes no result for that run and exits 130, 143 or 129; the journal stays only when something changed that this bench could have made (another process's change under write confinement is reported and leaves none). One bench holds the tripwire at a time (`holders/<pid>.<start>`); a second one exits 4. Every dir the tripwire uses under `~/.cache/workit-bench-tripwire/` (the base, `holders/`, `journal/`, `blobs/`) must be a real directory you own; a symlink, a file or another owner's dir stops the start with exit 4 and nothing is created or removed there. It removes only by unlinking, so a link planted in its dir loses only itself, and in `holders/` it unlinks only regular files named `<pid>.<start>` of dead runners. Each start removes the `workit-eval-*` worlds a dead runner left in the temp dir. The start-time sweep also removes a directory named `workit-eval-*` under the temp dir that has no `.runner` marker and is older than 24 h, even if the runner did not make it. The sweep skips symlinks and dirs you do not own, reads a `.runner` marker only when it is a regular file, never follows a link inside a world, and reports a world it cannot remove without stopping the start.
 - **Write confinement.** On Linux the host runs under Landlock: it and everything it starts can write only in its world, the temp dirs, `/dev` and the host's own credential file. A write, delete, rename, link or create anywhere else in your home fails in the kernel. The runner itself stays unconfined. `scripts/eval/confine.ts` applies the rules through `bun:ffi` (glibc's `syscall`, x86_64 or arm64, Landlock ABI 3+); any failure exits 126 without running the host. A temp dir that holds your home, a guarded root or the tripwire dir is not made writable, since Landlock has no deny rules. Each bench start checks it with a canary write into the tripwire dir and prints `write confinement: on (Landlock ABI n)` or `off (<reason>)`.
-- **Read confinement.** Under the same Landlock ruleset the host can read, list and execute only its world and the temp dirs, `/dev`, the system dirs (`/usr`, `/bin`, `/sbin`, `/lib*`, `/etc`, `/opt`, `/proc`, `/sys`, `/run`, `/snap`, `/nix`, `/var/lib`, `/var/cache`), this Workit checkout and the packages its `node_modules` links to (a worktree links them to the main checkout's), the install dirs of bun, node, git and the host binary (a `bin` dir's parent: `~/.bun`, the fnm node version, `~/.local/share/claude/versions`, `~/.opencode`), and its own credential file. Your real Workit config and state dirs, the host config dirs (`~/.claude` but the credential file, `~/.claude.json`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, `~/.pi`, `~/.local/share/opencode`) and every other project or file in your home are not readable. A candidate dir that holds the home or a guarded path is dropped. Each bench start lists the real home under the run's rules and prints `read confinement: on`, or `off (<reason>)` when the listing works. Both hosts start signed in under it (one `session-context` run each).
+- **Read confinement.** Under the same Landlock ruleset the host can read, list and execute only its world and the temp dirs, `/dev`, the system dirs (`/usr`, `/bin`, `/sbin`, `/lib*`, `/etc`, `/opt`, `/proc`, `/sys`, `/run`, `/snap`, `/nix`, `/var/lib`, `/var/cache`), this Workit checkout, the packages its `node_modules` links to and the `node_modules` store they sit in (a worktree links them into the main checkout's `node_modules`: that store is readable, the main checkout's source and other files are not; the host's environment sets `NODE_PRESERVE_SYMLINKS=1`, so a linked package stays at the path this checkout names it by and its imports resolve through this checkout's `node_modules` instead of the main checkout, whose listing bun would need and may not have, and `NODE_PATH` names the store for a dependency this checkout does not link; a linked package then finds its own dependencies as in a plain checkout, and no path of the main checkout reaches an error message), the install dirs of bun, node, git and the host binary (a `bin` dir's parent: `~/.bun`, the fnm node version, `~/.local/share/claude/versions`, `~/.opencode`), and its own credential file. Your real Workit config and state dirs, the host config dirs (`~/.claude` but the credential file, `~/.claude.json`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, `~/.pi`, `~/.local/share/opencode`) and every other project or file in your home are not readable. A candidate dir that holds the home or a guarded path is dropped. Each bench start lists the real home under the run's rules and prints `read confinement: on`, or `off (<reason>)` when the listing works. Both hosts start signed in under it (one `session-context` run each).
   Without Landlock (another OS, a kernel before 6.2) a case that permits a shell wrapper is refused unless you pass `--unconfined`; it then runs with detection only.
 - **Open and limits.**
-  - Landlock does not cover metadata: a bench agent can `chmod`, `chown` or `touch` a real file. A mode change on a guarded file is reported; nothing else is.
-  - A bench agent can ask a service of yours that runs outside the sandbox to write for it (`systemd-run --user`, a tmux or docker socket). Such a write to a guarded file is detected within 2 s; to any other file it is not seen.
+  - Landlock does not cover metadata: a bench agent can `chmod`, `chown` or `touch` a real file. A mode change on a guarded file stops the bench as an outside write; nothing else is seen.
+  - A bench agent can ask a service of yours that runs outside the sandbox to write for it (`systemd-run --user`, a tmux or docker socket). Such a write to a guarded file is seen within 2 s, but under write confinement the bench cannot tell it from any other process's write: it is reported as another process's change and stops nothing. Read that report line: a change you cannot place is yours to check. To any other file it is not seen.
   - The temp dirs and `/dev` stay writable, so files there (other tools' scratch files) are not protected.
-  - A change to a watched file is seen within 2 s, the watch interval, and the host is killed; the changed bytes stay until you act, so a live session that reads the file meanwhile sees them.
+  - A change to a watched file is seen within 2 s, the watch interval, and the host is killed unless the change is another process's (see Tripwire); the changed bytes stay until you act, so a live session that reads the file meanwhile sees them.
+  - If the runner dies after another process's change and before its clean end, the journal still holds the bench start's copies, so the next start reports that change as a leftover and runs nothing until you settle it.
   - A bench agent can kill the runner, which ends detection. Under Landlock what it leaves running still cannot write your home. Everything the runner leaves on disk is writable and deletable by the same OS user, so the next start reports a leftover only if the agent left one and cannot prove it genuine; the digest the stopped run printed on your terminal is the only check, and it is yours to make.
   - A bench agent that attaches to the runner (ptrace, `/proc/<pid>/mem`) can change the snapshot in memory. With `kernel.yama.ptrace_scope` 1 or higher (Ubuntu's default) the kernel refuses a child attaching to its parent; with 0 nothing does.
   - The host's login (`~/.claude/.credentials.json`, the world's copy of `~/.claude.json`'s sign-in keys, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise. A result that holds it is refused (see Host credentials above), in the form the login file stores it: a model that re-encodes a token (base64, split in two) or prints part of one gets past the refusal, and so does what OpenCode keeps in its `kv` rows.

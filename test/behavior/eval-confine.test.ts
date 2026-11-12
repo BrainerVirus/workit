@@ -6,6 +6,7 @@ import { afterAll, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   lstatSync,
@@ -15,10 +16,12 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { main } from "@/scripts/eval/run";
 // Namespace imports: on a checkout without the launcher, only the tests that use it fail.
 import * as confine from "@/scripts/eval/confine";
@@ -145,6 +148,117 @@ test("Given the read rules, Then a dir holding the real home or a guarded path i
   );
   expect(confine.toolchainDir("no-such-tool", bin)).toBeNull();
 });
+
+// A linked worktree: its packages are symlinks into the main checkout's `node_modules`, and a
+// package there imports its own dependencies from that store, linked into the worktree or not.
+test.skipIf(!landlock)(
+  "Given a linked worktree under Landlock, Then a package linked from the main checkout's store imports its own dependency from that store; the main checkout's source stays unreadable",
+  () => {
+    const store = path.join(root, "main", "node_modules");
+    const worktree = path.join(root, "wt");
+    for (const [name, body] of [
+      ["pkg", 'module.exports = require("dep").value + "-pkg";'],
+      ["dep", 'module.exports = { value: "dep" };'],
+    ] as const) {
+      mkdirSync(path.join(store, name), { recursive: true });
+      writeFileSync(
+        path.join(store, name, "package.json"),
+        JSON.stringify({ name, main: "index.js" }),
+      );
+      writeFileSync(path.join(store, name, "index.js"), body);
+    }
+    mkdirSync(path.join(root, "main", "src"), { recursive: true });
+    writeFileSync(path.join(root, "main", "src", "secret.txt"), "main checkout source");
+    writeFileSync(path.join(root, "main", "notes.txt"), "an untracked file");
+    mkdirSync(path.join(worktree, "node_modules"), { recursive: true });
+    // Only `pkg` is linked: `dep` is reached through the store alone.
+    symlinkSync(path.join(store, "pkg"), path.join(worktree, "node_modules", "pkg"));
+    writeFileSync(path.join(worktree, "run.js"), 'console.log(require("pkg"));');
+    mkdirSync(path.join(root, "world"));
+
+    const linked = confine.linkedReads(path.join(worktree, "node_modules"));
+    expect(linked).toContain(store);
+    const reads = confine.readableDirs(
+      [worktree, ...linked, confine.toolchainDir(process.execPath, process.env.PATH ?? "") ?? ""],
+      [home],
+    );
+    // The store is readable; the main checkout that holds it is not a rule.
+    expect(reads).toContain(store);
+    expect(reads).not.toContain(path.join(root, "main"));
+    // The environment the runner gives a host in a linked worktree (run.ts `childEnv`).
+    const linkedEnv = confine.linkedEnv(path.join(worktree, "node_modules"), {
+      NODE_PATH: "/elsewhere",
+    });
+    expect(linkedEnv).toEqual({
+      NODE_PRESERVE_SYMLINKS: "1",
+      NODE_PATH: `${store}${path.delimiter}/elsewhere`,
+    });
+    // A dir that links into no store changes nothing.
+    expect(confine.linkedEnv(path.join(store, "pkg"), {})).toEqual({});
+    const run = (cmd: string[]): { status: number | null; out: string } => {
+      const [bin = "", ...args] = confine.confined([path.join(root, "world")], [], cmd, reads);
+      const done = spawnSync(bin, args, {
+        cwd: path.join(root, "world"),
+        encoding: "utf8",
+        env: { ...process.env, ...linkedEnv },
+      });
+      return { status: done.status, out: `${done.stdout}${done.stderr}` };
+    };
+    expect(run([process.execPath, path.join(worktree, "run.js")])).toEqual({
+      status: 0,
+      out: "dep-pkg\n",
+    });
+    for (const file of [
+      path.join(root, "main", "src", "secret.txt"),
+      path.join(root, "main", "notes.txt"),
+    ]) {
+      const read = run(["cat", file]);
+      expect(read.status, file).not.toBe(0);
+      expect(read.out, file).toContain("Permission denied");
+    }
+    // A store that holds the home or a guarded path is dropped like any other dir.
+    expect(confine.readableDirs([store], [path.join(store, "dep")])).not.toContain(store);
+  },
+  30_000,
+);
+
+test.skipIf(!landlock)(
+  "Given this checkout under Landlock with the host's environment, Then a package that imports its own dependencies loads (ink, as `workit uninstall` loads it): in a linked worktree too",
+  () => {
+    // In a linked worktree every package is a symlink into the main checkout's store, and ink's
+    // imports failed there (`Cannot find package 'react' imported from …/node_modules/ink/…`).
+    const modules = path.join(REPO, "node_modules");
+    const reads = confine.readableDirs(
+      [
+        REPO,
+        ...confine.linkedReads(modules),
+        confine.toolchainDir(process.execPath, process.env.PATH ?? "") ?? "",
+      ],
+      [os.homedir()],
+    );
+    mkdirSync(path.join(root, "world"));
+    const [bin = "", ...args] = confine.confined(
+      [path.join(root, "world")],
+      [],
+      [
+        process.execPath,
+        "-e",
+        'await import("ink"); console.log("ink loads from", import.meta.resolve("ink"))',
+      ],
+      reads,
+    );
+    const done = spawnSync(bin, args, {
+      cwd: path.join(REPO, "packages", "workit-cli"),
+      encoding: "utf8",
+      env: { ...process.env, ...confine.linkedEnv(modules, process.env) },
+    });
+    expect(`${done.stdout}${done.stderr}`).not.toContain("Cannot find package");
+    // ink stays at the path this checkout names it by, never the store's.
+    expect(done.stdout.trim()).toStartWith(`ink loads from ${pathToFileURL(REPO).href}/`);
+    expect(done.status).toBe(0);
+  },
+  30_000,
+);
 
 /** Each line prints `<read> ok` or `<read> denied`. */
 const READS = (r: string): string => {
@@ -280,6 +394,146 @@ test.skipIf(!landlock)(
     for (const spelling of ["world-glob", "world-brace", "world-python3"])
       expect(transcript).toContain(`${spelling} ok`);
     expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
+  },
+  30_000,
+);
+
+// Another process (a second session recording a verdict, the user editing the config) changes a
+// guarded file while a bench runs. Under write confinement the kernel refused this bench that
+// write, so the change is reported and nothing stops; without it the bench stops as before.
+const whileRunning = async (
+  extra: string[],
+  change: () => void,
+): Promise<{ exit: number; said: string }> => {
+  const lines: string[] = [];
+  // The host outlives the change by far, and says so when nothing killed it.
+  const bench = main(
+    [...argv(fakeClaude('sleep 2; say "survived"')), "--watch-ms", "100", ...extra],
+    (text) => lines.push(text),
+  );
+  // The snapshot is armed before the confinement lines print.
+  for (
+    let waited = 0;
+    waited < 10_000 && !lines.some((line) => /read confinement: /u.test(line));
+    waited += 20
+  )
+    await Bun.sleep(20);
+  await Bun.sleep(400);
+  change();
+  return { exit: await bench, said: lines.join("\n") };
+};
+const journal = (): string => path.join(tripwire.tripwireBase(home), "journal");
+const resultFile = (name: string): string => path.join(root, "results", "haiku", name);
+
+test.skipIf(!landlock)(
+  "Given write confinement, When another process appends to a guarded file mid-run, Then the run finishes, its result is written, the change is reported as another process's, no journal is left and the exit is 0",
+  async () => {
+    const file = path.join(config, "workspaces.json");
+    const { exit, said } = await whileRunning([], () => appendFileSync(file, "\n"));
+    expect(said).toMatch(/^write confinement: on /mu);
+    expect(said).toContain(
+      "outside change, not this bench's: write confinement was on, so this change was made by another process; the run goes on, its result is written and the next bench starts.",
+    );
+    // What changed and where the copy from the bench start is, on the terminal.
+    expect(said).toContain(`  ${file}\n    was: file, mode 600, 18 B, sha `);
+    expect(said).toContain(`    original: ${path.join(journal(), "blobs")}`);
+    expect(said).not.toContain("STOPPED");
+    expect(said).toMatch(
+      /1 model run\(s\), 0 failed of 1 graded; 1 outside change\(s\) by another process, reported above$/mu,
+    );
+    expect(exit).toBe(0);
+    // The watch did not kill the host, and the result is a clean run's.
+    expect(readFileSync(resultFile("a-case.transcript.jsonl"), "utf8")).toContain("survived");
+    const result = JSON.parse(readFileSync(resultFile("a-case.json"), "utf8"));
+    expect(result.grade.pass).toBe(true);
+    expect(result.outsideWrite).toBeUndefined();
+    // The result and the summary carry it (O1): the path under `~` and what happened, no content.
+    expect(result.outsideChanges).toEqual([
+      { path: ["~", ".config", "workit", "workspaces.json"].join("/"), change: "changed" },
+    ]);
+    const summary = JSON.parse(readFileSync(resultFile("summary.json"), "utf8"));
+    expect(summary.outsideChanges).toBe(1);
+    expect(summary.cases[0].outsideChanges).toBe(1);
+    expect(existsSync(journal())).toBe(false);
+    // The next bench starts: nothing is left over, and the change is not reported twice.
+    const next: string[] = [];
+    expect(await main([...argv(fakeClaude(":")), "--force"], (text) => next.push(text))).toBe(0);
+    expect(next.join("\n")).not.toMatch(/LEFTOVER|outside change/u);
+  },
+  30_000,
+);
+
+test("Given no write confinement, When another process appends to a guarded file mid-run, Then the bench stops with exit 3 and the next start is blocked by the leftover, as before", async () => {
+  const file = path.join(config, "workspaces.json");
+  const { exit, said } = await whileRunning(["--confine", "off"], () => appendFileSync(file, "\n"));
+  expect(said).toContain("STOPPED: a-case changed real Workit files outside its world.");
+  expect(said).not.toContain("outside change, not this bench's");
+  expect(said).not.toContain("another process");
+  expect(exit).toBe(3);
+  expect(JSON.parse(readFileSync(resultFile("a-case.json"), "utf8")).outsideWrite).toBeDefined();
+  expect(existsSync(journal())).toBe(true);
+  const next: string[] = [];
+  expect(
+    await main([...argv(fakeClaude(":")), "--confine", "off"], (text) => next.push(text)),
+  ).toBe(3);
+  expect(next.join("\n")).toContain("LEFTOVER: ");
+}, 30_000);
+
+// The last run's check is over and the journal is not yet dropped: the summary line prints in between.
+const afterLastCheck = async (
+  extra: string[],
+  change: () => void,
+): Promise<{ exit: number; said: string }> => {
+  const lines: string[] = [];
+  const exit = await main([...argv(fakeClaude(":")), ...extra], (text) => {
+    lines.push(text);
+    if (/ model run\(s\), /u.test(text)) change();
+  });
+  return { exit, said: lines.join("\n") };
+};
+
+test.skipIf(!landlock)(
+  "Given write confinement, When another process changes a guarded file after the last run's check, Then the last check reports it, no journal is left and the exit is 0",
+  async () => {
+    const file = path.join(config, "workspaces.json");
+    const { exit, said } = await afterLastCheck([], () => appendFileSync(file, "\n"));
+    expect(said).toContain(
+      "outside change, not this bench's: write confinement was on, so this change was made by another process; it came after the last run's check, so no result records it, and the next bench starts.",
+    );
+    expect(said).toContain(`  ${file}\n    was: file, mode 600, 18 B, sha `);
+    expect(said).not.toContain("STOPPED");
+    expect(exit).toBe(0);
+    expect(existsSync(journal())).toBe(false);
+    const next: string[] = [];
+    expect(await main([...argv(fakeClaude(":")), "--force"], (text) => next.push(text))).toBe(0);
+    expect(next.join("\n")).not.toMatch(/LEFTOVER|outside change/u);
+  },
+  30_000,
+);
+
+test("Given no write confinement, When a guarded file changes after the last run's check, Then the last check stops the bench with exit 3 and the journal stays", async () => {
+  const file = path.join(config, "workspaces.json");
+  const { exit, said } = await afterLastCheck(["--confine", "off"], () =>
+    appendFileSync(file, "\n"),
+  );
+  expect(said).toContain("STOPPED: real Workit files changed after the last run's check.");
+  expect(said).toContain(file);
+  expect(said).not.toContain("another process");
+  expect(exit).toBe(3);
+  expect(existsSync(journal())).toBe(true);
+}, 30_000);
+
+test.skipIf(!landlock)(
+  "Given write confinement, When a guarded file's mode changes mid-run, Then the bench still stops with exit 3: Landlock does not cover metadata",
+  async () => {
+    const file = path.join(config, "workspaces.json");
+    const { exit, said } = await whileRunning([], () => chmodSync(file, 0o644));
+    expect(said).toMatch(/^write confinement: on /mu);
+    expect(said).toContain("STOPPED: a-case changed real Workit files outside its world.");
+    expect(said).toContain("mode 600");
+    expect(said).not.toContain("outside change, not this bench's");
+    expect(exit).toBe(3);
+    expect(existsSync(journal())).toBe(true);
   },
   30_000,
 );

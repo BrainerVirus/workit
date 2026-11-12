@@ -216,7 +216,7 @@ export const binaryOf = (binary: string, pathEnv: string): string | null => {
  * worktree links its packages to the main checkout's): read rules follow
  * the resolved path, not the link.
  */
-export const linkedPackages = (dir: string): string[] => {
+const linkedPackages = (dir: string): string[] => {
   const entries = (at: string): string[] => {
     try {
       return readdirSync(at).map((name) => path.join(at, name));
@@ -228,6 +228,71 @@ export const linkedPackages = (dir: string): string[] => {
     .flatMap((entry) => (path.basename(entry).startsWith("@") ? entries(entry) : [entry]))
     .filter((entry) => lstatSync(entry, { throwIfNoEntry: false })?.isSymbolicLink() === true)
     .map(real);
+};
+
+/**
+ * The stores a `node_modules` dir's symlinked packages sit in: for a package
+ * that resolves into another `node_modules` (a linked worktree's into the
+ * main checkout's), the outermost `node_modules` of its resolved path. A
+ * package there imports its own dependencies from that store whether this
+ * dir links them or not (`ink` imports `react`). A store holds installed
+ * packages, never the checkout around it (its source, its untracked files);
+ * a package linked from a checkout's own source (a workspace package) has
+ * none.
+ */
+const linkedStores = (dir: string): string[] => {
+  const marker = `${path.sep}node_modules${path.sep}`;
+  return [
+    ...new Set(
+      linkedPackages(dir).flatMap((target) => {
+        const at = target.indexOf(marker);
+        return at === -1 ? [] : [target.slice(0, at + marker.length - 1)];
+      }),
+    ),
+  ];
+};
+
+/**
+ * What a host's environment needs so a symlinked package resolves as in a
+ * plain checkout; nothing when `dir` links into no store. bun and node
+ * resolve a symlinked package to its real path, in the store, and bun then
+ * looks for that store in the listing of the dir that holds it: the main
+ * checkout, which a host may not read. NODE_PRESERVE_SYMLINKS keeps a
+ * package at the path it was linked under, so its imports resolve through
+ * `dir` (and no path of the main checkout reaches an error message);
+ * NODE_PATH names the stores for a dependency `dir` does not link.
+ */
+export const linkedEnv = (
+  dir: string,
+  env: Record<string, string | undefined>,
+): Record<string, string> => {
+  const stores = linkedStores(dir);
+  if (stores.length === 0) return {};
+  return {
+    NODE_PRESERVE_SYMLINKS: "1",
+    NODE_PATH: [...stores, ...(env.NODE_PATH ? [env.NODE_PATH] : [])].join(path.delimiter),
+  };
+};
+
+/** What a host reads through a `node_modules` dir's symlinked packages: each resolved package and the store it sits in. */
+export const linkedReads = (dir: string): string[] => [
+  ...new Set([...linkedPackages(dir), ...linkedStores(dir)]),
+];
+
+/**
+ * The checkouts or stores the symlinked packages of a `node_modules` dir live
+ * in (a Workit worktree links its packages into the main checkout): for each
+ * resolved package, the nearest dir above it that holds a `.git`, else the
+ * dir its `node_modules` sits in, else its parent.
+ */
+export const linkedRoots = (dir: string): string[] => {
+  const rootOf = (target: string): string => {
+    for (let at = path.dirname(target); at !== path.dirname(at); at = path.dirname(at))
+      if (existsSync(path.join(at, ".git"))) return at;
+    const store = target.split(`${path.sep}node_modules${path.sep}`);
+    return store.length > 1 ? (store[0] ?? target) : path.dirname(target);
+  };
+  return [...new Set(linkedPackages(dir).map(rootOf))];
 };
 
 /** The install dir of a binary on `PATH`: its resolved dir, or that dir's parent when it is a `bin`. */
