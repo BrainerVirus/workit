@@ -191,9 +191,46 @@ const WRAPPERS: Record<string, string> = {
 
 const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/;
 
-/** Whether `file` is a config dir itself: how code names where config lives, not a write. */
+/** Whether `file` is a config dir itself. */
 const isConfigDir = (file: string): boolean =>
   configDirs().some((dir) => canonical(dir) === canonical(file));
+
+/** Whether `file` is a config dir or a state registry root (`<state>/issued*`, `<state>/approvals`). */
+const isRoot = (file: string): boolean =>
+  isConfigDir(file) ||
+  /^(?:issued[^\\/]*|approvals)$/.test(
+    path.relative(canonical(resolveStateDir()), canonical(file)),
+  );
+
+/** Calls that only read or print what they are given. */
+const READ_CALLS =
+  /^(?:print|log|info|warn|error|debug|puts|readdir(?:Sync)?|listdir|scandir|iterdir|glob|l?stat(?:Sync)?|exists(?:Sync)?|isdir|isfile|is_dir|is_file|access(?:Sync)?|realpath(?:Sync)?|dirname|basename|relative|str|repr|len)$/;
+/** Calls that change files (Python, Node, Ruby, PHP names), for a path value that may reach one. */
+const MUTATING_CALLS =
+  /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
+/** Calls that only build a path: the value they return may reach any later call. */
+const PATH_CALLS =
+  /^(?:join|resolve|normalize|abspath|expanduser|expandvars|Path|PurePath|fspath)$/;
+
+/**
+ * Code that takes a guarded dir (a config dir, a registry root) only to read
+ * or name it, at `at`: the call around it is a known reader, or it only builds
+ * a path (or is assigned) in code with no call that may change files. Any
+ * other call around it, recognised or not, counts as a write.
+ */
+const readsRoot = (text: string, at: number): boolean => {
+  let call: string | undefined;
+  for (let index = at, depth = 0; index > 0 && call === undefined; index--) {
+    const char = text[index - 1];
+    if (char === ")") depth++;
+    else if (char === "(" && depth-- === 0)
+      call = /([\w$]+)\s*$/.exec(text.slice(0, index - 1))?.[1] ?? "";
+    else if (depth <= 0 && /[;\n]/.test(char)) break;
+  }
+  if (call !== undefined && READ_CALLS.test(call)) return true;
+  if (call !== undefined && !PATH_CALLS.test(call)) return false;
+  return ![...text.matchAll(/([\w$]+)\s*\(/g)].some(([, name]) => MUTATING_CALLS.test(name));
+};
 
 /**
  * An editor command that cannot write: every `|`-separated part is `set`,
@@ -567,12 +604,8 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
  * inline script may write anywhere it names, so each counts as a change, with
  * the directory it runs in.
  */
-const pathsIn = (text: string): string[] =>
-  [
-    ...text.matchAll(
-      /(?<![\w.~:/$-])(?:~\/|\/|[A-Za-z]:\/|\.\.(?:\/|$))[^\s'"`$),;:*?<>|\\[\]{}]*/g,
-    ),
-  ].map((match) => match[0]);
+const PATHS = /(?<![\w.~:/$-])(?:~\/|\/|[A-Za-z]:\/|\.\.(?:\/|$))[^\s'"`$),;:*?<>|\\[\]{}]*/g;
+const pathsIn = (text: string): string[] => [...text.matchAll(PATHS)].map((match) => match[0]);
 
 /**
  * `ln`'s link sources, resolved as the link will: a relative symbolic source
@@ -1370,7 +1403,8 @@ const segmentTargets = (
       } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
         const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
-        if (code >= 0) others.push(args[code + 1] ?? "");
+        // As the shell expands it (`"…$HOME/…"`).
+        if (code >= 0) others.push(...expansions(args[code + 1] ?? "", vars, loops));
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
         others.push(
           ...(named === undefined
@@ -1390,16 +1424,26 @@ const segmentTargets = (
         // `'.config', 'workit', 'x.json'`, `".config" / "workit"`: literals a join puts together.
         const joined = [
           ...text.matchAll(/(?:["'][^"'\s,*?[]+["']\s*[,/+]\s*)+["'][^"'\s,*?[]+["']/g),
-        ].map((match) => match[0].replace(/["']\s*[,/+]\s*["']/g, "/").replace(/["']/g, ""));
-        // Each path as spelled, and each under the home dir (`home + "/.config/…"`).
-        const spelled = pathsIn(text);
-        for (const file of [
-          ...spelled.flatMap((word) => atAll(word)),
-          ...[...spelled, ...joined].map((word) =>
-            path.join(homeExpanded("~"), word.replace(/^~/, "")),
+        ].map(({ 0: literals, index }) => ({
+          word: literals.replace(/["']\s*[,/+]\s*["']/g, "/").replace(/["']/g, ""),
+          index,
+        }));
+        // Each path as spelled, and each under the home dir (`home + "/.config/…"`); a
+        // config dir or registry root itself counts unless only read (readsRoot).
+        // Only code that reads the home dir itself builds a path under it.
+        const homes = /homedir\(|expanduser\(|Path\.home\(|['"]HOME['"]|env\.HOME|\$HOME|~/.test(
+          text,
+        );
+        const under = (word: string) =>
+          homes ? [path.join(homeExpanded("~"), word.replace(/^~/, ""))] : [];
+        const found = [
+          ...[...text.matchAll(PATHS)].flatMap(({ 0: word, index }) =>
+            [...atAll(word), ...under(word)].map((file) => ({ file, index })),
           ),
-        ])
-          if (!isConfigDir(file)) targets.push(file);
+          ...joined.flatMap(({ word, index }) => under(word).map((file) => ({ file, index }))),
+        ];
+        for (const { file, index } of found)
+          if (!isRoot(file) || !readsRoot(text, index)) targets.push(file);
       }
       // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
       if (
@@ -1451,11 +1495,11 @@ const segmentTargets = (
       const here = segment.unanalyzable
         ? DIR_TARGET
         : `${OPAQUE_TARGET}${encodeURIComponent(runner?.split(/[\\/]/).at(-1) ?? "a command")}`;
-      // An interpreter's code that only names the config dir does not write it.
+      // An interpreter's code is judged with its calls above (readsRoot), not here.
       const quiet = strict === "registry" && INTERPRETERS.test(runner?.split(/[\\/]/).at(-1) ?? "");
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
-          if (!quiet || !isConfigDir(resolved))
+          if (!quiet || !isRoot(resolved))
             targets.push(file === "." ? path.join(resolved, here) : resolved);
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);

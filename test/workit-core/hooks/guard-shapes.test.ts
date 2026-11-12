@@ -652,3 +652,47 @@ test("G an editor -c or +cmd made of |-separated parts, W any part is not a safe
       expect(decide(command).kind, `${kind.name}: ${command}`).toBe("none");
   }
 });
+
+test("G interpreter code that takes the bare config dir or a registry root, W any call taking it is not a known reader, T denied; mention-only code passes", () => {
+  const cfg = sh(CONFIG);
+  const fromHome = sh(path.relative(home, CONFIG));
+  const roots = [cfg, sh(path.join(state, "approvals")), sh(path.join(state, "issued"))];
+  const scripts = path.join(root, "roots");
+  mkdirSync(scripts, { recursive: true });
+  for (const d of roots) {
+    writeFileSync(path.join(scripts, "rm.py"), `import shutil\nshutil.rmtree("${d}")\n`);
+    writeFileSync(
+      path.join(scripts, "var.py"),
+      `import os, shutil\nd = os.path.join("${d}")\nshutil.rmtree(d)\n`,
+    );
+    for (const command of [
+      `python3 -c "import os,shutil; os.rename('${d}','/tmp/z'); shutil.copytree('x','${d}')"`,
+      `python3 -c "import os; os.rename('${d}','/tmp/z')"`,
+      `python3 -c "import shutil; shutil.copytree('x','${d}')"`,
+      `node -e "require('fs').rmSync('${d}',{recursive:true})"`,
+      `node -e "require('fs').mkdirSync('${d}')"`,
+      `python3 -c "import os; os.symlink('/tmp/x', '${d}')"`,
+      `python3 -c "frobnicate('${d}')"`,
+      `python3 -c "d = '${d}'; import shutil; shutil.rmtree(d)"`,
+      "python3 roots/rm.py",
+      "python3 roots/var.py",
+      `python3 <<'EOF'\nimport shutil\nshutil.rmtree('${d}')\nEOF`,
+    ])
+      expect(decide(command).kind, command).toBe("deny");
+    for (const command of [
+      `python3 -c "print('${d}')"`,
+      `node -e "console.log('${d}')"`,
+      `node -e "require('fs').readdirSync('${d}')"`,
+      `python3 -c "import os; print(os.listdir('${d}'))"`,
+      `python3 -c "import os; print(os.path.exists('${d}'))"`,
+      `python3 -c "import os; print(os.path.join('${d}', 'x'))"`,
+    ])
+      expect(decide(command).kind, command).toBe("none");
+  }
+  for (const command of [
+    `python3 -c "print('~/${fromHome}')"`,
+    `node -e "console.log('$HOME/${fromHome}')"`,
+    `node -e "console.log(require('path').join(require('os').homedir(), '${fromHome}'))"`,
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});
