@@ -1014,7 +1014,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "youtrack",
     group: "delivery",
-    summary: "YouTrack issues and time; writes ask first unless youtrack.writes: auto",
+    summary: "YouTrack issues and time; writes ask first (unless writes: auto)",
     subcommands: [
       {
         name: "note",
