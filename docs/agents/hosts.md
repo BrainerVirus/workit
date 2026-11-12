@@ -30,7 +30,9 @@ That is a CLI verb, so every host gets it through its shell tool with no
 adapter code. Workit never reads, writes, prompts for or stores a YouTrack
 token: ytrack keeps it in the OS keyring. All YouTrack I/O goes through one
 seam, `YouTrackBackend` in `packages/workit-core/src/core/youtrack-backend.ts`
-(`showIssue`, `createIssue`, `addComment`, `addWorkItem`, and `texts` for the
+(`showIssue`, `createIssue`, `addComment` with optional `--attach` files,
+`addWorkItem`, `attachFiles`, `applyCommand`, `supports` (a `--help` probe for
+`issue comment --attach`, `issue attach` and `auth paths`), and `texts` for the
 marker read-back), and its only implementation, `ytrackBackend`, runs
 `ytrack … --json` (`core/youtrack-ytrack.ts`). It sets `YTRACK_HOST` from
 `youtrack.json`'s `baseUrl` and passes no token.
@@ -58,8 +60,18 @@ post nothing; `auto`, which the user sets, keeps the `WORKIT_YT_WRITE=1` gate
 `workit pr create` or `workit pr edit` of that PR. Both run in the CLI, so
 every host behaves the same; only how the host shows the ask differs.
 
+`workit youtrack update <ISSUE>` puts a comment (with `--attach` files), time
+and commands (`--state`, `--command`) on one issue under one `youtrack-write`
+approval and runs them in that order, stopping at the first failure. It is a
+CLI verb, so all five hosts get it with no adapter code. `ytrack auth paths`
+(youtrack-cli hosts.yml) maps each workspace glob to its YouTrack host so an
+agent's own ytrack there reaches it: `core/youtrack-paths.ts`
+(`reviewYtrackPaths`) feeds the doctor's `ytrack_paths` row and the setup
+preview's `ytrackPaths`, whose `--add` calls Apply runs; neither touches
+`workspaces.json`.
+
 A raw `ytrack` write an agent runs itself asks first too (`hooks/ytrack-guard.ts`,
-wired in `hooks/handle.ts`): `issue comment|create|edit|update|delete|command`
+wired in `hooks/handle.ts`): `issue comment|create|edit|update|delete|command|attach`
 (not `--dry-run`), `work-item` (alias `workitem`) `add|edit|update|delete`, and
 `ytrack api` with `-X`/`--method` POST, PUT, PATCH or DELETE (`-XPOST`, `=`
 forms) or a body (`-f`, `-F`, `--field`, `--input`) without a read method, past
@@ -70,8 +82,14 @@ global flags before the group (`--host`, `--debug`, `--no-color`). A call with `
 function defined in the same command and `$(which ytrack)`; the npx `workit`
 form is normalised first (#816), so it gets the same answer. Scripts nested
 deeper than four levels that name ytrack are denied as unanalysable. A write is
-denied naming a `workit youtrack note|time|create` call only when that call
-makes the same write: every option is one the mapping carries (`--body`/`-b`,
+denied naming a `workit youtrack note|time|update|create` call only when that call
+makes the same write (`issue comment --attach`, `issue attach`, `issue command
+'<one quoted command>'` and an `api` POST to `/issues/<id>/comments` with one
+`text` field or `/issues/<id>/attachments` with `-F <name>=@<file>` fields map
+to `update` or `note`; plain ytrack writes chained right after the first one on
+the same issue with `&&` or `;`, no `||`, pipe or other command between, become
+one `update` call; a second comment, time or command, or another issue, keeps
+the rule below): every option is one the mapping carries (`--body`/`-b`,
 `--body-file`, `--duration` in whole minutes, `--text`, `--date`,
 `--project`/`-p`, `--summary`/`-s`, `--description`, `--description-file`) and
 every value is a literal with no `$` or backtick; a value starting with `-` is
@@ -316,6 +334,7 @@ use yet), L = host limit (the host has no mechanism for it).
 | Heartbeat / doctor | P plugin check; N `claude_session_plugin` (running `claude` processes older than the installed plugin, via `ps`; L: not on Windows) and a once-per-session restart line from the hook | P version check | N version, hook-trust (`codex_hooks`) and agents (`codex_agents`) checks | N launcher heartbeat | N `pi_extension`: missing, not loading, older than workit |
 | PR issue links (`pr create --issue`, #324) | N: CLI flag (no native PR tool: delivery is the CLI's `pr` verbs under grants) | N: CLI flag; the plugin's tools are the task families only | N: CLI flag; MCP advertises the task families only | N: CLI flag; MCP advertises the task families only | N: CLI flag; `workit_context` and the task families are its only tools |
 | ytrack agent skill (youtrack-cli #16, `core/ytrack-skill.ts`): with YouTrack in use, `workit setup` and `workit upgrade` run `ytrack skill install --dir <root> --json` for each host with Workit; doctor `ytrack_skill`; uninstall removes only recorded dirs | N `$CLAUDE_CONFIG_DIR/skills`, default `~/.claude/skills` ([Claude Code skills](https://code.claude.com/docs/en/skills)) | N `$XDG_CONFIG_HOME/opencode/skills`, default `~/.config/opencode/skills` ([OpenCode skills](https://opencode.ai/docs/skills/)); OpenCode also reads `~/.claude/skills` and `~/.agents/skills`, so it can list the skill twice | N `$CODEX_HOME/skills`, default `~/.codex/skills`: still a user root, though the docs now name `~/.agents/skills` ([Codex skills](https://developers.openai.com/codex/skills)); Workit keeps `~/.agents/skills` free because OpenCode, Cursor and Pi read it too | N `~/.cursor/skills` ([Cursor skills](https://cursor.com/docs/context/skills)); Cursor also reads `~/.claude/skills` and `~/.codex/skills` | N `$PI_CODING_AGENT_DIR/skills`, default `~/.pi/agent/skills` (pi-mono `packages/coding-agent/src/core/skills.ts`, the user `skills` dir under the agent dir) |
+| YouTrack update under one yes (`workit youtrack update`, `create --attach/--command`) and the raw-ytrack routing to it (`hooks/ytrack-guard.ts`); `ytrack auth paths` folder map (doctor `ytrack_paths`, setup) | N CLI verb; guard asks or denies as for other raw ytrack writes | N CLI verb; guard denies via `permission.evaluate` | N CLI verb; guard denies via the hook | N CLI verb; guard denies via `beforeShellExecution` | N CLI verb; guard blocks via `tool_call` |
 | Continuing a reported worker (#313) | L: no continuation gate; a subagent turn is resumed natively, so the lead follows `fanout brief --mode resume` by convention | N: `subagent` with a `sessionID` is refused (`delegation_lineage_denied`) unless the worker is running or its worktree has uncommitted changes; the refusal prints `workit fanout brief <slice> --mode resume` | L: no continuation gate | L: no continuation gate | L: no host subagents |
 | Owned CLI on the agent's PATH (#648, `core/cli-locate.ts`) | N: the plugin's bundled `bin/workit`, unchanged | N: `shell.create.before` adds `opencodeShellEnv()` to every agent shell's env (`src/cli-path.ts`); a V2 build with no shell domain applies it to the plugin process, whose shells inherit it | P: the hook entry (`hooks/launcher.ts`) and the MCP server (`scripts/launch-mcp.ts`) apply it to their own process, so what they run or probe is the owned CLI. L: no hook or MCP answer changes the agent's shell env | P: the hook process (`hooks/workit-hook.ts`) applies it to its own env. L: no hook changes the agent's shell env | N: the extension applies it to Pi's process env when it loads (`src/cli-path.ts`); the bash tool inherits it |
 | `base_red` cause on `pr merge` (#750, `forge/merge-gate-base-red.ts`): the previous base run decides likely flaky (unblock `workit ci rerun --ref <base> --check "<job>" --reason flake`), `<base>` is broken (no rerun) or unknown | N: CLI | N: CLI | N: CLI | N: CLI | N: CLI. On every host the classification is GitHub-only: GitLab always gets `unknown` and the generic `--failed` rerun hint (X: `Forge.commitChecks` for GitLab, follow-up) |
