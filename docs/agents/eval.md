@@ -122,10 +122,16 @@ result file (`scripts/eval/privacy.ts`):
   project slug), the login name `<user>` and the host name `<host>`.
 - **Scrub.** A tool call that read or listed a path outside the world (Claude
   Code's Read, Grep, Glob, Edit, Write, Bash; OpenCode's read, grep, glob,
-  list, shell; any `~`, `$HOME` or absolute path in its input, `<workit>`,
-  relative paths and `/dev` streams aside) keeps its input, but its result
-  becomes `<outside-world file: <class>, <n> bytes>`, the class being `real
-  config`, `real state`, `host config`, `home` or `system`. A hook's or the
+  list, shell) keeps its input, but its result becomes `<outside-world file:
+  <class>, <n> bytes>`, the class being `real config`, `real state`, `host
+  config`, `home`, `unresolved` or `system`. Every path is resolved first: a
+  relative one against the call's working directory (the world's project dir,
+  unless the call's `workdir` or an earlier `cd` in the same script says
+  otherwise); `$HOME` and the `XDG_*_HOME` bases expand as `~`, which counts as
+  outside. A `..`, an unknown variable, a command substitution or a relative
+  path after a `cd` it cannot follow is `unresolved` (or the class its tail
+  names, such as `.config/workit`), never inside. Paths under `<world>` and
+  `<workit>` and `/dev` streams stay. A hook's or the
   host's denial stays: it holds no file content and the grader reads it. The
   stored, scrubbed transcript is the one graded, so `--replay` agrees.
 - **Refusal.** At bench start the runner builds, in memory only, the real

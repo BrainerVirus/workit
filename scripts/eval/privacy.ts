@@ -52,7 +52,13 @@ export const scrubAccount = (text: string, account: Account): string => {
 
 // ------------------------------------------------------------ outside-world reads
 
-export type PathClass = "real config" | "real state" | "host config" | "home" | "system";
+export type PathClass =
+  | "real config"
+  | "real state"
+  | "host config"
+  | "home"
+  | "unresolved"
+  | "system";
 
 const CLASSES: [RegExp, PathClass][] = [
   [/^~\/\.config\/workit(?:\/|$)/u, "real config"],
@@ -63,26 +69,152 @@ const CLASSES: [RegExp, PathClass][] = [
   ],
   [/^~(?:\/|$)/u, "home"],
 ];
-const RANK: PathClass[] = ["real config", "real state", "host config", "home", "system"];
+const RANK: PathClass[] = [
+  "real config",
+  "real state",
+  "host config",
+  "home",
+  "unresolved",
+  "system",
+];
+
+/** The world's project dir: a host call's cwd unless the call says otherwise. */
+const WORLD_CWD = "<world>/repo";
 
 /**
- * The class of a path a call names (after the runner's placeholders), or
- * null inside the world: `<world>/…`, the Workit checkout `<workit>/…`, a
- * relative path (the host's cwd is the world's repo) and /dev streams.
- * `~` counts as outside: a host's file tool may expand it to the real home.
+ * The variables the bench world sets, spelled as the scrub classes them:
+ * HOME and the XDG bases count as the real home (`~`), as `~` does.
  */
-export const pathClass = (raw: string): PathClass | null => {
-  const name = raw.trim().replace(/^\$\{?HOME\}?(?=\/|$)/u, "~");
-  if (name.startsWith("<world>") || name.startsWith("<workit>") || name.startsWith("//"))
-    return null;
-  if (/^\/dev\/(?:null|stdin|stdout|stderr|tty)$/u.test(name)) return null;
-  if (!name.startsWith("/") && !name.startsWith("~") && !/^[A-Za-z]:[\\/]/u.test(name)) return null;
-  return CLASSES.find(([pattern]) => pattern.test(name))?.[1] ?? "system";
+const HOME_VARS: Record<string, string> = {
+  HOME: "~",
+  XDG_CONFIG_HOME: "~/.config",
+  XDG_DATA_HOME: "~/.local/share",
+  XDG_STATE_HOME: "~/.local/state",
+  XDG_CACHE_HOME: "~/.cache",
 };
 
-/** Path-like words of a shell command: absolute, `~` or `$HOME`; never one after a placeholder or a URL scheme. */
-const PATH_WORD = /(?<![\w>.:/~-])(?:~|\$HOME|\$\{HOME\}|\/)[^\s'"`;|&()<>]*/gu;
-const pathsIn = (command: string): string[] => [...command.matchAll(PATH_WORD)].map((m) => m[0]);
+/** `word` with its variables expanded; null when one is unknown or a substitution runs. */
+const expand = (word: string, cwd: string | null): string | null => {
+  if (word.includes("$(") || word.includes("`")) return null;
+  let unknown = false;
+  const out = word.replaceAll(/\$\{?(\w+)\}?/gu, (_, name: string) => {
+    const value = name === "PWD" ? cwd : HOME_VARS[name];
+    if (value === undefined || value === null) unknown = true;
+    return value ?? "";
+  });
+  return unknown ? null : out;
+};
+
+/** Where a path that cannot be resolved with certainty may land, by what it names. */
+const byTail = (name: string): PathClass => {
+  const tail = name.replace(/^(?:\.{1,2}\/)+/u, "");
+  for (const [pattern, kind] of CLASSES.slice(0, 3))
+    if (pattern.test(`~/${tail}`) || pattern.test(`~${tail.slice(tail.search(/\/\.[\w.]/u))}`))
+      return kind;
+  return "unresolved";
+};
+
+const DEV = /^\/dev\/(?:null|stdin|stdout|stderr|tty|fd\/\d+)$/u;
+
+/**
+ * `raw` resolved against `cwd` (null: not certain): the path it names, or
+ * a class when it is outside the world or cannot be resolved. Inside the
+ * world: `<world>/…`, the Workit checkout `<workit>/…`, a relative path
+ * from a cwd inside them, /dev streams. `~`, `$HOME` and the XDG bases count
+ * as outside: a host's file tool may expand `~` to the real home. A `..`,
+ * an unknown variable or a relative path from an unknown cwd is unresolved.
+ */
+const resolveName = (raw: string, cwd: string | null): { inside: string } | { kind: PathClass } => {
+  const name = expand(raw.trim(), cwd);
+  if (name === null) return { kind: byTail(raw) };
+  if (name === "" || name.startsWith("//") || DEV.test(name)) return { inside: name };
+  if (name.split("/").includes("..")) return { kind: byTail(name) };
+  if (name.startsWith("<world>") || name.startsWith("<workit>")) return { inside: name };
+  if (name.startsWith("/") || name.startsWith("~") || /^[A-Za-z]:[\\/]/u.test(name))
+    return { kind: CLASSES.find(([pattern]) => pattern.test(name))?.[1] ?? "system" };
+  if (cwd === null) return { kind: byTail(name) };
+  return resolveName(`${cwd}/${name.replace(/^\.\//u, "")}`, cwd);
+};
+
+/** The class of a path a call names, from the world's project dir; null inside the world. */
+export const pathClass = (raw: string, cwd: string | null = WORLD_CWD): PathClass | null => {
+  const resolved = resolveName(raw, cwd);
+  return "kind" in resolved ? resolved.kind : null;
+};
+
+/** A shell script's segments (split on `&&`, `||`, `;`, `|`, `&`, newlines, parentheses) as words, quotes removed. */
+const segments = (script: string): string[][] => {
+  const out: string[][] = [[]];
+  let word = "";
+  let quote = "";
+  let has = false;
+  const end = (): void => {
+    if (has) out.at(-1)?.push(word);
+    word = "";
+    has = false;
+  };
+  for (const char of script) {
+    if (quote) {
+      if (char === quote) quote = "";
+      else word += char;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      has = true;
+    } else if (/\s/u.test(char) && char !== "\n") end();
+    else if ("&|;\n()".includes(char)) {
+      end();
+      if (out.at(-1)?.length) out.push([]);
+    } else {
+      word += char;
+      has = true;
+    }
+  }
+  end();
+  return out.filter((each) => each.length > 0);
+};
+
+/** The classes of every path a shell script names, following its `cd`s from `start`. */
+const shellClasses = (script: string, start: string | null): PathClass[] => {
+  const classes: PathClass[] = [];
+  let cwd = start;
+  for (const words of segments(script)) {
+    const args = words.slice(words.findIndex((each) => !/^\w+=/u.test(each)));
+    const [command = "", ...rest] = args;
+    if (command === "cd" || command === "pushd") {
+      const target = rest.find((each) => !each.startsWith("-")) ?? "~";
+      const resolved = target === "-" ? null : resolveName(target, cwd);
+      cwd =
+        resolved && "inside" in resolved
+          ? resolved.inside
+          : resolved?.kind === "unresolved" || !resolved
+            ? null
+            : (expand(target, cwd) ?? null);
+      continue;
+    }
+    if (command === "popd") {
+      cwd = null;
+      continue;
+    }
+    const names = [
+      ...words
+        .filter((each) => /^\w+=/u.test(each))
+        .map((each) => each.slice(each.indexOf("=") + 1)),
+      ...(command.includes("/") ? [command] : []),
+      ...rest.flatMap((each) => {
+        const word = each.replace(/^\d*[<>]+/u, "");
+        if (word === "" || word.startsWith("&")) return [];
+        if (word.startsWith("-"))
+          return word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : [];
+        return [word];
+      }),
+    ];
+    for (const name of names) {
+      const kind = pathClass(name, cwd);
+      if (kind) classes.push(kind);
+    }
+  }
+  return classes;
+};
 
 const PATH_KEYS = ["file_path", "filePath", "path", "notebook_path", "workdir", "cwd"];
 const SHELLS = new Set(["Bash", "shell", "bash"]);
@@ -90,13 +222,16 @@ const GLOBS = new Set(["Glob", "glob"]);
 
 /** The most private class among the paths a call reads or lists, or null when all are inside. */
 const callClass = (tool: string, input: Record<string, unknown>): PathClass | null => {
+  const dir = input.workdir ?? input.cwd;
+  const start = typeof dir === "string" ? resolveName(dir, WORLD_CWD) : { inside: WORLD_CWD };
+  const cwd = "inside" in start ? start.inside : null;
   const names = PATH_KEYS.map((key) => input[key]);
   if (GLOBS.has(tool)) names.push(input.pattern);
-  if (SHELLS.has(tool)) names.push(...pathsIn(String(input.command ?? "")));
   const classes = names
     .filter((name): name is string => typeof name === "string")
-    .map(pathClass)
+    .map((name) => pathClass(name, cwd))
     .filter((each): each is PathClass => each !== null);
+  if (SHELLS.has(tool)) classes.push(...shellClasses(String(input.command ?? ""), cwd));
   return classes.length === 0 ? null : (RANK.find((each) => classes.includes(each)) ?? "system");
 };
 

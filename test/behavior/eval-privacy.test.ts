@@ -245,3 +245,70 @@ test("a text holding a private string reports only its kind, as is or JSON-escap
   ]);
   expect(privateKinds("workspace eval, glob <world>/**, preset conventional", set)).toEqual([]);
 });
+
+const MARKER = /^<outside-world file: /u;
+
+test("a relative path with .., a cd .. and an XDG or HOME variable count as outside on both hosts", () => {
+  const commands = [
+    "cat ../../../.config/workit/workspaces.json",
+    "cd .. && cat .config/x",
+    "cat $XDG_CONFIG_HOME/workit/w.json",
+    "cat ${HOME}/notes.txt",
+    "cat $SOME_UNKNOWN/x",
+    "cd ~ && cat .claude.json",
+  ];
+  const claude = scrubOutsideReads(
+    commands
+      .flatMap((command, at) => [
+        claudeCall(`c${at}`, "Bash", { command }),
+        claudeResult(`c${at}`, "acme-example"),
+      ])
+      .join("\n"),
+  )
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((event) => event.type === "user")
+    .map((event) => event.message.content[0].content);
+  expect(claude).toHaveLength(commands.length);
+  for (const result of claude) expect(result).toMatch(MARKER);
+  expect(claude[0]).toStartWith("<outside-world file: real config, ");
+  expect(claude[2]).toStartWith("<outside-world file: real config, ");
+  expect(claude[5]).toStartWith("<outside-world file: host config, ");
+  const opencode = scrubOutsideReads(
+    commands
+      .map((command) =>
+        opencodeTool("shell", {
+          status: "completed",
+          input: { command, workdir: "<world>/repo" },
+          output: "acme-example",
+        }),
+      )
+      .join("\n"),
+  )
+    .split("\n")
+    .map((line) => JSON.parse(line).part.state.output);
+  for (const output of opencode) expect(output).toMatch(MARKER);
+});
+
+test("relative paths inside the world's project dir, and a cd into it, keep their results", () => {
+  const commands = [
+    "cat src/app.ts",
+    "cd src && cat app.ts",
+    "cd <world>/repo && git status --short",
+    "git log --oneline -3 2>/dev/null | head -n 3",
+    "workit check test",
+  ];
+  const results = scrubOutsideReads(
+    commands
+      .flatMap((command, at) => [
+        claudeCall(`k${at}`, "Bash", { command }),
+        claudeResult(`k${at}`, "kept"),
+      ])
+      .join("\n"),
+  )
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((event) => event.type === "user")
+    .map((event) => event.message.content[0].content);
+  expect(results).toEqual(commands.map(() => "kept"));
+});
