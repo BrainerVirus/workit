@@ -245,3 +245,46 @@ test("G a hard link to a guarded file, W a shell or the Edit tool writes it, or 
   expect(writeGate(root, [path.join(links, "two-b.json")]).kind).toBe("none");
   expect(decide(`cp -l links/two.json links/two-c.json`).kind).toBe("none");
 });
+
+test("G script files that spell a guarded path in a write, W a shell or interpreter runs them, T read at hook time and denied; other scripts pass", () => {
+  const scripts = path.join(root, "scripts");
+  mkdirSync(scripts, { recursive: true });
+  const put = (name: string, text: string) => writeFileSync(path.join(scripts, name), text);
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    put("forge.sh", `#!/bin/sh\necho '{}' > ${f}\n`);
+    put("forge-cd.sh", `cd ${sh(kind.dir)}\necho '{}' > ${path.basename(kind.file)}\n`);
+    put("forge.py", `import json\njson.dump({}, open("${f}", "w"))\n`);
+    put("forge.mjs", `import fs from "node:fs";\nfs.writeFileSync("${f}", "{}");\n`);
+    put("forge.rb", `File.write("${f}", "{}")\n`);
+    for (const command of [
+      "bash scripts/forge.sh",
+      "sh ./scripts/forge.sh",
+      "zsh scripts/forge-cd.sh",
+      ". ./scripts/forge.sh",
+      "source scripts/forge.sh",
+      "./scripts/forge.sh",
+      "cd scripts && ./forge.sh",
+      "python3 scripts/forge.py",
+      "node scripts/forge.mjs",
+      "ruby scripts/forge.rb",
+      `cat > t.sh <<'EOF'\necho '{}' > ${f}\nEOF\nbash t.sh`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  put("ok.sh", "echo hi > out.txt\n");
+  put("ok.py", 'print(open("/etc/hostname").read())\n');
+  put("ok.mjs", 'console.log("hi");\n');
+  // Past the 256 KB cap a script is not read.
+  put("big.sh", `${"# pad\n".repeat(50_000)}echo '{}' > ${sh(KINDS[2].file)}\n`);
+  for (const command of [
+    "bash scripts/ok.sh",
+    "./scripts/ok.sh",
+    "python3 scripts/ok.py",
+    "node scripts/ok.mjs",
+    "bash scripts/missing.sh",
+    "bash scripts/big.sh",
+    `cat > t.sh <<'EOF'\necho hi > out.txt\nEOF\nbash t.sh`,
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});

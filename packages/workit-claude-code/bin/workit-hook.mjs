@@ -311,6 +311,11 @@ const mentionsGuarded = (text) => {
 const GUARD_SPELLING =
   /(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/;
 
+// A script run the registry guard reads at hook time (write-gate.ts): a shell,
+// an interpreter or `.`/`source` given a file, or a command spelled as a path.
+const SCRIPT_RUNNERS = new Set("node bash sh zsh dash ksh ruby perl php source".split(" "));
+const RUNS_PATH = /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:\.\s+\S|\.{0,2}\/)/u;
+
 /** Does a word name a regular file with more than one link (maybe a guarded file's second name)? */
 const hardLinkNamed = (words, cwd) =>
   words.slice(0, 64).some((word) => {
@@ -495,6 +500,8 @@ const fastAllow = (() => {
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
+      if (RUNS_PATH.test(command) || wordsOf(command).some((word) => SCRIPT_RUNNERS.has(word)))
+        return false;
       if (
         (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command)) &&
         (GUARD_SPELLING.test(command) ||

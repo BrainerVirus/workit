@@ -151,7 +151,10 @@ const quietEvent = (): string | null => {
             return false;
           }
         }));
-    return /\b(?:git|gh|glab)\b/.test(text) ||
+    // A script run the registry guard reads at hook time: a shell, an interpreter, `.` or a path.
+    return /\b(?:git|gh|glab|node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:\.\s+\S|\.{0,2}\/)/.test(
+      text,
+    ) ||
       guarded(text) ||
       writes ||
       maybeHeavy(text, value.cwd)

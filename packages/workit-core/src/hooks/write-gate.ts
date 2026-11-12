@@ -4,7 +4,7 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskReader } from "../core/task-read";
@@ -1010,6 +1010,8 @@ const segmentTargets = (
   inherited: ReadonlyMap<string, string> = new Map(),
 ): string[] => {
   const targets: string[] = [];
+  // Scripts this command writes from a heredoc (`cat > t.sh <<'EOF'`), by path.
+  const written = new Map<string, string>();
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
   const segments = segmentsOf(command, dialect);
@@ -1208,14 +1210,37 @@ const segmentTargets = (
       const [verb = "", ...args] = run.map((word, index) =>
         index ? word : (word.split(/[\\/]/).at(-1) ?? "").toLowerCase(),
       );
-      const scripts =
-        verb === "eval"
-          ? [args.join(" ")]
-          : SCRIPT_SHELLS.has(verb) && !args.some((arg) => !arg.startsWith("-"))
-            ? (segment.stdin ?? [])
-            : [];
-      for (const script of scripts)
+      const fed = segment.stdin?.join("\n");
+      if (fed !== undefined)
+        for (const file of segment.redirects)
+          for (const into of atAll(file)) written.set(into, fed);
+      // A script file, read now (up to 256 KB), or the heredoc this command wrote it from.
+      const read = (file: string): string[] =>
+        atAll(file).flatMap((script) => {
+          const made = written.get(script);
+          if (made !== undefined) return [made];
+          try {
+            const text = statSync(script).size <= 262_144 ? readFileSync(script, "utf8") : "\0";
+            return text.includes("\0") ? [] : [text];
+          } catch {
+            return [];
+          }
+        });
+      const named = args.find((arg) => !arg.startsWith("-") && arg !== "run");
+      const shells: string[] = verb === "eval" ? [args.join(" ")] : [];
+      const others: string[] = [];
+      if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
+        if (named === undefined) shells.push(...(segment.stdin ?? []));
+        else if (shellScript(run) === null) shells.push(...read(named));
+      } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
+        if (named !== undefined) others.push(...read(named));
+      } else if (/[\\/]/.test(run[0] ?? ""))
+        // `./x.sh`: its shebang names the interpreter.
+        for (const text of read(run[0]))
+          (/^#!.*\b(?:python|node|bun|deno|ruby|perl|php)/.test(text) ? others : shells).push(text);
+      for (const script of shells)
         targets.push(...segmentTargets(dir, script, "posix", depth + 1, strict, vars));
+      for (const text of others) for (const file of pathsIn(text)) targets.push(...atAll(file));
       // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
       if (
         /^(?:n?vim?|ex|ed|emacs)$/.test(verb) &&

@@ -90,3 +90,21 @@ test("Given a hard link in the repo to a guarded file, When a shell write names 
   expect(run(`echo '{}' > ${root}/linked.json`).permissionDecision).toBe("deny");
   expect(run(`echo ok > ${root}/plain.txt`).permissionDecision).toBeUndefined();
 }, 60_000);
+
+test("Given a script file that writes a guarded file, When a shell, an interpreter, `.` or `./x` runs it, Then the hook reads it and denies the run", () => {
+  const grant = path.join(state, "approvals", "grants", "s.json").replaceAll("\\", "/");
+  writeFileSync(path.join(root, "forge.sh"), `#!/bin/sh\necho '{}' > ${grant}\n`, { mode: 0o755 });
+  writeFileSync(path.join(root, "forge.mjs"), `require("fs").writeFileSync("${grant}", "{}");\n`);
+  writeFileSync(path.join(root, "forge.pl"), `open(my $f, ">", "${grant}");\n`);
+  writeFileSync(path.join(root, "ok.sh"), "echo hi > out.txt\n");
+  for (const command of [
+    "bash forge.sh",
+    "sh ./forge.sh",
+    ". ./forge.sh",
+    "./forge.sh",
+    "node forge.mjs",
+    "perl forge.pl",
+  ])
+    expect(run(command).permissionDecision, command).toBe("deny");
+  expect(run("bash ok.sh").permissionDecision).toBeUndefined();
+}, 60_000);
