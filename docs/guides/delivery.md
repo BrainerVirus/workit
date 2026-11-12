@@ -698,8 +698,9 @@ A closing keyword does not cross forges, so an issue on the other forge is a
 - With `backlink: true` the PR URL is commented on each linked issue, at
   most once per PR, with the workspace's verified forge credential or the
   YouTrack API. A YouTrack backlink follows `youtrack.writes`: with `ask` it
-  is `pending` and names the `workit youtrack note` call that asks the user;
-  with `auto` it needs `WORKIT_YT_WRITE=1`.
+  is `pending` on a request to approve, and after the user's yes the next
+  `workit pr create` or `workit pr edit` of that PR posts it once; with
+  `auto` it needs `WORKIT_YT_WRITE=1`.
   An issue on another forge host is not commented on; it is reported as
   `skipped` with a note.
 

@@ -116,6 +116,27 @@ export const youTrackApprovalFields = (input: {
   subject: input.subject,
 });
 
+/** The yes for one comment: the fields `workit youtrack note <ISSUE> --markdown <text>` asks for. */
+export const youTrackCommentApproval = (issueId: string, markdown: string): ApprovalFields =>
+  youTrackApprovalFields({
+    action: `workit youtrack note ${issueId}`,
+    on: { issue: issueId },
+    effect: `posts this comment on ${issueId}`,
+    subject: { comment: markdown },
+  });
+
+/** The yes for one work item: the fields `workit youtrack time <ISSUE> --minutes <n>` asks for. */
+export const youTrackTimeApproval = (
+  issueId: string,
+  item: { minutes: number; text: string; localDate: string },
+): ApprovalFields =>
+  youTrackApprovalFields({
+    action: `workit youtrack time ${issueId} --minutes ${item.minutes}`,
+    on: { issue: issueId },
+    effect: `logs ${item.minutes} minutes on ${issueId} on ${item.localDate}`,
+    subject: { minutes: item.minutes, text: item.text, date: item.localDate },
+  });
+
 // ------------------------------------------------- duplicate entries (#780)
 
 const MARKER_TAIL = /\s*<!-- workit-action:[0-9a-f]{64} -->\s*$/u;

@@ -132,6 +132,10 @@ Before asking, Workit reads the issue back:
   `note`, `time` or `meeting` call, which reports whether it landed
   (`earlier` in `--json`).
 
+A PR backlink (`issues.backlink: true`) asks the same way: `workit pr create`
+reports it `pending` with the request to approve, and the next
+`workit pr create` or `workit pr edit` of that PR posts it once.
+
 To post without asking in one workspace, set this yourself in its entry in
 `workspaces.json`; writes there then need `WORKIT_YT_WRITE=1` instead:
 

@@ -514,6 +514,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every YouTrack write Workit makes now asks first by default: the YouTrack tool calls (`ytrackWrite`) and the PR backlink go through the same approval as `workit youtrack note|time`, so one yes covers either path; `youtrack.writes: auto` keeps the old behaviour
+- A YouTrack backlink that was pending when `workit pr create` ran is posted once after the yes, on the next `workit pr create` or `workit pr edit`, and never twice
 - `workit stack land` checks every PR before merging any: when one would be refused (verdict, required check, another author, base, mergeability), nothing merges and every refused PR is named; `--max N` lands just the first N. `--allow-failing` applies only to the PRs whose head runs that check.
 - Verdict gates and stack carry checks compute a range's patch-id and diff hash from one git diff instead of two.
 - Workit runs fewer git processes per command: a checkout's top level, git dir and common dir are read once per process, and the default base is found with one git call instead of one per candidate branch (faster on Windows especially).
