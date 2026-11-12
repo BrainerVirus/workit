@@ -14,6 +14,7 @@ import { vcsConfig, type IssueTracker } from "../core/vcs-config";
 import { youTrackBaseUrl } from "../core/youtrack";
 import { defaultOperations, ISSUE_RE, unwrap } from "../core/youtrack-tools";
 import { youTrackBackend } from "../core/youtrack-backend";
+import { ytrackHostName } from "../core/youtrack-ytrack";
 import {
   findDuplicate,
   markerPresent,
@@ -99,9 +100,13 @@ export function parseIssueRef(
   }
   if (url) {
     const pathname = url.pathname.replace(/\/+$/u, "");
-    const youtrack = /\/issues?\/([A-Z][A-Z0-9]*-\d+)(?:\/|$)/u.exec(pathname);
+    // `/issue/APP-1[/slug]` and `/projects/<P>/issues/APP-1`, under any path prefix.
+    const youtrack = /\/issues?\/([A-Z][A-Z0-9_]*-\d+)(?:\/|$)/u.exec(pathname);
     if (youtrack && ISSUE_RE.test(youtrack[1]))
-      return { ok: true, ref: { tracker: "youtrack", id: youtrack[1], repo: null, host: null } };
+      return {
+        ok: true,
+        ref: { tracker: "youtrack", id: youtrack[1], repo: null, host: url.host.toLowerCase() },
+      };
     const gitlab = /^\/(.+?)\/-\/(?:issues|work_items)\/(\d+)$/u.exec(pathname);
     const github = /^\/([^/]+\/[^/]+)\/issues\/(\d+)$/u.exec(pathname);
     const found: [ForgeKind, RegExpExecArray] | null = gitlab
@@ -139,9 +144,21 @@ function placeRef(
   youtrackBase: string | null,
 ): Omit<IssueLink, "source"> | { error: string } {
   if (ref.tracker === "youtrack") {
+    // An issue URL must be on the YouTrack this workspace posts to: a backlink
+    // or a link to another instance would point at the wrong issue.
+    if (ref.host !== null) {
+      const configured = youtrackBase ? ytrackHostName(youtrackBase) : null;
+      if (configured !== ref.host)
+        return {
+          error: configured
+            ? `${ref.id} is on ${ref.host}, but this workspace's YouTrack is ${configured}: pass an issue on ${configured}, or set this workspace's youtrack.baseUrl to https://${ref.host}`
+            : `${ref.id} is on ${ref.host}, but this workspace has no YouTrack configured (youtrack.baseUrl): set it to https://${ref.host}, or pass ${ref.id} alone`,
+        };
+    }
     const url = youtrackBase ? `${youtrackBase.replace(/\/+$/u, "")}/issue/${ref.id}` : null;
     return {
       ...ref,
+      host: null,
       url,
       relation: "related",
       line: `Related to: ${url ?? ref.id}`,
