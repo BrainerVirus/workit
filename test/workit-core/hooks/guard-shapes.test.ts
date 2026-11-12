@@ -309,3 +309,20 @@ test("G Windows registry paths with unquoted backslashes, W the guarded path is 
     expect(unquotedWindowsRegistry(command, "win32"), command).toBe(want);
   expect(unquotedWindowsRegistry("cp backup.json C:\\cfg\\workspaces.json", "linux")).toBeNull();
 });
+
+test("G an interpreter fed its script on stdin, W the heredoc spells a guarded path, directly or from a script file, T denied", () => {
+  const scripts = path.join(root, "scripts");
+  mkdirSync(scripts, { recursive: true });
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    const heredoc = `python3 << 'PY'\nimport json\nwith open("${f}", "w") as out:\n    json.dump({}, out)\nPY`;
+    writeFileSync(path.join(scripts, "fed.sh"), `#!/bin/bash\nset -e\n${heredoc}\n`);
+    for (const command of [
+      heredoc,
+      `node <<'JS'\nrequire("fs").writeFileSync("${f}", "{}")\nJS`,
+      "bash scripts/fed.sh",
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  expect(decide(`python3 <<'PY'\nprint("hi")\nPY`).kind).toBe("none");
+});

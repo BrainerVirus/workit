@@ -1233,7 +1233,8 @@ const segmentTargets = (
         if (named === undefined) shells.push(...(segment.stdin ?? []));
         else if (shellScript(run) === null) shells.push(...read(named));
       } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
-        if (named !== undefined) others.push(...read(named));
+        // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
+        others.push(...(named === undefined ? (segment.stdin ?? []) : read(named)));
       } else if (/[\\/]/.test(run[0] ?? ""))
         // `./x.sh`: its shebang names the interpreter.
         for (const text of read(run[0]))
