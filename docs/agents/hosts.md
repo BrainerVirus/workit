@@ -63,8 +63,7 @@ wired in `hooks/handle.ts`): `issue comment|create|edit|update|delete|command`
 (not `--dry-run`), `work-item` (alias `workitem`) `add|edit|update|delete`, and
 `ytrack api` with `-X`/`--method` POST, PUT, PATCH or DELETE (`-XPOST`, `=`
 forms) or a body (`-f`, `-F`, `--field`, `--input`) without a read method, past
-global flags before the group (`--host`, `--debug`, `--no-color`). A call with
-`--help` or `-h` as an option only prints help and passes. It finds them through
+global flags before the group (`--host`, `--debug`, `--no-color`). A call with `--help` or `-h` only prints help and passes when that word stands alone: no `--` before it, and the word before it is no option, a `--flag=value`, or a flag known to take no value (`--debug`, `--no-color`, `--paginate`, `--include`, `--dry-run`, `--silent`, `--yes`, `--meeting`); after any other option it may be that option's value, so the call is judged as the write it carries. `--dry-run` and `-X GET` clear a call under the same rule, and a write method anywhere makes `ytrack api` a write. An option Workit does not know is read both as taking the next word and as not; the stricter reading wins. It finds them through
 `raw-git.ts` `commandLines` (chains, pipes, `cd`, env prefixes, wrappers,
 `bash -c`, eval, heredoc-fed shells, substitutions, variables) plus
 `workit check -- …`, `npx`/`bunx`/`pnpm dlx`, full-path spellings, an alias or
@@ -76,22 +75,22 @@ makes the same write: every option is one the mapping carries (`--body`/`-b`,
 `--body-file`, `--duration` in whole minutes, `--text`, `--date`,
 `--project`/`-p`, `--summary`/`-s`, `--description`, `--description-file`) and
 every value is a literal with no `$` or backtick; a value starting with `-` is
-written `--flag=value`. Anything else (`--host`, `--tag`, `--meeting`, text on
+written `--flag=value`. The call must also be a plain command: the hook command, and any script reached through `sh -c`, `eval`, `workit check --` or a package runner, is simple commands joined by `;`, `&&`, `||`, `|`, `&` or newlines, with no group, substitution, loop, function or `YTRACK_*` assignment, and each command in it that names ytrack is the ytrack call itself behind only env assignments and `command`, `exec`, `nohup`, `setsid`, `time`, `nice`, `ionice`, `stdbuf`, `chronic`, `unbuffer`, `timeout` or `env`, with no word the shell expands (`$`, a glob, a leading `~`) and no second copy of the same write. Any other write (`xargs`, `find -exec`, `parallel`, `watch`, `sudo`, a loop, an alias, a function, a variable, a shell fed on stdin) is judged as one no verb covers, so nothing can fill in or repeat a named call. Anything else (`--host`, `--tag`, `--meeting`, text on
 stdin, a URL for the issue) is treated as a write no verb covers, naming the
 part Workit cannot carry. Reads, `ytrack api` GET and `youtrack.writes: auto`
 pass.
 
-- **Claude Code:** N. The launcher sends a command with a `ytrack` command word
-  (a segment start, or after `$(`, `-c`, `--`, `=`, `{` or a wrapper or runner)
-  to the runtime, so a mere mention stays on the fast path; a write no verb
-  covers gets `permissionDecision: "ask"`.
-- **Codex:** N. The hook entry sends the same commands to the runtime; a write
+- **Claude Code:** N. The launcher sends a command to the runtime when its text, with quotes and backslashes removed (and again with backticks removed), has `ytrack` not followed by `[\w/-]` or by a `.` other than `.exe`/`.cmd`, in any position (`hooks/ytrack-word.ts`, the test the gate itself starts with): `cat docs/ytrack-notes.md` stays on the fast path, `grep -rn ytrack docs` loads the runtime and passes; a write no verb covers gets `permissionDecision: "ask"`.
+- **Codex:** N. The hook entry uses the same test; a write
   no verb covers is denied, handing the command to the user's terminal (the
   hook cannot ask).
 - **Cursor:** N. `beforeShellExecution` denies the same way.
 - **Pi:** N. The `tool_call` hook blocks the same way (it drops an ask).
 - **OpenCode:** N. `permission.evaluate` (`v2/permissions.ts`) denies the same
   way, after `execute.before` rewrote an npx workit call.
+- (L) A ytrack name the text does not spell as a word (`$a$b`, `xargs -IEXT ytrackEXT`, `$'\x79track'`, a glob, cmd `^`), a variable only the nested shell sees (`YT=ytrack bash -c '$YT …'`), an alias or function from an earlier call, `ssh`, `docker` or `su -c` running it elsewhere, and an interpreter or script file that runs it are not seen. (P) A help or read call whose `--help` or `-X GET` directly follows an option Workit does not know is asked: put it first.
+
+A launcher pre-filter is the gate's own first test, copied byte for byte and compared by a test, and it may skip the runtime only on a property the gate itself passes on; it never lists the positions, wrappers or commands where a tool name counts, because a list of places to look misses every place it does not name.
 
 `findYtrack` ignores `PATH` when `WORKIT_NO_YTRACK=1`,
 which the test preload sets, so a test never spawns a developer's real ytrack:
