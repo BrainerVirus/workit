@@ -68,9 +68,9 @@ const HOOK_ENTRIES = [
 // from 537,270 B to 511,615 B (Claude Code 505,078 B, Cursor 499,833 B, Codex 499,445 B), so the
 // ceiling is that baseline plus 12 KB for the rest of wave 7.5. 2026-11-12: the registry
 // guard (#818), the account home (#826) and the raw-ytrack ask (#780, hooks/ytrack-guard.ts,
-// +3,808 B on core run) added code after that split: core run 526,944 B, Claude Code 520,407 B,
-// Cursor 515,993 B, Codex 515,605 B, so the ceiling is core run plus 2,000 B.
-const BUDGET = 528_944;
+// +3,911 B on core run) added code after that split: core run 527,047 B, Claude Code 520,510 B,
+// Cursor 516,096 B, Codex 515,708 B, so the ceiling is core run plus 2,000 B.
+const BUDGET = 529_047;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
