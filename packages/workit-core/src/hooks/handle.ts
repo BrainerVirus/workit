@@ -40,6 +40,7 @@ import { invariantBootstrap } from "../core/methods";
 import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
+import { ytrackGate } from "./ytrack-guard";
 import {
   confineImplementer,
   confineImplementerShell,
@@ -256,6 +257,16 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const canDeny = usable(descriptor.shellPolicy.deny);
       const policy = canDeny ? shellPolicy(input.cwd, event.command, event.dialect) : NONE;
       if (policy.kind !== "none") return policy;
+      // A raw `ytrack` write asks the user first (#780); Claude Code asks natively.
+      const ytrack = canDeny
+        ? ytrackGate(
+            input.cwd,
+            event.command,
+            event.dialect ?? "posix",
+            input.host === "claude_code",
+          )
+        : null;
+      if (ytrack) return ytrack;
       // `cd <dir> && workit … || git …` (#793): no single --cwd rewrite, so name it.
       const split = canDeny ? cdWorkitSplit(event.command) : null;
       if (split)

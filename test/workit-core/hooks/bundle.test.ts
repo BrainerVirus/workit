@@ -66,8 +66,11 @@ const HOOK_ENTRIES = [
 // split (#807, 2026-11-11): hooks read through TaskReader (core/task-read.ts) and never load the
 // write side (core/task-store.ts: appends, binding, compaction, 2.x migration). Core run went
 // from 537,270 B to 511,615 B (Claude Code 505,078 B, Cursor 499,833 B, Codex 499,445 B), so the
-// ceiling is that baseline plus 12 KB for the rest of wave 7.5.
-const BUDGET = 523_615;
+// ceiling is that baseline plus 12 KB for the rest of wave 7.5. 2026-11-12: the registry
+// guard (#818), the account home (#826) and the raw-ytrack ask (#780, hooks/ytrack-guard.ts,
+// +3,808 B on core run) added code after that split: core run 526,944 B, Claude Code 520,407 B,
+// Cursor 515,993 B, Codex 515,605 B, so the ceiling is core run plus 2,000 B.
+const BUDGET = 528_944;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
