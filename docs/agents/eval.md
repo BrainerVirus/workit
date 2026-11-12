@@ -119,7 +119,17 @@ result file (`scripts/eval/privacy.ts`):
 - **Placeholders.** The world path (and Claude's project slug of it) becomes
   `<world>`, the checkout `<workit>`, the account's home in every absolute
   spelling (the OS record's, the runtime's, resolved) `~` (`<home>` as a
-  project slug), the login name `<user>` and the host name `<host>`.
+  project slug), the login name `<user>` and the host name `<host>`. The
+  dirs the bench itself puts a host in become placeholders too, before the
+  refusal looks: a checkout or store this checkout's `node_modules` link into
+  is `<linked>` (a linked worktree's packages are symlinks into the main
+  checkout, and an error raised inside one names the main checkout's real
+  path), and a toolchain's install dir the read rules allow under your home is
+  `<toolchain:bun>`, `<toolchain:node>`, `<toolchain:git>` or
+  `<toolchain:<host binary>>`, each in every spelling (its path, and that path
+  under `~`, `$HOME` and `${HOME}`). Such a path is the bench's own doing: it
+  can spell one of your host's project paths or a workspace's name without
+  holding either. A call that names one is outside the world (`system`).
 - **Scrub.** The scrub does not decide what a call read: nothing that reads a
   command's text can (a glob, a quote, a script the model wrote, a path an
   interpreter builds). The kernel does, so there are two regimes:
@@ -216,10 +226,37 @@ result file (`scripts/eval/privacy.ts`):
   or `/Users/…`; the placeholders and the invented names `me`, `user` and
   `example` aside), a host config's `projects` map, or a workspace glob under
   the real home.
+- **Diagnosing a refusal.** A `private_content` refusal prints, on the
+  terminal only (it is in no file, and nothing of the run is written), where
+  each hit is, without the value:
+
+  ```
+  where (shown here only, in no file; no value is shown; an id is salted per bench start: equal ids are one value):
+    <case>.transcript.jsonl: event 9, user result of Bash(tool trace): host project path, 41 chars, id 3f9a1c2e, from ~/.claude.json: projects, key 3 of 9 (as a ~ path)
+    <case>.transcript.jsonl: event 12, assistant (the model's text): real Workit config value, 12 chars, id 0b7d44a1, from ~/.config/workit/workspaces.json: workspaces[0].name
+  ```
+
+  A line names the file, the event (its 1-based line in the transcript; a key
+  path in the result file), the event's type and the field (a tool's input, a
+  call's result with the call's command cut to 100 characters and any private
+  string in it shown as `<kind>`, the model's text, the answer text, or a key
+  path), the kind, the value's length, an id (the first 8 hex of a sha256
+  salted per bench start: two hits with one id are one value, and an id means
+  nothing in another bench start) and where the runner read the value from:
+  the file, with your home as `~`, and the key path, the `projects` key's
+  position, the git key, the database row and column, or `a variable named as
+  a secret` for the environment. A key you chose yourself (not one of
+  Workit's or the host's schema) shows as its position, `{key 2}`. A shape
+  the committed check refuses (a home path, a projects map) has a place and a
+  kind only. Read it as: the same id in a tool's result and then in the
+  model's text is one value the model repeated; a path-length value whose
+  origin is a `projects` key, sitting in an error message, is a path the
+  bench itself produced, which belongs in the placeholders above.
 - **Known false refusal.** A private config value that is an ordinary word
   (it also appears in public text such as the README) makes a run that quotes
-  that text fail as `private_content`. That is the safe direction; rerun the
-  case.
+  that text fail as `private_content`. That is the safe direction; the
+  diagnosis shows it as a `real Workit config value` of a word's length whose
+  origin is a name or label key. Rerun the case.
 
 ## Isolation and the tripwire
 
