@@ -1447,8 +1447,11 @@ export const underConfig = (
  * `> C:\state\issued\x` loses its separators. On Windows, a command that
  * writes and spells out a registry path is denied.
  */
-const unquotedWindowsRegistry = (command: string): Registry | null => {
-  if (process.platform !== "win32" || !command.includes("\\")) return null;
+export const unquotedWindowsRegistry = (
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): Registry | null => {
+  if (platform !== "win32" || !command.includes("\\")) return null;
   const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
   const text = flat(command);
   const state = flat(resolveStateDir());
