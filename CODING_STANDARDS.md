@@ -74,7 +74,10 @@ what to fix.
   (`spawn-timeout`); a child env spreading `process.env` re-declares `PATH`
   (`spawn-env-path`); tests never bound runner wall time
   (`no-wall-clock-assert`); `process.exit` follows a stream flush
-  (`exit-after-flush`). Existing hits sit in `scripts/repo-rules/baseline.json`,
+  (`exit-after-flush`); no tracked file names the maintainer's work
+  organisation, repositories, accounts or home (`private-names`, a text scan in
+  `scripts/repo-rules/private-names.mts`: use `acme`, `alice`, `work-gh`).
+  Existing hits sit in `scripts/repo-rules/baseline.json`,
   which only shrinks (`bun run lint:rules --write`). A new rule cites its
   mistake, fails on it in `test/repo-rules/`, and seeds its hits with
   `--grandfather <rule>`.
