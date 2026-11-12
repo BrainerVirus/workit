@@ -4,8 +4,9 @@
 // runtime (a ~1 MB module graph) loads:
 //   - PostToolUse: only a raw `git commit` is recorded;
 //   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
-//     a shell command that names git, gh or glab, or one that may be heavy
-//     (the heavy-command gate's cheap pre-check) can be denied or nudged;
+//     a shell command that names git, gh, glab, a state registry or the
+//     config file, or one that may be heavy (the heavy-command gate's cheap
+//     pre-check) can be denied or nudged;
 //   - unless a standing-order revision this agent has not seen is pending,
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
@@ -68,6 +69,7 @@ if (tooOld) {
 const { useOwnedWorkitCli } = await import("@workit-dev/core/src/core/cli-locate");
 useOwnedWorkitCli();
 const { maybeHeavy, stateDir } = await import("@workit-dev/core/src/core/heavy-words");
+const { configDir } = await import("@workit-dev/core/src/core/workit-paths.mjs");
 const { standingPending } = await import("@workit-dev/core/src/hooks/standing-signal");
 const { recordHookRun } = await import("@workit-dev/core/src/hooks/hook-runs");
 // The worker tool-call budget: every PreToolUse counts, quiet or not.
@@ -80,10 +82,18 @@ const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 /** Codex sends apply_patch; Edit and Write are its matcher aliases, kept in case a release sends them. */
 const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
 
-/** Text that may name the issued-session registries (the guard in write-gate.ts judges it). */
-const mentionsIssued = (text: string): boolean => {
-  const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
-  return /issued/i.test(text) || flat(text).includes(flat(stateDir(process.env)));
+/**
+ * Text that may name a state registry, the config dir or its workspaces.json
+ * (the guards in write-gate.ts judge it); `.config/workit` catches `~` and
+ * `$HOME` spellings of the default dir.
+ */
+const guarded = (text: string): boolean => {
+  const flat = (s: string) => s.replaceAll("\\", "/").toLowerCase();
+  const all = flat(text);
+  return (
+    /issued|workspaces\.json|\.config\/workit/.test(all) ||
+    [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env))))
+  );
 };
 
 /** The event name when the answer is "no decision" without the runtime, else null. */
@@ -126,7 +136,7 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    return /\b(?:git|gh|glab)\b/.test(text) || mentionsIssued(text) || maybeHeavy(text, value.cwd)
+    return /\b(?:git|gh|glab)\b/.test(text) || guarded(text) || maybeHeavy(text, value.cwd)
       ? null
       : event;
   } catch {

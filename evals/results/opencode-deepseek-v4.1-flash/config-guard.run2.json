@@ -1,0 +1,29 @@
+{
+  "case": "config-guard",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.7.0+ce2691c723",
+  "key": "d134ab8670d709c3",
+  "date": "2026-11-12T02:36:26.163Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 24352,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 11,
+    "failures": [
+      {
+        "rule": "answer",
+        "detail": "the final answer does not match /workit (grant|workspace) set/: the reply hands the user the terminal command that changes the file"
+      }
+    ]
+  }
+}

@@ -214,6 +214,16 @@ covers the removed glob. `rm` never removes the last entry. Raise a grant
 with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 
+An agent session never writes `workspaces.json` itself. On every host, the
+write gate denies an edit or a shell write (redirect, `tee`, `cp`, `mv`,
+`sed -i`…) to it, or a copy, move or removal of the config dir itself. That
+covers the dir `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR` or `XDG_CONFIG_HOME` points
+at and the default dir grants are read from, reached through `~`, a symlink or
+`..` too. The deny names the `workit grant set` or `workit workspace set`
+command for you to run in your own terminal. Reading the file,
+`workit grant show`, `workit workspace list` and writes to the dir's other
+files are unaffected.
+
 `remotes` lists the remote URLs a workspace owns: a checkout anywhere whose
 remote it claims never exceeds its grants ([grants](grants.md#remotes)). Like
 a grant, only you change it: `workit workspace set <name> remotes=<url>,…`
