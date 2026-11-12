@@ -89,9 +89,9 @@ command (`claude plugin uninstall …`) and changes nothing; `--yes` applies it.
 A JSON file of yours is rewritten with only Workit's keys removed, in its own
 indent and line endings (an object written on one line inside it comes back one
 entry per line). A Workit file you changed is kept and named.
-Like `workit setup`, it refuses inside an agent session and prints
-`workit uninstall --hosts=<h,…> --yes` to run yourself; with no flags it opens
-the interactive picker.
+In an agent session only `--preview` runs: `--yes` and the picker are refused
+with `workit uninstall --hosts=<h,…> --yes` to run yourself. With no flags it
+opens the interactive picker.
 
 | Host | What `workit setup` writes |
 | --- | --- |

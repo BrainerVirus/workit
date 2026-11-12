@@ -65,9 +65,8 @@ host); the native commands below are the fallback.
 To remove Workit from some hosts without the picker, name them:
 `workit uninstall --hosts=cursor --preview` prints the exact files, config keys
 and host commands it would remove and changes nothing; `--yes` removes them.
-Other hosts, your own rules and `~/.config/workit` stay byte-identical. Run it
-in your own terminal: it refuses in an agent session, and without `--yes` it
-needs a terminal to ask.
+Other hosts, your own rules and `~/.config/workit` stay as they are. An agent
+may run `--preview`; `--yes` and the picker are yours, in your own terminal.
 
 Coming from `@brainervirus/workit-*` (14.x)? The packages moved to
 `@workit-dev/*` and restarted at 1.0.0: run
