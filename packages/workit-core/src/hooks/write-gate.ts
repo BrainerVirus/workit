@@ -189,6 +189,39 @@ const WRAPPERS: Record<string, string> = {
   bunx: "p",
 };
 
+/** Options that take a value, by interpreter (the shape of WRAPPERS); a preload option's value runs too. */
+const SCRIPT_OPTIONS: Array<[RegExp, RegExp]> = [
+  [/^(?:(?:ba|z|k|da)?sh|source|\.)$/, /^(?:[-+][oO]|--(?:rcfile|init-file))$/],
+  [/^python/, /^-[WXQ]$/],
+  [
+    /./,
+    /^(?:-[rCI]|--(?:require|import|(?:experimental-)?loader|preload|input-type|conditions|title|cwd|tsconfig|project|env-file|config))$/,
+  ],
+];
+const PRELOAD = /^(?:-r|--(?:require|import|(?:experimental-)?loader|preload|rcfile|init-file))$/;
+
+/**
+ * The script operand of a shell or interpreter, past options and their
+ * values (none after `-m`, `-c`, `-e`), and the modules its preload options run.
+ */
+const scriptArgs = (
+  verb: string,
+  args: readonly string[],
+): { named?: string; preloads: string[] } => {
+  const takes = SCRIPT_OPTIONS.find(([family]) => family.test(verb))?.[1] ?? /^$/;
+  const preloads: string[] = [];
+  for (let at = 0; at < args.length; at++) {
+    const [option, value] = args[at].split(/=(.*)/s);
+    if (value !== undefined && PRELOAD.test(option)) preloads.push(value);
+    else if (/^-[mce]$|^--(?:eval|print)$/.test(option)) break;
+    else if (takes.test(option)) {
+      if (PRELOAD.test(option)) preloads.push(args[at + 1] ?? "");
+      at++;
+    } else if (!/^[-+]/.test(option) && option !== "run") return { named: args[at], preloads };
+  }
+  return { preloads };
+};
+
 /** The command a wrapper runs, past its options, values, assignments and a leading number; null with no wrapper. */
 const unwrapped = (words: readonly string[]): string[] | null => {
   let at = 0;
@@ -1288,7 +1321,7 @@ const segmentTargets = (
           }
         });
       // `/dev/stdin` (like `-`) is the heredoc the command feeds it, never the hook's own stdin.
-      const operand = args.find((arg) => !arg.startsWith("-") && arg !== "run");
+      const { named: operand, preloads } = scriptArgs(verb, args);
       const named = operand === "/dev/stdin" ? undefined : operand;
       // What a literal producer pipes in: `echo`/`printf` words (a printf format
       // too, which may be the script itself), `cat` of a heredoc or files.
@@ -1311,9 +1344,10 @@ const segmentTargets = (
       const others: string[] = [];
       if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
         // No script operand: the heredoc, or the file `<` feeds it (`bash < x.sh`).
-        if (named === undefined)
+        if (named === undefined && shellScript(run) === null)
           shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped);
         else if (shellScript(run) === null) shells.push(...read(named));
+        shells.push(...preloads.flatMap(read));
       } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
         const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
@@ -1323,6 +1357,7 @@ const segmentTargets = (
           ...(named === undefined
             ? [...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped]
             : read(named)),
+          ...preloads.flatMap(read),
         );
       } else if (/[\\/]/.test(run[0] ?? ""))
         // `./x.sh`: its shebang names the interpreter.

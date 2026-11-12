@@ -548,3 +548,40 @@ test("G a TypeScript script that writes a guarded file, W tsx or ts-node runs it
   }
   expect(decide("npx tsx x.json").kind).toBe("none");
 });
+
+test("G a script operand behind an option that takes a value, or a preloaded module, W either writes a guarded file, T read and denied", () => {
+  const opts = path.join(root, "opts");
+  mkdirSync(opts, { recursive: true });
+  const put = (name: string, text: string) => writeFileSync(path.join(opts, name), text);
+  put("x.js", "console.log(1);\n");
+  put("ok.js", "console.log(2);\n");
+  put("ok.sh", "echo hi > out.txt\n");
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    put("evil.sh", `echo '{}' > ${f}\n`);
+    put("evil.py", `open("${f}", "w")\n`);
+    put("evil.js", `require("fs").writeFileSync("${f}", "{}");\n`);
+    put("pre.js", `require("fs").writeFileSync("${f}", "{}");\n`);
+    for (const command of [
+      "bash -o pipefail opts/evil.sh",
+      "bash --rcfile /dev/null opts/evil.sh",
+      "bash +O extglob opts/evil.sh",
+      "python3 -W ignore opts/evil.py",
+      "python3 -X dev opts/evil.py",
+      "node -r ./opts/x.js opts/evil.js",
+      "node --import ./opts/x.js opts/evil.js",
+      "bun --preload ./opts/x.js opts/evil.js",
+      "node -r ./opts/pre.js opts/ok.js",
+      "node --import=./opts/pre.js opts/ok.js",
+      "bun --preload ./opts/pre.js opts/ok.js",
+      "bash --init-file opts/evil.sh opts/ok.sh",
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  for (const command of [
+    "node -r ./opts/x.js opts/ok.js",
+    "bash -o pipefail opts/ok.sh",
+    "python3 -m json.tool x.json out.json",
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});
