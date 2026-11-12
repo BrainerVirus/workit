@@ -7,9 +7,9 @@
 // and a pattern ending in `/*` claims everything under that owner or group.
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
 import { readSshConfig, resolveSshHost, type SshConfig } from "../git/rev";
+import { accountHome } from "./account-home";
 
 const FORGE_SCHEMES = new Set(["ssh", "git", "http", "https", "git+ssh", "ssh+git"]);
 const SSH_SCHEMES = new Set(["ssh", "git+ssh", "ssh+git"]);
@@ -19,14 +19,6 @@ const SSH_443: Record<string, string> = {
 };
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/u;
 const SCP_LIKE = /^(?:[^@/\\]+@)?([^/\\:]+):(.+)$/u;
-
-const accountHome = (): string => {
-  try {
-    return os.userInfo().homedir;
-  } catch {
-    return os.homedir();
-  }
-};
 
 /**
  * The ssh_config aliases resolve through, as deriveForge resolves them: the

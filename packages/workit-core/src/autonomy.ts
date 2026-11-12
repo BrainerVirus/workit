@@ -33,8 +33,8 @@
 //   release push above), and the host
 //   permission prompt applies in addition: a host deny always wins.
 import { copyFileSync, existsSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { accountHome } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
 import { evalWorldEntry } from "./core/eval-world";
@@ -63,14 +63,6 @@ import {
  * redirect grants: an agent could point them at a file it wrote. While an
  * override points elsewhere, grants resolve to the D4 defaults.
  */
-const accountHome = (): string => {
-  try {
-    return os.userInfo().homedir;
-  } catch {
-    return os.homedir();
-  }
-};
-
 /**
  * Where grants are read from: the OS account record's home directory, never
  * `$HOME` (an agent can set that for one command). Tests swap `resolve`
