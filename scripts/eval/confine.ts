@@ -240,7 +240,7 @@ const linkedPackages = (dir: string): string[] => {
  * a package linked from a checkout's own source (a workspace package) has
  * none.
  */
-export const linkedStores = (dir: string): string[] => {
+const linkedStores = (dir: string): string[] => {
   const marker = `${path.sep}node_modules${path.sep}`;
   return [
     ...new Set(
@@ -250,6 +250,28 @@ export const linkedStores = (dir: string): string[] => {
       }),
     ),
   ];
+};
+
+/**
+ * What a host's environment needs so a symlinked package resolves as in a
+ * plain checkout; nothing when `dir` links into no store. bun and node
+ * resolve a symlinked package to its real path, in the store, and bun then
+ * looks for that store in the listing of the dir that holds it: the main
+ * checkout, which a host may not read. NODE_PRESERVE_SYMLINKS keeps a
+ * package at the path it was linked under, so its imports resolve through
+ * `dir` (and no path of the main checkout reaches an error message);
+ * NODE_PATH names the stores for a dependency `dir` does not link.
+ */
+export const linkedEnv = (
+  dir: string,
+  env: Record<string, string | undefined>,
+): Record<string, string> => {
+  const stores = linkedStores(dir);
+  if (stores.length === 0) return {};
+  return {
+    NODE_PRESERVE_SYMLINKS: "1",
+    NODE_PATH: [...stores, ...(env.NODE_PATH ? [env.NODE_PATH] : [])].join(path.delimiter),
+  };
 };
 
 /** What a host reads through a `node_modules` dir's symlinked packages: each resolved package and the store it sits in. */

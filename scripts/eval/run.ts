@@ -31,9 +31,9 @@ import {
   confined,
   confinementLine,
   binaryOf,
+  linkedEnv,
   linkedReads,
   linkedRoots,
-  linkedStores,
   readableDirs,
   toolchainDir,
   writableDirs,
@@ -275,13 +275,8 @@ export const childEnv = (world: World, binDir: string): Record<string, string> =
   env.YTRACK_CONFIG_DIR = path.join(world.dir, "ytrack-config");
   env.YTRACK_HOST = "https://youtrack.invalid";
   env.PATH = [world.bin, binDir, env.PATH ?? ""].join(path.delimiter);
-  // In a linked worktree a package runs from the main checkout's store, and bun
-  // finds a `node_modules` only in the listing of the dir that holds it: the
-  // main checkout, which a host may not read. NODE_PATH names the store instead,
-  // so a linked package finds its own dependencies as in a plain checkout.
-  const stores = linkedStores(path.join(REPO, "node_modules"));
-  if (stores.length > 0)
-    env.NODE_PATH = [...stores, ...(env.NODE_PATH ? [env.NODE_PATH] : [])].join(path.delimiter);
+  // In a linked worktree a package resolves as in a plain checkout (confine.ts `linkedEnv`).
+  Object.assign(env, linkedEnv(path.join(REPO, "node_modules"), env));
   return env;
 };
 

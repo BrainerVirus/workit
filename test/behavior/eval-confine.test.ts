@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { main } from "@/scripts/eval/run";
 // Namespace imports: on a checkout without the launcher, only the tests that use it fail.
 import * as confine from "@/scripts/eval/confine";
@@ -184,15 +185,22 @@ test.skipIf(!landlock)(
     // The store is readable; the main checkout that holds it is not a rule.
     expect(reads).toContain(store);
     expect(reads).not.toContain(path.join(root, "main"));
-    // bun finds a store only in the listing of the dir that holds it, which stays unreadable:
-    // the runner names the store in NODE_PATH (run.ts `childEnv`).
-    expect(confine.linkedStores(path.join(worktree, "node_modules"))).toEqual([store]);
+    // The environment the runner gives a host in a linked worktree (run.ts `childEnv`).
+    const linkedEnv = confine.linkedEnv(path.join(worktree, "node_modules"), {
+      NODE_PATH: "/elsewhere",
+    });
+    expect(linkedEnv).toEqual({
+      NODE_PRESERVE_SYMLINKS: "1",
+      NODE_PATH: `${store}${path.delimiter}/elsewhere`,
+    });
+    // A dir that links into no store changes nothing.
+    expect(confine.linkedEnv(path.join(store, "pkg"), {})).toEqual({});
     const run = (cmd: string[]): { status: number | null; out: string } => {
       const [bin = "", ...args] = confine.confined([path.join(root, "world")], [], cmd, reads);
       const done = spawnSync(bin, args, {
         cwd: path.join(root, "world"),
         encoding: "utf8",
-        env: { ...process.env, NODE_PATH: store },
+        env: { ...process.env, ...linkedEnv },
       });
       return { status: done.status, out: `${done.stdout}${done.stderr}` };
     };
@@ -210,6 +218,44 @@ test.skipIf(!landlock)(
     }
     // A store that holds the home or a guarded path is dropped like any other dir.
     expect(confine.readableDirs([store], [path.join(store, "dep")])).not.toContain(store);
+  },
+  30_000,
+);
+
+test.skipIf(!landlock)(
+  "Given this checkout under Landlock with the host's environment, Then a package that imports its own dependencies loads (ink, as `workit uninstall` loads it): in a linked worktree too",
+  () => {
+    // In a linked worktree every package is a symlink into the main checkout's store, and ink's
+    // imports failed there (`Cannot find package 'react' imported from …/node_modules/ink/…`).
+    const modules = path.join(REPO, "node_modules");
+    const reads = confine.readableDirs(
+      [
+        REPO,
+        ...confine.linkedReads(modules),
+        confine.toolchainDir(process.execPath, process.env.PATH ?? "") ?? "",
+      ],
+      [os.homedir()],
+    );
+    mkdirSync(path.join(root, "world"));
+    const [bin = "", ...args] = confine.confined(
+      [path.join(root, "world")],
+      [],
+      [
+        process.execPath,
+        "-e",
+        'await import("ink"); console.log("ink loads from", import.meta.resolve("ink"))',
+      ],
+      reads,
+    );
+    const done = spawnSync(bin, args, {
+      cwd: path.join(REPO, "packages", "workit-cli"),
+      encoding: "utf8",
+      env: { ...process.env, ...confine.linkedEnv(modules, process.env) },
+    });
+    expect(`${done.stdout}${done.stderr}`).not.toContain("Cannot find package");
+    // ink stays at the path this checkout names it by, never the store's.
+    expect(done.stdout.trim()).toStartWith(`ink loads from ${pathToFileURL(REPO).href}/`);
+    expect(done.status).toBe(0);
   },
   30_000,
 );
