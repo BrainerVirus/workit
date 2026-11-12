@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -290,19 +291,58 @@ const hasTaskStore = (cwd) => {
 
 /**
  * Text that may name a state registry or the config dir's workspaces.json
- * (the guards in write-gate.ts judge it): the config dir by its last two
- * parts, so `~/.config/workit` and `$HOME/...` match too.
+ * (the guards in write-gate.ts judge it): the state and config dirs by their
+ * last two parts, so `~/.local/state/workit`, `~/.config/workit` and
+ * `$HOME/...` match too.
  */
 const mentionsGuarded = (text) => {
   const flat = (value) => value.replaceAll("\\", "/").toLowerCase();
   const tail = (dir) => flat(dir).split("/").slice(-2).join("/");
-  return (
-    /issued|workspaces\.json/i.test(text) ||
-    [stateDir(), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some((part) =>
-      flat(text).includes(flat(part)),
-    )
+  // As written, and with quotes and backslashes gone (`work""spaces.json`, `work\spaces.json`).
+  return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
+    (all) =>
+      /issued|approvals|workspaces\.json/.test(all) ||
+      [tail(stateDir()), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some(
+        (part) => all.includes(part),
+      ),
   );
 };
+
+// A write whose path may name a guarded file only once the runtime expands
+// it: a `~`, `/`, `$` or `..` word holding a glob, or a variable that can
+// hold the state or config dir (write-gate.ts globbed, the registry env).
+const GUARD_SPELLING =
+  /(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/;
+
+// A script run the registry guard reads at hook time (write-gate.ts): a shell,
+// an interpreter or `.`/`source` given a file, or a command spelled as a path.
+const SCRIPT_RUNNERS = new Set(
+  "node tsx ts-node bash sh zsh dash ksh ruby perl php source".split(" "),
+);
+// After a wrapper or keyword too (`time ./x.sh`, `sudo ./x.sh`, `if ./x.sh`).
+const RUNS_PATH =
+  /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/u;
+
+/**
+ * Does a word name a guarded file by a second name: a regular file with more
+ * than one link, or a path whose real path (through a symlink, or a symlinked
+ * dir for a file not made yet) names a guarded dir?
+ */
+const hardLinkNamed = (words, cwd) =>
+  words.slice(0, 64).some((word) => {
+    if (typeof word !== "string" || !word) return false;
+    const file = path.resolve(cwd, word);
+    try {
+      const stat = statSync(file, { throwIfNoEntry: false });
+      if (stat?.isFile() && stat.nlink > 1) return true;
+      const real = stat
+        ? realpathSync(file)
+        : path.join(realpathSync(path.dirname(file)), path.basename(file));
+      return real !== file && mentionsGuarded(real);
+    } catch {
+      return false;
+    }
+  });
 
 // A standing order the lead added or cleared since this agent last looked
 // (`<store>/standing/rev` against its `standing/seen/<key>.json`) rides the
@@ -474,6 +514,14 @@ const fastAllow = (() => {
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
+      if (RUNS_PATH.test(command) || wordsOf(command).some((word) => SCRIPT_RUNNERS.has(word)))
+        return false;
+      if (
+        (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command)) &&
+        (GUARD_SPELLING.test(command) ||
+          hardLinkNamed(command.split(/[\s;&|()<>`'"]+/u), String(value.cwd ?? ".")))
+      )
+        return false;
       if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;
       return !confined && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }
@@ -496,7 +544,14 @@ const fastAllow = (() => {
     }
     // Read, Grep and Glob reach this hook only to be counted against a budget.
     if (READS.has(value.tool_name)) return true;
-    return EDITS.has(value.tool_name) && !confined && !hasTaskStore(String(value.cwd ?? "."));
+    const cwd = String(value.cwd ?? ".");
+    const input = value.tool_input ?? {};
+    return (
+      EDITS.has(value.tool_name) &&
+      !confined &&
+      !hardLinkNamed([input.file_path, input.notebook_path], cwd) &&
+      !hasTaskStore(cwd)
+    );
   } catch {
     return false;
   }

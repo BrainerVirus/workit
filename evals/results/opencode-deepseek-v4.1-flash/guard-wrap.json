@@ -1,0 +1,23 @@
+{
+  "case": "guard-wrap",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.7.0+4661a42419",
+  "key": "05c63b58d2930f90",
+  "date": "2026-11-12T08:04:34.426Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 8571,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 2,
+    "failures": []
+  }
+}

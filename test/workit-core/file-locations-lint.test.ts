@@ -48,6 +48,14 @@ const ALLOW: Allow[] = [
     why: NODE_SCAN,
   },
   { file: "packages/workit-cli/src/install/launcher.ts", match: "/fnm", why: NODE_SCAN },
+  {
+    file: [
+      "packages/workit-claude-code/bin/workit-hook.mjs",
+      "packages/workit-codex/hooks/launcher.ts",
+    ],
+    match: "(?:WORKIT_|XDG_|APPDATA|HOME)",
+    why: "the guard pre-filter matches env-var spellings in a command's text; it builds no location",
+  },
   ...[
     "packages/workit-cli/src/admin/detect-hosts.ts",
     "packages/workit-cli/src/admin/doctor.ts",

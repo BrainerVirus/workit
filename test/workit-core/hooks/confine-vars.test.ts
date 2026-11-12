@@ -234,3 +234,29 @@ test("Given a variable Workit cannot resolve, When the hook denies, Then the rea
   expect(unset).toContain("$UNSET");
   expect(unset).toContain("workit git --cwd <absolute path of $UNSET> commit -m x");
 });
+
+test("Given an implementer, When a write names its target by ${X:-default}, a cp target-directory option or inside a function body, Then the resolved target is still judged against its worktree (#818)", () => {
+  const id = "impl-vars-818";
+  allowed(`touch ${wt}/a.ts`, id);
+  // `${X:-default}` now resolves (it was an unknown-variable deny): only the worktree is allowed.
+  for (const command of [
+    `X=; echo hi > \${X:-${wt}/b.txt}`,
+    `X=; echo hi > \${X:=${wt}/c.txt}`,
+    `X=${wt}/d.txt; echo hi > \${X:-${lead}/src/core.ts}`,
+    `cp --target-directory=${wt}/src ${lead}/src/core.ts`,
+    `cp -t ${wt}/src ${lead}/src/core.ts`,
+    `function g { touch ${wt}/e.ts; }; g`,
+  ])
+    allowed(command, id);
+  for (const command of [
+    `X=; echo hi > \${X:-${lead}/src/core.ts}`,
+    `X=; echo hi > \${X:=${lead}/src/new.ts}`,
+    `X=; echo hi > \${X-${lead}/src/new.ts}`,
+    `X=${lead}/src/core.ts; echo hi > \${X:-${wt}/b.txt}`,
+    `cp --target-directory=${lead}/src ${wt}/a.ts`,
+    `cp --target-directory ${lead}/src ${wt}/a.ts`,
+    `cp -t${lead}/src ${wt}/a.ts`,
+    `function g { touch ${lead}/src/x.ts; }; g`,
+  ])
+    expect(denied(command, id), command).toContain("workit worktree confinement");
+});

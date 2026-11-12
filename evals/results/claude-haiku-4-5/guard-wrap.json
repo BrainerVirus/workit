@@ -1,0 +1,21 @@
+{
+  "case": "guard-wrap",
+  "model": "claude-haiku-4-5",
+  "workitVersion": "workit-dev-v1.7.0+2ba8a32114",
+  "key": "15c8c41b8e01098f",
+  "date": "2026-11-12T08:02:50.632Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 13769,
+    "costUsd": 0.040868,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 4,
+    "failures": []
+  }
+}

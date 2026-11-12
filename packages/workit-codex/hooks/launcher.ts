@@ -5,13 +5,15 @@
 //   - PostToolUse: only a raw `git commit` is recorded;
 //   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
 //     a shell command that names git, gh, glab, a state registry or the
-//     config file, or one that may be heavy (the heavy-command gate's cheap
-//     pre-check) can be denied or nudged;
+//     config file, runs a script (a shell, an interpreter, `.` or a path),
+//     writes through a glob, an env var or a hard link (the registry guard),
+//     or may be heavy (the heavy-command gate's cheap pre-check) can be
+//     denied or nudged;
 //   - unless a standing-order revision this agent has not seen is pending,
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -84,15 +86,16 @@ const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
 
 /**
  * Text that may name a state registry, the config dir or its workspaces.json
- * (the guards in write-gate.ts judge it); `.config/workit` catches `~` and
- * `$HOME` spellings of the default dir.
+ * (the guards in write-gate.ts judge it); `.config/workit` and `state/workit`
+ * catch `~` and `$HOME` spellings of the default dirs.
  */
 const guarded = (text: string): boolean => {
   const flat = (s: string) => s.replaceAll("\\", "/").toLowerCase();
-  const all = flat(text);
-  return (
-    /issued|workspaces\.json|\.config\/workit/.test(all) ||
-    [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env))))
+  // As written, and with quotes and backslashes gone (`work""spaces.json`).
+  return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
+    (all) =>
+      /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(all) ||
+      [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env)))),
   );
 };
 
@@ -136,7 +139,36 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    return /\b(?:git|gh|glab)\b/.test(text) || guarded(text) || maybeHeavy(text, value.cwd)
+    // A write that may name a guarded file only once the runtime expands it (a
+    // glob, a variable) or through a second name (a word naming a hard link).
+    const writes =
+      /[>]|\b(?:cp|mv|rm|rmdir|mkdir|tee|ln|install|rsync|touch|sed|perl|dd|curl|wget|tar|unzip|truncate|patch|chmod|chown|chgrp|chattr|find|xargs|unlink|g?awk|shred|mkfifo)\b/.test(
+        text,
+      ) &&
+      (/(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/.test(
+        text,
+      ) ||
+        text.split(/[\s;&|()<>`'"]+/).some((word) => {
+          // A hard link, or a symlink (or symlinked dir) whose real path is guarded.
+          const file = path.resolve(String(value.cwd), word);
+          try {
+            const stat = statSync(file, { throwIfNoEntry: false });
+            if (stat?.isFile() && stat.nlink > 1) return true;
+            const real = stat
+              ? realpathSync(file)
+              : path.join(realpathSync(path.dirname(file)), path.basename(file));
+            return real !== file && guarded(real);
+          } catch {
+            return false;
+          }
+        }));
+    // A script run the registry guard reads at hook time: a shell, an interpreter, `.` or a path.
+    return /\b(?:git|gh|glab|node|tsx|ts-node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/.test(
+      text,
+    ) ||
+      guarded(text) ||
+      writes ||
+      maybeHeavy(text, value.cwd)
       ? null
       : event;
   } catch {

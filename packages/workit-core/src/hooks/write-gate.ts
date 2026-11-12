@@ -4,7 +4,7 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskReader } from "../core/task-read";
@@ -115,8 +115,9 @@ const editsOf = (input: string[]): string[] | null => {
     case "cp":
     case "ln":
     case "install": {
-      const target = args.indexOf("-t");
-      if (target >= 0) return args[target + 1] ? [args[target + 1]] : null;
+      // `-t D`, `-tD`, `--target-directory[=]D`.
+      const into = valueOf(args, /^(?:-t|--target-directory=?)(.*)$/s);
+      if (into !== undefined) return [into];
       const last = operands(args).at(-1);
       return last ? [last] : null;
     }
@@ -165,6 +166,130 @@ const editsOf = (input: string[]): string[] | null => {
     default:
       return [];
   }
+};
+
+/** Wrappers that run their operand as the command, with the option letters that take a value. */
+const WRAPPERS: Record<string, string> = {
+  sudo: "ugCDhpRrTtU",
+  doas: "uC",
+  env: "uCS",
+  nice: "n",
+  ionice: "cnp",
+  timeout: "sk",
+  stdbuf: "ioe",
+  time: "fo",
+  nohup: "",
+  command: "",
+  exec: "a",
+  setsid: "",
+  builtin: "",
+  "!": "",
+  // `npx tsx x.ts`: the package's binary runs the script.
+  npx: "p",
+  bunx: "p",
+};
+
+const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/;
+
+/** Whether `file` is a config dir itself. */
+const isConfigDir = (file: string): boolean =>
+  configDirs().some((dir) => canonical(dir) === canonical(file));
+
+/** Whether `file` is a config dir or a state registry root (`<state>/issued*`, `<state>/approvals`). */
+const isRoot = (file: string): boolean =>
+  isConfigDir(file) ||
+  /^(?:issued[^\\/]*|approvals)$/.test(
+    path.relative(canonical(resolveStateDir()), canonical(file)),
+  );
+
+/** Calls that only read or print what they are given. */
+const READ_CALLS =
+  /^(?:print|log|info|warn|error|debug|puts|readdir(?:Sync)?|listdir|scandir|iterdir|glob|l?stat(?:Sync)?|exists(?:Sync)?|isdir|isfile|is_dir|is_file|access(?:Sync)?|realpath(?:Sync)?|dirname|basename|relative|str|repr|len)$/;
+/** Calls that change files (Python, Node, Ruby, PHP names), for a path value that may reach one. */
+const MUTATING_CALLS =
+  /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
+/** Calls that only build a path: the value they return may reach any later call. */
+const PATH_CALLS =
+  /^(?:join|resolve|normalize|abspath|expanduser|expandvars|Path|PurePath|fspath)$/;
+
+/**
+ * Code that takes a guarded dir (a config dir, a registry root) only to read
+ * or name it, at `at`: the call around it is a known reader, or it only builds
+ * a path (or is assigned) in code with no call that may change files. Any
+ * other call around it, recognised or not, counts as a write.
+ */
+const readsRoot = (text: string, at: number): boolean => {
+  let call: string | undefined;
+  for (let index = at, depth = 0; index > 0 && call === undefined; index--) {
+    const char = text[index - 1];
+    if (char === ")") depth++;
+    else if (char === "(" && depth-- === 0)
+      call = /([\w$]+)\s*$/.exec(text.slice(0, index - 1))?.[1] ?? "";
+    else if (depth <= 0 && /[;\n]/.test(char)) break;
+  }
+  if (call !== undefined && READ_CALLS.test(call)) return true;
+  if (call !== undefined && !PATH_CALLS.test(call)) return false;
+  return ![...text.matchAll(/([\w$]+)\s*\(/g)].some(([, name]) => MUTATING_CALLS.test(name));
+};
+
+/**
+ * An editor command that cannot write: every `|`-separated part is `set`,
+ * `syntax`, `colorscheme`, a bare search or a line number.
+ */
+const inertEdit = (command: string): boolean =>
+  command
+    .split("|")
+    .every((part) =>
+      /^:?(?:se(?:t)?|sy(?:ntax)?|colo(?:rscheme)?)(?:\s|$)|^[/?][^/?]*[/?]?$|^\d+$/.test(
+        part.trim(),
+      ),
+    );
+
+/** Options that take a value, by interpreter (the shape of WRAPPERS); a preload option's value runs too. */
+const SCRIPT_OPTIONS: Array<[RegExp, RegExp]> = [
+  [/^(?:(?:ba|z|k|da)?sh|source|\.)$/, /^(?:[-+][oO]|--(?:rcfile|init-file))$/],
+  [/^python/, /^-[WXQ]$/],
+  [
+    /./,
+    /^(?:-[rCI]|--(?:require|import|(?:experimental-)?loader|preload|input-type|conditions|title|cwd|tsconfig|project|env-file|config))$/,
+  ],
+];
+const PRELOAD = /^(?:-r|--(?:require|import|(?:experimental-)?loader|preload|rcfile|init-file))$/;
+
+/**
+ * The script operand of a shell or interpreter, past options and their
+ * values (none after `-m`, `-c`, `-e`), and the modules its preload options run.
+ */
+const scriptArgs = (
+  verb: string,
+  args: readonly string[],
+): { named?: string; preloads: string[] } => {
+  const takes = SCRIPT_OPTIONS.find(([family]) => family.test(verb))?.[1] ?? /^$/;
+  const preloads: string[] = [];
+  for (let at = 0; at < args.length; at++) {
+    const [option, value] = args[at].split(/=(.*)/s);
+    if (value !== undefined && PRELOAD.test(option)) preloads.push(value);
+    else if (/^-[mce]$|^--(?:eval|print)$/.test(option)) break;
+    else if (takes.test(option)) {
+      if (PRELOAD.test(option)) preloads.push(args[at + 1] ?? "");
+      at++;
+    } else if (!/^[-+]/.test(option) && option !== "run") return { named: args[at], preloads };
+  }
+  return { preloads };
+};
+
+/** The command a wrapper runs, past its options, values, assignments and a leading number; null with no wrapper. */
+const unwrapped = (words: readonly string[]): string[] | null => {
+  let at = 0;
+  for (
+    let takes: string | undefined;
+    (takes = WRAPPERS[words[at]?.split(/[\\/]/).at(-1) ?? ""]) !== undefined;
+  ) {
+    at++;
+    while (at < words.length && /^-|^\w+=|^\d[\w.]*$/.test(words[at]))
+      at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
+  }
+  return at ? words.slice(at) : null;
 };
 
 /** A `bash -c '<script>'` (any SCRIPT_SHELLS) script, else null. */
@@ -479,12 +604,8 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
  * inline script may write anywhere it names, so each counts as a change, with
  * the directory it runs in.
  */
-const pathsIn = (text: string): string[] =>
-  [
-    ...text.matchAll(
-      /(?<![\w.~:/$-])(?:~\/|\/|[A-Za-z]:\/|\.\.(?:\/|$))[^\s'"`$),;:*?<>|\\[\]{}]*/g,
-    ),
-  ].map((match) => match[0]);
+const PATHS = /(?<![\w.~:/$-])(?:~\/|\/|[A-Za-z]:\/|\.\.(?:\/|$))[^\s'"`$),;:*?<>|\\[\]{}]*/g;
+const pathsIn = (text: string): string[] => [...text.matchAll(PATHS)].map((match) => match[0]);
 
 /**
  * `ln`'s link sources, resolved as the link will: a relative symbolic source
@@ -695,6 +816,7 @@ const cdInto = (
   words: string[],
   strict = false,
   vars: ReadonlyMap<string, string> = new Map(),
+  globs = false,
 ): string | undefined => {
   const lost = strict ? UNKNOWN_DIR : undefined;
   const found = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
@@ -702,7 +824,7 @@ const cdInto = (
   // Only a leading `~` or `$HOME` expands; a mid-path `~` is literal (Windows 8.3
   // short names like RUNNER~1).
   const target = named === undefined ? undefined : homeExpanded(named);
-  if (target === "-" || (target && /^~|[$`*?]/.test(target))) return lost;
+  if (target === "-" || (target && (globs ? /^~|[$`]/ : /^~|[$`*?]/).test(target))) return lost;
   if (dir === undefined) return lost;
   return target === undefined ? os.homedir() : path.resolve(dir, target);
 };
@@ -742,7 +864,9 @@ const assignmentsOf = (words: readonly string[]): Array<[string, string]> => {
 /** `words` without the leading `do`, `then`, `else`… that only introduce the command. */
 const commandWords = (words: readonly string[]): string[] => {
   let start = 0;
-  while (start < words.length && COMPOUND.has(words[start])) start++;
+  // `function name { … }`: the name is not the command.
+  while (start < words.length && COMPOUND.has(words[start]))
+    if (words[start++] === "function") start++;
   return words.slice(start);
 };
 
@@ -929,7 +1053,15 @@ const expansions = (
     last = match.index + match[0].length;
     const value = vars.get(name);
     const values = loops.get(name) ?? (value === undefined ? null : [value]);
-    const applied = values?.map((item) => applyOperator(item, match[2] ?? ""));
+    // `${NAME:-default}` (and `-`, `=`, `:=`): the default, itself expanded, for an empty value.
+    const fallback = /^:?[-=](.*)$/s.exec(match[2] ?? "")?.[1];
+    const applied = values?.flatMap((item) =>
+      fallback === undefined
+        ? [applyOperator(item, match[2] ?? "")]
+        : item === ""
+          ? expansions(fallback, vars, loops)
+          : [item],
+    );
     const fits = applied && results.length * applied.length <= MAX_EXPANSIONS;
     results =
       fits && applied.every((item) => item !== null)
@@ -980,6 +1112,14 @@ const homeExpanded = (file: string): string => {
 };
 
 /**
+ * How far segmentTargets looks: false, the edit analysis; true, an
+ * implementer's confinement (opaque writers, `-c` scripts, unknowns as
+ * placeholders); "registry", that plus what only the registry guard reads
+ * (eval, a heredoc-fed shell, a scripted editor, a script held in a variable).
+ */
+type Strict = boolean | "registry";
+
+/**
  * Per top-level segment, the files it writes (redirects, `touch`, `rm`,
  * `sed -i`…) and `workit git commit|branch|stage|unstage`, resolved against the
  * directory that segment runs in (`cd`, `pushd`/`popd`, `( … )` groups). A
@@ -990,10 +1130,12 @@ const segmentTargets = (
   command: string,
   dialect: ShellDialect,
   depth = 0,
-  strict = false,
+  strict: Strict = false,
   inherited: ReadonlyMap<string, string> = new Map(),
 ): string[] => {
   const targets: string[] = [];
+  // Scripts this command writes from a heredoc (`cat > t.sh <<'EOF'`), by path.
+  const written = new Map<string, string>();
   let dir: string | undefined = cwd;
   let stack: Array<string | undefined> = [];
   const segments = segmentsOf(command, dialect);
@@ -1085,6 +1227,9 @@ const segmentTargets = (
       continue;
     }
     const body = commandWords(segment.words);
+    // The segment whose output this one reads (`a | b`).
+    const before = segments[segments.indexOf(segment) - 1];
+    const feeder = before?.pipe ? before : undefined;
     const keywords = segment.words.length - body.length;
     for (const keyword of segment.words.slice(0, keywords))
       if (OPENS.has(keyword)) nesting++;
@@ -1142,7 +1287,7 @@ const segmentTargets = (
     }
     const plain = !segment.conditional;
     if (CD.has(name)) {
-      dir = cdInto(dir, words, strict, vars);
+      dir = cdInto(dir, words, Boolean(strict), vars, strict === "registry");
       moved(plain);
       continue;
     }
@@ -1154,7 +1299,7 @@ const segmentTargets = (
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
-      dir = cdInto(dir, words, strict, vars);
+      dir = cdInto(dir, words, Boolean(strict), vars, strict === "registry");
       moved(plain);
       continue;
     }
@@ -1163,7 +1308,11 @@ const segmentTargets = (
       moved(plain);
       continue;
     }
-    const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+    const literal =
+      depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+    // `S='…'; bash -c "$S"`: the script a variable set in this command holds.
+    const held = literal !== null && strict === "registry" ? expansions(literal, vars, loops) : [];
+    const inner = held.length === 1 ? held[0] : literal;
     const unPwd = () => new Map([...vars].filter(([key]) => key !== "PWD"));
     if (inner !== null && dir !== undefined)
       for (const runIn of workitRunDir(dir, words, atAll))
@@ -1178,10 +1327,150 @@ const segmentTargets = (
             runIn === dir ? vars : unPwd(),
           ),
         );
+    // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
+    const bare = strict === "registry" && depth < 4 ? unwrapped(words) : null;
+    if (bare?.length && dir !== undefined)
+      targets.push(
+        ...segmentTargets(
+          dir,
+          bare
+            .flatMap((word) => expansions(word, vars, loops))
+            .map(quoteWord)
+            .join(" "),
+          "posix",
+          depth + 1,
+          strict,
+          vars,
+        ),
+      );
+    if (strict === "registry" && dir !== undefined && depth < 4) {
+      const run = words.slice(
+        Math.max(
+          0,
+          words.findIndex((word) => !PREFIXES.has(word)),
+        ),
+      );
+      const [verb = "", ...args] = run.map((word, index) =>
+        index ? word : (word.split(/[\\/]/).at(-1) ?? "").toLowerCase(),
+      );
+      const fed = segment.stdin?.join("\n");
+      if (fed !== undefined)
+        for (const file of segment.redirects)
+          for (const into of atAll(file)) written.set(into, fed);
+      // A script file, read now (up to 256 KB), or the heredoc this command wrote it from.
+      const read = (file: string): string[] =>
+        atAll(file).flatMap((script) => {
+          const made = written.get(script);
+          if (made !== undefined) return [made];
+          try {
+            // Only a regular file: a FIFO or a device would block the hook.
+            const stat = statSync(script);
+            const text =
+              stat.isFile() && stat.size <= 262_144 ? readFileSync(script, "utf8") : "\0";
+            return text.includes("\0") ? [] : [text];
+          } catch {
+            return [];
+          }
+        });
+      // `/dev/stdin` (like `-`) is the heredoc the command feeds it, never the hook's own stdin.
+      const { named: operand, preloads } = scriptArgs(verb, args);
+      const named = operand === "/dev/stdin" ? undefined : operand;
+      // What a literal producer pipes in: `echo`/`printf` words (a printf format
+      // too, which may be the script itself), `cat` of a heredoc or files.
+      const maker = feeder ? commandWords(feeder.words) : [];
+      const [format = "", ...values] = maker.slice(1);
+      let filled = 0;
+      // printf's `%s`, `%b`, `%q` take its arguments in order; the arguments count on their own too.
+      const printed = format.replace(/%[sbq]/g, () => values[filled++] ?? "");
+      const piped: string[] = /^(?:echo|printf)$/.test(maker[0] ?? "")
+        ? [[maker[0] === "printf" ? printed : format, ...values].join("\n").replaceAll("\\n", "\n")]
+        : maker[0] === "cat"
+          ? [...(feeder?.stdin ?? []), ...operands(maker.slice(1)).flatMap(read)]
+          : [];
+      const inputs = (segment.inputs ?? []).filter((file) => file !== "/dev/null");
+      // `eval`, `trap '<script>' SIG` and `alias n='<script>'` hold shell text.
+      const shells: string[] =
+        verb === "eval"
+          ? [args.join(" ")]
+          : verb === "trap"
+            ? args.slice(0, 1)
+            : verb === "alias"
+              ? args.map((arg) => arg.replace(/^[^=]*=/, ""))
+              : [];
+      const others: string[] = [];
+      if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
+        // No script operand: the heredoc, or the file `<` feeds it (`bash < x.sh`).
+        if (named === undefined && shellScript(run) === null)
+          shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped);
+        else if (named !== undefined && shellScript(run) === null) shells.push(...read(named));
+        shells.push(...preloads.flatMap(read));
+      } else if (INTERPRETERS.test(verb)) {
+        // Inline code (`-c`, `-e`) is judged like a script file.
+        const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
+        // As the shell expands it (`"…$HOME/…"`).
+        if (code >= 0) others.push(...expansions(args[code + 1] ?? "", vars, loops));
+        // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
+        others.push(
+          ...(named === undefined
+            ? [...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped]
+            : read(named)),
+          ...preloads.flatMap(read),
+        );
+      } else if (/[\\/]/.test(run[0] ?? ""))
+        // `./x.sh`: its shebang names the interpreter.
+        for (const text of read(run[0]))
+          (/^#!.*\b(?:python|node|bun|deno|ruby|perl|php)/.test(text) ? others : shells).push(text);
+      for (const script of shells)
+        targets.push(...segmentTargets(dir, script, "posix", depth + 1, strict, vars));
+      for (const raw of others) {
+        // Comment lines (`#`, `//`, `*`) are not code.
+        const text = raw.replace(/^\s*(?:#(?!!)|\/\/|\/?\*).*$/gm, "");
+        // `'.config', 'workit', 'x.json'`, `".config" / "workit"`: literals a join puts together.
+        const joined = [
+          ...text.matchAll(/(?:["'][^"'\s,*?[]+["']\s*[,/+]\s*)+["'][^"'\s,*?[]+["']/g),
+        ].map(({ 0: literals, index }) => ({
+          word: literals.replace(/["']\s*[,/+]\s*["']/g, "/").replace(/["']/g, ""),
+          index,
+        }));
+        // Each path as spelled, and each under the home dir (`home + "/.config/…"`); a
+        // config dir or registry root itself counts unless only read (readsRoot).
+        // Only code that reads the home dir itself builds a path under it.
+        const homes = /homedir\(|expanduser\(|Path\.home\(|['"]HOME['"]|env\.HOME|\$HOME|~/.test(
+          text,
+        );
+        const under = (word: string) =>
+          homes ? [path.join(homeExpanded("~"), word.replace(/^~/, ""))] : [];
+        const found = [
+          ...[...text.matchAll(PATHS)].flatMap(({ 0: word, index }) =>
+            [...atAll(word), ...under(word)].map((file) => ({ file, index })),
+          ),
+          ...joined.flatMap(({ word, index }) => under(word).map((file) => ({ file, index }))),
+        ];
+        for (const { file, index } of found)
+          if (!isRoot(file) || !readsRoot(text, index)) targets.push(file);
+      }
+      // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
+      if (
+        /^(?:n?vim?|ex|ed|emacs)$/.test(verb) &&
+        (segment.stdin ||
+          inputs.length > 0 ||
+          feeder ||
+          args.some(
+            (arg, index) =>
+              /^(?:-[a-zA-Z]*[se]|--(?:batch|eval|script))$/.test(arg) ||
+              (/^(?:-c|--cmd)$/.test(arg) && !inertEdit(args[index + 1] ?? "")) ||
+              (arg.startsWith("+") && !inertEdit(arg.slice(1) || "1")),
+          ))
+      )
+        for (const file of operands(args)) targets.push(...atAll(file));
+      // `cp -l` makes a hard link: a second name for its source.
+      if (verb === "cp" && args.some((arg) => /^-[a-zA-Z]*l|^--link$/.test(arg)))
+        for (const file of operands(args).slice(0, -1)) targets.push(...atAll(file));
+    }
     if (strict && dir !== undefined) {
       const runIn = dir;
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
-        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true, vars));
+        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, strict, vars));
       const expanding = new Set(segment.expands ?? []);
       const scriptOf = (index: number): string | undefined => {
         const word = body[index];
@@ -1210,12 +1499,21 @@ const segmentTargets = (
       const here = segment.unanalyzable
         ? DIR_TARGET
         : `${OPAQUE_TARGET}${encodeURIComponent(runner?.split(/[\\/]/).at(-1) ?? "a command")}`;
+      // An interpreter's code is judged with its calls above (readsRoot), not here.
+      const quiet = strict === "registry" && INTERPRETERS.test(runner?.split(/[\\/]/).at(-1) ?? "");
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
-          targets.push(file === "." ? path.join(resolved, here) : resolved);
+          if (!quiet || !isRoot(resolved))
+            targets.push(file === "." ? path.join(resolved, here) : resolved);
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
-      if (ln >= 0 && words.slice(0, ln).every((word) => PREFIXES.has(word)))
-        targets.push(...linkSources(words.slice(ln + 1), at));
+      const lnArgs = words.slice(ln + 1);
+      // The registry guard: a hard link is a second name for its source; a symbolic one only points.
+      if (
+        ln >= 0 &&
+        words.slice(0, ln).every((word) => PREFIXES.has(word)) &&
+        (strict !== "registry" || !lnArgs.some((arg) => /^-[a-zA-Z]*s|^--symbolic$/.test(arg)))
+      )
+        targets.push(...linkSources(lnArgs, at));
     }
     for (const file of segment.redirects)
       if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
@@ -1272,14 +1570,23 @@ export const shellMutationTargets = (
   cwd: string,
   command: string,
   dialect: ShellDialect = "posix",
-  strict = false,
+  strict: Strict = false,
 ): string[] => {
   try {
+    // The registry guard reads a name the command does not set from the hook's own environment.
+    const env = new Map(
+      strict === "registry"
+        ? [...command.matchAll(/\$\{?([A-Za-z_]\w*)/g)]
+            .filter((match) => !/^(?:OLD)?PWD$/.test(match[1]))
+            .map((match) => [match[1], process.env[match[1]] ?? ""])
+        : [],
+    );
     return [
-      ...segmentTargets(cwd, command, dialect, 0, strict),
+      ...segmentTargets(cwd, command, dialect, 0, strict, env),
       ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
     ];
-  } catch {
+  } catch (error) {
+    if (strict === "registry") throw error;
     return [];
   }
 };
@@ -1365,6 +1672,99 @@ type Registry = "issued" | "approvals" | "grants";
 /** The config dirs whose workspaces.json is guarded: this env's and the account home's (grants). */
 const configDirs = (): string[] => [resolveConfigDir(), grantsDir()];
 
+/**
+ * The guarded paths a glob `target` may expand to, matched segment by
+ * segment (`*`, `?`, `[…]`) against the state registries Workit lists in
+ * its own state dir and the config files; the user's tree is never globbed.
+ */
+const globbed = (cwd: string, target: string, state: string, configs: string[]): string[] => {
+  if (!/[*?[]/.test(target)) return [];
+  // The literal prefix through the same canonical form as the guarded paths
+  // (symlinks, Windows 8.3 short names such as RUNNER~1); the glob segments as written.
+  const raw = path.resolve(cwd, target).split(path.sep);
+  const literal = raw.findIndex((part) => /[*?[]/.test(part));
+  const pattern = [
+    ...canonical(raw.slice(0, literal).join(path.sep) || path.sep)
+      .replace(/[\\/]+$/, "")
+      .split(path.sep),
+    ...raw.slice(literal),
+  ];
+  const segment = (glob: string, name: string) => {
+    try {
+      return new RegExp(
+        // Like the shell, `*` and `?` never match a leading dot unless the pattern spells it.
+        `^${glob.startsWith(".") ? "" : "(?!\\.)"}${glob
+          .replace(/[.+^$(){}|\\]/g, "\\$&")
+          .replace(/\[!/g, "[^")
+          .replaceAll("*", ".*")
+          .replaceAll("?", ".")}$`,
+        CASE_INSENSITIVE ? "i" : "",
+      ).test(name);
+    } catch {
+      // `x[`, `x[z-a]`: no glob the shell expands, so it names no guarded file.
+      return false;
+    }
+  };
+  const hit = (file: string, below: boolean) => {
+    const parts = canonical(file).split(path.sep);
+    return (
+      (below ? pattern.length >= parts.length : pattern.length === parts.length) &&
+      parts.every((part, index) => segment(pattern[index], part))
+    );
+  };
+  let roots: string[] = [];
+  try {
+    roots = readdirSync(state).filter((name) => /^(?:issued|approvals$)/.test(name));
+  } catch {
+    // No state dir yet: no registry to hit.
+  }
+  return [
+    ...roots.map((name) => path.join(state, name)).filter((root) => hit(root, true)),
+    ...configs
+      .flatMap((dir) => [dir, path.join(dir, "workspaces.json")])
+      .filter((file) => hit(file, false)),
+  ];
+};
+
+/** The device and inode of each guarded file (the config files, files in the state registries), bounded. */
+const guardedInodes = (state: string, configs: string[]): Map<string, Registry> => {
+  const seen = new Map<string, Registry>();
+  let budget = 2000;
+  const add = (file: string, registry: Registry) => {
+    if (budget-- <= 0) return;
+    const stat = statSync(file, { throwIfNoEntry: false });
+    if (stat?.isFile()) seen.set(`${stat.dev}:${stat.ino}`, registry);
+    else if (stat?.isDirectory())
+      for (const name of readdirSync(file)) add(path.join(file, name), registry);
+  };
+  try {
+    for (const dir of configs) add(path.join(dir, "workspaces.json"), "grants");
+    for (const name of readdirSync(state))
+      if (/^(?:issued|approvals$)/.test(name))
+        add(path.join(state, name), name === "approvals" ? "approvals" : "issued");
+  } catch {
+    // An unreadable state dir: the files read so far.
+  }
+  return seen;
+};
+
+/** A second name for a guarded file: a regular file with more links whose inode a guarded file has. */
+const hardLinked = (
+  file: string,
+  state: string,
+  configs: string[],
+  inodes: { map?: Map<string, Registry> },
+): Registry | undefined => {
+  try {
+    const stat = statSync(file, { throwIfNoEntry: false });
+    if (!stat?.isFile() || stat.nlink < 2 || !stat.ino) return undefined;
+    inodes.map ??= guardedInodes(state, configs);
+    return inodes.map.get(`${stat.dev}:${stat.ino}`);
+  } catch {
+    return undefined;
+  }
+};
+
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
@@ -1372,9 +1772,14 @@ const registryTarget = (
 ): { file: string; registry: Registry } | null => {
   const state = resolveStateDir();
   const configs = configDirs();
+  const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
+    const glob = globbed(cwd, file, state, configs)[0];
+    const viaGlob = glob === undefined ? null : registryTarget(cwd, [glob]);
+    if (viaGlob) return { file: target, registry: viaGlob.registry };
     const registry =
+      hardLinked(path.resolve(cwd, file), state, configs, inodes) ??
       underRegistry(state, cwd, file, process.platform, canonical) ??
       (configs.some((dir) => underConfig(dir, cwd, file, process.platform, canonical))
         ? "grants"
@@ -1439,13 +1844,16 @@ export const underConfig = (
   real: (file: string) => string = (file) => file,
 ): boolean => {
   const parts = partsUnder(dir, cwd, target, platform, real);
-  return parts?.length === 1 && (parts[0] === "" || parts[0] === "workspaces.json");
+  // DIR_TARGET: a mutating git or an unknown edit run in the dir itself.
+  return parts?.length === 1 && ["", "workspaces.json", DIR_TARGET].includes(parts[0]);
 };
 
 /**
  * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
  * `> C:\state\issued\x` loses its separators. On Windows, a command that
- * writes and spells out a registry path is denied.
+ * spells out a registry path is judged with its backslashes turned into
+ * slashes: denied when that path is in a write position or the targets are
+ * unknown, so a copy out of it passes.
  */
 export const unquotedWindowsRegistry = (
   command: string,
@@ -1455,14 +1863,37 @@ export const unquotedWindowsRegistry = (
   const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
   const text = flat(command);
   const state = flat(resolveStateDir());
+  const configs = configDirs().map(flat);
   const registry: Registry | null = text.includes(`${state}/issued`)
     ? "issued"
     : text.includes(`${state}/approvals`)
       ? "approvals"
-      : configDirs().some((dir) => text.includes(`${flat(dir)}/workspaces.json`))
+      : configs.some((dir) => text.includes(dir))
         ? "grants"
         : null;
-  return registry && shellWrites(command).writes ? registry : null;
+  if (!registry) return null;
+  const spans = command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) =>
+    word.replaceAll("\\", "/"),
+  );
+  const writes = shellWrites(spans);
+  // A relative target lands in the dir a `cd` or `pushd` moved to.
+  const moved = [
+    "",
+    ...[...spans.matchAll(/(?:^|[;&|(]\s*)(?:cd|pushd|chdir)\s+([^\s;&|)]+)/g)].map(
+      (match) => `${match[1]}/`,
+    ),
+  ];
+  const named = (target: string) =>
+    moved.some((dir) => {
+      const at = flat(/^(?:[a-z]:)?\//i.test(target) ? target : dir + target).replace(
+        /\/\.?\//g,
+        "/",
+      );
+      return registry === "grants"
+        ? configs.some((cfg) => [cfg, `${cfg}/`, `${cfg}/workspaces.json`].includes(at))
+        : at.includes(`${state}/${registry}`);
+    });
+  return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };
 
 const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: string }> = {
@@ -1488,9 +1919,11 @@ const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: st
 
 const registryDeny = ({ file, registry }: { file: string; registry: Registry }): HookDecision => {
   const { label, what, unblock } = REGISTRY_DENY[registry];
+  // A placeholder (`<dir>/.workit-live-target`) names the dir it stands in.
+  const named = path.basename(file).startsWith(".workit-") ? path.dirname(file) : file;
   return {
     kind: "deny",
-    reason: `workit ${label}: ${file} is under ${what}. ${unblock}`,
+    reason: `workit ${label}: ${named} is under ${what}. ${unblock}`,
     unblock,
   };
 };
@@ -1537,11 +1970,26 @@ export function shellGate(
   try {
     const windows = unquotedWindowsRegistry(command);
     const forged =
-      registryTarget(cwd, segmentTargets(cwd, command, dialect)) ??
+      registryTarget(cwd, shellMutationTargets(cwd, command, dialect, "registry")) ??
       (windows ? { file: `the ${windows} registry`, registry: windows } : null);
     if (forged) return registryDeny(forged);
   } catch {
-    // Fail open, like the other shell analyses here.
+    // The registry check is never dropped: a command it could not analyse that
+    // names a guarded path is denied.
+    const text = command.replaceAll("\\", "/").replace(/['"]/g, "").toLowerCase();
+    if (
+      /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(text) ||
+      [resolveStateDir(), ...configDirs()].some((dir) =>
+        text.includes(dir.replaceAll("\\", "/").toLowerCase()),
+      )
+    ) {
+      const { unblock } = REGISTRY_DENY.grants;
+      return {
+        kind: "deny",
+        reason: `workit registry guard: Workit could not analyse this command, which names a guarded path; split it into plain commands. ${unblock}`,
+        unblock,
+      };
+    }
   }
   const writes = shellWrites(command);
   let targets: string[] = [];
