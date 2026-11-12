@@ -1,6 +1,6 @@
 # Inspiration scan: Superpowers, spec frameworks, and 2026 tooling
 
-Date: 2026-10-03. Local shallow clones: `/tmp/claude-1000/-home-cristhofer-pincetti/fb894a62-61b7-4f32-a4d0-f47c2e5e300f/scratchpad/refs/{superpowers,spec-kit,OpenSpec,BMAD-METHOD}`.
+Date: 2026-10-03. Local shallow clones: `/tmp/claude-1000/-home-user/fb894a62-61b7-4f32-a4d0-f47c2e5e300f/scratchpad/refs/{superpowers,spec-kit,OpenSpec,BMAD-METHOD}`.
 Clone heads: superpowers v6.4.2 (8ca22db, 2026-09-25); spec-kit 1.1.1.dev0 (ae5ade7, 2026-10-03); OpenSpec 1.14.0 (2500d6d, 2026-10-02); BMAD-METHOD unreleased main (3cae711, 2026-10-03; its `package.json` is absent, it uses `pyproject.toml`/`bmod.toml`).
 Confidence: file-level claims below were read from the clones. Tool-landscape claims (section 5) come from web search/fetch snippets and are marked where unverified.
 

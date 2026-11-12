@@ -73,7 +73,7 @@ const skillRows = (root: string) => {
 
 test("a prompt asks for a skill only in so many words: common words alone never route", () => {
   const cases: Array<[string, string | null]> = [
-    ["let's brainstorm the ui-kit tokens", "workit-shape"],
+    ["let's brainstorm the widgets tokens", "workit-shape"],
     ["plan the cache invalidation", "workit-shape"],
     ["the login test is flaky again", "workit-debug"],
     // A broken thing is debug work first, even when it names a build.
@@ -148,7 +148,7 @@ test("skill names resolve from the Skill tool, slash aliases and canonical names
 test("G a main session, W a prompt asks for a skill, T one advisory line, once, and none after it loads", async () => {
   await withProtectedMain(() => {
     const root = repo();
-    expect(prompt(root, "let's brainstorm the ui-kit tokens")).toContain(
+    expect(prompt(root, "let's brainstorm the widgets tokens")).toContain(
       'Workit: this request ("brainstorm") looks like workit-shape work; if it is, call the Skill tool with `workit:shape` first.',
     );
     // Ignored once, it does not repeat.

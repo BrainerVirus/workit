@@ -100,7 +100,7 @@ test(
   "config.sh resolve: workspace match wins over global vcs.json (work -> gitlab, personal -> github)",
   () => {
     const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
-    mkdirSync(path.join(base, "work", "sixbell", "repo"), { recursive: true });
+    mkdirSync(path.join(base, "work", "acme", "repo"), { recursive: true });
     mkdirSync(path.join(base, "personal", "some-app"), { recursive: true });
     try {
       const w = withConfigFiles(
@@ -124,7 +124,7 @@ test(
           }),
         },
         {},
-        () => vcsConfig("resolve", path.join(base, "work", "sixbell", "repo")),
+        () => vcsConfig("resolve", path.join(base, "work", "acme", "repo")),
       );
       expect(w.ok).toBe(true);
       expect(w.workspace_name).toBe("work");

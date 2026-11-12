@@ -82,7 +82,7 @@ claims never exceeds its grants, wherever the folder is:
 - A local path or `file://` URL compares as the repository git reaches
   (symlinks followed before `..`, git's `X`, `X.git` and `X/.git` forms, a
   relative path from the checkout's top). An ssh host alias resolves through
-  your `~/.ssh/config` as Workit's forge detection does (`github-work.com`
+  your `~/.ssh/config` as Workit's forge detection does (`work-gh.example`
   with `HostName github.com` is `github.com`), and `ssh.github.com` is
   `github.com`.
 - A target Workit cannot resolve (an unknown remote, a `<transport>::`

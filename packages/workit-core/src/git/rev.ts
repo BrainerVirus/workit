@@ -1065,8 +1065,8 @@ const normalizeHost = (value: string): string =>
 
 /**
  * Derive the forge from a remote URL. SSH aliases resolve through `sshConfig`
- * (default: the user's ~/.ssh/config), so `git@github-work.com:org/repo` with
- * `Host github-work.com / HostName github.com` is GitHub at github.com.
+ * (default: the user's ~/.ssh/config), so `git@work-gh.example:org/repo` with
+ * `Host work-gh.example / HostName github.com` is GitHub at github.com.
  * Configured enterprise hosts win next; finally a host whose first label is
  * exactly `github` or `gitlab` (gitlab.example.com) is taken at face value.
  * Null when the host is unknown or the path has no owner/name.

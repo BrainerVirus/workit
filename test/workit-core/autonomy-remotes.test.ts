@@ -235,11 +235,11 @@ test("Given an ssh alias for github.com in the user's ssh config, When a fresh r
   workspaces(["https://github.com/acme/strict"]);
   const saved = sshSeam.read;
   sshSeam.read = () => ({
-    text: "Host github-work.com\n  HostName github.com\n",
+    text: "Host work-gh.example\n  HostName github.com\n",
     home: os.tmpdir(),
   });
   try {
-    const fresh = checkout(`${root}/open/alias`, "git@github-work.com:acme/strict.git");
+    const fresh = checkout(`${root}/open/alias`, "git@work-gh.example:acme/strict.git");
     const push = requireGrant(fresh, "push", {
       target: () => pushTarget(fresh, "origin"),
     });
@@ -250,7 +250,7 @@ test("Given an ssh alias for github.com in the user's ssh config, When a fresh r
     sshSeam.read = saved;
   }
   // Without the alias it is another host: the folder's grants.
-  const other = checkout(`${root}/open/alias2`, "git@github-work.com:acme/strict.git");
+  const other = checkout(`${root}/open/alias2`, "git@work-gh.example:acme/strict.git");
   expect(requireGrant(other, "push", { target: () => pushTarget(other, "origin") }).allowed).toBe(
     true,
   );

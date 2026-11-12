@@ -279,7 +279,7 @@ test("Given a lead started in repo A, When its verifier records a verdict from r
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
   freshState(cwd);
   try {
-    const repoA = path.join(cwd, "ui-kit");
+    const repoA = path.join(cwd, "widgets");
     const repoB = path.join(cwd, "frontend");
     mkdirSync(repoA);
     mkdirSync(repoB);

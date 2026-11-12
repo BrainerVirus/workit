@@ -13,7 +13,7 @@ registered globally, the denial also fires in sessions working in unrelated
 checkouts: a manual `git checkout -b` in a non-Workit repository is denied with
 `recovery_required` guidance (`use git.branch_setup`) that makes no sense there
 (observed in session `ses_f5511cf6cffeR50J3yk4bRjekr`, cwd
-`.../sixbell/productos/irp/web/integration`).
+`.../acme/products/app/web/integration`).
 
 The denial is accident prevention, not a security boundary: the recognizer is
 deliberately narrow (`git branch <name>`, `git -C <dir> ...`, and unparseable
