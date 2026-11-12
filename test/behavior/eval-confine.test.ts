@@ -217,6 +217,70 @@ const argv = (bin: string): string[] => {
   ];
 };
 
+/**
+ * Spellings of the real config's path no reader of a command's text decides
+ * (a glob, a class, a backslash, ANSI-C quoting, a brace, a path an
+ * interpreter builds, a script the host wrote, a symlink): each line prints
+ * `<spelling> ok` or `<spelling> denied`. The scrub (privacy.ts) keeps a
+ * result on the kernel's word, so the kernel must refuse every one.
+ */
+const SPELLINGS = (r: string): string => {
+  const dir = `${r}/.config/workit`;
+  const spellings: [string, string][] = [
+    ["glob", `cat ${r}/.config/work?t/workspaces.json`],
+    ["class", `cat ${r}/.[c]onfig/workit/workspaces.json`],
+    ["backslash", `cat ${r}/\\.config/workit/workspaces\\.json`],
+    ["ansi-c", `bash -c "cat \\$'${dir}/workspaces.json'"`],
+    ["brace", `bash -c 'cat ${r}/.config/{workit,workit}/workspaces.json'`],
+    ["dotdot", `cat ${dir}/../workit/workspaces.json`],
+    ["python3", `python3 -c "print(open('${r}'+'/.config/'+'workit/workspaces.json').read())"`],
+    ["script", `printf 'cat ${dir}/workspaces.json\\n' > "$W/probe.sh" && sh "$W/probe.sh"`],
+    ["symlink", `ln -s ${dir} "$W/link" && cat "$W/link/workspaces.json"`],
+    // The same spellings on a world file: they work where the kernel allows the read.
+    ["world-glob", `printf w > "$W/note.txt" && cat "$W"/not?.txt`],
+    ["world-brace", `bash -c 'cat "$0"/{note,note}.txt' "$W"`],
+    [
+      "world-python3",
+      `python3 -c "import sys; print(open(sys.argv[1]+'/no'+'te.txt').read())" "$W"`,
+    ],
+  ];
+  return [
+    'W="$(dirname "$PWD")"',
+    ...spellings.map(
+      ([name, cmd]) =>
+        `if ( ${cmd} ) >/dev/null 2>&1; then echo "${name} ok"; else echo "${name} denied"; fi`,
+    ),
+  ].join("\n");
+};
+
+test.skipIf(!landlock)(
+  "Given Landlock, When the host reads the real Workit config through a spelling no text reader decides, Then the kernel denies each one; the same spellings read a world file",
+  async () => {
+    const lines: string[] = [];
+    expect(await main(argv(fakeClaude(SPELLINGS(home))), (text) => lines.push(text))).toBe(0);
+    const transcript = readFileSync(
+      path.join(root, "results", "haiku", "a-case.transcript.jsonl"),
+      "utf8",
+    );
+    for (const spelling of [
+      "glob",
+      "class",
+      "backslash",
+      "ansi-c",
+      "brace",
+      "dotdot",
+      "python3",
+      "script",
+      "symlink",
+    ])
+      expect(transcript).toContain(`${spelling} denied`);
+    for (const spelling of ["world-glob", "world-brace", "world-python3"])
+      expect(transcript).toContain(`${spelling} ok`);
+    expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
+  },
+  30_000,
+);
+
 /** The R4 shapes: each line prints `<shape> ok` or `<shape> denied`. */
 const SHAPES = (r: string): string => {
   const ws = `${r}/.config/workit/workspaces.json`;
