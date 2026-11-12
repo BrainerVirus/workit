@@ -355,3 +355,72 @@ test("G a script operand that is a FIFO or /dev/stdin, W the gate reads scripts,
   }
   expect(decide(`bash /dev/stdin <<'EOF'\necho hi > out.txt\nEOF`).kind).toBe("none");
 }, 20_000);
+
+test("G interpreter code that builds a guarded path from the home dir and literals, W it runs from a file, a heredoc or -c/-e, T denied; comment lines are not code", () => {
+  const homeState = path.join(home, ".local", "state", "workit");
+  set({ WORKIT_STATE_DIR: homeState });
+  const scripts = path.join(root, "home-built");
+  mkdirSync(scripts, { recursive: true });
+  const put = (name: string, text: string) => writeFileSync(path.join(scripts, name), text);
+  const files = [
+    path.join(CONFIG, "workspaces.json"),
+    path.join(homeState, "approvals", "grants", "a.json"),
+    path.join(homeState, "issued", "s1.json"),
+  ];
+  for (const file of files) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "{}");
+    const rel = sh(path.relative(home, file));
+    const parts = (quote: string, join: string) =>
+      rel
+        .split("/")
+        .map((part) => `${quote}${part}${quote}`)
+        .join(join);
+    put(
+      "plus.sh",
+      `#!/bin/bash\npython3 << 'EOF'\nimport os\np = os.path.expanduser('~') + '/${rel}'\nopen(p, 'w')\nEOF\n`,
+    );
+    put(
+      "join.sh",
+      `#!/bin/bash\npython3 << 'EOF'\nimport os\np = os.path.join(os.path.expanduser('~'), ${parts("'", ", ")})\nopen(p, 'w')\nEOF\n`,
+    );
+    put(
+      "pathlib.py",
+      `from pathlib import Path\n(Path.home() / ${parts('"', " / ")}).write_text("{}")\n`,
+    );
+    put(
+      "fstr.py",
+      `import os\nhome = os.environ["HOME"]\nopen(f"{home}/${rel}", "w").write("{}")\n`,
+    );
+    put(
+      "node.mjs",
+      `import fs from "node:fs";\nimport os from "node:os";\nimport path from "node:path";\nfs.writeFileSync(path.join(os.homedir(), ${parts('"', ", ")}), "{}");\n`,
+    );
+    for (const command of [
+      "bash home-built/plus.sh",
+      "bash home-built/join.sh",
+      "python3 home-built/pathlib.py",
+      "python3 home-built/fstr.py",
+      "node home-built/node.mjs",
+      `python3 -c "import os; open(os.path.expanduser('~') + '/${rel}', 'w')"`,
+      `node -e "require('fs').writeFileSync(require('path').join(require('os').homedir(), ${parts("'", ", ")}), '{}')"`,
+    ])
+      expect(decide(command).kind, `${rel}: ${command}`).toBe("deny");
+  }
+  put(
+    "comment.py",
+    `# grants live in ~/${sh(path.relative(home, files[0]))}; never edit it here\nprint("ok")\n`,
+  );
+  put(
+    "jsdoc.mjs",
+    `/**\n * Reads ~/${sh(path.relative(home, files[0]))} for the user.\n */\nconsole.log("ok");\n`,
+  );
+  put("concat.py", `print("a" + "b", 'x', 'y')\n`);
+  for (const command of [
+    "python3 home-built/comment.py",
+    "node home-built/jsdoc.mjs",
+    "echo '{}' | node home-built/jsdoc.mjs",
+    "python3 home-built/concat.py",
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});

@@ -1238,6 +1238,9 @@ const segmentTargets = (
         if (named === undefined) shells.push(...(segment.stdin ?? []));
         else if (shellScript(run) === null) shells.push(...read(named));
       } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
+        // Inline code (`-c`, `-e`) is judged like a script file.
+        const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
+        if (code >= 0) others.push(args[code + 1] ?? "");
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
         others.push(...(named === undefined ? (segment.stdin ?? []) : read(named)));
       } else if (/[\\/]/.test(run[0] ?? ""))
@@ -1246,7 +1249,22 @@ const segmentTargets = (
           (/^#!.*\b(?:python|node|bun|deno|ruby|perl|php)/.test(text) ? others : shells).push(text);
       for (const script of shells)
         targets.push(...segmentTargets(dir, script, "posix", depth + 1, strict, vars));
-      for (const text of others) for (const file of pathsIn(text)) targets.push(...atAll(file));
+      for (const raw of others) {
+        // Comment lines (`#`, `//`, `*`) are not code.
+        const text = raw.replace(/^\s*(?:#(?!!)|\/\/|\/?\*).*$/gm, "");
+        // `'.config', 'workit', 'x.json'`, `".config" / "workit"`: literals a join puts together.
+        const joined = [
+          ...text.matchAll(/(?:["'][^"'\s,*?[]+["']\s*[,/+]\s*)+["'][^"'\s,*?[]+["']/g),
+        ].map((match) => match[0].replace(/["']\s*[,/+]\s*["']/g, "/").replace(/["']/g, ""));
+        // Each path as spelled, and each under the home dir (`home + "/.config/…"`).
+        for (const spelled of pathsIn(text)) targets.push(...atAll(spelled));
+        // The config dir itself is how a script names where config lives, not a write.
+        const dirs = new Set(configDirs().map(canonical));
+        for (const spelled of [...pathsIn(text), ...joined]) {
+          const under = path.join(homeExpanded("~"), spelled.replace(/^~/, ""));
+          if (!dirs.has(canonical(under))) targets.push(under);
+        }
+      }
       // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
       if (
         /^(?:n?vim?|ex|ed|emacs)$/.test(verb) &&
