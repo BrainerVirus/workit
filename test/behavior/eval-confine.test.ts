@@ -6,6 +6,7 @@ import { afterAll, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   lstatSync,
@@ -347,6 +348,95 @@ test.skipIf(!landlock)(
     for (const spelling of ["world-glob", "world-brace", "world-python3"])
       expect(transcript).toContain(`${spelling} ok`);
     expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
+  },
+  30_000,
+);
+
+// Another process (a second session recording a verdict, the user editing the config) changes a
+// guarded file while a bench runs. Under write confinement the kernel refused this bench that
+// write, so the change is reported and nothing stops; without it the bench stops as before.
+const whileRunning = async (
+  extra: string[],
+  change: () => void,
+): Promise<{ exit: number; said: string }> => {
+  const lines: string[] = [];
+  // The host outlives the change by far, and says so when nothing killed it.
+  const bench = main(
+    [...argv(fakeClaude('sleep 2; say "survived"')), "--watch-ms", "100", ...extra],
+    (text) => lines.push(text),
+  );
+  // The snapshot is armed before the confinement lines print.
+  for (
+    let waited = 0;
+    waited < 10_000 && !lines.some((line) => /read confinement: /u.test(line));
+    waited += 20
+  )
+    await Bun.sleep(20);
+  await Bun.sleep(400);
+  change();
+  return { exit: await bench, said: lines.join("\n") };
+};
+const journal = (): string => path.join(tripwire.tripwireBase(home), "journal");
+const resultFile = (name: string): string => path.join(root, "results", "haiku", name);
+
+test.skipIf(!landlock)(
+  "Given write confinement, When another process appends to a guarded file mid-run, Then the run finishes, its result is written, the change is reported as another process's, no journal is left and the exit is 0",
+  async () => {
+    const file = path.join(config, "workspaces.json");
+    const { exit, said } = await whileRunning([], () => appendFileSync(file, "\n"));
+    expect(said).toMatch(/^write confinement: on /mu);
+    expect(said).toContain(
+      "outside change, not this bench's: write confinement was on, so this change was made by another process; the run goes on, its result is written and the next bench starts.",
+    );
+    // What changed and where the copy from the bench start is, on the terminal.
+    expect(said).toContain(`  ${file}\n    was: file, mode 600, 18 B, sha `);
+    expect(said).toContain(`    original: ${path.join(journal(), "blobs")}`);
+    expect(said).not.toContain("STOPPED");
+    expect(said).toMatch(
+      /1 model run\(s\), 0 failed of 1 graded; 1 outside change\(s\) by another process, reported above$/mu,
+    );
+    expect(exit).toBe(0);
+    // The watch did not kill the host, and the result is a clean run's.
+    expect(readFileSync(resultFile("a-case.transcript.jsonl"), "utf8")).toContain("survived");
+    const result = JSON.parse(readFileSync(resultFile("a-case.json"), "utf8"));
+    expect(result.grade.pass).toBe(true);
+    expect(result.outsideWrite).toBeUndefined();
+    expect(existsSync(journal())).toBe(false);
+    // The next bench starts: nothing is left over, and the change is not reported twice.
+    const next: string[] = [];
+    expect(await main([...argv(fakeClaude(":")), "--force"], (text) => next.push(text))).toBe(0);
+    expect(next.join("\n")).not.toMatch(/LEFTOVER|outside change/u);
+  },
+  30_000,
+);
+
+test("Given no write confinement, When another process appends to a guarded file mid-run, Then the bench stops with exit 3 and the next start is blocked by the leftover, as before", async () => {
+  const file = path.join(config, "workspaces.json");
+  const { exit, said } = await whileRunning(["--confine", "off"], () => appendFileSync(file, "\n"));
+  expect(said).toContain("STOPPED: a-case changed real Workit files outside its world.");
+  expect(said).not.toContain("outside change, not this bench's");
+  expect(said).not.toContain("another process");
+  expect(exit).toBe(3);
+  expect(JSON.parse(readFileSync(resultFile("a-case.json"), "utf8")).outsideWrite).toBeDefined();
+  expect(existsSync(journal())).toBe(true);
+  const next: string[] = [];
+  expect(
+    await main([...argv(fakeClaude(":")), "--confine", "off"], (text) => next.push(text)),
+  ).toBe(3);
+  expect(next.join("\n")).toContain("LEFTOVER: ");
+}, 30_000);
+
+test.skipIf(!landlock)(
+  "Given write confinement, When a guarded file's mode changes mid-run, Then the bench still stops with exit 3: Landlock does not cover metadata",
+  async () => {
+    const file = path.join(config, "workspaces.json");
+    const { exit, said } = await whileRunning([], () => chmodSync(file, 0o644));
+    expect(said).toMatch(/^write confinement: on /mu);
+    expect(said).toContain("STOPPED: a-case changed real Workit files outside its world.");
+    expect(said).toContain("mode 600");
+    expect(said).not.toContain("outside change, not this bench's");
+    expect(exit).toBe(3);
+    expect(existsSync(journal())).toBe(true);
   },
   30_000,
 );

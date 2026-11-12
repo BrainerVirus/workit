@@ -399,6 +399,25 @@ export type Finding = {
   now: string;
   blob: string | null;
   commands: string[];
+  /**
+   * The change took a write Landlock governs and nothing it does not: the
+   * content, the kind or the presence of the path changed, its mode and link
+   * count did not (`governed`). False for a mode change, a link count change,
+   * a file too big to hash, a replaced root, an unreachable path.
+   */
+  governed: boolean;
+};
+
+/**
+ * Whether going from `was` to `now` took a write Landlock's rights govern
+ * (write, truncate, create, remove, rename) and no change they do not
+ * (chmod, chown, touch, a hard link).
+ */
+const governed = (was: State, now: State): boolean => {
+  if (was.type !== now.type) return true;
+  if (was.type === "file" && now.type === "file")
+    return was.mode === now.mode && was.nlink === now.nlink && was.sha !== null && now.sha !== null;
+  return was.type === "link";
 };
 
 const octal = (mode: number): string => (mode & 0o7777).toString(8);
@@ -495,6 +514,7 @@ const findingsFor = (
         now: `${describeRoot(nowRoot)} (root replaced: not walked)`,
         blob: null,
         commands: [`ls -la ${quote(root)}`],
+        governed: false,
       });
       continue;
     }
@@ -527,6 +547,7 @@ const findingsFor = (
             now: describe(now, true),
             blob,
             commands: commandsFor(file, was, now, blob),
+            governed: governed(was, now),
           });
           return;
         }
@@ -539,6 +560,7 @@ const findingsFor = (
           now: `${describe(now, true)} (created)`,
           blob: null,
           commands: commandsFor(file, { type: "absent" }, now, null),
+          governed: true,
         });
       },
       (dir) => dir === root || entries.get(dir)?.type === "dir",
@@ -550,6 +572,7 @@ const findingsFor = (
         now: `${created - MAX_CREATED} more created paths under it, not listed`,
         blob: null,
         commands: [],
+        governed: false,
       });
     for (const [file, was] of entries) {
       if (!under(file) || seen.has(file)) continue;
@@ -561,6 +584,7 @@ const findingsFor = (
           now: `not reachable: ${broken} is no longer a dir`,
           blob: blobs.get(file) ?? null,
           commands: [`ls -la ${quote(broken)}`],
+          governed: false,
         });
         continue;
       }
@@ -571,6 +595,7 @@ const findingsFor = (
         now: "absent",
         blob,
         commands: commandsFor(file, was, { type: "absent" }, blob),
+        governed: true,
       });
     }
   }
@@ -605,9 +630,31 @@ export const checkSnapshot = (snapshot: Snapshot): Trip | null => {
   return count === 0 ? null : { findings, reported };
 };
 
-/** The watch during a run: true when a watched path changed. Stat first, hash only on a stat change. */
-export const watchedChanged = (snapshot: Snapshot): boolean =>
-  findingsFor(snapshot.guard.watched, snapshot.roots, snapshot.entries, new Map()).length > 0;
+/** The watch during a run: the watched paths that changed. Stat first, hash only on a stat change. */
+export const watchedFindings = (snapshot: Snapshot): Finding[] =>
+  findingsFor(snapshot.guard.watched, snapshot.roots, snapshot.entries, new Map());
+
+/**
+ * Take the state `trip` found as the snapshot's own, in memory only: a change
+ * another process made is reported once, not again at every later check.
+ * The journal on disk keeps the copy taken at arm; a path adopted here no
+ * longer points at it, since that copy is older than the state adopted.
+ */
+export const adopt = (snapshot: Snapshot, trip: Trip): void => {
+  for (const finding of trip.findings) {
+    const stat = lstat(finding.path);
+    if (stat) snapshot.entries.set(finding.path, stateOf(finding.path, stat));
+    else snapshot.entries.delete(finding.path);
+    snapshot.blobs.delete(finding.path);
+  }
+  const now = hashReported(snapshot.guard);
+  for (const file of [...trip.reported.added, ...trip.reported.changed]) {
+    const hash = now.get(file);
+    if (hash === undefined) snapshot.reported.delete(file);
+    else snapshot.reported.set(file, hash);
+  }
+  for (const file of trip.reported.missing) snapshot.reported.delete(file);
+};
 
 /** Each finding as indented lines: path, was, now, the original's copy, and commands to run. */
 export const findingLines = (findings: Finding[]): string[] =>

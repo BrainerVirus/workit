@@ -76,6 +76,7 @@ import {
   accountHome,
   acquire,
   armSnapshot,
+  adopt,
   checkSnapshot,
   dropJournal,
   ensureBase,
@@ -87,8 +88,9 @@ import {
   TripwireRefused,
   tripDetail,
   tripwireBase,
-  watchedChanged,
+  watchedFindings,
   writeJournal,
+  type Finding,
   type Guard,
   type Snapshot,
   type Trip,
@@ -475,6 +477,61 @@ const benchRoots = (opts: Options): Root[] => {
   );
 };
 
+/**
+ * Whether a change to a guarded path was made by another process: Landlock
+ * write confinement was applied to the run, the change is one its rights
+ * govern (content, kind, presence: `governed`, never a mode or link count),
+ * and the path is not one the run's ruleset let this bench write. Then the
+ * kernel refused this bench that write, so it did not make it.
+ */
+const notOurs = (
+  opts: Options,
+  confinedRun: boolean,
+  change: Pick<Finding, "path" | "governed">,
+): boolean => {
+  if (!confinedRun || !change.governed) return false;
+  const { dirs, files } = writeRules(opts, null);
+  const inside = (dir: string): boolean => {
+    const rel = path.relative(dir, change.path);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  return !files.includes(change.path) && !dirs.some(inside);
+};
+
+/** A trip split in two: what another process changed (`notOurs`), and what stops the bench as before. */
+const splitTrip = (
+  opts: Options,
+  confinedRun: boolean,
+  trip: Trip,
+): { other: Trip | null; own: Trip | null } => {
+  const mine = (file: string): boolean =>
+    !notOurs(opts, confinedRun, { path: file, governed: true });
+  const part = (keep: (ours: boolean) => boolean): Trip | null => {
+    const kept = {
+      findings: trip.findings.filter((finding) => keep(!notOurs(opts, confinedRun, finding))),
+      reported: {
+        added: trip.reported.added.filter((file) => keep(mine(file))),
+        changed: trip.reported.changed.filter((file) => keep(mine(file))),
+        missing: trip.reported.missing.filter((file) => keep(mine(file))),
+      },
+    };
+    const count =
+      kept.findings.length +
+      kept.reported.added.length +
+      kept.reported.changed.length +
+      kept.reported.missing.length;
+    return count === 0 ? null : kept;
+  };
+  return { other: part((ours) => !ours), own: part((ours) => ours) };
+};
+
+/** How many paths a trip names. */
+const tripCount = (trip: Trip): number =>
+  trip.findings.length +
+  trip.reported.added.length +
+  trip.reported.changed.length +
+  trip.reported.missing.length;
+
 /** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
 const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
   if (!opts.confinement.on) return cmd;
@@ -584,6 +641,8 @@ type Options = {
   stop: string | null;
   /** A run changed real Workit files: the journal stays as the user's recovery copy. */
   keepJournal: boolean;
+  /** Changes to guarded paths another process made during this bench (`notOurs`): reported, never a stop. */
+  otherChanges: number;
   /** The host running now, in its own process group. */
   child: RunningHost | null;
   /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
@@ -687,8 +746,10 @@ const attempt = async (
     killGroup(child);
   }, opts.timeoutMs);
   const snapshot = opts.snapshot;
+  // A change this bench could not have made (see `notOurs`) does not end the run.
+  const ours = (finding: Finding): boolean => !notOurs(opts, opts.confinement.on, finding);
   const watch = setInterval(() => {
-    if (snapshot && watchedChanged(snapshot)) killGroup(child);
+    if (snapshot && watchedFindings(snapshot).some(ours)) killGroup(child);
   }, opts.watchMs);
   const exit = await new Promise<number | null>((resolve) => {
     child.on("error", (error) => {
@@ -775,7 +836,7 @@ const runCase = async (
   version: string,
   opts: Options,
   index = 1,
-): Promise<{ result: RunResult | null; trip: Trip | null; hits?: string[] }> => {
+): Promise<{ result: RunResult | null; trip: Trip | null; hits?: string[]; other?: Trip }> => {
   const snapshot = opts.snapshot;
   if (!snapshot) throw new Error("the tripwire is not armed");
   // The value a refresh during the run rotates away.
@@ -788,10 +849,20 @@ const runCase = async (
     if (checkSnapshot(snapshot)) opts.keepJournal = true;
     throw error;
   }
-  const trip = checkSnapshot(snapshot);
+  const found = checkSnapshot(snapshot);
+  // The ruleset the run really had: the launcher exits 126 without the host when it cannot apply it.
+  const confinedRun = opts.confinement.on && !run.refused && run.exit !== 126;
+  const { other, own: trip } = found
+    ? splitTrip(opts, confinedRun, found)
+    : { other: null, own: null };
+  // Another process's change is reported and taken as the new state; it stops nothing.
+  if (other) {
+    adopt(snapshot, other);
+    opts.otherChanges += tripCount(other);
+  }
   // Nothing is put back: the journal stays as the user's recovery copy.
   if (trip) opts.keepJournal = true;
-  if (opts.stop) return { result: null, trip };
+  if (opts.stop) return { result: null, trip, ...(other ? { other } : {}) };
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
@@ -848,11 +919,11 @@ const runCase = async (
     };
     result.refused = "private_content";
     const hits = unread ? [] : privateHits(files, privates, opts.origins, opts.salt).map(shownHit);
-    return { result, trip, hits };
+    return { result, trip, hits, ...(other ? { other } : {}) };
   }
   writeFileSync(transcript, run.transcript);
   writeJson(json, stored);
-  return { result, trip };
+  return { result, trip, ...(other ? { other } : {}) };
 };
 
 type Row = {
@@ -1127,6 +1198,7 @@ export const main = async (
     unconfined: values.unconfined,
     stop: null,
     keepJournal: false,
+    otherChanges: 0,
     child: null,
     carried: [],
   };
@@ -1308,7 +1380,8 @@ const bench = async (
       // A signal is handled when the runner reaches its event loop: give it the chance.
       await new Promise((resolve) => setImmediate(resolve));
       if (opts.stop) return stopped(opts, null, print);
-      const { result, trip, hits } = await runCase(spec, key, version, opts, run);
+      const { result, trip, hits, other } = await runCase(spec, key, version, opts, run);
+      if (other) print(otherChange(other));
       if (!result) return stopped(opts, trip, print);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
@@ -1353,7 +1426,7 @@ const bench = async (
   }
   writeSummary(dir);
   print(
-    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}`,
+    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}${opts.otherChanges > 0 ? `; ${opts.otherChanges} outside change(s) by another process, reported above` : ""}`,
   );
   if (limited.length > 0)
     print(
@@ -1369,6 +1442,25 @@ const bench = async (
 };
 
 /** A signal stopped the bench: say what the tripwire found; `tripwired` exits with the signal's code. */
+/**
+ * The report of a change another process made (`notOurs`): what changed and
+ * where the copy taken at arm is, for the terminal. The run goes on.
+ */
+const otherChange = (trip: Trip): string =>
+  [
+    `outside change, not this bench's: write confinement was on, so this change was made by another process; the run goes on, its result is written and the next bench starts. ${[
+      trip.reported.added.length > 0 ? `added ${trip.reported.added.join(", ")}` : "",
+      trip.reported.changed.length > 0 ? `changed ${trip.reported.changed.join(", ")}` : "",
+      trip.reported.missing.length > 0 ? `missing ${trip.reported.missing.join(", ")}` : "",
+      trip.findings.length > 0
+        ? "nothing was put back; a file's copy from the bench start stays in the journal until this bench ends:"
+        : "",
+    ]
+      .filter(Boolean)
+      .join("; ")}`,
+    ...findingLines(trip.findings.map((finding) => ({ ...finding, commands: [] }))),
+  ].join("\n");
+
 const stopped = (opts: Options, trip: Trip | null, print: (text: string) => void): number => {
   print(
     [
