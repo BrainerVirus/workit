@@ -622,6 +622,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The eval bench says where a `private_content` refusal hit and what kind of value it was, never the value; it no longer refuses a run over the path of a checkout it links to itself; a linked package resolves its own dependencies in a linked worktree; and with write confinement on, another process changing a guarded file is reported instead of stopping the bench.
 - `workit pr merge --pr N` works from a checkout that does not have the PR branch: it takes the head from the forge, checks the verdict for it (one recorded in another clone counts) and leaves no ref behind; a head it cannot fetch is refused as `head_unfetched` with the fetch command
 - A changelog with CRLF line endings keeps them when `workit git rebase` or the merge driver merges two Unreleased blocks
 - Claude Code no longer asks about `workit approve <id>` when no id is a live request: the CLI answers `not_found`
