@@ -12,7 +12,7 @@ import {
 } from "./youtrack-ytrack";
 
 /** One workspace glob that should resolve to its YouTrack host. */
-export type PathWant = { workspace: string; host: string; glob: string };
+type PathWant = { workspace: string; host: string; glob: string };
 
 const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() ? value.trim() : null;
@@ -37,7 +37,7 @@ export type PathFix = {
   command: string;
 };
 
-export type PathsReview =
+type PathsReview =
   | { state: "ok"; drift: string[]; fixes: PathFix[] }
   | { state: "missing" | "old" | "failed"; error: string };
 

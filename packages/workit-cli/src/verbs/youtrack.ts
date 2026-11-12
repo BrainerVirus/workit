@@ -262,7 +262,7 @@ function legacyPlan(
 }
 
 /** `2h45m`, `1h`, `30m`. */
-export const durationText = (minutes: number): string =>
+const durationText = (minutes: number): string =>
   `${minutes >= 60 ? `${Math.floor(minutes / 60)}h` : ""}${minutes % 60 || minutes < 60 ? `${minutes % 60}m` : ""}`;
 
 const sizeText = (bytes: number): string =>

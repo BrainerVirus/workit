@@ -279,7 +279,7 @@ export const ytrackAuthPathsArgs = (
   ...(change.remove ?? []).flatMap((glob) => ["--remove", glob]),
 ];
 
-export type YtrackPaths =
+type YtrackPaths =
   | { ok: true; paths: string[] }
   | { ok: false; reason: "missing" | "old" | "failed"; error: string };
 
