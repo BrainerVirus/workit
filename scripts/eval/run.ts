@@ -52,6 +52,7 @@ import {
   committedLeaks,
   privateKinds,
   privateStrings,
+  PrivateSetUnreadable,
   scrubAccount,
   scrubOutsideReads,
   workitVocabulary,
@@ -946,6 +947,20 @@ export const main = async (
     print(USAGE);
     return 2;
   }
+  // A real account file that exists but cannot be read would leave the set short: nothing runs.
+  let privateSet: PrivateSet = new Map();
+  if (!settling)
+    try {
+      privateSet = privateStrings(
+        path.resolve(values["real-home"] ?? accountHome()),
+        workitVocabulary(REPO),
+        values["real-home"] ? undefined : process.env,
+      );
+    } catch (error) {
+      if (!(error instanceof PrivateSetUnreadable)) throw error;
+      print(`private set: cannot read ${error.message}; fix or remove it, nothing runs`);
+      return 4;
+    }
   const opts: Options = {
     host,
     model: values.model ?? "",
@@ -960,11 +975,7 @@ export const main = async (
       : guardFor(accountHome(), process.env),
     realHome: path.resolve(values["real-home"] ?? accountHome()),
     account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
-    privateSet: privateStrings(
-      path.resolve(values["real-home"] ?? accountHome()),
-      workitVocabulary(REPO),
-      values["real-home"] ? undefined : process.env,
-    ),
+    privateSet,
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),

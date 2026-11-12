@@ -366,11 +366,33 @@ export const workitVocabulary = (repo: string): ((text: string) => boolean) => {
   return (text) => words.has(text) || schemas.includes(text);
 };
 
-const readJson = (file: string): unknown => {
+/**
+ * An account file the private set is built from exists but cannot be read
+ * or parsed: the set would miss what it holds, so no run starts. The
+ * message names the file and the reason, never its content.
+ */
+export class PrivateSetUnreadable extends Error {}
+
+/** The file's text; null when it does not exist; throws when it exists and cannot be read. */
+const readAccountFile = (file: string): string | null => {
   try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    return readFileSync(file, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "unreadable";
+    if (code === "ENOENT") return null;
+    throw new PrivateSetUnreadable(`${file}: ${code}`);
+  }
+};
+
+/** The file's JSON; null when it does not exist; throws on a file that is not valid JSON. */
+const readJson = (file: string): unknown => {
+  const text = readAccountFile(file);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
   } catch {
-    return null;
+    // The parser's message quotes the content: only the reason goes out.
+    throw new PrivateSetUnreadable(`${file}: not valid JSON`);
   }
 };
 
@@ -386,17 +408,21 @@ const collect = (value: unknown, into: string[]): void => {
     }
 };
 
-const gitValues = (file: string, pattern: string): string[] =>
-  (
-    spawnSync("git", ["config", "--file", file, "--get-regexp", pattern], {
-      encoding: "utf8",
-      timeout: 10_000,
-      env: { PATH: process.env.PATH ?? "", GIT_CONFIG_NOSYSTEM: "1" },
-    }).stdout ?? ""
-  )
+/** The values of `pattern` keys in a git config file; exit 1 is no match, anything else a file git cannot parse. */
+const gitValues = (file: string, pattern: string): string[] => {
+  readAccountFile(file);
+  const run = spawnSync("git", ["config", "--file", file, "--get-regexp", pattern], {
+    encoding: "utf8",
+    timeout: 10_000,
+    env: { PATH: process.env.PATH ?? "", GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  if (run.status !== 0 && run.status !== 1)
+    throw new PrivateSetUnreadable(`${file}: git cannot parse it (exit ${run.status ?? "none"})`);
+  return (run.stdout ?? "")
     .split("\n")
     .map((line) => line.slice(line.indexOf(" ") + 1).trim())
     .filter((value, at, all) => value.length > 0 && all.indexOf(value) === at);
+};
 
 /**
  * Every git identity of the account: its global files and each file they

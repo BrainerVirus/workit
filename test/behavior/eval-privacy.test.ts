@@ -4,7 +4,15 @@
 // refuses a file that still holds a private string. Every fixture here is
 // invented, and the "real" home is a temp dir.
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -311,4 +319,34 @@ test("relative paths inside the world's project dir, and a cd into it, keep thei
     .filter((event) => event.type === "user")
     .map((event) => event.message.content[0].content);
   expect(results).toEqual(commands.map(() => "kept"));
+});
+
+test("an account file that exists but cannot be parsed or read stops the private set, naming the file and never its content", () => {
+  const broken: [string, string][] = [
+    [path.join(".config", "workit", "workspaces.json"), '{"workspaces": [acme-example'],
+    [path.join(".config", "workit", "config.json"), "acme-example}"],
+    [".claude.json", "{acme-example"],
+    [".gitconfig", "[user\n\tname = acme-example\n"],
+  ];
+  for (const [rel, content] of broken) {
+    const home = fakeHome();
+    writeFileSync(path.join(home, rel), content);
+    let message = "";
+    try {
+      privateStrings(home, workitVocabulary(REPO));
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain(path.join(home, rel));
+    expect(message).not.toContain("acme-example");
+  }
+  if (process.getuid?.() !== 0) {
+    const home = fakeHome();
+    chmodSync(path.join(home, ".config", "workit", "workspaces.json"), 0o000);
+    expect(() => privateStrings(home, workitVocabulary(REPO))).toThrow(/workspaces\.json: EACCES/u);
+  }
+  // A file that does not exist is fine.
+  const bare = mkdtempSync(path.join(os.tmpdir(), "workit-privacy-bare-"));
+  temps.push(bare);
+  expect([...privateStrings(bare, workitVocabulary(REPO)).values()]).toEqual(["home path"]);
 });

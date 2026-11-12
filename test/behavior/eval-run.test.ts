@@ -245,6 +245,20 @@ test("Given a transcript still holding a value of the real Workit config, When r
   expect(written.filter((name) => name.startsWith("a-smoke"))).toEqual([]);
 });
 
+test("Given a real Workit config that exists but is not valid JSON, When run, Then the bench refuses to start, naming the file and the reason, and no host runs", async () => {
+  const config = path.join(root, "home", ".config", "workit", "workspaces.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  writeFileSync(config, '{"workspaces": [acme-example');
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(4);
+  const said = printed.join("\n");
+  expect(said).toContain(`${config}: not valid JSON`);
+  expect(said).toContain("nothing runs");
+  expect(said).not.toContain("acme-example");
+  expect(calls()).toEqual([]);
+  expect(existsSync(path.join(root, "results"))).toBe(false);
+});
+
 test("Given cached results for case+model+version, When run again, Then no model call is made", async () => {
   await main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet([]));
   expect(calls()).toHaveLength(3);

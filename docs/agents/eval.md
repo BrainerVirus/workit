@@ -143,7 +143,10 @@ result file (`scripts/eval/privacy.ts`):
   include, and its home. A run whose transcript or result still holds one,
   or an absolute home path or a projects map, fails as `private_content`
   naming the file and the kind of string, never the string; nothing of that
-  run is written. The set is never written or logged.
+  run is written. The set is never written or logged. One of those files that
+  exists but cannot be read or parsed stops the bench before any run (exit 4,
+  `private set: cannot read <file>: <reason>`, never its content); a missing
+  one is fine.
 - **Committed check.** `test/behavior/eval-privacy.test.ts` fails when any file
   under `evals/results/` holds an absolute path under `/home/<name>/` or
   `/Users/<name>/` (the placeholders and invented `me`/`user`/`example` aside),
