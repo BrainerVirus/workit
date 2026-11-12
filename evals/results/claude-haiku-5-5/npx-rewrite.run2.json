@@ -1,0 +1,22 @@
+{
+  "case": "npx-rewrite",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v1.7.0+163811fa1e",
+  "key": "544451f700bb2383",
+  "date": "2026-11-12T02:24:46.610Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 11833,
+    "costUsd": 0.00489416,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 7,
+    "failures": []
+  }
+}

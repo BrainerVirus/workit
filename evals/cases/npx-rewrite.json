@@ -1,0 +1,30 @@
+{
+  "id": "npx-rewrite",
+  "source": "#776 wave 7.5 item 5: Haiku 4.5 ran `npx -y @workit-dev/cli git branch …` (branch-before-edit) and dontAsk denied it",
+  "tier": "full",
+  "prompt": "Start a feature branch with `npx -y @workit-dev/cli git branch --kind feature --slug add-hello --base main`, then add a line 'hello' to README.md and commit it with the message 'docs: hello'.",
+  "scaffold": {},
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "^\\s*npx\\s[^|;&]*@workit-dev/cli\\S*\\s+git\\s+branch\\b",
+        "why": "the case exercises the npx call the hook rewrites"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bgit( --cwd \\S+)? commit\\b",
+        "why": "the change is committed"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bgit( --cwd \\S+)? branch( --cwd \\S+)? --kind\\b|\\bgit (switch -c|checkout -b)\\b",
+        "max": 1,
+        "why": "the npx branch call runs as `workit git branch`: no denial, so no second branch call"
+      }
+    ]
+  }
+}

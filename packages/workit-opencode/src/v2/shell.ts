@@ -19,6 +19,8 @@ import {
   type HookInput,
 } from "@workit-dev/core/hooks";
 import { repeatedCliFailure, type FailureMemo } from "@workit-dev/core/src/hooks/repeat-failure";
+import { npxWorkit } from "@workit-dev/core/src/hooks/cwd-normalize";
+import { workitOnPath } from "@workit-dev/core/src/core/heavy";
 
 type Content = { type: string; text?: string };
 type ShellResult = { content?: string | ReadonlyArray<Content> } & Record<string, unknown>;
@@ -100,10 +102,13 @@ export const observeShellBefore = (
     if (!shell) return;
     const sessionID = String(event.sessionID);
     const original = hookInput(root, sessionID, String(event.id), shell);
-    const heavy = leaseRewrite(original);
-    if (heavy) {
-      (event.input as { command: string }).command = heavy;
-      shell.command = heavy;
+    // `npx @workit-dev/cli …` runs as the `workit …` on PATH; OpenCode then
+    // evaluates its permission on the rewritten command, never the npx one.
+    const npx = npxWorkit(shell.command);
+    const rewrite = leaseRewrite(original) ?? (npx && workitOnPath() ? npx : null);
+    if (rewrite) {
+      (event.input as { command: string }).command = rewrite;
+      shell.command = rewrite;
     }
     const input = hookInput(root, sessionID, String(event.id), shell);
     workdirs.set(sessionID, input.cwd);

@@ -9,7 +9,9 @@ import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
-import { cdWorkitSplit, cwdRewrite, verbFirst } from "./cwd-normalize";
+import { cdWorkitSplit, cwdRewrite, npxWorkit, verbFirst } from "./cwd-normalize";
+import { workitOnPath } from "../core/heavy";
+import { approveCallDeny, approveCallIn } from "../approvals/call";
 import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
@@ -225,6 +227,30 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       );
     }
     case "shell.pre": {
+      // `npx @workit-dev/cli …` with `workit` on PATH is judged as the `workit …`
+      // call it runs, by every gate below; only a pass becomes that call.
+      const npx = npxWorkit(event.command);
+      if (npx && workitOnPath()) {
+        const canDeny = usable(descriptor.shellPolicy.deny);
+        // Claude Code and Pi ask for and record an approval only on the plain call.
+        const approve = approveCallIn(npx, event.dialect);
+        if (approve && canDeny && (input.host === "claude_code" || input.host === "pi")) {
+          const fix = approve.plain ? `workit approve ${approve.ids.join(" ")}` : approve.fix;
+          return { kind: "deny", reason: approveCallDeny(fix), unblock: fix };
+        }
+        const plain = decide({ ...input, event: { ...event, command: npx } }, deps);
+        if (plain.kind !== "none" && plain.kind !== "context") return plain;
+        if (usable(descriptor.shellPolicy.rewrite))
+          return {
+            kind: "rewrite",
+            command: npx,
+            input: event.toolInput ? { ...event.toolInput, command: npx } : null,
+            text: plain.kind === "context" ? plain.text : null,
+          };
+        if (canDeny)
+          return { kind: "deny", reason: `Run \`${npx}\`: workit is on PATH.`, unblock: npx };
+        return plain;
+      }
       const skillRead = skillReadIn(event.command, event.dialect);
       if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);

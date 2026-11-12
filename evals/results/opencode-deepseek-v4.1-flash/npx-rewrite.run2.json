@@ -1,0 +1,24 @@
+{
+  "case": "npx-rewrite",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.7.0+f14f98128a",
+  "key": "044ee5f6881da314",
+  "date": "2026-11-12T02:33:02.636Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 15594,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 6,
+    "failures": []
+  }
+}
