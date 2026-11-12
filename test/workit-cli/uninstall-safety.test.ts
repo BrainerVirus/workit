@@ -214,3 +214,22 @@ test("O1: Given Workit's Codex rules file unchanged, When --yes runs, Then it is
   expect(await uninstall(["--hosts=codex", "--yes"], io(home).io)).toBe(0);
   expect(existsSync(path.join(home, ".codex/rules/workit.rules"))).toBe(false);
 });
+
+test("O2: Given Workit's permission block on Cursor, When the plan is shown, Then the ownership record it changes is a row, and --yes forgets only Cursor's entry", async () => {
+  const home = await cursorHome("ownership", true);
+  const preview = io(home, {}, true);
+  expect(await uninstall(["--hosts=cursor", "--preview"], preview.io)).toBe(0);
+  const rows = lastJson(preview.out()).data.actions as {
+    host: string;
+    kind: string;
+    path: string;
+  }[];
+  const record = rows.find((row) => row.kind === "forget-ownership");
+  expect(record?.host).toBe("cursor");
+  expect(path.basename(record?.path ?? "")).toBe("host-permissions.json");
+  const before = JSON.parse(readFileSync(record?.path ?? "", "utf8"));
+  expect(Object.keys(before.hosts).toSorted()).toEqual(["codex", "cursor"]);
+  expect(await uninstall(["--hosts=cursor", "--yes"], io(home).io)).toBe(0);
+  const after = JSON.parse(readFileSync(record?.path ?? "", "utf8"));
+  expect(Object.keys(after.hosts)).toEqual(["codex"]);
+});

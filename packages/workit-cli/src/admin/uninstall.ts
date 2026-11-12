@@ -22,6 +22,7 @@ import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/
 import { isWorkitPlugin } from "./registration";
 import {
   forgetOwnership,
+  ownershipFile,
   permissionTarget,
   readOwnership,
   codexRulesText,
@@ -62,6 +63,8 @@ export type UninstallAction =
   | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost }
   /** A foreign file at the launcher's place: reported, never touched. */
   | { kind: "keep-foreign"; path: string; detail: string }
+  /** Drop the host's entry from Workit's permission ownership record (state dir). */
+  | { kind: "forget-ownership"; path: string; detail: string; permissionHost: PermissionHost }
   /** A file the plan must read that exists but cannot be read or parsed: its host is left untouched. */
   | { kind: "unreadable"; path: string; detail: string };
 
@@ -564,6 +567,22 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     );
   }
 
+  // The ownership record names what Workit added; it is forgotten after the block goes.
+  const owned = readOwnership(permissionPathsOf(paths)).hosts;
+  for (const [plan, host, file] of [
+    [claude, "claude-code", res.claudeSettings],
+    [cursor, "cursor", res.cursorCliConfig],
+    [codex, "codex", res.codexRules],
+  ] as const) {
+    if (!owned[host] || !plan.actions.some((action) => action.path === file)) continue;
+    plan.actions.push({
+      kind: "forget-ownership",
+      path: ownershipFile(permissionPathsOf(paths)),
+      detail: `forget ${host}'s entry in Workit's permission record`,
+      permissionHost: host,
+    });
+  }
+
   // The ytrack skill directories Workit recorded installing, and only those,
   // each at exactly its host's `<skills root>/ytrack` with no symlink on the
   // way: any other recorded path is reported and never removed. Like the
@@ -745,6 +764,12 @@ function applyAction(
   } else if (action.kind === "unreadable") {
     status = "failed";
     detail = action.detail;
+  } else if (action.kind === "forget-ownership") {
+    // A Codex rules file kept above (changed by someone) keeps its record.
+    const kept = action.permissionHost === "codex" && existsSync(res.codexRules);
+    if (!kept) forgetOwnership(action.permissionHost, permissionPathsOf(paths));
+    status = kept ? "skipped" : "removed";
+    detail = kept ? "kept: the Codex rules file is still there" : undefined;
   } else if (action.kind === "remove-completion") {
     const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
     status = removed.includes(action.path) || !existsSync(action.path) ? "removed" : "failed";
@@ -772,7 +797,6 @@ function applyAction(
       const removed = removeCodexRules(action.path, permissionPathsOf(paths));
       status = removed ? "removed" : "failed";
       detail = removed ? undefined : `${action.path} is not Workit's Codex rules file`;
-      if (removed) forgetOwnership("codex", permissionPathsOf(paths));
     } catch (error) {
       status = "failed";
       detail = error instanceof Error ? error.message : String(error);
@@ -813,14 +837,6 @@ function applyAction(
       const outcome = applyEditJsonRemove(action.path, cleaner);
       status = outcome.status;
       detail = outcome.detail;
-      const permissionHost: PermissionHost | null =
-        action.path === res.claudeSettings
-          ? "claude-code"
-          : action.path === res.cursorCliConfig
-            ? "cursor"
-            : null;
-      if (permissionHost && status !== "failed")
-        forgetOwnership(permissionHost, permissionPathsOf(paths));
     }
   }
   return { status, detail };

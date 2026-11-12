@@ -538,6 +538,10 @@ const unionOwned = (a: OwnedEntries | undefined, b: OwnedEntries): OwnedEntries 
   };
 };
 
+/** Where Workit records the permission entries it added. */
+export const ownershipFile = (options: PermissionPaths = {}): string =>
+  path.join(resolvePaths(options).stateDir, RECORD_FILE);
+
 /** Forget what Workit added for `host` (after uninstall removed it). */
 export const forgetOwnership = (host: PermissionHost, options: PermissionPaths = {}): void => {
   const paths = resolvePaths(options);
