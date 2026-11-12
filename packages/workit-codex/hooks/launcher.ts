@@ -167,6 +167,8 @@ const quietEvent = (): string | null => {
       text,
     ) ||
       guarded(text) ||
+      // A raw ytrack write asks the user first (hooks/ytrack-guard.ts), however quoted.
+      /ytrack/i.test(text.replace(/['"\\`]/g, "")) ||
       writes ||
       maybeHeavy(text, value.cwd)
       ? null

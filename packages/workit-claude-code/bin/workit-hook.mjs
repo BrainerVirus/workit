@@ -510,7 +510,9 @@ const fastAllow = (() => {
         WORKIT_DELIVERY.test(command) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
-        mayBypass(command)
+        mayBypass(command) ||
+        // A raw ytrack write asks the user first (workit-core hooks/ytrack-guard.ts), however quoted.
+        /ytrack/i.test(command.replace(/['"\\`]/g, ""))
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
