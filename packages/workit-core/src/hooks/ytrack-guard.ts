@@ -40,12 +40,30 @@ const minutesOf = (text = ""): number | null => {
   return rest.trim() || !Number.isInteger(total) || total <= 0 ? null : total;
 };
 
+/**
+ * Options that take the next word as their value, across the ytrack commands
+ * the ytrack skill documents (`issue`, `work-item`, `api`, the global `--host`),
+ * so a `--help` that is a value (`--body --help`) is not read as the help flag.
+ */
+const VALUE = new Set(
+  (
+    "--host --body -b --body-file --text --date --duration --type --project -p --summary -s " +
+    "--description --description-file --field --tag --add-tag --remove-tag --assignee --comment " +
+    "--json --jq -X --method -f -F --raw-field --input --fields -q --query --author --since --limit"
+  ).split(" "),
+);
+
+/** `ytrack … --help` (or `-h`) as an option, not a value: it only prints help. */
+const asksHelp = (args: readonly string[]): boolean =>
+  args.some((arg, at) => /^(?:--help|-h)$/.test(arg) && !VALUE.has(args[at - 1] ?? ""));
+
 const ASKS = /^(?:post|put|patch|delete)$/i;
 const BODY = /^(?:-[fF]|--(?:field|raw-field|input))(?:=|$)|^-[fF]./;
 
 /** For one `ytrack` argv (past the binary): whether it writes, and the `workit youtrack` call that asks first. */
 const classify = (args: readonly string[]): { workit: string | null } | null => {
   // Past the global `--host <h>`.
+  if (asksHelp(args)) return null;
   const rest = args.filter((arg, at) => !/^--host(?:=|$)/.test(arg) && args[at - 1] !== "--host");
   const [group, verb] = rest;
   const issue = rest[2] && !rest[2].startsWith("-") ? rest[2] : "<ISSUE>";
