@@ -24,6 +24,19 @@ export const summary = (
       );
   }
   for (const entry of plan.entries) {
+    // A host-only repair shows its planned diff, one line per entry, in the planner's words.
+    const diff = entry.install?.diff;
+    if (diff) {
+      lines.push(
+        `${host(entry.host)}repair`,
+        ...[
+          ...diff.files.map((file) => style.path(file)),
+          ...diff.keys,
+          ...diff.commands.map((command) => style.command(command)),
+        ].map((line) => `  ${pad("")}  ${line}`),
+      );
+      continue;
+    }
     const what = entry.repair
       ? `reinstall missing plugin files (${entry.latest})`
       : entry.latest

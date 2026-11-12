@@ -10,11 +10,21 @@ import {
 import path from "node:path";
 import { createHash } from "node:crypto";
 import pkg from "../../package.json" with { type: "json" };
-import { claudeWorkitInstalls } from "../admin/host-install";
+import {
+  claudeConfigDir,
+  claudeStaleWorkitRecords,
+  claudeWorkitInstalls,
+} from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
 import { type HostCommandResult } from "../admin/host-install";
 import { recordHookNode } from "../admin/hook-node";
-import { applySetupPreview, type SetupPreview } from "../admin/setup";
+import {
+  applySetupPreview,
+  planHostOnlyInstall,
+  type ApplySetupOptions,
+  type SetupPreview,
+  type SetupResult,
+} from "../admin/setup";
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import { stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { describeInstall, describeInstallAt, listInstalls } from "../install/discover";
@@ -41,6 +51,7 @@ import {
   object,
   objectOrNull,
   piInstalledVersion,
+  piListedRoot,
   failureReason,
   stderrTail,
   asyncRunner,
@@ -52,6 +63,125 @@ import {
   type UpgradePlan,
 } from "./shared";
 import { CODEX_LEGACY_MARKETPLACE } from "./codex-marketplace";
+
+/**
+ * Apply a host-only setup preview: its host commands run on the async runner
+ * (so the spinner keeps moving), then setup's synchronous installer replays
+ * their recorded results and goes on with the file steps.
+ */
+const applyInstallPreview = async (
+  preview: SetupPreview,
+  runAsync: ReturnType<typeof asyncRunner>,
+  options: ApplySetupOptions,
+): Promise<SetupResult> => {
+  const recorded = new Map<object, HostCommandResult>();
+  let history = "";
+  for (const command of preview.mutations.flatMap((mutation) =>
+    mutation.type === "install-host" ? mutation.commands : [],
+  )) {
+    if (command.skipWhenOutputIncludes && history.includes(command.skipWhenOutputIncludes))
+      continue;
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the install commands are ordered: each needs the one before it, and the first failure stops the rest.
+    const outcome = await runAsync(command.command, command.args);
+    const result = {
+      exitCode: outcome.status ?? 1,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr ?? "",
+    };
+    recorded.set(command, result);
+    history += `\n${result.stdout}\n${result.stderr}`;
+    if (result.exitCode !== 0) break;
+  }
+  return applySetupPreview(preview, {
+    ...options,
+    runHostCommand: (command) =>
+      recorded.get(command) ?? { exitCode: 1, stdout: "", stderr: "command did not run" },
+  });
+};
+
+/** Where the upgrade backup keeps its copy of a config file. */
+const backupCopy = (backup: string, file: string): string =>
+  path.join(
+    backup,
+    createHash("sha256").update(file).digest("hex").slice(0, 12) + "-" + path.basename(file),
+  );
+
+const CLAUDE_INSTALL = "claude plugin install workit@workit --scope user";
+
+/**
+ * A failed Claude Code repair, said plainly: the state the registry is left
+ * in (a successful uninstall before a failed install leaves no Workit record),
+ * the command to rerun, and the registry's copy in the upgrade backup. Nothing
+ * restores the backup by itself.
+ */
+const claudeRepairFailure = (
+  problems: string,
+  paths: ReturnType<typeof upgradePaths>,
+  backup: string | undefined,
+  fix: string,
+): HostOutcome => {
+  const { home, env } = paths;
+  const registry = path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
+  const none =
+    claudeWorkitInstalls(home, env, null).length === 0 &&
+    claudeStaleWorkitRecords(home, env).length === 0;
+  const state = none
+    ? `${registry} now has no Workit record, so Claude Code loads no Workit plugin until you rerun ${CLAUDE_INSTALL}`
+    : `${registry} still lists Workit; rerun ${fix}`;
+  const copy = backup ? backupCopy(backup, registry) : null;
+  return {
+    host: "claude-code",
+    status: "failed",
+    reason: `repair failed: ${problems}; ${state}${copy && existsSync(copy) ? `; registry before the repair: ${copy}` : ""}`,
+    fix: none ? CLAUDE_INSTALL : fix,
+  };
+};
+
+/** Repair a registered-but-broken host with its host-only install, then prove it: a second plan is empty. */
+const applyRepair = async (
+  entry: PlanEntry,
+  preview: SetupPreview,
+  context: {
+    runAsync: ReturnType<typeof asyncRunner>;
+    paths: ReturnType<typeof upgradePaths>;
+    backup?: string;
+  },
+): Promise<HostOutcome> => {
+  const { home, env, configDir, opencodeConfig } = context.paths;
+  const options = { home, env, cwd: home, dir: configDir, opencodeConfig };
+  const fail = (reason: string): HostOutcome => ({
+    host: entry.host,
+    status: "failed",
+    reason,
+    fix: entry.fix,
+  });
+  const result = await applyInstallPreview(preview, context.runAsync, options);
+  const problems = result.entries
+    .filter((one) => one.status === "Failed")
+    .map((one) => briefDetail(one.detail ?? `${one.file} failed`));
+  if (problems.length && entry.host === "claude-code")
+    return claudeRepairFailure(problems.join("; "), context.paths, context.backup, entry.fix);
+  if (problems.length) return fail(`repair failed: ${problems.join("; ")}`);
+  // Pi may install into a root only `pi list` names: prove the repair there.
+  let piPackageRoot: string | null = null;
+  if (entry.host === "pi") {
+    const listing = await context.runAsync("pi", ["list"]);
+    if (listing.status === 0) piPackageRoot = piListedRoot(listing.stdout, entry.selector) ?? null;
+  }
+  const left = planHostOnlyInstall(entry.host, { ...options, piPackageRoot });
+  if (left.preview.mutations.length)
+    return fail(
+      `the repair ran, but ${entry.host} still needs: ${[...left.diff.files, ...left.diff.commands].join("; ")}`,
+    );
+  return {
+    host: entry.host,
+    status: "updated",
+    reason:
+      entry.host === "opencode"
+        ? `re-registered Workit in ${preview.mutations.map((mutation) => mutation.path).join(", ")}`
+        : `reinstalled missing plugin files (${entry.latest})`,
+  };
+};
 
 /** A setup entry's detail: its first line, then the last five when it ran long. */
 const briefDetail = (detail: string): string => {
@@ -133,6 +263,7 @@ const applyEntry = async (
     paths: ReturnType<typeof upgradePaths>;
     configDir: string;
     opencodeReady?: UpgradeDeps["opencodeReady"];
+    backup?: string;
   },
 ): Promise<HostOutcome> => {
   const { runAsync, paths, configDir } = context;
@@ -143,6 +274,7 @@ const applyEntry = async (
     reason,
     fix: entry.fix,
   });
+  if (entry.install) return applyRepair(entry, entry.install.preview, context);
   if (entry.host === "cursor") {
     // The init wizard's installer: setup's install-host + install-adapter
     // mutations, scoped to Cursor; workspaces and other config stay untouched.
@@ -150,25 +282,6 @@ const applyEntry = async (
       ...command,
       purpose: command.purpose ?? "Upgrade Cursor",
     }));
-    // The host commands (npm) wait on the async runner so the spinner keeps
-    // moving; setup's synchronous installer then replays their recorded results
-    // and goes on with the file steps (copy, settings, mcp.json).
-    const recorded = new Map<object, HostCommandResult>();
-    let history = "";
-    for (const command of commands) {
-      if (command.skipWhenOutputIncludes && history.includes(command.skipWhenOutputIncludes))
-        continue;
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the install commands are ordered: each needs the one before it, and the first failure stops the rest.
-      const outcome = await runAsync(command.command, command.args);
-      const result = {
-        exitCode: outcome.status ?? 1,
-        stdout: outcome.stdout,
-        stderr: outcome.stderr ?? "",
-      };
-      recorded.set(command, result);
-      history += `\n${result.stdout}\n${result.stderr}`;
-      if (result.exitCode !== 0) break;
-    }
     const cursorSettings = path.join(home, ".cursor", "settings.json");
     const cursorMcp = path.join(home, ".cursor", "mcp.json");
     const preview: SetupPreview = {
@@ -192,17 +305,11 @@ const applyEntry = async (
         { type: "register-platform", platform: "cursor", path: cursorMcp },
       ],
     };
-    const result = applySetupPreview(preview, {
+    const result = await applyInstallPreview(preview, runAsync, {
       home,
       env,
       cwd: home,
       preferInstalledAdapter: true,
-      runHostCommand: (command) =>
-        recorded.get(command) ?? {
-          exitCode: 1,
-          stdout: "",
-          stderr: "command did not run",
-        },
     });
     const installed = objectOrNull(path.join(paths.cursorRoot, "package.json"));
     const problems = result.entries
@@ -370,10 +477,7 @@ export async function applyUpgrade(
   mkdirSync(backup, { recursive: true, mode: 0o700 });
   for (const file of Object.keys(plan.configDigests))
     if (existsSync(file)) {
-      const target = path.join(
-        backup,
-        createHash("sha256").update(file).digest("hex").slice(0, 12) + "-" + path.basename(file),
-      );
+      const target = backupCopy(backup, file);
       copyFileSync(file, target);
       chmodSync(target, 0o600);
     }
@@ -486,6 +590,7 @@ export async function applyUpgrade(
           paths,
           configDir,
           opencodeReady: deps.opencodeReady,
+          backup,
         });
         if (entry.host === "codex" && outcome.status === "updated") {
           const agents = await refreshCodexAgents(runAsync, paths.codexHome);

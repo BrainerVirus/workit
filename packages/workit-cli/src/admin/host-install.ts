@@ -94,6 +94,11 @@ export type HostInstallOptions = {
   alreadyInstalled?: boolean;
   targetDir?: string;
   mode?: "install" | "upgrade";
+  /** Also reinstall a registered install whose plugin files are missing or broken
+   *  (Claude Code, Pi); without it a registered host plans nothing, as setup does. */
+  repair?: boolean;
+  /** Pi: where `pi list` says the Workit package is installed, when known. */
+  piPackageRoot?: string | null;
 };
 
 /** Claude Code reads the git-hosted marketplace at the repo root
@@ -193,6 +198,106 @@ export const isPiWorkitInstalled = (
   } catch {
     return false;
   }
+};
+
+/**
+ * Why a host's own JSON file cannot be read, as `cannot read <file>: <why>:
+ * not repaired`; null when it is missing or readable. `shape` names a key
+ * with the wrong shape. Nothing plans a rewrite of a file it cannot read.
+ */
+export const hostFileProblem = (
+  file: string,
+  shape: (value: Record<string, unknown>) => string | null = () => null,
+): string | null => {
+  if (!existsSync(file)) return null;
+  const problem = (why: string) => `cannot read ${file}: ${why}: not repaired`;
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return problem("not readable");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return problem("not valid JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return problem("not a JSON object");
+  const why = shape(value as Record<string, unknown>);
+  return why ? problem(why) : null;
+};
+
+const piSettingsFile = (home: string, env: NodeJS.ProcessEnv): string =>
+  path.join(env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent"), "settings.json");
+
+/** Pi's user settings, when they cannot be read. */
+export const piSettingsProblem = (home: string, env: NodeJS.ProcessEnv = process.env) =>
+  hostFileProblem(piSettingsFile(home, env), (settings) =>
+    settings.packages !== undefined && !Array.isArray(settings.packages)
+      ? "`packages` is not a list"
+      : null,
+  );
+
+const PI_PACKAGE = "@workit-dev/pi";
+const PI_EXTENSION = "dist/workit.js";
+
+/** The user-scope Pi entry for Workit and the state of Pi's install of it. */
+export type PiWorkitPackage = {
+  source: string;
+  root: string;
+  /** An npm entry Pi installs itself; false for a local checkout. */
+  npm: boolean;
+  state: "ok" | "missing" | "not-loading";
+};
+
+/**
+ * The Workit entry in Pi's user settings and whether Pi installed it: an npm
+ * entry lives under `<agent dir>/npm/node_modules` (where doctor's
+ * pi_extension looks) unless `pi list` named another root. `missing` has no
+ * package there, `not-loading` has one without its extension. Read-only.
+ */
+export const piWorkitPackage = (
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+  listedRoot: string | null = null,
+): PiWorkitPackage | null => {
+  const agentDir = env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
+  let packages: unknown;
+  try {
+    packages = (
+      JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8")) as {
+        packages?: unknown;
+      }
+    ).packages;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(packages)) return null;
+  for (const entry of packages) {
+    const source =
+      typeof entry === "string"
+        ? entry
+        : typeof (entry as { source?: unknown })?.source === "string"
+          ? (entry as { source: string }).source
+          : null;
+    if (!source) continue;
+    const npm = /^(?:npm:)?@workit-dev\/pi(?:@[^/]+)?$/.test(source);
+    const local = !npm && /(?:^|\/)packages\/workit-pi$/.test(source.replaceAll("\\", "/"));
+    if (!npm && !local) continue;
+    const root = npm
+      ? (listedRoot ?? path.join(agentDir, "npm", "node_modules", ...PI_PACKAGE.split("/")))
+      : path.resolve(agentDir, source.replace(/^~(?=\/|\\)/, home));
+    const named = packageVersionAt(root, PI_PACKAGE) !== null;
+    return {
+      source,
+      root,
+      npm,
+      state: !named ? "missing" : existsSync(path.join(root, PI_EXTENSION)) ? "ok" : "not-loading",
+    };
+  }
+  return null;
 };
 
 const OPENCODE_PLUGIN_SCOPE = "@workit-dev";
@@ -410,6 +515,57 @@ export const claudeWorkitInstalls = (
   return found;
 };
 
+/**
+ * User-scope `workit@*` records in Claude Code's plugin registry whose install
+ * directory lost its Workit manifest: registered, so Claude Code reports the
+ * plugin installed, but there is nothing for it to load.
+ */
+export const claudeStaleWorkitRecords = (
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] => {
+  let registry: { plugins?: Record<string, unknown> } | null = null;
+  try {
+    registry = JSON.parse(
+      readFileSync(
+        path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json"),
+        "utf8",
+      ),
+    );
+  } catch {
+    return [];
+  }
+  const plugins = registry?.plugins;
+  if (!plugins || typeof plugins !== "object") return [];
+  return Object.entries(plugins)
+    .filter(
+      ([id, entries]) =>
+        id.startsWith("workit@") &&
+        Array.isArray(entries) &&
+        entries.some(
+          (entry: { installPath?: unknown; scope?: unknown }) =>
+            (entry?.scope === undefined || entry.scope === "user") &&
+            !(typeof entry?.installPath === "string" && isCanonicalClaudePlugin(entry.installPath)),
+        ),
+    )
+    .map(([id]) => id);
+};
+
+/** Claude Code's plugin registry, when it cannot be read. */
+export const claudeRegistryProblem = (home: string, env: NodeJS.ProcessEnv = process.env) =>
+  hostFileProblem(
+    path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json"),
+    ({ plugins }) => {
+      if (plugins === undefined) return null;
+      if (!plugins || typeof plugins !== "object" || Array.isArray(plugins))
+        return "`plugins` is not an object";
+      const bad = Object.entries(plugins).find(
+        ([id, entries]) => id.startsWith("workit@") && !Array.isArray(entries),
+      );
+      return bad ? `\`${bad[0]}\` is not a list` : null;
+    },
+  );
+
 /** A Workit install Claude Code loads for this user (any project). */
 export const isClaudeWorkitInstalled = (
   home: string,
@@ -508,6 +664,9 @@ export function planHostInstall(
   if (host === "claude-code") {
     if (!upgrading && isClaudeWorkitInstalled(home, env, null)) return [];
     const base = hostCommand("claude", [], { home, cwd, env });
+    // A registered record without its files is removed before the install, so
+    // the install starts from no record of Workit.
+    const stale = options.repair && !upgrading ? claudeStaleWorkitRecords(home, env) : [];
     return [
       nodePrerequisite({ home, cwd, env }),
       {
@@ -527,6 +686,11 @@ export function planHostInstall(
             purpose: "Register the Workit Claude Code marketplace",
             skipWhenOutputIncludes: `"name": "${CLAUDE_MARKETPLACE_NAME}"`,
           },
+      ...stale.map((id) => ({
+        ...base,
+        args: [...base.args, "plugin", "uninstall", id, "--scope", "user"],
+        purpose: `Remove the ${id} record whose plugin files are missing`,
+      })),
       {
         ...base,
         args: upgrading
@@ -539,6 +703,31 @@ export function planHostInstall(
     ];
   }
   if (host === "pi") {
+    const listed =
+      options.repair && !upgrading ? piWorkitPackage(home, env, options.piPackageRoot) : null;
+    if (listed) {
+      // A local checkout is the user's to build; only an npm entry is reinstalled.
+      if (listed.state === "ok" || !listed.npm) return [];
+      const base = hostCommand("pi", [], { home, cwd, env });
+      return [
+        nodePrerequisite({ home, cwd, env }),
+        // npm leaves an installed same-version package as is: remove it first.
+        ...(listed.state === "not-loading"
+          ? [
+              {
+                ...base,
+                args: [...base.args, "remove", listed.source],
+                purpose: "Remove the Workit Pi package that does not load its extension",
+              },
+            ]
+          : []),
+        {
+          ...base,
+          args: [...base.args, "install", listed.source],
+          purpose: "Reinstall the Workit Pi package Pi lists but has not installed",
+        },
+      ];
+    }
     if (!upgrading && isPiWorkitInstalled(home, env)) return [];
     const base = hostCommand("pi", [], { home, cwd, env });
     return [

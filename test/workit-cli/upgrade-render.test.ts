@@ -125,3 +125,91 @@ test("Given the answered plan, When it is erased, Then the cursor moves up over 
   expect(eraseAbove(text, 80)).toBe("\x1b[5A\r\x1b[0J");
   expect(eraseAbove("", 80)).toBe("");
 });
+
+// A repair row shows the host-only planner's diff, one line per entry, in the
+// planner's words: the files it writes, the config keys, the host commands.
+const repairPlan = (diff: { files: string[]; keys: string[]; commands: string[] }) =>
+  ({
+    ok: true,
+    blocked: [],
+    failed: [],
+    skipped: [],
+    entries: [
+      {
+        host: "opencode",
+        selector: "@workit-dev/opencode",
+        latest: "latest",
+        commands: [],
+        repair: true,
+        install: { preview: {}, diff },
+        fix: "workit upgrade --hosts=opencode",
+      },
+    ],
+    configDigests: {},
+    migrations: [],
+  }) as unknown as UpgradePlan;
+
+const ROW = (lines: string[]) =>
+  [
+    "Workit upgrade plan:",
+    "  opencode    repair",
+    ...lines.map((line) => `                ${line}`),
+    "",
+  ].join("\n");
+
+test("Given a repair that writes a file, Then the plan row lists that file on its own line", () => {
+  expect(
+    summary(
+      repairPlan({ files: ["/h/.config/opencode/opencode.json"], keys: [], commands: [] }),
+      [],
+    ),
+  ).toBe(ROW(["/h/.config/opencode/opencode.json"]));
+});
+
+test("Given a repair that changes config keys, Then each key is its own line", () => {
+  expect(
+    summary(
+      repairPlan({
+        files: [],
+        keys: [
+          "/h/.config/opencode/opencode.json: plugins",
+          "/h/.config/opencode/opencode.json: plugin",
+        ],
+        commands: [],
+      }),
+      [],
+    ),
+  ).toBe(
+    ROW([
+      "/h/.config/opencode/opencode.json: plugins",
+      "/h/.config/opencode/opencode.json: plugin",
+    ]),
+  );
+});
+
+test("Given a repair that runs host commands, Then each command is its own line, in order", () => {
+  expect(
+    summary(
+      repairPlan({
+        files: [],
+        keys: [],
+        commands: [
+          "/h/bin/claude plugin uninstall workit@workit --scope user",
+          "/h/bin/claude plugin install workit@workit --scope user",
+        ],
+      }),
+      [],
+    ),
+  ).toBe(
+    ROW([
+      "/h/bin/claude plugin uninstall workit@workit --scope user",
+      "/h/bin/claude plugin install workit@workit --scope user",
+    ]),
+  );
+});
+
+test("Given a repair with an empty diff, Then the row is the host and repair alone, never the fixed reinstall text", () => {
+  const text = summary(repairPlan({ files: [], keys: [], commands: [] }), []);
+  expect(text).toBe(ROW([]));
+  expect(text).not.toContain("reinstall missing plugin files");
+});

@@ -1066,6 +1066,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - An agent that runs `npx -y @workit-dev/cli <verb> …` where `workit` is on PATH now gets the same `workit <verb> …` call: rewritten on Claude Code, OpenCode and Pi, and denied with that exact call on Codex and Cursor, so the allow rules match and a weak model is not stopped by a prompt
 - `workit --session=<v> approve <id>` and `workit --token <v> approve <id>` reach the approve step in the Claude Code hook launcher
 - On Windows, copying the config `workspaces.json` or an issued file out to another path is no longer denied
+- `workit upgrade --hosts=<h>` repairs a registered-but-missing Workit plugin on Claude Code, OpenCode and Pi too (Cursor and Codex already were): it plans the reinstall for that host only, applies it, and checks the host plans clean afterwards
 
 ### Removed
 
