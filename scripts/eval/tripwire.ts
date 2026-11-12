@@ -1,31 +1,33 @@
-// The bench's tripwire (#822, decision for #823): a bench run must never
-// change the real Workit config or state. Isolation (isolation.ts) keeps a run
-// away from them; this catches what isolation cannot stop.
+// The bench's tripwire (#822, decision 2 for #823): it detects and reports,
+// and never writes, removes or renames anything outside its own dir
+// (`<real home>/.cache/workit-bench-tripwire/`). Landlock (confine.ts) keeps
+// a host from writing the real home; this sees what gets through anyway.
 //
-// - Restored: the whole config dir, and the state files that grant or pick
+// - Watched: the whole config dir, and the state files that grant or pick
 //   what runs (host-permissions.json and its backups, node.json). The runner
-//   snapshots them into its own memory once per bench start; that snapshot is
-//   the only thing ever restored automatically, in place (same inode, mode and
-//   mtime; a symlink as a symlink), after the changed bytes are rescued.
-// - Reported only: approvals/, issued/, issued-tokens/ and verdicts/. Live
-//   sessions add and consume these; putting a consumed approval back would
-//   re-arm it, so a change stops the bench and nothing is restored.
-// - Not guarded: leases/, logs/, hook-runs/, live-sessions/, worktrees/ and
+//   snapshots them into memory once per bench start, and writes a journal
+//   (the user's recovery copy) to its own dir.
+// - Reported the same way: approvals/, issued/, issued-tokens/ and verdicts/,
+//   which live sessions change during a run.
+// - Not watched: leases/, logs/, hook-runs/, live-sessions/, worktrees/ and
 //   the other caches every session rewrites; none grants anything.
 //
-// The disk journal (journal/) is a crash report, never an authority: the same
-// OS user can rewrite it. A later start only compares it and reports; it is
-// restored only by `--tripwire-restore <digest>`, with paths confined to the
-// roots the runner recomputes, every blob hashed and the digest equal to the
-// line the stopped run printed on the user's terminal.
+// Read safety: a root whose kind, link target or dev+ino changed is reported
+// as `root replaced` and not walked; below a root everything is lstat'ed,
+// never followed; bytes are read only through O_RDONLY|O_NOFOLLOW|O_NONBLOCK
+// and an fstat that says regular file; files over 64 MB are compared by size;
+// a created dir is reported, not descended; at most 50 created paths per root.
+//
+// The only writes in this file are to the tripwire dir: ensureBase, acquire,
+// release, writeJournal and dropJournal (test/behavior/eval-tripwire.test.ts
+// holds that by name).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
   constants,
-  fchmodSync,
-  futimesSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -34,21 +36,18 @@ import {
   readlinkSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { workitDir } from "../../packages/workit-core/src/core/workit-paths.mjs";
 
-/** State files that grant or pick what runs: restored like the config dir. */
-const STATE_RESTORED = ["host-permissions.json", "host-permissions-backup", "node.json"];
-/** State trees live sessions change during a run: a change is reported, never restored. */
+/** State files that grant or pick what runs: watched like the config dir. */
+const STATE_WATCHED = ["host-permissions.json", "host-permissions-backup", "node.json"];
+/** State trees live sessions change during a run: a change is reported too. */
 const STATE_REPORTED = ["approvals", "issued", "issued-tokens", "verdicts"];
-const RESCUE_KEEP = 5;
-const RESCUE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
-const WORLD_MAX_AGE_MS = 24 * 3600 * 1000;
+const MAX_HASH_BYTES = 64 * 1024 * 1024;
+const MAX_CREATED = 50;
 
 /**
  * The OS account's home from the account record (/etc/passwd), never $HOME:
@@ -67,9 +66,9 @@ export const accountHome = (): string => {
   return os.userInfo().homedir;
 };
 
-export type Guard = { restored: string[]; reported: string[] };
+export type Guard = { watched: string[]; reported: string[] };
 
-/** The real paths to guard: the default config and state dirs of `home`, and those `env` (the runner's) points at. */
+/** The real paths to watch: the default config and state dirs of `home`, and those `env` (the runner's) points at. */
 export const guardFor = (home: string, env?: NodeJS.ProcessEnv): Guard => {
   const dirs = (kind: "config" | "state") => [
     ...new Set(
@@ -80,15 +79,15 @@ export const guardFor = (home: string, env?: NodeJS.ProcessEnv): Guard => {
   ];
   const state = dirs("state");
   return {
-    restored: [
+    watched: [
       ...dirs("config"),
-      ...state.flatMap((dir) => STATE_RESTORED.map((name) => path.join(dir, name))),
+      ...state.flatMap((dir) => STATE_WATCHED.map((name) => path.join(dir, name))),
     ],
     reported: state.flatMap((dir) => STATE_REPORTED.map((name) => path.join(dir, name))),
   };
 };
 
-/** Where the journal, the holders and rescued bytes live: outside every Workit dir, under the account's cache. */
+/** Where the journal and the holders live: outside every Workit dir, under the account's cache. */
 export const tripwireBase = (home: string): string =>
   path.join(home, ".cache", "workit-bench-tripwire");
 
@@ -118,13 +117,13 @@ export const startOf = (pid: number): string | null => {
 export const runnerIdentity = (): string => `${process.pid}.${startOf(process.pid) ?? "0"}`;
 
 /** The identity names a process that is still the same process. */
-const identityAlive = (identity: string): boolean => {
+export const identityAlive = (identity: string): boolean => {
   const cut = identity.indexOf(".");
   const pid = Number(identity.slice(0, cut));
   return Number.isInteger(pid) && pid > 0 && startOf(pid) === identity.slice(cut + 1);
 };
 
-// ---------------------------------------------------------------- the base dir and the lock
+// ---------------------------------------------------------------- the tripwire dir and the lock
 
 /** The base must be a real dir of this user: a symlink or someone else's dir could point the journal anywhere. */
 export const ensureBase = (base: string): string | null => {
@@ -163,55 +162,131 @@ export const release = (base: string): void => {
   rmSync(path.join(holders(base), runnerIdentity()), { force: true });
 };
 
-// ---------------------------------------------------------------- snapshot
+// ---------------------------------------------------------------- reading without following
 
-type Meta = { mode: number; atimeMs: number; mtimeMs: number; sha: string };
-type Entry =
-  | ({ type: "file"; bytes: Uint8Array; size: number; ino: number } & Meta)
+/** One path as it is: what lstat says, and for a regular file its bytes' sha. */
+type State =
+  | { type: "absent" }
+  | {
+      type: "file";
+      mode: number;
+      size: number;
+      ino: number;
+      nlink: number;
+      mtimeMs: number;
+      /** Null over 64 MB: compared by size only. */
+      sha: string | null;
+    }
+  | { type: "dir"; mode: number }
   | { type: "link"; target: string }
-  | { type: "dir"; mode: number };
-
-/** The runner's in-memory snapshot: the only thing ever restored automatically. */
-export type Snapshot = {
-  guard: Guard;
-  restored: Map<string, Entry>;
-  reported: Map<string, string>;
-  digest: string;
-  files: number;
-};
+  | { type: "fifo" | "socket" | "device" };
 
 const sha = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
 const lstat = (file: string) => lstatSync(file, { throwIfNoEntry: false });
 type Stat = NonNullable<ReturnType<typeof lstat>>;
 
-/** Every entry under `root`; a root that is a symlink to a dir is followed, nothing below it is. */
-const walk = (root: string, visit: (file: string, stat: Stat) => void): void => {
-  const go = (file: string, follow: boolean): void => {
-    const stat = lstat(file);
-    if (!stat) return;
-    visit(file, stat);
-    const dir =
-      stat.isDirectory() ||
-      (follow &&
-        stat.isSymbolicLink() &&
-        statSync(file, { throwIfNoEntry: false })?.isDirectory() === true);
-    if (!dir) return;
-    let names: string[];
-    try {
-      names = readdirSync(file).toSorted();
-    } catch {
-      // Unreadable (mode 0): the dir itself is still visited and compared.
-      return;
-    }
-    for (const name of names) go(path.join(file, name), false);
-  };
-  go(root, true);
+/** A regular file's bytes, opened so no link is followed and no fifo blocks; null when it is not one. */
+const readRegular = (file: string): Uint8Array | null => {
+  let fd: number;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_HASH_BYTES) return null;
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 };
 
-type Described = { type: string; mode?: number; sha?: string; target?: string };
+const stateOf = (file: string, stat = lstat(file)): State => {
+  if (!stat) return { type: "absent" };
+  if (stat.isSymbolicLink()) return { type: "link", target: readlinkSync(file) };
+  if (stat.isDirectory()) return { type: "dir", mode: stat.mode & 0o7777 };
+  if (stat.isFIFO()) return { type: "fifo" };
+  if (stat.isSocket()) return { type: "socket" };
+  if (!stat.isFile()) return { type: "device" };
+  const bytes = stat.size > MAX_HASH_BYTES ? null : readRegular(file);
+  return {
+    type: "file",
+    mode: stat.mode & 0o7777,
+    size: stat.size,
+    ino: stat.ino,
+    nlink: stat.nlink,
+    mtimeMs: stat.mtimeMs,
+    sha: bytes ? sha(bytes) : null,
+  };
+};
 
-/** sha256 over the sorted (path, type, mode, sha256 or link target) of the restored set: 16 hex. */
+/** A root as it is: kind, link target, and the dev+ino of what it resolves to. */
+type RootState = { kind: string; target?: string; dev?: number; ino?: number };
+
+const rootStateOf = (root: string): RootState => {
+  const stat = lstat(root);
+  if (!stat) return { kind: "absent" };
+  const resolved = statSync(root, { throwIfNoEntry: false });
+  const id = resolved ? { dev: resolved.dev, ino: resolved.ino } : {};
+  if (stat.isSymbolicLink()) return { kind: "link", target: readlinkSync(root), ...id };
+  return { kind: stat.isDirectory() ? "dir" : stat.isFile() ? "file" : "other", ...id };
+};
+
+const sameRoot = (a: RootState, b: RootState): boolean =>
+  a.kind === b.kind && a.target === b.target && a.dev === b.dev && a.ino === b.ino;
+
+/**
+ * Every path below `root`, lstat'ed: a root that resolves to a dir is
+ * entered, nothing below it is followed, and a dir is entered only when
+ * `enter` says so (a created dir is reported, not descended).
+ */
+const walk = (
+  root: string,
+  visit: (file: string, stat: Stat) => void,
+  enter: (dir: string) => boolean = () => true,
+): void => {
+  const go = (dir: string): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir).toSorted();
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const file = path.join(dir, name);
+      const stat = lstat(file);
+      if (!stat) continue;
+      visit(file, stat);
+      if (stat.isDirectory() && enter(file)) go(file);
+    }
+  };
+  const stat = lstat(root);
+  if (!stat) return;
+  visit(root, stat);
+  if (statSync(root, { throwIfNoEntry: false })?.isDirectory() && enter(root)) go(root);
+};
+
+// ---------------------------------------------------------------- snapshot
+
+/** The runner's in-memory snapshot, taken once per bench start. */
+export type Snapshot = {
+  guard: Guard;
+  roots: Map<string, RootState>;
+  entries: Map<string, State>;
+  /** The bytes of each watched file, for the journal only. */
+  bytes: Map<string, Uint8Array>;
+  /** Journal blob paths, once the journal is written. */
+  blobs: Map<string, string>;
+  reported: Map<string, string>;
+  digest: string;
+  files: number;
+};
+
+type Described = { type: string; mode?: number; sha?: string | null; target?: string };
+
+/** sha256 over the sorted (path, type, mode, sha256 or link target) of the watched set: 16 hex. */
 const digestOf = (entries: [string, Described][]): string => {
   const hash = createHash("sha256");
   for (const [file, entry] of entries.toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
@@ -225,236 +300,241 @@ const hashReported = (guard: Guard): Map<string, string> => {
   const now = new Map<string, string>();
   for (const root of guard.reported)
     walk(root, (file, stat) => {
-      if (stat.isFile()) now.set(file, sha(readFileSync(file)));
+      if (!stat.isFile()) return;
+      const bytes = readRegular(file);
+      now.set(file, bytes ? sha(bytes) : `size ${stat.size}`);
     });
   return now;
 };
 
-/** Snapshot the guarded paths into memory. */
+/** Snapshot the watched paths into memory. */
 export const armSnapshot = (guard: Guard): Snapshot => {
-  const restored = new Map<string, Entry>();
-  for (const root of guard.restored)
+  const roots = new Map(guard.watched.map((root) => [root, rootStateOf(root)] as const));
+  const entries = new Map<string, State>();
+  const bytes = new Map<string, Uint8Array>();
+  for (const root of guard.watched)
     walk(root, (file, stat) => {
-      if (stat.isSymbolicLink()) restored.set(file, { type: "link", target: readlinkSync(file) });
-      else if (stat.isDirectory()) restored.set(file, { type: "dir", mode: stat.mode & 0o7777 });
-      else if (stat.isFile()) {
-        const bytes = readFileSync(file);
-        restored.set(file, {
-          type: "file",
-          bytes,
-          size: stat.size,
-          ino: stat.ino,
-          mode: stat.mode & 0o7777,
-          atimeMs: stat.atimeMs,
-          mtimeMs: stat.mtimeMs,
-          sha: sha(bytes),
-        });
+      const state = stateOf(file, stat);
+      entries.set(file, state);
+      if (state.type === "file" && state.sha !== null) {
+        const read = readRegular(file);
+        if (read) bytes.set(file, read);
       }
     });
   return {
     guard,
-    restored,
+    roots,
+    entries,
+    bytes,
+    blobs: new Map(),
     reported: hashReported(guard),
-    digest: digestOf([...restored]),
-    files: [...restored.values()].filter((entry) => entry.type !== "dir").length,
+    digest: digestOf([...entries]),
+    files: [...entries.values()].filter((entry) => entry.type !== "dir").length,
   };
 };
 
-/** The guarded root `file` is under (the longest), or null. */
-const rootOf = (roots: string[], file: string): string | null => {
-  let found: string | null = null;
-  for (const root of roots) {
-    const rel = path.relative(root, file);
-    if (
-      (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) &&
-      root.length > (found?.length ?? -1)
-    )
-      found = root;
+// ---------------------------------------------------------------- findings
+
+/** One changed path: what was there, what is there now, where the original is, and what to run. */
+export type Finding = {
+  path: string;
+  was: string;
+  now: string;
+  blob: string | null;
+  commands: string[];
+};
+
+const octal = (mode: number): string => (mode & 0o7777).toString(8);
+
+const describe = (state: State, links = false): string => {
+  switch (state.type) {
+    case "absent":
+      return "absent";
+    case "dir":
+      return `dir, mode ${octal(state.mode)}`;
+    case "link":
+      return `symlink to ${state.target}`;
+    case "file":
+      return [
+        "file",
+        ...(links ? [`${state.nlink} link${state.nlink === 1 ? "" : "s"}`] : []),
+        `mode ${octal(state.mode)}`,
+        `${state.size} B`,
+        state.sha ? `sha ${state.sha.slice(0, 12)}` : "not hashed (over 64 MB)",
+      ].join(", ");
+    default:
+      return state.type;
   }
-  return found;
 };
 
-/** The dirs strictly between `root` and `file`, outermost first. */
-const between = (root: string, file: string): string[] => {
-  const dirs: string[] = [];
-  for (
-    let dir = path.dirname(file);
-    dir.length > root.length && dir.startsWith(root);
-    dir = path.dirname(dir)
-  )
-    dirs.unshift(dir);
-  return dirs;
+const describeRoot = (root: RootState): string =>
+  root.kind === "link"
+    ? `symlink to ${root.target}`
+    : `${root.kind}${root.ino === undefined ? "" : ` (dev ${root.dev}, inode ${root.ino})`}`;
+
+const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+const sameFile = (was: State, now: State): boolean => {
+  if (was.type !== now.type) return false;
+  if (was.type === "file" && now.type === "file")
+    return (
+      was.mode === now.mode &&
+      was.nlink === now.nlink &&
+      (was.sha !== null && now.sha !== null
+        ? was.sha === now.sha
+        : was.size === now.size && was.mtimeMs === now.mtimeMs)
+    );
+  if (was.type === "dir" && now.type === "dir") return was.mode === now.mode;
+  if (was.type === "link" && now.type === "link") return was.target === now.target;
+  return true;
 };
 
-/** The first dir between the root and `file` that is a symlink on the real filesystem, or null. */
-const linkAbove = (roots: string[], file: string): string | null => {
-  const root = rootOf(roots, file);
-  if (!root) return null;
-  return between(root, file).find((dir) => lstat(dir)?.isSymbolicLink() === true) ?? null;
+/** The dir between `root` and `file` that is no longer a real dir, or null. */
+const brokenParent = (root: string, file: string): string | null => {
+  for (let dir = path.dirname(file); dir.length > root.length; dir = path.dirname(dir))
+    if (!lstat(dir)?.isDirectory()) return dir;
+  return null;
 };
 
-const differs = (entry: Described | undefined, file: string): boolean => {
-  const stat = lstat(file);
-  if (!entry || !stat) return entry !== undefined || stat !== undefined;
-  if (entry.type === "link") return !stat.isSymbolicLink() || readlinkSync(file) !== entry.target;
-  if (entry.type === "dir") return !stat.isDirectory() || (stat.mode & 0o7777) !== entry.mode;
-  return (
-    !stat.isFile() || (stat.mode & 0o7777) !== entry.mode || sha(readFileSync(file)) !== entry.sha
-  );
-};
-
-/** Every path under `roots` that differs from `entries`, created ones included. */
-const changedUnder = (roots: string[], entries: Map<string, Described>): string[] => {
-  const now: string[] = [];
-  for (const root of roots) walk(root, (file) => now.push(file));
-  // A path reached through a symlink planted above it is never trusted as unchanged.
-  return [...new Set([...entries.keys(), ...now])].filter(
-    (file) => linkAbove(roots, file) !== null || differs(entries.get(file), file),
-  );
+const commandsFor = (file: string, was: State, now: State, blob: string | null): string[] => {
+  const look = [`ls -la ${quote(file)}`];
+  if (was.type === "file") {
+    const single = now.type === "absent" || (now.type === "file" && now.nlink === 1);
+    if (!blob || !single) return look;
+    if (now.type === "file" && now.sha === was.sha && now.size === was.size)
+      return [`chmod ${octal(was.mode)} ${quote(file)}`];
+    return [
+      ...(now.type === "file" && !file.endsWith(".token")
+        ? [`diff -u ${quote(blob)} ${quote(file)}`]
+        : []),
+      `rm -f -- ${quote(file)} && cp -- ${quote(blob)} ${quote(file)} && chmod ${octal(was.mode)} ${quote(file)}`,
+    ];
+  }
+  if (was.type === "absent") {
+    if ((now.type === "file" && now.nlink === 1) || now.type === "link" || now.type === "fifo")
+      return [`rm -- ${quote(file)}`];
+  }
+  return look;
 };
 
 /**
- * The watch during a run: true when the restored set changed. It stats first
- * and hashes only an entry whose stat moved, so it is cheap every 2 s.
+ * Compare the watched paths with `entries` (and roots with `roots`). Read
+ * only: nothing is written, removed, renamed or followed.
  */
-export const restoredChanged = (snapshot: Snapshot): boolean => {
-  let changed = false;
-  const seen = new Set<string>();
-  for (const root of snapshot.guard.restored)
-    walk(root, (file, stat) => {
-      seen.add(file);
-      if (changed) return;
-      const entry = snapshot.restored.get(file);
-      if (entry?.type === "file" && stat.isFile()) {
-        if (stat.size === entry.size && stat.mtimeMs === entry.mtimeMs && stat.ino === entry.ino)
-          return;
-      }
-      changed = differs(entry, file);
-    });
-  return changed || [...snapshot.restored.keys()].some((file) => !seen.has(file));
-};
-
-/** What a run changed outside its world. */
-export type Trip = {
-  /** Put back to their snapshot (changed, deleted or created under a restored root). */
-  restored: string[];
-  /** Changed in a reported tree: left as they are. */
-  reported: { added: string[]; changed: string[]; missing: string[] };
-  /** Where the bytes the run left were saved before the restore, or null. */
-  rescued: string | null;
-  /** `<path>: <error>` for each path that could not be put back; the rest still was. */
-  failed: string[];
-};
-
-const writeSecret = (file: string, bytes: Uint8Array | string): void => {
-  writeFileSync(file, bytes, { mode: 0o600 });
-  chmodSync(file, 0o600);
-};
-
-const rescueDir = (base: string): string =>
-  path.join(base, "rescued", `${new Date().toISOString().replaceAll(":", "-")}-${process.pid}`);
-
-const rescue = (roots: string[], into: string, file: string): void => {
-  // Never read through a planted link: those bytes are not the run's to keep.
-  if (linkAbove(roots, file)) return;
-  const stat = lstat(file);
-  if (!stat || stat.isDirectory()) return;
-  const copy = path.join(into, file);
-  mkdirSync(path.dirname(copy), { recursive: true, mode: 0o700 });
-  if (stat.isSymbolicLink()) writeSecret(`${copy}.symlink`, readlinkSync(file));
-  else if (stat.isFile()) writeSecret(copy, readFileSync(file));
-};
-
-type Restorable =
-  | ({ type: "file"; bytes: Uint8Array } & Meta)
-  | { type: "link"; target: string }
-  | { type: "dir"; mode: number };
-
-/**
- * Make every dir between the root and `file` a real dir: a missing one is
- * created, a symlink one is refused (the restore never writes through a link,
- * one made earlier in the same restore included).
- */
-const realParents = (roots: string[], file: string): void => {
-  const root = rootOf(roots, file);
-  if (!root) throw new Error("outside the guarded roots");
-  for (const dir of between(root, file)) {
-    const stat = lstat(dir);
-    if (!stat) mkdirSync(dir);
-    else if (stat.isSymbolicLink()) throw new Error(`a symlink above it: ${dir}`);
-    else if (!stat.isDirectory()) throw new Error(`not a directory above it: ${dir}`);
-  }
-};
-
-const putBack = (roots: string[], file: string, entry: Restorable): void => {
-  realParents(roots, file);
-  const stat = lstat(file);
-  if (entry.type === "dir") {
-    if (stat && !stat.isDirectory()) rmSync(file, { recursive: true, force: true });
-    if (!lstat(file)) mkdirSync(file);
-    if (!lstat(file)?.isDirectory()) throw new Error("not a directory after mkdir");
-    chmodSync(file, entry.mode);
-    return;
-  }
-  if (entry.type === "link") {
-    if (stat) rmSync(file, { recursive: true, force: true });
-    symlinkSync(entry.target, file);
-    return;
-  }
-  // In place, so the inode (and every hard link to it) gets the bytes back;
-  // O_NOFOLLOW, and the mode and times set on the fd, so no link is followed.
-  if (stat && !stat.isFile()) rmSync(file, { recursive: true, force: true });
-  const fd = openSync(
-    file,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
-    entry.mode,
-  );
-  try {
-    writeSync(fd, entry.bytes);
-    fchmodSync(fd, entry.mode);
-    futimesSync(fd, entry.atimeMs / 1000, entry.mtimeMs / 1000);
-  } finally {
-    closeSync(fd);
-  }
-};
-
-/**
- * Rescue the current bytes of `changed`, remove created paths (deepest
- * first), put snapshot paths back (parents first). A path that fails is
- * reported and the rest still restored.
- */
-const settle = (
-  base: string,
-  roots: string[],
-  changed: string[],
-  entryOf: (file: string) => Restorable | undefined,
-): { rescued: string | null; failed: string[] } => {
-  const failed: string[] = [];
-  if (changed.length === 0) return { rescued: null, failed };
-  const rescued = rescueDir(base);
-  mkdirSync(rescued, { recursive: true, mode: 0o700 });
-  const attempt = (file: string, step: () => void): void => {
-    try {
-      step();
-    } catch (error) {
-      failed.push(`${file}: ${(error as Error).message}`);
+const findingsFor = (
+  watched: string[],
+  roots: Map<string, RootState>,
+  entries: Map<string, State>,
+  blobs: Map<string, string>,
+): Finding[] => {
+  const findings: Finding[] = [];
+  for (const root of watched) {
+    const wasRoot = roots.get(root) ?? { kind: "absent" };
+    const nowRoot = rootStateOf(root);
+    if (!sameRoot(wasRoot, nowRoot)) {
+      findings.push({
+        path: root,
+        was: describeRoot(wasRoot),
+        now: `${describeRoot(nowRoot)} (root replaced: not walked)`,
+        blob: null,
+        commands: [`ls -la ${quote(root)}`],
+      });
+      continue;
     }
-  };
-  for (const file of changed) attempt(file, () => rescue(roots, rescued, file));
-  for (const file of changed
-    .filter((each) => !entryOf(each))
-    .toSorted((a, b) => b.length - a.length))
-    attempt(file, () => rmSync(file, { recursive: true, force: true }));
-  for (const file of changed.toSorted((a, b) => a.length - b.length)) {
-    const entry = entryOf(file);
-    if (entry) attempt(file, () => putBack(roots, file, entry));
+    const under = (file: string): boolean => file === root || file.startsWith(`${root}/`);
+    const seen = new Set<string>();
+    let created = 0;
+    walk(
+      root,
+      (file, stat) => {
+        seen.add(file);
+        const was = entries.get(file);
+        if (was) {
+          // Fast path: a file whose stat did not move is not re-hashed.
+          if (
+            was.type === "file" &&
+            stat.isFile() &&
+            stat.size === was.size &&
+            stat.mtimeMs === was.mtimeMs &&
+            stat.ino === was.ino &&
+            stat.nlink === was.nlink &&
+            (stat.mode & 0o7777) === was.mode
+          )
+            return;
+          const now = stateOf(file, stat);
+          if (sameFile(was, now)) return;
+          const blob = blobs.get(file) ?? null;
+          findings.push({
+            path: file,
+            was: describe(was),
+            now: describe(now, true),
+            blob,
+            commands: commandsFor(file, was, now, blob),
+          });
+          return;
+        }
+        created += 1;
+        if (created > MAX_CREATED) return;
+        const now = stateOf(file, stat);
+        findings.push({
+          path: file,
+          was: "absent",
+          now: `${describe(now, true)} (created)`,
+          blob: null,
+          commands: commandsFor(file, { type: "absent" }, now, null),
+        });
+      },
+      (dir) => dir === root || entries.get(dir)?.type === "dir",
+    );
+    if (created > MAX_CREATED)
+      findings.push({
+        path: root,
+        was: "",
+        now: `${created - MAX_CREATED} more created paths under it, not listed`,
+        blob: null,
+        commands: [],
+      });
+    for (const [file, was] of entries) {
+      if (!under(file) || seen.has(file)) continue;
+      const broken = brokenParent(root, file);
+      if (broken) {
+        findings.push({
+          path: file,
+          was: describe(was),
+          now: `not reachable: ${broken} is no longer a dir`,
+          blob: blobs.get(file) ?? null,
+          commands: [`ls -la ${quote(broken)}`],
+        });
+        continue;
+      }
+      const blob = blobs.get(file) ?? null;
+      findings.push({
+        path: file,
+        was: describe(was),
+        now: "absent",
+        blob,
+        commands: commandsFor(file, was, { type: "absent" }, blob),
+      });
+    }
   }
-  return { rescued, failed };
+  return findings;
 };
 
-/** Compare with the in-memory snapshot and put every restored path back. Null when nothing changed. */
-export const checkSnapshot = (base: string, snapshot: Snapshot): Trip | null => {
-  const changed = changedUnder(snapshot.guard.restored, snapshot.restored);
+/** What a run changed outside its world. Nothing was put back. */
+export type Trip = {
+  findings: Finding[];
+  /** Changed in a reported state tree. */
+  reported: { added: string[]; changed: string[]; missing: string[] };
+};
+
+/** Compare with the in-memory snapshot. Read only; null when nothing changed. */
+export const checkSnapshot = (snapshot: Snapshot): Trip | null => {
+  const findings = findingsFor(
+    snapshot.guard.watched,
+    snapshot.roots,
+    snapshot.entries,
+    snapshot.blobs,
+  );
   const now = hashReported(snapshot.guard);
   const reported = {
     added: [...now.keys()].filter((file) => !snapshot.reported.has(file)),
@@ -463,61 +543,87 @@ export const checkSnapshot = (base: string, snapshot: Snapshot): Trip | null => 
       .map(([file]) => file),
     missing: [...snapshot.reported.keys()].filter((file) => !now.has(file)),
   };
-  // The bench stops on any trip, so the reported trees need no new baseline.
-  const { rescued, failed } = settle(base, snapshot.guard.restored, changed, (file) =>
-    snapshot.restored.get(file),
-  );
   const count =
-    changed.length + reported.added.length + reported.changed.length + reported.missing.length;
-  return count === 0 ? null : { restored: changed, reported, rescued, failed };
+    findings.length + reported.added.length + reported.changed.length + reported.missing.length;
+  return count === 0 ? null : { findings, reported };
 };
 
-// ---------------------------------------------------------------- journal (a crash report)
+/** The watch during a run: true when a watched path changed. Stat first, hash only on a stat change. */
+export const watchedChanged = (snapshot: Snapshot): boolean =>
+  findingsFor(snapshot.guard.watched, snapshot.roots, snapshot.entries, new Map()).length > 0;
 
-type JournalEntry = Described & { blob?: string; atimeMs?: number; mtimeMs?: number };
-type Journal = { entries: Record<string, JournalEntry> };
+/** Each finding as indented lines: path, was, now, the original's copy, and commands to run. */
+export const findingLines = (findings: Finding[]): string[] =>
+  findings.flatMap((finding) => [
+    `  ${finding.path}`,
+    ...(finding.was ? [`    was: ${finding.was}`] : []),
+    `    now: ${finding.now}`,
+    ...(finding.blob ? [`    original: ${finding.blob}`] : []),
+    ...finding.commands.map((command) => `    $ ${command}`),
+  ]);
+
+export const tripDetail = (trip: Trip, transcript: string): string =>
+  [
+    trip.findings.length > 0
+      ? `nothing was put back; the originals are in the journal: ${trip.findings
+          .map((finding) => `${finding.path} (was ${finding.was || "-"}; now ${finding.now})`)
+          .join("; ")}`
+      : "",
+    trip.reported.added.length > 0 ? `added ${trip.reported.added.join(", ")}` : "",
+    trip.reported.changed.length > 0 ? `changed ${trip.reported.changed.join(", ")}` : "",
+    trip.reported.missing.length > 0 ? `missing ${trip.reported.missing.join(", ")}` : "",
+    `transcript ${transcript}`,
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+// ---------------------------------------------------------------- journal (the user's recovery copy)
+
+type Journal = {
+  roots: Record<string, RootState>;
+  entries: Record<string, State & { blob?: string }>;
+};
 
 const journalDir = (base: string): string => path.join(base, "journal");
 
-/** Write the journal once at arm: blobs first, the manifest last. */
+/** Write the journal once at arm, blobs first and the manifest last; record each blob's path in the snapshot. */
 export const writeJournal = (base: string, snapshot: Snapshot): void => {
   const dir = journalDir(base);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(path.join(dir, "blobs"), { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const entries: Journal["entries"] = {};
-  let blobs = 0;
-  for (const [file, entry] of snapshot.restored) {
-    if (entry.type !== "file") {
+  let count = 0;
+  for (const [file, entry] of snapshot.entries) {
+    const bytes = snapshot.bytes.get(file);
+    if (!bytes) {
       entries[file] = entry;
       continue;
     }
-    blobs += 1;
-    writeSecret(path.join(dir, "blobs", String(blobs)), entry.bytes);
-    entries[file] = {
-      type: "file",
-      mode: entry.mode,
-      sha: entry.sha,
-      atimeMs: entry.atimeMs,
-      mtimeMs: entry.mtimeMs,
-      blob: String(blobs),
-    };
+    count += 1;
+    const blob = path.join(dir, "blobs", String(count));
+    writeFileSync(blob, bytes, { mode: 0o600 });
+    chmodSync(blob, 0o600);
+    snapshot.blobs.set(file, blob);
+    entries[file] = { ...entry, blob: String(count) };
   }
-  writeSecret(path.join(dir, "manifest.json"), JSON.stringify({ entries }));
+  const manifest = path.join(dir, "manifest.json");
+  writeFileSync(manifest, JSON.stringify({ roots: Object.fromEntries(snapshot.roots), entries }), {
+    mode: 0o600,
+  });
+  chmodSync(manifest, 0o600);
 };
 
+/** Delete the journal dir; nothing else. */
 export const dropJournal = (base: string): void => {
   rmSync(journalDir(base), { recursive: true, force: true });
 };
 
-/** What a leftover journal says, checked against roots the runner recomputes, never the journal's own. */
+/** What a leftover journal says, compared against roots the runner recomputes, never the journal's own. */
 export type Leftover = {
   /** The journal cannot be trusted as written: unreadable, a path outside the roots, a blob that does not match. */
   problems: string[];
-  /** Real paths that differ from the journal (or are new under a root). */
-  changed: string[];
-  /** Ready-to-run `diff -u <blob> <real>` lines for changed non-token files. */
-  diffs: string[];
+  findings: Finding[];
   /** The journal's own digest: proves nothing unless it equals the line the stopped run printed. */
   digest: string | null;
 };
@@ -529,7 +635,7 @@ const insideRoots = (roots: string[], file: string): boolean =>
     return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
   });
 
-/** Null when no journal is left; never writes a real file. */
+/** Null when no journal is left. Read only, like the live check. */
 export const inspectJournal = (base: string, guard: Guard): Leftover | null => {
   const dir = journalDir(base);
   if (!lstat(dir)) return null;
@@ -538,140 +644,34 @@ export const inspectJournal = (base: string, guard: Guard): Leftover | null => {
     journal = JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")) as Journal;
     if (typeof journal.entries !== "object" || journal.entries === null) throw new Error("shape");
   } catch {
-    return { problems: ["leftover unreadable"], changed: [], diffs: [], digest: null };
+    return { problems: ["leftover unreadable"], findings: [], digest: null };
   }
   const problems: string[] = [];
-  const entries = new Map(Object.entries(journal.entries));
-  for (const [file, entry] of entries) {
-    if (!insideRoots(guard.restored, file)) {
-      problems.push(`outside the guarded set: ${file}`);
+  const entries = new Map<string, State>();
+  const blobs = new Map<string, string>();
+  for (const [file, { blob, ...entry }] of Object.entries(journal.entries)) {
+    if (!insideRoots(guard.watched, file)) {
+      problems.push(`outside the watched set: ${file}`);
       continue;
     }
-    // Links are kept as links, never written through: nothing may sit under one.
-    const root = rootOf(guard.restored, path.normalize(file)) ?? "";
-    if (between(root, path.normalize(file)).some((above) => entries.get(above)?.type === "link")) {
-      problems.push(`under a recorded symlink: ${file}`);
-      continue;
-    }
-    if (entry.type !== "file") continue;
-    const blob = path.join(dir, "blobs", String(entry.blob ?? ""));
-    let bytes: Uint8Array | null = null;
-    try {
-      bytes = lstat(blob)?.isFile() ? readFileSync(blob) : null;
-    } catch {
-      bytes = null;
-    }
-    if (bytes === null || sha(bytes) !== entry.sha)
+    entries.set(file, entry);
+    if (entry.type !== "file" || !blob) continue;
+    const blobPath = path.join(dir, "blobs", String(blob));
+    const bytes = readRegular(blobPath);
+    if (bytes === null || sha(bytes) !== entry.sha) {
       problems.push(`blob does not match its sha: ${file}`);
-  }
-  const inside = new Map([...entries].filter(([file]) => insideRoots(guard.restored, file)));
-  const changed = changedUnder(guard.restored, inside);
-  const diffs = changed
-    .filter((file) => !file.endsWith(".token") && inside.get(file)?.type === "file")
-    .map((file) => `diff -u ${path.join(dir, "blobs", String(inside.get(file)?.blob))} ${file}`);
-  return { problems, changed, diffs, digest: digestOf([...entries]) };
-};
-
-/**
- * `--tripwire-restore <digest>`: put the journal back only when its digest is
- * the one given, every path is inside the recomputed roots and every blob
- * matches. Returns the restored paths, or why it refused.
- */
-export const restoreJournal = (
-  base: string,
-  guard: Guard,
-  digest: string,
-): { restored: string[]; rescued: string | null; failed: string[] } | { refused: string } => {
-  const left = inspectJournal(base, guard);
-  if (!left) return { refused: "no leftover journal" };
-  if (left.problems.length > 0) return { refused: left.problems.join("; ") };
-  if (left.digest !== digest)
-    return { refused: `the journal's digest ${left.digest} is not ${digest}` };
-  const dir = journalDir(base);
-  const journal = JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")) as Journal;
-  const entryOf = (file: string): Restorable | undefined => {
-    const entry = journal.entries[file];
-    if (!entry) return undefined;
-    if (entry.type === "link") return { type: "link", target: String(entry.target) };
-    if (entry.type === "dir") return { type: "dir", mode: Number(entry.mode) };
-    return {
-      type: "file",
-      bytes: readFileSync(path.join(dir, "blobs", String(entry.blob))),
-      mode: Number(entry.mode),
-      atimeMs: Number(entry.atimeMs),
-      mtimeMs: Number(entry.mtimeMs),
-      sha: String(entry.sha),
-    };
-  };
-  const { rescued, failed } = settle(base, guard.restored, left.changed, entryOf);
-  // A partial restore keeps the journal, so it can be settled again.
-  if (failed.length === 0) dropJournal(base);
-  return { restored: left.changed, rescued, failed };
-};
-
-// ---------------------------------------------------------------- housekeeping
-
-/** Keep the 5 newest rescue dirs, none older than 7 days. */
-export const pruneRescued = (base: string, now = Date.now()): void => {
-  const dir = path.join(base, "rescued");
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return;
-  }
-  const dated = names
-    .map((name) => ({ name, mtime: lstat(path.join(dir, name))?.mtimeMs ?? 0 }))
-    .toSorted((a, b) => b.mtime - a.mtime);
-  for (const [index, { name, mtime }] of dated.entries())
-    if (index >= RESCUE_KEEP || now - mtime > RESCUE_MAX_AGE_MS)
-      rmSync(path.join(dir, name), { recursive: true, force: true });
-};
-
-/** The marker a world carries: the identity of the runner that made it. */
-export const RUNNER_MARKER = ".runner";
-
-/**
- * Remove bench worlds a dead runner left in the temp dir: real dirs this user
- * owns whose marker names a dead runner, or with no marker and older than 24 h.
- * A symlink is never followed.
- */
-export const sweepWorlds = (tmp = os.tmpdir(), now = Date.now()): string[] => {
-  const removed: string[] = [];
-  for (const name of readdirSync(tmp)) {
-    if (!name.startsWith("workit-eval-")) continue;
-    const dir = path.join(tmp, name);
-    const stat = lstat(dir);
-    if (!stat?.isDirectory() || (process.getuid && stat.uid !== process.getuid())) continue;
-    let marker: string | null = null;
-    try {
-      marker = readFileSync(path.join(dir, RUNNER_MARKER), "utf8").trim();
-    } catch {
-      marker = null;
+      continue;
     }
-    const dead = marker ? !identityAlive(marker) : now - stat.mtimeMs > WORLD_MAX_AGE_MS;
-    if (!dead) continue;
-    rmSync(dir, { recursive: true, force: true });
-    removed.push(dir);
+    blobs.set(file, blobPath);
   }
-  return removed;
+  const roots = new Map(Object.entries(journal.roots ?? {}));
+  const findings = findingsFor(guard.watched, roots, entries, blobs).map((finding) =>
+    // An untrusted journal gets no command to run, only a look.
+    problems.length > 0 ? { ...finding, commands: [`ls -la ${quote(finding.path)}`] } : finding,
+  );
+  return {
+    problems,
+    findings,
+    digest: digestOf(Object.entries(journal.entries)),
+  };
 };
-
-export const tripDetail = (trip: Trip, transcript: string): string =>
-  [
-    trip.restored.length > 0 ? `restored ${trip.restored.join(", ")}` : "",
-    trip.rescued
-      ? `the bytes the run left are saved in ${trip.rescued} (delete it once read; it may hold token bytes)`
-      : "",
-    trip.reported.added.length > 0 ? `added (left in place) ${trip.reported.added.join(", ")}` : "",
-    trip.reported.changed.length > 0
-      ? `changed (left in place) ${trip.reported.changed.join(", ")}`
-      : "",
-    trip.reported.missing.length > 0
-      ? `missing (not restored: a live session may have consumed them) ${trip.reported.missing.join(", ")}`
-      : "",
-    trip.failed.length > 0 ? `NOT restored (the journal is kept): ${trip.failed.join("; ")}` : "",
-    `transcript ${transcript}`,
-  ]
-    .filter(Boolean)
-    .join("; ");

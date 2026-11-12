@@ -1,10 +1,50 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EVAL_WORLD_MARKER } from "../../packages/workit-core/src/core/eval-world";
 import type { EvalCase } from "./cases";
-import { RUNNER_MARKER, runnerIdentity } from "./tripwire";
+import { identityAlive, runnerIdentity } from "./tripwire";
+
+/** The marker a world carries: the identity of the runner that made it. */
+export const RUNNER_MARKER = ".runner";
+const WORLD_MAX_AGE_MS = 24 * 3600 * 1000;
+
+/**
+ * Remove bench worlds a dead runner left in the temp dir: real dirs this user
+ * owns whose marker names a dead runner, or with no marker and older than 24 h.
+ * A symlink is never followed.
+ */
+export const sweepWorlds = (tmp = os.tmpdir(), now = Date.now()): string[] => {
+  const removed: string[] = [];
+  for (const name of readdirSync(tmp)) {
+    if (!name.startsWith("workit-eval-")) continue;
+    const dir = path.join(tmp, name);
+    const stat = lstatSync(dir, { throwIfNoEntry: false });
+    if (!stat?.isDirectory() || (process.getuid && stat.uid !== process.getuid())) continue;
+    let marker: string | null = null;
+    try {
+      marker = readFileSync(path.join(dir, RUNNER_MARKER), "utf8").trim();
+    } catch {
+      marker = null;
+    }
+    const dead = marker ? !identityAlive(marker) : now - stat.mtimeMs > WORLD_MAX_AGE_MS;
+    if (!dead) continue;
+    rmSync(dir, { recursive: true, force: true });
+    removed.push(dir);
+  }
+  return removed;
+};
 
 /** A throwaway world for one run: the repo, an optional worktree, Workit state and config. */
 export type World = {

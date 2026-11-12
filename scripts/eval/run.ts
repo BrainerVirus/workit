@@ -44,7 +44,7 @@ import {
   selfCheck,
   type Host,
 } from "./isolation";
-import { makeWorld, promptFor, type World } from "./scaffold";
+import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
 import {
   accountHome,
   acquire,
@@ -53,15 +53,13 @@ import {
   dropJournal,
   ensureBase,
   guardFor,
+  findingLines,
   inspectJournal,
-  pruneRescued,
   release,
-  restoreJournal,
-  restoredChanged,
   runnerIdentity,
-  sweepWorlds,
   tripDetail,
   tripwireBase,
+  watchedChanged,
   writeJournal,
   type Guard,
   type Snapshot,
@@ -124,8 +122,8 @@ type RunResult = {
   grade: Grade;
   /** The world failed the isolation self-check: the case never started, and the run failed. */
   refused?: "isolation";
-  /** The run changed a real guarded file (tripwire.ts): put back, and the run failed. */
-  outsideWrite?: Omit<Trip, "rescued"> & { rescued: string | null };
+  /** The run changed a real watched file (tripwire.ts): reported, nothing put back, and the run failed. */
+  outsideWrite?: Trip;
 };
 
 const out = (repo: string, ...args: string[]): string =>
@@ -334,7 +332,7 @@ const REFUSED = { transcript: "", exit: null, timedOut: false, limit: null };
 const writeRules = (opts: Options, world: World | null): { dirs: string[]; files: string[] } => ({
   dirs: writableDirs(world?.dir ?? null, [
     opts.realHome,
-    ...opts.guard.restored,
+    ...opts.guard.watched,
     ...opts.guard.reported,
     opts.tripwire,
   ]),
@@ -448,7 +446,7 @@ type Options = {
   unconfined: boolean;
   /** The signal that asked the bench to stop, once one has. */
   stop: string | null;
-  /** A live restore failed for some path: the journal is kept for --tripwire-restore. */
+  /** A run changed real Workit files: the journal stays as the user's recovery copy. */
   keepJournal: boolean;
   /** The host running now, in its own process group. */
   child: RunningHost | null;
@@ -520,7 +518,7 @@ const attempt = async (
   }, opts.timeoutMs);
   const snapshot = opts.snapshot;
   const watch = setInterval(() => {
-    if (snapshot && restoredChanged(snapshot)) killGroup(child);
+    if (snapshot && watchedChanged(snapshot)) killGroup(child);
   }, opts.watchMs);
   const exit = await new Promise<number | null>((resolve) => {
     child.on("error", (error) => {
@@ -595,11 +593,12 @@ const runCase = async (
   try {
     run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
   } catch (error) {
-    checkSnapshot(opts.tripwire, snapshot);
+    if (checkSnapshot(snapshot)) opts.keepJournal = true;
     throw error;
   }
-  const trip = checkSnapshot(opts.tripwire, snapshot);
-  if (trip && trip.failed.length > 0) opts.keepJournal = true;
+  const trip = checkSnapshot(snapshot);
+  // Nothing is put back: the journal stays as the user's recovery copy.
+  if (trip) opts.keepJournal = true;
   if (opts.stop) return { result: null, trip };
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
@@ -773,7 +772,7 @@ const replay = (
 const USAGE =
   "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--force]\n" +
   "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]\n" +
-  "       bun scripts/eval/run.ts --tripwire-restore <digest> | --tripwire-discard\n" +
+  "       bun scripts/eval/run.ts --tripwire-discard\n" +
   "       --unconfined: run shell-wrapper cases with detection only when write confinement (Landlock) is off";
 
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
@@ -791,36 +790,42 @@ export const main = async (
     if (decision) print(decision);
     return 0;
   }
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      host: { type: "string", default: "claude-code" },
-      model: { type: "string" },
-      tier: { type: "string", default: "smoke" },
-      cases: { type: "string" },
-      "budget-runs": { type: "string", default: "3" },
-      repeat: { type: "string", default: "1" },
-      force: { type: "boolean", default: false },
-      replay: { type: "boolean", default: false },
-      check: { type: "boolean", default: false },
-      bin: { type: "string" },
-      "plugin-dir": { type: "string" },
-      "timeout-s": { type: "string", default: "300" },
-      // Test seam: the account home whose Workit files are guarded and whose host login is linked.
-      "real-home": { type: "string" },
-      "tripwire-restore": { type: "string" },
-      "tripwire-discard": { type: "boolean", default: false },
-      // Test seam: how often a running host's restored set is re-checked.
-      "watch-ms": { type: "string", default: "2000" },
-      // Test seam: "off" skips write confinement as if Landlock were missing.
-      confine: { type: "string", default: "auto" },
-      unconfined: { type: "boolean", default: false },
-      results: { type: "string", default: path.join(REPO, "evals", "results") },
-      "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
-      help: { type: "boolean", default: false },
-    },
-    strict: true,
-  });
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      options: {
+        host: { type: "string", default: "claude-code" },
+        model: { type: "string" },
+        tier: { type: "string", default: "smoke" },
+        cases: { type: "string" },
+        "budget-runs": { type: "string", default: "3" },
+        repeat: { type: "string", default: "1" },
+        force: { type: "boolean", default: false },
+        replay: { type: "boolean", default: false },
+        check: { type: "boolean", default: false },
+        bin: { type: "string" },
+        "plugin-dir": { type: "string" },
+        "timeout-s": { type: "string", default: "300" },
+        // Test seam: the account home whose Workit files are guarded and whose host login is linked.
+        "real-home": { type: "string" },
+        "tripwire-discard": { type: "boolean", default: false },
+        // Test seam: how often a running host's restored set is re-checked.
+        "watch-ms": { type: "string", default: "2000" },
+        // Test seam: "off" skips write confinement as if Landlock were missing.
+        confine: { type: "string", default: "auto" },
+        unconfined: { type: "boolean", default: false },
+        results: { type: "string", default: path.join(REPO, "evals", "results") },
+        "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
+        help: { type: "boolean", default: false },
+      },
+      strict: true,
+    });
+  } catch (error) {
+    print(`${(error as Error).message}\n${USAGE}`);
+    return 2;
+  }
+  const { values } = parsed;
   if (values.help) {
     print(USAGE);
     return 0;
@@ -844,7 +849,7 @@ export const main = async (
   const budget = Number(values["budget-runs"]);
   const repeat = Number(values.repeat);
   const tier = values.tier as Tier;
-  const settling = values["tripwire-restore"] !== undefined || values["tripwire-discard"];
+  const settling = values["tripwire-discard"];
   if (
     (!values.model && !settling) ||
     !Number.isInteger(repeat) ||
@@ -890,10 +895,7 @@ export const main = async (
         budget,
         force: values.force,
       }),
-    {
-      restore: values["tripwire-restore"],
-      discard: values["tripwire-discard"],
-    },
+    { discard: values["tripwire-discard"] },
   );
 };
 
@@ -908,7 +910,7 @@ const tripwired = async (
   opts: Options,
   print: (text: string) => void,
   run: () => Promise<number>,
-  settleFlags: { restore: string | undefined; discard: boolean },
+  settleFlags: { discard: boolean },
 ): Promise<number> => {
   const bad = ensureBase(opts.tripwire);
   if (bad) {
@@ -918,50 +920,32 @@ const tripwired = async (
   const holder = acquire(opts.tripwire);
   if (holder !== null) {
     print(
-      `another bench run (pid ${holder}) holds the tripwire at ${opts.tripwire}: two runs would restore each other's snapshot. Wait for it, or stop it.`,
+      `another bench run (pid ${holder}) holds the tripwire at ${opts.tripwire}: two runs would report each other's changes. Wait for it, or stop it.`,
     );
     return 4;
   }
   try {
-    // A dead runner's worlds (its login copies included) and old rescued bytes go first.
+    // A dead runner's worlds (its login copies included) go first.
     for (const dir of sweepWorlds()) print(`tripwire: removed a dead bench run's world ${dir}`);
-    pruneRescued(opts.tripwire);
     if (settleFlags.discard) {
       dropJournal(opts.tripwire);
-      print("tripwire: the leftover journal is dropped; nothing was restored");
+      print("tripwire: the leftover journal is dropped; nothing else was touched");
       return 0;
     }
-    if (settleFlags.restore !== undefined) {
-      const done = restoreJournal(opts.tripwire, opts.guard, settleFlags.restore);
-      if ("refused" in done) {
-        print(`tripwire-restore refused, nothing written: ${done.refused}`);
-        return 3;
-      }
-      print(
-        `tripwire-restore: restored ${done.restored.join(", ") || "nothing (no file differed)"}${done.rescued ? `; the bytes it replaced are saved in ${done.rescued} (delete it once read; it may hold token bytes)` : ""}`,
-      );
-      if (done.failed.length === 0) return 0;
-      print(
-        [
-          "tripwire-restore: these were NOT restored; the journal is kept, fix them and run it again:",
-          ...done.failed.map((failure) => `  failed ${failure}`),
-        ].join("\n"),
-      );
-      return 3;
-    }
     const left = inspectJournal(opts.tripwire, opts.guard);
-    if (left && left.problems.length === 0 && left.changed.length === 0) {
-      print(`tripwire: a leftover journal (digest ${left.digest}) matches the real files; dropped`);
+    if (left && left.problems.length === 0 && left.findings.length === 0) {
+      print(
+        `tripwire: a leftover journal (digest ${left.digest}): nothing differs from the real files; dropped`,
+      );
       dropJournal(opts.tripwire);
     } else if (left) {
       print(
         [
-          "LEFTOVER: a bench run ended without its tripwire check (a crash, SIGKILL or a second Ctrl-C). No real file was written and no run starts.",
+          "LEFTOVER: real Workit files differ from the journal a bench run left (it changed them, or ended without its check). Nothing was written and no run starts.",
           ...left.problems.map((problem) => `  ${problem}`),
-          ...left.changed.map((file) => `  differs from the journal: ${file}`),
-          ...left.diffs.map((diff) => `  ${diff}`),
+          ...findingLines(left.findings),
           `  journal digest ${left.digest ?? "none"}: proves nothing unless it equals the \`tripwire armed\` line the stopped run printed`,
-          "  settle it: bun scripts/eval/run.ts --tripwire-restore <that digest>, or --tripwire-discard",
+          "  once the real files are as you want them, the next start drops it; or drop it now with --tripwire-discard",
         ].join("\n"),
       );
       return 3;
@@ -970,7 +954,7 @@ const tripwired = async (
     print(`tripwire armed: ${opts.snapshot.files} files, digest ${opts.snapshot.digest}`);
     writeJournal(opts.tripwire, opts.snapshot);
     // The handler only flags the stop and kills the host's group; the normal
-    // unwind restores from memory, removes the world and drops the journal.
+    // unwind checks against memory, removes the world and drops the journal.
     // A second signal exits at once and leaves the journal for the next start.
     const onSignal = (signal: NodeJS.Signals): void => {
       if (opts.stop) process.exit(SIGNAL_EXIT[signal] ?? 1);
@@ -982,7 +966,7 @@ const tripwired = async (
       const code = await run();
       if (opts.keepJournal)
         print(
-          `tripwire: a restore failed, so the journal stays; settle it with --tripwire-restore ${opts.snapshot.digest}`,
+          `tripwire: real Workit files changed, so the journal stays at ${opts.tripwire}/journal as your recovery copy`,
         );
       else dropJournal(opts.tripwire);
       return opts.stop ? (SIGNAL_EXIT[opts.stop] ?? 1) : code;
@@ -1064,7 +1048,10 @@ const bench = async (
       if (result.outsideWrite) {
         writeSummary(dir);
         print(
-          `STOPPED: ${spec.id} wrote real Workit files outside its world (put back; see outside_write above). No further run starts.`,
+          [
+            `STOPPED: ${spec.id} changed real Workit files outside its world. Nothing was put back; no further run starts.`,
+            ...findingLines(trip?.findings ?? []),
+          ].join("\n"),
         );
         return 3;
       }
@@ -1106,7 +1093,10 @@ const bench = async (
 /** A signal stopped the bench: say what the tripwire found; `tripwired` exits with the signal's code. */
 const stopped = (opts: Options, trip: Trip | null, print: (text: string) => void): number => {
   print(
-    `STOPPED by ${opts.stop}: ${trip ? tripDetail(trip, "none (the interrupted run writes no result)") : "no real Workit file changed"}`,
+    [
+      `STOPPED by ${opts.stop}: ${trip ? tripDetail(trip, "none (the interrupted run writes no result)") : "no real Workit file changed"}`,
+      ...findingLines(trip?.findings ?? []),
+    ].join("\n"),
   );
   return SIGNAL_EXIT[opts.stop ?? ""] ?? 1;
 };

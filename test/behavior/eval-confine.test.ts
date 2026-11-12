@@ -111,7 +111,7 @@ test.skipIf(!landlock)(
     const guard = tripwire.guardFor(home);
     const dirs = confine.writableDirs(path.join(root, "world"), [
       home,
-      ...guard.restored,
+      ...guard.watched,
       ...guard.reported,
       tripwire.tripwireBase(home),
     ]);
