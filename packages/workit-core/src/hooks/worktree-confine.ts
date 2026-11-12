@@ -21,7 +21,8 @@
 // filesystem; fails open on any error.
 //
 // A verifier or reviewer (a judge, #790) writes only in a scratch dir:
-// `.workit-scratch/` at the root of a git checkout. Every other write target,
+// `.workit-scratch/` at the root of a checkout of the judged repository, the
+// candidate worktree's included. Every other write target,
 // in a repository or not, is denied naming the scratch dir, and so is an
 // unquoted heredoc whose body runs a command substitution.
 import { createHash } from "node:crypto";
@@ -104,7 +105,12 @@ const workitWorktreeOf = (file: string): string | null => {
   }
 };
 
-type Binding = { worktree: string; session: string; agentId: string; at: string };
+type Binding = {
+  worktree: string;
+  session: string;
+  agentId: string;
+  at: string;
+};
 
 // Bindings live in Workit's machine state dir, keyed by session and agent, so
 // one is kept wherever the hook's cwd is (even outside every repository).
@@ -687,11 +693,21 @@ const substitutingHeredoc = (command: string): boolean => {
   return false;
 };
 
-const judgeDeny = (input: HookInput, what: string): HookDecision => {
+/**
+ * A judge writes in the scratch dir of any checkout of the judged repository:
+ * the hook cwd's, and the candidate worktree's when `target` is in another
+ * checkout of the same repository (#792 item 32), so the deny names both.
+ */
+const judgeDeny = (input: HookInput, what: string, target?: string): HookDecision => {
   const role = input.session.agentType?.endsWith("reviewer") ? "reviewer" : "verifier";
   const root = checkoutOf(input.cwd)?.root;
+  const candidate = target ? checkoutOf(target)?.root : undefined;
+  const also =
+    root && candidate && candidate !== root && commonDir(candidate) === commonDir(root)
+      ? ` or ${path.join(candidate, SCRATCH)}`
+      : "";
   const scratch = root
-    ? path.join(root, SCRATCH)
+    ? `${path.join(root, SCRATCH)}${also}`
     : `${SCRATCH}/ at the root of the checkout you judge`;
   const unblock = `Write only under ${scratch} (mkdir -p it): put a generated case in a file there with a quoted heredoc (<<'EOF') and never run it in the shell. Reads, \`workit check\` and \`workit ledger verdict|finding\` stay allowed; a change the candidate needs is a finding, not an edit.`;
   return {
@@ -726,6 +742,7 @@ export function confineJudge(input: HookInput, targets: readonly string[]): Hook
         runner === null
           ? `${shown(target)} is outside it`
           : `\`${runner}\` runs in ${shown(target)}, outside it`,
+        target,
       );
     }
     return NONE;

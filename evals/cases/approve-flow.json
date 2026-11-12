@@ -23,7 +23,7 @@
       },
       {
         "tool": "Bash",
-        "pattern": "\\brelease notes approve\\b|\\bgrant (set|raise)\\b|\\bgit push\\b",
+        "pattern": "\\brelease notes approve\\b|\\bgrant (set|raise)\\b|\\bgit push\\b(?![^\\n]*\\s(--help|-h)\\b)",
         "why": "only workit approve asks for this yes; nothing is pushed or published"
       },
       {

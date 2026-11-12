@@ -389,16 +389,20 @@ const personAsked = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): bool
   ASKING_MODES.has(String(raw.permission_mode)) &&
   !String(env.CLAUDE_CODE_ENTRYPOINT ?? "").startsWith("sdk");
 
-/** The ask for a plain `workit approve <id>…`: every request rendered from the store. */
-const approveAsk = (ids: readonly string[]): string =>
-  [
+/**
+ * The ask for a plain `workit approve <id>…`: every request rendered from the
+ * store. null when no id is a live request: there is nothing to ask about, and
+ * the CLI answers not_found.
+ */
+const approveAsk = (ids: readonly string[]): string | null => {
+  const found = ids.map((id) => liveApprovalRequest(id));
+  if (!found.some((one) => one.ok)) return null;
+  return [
     "Workit asks you to approve:",
-    ...ids.map((id) => {
-      const found = liveApprovalRequest(id);
-      return found.ok ? renderApprovalRequest(found.request) : found.reason;
-    }),
+    ...found.map((one) => (one.ok ? renderApprovalRequest(one.request) : one.reason)),
     "Yes records your approval of exactly this (one use, 15 minutes); No records nothing.",
   ].join("\n");
+};
 
 /**
  * What a `workit approve` call does to this dispatch: PreToolUse answers the
@@ -430,6 +434,9 @@ const approveStepOf = (
           reason: approveCallDeny(call.fix),
           unblock: call.fix,
         };
+      const reason = approveAsk(call.ids);
+      // No live request: drop the shared user-only ask; the CLI answers not_found.
+      if (reason === null) return decision.kind === "ask" ? { kind: "none" } : decision;
       if (asked && session && toolUseId)
         recordApprovalAsked({
           toolUseId,
@@ -437,7 +444,7 @@ const approveStepOf = (
           host: "claude_code",
           ids: call.ids,
         });
-      return { kind: "ask", reason: approveAsk(call.ids) };
+      return { kind: "ask", reason };
     };
   // Claude Code fires PostToolUse only for a call that succeeded (a failed
   // one is PostToolUseFailure, not registered); an exit code it does send must be 0.

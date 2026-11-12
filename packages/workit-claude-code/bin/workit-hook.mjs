@@ -168,8 +168,10 @@ const WORKIT_DELIVERY =
 const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*--cwd[\s=])/;
 // `workit approve` (the host-approval channel, workit-core approvals/call.ts)
 // goes to the runtime on both events: PreToolUse asks with the rendered
-// request or denies a wrapped call, PostToolUse records the grant.
-const WORKIT_APPROVE = /\bworkit(?:-cli)?\b[\s\S]*\bapprove\b/;
+// request or denies a wrapped call, PostToolUse records the grant. Anchored at
+// the verb, after any global option: `release notes approve` is not it.
+const WORKIT_APPROVE =
+  /(?:^|[\s;&|(`])(?:\S*[\\/])?workit(?:-cli)?(?:\s+(?:--json|--cwd[\s=]\S+|--session\s+\S+))*\s+approve\b/;
 // A Workit call that may carry a bypass flag, however quoted, goes to the
 // runtime, which asks the user (hooks/delivery-verbs.ts workitBypassFlag).
 const mayBypass = (command) =>

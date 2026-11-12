@@ -70,3 +70,29 @@ test("Given a stored request, When the launcher sees workit approve <id> on PreT
   expect(runHook(PLUGIN_DIR, payload("PreToolUse", "ls -la"), env).json).toEqual({});
   expect(runHook(PLUGIN_DIR, payload("PostToolUse", "ls -la"), env).json).toEqual({});
 }, 60_000);
+
+test("Given workit release notes approve or a commit message that says approve, When the launcher classifies PostToolUse, Then it stays on the fast path; workit approve <id> still reaches the runtime", () => {
+  // A runtime that cannot start says so on stderr; the fast path never starts it.
+  const noRuntime = {
+    ...env,
+    WORKIT_CLAUDE_RUNTIME: "source",
+    WORKIT_BUN: path.join(base, "no-bun"),
+  };
+  const reached = (command: string) =>
+    runHook(PLUGIN_DIR, payload("PostToolUse", command), noRuntime).stderr.includes(
+      "hook unavailable",
+    );
+  for (const command of [
+    "workit release notes approve 4.5.0",
+    'workit git push --help && echo "approve flow"',
+    "workit ledger standing list --approve",
+  ])
+    expect(reached(command), command).toBe(false);
+  for (const command of [
+    "workit approve ap_k3m7q2xa",
+    "workit --cwd /tmp approve ap_k3m7q2xa",
+    "cd /tmp && workit approve ap_k3m7q2xa",
+    "FOO=1 workit approve ap_k3m7q2xa",
+  ])
+    expect(reached(command), command).toBe(true);
+}, 60_000);

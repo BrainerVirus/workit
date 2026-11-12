@@ -617,6 +617,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A changelog with CRLF line endings keeps them when `workit git rebase` or the merge driver merges two Unreleased blocks
+- Claude Code no longer asks about `workit approve <id>` when no id is a live request: the CLI answers `not_found`
+- A verifier or reviewer is pointed at the candidate worktree's `.workit-scratch/` for its probe files, in the brief and in every confinement denial, instead of the lead checkout's
+- `workit release notes approve` and a commit message that mentions approve no longer take the slower approve path in the Claude Code hook launcher
+- On Windows, a `cd <worktree> && git commit` chain is matched to its Workit worktree whatever the path separators or drive-letter case
 - `workit git rebase` settles a conflict that is only both sides adding Unreleased changelog entries by keeping both, with no merge driver installed; `workit fanout check` no longer reports the configured changelog file as out of scope.
 - Tests that make Workit worktrees load their own state dir even when `bun test` runs outside the repo root, and the test preload fails any run that leaves a worktree in the real `~/.local/state/workit`
 - `workit ledger standing add` with several active fanout plans refuses with the exact `--fanout` retry, and `workit fanout plan` prints that command when another plan is active (#775)

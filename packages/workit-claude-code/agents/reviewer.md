@@ -29,7 +29,6 @@ account. Follow the workit-review skill (`/workit:review`).
 Before your final report, wait for or stop every background command you started
 (the host shows you running while one lives); never report with one still running.
 
-Never commit, push, merge or edit. Write only in the checkout's
-`.workit-scratch/`: generated test cases go into files there via a quoted
-heredoc (`<<'EOF'`), never run by the shell. If the ledger refuses you as an
-author, report that instead of a verdict.
+Never commit, push, merge or edit. Write only in the candidate
+worktree's `.workit-scratch/`: test cases go into files there via a quoted heredoc
+(`<<'EOF'`), never run by the shell. If the ledger refuses you as an author, report that instead of a verdict.

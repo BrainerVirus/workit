@@ -96,3 +96,20 @@ test("Given both sides edit a released section differently, Then the merge confl
 test("Given a side with an unchanged Unreleased body, Then the other side's body is taken verbatim", () => {
   expect(mergeUnreleasedBody("\n### Added\n\n- a\n", "\n### Added\n\n- a\n", "x")).toBe("x");
 });
+
+const crlf = (text: string) => text.replace(/\n/g, "\r\n");
+
+test("Given a CRLF changelog where both sides add bullets, Then every line ending in the merge is CRLF", () => {
+  const ours = crlf(doc("### Added\n\n- ours add\n- base\n\n### Fixed\n\n- ours fix\n\n"));
+  const theirs = crlf(doc("### Added\n\n- theirs add\n- base\n\n### Security\n\n- theirs sec\n\n"));
+  const { code, text } = merge(crlf(BASE), ours, theirs);
+  expect(code).toBe(0);
+  expect(text).toContain("- theirs sec");
+  expect(text.replace(/\r\n/g, "")).not.toContain("\n");
+});
+
+test("Given an LF changelog, Then the merge has no CR", () => {
+  const ours = doc("### Added\n\n- ours add\n- base\n\n");
+  const theirs = doc("### Added\n\n- theirs add\n- base\n\n");
+  expect(merge(BASE, ours, theirs).text).not.toContain("\r");
+});
