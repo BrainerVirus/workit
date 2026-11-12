@@ -69,6 +69,17 @@ test("Given Pi's TUI, When the user picks Approve once, Then the grant is record
   expect(consumeApproval(FIELDS, { session: "pi-session", verb: "git push" }).ok).toBe(true);
 });
 
+test("Given a Pi dialog grant whose ask row is gone, When the consumer runs, Then it is refused", async () => {
+  const request = createApprovalRequest(FIELDS, { session: "pi-session" });
+  await approve(request.id, ctx("tui", "Approve once"));
+  expect(existsSync(grantFile(request.id))).toBe(true);
+  rmSync(path.join(process.env.WORKIT_STATE_DIR!, "approvals", "asked"), { recursive: true });
+  expect(consumeApproval(FIELDS, { session: "pi-session", verb: "git push" })).toMatchObject({
+    ok: false,
+    code: "approval_needed",
+  });
+});
+
 test("Given Pi's TUI, When the user rejects, picks Edit or dismisses the dialog, Then no grant is recorded", async () => {
   for (const answer of ["Reject", "Edit", undefined]) {
     const request = createApprovalRequest(FIELDS, { session: "pi-session" });
