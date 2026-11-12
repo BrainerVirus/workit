@@ -65,6 +65,7 @@ import {
   isClaudeWorkitInstalled,
   claudeConfigDir,
   openCodeInstalledPlugin,
+  piWorkitPackage,
   planHostInstall,
   runHostInstall,
   type HostCommandRunner,
@@ -330,65 +331,11 @@ export function buildSetupPreview(
     // writing, it never creates an unreviewed write.
     const platforms = values.platforms ?? [];
     if (platforms.length > 0) {
-      const paths = resolveSetupPaths(opts, state.configDir);
-      for (const platform of platforms) {
-        if (platform === "opencode") {
-          mutations.push({ type: "register-platform", platform, path: paths.opencodeConfig });
-        } else if (platform === "cursor") {
-          const cursorRoot = adapterRoot("cursor", {
-            ...paths,
-            dev: opts.dev ?? env.WORKIT_DEV ?? null,
-          });
-          if (cursorRoot === null) {
-            const commands = planHostInstall("cursor", {
-              home: paths.home,
-              cwd: paths.cwd,
-              env,
-              packageVersion: "latest",
-              targetDir: paths.cursorPluginDir,
-            });
-            mutations.push({
-              type: "install-host",
-              platform: "cursor",
-              path: path.join(
-                paths.home,
-                ".cursor",
-                "plugins",
-                "local",
-                ".workit-package-bootstrap",
-              ),
-              commands,
-            });
-          }
-          mutations.push({ type: "install-adapter", platform, path: paths.cursorPluginDir });
-          mutations.push({ type: "register-platform", platform, path: paths.cursorSettings });
-          mutations.push({ type: "register-platform", platform, path: paths.cursorMcp });
-        } else if (platform === "codex" || platform === "pi" || platform === "claude-code") {
-          const commands = planHostInstall(platform, { home: paths.home, cwd: paths.cwd, env });
-          if (commands.length > 0) {
-            mutations.push({
-              type: "install-host",
-              platform,
-              path:
-                platform === "claude-code"
-                  ? claudeInstallRecord(paths.home, env)
-                  : platform === "codex"
-                    ? path.join(
-                        env.CODEX_HOME ?? path.join(paths.home, ".codex"),
-                        "plugins",
-                        "cache",
-                        CODEX_MARKETPLACE,
-                        "workit",
-                      )
-                    : path.join(
-                        env.PI_CODING_AGENT_DIR ?? path.join(paths.home, ".pi", "agent"),
-                        "settings.json",
-                      ),
-              commands,
-            });
-          }
-        }
-      }
+      const res = {
+        ...resolveSetupPaths(opts, state.configDir),
+        dev: opts.dev ?? env.WORKIT_DEV ?? null,
+      };
+      for (const platform of platforms) mutations.push(...platformMutations(platform, res));
     }
 
     const target = values.applyProject ? projectTarget(opts.cwd ?? process.cwd()) : null;
@@ -427,12 +374,228 @@ export function buildSetupPreview(
 }
 
 // ---------------------------------------------------------------------------
+// One host's install or repair with no Workit config change (#423): the
+// planner a per-host install verb, `doctor --fix` and `upgrade` call.
+// ---------------------------------------------------------------------------
+
+/** What applying a host-only plan changes, shown before it runs. */
+export type HostInstallDiff = {
+  /** Files and directories written: host config and plugin files only. */
+  files: string[];
+  /** Config keys changed, as `<file>: <key>`. */
+  keys: string[];
+  /** Host commands in order, as their argv (never run through a shell). */
+  commands: string[];
+};
+
+export type HostOnlyInstallPlan = {
+  host: HostId;
+  /** This host's install mutations only; none when the host is healthy. */
+  preview: SetupPreview;
+  diff: HostInstallDiff;
+  /** What this path leaves to the host or the user. */
+  notes: string[];
+};
+
+type HostOnlyInstallOptions = SetupPreviewOptions & {
+  /** The npm version Cursor's download and a new Pi install pin; default latest. */
+  packageVersion?: string;
+  /** Pi: the Workit package root `pi list` named, when known. */
+  piPackageRoot?: string | null;
+};
+
+const describeMutations = (
+  mutations: SetupMutation[],
+  res: ResolvedApply,
+  opencodeRoot: string | null,
+): HostInstallDiff => {
+  const diff: HostInstallDiff = { files: [], keys: [], commands: [] };
+  for (const mutation of mutations) {
+    if (mutation.type === "install-host")
+      diff.commands.push(
+        ...mutation.commands.map((step) => [step.command, ...step.args].join(" ")),
+      );
+    if (
+      mutation.type !== "install-host" &&
+      mutation.type !== "install-adapter" &&
+      mutation.type !== "register-platform"
+    )
+      continue;
+    diff.files.push(mutation.path);
+    if (mutation.type !== "register-platform") continue;
+    const registration =
+      mutation.platform === "opencode"
+        ? opencodeRegistration(opencodeRoot, res)
+        : mutation.path === res.cursorSettings
+          ? cursorSettingsRegistration(res)
+          : cursorMcpRegistration(res);
+    if (!("error" in registration))
+      diff.keys.push(...registration.merged.changed.map((key) => `${mutation.path}: ${key}`));
+  }
+  return diff;
+};
+
+const registered = (registration: Registration): boolean =>
+  registration.existing.kind === "record" && registration.merged.changed.length === 0;
+
+/** Cursor is healthy when its plugin dir holds the adapter (the resolved source's
+ *  content, or the requested version) and settings and mcp.json register it. */
+const cursorHealthy = (res: ResolvedApply, opts: HostOnlyInstallOptions): boolean => {
+  const installed = path.join(res.cursorPluginDir, "package.json");
+  if (!isAdapter(res.cursorPluginDir, "cursor") || lstatSync(res.cursorPluginDir).isSymbolicLink())
+    return false;
+  const root = adapterRoot("cursor", res, opts.preferInstalledAdapter);
+  if (root !== null && !samePluginContent(root, res.cursorPluginDir, res.cursorPluginDir))
+    return false;
+  const wanted = opts.packageVersion;
+  if (
+    root === null &&
+    wanted &&
+    wanted !== "latest" &&
+    (JSON.parse(readFileSync(installed, "utf8")) as { version?: unknown }).version !== wanted
+  )
+    return false;
+  return registered(cursorSettingsRegistration(res)) && registered(cursorMcpRegistration(res));
+};
+
+/**
+ * Plan the install, or the repair, of one host's Workit plugin: its plugin
+ * files, its own config keys and its native commands, never the Workit config,
+ * workspaces, project files or another host. A healthy host plans nothing, so
+ * applying twice changes nothing. Read-only; apply with applySetupPreview and
+ * the same options.
+ */
+export function planHostOnlyInstall(
+  host: HostId,
+  opts: HostOnlyInstallOptions = {},
+): HostOnlyInstallPlan {
+  const env = opts.env ?? process.env;
+  const state = readSetupState(opts.dir ?? opts.configDir ?? resolveConfigDir());
+  const res: ResolvedApply = {
+    ...resolveSetupPaths(opts, state.configDir),
+    dev: opts.dev ?? env.WORKIT_DEV ?? null,
+  };
+  const notes: string[] = [];
+  let opencodeRoot: string | null = null;
+  const plan = (mutations: SetupMutation[], blocked: string[] = []): HostOnlyInstallPlan => ({
+    host,
+    preview: {
+      ok: blocked.length === 0,
+      blocked,
+      mutations,
+      overrides: [],
+      preserved: [],
+      platforms: [host],
+      state,
+    },
+    diff: describeMutations(mutations, res, opencodeRoot),
+    notes,
+  });
+  try {
+    if (host === "opencode") {
+      opencodeRoot = adapterRoot("opencode", res, opts.preferInstalledAdapter);
+      const registration = opencodeRegistration(opencodeRoot, res);
+      notes.push(
+        "OpenCode downloads and refreshes the npm package of its pin itself when it loads",
+      );
+      if ("error" in registration) return plan(platformMutations(host, res));
+      if (
+        registration.pin.startsWith("file://") &&
+        !existsSync(registration.pin.slice("file://".length))
+      )
+        notes.push(
+          `the configured pin ${registration.pin} names a missing file; a local pin is kept as is: rebuild the checkout or change the pin`,
+        );
+      return plan(registered(registration) ? [] : platformMutations(host, res));
+    }
+    if (host === "cursor")
+      return plan(
+        cursorHealthy(res, opts)
+          ? []
+          : platformMutations(host, res, { packageVersion: opts.packageVersion }),
+      );
+    const pi = host === "pi" ? piWorkitPackage(res.home, env, opts.piPackageRoot ?? null) : null;
+    if (pi && !pi.npm && pi.state !== "ok")
+      notes.push(
+        `Pi lists the local checkout ${pi.root}, which does not load; build it there (bun run build)`,
+      );
+    return plan(
+      platformMutations(host, res, {
+        repair: true,
+        piPackageRoot: opts.piPackageRoot ?? null,
+        ...(opts.packageVersion ? { packageVersion: opts.packageVersion } : {}),
+      }),
+    );
+  } catch (error) {
+    return plan([], [error instanceof Error ? error.message : String(error)]);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Apply (Task 14: WZ-09, WZ-10, WZ-13-WZ-15; CA-08, CA-13, CA-14, CA-31).
 // ---------------------------------------------------------------------------
 
-/** The Claude Code plugin registry a Workit install is recorded in. */
-const claudeInstallRecord = (home: string, env: NodeJS.ProcessEnv): string =>
-  path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
+/** Where a host's native install lands: the reviewed path of its install-host mutation. */
+const hostInstallRecord = (platform: HostId, home: string, env: NodeJS.ProcessEnv): string =>
+  platform === "cursor"
+    ? path.join(home, ".cursor", "plugins", "local", ".workit-package-bootstrap")
+    : platform === "codex"
+      ? path.join(
+          env.CODEX_HOME ?? path.join(home, ".codex"),
+          "plugins",
+          "cache",
+          CODEX_MARKETPLACE,
+          "workit",
+        )
+      : platform === "pi"
+        ? path.join(env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent"), "settings.json")
+        : platform === "claude-code"
+          ? path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json")
+          : "";
+
+type PlatformPlan = { packageVersion?: string; repair?: boolean; piPackageRoot?: string | null };
+
+/** One platform's install mutations: the host's own files and registrations, nothing else. */
+function platformMutations(
+  platform: string,
+  res: ResolvedApply,
+  plan: PlatformPlan = {},
+): SetupMutation[] {
+  const { home, cwd, env } = res;
+  if (platform === "opencode")
+    return [{ type: "register-platform", platform, path: res.opencodeConfig }];
+  if (platform === "cursor") {
+    const mutations: SetupMutation[] = [];
+    if (adapterRoot("cursor", res) === null)
+      mutations.push({
+        type: "install-host",
+        platform: "cursor",
+        path: hostInstallRecord("cursor", home, env),
+        commands: planHostInstall("cursor", {
+          home,
+          cwd,
+          env,
+          packageVersion: plan.packageVersion ?? "latest",
+          targetDir: res.cursorPluginDir,
+        }),
+      });
+    mutations.push({ type: "install-adapter", platform, path: res.cursorPluginDir });
+    mutations.push({ type: "register-platform", platform, path: res.cursorSettings });
+    mutations.push({ type: "register-platform", platform, path: res.cursorMcp });
+    return mutations;
+  }
+  if (platform !== "codex" && platform !== "pi" && platform !== "claude-code") return [];
+  const commands = planHostInstall(platform, {
+    home,
+    cwd,
+    env,
+    ...(plan.packageVersion ? { packageVersion: plan.packageVersion } : {}),
+    ...(plan.repair ? { repair: true, piPackageRoot: plan.piPackageRoot ?? null } : {}),
+  });
+  return commands.length > 0
+    ? [{ type: "install-host", platform, path: hostInstallRecord(platform, home, env), commands }]
+    : [];
+}
 
 type Platform = "opencode" | "cursor";
 
@@ -853,27 +1016,24 @@ const opencodePin = (root: string, res: ResolvedApply): string | null =>
 const registersNpmPin = (platform: Platform, res: ResolvedApply): boolean =>
   platform === "opencode" && !res.dev;
 
-function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntry {
+type Registration = { existing: Existing; merged: { config: unknown; changed: string[] } };
+
+/** OpenCode's registration merge, unwritten: the pin already configured wins. */
+const opencodeRegistration = (
+  root: string | null,
+  res: ResolvedApply,
+): (Registration & { pin: string }) | { error: string } => {
   const resolvedPin = root === null ? OPENCODE_NPM_PIN : opencodePin(root, res);
-  if (!resolvedPin) {
+  if (!resolvedPin)
     return {
-      platform: "opencode",
-      file: res.opencodeConfig,
-      status: "Failed",
-      detail:
+      error:
         "workit-opencode package has no loadable plugin entry (src/plugin.ts or dist/plugin.js)",
     };
-  }
-  mkdirSync(path.dirname(res.opencodeConfig), { recursive: true });
   const existing = readExisting(res.opencodeConfig);
-  if (existing.kind === "malformed") {
+  if (existing.kind === "malformed")
     return {
-      platform: "opencode",
-      file: res.opencodeConfig,
-      status: "Failed",
-      detail: `cannot merge into malformed config: ${existing.error} — repair or remove the file`,
+      error: `cannot merge into malformed config: ${existing.error} — repair or remove the file`,
     };
-  }
   const listOf = (value: unknown): unknown[] =>
     Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   const configuredPlugins =
@@ -884,8 +1044,21 @@ function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntr
     (entry): entry is string => typeof entry === "string" && isWorkitPlugin(entry),
   );
   const pin = configuredPin ?? resolvedPin;
-  const base = existing.kind === "record" ? existing.value : {};
-  const merged = mergeOpenCodeConfig(base, pin);
+  const merged = mergeOpenCodeConfig(existing.kind === "record" ? existing.value : {}, pin);
+  return { existing, merged, pin };
+};
+
+function applyOpenCode(root: string | null, res: ResolvedApply): SetupResultEntry {
+  const registration = opencodeRegistration(root, res);
+  if ("error" in registration)
+    return {
+      platform: "opencode",
+      file: res.opencodeConfig,
+      status: "Failed",
+      detail: registration.error,
+    };
+  mkdirSync(path.dirname(res.opencodeConfig), { recursive: true });
+  const { existing, merged, pin } = registration;
   const moved = merged.changed.includes("plugin");
   if (merged.changed.length === 0) {
     return {
@@ -1046,9 +1219,40 @@ export function copyPluginDir(src: string, dest: string): SetupResultStatus {
 
 // One reviewed mutation per Cursor write target (AR-09): the settings merge and
 // the mcp merge are dispatched independently, exactly like the adapter copy.
+const cursorSettingsRegistration = (res: ResolvedApply): Registration => {
+  const existing = readExisting(res.cursorSettings);
+  return {
+    existing,
+    merged: mergeCursorSettings(
+      existing.kind === "record" ? existing.value : {},
+      res.cursorPluginDir,
+    ),
+  };
+};
+
+/** Cursor's mcp.json merge, unwritten: an exact package pin the user chose stays. */
+const cursorMcpRegistration = (res: ResolvedApply): Registration => {
+  const existing = readExisting(res.cursorMcp);
+  const mcpBase = existing.kind === "record" ? existing.value : {};
+  const server = cursorMcpServerEntry(res.cursorPluginDir);
+  const servers = isRecord(mcpBase.mcpServers) ? mcpBase.mcpServers : {};
+  const current = isRecord(servers.workit) ? servers.workit : {};
+  const previousArgs = Array.isArray(current.args) ? current.args.map(String) : [];
+  const previousPackage = previousArgs.find(
+    (arg) =>
+      arg.startsWith("--package=@workit-dev/cursor@") &&
+      arg !== `--package=${CURSOR_RUNTIME_PACKAGE}`,
+  );
+  if (previousPackage) {
+    const index = server.args.findIndex((arg) => arg.startsWith("--package="));
+    if (index >= 0) server.args[index] = previousPackage;
+  }
+  return { existing, merged: mergeCursorMcp(mcpBase, "workit", server) };
+};
+
 function applyCursorSettings(root: string, res: ResolvedApply): SetupResultEntry {
   mkdirSync(path.dirname(res.cursorSettings), { recursive: true });
-  const settingsExisting = readExisting(res.cursorSettings);
+  const { existing: settingsExisting, merged: settings } = cursorSettingsRegistration(res);
   if (settingsExisting.kind === "malformed") {
     return {
       platform: "cursor",
@@ -1057,10 +1261,6 @@ function applyCursorSettings(root: string, res: ResolvedApply): SetupResultEntry
       detail: `cannot merge into malformed config: ${settingsExisting.error} — repair or remove the file`,
     };
   }
-  const settings = mergeCursorSettings(
-    settingsExisting.kind === "record" ? settingsExisting.value : {},
-    res.cursorPluginDir,
-  );
   if (settings.changed.length === 0) {
     return {
       platform: "cursor",
@@ -1079,7 +1279,7 @@ function applyCursorSettings(root: string, res: ResolvedApply): SetupResultEntry
 
 function applyCursorMcp(root: string, res: ResolvedApply): SetupResultEntry {
   mkdirSync(path.dirname(res.cursorMcp), { recursive: true });
-  const mcpExisting = readExisting(res.cursorMcp);
+  const { existing: mcpExisting, merged: mcp } = cursorMcpRegistration(res);
   if (mcpExisting.kind === "malformed") {
     return {
       platform: "cursor",
@@ -1088,21 +1288,6 @@ function applyCursorMcp(root: string, res: ResolvedApply): SetupResultEntry {
       detail: `cannot merge into malformed config: ${mcpExisting.error} — repair or remove the file`,
     };
   }
-  const mcpBase = mcpExisting.kind === "record" ? mcpExisting.value : {};
-  const server = cursorMcpServerEntry(res.cursorPluginDir);
-  const servers = isRecord(mcpBase.mcpServers) ? mcpBase.mcpServers : {};
-  const current = isRecord(servers.workit) ? servers.workit : {};
-  const previousArgs = Array.isArray(current.args) ? current.args.map(String) : [];
-  const previousPackage = previousArgs.find(
-    (arg) =>
-      arg.startsWith("--package=@workit-dev/cursor@") &&
-      arg !== `--package=${CURSOR_RUNTIME_PACKAGE}`,
-  );
-  if (previousPackage) {
-    const index = server.args.findIndex((arg) => arg.startsWith("--package="));
-    if (index >= 0) server.args[index] = previousPackage;
-  }
-  const mcp = mergeCursorMcp(mcpBase, "workit", server);
   if (mcp.changed.length === 0) {
     return {
       platform: "cursor",
@@ -1222,25 +1407,7 @@ export function applySetupPreview(
   let cursorCopyOk = false;
   for (const mutation of preview.mutations) {
     if (mutation.type === "install-host") {
-      const expectedPath =
-        mutation.platform === "cursor"
-          ? path.join(res.home, ".cursor", "plugins", "local", ".workit-package-bootstrap")
-          : mutation.platform === "codex"
-            ? path.join(
-                res.env.CODEX_HOME ?? path.join(res.home, ".codex"),
-                "plugins",
-                "cache",
-                CODEX_MARKETPLACE,
-                "workit",
-              )
-            : mutation.platform === "pi"
-              ? path.join(
-                  res.env.PI_CODING_AGENT_DIR ?? path.join(res.home, ".pi", "agent"),
-                  "settings.json",
-                )
-              : mutation.platform === "claude-code"
-                ? claudeInstallRecord(res.home, res.env)
-                : "";
+      const expectedPath = hostInstallRecord(mutation.platform, res.home, res.env);
       if (mutation.path !== expectedPath) {
         entries.push({
           platform: mutation.platform,
