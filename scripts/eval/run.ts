@@ -28,7 +28,15 @@ import {
   type Provider,
 } from "./opencode";
 import {
+  checkConfinement,
+  confined,
+  confinementLine,
+  writableDirs,
+  type Confinement,
+} from "./confine";
+import {
   carryBack,
+  loginFiles,
   isolateHome,
   linkLogin,
   permitsShellWrappers,
@@ -50,6 +58,7 @@ import {
   release,
   restoreJournal,
   restoredChanged,
+  runnerIdentity,
   sweepWorlds,
   tripDetail,
   tripwireBase,
@@ -306,17 +315,38 @@ const prepare = (
 ): string | null => {
   linkLogin(world.home, opts.host, opts.realHome);
   if (!permitsShellWrappers(spec, spec.allowedTools ?? DEFAULT_TOOLS)) return null;
-  const check = selfCheck(world.dir, world.repo, env, [
-    process.execPath,
-    import.meta.path,
-    PROBE_FLAG,
-  ]);
+  if (!opts.confinement.on && !opts.unconfined)
+    return `the case permits a shell wrapper and write confinement is off (${opts.confinement.reason}); pass --unconfined to run it with detection only`;
+  const check = selfCheck(
+    world.dir,
+    world.repo,
+    env,
+    withConfinement(opts, world, [process.execPath, import.meta.path, PROBE_FLAG]),
+  );
   return check.ok
     ? null
     : `the case permits a shell wrapper and the world failed the isolation self-check: ${check.outside.join("; ")}`;
 };
 
 const REFUSED = { transcript: "", exit: null, timedOut: false, limit: null };
+
+/** What a host (or the probe) may write: its world, /dev, the temp dirs and its own credential file. */
+const writeRules = (opts: Options, world: World | null): { dirs: string[]; files: string[] } => ({
+  dirs: writableDirs(world?.dir ?? null, [
+    opts.realHome,
+    ...opts.guard.restored,
+    ...opts.guard.reported,
+    opts.tripwire,
+  ]),
+  files: loginFiles(opts.host, opts.realHome),
+});
+
+/** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
+const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
+  if (!opts.confinement.on) return cmd;
+  const { dirs, files } = writeRules(opts, world);
+  return confined(dirs, files, cmd);
+};
 const benchSettings = JSON.stringify({
   hooks: {
     PreToolUse: [
@@ -410,6 +440,12 @@ type Options = {
   snapshot: Snapshot | null;
   /** How often a running host's restored set is re-checked (test seam: --watch-ms). */
   watchMs: number;
+  /** Landlock write confinement for the host and the probe, checked once per bench start. */
+  confinement: Confinement;
+  /** `off` forces confinement off (test seam: --confine off). */
+  confineMode: "auto" | "off";
+  /** --unconfined: run shell-wrapper cases with detection only when confinement is off. */
+  unconfined: boolean;
   /** The signal that asked the bench to stop, once one has. */
   stop: string | null;
   /** A live restore failed for some path: the journal is kept for --tripwire-restore. */
@@ -462,7 +498,8 @@ const attempt = async (
   let stdout = "";
   let stderr = "";
   let timedOut = false;
-  const child = spawn(opts.bin, args, {
+  const [bin = opts.bin, ...rest] = withConfinement(opts, world, [opts.bin, ...args]);
+  const child = spawn(bin, rest, {
     cwd: world.repo,
     env,
     detached: true,
@@ -736,7 +773,8 @@ const replay = (
 const USAGE =
   "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--force]\n" +
   "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]\n" +
-  "       bun scripts/eval/run.ts --tripwire-restore <digest> | --tripwire-discard";
+  "       bun scripts/eval/run.ts --tripwire-restore <digest> | --tripwire-discard\n" +
+  "       --unconfined: run shell-wrapper cases with detection only when write confinement (Landlock) is off";
 
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
 
@@ -774,6 +812,9 @@ export const main = async (
       "tripwire-discard": { type: "boolean", default: false },
       // Test seam: how often a running host's restored set is re-checked.
       "watch-ms": { type: "string", default: "2000" },
+      // Test seam: "off" skips write confinement as if Landlock were missing.
+      confine: { type: "string", default: "auto" },
+      unconfined: { type: "boolean", default: false },
       results: { type: "string", default: path.join(REPO, "evals", "results") },
       "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
       help: { type: "boolean", default: false },
@@ -831,6 +872,9 @@ export const main = async (
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),
+    confinement: { on: false, reason: "not checked yet" },
+    confineMode: values.confine === "off" ? "off" : "auto",
+    unconfined: values.unconfined,
     stop: null,
     keepJournal: false,
     child: null,
@@ -969,6 +1013,12 @@ const bench = async (
   },
 ): Promise<number> => {
   const { host } = opts;
+  if (opts.confineMode === "off") opts.confinement = { on: false, reason: "--confine off" };
+  else {
+    const { dirs, files } = writeRules(opts, null);
+    opts.confinement = checkConfinement(opts.tripwire, runnerIdentity(), dirs, files);
+  }
+  print(confinementLine(opts.confinement));
   const version = workitVersion(host);
   const label = host === "opencode" ? `opencode ${opts.model}` : opts.model;
   const dir = modelDir(opts.results, resultName(host, opts.model));
@@ -1038,7 +1088,7 @@ const bench = async (
   }
   writeSummary(dir);
   print(
-    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded`,
+    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}`,
   );
   if (limited.length > 0)
     print(

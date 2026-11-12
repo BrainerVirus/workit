@@ -116,6 +116,9 @@ beforeEach(() => {
     // The tripwire guards a fake real home, never the account's (#822).
     "--real-home",
     path.join(root, "home"),
+    // The fake claude logs outside its world; confinement has its own tests (eval-confine).
+    "--confine",
+    "off",
   ];
 });
 

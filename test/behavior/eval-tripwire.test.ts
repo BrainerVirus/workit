@@ -288,6 +288,8 @@ const argv = (bin: string, ...extra: string[]): string[] => {
     cases,
     "--real-home",
     home,
+    // These tests prove detection, so the host's writes must get through: Landlock off.
+    ...(extra.includes("--confine") ? [] : ["--confine", "off"]),
     ...extra,
   ];
 };

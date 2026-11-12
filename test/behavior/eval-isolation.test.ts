@@ -221,7 +221,12 @@ test.each([
 });
 
 /** A fake `claude` that logs each start, and a plugin whose `workit` prints `say`. */
-const bench = async (say: string, lines: string[]): Promise<{ exit: number; starts: number }> => {
+const bench = async (
+  say: string,
+  lines: string[],
+  // The fake logs outside its world, so these self-check tests run with Landlock off.
+  flags: string[] = ["--confine", "off", "--unconfined"],
+): Promise<{ exit: number; starts: number }> => {
   const cases = path.join(root, "cases");
   const plugin = path.join(root, "plugin");
   mkdirSync(cases, { recursive: true });
@@ -261,6 +266,7 @@ const bench = async (say: string, lines: string[]): Promise<{ exit: number; star
       cases,
       "--real-home",
       realHome,
+      ...flags,
     ],
     (text) => lines.push(text),
   );
@@ -293,4 +299,22 @@ test("Given a case that permits python3 and a world that passes the self-check, 
   const { exit, starts } = await bench("$WORKIT_CONFIG_DIR", []);
   expect(starts).toBe(1);
   expect(exit).toBe(0);
+});
+
+// Decision 2, test 8
+test("Given write confinement is off, When a case permits python3, Then it is refused as isolation; with --unconfined it runs and the summary says confinement is off", async () => {
+  const refused: string[] = [];
+  const first = await bench("$WORKIT_CONFIG_DIR", refused, ["--confine", "off"]);
+  expect(first.starts).toBe(0);
+  const stored = JSON.parse(readFileSync(path.join(root, "results", "haiku", "wrap.json"), "utf8"));
+  expect(stored.refused).toBe("isolation");
+  expect(stored.grade.failures[0].detail).toContain("write confinement is off");
+  expect(refused.join("\n")).toContain("write confinement: off (--confine off)");
+
+  const ran: string[] = [];
+  const second = await bench("$WORKIT_CONFIG_DIR", ran, ["--confine", "off", "--unconfined"]);
+  expect(second.starts).toBe(1);
+  expect(ran.join("\n")).toMatch(
+    /graded; write confinement off \(--confine off\): detection only/u,
+  );
 });

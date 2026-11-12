@@ -87,6 +87,12 @@ const seedOpencodeDb = (home: string, realHome: string): boolean => {
   return true;
 };
 
+/** The real files the host's login links point at, as Landlock file rules: write and truncate only. */
+export const loginFiles = (host: Host, realHome: string): string[] =>
+  HOST_LOGIN[host].link
+    .map((rel) => path.join(realHome, rel))
+    .filter((file) => lstatSync(file, { throwIfNoEntry: false })?.isFile() === true);
+
 /** Link (and copy) the host's login files that exist in `realHome` into the world's `home`. */
 export const linkLogin = (home: string, host: Host, realHome: string): string[] => {
   const done: string[] = [];

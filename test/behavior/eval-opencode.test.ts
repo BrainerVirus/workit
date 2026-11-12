@@ -134,6 +134,9 @@ beforeEach(() => {
     // The tripwire guards, and the login is linked from, a fake real home (#822).
     "--real-home",
     path.join(root, "home"),
+    // The fake opencode logs outside its world; confinement has its own tests (eval-confine).
+    "--confine",
+    "off",
   ];
 });
 
