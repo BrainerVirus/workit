@@ -1,21 +1,21 @@
 {
   "case": "youtrack-ask",
   "model": "claude-haiku-4-5",
-  "workitVersion": "workit-dev-v1.7.0+afd94d00c4",
-  "key": "c1288b5c9d8e105d",
-  "date": "2026-11-12T08:39:57.748Z",
+  "workitVersion": "workit-dev-v1.7.0+6bc6fa7f91",
+  "key": "5f9fb969dd2c2973",
+  "date": "2026-11-12T09:09:28.892Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 4,
-    "durationMs": 10923,
-    "costUsd": 0.034438800000000006,
+    "turns": 5,
+    "durationMs": 11332,
+    "costUsd": 0.038308299999999997,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 1,
     "pass": true,
-    "calls": 3,
+    "calls": 4,
     "failures": []
   }
 }

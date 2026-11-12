@@ -3,21 +3,26 @@
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
   "provider": "free",
-  "workitVersion": "workit-dev-v1.7.0+4a4605abbd",
-  "key": "a0d2f73ddbbd509f",
-  "date": "2026-11-12T08:41:21.194Z",
+  "workitVersion": "workit-dev-v1.7.0+0b667537ae",
+  "key": "f3a1548955486269",
+  "date": "2026-11-12T09:11:21.622Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 8,
-    "durationMs": 45442,
+    "durationMs": 72065,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": true,
-    "calls": 10,
-    "failures": []
+    "pass": false,
+    "calls": 14,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) approve ap_[a-z2-7]{8}$/: the refusal says to run the plain approve call so the host asks the user"
+      }
+    ]
   }
 }
