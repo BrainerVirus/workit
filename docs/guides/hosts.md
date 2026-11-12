@@ -81,6 +81,15 @@ version to a block it already wrote, never one you removed, and prints the
 diff in the preview and again when it applies. `workit doctor` has a
 `claude_permissions`, `codex_permissions` and `cursor_permissions` row.
 
+`workit uninstall --hosts=<h,…>` removes Workit from the named hosts only: the
+plugin files and registrations, the MCP entry, the permission block above and
+the ytrack skill Workit installed. `--preview` prints each file, config key
+(`- mcpServers.workit`, `- permissions.allow[] "Shell(workit git)"`) and host
+command (`claude plugin uninstall …`) and changes nothing; `--yes` applies it.
+Like `workit setup`, it refuses inside an agent session and prints
+`workit uninstall --hosts=<h,…> --yes` to run yourself; with no flags it opens
+the interactive picker.
+
 | Host | What `workit setup` writes |
 | --- | --- |
 | Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit pr merge *--unverified*)`, `Bash(workit stack land *--unverified*)`, `Bash(workit git push *--overwrite-unintegrated*)` and `Bash(workit <user-only call>*)` (`release notes approve`, `grant set|raise`, `ledger void`) as a second layer: each is anchored at its verb, so a call that only mentions one in its text (a verdict's `--how`, a changelog entry) is not asked, and a refresh removes the older `Bash(workit * …)` rules Workit wrote, never yours (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you (a word with a `$VAR`, glob or `$(…)` is not read, so it never asks: the merge grant and `--reason` stay the gate). With the hooks off (Node below 24) only the anchored rules stand, and they miss a global option placed between the verb and its subcommand: `workit pr --cwd X merge --unverified` matches the `workit pr *` allow, so the merge grant and `--reason` are its only gate; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it) |

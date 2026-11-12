@@ -271,7 +271,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage:
       "workit setup [--hosts=claude-code,codex,cursor,opencode,pi] [--no-shell] [--dry-run | --yes]",
     summary:
-      "Write Workit's host permission block (enumerated delivery verbs) after showing the diff; run it in your own terminal",
+      "Write Workit's host permission block after showing the diff; run it in your own terminal",
     load: () => import("./setup"),
   },
   {
@@ -328,8 +328,11 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "uninstall",
     group: "setup",
-    usage: "workit uninstall",
-    summary: "Remove workit host registrations interactively (the Workit config dir is kept)",
+    usage: "workit uninstall [--hosts=<h,…> [--preview | --yes]]",
+    summary: "Remove Workit from the picked or named hosts (keeps the Workit config)",
+    notes: [
+      "No flags: the interactive picker (hosts and the owned CLI install). --hosts takes claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys and host commands it would remove and changes nothing; --yes removes them. Like setup, it refuses inside an agent session: run it in your own terminal.",
+    ],
     load: () => import("./uninstall"),
   },
   withSubcommands(

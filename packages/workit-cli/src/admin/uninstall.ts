@@ -341,6 +341,31 @@ const jsonCleanerFor = (
   return null;
 };
 
+// Every dotted key and array entry in `before` that `after` drops.
+const droppedKeys = (before: unknown, after: unknown, at: string): string[] => {
+  if (Array.isArray(before)) {
+    const kept = new Set(Array.isArray(after) ? after.map((v) => JSON.stringify(v)) : []);
+    return before
+      .filter((v) => !kept.has(JSON.stringify(v)))
+      .map((v) => `${at}[] ${JSON.stringify(v)}`);
+  }
+  if (!isRecord(before)) return [];
+  return Object.keys(before).flatMap((key) => {
+    const where = at ? `${at}.${key}` : key;
+    if (!isRecord(after) || !Object.hasOwn(after, key)) return [where];
+    return droppedKeys(before[key], after[key], where);
+  });
+};
+
+/** The config keys an `edit-json-remove` action would drop (`a.b`, `list[] "entry"`). */
+export function uninstallKeyChanges(action: UninstallAction, paths: UninstallPaths = {}): string[] {
+  if (action.kind !== "edit-json-remove") return [];
+  const cleaner = jsonCleanerFor(action.path, resolveUninstallPaths(paths), paths);
+  const existing = readJsonRecord(action.path);
+  if (!cleaner || existing.kind !== "record") return [];
+  return droppedKeys(existing.value, cleaner(existing.value).next, "");
+}
+
 /** What uninstall says about Workit's own config: it stays, named at its resolved path. */
 export const configKeptNote = (
   env: NodeJS.ProcessEnv = process.env,

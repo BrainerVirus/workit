@@ -75,6 +75,7 @@ import {
 } from "@workit-dev/core/src/core/workspaces";
 import { resolvePrTemplate } from "@workit-dev/core/src/core/pr-template";
 import { isChangelogGlob, resolveChangelogPaths } from "@workit-dev/core/src/core/changelog-gate";
+import { agentSessionVar } from "../admin/host-permissions";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
 import { createStyle, type Style } from "../style";
@@ -83,7 +84,7 @@ import { vcsView } from "./config-vcs";
 const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=proportional|self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
 
-/** Agent hosts that export a marker into the shells they run (best effort). */
+/** Agent hosts that export a marker into the shells they run (best effort), beyond setup's list. */
 const AGENT_ENV = [
   "CLAUDECODE",
   "OPENCODE",
@@ -92,7 +93,9 @@ const AGENT_ENV = [
   "AI_AGENT",
   "AGENT",
 ];
+/** Refuses on every marker `workit setup` refuses on, and on these. */
 export const agentMarker = (env: NodeJS.ProcessEnv): string | undefined =>
+  agentSessionVar(env) ??
   AGENT_ENV.find((name) => env[name]) ??
   Object.keys(env).find((name) => name.startsWith("CODEX_") && env[name]);
 

@@ -476,7 +476,8 @@ export const permissionTarget = (
   return { file: path.join(dir, "cli-config.json"), hostDir: dir };
 };
 
-const AGENT_SESSION_VARS = [
+/** Agent-session markers: `workit setup`, `upgrade`'s permission refresh and `workit uninstall --hosts` refuse on any. */
+export const AGENT_SESSION_VARS = [
   "CLAUDECODE",
   "WORKIT_SESSION_ID",
   "CODEX_THREAD_ID",
@@ -486,7 +487,7 @@ const AGENT_SESSION_VARS = [
 ] as const;
 
 /** The variable showing this process runs inside an agent session, or null. */
-const agentSessionVar = (env: NodeJS.ProcessEnv): string | null =>
+export const agentSessionVar = (env: NodeJS.ProcessEnv): string | null =>
   AGENT_SESSION_VARS.find((name) => (env[name] ?? "") !== "") ?? null;
 
 type HostRecord = {
