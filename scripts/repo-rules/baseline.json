@@ -34,9 +34,6 @@
     "test/workit-core/route-denial-parity.test.ts": 1,
     "test/workit-core/store-lock.test.ts": 3
   },
-  "private-names": {
-    "evals/results/claude-haiku-4-5/config-guard.transcript.jsonl": 5
-  },
   "spawn-env-path": {
     "packages/workit-cli/src/progress.ts": 1,
     "packages/workit-cli/src/update-check.ts": 1,

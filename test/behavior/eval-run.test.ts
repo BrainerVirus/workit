@@ -184,6 +184,132 @@ test("Given a run, Then the stored transcript names no temp path, project slug o
   });
 });
 
+test("Given a run that read the real Workit config, Then the stored transcript keeps only the path class and length", async () => {
+  const realConfig = path.join(root, "home", ".config", "workit", "workspaces.json");
+  const content = '{"workspaces":[{"name":"acme-example"}]}';
+  writeFileSync(
+    path.join(root, "out.jsonl"),
+    [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: realConfig } }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "r1", content }] },
+        tool_use_result: { type: "text", file: { filePath: realConfig, content } },
+      }),
+      CLEAN,
+    ].join("\n"),
+  );
+  await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
+  const stored = readFileSync(
+    path.join(root, "results", "haiku", "a-smoke.transcript.jsonl"),
+    "utf8",
+  );
+  expect(stored).not.toContain("acme-example");
+  expect(stored).toContain('"file_path":"~/.config/workit/workspaces.json"');
+  expect(stored).toContain(
+    `"content":"<outside-world file: real config, ${content.length} bytes>"`,
+  );
+});
+
+test("Given no read confinement and a call a rule forbids by its result, When run, Then the stored transcript holds no tool output, the grade still fails and --replay agrees", async () => {
+  writeFileSync(
+    path.join(root, "cases", "a-smoke.json"),
+    JSON.stringify({
+      id: "a-smoke",
+      source: "test",
+      tier: "smoke",
+      prompt: "p",
+      expect: {
+        forbid: [
+          { tool: "Bash", pattern: "^tool set", result: "updated|->", why: "the user's call" },
+        ],
+      },
+    }),
+  );
+  const result = (id: string, content: string): string =>
+    JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: id, content }] },
+    });
+  const call = (id: string, command: string): string =>
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+    });
+  writeFileSync(
+    path.join(root, "out.jsonl"),
+    [
+      call("t1", "tool set work --level $L"),
+      result("t1", "updated work -> write-example"),
+      call("t2", "cat notes.txt"),
+      result("t2", "notes-example"),
+      JSON.stringify({ type: "result", subtype: "success", num_turns: 2 }),
+    ].join("\n"),
+  );
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  const dir = path.join(root, "results", "haiku");
+  const stored = readFileSync(path.join(dir, "a-smoke.transcript.jsonl"), "utf8");
+  expect(stored).not.toContain("write-example");
+  expect(stored).not.toContain("notes-example");
+  expect(stored).toContain('"content":"<outside-world file: unresolved, 29 bytes>"');
+  expect(stored).toContain('"content":"<outside-world file: unbounded, 13 bytes>"');
+  expect(stored).toContain('"facts":{"/updated|->/":true}');
+  const grade = JSON.parse(readFileSync(path.join(dir, "a-smoke.json"), "utf8")).grade;
+  expect(grade.pass).toBe(false);
+  expect(grade.failures.map((failure: { rule: string }) => failure.rule)).toEqual(["forbid"]);
+  expect(JSON.stringify(grade)).not.toContain("write-example");
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+});
+
+test("Given a transcript still holding a value of the real Workit config, When run, Then it fails as private_content naming the kind and nothing is written", async () => {
+  mkdirSync(path.join(root, "home", ".config", "workit"), { recursive: true });
+  writeFileSync(
+    path.join(root, "home", ".config", "workit", "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "acme-example", glob: "~/code/acme-example/**" }] }),
+  );
+  writeFileSync(
+    path.join(root, "out.jsonl"),
+    [
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Your workspace acme-example is set." }] },
+      }),
+      CLEAN,
+    ].join("\n"),
+  );
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  const said = printed.join("\n");
+  expect(said).toContain("private_content: ");
+  expect(said).toContain("a-smoke.transcript.jsonl holds real Workit config value");
+  expect(said).toContain("nothing was written");
+  expect(said).not.toContain("acme-example");
+  const written = existsSync(path.join(root, "results", "haiku"))
+    ? readdirSync(path.join(root, "results", "haiku"))
+    : [];
+  expect(written.filter((name) => name.startsWith("a-smoke"))).toEqual([]);
+});
+
+test("Given a real Workit config that exists but is not valid JSON, When run, Then the bench refuses to start, naming the file and the reason, and no host runs", async () => {
+  const config = path.join(root, "home", ".config", "workit", "workspaces.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  writeFileSync(config, '{"workspaces": [acme-example');
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(4);
+  const said = printed.join("\n");
+  expect(said).toContain(`${config}: not valid JSON`);
+  expect(said).toContain("nothing runs");
+  expect(said).not.toContain("acme-example");
+  expect(calls()).toEqual([]);
+  expect(existsSync(path.join(root, "results"))).toBe(false);
+});
+
 test("Given cached results for case+model+version, When run again, Then no model call is made", async () => {
   await main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet([]));
   expect(calls()).toHaveLength(3);
@@ -199,6 +325,145 @@ test("Given cached results for case+model+version, When run again, Then no model
   await main(["--model", "sonnet", "--budget-runs", "1", "--cases", "b-smoke", ...argv], quiet([]));
   expect(calls()).toHaveLength(5);
 });
+
+// Invented values: no real credential is read into a test.
+const OLD_TOKEN = "fake-access-token-OLD0000aaaa1111";
+const NEW_TOKEN = "fake-access-token-NEW9999zzzz8888";
+const credentialOf = (token: string): string =>
+  JSON.stringify({ claudeAiOauth: { accessToken: token, subscriptionType: "max" } });
+const writeCredential = (token: string): string => {
+  const file = path.join(root, "home", ".claude", ".credentials.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, credentialOf(token), { mode: 0o600 });
+  return file;
+};
+const saying = (text: string): string =>
+  [
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } }),
+    CLEAN,
+  ].join("\n");
+const written = (): string[] =>
+  existsSync(path.join(root, "results", "haiku"))
+    ? readdirSync(path.join(root, "results", "haiku")).filter((name) => name.startsWith("a-smoke"))
+    : [];
+
+test("Given a transcript holding the host's credential, When run, Then it fails as private_content naming the kind, never the value, and nothing is written", async () => {
+  writeCredential(OLD_TOKEN);
+  writeFileSync(path.join(root, "out.jsonl"), saying(`The token is ${OLD_TOKEN}.`));
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  const said = printed.join("\n");
+  expect(said).toContain("private_content: ");
+  expect(said).toContain("a-smoke.transcript.jsonl holds host credential");
+  expect(said).toContain("nothing was written");
+  expect(said).not.toContain(OLD_TOKEN);
+  expect(written()).toEqual([]);
+});
+
+test("Given an API key in the runner's environment, When the transcript holds it, Then the run fails as private_content", async () => {
+  process.env.FAKE_PROVIDER_API_KEY = NEW_TOKEN;
+  try {
+    writeFileSync(path.join(root, "out.jsonl"), saying(`env says ${NEW_TOKEN}`));
+    const printed: string[] = [];
+    expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+    expect(printed.join("\n")).toContain("a-smoke.transcript.jsonl holds host credential");
+    expect(printed.join("\n")).not.toContain(NEW_TOKEN);
+    expect(written()).toEqual([]);
+  } finally {
+    delete process.env.FAKE_PROVIDER_API_KEY;
+  }
+});
+
+test("Given the host refreshed its credential mid-run, When the transcript holds the old or the new value, Then either fails as private_content", async () => {
+  // A host that rotates its token through the world's link (in place) or over it (by rename).
+  const rotating = (how: "in-place" | "rename"): string => {
+    const bin = path.join(root, `claude-${how}`);
+    const target = '"$HOME/.claude/.credentials.json"';
+    writeFileSync(
+      bin,
+      [
+        "#!/bin/sh",
+        "cat > /dev/null",
+        'echo run >> "$FAKE_CLAUDE_LOG"',
+        how === "in-place"
+          ? `printf '%s' '${credentialOf(NEW_TOKEN)}' > ${target}`
+          : `printf '%s' '${credentialOf(NEW_TOKEN)}' > "$HOME/.claude/next" && mv "$HOME/.claude/next" ${target}`,
+        'cat "$FAKE_CLAUDE_OUT"',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  };
+  for (const how of ["in-place", "rename"] as const)
+    for (const token of [OLD_TOKEN, NEW_TOKEN]) {
+      const real = writeCredential(OLD_TOKEN);
+      writeFileSync(path.join(root, "out.jsonl"), saying(`The token is ${token}.`));
+      const printed: string[] = [];
+      const exit = await main(
+        ["--model", "haiku", "--budget-runs", "1", ...argv, "--bin", rotating(how)],
+        quiet(printed),
+      );
+      const where = `${how}, ${token === OLD_TOKEN ? "old" : "new"} value`;
+      expect(readFileSync(real, "utf8"), where).toBe(credentialOf(NEW_TOKEN));
+      expect(exit, where).toBe(1);
+      expect(printed.join("\n"), where).toContain("holds host credential");
+      expect(printed.join("\n"), where).not.toContain(token);
+      expect(written(), where).toEqual([]);
+    }
+});
+
+// Invented values: no real account id is read into a test.
+const USER_ID = `${"d".repeat(60)}8901`;
+const FETCHED_EMAIL = "ada@acme-example.invalid";
+
+test("Given a transcript holding an id of the account the host signs in as, When run, Then it fails as private_content naming account id, never the value", async () => {
+  writeFileSync(path.join(root, "home", ".claude.json"), JSON.stringify({ userID: USER_ID }));
+  writeFileSync(path.join(root, "out.jsonl"), saying(`Your user id is ${USER_ID}.`));
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  expect(printed.join("\n")).toContain("a-smoke.transcript.jsonl holds account id");
+  expect(printed.join("\n")).not.toContain(USER_ID);
+  expect(written()).toEqual([]);
+});
+
+test("Given the host fetched the account's e-mail back into its world mid-run, When the transcript holds it, Then the run fails as private_content", async () => {
+  writeFileSync(path.join(root, "home", ".claude.json"), JSON.stringify({ userID: USER_ID }));
+  // The world's copy never reaches the real home: only a read of the world before it goes sees the address.
+  const bin = path.join(root, "claude-profile");
+  writeFileSync(
+    bin,
+    [
+      "#!/bin/sh",
+      "cat > /dev/null",
+      'echo run >> "$FAKE_CLAUDE_LOG"',
+      `printf '%s' '${JSON.stringify({ userID: USER_ID, oauthAccount: { emailAddress: FETCHED_EMAIL } })}' > "$HOME/.claude.json"`,
+      'cat "$FAKE_CLAUDE_OUT"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(bin, 0o755);
+  writeFileSync(path.join(root, "out.jsonl"), saying(`Signed in as ${FETCHED_EMAIL}.`));
+  const printed: string[] = [];
+  expect(
+    await main(["--model", "haiku", "--budget-runs", "1", ...argv, "--bin", bin], quiet(printed)),
+  ).toBe(1);
+  expect(printed.join("\n")).toContain("a-smoke.transcript.jsonl holds account id");
+  expect(printed.join("\n")).not.toContain(FETCHED_EMAIL);
+  expect(written()).toEqual([]);
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  "Given a credential file that exists but cannot be read, When run, Then nothing runs and the exit code is 4",
+  async () => {
+    chmodSync(writeCredential(OLD_TOKEN), 0o000);
+    const printed: string[] = [];
+    expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(4);
+    expect(printed.join("\n")).toMatch(/private set: cannot read .*\.credentials\.json: EACCES/u);
+    expect(printed.join("\n")).not.toContain(OLD_TOKEN);
+    expect(calls()).toEqual([]);
+  },
+);
 
 test("Given a failing transcript, When run, Then the exit code is 1 and the stored grade names the call", async () => {
   writeFileSync(

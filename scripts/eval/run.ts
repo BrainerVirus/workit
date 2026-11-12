@@ -13,7 +13,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
@@ -31,6 +30,10 @@ import {
   checkConfinement,
   confined,
   confinementLine,
+  binaryOf,
+  linkedPackages,
+  readableDirs,
+  toolchainDir,
   writableDirs,
   type Confinement,
 } from "./confine";
@@ -44,6 +47,22 @@ import {
   selfCheck,
   type Host,
 } from "./isolation";
+import {
+  accountIds,
+  accountOf,
+  committedLeaks,
+  envCredentials,
+  hostCredentials,
+  privateKinds,
+  privateStrings,
+  PrivateSetUnreadable,
+  scrubAccount,
+  scrubOutsideReads,
+  workitVocabulary,
+  type Account,
+  type PrivateSet,
+  type Scrub,
+} from "./privacy";
 import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
 import {
   accountHome,
@@ -122,7 +141,7 @@ type RunResult = {
   usage: Usage;
   grade: Grade;
   /** The world failed the isolation self-check: the case never started, and the run failed. */
-  refused?: "isolation";
+  refused?: "isolation" | "private_content";
   /** The run changed a real watched file (tripwire.ts): reported, nothing put back, and the run failed. */
   outsideWrite?: Trip;
 };
@@ -182,14 +201,32 @@ const writeJson = (file: string, value: unknown): void => {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 };
 
-/** Path- and user-free transcripts: the world (also as Claude's project slug), the checkout, HOME and the login name become placeholders. */
-const sanitize = (text: string, world: World): string =>
-  text
-    .replaceAll(world.dir, "<world>")
-    .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
-    .replaceAll(REPO, "<workit>")
-    .replaceAll(os.homedir(), "~")
-    .replaceAll(os.userInfo().username, "<user>");
+/**
+ * Path- and user-free transcripts: the world (also as Claude's project slug),
+ * the checkout, the account's home, user and host become placeholders, and a
+ * tool result that may hold what a call read outside the world keeps only its
+ * path class, its length and the grader's answers about it (privacy.ts).
+ */
+const sanitize = (text: string, world: World, account: Account, scrub: Scrub): string =>
+  scrubOutsideReads(
+    scrubAccount(
+      text
+        .replaceAll(world.dir, "<world>")
+        .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
+        .replaceAll(REPO, "<workit>"),
+      account,
+    ),
+    scrub,
+  );
+
+/** Why `files` (name to text) may not be written: each file with the kinds of private string it holds. */
+const privateContent = (files: Record<string, string>, set: PrivateSet): string | null => {
+  const found = Object.entries(files).flatMap(([name, text]) => {
+    const kinds = [...privateKinds(text, set), ...committedLeaks(text)];
+    return kinds.length > 0 ? [`${name} holds ${[...new Set(kinds)].join(", ")}`] : [];
+  });
+  return found.length > 0 ? `${found.join("; ")}; nothing was written` : null;
+};
 
 /** The subscription login only: no API key, no parent session, Workit isolated to the world. */
 export const childEnv = (world: World, binDir: string): Record<string, string> => {
@@ -340,11 +377,42 @@ const writeRules = (opts: Options, world: World | null): { dirs: string[]; files
   files: loginFiles(opts.host, opts.realHome),
 });
 
+/** The host config dirs a bench host never reads (its credential file is a write rule, readable). */
+const HOST_CONFIG = [".claude", ".claude.json", ".codex", ".cursor", ".config/opencode", ".pi"];
+
+/**
+ * What a host (or the probe) may read besides what it may write: the system
+ * dirs, this Workit checkout and the toolchains it runs (bun, node, git, the
+ * host binary), never the real home, its Workit dirs or host config dirs.
+ */
+const readRules = (opts: Options): string[] => {
+  const pathEnv = process.env.PATH ?? "";
+  return readableDirs(
+    [
+      REPO,
+      ...linkedPackages(path.join(REPO, "node_modules")),
+      ...[process.execPath, "node", "git", opts.bin]
+        .map((binary) => toolchainDir(binary, pathEnv))
+        .filter((dir): dir is string => dir !== null),
+      // The host binary itself, when its dir holds a protected path and is left out.
+      ...[binaryOf(opts.bin, pathEnv)].filter((file): file is string => file !== null),
+    ],
+    [
+      opts.realHome,
+      ...opts.guard.watched,
+      ...opts.guard.reported,
+      opts.tripwire,
+      ...HOST_CONFIG.map((rel) => path.join(opts.realHome, rel)),
+      path.join(opts.realHome, ".local", "share", "opencode"),
+    ],
+  );
+};
+
 /** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
 const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
   if (!opts.confinement.on) return cmd;
   const { dirs, files } = writeRules(opts, world);
-  return confined(dirs, files, cmd);
+  return confined(dirs, files, cmd, opts.confinement.reads.on ? readRules(opts) : []);
 };
 const benchSettings = JSON.stringify({
   hooks: {
@@ -455,6 +523,33 @@ type Options = {
   carried: string[];
   /** The account home the host's login is linked from. */
   realHome: string;
+  /** The account's home, user and host spellings the transcripts lose. */
+  account: Account;
+  /** The real account's private strings, in memory only: a result holding one is not written. */
+  privateSet: PrivateSet;
+  /**
+   * Every credential the bench host could reach and every id of the account
+   * it signs in as, as read so far: the login files at start, before and
+   * after each run and in each world before it goes, and the secret-named
+   * variables of each host's environment. In memory only: a result holding
+   * one is not written.
+   */
+  reachable: PrivateSet;
+  /** The login files the current run could not read (file and reason): its result is not written. */
+  unreadLogins: string[];
+};
+
+/** Add the credentials and account ids the host's login under `home` holds now; an unreadable login file is remembered. */
+const noteCredentials = (opts: Options, home: string): void => {
+  try {
+    for (const value of hostCredentials(home, opts.host))
+      opts.reachable.set(value, "host credential");
+    for (const value of accountIds(home, opts.host))
+      if (!opts.reachable.has(value)) opts.reachable.set(value, "account id");
+  } catch (error) {
+    if (!(error instanceof PrivateSetUnreadable)) throw error;
+    opts.unreadLogins.push(error.message);
+  }
 };
 
 type Attempt = {
@@ -532,7 +627,14 @@ const attempt = async (
   clearInterval(watch);
   killGroup(child);
   opts.child = null;
-  return { transcript: sanitize(stdout, world), stderr, exit, timedOut };
+  // Only Landlock read confinement says what the host could read.
+  const bounded = opts.confinement.on && opts.confinement.reads.on;
+  return {
+    transcript: sanitize(stdout, world, opts.account, { bounded, spec }),
+    stderr,
+    exit,
+    timedOut,
+  };
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
@@ -549,11 +651,14 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
         opts.pluginDir,
       );
       const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
+      for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
       const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
     } finally {
+      // What the host wrote into its world's login never reaches the real home.
+      noteCredentials(opts, world.home);
       opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
       rmSync(world.dir, { recursive: true, force: true });
     }
@@ -568,6 +673,7 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
+    for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
     return {
@@ -575,6 +681,8 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
       limit: null,
     };
   } finally {
+    // A token the host rotated by rename sits in the world until it is carried back.
+    noteCredentials(opts, world.home);
     opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
     rmSync(world.dir, { recursive: true, force: true });
   }
@@ -590,6 +698,9 @@ const runCase = async (
 ): Promise<{ result: RunResult | null; trip: Trip | null }> => {
   const snapshot = opts.snapshot;
   if (!snapshot) throw new Error("the tripwire is not armed");
+  // The value a refresh during the run rotates away.
+  opts.unreadLogins.length = 0;
+  noteCredentials(opts, opts.realHome);
   let run: Attempt;
   try {
     run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
@@ -605,7 +716,6 @@ const runCase = async (
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
   const transcript = path.join(dir, `${base}.transcript.jsonl`);
-  writeFileSync(transcript, run.transcript);
   const skipped =
     trip === null &&
     !run.refused &&
@@ -636,7 +746,32 @@ const runCase = async (
     ...(run.refused ? { refused: "isolation" as const } : {}),
     ...(trip ? { outsideWrite: trip } : {}),
   };
-  writeJson(path.join(dir, `${base}.json`), result);
+  const json = path.join(dir, `${base}.json`);
+  // A trip names the real files it found changed: under `~`, as in the transcript.
+  const stored = JSON.parse(scrubAccount(JSON.stringify(result), opts.account)) as RunResult;
+  // The value a refresh during the run left: read again at write time.
+  noteCredentials(opts, opts.realHome);
+  const [unread] = opts.unreadLogins;
+  const leaked = unread
+    ? `cannot read ${unread}, so the host's credential is unknown; nothing was written`
+    : privateContent(
+        {
+          [path.relative(REPO, transcript) || transcript]: run.transcript,
+          [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
+        },
+        new Map([...opts.privateSet, ...opts.reachable]),
+      );
+  if (leaked) {
+    result.grade = {
+      ...result.grade,
+      pass: false,
+      failures: [{ rule: "private_content", detail: leaked }, ...result.grade.failures],
+    };
+    result.refused = "private_content";
+    return { result, trip };
+  }
+  writeFileSync(transcript, run.transcript);
+  writeJson(json, stored);
   return { result, trip };
 };
 
@@ -862,6 +997,24 @@ export const main = async (
     print(USAGE);
     return 2;
   }
+  // A real account file that exists but cannot be read would leave the set short: nothing runs.
+  let privateSet: PrivateSet = new Map();
+  const reachable: PrivateSet = new Map();
+  if (!settling)
+    try {
+      privateSet = privateStrings(
+        path.resolve(values["real-home"] ?? accountHome()),
+        workitVocabulary(REPO),
+        values["real-home"] ? undefined : process.env,
+      );
+      const home = path.resolve(values["real-home"] ?? accountHome());
+      for (const value of accountIds(home, host)) reachable.set(value, "account id");
+      for (const value of hostCredentials(home, host)) reachable.set(value, "host credential");
+    } catch (error) {
+      if (!(error instanceof PrivateSetUnreadable)) throw error;
+      print(`private set: cannot read ${error.message}; fix or remove it, nothing runs`);
+      return 4;
+    }
   const opts: Options = {
     host,
     model: values.model ?? "",
@@ -875,6 +1028,10 @@ export const main = async (
       ? guardFor(path.resolve(values["real-home"]))
       : guardFor(accountHome(), process.env),
     realHome: path.resolve(values["real-home"] ?? accountHome()),
+    account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
+    privateSet,
+    reachable,
+    unreadLogins: [],
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),
@@ -1023,7 +1180,10 @@ const bench = async (
   if (opts.confineMode === "off") opts.confinement = { on: false, reason: "--confine off" };
   else {
     const { dirs, files } = writeRules(opts, null);
-    opts.confinement = checkConfinement(opts.tripwire, runnerIdentity(), dirs, files);
+    opts.confinement = checkConfinement(opts.tripwire, runnerIdentity(), dirs, files, {
+      dirs: readRules(opts),
+      secret: opts.realHome,
+    });
   }
   print(confinementLine(opts.confinement));
   const version = workitVersion(host);

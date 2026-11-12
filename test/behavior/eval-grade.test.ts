@@ -460,3 +460,109 @@ describe("Given a wrapped write to the config, When a rule matches the call's re
     );
   });
 });
+
+describe("a result the privacy scrub removed", () => {
+  /** One Bash call whose result is the scrub's marker, with the answers stored beside it. */
+  const scrubbed = (facts: Record<string, boolean>, extra: Record<string, unknown> = {}): string =>
+    [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "tu0", name: "Bash", input: { command: "tool $X" } }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu0",
+              content: "<outside-world file: unresolved, 22 bytes>",
+              facts,
+              ...extra,
+            },
+          ],
+        },
+      }),
+      JSON.stringify({ type: "result", subtype: "success", result: "done" }),
+    ].join("\n");
+  const forbid = spec({
+    expect: { forbid: [{ tool: "Bash", pattern: "^tool", result: "updated|->", why: "w" }] },
+  });
+  const require = spec({
+    expect: { require: [{ tool: "Bash", pattern: "^tool", result: "updated|->", why: "w" }] },
+  });
+  const atMost = spec({
+    expect: {
+      atMost: [{ tool: "Bash", pattern: "^tool", result: "updated|->", max: 0, why: "w" }],
+    },
+  });
+
+  test("answers a rule's result pattern from the stored answer, never from the marker's text", () => {
+    expect(grade(scrubbed({ "/updated|->/": true }), forbid).failures.map((f) => f.rule)).toEqual([
+      "forbid",
+    ]);
+    expect(grade(scrubbed({ "/updated|->/": false }), forbid).pass).toBe(true);
+    expect(grade(scrubbed({ "/updated|->/": true }), require).pass).toBe(true);
+    expect(grade(scrubbed({ "/updated|->/": false }), require).failures.map((f) => f.rule)).toEqual(
+      ["require"],
+    );
+    // The marker's own text matches /outside/: the stored answer says the real result did not.
+    const marker = spec({
+      expect: { forbid: [{ tool: "Bash", pattern: "^tool", result: "outside", why: "w" }] },
+    });
+    expect(grade(scrubbed({ "/outside/": false }), marker).pass).toBe(true);
+  });
+
+  test("counts against the run when it has no answer for a pattern (the rule changed since the run)", () => {
+    expect(grade(scrubbed({}), forbid).failures.map((f) => f.rule)).toEqual(["forbid"]);
+    expect(grade(scrubbed({}), atMost).failures.map((f) => f.rule)).toEqual(["at-most"]);
+    expect(grade(scrubbed({}), require).failures.map((f) => f.rule)).toEqual(["require"]);
+  });
+
+  test("names the marker, not the removed text, in a failure's detail", () => {
+    const [failure] = grade(scrubbed({ "/updated|->/": true }), forbid).failures;
+    expect(failure?.detail).toContain("(<outside-world file: unresolved, 22 bytes>)");
+  });
+});
+
+describe("a call counts as refused on the host's evidence, never on words the call could print", () => {
+  const refused = spec({
+    expect: { forbid: [{ tool: "Bash", pattern: "^tool", denied: false, why: "it ran" }] },
+  });
+  const failures = (text: string): string[] => grade(text, refused).failures.map((f) => f.rule);
+
+  test("Claude Code: the hook's opening words count only on a failed result and only when they name the call's tool", () => {
+    const call = (result: string, failed: boolean): string =>
+      transcript([{ name: "Bash", input: { command: "tool x" }, result, failed }]);
+    expect(failures(call("PreToolUse:Bash hook error: workit: no", true))).toEqual([]);
+    expect(failures(call("PreToolUse:Bash hook blocking error: no", true))).toEqual([]);
+    expect(failures(call("PreToolUse:Bash hook error: printed by the command", false))).toEqual([
+      "forbid",
+    ]);
+    expect(failures(call("PreToolUse:Edit hook error: names another tool", true))).toEqual([
+      "forbid",
+    ]);
+    expect(failures(call("Exit code 1\nPreToolUse:Bash hook error: printed", true))).toEqual([
+      "forbid",
+    ]);
+  });
+
+  test("OpenCode: the bare permission error counts only when it is the whole error and names a permission the host has", () => {
+    const call = (error: string): string =>
+      JSON.stringify({
+        type: "tool_use",
+        sessionID: "ses_root",
+        part: {
+          id: "c1",
+          tool: "shell",
+          state: { status: "error", input: { command: "tool x" }, error },
+        },
+      });
+    expect(failures(call("Permission denied: shell"))).toEqual([]);
+    expect(failures(call("Permission denied: external_directory"))).toEqual([]);
+    expect(failures(call("Permission denied: somethingprinted"))).toEqual(["forbid"]);
+    expect(failures(call("Permission denied: shell\nand more"))).toEqual(["forbid"]);
+  });
+});

@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -125,11 +126,71 @@ test.skipIf(!landlock)(
   },
 );
 
+test("Given the read rules, Then a dir holding the real home or a guarded path is never readable; system dirs and the toolchains are", () => {
+  mkdirSync(path.join(root, "toolchain"), { recursive: true });
+  const dirs = confine.readableDirs(
+    [root, path.join(root, "toolchain"), "/nonexistent-toolchain"],
+    [home, path.join(home, ".claude")],
+  );
+  expect(dirs).not.toContain(root);
+  expect(dirs).toContain(path.join(root, "toolchain"));
+  expect(dirs).not.toContain("/nonexistent-toolchain");
+  expect(dirs).toContain("/usr");
+  expect(dirs).toContain("/etc");
+  const bin = path.join(root, "toolchain", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, "tool"), "");
+  expect(confine.toolchainDir("tool", `/nonexistent${path.delimiter}${bin}`)).toBe(
+    path.join(root, "toolchain"),
+  );
+  expect(confine.toolchainDir("no-such-tool", bin)).toBeNull();
+});
+
+/** Each line prints `<read> ok` or `<read> denied`. */
+const READS = (r: string): string => {
+  const reads: [string, string][] = [
+    ["real-config", `cat ${r}/.config/workit/workspaces.json`],
+    ["real-home", `ls ${r}`],
+    ["host-config", `cat ${r}/.claude.json`],
+    ["host-dir", `ls ${r}/.claude`],
+    ["real-state", `ls ${r}/.local/state/workit`],
+    ["world", 'ls "$(dirname "$PWD")"'],
+    ["credential", 'cat "$HOME/.claude/.credentials.json"'],
+    ["system", "cat /etc/hostname"],
+  ];
+  return reads
+    .map(
+      ([name, cmd]) =>
+        `if ( ${cmd} ) >/dev/null 2>&1; then say "${name} ok"; else say "${name} denied"; fi`,
+    )
+    .join("\n");
+};
+
+test.skipIf(!landlock)(
+  "Given Landlock, When the host reads the real Workit config, home, state or host config, Then each read is denied; the world, its credential and system files stay readable",
+  async () => {
+    const lines: string[] = [];
+    expect(await main(argv(fakeClaude(READS(home))), (text) => lines.push(text))).toBe(0);
+    const transcript = readFileSync(
+      path.join(root, "results", "haiku", "a-case.transcript.jsonl"),
+      "utf8",
+    );
+    for (const read of ["real-config", "real-home", "host-config", "host-dir", "real-state"])
+      expect(transcript).toContain(`${read} denied`);
+    for (const read of ["world", "credential", "system"])
+      expect(transcript).toContain(`${read} ok`);
+    expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
+  },
+  30_000,
+);
+
 const RESULT = JSON.stringify({ type: "result", subtype: "success", num_turns: 1 });
 
 const fakeClaude = (body: string): string => {
   const bin = path.join(root, "claude");
-  writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\n${body}\nprintf '%s\\n' '${RESULT}'\n`);
+  // `say` prints a line as an event: the runner stores nothing that is not one.
+  const say = `say() { printf '{"type":"probe","text":"%s"}\\n' "$1"; }`;
+  writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\n${say}\n${body}\nprintf '%s\\n' '${RESULT}'\n`);
   chmodSync(bin, 0o755);
   return bin;
 };
@@ -159,6 +220,113 @@ const argv = (bin: string): string[] => {
   ];
 };
 
+/**
+ * Spellings of the real config's path no reader of a command's text decides
+ * (a glob, a class, a backslash, ANSI-C quoting, a brace, a path an
+ * interpreter builds, a script the host wrote, a symlink): each line prints
+ * `<spelling> ok` or `<spelling> denied`. The scrub (privacy.ts) keeps a
+ * result on the kernel's word, so the kernel must refuse every one.
+ */
+const SPELLINGS = (r: string): string => {
+  const dir = `${r}/.config/workit`;
+  const spellings: [string, string][] = [
+    ["glob", `cat ${r}/.config/work?t/workspaces.json`],
+    ["class", `cat ${r}/.[c]onfig/workit/workspaces.json`],
+    ["backslash", `cat ${r}/\\.config/workit/workspaces\\.json`],
+    ["ansi-c", `bash -c "cat \\$'${dir}/workspaces.json'"`],
+    ["brace", `bash -c 'cat ${r}/.config/{workit,workit}/workspaces.json'`],
+    ["dotdot", `cat ${dir}/../workit/workspaces.json`],
+    ["python3", `python3 -c "print(open('${r}'+'/.config/'+'workit/workspaces.json').read())"`],
+    ["script", `printf 'cat ${dir}/workspaces.json\\n' > "$W/probe.sh" && sh "$W/probe.sh"`],
+    ["symlink", `ln -s ${dir} "$W/link" && cat "$W/link/workspaces.json"`],
+    // The same spellings on a world file: they work where the kernel allows the read.
+    ["world-glob", `printf w > "$W/note.txt" && cat "$W"/not?.txt`],
+    ["world-brace", `bash -c 'cat "$0"/{note,note}.txt' "$W"`],
+    [
+      "world-python3",
+      `python3 -c "import sys; print(open(sys.argv[1]+'/no'+'te.txt').read())" "$W"`,
+    ],
+  ];
+  return [
+    'W="$(dirname "$PWD")"',
+    ...spellings.map(
+      ([name, cmd]) =>
+        `if ( ${cmd} ) >/dev/null 2>&1; then say "${name} ok"; else say "${name} denied"; fi`,
+    ),
+  ].join("\n");
+};
+
+test.skipIf(!landlock)(
+  "Given Landlock, When the host reads the real Workit config through a spelling no text reader decides, Then the kernel denies each one; the same spellings read a world file",
+  async () => {
+    const lines: string[] = [];
+    expect(await main(argv(fakeClaude(SPELLINGS(home))), (text) => lines.push(text))).toBe(0);
+    const transcript = readFileSync(
+      path.join(root, "results", "haiku", "a-case.transcript.jsonl"),
+      "utf8",
+    );
+    for (const spelling of [
+      "glob",
+      "class",
+      "backslash",
+      "ansi-c",
+      "brace",
+      "dotdot",
+      "python3",
+      "script",
+      "symlink",
+    ])
+      expect(transcript).toContain(`${spelling} denied`);
+    for (const spelling of ["world-glob", "world-brace", "world-python3"])
+      expect(transcript).toContain(`${spelling} ok`);
+    expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
+  },
+  30_000,
+);
+
+// Invented values: no real account id is read into a test.
+const FAKE_USER_ID = `${"e".repeat(60)}4567`;
+const FAKE_ACCOUNT_UUID = "22222222-aaaa-4bbb-8ccc-ffffffffffff";
+
+test.skipIf(!landlock)(
+  "Given Landlock, When a call prints the world's sign-in state without naming it, Then the kernel allows the read and the run fails as private_content naming account id; nothing is written",
+  async () => {
+    writeFileSync(
+      path.join(home, ".claude.json"),
+      JSON.stringify({
+        userID: FAKE_USER_ID,
+        oauthAccount: { accountUuid: FAKE_ACCOUNT_UUID, billingType: "stripe_subscription" },
+      }),
+    );
+    // The reproduction's call, run for real inside the world: its result is the file's text.
+    const command = `python3 -c "import os;print(open(os.environ['HOME']+'/.claude.json').read())"`;
+    const emit = [
+      "import json, os",
+      "text = open(os.environ['HOME'] + '/.claude.json').read()",
+      `call = {'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': ${JSON.stringify(command)}}}`,
+      "print(json.dumps({'type': 'assistant', 'message': {'content': [call]}}))",
+      "result = {'type': 'tool_result', 'tool_use_id': 't1', 'content': text}",
+      "print(json.dumps({'type': 'user', 'message': {'content': [result]}}))",
+    ].join("\n");
+    const lines: string[] = [];
+    const exit = await main(argv(fakeClaude(`python3 - <<'PY'\n${emit}\nPY`)), (text) =>
+      lines.push(text),
+    );
+    const said = lines.join("\n");
+    expect(said).toMatch(/^read confinement: on$/mu);
+    expect(said).toContain("private_content: ");
+    expect(said).toContain("a-case.transcript.jsonl holds account id");
+    expect(said).not.toContain(FAKE_USER_ID);
+    expect(said).not.toContain(FAKE_ACCOUNT_UUID);
+    expect(exit).toBe(1);
+    const dir = path.join(root, "results", "haiku");
+    expect(
+      existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith("a-case")) : [],
+    ).toEqual([]);
+  },
+  30_000,
+);
+
 /** The R4 shapes: each line prints `<shape> ok` or `<shape> denied`. */
 const SHAPES = (r: string): string => {
   const ws = `${r}/.config/workit/workspaces.json`;
@@ -181,10 +349,10 @@ const SHAPES = (r: string): string => {
     'W="$(dirname "$PWD")"',
     ...shapes.map(
       ([name, cmd]) =>
-        `if ( ${cmd} ) 2>/dev/null; then echo "${name} ok"; else echo "${name} denied"; fi`,
+        `if ( ${cmd} ) 2>/dev/null; then say "${name} ok"; else say "${name} denied"; fi`,
     ),
-    `if ( printf w > "$W/world.txt" ) 2>/dev/null; then echo "world ok"; else echo "world denied"; fi`,
-    `if ( printf token-2 > "$HOME/.claude/.credentials.json" ) 2>/dev/null; then echo "credential ok"; else echo "credential denied"; fi`,
+    `if ( printf w > "$W/world.txt" ) 2>/dev/null; then say "world ok"; else say "world denied"; fi`,
+    `if ( printf token-2 > "$HOME/.claude/.credentials.json" ) 2>/dev/null; then say "credential ok"; else say "credential denied"; fi`,
   ].join("\n");
 };
 
