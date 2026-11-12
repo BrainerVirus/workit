@@ -18,7 +18,7 @@ afterAll(() => rmSync(base, { recursive: true, force: true }));
 
 const args = "issue comment X-1 --body hi";
 
-test("G ytrack respelled through an alias, a function or its resolved path, W the write runs, T it is denied naming the workit call", () => {
+test("G ytrack respelled through an alias, a function or its resolved path, W the write runs, T it is denied without a named call (not a plain command)", () => {
   for (const command of [
     `alias yt=ytrack; yt ${args}`,
     `alias yt='ytrack issue'; yt comment X-1 --body hi`,
@@ -30,9 +30,9 @@ test("G ytrack respelled through an alias, a function or its resolved path, W th
   ]) {
     const out = ytrackGate(root, command, "posix", false);
     expect(out?.kind, command).toBe("deny");
-    expect(out?.kind === "deny" ? out.reason : "", command).toContain(
-      "`workit youtrack note X-1 --markdown hi`",
-    );
+    // Not a plain command: still denied, but no workit call is named.
+    expect(out?.kind === "deny" ? out.reason : "", command).not.toContain("`workit youtrack");
+    expect(out?.kind === "deny" ? out.reason : "", command).toContain("in their own terminal");
   }
 });
 

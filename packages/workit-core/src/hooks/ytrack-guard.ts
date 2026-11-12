@@ -8,7 +8,7 @@
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import type { HookDecision } from "./protocol";
 import { commandLines, workitCheckTail } from "./raw-git";
-import type { ShellDialect } from "./shell-words";
+import { segmentsOf, type ShellDialect } from "./shell-words";
 import { namesYtrack } from "./ytrack-word";
 
 const name = (word = "") =>
@@ -132,7 +132,7 @@ const mapWrite = (verb: keyof typeof CARRIES, args: readonly string[]): Mapped =
     if (QUIET.test(flag)) continue;
     const key = CARRIES[verb][flag];
     if (!key || value === undefined || key in values) return gap(`\`${flag}\``);
-    if (/[$`]/.test(value))
+    if (/[$`]|^~/.test(value))
       return gap(`the value of \`${flag}\`, which the shell expands when it runs`);
     values[key] = value;
   }
@@ -235,31 +235,45 @@ const MAX_DEPTH = 4;
 /** Scripts already read (the same text, the same writes), so nesting costs one read per level. */
 const READ = new Map<string, YtrackWrite[]>();
 
-/** The ytrack writes one command line runs: past a package runner (`npx -y ytrack`, `pnpm dlx ytrack`) or `workit check --`. */
+const NOT_PLAIN: Mapped = gap(
+  "a ytrack call that is not a plain command of its own (a wrapper, loop, substitution or script around it can change or repeat it)",
+);
+/** The same write, unmapped: a named call is only for a plain command. */
+const ungrant = (write: YtrackWrite): YtrackWrite =>
+  write.workit ? { command: write.command, ...NOT_PLAIN } : write;
+
+/**
+ * The ytrack writes one command line runs: past a package runner (`npx -y
+ * ytrack`, `pnpm dlx ytrack`) or `workit check --`, and in a shell's `-c`
+ * script or eval's text. Returns whether the line is a ytrack call or a script
+ * the gate reads; a write found while not `plain` is never mapped.
+ */
 const ytrackArgs = (
   line: readonly string[],
   found: YtrackWrite[],
   depth: number,
   names: ReadonlyMap<string, string[]>,
-): void => {
+  plain: boolean,
+): boolean => {
+  const inner = (script: string) =>
+    void found.push(...ytrackWrites(script, "posix", depth + 1, plain));
   const tail = workitCheckTail(line);
-  if (tail)
-    return void found.push(
-      ...ytrackWrites(
-        "script" in tail ? tail.script : tail.argv.map(quote).join(" "),
-        "posix",
-        depth + 1,
-      ),
-    );
-  // A shell's `-c` script or eval's text is read here too, one level per call,
-  // so nesting past commandLines' own depth is judged or refused, never passed.
+  if (tail) {
+    inner("script" in tail ? tail.script : tail.argv.map(quote).join(" "));
+    return true;
+  }
+  // Read one level per call, so nesting past commandLines' own depth is judged or refused.
   const flag = SHELLS.test(name(line[0]))
     ? line.findIndex((word, index) => index > 0 && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(word))
     : -1;
   const script =
     flag > 0 ? line[flag + 1] : name(line[0]) === "eval" ? line.slice(1).join(" ") : undefined;
-  if (script !== undefined) return void found.push(...ytrackWrites(script, "posix", depth + 1));
+  if (script !== undefined) {
+    inner(script);
+    return true;
+  }
   let at = 0;
+  let called = false;
   const runner = name(line[0]);
   if (
     /^(?:npx|bunx|pnpx)$/.test(runner) ||
@@ -268,8 +282,10 @@ const ytrackArgs = (
     at = runner.endsWith("x") ? 1 : 2;
     for (; line[at]?.startsWith("-"); at++) {
       // `npx -c '<script>'` runs a shell string.
-      if (/^(?:-c|--call)$/.test(line[at]))
-        found.push(...ytrackWrites(line[at + 1] ?? "", "posix", depth + 1));
+      if (/^(?:-c|--call)$/.test(line[at])) {
+        inner(line[at + 1] ?? "");
+        called = true;
+      }
       if (/^(?:-[pc]|--package|--call)$/.test(line[at])) at++;
     }
   }
@@ -278,10 +294,14 @@ const ytrackArgs = (
     line[at] ?? "",
   );
   const alias = names.get(line[at] ?? "");
-  if (name(line[at]) !== "ytrack" && !resolved && !alias) return;
+  if (name(line[at]) !== "ytrack" && !resolved && !alias) return called;
   const argv = [...(alias ?? []), ...line.slice(at + 1)];
   const write = classify(argv);
-  if (write) found.push({ command: ["ytrack", ...argv].map(quote).join(" "), ...write });
+  if (write) {
+    const one = { command: ["ytrack", ...argv].map(quote).join(" "), ...write };
+    found.push(plain ? one : ungrant(one));
+  }
+  return true;
 };
 
 /**
@@ -304,20 +324,72 @@ const aliases = (command: string): Map<string, string[]> => {
   return found;
 };
 
-/** Every raw ytrack write `command` runs, wrapped or not. Throws when the command cannot be analysed. */
+/** Prefix words that run the command after them once, with its own arguments, user and environment. */
+const PASS = /^(?:command|exec|nohup|setsid|time|nice|ionice|stdbuf|chronic|unbuffer|timeout|env)$/;
+/** Words that repeat, define or group commands: a script holding one is not plain. */
+const COMPOUND = /^(?:for|select|while|until|repeat|do|done|function|case|foreach|coproc)$/;
+
+/** `words` past env assignments and pass-through prefixes with their options and numbers; [] after a YTRACK_* assignment. */
+const passed = (words: readonly string[]): string[] => {
+  let at = 0;
+  for (; at < words.length; at++) {
+    const word = words[at];
+    if (/^[A-Za-z_]\w*=/.test(word)) {
+      if (word.startsWith("YTRACK_")) return [];
+      continue;
+    }
+    if (!PASS.test(word)) break;
+    // `env` takes assignments only; the others take options and numbers.
+    if (word !== "env") while (/^(?:-|\d)/.test(words[at + 1] ?? "")) at++;
+  }
+  return words.slice(at);
+};
+
+/**
+ * The command lines of a plain script, or null: simple commands joined by
+ * `;`, `&&`, `||`, `|`, `&` or newlines, with no group, substitution, loop,
+ * function or YTRACK_* assignment, where every one that names ytrack has no
+ * word the shell expands and runs past pass-through prefixes only.
+ */
+const plainLines = (command: string, dialect: ShellDialect): string[][] | null => {
+  const lines: string[][] = [];
+  for (const segment of segmentsOf(command, dialect)) {
+    if (segment.group || segment.unanalyzable || segment.subs?.length) return null;
+    if (COMPOUND.test(segment.words[0] ?? "")) return null;
+    if (segment.words.some((word) => /^YTRACK_\w*=/.test(word))) return null;
+    if (!namesYtrack([...segment.words, ...(segment.stdin ?? [])].join(" "))) continue;
+    // A word the shell expands (`$`, a glob, a substitution) is not what runs.
+    if (segment.expands?.length) return null;
+    lines.push(passed(segment.words));
+  }
+  return lines;
+};
+
+/**
+ * Every raw ytrack write `command` runs, wrapped or not. A plain script is
+ * read line by line and may be mapped; anything else is read by commandLines
+ * and never mapped. Throws when the command cannot be analysed.
+ */
 const ytrackWrites = (
   command: string,
   dialect: ShellDialect = "posix",
   depth = 0,
+  plain = true,
 ): YtrackWrite[] => {
-  const found: YtrackWrite[] = [];
-  if (!namesYtrack(command)) return found;
+  if (!namesYtrack(command)) return [];
   if (depth > MAX_DEPTH) throw new Error("ytrack nested too deep");
-  const known = READ.get(command);
+  const key = `${plain}\0${dialect}\0${command}`;
+  const known = READ.get(key);
   if (known) return known;
-  for (const line of commandLines(command, dialect))
-    ytrackArgs(line, found, depth, aliases(command));
-  READ.set(command, found);
+  let found: YtrackWrite[] = [];
+  const lines = plain ? plainLines(command, dialect) : null;
+  const none = new Map<string, string[]>();
+  if (!lines?.every((line) => ytrackArgs(line, found, depth, none, true))) {
+    found = [];
+    for (const line of commandLines(command, dialect))
+      ytrackArgs(line, found, depth, aliases(command), false);
+  }
+  READ.set(key, found);
   if (READ.size > 64) READ.delete(READ.keys().next().value as string);
   return found;
 };
@@ -338,9 +410,16 @@ export const ytrackGate = (
 ): HookDecision | null => {
   let writes: YtrackWrite[];
   try {
-    writes = [
-      ...new Map(ytrackWrites(command, dialect).map((write) => [write.command, write])).values(),
-    ];
+    // A write found twice, or once unmapped, is unmapped.
+    const merged = new Map<string, YtrackWrite>();
+    for (const write of ytrackWrites(command, dialect)) {
+      const seen = merged.get(write.command);
+      merged.set(
+        write.command,
+        !seen || !write.workit ? write : !seen.workit ? seen : ungrant(write),
+      );
+    }
+    writes = [...merged.values()];
   } catch {
     // Unanalysable and naming ytrack: denied unless the user opted out.
     if (writesMode(cwd) === "auto") return null;
@@ -370,9 +449,13 @@ export const ytrackGate = (
   const user = bare.length
     ? ` For ${bare.join(", ")}, the user decides: ask the user, and if they agree they run it in their own terminal.`
     : "";
+  // Deny-only hosts: the named call comes back once the write is its own plain command.
+  const rerun = writes.some((write) => write.gap === NOT_PLAIN.gap)
+    ? " To get the named workit youtrack call instead, rerun the ytrack call as one plain command, with no wrapper, loop, substitution or script around it."
+    : "";
   return {
     kind: "deny",
-    reason: `${why}${run}${user}`,
+    reason: `${why}${run}${user}${rerun}`,
     unblock: writes[0]?.workit ?? null,
   };
 };

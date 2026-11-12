@@ -129,17 +129,11 @@ const comment = "ytrack issue comment X-1 --body hi";
 const WRAPPED = [
   `bash -c '${comment}'`,
   `sh -c "${comment}"`,
-  `YTRACK_HOST=acme ${comment}`,
-  `env YTRACK_HOST=acme ${comment}`,
   `cd /tmp && ${comment}`,
   `git status && ${comment}`,
   `echo start; ${comment}`,
   `false || ${comment}`,
-  `echo '${comment}' | bash`,
-  `bash <<'EOF'\n${comment}\nEOF`,
   `eval "${comment}"`,
-  `echo $(${comment})`,
-  `Y=ytrack; $Y issue comment X-1 --body hi`,
   `npx ${comment}`,
   `npx -y ${comment}`,
   `bunx ${comment}`,
@@ -148,10 +142,20 @@ const WRAPPED = [
   `~/.local/bin/${comment}`,
   `y"t"rack issue comment X-1 --body hi`,
   `timeout 30 ${comment}`,
-  `sudo -u me ${comment}`,
   `nohup ${comment}`,
   `workit check --name yt -- ${comment}`,
   `workit check --name yt --shell -- '${comment}'`,
+];
+
+/** The same comment where the call is not a plain command: judged, but no workit call is named. */
+const WRAPPED_UNMAPPED = [
+  `YTRACK_HOST=acme ${comment}`,
+  `env YTRACK_HOST=acme ${comment}`,
+  `echo '${comment}' | bash`,
+  `bash <<'EOF'\n${comment}\nEOF`,
+  `echo $(${comment})`,
+  `Y=ytrack; $Y issue comment X-1 --body hi`,
+  `sudo -u me ${comment}`,
 ];
 
 /** Reads and mentions: untouched. */
@@ -201,6 +205,16 @@ test("G the default ask, W the write is wrapped, chained, piped or respelled, T 
         "`workit youtrack note X-1 --markdown hi`",
       );
     }
+  // Not a plain command: Claude Code asks, the deny-only hosts hand it to the user.
+  for (const command of WRAPPED_UNMAPPED) {
+    expect(claude(command).kind, command).toBe("ask");
+    for (const [host, run] of Object.entries({ codex, cursor, pi })) {
+      const out = run(command);
+      expect(out.kind, `${host}: ${command}`).toBe("deny");
+      expect(out.reason, `${host}: ${command}`).toContain("in their own terminal");
+      expect(out.reason, `${host}: ${command}`).not.toContain("`workit youtrack");
+    }
+  }
   // xargs appends its input as operands: judged, but no workit call carries them.
   for (const [host, run] of Object.entries(HOSTS))
     expect(run(`xargs ${comment} <<< x`).kind, host).not.toBe("pass");

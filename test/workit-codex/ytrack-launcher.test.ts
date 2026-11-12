@@ -52,7 +52,6 @@ const run = (command: string) => {
 test("G the Codex hook entry, W raw ytrack writes plain, wrapped or respelled, T the runtime denies them; reads stay quiet", () => {
   for (const command of [
     "ytrack issue comment X-1 --body hi",
-    "env YTRACK_HOST=acme ytrack issue comment X-1 --body hi",
     "cd /tmp && ytrack issue comment X-1 --body hi",
     "echo hi | ytrack issue comment X-1 --body hi",
     "/opt/bin/ytrack issue comment X-1 --body hi",
@@ -67,6 +66,11 @@ test("G the Codex hook entry, W raw ytrack writes plain, wrapped or respelled, T
   const api = run("ytrack api /issues/X-1 -X DELETE");
   expect(api.permissionDecision).toBe("deny");
   expect(api.permissionDecisionReason).toContain("in their own terminal");
+  // A host override is not a plain command: no named call, handed to the user.
+  const host = run("env YTRACK_HOST=acme ytrack issue comment X-1 --body hi");
+  expect(host.permissionDecision).toBe("deny");
+  expect(host.permissionDecisionReason).toContain("in their own terminal");
+  expect(host.permissionDecisionReason).not.toContain("`workit youtrack");
   for (const command of ["ytrack issue view X-1", "ytrack work-item list X-1", "ls"])
     expect(run(command).permissionDecision, command).toBeUndefined();
 }, 60_000);

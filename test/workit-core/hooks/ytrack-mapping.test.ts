@@ -76,7 +76,6 @@ const MAPPED: Array<[string, Write]> = [
   ["ytrack issue comment --body hi X-1", { verb: "note", issue: "X-1", text: "hi" }],
   ["ytrack issue comment X-1 --body '-1 ok'", { verb: "note", issue: "X-1", text: "-1 ok" }],
   ["ytrack issue comment X-1 --body='a b'", { verb: "note", issue: "X-1", text: "a b" }],
-  ["T='lit'; ytrack issue comment X-1 --body \"$T\"", { verb: "note", issue: "X-1", text: "lit" }],
   ["ytrack issue comment X-1 --body-file r.md", { verb: "note", issue: "X-1", file: "r.md" }],
   ["ytrack --debug issue comment X-1 --body hi", { verb: "note", issue: "X-1", text: "hi" }],
   [
@@ -143,4 +142,70 @@ test("G a raw write with a part the mapping cannot carry, W the hook judges it, 
       expect(reason, command).toContain("the user decides");
     }
   }
+});
+
+// Decision for PR #827: a named call only for a plain command. A wrapper,
+// loop, substitution, function, host override or second copy can fill in or
+// repeat the write, so the named call would not do the same thing.
+const NOT_PLAIN = [
+  "xargs -I{} ytrack issue comment X-1 --body {} < f",
+  "xargs ytrack issue comment X-1 --body hi < f",
+  "find . -name '*.md' -exec ytrack issue comment X-1 --body-file {} \\;",
+  "watch -n1 ytrack issue comment X-1 --body hi",
+  "while true; do ytrack issue comment X-1 --body hi; done",
+  "for i in 1 2; do ytrack issue comment X-1 --body hi; done",
+  "ytrack issue comment X-1 --body hi; ytrack issue comment X-1 --body hi",
+  "f() { ytrack issue comment X-1 --body hi; }; f; f",
+  'false && T=x; ytrack issue comment X-1 --body "$T"',
+  "ytrack issue comment X-1 --body-file ~/notes.md",
+  "ytrack issue comment X-1 --body *",
+  "YTRACK_HOST=other ytrack issue comment X-1 --body hi",
+  "sudo -u other ytrack issue comment X-1 --body hi",
+  "echo hi | xargs -I{} ytrack issue comment X-1 --body {}",
+  "parallel ytrack issue comment X-1 --body {} ::: a b",
+  "xargs -I{} bash -c 'ytrack issue comment X-1 --body {}' < f",
+  "ytrack issue comment X-1 --body hi; bash -c 'watch ytrack issue comment X-1 --body hi'",
+  "T='lit'; ytrack issue comment X-1 --body \"$T\"",
+];
+
+const W = "ytrack issue comment X-1 --body hi";
+const PLAIN = [
+  W,
+  `cd /tmp && ${W}`,
+  `${W} | jq .id`,
+  `${W} > out.json 2>&1`,
+  `nohup ${W} &`,
+  `timeout -k 5 30 ${W}`,
+  `nice -n 5 ${W}`,
+  `FOO=1 ${W}`,
+  `bash -lc '${W}'`,
+  `eval "${W}"`,
+  `npx -y ${W}`,
+  `workit check --name y -- ${W}`,
+  `ytrack issue view X-1 && ${W}`,
+];
+
+test("G a ytrack write that is not a plain command, W the hook judges it, T no workit call is named: Claude Code asks, the other hosts deny", () => {
+  for (const command of NOT_PLAIN) {
+    expect(ytrackGate(root, command, "posix", true)?.kind, command).toBe("ask");
+    const out = ytrackGate(root, command, "posix", false);
+    expect(out?.kind, command).toBe("deny");
+    const reason = out?.kind === "deny" ? out.reason : "";
+    expect(reason, command).toContain("in their own terminal");
+    expect(reason, command).not.toContain("`workit youtrack");
+    // The value gap (`~`) is the value's own; every other row is not a plain command.
+    if (!command.includes("~/"))
+      expect(reason, command).toContain("rerun the ytrack call as one plain command");
+  }
+});
+
+test("G a plain ytrack write, W the hook judges it, T both readings name the workit call", () => {
+  for (const command of PLAIN)
+    for (const ask of [true, false]) {
+      const out = ytrackGate(root, command, "posix", ask);
+      expect(out?.kind, `${ask}: ${command}`).toBe("deny");
+      expect(out?.kind === "deny" ? out.reason : "", `${ask}: ${command}`).toContain(
+        "`workit youtrack note X-1 --markdown hi`",
+      );
+    }
 });
