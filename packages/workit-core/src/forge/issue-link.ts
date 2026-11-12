@@ -13,7 +13,10 @@
 import { vcsConfig, type IssueTracker } from "../core/vcs-config";
 import { youTrackBaseUrl } from "../core/youtrack";
 import { defaultOperations, ISSUE_RE, unwrap } from "../core/youtrack-tools";
+import { youTrackBackend } from "../core/youtrack-backend";
 import {
+  findDuplicate,
+  markerPresent,
   withMarker,
   writeOnce,
   youTrackMarker,
@@ -21,7 +24,7 @@ import {
   type OnceOutcome,
 } from "../core/youtrack-writes";
 import { sliceIssuesFor } from "../fanout";
-import { appendObserved, type LedgerActor, type ReadRow } from "../ledger";
+import { appendObserved, readLedger, type LedgerActor, type ReadRow } from "../ledger";
 import type { ForgeRunner } from "./exec";
 import { createGitHubForge } from "./github";
 import { createGitLabForge } from "./gitlab";
@@ -353,24 +356,47 @@ export type BacklinkOutcome = {
   /** pending: a YouTrack backlink waiting for the user's yes (youtrack.writes ask). */
   status: OnceOutcome["status"] | "skipped" | "pending";
   note?: string;
+  /** The approval request a pending backlink waits on. */
+  approval?: string;
 };
 
-const defaultYouTrackComment = (
+/**
+ * One YouTrack backlink, posted at most once: the marker is read back, and in
+ * ask mode an identical comment of the user's counts as posted, both before
+ * the ask. The post goes through ytrackWrite, which consumes the user's yes or
+ * leaves the backlink pending on a new request.
+ */
+async function youTrackBacklink(
   root: string,
   issueId: string,
   text: string,
   marker: string,
-): Promise<OnceOutcome> =>
-  writeOnce(issueId, marker, "comments", async () => {
+  ask: boolean,
+): Promise<Omit<BacklinkOutcome, "issue">> {
+  if (ask) {
+    const backend = youTrackBackend();
+    if ((await markerPresent(issueId, marker, "comments", backend)) === true)
+      return { status: "already_done" };
+    const duplicate = await findDuplicate(issueId, { where: "comments", text }, backend);
+    if (duplicate)
+      return {
+        status: "already_done",
+        note: `${issueId} already has your comment ${duplicate.id} with this text`,
+      };
+  }
+  let approval: string | null = null;
+  const outcome = await writeOnce(issueId, marker, "comments", async () => {
     try {
       const value = await defaultOperations.postComment(issueId, withMarker(text, marker), root);
-      // Not sent (no ytrack, logged out): say how to unblock, skip the read-back.
-      if (value?.ok === false && value.outcome === "not_applied")
+      // Not sent (no yes, no ytrack, logged out): say how to unblock, skip the read-back.
+      if (value?.ok === false && value.outcome === "not_applied") {
+        if (typeof value.approval === "string") approval = value.approval;
         return {
           ok: false,
           error: `${String(value.error)}${typeof value.unblock === "string" ? `; ${value.unblock}` : ""}`,
           data: { outcome: "not_applied" },
         };
+      }
       return { ok: true, data: unwrap(value) };
     } catch (error) {
       return {
@@ -379,6 +405,14 @@ const defaultYouTrackComment = (
       };
     }
   });
+  if (approval !== null && outcome.status === "failed")
+    return {
+      status: "pending",
+      note: `${outcome.error}; after the yes, re-run workit pr create to post it once`,
+      approval,
+    };
+  return { status: outcome.status, ...("error" in outcome ? { note: outcome.error } : {}) };
+}
 
 /**
  * The forge an issue lives on: the PR's own, or another repository on the
@@ -402,17 +436,16 @@ function issueForge(
   return link.tracker === "github" ? createGitHubForge(options) : createGitLabForge(options);
 }
 
-const shellQuote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
-
 /**
  * The tracker backlink (`issues.backlink: true`): a comment with the PR URL
  * on each linked issue, posted at most once: a marker naming the PR is read
  * back first. Forge issues on the PR's host go through the workspace's
  * verified credential; one on another forge host is skipped (no account is
  * verified there). A YouTrack backlink asks first like every YouTrack write
- * (#780): with `youtrack.writes` ask (the default) it is pending and names
- * the `workit youtrack note` call that asks the user and posts it once; with
- * `auto` it posts behind WORKIT_YT_WRITE=1. A failure or a pending backlink is
+ * (#780): with `youtrack.writes` ask (the default) it records a request and
+ * is pending until the user's yes, which the next `workit pr create` or
+ * `workit pr edit` consumes to post it once (pendingBacklinks); with `auto`
+ * it posts behind WORKIT_YT_WRITE=1. A failure or a pending backlink is
  * reported per issue and never undoes the PR.
  */
 export async function postBacklinks(
@@ -429,15 +462,8 @@ export async function postBacklinks(
   for (const link of links) {
     const issue = label(link);
     if (link.tracker === "youtrack") {
-      if (youTrackWritesMode(cwd) === "ask") {
-        out.push({
-          issue,
-          status: "pending",
-          note: `YouTrack writes ask the user first: run workit youtrack note ${link.id} --markdown ${shellQuote(text)}`,
-        });
-        continue;
-      }
-      if (env.WORKIT_YT_WRITE !== "1") {
+      const ask = youTrackWritesMode(cwd) === "ask";
+      if (!ask && env.WORKIT_YT_WRITE !== "1") {
         out.push({
           issue,
           status: "failed",
@@ -450,12 +476,7 @@ export async function postBacklinks(
         issueId: link.id,
         pr: pr.url,
       });
-      const outcome = await defaultYouTrackComment(cwd, link.id, text, marker);
-      out.push({
-        issue,
-        status: outcome.status,
-        ...("error" in outcome ? { note: outcome.error } : {}),
-      });
+      out.push({ issue, ...(await youTrackBacklink(cwd, link.id, text, marker, ask)) });
       continue;
     }
     const forge = issueForge(resolved, link, deps.runner);
@@ -484,4 +505,38 @@ export async function postBacklinks(
     );
   }
   return out;
+}
+
+/**
+ * The YouTrack backlinks of a PR an earlier `pr create` opened and linked
+ * (its `pr.linked` rows), posted now: a re-run of `pr create` on the open PR
+ * and `pr edit` consume the user's yes for a pending one. One already there
+ * is read back as already_done, so a later run posts nothing. Empty when the
+ * workspace tracker has no `backlink: true` or the ledger records none.
+ */
+export async function pendingBacklinks(
+  cwd: string,
+  resolved: ResolvedForge,
+  pr: { number: number; url: string },
+  deps: { env?: NodeJS.ProcessEnv } = {},
+): Promise<BacklinkOutcome[]> {
+  if (trackerFor(cwd)?.backlink !== true) return [];
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return [];
+  const links: IssueLink[] = linkedIssues(ledger.value.rows, {
+    pr: pr.number,
+    repo: resolved.forge.repo,
+  })
+    .filter((linked) => linked.tracker === "youtrack")
+    .map((linked) => ({
+      tracker: "youtrack",
+      id: linked.issue,
+      repo: null,
+      host: null,
+      url: linked.url,
+      relation: "related",
+      source: linked.source as IssueLink["source"],
+      line: "",
+    }));
+  return links.length ? postBacklinks(cwd, resolved, pr, links, deps) : [];
 }

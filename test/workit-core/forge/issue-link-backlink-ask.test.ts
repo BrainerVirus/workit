@@ -1,7 +1,7 @@
 // #780 review: a YouTrack backlink is a YouTrack write, so in ask mode (the
 // default) it never posts behind WORKIT_YT_WRITE alone. The PR still opens;
-// the backlink is pending and names the `workit youtrack note` call that asks
-// the user through the same approval channel and posts it once.
+// the backlink records a request through the approval channel and is pending
+// until the user's yes, which a re-run of `workit pr create` consumes.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -33,12 +33,13 @@ const PR = { number: 5, url: "https://github.com/o/r/pull/5" };
 /** No ytrack anywhere: a post attempt would fail, never reach a tracker. */
 const env = { PATH: path.join(dir, "empty"), WORKIT_YT_WRITE: "1" };
 
-test("Given the default (ask), When pr create backlinks a YouTrack issue, Then it is pending with the youtrack note call to run, even with WORKIT_YT_WRITE=1", async () => {
+test("Given the default (ask), When pr create backlinks a YouTrack issue, Then it is pending on a youtrack-write request to approve, even with WORKIT_YT_WRITE=1", async () => {
   const [outcome] = await postBacklinks(dir, resolved, PR, [LINK], { env });
-  expect(outcome.status).toBe("pending");
-  expect(outcome.note).toContain(
-    "workit youtrack note IRPT-74 --markdown 'Linked from PR #5: https://github.com/o/r/pull/5'",
-  );
+  expect(outcome).toMatchObject({ issue: "IRPT-74", status: "pending" });
+  expect(outcome.approval).toMatch(/^ap_[a-z2-7]{8}$/u);
+  expect(outcome.note).toStartWith("approval_needed: nothing was posted");
+  expect(outcome.note).toContain(`workit approve ${outcome.approval}`);
+  expect(outcome.note).toContain("re-run workit pr create to post it once");
 });
 
 test("Given youtrack.writes auto, Then the backlink keeps today's WORKIT_YT_WRITE gate", async () => {

@@ -17,6 +17,7 @@ import {
   label as issueLabel,
   linkedIssues,
   planIssueLinks,
+  pendingBacklinks,
   postBacklinks,
   recordIssueLinks,
   withIssueLines,
@@ -850,6 +851,8 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
         repo: forge.repo,
       })
     : [];
+  // A re-run on the open PR posts the YouTrack backlinks the first run left
+  // pending once the user said yes (#780).
   const backlinks: BacklinkOutcome[] =
     opened && planned.data.backlink && links.length
       ? await progressFor(io).run("Posting issue backlinks", () =>
@@ -857,7 +860,9 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
             env: io.env,
           }),
         )
-      : [];
+      : opened
+        ? []
+        : await pendingBacklinks(io.cwd, connected.data, result.data, { env: io.env });
   const created = {
     ...result.data,
     issues: links.map((link) => ({
@@ -868,7 +873,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
       line: link.line,
     })),
     linked,
-    ...(planned.data.backlink && links.length ? { backlinks } : {}),
+    ...((planned.data.backlink && links.length) || backlinks.length ? { backlinks } : {}),
     ...(planned.data.warnings.length ? { warnings: planned.data.warnings } : {}),
     ...(releaseTrack ? { releaseTrack } : {}),
     ...(route ? { flow: route } : {}),
@@ -1025,23 +1030,27 @@ function issueLines(
   backlinks: readonly BacklinkOutcome[],
   number: number,
 ): string[] {
-  if (links.length === 0) return [];
+  if (links.length === 0) return backlinkLines(backlinks);
   const names = links.map(issueLabel).join(", ");
   if (!opened)
     return [
       `issues not linked: the PR was already open, so its body is unchanged (${names}); add the lines with workit pr edit --pr ${number} --body-file <f>`,
+      ...backlinkLines(backlinks),
     ];
   return [
     `linked ${names}`,
     ...linked.flatMap((row) =>
       "error" in row ? [`ledger: link to ${row.issue} not recorded (${row.error})`] : [],
     ),
-    ...backlinks.map(
-      (entry) =>
-        `backlink ${entry.issue}: ${entry.status.replace("_", " ")}${entry.note ? ` (${entry.note})` : ""}`,
-    ),
+    ...backlinkLines(backlinks),
   ];
 }
+
+const backlinkLines = (backlinks: readonly BacklinkOutcome[]): string[] =>
+  backlinks.map(
+    (entry) =>
+      `backlink ${entry.issue}: ${entry.status.replace("_", " ")}${entry.note ? ` (${entry.note})` : ""}`,
+  );
 
 /** The `reason` of a refused `--allow-failing` waiver, for the envelope data. */
 const waiverReason = (error: string): { reason?: string } => {
@@ -1313,9 +1322,16 @@ async function edit(argv: string[], io: Io): Promise<number> {
       ? usage(io, result.error, EDIT_USAGE)
       : forgeFail(io, result);
   const kind = connected.data.forge.kind;
-  return emit(io, ok(result.data), (data: EditOutcome) => [
-    `edited ${prLabel(kind, data.number)} (${data.changed.join(", ")}): ${data.title} -> ${data.base}  ${data.url}`,
-  ]);
+  // A YouTrack backlink `pr create` left pending posts once after the yes (#780).
+  const backlinks = await pendingBacklinks(io.cwd, connected.data, result.data, { env: io.env });
+  return emit(
+    io,
+    ok({ ...result.data, ...(backlinks.length ? { backlinks } : {}) }),
+    (data: EditOutcome) => [
+      `edited ${prLabel(kind, data.number)} (${data.changed.join(", ")}): ${data.title} -> ${data.base}  ${data.url}`,
+      ...backlinkLines(backlinks),
+    ],
+  );
 }
 
 async function threads(argv: string[], io: Io): Promise<number> {

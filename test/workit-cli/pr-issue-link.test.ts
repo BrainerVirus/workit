@@ -14,6 +14,7 @@ import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { recordApprovalGrant } from "@/packages/workit-core/src/approvals/store";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import {
   fixture,
@@ -382,7 +383,7 @@ const youTrackServer = () => {
   return { url: `http://127.0.0.1:${server.port}`, requests, comments, stop: () => server.stop() };
 };
 
-test("pr create: given backlink true, a YouTrack issue and the default youtrack.writes ask, then the PR opens and the backlink is pending with the youtrack note call, even with WORKIT_YT_WRITE=1", async () => {
+test("pr create: given backlink true, a YouTrack issue and the default youtrack.writes ask, then the PR opens and the backlink is pending on a request to approve, even with WORKIT_YT_WRITE=1", async () => {
   const yt = youTrackServer();
   const previous = process.env.WORKIT_YT_WRITE;
   try {
@@ -395,13 +396,9 @@ test("pr create: given backlink true, a YouTrack issue and the default youtrack.
     process.env.WORKIT_YT_WRITE = "1";
     const out = await run(createIssue("IRPT-74"), repo.cwd);
     expect(out.code).toBe(0);
-    expect(out.json().data.backlinks).toEqual([
-      {
-        issue: "IRPT-74",
-        status: "pending",
-        note: "YouTrack writes ask the user first: run workit youtrack note IRPT-74 --markdown 'Linked from PR #12: https://github.com/o/r/pull/12'",
-      },
-    ]);
+    const [pending] = out.json().data.backlinks;
+    expect(pending).toMatchObject({ issue: "IRPT-74", status: "pending" });
+    expect(pending.note).toContain(`workit approve ${pending.approval}`);
     expect(yt.requests).toEqual([]);
   } finally {
     if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
@@ -459,7 +456,8 @@ test("pr create: given backlink true, a YouTrack issue and youtrack.writes auto,
 
 /**
  * A ytrack stub on a temp PATH: `issue view --json comments` lists the
- * comments it keeps, `issue comment` adds the stdin body; every call is logged.
+ * comments it keeps, `issue comment` adds the stdin body as user "me", and
+ * `api /users/me` names that user; every call is logged.
  * Bun runs it, so no sh is needed; Windows does not run a shebang file.
  */
 const ytrackStub = () => {
@@ -477,15 +475,20 @@ const comments = fs.existsSync(store) ? JSON.parse(fs.readFileSync(store, "utf8"
 if (args[0] === "issue" && args[1] === "view") {
   process.stdout.write(JSON.stringify({ comments }));
 } else if (args[0] === "issue" && args[1] === "comment") {
-  const comment = { id: "c" + (comments.length + 1), text: fs.readFileSync(0, "utf8") };
+  const comment = { id: "c" + (comments.length + 1), text: fs.readFileSync(0, "utf8"), author: { login: "me" } };
   fs.writeFileSync(store, JSON.stringify([...comments, comment]));
   process.stdout.write(JSON.stringify({ id: comment.id, url: "https://yt.example.test/issue/" + args[2] }));
+} else if (args[0] === "api" && args[1] === "/users/me") {
+  process.stdout.write(JSON.stringify({ login: "me" }));
 } else process.exit(1);
 `,
   );
   chmodSync(path.join(dir, "ytrack"), 0o755);
   return {
     dir,
+    /** A comment the user already posted (e.g. through workit youtrack note). */
+    seed: (text: string) =>
+      writeFileSync(store, JSON.stringify([{ id: "c1", text, author: { login: "me" } }])),
     calls: (): string[] =>
       existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
     comments: (): Array<{ text: string }> =>
@@ -542,6 +545,145 @@ test.skipIf(process.platform === "win32")(
       rmSync(stub.dir, { recursive: true, force: true });
     }
   },
+);
+
+/** Run `fn` with the ytrack stub on PATH and the YouTrack env it needs; restore after. */
+const withYtrack = async (fn: (stub: ReturnType<typeof ytrackStub>) => Promise<void>) => {
+  const stub = ytrackStub();
+  const previous = {
+    write: process.env.WORKIT_YT_WRITE,
+    noYtrack: process.env.WORKIT_NO_YTRACK,
+    path: process.env.PATH,
+  };
+  try {
+    writeFileSync(
+      path.join(configHome.configDir, "youtrack.json"),
+      JSON.stringify({ baseUrl: "https://yt.example.test" }),
+    );
+    delete process.env.WORKIT_YT_WRITE;
+    delete process.env.WORKIT_NO_YTRACK;
+    process.env.PATH = [stub.dir, previous.path ?? ""].join(path.delimiter);
+    await fn(stub);
+  } finally {
+    for (const [key, value] of [
+      ["WORKIT_YT_WRITE", previous.write],
+      ["WORKIT_NO_YTRACK", previous.noYtrack],
+      ["PATH", previous.path],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(stub.dir, { recursive: true, force: true });
+  }
+};
+
+/** The user's yes at their own terminal (`workit approve <id>`). */
+const userApproves = (id: string) =>
+  expect(
+    recordApprovalGrant({ id, host: "terminal", session: null, toolUseId: null, via: "terminal" })
+      .ok,
+  ).toBe(true);
+
+/** GitHub routes where the PR is found open once the first run opened it. */
+const reopenRoutes = (state: { open: boolean }, extra: Record<string, Reply> = {}) =>
+  githubRoutes({
+    "graphql find": () => fixture(state.open ? "github/find-pr.json" : "github/find-none.json"),
+    ...extra,
+  });
+
+const posts = (stub: ReturnType<typeof ytrackStub>) =>
+  stub.calls().filter((call) => call.startsWith("issue comment "));
+
+for (const rerun of ["pr create", "pr edit"] as const)
+  test.skipIf(process.platform === "win32")(
+    `${rerun}: given pr create left a YouTrack backlink pending, when the user approves and the agent runs ${rerun}, then the backlink posts exactly once and a third run posts nothing`,
+    () =>
+      withYtrack(async (stub) => {
+        const state = { open: false };
+        const pull = JSON.stringify({
+          number: 12,
+          html_url: "https://github.com/o/r/pull/12",
+          state: "open",
+          title: "feat: y",
+          base: { ref: "main" },
+          head: { ref: "feature/x" },
+        });
+        const { repo } = setup(
+          "github",
+          reopenRoutes(state, { "GET repos/o/r/pulls/12": pull, "PATCH repos/o/r/pulls/12": pull }),
+        );
+        workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+        const first = await run(createIssue("IRPT-74"), repo.cwd);
+        expect(first.code, first.stderr).toBe(0);
+        const [pending] = first.json().data.backlinks;
+        expect(pending).toMatchObject({ issue: "IRPT-74", status: "pending" });
+        expect(posts(stub)).toEqual([]);
+        state.open = true;
+
+        // Before the yes a re-run still posts nothing.
+        const early = await run(createIssue("IRPT-74"), repo.cwd);
+        expect(early.json().data.backlinks[0]).toMatchObject({ status: "pending" });
+        expect(posts(stub)).toEqual([]);
+
+        userApproves(early.json().data.backlinks[0].approval);
+        const again = () =>
+          rerun === "pr create"
+            ? run(createIssue("IRPT-74"), repo.cwd)
+            : run(["pr", "edit", "--title", "feat: y", "--json"], repo.cwd);
+        const second = await again();
+        expect(second.code, second.stdout).toBe(0);
+        expect(second.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "done" }]);
+        expect(stub.comments()[0].text).toStartWith(
+          "Linked from PR #12: https://github.com/o/r/pull/12",
+        );
+
+        const third = await again();
+        expect(third.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "already_done" }]);
+        expect(posts(stub)).toHaveLength(1);
+      }),
+  );
+
+test.skipIf(process.platform === "win32")(
+  "pr create: given the user already posted the backlink text (workit youtrack note), when pr create re-runs on the open PR, then it is already done and nothing is asked or posted",
+  () =>
+    withYtrack(async (stub) => {
+      const state = { open: false };
+      const { repo } = setup("github", reopenRoutes(state));
+      workspace(repo, { issues: { provider: "youtrack", backlink: true } });
+      const first = await run(createIssue("IRPT-74"), repo.cwd);
+      expect(first.json().data.backlinks[0]).toMatchObject({ status: "pending" });
+      stub.seed("Linked from PR #12: https://github.com/o/r/pull/12");
+      state.open = true;
+      const again = await run(createIssue("IRPT-74"), repo.cwd);
+      expect(again.json().data.backlinks).toEqual([
+        {
+          issue: "IRPT-74",
+          status: "already_done",
+          note: "IRPT-74 already has your comment c1 with this text",
+        },
+      ]);
+      expect(posts(stub)).toEqual([]);
+    }),
+);
+
+test.skipIf(process.platform === "win32")(
+  "pr create: given youtrack.writes auto, when pr create re-runs on the open PR, then the backlink posts behind WORKIT_YT_WRITE=1 with no request",
+  () =>
+    withYtrack(async (stub) => {
+      const state = { open: false };
+      const { repo } = setup("github", reopenRoutes(state));
+      workspace(repo, {
+        issues: { provider: "youtrack", backlink: true },
+        youtrack: { writes: "auto" },
+      });
+      const first = await run(createIssue("IRPT-74"), repo.cwd);
+      expect(first.json().data.backlinks[0]).toMatchObject({ status: "failed" });
+      state.open = true;
+      process.env.WORKIT_YT_WRITE = "1";
+      const again = await run(createIssue("IRPT-74"), repo.cwd);
+      expect(again.json().data.backlinks).toEqual([{ issue: "IRPT-74", status: "done" }]);
+      expect(posts(stub)).toHaveLength(1);
+    }),
 );
 
 test("pr create: given backlink false (the default), then no issue comment is read or posted", async () => {
