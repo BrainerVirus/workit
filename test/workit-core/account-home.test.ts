@@ -102,7 +102,7 @@ test("Given bun on Windows, Then the home is the ProfileList entry of the token'
 });
 
 test("Given node, Then the home is os.userInfo() (the account record) on every platform", () => {
-  for (const platform of ["linux", "darwin", "win32"])
+  for (const platform of ["linux", "darwin", "win32"] as const)
     expect(accountHome(platform, io({ bun: false, userInfo: () => "/record/home" }))).toBe(
       "/record/home",
     );
