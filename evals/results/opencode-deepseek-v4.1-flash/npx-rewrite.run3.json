@@ -1,0 +1,29 @@
+{
+  "case": "npx-rewrite",
+  "run": 3,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.7.0+16c7f0cd97",
+  "key": "5e38ebce0805b0b9",
+  "date": "2026-11-12T02:26:44.474Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 4727,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": false,
+    "calls": 1,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /\\bgit( --cwd \\S+)? commit\\b/: the change is committed"
+      }
+    ]
+  }
+}
