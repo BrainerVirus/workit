@@ -9,7 +9,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { grantsHome } from "@/packages/workit-core/src/autonomy";
 import { configDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
-import { shellGate, writeGate } from "@/packages/workit-core/src/hooks/write-gate";
+import {
+  shellGate,
+  unquotedWindowsRegistry,
+  writeGate,
+} from "@/packages/workit-core/src/hooks/write-gate";
 
 const base = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-guard-shapes-")));
 const home = path.join(base, "home");
@@ -287,4 +291,21 @@ test("G script files that spell a guarded path in a write, W a shell or interpre
     `cat > t.sh <<'EOF'\necho hi > out.txt\nEOF\nbash t.sh`,
   ])
     expect(decide(command).kind, command).toBe("none");
+});
+
+test("G Windows registry paths with unquoted backslashes, W the guarded path is only read, T no deny; in a write position, T denied", () => {
+  set({ WORKIT_STATE_DIR: "C:\\st", WORKIT_CONFIG: "C:\\cfg" });
+  const cases: Array<[string, string | null]> = [
+    ["cp C:\\cfg\\workspaces.json backup.json", null],
+    ["type C:\\cfg\\workspaces.json > out.json", null],
+    ["cat C:\\st\\issued\\x | tee copy.txt", null],
+    ["cp C:\\cfg\\workspaces.json C:\\cfg\\rules\\copy.json", null],
+    ["cp backup.json C:\\cfg\\workspaces.json", "grants"],
+    ["cp backup.json C:\\cfg\\", "grants"],
+    ["echo x > C:\\st\\approvals\\grants\\a.json", "approvals"],
+    ["rm -rf C:\\st\\issued", "issued"],
+  ];
+  for (const [command, want] of cases)
+    expect(unquotedWindowsRegistry(command, "win32"), command).toBe(want);
+  expect(unquotedWindowsRegistry("cp backup.json C:\\cfg\\workspaces.json", "linux")).toBeNull();
 });

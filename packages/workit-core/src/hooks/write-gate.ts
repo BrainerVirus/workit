@@ -1618,7 +1618,9 @@ export const underConfig = (
 /**
  * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
  * `> C:\state\issued\x` loses its separators. On Windows, a command that
- * writes and spells out a registry path is denied.
+ * spells out a registry path is judged with its backslashes turned into
+ * slashes: denied when that path is in a write position or the targets are
+ * unknown, so a copy out of it passes.
  */
 export const unquotedWindowsRegistry = (
   command: string,
@@ -1628,14 +1630,25 @@ export const unquotedWindowsRegistry = (
   const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
   const text = flat(command);
   const state = flat(resolveStateDir());
+  const configs = configDirs().map(flat);
   const registry: Registry | null = text.includes(`${state}/issued`)
     ? "issued"
     : text.includes(`${state}/approvals`)
       ? "approvals"
-      : configDirs().some((dir) => text.includes(`${flat(dir)}/workspaces.json`))
+      : configs.some((dir) => text.includes(dir))
         ? "grants"
         : null;
-  return registry && shellWrites(command).writes ? registry : null;
+  if (!registry) return null;
+  const writes = shellWrites(
+    command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) => word.replaceAll("\\", "/")),
+  );
+  const named = (target: string) => {
+    const at = flat(target);
+    return registry === "grants"
+      ? configs.some((dir) => [dir, `${dir}/`, `${dir}/workspaces.json`].includes(at))
+      : at.includes(`${state}/${registry}`);
+  };
+  return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };
 
 const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: string }> = {
