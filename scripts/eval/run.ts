@@ -48,6 +48,7 @@ import {
   type Host,
 } from "./isolation";
 import {
+  accountIds,
   accountOf,
   committedLeaks,
   envCredentials,
@@ -59,7 +60,6 @@ import {
   scrubOutsideReads,
   workitVocabulary,
   type Account,
-  type PrivateKind,
   type PrivateSet,
   type Scrub,
 } from "./privacy";
@@ -528,20 +528,24 @@ type Options = {
   /** The real account's private strings, in memory only: a result holding one is not written. */
   privateSet: PrivateSet;
   /**
-   * Every credential the bench host could reach, as read so far: the login
-   * files at start, before and after each run and in each world before it
-   * goes, and the secret-named variables of each host's environment. In
-   * memory only: a result holding one is not written.
+   * Every credential the bench host could reach and every id of the account
+   * it signs in as, as read so far: the login files at start, before and
+   * after each run and in each world before it goes, and the secret-named
+   * variables of each host's environment. In memory only: a result holding
+   * one is not written.
    */
-  credentials: Set<string>;
+  reachable: PrivateSet;
   /** The login files the current run could not read (file and reason): its result is not written. */
   unreadLogins: string[];
 };
 
-/** Add the credentials the host's login under `home` holds now; an unreadable login file is remembered. */
+/** Add the credentials and account ids the host's login under `home` holds now; an unreadable login file is remembered. */
 const noteCredentials = (opts: Options, home: string): void => {
   try {
-    for (const value of hostCredentials(home, opts.host)) opts.credentials.add(value);
+    for (const value of hostCredentials(home, opts.host))
+      opts.reachable.set(value, "host credential");
+    for (const value of accountIds(home, opts.host))
+      if (!opts.reachable.has(value)) opts.reachable.set(value, "account id");
   } catch (error) {
     if (!(error instanceof PrivateSetUnreadable)) throw error;
     opts.unreadLogins.push(error.message);
@@ -647,7 +651,7 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
         opts.pluginDir,
       );
       const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
-      for (const value of envCredentials(env)) opts.credentials.add(value);
+      for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
       const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
@@ -669,7 +673,7 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
-    for (const value of envCredentials(env)) opts.credentials.add(value);
+    for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
     return {
@@ -755,13 +759,7 @@ const runCase = async (
           [path.relative(REPO, transcript) || transcript]: run.transcript,
           [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
         },
-        new Map([
-          ...opts.privateSet,
-          ...[...opts.credentials].map((value): [string, PrivateKind] => [
-            value,
-            "host credential",
-          ]),
-        ]),
+        new Map([...opts.privateSet, ...opts.reachable]),
       );
   if (leaked) {
     result.grade = {
@@ -1001,7 +999,7 @@ export const main = async (
   }
   // A real account file that exists but cannot be read would leave the set short: nothing runs.
   let privateSet: PrivateSet = new Map();
-  let credentials: string[] = [];
+  const reachable: PrivateSet = new Map();
   if (!settling)
     try {
       privateSet = privateStrings(
@@ -1009,7 +1007,9 @@ export const main = async (
         workitVocabulary(REPO),
         values["real-home"] ? undefined : process.env,
       );
-      credentials = hostCredentials(path.resolve(values["real-home"] ?? accountHome()), host);
+      const home = path.resolve(values["real-home"] ?? accountHome());
+      for (const value of accountIds(home, host)) reachable.set(value, "account id");
+      for (const value of hostCredentials(home, host)) reachable.set(value, "host credential");
     } catch (error) {
       if (!(error instanceof PrivateSetUnreadable)) throw error;
       print(`private set: cannot read ${error.message}; fix or remove it, nothing runs`);
@@ -1030,7 +1030,7 @@ export const main = async (
     realHome: path.resolve(values["real-home"] ?? accountHome()),
     account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
     privateSet,
-    credentials: new Set(credentials),
+    reachable,
     unreadLogins: [],
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,

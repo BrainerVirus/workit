@@ -362,3 +362,21 @@ test("Given OpenCode wrote a new key into its world mid-run, When the transcript
   expect(printed.join("\n")).not.toContain(REFRESHED_KEY);
   expect(storedRuns()).toEqual([]);
 });
+
+test("Given a transcript holding an id of a credential row seeded into the world, When run, Then it fails as private_content naming account id", async () => {
+  const rowId = "cred_0123456789abcdefghij";
+  const data = path.join(root, "home", ".local", "share", "opencode");
+  mkdirSync(data, { recursive: true });
+  const db = new Database(path.join(data, "opencode.db"));
+  db.run(
+    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT)",
+  );
+  db.run("INSERT INTO credential VALUES (?, 'opencode', 'Default', ?)", [rowId, SEEDED_KEY]);
+  db.close();
+  writeFileSync(path.join(root, "out.jsonl"), sayingKey(rowId));
+  const printed: string[] = [];
+  expect(await main(["--cases", "a-smoke", ...argv], (text) => printed.push(text))).toBe(1);
+  expect(printed.join("\n")).toContain("a-smoke.transcript.jsonl holds account id");
+  expect(printed.join("\n")).not.toContain(rowId);
+  expect(storedRuns()).toEqual([]);
+});

@@ -73,6 +73,17 @@ const CLAUDE_ACCOUNT_KEYS = [
 const pick = (from: Record<string, unknown>, keys: string[]): Record<string, unknown> =>
   Object.fromEntries(keys.filter((key) => key in from).map((key) => [key, from[key]]));
 
+/** What a world's copy of ~/.claude.json keeps of the real one's parsed `state`: its sign-in keys only. */
+export const claudeSignIn = (state: Record<string, unknown>): Record<string, unknown> => {
+  const account = state.oauthAccount;
+  return {
+    ...pick(state, CLAUDE_STATE_KEYS),
+    ...(account && typeof account === "object"
+      ? { oauthAccount: pick(account as Record<string, unknown>, CLAUDE_ACCOUNT_KEYS) }
+      : {}),
+  };
+};
+
 /** The world's ~/.claude.json: the sign-in keys of the real one only. */
 const copyClaudeState = (real: string, into: string): void => {
   let state: Record<string, unknown> = {};
@@ -82,17 +93,7 @@ const copyClaudeState = (real: string, into: string): void => {
   } catch {
     // An unreadable state file: the world starts with none of it.
   }
-  const account = state.oauthAccount;
-  writeFileSync(
-    into,
-    JSON.stringify({
-      ...pick(state, CLAUDE_STATE_KEYS),
-      ...(account && typeof account === "object"
-        ? { oauthAccount: pick(account as Record<string, unknown>, CLAUDE_ACCOUNT_KEYS) }
-        : {}),
-    }),
-    { mode: 0o600 },
-  );
+  writeFileSync(into, JSON.stringify(claudeSignIn(state)), { mode: 0o600 });
 };
 
 /** The OpenCode db tables a fresh world copies: schema state and the provider credentials. */

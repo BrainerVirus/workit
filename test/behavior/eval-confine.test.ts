@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -160,7 +161,7 @@ const READS = (r: string): string => {
   return reads
     .map(
       ([name, cmd]) =>
-        `if ( ${cmd} ) >/dev/null 2>&1; then echo "${name} ok"; else echo "${name} denied"; fi`,
+        `if ( ${cmd} ) >/dev/null 2>&1; then say "${name} ok"; else say "${name} denied"; fi`,
     )
     .join("\n");
 };
@@ -187,7 +188,9 @@ const RESULT = JSON.stringify({ type: "result", subtype: "success", num_turns: 1
 
 const fakeClaude = (body: string): string => {
   const bin = path.join(root, "claude");
-  writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\n${body}\nprintf '%s\\n' '${RESULT}'\n`);
+  // `say` prints a line as an event: the runner stores nothing that is not one.
+  const say = `say() { printf '{"type":"probe","text":"%s"}\\n' "$1"; }`;
+  writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\n${say}\n${body}\nprintf '%s\\n' '${RESULT}'\n`);
   chmodSync(bin, 0o755);
   return bin;
 };
@@ -248,7 +251,7 @@ const SPELLINGS = (r: string): string => {
     'W="$(dirname "$PWD")"',
     ...spellings.map(
       ([name, cmd]) =>
-        `if ( ${cmd} ) >/dev/null 2>&1; then echo "${name} ok"; else echo "${name} denied"; fi`,
+        `if ( ${cmd} ) >/dev/null 2>&1; then say "${name} ok"; else say "${name} denied"; fi`,
     ),
   ].join("\n");
 };
@@ -281,6 +284,49 @@ test.skipIf(!landlock)(
   30_000,
 );
 
+// Invented values: no real account id is read into a test.
+const FAKE_USER_ID = `${"e".repeat(60)}4567`;
+const FAKE_ACCOUNT_UUID = "22222222-aaaa-4bbb-8ccc-ffffffffffff";
+
+test.skipIf(!landlock)(
+  "Given Landlock, When a call prints the world's sign-in state without naming it, Then the kernel allows the read and the run fails as private_content naming account id; nothing is written",
+  async () => {
+    writeFileSync(
+      path.join(home, ".claude.json"),
+      JSON.stringify({
+        userID: FAKE_USER_ID,
+        oauthAccount: { accountUuid: FAKE_ACCOUNT_UUID, billingType: "stripe_subscription" },
+      }),
+    );
+    // The reproduction's call, run for real inside the world: its result is the file's text.
+    const command = `python3 -c "import os;print(open(os.environ['HOME']+'/.claude.json').read())"`;
+    const emit = [
+      "import json, os",
+      "text = open(os.environ['HOME'] + '/.claude.json').read()",
+      `call = {'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': ${JSON.stringify(command)}}}`,
+      "print(json.dumps({'type': 'assistant', 'message': {'content': [call]}}))",
+      "result = {'type': 'tool_result', 'tool_use_id': 't1', 'content': text}",
+      "print(json.dumps({'type': 'user', 'message': {'content': [result]}}))",
+    ].join("\n");
+    const lines: string[] = [];
+    const exit = await main(argv(fakeClaude(`python3 - <<'PY'\n${emit}\nPY`)), (text) =>
+      lines.push(text),
+    );
+    const said = lines.join("\n");
+    expect(said).toMatch(/^read confinement: on$/mu);
+    expect(said).toContain("private_content: ");
+    expect(said).toContain("a-case.transcript.jsonl holds account id");
+    expect(said).not.toContain(FAKE_USER_ID);
+    expect(said).not.toContain(FAKE_ACCOUNT_UUID);
+    expect(exit).toBe(1);
+    const dir = path.join(root, "results", "haiku");
+    expect(
+      existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith("a-case")) : [],
+    ).toEqual([]);
+  },
+  30_000,
+);
+
 /** The R4 shapes: each line prints `<shape> ok` or `<shape> denied`. */
 const SHAPES = (r: string): string => {
   const ws = `${r}/.config/workit/workspaces.json`;
@@ -303,10 +349,10 @@ const SHAPES = (r: string): string => {
     'W="$(dirname "$PWD")"',
     ...shapes.map(
       ([name, cmd]) =>
-        `if ( ${cmd} ) 2>/dev/null; then echo "${name} ok"; else echo "${name} denied"; fi`,
+        `if ( ${cmd} ) 2>/dev/null; then say "${name} ok"; else say "${name} denied"; fi`,
     ),
-    `if ( printf w > "$W/world.txt" ) 2>/dev/null; then echo "world ok"; else echo "world denied"; fi`,
-    `if ( printf token-2 > "$HOME/.claude/.credentials.json" ) 2>/dev/null; then echo "credential ok"; else echo "credential denied"; fi`,
+    `if ( printf w > "$W/world.txt" ) 2>/dev/null; then say "world ok"; else say "world denied"; fi`,
+    `if ( printf token-2 > "$HOME/.claude/.credentials.json" ) 2>/dev/null; then say "credential ok"; else say "credential denied"; fi`,
   ].join("\n");
 };
 

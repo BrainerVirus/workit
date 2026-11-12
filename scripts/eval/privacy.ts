@@ -3,8 +3,9 @@
 // names, (2) removes tool results, leaving a marker with the path class and
 // byte length, and (3) refuses to write a file that still holds a string from
 // the real account (its Workit config values, its host's project paths, its
-// git identity, its home) or a credential the bench host could reach (its
-// login files, a key in its environment). The private set lives in memory
+// git identity, its home), a credential the bench host could reach (its
+// login files, a key in its environment) or an id of the account it signs in
+// as. The private set lives in memory
 // only: never written, never logged; a refusal names the file and the kind
 // of string, never it.
 //
@@ -14,7 +15,10 @@
 // and the read rules, so a result stays unless the call names a path outside
 // the world. When nothing confined them, no result of a call that ran stays.
 // A removed result keeps the grader's own answers about its text (grade.ts
-// `callFacts`), so removing it never changes a grade.
+// `callFacts`), so removing it never changes a grade. A refused call's result
+// keeps only what the grader's own evidence says are the host's words
+// (grade.ts `Refusal`): never a result's wording alone. A line of the host's
+// output that is not an event is not stored.
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
@@ -23,7 +27,7 @@ import path from "node:path";
 import { workitDir } from "../../packages/workit-core/src/core/workit-paths.mjs";
 import type { EvalCase } from "./cases";
 import { callFacts, type Facts } from "./grade";
-import type { Host } from "./isolation";
+import { claudeSignIn, type Host } from "./isolation";
 
 // ------------------------------------------------------------ spellings
 
@@ -263,10 +267,6 @@ const callClass = (tool: string, input: Record<string, unknown>): PathClass | nu
   return classes.length === 0 ? null : (RANK.find((each) => classes.includes(each)) ?? "system");
 };
 
-/** A host's or a hook's refusal by its text: Workit's or the host's words, no file content. */
-const DENIAL =
-  /^(?:PreToolUse:\S+ hook (?:blocking )?error|Permission denied: \w+$|Claude requested permissions)/u;
-
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (Array.isArray(content))
@@ -309,9 +309,15 @@ const scrubClaude = (lines: (Json | null)[], known: Known): void => {
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
       const call = known.calls.get(block.tool_use_id);
       const kind = calls.get(block.tool_use_id) ?? resolved ?? (known.bounded ? null : "unbounded");
-      // A refused call never ran; a result already removed keeps its marker and facts.
-      if (!kind || call?.denied || "facts" in block || DENIAL.test(textOf(block.content))) continue;
-      block.content = marker(kind, block.content);
+      // A result already removed keeps its marker and facts.
+      if (!kind || "facts" in block) continue;
+      const refusal = call?.refusal ?? null;
+      const text = textOf(block.content);
+      // The host's own words and nothing else: the call never ran.
+      if (refusal?.whole && refusal.kept === text) continue;
+      // Words only the result itself vouches for: they stay, what follows them goes.
+      const words = refusal && refusal.kept !== "" && text.startsWith(refusal.kept);
+      block.content = `${words ? `${refusal.kept}\n` : ""}${marker(kind, block.content)}`;
       block.facts = call?.facts ?? ({} satisfies Facts);
       if ("tool_use_result" in event) event.tool_use_result = marker(kind, event.tool_use_result);
     }
@@ -332,8 +338,8 @@ const scrubOpencode = (lines: (Json | null)[], known: Known): void => {
     if (!kind || "facts" in state) continue;
     const before = JSON.stringify([state.output, state.error]);
     if (state.output !== undefined) state.output = marker(kind, state.output);
-    // A refusal is the host's words: the call never ran.
-    if (state.error !== undefined && !DENIAL.test(textOf(state.error)))
+    // The host's bare permission sentence and nothing else: the call never ran.
+    if (state.error !== undefined && !(call?.refusal?.whole && call.refusal.kept === state.error))
       state.error = marker(kind, state.error);
     if (JSON.stringify([state.output, state.error]) !== before)
       state.facts = call?.facts ?? ({} satisfies Facts);
@@ -357,8 +363,10 @@ export type Scrub = {
 
 /**
  * Both hosts' transcripts: a removed result keeps only its path class, its
- * byte length and the grader's answers about its text. A refused call's
- * result (it never ran) and every input stay.
+ * byte length and the grader's answers about its text. Every input stays,
+ * and of a refused call's result what the host's own evidence says are the
+ * host's words. A line that is not an event (a JSON object) is dropped, and
+ * a closing `scrub` event says how many lines and bytes went.
  */
 export const scrubOutsideReads = (transcript: string, { bounded, spec }: Scrub): string => {
   const raw = transcript.split("\n");
@@ -374,14 +382,25 @@ export const scrubOutsideReads = (transcript: string, { bounded, spec }: Scrub):
   const known = { calls: callFacts(transcript, spec), bounded };
   if (lines.some((line) => typeof line?.sessionID === "string")) scrubOpencode(lines, known);
   else scrubClaude(lines, known);
-  return raw
-    .map((line, at) => {
-      const event = lines[at];
-      if (!event) return line;
+  const removed = { lines: 0, bytes: 0 };
+  const out = raw.flatMap((line, at) => {
+    const event = lines[at];
+    if (event) {
       const after = JSON.stringify(event);
-      return after === before[at] ? line : after;
-    })
-    .join("\n");
+      return [after === before[at] ? line : after];
+    }
+    if (line.trim() === "") return [line];
+    removed.lines += 1;
+    removed.bytes += Buffer.byteLength(line);
+    return [];
+  });
+  if (removed.lines > 0)
+    out.splice(
+      out.findLastIndex((line) => line.trim() !== "") + 1,
+      0,
+      JSON.stringify({ type: "scrub", removed }),
+    );
+  return out.join("\n");
 };
 
 // ------------------------------------------------------------ the private set
@@ -392,7 +411,8 @@ export type PrivateKind =
   | "git user name"
   | "git user email"
   | "home path"
-  | "host credential";
+  | "host credential"
+  | "account id";
 export type PrivateSet = Map<string, PrivateKind>;
 
 /** Workit's own vocabulary (enums, presets, model names, default branches): public, never a leak. */
@@ -589,12 +609,8 @@ const stringsIn = (value: unknown, into: Set<string>): void => {
   else if (record(value)) for (const each of Object.values(value as Json)) stringsIn(each, into);
 };
 
-/**
- * The secrets of an OpenCode db's `credential` rows: their `value` column
- * (the provider key; ids and labels are not secrets), or every column of a
- * table without one. None when the file or the table is missing.
- */
-const credentialRows = (file: string): unknown[] => {
+/** An OpenCode db's `credential` rows; none when the file or the table is missing. */
+const credentialRows = (file: string): Json[] => {
   if (!existsSync(file)) return [];
   try {
     const db = new Database(file, { readonly: true });
@@ -602,12 +618,7 @@ const credentialRows = (file: string): unknown[] => {
       const table = db
         .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential'")
         .get();
-      return table
-        ? db
-            .query<Json, []>('SELECT * FROM "credential"')
-            .all()
-            .flatMap((row) => ("value" in row ? [row.value] : Object.values(row)))
-        : [];
+      return table ? db.query<Json, []>('SELECT * FROM "credential"').all() : [];
     } finally {
       db.close();
     }
@@ -620,8 +631,9 @@ const credentialRows = (file: string): unknown[] => {
 /**
  * The credentials a host's login under `home` holds now, in memory only:
  * every string value of CREDENTIAL_FLOOR+ characters in its login files (each
- * word of one that is not JSON) and in its db's `credential` rows. A login
- * file that exists but cannot be read throws PrivateSetUnreadable.
+ * word of one that is not JSON) and in the `value` column of its db's
+ * `credential` rows (the provider key; every column of a table without one).
+ * A login file that exists but cannot be read throws PrivateSetUnreadable.
  */
 export const hostCredentials = (home: string, host: Host): string[] => {
   const found = new Set<string>();
@@ -634,8 +646,48 @@ export const hostCredentials = (home: string, host: Host): string[] => {
       for (const word of text.split(/\s+/u)) found.add(word);
     }
   }
-  for (const rel of LOGIN[host].dbs) stringsIn(credentialRows(path.join(home, rel)), found);
+  for (const rel of LOGIN[host].dbs)
+    for (const row of credentialRows(path.join(home, rel)))
+      stringsIn("value" in row ? row.value : Object.values(row), found);
   return [...found].filter((value) => value.length >= CREDENTIAL_FLOOR);
+};
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+
+/**
+ * Whether a value seeded into a world identifies the account: an e-mail
+ * address; a string of 32+ characters (a UUID is 36, a hashed user id 64,
+ * while the plan, tier, role, install and version words beside them stop at
+ * about 22, so no ordinary word is refused); or one of 20+ under a key that
+ * says id (a database row id).
+ */
+const isAccountId = (key: string, value: unknown): value is string =>
+  typeof value === "string" &&
+  (EMAIL.test(value) || value.length >= 32 || (value.length >= 20 && /(?:id|uuid)$/iu.test(key)));
+
+/**
+ * The account ids a host's sign-in state under `home` holds now, in memory
+ * only: for Claude Code the keys a world's copy of `.claude.json` keeps
+ * (isolation.ts `claudeSignIn`) and everything under `oauthAccount`, which
+ * the host may fetch back into its world (the e-mail address); for OpenCode
+ * the other columns of its db's `credential` rows.
+ */
+export const accountIds = (home: string, host: Host): string[] => {
+  const found = new Set<string>();
+  const note = (entries: [string, unknown][]): void => {
+    for (const [key, value] of entries) if (isAccountId(key, value)) found.add(value);
+  };
+  if (host === "claude-code") {
+    const state = record(readJson(path.join(home, ".claude.json")));
+    if (state) {
+      note(Object.entries(claudeSignIn(state)));
+      note(Object.entries(record(state.oauthAccount) ?? {}));
+    }
+  }
+  for (const rel of LOGIN[host].dbs)
+    for (const row of credentialRows(path.join(home, rel)))
+      note(Object.entries(row).filter(([column]) => column !== "value"));
+  return [...found];
 };
 
 /** A variable whose name says it holds a secret: a key, a token, a secret, a password. */

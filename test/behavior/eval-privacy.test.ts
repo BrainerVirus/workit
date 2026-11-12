@@ -19,6 +19,7 @@ import path from "node:path";
 import { loadCases, type EvalCase } from "@/scripts/eval/cases";
 import { grade } from "@/scripts/eval/grade";
 import {
+  accountIds,
   committedLeaks,
   envCredentials,
   hostCredentials,
@@ -138,7 +139,19 @@ test("Claude Code: an outside-world Read, Bash and Grep keep only the path class
     claudeCall("i1", "Read", { file_path: "<world>/config/workspaces.json" }),
     claudeResult("i1", "1\t{}"),
     claudeCall("d1", "Edit", { file_path: "~/.config/workit/workspaces.json" }),
-    claudeResult("d1", "PreToolUse:Edit hook error: workit config guard: ask the user"),
+    JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "d1",
+            content: "PreToolUse:Edit hook error: workit config guard: ask the user",
+            is_error: true,
+          },
+        ],
+      },
+    }),
   ].join("\n");
   const lines = scrubOutsideReads(transcript, BOUNDED)
     .split("\n")
@@ -153,7 +166,10 @@ test("Claude Code: an outside-world Read, Bash and Grep keep only the path class
   expect(result(3)).toStartWith("<outside-world file: host config, ");
   expect(result(5)).toStartWith("<outside-world file: system, ");
   expect(result(7)).toBe("1\t{}");
-  expect(result(9)).toStartWith("PreToolUse:Edit hook error");
+  // A blocking hook leaves no flag of its own: only its fixed opening words stay.
+  expect(result(9)).toMatch(
+    /^PreToolUse:Edit hook error\n<outside-world file: real config, \d+ bytes>$/u,
+  );
   expect(lines.map((line) => JSON.stringify(line)).join("\n")).not.toContain("acme-example");
 });
 
@@ -447,7 +463,8 @@ const caseOf = (id: string): EvalCase => {
 /** The failing rules of a grade with the call and pattern each names, short of the result line a detail quotes. */
 const rulesOf = (transcript: string, spec: EvalCase): string[] =>
   grade(transcript, spec).failures.map(
-    (failure) => `${failure.rule}: ${failure.detail.split(" was refused: ")[0]?.slice(0, 80)}`,
+    (failure) =>
+      `${failure.rule}: ${failure.detail.split(/ was refused: | repeats failed call /u)[0]?.slice(0, 80)}`,
   );
 
 /** Every regime a run is stored under: reads bounded by the kernel, or by nothing. */
@@ -504,7 +521,7 @@ test("a wrapped write Workit's guard refused passes before the scrub and after i
   // Claude Code names the guard in the refusal; OpenCode records a bare permission error.
   const refusal: Record<Host, string> = {
     "claude-code": "workit config guard: this file is yours to change; ask the user to run it",
-    opencode: "Permission denied: bash",
+    opencode: "Permission denied: shell",
   };
   for (const host of HOSTS)
     for (const bounded of REGIMES) {
@@ -616,11 +633,15 @@ test("with nothing bounding a host's reads, no call that ran keeps its result, w
     const stored = scrubOutsideReads(raw, { bounded: false, spec: null });
     expect(stored, host).not.toContain("acme-example");
     expect(stored.match(/<outside-world file: [\w ]+, \d+ bytes>/gu), host).toHaveLength(
-      ran.length + 1,
+      ran.length + 2,
     );
     expect(stored, host).toContain("<outside-world file: unbounded, ");
     for (const step of ran) expect(stored, host).toContain(JSON.stringify(step.input.command));
-    expect(stored, host).toContain("push through workit git push");
+    // A blocking hook's refusal keeps its fixed opening words on Claude Code; OpenCode has no such form.
+    expect(stored, host).not.toContain("push through workit git push");
+    expect(stored.includes("PreToolUse:Bash hook error\\n<outside-world file: "), host).toBe(
+      host === "claude-code",
+    );
   }
   const denied = runOf(
     "opencode",
@@ -628,7 +649,7 @@ test("with nothing bounding a host's reads, no call that ran keeps its result, w
       {
         tool: "Bash",
         input: { command: UNDECIDABLE[0] },
-        result: "Permission denied: bash",
+        result: "Permission denied: shell",
         denied: true,
       },
     ],
@@ -779,4 +800,238 @@ test("the world's own login paths are host config: a call that names one loses i
       expect(stored.match(/<outside-world file: host config, \d+ bytes>/gu), where).toHaveLength(3);
       expect(stored.match(/"facts":\{\}/gu), where).toHaveLength(3);
     }
+});
+
+// ------------------------------------------------------------ a refusal is kept on evidence, never on its words
+
+const SECRETDATA = "SECRETDATA-acme-example";
+const HOOK_WORDS = "PreToolUse:Bash hook error:";
+const ASK_WORDS = "Claude requested permissions to use Bash, but you haven't granted it yet.";
+
+test("a result that only opens with a refusal's words is removed like any other, on both hosts and in both regimes (verdict mwdj8c0v)", () => {
+  const failing = (result: string): Step => ({
+    tool: "Bash",
+    input: { command: "cat ~/x" },
+    result,
+    failed: true,
+  });
+  const steps: Step[] = [
+    // The verifier's reproductions: the model prints the words itself, then the file.
+    {
+      tool: "Bash",
+      input: { command: `echo '${HOOK_WORDS}'; cat ~/x` },
+      result: `${HOOK_WORDS}\n${SECRETDATA}`,
+    },
+    {
+      tool: "Bash",
+      input: { command: `echo "${ASK_WORDS}"; cat ~/x` },
+      result: `${ASK_WORDS}\n${SECRETDATA}`,
+    },
+    // A command that exits non-zero with output: an error, not a refusal.
+    failing(`Exit code 1\n${SECRETDATA}`),
+    // The same words as an error (OpenCode's `state.error`; a forged Claude Code one), in two lines and in one.
+    failing(`${HOOK_WORDS}\n${SECRETDATA}`),
+    failing(`${HOOK_WORDS} ${SECRETDATA}`),
+    failing(`${ASK_WORDS} ${SECRETDATA}`),
+    // Words that name another tool, and a permission error with a word of the model's.
+    failing(`PreToolUse:Edit hook error: ${SECRETDATA}`),
+    failing(`Permission denied: ${SECRETDATA}`),
+    failing("Permission denied: secretdataexample"),
+  ];
+  const spec: EvalCase = {
+    id: "c",
+    source: "test",
+    tier: "smoke",
+    prompt: "p",
+    expect: { forbid: [{ tool: "Bash", pattern: "cat", denied: false, why: "a read ran" }] },
+  };
+  eachStored(steps, "done", spec, (raw, stored, where) => {
+    expect(stored, where).not.toContain("SECRETDATA");
+    expect(stored, where).not.toContain("secretdataexample");
+    expect(rulesOf(stored, spec), where).toEqual(rulesOf(raw, spec));
+  });
+});
+
+test("a refusal the host flags itself stays whole; one known only by its fixed words keeps those words and nothing after them", () => {
+  const reason = "Workit asks you to approve: ap_abcdefgh (youtrack-write)";
+  const spec: EvalCase = {
+    id: "c",
+    source: "test",
+    tier: "smoke",
+    prompt: "p",
+    expect: {
+      require: [
+        { tool: "Bash", pattern: "tool", denied: true, result: "approve", why: "it asked" },
+      ],
+    },
+  };
+  for (const bounded of REGIMES) {
+    // Claude Code's `permission_denied` event names the call: the result is the hook's reason.
+    const flagged = runOf(
+      "claude-code",
+      [{ tool: "Bash", input: { command: "tool $X" }, result: reason, denied: true }],
+      "done",
+    );
+    expect(scrubOutsideReads(flagged, { bounded, spec }), `flagged ${bounded}`).toBe(flagged);
+    // A blocking hook (exit 2) leaves `is_error` and its opening words, which name the call's own tool.
+    const words = "PreToolUse:Bash hook error: workit: ask the user to approve it";
+    const blocked = runOf(
+      "claude-code",
+      [{ tool: "Bash", input: { command: "tool $X" }, result: words, failed: true }],
+      "done",
+    );
+    const stored = scrubOutsideReads(blocked, { bounded, spec });
+    expect(stored, `blocked ${bounded}`).toContain(
+      `"content":"PreToolUse:Bash hook error\\n<outside-world file: unresolved, ${words.length} bytes>"`,
+    );
+    expect(stored, `blocked ${bounded}`).not.toContain("ask the user to approve it");
+    expect(rulesOf(blocked, spec), `blocked ${bounded}`).toEqual([]);
+    expect(rulesOf(stored, spec), `blocked ${bounded}`).toEqual([]);
+    // OpenCode's bare permission error is the whole error and names a permission it knows.
+    const bare = runOf(
+      "opencode",
+      [
+        {
+          tool: "Bash",
+          input: { command: "tool $X" },
+          result: "Permission denied: shell",
+          denied: true,
+        },
+      ],
+      "done",
+    );
+    expect(scrubOutsideReads(bare, { bounded, spec }), `bare ${bounded}`).toBe(bare);
+  }
+});
+
+test("every committed transcript keeps its grade when scrubbed in either regime: hook denials, host denials and declined asks among them", () => {
+  const kinds = { event: 0, blocked: 0, bare: 0 };
+  let graded = 0;
+  for (const dir of readdirSync(RESULTS))
+    for (const name of readdirSync(path.join(RESULTS, dir)).filter((each) =>
+      each.endsWith(".transcript.jsonl"),
+    )) {
+      const spec = CASES.find(
+        (each) => each.id === name.replace(/(?:\.run\d+)?\.transcript\.jsonl$/u, ""),
+      );
+      if (!spec) continue;
+      const raw = readFileSync(path.join(RESULTS, dir, name), "utf8");
+      kinds.event += raw.match(/"subtype":"permission_denied"/gu)?.length ?? 0;
+      kinds.blocked += raw.match(/"content":"PreToolUse:\w+ hook error/gu)?.length ?? 0;
+      kinds.bare += raw.match(/"error":"Permission denied: \w+"/gu)?.length ?? 0;
+      graded += 1;
+      for (const bounded of REGIMES) {
+        const stored = scrubOutsideReads(raw, { bounded, spec });
+        const where = `${dir}/${name} bounded=${bounded}`;
+        expect(
+          grade(stored, spec).failures.map((failure) => failure.rule),
+          where,
+        ).toEqual(grade(raw, spec).failures.map((failure) => failure.rule));
+        expect(scrubOutsideReads(stored, { bounded, spec }), where).toBe(stored);
+      }
+    }
+  // The corpus holds each kind of refusal, so the property is not vacuous.
+  expect(graded).toBeGreaterThan(50);
+  expect(kinds.event).toBeGreaterThan(0);
+  expect(kinds.blocked).toBeGreaterThan(0);
+  expect(kinds.bare).toBeGreaterThan(0);
+});
+
+test("a line of a host's output that is not an event is not stored; the transcript says how much went", () => {
+  for (const host of HOSTS) {
+    const run = runOf(host, [{ tool: "Bash", input: { command: "ls" }, result: "ok" }], "done");
+    const lines = run.split("\n");
+    const raw = [lines[0], `${SECRETDATA} printed raw`, ...lines.slice(1), "[1,2]", ""].join("\n");
+    for (const bounded of REGIMES) {
+      const stored = scrubOutsideReads(raw, { bounded, spec: null });
+      expect(stored, host).not.toContain("SECRETDATA");
+      expect(stored, host).toContain('{"type":"scrub","removed":{"lines":2,"bytes":');
+      for (const line of stored.split("\n").filter(Boolean)) expect(line, host).toStartWith("{");
+      expect(scrubOutsideReads(stored, { bounded, spec: null }), host).toBe(stored);
+      expect(grade(stored, { id: "c", source: "t", tier: "smoke", prompt: "p" }).calls).toBe(1);
+    }
+  }
+});
+
+// ------------------------------------------------------------ account ids
+
+// Invented values: no real account id is read into a test.
+const USER_ID = `${"f".repeat(60)}0123`;
+const ACCOUNT_UUID = "00000000-aaaa-4bbb-8ccc-dddddddddddd";
+const ORG_UUID = "11111111-aaaa-4bbb-8ccc-eeeeeeeeeeee";
+const EMAIL = "ada@acme-example.invalid";
+const ROW_ID = "cred_0123456789abcdefghij";
+
+const claudeState = (extra: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    userID: USER_ID,
+    installMethod: "native",
+    lastOnboardingVersion: "2.1.30",
+    numStartups: 12,
+    oauthAccount: {
+      accountUuid: ACCOUNT_UUID,
+      organizationUuid: ORG_UUID,
+      billingType: "stripe_subscription",
+      userRateLimitTier: "default_claude_max_20x",
+      organizationRole: "admin",
+      ...extra,
+    },
+    projects: {},
+  });
+
+test("the ids a world's sign-in state keeps are account ids; the plan, tier and role words beside them are not", () => {
+  const home = loginHome();
+  writeFileSync(path.join(home, ".claude.json"), claudeState());
+  expect(accountIds(home, "claude-code").toSorted()).toEqual(
+    [USER_ID, ACCOUNT_UUID, ORG_UUID].toSorted(),
+  );
+  // What the host may fetch back into its world's copy: the account's e-mail address.
+  writeFileSync(
+    path.join(home, ".claude.json"),
+    claudeState({ emailAddress: EMAIL, displayName: "Ada Example" }),
+  );
+  const fetched = accountIds(home, "claude-code");
+  expect(fetched).toContain(EMAIL);
+  // A name is an ordinary word: only the git identity of the private set covers one.
+  for (const word of [
+    "Ada Example",
+    "stripe_subscription",
+    "default_claude_max_20x",
+    "admin",
+    "native",
+    "2.1.30",
+  ])
+    expect(fetched).not.toContain(word);
+
+  const db = new Database(path.join(home, ".local", "share", "opencode", "opencode.db"));
+  db.run(
+    "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT)",
+  );
+  db.run("INSERT INTO credential VALUES (?, 'opencode-go', ?, ?)", [ROW_ID, EMAIL, ZEN_KEY]);
+  db.run("INSERT INTO credential VALUES ('c2', 'opencode', 'Default', 'short')");
+  db.close();
+  expect(accountIds(home, "opencode").toSorted()).toEqual([ROW_ID, EMAIL].toSorted());
+  expect(accountIds(loginHome(), "claude-code")).toEqual([]);
+  expect(accountIds(loginHome(), "opencode")).toEqual([]);
+});
+
+test("a call that prints the world's sign-in state without naming it keeps its result when reads are confined; the refusal knows the ids", () => {
+  const home = loginHome();
+  writeFileSync(path.join(home, ".claude.json"), claudeState());
+  const set = new Map(accountIds(home, "claude-code").map((id) => [id, "account id" as const]));
+  const step: Step = {
+    tool: "Bash",
+    input: {
+      command: `python3 -c "import os;print(open(os.environ['HOME']+'/.claude.json').read())"`,
+    },
+    result: JSON.stringify({ userID: USER_ID, oauthAccount: { accountUuid: ACCOUNT_UUID } }),
+  };
+  for (const host of HOSTS) {
+    const confined = scrubOutsideReads(runOf(host, [step], "done"), { bounded: true, spec: null });
+    // The kernel allows the world's own login and no word of the command names it.
+    expect(confined, host).toContain(ACCOUNT_UUID);
+    expect(privateKinds(confined, set), host).toEqual(["account id"]);
+    const open = scrubOutsideReads(runOf(host, [step], "done"), { bounded: false, spec: null });
+    expect(privateKinds(open, set), host).toEqual([]);
+  }
 });
