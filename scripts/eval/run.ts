@@ -27,11 +27,18 @@ import {
   writeOpencodeConfig,
   type Provider,
 } from "./opencode";
+import {
+  isolateHome,
+  linkLogin,
+  permitsShellWrappers,
+  probe,
+  selfCheck,
+  type Host,
+} from "./isolation";
 import { makeWorld, promptFor, type World } from "./scaffold";
 import { accountHome, guardFor, restore, snapshot, tripDetail, type Guard } from "./tripwire";
 
 const REPO = path.resolve(import.meta.dir, "..", "..");
-type Host = "claude-code" | "opencode";
 const PLUGINS: Record<Host, string> = {
   "claude-code": path.join(REPO, "packages", "workit-claude-code"),
   opencode: path.join(REPO, "packages", "workit-opencode"),
@@ -85,6 +92,8 @@ type RunResult = {
   timedOut: boolean;
   usage: Usage;
   grade: Grade;
+  /** The world failed the isolation self-check: the case never started, and the run failed. */
+  refused?: "isolation";
   /** The run changed a real guarded file (tripwire.ts): put back, and the run failed. */
   outsideWrite?: { restored: string[]; added: string[] };
 };
@@ -170,6 +179,7 @@ export const childEnv = (world: World, binDir: string): Record<string, string> =
       continue;
     env[key] = value;
   }
+  isolateHome(env, world.home);
   env.WORKIT_STATE_DIR = world.state;
   env.WORKIT_CONFIG_DIR = world.config;
   if (world.workspace) env[EVAL_WORLD_ENV] = world.dir;
@@ -261,6 +271,31 @@ const readOnlyCdHook = (input: string): string => {
 };
 
 const HOOK_FLAG = "--read-only-cd-hook";
+const PROBE_FLAG = "--isolation-probe";
+
+/**
+ * Link the host's login into the world HOME; a case that permits a shell
+ * wrapper starts only after the world passes the isolation self-check.
+ */
+const prepare = (
+  spec: EvalCase,
+  opts: Options,
+  world: World,
+  env: Record<string, string>,
+): string | null => {
+  linkLogin(world.home, opts.host, opts.realHome);
+  if (!permitsShellWrappers(spec, spec.allowedTools ?? DEFAULT_TOOLS)) return null;
+  const check = selfCheck(world.dir, world.repo, env, [
+    process.execPath,
+    import.meta.path,
+    PROBE_FLAG,
+  ]);
+  return check.ok
+    ? null
+    : `the case permits a shell wrapper and the world failed the isolation self-check: ${check.outside.join("; ")}`;
+};
+
+const REFUSED = { transcript: "", exit: null, timedOut: false, limit: null };
 const benchSettings = JSON.stringify({
   hooks: {
     PreToolUse: [
@@ -348,9 +383,13 @@ type Options = {
   limits: NonNullable<RunResult["limits"]>;
   /** The real config and state files the tripwire guards. */
   guard: Guard;
+  /** The account home the host's login is linked from. */
+  realHome: string;
 };
 
 type Attempt = {
+  /** The world failed the isolation self-check, so the case never started. */
+  refused?: string;
   transcript: string;
   exit: number | null;
   timedOut: boolean;
@@ -395,13 +434,10 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
         spec.allowedTools ?? DEFAULT_TOOLS,
         opts.pluginDir,
       );
-      const run = attempt(
-        spec,
-        opts,
-        opencodeArgs(provider),
-        opencodeEnv(childEnv(world, CLI_BIN), config, world),
-        world,
-      );
+      const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
+      const refused = prepare(spec, opts, world, env);
+      if (refused) return { ...REFUSED, refused };
+      const run = attempt(spec, opts, opencodeArgs(provider), env, world);
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
     } finally {
       rmSync(world.dir, { recursive: true, force: true });
@@ -416,14 +452,11 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
 const runClaude = (spec: EvalCase, opts: Options): Attempt => {
   const world = makeWorld(spec);
   try {
+    const env = childEnv(world, path.join(opts.pluginDir, "bin"));
+    const refused = prepare(spec, opts, world, env);
+    if (refused) return { ...REFUSED, refused };
     return {
-      ...attempt(
-        spec,
-        opts,
-        claudeArgs(spec, opts.model, opts.pluginDir),
-        childEnv(world, path.join(opts.pluginDir, "bin")),
-        world,
-      ),
+      ...attempt(spec, opts, claudeArgs(spec, opts.model, opts.pluginDir), env, world),
       limit: null,
     };
   } finally {
@@ -453,8 +486,12 @@ const runCase = (
   const transcript = path.join(dir, `${base}.transcript.jsonl`);
   writeFileSync(transcript, run.transcript);
   const skipped =
-    trip === null && opts.host === "opencode" && (run.provider === undefined || run.limit !== null);
+    trip === null &&
+    !run.refused &&
+    opts.host === "opencode" &&
+    (run.provider === undefined || run.limit !== null);
   const graded = grade(run.transcript, spec);
+  if (run.refused) graded.failures.unshift({ rule: "isolation", detail: run.refused });
   if (trip)
     graded.failures.unshift({
       rule: "outside_write",
@@ -474,7 +511,8 @@ const runCase = (
     exit: run.exit,
     timedOut: run.timedOut,
     usage: usageOf(run.transcript),
-    grade: skipped || trip ? { ...graded, pass: false } : graded,
+    grade: skipped || trip || run.refused ? { ...graded, pass: false } : graded,
+    ...(run.refused ? { refused: "isolation" as const } : {}),
     ...(trip ? { outsideWrite: trip } : {}),
   };
   writeJson(path.join(dir, `${base}.json`), result);
@@ -596,7 +634,7 @@ const replay = (
       }
       // A limited run was never graded; re-grading its stub could turn it into a pass.
       // An outside write fails the run whatever its transcript says.
-      if (stored.skipped || stored.outsideWrite) continue;
+      if (stored.skipped || stored.outsideWrite || stored.refused) continue;
       const fresh = grade(readFileSync(path.join(dir, file), "utf8"), spec);
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
@@ -618,6 +656,10 @@ const USAGE =
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
 
 export const main = (argv: string[], print: (text: string) => void = console.log): number => {
+  if (argv[0] === PROBE_FLAG) {
+    print(JSON.stringify(probe()));
+    return 0;
+  }
   if (argv[0] === HOOK_FLAG) {
     const decision = readOnlyCdHook(readFileSync(0, "utf8"));
     if (decision) print(decision);
@@ -638,8 +680,8 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       bin: { type: "string" },
       "plugin-dir": { type: "string" },
       "timeout-s": { type: "string", default: "300" },
-      // Test seam: guard this home's config and state instead of the account's.
-      "guard-home": { type: "string" },
+      // Test seam: the account home whose Workit files are guarded and whose host login is linked.
+      "real-home": { type: "string" },
       results: { type: "string", default: path.join(REPO, "evals", "results") },
       "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
       help: { type: "boolean", default: false },
@@ -689,9 +731,10 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     results,
     providers: host === "opencode" ? providersFor(values.model) : [],
     limits: [],
-    guard: values["guard-home"]
-      ? guardFor(path.resolve(values["guard-home"]))
+    guard: values["real-home"]
+      ? guardFor(path.resolve(values["real-home"]))
       : guardFor(accountHome(), process.env),
+    realHome: path.resolve(values["real-home"] ?? accountHome()),
   };
   const selected = selectCases(cases, tier, values.cases?.split(",").filter(Boolean));
   const version = workitVersion(host);

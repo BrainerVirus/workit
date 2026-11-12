@@ -131,6 +131,9 @@ beforeEach(() => {
     path.join(root, "results"),
     "--cases-dir",
     cases,
+    // The tripwire guards, and the login is linked from, a fake real home (#822).
+    "--real-home",
+    path.join(root, "home"),
   ];
 });
 
@@ -274,6 +277,7 @@ test("Given a parent shell elsewhere, Then the OpenCode child's PWD is the world
     state: "/w/state",
     config: "/w/config",
     bin: "/w/bin",
+    home: "/w/home",
   };
   const env = opencodeEnv(
     {

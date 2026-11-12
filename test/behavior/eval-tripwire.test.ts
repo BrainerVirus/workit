@@ -129,7 +129,7 @@ const runBench = (write: boolean, lines: string[]): number => {
       path.join(root, "results"),
       "--cases-dir",
       cases,
-      "--guard-home",
+      "--real-home",
       home,
     ],
     (text) => lines.push(text),

@@ -16,6 +16,8 @@ export type World = {
   bin: string;
   /** The case gave the world a workspace: the runner sets WORKIT_EVAL_WORLD. */
   workspace?: boolean;
+  /** The world's HOME (isolation.ts): empty but for the host's login links. */
+  home: string;
 };
 
 const git = (cwd: string, ...args: string[]): void => {
@@ -61,11 +63,13 @@ esac
 
 export const makeWorld = (spec: EvalCase): World => {
   const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), `workit-eval-${spec.id}-`)));
-  const [repo, state, config, bin] = ["repo", "state", "config", "bin"].map((name) => {
-    const sub = path.join(dir, name);
-    mkdirSync(sub);
-    return sub;
-  }) as [string, string, string, string];
+  const [repo, state, config, bin, home] = ["repo", "state", "config", "bin", "home"].map(
+    (name) => {
+      const sub = path.join(dir, name);
+      mkdirSync(sub);
+      return sub;
+    },
+  ) as [string, string, string, string, string];
   writeFileSync(path.join(bin, "ytrack"), FAKE_YTRACK);
   chmodSync(path.join(bin, "ytrack"), 0o755);
   const scaffold = spec.scaffold ?? {};
@@ -90,6 +94,7 @@ export const makeWorld = (spec: EvalCase): World => {
       config,
       bin,
       workspace: Boolean(scaffold.workspace),
+      home,
     };
   }
   git(repo, "add", "-A");
@@ -115,7 +120,16 @@ export const makeWorld = (spec: EvalCase): World => {
   writeAll(worktree ?? repo, scaffold.dirty);
 
   writeConfig(dir, config, spec);
-  return { dir, repo, worktree, state, config, bin, workspace: Boolean(scaffold.workspace) };
+  return {
+    dir,
+    repo,
+    worktree,
+    state,
+    config,
+    bin,
+    workspace: Boolean(scaffold.workspace),
+    home,
+  };
 };
 
 const writeConfig = (dir: string, config: string, spec: EvalCase): void => {

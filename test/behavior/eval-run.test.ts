@@ -114,7 +114,7 @@ beforeEach(() => {
     "--cases-dir",
     cases,
     // The tripwire guards a fake real home, never the account's (#822).
-    "--guard-home",
+    "--real-home",
     path.join(root, "home"),
   ];
 });
