@@ -51,7 +51,7 @@ const parse = (argv: readonly string[]): Args | string => {
 export async function run(argv: string[], io: Io): Promise<number> {
   if (argv.every((arg) => arg === "--json")) {
     const agent = agentSessionVar(io.env);
-    if (agent) return emit(io, agentRefusal(agent, "workit uninstall"));
+    if (agent) return refuseAgent(io, agent, "workit uninstall");
     if (io.json)
       return emit(
         io,
@@ -68,15 +68,26 @@ export async function run(argv: string[], io: Io): Promise<number> {
   return uninstallHosts(args, io);
 }
 
-/** An agent never removes Workit: it hands the user the command for their own terminal. */
-const agentRefusal = (agent: string, command: string) =>
-  fail(
+/**
+ * An agent never removes Workit: one line handing the user the command for
+ * their own terminal, before any plan is read or printed.
+ */
+const refuseAgent = (io: Io, agent: string, command: string): number => {
+  const refusal = fail(
     "blocked",
     `an agent cannot run this (${agent} is set): hand the user \`${command}\` to run in their own terminal`,
     { unblock: command },
   );
+  if (io.json) return emit(io, refusal);
+  io.stderr(`workit: ${refusal.error}\n`);
+  return 3;
+};
 
 async function uninstallHosts(args: Args, io: Io): Promise<number> {
+  const command = `workit uninstall --hosts=${args.hosts.join(",")} --yes`;
+  const agent = agentSessionVar(io.env);
+  // An agent never gets an uninstall to run, even one with nothing to remove.
+  if (agent && !args.preview) return refuseAgent(io, agent, command);
   const paths: UninstallPaths = {
     env: io.env,
     cwd: io.cwd,
@@ -106,10 +117,6 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
   }
   const kept = configKeptNote(io.env);
   const summary = { hosts: args.hosts, actions, kept };
-  const command = `workit uninstall --hosts=${args.hosts.join(",")} --yes`;
-  const agent = agentSessionVar(io.env);
-  // An agent never gets an uninstall to run, even one with nothing to remove.
-  if (agent && !args.preview) return emit(io, { ...agentRefusal(agent, command), data: summary });
   if (actions.length === 0)
     return emit(io, ok({ ...summary, removed: [] }), () => [
       `Workit is not installed on ${args.hosts.join(", ")}: nothing to remove.`,
