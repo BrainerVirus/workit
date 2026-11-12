@@ -288,10 +288,20 @@ const hasTaskStore = (cwd) => {
   }
 };
 
-/** Text that may name the issued-session registries (the guard in write-gate.ts judges it). */
-const mentionsIssued = (text) => {
+/**
+ * Text that may name a state registry or the config dir's workspaces.json
+ * (the guards in write-gate.ts judge it): the config dir by its last two
+ * parts, so `~/.config/workit` and `$HOME/...` match too.
+ */
+const mentionsGuarded = (text) => {
   const flat = (value) => value.replaceAll("\\", "/").toLowerCase();
-  return /issued/i.test(text) || flat(text).includes(flat(stateDir()));
+  const tail = (dir) => flat(dir).split("/").slice(-2).join("/");
+  return (
+    /issued|workspaces\.json/i.test(text) ||
+    [stateDir(), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some((part) =>
+      flat(text).includes(flat(part)),
+    )
+  );
 };
 
 // A standing order the lead added or cleared since this agent last looked
@@ -449,7 +459,7 @@ const fastAllow = (() => {
       );
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (budgetDue) return false;
-    if (mentionsIssued(JSON.stringify(value.tool_input ?? {}))) return false;
+    if (mentionsGuarded(JSON.stringify(value.tool_input ?? {}))) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
     // An implementer's writes are confined to its Workit worktree, a verifier's
     // or reviewer's to its scratch dir, with or without a task store
