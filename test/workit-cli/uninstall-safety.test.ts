@@ -1,7 +1,9 @@
 // `workit uninstall --hosts` safety (#832 review): host lists merge, an agent
 // is refused before any plan output, an unreadable file stops its host before
 // anything changes, a failure lists what was and was not removed, a changed
-// Workit-owned file is kept, and a user file keeps its own formatting.
+// Workit-owned file is kept, a user file keeps its own formatting, and every
+// preview row is what `--yes` then reports (a host left with only its entry in
+// the permission record still has that row).
 // Every run uses a temp home passed through io.env.
 import { afterAll, expect, test } from "bun:test";
 import {
@@ -150,7 +152,8 @@ test("D2a: Given Cursor with an invalid mcp.json and a clean Codex, When --yes r
   expect(text).toContain("cursor left untouched");
   expect(text).toContain(path.join(home, ".cursor/mcp.json"));
   expect(text).toContain(`removed ${path.join(home, ".codex/rules/workit.rules")}`);
-  expect(text).toContain("workit uninstall --hosts=cursor,codex --yes");
+  expect(text).toContain("then run workit uninstall --hosts=cursor --yes");
+  expect(text).not.toContain("--hosts=cursor,codex --yes");
   const json = io(home, {}, true);
   expect(await uninstall(["--hosts=cursor", "--yes"], json.io)).toBe(1);
   const envelope = lastJson(json.out());
@@ -186,7 +189,7 @@ test("D2b: Given a host command that fails, When --yes runs, Then it ran first, 
   expect(readFileSync(settings, "utf8")).toBe(before);
   const text = run.all();
   expect(text).toContain("failed");
-  expect(text).toContain("claude: plugin store locked");
+  expect(text).toContain("(claude: plugin store locked)");
   expect(text).toContain(`not-run ${settings}`);
   expect(text).toContain("workit uninstall --hosts=claude-code --yes");
 });
@@ -200,11 +203,13 @@ test("O1: Given Workit's Codex rules file with a line the user added, When unins
   const changed = readFileSync(rules, "utf8");
   const preview = io(home);
   expect(await uninstall(["--hosts=codex", "--preview"], preview.io)).toBe(0);
-  expect(preview.all()).toContain("changed since Workit wrote it");
+  expect(preview.all()).toContain(`${rules} differs from what this Workit version writes`);
   const run = io(home);
   expect(await uninstall(["--hosts=codex", "--yes"], run.io)).toBe(0);
   expect(readFileSync(rules, "utf8")).toBe(changed);
-  expect(run.all()).toContain(`skipped ${rules} (${rules} changed since Workit wrote it`);
+  expect(run.all()).toContain(
+    `skipped ${rules} (${rules} differs from what this Workit version writes, so it is kept.`,
+  );
 });
 
 test("O1: Given Workit's Codex rules file unchanged, When --yes runs, Then it is deleted", async () => {
@@ -248,4 +253,176 @@ test("O3: Given a compact settings.json and a tab-indented CRLF mcp.json, When -
   expect(readFileSync(mcp, "utf8")).toBe(
     '{\r\n\t"mcpServers": {\r\n\t\t"mine": {\r\n\t\t\t"command": "m"\r\n\t\t}\r\n\t}\r\n}\r\n',
   );
+});
+
+type Row = { host: string; kind: string; path: string; detail: string };
+type Outcome = { host: string; path: string; status: string; detail?: string };
+
+/** What `--yes` must report for each preview row: its kind's outcome, and why for a row not removed. */
+const promised = (rows: Row[]) =>
+  rows
+    .map((row) =>
+      JSON.stringify(
+        row.kind === "keep-foreign"
+          ? [row.host, row.path, "skipped", row.detail]
+          : row.kind === "unreadable"
+            ? [row.host, row.path, "failed", row.detail]
+            : [row.host, row.path, "removed"],
+      ),
+    )
+    .toSorted();
+
+const reported = (outcomes: Outcome[]) =>
+  outcomes
+    .map((entry) =>
+      JSON.stringify(
+        entry.status === "removed"
+          ? [entry.host, entry.path, entry.status]
+          : [entry.host, entry.path, entry.status, entry.detail],
+      ),
+    )
+    .toSorted();
+
+/** The rows `--preview --json` lists, then the outcomes `--yes --json` reports. */
+async function previewThenApply(home: string, host: string, env: NodeJS.ProcessEnv = {}) {
+  const preview = io(home, env, true);
+  expect(await uninstall([`--hosts=${host}`, "--preview"], preview.io)).toBe(0);
+  const run = io(home, env, true);
+  const code = await uninstall([`--hosts=${host}`, "--yes"], run.io);
+  return {
+    code,
+    rows: lastJson(preview.out()).data.actions as Row[],
+    outcomes: lastJson(run.out()).data.removed as Outcome[],
+  };
+}
+
+const recordedHosts = (record: string): string[] =>
+  Object.keys(JSON.parse(readFileSync(record, "utf8")).hosts);
+
+test("V1: Given a Codex rules file with a line the user added, When --preview then --yes run, Then each preview row is what --yes reports: the file and its record entry are kept", async () => {
+  const home = path.join(scratch, "codex-kept");
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  expect(await setup(["--hosts=codex", "--no-shell", "--yes"], io(home).io)).toBe(0);
+  const rules = path.join(home, ".codex/rules/workit.rules");
+  writeFileSync(rules, `${readFileSync(rules, "utf8")}# my own rule\n`);
+  const kept = await previewThenApply(home, "codex");
+  expect(kept.code).toBe(0);
+  expect(kept.rows.map((row) => [row.kind, path.basename(row.path)])).toEqual([
+    ["keep-foreign", "workit.rules"],
+    ["keep-foreign", "host-permissions.json"],
+  ]);
+  expect(reported(kept.outcomes)).toEqual(promised(kept.rows));
+  // True whether the user edited it or an older Workit wrote it.
+  expect(kept.rows[0].detail).toContain("differs from what this Workit version writes");
+  expect(kept.rows[0].detail).toContain("`workit upgrade` rewrites it and uninstall then removes");
+  expect(kept.rows[0].detail).toContain("if you added rules, move them out and delete it");
+  const record = kept.rows[1].path;
+  expect(recordedHosts(record)).toEqual(["codex"]);
+  // Nothing in this plan is removed, and neither run says otherwise.
+  const keptPreview = io(home);
+  expect(await uninstall(["--hosts=codex", "--preview"], keptPreview.io)).toBe(0);
+  expect(keptPreview.all()).toContain("would remove nothing");
+  expect(keptPreview.all()).not.toContain("--yes` removes it");
+  const keptRun = io(home);
+  expect(await uninstall(["--hosts=codex", "--yes"], keptRun.io)).toBe(0);
+  expect(keptRun.all()).toContain("Nothing removed.");
+  expect(keptRun.all()).not.toContain("Restart the host sessions");
+
+  // The user deletes the kept file by hand: the record entry is all that is left.
+  rmSync(rules);
+  const text = io(home);
+  expect(await uninstall(["--hosts=codex", "--preview"], text.io)).toBe(0);
+  expect(text.all()).not.toContain("not installed");
+  expect(text.all()).toContain(`codex forget-ownership ${record}`);
+  const cleared = await previewThenApply(home, "codex");
+  expect(cleared.code).toBe(0);
+  expect(cleared.rows.map((row) => [row.kind, row.path])).toEqual([["forget-ownership", record]]);
+  expect(reported(cleared.outcomes)).toEqual(promised(cleared.rows));
+  expect(recordedHosts(record)).toEqual([]);
+  const after = io(home);
+  expect(await uninstall(["--hosts=codex", "--preview"], after.io)).toBe(0);
+  expect(after.all()).toContain("Workit is not installed on codex: nothing to remove.");
+});
+
+test("V2: Given Claude Code and Cursor whose only trace is the permission record, When each is previewed then removed, Then its record entry is listed and cleared", async () => {
+  const home = path.join(scratch, "record-only");
+  for (const dir of [".claude", ".cursor"]) mkdirSync(path.join(home, dir), { recursive: true });
+  expect(await setup(["--hosts=claude-code,cursor", "--no-shell", "--yes"], io(home).io)).toBe(0);
+  // One file deleted by hand, the other cleaned by hand.
+  rmSync(path.join(home, ".claude/settings.json"));
+  writeFileSync(path.join(home, ".cursor/cli-config.json"), '{"mine":true}\n');
+  for (const [host, left] of [
+    ["claude-code", ["cursor"]],
+    ["cursor", []],
+  ] as const) {
+    const run = await previewThenApply(home, host);
+    expect(run.code).toBe(0);
+    expect(run.rows.map((row) => [row.host, row.kind])).toEqual([[host, "forget-ownership"]]);
+    expect(reported(run.outcomes)).toEqual(promised(run.rows));
+    expect(recordedHosts(run.rows[0].path)).toEqual([...left]);
+  }
+  expect(readFileSync(path.join(home, ".cursor/cli-config.json"), "utf8")).toBe('{"mine":true}\n');
+});
+
+test("V3: Given Cursor with an invalid mcp.json, When --preview then --yes run, Then the plan is that file alone, saying Cursor is left untouched, and --yes reports exactly it", async () => {
+  const home = await cursorHome("blocked-rows");
+  const mcp = path.join(home, ".cursor/mcp.json");
+  write(mcp, "{ broken\n");
+  const run = await previewThenApply(home, "cursor");
+  expect(run.code).toBe(1);
+  expect(run.rows.map((row) => [row.kind, row.path])).toEqual([["unreadable", mcp]]);
+  expect(run.rows[0].detail).toContain("cursor is left untouched until then");
+  expect(reported(run.outcomes)).toEqual(promised(run.rows));
+});
+
+test("P1: Given Workit on all five hosts, When each host is previewed then removed, Then the preview rows are exactly the outcomes --yes reports", async () => {
+  if (process.platform === "win32") return; // the fake host is a POSIX shell script
+  const home = await cursorHome("every-host", true);
+  mkdirSync(path.join(home, ".claude"), { recursive: true });
+  expect(await setup(["--hosts=claude-code", "--no-shell", "--yes"], io(home).io)).toBe(0);
+  const plugin = path.join(home, ".claude/plugins/cache/workit/workit/1.0.0");
+  write(
+    path.join(plugin, ".claude-plugin/plugin.json"),
+    JSON.stringify({ name: "workit", repository: "https://github.com/BrainerVirus/workit" }),
+  );
+  write(
+    path.join(home, ".claude/plugins/installed_plugins.json"),
+    JSON.stringify({
+      version: 2,
+      plugins: { "workit@workit": [{ installPath: plugin, version: "1.0.0", scope: "user" }] },
+    }),
+  );
+  const bin = path.join(home, "bin");
+  write(path.join(bin, "claude"), "#!/bin/sh\nexit 0\n");
+  chmodSync(path.join(bin, "claude"), 0o755);
+  write(path.join(home, ".codex/plugins/workit/plugin.json"), "{}\n");
+  write(
+    path.join(home, ".config/opencode/opencode.json"),
+    `${JSON.stringify({ plugins: ["@workit-dev/opencode", "other"] }, null, 2)}\n`,
+  );
+  write(
+    path.join(home, ".pi/config.json"),
+    `${JSON.stringify({ extensions: ["npm:@workit-dev/pi", "npm:mine"] }, null, 2)}\n`,
+  );
+  const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const kinds: Record<string, string[]> = {};
+  for (const host of ["claude-code", "codex", "cursor", "opencode", "pi"]) {
+    const run = await previewThenApply(home, host, env);
+    expect(run.code).toBe(0);
+    expect(reported(run.outcomes)).toEqual(promised(run.rows));
+    kinds[host] = run.rows.map((row) => row.kind);
+  }
+  expect(kinds).toEqual({
+    "claude-code": ["host-command", "edit-json-remove", "forget-ownership"],
+    codex: ["remove-dir", "remove-file", "forget-ownership"],
+    cursor: [
+      "edit-json-remove",
+      "edit-json-remove",
+      "remove-dir",
+      "edit-json-remove",
+      "forget-ownership",
+    ],
+    opencode: ["edit-json-remove"],
+    pi: ["edit-json-remove"],
+  });
 });

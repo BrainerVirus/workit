@@ -158,7 +158,8 @@ test("malformed host JSON fails that action and leaves its whole host untouched 
   expect(settingsEntry.status).toBe("failed");
   expect(readFileSync(f.cursorSettings, "utf8")).toBe(broken);
   expect(existsSync(f.cursorPluginDir)).toBe(true);
-  expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("not-run");
+  // The plan for a host with a file it cannot read is that file alone (#832).
+  expect(result.entries.filter((e) => e.host === "cursor")).toEqual([settingsEntry]);
   expect(result.skipped).toEqual(["cursor"]);
 });
 
@@ -182,8 +183,9 @@ test("existing-but-unreadable settings.json plans installed and applies failed u
     const result = applyUninstall(plan, f);
     expect(result.ok).toBe(false);
     expect(result.entries.find((e) => e.path === f.cursorSettings)!.status).toBe("failed");
-    // The host is left untouched (#832 D2).
-    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("not-run");
+    // The host is left untouched and its plan names that file alone (#832 D2).
+    expect(cur.actions.map((a) => a.path)).toEqual([f.cursorSettings]);
+    expect(readFileSync(f.cursorMcp, "utf8")).toContain("workit");
     expect(existsSync(f.cursorPluginDir)).toBe(true);
   } finally {
     chmodSync(f.cursorSettings, 0o644);

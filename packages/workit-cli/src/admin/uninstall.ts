@@ -61,7 +61,7 @@ export type UninstallAction =
   | { kind: "remove-completion"; path: string; detail: string }
   /** A ytrack skill directory Workit installed (its own record, exact path only). */
   | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost }
-  /** A foreign file at the launcher's place: reported, never touched. */
+  /** A path left in place (a foreign or changed file, a record still in use): reported, never touched. */
   | { kind: "keep-foreign"; path: string; detail: string }
   /** Drop the host's entry from Workit's permission ownership record (state dir). */
   | { kind: "forget-ownership"; path: string; detail: string; permissionHost: PermissionHost }
@@ -385,9 +385,13 @@ const codexRulesState = (file: string): "unchanged" | "changed" | "unreadable" =
   }
 };
 
-/** What uninstall says about a Codex rules file someone changed: kept, with the manual step. */
+/** Why a Codex rules file is kept: true of the user's own edits and of an older Workit's text alike. */
 const codexRulesKept = (file: string): string =>
-  `${file} changed since Workit wrote it: kept; move any rules of your own out of it, then delete it`;
+  `${file} differs from what this Workit version writes, so it is kept. If an older Workit wrote it, \`workit upgrade\` rewrites it and uninstall then removes it; if you added rules, move them out and delete it.`;
+
+/** A kept Codex rules file keeps its entry in the permission record. */
+const CODEX_RECORD_KEPT =
+  "kept: codex's entry in Workit's permission record stays while its rules file is kept";
 
 /** A file the plan cannot read: named with the reason, never its content. */
 const unreadable = (file: string, existing: Existing): UninstallAction[] =>
@@ -567,20 +571,28 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     );
   }
 
-  // The ownership record names what Workit added; it is forgotten after the block goes.
+  // The ownership record names what Workit added to this file. A host's entry
+  // is forgotten once its block or rules file goes, or is already gone (the
+  // entry may be all that is left of the host); it stays with a kept rules file.
   const owned = readOwnership(permissionPathsOf(paths)).hosts;
+  const record = ownershipFile(permissionPathsOf(paths));
   for (const [plan, host, file] of [
     [claude, "claude-code", res.claudeSettings],
     [cursor, "cursor", res.cursorCliConfig],
     [codex, "codex", res.codexRules],
   ] as const) {
-    if (!owned[host] || !plan.actions.some((action) => action.path === file)) continue;
-    plan.actions.push({
-      kind: "forget-ownership",
-      path: ownershipFile(permissionPathsOf(paths)),
-      detail: `forget ${host}'s entry in Workit's permission record`,
-      permissionHost: host,
-    });
+    if (owned[host]?.file !== file) continue;
+    const kept = plan.actions.some((a) => a.kind === "keep-foreign" && a.path === file);
+    plan.actions.push(
+      kept
+        ? { kind: "keep-foreign", path: record, detail: CODEX_RECORD_KEPT }
+        : {
+            kind: "forget-ownership",
+            path: record,
+            detail: `forget ${host}'s entry in Workit's permission record`,
+            permissionHost: host,
+          },
+    );
   }
 
   // The ytrack skill directories Workit recorded installing, and only those,
@@ -606,6 +618,17 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
             host: install.host,
           },
     );
+  }
+
+  // A host with a file that cannot be read is left untouched: its plan is
+  // those files alone, so the preview lists no removal apply would not do.
+  for (const plan of Object.values(byHost)) {
+    const blocked = plan.actions.filter((action) => action.kind === "unreadable");
+    if (blocked.length > 0)
+      plan.actions = blocked.map((action) => ({
+        ...action,
+        detail: `${action.detail}: ${plan.host} is left untouched until then`,
+      }));
   }
 
   const cliActions: UninstallAction[] = planOwnedRemoval(cliEnvOf(paths), paths.platform).map(
@@ -760,7 +783,7 @@ const applyClaudeUninstall = (
     : runHostCommand(step, { home, env });
   return result.exitCode === 0
     ? { status: "removed", detail: action.detail }
-    : { status: "failed", detail: result.stderr || `exit ${result.exitCode}` };
+    : { status: "failed", detail: result.stderr.trim() || `exit ${result.exitCode}` };
 };
 
 /** Runs one reviewed action. */
@@ -778,11 +801,11 @@ function applyAction(
     status = "failed";
     detail = action.detail;
   } else if (action.kind === "forget-ownership") {
-    // A Codex rules file kept above (changed by someone) keeps its record.
+    // The plan keeps the record with a kept rules file; this covers one changed after the plan.
     const kept = action.permissionHost === "codex" && existsSync(res.codexRules);
     if (!kept) forgetOwnership(action.permissionHost, permissionPathsOf(paths));
     status = kept ? "skipped" : "removed";
-    detail = kept ? "kept: the Codex rules file is still there" : undefined;
+    detail = kept ? CODEX_RECORD_KEPT : undefined;
   } else if (action.kind === "remove-completion") {
     const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
     status = removed.includes(action.path) || !existsSync(action.path) ? "removed" : "failed";

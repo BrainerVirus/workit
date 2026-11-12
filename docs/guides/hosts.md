@@ -88,7 +88,11 @@ the ytrack skill Workit installed. `--preview` prints each file, config key
 command (`claude plugin uninstall …`) and changes nothing; `--yes` applies it.
 A JSON file of yours is rewritten with only Workit's keys removed, in its own
 indent and line endings (an object written on one line inside it comes back one
-entry per line). A Workit file you changed is kept and named.
+entry per line). Workit's Codex rules file is kept and named when it differs
+from what this Workit version writes: `workit upgrade` rewrites an older
+Workit's file, and rules you added are yours to move out before you delete it.
+A host whose file cannot be read is left untouched and the preview lists that
+file alone.
 In an agent session only `--preview` runs: `--yes` and the picker are refused
 with `workit uninstall --hosts=<h,…> --yes` to run yourself. With no flags it
 opens the interactive picker.

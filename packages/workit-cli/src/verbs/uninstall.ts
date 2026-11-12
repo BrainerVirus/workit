@@ -129,11 +129,13 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
       `Workit is not installed on ${args.hosts.join(", ")}: nothing to remove.`,
     ]);
   say(`${kept}\n`);
+  // Kept and unreadable rows remove nothing: the preview must not promise a removal.
+  const removes = actions.some((a) => a.kind !== "keep-foreign" && a.kind !== "unreadable");
   if (args.preview)
-    return emit(
-      io,
-      ok({ ...summary, removed: [] }),
-      () => `Preview: nothing changed. \`${command}\` removes it, run in your own terminal.`,
+    return emit(io, ok({ ...summary, removed: [] }), () =>
+      removes
+        ? `Preview: nothing changed. \`${command}\` removes it, run in your own terminal.`
+        : `Preview: nothing changed. \`${command}\` would remove nothing: each row above says why.`,
     );
   if (!args.yes) {
     if (process.stdin.isTTY !== true)
@@ -165,6 +167,12 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
   ];
   if (!result.ok) {
     if (!io.json) for (const line of lines) io.stdout(`${line}\n`);
+    // Run again names only the hosts not done yet.
+    const pending = args.hosts.filter((host) =>
+      result.entries.some(
+        (e) => e.host === host && (e.status === "failed" || e.status === "not-run"),
+      ),
+    );
     return emit(
       io,
       fail(
@@ -173,9 +181,17 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
           .filter((e) => e.status === "failed")
           .map((e) => `${e.path}: ${e.detail ?? "failed"}`)
           .join("; "),
-        { data, unblock: `fix what failed above, then run ${command}` },
+        {
+          data,
+          unblock: `fix what failed above, then run workit uninstall --hosts=${pending.join(",")} --yes`,
+        },
       ),
     );
   }
-  return emit(io, ok(data), () => [...lines, "Restart the host sessions to unload Workit."]);
+  return emit(io, ok(data), () => [
+    ...lines,
+    result.entries.some((e) => e.status === "removed")
+      ? "Restart the host sessions to unload Workit."
+      : "Nothing removed.",
+  ]);
 }
