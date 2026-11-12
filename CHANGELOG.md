@@ -1059,6 +1059,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - Retrying `workit git commit -- <paths>` after a pre-commit hook rewrote and refused the paths commits the rewritten files instead of failing.
 - A redundant `cd` before `workit --cwd <dir>` is dropped only for an absolute dir, so the rewrite never changes where a relative command runs.
 - A raw `git commit` onto a protected branch is denied and names `workit git branch --kind feature --slug <slug>`; a raw `cd <worktree> && git add … && git commit …` is denied with the exact `workit git --cwd <worktree> commit -m … -- <paths>` call to run instead.
+- An agent that runs `npx -y @workit-dev/cli <verb> …` where `workit` is on PATH now gets the same `workit <verb> …` call: rewritten on Claude Code, OpenCode and Pi, and denied with that exact call on Codex and Cursor, so the allow rules match and a weak model is not stopped by a prompt
 
 ### Removed
 
