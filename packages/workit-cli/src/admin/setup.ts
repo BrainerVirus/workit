@@ -452,7 +452,7 @@ const cursorHealthy = (res: ResolvedApply, opts: HostOnlyInstallOptions): boolea
     root === null &&
     wanted &&
     wanted !== "latest" &&
-    (JSON.parse(readFileSync(installed, "utf8")) as { version?: unknown }).version !== wanted
+    readConfigRecord(installed)?.version !== wanted
   )
     return false;
   return registered(cursorSettingsRegistration(res)) && registered(cursorMcpRegistration(res));

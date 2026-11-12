@@ -522,6 +522,8 @@ const planRepairs = (
             // Pi: only when `pi list` showed no installed package for the entry.
             (host !== "pi" || (source.kind === "floating" && !source.installedVersion)),
         );
+  // The first registration of each host names the repaired entry.
+  const selectors = new Map(installed.toReversed().map((source) => [source.host, source.selector]));
   for (const host of INSTALLER_REPAIRS) {
     if (!hosts.includes(host) || conflicted.has(host) || !registered(host)) continue;
     const repair = planHostOnlyInstall(host, {
@@ -549,7 +551,7 @@ const planRepairs = (
     }
     plan.entries.push({
       host,
-      selector: installed.find((source) => source.host === host)?.selector ?? `@workit-dev/${host}`,
+      selector: selectors.get(host) ?? `@workit-dev/${host}`,
       latest: registryVersion(run, `@workit-dev/${host}`) ?? "latest",
       commands: repair.preview.mutations.flatMap((mutation) =>
         mutation.type === "install-host" ? mutation.commands : [],
