@@ -95,10 +95,6 @@ const COVERED: Array<[string, string]> = [
     "workit youtrack time X-1 --minutes 45 --date 2026-10-06",
   ],
   [
-    "ytrack work-item add X-1 --duration 30m --meeting --text Planning",
-    "workit youtrack meeting X-1 --minutes 30 --text Planning",
-  ],
-  [
     "ytrack issue comment X-1 --body 'Fixed in #42'",
     "workit youtrack note X-1 --markdown 'Fixed in #42'",
   ],
@@ -107,10 +103,7 @@ const COVERED: Array<[string, string]> = [
     "ytrack issue create --project APP --summary 'Crash on start'",
     "workit youtrack create --project APP --summary 'Crash on start'",
   ],
-  [
-    "ytrack --host acme.youtrack.cloud issue comment X-1 --body=hi",
-    "workit youtrack note X-1 --markdown hi",
-  ],
+  ["ytrack --debug issue comment X-1 --body=hi", "workit youtrack note X-1 --markdown hi"],
 ];
 
 /** Writes no workit verb covers: Claude Code asks, the other hosts deny. */
@@ -157,7 +150,6 @@ const WRAPPED = [
   `timeout 30 ${comment}`,
   `sudo -u me ${comment}`,
   `nohup ${comment}`,
-  `xargs ${comment} <<< x`,
   `workit check --name yt -- ${comment}`,
   `workit check --name yt --shell -- '${comment}'`,
 ];
@@ -209,9 +201,12 @@ test("G the default ask, W the write is wrapped, chained, piped or respelled, T 
         "`workit youtrack note X-1 --markdown hi`",
       );
     }
-  // Piped text: the deny names the file form.
+  // xargs appends its input as operands: judged, but no workit call carries them.
+  for (const [host, run] of Object.entries(HOSTS))
+    expect(run(`xargs ${comment} <<< x`).kind, host).not.toBe("pass");
+  // Piped text: no workit call carries it, so the user decides.
   expect(claude(`echo hi | ytrack issue comment X-1 --body-file -`).reason).toContain(
-    "workit youtrack note X-1 --file <file with the comment>",
+    "cannot carry text read from standard input",
   );
 });
 

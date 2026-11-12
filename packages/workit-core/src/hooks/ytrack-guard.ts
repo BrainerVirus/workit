@@ -28,7 +28,7 @@ const valueOf = (args: readonly string[], ...flags: string[]): string | undefine
 
 /** ytrack's `--duration` in whole minutes (`90`, `1h30m`, `1.5h`, `2 hours 15 minutes`), or null. */
 const minutesOf = (text = ""): number | null => {
-  if (/^\d+$/.test(text.trim())) return Number(text);
+  if (/^\d+$/.test(text.trim())) return Number(text) > 0 ? Number(text) : null;
   let total = 0;
   const rest = text.replace(
     /(\d+(?:\.\d+)?)\s*(h|hours?|m|mins?|minutes?)(?![a-z])/gi,
@@ -73,69 +73,140 @@ const GROUPS: Record<string, string> = {
 const ASKS = /^(?:post|put|patch|delete)$/i;
 const BODY = /^(?:-[fF]|--(?:field|raw-field|input))(?:=|$)|^-[fF]./;
 
-/** For one `ytrack` argv (past the binary): whether it writes, and the `workit youtrack` call that asks first. */
-const classify = (args: readonly string[]): { workit: string | null } | null => {
-  // Past the global `--host <h>`.
+/** Options that change only what ytrack prints: a mapped write may carry them. */
+const QUIET = /^--(?:debug|no-color|json|jq)$/;
+
+/**
+ * The ytrack options each `workit youtrack` verb carries faithfully, by the
+ * key it maps them to (ytrack skill: `--body`, `--body-file`, `--duration`,
+ * `--text`, `--date`, `-p`/`--project`, `-s`/`--summary`, `--description`,
+ * `--description-file`; `-b` is `--body` in ytrack's own `issue comment --help`).
+ */
+const CARRIES: Record<"note" | "time" | "create", Record<string, string>> = {
+  note: { "--body": "body", "-b": "body", "--body-file": "file" },
+  time: { "--duration": "duration", "--text": "text", "--date": "date" },
+  create: {
+    "--project": "project",
+    "-p": "project",
+    "--summary": "summary",
+    "-s": "summary",
+    "--description": "description",
+    "--description-file": "file",
+  },
+};
+
+type Mapped = { workit: string; gap?: undefined } | { workit: null; gap: string };
+const gap = (part: string): Mapped => ({ workit: null, gap: part });
+
+/** `--flag value`, or `--flag=value` for a value starting with `-` (the workit CLI reads that as a flag). */
+const pair = (flag: string, value: string) =>
+  value.startsWith("-") ? `${flag}=${quote(value)}` : `${flag} ${quote(value)}`;
+
+/**
+ * The `workit youtrack note|time|create` call that makes exactly the write
+ * `args` (past the binary) makes, or the first part it cannot carry: an option
+ * it has no flag for, a value the shell expands at run time, a missing or
+ * non-id issue, text read from standard input, a duration in days.
+ */
+const mapWrite = (verb: keyof typeof CARRIES, args: readonly string[]): Mapped => {
+  const values: Record<string, string> = {};
+  const operands: string[] = [];
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at];
+    if (!arg.startsWith("-") || arg === "-") {
+      operands.push(arg);
+      continue;
+    }
+    const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
+    const flag = eq > 0 ? arg.slice(0, eq) : arg;
+    const value = eq > 0 ? arg.slice(eq + 1) : VALUE.has(flag) ? args[++at] : undefined;
+    if (QUIET.test(flag)) continue;
+    const key = CARRIES[verb][flag];
+    if (!key || value === undefined || key in values) return gap(`\`${flag}\``);
+    if (/[$`]/.test(value))
+      return gap(`the value of \`${flag}\`, which the shell expands when it runs`);
+    values[key] = value;
+  }
+  // The group and verb words come first.
+  const [issue, ...more] = operands.slice(2);
+  const v = values;
+  if (verb === "create") {
+    if (issue !== undefined) return gap(`the operand \`${issue}\``);
+    if (v.project === undefined || v.summary === undefined)
+      return gap("a missing --project or --summary");
+    if (v.description !== undefined && v.file !== undefined)
+      return gap("both --description and --description-file");
+    if (v.file === "-") return gap("text read from standard input");
+    return {
+      workit: [
+        "workit youtrack create",
+        pair("--project", v.project),
+        pair("--summary", v.summary),
+        v.description === undefined ? "" : pair("--description", v.description),
+        v.file === undefined ? "" : pair("--file", v.file),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  }
+  if (issue === undefined || more.length || !/^[A-Z]+-\d+$/.test(issue))
+    return gap("the issue, which must be one id like ABC-123");
+  if (verb === "note") {
+    if ((v.body === undefined) === (v.file === undefined))
+      return gap("a comment that needs exactly one of --body or --body-file");
+    if (v.file === "-") return gap("text read from standard input");
+    if (v.body !== undefined && !v.body.trim()) return gap("an empty --body");
+    return {
+      workit: `workit youtrack note ${issue} ${
+        v.body === undefined ? pair("--file", v.file) : pair("--markdown", v.body)
+      }`,
+    };
+  }
+  const minutes = minutesOf(v.duration);
+  if (minutes === null)
+    return gap(`\`--duration ${v.duration ?? ""}\`, which is no whole number of minutes`);
+  if (v.date !== undefined && !/^(?:auto|\d{4}-\d{2}-\d{2})$/.test(v.date))
+    return gap(`\`--date ${v.date}\``);
+  return {
+    workit: [
+      `workit youtrack time ${issue} --minutes ${minutes}`,
+      v.text === undefined ? "" : pair("--text", v.text),
+      v.date === undefined ? "" : pair("--date", v.date),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+};
+
+const UNCOVERED: Mapped = { workit: null, gap: "" };
+
+/** For one `ytrack` argv (past the binary): null when it does not write, else the call that asks first or the gap. */
+const classify = (args: readonly string[]): Mapped | null => {
   if (asksHelp(args)) return null;
-  const rest = args;
   // The words that are no option or option value: the group, its verb, then
   // operands, past global flags such as `--host <h>`, `--debug`, `--no-color`.
   const words = args.filter((arg, at) => !arg.startsWith("-") && !VALUE.has(args[at - 1] ?? ""));
   const group = GROUPS[words[0] ?? ""];
-  const verb = words[1];
-  const issue = words[2] ?? "<ISSUE>";
+  const verb = words[1] ?? "";
   if (group === "api") {
-    const method = valueOf(rest, "-X", "--method") ?? rest.find((a) => /^-X./.test(a))?.slice(2);
-    return (method ? ASKS.test(method) : rest.some((a) => BODY.test(a))) ? { workit: null } : null;
+    const method =
+      valueOf(args, "-X", "--method") ??
+      args
+        .find((a) => /^-X./.test(a))
+        ?.slice(2)
+        .replace(/^=/, "");
+    return (method ? ASKS.test(method) : args.some((a) => BODY.test(a))) ? UNCOVERED : null;
   }
-  if (group === "work-item" && /^(?:add|create)$/.test(verb ?? "")) {
-    const minutes = minutesOf(valueOf(rest, "--duration")) ?? "<minutes>";
-    const text = valueOf(rest, "--text");
-    const date = valueOf(rest, "--date");
-    const meeting = rest.includes("--meeting");
-    return {
-      workit: [
-        `workit youtrack ${meeting ? "meeting" : "time"} ${issue} --minutes ${minutes}`,
-        text !== undefined || meeting ? `--text ${quote(text ?? "<what the meeting was>")}` : "",
-        date === undefined ? "" : `--date ${quote(date)}`,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    };
-  }
-  if (group === "work-item" && /^(?:edit|update|delete|rm)$/.test(verb ?? ""))
-    return { workit: null };
+  if (group === "work-item" && /^(?:add|create)$/.test(verb)) return mapWrite("time", args);
+  if (group === "work-item") return /^(?:edit|update|delete|rm)$/.test(verb) ? UNCOVERED : null;
   if (group !== "issue") return null;
-  if (verb === "comment") {
-    const body = valueOf(rest, "--body");
-    const file = valueOf(rest, "--body-file");
-    return {
-      workit: `workit youtrack note ${issue} ${
-        body !== undefined
-          ? `--markdown ${quote(body)}`
-          : `--file ${file && file !== "-" ? quote(file) : "<file with the comment>"}`
-      }`,
-    };
-  }
-  if (verb === "create") {
-    const description = valueOf(rest, "--description", "-d");
-    const file = valueOf(rest, "--description-file");
-    return {
-      workit: [
-        `workit youtrack create --project ${quote(valueOf(rest, "--project", "-p") ?? "<P>")}`,
-        `--summary ${quote(valueOf(rest, "--summary", "-s") ?? "<summary>")}`,
-        description !== undefined ? `--description ${quote(description)}` : "",
-        file && file !== "-" ? `--file ${quote(file)}` : "",
-      ]
-        .filter(Boolean)
-        .join(" "),
-    };
-  }
-  if (verb === "command") return rest.includes("--dry-run") ? null : { workit: null };
-  return /^(?:edit|update|delete|rm)$/.test(verb ?? "") ? { workit: null } : null;
+  if (verb === "comment") return mapWrite("note", args);
+  if (verb === "create") return mapWrite("create", args);
+  if (verb === "command") return args.includes("--dry-run") ? null : UNCOVERED;
+  return /^(?:edit|update|delete|rm)$/.test(verb) ? UNCOVERED : null;
 };
 
-type YtrackWrite = { command: string; workit: string | null };
+type YtrackWrite = Mapped & { command: string };
 
 const SHELLS = /^(?:sh|bash|zsh|dash|ksh|ash|mksh|yash|fish)$/;
 /** Nested scripts read this deep; deeper ones that name ytrack are refused. */
@@ -228,18 +299,23 @@ export const ytrackGate = (
   }
   if (!writes.length || writesMode(cwd) === "auto") return null;
   const calls = writes.flatMap((write) => (write.workit ? [`\`${write.workit}\``] : []));
-  const bare = writes.filter((write) => !write.workit).map((write) => `\`${write.command}\``);
+  const bare = writes
+    .filter((write) => !write.workit)
+    .map(
+      (write) =>
+        `\`${write.command}\` (${write.gap ? `Workit cannot carry ${write.gap} into a workit youtrack call` : "no workit youtrack verb covers it"})`,
+    );
   if (!calls.length && ask)
     return {
       kind: "ask",
-      reason: `${bare.join(", ")} writes to YouTrack and no workit youtrack verb covers it: the user decides this call (#780).`,
+      reason: `${bare.join(", ")} writes to YouTrack: the user decides this call (#780).`,
     };
   const why = `A raw ytrack write posts to YouTrack without the user's yes (#780).`;
   const run = calls.length
     ? ` Run ${calls.join(", then ")} instead: it asks the user first. When it answers approval_needed, run exactly the \`workit approve <id>\` it names, now, with nothing around it (no 2>&1, pipe or echo), so the host asks the user; then rerun the workit call once.`
     : "";
   const user = bare.length
-    ? ` No workit youtrack verb covers ${bare.join(", ")}: ask the user, and if they agree they run it in their own terminal.`
+    ? ` For ${bare.join(", ")}, the user decides: ask the user, and if they agree they run it in their own terminal.`
     : "";
   return {
     kind: "deny",
