@@ -1,7 +1,9 @@
 // `workit setup` and `workit uninstall --hosts` refuse from inside an agent
 // session on one shared marker list, so the two cannot drift: an agent that
 // could remove Workit's hooks and permission blocks could remove the guards
-// themselves (#423). `grant` refuses on at least the same markers.
+// themselves (#423). The user-only verbs (grant, approve, ledger void, release
+// notes approve) keep their own marker set: there WORKIT_SESSION_ID names the
+// acting session, which a user's own terminal may carry.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -90,8 +92,9 @@ for (const [host, marker] of Object.entries(MARKERS)) {
     );
     expect(envelope.unblock).toBe("workit uninstall");
   });
-
-  test(`Given ${marker} (${host}), Then grant's agent check refuses too`, () => {
-    expect(agentMarker({ [marker]: "1" })).toBe(marker);
-  });
 }
+
+test("Given only a session id, Then the user-only verbs' agent check does not refuse (release notes approve, #832)", () => {
+  for (const marker of ["WORKIT_SESSION_ID", "OPENCODE_SESSION_ID", "PI_SESSION_ID"])
+    expect(agentMarker({ [marker]: "1" })).toBeUndefined();
+});
