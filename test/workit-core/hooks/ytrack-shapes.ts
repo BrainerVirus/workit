@@ -4,7 +4,7 @@
 // launchers' pre-filter must route every shape the gate decides.
 import { KEYWORDS, WRAPPERS } from "@/packages/workit-core/src/hooks/raw-git";
 
-export const W = "ytrack issue comment X-1 --body hi";
+const W = "ytrack issue comment X-1 --body hi";
 const args = "issue comment X-1 --body hi";
 
 /** Shapes a POSIX shell runs. */
