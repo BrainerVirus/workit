@@ -70,6 +70,9 @@ const inside = (dir: string, file: string): boolean => {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 };
 
+/** Whatever `workit` the agent's PATH finds. */
+const AGENT_CLI = "workit";
+
 /** The `--isolation-probe` side: the real resolvers in this process, and what the `workit` on PATH says. */
 export const probe = (): Record<string, string> => {
   const paths: Record<string, string> = {
@@ -87,7 +90,7 @@ export const probe = (): Record<string, string> => {
     ["grant", "show", "--json"],
     ["workspace", "list", "--json"],
   ]) {
-    const run = spawnSync("workit", args, { encoding: "utf8", timeout: 30_000 });
+    const run = spawnSync(AGENT_CLI, args, { encoding: "utf8", timeout: 30_000 });
     const text = `${run.stdout ?? ""}${run.stderr ?? ""}`;
     const label = `workit ${args.join(" ")}`;
     if (run.status !== 0) {

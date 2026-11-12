@@ -3,7 +3,6 @@
 // after it, any change is put back byte for byte and the run fails as
 // outside_write. Isolation (isolation.ts) keeps a run away from them; this
 // catches what isolation cannot stop, such as a write to an absolute path.
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -23,15 +22,18 @@ const CONFIG_FILES = ["workspaces.json", "workspaces.json.bak", "config.json"];
 const STATE_TREES = ["approvals", "issued", "issued-tokens"];
 
 /**
- * The OS account's home from the account record (getent), never $HOME: under
- * bun `os.userInfo()` follows $HOME, so it cannot tell the real home.
+ * The OS account's home from the account record (/etc/passwd), never $HOME:
+ * under bun `os.userInfo()` follows $HOME, so it cannot tell the real home.
  */
 export const accountHome = (): string => {
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (uid !== null) {
-    const run = spawnSync("getent", ["passwd", String(uid)], { encoding: "utf8", timeout: 5000 });
-    const home = run.status === 0 ? run.stdout.trim().split(":")[5] : undefined;
-    if (home) return home;
+  const uid = typeof process.getuid === "function" ? String(process.getuid()) : null;
+  try {
+    for (const entry of readFileSync("/etc/passwd", "utf8").split("\n")) {
+      const fields = entry.split(":");
+      if (uid !== null && fields[2] === uid && fields[5]) return fields[5];
+    }
+  } catch {
+    // No passwd file (Windows): fall back to the runtime's answer.
   }
   return os.userInfo().homedir;
 };

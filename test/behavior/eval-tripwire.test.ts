@@ -14,7 +14,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/scripts/eval/run";
-import { guardFor, restore, snapshot } from "@/scripts/eval/tripwire";
+import { accountHome, guardFor, restore, snapshot } from "@/scripts/eval/tripwire";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -48,6 +48,18 @@ test("Given a fake real home, Then the guard names its config files and state tr
     path.join(state, "issued-tokens"),
   ]);
   for (const file of [...guard.files, ...guard.trees]) expect(file.startsWith(home)).toBe(true);
+});
+
+test("Given $HOME points elsewhere, Then the guarded account home is still the account record's", () => {
+  const before = accountHome();
+  const saved = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    expect(accountHome()).toBe(before);
+    expect(accountHome()).not.toBe(home);
+  } finally {
+    process.env.HOME = saved;
+  }
 });
 
 test("Given nothing changed, Then restore reports no trip", () => {
