@@ -14,6 +14,18 @@ import {
   type WriteResult,
   type YouTrackBackend,
 } from "./youtrack-backend";
+import {
+  youTrackCommentApproval,
+  youTrackTimeApproval,
+  youTrackWritesMode,
+  withoutMarker,
+} from "./youtrack-writes";
+import {
+  approveLine,
+  consumeApproval,
+  createApprovalRequest,
+  type ApprovalFields,
+} from "../approvals/store";
 
 export const ISSUE_RE = /^[A-Z]+-\d+$/;
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -33,6 +45,8 @@ export type NotApplied = {
   error: string;
   outcome: "not_applied";
   unblock?: string;
+  /** The approval request the user's yes is needed for (youtrack.writes ask). */
+  approval?: string;
 };
 
 export type YouTrackOperations = {
@@ -50,22 +64,41 @@ export const unwrap = (value: LegacyValue) => {
 };
 
 /**
- * A write through ytrack (#263), as the legacy value shape, behind the
- * WORKIT_YT_WRITE gate. A failure that surely did not land (gate, missing
- * ytrack, logged out) stays a not_applied value with its unblock; any other
- * failure throws, so callers report an unknown outcome.
+ * A write through ytrack (#263), as the legacy value shape. It asks first
+ * like `workit youtrack note|time` (#780): with `youtrack.writes` ask (the
+ * default) it consumes the user's yes for `fields`, else records the request
+ * and posts nothing; with `auto` it keeps the WORKIT_YT_WRITE gate. A failure
+ * that surely did not land (no yes, gate, missing ytrack, logged out) stays a
+ * not_applied value with its unblock; any other failure throws, so callers
+ * report an unknown outcome.
  */
 async function ytrackWrite(
+  ask: { cwd: string; fields: ApprovalFields },
   write: (backend: YouTrackBackend) => Promise<WriteResult>,
 ): Promise<LegacyValue> {
-  const gate = youTrackWriteGate(process.env);
-  if (gate)
-    return {
-      ok: false,
-      error: gate.error,
-      outcome: "not_applied",
-      unblock: gate.unblock,
-    };
+  if (youTrackWritesMode(ask.cwd) === "ask") {
+    const session = process.env.WORKIT_SESSION_ID || null;
+    const used = consumeApproval(ask.fields, { session, verb: "youtrack write" });
+    if (!used.ok) {
+      const request = used.request ?? createApprovalRequest(ask.fields, { session });
+      return {
+        ok: false,
+        error: `${used.code}: nothing was posted`,
+        outcome: "not_applied",
+        unblock: approveLine([request.id]),
+        approval: request.id,
+      };
+    }
+  } else {
+    const gate = youTrackWriteGate(process.env);
+    if (gate)
+      return {
+        ok: false,
+        error: gate.error,
+        outcome: "not_applied",
+        unblock: gate.unblock,
+      };
+  }
   const result = await write(youTrackBackend());
   if (result.ok) return unwrap({ ok: true, data: result.data });
   if (result.outcome === "not_applied")
@@ -81,20 +114,33 @@ async function ytrackWrite(
 export const defaultOperations: YouTrackOperations = {
   context: (input) => legacyContext(input as never),
   parseDuration: (text, workspaceRoot) => legacyParseDuration(text, workspaceRoot),
-  postComment: (issueId, markdown) =>
-    ytrackWrite((backend) => backend.addComment(issueId, markdown)),
-  logTime: (input) =>
-    ytrackWrite(async (backend) => {
-      const date = youTrackWorkDateMs(
-        input.dateMs != null ? String(input.dateMs) : String(input.date ?? "auto"),
-      );
-      if ("error" in date) return { ok: false, error: date.error, outcome: "not_applied" };
-      return backend.addWorkItem(String(input.issueId), {
-        minutes: Number(input.minutes),
-        text: typeof input.text === "string" ? input.text : "workit",
-        dateMs: date.data.dateMs,
-      });
-    }),
+  postComment: (issueId, markdown, workspaceRoot) =>
+    ytrackWrite(
+      {
+        cwd: workspaceRoot ?? process.cwd(),
+        // The user approves the text without Workit's marker.
+        fields: youTrackCommentApproval(issueId, withoutMarker(markdown)),
+      },
+      (backend) => backend.addComment(issueId, markdown),
+    ),
+  logTime: async (input) => {
+    const date = youTrackWorkDateMs(
+      input.dateMs != null ? String(input.dateMs) : String(input.date ?? "auto"),
+    );
+    if ("error" in date) return { ok: false, error: date.error, outcome: "not_applied" };
+    const issueId = String(input.issueId);
+    const item = {
+      minutes: Number(input.minutes),
+      text: typeof input.text === "string" ? input.text : "workit",
+    };
+    return ytrackWrite(
+      {
+        cwd: typeof input.workspace_root === "string" ? input.workspace_root : process.cwd(),
+        fields: youTrackTimeApproval(issueId, { ...item, localDate: date.data.localDate }),
+      },
+      (backend) => backend.addWorkItem(issueId, { ...item, dateMs: date.data.dateMs }),
+    );
+  },
 };
 
 type PostInput = {

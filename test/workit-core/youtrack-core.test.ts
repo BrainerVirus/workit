@@ -229,39 +229,60 @@ test("default scripts delegate only to read-only youtrack helpers", () => {
   expect(duration).toBeDefined();
 });
 
-test("Given no WORKIT_YT_WRITE, When a write goes through the default operations, Then it is refused before ytrack runs", async () => {
-  const previous = process.env.WORKIT_YT_WRITE;
-  delete process.env.WORKIT_YT_WRITE;
-  try {
-    const result = await defaultOperations.postComment("NSR-40", "test");
-    expect(result).toMatchObject({ ok: false, outcome: "not_applied" });
-    expect(String(result?.error)).toContain("WORKIT_YT_WRITE");
-  } finally {
-    if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
-    else process.env.WORKIT_YT_WRITE = previous;
-  }
-});
+/** A workspace with `youtrack.writes: auto`, the opt-out that keeps the WORKIT_YT_WRITE gate. */
+const autoWrites = (fn: (root: string) => Promise<void>) => {
+  const config = mkdtempSync(path.join(os.tmpdir(), "wk-yt-auto-"));
+  const previous = process.env.WORKIT_CONFIG;
+  const root = path.join(config, "work");
+  writeFileSync(
+    path.join(config, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [{ name: "w", glob: `${root}/**`, youtrack: { writes: "auto" } }],
+    }),
+  );
+  process.env.WORKIT_CONFIG = config;
+  return fn(root).finally(() => {
+    if (previous === undefined) delete process.env.WORKIT_CONFIG;
+    else process.env.WORKIT_CONFIG = previous;
+    rmSync(config, { recursive: true, force: true });
+  });
+};
 
-test("Given no ytrack, When a gated write goes through the default operations, Then it is not applied and names the ytrack install", async () => {
-  // The preload hides any real ytrack; the write must never reach an instance.
-  expect(process.env.WORKIT_NO_YTRACK).toBe("1");
-  const previous = process.env.WORKIT_YT_WRITE;
-  process.env.WORKIT_YT_WRITE = "1";
-  const workItem = { issueId: "NSR-40", minutes: 5 };
-  try {
-    for (const result of [
-      await defaultOperations.postComment("NSR-40", "test"),
-      await defaultOperations.logTime(workItem),
-    ]) {
+test("Given youtrack.writes auto and no WORKIT_YT_WRITE, When a write goes through the default operations, Then it is refused before ytrack runs", () =>
+  autoWrites(async (root) => {
+    const previous = process.env.WORKIT_YT_WRITE;
+    delete process.env.WORKIT_YT_WRITE;
+    try {
+      const result = await defaultOperations.postComment("NSR-40", "test", root);
       expect(result).toMatchObject({ ok: false, outcome: "not_applied" });
-      expect(String(result?.error)).toContain("ytrack is not on PATH");
-      expect(String(result?.unblock)).toContain("github.com/BrainerVirus/youtrack-cli");
+      expect(String(result?.error)).toContain("WORKIT_YT_WRITE");
+    } finally {
+      if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
+      else process.env.WORKIT_YT_WRITE = previous;
     }
-  } finally {
-    if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
-    else process.env.WORKIT_YT_WRITE = previous;
-  }
-});
+  }));
+
+test("Given youtrack.writes auto and no ytrack, When a gated write goes through the default operations, Then it is not applied and names the ytrack install", () =>
+  autoWrites(async (root) => {
+    // The preload hides any real ytrack; the write must never reach an instance.
+    expect(process.env.WORKIT_NO_YTRACK).toBe("1");
+    const previous = process.env.WORKIT_YT_WRITE;
+    process.env.WORKIT_YT_WRITE = "1";
+    const workItem = { issueId: "NSR-40", minutes: 5, workspace_root: root };
+    try {
+      for (const result of [
+        await defaultOperations.postComment("NSR-40", "test", root),
+        await defaultOperations.logTime(workItem),
+      ]) {
+        expect(result).toMatchObject({ ok: false, outcome: "not_applied" });
+        expect(String(result?.error)).toContain("ytrack is not on PATH");
+        expect(String(result?.unblock)).toContain("github.com/BrainerVirus/youtrack-cli");
+      }
+    } finally {
+      if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
+      else process.env.WORKIT_YT_WRITE = previous;
+    }
+  }));
 
 test("the pre-rename write flag is no alias: it alone leaves YouTrack writes refused", () => {
   // Built at runtime so the no-legacy-name guard keeps the old spelling out of the tree.
