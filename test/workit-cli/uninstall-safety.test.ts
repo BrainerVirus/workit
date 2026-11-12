@@ -233,3 +233,19 @@ test("O2: Given Workit's permission block on Cursor, When the plan is shown, The
   const after = JSON.parse(readFileSync(record?.path ?? "", "utf8"));
   expect(Object.keys(after.hosts)).toEqual(["codex"]);
 });
+
+test("O3: Given a compact settings.json and a tab-indented CRLF mcp.json, When --yes removes Workit's keys, Then each keeps its own layout", async () => {
+  const home = await cursorHome("layout");
+  const settings = path.join(home, ".cursor/settings.json");
+  const mcp = path.join(home, ".cursor/mcp.json");
+  writeFileSync(settings, '{"enabled_plugins":{"workit":true,"mine":true}}');
+  writeFileSync(
+    mcp,
+    '{\r\n\t"mcpServers": {\r\n\t\t"workit": {"command": "w"},\r\n\t\t"mine": {"command": "m"}\r\n\t}\r\n}\r\n',
+  );
+  expect(await uninstall(["--hosts=cursor", "--yes"], io(home).io)).toBe(0);
+  expect(readFileSync(settings, "utf8")).toBe('{"enabled_plugins":{"mine":true}}');
+  expect(readFileSync(mcp, "utf8")).toBe(
+    '{\r\n\t"mcpServers": {\r\n\t\t"mine": {\r\n\t\t\t"command": "m"\r\n\t\t}\r\n\t}\r\n}\r\n',
+  );
+});

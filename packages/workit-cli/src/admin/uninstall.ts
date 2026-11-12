@@ -656,6 +656,19 @@ const canonicalRemoveDirAllowed = (actionPath: string, res: ResolvedUninstall): 
   }
 };
 
+/**
+ * `value` as JSON in `original`'s layout: its indent (spaces or tabs, or none
+ * for a one-line file), line ending and trailing newline. JSON.stringify has
+ * one layout per indent, so an object or list the file wrote on one line
+ * inside an indented file comes back one entry per line.
+ */
+const serializeLike = (original: string, value: unknown): string => {
+  const eol = original.includes("\r\n") ? "\r\n" : "\n";
+  const indent = /\n([ \t]+)\S/u.exec(original)?.[1];
+  const text = JSON.stringify(value, null, indent).replaceAll("\n", eol);
+  return /\r?\n$/u.test(original) ? text + eol : text;
+};
+
 const applyEditJsonRemove = (
   target: string,
   cleaner: JsonCleaner,
@@ -670,7 +683,6 @@ const applyEditJsonRemove = (
   const { next, changed } = cleaner(existing.value);
   // Only-if-changed: byte-preserving when there is nothing to remove.
   if (!changed) return { status: "skipped", detail: "no workit entries present" };
-  const serialized = JSON.stringify(next, null, 2) + "\n";
   // The byte-compare re-read races any external writer; a vanished/unreadable
   // file between the two reads must fail THIS action, not abort the rest.
   let current: string;
@@ -682,6 +694,7 @@ const applyEditJsonRemove = (
       detail: `read failed before write: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+  const serialized = serializeLike(current, next);
   if (current === serialized) {
     return { status: "skipped", detail: "already clean" };
   }
