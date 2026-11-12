@@ -621,6 +621,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `workit pr merge --pr N` works from a checkout that does not have the PR branch: it takes the head from the forge, checks the verdict for it (one recorded in another clone counts) and leaves no ref behind; a head it cannot fetch is refused as `head_unfetched` with the fetch command
 - A changelog with CRLF line endings keeps them when `workit git rebase` or the merge driver merges two Unreleased blocks
 - Claude Code no longer asks about `workit approve <id>` when no id is a live request: the CLI answers `not_found`
 - A verifier or reviewer is pointed at the candidate worktree's `.workit-scratch/` for its probe files, in the brief and in every confinement denial, instead of the lead checkout's

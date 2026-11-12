@@ -33,9 +33,19 @@ import { workspaceTrailers } from "../core/workspaces";
 import { workspaceReleaseTracks } from "../core/release-tracks";
 import { deleteRemoteBranch, stripSessionTrailers } from "../git/ops";
 import { spawnSync } from "node:child_process";
-import { currentBranch, fetchRefs, GIT_TIMEOUTS, remoteRefTip, resolveRef } from "../git/rev";
+import { randomBytes } from "node:crypto";
+import {
+  currentBranch,
+  fetchRefs,
+  GIT_TIMEOUTS,
+  gitNetwork,
+  hasCommit,
+  remoteRefTip,
+  resolveRef,
+} from "../git/rev";
 import {
   appendObserved,
+  branchHead,
   failedVerdictUnblock,
   tamperedUnblock,
   readLedger,
@@ -490,7 +500,8 @@ export type MergeRefusal = {
     | "base_mismatch"
     | "base_red"
     | "ledger_tampered"
-    | "intent_unrecorded";
+    | "intent_unrecorded"
+    | "head_unfetched";
   next?: string;
   blockers?: string[];
   /** base_red: whether the previous base run makes it look like a flake. */
@@ -509,6 +520,85 @@ export type MergeResult =
       /** merge_unverified: the `pr.merged` row (verified:false) written when the forge accepted it. */
       recorded?: { id: string } | { error: string };
     };
+
+type Borrowed = { ok: true; release: () => void } | { ok: false; error: string };
+
+/**
+ * The merge gate reads a PR branch from `refs/heads` or `refs/remotes/origin`
+ * (#311). When this checkout has neither, point the tracking ref at the
+ * forge's head for the gate only, fetching the commit if it is missing, and
+ * remove it on release: the user never gains a ref.
+ */
+function borrowForgeHead(
+  cwd: string,
+  resolved: ResolvedForge,
+  pr: { branch: string; head: string; number: number },
+): Borrowed {
+  const kept: Borrowed = { ok: true, release: () => {} };
+  if (branchHead(cwd, pr.branch) !== null) return kept;
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(pr.head))
+    return { ok: false, error: "the forge head is not a commit id" };
+  const ref = `refs/remotes/origin/${pr.branch}`;
+  const gitAt = (args: string[]) =>
+    spawnSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      timeout: GIT_TIMEOUTS.local,
+      killSignal: "SIGKILL",
+      windowsHide: true,
+    }).status === 0;
+  if (!gitAt(["check-ref-format", ref]))
+    return { ok: false, error: `${pr.branch} is not a valid branch name` };
+  // Only our ref goes: a ref the user fetched meanwhile points elsewhere or is kept.
+  const release = () => void gitAt(["update-ref", "-d", ref, pr.head]);
+  // Create only: an empty old value refuses a ref that appeared meanwhile, and
+  // the gate then reads that ref (a head_mismatch), never one forced over it.
+  const lend = (): Borrowed =>
+    gitAt(["update-ref", ref, pr.head, ""])
+      ? { ok: true, release }
+      : resolveRef(cwd, ref) !== null
+        ? kept
+        : { ok: false, error: `could not point ${ref} at it` };
+  if (hasCommit(cwd, pr.head)) return lend();
+  const pull =
+    resolved.forge.kind === "github"
+      ? `refs/pull/${pr.number}/head`
+      : `refs/merge-requests/${pr.number}/head`;
+  // Fetched into a private ref, never onto the tracking ref; --refmap= stops
+  // git's opportunistic update of refs/remotes/origin/<branch> too.
+  const scratch = `refs/workit/borrow/${process.pid}-${randomBytes(6).toString("hex")}`;
+  let last = "";
+  try {
+    for (const remote of new Set([resolved.baseRemote, "origin"]))
+      for (const source of [pr.head, pull, `refs/heads/${pr.branch}`]) {
+        if (remote.startsWith("-")) continue;
+        const fetched = gitNetwork(
+          cwd,
+          [
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            "--quiet",
+            "--refmap=",
+            remote,
+            `+${source}:${scratch}`,
+          ],
+          GIT_TIMEOUTS.network,
+        );
+        const at = fetched.ok ? resolveRef(cwd, scratch) : null;
+        if (at === pr.head) return lend();
+        if (at) gitAt(["update-ref", "-d", scratch, at]);
+        if (!fetched.ok)
+          last = fetched.timedOut
+            ? `git fetch ${remote} timed out after ${GIT_TIMEOUTS.network} ms`
+            : `git fetch ${remote} failed (unreachable, not authorized, or ref missing)`;
+      }
+  } finally {
+    gitAt(["update-ref", "-d", scratch, pr.head]);
+  }
+  return { ok: false, error: last || `the remote has no commit ${pr.head.slice(0, 12)}` };
+}
 
 const refuse = (error: string, unblock: string, refusal: MergeRefusal): MergeResult => ({
   ok: false,
@@ -855,9 +945,22 @@ export async function mergePullRequest(
   }
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return ledger;
-  // A lower PR of a stack may be covered by the verdict at its top (#334).
-  const check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
-  const gate = prLaneGate(cwd, check, { branch, base: doc.base, head });
+  const borrowed = borrowForgeHead(cwd, resolved, { branch, head, number: doc.number });
+  if (!borrowed.ok)
+    return refuse(
+      `head_unfetched: ${branch} is not in this checkout and ${label}'s head ${head.slice(0, 12)} could not be fetched (${borrowed.error})`,
+      `git fetch origin ${branch}  # then workit pr merge${prFlag} again`,
+      { reason: "head_unfetched" },
+    );
+  let check: ReturnType<typeof checkVerdictsCovered>;
+  let gate: ReturnType<typeof prLaneGate>;
+  try {
+    // A lower PR of a stack may be covered by the verdict at its top (#334).
+    check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
+    gate = prLaneGate(cwd, check, { branch, base: doc.base, head });
+  } finally {
+    borrowed.release();
+  }
   const summary = {
     head: check.head,
     accepted: check.accepted,
@@ -909,13 +1012,17 @@ export async function mergePullRequest(
       );
     verdict = { ...verdict, required: false, accepted: false, verdictId: null, review: "none" };
     unverified = { reason, recorded: String(recorded.value.id) };
-  } else if (!covered && check.head !== head)
+  } else if (!covered && check.head !== head) {
+    // No local branch: the check read a tracking ref, which a fetch moves.
+    const tracked = check.head !== null && resolveRef(cwd, `refs/heads/${branch}`) === null;
     return refuse(
-      `head_mismatch: the verdict check reads ${branch} at ${check.head?.slice(0, 12) ?? "(missing)"} but ${label} is at ${head.slice(0, 12)}`,
-      `git fetch && git switch ${branch} && git merge --ff-only @{u}  # then re-verify that head`,
+      `head_mismatch: the verdict check reads ${tracked ? `origin/${branch} (no local branch)` : branch} at ${check.head?.slice(0, 12) ?? "(missing)"} but ${label} is at ${head.slice(0, 12)}`,
+      tracked
+        ? `git fetch origin ${branch}  # then workit pr merge${prFlag} again`
+        : `git fetch && git switch ${branch} && git merge --ff-only @{u}  # then re-verify that head`,
       { reason: "head_mismatch", verdict: summary },
     );
-  else if (!covered && check.accepted.reasons.includes("ledger_tampered"))
+  } else if (!covered && check.accepted.reasons.includes("ledger_tampered"))
     return refuse(
       `ledger_tampered: a ledger row was edited, removed or moved, so no verdict for ${label} is accepted until it is repaired`,
       tamperedUnblock(cwd),
