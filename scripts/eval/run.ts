@@ -40,14 +40,19 @@ import { makeWorld, promptFor, type World } from "./scaffold";
 import {
   accountHome,
   acquire,
-  armTripwire,
-  checkTripwire,
+  armSnapshot,
+  checkSnapshot,
+  dropJournal,
+  ensureBase,
   guardFor,
-  leftover,
+  inspectJournal,
   release,
+  restoreJournal,
   tripDetail,
   tripwireBase,
+  writeJournal,
   type Guard,
+  type Snapshot,
   type Trip,
 } from "./tripwire";
 
@@ -396,8 +401,10 @@ type Options = {
   limits: NonNullable<RunResult["limits"]>;
   /** The real config and state files the tripwire guards. */
   guard: Guard;
-  /** The tripwire's lock, on-disk snapshot and rescued bytes (tripwire.ts). */
+  /** The tripwire's holders, journal and rescued bytes (tripwire.ts). */
   tripwire: string;
+  /** The in-memory snapshot armed once at bench start: the only thing restored automatically. */
+  snapshot: Snapshot | null;
   /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
   carried: string[];
   /** The account home the host's login is linked from. */
@@ -490,15 +497,16 @@ const runCase = (
   opts: Options,
   index = 1,
 ): RunResult => {
-  armTripwire(opts.tripwire, opts.guard);
+  const snapshot = opts.snapshot;
+  if (!snapshot) throw new Error("the tripwire is not armed");
   let run: Attempt;
   try {
     run = opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts);
   } catch (error) {
-    checkTripwire(opts.tripwire);
+    checkSnapshot(opts.tripwire, snapshot);
     throw error;
   }
-  const trip = checkTripwire(opts.tripwire);
+  const trip = checkSnapshot(opts.tripwire, snapshot);
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
@@ -670,7 +678,8 @@ const replay = (
 
 const USAGE =
   "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--force]\n" +
-  "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]";
+  "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]\n" +
+  "       bun scripts/eval/run.ts --tripwire-restore <digest> | --tripwire-discard";
 
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
 
@@ -701,6 +710,8 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       "timeout-s": { type: "string", default: "300" },
       // Test seam: the account home whose Workit files are guarded and whose host login is linked.
       "real-home": { type: "string" },
+      "tripwire-restore": { type: "string" },
+      "tripwire-discard": { type: "boolean", default: false },
       results: { type: "string", default: path.join(REPO, "evals", "results") },
       "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
       help: { type: "boolean", default: false },
@@ -730,8 +741,9 @@ export const main = (argv: string[], print: (text: string) => void = console.log
   const budget = Number(values["budget-runs"]);
   const repeat = Number(values.repeat);
   const tier = values.tier as Tier;
+  const settling = values["tripwire-restore"] !== undefined || values["tripwire-discard"];
   if (
-    !values.model ||
+    (!values.model && !settling) ||
     !Number.isInteger(repeat) ||
     repeat < 1 ||
     (tier !== "smoke" && tier !== "full") ||
@@ -743,20 +755,54 @@ export const main = (argv: string[], print: (text: string) => void = console.log
   }
   const opts: Options = {
     host,
-    model: values.model,
+    model: values.model ?? "",
     bin: values.bin ?? BINS[host],
     pluginDir: path.resolve(values["plugin-dir"] ?? PLUGINS[host]),
     timeoutMs: Number(values["timeout-s"]) * 1000,
     results,
-    providers: host === "opencode" ? providersFor(values.model) : [],
+    providers: host === "opencode" && values.model ? providersFor(values.model) : [],
     limits: [],
     guard: values["real-home"]
       ? guardFor(path.resolve(values["real-home"]))
       : guardFor(accountHome(), process.env),
     realHome: path.resolve(values["real-home"] ?? accountHome()),
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
+    snapshot: null,
     carried: [],
   };
+  return tripwired(
+    opts,
+    print,
+    () =>
+      bench(opts, print, {
+        selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
+        repeat,
+        budget,
+        force: values.force,
+      }),
+    {
+      restore: values["tripwire-restore"],
+      discard: values["tripwire-discard"],
+    },
+  );
+};
+
+/**
+ * Hold the tripwire around `run`: take the lock, settle or report a leftover
+ * journal, arm the in-memory snapshot (printing its digest on the user's
+ * terminal) and write the crash journal; drop it at the end.
+ */
+const tripwired = (
+  opts: Options,
+  print: (text: string) => void,
+  run: () => number,
+  settleFlags: { restore: string | undefined; discard: boolean },
+): number => {
+  const bad = ensureBase(opts.tripwire);
+  if (bad) {
+    print(`tripwire: ${bad}; nothing runs`);
+    return 4;
+  }
   const holder = acquire(opts.tripwire);
   if (holder !== null) {
     print(
@@ -764,39 +810,50 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     );
     return 4;
   }
-  const onSignal = (signal: NodeJS.Signals): void => {
-    const trip = checkTripwire(opts.tripwire);
-    if (trip) print(`STOPPED by ${signal}: ${tripDetail(trip, "the interrupted run")}`);
-    release(opts.tripwire);
-    process.exit(signal === "SIGINT" ? 130 : 143);
-  };
-  for (const signal of SIGNALS) process.on(signal, onSignal);
   try {
-    if (leftover(opts.tripwire)) {
-      const trip = checkTripwire(opts.tripwire);
-      if (trip) {
-        print(
-          `RECOVERED: a bench run ended without its tripwire check (crash or SIGKILL) and changed real Workit files: ${tripDetail(trip, "unknown (the run did not finish)")}. No run starts.`,
-        );
+    if (settleFlags.discard) {
+      dropJournal(opts.tripwire);
+      print("tripwire: the leftover journal is dropped; nothing was restored");
+      return 0;
+    }
+    if (settleFlags.restore !== undefined) {
+      const done = restoreJournal(opts.tripwire, opts.guard, settleFlags.restore);
+      if ("refused" in done) {
+        print(`tripwire-restore refused, nothing written: ${done.refused}`);
         return 3;
       }
       print(
-        "recovered: a leftover tripwire snapshot (a run that did not finish) found nothing changed",
+        `tripwire-restore: restored ${done.restored.join(", ") || "nothing (no file differed)"}${done.rescued ? `; the bytes it replaced are saved in ${done.rescued} (delete it once read; it may hold token bytes)` : ""}`,
       );
+      return 0;
     }
-    return bench(opts, print, {
-      selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
-      repeat,
-      budget,
-      force: values.force,
-    });
+    const left = inspectJournal(opts.tripwire, opts.guard);
+    if (left && left.problems.length === 0 && left.changed.length === 0) {
+      print(`tripwire: a leftover journal (digest ${left.digest}) matches the real files; dropped`);
+      dropJournal(opts.tripwire);
+    } else if (left) {
+      print(
+        [
+          "LEFTOVER: a bench run ended without its tripwire check (a crash, SIGKILL or a second Ctrl-C). No real file was written and no run starts.",
+          ...left.problems.map((problem) => `  ${problem}`),
+          ...left.changed.map((file) => `  differs from the journal: ${file}`),
+          ...left.diffs.map((diff) => `  ${diff}`),
+          `  journal digest ${left.digest ?? "none"}: proves nothing unless it equals the \`tripwire armed\` line the stopped run printed`,
+          "  settle it: bun scripts/eval/run.ts --tripwire-restore <that digest>, or --tripwire-discard",
+        ].join("\n"),
+      );
+      return 3;
+    }
+    opts.snapshot = armSnapshot(opts.guard);
+    print(`tripwire armed: ${opts.snapshot.files} files, digest ${opts.snapshot.digest}`);
+    writeJournal(opts.tripwire, opts.snapshot);
+    const code = run();
+    dropJournal(opts.tripwire);
+    return code;
   } finally {
-    for (const signal of SIGNALS) process.off(signal, onSignal);
     release(opts.tripwire);
   }
 };
-
-const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /** Every selected case, `repeat` runs each, under the tripwire `main` holds. */
 const bench = (

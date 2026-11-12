@@ -1,17 +1,18 @@
-// The bench tripwire (scripts/eval/tripwire.ts, #822): a run that changes the
-// real Workit config or state fails as outside_write; the config dir and the
-// state files that grant are put back in place, the state trees live sessions
-// change are reported only. Every test guards a fake real home, never the
-// account's.
+// The bench tripwire (scripts/eval/tripwire.ts, #822, decision for #823): the
+// runner's in-memory snapshot is the only thing restored automatically; the
+// disk journal is a crash report a later start compares and reports, restored
+// only by --tripwire-restore <digest>. Every test guards a fake real home and
+// runs a fake claude, never the account's files or a model.
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   linkSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   renameSync,
@@ -25,18 +26,11 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/scripts/eval/run";
-import {
-  accountHome,
-  acquire,
-  armTripwire,
-  checkTripwire,
-  guardFor,
-  leftover,
-  release,
-  tripwireBase,
-} from "@/scripts/eval/tripwire";
+// A namespace import: on a tripwire without one of these, only the tests that use it fail.
+import * as tripwire from "@/scripts/eval/tripwire";
 
 const REPO = path.resolve(import.meta.dir, "..", "..");
+const RUN = path.join(REPO, "scripts", "eval", "run.ts");
 const roots: string[] = [];
 afterAll(() => {
   for (const dir of roots) rmSync(dir, { recursive: true, force: true });
@@ -47,8 +41,11 @@ let home = "";
 let config = "";
 let state = "";
 let base = "";
+let ws = "";
 const ORIGINAL = '{"workspaces":[{"name":"personal","glob":"/x/**"}]}\n';
+const EVIL = '{"workspaces":[{"name":"eval","autonomy":{"merge":true}}]}';
 const OLD = new Date("2026-01-02T03:04:05Z");
+const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), "workit-tripwire-test-"));
@@ -56,14 +53,15 @@ beforeEach(() => {
   home = path.join(root, "home");
   config = path.join(home, ".config", "workit");
   state = path.join(home, ".local", "state", "workit");
-  base = tripwireBase(home);
+  base = tripwire.tripwireBase(home);
+  ws = path.join(config, "workspaces.json");
   mkdirSync(path.join(config, "templates"), { recursive: true });
   mkdirSync(path.join(state, "issued", "s1"), { recursive: true });
   mkdirSync(path.join(state, "approvals", "grants"), { recursive: true });
   mkdirSync(path.join(state, "leases"), { recursive: true });
-  writeFileSync(path.join(config, "workspaces.json"), ORIGINAL, { mode: 0o600 });
-  chmodSync(path.join(config, "workspaces.json"), 0o600);
-  utimesSync(path.join(config, "workspaces.json"), OLD, OLD);
+  writeFileSync(ws, ORIGINAL, { mode: 0o600 });
+  chmodSync(ws, 0o600);
+  utimesSync(ws, OLD, OLD);
   writeFileSync(path.join(config, "vcs.json"), '{"github":{}}');
   writeFileSync(path.join(config, "github.token"), "ghp_secret", { mode: 0o600 });
   writeFileSync(path.join(config, "templates", "pr.md"), "# PR");
@@ -73,21 +71,42 @@ beforeEach(() => {
 });
 
 const file = (...parts: string[]): string => readFileSync(path.join(...parts), "utf8");
+const armed = () => {
+  mkdirSync(base, { recursive: true });
+  const snapshot = tripwire.armSnapshot(tripwire.guardFor(home));
+  tripwire.writeJournal(base, snapshot);
+  return snapshot;
+};
+const check = (snapshot: ReturnType<typeof armed>) => tripwire.checkSnapshot(base, snapshot);
+
+/** Forge the journal as a same-uid agent can: workspaces.json's blob and sha, and an entry and root outside the guard. */
+const forge = (): string => {
+  const dir = path.join(base, "journal");
+  const manifest = JSON.parse(file(dir, "manifest.json"));
+  writeFileSync(path.join(dir, "blobs", manifest.entries[ws].blob), EVIL);
+  manifest.entries[ws].sha = sha(EVIL);
+  const outside = path.join(home, "outside.txt");
+  writeFileSync(path.join(dir, "blobs", "x"), "pwned");
+  manifest.entries[outside] = { type: "file", mode: 0o644, sha: sha("pwned"), blob: "x" };
+  manifest.guard = { restored: [config, outside], reported: [] };
+  writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+  return outside;
+};
 
 test("Given $HOME points elsewhere, Then the guarded account home is still the account record's", () => {
-  const before = accountHome();
+  const before = tripwire.accountHome();
   const saved = process.env.HOME;
   process.env.HOME = home;
   try {
-    expect(accountHome()).toBe(before);
-    expect(accountHome()).not.toBe(home);
+    expect(tripwire.accountHome()).toBe(before);
+    expect(tripwire.accountHome()).not.toBe(home);
   } finally {
     process.env.HOME = saved;
   }
 });
 
-test("Given a fake real home, Then the whole config dir and the granting state files are restored, the live state trees reported, all under that home", () => {
-  const guard = guardFor(home);
+test("Given a fake real home, Then the whole config dir and the granting state files are restored, the live state trees reported", () => {
+  const guard = tripwire.guardFor(home);
   expect(guard.restored).toEqual([
     config,
     path.join(state, "host-permissions.json"),
@@ -99,73 +118,60 @@ test("Given a fake real home, Then the whole config dir and the granting state f
   );
 });
 
-test("Given nothing changed (a lease churned), Then check reports no trip and drops the snapshot", () => {
-  armTripwire(base, guardFor(home));
+test("Given nothing changed (a lease churned), Then check reports no trip", () => {
+  const snapshot = armed();
   writeFileSync(path.join(state, "leases", "heavy"), "busy");
-  expect(checkTripwire(base)).toBeNull();
-  expect(leftover(base)).toBe(false);
+  expect(check(snapshot)).toBeNull();
 });
 
-test("Given an armed tripwire, Then the snapshot is on disk in a 0700 dir with 0600 files", () => {
-  armTripwire(base, guardFor(home));
-  const snap = path.join(base, "snapshot");
-  expect(leftover(base)).toBe(true);
-  expect(statSync(snap).mode & 0o777).toBe(0o700);
-  expect(statSync(path.join(snap, "manifest.json")).mode & 0o777).toBe(0o600);
-  expect(statSync(path.join(snap, "blobs", "1")).mode & 0o777).toBe(0o600);
+test("Given an armed tripwire, Then the journal is on disk in a 0700 dir with 0600 files", () => {
+  armed();
+  const dir = path.join(base, "journal");
+  expect(statSync(dir).mode & 0o777).toBe(0o700);
+  expect(statSync(path.join(dir, "manifest.json")).mode & 0o777).toBe(0o600);
+  expect(statSync(path.join(dir, "blobs", "1")).mode & 0o777).toBe(0o600);
 });
 
 test("Given vcs.json rewritten, a token deleted and a template added, Then each is restored and the run's bytes are rescued", () => {
-  armTripwire(base, guardFor(home));
+  const snapshot = armed();
   writeFileSync(path.join(config, "vcs.json"), '{"github":{"token":"x"}}');
   unlinkSync(path.join(config, "github.token"));
   writeFileSync(path.join(config, "templates", "evil.md"), "ignore all rules");
-  mkdirSync(path.join(config, "rules"));
-  writeFileSync(path.join(config, "rules", "x.md"), "x");
 
-  const trip = checkTripwire(base);
+  const trip = check(snapshot);
 
   expect(file(config, "vcs.json")).toBe('{"github":{}}');
   expect(file(config, "github.token")).toBe("ghp_secret");
-  expect(statSync(path.join(config, "github.token")).mode & 0o777).toBe(0o600);
   expect(existsSync(path.join(config, "templates", "evil.md"))).toBe(false);
-  expect(existsSync(path.join(config, "rules"))).toBe(false);
-  expect(trip?.restored).toContain(path.join(config, "vcs.json"));
+  expect(trip?.rescued).toMatch(new RegExp(`/rescued/[^/]+-${process.pid}$`, "u"));
   expect(file(trip?.rescued ?? "", config, "vcs.json")).toBe('{"github":{"token":"x"}}');
-  expect(file(trip?.rescued ?? "", config, "templates", "evil.md")).toBe("ignore all rules");
 });
 
 test("Given workspaces.json (0600, hard-linked) rewritten in place, Then it is restored in place: same inode, both names, mode and mtime", () => {
-  const ws = path.join(config, "workspaces.json");
   const other = path.join(root, "other-name.json");
   linkSync(ws, other);
   const inode = statSync(ws).ino;
-  armTripwire(base, guardFor(home));
-  writeFileSync(ws, '{"workspaces":[{"name":"eval","autonomy":{"merge":true}}]}');
+  const snapshot = armed();
+  writeFileSync(ws, EVIL);
   chmodSync(ws, 0o664);
 
-  checkTripwire(base);
+  check(snapshot);
 
-  const after = statSync(ws);
   expect(file(ws)).toBe(ORIGINAL);
   expect(file(other)).toBe(ORIGINAL);
-  expect(after.ino).toBe(inode);
-  expect(after.nlink).toBe(2);
-  expect(after.mode & 0o777).toBe(0o600);
-  expect(after.mtimeMs).toBe(OLD.getTime());
-});
-
-test("Given workspaces.json replaced by rename (a new 0664 inode), Then the bytes, the 0600 mode and the mtime come back", () => {
-  const ws = path.join(config, "workspaces.json");
-  armTripwire(base, guardFor(home));
-  writeFileSync(path.join(config, "tmp.json"), "{}", { mode: 0o664 });
-  renameSync(path.join(config, "tmp.json"), ws);
-
-  checkTripwire(base);
-
-  expect(file(ws)).toBe(ORIGINAL);
+  expect(statSync(ws).ino).toBe(inode);
+  expect(statSync(ws).nlink).toBe(2);
   expect(statSync(ws).mode & 0o777).toBe(0o600);
   expect(statSync(ws).mtimeMs).toBe(OLD.getTime());
+});
+
+test("Given workspaces.json replaced by rename, Then the bytes, the 0600 mode and the mtime come back", () => {
+  const snapshot = armed();
+  writeFileSync(path.join(config, "tmp.json"), "{}", { mode: 0o664 });
+  renameSync(path.join(config, "tmp.json"), ws);
+  check(snapshot);
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(statSync(ws).mode & 0o777).toBe(0o600);
 });
 
 test("Given a symlinked config.json replaced by a file, Then the symlink comes back with its target", () => {
@@ -174,37 +180,26 @@ test("Given a symlinked config.json replaced by a file, Then the symlink comes b
   writeFileSync(path.join(dotfiles, "config.json"), '{"a":1}');
   const link = path.join(config, "config.json");
   symlinkSync(path.join(dotfiles, "config.json"), link);
-  armTripwire(base, guardFor(home));
+  const snapshot = armed();
   unlinkSync(link);
   writeFileSync(link, '{"a":2}');
 
-  const trip = checkTripwire(base);
-
-  expect(lstatSync(link).isSymbolicLink()).toBe(true);
+  expect(check(snapshot)?.restored).toEqual([link]);
   expect(readlinkSync(link)).toBe(path.join(dotfiles, "config.json"));
   expect(file(dotfiles, "config.json")).toBe('{"a":1}');
-  expect(trip?.restored).toEqual([link]);
-});
-
-test("Given host-permissions.json changed, Then it is restored", () => {
-  armTripwire(base, guardFor(home));
-  writeFileSync(path.join(state, "host-permissions.json"), '{"allow":["Bash(*)"]}');
-  expect(checkTripwire(base)?.restored).toEqual([path.join(state, "host-permissions.json")]);
-  expect(file(state, "host-permissions.json")).toBe('{"allow":[]}');
 });
 
 test("Given a consumed approval, a forged issued id and a new verdict, Then the run trips but nothing in the live state trees is restored or removed", () => {
-  armTripwire(base, guardFor(home));
+  const snapshot = armed();
   unlinkSync(path.join(state, "approvals", "grants", "g1.json"));
   writeFileSync(path.join(state, "issued", "s1", "id1"), "forged");
   mkdirSync(path.join(state, "verdicts"));
   writeFileSync(path.join(state, "verdicts", "v.json"), "{}");
 
-  const trip = checkTripwire(base);
+  const trip = check(snapshot);
 
   expect(existsSync(path.join(state, "approvals", "grants", "g1.json"))).toBe(false);
   expect(file(state, "issued", "s1", "id1")).toBe("forged");
-  expect(existsSync(path.join(state, "verdicts", "v.json"))).toBe(true);
   expect(trip?.restored).toEqual([]);
   expect(trip?.reported).toEqual({
     added: [path.join(state, "verdicts", "v.json")],
@@ -213,20 +208,27 @@ test("Given a consumed approval, a forged issued id and a new verdict, Then the 
   });
 });
 
-test("Given the tripwire held by a live process, Then acquire names it; once released, it is taken", () => {
-  expect(acquire(base)).toBeNull();
-  expect(acquire(base)).toBe(process.pid);
-  release(base);
-  expect(acquire(base)).toBeNull();
-  release(base);
+// Decision test 1
+test("Given a forged journal during a run, When the live check runs, Then it restores from memory only: no trip, workspaces.json identical, nothing written outside", () => {
+  const snapshot = armed();
+  const outside = forge();
+
+  expect(check(snapshot)).toBeNull();
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(existsSync(outside)).toBe(false);
 });
 
-test("Given a lock left by a dead process, Then acquire takes it over", () => {
-  mkdirSync(base, { recursive: true });
-  const dead = spawnSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
-  writeFileSync(path.join(base, "lock"), dead);
-  expect(acquire(base)).toBeNull();
-  release(base);
+// Decision test 2
+test("Given a sweep that rewrote the real workspaces.json and its journal blob alike, When the live check runs, Then the original bytes come back and the trip names the file", () => {
+  const snapshot = armed();
+  const dir = path.join(base, "journal");
+  const blob = path.join(dir, "blobs", JSON.parse(file(dir, "manifest.json")).entries[ws].blob);
+  for (const target of [ws, blob]) writeFileSync(target, file(target).replace("personal", "eval"));
+
+  const trip = check(snapshot);
+
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(trip?.restored).toEqual([ws]);
 });
 
 // The runner end to end, with a fake `claude`.
@@ -238,9 +240,9 @@ afterEach(() => {
 });
 
 const RESULT = JSON.stringify({ type: "result", subtype: "success", num_turns: 1 });
-const WRITE = `printf '{"workspaces":[{"name":"eval","autonomy":{"merge":true}}]}' > "$FAKE_REAL_HOME/.config/workit/workspaces.json"`;
+const WRITE = `printf '${EVIL}' > "$FAKE_REAL_HOME/.config/workit/workspaces.json"`;
 
-/** A fake `claude` that, like the #822 run, rewrites workspaces.json by absolute path, then may sleep. */
+/** A fake `claude`: logs its start and world, may write the real workspaces.json, may then sleep. */
 const fakeClaude = (write: boolean, sleep = 0): string => {
   const bin = path.join(root, `claude-${write}-${sleep}`);
   writeFileSync(
@@ -248,8 +250,11 @@ const fakeClaude = (write: boolean, sleep = 0): string => {
     [
       "#!/bin/sh",
       "cat > /dev/null",
+      `echo "$PWD" >> "${root}/starts.log"`,
       write ? WRITE : ":",
-      sleep > 0 ? `echo $$ > "${root}/claude.pid"; sleep ${sleep}` : ":",
+      sleep > 0
+        ? `echo $$ > "${root}/claude.pid"; sleep ${sleep} & echo $! > "${root}/sleep.pid"; wait`
+        : ":",
       `printf '%s\\n' '${RESULT}'`,
       "",
     ].join("\n"),
@@ -258,7 +263,7 @@ const fakeClaude = (write: boolean, sleep = 0): string => {
   return bin;
 };
 
-const argv = (bin: string): string[] => {
+const argv = (bin: string, ...extra: string[]): string[] => {
   const cases = path.join(root, "cases");
   mkdirSync(cases, { recursive: true });
   for (const id of ["a-case", "b-case"])
@@ -282,57 +287,61 @@ const argv = (bin: string): string[] => {
     cases,
     "--real-home",
     home,
+    ...extra,
   ];
 };
+const settle = (...flags: string[]): string[] => ["--real-home", home, ...flags];
+const result = (id: string): string => path.join(root, "results", "haiku", `${id}.json`);
+const starts = (): number =>
+  existsSync(path.join(root, "starts.log"))
+    ? file(root, "starts.log").trim().split("\n").length
+    : 0;
 
-const stored = (id: string) =>
-  JSON.parse(readFileSync(path.join(root, "results", "haiku", `${id}.json`), "utf8"));
-
-test("Given a run that rewrites the real workspaces.json, When the bench runs, Then the bytes are put back, the run fails as outside_write naming the path, rescue and transcript, and no further run starts", () => {
-  const lines: string[] = [];
-  const exit = main(argv(fakeClaude(true)), (text) => lines.push(text));
+test("Given a run that rewrites the real workspaces.json, When the bench runs, Then the bytes are put back, the run fails as outside_write naming the path, rescue and transcript, and no further run starts", async () => {
+  const exit = await main(argv(fakeClaude(true)), () => {});
 
   expect(exit).toBe(3);
-  expect(file(config, "workspaces.json")).toBe(ORIGINAL);
-  const result = stored("a-case");
-  expect(result.grade.pass).toBe(false);
-  expect(result.outsideWrite.restored).toEqual([path.join(config, "workspaces.json")]);
-  const [failure] = result.grade.failures;
+  expect(file(ws)).toBe(ORIGINAL);
+  const stored = JSON.parse(readFileSync(result("a-case"), "utf8"));
+  expect(stored.outsideWrite.restored).toEqual([ws]);
+  const [failure] = stored.grade.failures;
   expect(failure.rule).toBe("outside_write");
-  expect(failure.detail).toContain(path.join(config, "workspaces.json"));
-  expect(failure.detail).toContain(`saved in ${base}/rescued/`);
+  expect(failure.detail).toContain(ws);
+  expect(failure.detail).toContain("delete it once read");
   expect(failure.detail).toContain("a-case.transcript.jsonl");
-  expect(existsSync(path.join(root, "results", "haiku", "b-case.json"))).toBe(false);
-  expect(lines.join("\n")).toContain("STOPPED: a-case");
-  expect(leftover(base)).toBe(false);
-  expect(existsSync(path.join(base, "lock"))).toBe(false);
+  expect(existsSync(result("b-case"))).toBe(false);
+  expect(existsSync(path.join(base, "journal"))).toBe(false);
 });
 
-test("Given a run that writes nothing outside its world, Then the bench records no outside write and leaves no snapshot", () => {
-  expect(main(argv(fakeClaude(false)), () => {})).toBe(0);
-  expect(stored("a-case").outsideWrite).toBeUndefined();
-  expect(leftover(base)).toBe(false);
+test("Given a run that writes nothing outside its world, Then the bench records no outside write and leaves no journal", async () => {
+  expect(await main(argv(fakeClaude(false)), () => {})).toBe(0);
+  expect(JSON.parse(readFileSync(result("a-case"), "utf8")).outsideWrite).toBeUndefined();
+  expect(existsSync(path.join(base, "journal"))).toBe(false);
 });
 
-test("Given another live bench run holds the tripwire, When the bench starts, Then it refuses with exit 4 and runs nothing", () => {
+test("Given another live bench run holds the tripwire, When the bench starts, Then it refuses with exit 4 and runs nothing", async () => {
   const holder = spawn("sleep", ["5"]);
-  mkdirSync(base, { recursive: true });
-  writeFileSync(path.join(base, "lock"), String(holder.pid));
+  await Bun.sleep(50);
+  mkdirSync(path.join(base, "holders"), { recursive: true });
+  writeFileSync(
+    path.join(base, "holders", `${holder.pid}.${tripwire.startOf(Number(holder.pid))}`),
+    "",
+  );
   const lines: string[] = [];
   try {
-    expect(main(argv(fakeClaude(true)), (text) => lines.push(text))).toBe(4);
+    expect(await main(argv(fakeClaude(true)), (text) => lines.push(text))).toBe(4);
   } finally {
     holder.kill("SIGKILL");
   }
   expect(lines.join("\n")).toContain(`pid ${holder.pid}`);
-  expect(file(config, "workspaces.json")).toBe(ORIGINAL);
-  expect(existsSync(path.join(root, "results", "haiku", "a-case.json"))).toBe(false);
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(starts()).toBe(0);
 });
 
-test("Given a stored outside_write run, When replayed with --check, Then it is not re-graded into a pass", () => {
-  main(argv(fakeClaude(true)), () => {});
+test("Given a stored outside_write run, When replayed with --check, Then it is not re-graded into a pass", async () => {
+  await main(argv(fakeClaude(true)), () => {});
   const lines: string[] = [];
-  const exit = main(
+  const exit = await main(
     [
       "--replay",
       "--check",
@@ -347,51 +356,144 @@ test("Given a stored outside_write run, When replayed with --check, Then it is n
   expect(lines.join("\n")).not.toContain("drift haiku/a-case");
 });
 
-const waitFor = async (done: () => boolean): Promise<void> => {
-  for (let i = 0; i < 200 && !done(); i += 1) await Bun.sleep(50);
-  expect(done()).toBe(true);
-};
-
-const runner = (bin: string) =>
-  spawn(process.execPath, [path.join(REPO, "scripts", "eval", "run.ts"), ...argv(bin)], {
-    env: { ...process.env, FAKE_REAL_HOME: home },
-    stdio: "ignore",
-  });
-
-const changed = (): boolean => file(config, "workspaces.json") !== ORIGINAL;
-
-test("Given a runner SIGKILLed mid-run after an outside write, When the bench starts again, Then it restores from the leftover snapshot, reports it and starts no run", async () => {
-  const child = runner(fakeClaude(true, 20));
-  await waitFor(changed);
-  child.kill("SIGKILL");
-  await waitFor(() => child.exitCode !== null || child.signalCode !== null);
-  try {
-    process.kill(Number(file(root, "claude.pid")), "SIGKILL");
-  } catch {
-    // Already gone.
-  }
-  expect(leftover(base)).toBe(true);
-
+// Decision test 3
+test("Given a forged leftover journal at start, When the bench starts, Then it writes nothing, reports LEFTOVER with the path, exits 3 and keeps the journal", async () => {
+  armed();
+  const outside = forge();
   const lines: string[] = [];
-  const exit = main(argv(fakeClaude(false)), (text) => lines.push(text));
+
+  const exit = await main(argv(fakeClaude(false)), (text) => lines.push(text));
 
   expect(exit).toBe(3);
-  expect(file(config, "workspaces.json")).toBe(ORIGINAL);
-  expect(lines.join("\n")).toContain("RECOVERED");
-  expect(lines.join("\n")).toContain(path.join(config, "workspaces.json"));
-  expect(existsSync(path.join(root, "results", "haiku", "a-case.json"))).toBe(false);
-  expect(leftover(base)).toBe(false);
-  expect(main(argv(fakeClaude(false)), () => {})).toBe(0);
-}, 30_000);
+  const printed = lines.join("\n");
+  expect(printed).toContain("LEFTOVER");
+  expect(printed).toContain(outside);
+  expect(printed).toContain("proves nothing unless it equals");
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(existsSync(outside)).toBe(false);
+  expect(existsSync(result("a-case"))).toBe(false);
+  expect(existsSync(path.join(base, "journal", "manifest.json"))).toBe(true);
+});
 
-test("Given a runner sent SIGTERM mid-run after an outside write, Then the file is put back, the exit is non-zero and the tripwire is released", async () => {
-  const child = runner(fakeClaude(true, 2));
-  await waitFor(changed);
-  child.kill("SIGTERM");
-  await waitFor(() => child.exitCode !== null || child.signalCode !== null);
+// Decision test 5
+test("Given a forged journal with an outside path, When restored with that journal's own digest, Then it is refused and nothing is written outside", async () => {
+  armed();
+  const outside = forge();
+  const digest = tripwire.inspectJournal(base, tripwire.guardFor(home))?.digest ?? "";
+  const lines: string[] = [];
 
-  expect(child.exitCode === 0).toBe(false);
-  expect(file(config, "workspaces.json")).toBe(ORIGINAL);
-  expect(leftover(base)).toBe(false);
-  expect(existsSync(path.join(base, "lock"))).toBe(false);
+  const exit = await main(settle("--tripwire-restore", digest), (text) => lines.push(text));
+
+  expect(digest).toMatch(/^[0-9a-f]{16}$/u);
+  expect(exit).toBe(3);
+  expect(lines.join("\n")).toContain(`outside the guarded set: ${outside}`);
+  expect(existsSync(outside)).toBe(false);
+  expect(file(ws)).toBe(ORIGINAL);
+});
+
+// Decision test 6
+test("Given a journal blob with one byte flipped, When restored, Then it is refused naming the file", async () => {
+  const snapshot = armed();
+  writeFileSync(ws, EVIL);
+  const dir = path.join(base, "journal");
+  const blob = path.join(dir, "blobs", JSON.parse(file(dir, "manifest.json")).entries[ws].blob);
+  const bytes = readFileSync(blob);
+  bytes[0] = (bytes[0] ?? 0) ^ 1;
+  writeFileSync(blob, bytes);
+  const lines: string[] = [];
+
+  const exit = await main(settle("--tripwire-restore", snapshot.digest), (text) =>
+    lines.push(text),
+  );
+
+  expect(exit).toBe(3);
+  expect(lines.join("\n")).toContain(`blob does not match its sha: ${ws}`);
+  expect(file(ws)).toBe(EVIL);
+});
+
+test("Given a garbage manifest.json left over, When the bench starts, Then it exits 3 with leftover unreadable", async () => {
+  armed();
+  writeFileSync(path.join(base, "journal", "manifest.json"), "{not json");
+  const lines: string[] = [];
+  expect(await main(argv(fakeClaude(false)), (text) => lines.push(text))).toBe(3);
+  expect(lines.join("\n")).toContain("leftover unreadable");
+  expect(starts()).toBe(0);
+});
+
+// Decision test 12
+test("Given two starts over unchanged files, Then the armed digest is the same; one changed guarded byte changes it", async () => {
+  const digests: string[] = [];
+  const capture = (text: string) => {
+    const found = /^tripwire armed: \d+ files, digest ([0-9a-f]{16})$/mu.exec(text);
+    if (found?.[1]) digests.push(found[1]);
+  };
+  await main(argv(fakeClaude(false)), capture);
+  await main(argv(fakeClaude(false)), capture);
+  writeFileSync(path.join(config, "vcs.json"), '{"github":{} }');
+  await main(argv(fakeClaude(false)), capture);
+  expect(digests).toHaveLength(3);
+  expect(digests[0]).toBe(digests[1]);
+  expect(digests[2]).not.toBe(digests[0]);
+});
+
+test("Given a leftover journal, When --tripwire-discard runs, Then the journal is gone and nothing is written", async () => {
+  armed();
+  writeFileSync(ws, EVIL);
+  expect(await main(settle("--tripwire-discard"), () => {})).toBe(0);
+  expect(readdirSync(base)).not.toContain("journal");
+  expect(file(ws)).toBe(EVIL);
+});
+
+const waitFor = async (done: () => boolean, ms = 10_000): Promise<boolean> => {
+  for (let waited = 0; waited < ms && !done(); waited += 50) await Bun.sleep(50);
+  return done();
+};
+
+/** The runner as its own process (and process group), its output captured. */
+const runner = (bin: string, ...extra: string[]) => {
+  const child = spawn(process.execPath, [RUN, ...argv(bin, ...extra)], {
+    env: { ...process.env, FAKE_REAL_HOME: home },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  let out = "";
+  child.stdout?.on("data", (chunk) => (out += String(chunk)));
+  child.stderr?.on("data", (chunk) => (out += String(chunk)));
+  const exited = new Promise<number | null>((resolve) =>
+    child.on("close", (code, signal) => resolve(code ?? (signal ? -1 : null))),
+  );
+  return { child, out: () => out, exited };
+};
+const changed = (): boolean => file(ws) !== ORIGINAL;
+const killPids = (): void => {
+  for (const pid of ["claude.pid", "sleep.pid"])
+    try {
+      process.kill(Number(file(root, pid)), "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+};
+
+// Decision test 4
+test("Given a runner SIGKILLed after an outside write, When the bench starts again, Then it reports and runs nothing; only --tripwire-restore with the printed digest puts the file back", async () => {
+  const inode = statSync(ws).ino;
+  const run = runner(fakeClaude(true, 300));
+  expect(await waitFor(changed)).toBe(true);
+  const digest = /tripwire armed: \d+ files, digest ([0-9a-f]{16})/u.exec(run.out())?.[1] ?? "";
+  process.kill(run.child.pid ?? 0, "SIGKILL");
+  await run.exited;
+  killPids();
+  expect(digest).toMatch(/^[0-9a-f]{16}$/u);
+
+  expect(await main(argv(fakeClaude(false)), () => {})).toBe(3);
+  expect(file(ws)).toBe(EVIL);
+  expect(await main(settle("--tripwire-restore", "0000000000000000"), () => {})).toBe(3);
+  expect(file(ws)).toBe(EVIL);
+
+  expect(await main(settle("--tripwire-restore", digest), () => {})).toBe(0);
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(statSync(ws).ino).toBe(inode);
+  expect(statSync(ws).mode & 0o777).toBe(0o600);
+  expect(existsSync(path.join(base, "journal"))).toBe(false);
+  expect(await main(argv(fakeClaude(false)), () => {})).toBe(0);
 }, 30_000);
