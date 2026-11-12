@@ -30,11 +30,14 @@ import {
   privateHits,
   privateKinds,
   privateStrings,
+  refusalKinds,
   rootSpellings,
+  safeRoots,
   scrubAccount,
   scrubOutsideReads,
   scrubRoots,
   shownHit,
+  unscrubRoots,
   workitVocabulary,
   type Origins,
 } from "@/scripts/eval/privacy";
@@ -1071,13 +1074,46 @@ test("the private set remembers where each string came from: a file and a key pa
   expect(origins.get("~/code/widget-example")).toBe(
     "~/.claude.json: projects, key 1 of 1 (as a ~ path)",
   );
-  expect(origins.get("Ada Example")).toBe("~/.gitconfig.d/work.inc: user.name");
-  expect(origins.get("ada@example.invalid")).toBe("~/.gitconfig.d/work.inc: user.email");
+  // An included git config sits in a dir the user named: its class, never its path (D4).
+  expect(origins.get("Ada Example")).toBe(
+    "a git config file included from ~/.gitconfig, include 1: user.name",
+  );
+  expect(origins.get("ada@example.invalid")).toBe(
+    "a git config file included from ~/.gitconfig, include 1: user.email",
+  );
   expect(origins.get(home)).toBe("the account's home dir");
   const said = [...origins.values()].join("\n");
-  for (const secret of ["acme-example", "acme-custom", "widget-example", "Ada", "ada@", home])
+  for (const secret of [
+    "acme-example",
+    "acme-custom",
+    "widget-example",
+    "Ada",
+    "ada@",
+    home,
+    "gitconfig.d",
+    "work.inc",
+  ])
     expect(said).not.toContain(secret);
+  // A config dir the environment names is the user's choice too: only the file's fixed name shows.
+  const elsewhere = mkdtempSync(path.join(os.tmpdir(), "workit-privacy-acme-dir-"));
+  temps.push(elsewhere);
+  writeFileSync(
+    path.join(elsewhere, "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "acme-elsewhere-example" }] }),
+  );
+  const fromEnv: Origins = new Map();
+  privateStrings(bareHome(), workitVocabulary(REPO), { WORKIT_CONFIG_DIR: elsewhere }, fromEnv);
+  expect(fromEnv.get("acme-elsewhere-example")).toBe(
+    "the Workit config dir's workspaces.json: workspaces[0].name",
+  );
+  expect([...fromEnv.values()].join("\n")).not.toContain("acme-dir");
 });
+
+const bareHome = (): string => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "workit-privacy-bare-home-"));
+  temps.push(home);
+  return home;
+};
 
 test("a host's credentials and account ids remember their file and key or column; an environment key never its variable's name", () => {
   const home = loginHome();
@@ -1167,17 +1203,16 @@ test("a refusal's hits say the event, the call and field, the kind, the length, 
       `${name}: ${input}: real Workit config value, 12 chars, id ${id(input, "real Workit config value")}, from ${CONFIG_FILE}: workspaces[0].name`,
     );
     expect(shown, host).toContain(
-      `${name}: ${result} ${tool}(tool trace): host project path, ${project.length} chars, id ${id(result, "host project path")}, from ~/.claude.json: projects, key 1 of 1 (as a ~ path)`,
+      `${name}: ${result} ${tool} call (10 chars; a command not on the list): host project path, ${project.length} chars, id ${id(result, "host project path")}, from ~/.claude.json: projects, key 1 of 1 (as a ~ path)`,
     );
-    // A call's command is shown beside its result's hit: a private string in it shows as its kind.
-    const veiled: Step = { tool: "Bash", input: { command: "ls acme-example" }, result: project };
+    // A result's hit names its call by structure only: the tool, the command's length and its
+    // first word when that is a known command. Never an excerpt (D1, D2).
+    const known: Step = { tool: "Bash", input: { command: "ls acme-example" }, result: project };
     expect(
-      privateHits({ [name]: runOf(host, [veiled], "done") }, set, origins, "salt-one").map(
-        shownHit,
-      ),
+      privateHits({ [name]: runOf(host, [known], "done") }, set, origins, "salt-one").map(shownHit),
       host,
     ).toContain(
-      `${name}: event 2, ${host === "claude-code" ? "user" : "tool_use"} result of ${tool}(ls <real Workit config value>): host project path, ${project.length} chars, id ${id(result, "host project path")}, from ~/.claude.json: projects, key 1 of 1 (as a ~ path)`,
+      `${name}: event 2, ${host === "claude-code" ? "user" : "tool_use"} result of ${tool} call (15 chars; starts with ls): host project path, ${project.length} chars, id ${id(result, "host project path")}, from ~/.claude.json: projects, key 1 of 1 (as a ~ path)`,
     );
     expect(said, host).toContain(`${name}: ${answer}: host project path, `);
     expect(said, host).toContain(
@@ -1293,4 +1328,286 @@ test("a path under a checkout the bench links to is no private string once the r
   expect(rootSpellings([{ dir: "/srv/acme-example", as: "<linked>" }], [home])).toEqual([
     { dir: "/srv/acme-example", as: "<linked>" },
   ]);
+});
+
+// ------------------------------------------------------------ the diagnosis shows structure, never text (verdict on #833)
+
+/** No part of `secret` of 3+ characters, as is or JSON-escaped, is in `text`. */
+const holdsPartOf = (text: string, secret: string): string | null => {
+  for (const form of [secret, JSON.stringify(secret).slice(1, -1)])
+    for (let at = 0; at + 3 <= form.length; at += 1)
+      if (text.includes(form.slice(at, at + 3))) return form.slice(at, at + 3);
+  return null;
+};
+
+test("D1: a secret that straddles the old 100-character cut of a command leaves no part of itself in a hit line", () => {
+  const secret = "QZXJ-KVYQ-ZXJK-V";
+  const other = "JXZQ-YVKQ-other-credential";
+  const set = new Map([
+    [secret, "host credential"],
+    [other, "host credential"],
+  ] as const);
+  for (const host of HOSTS) {
+    const run = runOf(
+      host,
+      [{ tool: "Bash", input: { command: `${"x".repeat(94)} ${secret}` }, result: other }],
+      "done",
+    );
+    const said = privateHits({ "t.transcript.jsonl": run }, set, new Map(), "salt").map(shownHit);
+    expect(said.length, host).toBeGreaterThan(0);
+    for (const line of said) {
+      expect(holdsPartOf(line, secret), `${host}: ${line}`).toBeNull();
+      expect(line, host).not.toContain("xxx");
+    }
+    expect(said.join("\n"), host).toContain("call (111 chars; a command not on the list)");
+  }
+});
+
+test("D2: a value with a quote, a backslash or a newline never shows in its JSON form when the call has no command", () => {
+  const secret = 'QZ"XJ\\KV\nYQZX';
+  const other = "JXZQ-YVKQ-other-credential";
+  const set = new Map([
+    [secret, "real Workit config value"],
+    [other, "host credential"],
+  ] as const);
+  for (const host of HOSTS) {
+    const run = runOf(
+      host,
+      [{ tool: "Read", input: { file_path: secret }, result: other }],
+      "done",
+    );
+    const said = privateHits({ "t.transcript.jsonl": run }, set, new Map(), "salt").map(shownHit);
+    expect(said.length, host).toBeGreaterThan(0);
+    for (const line of said) expect(holdsPartOf(line, secret), `${host}: ${line}`).toBeNull();
+    expect(said.join("\n"), host).toContain(
+      `result of ${host === "claude-code" ? "Read" : "read"} call`,
+    );
+  }
+});
+
+test("D3: a key the transcript formats do not have shows as its position, however short", () => {
+  const set = new Map([["QZXJ-KVYQ-secret", "host credential"]] as const);
+  const event = JSON.stringify({
+    type: "user",
+    something: { shortkey: "has QZXJ-KVYQ-secret", "acme-key": { nested: "QZXJ-KVYQ-secret" } },
+  });
+  const said = privateHits({ "t.transcript.jsonl": event }, set, new Map(), "salt").map(shownHit);
+  expect(said).toEqual([
+    expect.stringMatching(
+      /^t\.transcript\.jsonl: event 1, user \{key 2\}\.\{key 1\}: host credential, 16 chars, id [0-9a-f]{8}$/u,
+    ),
+    expect.stringMatching(
+      /^t\.transcript\.jsonl: event 1, user \{key 2\}\.\{key 2\}\.\{key 1\}: host credential, 16 chars, id [0-9a-f]{8}$/u,
+    ),
+  ]);
+  // A tool, an event type or a subtype the formats do not have is not named either.
+  const odd = JSON.stringify({
+    type: "acme-type",
+    subtype: "acme-sub",
+    message: {
+      content: [
+        { type: "tool_use", id: "t", name: "mcp__acme__tool", input: { q: "QZXJ-KVYQ-secret" } },
+      ],
+    },
+  });
+  const [line = ""] = privateHits({ "t.transcript.jsonl": odd }, set, new Map(), "salt").map(
+    shownHit,
+  );
+  expect(line).toStartWith(
+    "t.transcript.jsonl: event 1, an event, a tool's input: host credential, ",
+  );
+  expect(line).not.toContain("acme");
+  // The result file's own keys are named; a key inside a quoted value is not.
+  const result = JSON.stringify({
+    grade: { failures: [{ detail: "QZXJ-KVYQ-secret" }] },
+    shortkey: "QZXJ-KVYQ-secret",
+  });
+  expect(privateHits({ "a.json": result }, set, new Map(), "salt").map((hit) => hit.where)).toEqual(
+    ["result file, grade.failures[0].detail", "result file, {key 2}"],
+  );
+});
+
+test("the diagnosis never shows a part of a private value: random values in a command, a path, a key, a tool name, the text and a result, on both hosts", () => {
+  // A small deterministic generator: the same cases on every run.
+  let seed = 20261112;
+  const next = (below: number): number => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % below;
+  };
+  // Letters the fixed words of a hit line do not use, and the characters that change a value's JSON and shell forms.
+  const alphabet = ["Q", "Z", "X", "J", "K", "V", "Y", '"', "\\", "'", "$", "\n", "-", "/"];
+  const value = (): string =>
+    Array.from({ length: 6 + next(30) }, () => alphabet[next(alphabet.length)]).join("");
+  for (let round = 0; round < 150; round += 1) {
+    const secrets = [value(), value(), value()];
+    const [inCommand = "", inPath = "", inKey = ""] = secrets;
+    const set = new Map(secrets.map((secret) => [secret, "host credential"] as const));
+    const pad = "x".repeat(next(120));
+    const steps: Step[] = [
+      { tool: "Bash", input: { command: `${pad} ${inCommand} ${pad}` }, result: `out ${inPath}` },
+      { tool: "Read", input: { file_path: inPath, [inKey]: inCommand }, result: inKey },
+      { tool: inKey, input: { [inPath]: inCommand }, result: inCommand },
+    ];
+    for (const host of HOSTS) {
+      const transcript = `${runOf(host, steps, `said ${inCommand}`)}\n${JSON.stringify({ type: inKey, [inKey]: { [inPath]: inCommand } })}`;
+      const files = {
+        "t.transcript.jsonl": transcript,
+        "t.json": JSON.stringify({ grade: { failures: [{ detail: inCommand }] }, [inKey]: inPath }),
+      };
+      const said = privateHits(files, set, new Map(), `salt-${round}`).map(shownHit);
+      expect(said.length, `round ${round}`).toBeGreaterThan(3);
+      for (const line of said)
+        for (const secret of secrets) {
+          const part = holdsPartOf(line, secret);
+          if (part !== null)
+            throw new Error(`round ${round} ${host}: a hit line holds part of a value`);
+        }
+    }
+  }
+});
+
+// ------------------------------------------------------------ roots have boundaries and never hide a private value (D5)
+
+test("D5: a root is replaced only as a whole path: a sibling project, a sibling of a toolchain dir and a longer name keep their own text", () => {
+  const roots = rootSpellings(
+    [
+      { dir: "/home/inv/proj/main", as: "<linked>" },
+      { dir: "/home/inv/.bun", as: "<toolchain:bun>" },
+    ],
+    ["/home/inv"],
+  );
+  const unchanged = [
+    "/home/inv/proj/main-clientx/src/a.ts and ~/proj/main-clientx",
+    "/home/inv/.bunx/secret",
+    "~/.bun-work and $HOME/.bun_old and ${HOME}/.bun.bak",
+    "/mnt/home/inv/proj/main/x",
+    "/home/inv/proj/mainline",
+  ];
+  for (const text of unchanged) expect(scrubRoots(text, roots), text).toBe(text);
+  expect(scrubRoots("at /home/inv/proj/main/node_modules/x.js:1", roots)).toBe(
+    "at <linked>/node_modules/x.js:1",
+  );
+  expect(scrubRoots('{"cwd":"/home/inv/proj/main","bun":"~/.bun"}', roots)).toBe(
+    '{"cwd":"<linked>","bun":"<toolchain:bun>"}',
+  );
+  expect(scrubRoots("file:///home/inv/proj/main/a.js ~/proj/main: $HOME/.bun/bin/bun", roots)).toBe(
+    "file://<linked>/a.js <linked>: <toolchain:bun>/bin/bun",
+  );
+  // The verifier's reproduction: the sibling is still refused.
+  const set = new Map([
+    ["/home/inv/proj/main-clientx", "host project path"],
+    ["~/proj/main-clientx", "host project path"],
+  ] as const);
+  const account = { homes: ["/home/inv"], user: "nobody-example", host: "box-example" };
+  const pre = scrubAccount(unchanged[0] ?? "", account);
+  expect(refusalKinds(pre, set, roots)).toEqual(["host project path"]);
+  expect(scrubRoots(pre, roots)).toBe("~/proj/main-clientx/src/a.ts and ~/proj/main-clientx");
+});
+
+test("D5: the refusal looks before the roots become placeholders: a private value that starts with or contains a root is still refused; the root itself is not", () => {
+  const roots = rootSpellings([{ dir: "/home/inv/proj/main", as: "<linked>" }], ["/home/inv"]);
+  const set = new Map([
+    ["~/proj/main", "host project path"],
+    ["/home/inv/proj/main", "host project path"],
+    ["projmain", "real Workit config value"],
+    ["~/proj/main/sub-client", "host project path"],
+    ["inv/proj", "real Workit config value"],
+  ] as const);
+  // The root itself, and a value that is only a part of it, are the bench's own path.
+  for (const text of ["at ~/proj/main/node_modules/x.js", "cd ~/proj/main", '"~/proj/main"'])
+    expect(refusalKinds(text, set, roots), text).toEqual([]);
+  expect(refusalKinds("at /home/inv/proj/main/x.js", set, roots)).toEqual([]);
+  // A value that goes on past the root is the account's, whatever the stored text would show.
+  const under = "cat ~/proj/main/sub-client/notes";
+  expect(scrubRoots(under, roots)).toBe("cat <linked>/sub-client/notes");
+  expect(refusalKinds(under, set, roots)).toEqual(["host project path"]);
+  // A value elsewhere in the text, and one in a sibling, still hit.
+  expect(refusalKinds("the projmain workspace is at ~/proj/main", set, roots)).toEqual([
+    "real Workit config value",
+  ]);
+  expect(refusalKinds("see /srv/inv/proj/main", set, roots)).toEqual(["real Workit config value"]);
+  // The JSON-escaped form of a value is looked for too.
+  const escaped = new Map([['say "acme"', "real Workit config value"]] as const);
+  expect(refusalKinds(JSON.stringify({ text: 'say "acme"' }), escaped, roots)).toEqual([
+    "real Workit config value",
+  ]);
+  // The diagnosis locates the same hits, and none for the root.
+  const transcript = runOf(
+    "claude-code",
+    [{ tool: "Bash", input: { command: under }, result: "at ~/proj/main/x.js" }],
+    "done",
+  );
+  const where = privateHits(
+    { "t.transcript.jsonl": transcript },
+    set,
+    new Map(),
+    "salt",
+    roots,
+  ).map((hit) => `${hit.where}: ${hit.kind}, ${hit.length}`);
+  expect(where).toEqual(["event 1, assistant Bash input: host project path, 22"]);
+});
+
+test("D5: the checkout's own placeholder hides nothing either: put back, a private value under the checkout is refused and the checkout is not", () => {
+  // `<workit>` goes in early (the outside-read scrub needs it), so the refusal puts it back to look.
+  const checkout = { dir: "~/proj/workit", as: "<workit>" };
+  const set = new Map([
+    ["~/proj/workit", "host project path"],
+    ["~/proj/workit/notes-client", "host project path"],
+    ["~/proj/workit-clientx", "host project path"],
+  ] as const);
+  const look = (stored: string): string[] =>
+    refusalKinds(unscrubRoots(stored, [checkout]), set, [checkout]);
+  expect(look("bun <workit>/packages/workit-cli/src/main.ts")).toEqual([]);
+  expect(look("cd <workit>")).toEqual([]);
+  expect(look("cat <workit>/notes-client/a.md")).toEqual(["host project path"]);
+  // A sibling was never replaced: the checkout goes in as a whole path only.
+  const sibling = scrubRoots("ls /home/inv/proj/workit-clientx /home/inv/proj/workit/x", [
+    { dir: "/home/inv/proj/workit", as: "<workit>" },
+  ]);
+  expect(sibling).toBe("ls /home/inv/proj/workit-clientx <workit>/x");
+  expect(
+    look(
+      scrubAccount(sibling, { homes: ["/home/inv"], user: "nobody-example", host: "box-example" }),
+    ),
+  ).toEqual(["host project path"]);
+});
+
+test("D5: a root is never the home, a dir above it or a dir that holds a guarded path", () => {
+  const home = "/home/inv";
+  const guarded = [home, "/home/inv/.config/workit", "/srv/guarded/state"];
+  expect(
+    safeRoots(
+      [
+        { dir: "/home/inv", as: "<linked>" },
+        { dir: "/home", as: "<linked-2>" },
+        { dir: "/", as: "<linked-3>" },
+        { dir: "/home/inv/.config", as: "<toolchain:x>" },
+        { dir: "/srv/guarded", as: "<linked-4>" },
+        { dir: "/home/inv/proj/main", as: "<linked-5>" },
+        { dir: "/home/inv/.bun", as: "<toolchain:bun>" },
+      ],
+      guarded,
+    ),
+  ).toEqual([
+    { dir: "/home/inv/proj/main", as: "<linked-5>" },
+    { dir: "/home/inv/.bun", as: "<toolchain:bun>" },
+  ]);
+  // The reproduction: a store under a home that is itself a git repo makes the home the root.
+  const repoHome = realpathSync(mkdtempSync(path.join(os.tmpdir(), "workit-privacy-githome-")));
+  temps.push(repoHome);
+  mkdirSync(path.join(repoHome, ".git"));
+  mkdirSync(path.join(repoHome, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(path.join(repoHome, "wt", "node_modules"), { recursive: true });
+  symlinkSync(
+    path.join(repoHome, "node_modules", "pkg"),
+    path.join(repoHome, "wt", "node_modules", "pkg"),
+  );
+  const found = linkedRoots(path.join(repoHome, "wt", "node_modules"));
+  expect(found).toEqual([repoHome]);
+  expect(
+    safeRoots(
+      found.map((dir) => ({ dir, as: "<linked>" })),
+      [repoHome],
+    ),
+  ).toEqual([]);
 });

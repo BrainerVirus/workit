@@ -95,12 +95,55 @@ export const rootSpellings = (roots: Root[], homes: string[]): Root[] =>
       ),
   ]);
 
-/** `text` with each root replaced by its placeholder, the longest root first. */
+/**
+ * `roots` without any that is a guarded path, holds one or lies above one
+ * (`guarded`: the home, the real Workit dirs, the host config dirs): such a
+ * dir is the account's, never a placeholder, whatever linked into it.
+ */
+export const safeRoots = (roots: Root[], guarded: string[]): Root[] =>
+  roots.filter(
+    (root) =>
+      !guarded.some((each) => {
+        const rel = path.relative(root.dir, each);
+        return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+      }),
+  );
+
+/** A character a path segment goes on with: a root next to one is part of a longer name, not the root. */
+const SEGMENT = String.raw`[\w.@+~-]`;
+
+type Span = { start: number; end: number; as: string };
+
+/**
+ * Every place `text` names a root as a whole path: not after and not before
+ * a character a path segment goes on with, so `<root>/x` and `"<root>"` are
+ * the root and `<root>-client`, `<root>x` and `/mnt<root>` are other paths.
+ * The longest root wins where two start at one place.
+ */
+const rootSpans = (text: string, roots: Root[]): Span[] => {
+  if (roots.length === 0) return [];
+  const sorted = roots.toSorted((a, b) => b.dir.length - a.dir.length);
+  const as = new Map(sorted.map((root) => [root.dir, root.as]));
+  const pattern = new RegExp(
+    `(?<!${SEGMENT})(?:${sorted.map((root) => escape(root.dir)).join("|")})(?!${SEGMENT})`,
+    "gu",
+  );
+  return [...text.matchAll(pattern)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    as: as.get(match[0]) ?? "",
+  }));
+};
+
+/** `text` with each root that stands as a whole path replaced by its placeholder. */
 export const scrubRoots = (text: string, roots: Root[]): string => {
-  let out = text;
-  for (const { dir, as } of roots.toSorted((a, b) => b.dir.length - a.dir.length))
-    out = out.replaceAll(dir, as);
-  return out;
+  let out = "";
+  let at = 0;
+  for (const span of rootSpans(text, roots)) {
+    out += text.slice(at, span.start) + span.as;
+    at = span.end;
+  }
+  return out + text.slice(at);
 };
 
 // ------------------------------------------------------------ outside-world reads
@@ -548,9 +591,15 @@ const collect = (
     }
 };
 
-/** A file as a diagnosis names it: under the home as `~/…`, else by its name only. */
-const shownFile = (file: string, home: string): string =>
-  file.startsWith(`${home}${path.sep}`) ? `~${file.slice(home.length)}` : path.basename(file);
+/**
+ * A Workit config file as a diagnosis names it: by its well-known path in
+ * the default dir, else as the config dir's file of that fixed name. A dir
+ * the environment names is the user's choice and is never shown.
+ */
+const shownConfig = (dir: string, name: string, home: string): string =>
+  dir === workitDir("config", { HOME: home })
+    ? `~${dir.slice(home.length)}/${name}`
+    : `the Workit config dir's ${name}`;
 
 /** The values of `pattern` keys in a git config file; exit 1 is no match, anything else a file git cannot parse. */
 const gitValues = (file: string, pattern: string): string[] => {
@@ -576,19 +625,28 @@ const gitIdentities = (
   home: string,
   env: NodeJS.ProcessEnv,
 ): { names: [string, string][]; emails: [string, string][] } => {
-  const xdg = env.XDG_CONFIG_HOME ?? path.join(home, ".config");
-  const files = [path.join(home, ".gitconfig"), path.join(xdg, "git", "config")].filter(existsSync);
+  // Each file with the name a diagnosis gives it: the two well-known ones by
+  // path, an included one by where it was included from, never by its own
+  // path (the user chose the dir it sits in).
+  const base: [string, string][] = [
+    [path.join(home, ".gitconfig"), "~/.gitconfig"],
+    env.XDG_CONFIG_HOME
+      ? [path.join(env.XDG_CONFIG_HOME, "git", "config"), "the git config under XDG_CONFIG_HOME"]
+      : [path.join(home, ".config", "git", "config"), "~/.config/git/config"],
+  ];
+  const files = base.filter(([file]) => existsSync(file));
   // An include may include more: the loop reaches files pushed while it runs.
-  for (const file of files)
-    for (const include of gitValues(file, String.raw`^include(if\..*)?\.path$`)) {
+  for (const [file, label] of files)
+    for (const [at, include] of gitValues(file, String.raw`^include(if\..*)?\.path$`).entries()) {
       const full = include.startsWith("~/")
         ? path.join(home, include.slice(2))
         : path.resolve(path.dirname(file), include);
-      if (existsSync(full) && !files.includes(full)) files.push(full);
+      if (existsSync(full) && !files.some(([seen]) => seen === full))
+        files.push([full, `a git config file included from ${label}, include ${at + 1}`]);
     }
   const valuesOf = (pattern: string): [string, string][] =>
-    files.flatMap((file) =>
-      gitValues(file, pattern).map((value): [string, string] => [value, file]),
+    files.flatMap(([file, label]) =>
+      gitValues(file, pattern).map((value): [string, string] => [value, label]),
     );
   return {
     names: valuesOf(String.raw`^user\.name$`),
@@ -626,7 +684,7 @@ export const privateStrings = (
       collect(readJson(file), "", isPublic, strings);
       for (const [text, where] of strings)
         if (!isPublic(text))
-          add(text, "real Workit config value", `${shownFile(file, realHome)}: ${where}`);
+          add(text, "real Workit config value", `${shownConfig(dir, name, realHome)}: ${where}`);
     }
   const projects = Object.keys(
     record(record(readJson(path.join(realHome, ".claude.json")))?.projects) ?? {},
@@ -638,10 +696,8 @@ export const privateStrings = (
       add(`~${project.slice(realHome.length)}`, "host project path", `${from} (as a ~ path)`);
   }
   const git = gitIdentities(realHome, env ?? {});
-  for (const [name, file] of git.names)
-    add(name, "git user name", `${shownFile(file, realHome)}: user.name`, 3);
-  for (const [email, file] of git.emails)
-    add(email, "git user email", `${shownFile(file, realHome)}: user.email`, 3);
+  for (const [name, file] of git.names) add(name, "git user name", `${file}: user.name`, 3);
+  for (const [email, file] of git.emails) add(email, "git user email", `${file}: user.email`, 3);
   add(realHome, "home path", "the account's home dir", 2);
   return set;
 };
@@ -687,6 +743,9 @@ const HOST_KEYS = new Set([
   "refresh",
   "token",
 ]);
+
+/** The columns of OpenCode's `credential` table a diagnosis may name. */
+const CREDENTIAL_COLUMNS = new Set(["id", "integration_id", "label", "connector_id", "method_id"]);
 
 /** Every string value under `value` (never a key) to where it sits; a string that is itself JSON is opened too. */
 const stringsIn = (value: unknown, where: string, into: Map<string, string>): void => {
@@ -798,7 +857,7 @@ export const accountIds = (home: string, host: Host, origins?: OriginsOf): strin
       if (isAccountId(key, value) && !found.has(value))
         found.set(
           value,
-          `${where}${HOST_KEYS.has(key) || where.includes("column") ? key : "a key"}`,
+          `${where}${HOST_KEYS.has(key) || (where.includes("column") && CREDENTIAL_COLUMNS.has(key)) ? key : where.includes("column") ? "(not shown)" : "a key"}`,
         );
   };
   if (host === "claude-code") {
@@ -832,14 +891,47 @@ export const envCredentials = (env: Record<string, string>, origins?: Origins): 
       return value;
     });
 
-/** The kinds of private string `text` still holds (as is or JSON-escaped); never the strings. */
-export const privateKinds = (text: string, set: PrivateSet): PrivateKind[] => {
+/**
+ * `text` with each root's placeholder put back as the path it stands for:
+ * what the refusal looks at when a placeholder went in before it could look
+ * (the checkout's `<workit>`, which the outside-read scrub needs in place).
+ */
+export const unscrubRoots = (text: string, roots: Root[]): string => {
+  let out = text;
+  for (const root of roots) out = out.replaceAll(root.as, root.dir);
+  return out;
+};
+
+/** Whether `text` holds `needle` somewhere that is not wholly inside one of `spans`. */
+const outsideSpans = (text: string, needle: string, spans: Span[]): boolean => {
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1))
+    if (!spans.some((span) => span.start <= at && at + needle.length <= span.end)) return true;
+  return false;
+};
+
+/** Whether `text` holds `secret`, as is or JSON-escaped, outside the roots it names. */
+const holds = (text: string, secret: string, spans: Span[]): boolean =>
+  outsideSpans(text, secret, spans) ||
+  outsideSpans(text, JSON.stringify(secret).slice(1, -1), spans);
+
+/**
+ * The kinds of private string `text` holds (as is or JSON-escaped), never
+ * the strings. `text` is the transcript BEFORE its roots become placeholders
+ * (`scrubRoots`), and only a string wholly inside a root named as a whole
+ * path is let through: the root itself, a part of it. A private value that
+ * starts with a root, contains one or sits beside one still counts, so a
+ * placeholder never hides one.
+ */
+export const refusalKinds = (text: string, set: PrivateSet, roots: Root[] = []): PrivateKind[] => {
+  const spans = rootSpans(text, roots);
   const kinds = new Set<PrivateKind>();
-  for (const [secret, kind] of set)
-    if (text.includes(secret) || text.includes(JSON.stringify(secret).slice(1, -1)))
-      kinds.add(kind);
+  for (const [secret, kind] of set) if (holds(text, secret, spans)) kinds.add(kind);
   return [...kinds];
 };
+
+/** The kinds of private string `text` holds (as is or JSON-escaped); never the strings. */
+export const privateKinds = (text: string, set: PrivateSet): PrivateKind[] =>
+  refusalKinds(text, set);
 
 // ------------------------------------------------------------ a refusal's diagnosis
 
@@ -848,6 +940,11 @@ export const privateKinds = (text: string, set: PrivateSet): PrivateKind[] => {
  * is, never the string. `id` is a salted fingerprint, so two hits of one
  * value show the same id and two values different ones; `from` is where the
  * value came from (a file and key path), when the runner read it from one.
+ *
+ * `where` is built from structure only: counts, lengths and names taken
+ * from the fixed lists below (the formats' own keys, event types, tools, a
+ * shell call's first word). No text a model or a user wrote is ever in it:
+ * no excerpt of a command, no key or tool name outside the lists.
  */
 export type Hit = {
   file: string;
@@ -859,76 +956,275 @@ export type Hit = {
   from: string | null;
 };
 
-type Leaf = { at: (string | number)[]; text: string };
+/** The keys of the two transcript formats and of a result file: the only key names a diagnosis shows. */
+const FORMAT_KEYS = new Set([
+  // Claude Code stream-json.
+  "type",
+  "subtype",
+  "message",
+  "content",
+  "text",
+  "input",
+  "result",
+  "tool_use_result",
+  "tool_use_id",
+  "is_error",
+  "permission_denials",
+  "tool_input",
+  "tool_name",
+  "command",
+  "description",
+  "cwd",
+  "model",
+  "stdout",
+  "stderr",
+  "file",
+  "decision_reason",
+  "errors",
+  // OpenCode run --format json.
+  "part",
+  "state",
+  "output",
+  "error",
+  "metadata",
+  "title",
+  "tool",
+  "reason",
+  // A result file.
+  "case",
+  "run",
+  "host",
+  "provider",
+  "limits",
+  "workitVersion",
+  "key",
+  "date",
+  "usage",
+  "grade",
+  "failures",
+  "rule",
+  "detail",
+  "outsideWrite",
+  "outsideChanges",
+  "findings",
+  "reported",
+  "path",
+  "was",
+  "now",
+  "blob",
+  "commands",
+  "added",
+  "changed",
+  "missing",
+  "change",
+]);
+
+/** The event types and subtypes of the two transcript formats. */
+const EVENT_TYPES = new Set([
+  "assistant",
+  "user",
+  "system",
+  "result",
+  "rate_limit_event",
+  "tool_use",
+  "text",
+  "step_start",
+  "step_finish",
+  "error",
+  "scrub",
+]);
+const EVENT_SUBTYPES = new Set([
+  "init",
+  "success",
+  "permission_denied",
+  "hook_started",
+  "hook_response",
+  "notification",
+  "task_started",
+  "task_progress",
+  "task_updated",
+  "task_notification",
+  "thinking_tokens",
+  "error_max_turns",
+  "error_during_execution",
+]);
+
+/** The hosts' own tools; Workit's OpenCode tools share one prefix. */
+const TOOLS = new Set([
+  "Bash",
+  "Read",
+  "Edit",
+  "Write",
+  "Glob",
+  "Grep",
+  "Skill",
+  "Agent",
+  "Task",
+  "TodoWrite",
+  "WebFetch",
+  "WebSearch",
+  "NotebookEdit",
+  "shell",
+  "read",
+  "edit",
+  "write",
+  "patch",
+  "glob",
+  "grep",
+  "list",
+  "skill",
+  "subagent",
+]);
+const shownTool = (name: unknown): string =>
+  typeof name === "string" && (TOOLS.has(name) || /^workit_[a-z_]{1,40}$/u.test(name))
+    ? name
+    : "a tool";
+
+/** The commands a diagnosis may name as a shell call's first word. */
+const KNOWN_COMMANDS = new Set([
+  "workit",
+  "git",
+  "ytrack",
+  "bun",
+  "node",
+  "npm",
+  "npx",
+  "python",
+  "python3",
+  "sh",
+  "bash",
+  "cd",
+  "ls",
+  "cat",
+  "echo",
+  "printf",
+  "grep",
+  "rg",
+  "find",
+  "head",
+  "tail",
+  "sed",
+  "awk",
+  "wc",
+  "sort",
+  "xargs",
+  "tee",
+  "diff",
+  "jq",
+  "mkdir",
+  "rm",
+  "cp",
+  "mv",
+  "touch",
+  "chmod",
+  "curl",
+  "which",
+  "env",
+  "pwd",
+  "test",
+]);
+
+type Step = number | { key: string; index: number };
+type Leaf = { at: Step[]; text: string; isKey: boolean };
 
 /** Every string under `value` with its path; an object's key is a leaf of its own. */
-const leaves = (value: unknown, at: (string | number)[], into: Leaf[]): void => {
-  if (typeof value === "string") into.push({ at, text: value });
+const leaves = (value: unknown, at: Step[], into: Leaf[]): void => {
+  if (typeof value === "string") into.push({ at, text: value, isKey: false });
   else if (Array.isArray(value))
     for (const [index, each] of value.entries()) leaves(each, [...at, index], into);
   else if (record(value))
-    for (const [key, each] of Object.entries(value as Json)) {
-      into.push({ at: [...at, "{key}"], text: key });
-      leaves(each, [...at, key], into);
+    for (const [index, [key, each]] of Object.entries(value as Json).entries()) {
+      const here = [...at, { key, index }];
+      into.push({ at: here, text: key, isKey: true });
+      leaves(each, here, into);
     }
 };
 
-/** A path as a diagnosis shows it: a host's schema keys; a long or path-like key (the user's) as `{key}`. */
-const shownPath = (at: (string | number)[]): string =>
-  at
-    .map((part) =>
-      typeof part === "number"
-        ? `[${part}]`
-        : /^[\w{}$-]{1,40}$/u.test(part)
-          ? `.${part}`
-          : ".{key}",
-    )
-    .join("")
-    .replace(/^\./u, "");
-
-/** The field of a transcript event a leaf sits in: the event's type, the tool and input, result or text. */
-const fieldOf = (event: Json, at: (string | number)[], tools: Map<string, string>): string => {
-  const type = `${String(event.type ?? "event")}${typeof event.subtype === "string" ? `/${event.subtype}` : ""}`;
-  const part = record(event.part);
-  if (part && at[0] === "part") {
-    const tool = String(part.tool ?? "tool");
-    if (at[1] === "state" && at[2] === "input") return `${type} ${tool} input`;
-    if (at[1] === "state") return `${type} result of ${shownCall(tool, record(part.state)?.input)}`;
-    if (at[1] === "text") return `${type} (the model's text)`;
-  }
-  const content = record(event.message)?.content;
-  if (at[0] === "message" && at[1] === "content" && Array.isArray(content)) {
-    const block = record(content[Number(at[2])]);
-    if (block?.type === "tool_use") return `${type} ${String(block.name ?? "tool")} input`;
-    if (block?.type === "tool_result")
-      return `${type} result of ${tools.get(String(block.tool_use_id)) ?? "a call"}`;
-    if (at[3] === "text") return `${type} (the model's text)`;
-  }
-  if (at[0] === "tool_use_result") return `${type} result (the host's copy)`;
-  if (event.type === "result" && at[0] === "result") return `${type} (the answer text)`;
-  return `${type} ${shownPath(at)}`;
+const keyAt = (at: Step[], depth: number): string | null => {
+  const step = at[depth];
+  return typeof step === "object" ? step.key : null;
 };
 
-/** A call as a diagnosis names it: the tool, and its command or input cut short. */
-const shownCall = (tool: string, input: unknown): string => {
+/** A path as a diagnosis shows it: a key of the formats by name, any other key by its position. */
+const shownPath = (leaf: Leaf): string =>
+  `${leaf.at
+    .map((step) =>
+      typeof step === "number"
+        ? `[${step}]`
+        : FORMAT_KEYS.has(step.key)
+          ? `.${step.key}`
+          : `.{key ${step.index + 1}}`,
+    )
+    .join("")
+    .replace(/^\./u, "")}${leaf.isKey ? " (the key's own name)" : ""}`;
+
+/**
+ * A call as a diagnosis names it, by structure only: the tool, and for a
+ * shell call the command's length and its first word when that is a known
+ * command. Never an excerpt: a cut can split a private value, and a value
+ * has more than one written form.
+ */
+const shownCall = (tool: unknown, input: unknown): string => {
   const command = record(input)?.command;
-  const text = (typeof command === "string" ? command : JSON.stringify(input ?? {}))
-    .replaceAll(/\s+/gu, " ")
-    .slice(0, 100);
-  return `${tool}(${text})`;
+  if (typeof command !== "string") return `${shownTool(tool)} call`;
+  const first = /^\s*([\w.-]+)/u.exec(command)?.[1] ?? "";
+  return `${shownTool(tool)} call (${command.length} chars; ${
+    KNOWN_COMMANDS.has(first) ? `starts with ${first}` : "a command not on the list"
+  })`;
+};
+
+/** The field of a transcript event a leaf sits in: the event's type, the tool and input, result or text. */
+const fieldOf = (event: Json, leaf: Leaf, calls: Map<string, string>): string => {
+  const known = typeof event.type === "string" && EVENT_TYPES.has(event.type);
+  const sub = typeof event.subtype === "string" && EVENT_SUBTYPES.has(event.subtype);
+  const type = known
+    ? `${String(event.type)}${sub ? `/${String(event.subtype)}` : ""}`
+    : "an event,";
+  const input = (tool: unknown): string => {
+    const name = shownTool(tool);
+    return `${type} ${name === "a tool" ? "a tool's" : name} input`;
+  };
+  const part = record(event.part);
+  if (part && keyAt(leaf.at, 0) === "part") {
+    if (keyAt(leaf.at, 1) === "state" && keyAt(leaf.at, 2) === "input") return input(part.tool);
+    if (keyAt(leaf.at, 1) === "state")
+      return `${type} result of ${shownCall(part.tool, record(part.state)?.input)}`;
+    if (keyAt(leaf.at, 1) === "text") return `${type} (the model's text)`;
+  }
+  const content = record(event.message)?.content;
+  if (
+    keyAt(leaf.at, 0) === "message" &&
+    keyAt(leaf.at, 1) === "content" &&
+    Array.isArray(content)
+  ) {
+    const block = record(content[Number(leaf.at[2])]);
+    if (block?.type === "tool_use") return input(block.name);
+    if (block?.type === "tool_result")
+      return `${type} result of ${calls.get(String(block.tool_use_id)) ?? "a call"}`;
+    if (keyAt(leaf.at, 3) === "text") return `${type} (the model's text)`;
+  }
+  if (keyAt(leaf.at, 0) === "tool_use_result") return `${type} result (the host's copy)`;
+  if (
+    event.type === "result" &&
+    keyAt(leaf.at, 0) === "result" &&
+    leaf.at.length === 1 &&
+    !leaf.isKey
+  )
+    return `${type} (the answer text)`;
+  return `${type} ${shownPath(leaf)}`;
 };
 
 /** Each Claude Code call id to the call, as a diagnosis names it. */
-const toolNames = (events: (Json | null)[]): Map<string, string> => {
-  const tools = new Map<string, string>();
+const callsById = (events: (Json | null)[]): Map<string, string> => {
+  const calls = new Map<string, string>();
   for (const event of events) {
     const content = record(event?.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const block of content.map(record))
       if (block?.type === "tool_use" && typeof block.id === "string")
-        tools.set(block.id, shownCall(String(block.name ?? "tool"), block.input));
+        calls.set(block.id, shownCall(block.name, block.input));
   }
-  return tools;
+  return calls;
 };
 
 const parsed = (line: string): Json | null => {
@@ -942,15 +1238,16 @@ const parsed = (line: string): Json | null => {
 /**
  * Where `files` (name to text) hold a private string or a shape the
  * committed scan refuses: per transcript event and field, per key path of a
- * result file. `salt` makes the ids: pass one per bench start. A result's
- * hit names its call by the call's command, cut short, with any private
- * string in it replaced by its kind.
+ * result file. `salt` makes the ids: pass one per bench start. `roots` are
+ * let through as in `refusalKinds`: pass the transcript before its roots
+ * become placeholders.
  */
 export const privateHits = (
   files: Record<string, string>,
   set: PrivateSet,
   origins: Origins,
   salt: string,
+  roots: Root[] = [],
 ): Hit[] => {
   const hits: Hit[] = [];
   const id = (secret: string): string =>
@@ -963,8 +1260,9 @@ export const privateHits = (
   };
   const scan = (file: string, text: string, where: string): boolean => {
     let found = false;
+    const spans = rootSpans(text, roots);
     for (const [secret, kind] of set)
-      if (text.includes(secret) || text.includes(JSON.stringify(secret).slice(1, -1))) {
+      if (holds(text, secret, spans)) {
         found = true;
         add({
           file,
@@ -981,28 +1279,23 @@ export const privateHits = (
     }
     return found;
   };
-  // A call's command is shown beside its result's hit: never with a private string in it.
-  const veiled = (where: string): string => {
-    let out = where;
-    for (const [secret, kind] of set) out = out.replaceAll(secret, `<${kind}>`);
-    return out;
-  };
   for (const [file, text] of Object.entries(files)) {
-    const lines = file.endsWith(".jsonl") ? text.split("\n") : [text];
+    const transcript = file.endsWith(".jsonl");
+    const lines = transcript ? text.split("\n") : [text];
     const events = lines.map(parsed);
-    const tools = toolNames(events);
+    const calls = callsById(events);
     for (const [index, line] of lines.entries()) {
       // A line with no hit as a whole has none in a field.
-      if (privateKinds(line, set).length === 0 && committedLeaks(line).length === 0) continue;
+      if (refusalKinds(line, set, roots).length === 0 && committedLeaks(line).length === 0)
+        continue;
       const event = events[index];
-      const here = file.endsWith(".jsonl") ? `event ${index + 1}` : "result file";
+      const here = transcript ? `event ${index + 1}` : "result file";
       const found: Leaf[] = [];
       if (event) leaves(event, [], found);
       let located = false;
       for (const leaf of found) {
-        const field =
-          file.endsWith(".jsonl") && event ? fieldOf(event, leaf.at, tools) : shownPath(leaf.at);
-        located = scan(file, leaf.text, veiled(`${here}, ${field}`)) || located;
+        const field = transcript && event ? fieldOf(event, leaf, calls) : shownPath(leaf);
+        located = scan(file, leaf.text, `${here}, ${field}`) || located;
       }
       // Seen only across fields (a shape of the event itself, a line that is not JSON).
       if (!located) scan(file, line, `${here}, across its fields`);
