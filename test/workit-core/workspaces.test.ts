@@ -55,10 +55,10 @@ test("resolveWorkspace matches work and personal globs, deep paths included", ()
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-basic-"));
   writeWorkspaces(dir, JSON.stringify(WORKSPACES, null, 2));
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo")?.name).toBe("work");
+    expect(resolveWorkspace("/home/u/Documents/projects/work/acme/repo")?.name).toBe("work");
     expect(resolveWorkspace("/home/u/Documents/projects/personal/some-app")?.name).toBe("personal");
     expect(
-      resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo/deep/nested/path")?.name,
+      resolveWorkspace("/home/u/Documents/projects/work/acme/repo/deep/nested/path")?.name,
     ).toBe("work");
   });
 });
@@ -105,7 +105,7 @@ test("equally-specific overlapping workspace globs require an explicit name", ()
 
 test("runtime VCS and branch policy resolution use the most-specific workspace", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-specific-"));
-  const cwd = "/home/u/Documents/projects/work/sixbell/productos/ri/web";
+  const cwd = "/home/u/Documents/projects/work/acme/products/app/web";
   writeWorkspaces(
     dir,
     JSON.stringify({
@@ -118,7 +118,7 @@ test("runtime VCS and branch policy resolution use the most-specific workspace",
         },
         {
           name: "github-web",
-          glob: "/home/*/Documents/projects/work/sixbell/productos/ri/web/**",
+          glob: "/home/*/Documents/projects/work/acme/products/app/web/**",
           vcs: { provider: "github", defaultTargetBranch: "nun-develop" },
           branchPolicy: { preset: "github-flow" },
         },
@@ -166,7 +166,7 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-fields-"));
   writeWorkspaces(dir, JSON.stringify(WORKSPACES, null, 2));
   withIsolatedConfig(dir, () => {
-    const ws = resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo");
+    const ws = resolveWorkspace("/home/u/Documents/projects/work/acme/repo");
     expect(ws).not.toBeNull();
     expect(ws?.vcs?.provider).toBe("gitlab");
     expect(ws?.vcs?.defaultTargetBranch).toBe("develop");
@@ -289,7 +289,7 @@ test("CA-01: resolveWorkspace maps work/personal globs to vcs + branchPolicy pre
   };
   writeWorkspaces(dir, JSON.stringify(cfg, null, 2));
   withIsolatedConfig(dir, () => {
-    const work = resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo");
+    const work = resolveWorkspace("/home/u/Documents/projects/work/acme/repo");
     expect(work?.name).toBe("work");
     expect(work?.vcs?.provider).toBe("gitlab");
     expect(work?.vcs?.defaultTargetBranch).toBe("develop");

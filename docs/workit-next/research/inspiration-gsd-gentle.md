@@ -1,7 +1,7 @@
 # Inspiration scout: GSD (core, pi, original) and Gentle AI (gentle-ai, gentle-pi, engram)
 
 Research date: 2026-10-03. Shallow clones live in
-`/tmp/claude-1000/-home-cristhofer-pincetti/fb894a62-61b7-4f32-a4d0-f47c2e5e300f/scratchpad/refs/`.
+`/tmp/claude-1000/-home-user/fb894a62-61b7-4f32-a4d0-f47c2e5e300f/scratchpad/refs/`.
 All HEADs read were dated 2026-10-03: gsd-core `81cb6f8`, gsd-pi `387de59`, gentle-ai `f4d3f3e`
 (docs say v4.0.0), gentle-pi `cd4ba5a`, engram `a5d9429`, get-shit-done `bdcaab2` (2026-05-31).
 

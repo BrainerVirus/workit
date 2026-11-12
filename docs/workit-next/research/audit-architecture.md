@@ -75,7 +75,7 @@ There are also host-only surfaces outside the families: `workit_context` / `cont
   - `recovery/{task|workspace}.<id>.<sha256>.json`: a full copy of the *previous* bytes, written before every replacement (`task-store.ts:1093-1151`), never pruned.
   - `metadata.lock`: an `@openclaw/fs-safe` file lock that holds `{pid, processStart, host, nonce}`.
   - `.gitignore` containing `*` (rewritten on every mutation, `task-store.ts:1090`).
-- **`~/.config/workit/`**: `config.json` (locale, timezone, branch and commit policy), `workspaces.json` (glob → VCS provider, account, branch policy, `autoApprove`), `vcs.json`, `youtrack.json`, `youtrack.token`, `templates/`. There are also legacy `github.token`, `github-work.token` and `gitlab.token` files, which the README says are no longer read.
+- **`~/.config/workit/`**: `config.json` (locale, timezone, branch and commit policy), `workspaces.json` (glob → VCS provider, account, branch policy, `autoApprove`), `vcs.json`, `youtrack.json`, `youtrack.token`, `templates/`. There are also legacy `github.token`, `work-gh.token` and `gitlab.token` files, which the README says are no longer read.
 - **`~/.workit/`** is not a separate global store. It is just a `.workit/` created when an agent ran from `$HOME` (24 KB here).
 - **`~/.local/state/workit/upgrades/`** holds upgrade backups; **`~/.local/share/workit/`** is the sync-runtime share clone (130 MB here).
 

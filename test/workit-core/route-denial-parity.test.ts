@@ -352,7 +352,7 @@ test("all adapters enforce the branch policy on every raw branch-creation form",
         // A path alone names the branch after it.
         ["git worktree add ../other", "allowed_pattern"],
         ['git checkout -b "main"', "protected_ref"],
-        // The 2026-10 ui-kit form that slipped through: a compound command
+        // The 2026-10 widgets form that slipped through: a compound command
         // with cd, a start point and a trailing --no-track.
         [
           "git fetch origin develop -q && git switch -c chore/x origin/develop --no-track; git log --oneline -1",

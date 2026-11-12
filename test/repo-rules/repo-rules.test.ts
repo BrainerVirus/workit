@@ -124,7 +124,7 @@ export const probe = spawnSync("git", ["--version"]);
 };
 
 let root = "";
-const write = (file: string, source: string) => {
+const write = (file: string, source: string | Uint8Array) => {
   mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
   writeFileSync(path.join(root, file), source);
 };
@@ -236,4 +236,85 @@ test("Given a newly added rule, When --grandfather names it, Then only that rule
     "spawn-env-path": { "packages/workit-core/src/core/pr-env.ts": 1 },
   });
   expect(run("--grandfather", "no-such-rule").code).toBe(2);
+});
+
+// The private names are joined from fragments so the repo itself never spells them.
+const ORG = ["Eng", "houseGlobal"].join("");
+const ALIAS = ["github", "-work.com"].join("");
+const REPO = ["ui", "-kit"].join("");
+const AUTHOR = ["Cris", "thofer ", "Pin", "cetti"].join("");
+
+test("Given a private work name in a Markdown or JSON file, When the repo rules run, Then they fail at its line naming the neutral value, and the author credit stays allowed", () => {
+  const files = {
+    "docs/guides/remote.md": `# Remotes\n\nAn alias such as \`git@${ALIAS}:${ORG}/${REPO}.git\`.\n`,
+    "test/behavior/cases/grant.json": `{ "argv": ["workspace", "set", "${REPO.toUpperCase()}"] }\n`,
+    LICENSE: `MIT License\n\nCopyright (c) 2026 ${AUTHOR}\n`,
+    "docs/credits.md": `Written by ${AUTHOR}.\n`,
+  };
+  for (const [file, source] of Object.entries(files)) write(file, source);
+  try {
+    setBaseline(Object.fromEntries(CITED.map((entry) => [entry.rule, { [entry.file]: 1 }])));
+    const { code, err } = run();
+    expect(code).toBe(1);
+    const hits = err.split("\n").filter((line) => line.includes("workit/private-names: "));
+    expect(hits.map((line) => line.split(" ")[0])).toEqual([
+      "docs/credits.md:1:12",
+      "docs/credits.md:1:23",
+      "docs/guides/remote.md:3:23",
+      "docs/guides/remote.md:3:39",
+      "docs/guides/remote.md:3:54",
+      "test/behavior/cases/grant.json:1:33",
+    ]);
+    expect(err).toContain("Fix: use the neutral sample value acme.");
+    expect(err).toContain("Fix: use the neutral sample value work-gh.");
+    expect(err).toContain("Fix: use the neutral sample value widgets.");
+    expect(err).not.toContain("LICENSE:");
+    expect(err).toContain("repo rules: 6 new hits.");
+  } finally {
+    for (const file of Object.keys(files)) rmSync(path.join(root, file));
+  }
+});
+
+const SISTER = ["Six", "bell"].join("");
+const ascii = (text: string) => Buffer.from(text, "latin1");
+const utf16be = (text: string) => Buffer.from(text, "utf16le").swap16();
+
+test("Given a private work name in a path, a binary, UTF-16 text or text followed by NULs, When the repo rules run, Then each is reported: a path at line 0, an undecodable file at its byte offset", () => {
+  const files: Record<string, string | Uint8Array> = {
+    [`docs/${REPO}-notes.md`]: "clean\n",
+    [`docs/${SISTER}/readme.md`]: "clean\n",
+    "assets/blob.bin": Buffer.concat([Buffer.from([0xff, 0x00, 0x01]), ascii(`x ${ALIAS}`)]),
+    "docs/le.txt": Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(`host ${ORG}`, "utf16le"),
+    ]),
+    "docs/be.txt": Buffer.concat([
+      Buffer.from([0xfe, 0xff]),
+      utf16be(`repo ${REPO.toUpperCase()}`),
+    ]),
+    "docs/padded.txt": Buffer.concat([ascii(`see ${REPO}\n`), Buffer.alloc(32)]),
+  };
+  for (const [file, source] of Object.entries(files)) write(file, source);
+  try {
+    setBaseline(Object.fromEntries(CITED.map((entry) => [entry.rule, { [entry.file]: 1 }])));
+    const { code, err } = run();
+    expect(code).toBe(1);
+    const hits = err.split("\n").filter((line) => line.includes("workit/private-names: "));
+    expect(hits.map((line) => line.split(" ")[0])).toEqual([
+      "assets/blob.bin@5",
+      "docs/be.txt@12",
+      "docs/le.txt@12",
+      "docs/padded.txt:1:5",
+      `docs/${SISTER}/readme.md:0:0`,
+      `docs/${REPO}-notes.md:0:0`,
+    ]);
+    expect(hits[1]).toContain("as UTF-16 BE");
+    expect(hits[2]).toContain("as UTF-16 LE");
+    expect(hits[4]).toContain("in its path");
+    expect(hits[5]).toContain("Fix: use the neutral sample value widgets.");
+    expect(err).toContain("repo rules: 6 new hits.");
+  } finally {
+    for (const file of Object.keys(files)) rmSync(path.join(root, file));
+    rmSync(path.join(root, "docs", SISTER), { recursive: true });
+  }
 });

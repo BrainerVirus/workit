@@ -1868,7 +1868,7 @@ test("doctor uses a workspace provider for custom SSH-host aliases", () => {
     let githubHost = "";
     let glabCalls = 0;
     const probes = {
-      origin: () => "git@github-work:owner/repo.git",
+      origin: () => "git@work-gh:owner/repo.git",
       ghLogin: (env: NodeJS.ProcessEnv) => {
         githubHost = env.GH_HOST ?? "";
         return "work";
@@ -1913,7 +1913,7 @@ test("doctor uses the default GitHub API host when the SSH alias has no host con
     const result = checkGithubIdentity(
       { cwd: dir, configDir: dir, env: {} },
       {
-        origin: () => "git@github-work:owner/repo.git",
+        origin: () => "git@work-gh:owner/repo.git",
         ghLogin: (env) => {
           apiHost = env.GH_HOST ?? "";
           return "work";

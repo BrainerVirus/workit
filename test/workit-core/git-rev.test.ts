@@ -217,7 +217,7 @@ test("parseRemoteUrl handles scp-like, ssh://, https and local remotes", () => {
 
 const SSH_CONFIG = `
 # personal default
-Host github-work.com
+Host work-gh.example
   HostName github.com
   User git
   IdentityFile ~/.ssh/id_work
@@ -235,7 +235,7 @@ Host *
 `;
 
 test("resolveSshHost honors aliases, wildcards, negation, %h and first-value-wins", () => {
-  expect(resolveSshHost("github-work.com", SSH_CONFIG)).toEqual({
+  expect(resolveSshHost("work-gh.example", SSH_CONFIG)).toEqual({
     hostname: "github.com",
     port: "22",
   });
@@ -258,31 +258,27 @@ test("readSshConfig expands Include relative to ~/.ssh", () => {
   );
   writeFileSync(
     path.join(home, ".ssh", "conf.d", "work.conf"),
-    "Host github-work.com\n  HostName github.com\n",
+    "Host work-gh.example\n  HostName github.com\n",
   );
   const config = readSshConfig(home);
-  expect(resolveSshHost("github-work.com", config).hostname).toBe("github.com");
+  expect(resolveSshHost("work-gh.example", config).hostname).toBe("github.com");
   expect(resolveSshHost("x", config).hostname).toBe("x.example");
   expect(readSshConfig(tmp("wk-rev-empty-")).text).toBe("");
 });
 
-test("deriveForge: github-work.com style SSH alias resolves to GitHub at github.com", () => {
-  expect(
-    deriveForge("git@github-work.com:EnghouseGlobal/ui-kit.git", { sshConfig: SSH_CONFIG }),
-  ).toEqual({
+test("deriveForge: work-gh.example style SSH alias resolves to GitHub at github.com", () => {
+  expect(deriveForge("git@work-gh.example:acme/widgets.git", { sshConfig: SSH_CONFIG })).toEqual({
     kind: "github",
-    host: "github-work.com",
+    host: "work-gh.example",
     hostname: "github.com",
     apiHost: "github.com",
-    repo: "EnghouseGlobal/ui-kit",
+    repo: "acme/widgets",
     via: "known_host",
   });
   // Without the alias mapping the host is not guessed from its name.
-  expect(
-    deriveForge("git@github-work.com:EnghouseGlobal/ui-kit.git", { sshConfig: "" }),
-  ).toBeNull();
+  expect(deriveForge("git@work-gh.example:acme/widgets.git", { sshConfig: "" })).toBeNull();
   // An HTTPS remote never goes through SSH aliases.
-  expect(deriveForge("https://github-work.com/o/r.git", { sshConfig: SSH_CONFIG })).toBeNull();
+  expect(deriveForge("https://work-gh.example/o/r.git", { sshConfig: SSH_CONFIG })).toBeNull();
 });
 
 test("deriveForge: GitLab public, subgroups, SSH-over-443 and self-hosted", () => {
@@ -321,42 +317,28 @@ test("pushForge derives the forge from the push remote, not the configured provi
   expect(pushForge(root, { sshConfig: "" })).toMatchObject({ ok: false, code: "not_found" });
 
   git(root, "remote", "add", "origin", "git@gitlab.com:group/project.git");
-  git(
-    root,
-    "remote",
-    "set-url",
-    "--push",
-    "origin",
-    "git@github-work.com:EnghouseGlobal/project.git",
-  );
+  git(root, "remote", "set-url", "--push", "origin", "git@work-gh.example:acme/project.git");
   const derived = pushForge(root, { sshConfig: SSH_CONFIG });
   expect(derived).toMatchObject({
     ok: true,
     remote: "origin",
-    url: "git@github-work.com:EnghouseGlobal/project.git",
-    forge: { kind: "github", apiHost: "github.com", repo: "EnghouseGlobal/project" },
+    url: "git@work-gh.example:acme/project.git",
+    forge: { kind: "github", apiHost: "github.com", repo: "acme/project" },
   });
 
   const unknown = pushForge(root, { sshConfig: "" });
   expect(unknown).toMatchObject({ ok: false, code: "unavailable" });
-  if (!unknown.ok) expect(unknown.unblock).toContain("Host github-work.com");
+  if (!unknown.ok) expect(unknown.unblock).toContain("Host work-gh.example");
   // Only a dotless host is called an alias; a dotted one may be a real host.
   if (!unknown.ok)
     expect(unknown.error).toContain(
-      'ssh host "github-work.com" is not a GitHub/GitLab host or an alias workit can resolve',
+      'ssh host "work-gh.example" is not a GitHub/GitLab host or an alias workit can resolve',
     );
-  git(root, "remote", "set-url", "--push", "origin", "git@workgh:EnghouseGlobal/project.git");
+  git(root, "remote", "set-url", "--push", "origin", "git@workgh:acme/project.git");
   const alias = pushForge(root, { sshConfig: "" });
   if (alias.ok) throw new Error("expected an unresolved alias");
   expect(alias.error).toContain('could not resolve ssh alias "workgh" to GitHub or GitLab');
-  git(
-    root,
-    "remote",
-    "set-url",
-    "--push",
-    "origin",
-    "git@github-work.com:EnghouseGlobal/project.git",
-  );
+  git(root, "remote", "set-url", "--push", "origin", "git@work-gh.example:acme/project.git");
 
   // D16: a disagreeing workspace provider is blocked with the exact fix.
   if (!derived.ok) throw new Error("expected a forge");
@@ -505,15 +487,15 @@ test("remote URLs are redacted everywhere they are echoed", () => {
 }, 60_000);
 
 test("SSH aliases keep their case: patterns match case-insensitively, %h keeps the spelling", () => {
-  const config = "Host GitHub-Work\n  HostName %h.example\n";
-  expect(resolveSshHost("github-work", config).hostname).toBe("github-work.example");
-  expect(resolveSshHost("GitHub-Work", config).hostname).toBe("GitHub-Work.example");
-  expect(parseRemoteUrl("git@GitHub-Work:o/r.git")?.host).toBe("GitHub-Work");
+  const config = "Host Work-GH\n  HostName %h.example\n";
+  expect(resolveSshHost("work-gh", config).hostname).toBe("work-gh.example");
+  expect(resolveSshHost("Work-GH", config).hostname).toBe("Work-GH.example");
+  expect(parseRemoteUrl("git@Work-GH:o/r.git")?.host).toBe("Work-GH");
   expect(
-    deriveForge("git@GitHub-Work:o/r.git", {
-      sshConfig: "Host github-work\n HostName GitHub.com\n",
+    deriveForge("git@Work-GH:o/r.git", {
+      sshConfig: "Host work-gh\n HostName GitHub.com\n",
     }),
-  ).toMatchObject({ kind: "github", host: "GitHub-Work", hostname: "github.com" });
+  ).toMatchObject({ kind: "github", host: "Work-GH", hostname: "github.com" });
 });
 
 test("SSH Include applies only inside a matching block and the block continues after it", () => {

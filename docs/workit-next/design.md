@@ -505,7 +505,7 @@ Worktrees: `../workit-wt/s8-hooks`, `s9a-router`, `s9b-check`, `s10-pr`, `s11-gi
 - G gh missing, T exit 5 with an install hint.
 
 **S11**
-- G `vcs.account=cpincetti` but `glab api user` returns `other`, W `git push`, T `blocked` with the `glab auth` unblock and nothing pushed.
+- G `vcs.account=alice` but `glab api user` returns `other`, W `git push`, T `blocked` with the `glab auth` unblock and nothing pushed.
 - G a workspace without a merge grant, W `pr merge`, T `grant_required` naming the grant, with the exact command.
 - G `merge:"verified"` and no verdict, T blocked with `NEEDS_VERDICT`.
 - G the remote advanced after the local SHA, T merge refuses (SHA guard).

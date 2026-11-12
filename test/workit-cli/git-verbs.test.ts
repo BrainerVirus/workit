@@ -822,11 +822,11 @@ const forgeRemote = (repo: RemoteRepo, kind: "github" | "gitlab") => {
   );
 };
 
-test("git push: given vcs.account=cpincetti but glab reports another user, then blocked with the glab auth unblock and nothing pushed", async () => {
+test("git push: given vcs.account=alice but glab reports another user, then blocked with the glab auth unblock and nothing pushed", async () => {
   const repo = setup();
   await feature(repo);
   forgeRemote(repo, "gitlab");
-  workspace(repo, { vcs: { provider: "gitlab", account: "cpincetti" } });
+  workspace(repo, { vcs: { provider: "gitlab", account: "alice" } });
   const runner = replayRunner({
     "GET user": JSON.stringify({ id: 9, username: "other" }),
     "GET projects/group%2Fproject": fixture("gitlab/project.json"),
@@ -1131,7 +1131,7 @@ test.skipIf(process.platform === "win32")(
     const repo = setup();
     const sha = await feature(repo);
     sshForgeRemote(repo, "git@github.com:o/r.git");
-    workspace(repo, { vcs: { provider: "gitlab", account: "cpincetti" } });
+    workspace(repo, { vcs: { provider: "gitlab", account: "alice" } });
     const runner = replayRunner({});
     forgeDeps.runner = runner;
     const pushed = await withHome(configHome.home, () => run(["git", "push", "--json"], repo.cwd));

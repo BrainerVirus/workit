@@ -99,11 +99,11 @@ afterEach(() => {
 const stubPath = (): string => stubPathWith(stubBin);
 
 test("push URL approval identity preserves SSH user and port while stripping HTTPS secrets", () => {
-  expect(pushRemoteIdentity("ssh://git@github-work.com:2222/org/repo.git")).toBe(
-    "ssh://git@github-work.com:2222/org/repo.git",
+  expect(pushRemoteIdentity("ssh://git@work-gh.example:2222/org/repo.git")).toBe(
+    "ssh://git@work-gh.example:2222/org/repo.git",
   );
-  expect(safePushUrl("ssh://git@github-work.com:2222/org/repo.git")).toBe(
-    "ssh://git@github-work.com:2222/org/repo.git",
+  expect(safePushUrl("ssh://git@work-gh.example:2222/org/repo.git")).toBe(
+    "ssh://git@work-gh.example:2222/org/repo.git",
   );
   expect(pushRemoteIdentity("https://token:secret@example.test:8443/org/repo.git")).toBe(
     "https://example.test:8443/org/repo.git",
@@ -139,20 +139,18 @@ test("hosting API host must match the remote or its resolved SSH alias", () => {
     })),
   ).toBe(true);
   expect(
-    hostingApiHostMatches("git@github-work:org/repo.git", "github.com", () => ({
+    hostingApiHostMatches("git@work-gh:org/repo.git", "github.com", () => ({
       host: "github.com",
       port: "22",
     })),
   ).toBe(true);
   expect(
-    hostingApiHostMatches("git@github-work:org/repo.git", "github.com", () => ({
+    hostingApiHostMatches("git@work-gh:org/repo.git", "github.com", () => ({
       host: "other.example",
       port: "22",
     })),
   ).toBe(false);
-  expect(hostingApiHostMatches("git@github-work:org/repo.git", "github.com", () => null)).toBe(
-    false,
-  );
+  expect(hostingApiHostMatches("git@work-gh:org/repo.git", "github.com", () => null)).toBe(false);
   expect(
     hostingApiHostMatches("ssh://git@github.com:2222/org/repo.git", "github.com", () => ({
       host: "github.com",

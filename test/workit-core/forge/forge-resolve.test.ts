@@ -131,12 +131,12 @@ describe("S10 forge resolution and identity", () => {
     // An ~/.ssh/config alias that resolves to github.com gets the token.
     const alias = repoFor("github");
     try {
-      alias.git("remote", "set-url", "--push", "origin", "git@github-work.com:o/r.git");
+      alias.git("remote", "set-url", "--push", "origin", "git@work-gh.example:o/r.git");
       writeWorkspace(alias, { provider: "github", tokenFile });
       const aliasRunner = replayRunner(githubRoutes(), alias.subs);
       const resolved = resolveForge(alias.cwd, {
         runner: aliasRunner,
-        sshConfig: "Host github-work.com\n  HostName github.com\n",
+        sshConfig: "Host work-gh.example\n  HostName github.com\n",
       });
       expect(resolved).toMatchObject({
         ok: true,
@@ -245,13 +245,13 @@ describe("S10 forge resolution and identity", () => {
       ok: true,
       data: { login: "octo", matches: true },
     });
-    writeWorkspace(gitlab, { provider: "gitlab", account: "cpincetti" });
+    writeWorkspace(gitlab, { provider: "gitlab", account: "alice" });
     // glab keeps one login per host, so the fix is a workspace token, not a switch.
     expect(checkIdentity(connect(gitlab, gitlabRoutes()).resolved)).toMatchObject({
       ok: false,
       code: "blocked",
       unblock:
-        "put a token for cpincetti in the workspace w vcs.tokenFile (glab keeps one login per host, so workit never switches it)",
+        "put a token for alice in the workspace w vcs.tokenFile (glab keeps one login per host, so workit never switches it)",
     });
   });
 

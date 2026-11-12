@@ -248,7 +248,7 @@ test("Given a scratch or new repository, When a command changes into it, Then th
   }
 });
 
-test("Given the ui-kit chore/* chain (8.4.1 let it through), When checked, Then it is denied with the allowed kinds and the closest name", () => {
+test("Given the widgets chore/* chain (8.4.1 let it through), When checked, Then it is denied with the allowed kinds and the closest name", () => {
   const root = workitRepo();
   try {
     writeFileSync(
