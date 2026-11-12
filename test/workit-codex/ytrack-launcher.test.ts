@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { FAST, POSIX_SHAPES, ROUTED_MENTIONS } from "../workit-core/hooks/ytrack-shapes";
 
 const LAUNCHER = path.resolve(import.meta.dir, "../../packages/workit-codex/hooks/launcher.ts");
 const base = mkdtempSync(path.join(tmpdir(), "wk-codex-ytrack-"));
@@ -92,7 +93,7 @@ const quietOnly = (): string => {
   return path.join(dist, "workit-hook.js");
 };
 
-test("G the Codex hook entry, W a command only mentions ytrack in a path or an argument, T it answers quietly; every ytrack command word still reaches the runtime", () => {
+test("G the Codex hook entry, W a command only mentions ytrack in a path or an argument, T it answers quietly; every shape the gate decides reaches the runtime", () => {
   const entry = quietOnly();
   const quiet = (command: string) => {
     const child = spawnSync("node", [entry], {
@@ -113,27 +114,11 @@ test("G the Codex hook entry, W a command only mentions ytrack in a path or an a
     );
   };
   expect(quiet("ls")).toBe(true);
-  for (const command of [
-    "cat docs/ytrack-notes.md",
-    "ls /tmp/ytrack/x",
-    "echo see the ytrack skill",
-    "grep -rn ytrack docs",
-  ])
-    expect(quiet(command), command).toBe(true);
-  for (const command of [
-    "ytrack issue comment X-1 --body hi",
-    "cd /tmp && ytrack issue comment X-1 --body hi",
-    'eval "ytrack issue comment X-1 --body hi"',
-    "env YTRACK_HOST=a ytrack issue comment X-1 --body hi",
-    "sudo -u me ytrack issue comment X-1 --body hi",
-    "npx -y ytrack issue comment X-1 --body hi",
-    "xargs ytrack issue comment X-1 --body hi",
-    "/opt/bin/ytrack issue comment X-1 --body hi",
-    'y"t"rack issue comment X-1 --body hi',
-    "workit check --name yt -- ytrack issue comment X-1 --body hi",
-    "alias yt=ytrack; yt issue comment X-1 --body hi",
-    'yt() { ytrack "$@"; }; yt issue comment X-1 --body hi',
-    "$(which ytrack) issue comment X-1 --body hi",
-  ])
+  for (const command of FAST) expect(quiet(command), command).toBe(true);
+  // The shared test routes a bare mention; the gate then decides nothing.
+  for (const command of ROUTED_MENTIONS) {
     expect(quiet(command), command).toBe(false);
+    expect(run(command).permissionDecision, command).toBeUndefined();
+  }
+  for (const command of POSIX_SHAPES) expect(quiet(command), command).toBe(false);
 }, 180_000);

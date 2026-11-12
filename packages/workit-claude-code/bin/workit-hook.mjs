@@ -186,10 +186,14 @@ const MAYBE_GATED =
 // and, for a judge, scripts fed on stdin or by eval.
 const IMPLEMENTER_GATED =
   /\b(?:unlink|chmod|chown|chgrp|shred|chattr|setfacl|rsync|find|xargs|g?awk|python[\d.]*|node|bun|deno|ruby|php|sh|bash|zsh|dash|ksh|workit|mkfifo|wget|tar|unzip|eval|source)\b|\$\(|`|<\(|\/dev\/(?:stdin|fd)/i;
-// `ytrack` as a command word: at a segment start or after `$(`, `-c`, `--`, `=` or `{`,
-// past wrappers, runners and their options (a copy lives in the Codex launcher).
-const YTRACK_WORD =
-  /(?:^|[;&|({\n`=]|\$\(|\s-c\s|\s--\s)\s*(?:(?:\w+=\S*|sudo|env|timeout|nohup|exec|command|time|nice|xargs|npx|bunx|pnpx|pnpm|npm|yarn|dlx|x|eval|which|stdbuf|builtin|if|then|do|else|while|until|!|\d\S*|-\S+(?:\s+[^-\s]\S*)?)\s+)*(?:\S*\/)?ytrack(?:\.exe)?(?=$|[\s;&|)`])/i;
+// Text that may run ytrack (a raw write asks the user first): `ytrack` where a command
+// name can end, in any position. The same test opens workit-core hooks/ytrack-guard.ts
+// (hooks/ytrack-word.ts) and the Codex launcher: never a list of positions or wrappers.
+const YTRACK_WORD = /ytrack(?![\w/-]|\.(?!exe|cmd))/i;
+const namesYtrack = (text) => {
+  const bare = text.replace(/['"\\]/g, "");
+  return YTRACK_WORD.test(bare) || YTRACK_WORD.test(bare.replace(/`/g, ""));
+};
 const SHELLS = new Set(["Bash", "PowerShell"]);
 const HEAVY_WORDS = new Set(
   (
@@ -515,9 +519,7 @@ const fastAllow = (() => {
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         mayBypass(command) ||
-        // A raw ytrack write asks the user first (workit-core hooks/ytrack-guard.ts): a
-        // ytrack command word, however quoted, wrapped or chained; a mere mention stays fast.
-        YTRACK_WORD.test(command.replace(/['"\\]/g, ""))
+        namesYtrack(command)
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { PLUGIN_DIR, runHook } from "./plugin-helpers";
+import { FAST, POSIX_SHAPES, ROUTED_MENTIONS } from "../workit-core/hooks/ytrack-shapes";
 
 const base = realpathSync(mkdtempSync(path.join(tmpdir(), "wk-claude-ytrack-")));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
@@ -68,28 +69,7 @@ test("G Claude Code's launcher, W raw ytrack writes plain, wrapped or respelled,
     expect(decide(command)?.permissionDecision, command).toBeUndefined();
 }, 60_000);
 
-// Every spelling the guard reads: these must reach the runtime.
-const ROUTED = [
-  "ytrack issue comment X-1 --body hi",
-  "cd /tmp && ytrack issue comment X-1 --body hi",
-  "bash -c 'ytrack issue comment X-1 --body hi'",
-  'eval "ytrack issue comment X-1 --body hi"',
-  "env YTRACK_HOST=a ytrack issue comment X-1 --body hi",
-  "sudo -u me ytrack issue comment X-1 --body hi",
-  "timeout 30 ytrack issue comment X-1 --body hi",
-  "npx -y ytrack issue comment X-1 --body hi",
-  "pnpm dlx ytrack issue comment X-1 --body hi",
-  "xargs ytrack issue comment X-1 --body hi",
-  "/opt/bin/ytrack issue comment X-1 --body hi",
-  'y"t"rack issue comment X-1 --body hi',
-  "workit check --name yt -- ytrack issue comment X-1 --body hi",
-  "alias yt=ytrack; yt issue comment X-1 --body hi",
-  'yt() { ytrack "$@"; }; yt issue comment X-1 --body hi',
-  "$(which ytrack) issue comment X-1 --body hi",
-  "echo ok\nytrack issue comment X-1 --body hi",
-];
-
-test("G Claude Code's launcher, W a command only mentions ytrack in a path or an argument, T it stays on the fast path; every ytrack command word still reaches the runtime", () => {
+test("G Claude Code's launcher, W a command only mentions ytrack in a path or an argument, T it stays on the fast path; every shape the gate decides reaches the runtime", () => {
   // A runtime that cannot start says so on stderr; the fast path never starts it.
   const reached = (command: string) =>
     runHook(
@@ -106,12 +86,11 @@ test("G Claude Code's launcher, W a command only mentions ytrack in a path or an
       },
       { ...env, WORKIT_CLAUDE_RUNTIME: "source", WORKIT_BUN: path.join(base, "no-bun") },
     ).stderr.includes("hook unavailable");
-  for (const command of [
-    "cat docs/ytrack-notes.md",
-    "ls /tmp/ytrack/x",
-    "echo see the ytrack skill",
-    "grep -rn ytrack docs",
-  ])
-    expect(reached(command), command).toBe(false);
-  for (const command of ROUTED) expect(reached(command), command).toBe(true);
+  for (const command of FAST) expect(reached(command), command).toBe(false);
+  // The shared test routes a bare mention; the gate then decides nothing.
+  for (const command of ROUTED_MENTIONS) {
+    expect(reached(command), command).toBe(true);
+    expect(decide(command)?.permissionDecision, command).toBeUndefined();
+  }
+  for (const command of POSIX_SHAPES) expect(reached(command), command).toBe(true);
 }, 60_000);

@@ -69,7 +69,7 @@ const EVALS = new Set(["eval", "iex", "invoke-expression"]);
  * Wrappers that run the command after their options: the options that take
  * a value, and how many operands come before the command (`timeout 30`).
  */
-const WRAPPERS: Record<string, { values: string; operands?: number }> = {
+export const WRAPPERS: Record<string, { values: string; operands?: number }> = {
   sudo: {
     values: "-u -g -h -p -C -D -R -T -r -t -U --user --group --host --prompt --chdir",
   },
@@ -98,7 +98,7 @@ const WRAPPER_VALUES = new Map(
   Object.entries(WRAPPERS).map(([name, wrapper]) => [name, new Set(wrapper.values.split(" "))]),
 );
 /** Shell keywords that open a compound command: the command follows them. */
-const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{"]);
+export const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{"]);
 const DECLARATIONS = new Set(["export", "local", "declare", "readonly", "typeset"]);
 const SCRIPT_FLAG = /^-[a-zA-Z]*c[a-zA-Z]*$/;
 const CD = new Set(["cd", "chdir", "set-location", "sl"]);

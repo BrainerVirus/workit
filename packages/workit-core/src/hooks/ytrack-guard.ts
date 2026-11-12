@@ -9,6 +9,7 @@ import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
 import type { HookDecision } from "./protocol";
 import { commandLines, workitCheckTail } from "./raw-git";
 import type { ShellDialect } from "./shell-words";
+import { namesYtrack } from "./ytrack-word";
 
 const name = (word = "") =>
   (word.split(/[\\/]/).at(-1) ?? "").toLowerCase().replace(/\.(?:exe|cmd)$|@.*$/g, "");
@@ -290,7 +291,7 @@ const ytrackWrites = (
   depth = 0,
 ): YtrackWrite[] => {
   const found: YtrackWrite[] = [];
-  if (!/ytrack/i.test(command.replace(/['"\\`]/g, ""))) return found;
+  if (!namesYtrack(command)) return found;
   if (depth > MAX_DEPTH) throw new Error("ytrack nested too deep");
   const known = READ.get(command);
   if (known) return known;
