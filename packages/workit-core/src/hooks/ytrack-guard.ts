@@ -215,7 +215,12 @@ const MAX_DEPTH = 4;
 const READ = new Map<string, YtrackWrite[]>();
 
 /** The ytrack writes one command line runs: past a package runner (`npx -y ytrack`, `pnpm dlx ytrack`) or `workit check --`. */
-const ytrackArgs = (line: readonly string[], found: YtrackWrite[], depth: number): void => {
+const ytrackArgs = (
+  line: readonly string[],
+  found: YtrackWrite[],
+  depth: number,
+  names: ReadonlyMap<string, string[]>,
+): void => {
   const tail = workitCheckTail(line);
   if (tail)
     return void found.push(
@@ -247,9 +252,33 @@ const ytrackArgs = (line: readonly string[], found: YtrackWrite[], depth: number
       if (/^(?:-[pc]|--package|--call)$/.test(line[at])) at++;
     }
   }
-  if (name(line[at]) !== "ytrack") return;
-  const write = classify(line.slice(at + 1));
-  if (write) found.push({ command: line.slice(at).map(quote).join(" "), ...write });
+  // `$(which ytrack)`, `$(command -v ytrack)`, backticks: the path the shell resolves.
+  const resolved = /^(?:\$\(|`)\s*(?:which|command\s+-v|type\s+-[pP])\s+ytrack\s*[)`]$/.test(
+    line[at] ?? "",
+  );
+  const alias = names.get(line[at] ?? "");
+  if (name(line[at]) !== "ytrack" && !resolved && !alias) return;
+  const argv = [...(alias ?? []), ...line.slice(at + 1)];
+  const write = classify(argv);
+  if (write) found.push({ command: ["ytrack", ...argv].map(quote).join(" "), ...write });
+};
+
+/**
+ * Names this command defines to run ytrack, with the words they put before
+ * the caller's: `alias yt=ytrack`, `alias yt='ytrack issue'`, and a function
+ * whose body runs ytrack (`yt() { ytrack "$@"; }`, `function yt { … }`).
+ */
+const aliases = (command: string): Map<string, string[]> => {
+  const found = new Map<string, string[]>();
+  for (const [, alias, value] of command
+    .matchAll(/\balias\s+([\w.-]+)=(?:'([^']*)'|"([^"]*)"|([^\s;&|)]+))/g)
+    .map(([all, n, a, b, c]) => [all, n, a ?? b ?? c ?? ""]))
+    if (/^(?:\S*\/)?ytrack(?:\s|$)/.test(value)) found.set(alias, value.split(/\s+/).slice(1));
+  for (const [, named, fn] of command
+    .matchAll(/(?:\bfunction\s+([\w.-]+)(?:\s*\(\s*\))?|\b([\w.-]+)\s*\(\s*\))\s*\{([^}]*)\}/g)
+    .map(([all, a, b, body]) => [all, a ?? b ?? "", body ?? ""]))
+    if (/(?:^|[\s;&|])(?:\S*\/)?ytrack\s/.test(fn)) found.set(named, []);
+  return found;
 };
 
 /** Every raw ytrack write `command` runs, wrapped or not. Throws when the command cannot be analysed. */
@@ -263,7 +292,8 @@ const ytrackWrites = (
   if (depth > MAX_DEPTH) throw new Error("ytrack nested too deep");
   const known = READ.get(command);
   if (known) return known;
-  for (const line of commandLines(command, dialect)) ytrackArgs(line, found, depth);
+  for (const line of commandLines(command, dialect))
+    ytrackArgs(line, found, depth, aliases(command));
   READ.set(command, found);
   if (READ.size > 64) READ.delete(READ.keys().next().value as string);
   return found;
