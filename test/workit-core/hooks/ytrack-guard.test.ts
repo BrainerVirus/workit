@@ -129,10 +129,6 @@ const comment = "ytrack issue comment X-1 --body hi";
 const WRAPPED = [
   `bash -c '${comment}'`,
   `sh -c "${comment}"`,
-  `cd /tmp && ${comment}`,
-  `git status && ${comment}`,
-  `echo start; ${comment}`,
-  `false || ${comment}`,
   `eval "${comment}"`,
   `npx ${comment}`,
   `npx -y ${comment}`,
@@ -149,6 +145,10 @@ const WRAPPED = [
 
 /** The same comment where the call is not a plain command: judged, but no workit call is named. */
 const WRAPPED_UNMAPPED = [
+  `cd /tmp && ${comment}`,
+  `git status && ${comment}`,
+  `echo start; ${comment}`,
+  `false || ${comment}`,
   `YTRACK_HOST=acme ${comment}`,
   `env YTRACK_HOST=acme ${comment}`,
   `echo '${comment}' | bash`,

@@ -49,8 +49,6 @@ test("G Claude Code's launcher, W raw ytrack writes plain, wrapped or respelled,
   for (const command of [
     "ytrack issue comment X-1 --body hi",
     "bash -c 'ytrack issue comment X-1 --body hi'",
-    "cd /tmp && ytrack issue comment X-1 --body hi",
-    "echo hi | ytrack issue comment X-1 --body hi",
     "/opt/bin/ytrack issue comment X-1 --body hi",
     'y"t"rack issue comment X-1 --body hi',
   ]) {
@@ -64,7 +62,12 @@ test("G Claude Code's launcher, W raw ytrack writes plain, wrapped or respelled,
     "`workit youtrack time X-1 --minutes 30`",
   );
   expect(decide("ytrack api /issues/X-1 -X DELETE")?.permissionDecision).toBe("ask");
-  // A host override is not a plain command: no named call, so the user decides.
+  // Not a plain command (a host override, a command before the call): the user decides.
+  for (const command of [
+    "cd /tmp && ytrack issue comment X-1 --body hi",
+    "echo hi | ytrack issue comment X-1 --body hi",
+  ])
+    expect(decide(command)?.permissionDecision, command).toBe("ask");
   expect(decide("YTRACK_HOST=acme ytrack issue comment X-1 --body hi")?.permissionDecision).toBe(
     "ask",
   );

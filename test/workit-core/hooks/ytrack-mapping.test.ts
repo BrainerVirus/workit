@@ -171,18 +171,17 @@ const NOT_PLAIN = [
 const W = "ytrack issue comment X-1 --body hi";
 const PLAIN = [
   W,
-  `cd /tmp && ${W}`,
   `${W} | jq .id`,
   `${W} > out.json 2>&1`,
+  `${W}; echo done`,
+  `${W} && ytrack issue view X-1`,
   `nohup ${W} &`,
   `timeout -k 5 30 ${W}`,
   `nice -n 5 ${W}`,
-  `X=1; ${W}`,
   `bash -lc '${W}'`,
   `eval "${W}"`,
   `npx -y ${W}`,
   `workit check --name y -- ${W}`,
-  `ytrack issue view X-1 && ${W}`,
 ];
 
 test("G a ytrack write that is not a plain command, W the hook judges it, T no workit call is named: Claude Code asks, the other hosts deny", () => {
@@ -270,4 +269,44 @@ test("G each pass-through prefix, W it runs a plain ytrack write, T the named ca
       "`workit youtrack note X-1 --markdown hi`",
     );
   }
+});
+
+// Verdict mwde2676: a named call only when the ytrack call is the first command
+// of its script. Whatever runs before it (a `cd`, any assignment, `unset`,
+// `source`, `umask`, `set`, even a read) can change the directory, the
+// environment or the files the call reads, so it is a write no verb covers.
+const PRECEDED = [
+  "cd /elsewhere && ytrack issue comment X-1 --body-file n.md",
+  "pushd /elsewhere; ytrack issue comment X-1 --body-file n.md",
+  `HOME=/x; ${W}`,
+  `unset HOME; ${W}`,
+  `source ./env.sh; ${W}`,
+  `. ~/.profile; ${W}`,
+  `true; ${W}`,
+  `X=1; ${W}`,
+  `umask 077; ${W}`,
+  `set -e; ${W}`,
+  `ytrack issue view X-1 && ${W}`,
+  `cd /tmp && ${W}`,
+  `bash -c 'cd /x && ${W}'`,
+];
+
+test("G a command before the ytrack call, W the hook judges it, T no workit call is named: Claude Code asks, the other hosts deny with the rerun hint", () => {
+  for (const command of PRECEDED) {
+    expect(ytrackGate(root, command, "posix", true)?.kind, command).toBe("ask");
+    const out = ytrackGate(root, command, "posix", false);
+    expect(out?.kind, command).toBe("deny");
+    const reason = out?.kind === "deny" ? out.reason : "";
+    expect(reason, command).toContain("in their own terminal");
+    expect(reason, command).not.toContain("`workit youtrack");
+    expect(reason, command).toContain("rerun the ytrack call as one plain command");
+  }
+});
+
+test("G a second ytrack write after the first, W the hook judges it, T only the first is named", () => {
+  const out = ytrackGate(root, `${W} && ytrack issue comment X-2 --body yo`, "posix", false);
+  const reason = out?.kind === "deny" ? out.reason : "";
+  expect(reason).toContain("`workit youtrack note X-1 --markdown hi`");
+  expect(reason).not.toContain("`workit youtrack note X-2");
+  expect(reason).toContain("in their own terminal");
 });

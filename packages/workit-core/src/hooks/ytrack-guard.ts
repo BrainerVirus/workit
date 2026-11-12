@@ -332,15 +332,6 @@ const aliases = (command: string): Map<string, string[]> => {
 const PASS = /^(?:command|exec|nohup|setsid|time|nice|ionice|stdbuf|chronic|unbuffer|timeout)$/;
 /** Words that repeat, define or group commands: a script holding one is not plain. */
 const COMPOUND = /^(?:for|select|while|until|repeat|do|done|function|case|foreach|coproc)$/;
-/** A command that exports variables to later ones (`export`, `declare -x`, `set -a`). */
-const exportsVars = (words: readonly string[]): boolean => {
-  const [verb = "", ...rest] = words;
-  if (verb === "export") return true;
-  if (/^(?:declare|typeset|local|readonly)$/.test(verb))
-    return rest.some((word) => /^-\w*x/.test(word));
-  return verb === "set" && rest.some((word) => /^-\w*a/.test(word) || word === "allexport");
-};
-
 /**
  * `words` past pass-through prefixes with their options and numbers, or []
  * (not plain) when anything changes the call's environment or binary: an
@@ -360,28 +351,32 @@ const passed = (words: readonly string[]): string[] => {
 };
 
 /**
- * The command lines of a plain script, or null: simple commands joined by
- * `;`, `&&`, `||`, `|`, `&` or newlines, with no group, substitution, loop,
- * function or export before the call, where every one that names ytrack has
- * no word the shell expands and runs past pass-through prefixes only. A plain
- * unexported variable (`X=1; ytrack …`) never reaches the call.
+ * The command lines of a plain script, or null. Plain: its first command is
+ * the ytrack call (or a script the gate enters) behind pass-through prefixes
+ * only, with no word the shell expands; nothing runs before it, since even a
+ * `cd` or an assignment can change the directory, the environment or the
+ * files the call reads. Later commands may only handle output or run
+ * unrelated commands; they are read as not plain, so a second write is never
+ * named. No group, substitution, loop, function or YTRACK_* assignment.
  */
-const plainLines = (command: string, dialect: ShellDialect): string[][] | null => {
-  const lines: string[][] = [];
-  let exported = false;
+const plainLines = (
+  command: string,
+  dialect: ShellDialect,
+): { first: string[]; later: string[][] } | null => {
+  let first: string[] | null = null;
+  const later: string[][] = [];
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.group || segment.unanalyzable || segment.subs?.length) return null;
     if (COMPOUND.test(segment.words[0] ?? "")) return null;
     if (segment.words.some((word) => /^YTRACK_\w*=/.test(word))) return null;
-    exported ||= exportsVars(segment.words);
-    if (!namesYtrack([...segment.words, ...(segment.stdin ?? [])].join(" "))) continue;
-    // An exported variable reaches the call and may change its host, account or binary.
-    if (exported) return null;
-    // A word the shell expands (`$`, a glob, a substitution) is not what runs.
-    if (segment.expands?.length) return null;
-    lines.push(passed(segment.words));
+    const names = namesYtrack([...segment.words, ...(segment.stdin ?? [])].join(" "));
+    if (first === null) {
+      // The first command must be the call: anything before it is not plain.
+      if (!names || segment.expands?.length) return null;
+      first = passed(segment.words);
+    } else if (names) later.push(segment.words);
   }
-  return lines;
+  return first ? { first, later } : null;
 };
 
 /**
@@ -403,7 +398,11 @@ const ytrackWrites = (
   let found: YtrackWrite[] = [];
   const lines = plain ? plainLines(command, dialect) : null;
   const none = new Map<string, string[]>();
-  if (!lines?.every((line) => ytrackArgs(line, found, depth, none, true))) {
+  if (
+    !lines ||
+    !ytrackArgs(lines.first, found, depth, none, true) ||
+    !lines.later.every((line) => ytrackArgs(line, found, depth, none, false))
+  ) {
     found = [];
     for (const line of commandLines(command, dialect))
       ytrackArgs(line, found, depth, aliases(command), false);

@@ -51,8 +51,6 @@ test("G OpenCode and the default ask, W a raw ytrack write plain, wrapped or res
   for (const command of [
     "ytrack issue comment X-1 --body hi",
     "bash -c 'ytrack issue comment X-1 --body hi'",
-    "cd /tmp && ytrack issue comment X-1 --body hi",
-    "echo hi | ytrack issue comment X-1 --body hi",
     "npx ytrack issue comment X-1 --body hi",
     "/opt/bin/ytrack issue comment X-1 --body hi",
     "npx -y @workit-dev/cli check --name yt -- ytrack issue comment X-1 --body hi",
@@ -65,7 +63,15 @@ test("G OpenCode and the default ask, W a raw ytrack write plain, wrapped or res
   const api = permission("ytrack api /issues/X-1 --method=DELETE");
   expect(api.effect).toBe("deny");
   expect(api.message).toContain("in their own terminal");
-  // A host override is not a plain command: no named call, handed to the user.
+  // Not a plain command (a host override, a command before the call): handed to the user.
+  for (const command of [
+    "cd /tmp && ytrack issue comment X-1 --body hi",
+    "echo hi | ytrack issue comment X-1 --body hi",
+  ]) {
+    const out = permission(command);
+    expect(out.effect, command).toBe("deny");
+    expect(out.message, command).not.toContain("`workit youtrack");
+  }
   const host = permission("YTRACK_HOST=acme ytrack issue comment X-1 --body hi");
   expect(host.effect).toBe("deny");
   expect(host.message).toContain("in their own terminal");
