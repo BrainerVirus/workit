@@ -4,7 +4,15 @@
 // guarded path are denied with the plain write's text, while reads through
 // the same tools, and the same shapes elsewhere, pass (#818).
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -708,4 +716,40 @@ test("G a printf format with %s, %b or %q directives piped into a shell, W an ar
       expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
   }
   expect(decide(`printf 'echo x > %s' out.txt | sh`).kind).toBe("none");
+});
+
+test("G a Windows registry path with unquoted backslashes, W a cd or pushd into it is followed by a relative write, T the text check still denies (Windows CI #825)", () => {
+  set({ WORKIT_STATE_DIR: "C:\\Users\\RUNNER~1\\Temp\\st", WORKIT_CONFIG: "C:\\cfg" });
+  const cases: Array<[string, string | null]> = [
+    ["cd C:\\Users\\RUNNER~1\\Temp\\st\\approvals/grants && touch ap_aaaaaaaa.json", "approvals"],
+    ["cd C:\\Users\\RUNNER~1\\Temp\\st\\issued/lead && touch abc", "issued"],
+    ["pushd C:\\Users\\RUNNER~1\\Temp\\st\\approvals && cp x.json grants/a.json", "approvals"],
+    ["cd C:\\cfg && echo x > workspaces.json", "grants"],
+    ["cd C:\\cfg && touch notes.txt", null],
+    ["cd C:\\Users\\RUNNER~1\\Temp\\st\\issued && cat x > C:/tmp/out.txt", null],
+  ];
+  for (const [command, want] of cases)
+    expect(unquotedWindowsRegistry(command, "win32"), command).toBe(want as never);
+});
+
+test("G a home or state dir reached through a second name (a symlink here, an 8.3 short name on Windows), W a write target or cd holds a glob, T the glob still matches the guarded path", () => {
+  const real = path.join(base, "real-home");
+  const link = path.join(base, "link-home");
+  mkdirSync(real, { recursive: true });
+  symlinkSync(real, link, "junction");
+  const linkState = path.join(link, ".local", "state", "workit");
+  set({ HOME: link, WORKIT_STATE_DIR: linkState });
+  const cfg = configDir({ HOME: link });
+  mkdirSync(cfg, { recursive: true });
+  writeFileSync(path.join(cfg, "workspaces.json"), "{}");
+  mkdirSync(path.join(linkState, "approvals", "grants"), { recursive: true });
+  mkdirSync(path.join(linkState, "issued"), { recursive: true });
+  for (const command of [
+    `cp x.json ${sh(cfg)}/work*.json`,
+    `cd ${sh(linkState)}/issue* && echo '{}' > s1.json`,
+    `rm ~/.*/*/*/approvals/grants/a.json`,
+    `rm ${sh(linkState)}/appr*/grants/*.json`,
+  ])
+    expect(decide(command).kind, command).toBe("deny");
+  expect(decide(`cp x.json ${sh(cfg)}/rules/*.md`).kind).toBe("none");
 });

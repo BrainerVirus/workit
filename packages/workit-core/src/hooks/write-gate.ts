@@ -1679,7 +1679,16 @@ const configDirs = (): string[] => [resolveConfigDir(), grantsDir()];
  */
 const globbed = (cwd: string, target: string, state: string, configs: string[]): string[] => {
   if (!/[*?[]/.test(target)) return [];
-  const pattern = path.resolve(cwd, target).split(path.sep);
+  // The literal prefix through the same canonical form as the guarded paths
+  // (symlinks, Windows 8.3 short names such as RUNNER~1); the glob segments as written.
+  const raw = path.resolve(cwd, target).split(path.sep);
+  const literal = raw.findIndex((part) => /[*?[]/.test(part));
+  const pattern = [
+    ...canonical(raw.slice(0, literal).join(path.sep) || path.sep)
+      .replace(/[\\/]+$/, "")
+      .split(path.sep),
+    ...raw.slice(literal),
+  ];
   const segment = (glob: string, name: string) => {
     try {
       return new RegExp(
@@ -1863,15 +1872,27 @@ export const unquotedWindowsRegistry = (
         ? "grants"
         : null;
   if (!registry) return null;
-  const writes = shellWrites(
-    command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) => word.replaceAll("\\", "/")),
+  const spans = command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) =>
+    word.replaceAll("\\", "/"),
   );
-  const named = (target: string) => {
-    const at = flat(target);
-    return registry === "grants"
-      ? configs.some((dir) => [dir, `${dir}/`, `${dir}/workspaces.json`].includes(at))
-      : at.includes(`${state}/${registry}`);
-  };
+  const writes = shellWrites(spans);
+  // A relative target lands in the dir a `cd` or `pushd` moved to.
+  const moved = [
+    "",
+    ...[...spans.matchAll(/(?:^|[;&|(]\s*)(?:cd|pushd|chdir)\s+([^\s;&|)]+)/g)].map(
+      (match) => `${match[1]}/`,
+    ),
+  ];
+  const named = (target: string) =>
+    moved.some((dir) => {
+      const at = flat(/^(?:[a-z]:)?\//i.test(target) ? target : dir + target).replace(
+        /\/\.?\//g,
+        "/",
+      );
+      return registry === "grants"
+        ? configs.some((cfg) => [cfg, `${cfg}/`, `${cfg}/workspaces.json`].includes(at))
+        : at.includes(`${state}/${registry}`);
+    });
   return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };
 
