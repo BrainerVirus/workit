@@ -614,6 +614,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implementer instructions agree with the hooks on git: in a Workit worktree use `workit git --cwd <worktree> …`; only a Claude Code host-isolated worktree uses plain git. Implementer definitions and briefs show `workit git commit --trailer "Co-Authored-By: …"`, and Claude Code and Cursor briefs carry the concrete trailer (no invented addresses for other hosts) (#292).
 - Verdict gates read HEAD and branch tips from the repository files (fresh on every read, git as the fallback whenever a read is uncertain) and the origin URL once per gate, so a gate check spawns 8 git processes instead of 10.
 - `workit-implement` runs a codemod or schematic one area at a time (run, `workit check`, commit, then the next area), never as one repo-wide commit (#779)
+- Hooks start from a bundle about 25 KB smaller on every host: they read tasks through a read-only store and no longer load the task write path
 
 ### Fixed
 
