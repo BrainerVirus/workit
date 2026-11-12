@@ -424,3 +424,33 @@ test("G interpreter code that builds a guarded path from the home dir and litera
   ])
     expect(decide(command).kind, command).toBe("none");
 });
+
+test("G a script or editor commands fed by `<`, a pipe, or a cd/pushd into a glob, W they write a guarded file, T denied; reads pass", () => {
+  const fed = path.join(root, "fed");
+  mkdirSync(fed, { recursive: true });
+  writeFileSync(path.join(fed, "cmds.ed"), "1d\nw\nq\n");
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    const b = path.basename(kind.file);
+    const d = sh(kind.dir);
+    writeFileSync(path.join(fed, `${kind.name}.sh`), `echo '{}' > ${f}\n`);
+    writeFileSync(path.join(fed, `${kind.name}.py`), `open('${f}', 'w').write('{}')\n`);
+    const star = `${d.slice(0, -1)}*`;
+    const klass = `${d.slice(0, -1)}[${d.at(-1)}]`;
+    for (const command of [
+      `bash < fed/${kind.name}.sh`,
+      `python3 < fed/${kind.name}.py`,
+      `ed ${f} < fed/cmds.ed`,
+      `ex -s ${f} < fed/cmds.ed`,
+      `printf '1d\\nw\\nq\\n' | ed ${f}`,
+      `cd ${star} && echo '{}' > ${b}`,
+      `cd ${klass} && echo '{}' > ${b}`,
+      `pushd ${star} && cp ${sh(root)}/x.json ${b}`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+    for (const command of [`cd ${star} && cat ${b}`, `wc -l < ${f}`, `ed ${f} < /dev/null`])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("none");
+  }
+  expect(decide("node tool.mjs < x.json").kind).toBe("none");
+  expect(decide("bash < fed/missing.sh").kind).toBe("none");
+});

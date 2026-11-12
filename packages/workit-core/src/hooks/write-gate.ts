@@ -695,6 +695,7 @@ const cdInto = (
   words: string[],
   strict = false,
   vars: ReadonlyMap<string, string> = new Map(),
+  globs = false,
 ): string | undefined => {
   const lost = strict ? UNKNOWN_DIR : undefined;
   const found = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
@@ -702,7 +703,7 @@ const cdInto = (
   // Only a leading `~` or `$HOME` expands; a mid-path `~` is literal (Windows 8.3
   // short names like RUNNER~1).
   const target = named === undefined ? undefined : homeExpanded(named);
-  if (target === "-" || (target && /^~|[$`*?]/.test(target))) return lost;
+  if (target === "-" || (target && (globs ? /^~|[$`]/ : /^~|[$`*?]/).test(target))) return lost;
   if (dir === undefined) return lost;
   return target === undefined ? os.homedir() : path.resolve(dir, target);
 };
@@ -1103,6 +1104,9 @@ const segmentTargets = (
       continue;
     }
     const body = commandWords(segment.words);
+    // The segment whose output this one reads (`a | b`).
+    const before = segments[segments.indexOf(segment) - 1];
+    const feeder = before?.pipe ? before : undefined;
     const keywords = segment.words.length - body.length;
     for (const keyword of segment.words.slice(0, keywords))
       if (OPENS.has(keyword)) nesting++;
@@ -1160,7 +1164,7 @@ const segmentTargets = (
     }
     const plain = !segment.conditional;
     if (CD.has(name)) {
-      dir = cdInto(dir, words, Boolean(strict), vars);
+      dir = cdInto(dir, words, Boolean(strict), vars, strict === "registry");
       moved(plain);
       continue;
     }
@@ -1172,7 +1176,7 @@ const segmentTargets = (
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
-      dir = cdInto(dir, words, Boolean(strict), vars);
+      dir = cdInto(dir, words, Boolean(strict), vars, strict === "registry");
       moved(plain);
       continue;
     }
@@ -1232,17 +1236,23 @@ const segmentTargets = (
       // `/dev/stdin` (like `-`) is the heredoc the command feeds it, never the hook's own stdin.
       const operand = args.find((arg) => !arg.startsWith("-") && arg !== "run");
       const named = operand === "/dev/stdin" ? undefined : operand;
+      const inputs = (segment.inputs ?? []).filter((file) => file !== "/dev/null");
       const shells: string[] = verb === "eval" ? [args.join(" ")] : [];
       const others: string[] = [];
       if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
-        if (named === undefined) shells.push(...(segment.stdin ?? []));
+        // No script operand: the heredoc, or the file `<` feeds it (`bash < x.sh`).
+        if (named === undefined) shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read));
         else if (shellScript(run) === null) shells.push(...read(named));
       } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
         const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
         if (code >= 0) others.push(args[code + 1] ?? "");
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
-        others.push(...(named === undefined ? (segment.stdin ?? []) : read(named)));
+        others.push(
+          ...(named === undefined
+            ? [...(segment.stdin ?? []), ...inputs.flatMap(read)]
+            : read(named)),
+        );
       } else if (/[\\/]/.test(run[0] ?? ""))
         // `./x.sh`: its shebang names the interpreter.
         for (const text of read(run[0]))
@@ -1269,6 +1279,8 @@ const segmentTargets = (
       if (
         /^(?:n?vim?|ex|ed|emacs)$/.test(verb) &&
         (segment.stdin ||
+          inputs.length > 0 ||
+          feeder ||
           args.some((arg) =>
             /^(?:-[a-zA-Z]*[cse]|--(?:cmd|batch|eval|script))$|^\+(?!\d*$|\/)/.test(arg),
           ))

@@ -24,6 +24,8 @@ export type Segment = {
   conditional?: true;
   /** Text it reads on standard input: heredoc bodies and here-strings. */
   stdin?: string[];
+  /** Files it reads on standard input (`< file`). */
+  inputs?: string[];
   /**
    * Indexes into `words` of the words the shell expands before the command
    * runs: an unquoted `$`, `*`, `?`, `[` or backtick, or a `$(…)`, `<(…)` or
@@ -355,7 +357,8 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
     } else if (pending === "heredoc")
       heredocs.push({ delimiter: text.replace(/^-/, ""), owner: current });
     else if (pending === "herestring") (current.stdin ??= []).push(text);
-    else if (pending !== "input") {
+    else if (pending === "input") (current.inputs ??= []).push(text);
+    else {
       const at = current.words.length;
       current.words.push(...(MARKERS.test(word) ? expandBraces(word) : [word]));
       if (expanding || (!posix && word.startsWith("@")))
