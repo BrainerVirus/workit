@@ -4,12 +4,12 @@
 // guarded path are denied with the plain write's text, while reads through
 // the same tools, and the same shapes elsewhere, pass (#818).
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { grantsHome } from "@/packages/workit-core/src/autonomy";
 import { configDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
-import { shellGate } from "@/packages/workit-core/src/hooks/write-gate";
+import { shellGate, writeGate } from "@/packages/workit-core/src/hooks/write-gate";
 
 const base = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-guard-shapes-")));
 const home = path.join(base, "home");
@@ -221,4 +221,27 @@ test("G a write target with a glob, W it may expand to a guarded path, T matched
     `ls ${cfg}/*.json > list.txt`,
   ])
     expect(decide(command).kind, command).toBe("none");
+});
+
+test("G a hard link to a guarded file, W a shell or the Edit tool writes it, or a command makes one, T denied; a symlink and unrelated links pass", () => {
+  const links = path.join(root, "links");
+  mkdirSync(links, { recursive: true });
+  for (const kind of KINDS) {
+    const link = path.join(links, `${kind.name}.json`);
+    linkSync(kind.file, link);
+    for (const command of [
+      `echo '{}' > links/${kind.name}.json`,
+      `sed -i s/a/b/ links/${kind.name}.json`,
+      `ln ${sh(kind.file)} links/${kind.name}-2.json`,
+      `cp -l ${sh(kind.file)} links/${kind.name}-3.json`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+    expect(writeGate(root, [link]).kind, `${kind.name}: Edit through a hard link`).toBe("deny");
+    expect(decide(`ln -s ${sh(kind.file)} links/${kind.name}-view.json`).kind).toBe("none");
+  }
+  writeFileSync(path.join(links, "two.json"), "{}");
+  linkSync(path.join(links, "two.json"), path.join(links, "two-b.json"));
+  expect(decide("echo '{}' > links/two.json").kind).toBe("none");
+  expect(writeGate(root, [path.join(links, "two-b.json")]).kind).toBe("none");
+  expect(decide(`cp -l links/two.json links/two-c.json`).kind).toBe("none");
 });

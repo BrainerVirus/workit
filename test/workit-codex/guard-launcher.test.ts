@@ -4,7 +4,7 @@
 // whose write gate denies it (#818).
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -81,4 +81,12 @@ test("Given a write whose guarded path shows only once expanded (a glob, an env 
     ['echo {} > "${XDG_CONFIG_HOME:-$HOME/.config}/workit/work"*', {}],
   ] as Array<[string, Record<string, string>]>)
     expect(run(command, extra).permissionDecision, command).toBe("deny");
+}, 60_000);
+
+test("Given a hard link in the repo to a guarded file, When a shell write names the link, Then it is denied", () => {
+  const grant = path.join(state, "approvals", "grants", "linked.json");
+  writeFileSync(grant, "{}");
+  linkSync(grant, path.join(root, "linked.json"));
+  expect(run(`echo '{}' > ${root}/linked.json`).permissionDecision).toBe("deny");
+  expect(run(`echo ok > ${root}/plain.txt`).permissionDecision).toBeUndefined();
 }, 60_000);

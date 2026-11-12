@@ -4,7 +4,7 @@
 // with no task store (#818).
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PLUGIN_DIR, runHook } from "./plugin-helpers";
@@ -73,4 +73,16 @@ test("Given a write whose guarded path shows only once expanded (a glob, an env 
     ['echo {} > "${XDG_CONFIG_HOME:-$HOME/.config}/workit/work"*', {}],
   ] as Array<[string, Record<string, string>]>)
     expect(decide("Bash", { command }, extra)?.permissionDecision, command).toBe("deny");
+}, 60_000);
+
+test("Given a hard link in the repo to a guarded file, When a shell write or a Write names the link, Then the runtime denies it", () => {
+  const grant = path.join(state, "approvals", "grants", "linked.json");
+  writeFileSync(grant, "{}");
+  linkSync(grant, path.join(repo, "linked.json"));
+  expect(decide("Bash", { command: "echo '{}' > linked.json" })?.permissionDecision).toBe("deny");
+  expect(
+    decide("Write", { file_path: path.join(repo, "linked.json"), content: "{}" })
+      ?.permissionDecision,
+  ).toBe("deny");
+  expect(decide("Bash", { command: "echo ok > plain.txt" })).toBeUndefined();
 }, 60_000);

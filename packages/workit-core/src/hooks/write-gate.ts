@@ -1225,6 +1225,9 @@ const segmentTargets = (
           ))
       )
         for (const file of operands(args)) targets.push(...atAll(file));
+      // `cp -l` makes a hard link: a second name for its source.
+      if (verb === "cp" && args.some((arg) => /^-[a-zA-Z]*l|^--link$/.test(arg)))
+        for (const file of operands(args).slice(0, -1)) targets.push(...atAll(file));
     }
     if (strict && dir !== undefined) {
       const runIn = dir;
@@ -1465,6 +1468,45 @@ const globbed = (cwd: string, target: string, state: string, configs: string[]):
   ];
 };
 
+/** The device and inode of each guarded file (the config files, files in the state registries), bounded. */
+const guardedInodes = (state: string, configs: string[]): Map<string, Registry> => {
+  const seen = new Map<string, Registry>();
+  let budget = 2000;
+  const add = (file: string, registry: Registry) => {
+    if (budget-- <= 0) return;
+    const stat = statSync(file, { throwIfNoEntry: false });
+    if (stat?.isFile()) seen.set(`${stat.dev}:${stat.ino}`, registry);
+    else if (stat?.isDirectory())
+      for (const name of readdirSync(file)) add(path.join(file, name), registry);
+  };
+  try {
+    for (const dir of configs) add(path.join(dir, "workspaces.json"), "grants");
+    for (const name of readdirSync(state))
+      if (/^(?:issued|approvals$)/.test(name))
+        add(path.join(state, name), name === "approvals" ? "approvals" : "issued");
+  } catch {
+    // An unreadable state dir: the files read so far.
+  }
+  return seen;
+};
+
+/** A second name for a guarded file: a regular file with more links whose inode a guarded file has. */
+const hardLinked = (
+  file: string,
+  state: string,
+  configs: string[],
+  inodes: { map?: Map<string, Registry> },
+): Registry | undefined => {
+  try {
+    const stat = statSync(file, { throwIfNoEntry: false });
+    if (!stat?.isFile() || stat.nlink < 2 || !stat.ino) return undefined;
+    inodes.map ??= guardedInodes(state, configs);
+    return inodes.map.get(`${stat.dev}:${stat.ino}`);
+  } catch {
+    return undefined;
+  }
+};
+
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
@@ -1472,12 +1514,14 @@ const registryTarget = (
 ): { file: string; registry: Registry } | null => {
   const state = resolveStateDir();
   const configs = configDirs();
+  const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
     const glob = globbed(cwd, file, state, configs)[0];
     const viaGlob = glob === undefined ? null : registryTarget(cwd, [glob]);
     if (viaGlob) return { file: target, registry: viaGlob.registry };
     const registry =
+      hardLinked(path.resolve(cwd, file), state, configs, inodes) ??
       underRegistry(state, cwd, file, process.platform, canonical) ??
       (configs.some((dir) => underConfig(dir, cwd, file, process.platform, canonical))
         ? "grants"

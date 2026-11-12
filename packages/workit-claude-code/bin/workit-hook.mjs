@@ -311,6 +311,20 @@ const mentionsGuarded = (text) => {
 const GUARD_SPELLING =
   /(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/;
 
+/** Does a word name a regular file with more than one link (maybe a guarded file's second name)? */
+const hardLinkNamed = (words, cwd) =>
+  words.slice(0, 64).some((word) => {
+    try {
+      const stat =
+        typeof word === "string" &&
+        word &&
+        statSync(path.resolve(cwd, word), { throwIfNoEntry: false });
+      return Boolean(stat?.isFile() && stat.nlink > 1);
+    } catch {
+      return false;
+    }
+  });
+
 // A standing order the lead added or cleared since this agent last looked
 // (`<store>/standing/rev` against its `standing/seen/<key>.json`) rides the
 // next tool call, so that call loads the runtime. A copy of
@@ -483,7 +497,8 @@ const fastAllow = (() => {
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
       if (
         (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command)) &&
-        GUARD_SPELLING.test(command)
+        (GUARD_SPELLING.test(command) ||
+          hardLinkNamed(command.split(/[\s;&|()<>`'"]+/u), String(value.cwd ?? ".")))
       )
         return false;
       if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;
@@ -508,7 +523,14 @@ const fastAllow = (() => {
     }
     // Read, Grep and Glob reach this hook only to be counted against a budget.
     if (READS.has(value.tool_name)) return true;
-    return EDITS.has(value.tool_name) && !confined && !hasTaskStore(String(value.cwd ?? "."));
+    const cwd = String(value.cwd ?? ".");
+    const input = value.tool_input ?? {};
+    return (
+      EDITS.has(value.tool_name) &&
+      !confined &&
+      !hardLinkNamed([input.file_path, input.notebook_path], cwd) &&
+      !hasTaskStore(cwd)
+    );
   } catch {
     return false;
   }

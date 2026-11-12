@@ -11,7 +11,7 @@
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -136,15 +136,24 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    // A write through a glob or a variable that may spell a guarded path (write-gate.ts).
-    const spelled =
+    // A write that may name a guarded file only once the runtime expands it (a
+    // glob, a variable) or through a second name (a word naming a hard link).
+    const writes =
       /[>]|\b(?:cp|mv|rm|tee|ln|install|rsync|touch|sed|dd|curl|tar)\b/.test(text) &&
-      /(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/.test(
+      (/(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/.test(
         text,
-      );
+      ) ||
+        text.split(/[\s;&|()<>`'"]+/).some((word) => {
+          try {
+            const stat = statSync(path.resolve(String(value.cwd), word));
+            return stat.isFile() && stat.nlink > 1;
+          } catch {
+            return false;
+          }
+        }));
     return /\b(?:git|gh|glab)\b/.test(text) ||
       guarded(text) ||
-      spelled ||
+      writes ||
       maybeHeavy(text, value.cwd)
       ? null
       : event;
