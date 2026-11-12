@@ -306,7 +306,7 @@ test("G Windows registry paths with unquoted backslashes, W the guarded path is 
     ["rm -rf C:\\st\\issued", "issued"],
   ];
   for (const [command, want] of cases)
-    expect(unquotedWindowsRegistry(command, "win32"), command).toBe(want);
+    expect(unquotedWindowsRegistry(command, "win32"), command).toBe(want as never);
   expect(unquotedWindowsRegistry("cp backup.json C:\\cfg\\workspaces.json", "linux")).toBeNull();
 });
 

@@ -1160,7 +1160,7 @@ const segmentTargets = (
     }
     const plain = !segment.conditional;
     if (CD.has(name)) {
-      dir = cdInto(dir, words, strict, vars);
+      dir = cdInto(dir, words, Boolean(strict), vars);
       moved(plain);
       continue;
     }
@@ -1172,7 +1172,7 @@ const segmentTargets = (
     }
     if (PUSHD.has(name)) {
       stack.push(dir);
-      dir = cdInto(dir, words, strict, vars);
+      dir = cdInto(dir, words, Boolean(strict), vars);
       moved(plain);
       continue;
     }
