@@ -10,7 +10,7 @@
  *   bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash [...]
  *   bun scripts/eval/run.ts --replay [--host opencode] [--model haiku] [--check]
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -27,10 +27,47 @@ import {
   writeOpencodeConfig,
   type Provider,
 } from "./opencode";
-import { makeWorld, promptFor, type World } from "./scaffold";
+import {
+  checkConfinement,
+  confined,
+  confinementLine,
+  writableDirs,
+  type Confinement,
+} from "./confine";
+import {
+  carryBack,
+  loginFiles,
+  isolateHome,
+  linkLogin,
+  permitsShellWrappers,
+  probe,
+  selfCheck,
+  type Host,
+} from "./isolation";
+import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
+import {
+  accountHome,
+  acquire,
+  armSnapshot,
+  checkSnapshot,
+  dropJournal,
+  ensureBase,
+  guardFor,
+  findingLines,
+  inspectJournal,
+  release,
+  runnerIdentity,
+  TripwireRefused,
+  tripDetail,
+  tripwireBase,
+  watchedChanged,
+  writeJournal,
+  type Guard,
+  type Snapshot,
+  type Trip,
+} from "./tripwire";
 
 const REPO = path.resolve(import.meta.dir, "..", "..");
-type Host = "claude-code" | "opencode";
 const PLUGINS: Record<Host, string> = {
   "claude-code": path.join(REPO, "packages", "workit-claude-code"),
   opencode: path.join(REPO, "packages", "workit-opencode"),
@@ -84,6 +121,10 @@ type RunResult = {
   timedOut: boolean;
   usage: Usage;
   grade: Grade;
+  /** The world failed the isolation self-check: the case never started, and the run failed. */
+  refused?: "isolation";
+  /** The run changed a real watched file (tripwire.ts): reported, nothing put back, and the run failed. */
+  outsideWrite?: Trip;
 };
 
 const out = (repo: string, ...args: string[]): string =>
@@ -167,6 +208,7 @@ export const childEnv = (world: World, binDir: string): Record<string, string> =
       continue;
     env[key] = value;
   }
+  isolateHome(env, world.home);
   env.WORKIT_STATE_DIR = world.state;
   env.WORKIT_CONFIG_DIR = world.config;
   if (world.workspace) env[EVAL_WORLD_ENV] = world.dir;
@@ -258,6 +300,52 @@ const readOnlyCdHook = (input: string): string => {
 };
 
 const HOOK_FLAG = "--read-only-cd-hook";
+const PROBE_FLAG = "--isolation-probe";
+
+/**
+ * Link the host's login into the world HOME; a case that permits a shell
+ * wrapper starts only after the world passes the isolation self-check.
+ */
+const prepare = (
+  spec: EvalCase,
+  opts: Options,
+  world: World,
+  env: Record<string, string>,
+): string | null => {
+  linkLogin(world.home, opts.host, opts.realHome);
+  if (!permitsShellWrappers(spec, spec.allowedTools ?? DEFAULT_TOOLS)) return null;
+  if (!opts.confinement.on && !opts.unconfined)
+    return `the case permits a shell wrapper and write confinement is off (${opts.confinement.reason}); pass --unconfined to run it with detection only`;
+  const check = selfCheck(
+    world.dir,
+    world.repo,
+    env,
+    withConfinement(opts, world, [process.execPath, import.meta.path, PROBE_FLAG]),
+  );
+  return check.ok
+    ? null
+    : `the case permits a shell wrapper and the world failed the isolation self-check: ${check.outside.join("; ")}`;
+};
+
+const REFUSED = { transcript: "", exit: null, timedOut: false, limit: null };
+
+/** What a host (or the probe) may write: its world, /dev, the temp dirs and its own credential file. */
+const writeRules = (opts: Options, world: World | null): { dirs: string[]; files: string[] } => ({
+  dirs: writableDirs(world?.dir ?? null, [
+    opts.realHome,
+    ...opts.guard.watched,
+    ...opts.guard.reported,
+    opts.tripwire,
+  ]),
+  files: loginFiles(opts.host, opts.realHome),
+});
+
+/** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
+const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
+  if (!opts.confinement.on) return cmd;
+  const { dirs, files } = writeRules(opts, world);
+  return confined(dirs, files, cmd);
+};
 const benchSettings = JSON.stringify({
   hooks: {
     PreToolUse: [
@@ -343,9 +431,35 @@ type Options = {
   providers: Provider[];
   /** The limits the dropped providers reported. */
   limits: NonNullable<RunResult["limits"]>;
+  /** The real config and state files the tripwire guards. */
+  guard: Guard;
+  /** The tripwire's dir: its holders and journal (tripwire.ts). */
+  tripwire: string;
+  /** The in-memory snapshot armed once at bench start: the only thing restored automatically. */
+  snapshot: Snapshot | null;
+  /** How often a running host's restored set is re-checked (test seam: --watch-ms). */
+  watchMs: number;
+  /** Landlock write confinement for the host and the probe, checked once per bench start. */
+  confinement: Confinement;
+  /** `off` forces confinement off (test seam: --confine off). */
+  confineMode: "auto" | "off";
+  /** --unconfined: run shell-wrapper cases with detection only when confinement is off. */
+  unconfined: boolean;
+  /** The signal that asked the bench to stop, once one has. */
+  stop: string | null;
+  /** A run changed real Workit files: the journal stays as the user's recovery copy. */
+  keepJournal: boolean;
+  /** The host running now, in its own process group. */
+  child: RunningHost | null;
+  /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
+  carried: string[];
+  /** The account home the host's login is linked from. */
+  realHome: string;
 };
 
 type Attempt = {
+  /** The world failed the isolation self-check, so the case never started. */
+  refused?: string;
   transcript: string;
   exit: number | null;
   timedOut: boolean;
@@ -353,32 +467,76 @@ type Attempt = {
   limit: string | null;
 };
 
-const attempt = (
+/** What the runner keeps of a running host: its pid leads its own process group. */
+type RunningHost = { pid?: number };
+
+/** SIGKILL a host's whole process group (its shells and their children too). */
+const killGroup = (child: RunningHost | null): void => {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // The group is gone.
+  }
+};
+
+const MAX_OUTPUT = 256 * 1024 * 1024;
+
+/**
+ * Run the host in its own process group, so a signal handler can stop it at
+ * once (the runner stays responsive: no spawnSync), and a watch can kill it
+ * when the restored set changes mid-run.
+ */
+const attempt = async (
   spec: EvalCase,
   opts: Options,
   args: string[],
   env: Record<string, string>,
   world: World,
-): Omit<Attempt, "limit"> & { stderr: string } => {
-  const run = spawnSync(opts.bin, args, {
+): Promise<Omit<Attempt, "limit"> & { stderr: string }> => {
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  const [bin = opts.bin, ...rest] = withConfinement(opts, world, [opts.bin, ...args]);
+  const child = spawn(bin, rest, {
     cwd: world.repo,
     env,
-    input: promptFor(spec, world),
-    encoding: "utf8",
-    timeout: opts.timeoutMs,
-    killSignal: "SIGKILL",
-    maxBuffer: 256 * 1024 * 1024,
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
   });
-  return {
-    transcript: sanitize(run.stdout ?? "", world),
-    stderr: run.stderr ?? "",
-    exit: run.status,
-    timedOut: run.error !== undefined && (run.error as NodeJS.ErrnoException).code === "ETIMEDOUT",
-  };
+  opts.child = child;
+  child.stdin?.on("error", () => {});
+  child.stdin?.end(promptFor(spec, world));
+  child.stdout?.on("data", (chunk) => {
+    if (stdout.length < MAX_OUTPUT) stdout += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    if (stderr.length < MAX_OUTPUT) stderr += String(chunk);
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killGroup(child);
+  }, opts.timeoutMs);
+  const snapshot = opts.snapshot;
+  const watch = setInterval(() => {
+    if (snapshot && watchedChanged(snapshot)) killGroup(child);
+  }, opts.watchMs);
+  const exit = await new Promise<number | null>((resolve) => {
+    child.on("error", (error) => {
+      stderr += String(error);
+      resolve(null);
+    });
+    child.on("close", (code) => resolve(code));
+  });
+  clearTimeout(timer);
+  clearInterval(watch);
+  killGroup(child);
+  opts.child = null;
+  return { transcript: sanitize(stdout, world), stderr, exit, timedOut };
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
-const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
+const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   let last: Attempt = { transcript: "", exit: null, timedOut: false, limit: null };
   while (opts.providers.length > 0) {
     const [provider] = opts.providers;
@@ -390,56 +548,76 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
         spec.allowedTools ?? DEFAULT_TOOLS,
         opts.pluginDir,
       );
-      const run = attempt(
-        spec,
-        opts,
-        opencodeArgs(provider),
-        opencodeEnv(childEnv(world, CLI_BIN), config, world),
-        world,
-      );
+      const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
+      const refused = prepare(spec, opts, world, env);
+      if (refused) return { ...REFUSED, refused };
+      const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
     } finally {
+      opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
       rmSync(world.dir, { recursive: true, force: true });
     }
-    if (last.limit === null) return last;
+    if (last.limit === null || opts.stop) return last;
     opts.limits.push({ provider: provider.name, error: last.limit });
     opts.providers.shift();
   }
   return last;
 };
 
-const runCase = (
+const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
+  const world = makeWorld(spec);
+  try {
+    const env = childEnv(world, path.join(opts.pluginDir, "bin"));
+    const refused = prepare(spec, opts, world, env);
+    if (refused) return { ...REFUSED, refused };
+    return {
+      ...(await attempt(spec, opts, claudeArgs(spec, opts.model, opts.pluginDir), env, world)),
+      limit: null,
+    };
+  } finally {
+    opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
+    rmSync(world.dir, { recursive: true, force: true });
+  }
+};
+
+/** One run: its result, or null when a signal stopped it (no result is written), and what the tripwire found. */
+const runCase = async (
   spec: EvalCase,
   key: string,
   version: string,
   opts: Options,
   index = 1,
-): RunResult => {
+): Promise<{ result: RunResult | null; trip: Trip | null }> => {
+  const snapshot = opts.snapshot;
+  if (!snapshot) throw new Error("the tripwire is not armed");
   let run: Attempt;
-  if (opts.host === "opencode") run = runOpencode(spec, opts);
-  else {
-    const world = makeWorld(spec);
-    try {
-      run = {
-        ...attempt(
-          spec,
-          opts,
-          claudeArgs(spec, opts.model, opts.pluginDir),
-          childEnv(world, path.join(opts.pluginDir, "bin")),
-          world,
-        ),
-        limit: null,
-      };
-    } finally {
-      rmSync(world.dir, { recursive: true, force: true });
-    }
+  try {
+    run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
+  } catch (error) {
+    if (checkSnapshot(snapshot)) opts.keepJournal = true;
+    throw error;
   }
+  const trip = checkSnapshot(snapshot);
+  // Nothing is put back: the journal stays as the user's recovery copy.
+  if (trip) opts.keepJournal = true;
+  if (opts.stop) return { result: null, trip };
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
-  writeFileSync(path.join(dir, `${base}.transcript.jsonl`), run.transcript);
-  const skipped = opts.host === "opencode" && (run.provider === undefined || run.limit !== null);
+  const transcript = path.join(dir, `${base}.transcript.jsonl`);
+  writeFileSync(transcript, run.transcript);
+  const skipped =
+    trip === null &&
+    !run.refused &&
+    opts.host === "opencode" &&
+    (run.provider === undefined || run.limit !== null);
   const graded = grade(run.transcript, spec);
+  if (run.refused) graded.failures.unshift({ rule: "isolation", detail: run.refused });
+  if (trip)
+    graded.failures.unshift({
+      rule: "outside_write",
+      detail: `the run changed real Workit files outside its world: ${tripDetail(trip, path.relative(REPO, transcript) || transcript)}`,
+    });
   const result: RunResult = {
     case: spec.id,
     ...(index > 1 ? { run: index } : {}),
@@ -454,10 +632,12 @@ const runCase = (
     exit: run.exit,
     timedOut: run.timedOut,
     usage: usageOf(run.transcript),
-    grade: skipped ? { ...graded, pass: false } : graded,
+    grade: skipped || trip || run.refused ? { ...graded, pass: false } : graded,
+    ...(run.refused ? { refused: "isolation" as const } : {}),
+    ...(trip ? { outsideWrite: trip } : {}),
   };
   writeJson(path.join(dir, `${base}.json`), result);
-  return result;
+  return { result, trip };
 };
 
 type Row = {
@@ -574,7 +754,8 @@ const replay = (
         continue;
       }
       // A limited run was never graded; re-grading its stub could turn it into a pass.
-      if (stored.skipped) continue;
+      // An outside write fails the run whatever its transcript says.
+      if (stored.skipped || stored.outsideWrite || stored.refused) continue;
       const fresh = grade(readFileSync(path.join(dir, file), "utf8"), spec);
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
@@ -591,37 +772,61 @@ const replay = (
 
 const USAGE =
   "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--force]\n" +
-  "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]";
+  "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]\n" +
+  "       bun scripts/eval/run.ts --tripwire-discard\n" +
+  "       --unconfined: run shell-wrapper cases with detection only when write confinement (Landlock) is off";
 
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
 
-export const main = (argv: string[], print: (text: string) => void = console.log): number => {
+export const main = async (
+  argv: string[],
+  print: (text: string) => void = console.log,
+): Promise<number> => {
+  if (argv[0] === PROBE_FLAG) {
+    print(JSON.stringify(probe()));
+    return 0;
+  }
   if (argv[0] === HOOK_FLAG) {
     const decision = readOnlyCdHook(readFileSync(0, "utf8"));
     if (decision) print(decision);
     return 0;
   }
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      host: { type: "string", default: "claude-code" },
-      model: { type: "string" },
-      tier: { type: "string", default: "smoke" },
-      cases: { type: "string" },
-      "budget-runs": { type: "string", default: "3" },
-      repeat: { type: "string", default: "1" },
-      force: { type: "boolean", default: false },
-      replay: { type: "boolean", default: false },
-      check: { type: "boolean", default: false },
-      bin: { type: "string" },
-      "plugin-dir": { type: "string" },
-      "timeout-s": { type: "string", default: "300" },
-      results: { type: "string", default: path.join(REPO, "evals", "results") },
-      "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
-      help: { type: "boolean", default: false },
-    },
-    strict: true,
-  });
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      options: {
+        host: { type: "string", default: "claude-code" },
+        model: { type: "string" },
+        tier: { type: "string", default: "smoke" },
+        cases: { type: "string" },
+        "budget-runs": { type: "string", default: "3" },
+        repeat: { type: "string", default: "1" },
+        force: { type: "boolean", default: false },
+        replay: { type: "boolean", default: false },
+        check: { type: "boolean", default: false },
+        bin: { type: "string" },
+        "plugin-dir": { type: "string" },
+        "timeout-s": { type: "string", default: "300" },
+        // Test seam: the account home whose Workit files are guarded and whose host login is linked.
+        "real-home": { type: "string" },
+        "tripwire-discard": { type: "boolean", default: false },
+        // Test seam: how often a running host's restored set is re-checked.
+        "watch-ms": { type: "string", default: "2000" },
+        // Test seam: "off" skips write confinement as if Landlock were missing.
+        confine: { type: "string", default: "auto" },
+        unconfined: { type: "boolean", default: false },
+        results: { type: "string", default: path.join(REPO, "evals", "results") },
+        "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
+        help: { type: "boolean", default: false },
+      },
+      strict: true,
+    });
+  } catch (error) {
+    print(`${(error as Error).message}\n${USAGE}`);
+    return 2;
+  }
+  const { values } = parsed;
   if (values.help) {
     print(USAGE);
     return 0;
@@ -645,8 +850,9 @@ export const main = (argv: string[], print: (text: string) => void = console.log
   const budget = Number(values["budget-runs"]);
   const repeat = Number(values.repeat);
   const tier = values.tier as Tier;
+  const settling = values["tripwire-discard"];
   if (
-    !values.model ||
+    (!values.model && !settling) ||
     !Number.isInteger(repeat) ||
     repeat < 1 ||
     (tier !== "smoke" && tier !== "full") ||
@@ -658,18 +864,171 @@ export const main = (argv: string[], print: (text: string) => void = console.log
   }
   const opts: Options = {
     host,
-    model: values.model,
+    model: values.model ?? "",
     bin: values.bin ?? BINS[host],
     pluginDir: path.resolve(values["plugin-dir"] ?? PLUGINS[host]),
     timeoutMs: Number(values["timeout-s"]) * 1000,
     results,
-    providers: host === "opencode" ? providersFor(values.model) : [],
+    providers: host === "opencode" && values.model ? providersFor(values.model) : [],
     limits: [],
+    guard: values["real-home"]
+      ? guardFor(path.resolve(values["real-home"]))
+      : guardFor(accountHome(), process.env),
+    realHome: path.resolve(values["real-home"] ?? accountHome()),
+    tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
+    snapshot: null,
+    watchMs: Number(values["watch-ms"]),
+    confinement: { on: false, reason: "not checked yet" },
+    confineMode: values.confine === "off" ? "off" : "auto",
+    unconfined: values.unconfined,
+    stop: null,
+    keepJournal: false,
+    child: null,
+    carried: [],
   };
-  const selected = selectCases(cases, tier, values.cases?.split(",").filter(Boolean));
+  return tripwired(
+    opts,
+    print,
+    async () =>
+      bench(opts, print, {
+        selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
+        repeat,
+        budget,
+        force: values.force,
+      }),
+    { discard: values["tripwire-discard"] },
+  );
+};
+
+/**
+ * Hold the tripwire around `run`: take the lock, settle or report a leftover
+ * journal, arm the in-memory snapshot (printing its digest on the user's
+ * terminal) and write the crash journal; drop it at the end.
+ */
+const SIGNAL_EXIT: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
+
+/** `holdTripwire`, with a path the tripwire refuses (not a real dir it owns) turned into exit 4. */
+const tripwired = async (
+  opts: Options,
+  print: (text: string) => void,
+  run: () => Promise<number>,
+  settleFlags: { discard: boolean },
+): Promise<number> => {
+  try {
+    return await holdTripwire(opts, print, run, settleFlags);
+  } catch (error) {
+    if (!(error instanceof TripwireRefused)) throw error;
+    print(`tripwire: ${error.message}; nothing was created or removed there, and nothing runs`);
+    return 4;
+  }
+};
+
+const holdTripwire = async (
+  opts: Options,
+  print: (text: string) => void,
+  run: () => Promise<number>,
+  settleFlags: { discard: boolean },
+): Promise<number> => {
+  const bad = ensureBase(opts.tripwire);
+  if (bad) {
+    print(`tripwire: ${bad}; nothing runs`);
+    return 4;
+  }
+  const strange: string[] = [];
+  const holder = acquire(opts.tripwire, strange);
+  for (const entry of strange)
+    print(`tripwire: left alone in holders/, not a runner's lock file: ${entry}`);
+  if (holder !== null) {
+    print(
+      `another bench run (pid ${holder}) holds the tripwire at ${opts.tripwire}: two runs would report each other's changes. Wait for it, or stop it.`,
+    );
+    return 4;
+  }
+  try {
+    // A dead runner's worlds (its login copies included) go first.
+    const swept = sweepWorlds();
+    for (const dir of swept.removed) print(`tripwire: removed a dead bench run's world ${dir}`);
+    for (const why of swept.failed)
+      print(`tripwire: could not remove a dead bench run's world: ${why}`);
+    if (settleFlags.discard) {
+      dropJournal(opts.tripwire);
+      print("tripwire: the leftover journal is dropped; nothing else was touched");
+      return 0;
+    }
+    const left = inspectJournal(opts.tripwire, opts.guard);
+    if (left && left.problems.length === 0 && left.findings.length === 0) {
+      print(
+        `tripwire: a leftover journal (digest ${left.digest}): nothing differs from the real files; dropped`,
+      );
+      dropJournal(opts.tripwire);
+    } else if (left) {
+      print(
+        [
+          "LEFTOVER: real Workit files differ from the journal a bench run left (it changed them, or ended without its check). Nothing was written and no run starts.",
+          ...left.problems.map((problem) => `  ${problem}`),
+          ...findingLines(left.findings),
+          `  journal digest ${left.digest ?? "none"}: proves nothing unless it equals the \`tripwire armed\` line the stopped run printed`,
+          "  once the real files are as you want them, the next start drops it; or drop it now with --tripwire-discard",
+        ].join("\n"),
+      );
+      return 3;
+    }
+    opts.snapshot = armSnapshot(opts.guard);
+    print(`tripwire armed: ${opts.snapshot.files} files, digest ${opts.snapshot.digest}`);
+    writeJournal(opts.tripwire, opts.snapshot);
+    // The handler only flags the stop and kills the host's group; the normal
+    // unwind checks against memory, removes the world and drops the journal.
+    // A second signal exits at once and leaves the journal for the next start.
+    const onSignal = (signal: NodeJS.Signals): void => {
+      if (opts.stop) process.exit(SIGNAL_EXIT[signal] ?? 1);
+      opts.stop = signal;
+      killGroup(opts.child);
+    };
+    for (const signal of SIGNALS) process.on(signal, onSignal);
+    try {
+      const code = await run();
+      if (opts.keepJournal)
+        print(
+          `tripwire: real Workit files changed, so the journal stays at ${opts.tripwire}/journal as your recovery copy`,
+        );
+      else dropJournal(opts.tripwire);
+      return opts.stop ? (SIGNAL_EXIT[opts.stop] ?? 1) : code;
+    } finally {
+      for (const signal of SIGNALS) process.off(signal, onSignal);
+    }
+  } finally {
+    release(opts.tripwire);
+  }
+};
+
+const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/** Every selected case, `repeat` runs each, under the tripwire `main` holds. */
+const bench = async (
+  opts: Options,
+  print: (text: string) => void,
+  {
+    selected,
+    repeat,
+    budget,
+    force,
+  }: {
+    selected: EvalCase[];
+    repeat: number;
+    budget: number;
+    force: boolean;
+  },
+): Promise<number> => {
+  const { host } = opts;
+  if (opts.confineMode === "off") opts.confinement = { on: false, reason: "--confine off" };
+  else {
+    const { dirs, files } = writeRules(opts, null);
+    opts.confinement = checkConfinement(opts.tripwire, runnerIdentity(), dirs, files);
+  }
+  print(confinementLine(opts.confinement));
   const version = workitVersion(host);
   const label = host === "opencode" ? `opencode ${opts.model}` : opts.model;
-  const dir = modelDir(results, resultName(host, opts.model));
+  const dir = modelDir(opts.results, resultName(host, opts.model));
   let runs = 0;
   let failed = 0;
   const limited: string[] = [];
@@ -688,7 +1047,7 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     const outcomes: RunResult[] = [];
     for (let run = 1; run <= repeat; run += 1) {
       const cached = readResult(path.join(dir, `${runBase(spec.id, run)}.json`));
-      if (!values.force && cached?.key === key && !cached.skipped) {
+      if (!force && cached?.key === key && !cached.skipped) {
         outcomes.push(cached);
         print(line(cached.grade.pass ? "cached pass" : "cached FAIL", cached));
         continue;
@@ -698,9 +1057,27 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       const callsModel = host !== "opencode" || opts.providers.length > 0;
       if (callsModel && runs === 0) ensurePlugin(host, opts.pluginDir);
       if (callsModel) runs += 1;
-      const result = runCase(spec, key, version, opts, run);
+      // A signal is handled when the runner reaches its event loop: give it the chance.
+      await new Promise((resolve) => setImmediate(resolve));
+      if (opts.stop) return stopped(opts, null, print);
+      const { result, trip } = await runCase(spec, key, version, opts, run);
+      if (!result) return stopped(opts, trip, print);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
+      if (opts.carried.length > 0)
+        print(
+          `    the host refreshed its login by rename; written back to ${opts.carried.splice(0).join(", ")}`,
+        );
+      if (result.outsideWrite) {
+        writeSummary(dir);
+        print(
+          [
+            `STOPPED: ${spec.id} changed real Workit files outside its world. Nothing was put back; no further run starts.`,
+            ...findingLines(trip?.findings ?? []),
+          ].join("\n"),
+        );
+        return 3;
+      }
     }
     if (outcomes.length < repeat) {
       skipped.push(spec.id);
@@ -721,7 +1098,7 @@ export const main = (argv: string[], print: (text: string) => void = console.log
   }
   writeSummary(dir);
   print(
-    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded`,
+    `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}`,
   );
   if (limited.length > 0)
     print(
@@ -736,4 +1113,15 @@ export const main = (argv: string[], print: (text: string) => void = console.log
   return failed > 0 || limited.length > 0 ? 1 : 0;
 };
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+/** A signal stopped the bench: say what the tripwire found; `tripwired` exits with the signal's code. */
+const stopped = (opts: Options, trip: Trip | null, print: (text: string) => void): number => {
+  print(
+    [
+      `STOPPED by ${opts.stop}: ${trip ? tripDetail(trip, "none (the interrupted run writes no result)") : "no real Workit file changed"}`,
+      ...findingLines(trip?.findings ?? []),
+    ].join("\n"),
+  );
+  return SIGNAL_EXIT[opts.stop ?? ""] ?? 1;
+};
+
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

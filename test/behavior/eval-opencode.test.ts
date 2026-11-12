@@ -73,6 +73,8 @@ let argv: string[] = [];
 beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), "workit-eval-oc-test-"));
   roots.push(root);
+  // The fake real home exists, as a real one does: the tripwire makes only its own dirs under it.
+  mkdirSync(path.join(root, "home"));
   const cases = path.join(root, "cases");
   mkdirSync(cases);
   for (const id of ["a-smoke", "b-smoke"])
@@ -131,6 +133,12 @@ beforeEach(() => {
     path.join(root, "results"),
     "--cases-dir",
     cases,
+    // The tripwire guards, and the login is linked from, a fake real home (#822).
+    "--real-home",
+    path.join(root, "home"),
+    // The fake opencode logs outside its world; confinement has its own tests (eval-confine).
+    "--confine",
+    "off",
   ];
 });
 
@@ -148,9 +156,9 @@ const results = () => path.join(root, "results", "opencode-flash");
 const stored = (id: string) => JSON.parse(readFileSync(path.join(results(), `${id}.json`), "utf8"));
 const quiet = (lines: string[]) => (text: string) => lines.push(text);
 
-test("Given --host opencode --model flash, When the smoke tier runs, Then each case runs `opencode run` on the free provider with the plugin pinned from the checkout and the same grader passes it", () => {
+test("Given --host opencode --model flash, When the smoke tier runs, Then each case runs `opencode run` on the free provider with the plugin pinned from the checkout and the same grader passes it", async () => {
   const printed: string[] = [];
-  expect(main(["--tier", "smoke", ...argv], quiet(printed))).toBe(0);
+  expect(await main(["--tier", "smoke", ...argv], quiet(printed))).toBe(0);
   const runs = calls();
   expect(runs).toHaveLength(2);
   expect(runs[0]).toMatch(/model=opencode\/flash-free /);
@@ -180,9 +188,9 @@ test("Given --host opencode --model flash, When the smoke tier runs, Then each c
   expect(printed.join("\n")).toContain("pass a-smoke (free) 2 turns $0.000");
 });
 
-test("Given the free provider answers with its limit, When a case runs, Then it is retried on the go provider, records provider: go, and later cases go straight to go", () => {
+test("Given the free provider answers with its limit, When a case runs, Then it is retried on the go provider, records provider: go, and later cases go straight to go", async () => {
   process.env.FAKE_OC_LIMITED = "opencode/flash-free";
-  expect(main(["--tier", "smoke", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--tier", "smoke", ...argv], quiet([]))).toBe(0);
   expect(calls().map((run) => /model=(\S+)/.exec(run)?.[1])).toEqual([
     "opencode/flash-free",
     "opencode-go/flash",
@@ -204,10 +212,10 @@ test("Given the free provider answers with its limit, When a case runs, Then it 
   expect(summary.cases.map((row: { provider: string }) => row.provider)).toEqual(["go", "go"]);
 });
 
-test("Given both providers are limited, Then the case is recorded skipped (limit), never passed, the summary says so and replay leaves it alone", () => {
+test("Given both providers are limited, Then the case is recorded skipped (limit), never passed, the summary says so and replay leaves it alone", async () => {
   process.env.FAKE_OC_LIMITED = "opencode/flash-free,opencode-go/flash";
   const printed: string[] = [];
-  expect(main(["--tier", "smoke", ...argv], quiet(printed))).toBe(1);
+  expect(await main(["--tier", "smoke", ...argv], quiet(printed))).toBe(1);
   expect(calls()).toHaveLength(2);
   for (const id of ["a-smoke", "b-smoke"]) {
     const result = stored(id);
@@ -227,16 +235,16 @@ test("Given both providers are limited, Then the case is recorded skipped (limit
   expect(text).toContain(
     "skipped (limit): 2 case(s) not graded, every provider reported its limit: a-smoke, b-smoke",
   );
-  expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
-  expect(main(["--replay", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--replay", ...argv], quiet([]))).toBe(0);
   expect(stored("a-smoke").grade.pass).toBe(false);
   // A skipped case is never a cache hit: the next run tries the providers again.
   process.env.FAKE_OC_LIMITED = "";
-  expect(main(["--tier", "smoke", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--tier", "smoke", ...argv], quiet([]))).toBe(0);
   expect(stored("a-smoke")).toMatchObject({ provider: "free", grade: { pass: true } });
 });
 
-test("Given a provider error that is not a limit, Then the case fails with run-error and is not retried on go", () => {
+test("Given a provider error that is not a limit, Then the case fails with run-error and is not retried on go", async () => {
   writeFileSync(
     process.env.FAKE_OC_OUT ?? "",
     JSON.stringify({
@@ -247,7 +255,7 @@ test("Given a provider error that is not a limit, Then the case fails with run-e
     }),
   );
   const printed: string[] = [];
-  expect(main(["--cases", "a-smoke", ...argv], quiet(printed))).toBe(1);
+  expect(await main(["--cases", "a-smoke", ...argv], quiet(printed))).toBe(1);
   expect(calls()).toHaveLength(1);
   expect(stored("a-smoke")).toMatchObject({ provider: "free", grade: { pass: false } });
   expect(printed.join("\n")).toContain(
@@ -255,13 +263,13 @@ test("Given a provider error that is not a limit, Then the case fails with run-e
   );
 });
 
-test("Given stored OpenCode results, When replayed with --check, Then they re-grade with no model and a changed grade is drift", () => {
-  main(["--cases", "a-smoke", ...argv], quiet([]));
-  expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+test("Given stored OpenCode results, When replayed with --check, Then they re-grade with no model and a changed grade is drift", async () => {
+  await main(["--cases", "a-smoke", ...argv], quiet([]));
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
   const file = path.join(results(), "a-smoke.json");
   writeFileSync(file, JSON.stringify({ ...stored("a-smoke"), grade: { pass: false } }));
   const printed: string[] = [];
-  expect(main(["--replay", "--check", ...argv], quiet(printed))).toBe(1);
+  expect(await main(["--replay", "--check", ...argv], quiet(printed))).toBe(1);
   expect(printed).toContain("drift opencode-flash/a-smoke: fail -> pass");
   expect(calls()).toHaveLength(1);
 });
@@ -274,6 +282,7 @@ test("Given a parent shell elsewhere, Then the OpenCode child's PWD is the world
     state: "/w/state",
     config: "/w/config",
     bin: "/w/bin",
+    home: "/w/home",
   };
   const env = opencodeEnv(
     {

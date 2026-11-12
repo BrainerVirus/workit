@@ -61,6 +61,8 @@ let argv: string[] = [];
 beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), "workit-eval-test-"));
   roots.push(root);
+  // The fake real home exists, as a real one does: the tripwire makes only its own dirs under it.
+  mkdirSync(path.join(root, "home"));
   const cases = path.join(root, "cases");
   mkdirSync(cases);
   for (const [id, tier] of [
@@ -113,6 +115,12 @@ beforeEach(() => {
     path.join(root, "results"),
     "--cases-dir",
     cases,
+    // The tripwire guards a fake real home, never the account's (#822).
+    "--real-home",
+    path.join(root, "home"),
+    // The fake claude logs outside its world; confinement has its own tests (eval-confine).
+    "--confine",
+    "off",
   ];
 });
 
@@ -125,9 +133,9 @@ afterEach(() => {
 const calls = (): string[] => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
 const quiet = (lines: string[]) => (text: string) => lines.push(text);
 
-test("Given --tier smoke --model haiku --budget-runs 2, When run, Then at most 2 runs start and results land under results/haiku", () => {
+test("Given --tier smoke --model haiku --budget-runs 2, When run, Then at most 2 runs start and results land under results/haiku", async () => {
   const printed: string[] = [];
-  const code = main(
+  const code = await main(
     ["--tier", "smoke", "--model", "haiku", "--budget-runs", "2", ...argv],
     quiet(printed),
   );
@@ -150,8 +158,8 @@ test("Given --tier smoke --model haiku --budget-runs 2, When run, Then at most 2
   expect(result.usage).toEqual({ turns: 2, durationMs: 1000, costUsd: 0.01, stop: "success" });
 });
 
-test("Given a run, Then claude -p gets the isolation flags, no API key, no parent Workit session and a substituted prompt", () => {
-  main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
+test("Given a run, Then claude -p gets the isolation flags, no API key, no parent Workit session and a substituted prompt", async () => {
+  await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
   const [call = ""] = calls();
   expect(call).toContain("key=none session=none");
   expect(call).toMatch(/prompt=do a-smoke in \/\S+\/repo /);
@@ -161,8 +169,8 @@ test("Given a run, Then claude -p gets the isolation flags, no API key, no paren
   expect(call).toContain("--model haiku");
 });
 
-test("Given a run, Then the stored transcript names no temp path, project slug or login name", () => {
-  main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
+test("Given a run, Then the stored transcript names no temp path, project slug or login name", async () => {
+  await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
   const [init = ""] = readFileSync(
     path.join(root, "results", "haiku", "a-smoke.transcript.jsonl"),
     "utf8",
@@ -176,23 +184,23 @@ test("Given a run, Then the stored transcript names no temp path, project slug o
   });
 });
 
-test("Given cached results for case+model+version, When run again, Then no model call is made", () => {
-  main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet([]));
+test("Given cached results for case+model+version, When run again, Then no model call is made", async () => {
+  await main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet([]));
   expect(calls()).toHaveLength(3);
   const printed: string[] = [];
-  expect(main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet(printed))).toBe(0);
+  expect(await main(["--model", "haiku", "--budget-runs", "3", ...argv], quiet(printed))).toBe(0);
   expect(calls()).toHaveLength(3);
   expect(printed.filter((text) => text.startsWith("cached pass"))).toHaveLength(3);
-  main(
+  await main(
     ["--model", "haiku", "--budget-runs", "3", "--force", "--cases", "b-smoke", ...argv],
     quiet([]),
   );
   expect(calls()).toHaveLength(4);
-  main(["--model", "sonnet", "--budget-runs", "1", "--cases", "b-smoke", ...argv], quiet([]));
+  await main(["--model", "sonnet", "--budget-runs", "1", "--cases", "b-smoke", ...argv], quiet([]));
   expect(calls()).toHaveLength(5);
 });
 
-test("Given a failing transcript, When run, Then the exit code is 1 and the stored grade names the call", () => {
+test("Given a failing transcript, When run, Then the exit code is 1 and the stored grade names the call", async () => {
   writeFileSync(
     process.env.FAKE_CLAUDE_OUT ?? "",
     [
@@ -213,7 +221,7 @@ test("Given a failing transcript, When run, Then the exit code is 1 and the stor
     ].join("\n"),
   );
   const printed: string[] = [];
-  expect(main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
   expect(printed.join("\n")).toContain(
     "raw-git-push: #1 Bash(git push origin HEAD) pushes with raw git",
   );
@@ -222,18 +230,18 @@ test("Given a failing transcript, When run, Then the exit code is 1 and the stor
   );
 });
 
-test("Given a stored grade that no longer matches the grader, When replayed with --check, Then it reports drift; plain --replay rewrites it", () => {
-  main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
+test("Given a stored grade that no longer matches the grader, When replayed with --check, Then it reports drift; plain --replay rewrites it", async () => {
+  await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet([]));
   const file = path.join(root, "results", "haiku", "a-smoke.json");
   const stored = JSON.parse(readFileSync(file, "utf8"));
   writeFileSync(file, JSON.stringify({ ...stored, grade: { ...stored.grade, pass: false } }));
-  expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(1);
-  expect(main(["--replay", ...argv], quiet([]))).toBe(0);
-  expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(1);
+  expect(await main(["--replay", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
   expect(calls()).toHaveLength(1);
 });
 
-test("Given a case with scaffold commits and no allowed tools, Then the repo has them and claude -p gets no --allowedTools", () => {
+test("Given a case with scaffold commits and no allowed tools, Then the repo has them and claude -p gets no --allowedTools", async () => {
   writeFileSync(
     path.join(root, "cases", "e-full.json"),
     JSON.stringify({
@@ -245,7 +253,7 @@ test("Given a case with scaffold commits and no allowed tools, Then the repo has
       scaffold: { commits: [{ message: "fix: adjust", files: { "a.ts": "b\n" } }] },
     }),
   );
-  main(["--model", "haiku", "--tier", "full", "--cases", "e-full", ...argv], quiet([]));
+  await main(["--model", "haiku", "--tier", "full", "--cases", "e-full", ...argv], quiet([]));
   const [call = ""] = calls();
   expect(call).toContain("commits=2 ");
   expect(call).not.toContain("--allowedTools");
@@ -267,10 +275,10 @@ const PUSH = [
 const summaryOf = (model = "haiku") =>
   JSON.parse(readFileSync(path.join(root, "results", model, "summary.json"), "utf8"));
 
-test("Given --repeat 3 and one failing run, When run, Then every run is stored and the case passes on 2 of 3", () => {
+test("Given --repeat 3 and one failing run, When run, Then every run is stored and the case passes on 2 of 3", async () => {
   writeFileSync(`${process.env.FAKE_CLAUDE_OUT}.2`, PUSH);
   const printed: string[] = [];
-  const code = main(
+  const code = await main(
     ["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv],
     quiet(printed),
   );
@@ -296,18 +304,21 @@ test("Given --repeat 3 and one failing run, When run, Then every run is stored a
   ]);
   // A second invocation finds all three runs cached.
   expect(
-    main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([])),
+    await main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([])),
   ).toBe(0);
   expect(calls()).toHaveLength(3);
-  expect(main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
 });
 
-test("Given --repeat 3 and two failing runs, When run, Then the case fails and the exit code is 1", () => {
+test("Given --repeat 3 and two failing runs, When run, Then the case fails and the exit code is 1", async () => {
   writeFileSync(`${process.env.FAKE_CLAUDE_OUT}.1`, PUSH);
   writeFileSync(`${process.env.FAKE_CLAUDE_OUT}.3`, PUSH);
   const printed: string[] = [];
   expect(
-    main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet(printed)),
+    await main(
+      ["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv],
+      quiet(printed),
+    ),
   ).toBe(1);
   expect(printed.join("\n")).toContain("FAIL a-smoke: 1 of 3 run(s) passed (needs 2)");
   expect(summaryOf().cases[0]).toMatchObject({
@@ -317,21 +328,21 @@ test("Given --repeat 3 and two failing runs, When run, Then the case fails and t
   });
 });
 
-test("Given a stored run's grade drifts, When replayed, Then --check reports that run and plain --replay rewrites the summary", () => {
-  main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([]));
+test("Given a stored run's grade drifts, When replayed, Then --check reports that run and plain --replay rewrites the summary", async () => {
+  await main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([]));
   const file = path.join(root, "results", "haiku", "a-smoke.run3.json");
   const stored = JSON.parse(readFileSync(file, "utf8"));
   writeFileSync(file, JSON.stringify({ ...stored, grade: { ...stored.grade, pass: false } }));
   const printed: string[] = [];
-  expect(main(["--replay", "--check", ...argv], quiet(printed))).toBe(1);
+  expect(await main(["--replay", "--check", ...argv], quiet(printed))).toBe(1);
   expect(printed.join("\n")).toContain("drift haiku/a-smoke.run3: fail -> pass");
-  expect(main(["--replay", ...argv], quiet([]))).toBe(0);
+  expect(await main(["--replay", ...argv], quiet([]))).toBe(0);
   expect(summaryOf().cases[0]).toMatchObject({ pass: true, passes: 3 });
 });
 
-test("Given --repeat 1 after --repeat 3, Then the extra runs are dropped and the summary row is a single run", () => {
-  main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([]));
-  main(["--model", "haiku", "--cases", "a-smoke", ...argv], quiet([]));
+test("Given --repeat 1 after --repeat 3, Then the extra runs are dropped and the summary row is a single run", async () => {
+  await main(["--model", "haiku", "--cases", "a-smoke", "--repeat", "3", ...argv], quiet([]));
+  await main(["--model", "haiku", "--cases", "a-smoke", ...argv], quiet([]));
   expect(readdirSync(path.join(root, "results", "haiku")).toSorted()).toEqual([
     "a-smoke.json",
     "a-smoke.transcript.jsonl",
@@ -340,7 +351,7 @@ test("Given --repeat 1 after --repeat 3, Then the extra runs are dropped and the
   expect(summaryOf().cases[0].runs).toBeUndefined();
 });
 
-test("Given a case with scaffold.workspace, Then the agent's world reports that workspace's endpoint through workit grant show", () => {
+test("Given a case with scaffold.workspace, Then the agent's world reports that workspace's endpoint through workit grant show", async () => {
   writeFileSync(
     path.join(root, "cases", "f-full.json"),
     JSON.stringify({
@@ -362,7 +373,7 @@ test("Given a case with scaffold.workspace, Then the agent's world reports that 
     "src",
     "main.ts",
   );
-  main(["--model", "haiku", "--tier", "full", "--cases", "f-full", ...argv], quiet([]));
+  await main(["--model", "haiku", "--tier", "full", "--cases", "f-full", ...argv], quiet([]));
   const shown = JSON.parse(readFileSync(grants, "utf8"));
   expect(shown.ok).toBe(true);
   expect(shown.data).toMatchObject({

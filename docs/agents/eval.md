@@ -84,8 +84,9 @@ same question of each and never takes a per-host answer.
 Each case gets a throwaway world under the OS temp dir: a git repo on the
 case's branch with its files, uncommitted changes, `.workit/checks.json`, an
 optional bare `origin` and an optional second worktree, plus its own
-`WORKIT_STATE_DIR` and `WORKIT_CONFIG_DIR` (branch policy: `feature/*`
-allowed, `main` protected). Then, in the repo:
+`WORKIT_STATE_DIR`, `WORKIT_CONFIG_DIR` (branch policy: `feature/*`
+allowed, `main` protected) and `HOME` ([isolation](#isolation-and-the-tripwire)).
+Then, in the repo:
 
 ```bash
 claude -p --model <m> --output-format stream-json --verbose --max-turns <n> \
@@ -113,6 +114,58 @@ transcript.
 The transcript is stored with the world path (and Claude's project slug of
 it) as `<world>`, the checkout as `<workit>`, the home dir as `~` and the
 login name as `<user>`.
+
+## Isolation and the tripwire
+
+A bench run must never change your real Workit files (#822: a run rewrote
+`~/.config/workit/workspaces.json` through a `python3` heredoc).
+
+- **World HOME.** `HOME` and the four `XDG_*_HOME` bases point inside the
+  world, so `~`, `$HOME` and every Workit path derived from them (config,
+  grants, state, `approvals/`, the issued registry) resolve there. The host
+  gets only its login, into real world dirs (so `cd -P ~/.claude/..` stays in
+  the world): Claude Code's `~/.claude/.credentials.json` is symlinked (it
+  refreshes in place; a host that replaces the link by rename has the new
+  bytes written back to the real file, and the runner prints that) and
+  `~/.claude.json` is copied; OpenCode gets a fresh `opencode.db` with the
+  real one's schema and only its `credential`, `kv` and migration rows. No
+  settings, `CLAUDE.md`, skills, hooks, plugins, sessions or caches.
+- **Grants dir.** Workit reads grants from the account home (the OS record,
+  never `$HOME`, D15). The bench runs the CLI and hooks from this checkout
+  with bun, and under bun that record follows `$HOME`, so it is the world's
+  too. A plugin dir that runs Workit on node would read the real one: the
+  self-check catches that.
+- **Self-check.** Before a case whose prompt names a shell wrapper (`bash`,
+  `sh`, `python3`, `node`, `bun`, `eval`, ...), or whose allow list or
+  permission mode lets one run, the runner resolves every guarded path in a
+  child with the run's env (`run.ts --isolation-probe`: the real resolvers,
+  then `workit dir config|state`, `workit grant show`, `workit workspace
+  list`). A path outside the world, or a verb that prints no path, refuses the
+  case: the host never starts and the run fails as `isolation`.
+- **Tripwire.** The tripwire only detects. It never writes, removes or renames anything in your home. On a change it kills the host, fails the run as `outside_write`, stops the bench with exit 3, and prints for each path what was there, what is there now, where the original copy is, and for the simple cases the command to put it back.
+  - Watched: the config dir, whole (tokens, `vcs.json`, `templates/`, backups included), and the state files that grant or pick what runs (`host-permissions.json`, `host-permissions-backup/`, `node.json`). At bench start, after taking the lock, the runner snapshots them into its own memory and re-checks them after each run and every 2 s while a host runs.
+  - Reported the same way: the state trees `approvals/`, `issued/`, `issued-tokens/` and `verdicts/`, which live sessions also change.
+  - Not watched: `leases/`, `logs/`, `hook-runs/`, `live-sessions/`, `worktrees/` and the other caches every session rewrites.
+  - Reading is as careful as writing is absent: a root whose kind, link target or device and inode changed is reported as `root replaced` and not walked; below a root nothing is followed; a file is read only when it opens with `O_NOFOLLOW|O_NONBLOCK` as a regular file; files over 64 MB are compared by size; a created dir is reported, not entered; at most 50 created paths are listed per root.
+  - Commands are printed only for simple cases: a changed or deleted regular file with one link and an unchanged parent chain gets `diff -u` and `rm -f -- … && cp -- <original> … && chmod …`; a mode change gets `chmod`; a created file, symlink or FIFO gets `rm --`; anything else gets `ls -la` and the original's path.
+  - `--replay` never re-grades an `outside_write` run.
+- **Digest and journal.** At arm the runner prints `tripwire armed: <N> files, digest <16 hex>` and writes the journal, your recovery copy, to `~/.cache/workit-bench-tripwire/journal/` (0700, files 0600), removed at a clean end. A changed file stays changed until you act. The bench will not start while a leftover differs; it drops the leftover once nothing differs, or on `--tripwire-discard`. A start that finds a leftover writes nothing and prints `LEFTOVER` in the same format; it prints no command for a journal it cannot trust (unreadable, a path outside the watched roots, a blob that does not match), and the journal's digest proves nothing unless it equals the line the stopped run printed.
+- **Stopping and other runs.** Ctrl-C, SIGTERM or SIGHUP kill the host's process group; the run unwinds (its world removed, the real files checked against memory), prints `STOPPED by <signal>`, writes no result for that run and exits 130, 143 or 129; the journal stays only when something changed. One bench holds the tripwire at a time (`holders/<pid>.<start>`); a second one exits 4. Every dir the tripwire uses under `~/.cache/workit-bench-tripwire/` (the base, `holders/`, `journal/`, `blobs/`) must be a real directory you own; a symlink, a file or another owner's dir stops the start with exit 4 and nothing is created or removed there. It removes only by unlinking, so a link planted in its dir loses only itself, and in `holders/` it unlinks only regular files named `<pid>.<start>` of dead runners. Each start removes the `workit-eval-*` worlds a dead runner left in the temp dir. The start-time sweep also removes a directory named `workit-eval-*` under the temp dir that has no `.runner` marker and is older than 24 h, even if the runner did not make it. The sweep skips symlinks and dirs you do not own, reads a `.runner` marker only when it is a regular file, never follows a link inside a world, and reports a world it cannot remove without stopping the start.
+- **Write confinement.** On Linux the host runs under Landlock: it and everything it starts can write only in its world, the temp dirs, `/dev` and the host's own credential file. A write, delete, rename, link or create anywhere else in your home fails in the kernel. The runner itself stays unconfined. `scripts/eval/confine.ts` applies the rules through `bun:ffi` (glibc's `syscall`, x86_64 or arm64, Landlock ABI 3+); any failure exits 126 without running the host. A temp dir that holds your home, a guarded root or the tripwire dir is not made writable, since Landlock has no deny rules. Each bench start checks it with a canary write into the tripwire dir and prints `write confinement: on (Landlock ABI n)` or `off (<reason>)`.
+  Without Landlock (another OS, a kernel before 6.2) a case that permits a shell wrapper is refused unless you pass `--unconfined`; it then runs with detection only.
+- **Open and limits.**
+  - Landlock does not cover metadata: a bench agent can `chmod`, `chown` or `touch` a real file. A mode change on a guarded file is reported; nothing else is.
+  - A bench agent can ask a service of yours that runs outside the sandbox to write for it (`systemd-run --user`, a tmux or docker socket). Such a write to a guarded file is detected within 2 s; to any other file it is not seen.
+  - The temp dirs and `/dev` stay writable, so files there (other tools' scratch files) are not protected.
+  - A change to a watched file is seen within 2 s, the watch interval, and the host is killed; the changed bytes stay until you act, so a live session that reads the file meanwhile sees them.
+  - A bench agent can kill the runner, which ends detection. Under Landlock what it leaves running still cannot write your home. Everything the runner leaves on disk is writable and deletable by the same OS user, so the next start reports a leftover only if the agent left one and cannot prove it genuine; the digest the stopped run printed on your terminal is the only check, and it is yours to make.
+  - A bench agent that attaches to the runner (ptrace, `/proc/<pid>/mem`) can change the snapshot in memory. With `kernel.yama.ptrace_scope` 1 or higher (Ubuntu's default) the kernel refuses a child attaching to its parent; with 0 nothing does.
+  - The host's login (`~/.claude/.credentials.json`, `~/.claude.json`, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise.
+  - Every other file in your home that your user can read, the bench agent can read; the bench protects your real Workit files from change, not your secrets from the model.
+  - After the runner dies without its check (SIGKILL, power loss, a second Ctrl-C), a changed real file stays changed until you act; the next start reports it with the original's copy and runs nothing. The dead run's world, with its login copies in a 0700 dir, stays until that start.
+  - The tripwire checks that each of its own dirs under `~/.cache/workit-bench-tripwire/` is a real directory you own, then lists it and unlinks by name. A process running as you that swaps one of those dirs for a symlink between the check and the unlink can redirect that unlink; a confined host cannot write there, an unconfined one (`--unconfined`) can. Open, not accepted: it needs a directory-handle walk that `node:fs` does not offer.
+  - A process the agent moved out of the host's process group (`setsid`) outlives its run; what it writes later is caught by a later check in the same bench, and by nothing after the last one.
+  - A signal is handled when the runner next reaches its event loop: a SIGTERM sent to the runner alone during a synchronous step (world setup, the self-check, up to 120 s) waits for that step. Ctrl-C at a terminal ends the step at once.
 
 ## Cases
 

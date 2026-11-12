@@ -1,9 +1,59 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EVAL_WORLD_MARKER } from "../../packages/workit-core/src/core/eval-world";
 import type { EvalCase } from "./cases";
+import { identityAlive, runnerIdentity } from "./tripwire";
+
+/** The marker a world carries: the identity of the runner that made it. */
+const RUNNER_MARKER = ".runner";
+const WORLD_MAX_AGE_MS = 24 * 3600 * 1000;
+
+/**
+ * Remove bench worlds a dead runner left in the temp dir: real dirs owned by
+ * `me` whose marker (a regular file) names a dead runner, or with no such
+ * marker and older than 24 h. A symlink is never followed (a link inside a
+ * world loses only itself), and a world that cannot be removed is reported
+ * in `failed` while the sweep goes on.
+ */
+export const sweepWorlds = (
+  tmp = os.tmpdir(),
+  now = Date.now(),
+  me: number | undefined = process.getuid?.(),
+): { removed: string[]; failed: string[] } => {
+  const removed: string[] = [];
+  const failed: string[] = [];
+  for (const name of readdirSync(tmp)) {
+    if (!name.startsWith("workit-eval-")) continue;
+    const dir = path.join(tmp, name);
+    const stat = lstatSync(dir, { throwIfNoEntry: false });
+    if (!stat?.isDirectory() || (me !== undefined && stat.uid !== me)) continue;
+    const markerFile = path.join(dir, RUNNER_MARKER);
+    const marker = lstatSync(markerFile, { throwIfNoEntry: false })?.isFile()
+      ? readFileSync(markerFile, "utf8").trim()
+      : null;
+    const dead = marker ? !identityAlive(marker) : now - stat.mtimeMs > WORLD_MAX_AGE_MS;
+    if (!dead) continue;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch (error) {
+      failed.push(`${dir}: ${(error as Error).message}`);
+    }
+  }
+  return { removed, failed };
+};
 
 /** A throwaway world for one run: the repo, an optional worktree, Workit state and config. */
 export type World = {
@@ -16,6 +66,8 @@ export type World = {
   bin: string;
   /** The case gave the world a workspace: the runner sets WORKIT_EVAL_WORLD. */
   workspace?: boolean;
+  /** The world's HOME (isolation.ts): empty but for the host's login links. */
+  home: string;
 };
 
 const git = (cwd: string, ...args: string[]): void => {
@@ -61,11 +113,15 @@ esac
 
 export const makeWorld = (spec: EvalCase): World => {
   const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), `workit-eval-${spec.id}-`)));
-  const [repo, state, config, bin] = ["repo", "state", "config", "bin"].map((name) => {
-    const sub = path.join(dir, name);
-    mkdirSync(sub);
-    return sub;
-  }) as [string, string, string, string];
+  const [repo, state, config, bin, home] = ["repo", "state", "config", "bin", "home"].map(
+    (name) => {
+      const sub = path.join(dir, name);
+      mkdirSync(sub);
+      return sub;
+    },
+  ) as [string, string, string, string, string];
+  // The runner that made the world: a later start removes it once that runner is dead.
+  writeFileSync(path.join(dir, RUNNER_MARKER), runnerIdentity());
   writeFileSync(path.join(bin, "ytrack"), FAKE_YTRACK);
   chmodSync(path.join(bin, "ytrack"), 0o755);
   const scaffold = spec.scaffold ?? {};
@@ -90,6 +146,7 @@ export const makeWorld = (spec: EvalCase): World => {
       config,
       bin,
       workspace: Boolean(scaffold.workspace),
+      home,
     };
   }
   git(repo, "add", "-A");
@@ -115,7 +172,16 @@ export const makeWorld = (spec: EvalCase): World => {
   writeAll(worktree ?? repo, scaffold.dirty);
 
   writeConfig(dir, config, spec);
-  return { dir, repo, worktree, state, config, bin, workspace: Boolean(scaffold.workspace) };
+  return {
+    dir,
+    repo,
+    worktree,
+    state,
+    config,
+    bin,
+    workspace: Boolean(scaffold.workspace),
+    home,
+  };
 };
 
 const writeConfig = (dir: string, config: string, spec: EvalCase): void => {
