@@ -102,6 +102,9 @@ const fakeYouTrack = (dropResponse: () => boolean, crash: () => boolean = () => 
       complete: true,
     }),
     ownEntries: async (_issueId, where) => (where === "comments" ? comments : workItems),
+    attachFiles: async () => ({ ok: true, data: {} }),
+    applyCommand: async () => ({ ok: true, data: {} }),
+    supports: () => "ok",
   };
   return { comments, workItems, posts };
 };

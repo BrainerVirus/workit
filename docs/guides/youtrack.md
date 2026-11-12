@@ -11,6 +11,7 @@ workit youtrack create --project ABC --summary "Crash on start" --file notes.md
 workit youtrack note ABC-123 --markdown "Fixed in #42" --minutes 30
 workit youtrack time ABC-123 --minutes 45 --text "Code review"
 workit youtrack meeting ABC-123 --minutes 30 --text "Planning"
+workit youtrack update ABC-123 --file notes.md --attach shot.png --minutes 45 --state Done
 ```
 
 ## Set up ytrack
@@ -112,10 +113,41 @@ write flag.
 `workit youtrack create --project <P> --summary <s>` creates an issue in the
 project with that short name or name, and prints its id and URL. The
 description comes from `--description <text>` or `--file <path>`.
+`--attach <file>` (repeatable) attaches files to the new issue and
+`--command '<command>'` applies a YouTrack command to it, under the same one
+yes. When a later part fails, the issue still exists: finish it with
+`workit youtrack update <id>`, never create it again.
+
+## Updating an issue in one go
+
+`workit youtrack update <ISSUE>` makes a whole issue update under one yes:
+
+```sh
+workit youtrack update ABC-123 --file notes.md --attach shot.png --attach report.html \
+  --minutes 165 --state Done
+```
+
+- `--markdown <text>` or `--file <path>`: one comment.
+- `--attach <file>` (repeatable): files on that comment. A file the comment
+  names as `![](shot.png)` shows inline in it; the others sit alongside it.
+  Without a comment the files are attached to the issue itself. Two files
+  with the same name are refused (ytrack keeps files by name).
+- `--minutes <n>`, with `--text` and `--date` as for `time` (either one needs `--minutes`): a work item.
+- `--state <S>` (the command `State <S>`) and `--command '<command>'`.
+
+Pass at least one. Before asking, Workit checks that each file exists and that
+your ytrack supports `--attach` (an older one fails with `ytrack upgrade` as
+the fix); nothing is asked or posted until both hold. The request you approve
+lists every part on that issue and host: the comment's first three lines, each
+file's name, size and content hash, the time (`2h45m`) and the state or command. After your
+yes the parts run in order (comment, time, then commands) and the result lists
+each one. The run stops at the first failure and says what landed and what
+was not applied; rerunning skips a comment or time that landed (its marker),
+but a command or a file-only attach has no marker, so check the issue first.
 
 ## Writes ask you first
 
-Every write (`create`, `note`, `time`, `meeting`) waits for your yes, in every
+Every write (`create`, `note`, `time`, `meeting`, `update`) waits for your yes, in every
 workspace. The first run records a request and refuses with
 `approval_needed`; nothing is posted. The agent runs `workit approve <id>`,
 your host shows the issue, the text, the minutes and the day, and the agent's
@@ -137,11 +169,15 @@ reports it `pending` with the request to approve, and the next
 `workit pr create` or `workit pr edit` of that PR posts it once.
 
 An agent that runs a `ytrack` write itself (`ytrack issue comment`,
-`ytrack work-item add`, `ytrack issue create|edit|delete|command`, or
+`ytrack work-item add`, `ytrack issue create|edit|delete|command|attach`, or
 `ytrack api` with POST, PUT, PATCH or DELETE), plain or wrapped in `bash -c`,
 a chain, a pipe, `npx` or a full path, is stopped by Workit's shell hook. When
 a `workit youtrack` verb does the same thing, the hook names that exact call,
-which asks you first. For a write no verb covers:
+which asks you first. Several writes on one issue chained with `&&` or `;`
+(a comment with `--attach`, `ytrack issue attach`, `ytrack work-item add`,
+`ytrack issue command`, or a hand-built `ytrack api` POST to the issue's
+`comments` or `attachments`) are named as one `workit youtrack update` call,
+so you answer one ask for the whole update. For a write no verb covers:
 
 | Host | What happens |
 | --- | --- |
@@ -159,10 +195,28 @@ shell hook lets raw `ytrack` writes through:
 { "name": "work", "glob": "/home/*/work/**", "youtrack": { "writes": "auto" } }
 ```
 
+## Which YouTrack a folder uses
+
+ytrack picks its host from `--host`, a URL, `YTRACK_HOST`, then the folder's
+path glob (`ytrack auth paths`), then its default host. Workit sets
+`YTRACK_HOST` for its own ytrack calls only, so an agent's own `ytrack` in a
+workspace reaches the right instance only when that workspace's folder is
+mapped to its YouTrack host. For each workspace with a `youtrack.baseUrl`:
+
+- `workit doctor` shows a `ytrack_paths` row: it passes when the workspace
+  glob is mapped to that host, and warns when it is missing or mapped to
+  another host, with the exact fix, for example
+  `ytrack auth paths --host acme.youtrack.cloud --add '/home/you/work/**'`.
+  An older ytrack without `ytrack auth paths` gets `ytrack upgrade` first.
+- `workit setup` plans the missing `ytrack auth paths --add` calls with its
+  other changes and runs them when it applies.
+
+Neither changes `workspaces.json`.
+
 ## How the verbs run ytrack
 
 Workit runs `ytrack issue view|create|comment` and `ytrack work-item add|list`
-with `--json`.
+with `--json`, and `ytrack issue attach|command` for files and commands.
 
 - Exit 0 is success.
 - ytrack missing: the command exits 5 (`unavailable`) and the unblock names

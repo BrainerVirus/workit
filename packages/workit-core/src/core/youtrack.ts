@@ -12,7 +12,7 @@ import {
   type YtrackRun,
 } from "./youtrack-ytrack";
 
-const ISSUE_RE = /^[A-Z]+-\d+$/;
+const ISSUE_RE = /^[A-Z][A-Z0-9_]*-\d+$/;
 
 // Port of scripts/youtrack/config.sh chain: WORKIT_YOUTRACK_CONFIG ->
 // configDir() (XDG_CONFIG_HOME / HOME .config + workit).
@@ -187,12 +187,12 @@ export function parseIssueRef(
     return { issueId: trimmed, source: "id" };
   }
 
-  const fromPath = trimmed.match(/\/(?:issue|issues)\/([A-Z]+-\d+)/i);
+  const fromPath = trimmed.match(/\/(?:issue|issues)\/([A-Z][A-Z0-9_]*-\d+)/i);
   if (fromPath && ISSUE_RE.test(fromPath[1])) {
     return { issueId: fromPath[1], source: "url" };
   }
 
-  const anywhere = trimmed.match(/([A-Z]+-\d+)/);
+  const anywhere = trimmed.match(/([A-Z][A-Z0-9_]*-\d+)/);
   if (anywhere && ISSUE_RE.test(anywhere[1])) {
     return { issueId: anywhere[1], source: "url" };
   }

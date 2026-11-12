@@ -15,12 +15,20 @@
 //   workit youtrack note <ISSUE> (--markdown <text> | --file <path>) [--minutes <n>] [--date auto|YYYY-MM-DD]
 //   workit youtrack time <ISSUE> --minutes <n> [--text <t>] [--date auto|YYYY-MM-DD]
 //   workit youtrack meeting <ISSUE> --minutes <n> --text <t> [--date auto|YYYY-MM-DD]
+//   workit youtrack update <ISSUE> [--markdown <t> | --file <p>] [--attach <file>]... [--minutes <n> [--text <t>] [--date …]] [--state <S>] [--command '<command>']
 //   workit youtrack show <ISSUE>
-//   workit youtrack create --project <P> --summary <s> [--description <t> | --file <p>]
+//   workit youtrack create --project <P> --summary <s> [--description <t> | --file <p>] [--attach <file>]... [--command '<command>']
+//
+// `update` makes every write on one issue under one yes, in order: one comment
+// carrying its attachments (`![](name)` in the text shows a file inline, the
+// rest sit alongside), the time, then the commands (--state S is `State S`).
+// It stops at the first failure and names what landed. Attachments are checked
+// before asking: each file must exist and ytrack must have --attach.
 import { progressFor } from "../progress";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
+import { youTrackBaseUrl, youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
 import { ISSUE_RE } from "@workit-dev/core/src/core/youtrack-tools";
 import {
   findDuplicate,
@@ -52,14 +60,53 @@ import {
   type WriteResult,
   type YouTrackBackend,
 } from "@workit-dev/core/src/core/youtrack-backend";
+import {
+  YTRACK_MISSING,
+  ytrackHostName,
+  ytrackMissingUnblock,
+  ytrackUpgradeUnblock,
+  type YtrackFeature,
+} from "@workit-dev/core/src/core/youtrack-ytrack";
 import { emit, fail, ok, type Io } from "../output";
 import { parseFlags, positiveInt, usage } from "./forge-common";
 
 const USAGE =
-  "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …] | youtrack show <ISSUE> | youtrack create --project <P> --summary <s> [--description <t> | --file <p>]";
+  "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …] | youtrack update <ISSUE> [--markdown <t> | --file <p>] [--attach <file>]... [--minutes <n> [--text <t>] [--date …]] [--state <S>] [--command '<command>'] | youtrack show <ISSUE> | youtrack create --project <P> --summary <s> [--description <t> | --file <p>] [--attach <file>]... [--command '<command>']";
 
 /** Test seams: the workspace's `youtrack.writes` mode for a cwd. */
 export type YouTrackDeps = { writes?: (cwd: string) => YouTrackWritesMode };
+
+type Write = (yt: YouTrackBackend, marked: (text: string) => string) => Promise<WriteResult>;
+
+/** One write of a call, in the order the call makes them. */
+type Step = {
+  label: string;
+  /** Where its marker is read back; null for a write with no text of its own (attachments, a command). */
+  where: MarkerWhere | null;
+  request: Record<string, unknown>;
+  /** What the duplicate check compares; null when the step has no identity of its own. */
+  wanted: Wanted | null;
+  write: Write;
+};
+
+/** Everything one call writes, and what the user approves for it. */
+type Plan = {
+  issueId: string;
+  verb: string;
+  localDate: string;
+  steps: Step[];
+  action: string;
+  effect: string;
+  subject: Record<string, unknown>;
+  /** A ytrack feature the writes need, checked before asking. */
+  needs?: { feature: YtrackFeature; what: string };
+};
+
+type StepResult = {
+  step: string;
+  status: OnceOutcome["status"] | "not_applied";
+  note?: string;
+};
 
 export async function run(
   argv: string[],
@@ -71,7 +118,7 @@ export async function run(
   const writesMode = () => (deps.writes ?? youTrackWritesMode)(io.cwd);
   if (sub === "show") return show(rest, io, backend);
   if (sub === "create") return create(rest, io, backend, writesMode());
-  if (sub !== "note" && sub !== "time" && sub !== "meeting")
+  if (sub !== "note" && sub !== "time" && sub !== "meeting" && sub !== "update")
     return usage(io, `unknown subcommand "${sub ?? ""}"`, USAGE);
   const flags = parseFlags(rest, {
     markdown: "value",
@@ -79,7 +126,8 @@ export async function run(
     minutes: "value",
     text: "value",
     date: "value",
-  });
+    ...(sub === "update" ? { attach: "list", state: "value", command: "value" } : {}),
+  } as const);
   if (typeof flags === "string") return usage(io, flags, USAGE);
   const [issueId, extra] = flags.positionals;
   if (!issueId || !ISSUE_RE.test(issueId))
@@ -89,53 +137,73 @@ export async function run(
   if (typeof minutes === "string") return usage(io, minutes, USAGE);
   const date = youTrackWorkDateMs(flags.values.date ?? "auto");
   if ("error" in date) return usage(io, date.error, USAGE);
-  const dateMs = date.data.dateMs;
-  // The marker names the day only when the user named it: with `--date auto`
-  // a retry on a later day is the same request and must not post again.
-  const markedDay =
-    flags.values.date !== undefined && flags.values.date !== "auto" ? { dateMs } : {};
+  const when: When = {
+    dateMs: date.data.dateMs,
+    localDate: date.data.localDate,
+    // The marker names the day only when the user named it: with `--date auto`
+    // a retry on a later day is the same request and must not post again.
+    markedDay:
+      flags.values.date !== undefined && flags.values.date !== "auto"
+        ? { dateMs: date.data.dateMs }
+        : {},
+  };
+  const plan =
+    sub === "update"
+      ? updatePlan(io, issueId, flags, minutes, when)
+      : legacyPlan(io, sub, issueId, flags, minutes, when);
+  if (typeof plan === "string") return usage(io, plan, USAGE);
+  return runPlan(io, plan, backend, writesMode());
+}
 
+type Flags = Exclude<ReturnType<typeof parseFlags>, string>;
+type When = {
+  dateMs: number;
+  localDate: string;
+  markedDay: { dateMs?: number };
+};
+
+/** The note's text from --markdown or --file, or why there is none. */
+function commentText(io: Io, flags: Flags, required: boolean): string | null | { error: string } {
+  const { markdown, file } = flags.values;
+  if (markdown !== undefined && file !== undefined)
+    return { error: "pass at most one of --markdown or --file" };
+  if (markdown === undefined && file === undefined)
+    return required ? { error: "pass exactly one of --markdown or --file" } : null;
+  let text = markdown ?? "";
+  if (file !== undefined)
+    try {
+      text = readFileSync(path.resolve(io.cwd, file), "utf8");
+    } catch (error) {
+      return { error: `cannot read ${file}: ${String(error)}` };
+    }
+  return text.trim() ? text : { error: "the note is empty" };
+}
+
+/** `workit youtrack note|time|meeting`: the steps they always made. */
+function legacyPlan(
+  io: Io,
+  sub: "note" | "time" | "meeting",
+  issueId: string,
+  flags: Flags,
+  minutes: number | null,
+  when: When,
+): Plan | string {
+  const { dateMs, localDate, markedDay } = when;
   const day = new Date(dateMs).toISOString().slice(0, 10);
-  const steps: {
-    label: string;
-    where: MarkerWhere;
-    request: Record<string, unknown>;
-    /** What the duplicate check compares; null when the step has no identity of its own. */
-    wanted: Wanted | null;
-  }[] = [];
-  let effect = "";
-  let subject: Record<string, unknown> = {};
-  const writes: ((
-    yt: YouTrackBackend,
-    marked: (text: string) => string,
-  ) => Promise<WriteResult>)[] = [];
-
+  const action = `workit youtrack ${sub} ${issueId}${minutes ? ` --minutes ${minutes}` : ""}`;
   if (sub === "note") {
-    if (Boolean(flags.values.markdown) === Boolean(flags.values.file))
-      return usage(io, "pass exactly one of --markdown or --file", USAGE);
-    let markdown = flags.values.markdown ?? "";
-    if (flags.values.file)
-      try {
-        markdown = readFileSync(path.resolve(io.cwd, flags.values.file), "utf8");
-      } catch (error) {
-        return usage(io, `cannot read ${flags.values.file}: ${String(error)}`, USAGE);
-      }
-    if (!markdown.trim()) return usage(io, "the note is empty", USAGE);
-    steps.push({
-      label: "comment",
-      where: "comments",
-      request: { operation: "note", issueId, markdown },
-      wanted: { where: "comments", text: markdown },
-    });
-    effect = minutes
-      ? `posts this comment on ${issueId} and logs ${minutes} minutes on ${date.data.localDate}`
-      : `posts this comment on ${issueId}`;
-    subject = {
-      comment: markdown,
-      ...(minutes ? { minutes, date: date.data.localDate } : {}),
-    };
-    writes.push((yt, marked) => yt.addComment(issueId, marked(markdown)));
-    if (minutes) {
+    const markdown = commentText(io, flags, true);
+    if (markdown === null || typeof markdown === "object") return markdown?.error ?? "";
+    const steps: Step[] = [
+      {
+        label: "comment",
+        where: "comments",
+        request: { operation: "note", issueId, markdown },
+        wanted: { where: "comments", text: markdown },
+        write: (yt, marked) => yt.addComment(issueId, marked(markdown)),
+      },
+    ];
+    if (minutes)
       steps.push({
         label: "time",
         where: "workItems",
@@ -149,48 +217,298 @@ export async function run(
         // The note's time is identified by its comment: "workit update" alone
         // would refuse a second legitimate note of the same length that day.
         wanted: null,
+        write: (yt, marked) =>
+          yt.addWorkItem(issueId, {
+            minutes,
+            text: marked("workit update"),
+            dateMs,
+          }),
       });
-      writes.push((yt, marked) =>
-        yt.addWorkItem(issueId, {
-          minutes,
-          text: marked("workit update"),
-          dateMs,
-        }),
-      );
-    }
-  } else {
-    if (!minutes) return usage(io, `${sub} needs --minutes <n>`, USAGE);
-    if (sub === "meeting" && !flags.values.text)
-      return usage(io, "meeting needs --text <what the meeting was>", USAGE);
-    const text = flags.values.text ?? "";
-    steps.push({
-      label: sub,
-      where: "workItems",
-      request: { operation: sub, issueId, minutes, text, ...markedDay },
-      wanted: { where: "workItems", text, minutes, date: day },
-    });
-    effect = `logs ${minutes} minutes on ${issueId} on ${date.data.localDate}`;
-    subject = { minutes, text, date: date.data.localDate };
-    writes.push((yt, marked) => yt.addWorkItem(issueId, { minutes, text: marked(text), dateMs }));
+    return {
+      issueId,
+      verb: sub,
+      localDate,
+      steps,
+      action,
+      effect: minutes
+        ? `posts this comment on ${issueId} and logs ${minutes} minutes on ${localDate}`
+        : `posts this comment on ${issueId}`,
+      subject: {
+        comment: markdown,
+        ...(minutes ? { minutes, date: localDate } : {}),
+      },
+    };
   }
+  if (!minutes) return `${sub} needs --minutes <n>`;
+  if (sub === "meeting" && !flags.values.text) return "meeting needs --text <what the meeting was>";
+  const text = flags.values.text ?? "";
+  return {
+    issueId,
+    verb: sub,
+    localDate,
+    steps: [
+      {
+        label: sub,
+        where: "workItems",
+        request: { operation: sub, issueId, minutes, text, ...markedDay },
+        wanted: { where: "workItems", text, minutes, date: day },
+        write: (yt, marked) => yt.addWorkItem(issueId, { minutes, text: marked(text), dateMs }),
+      },
+    ],
+    action,
+    effect: `logs ${minutes} minutes on ${issueId} on ${localDate}`,
+    subject: { minutes, text, date: localDate },
+  };
+}
 
-  const mode = writesMode();
+/** `2h45m`, `1h`, `30m`. */
+const durationText = (minutes: number): string =>
+  `${minutes >= 60 ? `${Math.floor(minutes / 60)}h` : ""}${minutes % 60 || minutes < 60 ? `${minutes % 60}m` : ""}`;
+
+const sizeText = (bytes: number): string =>
+  bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 * 1024
+      ? `${(bytes / 1024).toFixed(1)} KB`
+      : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+type Attachment = { path: string; name: string; bytes: number; sha256: string };
+
+/** Each --attach file read once (name, size, content hash), or the first one that is not a readable file. */
+function attachments(io: Io, files: readonly string[]): Attachment[] | string {
+  const out: Attachment[] = [];
+  for (const file of files) {
+    const full = path.resolve(io.cwd, file);
+    let content: Buffer;
+    try {
+      if (!statSync(full).isFile()) return `--attach ${file} is not a file`;
+      content = readFileSync(full);
+    } catch {
+      return `--attach ${file}: no such file`;
+    }
+    const twin = out.find((earlier) => earlier.name === path.basename(full));
+    if (twin)
+      return `--attach ${file} has the same name as ${twin.path}: ytrack refuses two files with one name, so rename one`;
+    out.push({
+      path: full,
+      name: path.basename(full),
+      bytes: content.length,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    });
+  }
+  return out;
+}
+
+/** The first three lines of a comment, with how many more there are. */
+const firstLines = (text: string): string => {
+  const lines = text.trim().split(/\r?\n/u);
+  return lines.length > 3
+    ? `${lines.slice(0, 3).join(" / ")} … (+${lines.length - 3} lines)`
+    : lines.join(" / ");
+};
+
+/** What the user approves for each file: name, size and the start of its content hash. */
+const attachmentLines = (files: readonly Attachment[]): string[] =>
+  files.map((file) => `${file.name} (${sizeText(file.bytes)}, sha256 ${file.sha256.slice(0, 12)})`);
+
+const fileList = (files: readonly Attachment[]): string =>
+  files.map((file) => `${file.name} (${sizeText(file.bytes)})`).join(", ");
+
+/** The commands --state and --command apply, in that order. */
+const commandsOf = (flags: Flags): string[] | string => {
+  const state = flags.values.state?.trim();
+  const command = flags.values.command?.trim();
+  if (flags.values.state !== undefined && !state) return "--state needs a state name";
+  if (flags.values.command !== undefined && !command) return "--command needs a YouTrack command";
+  return [...(state ? [`State ${state}`] : []), ...(command ? [command] : [])];
+};
+
+/**
+ * `workit youtrack update`: one comment (carrying any attachments), time and
+ * commands on one issue, in that order, under one yes.
+ */
+function updatePlan(
+  io: Io,
+  issueId: string,
+  flags: Flags,
+  minutes: number | null,
+  when: When,
+): Plan | string {
+  const { dateMs, localDate, markedDay } = when;
+  const comment = commentText(io, flags, false);
+  if (comment !== null && typeof comment === "object") return comment.error;
+  const files = attachments(io, flags.lists.attach ?? []);
+  if (typeof files === "string") return files;
+  const commands = commandsOf(flags);
+  if (typeof commands === "string") return commands;
+  if (!minutes && (flags.values.text !== undefined || flags.values.date !== undefined))
+    return "--text and --date describe time: pass --minutes <n> with them";
+  if (comment === null && !files.length && !minutes && !commands.length)
+    return "update needs at least one of --markdown/--file, --attach, --minutes, --state or --command";
+  const steps: Step[] = [];
+  const effects: string[] = [];
+  const subject: Record<string, unknown> = {};
+  const paths = files.map((file) => file.path);
+  const hashes = files.map((file) => file.sha256);
+  if (comment !== null) {
+    steps.push({
+      label: "comment",
+      where: "comments",
+      request: {
+        operation: "update.comment",
+        issueId,
+        markdown: comment,
+        attachments: hashes,
+      },
+      wanted: { where: "comments", text: comment },
+      write: (yt, marked) => yt.addComment(issueId, marked(comment), paths),
+    });
+    effects.push(
+      `comment "${firstLines(comment)}"${files.length ? ` with ${fileList(files)}` : ""}`,
+    );
+    subject.comment = firstLines(comment);
+    subject.commentSha256 = createHash("sha256").update(comment).digest("hex");
+  } else if (files.length) {
+    steps.push({
+      label: "attach",
+      where: null,
+      request: { operation: "update.attach", issueId, attachments: hashes },
+      wanted: null,
+      write: (yt) => yt.attachFiles(issueId, paths),
+    });
+    effects.push(`attach ${fileList(files)}`);
+  }
+  if (files.length) subject.attachments = attachmentLines(files);
+  if (minutes) {
+    const text = flags.values.text ?? (comment === null ? "" : "workit update");
+    steps.push({
+      label: "time",
+      where: "workItems",
+      request: {
+        operation: "update.time",
+        issueId,
+        minutes,
+        text,
+        ...markedDay,
+      },
+      // Time that rides on a comment is identified by it, as with note.
+      wanted:
+        comment !== null && flags.values.text === undefined
+          ? null
+          : {
+              where: "workItems",
+              text,
+              minutes,
+              date: new Date(dateMs).toISOString().slice(0, 10),
+            },
+      write: (yt, marked) => yt.addWorkItem(issueId, { minutes, text: marked(text), dateMs }),
+    });
+    effects.push(
+      `log ${durationText(minutes)} on ${localDate}${text && flags.values.text !== undefined ? ` ("${text}")` : ""}`,
+    );
+    subject.time = `${durationText(minutes)} on ${localDate}`;
+    if (flags.values.text !== undefined) subject.text = text;
+  }
+  for (const [index, command] of commands.entries()) {
+    steps.push({
+      label: commands.length > 1 ? `command ${index + 1}` : "command",
+      where: null,
+      request: { operation: "update.command", issueId, command },
+      wanted: null,
+      write: (yt) => yt.applyCommand(issueId, command),
+    });
+    effects.push(`apply the command ${command}`);
+  }
+  if (commands.length) subject.commands = commands;
+  return {
+    issueId,
+    verb: "update",
+    localDate,
+    steps,
+    action: `workit youtrack update ${issueId}`,
+    effect: `on ${issueId} at ${trackerName()}, in order: ${effects.map((effect, index) => `${index + 1}. ${effect}`).join("; ")}`,
+    subject,
+    ...(files.length
+      ? {
+          needs:
+            comment !== null
+              ? {
+                  feature: "comment-attach" as const,
+                  what: "`ytrack issue comment --attach`",
+                }
+              : {
+                  feature: "issue-attach" as const,
+                  what: "`ytrack issue attach`",
+                },
+        }
+      : {}),
+  };
+}
+
+/** The YouTrack the writes go to, as the user knows it. */
+const trackerName = (): string => {
+  const base = youTrackBaseUrl();
+  return base ? ytrackHostName(base) : "ytrack's default host";
+};
+
+/** Refuse, before asking, a write this ytrack cannot make. null when it can. */
+function unsupported(
+  io: Io,
+  yt: YouTrackBackend,
+  plan: Pick<Plan, "needs">,
+  data: Record<string, unknown>,
+): number | null {
+  if (!plan.needs) return null;
+  const support = yt.supports(plan.needs.feature);
+  if (support === "ok") return null;
+  const host = youTrackBaseUrl();
+  return emit(
+    io,
+    fail(
+      "unavailable",
+      support === "missing"
+        ? `${YTRACK_MISSING}; nothing was posted`
+        : `this ytrack has no ${plan.needs.what}, which attachments need; nothing was posted`,
+      {
+        data: {
+          ...data,
+          reason: support === "missing" ? "ytrack_missing" : "ytrack_too_old",
+          posted: false,
+        },
+        unblock:
+          support === "missing"
+            ? ytrackMissingUnblock(host)
+            : ytrackUpgradeUnblock(plan.needs.what),
+      },
+    ),
+  );
+}
+
+/** Run a plan's writes once each, in order, under one yes; stop at the first failure. */
+async function runPlan(
+  io: Io,
+  plan: Plan,
+  backend: () => YouTrackBackend,
+  mode: YouTrackWritesMode,
+): Promise<number> {
+  const { issueId, steps } = plan;
   if (mode === "auto") {
-    const gate = youTrackWriteGate(io.env, `workit youtrack ${sub}`);
+    const gate = youTrackWriteGate(io.env, `workit youtrack ${plan.verb}`);
     if (gate) return emit(io, fail(gate.code, gate.error, { unblock: gate.unblock }));
   }
   const yt = backend();
+  const refused = unsupported(io, yt, plan, { issueId });
+  if (refused !== null) return refused;
   const earlier = await settlePending(yt);
-  const results: {
-    step: string;
-    status: OnceOutcome["status"];
-    note?: string;
-  }[] = [];
+  const results: StepResult[] = [];
   const todo: number[] = [];
   /** Steps whose duplicate check could not read the user's entries. */
   const unchecked = new Set<number>();
   for (const [index, entry] of steps.entries()) {
-    if ((await markerPresent(issueId, youTrackMarker(entry.request), entry.where, yt)) === true) {
+    if (
+      entry.where &&
+      (await markerPresent(issueId, youTrackMarker(entry.request), entry.where, yt)) === true
+    ) {
       results.push({ step: entry.label, status: "already_done" });
       continue;
     }
@@ -221,41 +539,24 @@ export async function run(
     const asked = askFirst(
       io,
       youTrackApprovalFields({
-        action: `workit youtrack ${sub} ${issueId}${minutes ? ` --minutes ${minutes}` : ""}`,
+        action: plan.action,
         on: { issue: issueId },
-        effect,
+        effect: plan.effect,
         subject: unchecked.size
           ? {
-              ...subject,
+              ...plan.subject,
               duplicates: `not checked: your existing entries on ${issueId} could not be read`,
             }
-          : subject,
+          : plan.subject,
       }),
-      `youtrack ${sub}`,
+      `youtrack ${plan.verb}`,
       { issueId, steps: results, earlier },
     );
     if (asked !== null) return asked;
   }
-  for (const index of todo) {
+  for (const [position, index] of todo.entries()) {
     const entry = steps[index];
-    const marker = youTrackMarker(entry.request);
-    const write = async () =>
-      onceResult(await writes[index](yt, (text) => withMarker(text, marker)));
-    rememberPending({
-      issueId,
-      step: entry.label,
-      action: `workit youtrack ${sub} ${issueId}`,
-      where: entry.where,
-      marker,
-    });
-    // fetch and child-process work only, so Ctrl-C may clear the frame.
-    const outcome = await progressFor(io).run(
-      entry.label,
-      () => writeOnce(issueId, marker, entry.where, write, yt),
-      undefined,
-      { signals: true },
-    );
-    if (outcome.status !== "unknown") forgetPending(marker);
+    const outcome = await runStep(io, plan, entry, yt);
     const notes = [
       ...("precheck" in outcome && outcome.precheck === "inconclusive"
         ? [
@@ -272,25 +573,40 @@ export async function run(
       ...(notes.length ? { note: notes.join("; ") } : {}),
     });
     if (outcome.status === "failed" || outcome.status === "unknown") {
+      const rest = todo.slice(position + 1).map((later) => steps[later].label);
+      for (const label of rest) results.push({ step: label, status: "not_applied" });
+      const landed = results
+        .filter((result) => ["done", "already_done", "settled"].includes(result.status))
+        .map((result) => result.step);
       const unblock = (outcome.data as { unblock?: unknown } | undefined)?.unblock;
+      const summary = [
+        landed.length ? `landed: ${landed.join(", ")}` : "",
+        rest.length ? `not applied: ${rest.join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("; ");
       return emit(
         io,
-        fail(outcome.status === "unknown" ? "unavailable" : "failed", outcome.error, {
-          data: {
-            issueId,
-            backend: yt.kind,
-            steps: results,
-            earlier,
-            ...(outcome.data ? { detail: outcome.data } : {}),
+        fail(
+          outcome.status === "unknown" ? "unavailable" : "failed",
+          `${entry.label} ${outcome.status === "unknown" ? "may not have landed" : "failed"}: ${outcome.error}${summary ? ` (${summary})` : ""}`,
+          {
+            data: {
+              issueId,
+              backend: yt.kind,
+              steps: results,
+              earlier,
+              ...(outcome.data ? { detail: outcome.data } : {}),
+            },
+            ...(typeof unblock === "string"
+              ? { unblock }
+              : outcome.status === "unknown"
+                ? {
+                    unblock: `check ${issueId} in YouTrack; re-running is safe for a comment or time (the marker skips a write that already landed), not for a command or attachment`,
+                  }
+                : {}),
           },
-          ...(typeof unblock === "string"
-            ? { unblock }
-            : outcome.status === "unknown"
-              ? {
-                  unblock: `check ${issueId} in YouTrack; re-running is safe (the marker skips a write that already landed)`,
-                }
-              : {}),
-        }),
+        ),
       );
     }
   }
@@ -298,19 +614,64 @@ export async function run(
     io,
     ok({
       issueId,
-      date: date.data.localDate,
+      date: plan.localDate,
       backend: yt.kind,
       steps: results,
       earlier,
     }),
-    (data) => [
-      ...earlierLines(data.earlier),
-      `${issueId}: ${data.steps.map((entry) => `${entry.step} ${entry.status.replace("_", " ")}`).join(", ")} (${data.date})`,
-      ...data.steps.flatMap((entry) =>
-        entry.note ? [`  note (${entry.step}): ${entry.note}`] : [],
-      ),
-    ],
+    (data) => resultLines(issueId, data.date, data.steps, data.earlier),
   );
+}
+
+const resultLines = (
+  issueId: string,
+  date: string,
+  steps: StepResult[],
+  earlier: EarlierWrite[],
+): string[] => [
+  ...earlierLines(earlier),
+  `${issueId}: ${steps.map((entry) => `${entry.step} ${entry.status.replace("_", " ")}`).join(", ")} (${date})`,
+  ...steps.flatMap((entry) => (entry.note ? [`  note (${entry.step}): ${entry.note}`] : [])),
+];
+
+/** One step: a marked write at most once (read back first), else the write itself. */
+async function runStep(io: Io, plan: Plan, entry: Step, yt: YouTrackBackend): Promise<OnceOutcome> {
+  const { issueId } = plan;
+  if (!entry.where) {
+    const result = await progressFor(io).run(
+      entry.label,
+      () => entry.write(yt, (text) => text),
+      undefined,
+      {
+        signals: true,
+      },
+    );
+    if (result.ok) return { status: "done", data: result.data };
+    return {
+      status: result.outcome === "not_applied" ? "failed" : "unknown",
+      error: result.error,
+      data: onceResult(result).data,
+    };
+  }
+  const where = entry.where;
+  const marker = youTrackMarker(entry.request);
+  const write = async () => onceResult(await entry.write(yt, (text) => withMarker(text, marker)));
+  rememberPending({
+    issueId,
+    step: entry.label,
+    action: `workit youtrack ${plan.verb} ${issueId}`,
+    where,
+    marker,
+  });
+  // fetch and child-process work only, so Ctrl-C may clear the frame.
+  const outcome = await progressFor(io).run(
+    entry.label,
+    () => writeOnce(issueId, marker, where, write, yt),
+    undefined,
+    { signals: true },
+  );
+  if (outcome.status !== "unknown") forgetPending(marker);
+  return outcome;
 }
 
 /**
@@ -404,6 +765,8 @@ async function create(
     summary: "value",
     description: "value",
     file: "value",
+    attach: "list",
+    command: "value",
   });
   if (typeof flags === "string") return usage(io, flags, USAGE);
   if (flags.positionals.length)
@@ -420,6 +783,10 @@ async function create(
     } catch (error) {
       return usage(io, `cannot read ${file}: ${String(error)}`, USAGE);
     }
+  const files = attachments(io, flags.lists.attach ?? []);
+  if (typeof files === "string") return usage(io, files, USAGE);
+  const commands = commandsOf(flags);
+  if (typeof commands === "string") return usage(io, commands, USAGE);
   if (mode === "auto") {
     const gate = youTrackWriteGate(io.env, "creating a YouTrack issue");
     if (gate)
@@ -430,16 +797,33 @@ async function create(
           unblock: gate.unblock,
         }),
       );
-  } else {
+  }
+  const yt = backend();
+  if (files.length) {
+    const refused = unsupported(
+      io,
+      yt,
+      { needs: { feature: "issue-attach", what: "`ytrack issue attach`" } },
+      { project },
+    );
+    if (refused !== null) return refused;
+  }
+  if (mode === "ask") {
     const asked = askFirst(
       io,
       youTrackApprovalFields({
         action: `workit youtrack create --project ${project}`,
         on: { project },
-        effect: `creates a new issue in ${project}`,
+        effect: [
+          `creates a new issue in ${project}`,
+          ...(files.length ? [`attaches ${fileList(files)}`] : []),
+          ...commands.map((command) => `applies the command ${command}`),
+        ].join(", then "),
         subject: {
           summary: summary.trim(),
           ...(description === undefined ? {} : { description }),
+          ...(files.length ? { attachments: attachmentLines(files) } : {}),
+          ...(commands.length ? { commands } : {}),
         },
       }),
       "youtrack create",
@@ -447,7 +831,7 @@ async function create(
     );
     if (asked !== null) return asked;
   }
-  const result = await backend().createIssue({
+  const result = await yt.createIssue({
     project,
     summary: summary.trim(),
     ...(description === undefined ? {} : { description }),
@@ -460,7 +844,64 @@ async function create(
         unblock: result.unblock,
       }),
     );
-  return emit(io, ok(result.data), (data) => [
+  const issueId = result.data.issueId;
+  const after: { label: string; write: () => Promise<WriteResult> }[] = [
+    ...(files.length
+      ? [
+          {
+            label: "attach",
+            write: () =>
+              yt.attachFiles(
+                issueId,
+                files.map((one) => one.path),
+              ),
+          },
+        ]
+      : []),
+    ...commands.map((command, index) => ({
+      label: commands.length > 1 ? `command ${index + 1}` : "command",
+      write: () => yt.applyCommand(issueId, command),
+    })),
+  ];
+  const steps: StepResult[] = [{ step: "create", status: "done" }];
+  for (const [position, step] of after.entries()) {
+    const written = await step.write();
+    if (written.ok) {
+      steps.push({ step: step.label, status: "done" });
+      continue;
+    }
+    steps.push({
+      step: step.label,
+      status: written.outcome === "not_applied" ? "failed" : "unknown",
+    });
+    const rest = after.slice(position + 1).map((later) => later.label);
+    for (const label of rest) steps.push({ step: label, status: "not_applied" });
+    return emit(
+      io,
+      fail(
+        written.outcome === "not_applied" ? "failed" : "unavailable",
+        `${step.label} failed on the new issue ${issueId}: ${written.error} (landed: create${steps
+          .filter((entry) => entry.status === "done" && entry.step !== "create")
+          .map((entry) => `, ${entry.step}`)
+          .join("")}${rest.length ? `; not applied: ${rest.join(", ")}` : ""})`,
+        {
+          data: { project, ...result.data, steps },
+          unblock:
+            written.unblock ??
+            `the issue ${issueId} exists: finish it with workit youtrack update ${issueId}, never create it again`,
+        },
+      ),
+    );
+  }
+  return emit(io, ok({ ...result.data, ...(after.length ? { steps } : {}) }), (data) => [
     `created ${data.issueId}${data.url ? ` ${data.url}` : ""}`,
+    ...(after.length
+      ? [
+          `  ${steps
+            .slice(1)
+            .map((entry) => `${entry.step} ${entry.status}`)
+            .join(", ")}`,
+        ]
+      : []),
   ]);
 }

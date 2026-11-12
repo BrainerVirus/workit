@@ -104,6 +104,8 @@ const COVERED: Array<[string, string]> = [
     "workit youtrack create --project APP --summary 'Crash on start'",
   ],
   ["ytrack --debug issue comment X-1 --body=hi", "workit youtrack note X-1 --markdown hi"],
+  ["ytrack issue command X-1 'State Fixed'", "workit youtrack update X-1 --state Fixed"],
+  ["ytrack api /issues/X-1/comments -f text=hi", "workit youtrack note X-1 --markdown hi"],
 ];
 
 /** Writes no workit verb covers: Claude Code asks, the other hosts deny. */
@@ -111,7 +113,6 @@ const UNCOVERED = [
   "ytrack issue edit X-1 --summary 'New title'",
   "ytrack issue update X-1 --field State=Fixed",
   "ytrack issue delete X-1",
-  "ytrack issue command X-1 'State Fixed'",
   "ytrack work-item edit X-1 115-3 --duration 2h",
   "ytrack work-item delete X-1 115-3 --yes",
   "ytrack api /issues/X-1/comments -X POST",
@@ -120,7 +121,6 @@ const UNCOVERED = [
   "ytrack api /issues/X-1 --method=patch",
   "ytrack api /issues/X-1/comments/4-17 -X DELETE",
   "ytrack api /issues/X-1/comments -X=POST",
-  "ytrack api /issues/X-1/comments -f text=hi",
   "ytrack api /commands --input command.json",
 ];
 

@@ -579,6 +579,13 @@ test(
         YT_BASE_URL: "https://yt.example.com",
       }),
     ).toBe("Related to: https://yt.example.com/issue/IRP-123");
+    expect(
+      buildBody({
+        BRANCH: "bugfix/AB2-142-export",
+        LINK_ISSUES: "true",
+        YT_BASE_URL: "https://yt.example.com",
+      }),
+    ).toBe("Related to: https://yt.example.com/issue/AB2-142");
   },
   { timeout: 60_000 },
 );

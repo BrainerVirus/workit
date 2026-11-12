@@ -215,3 +215,118 @@ export function ytrackReadiness(run: YtrackRun, host: string | null): YtrackRead
     unblock: ytrackLogin(host),
   };
 }
+
+/** What a newer ytrack adds: `issue comment --attach`, `issue attach`, `auth paths`. */
+export type YtrackFeature = "comment-attach" | "issue-attach" | "auth-paths";
+
+const FEATURE_PROBE: Record<YtrackFeature, { args: string[]; shows: RegExp }> = {
+  "comment-attach": {
+    args: ["issue", "comment", "--help"],
+    shows: /--attach\b/u,
+  },
+  "issue-attach": {
+    args: ["issue", "attach", "--help"],
+    shows: /\bissue attach\b/u,
+  },
+  "auth-paths": { args: ["auth", "paths", "--help"], shows: /--add\b/u },
+};
+
+/**
+ * Whether this ytrack has `feature`, read from its own `--help` (exit 0 and
+ * the flag or command named): an older ytrack prints its parent's help or
+ * fails, and neither names it.
+ */
+export function ytrackSupports(run: YtrackRun, feature: YtrackFeature): "ok" | "missing" | "old" {
+  const probe = FEATURE_PROBE[feature];
+  const out = run(probe.args);
+  if (out.missing) return "missing";
+  return out.status === YTRACK_EXIT.ok && probe.shows.test(`${out.stdout}\n${out.stderr}`)
+    ? "ok"
+    : "old";
+}
+
+/** The unblock for a ytrack too old for a feature Workit needs. */
+export const ytrackUpgradeUnblock = (what: string): string =>
+  `ytrack upgrade (this ytrack has no ${what}), then run the same command again`;
+
+/** A word for a POSIX shell: always single-quoted unless it is plainly safe. */
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./-]+$/u.test(word) && !word.includes("*")
+    ? word
+    : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/** `ytrack auth paths --host <host> [--add '<glob>']… [--remove '<glob>']…`, ready to paste. */
+export const ytrackAuthPathsCommand = (
+  host: string,
+  change: { add?: readonly string[]; remove?: readonly string[] },
+): string =>
+  [
+    `ytrack auth paths --host ${ytrackHostName(host)}`,
+    ...(change.add ?? []).map((glob) => `--add ${shellWord(glob)}`),
+    ...(change.remove ?? []).map((glob) => `--remove ${shellWord(glob)}`),
+  ].join(" ");
+
+/** The argv of the same call, run without a shell. */
+export const ytrackAuthPathsArgs = (
+  host: string,
+  change: { add?: readonly string[]; remove?: readonly string[] },
+): string[] => [
+  "auth",
+  "paths",
+  "--host",
+  ytrackHostName(host),
+  ...(change.add ?? []).flatMap((glob) => ["--add", glob]),
+  ...(change.remove ?? []).flatMap((glob) => ["--remove", glob]),
+];
+
+type YtrackPaths =
+  | { ok: true; paths: string[] }
+  | { ok: false; reason: "missing" | "old" | "failed"; error: string };
+
+const UNKNOWN_COMMAND =
+  /unknown (?:command|flag|option|subcommand)|unrecognized|invalid choice|no such command/iu;
+
+/**
+ * The folder globs ytrack maps to `host` (`ytrack auth paths --host <h> --json
+ * host,paths`, youtrack-cli hosts.yml). `old` when this ytrack has no `auth
+ * paths`: it refuses the command or prints no such JSON.
+ */
+export function ytrackAuthPaths(run: YtrackRun, host: string): YtrackPaths {
+  const name = ytrackHostName(host);
+  const out = run(["auth", "paths", "--host", name, "--json", "host,paths"]);
+  if (out.missing) return { ok: false, reason: "missing", error: YTRACK_MISSING };
+  const old = {
+    ok: false as const,
+    reason: "old" as const,
+    error: "this ytrack has no `ytrack auth paths`",
+  };
+  if (out.status !== YTRACK_EXIT.ok) {
+    const detail = ytrackDetail(out);
+    return UNKNOWN_COMMAND.test(`${out.stdout}\n${out.stderr}`)
+      ? old
+      : {
+          ok: false,
+          reason: "failed",
+          error: `ytrack auth paths failed (exit ${out.status ?? "signal"})${detail ? `: ${detail}` : ""}`,
+        };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(out.stdout);
+  } catch {
+    return old;
+  }
+  const rows = (Array.isArray(json) ? json : [json]).filter(
+    (row): row is Record<string, unknown> => typeof row === "object" && row !== null,
+  );
+  const row =
+    rows.find((candidate) => ytrackHostName(String(candidate.host ?? "")) === name) ??
+    (rows.length === 1 && rows[0].host === undefined ? rows[0] : undefined);
+  if (!row) return rows.some((candidate) => "paths" in candidate) ? { ok: true, paths: [] } : old;
+  if (!Array.isArray(row.paths))
+    return row.paths === undefined || row.paths === null ? { ok: true, paths: [] } : old;
+  return {
+    ok: true,
+    paths: row.paths.filter((glob): glob is string => typeof glob === "string"),
+  };
+}

@@ -55,6 +55,10 @@ export const POSIX_SHAPES: string[] = [
   `alias yt=ytrack; yt ${args}`,
   `yt() { ytrack "$@"; }; yt ${args}`,
   `$(which ytrack) ${args}`,
+  // One update on one issue (comment, files, time, state): one routed call.
+  `${W} --attach a.png && ytrack work-item add X-1 --duration 1h && ytrack issue command X-1 'State Done'`,
+  "ytrack issue attach X-1 a.png",
+  "ytrack api /issues/X-1/attachments -X POST -F upload=@a.png",
 ];
 
 /** Shapes Claude Code's PowerShell tool runs. */

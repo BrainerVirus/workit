@@ -56,8 +56,14 @@ import {
   ytrackLogin,
   ytrackMissingUnblock,
   ytrackReadiness,
+  ytrackAuthPathsArgs,
   ytrackRunner,
 } from "@workit-dev/core/src/core/youtrack-ytrack";
+import {
+  pathWants,
+  reviewYtrackPaths,
+  type PathFix,
+} from "@workit-dev/core/src/core/youtrack-paths";
 
 import {
   isCodexWorkitInstalled,
@@ -152,6 +158,12 @@ export type SetupPreview = {
    *  unblocks it (install, or log in to the configured host). Apply checks
    *  the login itself. */
   ytrack?: { onPath: boolean; host: string; unblock: string };
+  /**
+   * ytrack's folder-to-host map for each workspace with a YouTrack baseUrl:
+   * the `ytrack auth paths --add` calls Apply runs, or why none can be planned
+   * (an older ytrack without `auth paths`, or its map unreadable).
+   */
+  ytrackPaths?: { planned: PathFix[] } | { skipped: string; unblock: string };
   /** Selected platform adapters to register on Apply (WZ-09). */
   platforms: string[];
   state: SetupState;
@@ -246,6 +258,7 @@ export function buildSetupPreview(
   const preserved: string[] = [];
   let projectRefused: string | undefined;
   let ytrack: SetupPreview["ytrack"];
+  let paths: SetupPreview["ytrackPaths"];
   const overrides = activeSetupOverrides(env);
 
   for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
@@ -318,6 +331,9 @@ export function buildSetupPreview(
       };
     }
 
+    const ytrackPaths = planYtrackPaths(values.workspaces, env);
+    if (ytrackPaths) paths = ytrackPaths;
+
     if (values.vcsProvider !== "skip") {
       const vcsPath = path.join(state.configDir, "vcs.json");
       mutations.push({
@@ -370,6 +386,7 @@ export function buildSetupPreview(
     overrides,
     preserved,
     ...(ytrack ? { ytrack } : {}),
+    ...(paths ? { ytrackPaths: paths } : {}),
     platforms: values.platforms ?? [],
     state,
     ...(projectRefused === undefined ? {} : { projectRefused }),
@@ -1567,6 +1584,7 @@ export function applySetupPreview(
     });
   }
   if (preview.ytrack) entries.push(ytrackEntry(preview.ytrack.host, res.env));
+  if (preview.ytrackPaths) entries.push(...applyYtrackPaths(preview.ytrackPaths, res.env));
   if (preview.projectRefused) {
     entries.push({
       platform: "core",
@@ -1623,6 +1641,60 @@ export function applySetupPreview(
 
 // ytrack's `auth status` may reach the network; Apply waits this long at most.
 const YTRACK_SETUP_TIMEOUT_MS = 15_000;
+
+/**
+ * The `ytrack auth paths --add` calls that map each workspace glob to its
+ * YouTrack host (core/youtrack-paths.ts), so an agent's own ytrack in that
+ * folder reaches the right instance. Read-only: it only reads ytrack's map.
+ * None without such a workspace or without ytrack on PATH.
+ */
+function planYtrackPaths(
+  workspaces: readonly unknown[],
+  env: NodeJS.ProcessEnv,
+): SetupPreview["ytrackPaths"] {
+  const wants = pathWants(workspaces);
+  if (!wants.length || !findYtrack(env)) return undefined;
+  const review = reviewYtrackPaths(ytrackRunner(env, null, YTRACK_SETUP_TIMEOUT_MS), wants);
+  if (review.state === "ok")
+    return {
+      planned: review.fixes.filter((fix) => fix.add.length).map((fix) => ({ ...fix, remove: [] })),
+    };
+  if (review.state === "missing") return undefined;
+  return {
+    skipped: review.error,
+    unblock:
+      review.state === "old" ? "ytrack upgrade, then run workit setup again" : "run workit doctor",
+  };
+}
+
+/** Run the planned `ytrack auth paths --add` calls, one Apply row each. */
+const applyYtrackPaths = (
+  paths: NonNullable<SetupPreview["ytrackPaths"]>,
+  env: NodeJS.ProcessEnv,
+): SetupResultEntry[] => {
+  if ("skipped" in paths)
+    return [
+      {
+        platform: "core",
+        file: "ytrack auth paths",
+        status: "Skipped",
+        detail: `${paths.skipped}: ${paths.unblock}`,
+      },
+    ];
+  const run = ytrackRunner(env, null, YTRACK_SETUP_TIMEOUT_MS);
+  return paths.planned.map((fix) => {
+    const out = run(ytrackAuthPathsArgs(fix.host, { add: fix.add }));
+    const ok = !out.missing && out.status === 0;
+    return {
+      platform: "core",
+      file: "ytrack auth paths",
+      status: ok ? "Configured" : "Failed",
+      detail: ok
+        ? `${fix.add.join(", ")} now reach ${fix.host}`
+        : `${fix.command} failed${out.missing ? ": ytrack is not on PATH" : ` (exit ${out.status ?? "signal"})${out.stderr.trim() ? `: ${out.stderr.trim().split("\n").slice(-1)[0]}` : ""}`}`,
+    };
+  });
+};
 
 /** ytrack's login for the configured YouTrack host, as an Apply row; never a failure. */
 const ytrackEntry = (host: string, env: NodeJS.ProcessEnv): SetupResultEntry => {

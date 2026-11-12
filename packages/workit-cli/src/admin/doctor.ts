@@ -111,8 +111,11 @@ import {
   ytrackHostName,
   ytrackLogin,
   ytrackRunner,
+  ytrackAuthPathsCommand,
   ytrackStatus,
+  type YtrackStatus,
 } from "@workit-dev/core/src/core/youtrack-ytrack";
+import { pathWants, reviewYtrackPaths } from "@workit-dev/core/src/core/youtrack-paths";
 import {
   installedSkillVersion,
   readYtrackSkillRecord,
@@ -178,6 +181,7 @@ type DoctorCheckId =
   | "session_hook"
   | "youtrack"
   | "ytrack_skill"
+  | "ytrack_paths"
   | "github_identity"
   | "gitlab_identity"
   | "log_writable"
@@ -2803,7 +2807,7 @@ const checkYouTrack = (res: Resolved): DoctorCheck | null => {
       fix: `${YTRACK_INSTALL}, then ${logins}`,
     };
   }
-  const status = ytrackStatus(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
+  const status = ytrackStatusOf(res);
   if (!status.installed) {
     return {
       id: "youtrack",
@@ -2843,6 +2847,72 @@ const checkYouTrack = (res: Resolved): DoctorCheck | null => {
     status: "warn",
     detail: `${version}: ${why.join("; ")}${legacy}`,
     fix: bad.map((row) => ytrackLogin(row.host)).join("; "),
+  };
+};
+
+/** `ytrack auth status`, read once per doctor run: it may reach the network. */
+const STATUS = new WeakMap<Resolved, YtrackStatus>();
+const ytrackStatusOf = (res: Resolved): YtrackStatus => {
+  const known = STATUS.get(res);
+  if (known) return known;
+  const status = ytrackStatus(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
+  STATUS.set(res, status);
+  return status;
+};
+
+/**
+ * ytrack's folder-to-host map (`ytrack auth paths`): each workspace with a
+ * YouTrack baseUrl should have its glob mapped to that host, so an agent's
+ * own ytrack there reaches it, not ytrack's default host. Read-only; the fix
+ * is the exact `ytrack auth paths` call (or `workit setup`, which plans it).
+ * No row without such a workspace or without ytrack (the youtrack row covers it).
+ */
+const checkYtrackPaths = (res: Resolved): DoctorCheck | null => {
+  const wants = pathWants(readWorkspacesResult(res.configDir).entries);
+  if (!wants.length || !findYtrack(res.env)) return null;
+  const status = ytrackStatusOf(res);
+  const others = status.installed ? status.hosts.map((row) => row.host).filter(Boolean) : [];
+  const review = reviewYtrackPaths(
+    ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS),
+    wants,
+    others,
+  );
+  if (review.state === "missing") return null;
+  if (review.state === "old") {
+    const version = status.installed && status.version ? ` ${status.version}` : "";
+    const hosts = [...new Set(wants.map((want) => want.host))];
+    return {
+      id: "ytrack_paths",
+      status: "warn",
+      detail: `ytrack${version} has no \`ytrack auth paths\`: an agent's own ytrack in ${wants.map((want) => want.glob).join(", ")} reaches ytrack's default host`,
+      fix: [
+        YTRACK_UPGRADE,
+        ...hosts.map((host) =>
+          ytrackAuthPathsCommand(host, {
+            add: wants.filter((want) => want.host === host).map((want) => want.glob),
+          }),
+        ),
+      ].join("; then "),
+    };
+  }
+  if (review.state !== "ok")
+    return {
+      id: "ytrack_paths",
+      status: "warn",
+      detail: review.error,
+      fix: "Run ytrack auth paths --help",
+    };
+  if (review.drift.length === 0)
+    return {
+      id: "ytrack_paths",
+      status: "pass",
+      detail: wants.map((want) => `${want.glob} -> ${want.host}`).join(", "),
+    };
+  return {
+    id: "ytrack_paths",
+    status: "warn",
+    detail: review.drift.join("; "),
+    fix: review.fixes.map((fix) => fix.command).join("; "),
   };
 };
 
@@ -4073,6 +4143,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkWorkspaceLock,
   checkSessionHook,
   checkYouTrack,
+  checkYtrackPaths,
   checkYtrackSkill,
   checkGithubIdentity,
   checkGitLabIdentity,

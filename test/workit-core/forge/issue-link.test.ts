@@ -188,3 +188,33 @@ test("withIssueLines appends each line once after a blank line and keeps lines a
   expect(withIssueLines("", two.slice(0, 1))).toBe("Closes #42");
   expect(withIssueLines("Why\n\nCloses #42", two.slice(0, 1))).toBe("Why\n\nCloses #42");
 });
+
+// A YouTrack issue URL (`/issue/AB2-142[/slug]`, `/projects/AB2/issues/AB2-142`)
+// is that issue on the workspace's YouTrack; one on another instance is refused.
+const acme = tracker({ provider: "youtrack", baseUrl: "https://acme.youtrack.cloud" });
+
+test("G a workspace on acme.youtrack.cloud, W --issue is an acme issue URL in either form, T it is the YouTrack issue AB2-142 linked on that host", () => {
+  for (const url of [
+    "https://acme.youtrack.cloud/issue/AB2-142",
+    "https://acme.youtrack.cloud/issue/AB2-142/crash-on-start",
+    "https://acme.youtrack.cloud/projects/AB2/issues/AB2-142",
+  ])
+    expect(links({ issues: [url] }, acme), url).toEqual([
+      expect.objectContaining({
+        tracker: "youtrack",
+        id: "AB2-142",
+        line: "Related to: https://acme.youtrack.cloud/issue/AB2-142",
+      }),
+    ]);
+  expect(links({ issues: ["AB2-142"] }, acme)).toEqual([
+    expect.objectContaining({ tracker: "youtrack", id: "AB2-142" }),
+  ]);
+});
+
+test("G a workspace on acme.youtrack.cloud, W --issue is a URL on another YouTrack, T it is refused naming the configured host", () => {
+  const out = planned({ issues: ["https://other.youtrack.cloud/issue/AB2-142"] }, acme);
+  expect(out.ok).toBe(false);
+  expect(!out.ok && out.error).toContain("this workspace's YouTrack is acme.youtrack.cloud");
+  const none = planned({ issues: ["https://other.youtrack.cloud/issue/AB2-142"] }, null);
+  expect(!none.ok && none.error).toContain("no YouTrack configured");
+});

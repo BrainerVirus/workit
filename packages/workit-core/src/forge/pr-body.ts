@@ -36,7 +36,7 @@ export function deriveGhIssueFromBranch(branch: string): string {
 
 /** A YouTrack id in the branch (feature/IRPT-740-x); anchored, 3+ digits so POSTGRES-16 or HTTP-3 never link. */
 export function deriveYouTrackIssueFromBranch(branch: string): string {
-  return /(?:^|\/|-)([A-Z]{2,}-\d{3,})\b/.exec(branch)?.[1] ?? "";
+  return /(?:^|\/|-)([A-Z][A-Z0-9_]+-\d{3,})\b/.exec(branch)?.[1] ?? "";
 }
 
 export function buildBody(

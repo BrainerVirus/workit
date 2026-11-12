@@ -1014,7 +1014,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "youtrack",
     group: "delivery",
-    summary: "YouTrack issues and time; writes ask first unless youtrack.writes: auto",
+    summary: "YouTrack issues and time; writes ask first (unless writes: auto)",
     subcommands: [
       {
         name: "note",
@@ -1033,6 +1033,12 @@ export const VERBS: readonly VerbEntry[] = [
         summary: "Log meeting time",
       },
       {
+        name: "update",
+        usage:
+          "workit youtrack update <ISSUE> [--markdown <t> | --file <p>] [--attach <file>]... [--minutes <n> [--text <t>] [--date auto|YYYY-MM-DD]] [--state <S>] [--command '<command>']",
+        summary: "Comment (with attachments), log time and change state on one issue under one yes",
+      },
+      {
         name: "show",
         usage: "workit youtrack show <ISSUE>",
         summary: "Read an issue (summary, state, fields, comments) through ytrack",
@@ -1040,8 +1046,8 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "create",
         usage:
-          "workit youtrack create --project <P> --summary <s> [--description <t> | --file <p>]",
-        summary: "Create an issue",
+          "workit youtrack create --project <P> --summary <s> [--description <t> | --file <p>] [--attach <file>]... [--command '<command>']",
+        summary: "Create an issue, optionally attaching files and applying a command",
       },
     ],
     load: () => import("./youtrack"),
