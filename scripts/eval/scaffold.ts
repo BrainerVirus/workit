@@ -21,29 +21,38 @@ const RUNNER_MARKER = ".runner";
 const WORLD_MAX_AGE_MS = 24 * 3600 * 1000;
 
 /**
- * Remove bench worlds a dead runner left in the temp dir: real dirs this user
- * owns whose marker names a dead runner, or with no marker and older than 24 h.
- * A symlink is never followed.
+ * Remove bench worlds a dead runner left in the temp dir: real dirs owned by
+ * `me` whose marker (a regular file) names a dead runner, or with no such
+ * marker and older than 24 h. A symlink is never followed (a link inside a
+ * world loses only itself), and a world that cannot be removed is reported
+ * in `failed` while the sweep goes on.
  */
-export const sweepWorlds = (tmp = os.tmpdir(), now = Date.now()): string[] => {
+export const sweepWorlds = (
+  tmp = os.tmpdir(),
+  now = Date.now(),
+  me: number | undefined = process.getuid?.(),
+): { removed: string[]; failed: string[] } => {
   const removed: string[] = [];
+  const failed: string[] = [];
   for (const name of readdirSync(tmp)) {
     if (!name.startsWith("workit-eval-")) continue;
     const dir = path.join(tmp, name);
     const stat = lstatSync(dir, { throwIfNoEntry: false });
-    if (!stat?.isDirectory() || (process.getuid && stat.uid !== process.getuid())) continue;
-    let marker: string | null = null;
-    try {
-      marker = readFileSync(path.join(dir, RUNNER_MARKER), "utf8").trim();
-    } catch {
-      marker = null;
-    }
+    if (!stat?.isDirectory() || (me !== undefined && stat.uid !== me)) continue;
+    const markerFile = path.join(dir, RUNNER_MARKER);
+    const marker = lstatSync(markerFile, { throwIfNoEntry: false })?.isFile()
+      ? readFileSync(markerFile, "utf8").trim()
+      : null;
     const dead = marker ? !identityAlive(marker) : now - stat.mtimeMs > WORLD_MAX_AGE_MS;
     if (!dead) continue;
-    rmSync(dir, { recursive: true, force: true });
-    removed.push(dir);
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch (error) {
+      failed.push(`${dir}: ${(error as Error).message}`);
+    }
   }
-  return removed;
+  return { removed, failed };
 };
 
 /** A throwaway world for one run: the repo, an optional worktree, Workit state and config. */

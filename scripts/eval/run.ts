@@ -57,6 +57,7 @@ import {
   inspectJournal,
   release,
   runnerIdentity,
+  TripwireRefused,
   tripDetail,
   tripwireBase,
   watchedChanged,
@@ -906,7 +907,23 @@ export const main = async (
  */
 const SIGNAL_EXIT: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
 
+/** `holdTripwire`, with a path the tripwire refuses (not a real dir it owns) turned into exit 4. */
 const tripwired = async (
+  opts: Options,
+  print: (text: string) => void,
+  run: () => Promise<number>,
+  settleFlags: { discard: boolean },
+): Promise<number> => {
+  try {
+    return await holdTripwire(opts, print, run, settleFlags);
+  } catch (error) {
+    if (!(error instanceof TripwireRefused)) throw error;
+    print(`tripwire: ${error.message}; nothing was created or removed there, and nothing runs`);
+    return 4;
+  }
+};
+
+const holdTripwire = async (
   opts: Options,
   print: (text: string) => void,
   run: () => Promise<number>,
@@ -917,7 +934,10 @@ const tripwired = async (
     print(`tripwire: ${bad}; nothing runs`);
     return 4;
   }
-  const holder = acquire(opts.tripwire);
+  const strange: string[] = [];
+  const holder = acquire(opts.tripwire, strange);
+  for (const entry of strange)
+    print(`tripwire: left alone in holders/, not a runner's lock file: ${entry}`);
   if (holder !== null) {
     print(
       `another bench run (pid ${holder}) holds the tripwire at ${opts.tripwire}: two runs would report each other's changes. Wait for it, or stop it.`,
@@ -926,7 +946,10 @@ const tripwired = async (
   }
   try {
     // A dead runner's worlds (its login copies included) go first.
-    for (const dir of sweepWorlds()) print(`tripwire: removed a dead bench run's world ${dir}`);
+    const swept = sweepWorlds();
+    for (const dir of swept.removed) print(`tripwire: removed a dead bench run's world ${dir}`);
+    for (const why of swept.failed)
+      print(`tripwire: could not remove a dead bench run's world: ${why}`);
     if (settleFlags.discard) {
       dropJournal(opts.tripwire);
       print("tripwire: the leftover journal is dropped; nothing else was touched");

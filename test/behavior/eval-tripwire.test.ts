@@ -28,6 +28,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/scripts/eval/run";
+import { sweepWorlds } from "@/scripts/eval/scaffold";
 // A namespace import: on a tripwire without one of these, only the tests that use it fail.
 import * as tripwire from "@/scripts/eval/tripwire";
 
@@ -86,7 +87,7 @@ const armed = () => {
 };
 
 /** Every path under the fake home but the tripwire dir: kind, inode, mode, size, links, link target, sha. */
-const listing = (): string[] => {
+const listing = (top = home): string[] => {
   const out: string[] = [];
   const go = (dir: string): void => {
     for (const name of readdirSync(dir).toSorted()) {
@@ -108,7 +109,7 @@ const listing = (): string[] => {
       if (stat.isDirectory()) go(each);
     }
   };
-  go(home);
+  go(top);
   return out;
 };
 
@@ -655,10 +656,174 @@ test("Given a dead runner's world, a live runner's world and a symlinked lookali
   expect(file(target, "keep.txt")).toBe("keep");
 });
 
+/** A victim dir outside every tripwire path: a file and a subdir with a file. */
+const victimDir = (name = "victim"): string => {
+  const victim = path.join(root, name);
+  mkdirSync(path.join(victim, "b"), { recursive: true });
+  writeFileSync(path.join(victim, "a.txt"), "A");
+  writeFileSync(path.join(victim, "b", "c.txt"), "C");
+  return victim;
+};
+
+// Round 6 (verdict mwd4gwvs), item 1: the verifier's probe.
+test("Given holders/ is a symlink to a victim dir, When the tripwire is taken, Then it is refused naming the path and the victim gains and loses nothing", async () => {
+  const victim = victimDir();
+  const before = listing(victim);
+  mkdirSync(base, { recursive: true });
+  symlinkSync(victim, path.join(base, "holders"));
+
+  expect(() => tripwire.acquire(base)).toThrow(path.join(base, "holders"));
+  const lines: string[] = [];
+  expect(await main(argv(fakeClaude(":")), (text) => lines.push(text))).toBe(4);
+
+  expect(lines.join("\n")).toContain(`${path.join(base, "holders")} is not a real directory`);
+  expect(listing(victim)).toEqual(before);
+  expect(starts()).toBe(0);
+});
+
+// Item 2
+test("Given holders/ holds a dead runner's lock, a symlink named like one and a stray file, Then only the dead lock is unlinked and the others are reported", async () => {
+  const victim = victimDir();
+  const before = listing(victim);
+  const dir = path.join(base, "holders");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "999998.1"), "");
+  symlinkSync(victim, path.join(dir, "999999.1"));
+  writeFileSync(path.join(dir, "notes"), "keep");
+  const strange: string[] = [];
+
+  expect(tripwire.acquire(base, strange)).toBeNull();
+  tripwire.release(base);
+
+  expect(readdirSync(dir).toSorted()).toEqual(["999999.1", "notes"]);
+  expect(strange.toSorted()).toEqual([path.join(dir, "999999.1"), path.join(dir, "notes")]);
+  expect(listing(victim)).toEqual(before);
+});
+
+// Item 3
+test("Given the journal is a symlink to a victim dir, When --tripwire-discard runs, Then it is refused with exit 4 and the victim and the link stay", async () => {
+  const victim = victimDir();
+  const before = listing(victim);
+  mkdirSync(base, { recursive: true });
+  symlinkSync(victim, path.join(base, "journal"));
+  const lines: string[] = [];
+
+  expect(await main(["--real-home", home, "--tripwire-discard"], (text) => lines.push(text))).toBe(
+    4,
+  );
+
+  expect(lines.join("\n")).toContain(`${path.join(base, "journal")} is not a real directory`);
+  expect(listing(victim)).toEqual(before);
+  expect(lstatSync(path.join(base, "journal")).isSymbolicLink()).toBe(true);
+});
+
+test("Given links to a victim dir inside the journal and its blobs, When --tripwire-discard runs, Then only the links go and the victim keeps everything", async () => {
+  const victim = victimDir();
+  const before = listing(victim);
+  armed();
+  symlinkSync(victim, path.join(base, "journal", "blobs", "evil"));
+  symlinkSync(victim, path.join(base, "journal", "extra"));
+  symlinkSync(path.join(victim, "a.txt"), path.join(base, "journal", "blobs", "evil-file"));
+
+  expect(await main(["--real-home", home, "--tripwire-discard"], () => {})).toBe(0);
+
+  expect(existsSync(path.join(base, "journal"))).toBe(false);
+  expect(listing(victim)).toEqual(before);
+});
+
+// Item 5, behaviour: nothing reachable through a planted link at a tripwire path ever changes.
+test("Given links to a victim dir planted at every tripwire path, Then the home, the state and the victim are identical across arm, check, a start with a leftover, discard and release", async () => {
+  const victim = victimDir();
+  const snap = () => [...listing(), ...listing(victim)];
+  const snapshot = armed();
+  symlinkSync(victim, path.join(base, "journal", "blobs", "evil"));
+  symlinkSync(victim, path.join(base, "journal", "extra"));
+  scramble();
+  const before = snap();
+
+  expect(tripwire.checkSnapshot(snapshot)).not.toBeNull();
+  expect(snap()).toEqual(before);
+
+  mkdirSync(path.join(base, "holders"), { recursive: true });
+  symlinkSync(victim, path.join(base, "holders", "999999.1"));
+  symlinkSync(path.join(victim, "a.txt"), path.join(base, "holders", "999997.1"));
+  expect(await main(argv(fakeClaude(":")), () => {})).toBe(3);
+  expect(snap()).toEqual(before);
+
+  expect(await main(["--real-home", home, "--tripwire-discard"], () => {})).toBe(0);
+  expect(snap()).toEqual(before);
+
+  // The whole holders/ and journal/ replaced by links: every start refuses, nothing moves.
+  rmSync(path.join(base, "holders"), { recursive: true });
+  symlinkSync(victim, path.join(base, "holders"));
+  expect(await main(argv(fakeClaude(":")), () => {})).toBe(4);
+  expect(snap()).toEqual(before);
+  rmSync(path.join(base, "holders"));
+  symlinkSync(victim, path.join(base, "journal"));
+  expect(await main(argv(fakeClaude(":")), () => {})).toBe(4);
+  expect(await main(["--real-home", home, "--tripwire-discard"], () => {})).toBe(4);
+  expect(snap()).toEqual(before);
+  expect(starts()).toBe(0);
+});
+
+// Item 4: the world sweep.
+test("Given dead worlds with a mode-0 subdir and with a link to a victim dir, a world whose marker is a symlink, and another owner's world, Then the start goes on, links lose only themselves and the rest is skipped", async () => {
+  const tmp = os.tmpdir();
+  const victim = victimDir();
+  const before = listing(victim);
+  const locked = mkdtempSync(path.join(tmp, "workit-eval-locked-"));
+  writeFileSync(path.join(locked, RUNNER_MARKER), "999999.1");
+  mkdirSync(path.join(locked, "sealed"));
+  writeFileSync(path.join(locked, "sealed", "x"), "x");
+  chmodSync(path.join(locked, "sealed"), 0);
+  const linked = mkdtempSync(path.join(tmp, "workit-eval-linked-"));
+  writeFileSync(path.join(linked, RUNNER_MARKER), "999999.1");
+  symlinkSync(victim, path.join(linked, "to-victim"));
+  const markerTarget = path.join(root, "marker-target");
+  writeFileSync(markerTarget, "999999.1");
+  const linkedMarker = mkdtempSync(path.join(tmp, "workit-eval-marker-"));
+  symlinkSync(markerTarget, path.join(linkedMarker, RUNNER_MARKER));
+  roots.push(locked, linkedMarker);
+  const lines: string[] = [];
+  try {
+    expect(await main(argv(fakeClaude(":")), (text) => lines.push(text))).toBe(0);
+  } finally {
+    if (existsSync(path.join(locked, "sealed"))) chmodSync(path.join(locked, "sealed"), 0o700);
+  }
+
+  expect(existsSync(linked)).toBe(false);
+  expect(listing(victim)).toEqual(before);
+  expect(existsSync(linkedMarker)).toBe(true);
+  expect(file(markerTarget)).toBe("999999.1");
+  if (existsSync(locked))
+    expect(lines.join("\n")).toContain(`could not remove a dead bench run's world: ${locked}`);
+
+  const foreign = mkdtempSync(path.join(tmp, "workit-eval-foreign-"));
+  writeFileSync(path.join(foreign, RUNNER_MARKER), "999999.1");
+  roots.push(foreign);
+  const me = process.getuid?.() ?? 0;
+  expect(sweepWorlds(tmp, Date.now(), me + 4242).removed).not.toContain(foreign);
+  expect(existsSync(foreign)).toBe(true);
+});
+
 // Repo guard: the tripwire writes only its own dir, in these functions, by name.
 test("Given scripts/eval/tripwire.ts, Then write-type fs calls appear only in the functions that write the tripwire dir, and it imports nothing else that could write", () => {
   const source = readFileSync(TRIPWIRE, "utf8");
-  const allowed = new Set(["ensureBase", "acquire", "release", "writeJournal", "dropJournal"]);
+  const allowed = new Set([
+    "ensureBase",
+    "ownDir",
+    "removeOwnTree",
+    "acquire",
+    "release",
+    "writeJournal",
+    "dropJournal",
+  ]);
+  // No recursive remover, no aliased fs import, no child process: each would hide a write from this test.
+  expect(source).not.toMatch(/\brmSync\b|\brm\s*\(|recursive:\s*true/u);
+  expect(source).not.toMatch(/from "node:child_process"|require\(|import\(/u);
+  const fsImport = /^import \{([^}]*)\} from "node:fs";$/mu.exec(source)?.[1] ?? "";
+  expect(fsImport).not.toMatch(/\bas\b/u);
+  expect(source).not.toMatch(/^import \* as /mu);
   const declarations = [...source.matchAll(/^(?:export )?const (\w+)/gmu)].map((match) => ({
     name: match[1] ?? "",
     at: match.index ?? 0,
@@ -680,7 +845,8 @@ test("Given scripts/eval/tripwire.ts, Then write-type fs calls appear only in th
   );
   for (const each of imports)
     expect(
-      each.startsWith("node:") ||
-        each === "../../packages/workit-core/src/core/workit-paths.mjs { workitDir }",
+      ["node:crypto ", "node:fs ", "node:os ", "node:path "].some((name) =>
+        each.startsWith(name),
+      ) || each === "../../packages/workit-core/src/core/workit-paths.mjs { workitDir }",
     ).toBe(true);
 });

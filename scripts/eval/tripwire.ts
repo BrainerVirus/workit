@@ -18,10 +18,10 @@
 // and an fstat that says regular file; files over 64 MB are compared by size;
 // a created dir is reported, not descended; at most 50 created paths per root.
 //
-// The only writes in this file are to the tripwire dir: ensureBase, acquire,
-// release, writeJournal and dropJournal (test/behavior/eval-tripwire.test.ts
-// holds that by name).
-import { spawnSync } from "node:child_process";
+// The only writes in this file are to the tripwire dir: ensureBase, ownDir,
+// removeOwnTree, acquire, release, writeJournal and dropJournal, each through
+// lstat-verified real dirs this user owns, never a recursive rm
+// (test/behavior/eval-tripwire.test.ts holds that by name and by behaviour).
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -34,9 +34,10 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
-  rmSync,
+  rmdirSync,
   statSync,
-  writeFileSync,
+  unlinkSync,
+  writeSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -93,23 +94,23 @@ export const tripwireBase = (home: string): string =>
 
 // ---------------------------------------------------------------- identity
 
-/** What `ps` is called: off Linux, a process start time comes from it. */
-const PS = "ps";
-
-/** A process's start time (/proc field 22, or `ps -o lstart=`), null when it is gone. */
+/**
+ * A process's start time (/proc field 22), null when it is gone. Off Linux
+ * there is no /proc and this file runs no process, so a live pid reads "0":
+ * a reused pid there can hold a stale lock until it exits.
+ */
 export const startOf = (pid: number): string | null => {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
     return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
   } catch {
     if (process.platform === "linux") return null;
-    const run = spawnSync(PS, ["-o", "lstart=", "-p", String(pid)], {
-      encoding: "utf8",
-      timeout: 5000,
-      killSignal: "SIGKILL",
-    });
-    const start = run.status === 0 ? run.stdout.trim().replaceAll(/\s+/gu, "_") : "";
-    return start || null;
+    try {
+      process.kill(pid, 0);
+      return "0";
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM" ? "0" : null;
+    }
   }
 };
 
@@ -125,41 +126,97 @@ export const identityAlive = (identity: string): boolean => {
 
 // ---------------------------------------------------------------- the tripwire dir and the lock
 
-/** The base must be a real dir of this user: a symlink or someone else's dir could point the journal anywhere. */
+/** A path under the tripwire dir that is not what the tripwire made: nothing is created or removed. */
+export class TripwireRefused extends Error {}
+
+const uid = (): number | undefined =>
+  typeof process.getuid === "function" ? process.getuid() : undefined;
+
+/**
+ * A dir the tripwire uses: lstat'ed, a real directory this user owns, mode
+ * 0700. A missing one is made (non-recursively: its parent was verified the
+ * same way first); a symlink, a file or another owner's dir is refused.
+ */
+const ownDir = (dir: string): void => {
+  if (!lstatSync(dir, { throwIfNoEntry: false })) mkdirSync(dir, { mode: 0o700 });
+  const stat = lstatSync(dir);
+  const me = uid();
+  if (!stat.isDirectory() || (me !== undefined && stat.uid !== me))
+    throw new TripwireRefused(
+      `${dir} is not a real directory this user owns (a symlink, a file or another owner's)`,
+    );
+  chmodSync(dir, 0o700);
+};
+
+/**
+ * Remove a tree the tripwire made, without following anything: regular
+ * files, symlinks and other non-dirs are unlinked (a link loses only
+ * itself), real dirs this user owns are emptied then removed. The top must
+ * be such a dir, else nothing is removed.
+ */
+const removeOwnTree = (dir: string): void => {
+  if (!lstatSync(dir, { throwIfNoEntry: false })) return;
+  ownDir(dir);
+  for (const name of readdirSync(dir)) {
+    const file = path.join(dir, name);
+    if (lstatSync(file).isDirectory()) removeOwnTree(file);
+    else unlinkSync(file);
+  }
+  rmdirSync(dir);
+};
+
+/**
+ * The tripwire dir: `<home>/.cache` is made if missing (the home must
+ * exist), then the base is verified as a real dir this user owns, 0700.
+ * Null when it is, else why not.
+ */
 export const ensureBase = (base: string): string | null => {
-  mkdirSync(base, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(base);
-  if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid()))
-    return `${base} is not a directory this user owns`;
-  chmodSync(base, 0o700);
-  return null;
+  try {
+    const cache = path.dirname(base);
+    if (!lstatSync(path.dirname(cache), { throwIfNoEntry: false }))
+      return `${path.dirname(cache)} does not exist`;
+    if (!lstatSync(cache, { throwIfNoEntry: false })) mkdirSync(cache, { mode: 0o700 });
+    ownDir(base);
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
 };
 
 const holders = (base: string): string => path.join(base, "holders");
+const IDENTITY = /^\d+\.[\w:-]+$/u;
 
 /**
  * Take the tripwire: one O_EXCL file per runner named by its identity. After
- * creating its own, a runner drops dead entries; any other live identity
- * means another bench holds it: own entry removed, that pid returned.
+ * creating its own, a runner unlinks entries of dead runners (regular files
+ * named `<pid>.<start>` only; anything else is left alone and named in
+ * `strange`); any other live identity means another bench holds it: own
+ * entry unlinked, that pid returned.
  */
-export const acquire = (base: string): number | null => {
+export const acquire = (base: string, strange: string[] = []): number | null => {
   const dir = holders(base);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  ownDir(dir);
   const mine = runnerIdentity();
   closeSync(openSync(path.join(dir, mine), "wx", 0o600));
   for (const name of readdirSync(dir)) {
     if (name === mine) continue;
+    const entry = path.join(dir, name);
+    if (!IDENTITY.test(name) || !lstatSync(entry).isFile()) {
+      strange.push(entry);
+      continue;
+    }
     if (identityAlive(name)) {
-      rmSync(path.join(dir, mine), { force: true });
+      unlinkSync(path.join(dir, mine));
       return Number(name.slice(0, name.indexOf(".")));
     }
-    rmSync(path.join(dir, name), { force: true });
+    unlinkSync(entry);
   }
   return null;
 };
 
 export const release = (base: string): void => {
-  rmSync(path.join(holders(base), runnerIdentity()), { force: true });
+  const mine = path.join(holders(base), runnerIdentity());
+  if (lstatSync(mine, { throwIfNoEntry: false })?.isFile()) unlinkSync(mine);
 };
 
 // ---------------------------------------------------------------- reading without following
@@ -589,11 +646,20 @@ const journalDir = (base: string): string => path.join(base, "journal");
 /** Write the journal once at arm, blobs first and the manifest last; record each blob's path in the snapshot. */
 export const writeJournal = (base: string, snapshot: Snapshot): void => {
   const dir = journalDir(base);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(path.join(dir, "blobs"), { recursive: true, mode: 0o700 });
-  chmodSync(dir, 0o700);
+  removeOwnTree(dir);
+  ownDir(dir);
+  ownDir(path.join(dir, "blobs"));
   const entries: Journal["entries"] = {};
   let count = 0;
+  const create = (file: string, bytes: Uint8Array): void => {
+    // O_EXCL: never through a link, never over a file someone put there.
+    const fd = openSync(file, "wx", 0o600);
+    try {
+      writeSync(fd, bytes);
+    } finally {
+      closeSync(fd);
+    }
+  };
   for (const [file, entry] of snapshot.entries) {
     const bytes = snapshot.bytes.get(file);
     if (!bytes) {
@@ -602,21 +668,21 @@ export const writeJournal = (base: string, snapshot: Snapshot): void => {
     }
     count += 1;
     const blob = path.join(dir, "blobs", String(count));
-    writeFileSync(blob, bytes, { mode: 0o600 });
-    chmodSync(blob, 0o600);
+    create(blob, bytes);
     snapshot.blobs.set(file, blob);
     entries[file] = { ...entry, blob: String(count) };
   }
-  const manifest = path.join(dir, "manifest.json");
-  writeFileSync(manifest, JSON.stringify({ roots: Object.fromEntries(snapshot.roots), entries }), {
-    mode: 0o600,
-  });
-  chmodSync(manifest, 0o600);
+  create(
+    path.join(dir, "manifest.json"),
+    new TextEncoder().encode(
+      JSON.stringify({ roots: Object.fromEntries(snapshot.roots), entries }),
+    ),
+  );
 };
 
-/** Delete the journal dir; nothing else. */
+/** Delete the journal dir and nothing else: never through a link, never a recursive rm. */
 export const dropJournal = (base: string): void => {
-  rmSync(journalDir(base), { recursive: true, force: true });
+  removeOwnTree(journalDir(base));
 };
 
 /** What a leftover journal says, compared against roots the runner recomputes, never the journal's own. */
@@ -639,6 +705,9 @@ const insideRoots = (roots: string[], file: string): boolean =>
 export const inspectJournal = (base: string, guard: Guard): Leftover | null => {
   const dir = journalDir(base);
   if (!lstat(dir)) return null;
+  // Read only through real dirs this user owns; anything else stops the start (exit 4).
+  ownDir(dir);
+  if (lstat(path.join(dir, "blobs"))) ownDir(path.join(dir, "blobs"));
   let journal: Journal;
   try {
     journal = JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")) as Journal;
