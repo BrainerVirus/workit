@@ -94,7 +94,10 @@ const call = async (argv: string[], deps: YouTrackDeps = ASK) => {
   const io: Io = {
     json: true,
     cwd: dir,
-    env: { PATH: `${bin}${path.delimiter}/usr/bin${path.delimiter}/bin`, STUB_DIR: stubDir },
+    env: {
+      PATH: `${bin}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+      STUB_DIR: stubDir,
+    },
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
@@ -159,7 +162,10 @@ it("Given an update with a comment, two files, 165 minutes and a state, When it 
   const out = await call(UPDATE);
   expect(out.code).toBe(3);
   const refusal = out.json();
-  expect(refusal.data).toMatchObject({ reason: "approval_needed", posted: false });
+  expect(refusal.data).toMatchObject({
+    reason: "approval_needed",
+    posted: false,
+  });
   expect(requests()).toHaveLength(1);
   const request = stored(refusal.data.approval);
   const preview = `${request.effect} ${JSON.stringify(request.subject)}`;
@@ -283,4 +289,49 @@ it("Given two --attach files with the same name, When the update runs, Then it f
   expect(out.code).toBe(2);
   expect(out.json().error).toContain("same name");
   expect(requests()).toEqual([]);
+});
+
+/** Ask, have the user say yes, change something, then rerun with `args`. */
+const changedAfterYes = async (change: () => void, args: string[]) => {
+  userApproves((await call(args)).json().data.approval);
+  change();
+  return call(args);
+};
+
+it("Given a yes, When an attachment's bytes change before the rerun, Then nothing is written and the yes is stale", async () => {
+  const out = await changedAfterYes(
+    () => writeFileSync(path.join(dir, "a.png"), "other-bytes"),
+    UPDATE,
+  );
+  expect(out.code).toBe(3);
+  expect(out.json().data.reason).toBe("approval_stale");
+  expect(writes()).toEqual([]);
+});
+
+it("Given a yes, When a comment line past the 3-line preview changes, Then nothing is written and the yes is stale", async () => {
+  writeFileSync(path.join(dir, "d.md"), "l1\nl2\nl3\nl4 original\n");
+  const out = await changedAfterYes(
+    () => writeFileSync(path.join(dir, "d.md"), "l1\nl2\nl3\nl4 changed\n"),
+    ["update", "AB2-142", "--file", "d.md", "--minutes", "5"],
+  );
+  expect(out.code).toBe(3);
+  expect(out.json().data.reason).toBe("approval_stale");
+  expect(writes()).toEqual([]);
+});
+
+it("Given a yes for 5 minutes with text x, When the rerun asks 6 minutes or text y, Then neither rides on that yes", async () => {
+  userApproves(
+    (await call(["update", "AB2-142", "--minutes", "5", "--text", "x"])).json().data.approval,
+  );
+  expect((await call(["update", "AB2-142", "--minutes", "6", "--text", "x"])).code).toBe(3);
+  expect((await call(["update", "AB2-142", "--minutes", "5", "--text", "y"])).code).toBe(3);
+  expect(writes()).toEqual([]);
+});
+
+it("Given a yes already used, When the same update runs a third time, Then it asks again and writes nothing more", async () => {
+  const args = ["update", "AB2-142", "--command", "tag A"];
+  userApproves((await call(args)).json().data.approval);
+  expect((await call(args)).code).toBe(0);
+  expect((await call(args)).code).toBe(3);
+  expect(writes()).toEqual(["issue command AB2-142 tag A"]);
 });
