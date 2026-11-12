@@ -7,7 +7,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileSignature, TaskStore } from "../core/task-store";
+import { fileSignature, TaskReader } from "../core/task-read";
 import { latestJudgment, writeBlockers, type WriteBlocker } from "../core/policy/derive";
 import { applicableDecision } from "../core/task-evaluation";
 import {
@@ -552,7 +552,7 @@ const planKeyOf = (root: string, plans: Iterable<string>) =>
 
 /** Unmet, unwaived before-write requirements of the checkout branch's open task. */
 const gateFor = (cwd: string): Gate | null => {
-  const store = new TaskStore(cwd);
+  const store = new TaskReader(cwd);
   const listed = store.listTaskIndex();
   if (!listed.ok) return null;
   const key = store.currentKey();
