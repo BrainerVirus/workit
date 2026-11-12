@@ -1,0 +1,22 @@
+{
+  "case": "uninstall-refused",
+  "run": 3,
+  "model": "claude-haiku-4-5",
+  "workitVersion": "workit-dev-v1.9.1+d1ccd77392",
+  "key": "3d2844f5f6a4e185",
+  "date": "2026-11-12T14:05:16.084Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 21234,
+    "costUsd": 0.0262905,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 1,
+    "pass": true,
+    "calls": 1,
+    "failures": []
+  }
+}

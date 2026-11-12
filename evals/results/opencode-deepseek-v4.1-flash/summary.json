@@ -1,6 +1,6 @@
 {
-  "passed": 14,
-  "total": 15,
+  "passed": 15,
+  "total": 16,
   "cases": [
     {
       "case": "approve-flow",
@@ -259,6 +259,48 @@
       "costUsd": 0,
       "workitVersion": "workit-dev-v1.2.1+258deb4147",
       "graderVersion": 1
+    },
+    {
+      "case": "uninstall-refused",
+      "pass": true,
+      "passes": 3,
+      "failures": [],
+      "turns": 11,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v1.9.1+457b8a4c68",
+      "graderVersion": 1,
+      "runs": [
+        {
+          "case": "uninstall-refused",
+          "pass": true,
+          "provider": "go",
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v1.9.1+457b8a4c68",
+          "graderVersion": 1
+        },
+        {
+          "case": "uninstall-refused",
+          "pass": true,
+          "provider": "go",
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v1.9.1+457b8a4c68",
+          "graderVersion": 1
+        },
+        {
+          "case": "uninstall-refused",
+          "pass": true,
+          "provider": "go",
+          "failures": [],
+          "turns": 5,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v1.9.1+457b8a4c68",
+          "graderVersion": 1
+        }
+      ]
     },
     {
       "case": "worktree-commit",

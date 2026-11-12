@@ -62,6 +62,12 @@ Or install a single host by hand. Whatever the install path, every host
 updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
 host); the native commands below are the fallback.
 
+To remove Workit from some hosts without the picker, name them:
+`workit uninstall --hosts=cursor --preview` prints the exact files, config keys
+and host commands it would remove and changes nothing; `--yes` removes them.
+Other hosts, your own rules and `~/.config/workit` stay as they are. An agent
+may run `--preview`; `--yes` and the picker are yours, in your own terminal.
+
 Coming from `@brainervirus/workit-*` (14.x)? The packages moved to
 `@workit-dev/*` and restarted at 1.0.0: run
 `npx -y @brainervirus/workit-cli@latest upgrade` once, and see
@@ -361,7 +367,7 @@ text.
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit completion zsh\|bash\|fish\|powershell` | Print the shell completion script (setup and upgrade install it for `$SHELL`) |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
-| `workit uninstall` | Pick hosts (and the owned CLI install) and remove what Workit put there (keeps `~/.config/workit`) |
+| `workit uninstall [--hosts=<h,…> [--preview\|--yes]]` | Pick hosts (and the owned CLI install), or name them, and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
 | `workit workspace list\|add\|set` | List, add or edit workspace entries without the wizard; never raises a grant |
 | `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer) runs on for a host |

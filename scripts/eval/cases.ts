@@ -45,6 +45,8 @@ export type EvalCase = {
     allowedBranches?: string[];
     /** `main` has no commit yet: `files` and `dirty` stay uncommitted; `remote`, `branch`, `commits` and `worktree` are ignored. */
     unborn?: boolean;
+    /** Written under the world HOME (a host install the case needs); relative paths inside HOME only. */
+    home?: Record<string, string>;
     /** Committed in order on the case's branch, after `files`. */
     commits?: { message: string; files: Record<string, string> }[];
     /**

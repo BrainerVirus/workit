@@ -56,6 +56,14 @@ or the launcher's directory first on PATH. The row lists every `workit` install 
 order, then the ones PATH does not reach. The npx cache copy that runs the upgrade is never
 listed or removed.
 
+## Removing a host
+
+`workit uninstall --hosts=cursor --preview` lists the files, config keys and host commands
+Workit would remove from Cursor; `workit uninstall --hosts=cursor --yes` removes them and
+nothing else (other hosts, your own rules and the Workit config are untouched). Without
+`--hosts`, `workit uninstall` opens the interactive picker, which also offers the CLI
+install. See [the hosts guide](hosts.md#host-permissions-workit-setup).
+
 ## Moving from an npm global install
 
 The first upgrade under this layout looks for other copies: `@workit-dev/cli` in

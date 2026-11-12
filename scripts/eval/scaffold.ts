@@ -111,7 +111,18 @@ case "$1 $2" in
 esac
 `;
 
+/** Refuses a `scaffold.home` path that is absolute, has a `..` segment or is not below HOME. */
+const checkHomeFiles = (files: Record<string, string> = {}): void => {
+  for (const name of Object.keys(files)) {
+    const parts = name.split(/[\\/]/u);
+    const rel = path.relative("home", path.join("home", name));
+    if (path.isAbsolute(name) || parts.includes("..") || rel === "" || rel.startsWith(".."))
+      throw new Error(`scaffold.home: ${name} must be a relative path inside the world HOME`);
+  }
+};
+
 export const makeWorld = (spec: EvalCase): World => {
+  checkHomeFiles(spec.scaffold?.home);
   const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), `workit-eval-${spec.id}-`)));
   const [repo, state, config, bin, home] = ["repo", "state", "config", "bin", "home"].map(
     (name) => {
@@ -125,6 +136,7 @@ export const makeWorld = (spec: EvalCase): World => {
   writeFileSync(path.join(bin, "ytrack"), FAKE_YTRACK);
   chmodSync(path.join(bin, "ytrack"), 0o755);
   const scaffold = spec.scaffold ?? {};
+  writeAll(home, scaffold.home);
 
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "eval@workit.invalid");

@@ -278,6 +278,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit uninstall --hosts=<h,…>` removes Workit from the named hosts only: `--preview` prints the files, config keys and host commands it would remove and changes nothing, `--yes` removes them. In an agent session it refuses and names the command to hand to the user.
 - `workit init` installs the ytrack agent skill for the hosts you set up when you pick YouTrack (as setup and upgrade do), and names `ytrack upgrade` when your ytrack is too old.
 - Agents get a ytrack skill that matches your installed ytrack: when a workspace uses YouTrack, `workit setup` and `workit upgrade` run `ytrack skill install` into each host's skills dir (Claude Code, OpenCode, Codex, Cursor, Pi), `workit doctor` warns when a host's copy is older than ytrack (fix: `workit upgrade --hosts=<host>`) or when ytrack predates `ytrack skill` (fix: `ytrack upgrade`), and `workit uninstall` removes the copies Workit installed. Workit's ship skill points agents at `workit youtrack` verbs first and the ytrack skill for the rest.
 - Heavy-check waiters and `workit lock status` show an estimated wait from each check's last measured run, and `resources.slots` above what RAM allows prints a warning.

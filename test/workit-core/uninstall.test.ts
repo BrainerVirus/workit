@@ -148,7 +148,7 @@ test("~/.config/workit stays byte-identical through plan and apply", () => {
   expect(allActions.some((p) => p.startsWith(f.configDir))).toBe(false);
 });
 
-test("malformed host JSON fails that action untouched while others proceed", () => {
+test("malformed host JSON fails that action and leaves its whole host untouched (#832 D2)", () => {
   const f = tracked();
   f.seedInstalled();
   const broken = "{not json";
@@ -157,8 +157,10 @@ test("malformed host JSON fails that action untouched while others proceed", () 
   const settingsEntry = result.entries.find((e) => e.path === f.cursorSettings)!;
   expect(settingsEntry.status).toBe("failed");
   expect(readFileSync(f.cursorSettings, "utf8")).toBe(broken);
-  expect(existsSync(f.cursorPluginDir)).toBe(false);
-  expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("removed");
+  expect(existsSync(f.cursorPluginDir)).toBe(true);
+  // The plan for a host with a file it cannot read is that file alone (#832).
+  expect(result.entries.filter((e) => e.host === "cursor")).toEqual([settingsEntry]);
+  expect(result.skipped).toEqual(["cursor"]);
 });
 
 // An existing-but-unreadable file (EACCES) must not be conflated with a missing
@@ -175,15 +177,16 @@ test("existing-but-unreadable settings.json plans installed and applies failed u
     const plan = planUninstall(f);
     const cur = plan.hosts.find((h) => h.host === "cursor")!;
     expect(cur.installed).toBe(true);
-    expect(
-      cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorSettings),
-    ).toBe(true);
+    expect(cur.actions.some((a) => a.kind === "unreadable" && a.path === f.cursorSettings)).toBe(
+      true,
+    );
     const result = applyUninstall(plan, f);
     expect(result.ok).toBe(false);
     expect(result.entries.find((e) => e.path === f.cursorSettings)!.status).toBe("failed");
-    // Sibling actions proceed.
-    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("removed");
-    expect(existsSync(f.cursorPluginDir)).toBe(false);
+    // The host is left untouched and its plan names that file alone (#832 D2).
+    expect(cur.actions.map((a) => a.path)).toEqual([f.cursorSettings]);
+    expect(readFileSync(f.cursorMcp, "utf8")).toContain("workit");
+    expect(existsSync(f.cursorPluginDir)).toBe(true);
   } finally {
     chmodSync(f.cursorSettings, 0o644);
   }
@@ -201,9 +204,7 @@ test("existing-but-unreadable mcp.json plans installed and applies failed untouc
     const plan = planUninstall(f);
     const cur = plan.hosts.find((h) => h.host === "cursor")!;
     expect(cur.installed).toBe(true);
-    expect(cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorMcp)).toBe(
-      true,
-    );
+    expect(cur.actions.some((a) => a.kind === "unreadable" && a.path === f.cursorMcp)).toBe(true);
     const result = applyUninstall(plan, f);
     expect(result.ok).toBe(false);
     expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("failed");
@@ -305,17 +306,18 @@ test("HOME fallback chain matches setup.ts: explicit home > env.HOME > homedir (
   );
 });
 
-test("byte-compare read failure fails that action; siblings proceed (vanish-between-reads race)", () => {
+test("byte-compare read failure fails that action and stops the steps after it (vanish-between-reads race)", () => {
   const f = tracked();
   f.seedInstalled();
   const plan = planUninstall(f);
-  // Deterministic TOCTOU: the byte-compare re-read of settings.json (the second
-  // read of that path inside apply) throws as if the file vanished after
-  // parse — the guard must fail THIS action only, never abort the rest.
+  // Deterministic TOCTOU: the byte-compare re-read of settings.json (the third
+  // read of that path inside apply, after the up-front check and the parse)
+  // throws as if the file vanished after parse — the guard fails THIS action
+  // and the host's later steps are not run (#832 D2).
   let settingsReads = 0;
   const realReadFileSync = readFileSync;
   const spy = spyOn(fsMod, "readFileSync").mockImplementation(((p: unknown, opts: unknown) => {
-    if (String(p) === f.cursorSettings && (settingsReads += 1) >= 2) {
+    if (String(p) === f.cursorSettings && (settingsReads += 1) >= 3) {
       throw new Error("simulated vanish between reads");
     }
     return realReadFileSync(p as string, opts as undefined);
@@ -326,9 +328,9 @@ test("byte-compare read failure fails that action; siblings proceed (vanish-betw
     expect(settingsEntry.status).toBe("failed");
     expect(settingsEntry.detail).toContain("read failed");
     expect(result.ok).toBe(false);
-    // Sibling actions still completed.
-    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("removed");
-    expect(existsSync(f.cursorPluginDir)).toBe(false);
+    // The steps after it did not run.
+    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("not-run");
+    expect(existsSync(f.cursorPluginDir)).toBe(true);
   } finally {
     spy.mockRestore();
   }

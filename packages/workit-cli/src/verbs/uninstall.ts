@@ -1,15 +1,197 @@
-// `workit uninstall`: interactive host picker, ink/react loaded lazily.
-import { emit, fail, type Io } from "../output";
+// `workit uninstall`: with no flags, the interactive host picker (ink/react
+// loaded lazily). `--hosts=<h,…>` removes Workit from those hosts only after
+// showing the exact files, config keys and host commands: `--preview` only
+// shows them, `--yes` is the consent for a script. Like `workit setup`, never
+// from inside an agent session: the user runs it in their own terminal.
+import { agentSessionVar } from "../admin/host-permissions";
+import {
+  applyUninstall,
+  configKeptNote,
+  planUninstall,
+  uninstallKeyChanges,
+  type UninstallPaths,
+  type UninstallPlan,
+} from "../admin/uninstall";
+import { emit, fail, ok, type Io } from "../output";
+import { askLine, askOrCancel, cancelled } from "../prompt";
+import { createStyle } from "../style";
 
-export async function run(_argv: string[], io: Io): Promise<number> {
-  if (io.json)
+const ALL_HOSTS = ["claude-code", "codex", "cursor", "opencode", "pi"];
+const USAGE = "workit uninstall [--hosts=claude-code,codex,cursor,opencode,pi [--preview | --yes]]";
+
+type Args = { hosts: string[]; preview: boolean; yes: boolean };
+
+const parse = (argv: readonly string[]): Args | string => {
+  // Repeated --hosts merge; a duplicate keeps its first place.
+  let hosts: Set<string> | null = null;
+  let preview = false;
+  let yes = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--yes") yes = true;
+    else if (arg === "--preview") preview = true;
+    else if (arg === "--json") continue;
+    else if (arg === "--hosts" || arg.startsWith("--hosts=")) {
+      const value = arg === "--hosts" ? argv[++i] : arg.slice("--hosts=".length);
+      const named = (value ?? "")
+        .split(",")
+        .map((h) => h.trim())
+        .filter(Boolean);
+      const unknown = named.filter((h) => !ALL_HOSTS.includes(h));
+      if (named.length === 0) return `--hosts needs a value; hosts: ${ALL_HOSTS.join(", ")}`;
+      if (unknown.length > 0) return `unknown host ${unknown[0]}; hosts: ${ALL_HOSTS.join(", ")}`;
+      hosts = new Set([...(hosts ?? []), ...named]);
+    } else return `unknown argument ${arg}`;
+  }
+  if (preview && yes) return "--preview and --yes cannot be combined";
+  if (!hosts) return "--preview and --yes need --hosts=<h,…>";
+  return { hosts: [...hosts], preview, yes };
+};
+
+export async function run(argv: string[], io: Io): Promise<number> {
+  if (argv.every((arg) => arg === "--json")) {
+    const agent = agentSessionVar(io.env);
+    // The picker names no host: hand over the named form the user's request maps to.
+    if (agent)
+      return refuseAgent(
+        io,
+        agent,
+        "workit uninstall --hosts=<hosts> --yes",
+        " (`--hosts=<hosts> --preview` shows what it removes)",
+      );
+    if (io.json)
+      return emit(
+        io,
+        fail("invalid_input", "workit uninstall is interactive and has no --json output", {
+          unblock: "run `workit uninstall` in a terminal without --json",
+        }),
+      );
+    const { runUninstall } = await import("../index");
+    await runUninstall();
+    return 0;
+  }
+  const args = parse(argv);
+  if (typeof args === "string") return emit(io, fail("invalid_input", args, { unblock: USAGE }));
+  return uninstallHosts(args, io);
+}
+
+/**
+ * An agent never removes Workit: one line handing the user the command for
+ * their own terminal, before any plan is read or printed.
+ */
+const refuseAgent = (io: Io, agent: string, command: string, hint = ""): number => {
+  const refusal = fail(
+    "blocked",
+    `an agent cannot run this (${agent} is set): hand the user \`${command}\` to run in their own terminal${hint}`,
+    { unblock: command },
+  );
+  if (io.json) return emit(io, refusal);
+  io.stderr(`workit: ${refusal.error}\n`);
+  return 3;
+};
+
+async function uninstallHosts(args: Args, io: Io): Promise<number> {
+  const command = `workit uninstall --hosts=${args.hosts.join(",")} --yes`;
+  const agent = agentSessionVar(io.env);
+  // An agent never gets an uninstall to run, even one with nothing to remove.
+  if (agent && !args.preview) return refuseAgent(io, agent, command);
+  const paths: UninstallPaths = {
+    env: io.env,
+    cwd: io.cwd,
+    ...(io.env.HOME ? { home: io.env.HOME } : {}),
+  };
+  const full = planUninstall(paths);
+  const named = new Set<string>(args.hosts);
+  const plan: UninstallPlan = { hosts: full.hosts.filter((h) => named.has(h.host)) };
+  const actions = plan.hosts.flatMap((h) =>
+    h.actions.map((action) => ({
+      host: h.host,
+      kind: action.kind,
+      path: action.path,
+      detail: action.detail,
+      keys: uninstallKeyChanges(action, paths),
+    })),
+  );
+  const say = io.json ? io.stderr : io.stdout;
+  const style = createStyle({
+    stream: io.json ? io.terminals?.stderr : io.terminals?.stdout,
+    env: io.env,
+  });
+  for (const action of actions) {
+    say(`${style.bold(action.host)} ${action.kind} ${style.path(action.path)}\n`);
+    say(`  ${action.detail}\n`);
+    for (const key of action.keys) say(`  ${style.warn("-")} ${key}\n`);
+  }
+  const kept = configKeptNote(io.env);
+  const summary = { hosts: args.hosts, actions, kept };
+  if (actions.length === 0)
+    return emit(io, ok({ ...summary, removed: [] }), () => [
+      `Workit is not installed on ${args.hosts.join(", ")}: nothing to remove.`,
+    ]);
+  say(`${kept}\n`);
+  // Kept and unreadable rows remove nothing: the preview must not promise a removal.
+  const removes = actions.some((a) => a.kind !== "keep-foreign" && a.kind !== "unreadable");
+  if (args.preview)
+    return emit(io, ok({ ...summary, removed: [] }), () =>
+      removes
+        ? `Preview: nothing changed. \`${command}\` removes it, run in your own terminal.`
+        : `Preview: nothing changed. \`${command}\` would remove nothing: each row above says why.`,
+    );
+  if (!args.yes) {
+    if (process.stdin.isTTY !== true)
+      return emit(
+        io,
+        fail("blocked", "removing Workit from these hosts needs your consent", {
+          data: summary,
+          unblock: `review the plan above, then run ${command} or run it in a terminal`,
+        }),
+      );
+    const answer = await askOrCancel(io, () =>
+      askLine(
+        `${style.bold("Remove Workit as shown above?")} [y/N] `,
+        io.json ? process.stderr : process.stdout,
+      ),
+    );
+    if (answer === null) return cancelled(io);
+    if (!/^y(es)?$/i.test(answer.trim()))
+      return emit(io, ok({ ...summary, removed: [] }), () => "Nothing removed.");
+  }
+  const result = applyUninstall(plan, paths);
+  const data = { ...summary, removed: result.entries, skipped: result.skipped };
+  const lines = [
+    ...result.entries.map(
+      (e) =>
+        `${e.status === "removed" ? style.ok(e.status) : e.status} ${style.path(e.path)}${e.detail ? ` (${e.detail})` : ""}`,
+    ),
+    ...result.skipped.map((host) => `${host} left untouched: a file it needs cannot be read`),
+  ];
+  if (!result.ok) {
+    if (!io.json) for (const line of lines) io.stdout(`${line}\n`);
+    // Run again names only the hosts not done yet.
+    const pending = args.hosts.filter((host) =>
+      result.entries.some(
+        (e) => e.host === host && (e.status === "failed" || e.status === "not-run"),
+      ),
+    );
     return emit(
       io,
-      fail("invalid_input", "workit uninstall is interactive and has no --json output", {
-        unblock: "run `workit uninstall` in a terminal without --json",
-      }),
+      fail(
+        "failed",
+        result.entries
+          .filter((e) => e.status === "failed")
+          .map((e) => `${e.path}: ${e.detail ?? "failed"}`)
+          .join("; "),
+        {
+          data,
+          unblock: `fix what failed above, then run workit uninstall --hosts=${pending.join(",")} --yes`,
+        },
+      ),
     );
-  const { runUninstall } = await import("../index");
-  await runUninstall();
-  return 0;
+  }
+  return emit(io, ok(data), () => [
+    ...lines,
+    result.entries.some((e) => e.status === "removed")
+      ? "Restart the host sessions to unload Workit."
+      : "Nothing removed.",
+  ]);
 }

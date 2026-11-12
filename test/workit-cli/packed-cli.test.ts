@@ -22,6 +22,7 @@ import {
   readTarballFile,
   runInIsolation,
 } from "@/test/shared/helpers/packages";
+import { AGENT_SESSION_VARS } from "@/packages/workit-cli/src/admin/host-permissions";
 
 // Task 14 packed gate: the CLI setup flow runs against EXTRACTED tarballs with
 // the repository node_modules unavailable. buildSetupPreview/applySetupPreview
@@ -446,8 +447,12 @@ test("packed CLI: non-TTY init gives guidance + nonzero; --help exits 0", () => 
     expect(init.stdout).toContain("ytrack auth login --host");
     expect(init.stderr).not.toContain('"initialization"');
 
-    // non-TTY uninstall is a usage error (exit 2), not an interactive failure
-    const uninstall = runInIsolation(install, "node", [entry, "uninstall"], env);
+    // non-TTY uninstall is a usage error (exit 2), not an interactive failure.
+    // The user's shell: an agent host running this suite sets a marker, and the
+    // agent refusal (exit 3) comes before the terminal check.
+    const userEnv = { ...env };
+    for (const marker of AGENT_SESSION_VARS) delete userEnv[marker];
+    const uninstall = runInIsolation(install, "node", [entry, "uninstall"], userEnv);
     expect(uninstall.status, uninstall.stdout + uninstall.stderr).toBe(2);
     expect(uninstall.stdout).toContain("interactive terminal");
     expect(uninstall.stderr).toBe("");

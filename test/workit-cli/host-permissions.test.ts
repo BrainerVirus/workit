@@ -111,7 +111,10 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
 
   const plan = planUninstall({ home, env });
   const claude = plan.hosts.find((h) => h.host === "claude-code")!;
-  expect(claude.actions.map((a) => a.path)).toEqual([settings]);
+  expect(claude.actions.map((a) => [a.kind, a.path])).toEqual([
+    ["edit-json-remove", settings],
+    ["forget-ownership", path.join(env.WORKIT_STATE_DIR!, "host-permissions.json")],
+  ]);
   const result = applyUninstall(plan, { home, env });
   expect(result.ok).toBe(true);
   expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual(USER_SETTINGS);
