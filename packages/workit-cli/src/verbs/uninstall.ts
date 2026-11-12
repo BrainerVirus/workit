@@ -48,6 +48,8 @@ const parse = (argv: readonly string[]): Args | string => {
 
 export async function run(argv: string[], io: Io): Promise<number> {
   if (argv.every((arg) => arg === "--json")) {
+    const agent = agentSessionVar(io.env);
+    if (agent) return emit(io, agentRefusal(agent, "workit uninstall"));
     if (io.json)
       return emit(
         io,
@@ -63,6 +65,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (typeof args === "string") return emit(io, fail("invalid_input", args, { unblock: USAGE }));
   return uninstallHosts(args, io);
 }
+
+/** An agent never removes Workit: it hands the user the command for their own terminal. */
+const agentRefusal = (agent: string, command: string) =>
+  fail(
+    "blocked",
+    `an agent cannot run this (${agent} is set): hand the user \`${command}\` to run in their own terminal`,
+    { unblock: command },
+  );
 
 async function uninstallHosts(args: Args, io: Io): Promise<number> {
   const paths: UninstallPaths = {
@@ -97,22 +107,18 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
   const command = `workit uninstall --hosts=${args.hosts.join(",")} --yes`;
   const agent = agentSessionVar(io.env);
   // An agent never gets an uninstall to run, even one with nothing to remove.
-  if (agent && !args.preview)
-    return emit(
-      io,
-      fail(
-        "blocked",
-        `refusing to uninstall Workit from inside an agent session (${agent} is set): run \`${command}\` yourself in a terminal`,
-        { data: summary, unblock: command },
-      ),
-    );
+  if (agent && !args.preview) return emit(io, { ...agentRefusal(agent, command), data: summary });
   if (actions.length === 0)
     return emit(io, ok({ ...summary, removed: [] }), () => [
       `Workit is not installed on ${args.hosts.join(", ")}: nothing to remove.`,
     ]);
   say(`${kept}\n`);
   if (args.preview)
-    return emit(io, ok({ ...summary, removed: [] }), () => "Preview: nothing changed.");
+    return emit(
+      io,
+      ok({ ...summary, removed: [] }),
+      () => `Preview: nothing changed. \`${command}\` removes it, run in your own terminal.`,
+    );
   if (!args.yes) {
     if (process.stdin.isTTY !== true)
       return emit(

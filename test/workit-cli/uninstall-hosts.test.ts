@@ -110,7 +110,9 @@ test("Given Workit on several hosts, When uninstall --hosts=cursor --preview run
   for (const other of [".claude", ".codex", ".config/opencode", ".pi"])
     expect(text).not.toContain(path.join(home, other));
   expect(text).toContain("is always kept");
-  expect(text).toContain("Preview: nothing changed.");
+  expect(text).toContain(
+    "Preview: nothing changed. `workit uninstall --hosts=cursor --yes` removes it, run in your own terminal.",
+  );
   expect(snapshot(home)).toEqual(before);
 });
 

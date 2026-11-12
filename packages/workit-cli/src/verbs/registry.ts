@@ -331,7 +331,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage: "workit uninstall [--hosts=<h,…> [--preview | --yes]]",
     summary: "Remove Workit from the picked or named hosts (keeps the Workit config)",
     notes: [
-      "No flags: the interactive picker (hosts and the owned CLI install). --hosts takes claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys and host commands it would remove and changes nothing; --yes removes them. Like setup, it refuses inside an agent session: run it in your own terminal.",
+      "No flags: the interactive picker (hosts and the owned CLI install). --hosts takes claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys and host commands it would remove and changes nothing; --yes removes them. Only the user runs --yes or the picker, in their own terminal; an agent may run --preview.",
     ],
     load: () => import("./uninstall"),
   },

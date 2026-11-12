@@ -61,7 +61,9 @@ for (const [host, marker] of Object.entries(MARKERS)) {
     const { code, envelope } = await run(uninstall, ["--hosts=cursor", "--yes"], home, marker);
     expect(code).toBe(3);
     expect(envelope.code).toBe("blocked");
-    expect(envelope.error).toContain(`${marker} is set`);
+    expect(envelope.error).toBe(
+      `an agent cannot run this (${marker} is set): hand the user \`workit uninstall --hosts=cursor --yes\` to run in their own terminal`,
+    );
     expect(envelope.unblock).toBe("workit uninstall --hosts=cursor --yes");
   });
 
@@ -78,6 +80,15 @@ for (const [host, marker] of Object.entries(MARKERS)) {
     expect(envelope.code).toBe("blocked");
     expect(envelope.error).toContain(`${marker} is set`);
     expect(envelope.error).toContain("workit setup --hosts=cursor");
+  });
+
+  test(`Given ${marker} (${host}), When the bare uninstall picker runs, Then it is refused before any terminal check`, async () => {
+    const { code, envelope } = await run(uninstall, [], scratch, marker);
+    expect(code).toBe(3);
+    expect(envelope.error).toBe(
+      `an agent cannot run this (${marker} is set): hand the user \`workit uninstall\` to run in their own terminal`,
+    );
+    expect(envelope.unblock).toBe("workit uninstall");
   });
 
   test(`Given ${marker} (${host}), Then grant's agent check refuses too`, () => {
