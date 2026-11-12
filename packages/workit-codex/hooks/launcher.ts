@@ -136,7 +136,16 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    return /\b(?:git|gh|glab)\b/.test(text) || guarded(text) || maybeHeavy(text, value.cwd)
+    // A write through a glob or a variable that may spell a guarded path (write-gate.ts).
+    const spelled =
+      /[>]|\b(?:cp|mv|rm|tee|ln|install|rsync|touch|sed|dd|curl|tar)\b/.test(text) &&
+      /(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/.test(
+        text,
+      );
+    return /\b(?:git|gh|glab)\b/.test(text) ||
+      guarded(text) ||
+      spelled ||
+      maybeHeavy(text, value.cwd)
       ? null
       : event;
   } catch {

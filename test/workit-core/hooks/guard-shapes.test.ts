@@ -169,3 +169,56 @@ test("G an inline interpreter that only reads a guarded file, W it runs, T the a
   expect(out.kind).toBe("deny");
   expect(out.kind === "deny" ? out.reason : "").toContain("workit grant show");
 });
+
+test("G env vars the hook's environment holds, W a write spells a guarded path through them or a ${X:-default}, T denied", () => {
+  const xdg = path.join(base, "xdg");
+  const wc = path.join(base, "wc");
+  const cases: Array<[string, Record<string, string>]> = [
+    ["echo '{}' > $XDG_CONFIG_HOME/workit/workspaces.json", { XDG_CONFIG_HOME: xdg }],
+    [
+      "echo '{}' > \"${XDG_CONFIG_HOME:-$HOME/.config}/workit/workspaces.json\"",
+      { XDG_CONFIG_HOME: xdg },
+    ],
+    ["echo '{}' > $WORKIT_STATE_DIR/approvals/grants/a.json", {}],
+    ["rm -rf ${WORKIT_STATE_DIR}/issued", {}],
+    ["cp x.json $WORKIT_CONFIG/", { WORKIT_CONFIG: wc }],
+  ];
+  // The default dir is ~/.config/workit only off Windows (%APPDATA%\workit there).
+  if (process.platform !== "win32")
+    cases.push(["echo '{}' > \"${XDG_CONFIG_HOME:-$HOME/.config}/workit/workspaces.json\"", {}]);
+  for (const [command, env] of cases) {
+    set(env);
+    expect(decide(command).kind, `${command} ${JSON.stringify(env)}`).toBe("deny");
+  }
+  set({ XDG_CONFIG_HOME: xdg });
+  for (const command of [
+    "echo hi > $UNSET_DIR/out.txt",
+    "echo '{}' > $XDG_CONFIG_HOME/other/workspaces.json",
+    "echo '{}' > \"${NOT_SET_HERE:-/tmp}/workspaces.json\"",
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});
+
+test("G a write target with a glob, W it may expand to a guarded path, T matched segment by segment and denied; other globs pass", () => {
+  const cfg = sh(CONFIG);
+  const fromHome = sh(path.relative(home, CONFIG))
+    .split("/")
+    .map((part) => `${part.slice(0, 4)}*`)
+    .join("/");
+  for (const command of [
+    `cp x.json ${cfg}/work*.json`,
+    `echo '{}' | tee ${cfg}/workspaces.j?on`,
+    `cp x.json ~/${fromHome}/w*.json`,
+    `rm ${sh(state)}/appr*/grants/*.json`,
+    `rm -rf ${sh(state)}/iss*`,
+    `cp x.json ${sh(state)}/[ai]*/grants/a.json`,
+  ])
+    expect(decide(command).kind, command).toBe("deny");
+  for (const command of [
+    `rm -f /tmp/zz*/x.json src/*.ts`,
+    `cp x.json ${sh(elsewhere)}/work*.json`,
+    `cp x.json ${cfg}/rules/*.md`,
+    `ls ${cfg}/*.json > list.txt`,
+  ])
+    expect(decide(command).kind, command).toBe("none");
+});

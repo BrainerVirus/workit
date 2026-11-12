@@ -305,6 +305,12 @@ const mentionsGuarded = (text) => {
   );
 };
 
+// A write whose path may name a guarded file only once the runtime expands
+// it: a `~`, `/`, `$` or `..` word holding a glob, or a variable that can
+// hold the state or config dir (write-gate.ts globbed, the registry env).
+const GUARD_SPELLING =
+  /(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/;
+
 // A standing order the lead added or cleared since this agent last looked
 // (`<store>/standing/rev` against its `standing/seen/<key>.json`) rides the
 // next tool call, so that call loads the runtime. A copy of
@@ -475,6 +481,11 @@ const fastAllow = (() => {
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
+      if (
+        (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command)) &&
+        GUARD_SPELLING.test(command)
+      )
+        return false;
       if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;
       return !confined && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
     }

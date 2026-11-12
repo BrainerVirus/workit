@@ -4,7 +4,7 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskReader } from "../core/task-read";
@@ -929,7 +929,15 @@ const expansions = (
     last = match.index + match[0].length;
     const value = vars.get(name);
     const values = loops.get(name) ?? (value === undefined ? null : [value]);
-    const applied = values?.map((item) => applyOperator(item, match[2] ?? ""));
+    // `${NAME:-default}` (and `-`, `=`, `:=`): the default, itself expanded, for an empty value.
+    const fallback = /^:?[-=](.*)$/s.exec(match[2] ?? "")?.[1];
+    const applied = values?.flatMap((item) =>
+      fallback === undefined
+        ? [applyOperator(item, match[2] ?? "")]
+        : item === ""
+          ? expansions(fallback, vars, loops)
+          : [item],
+    );
     const fits = applied && results.length * applied.length <= MAX_EXPANSIONS;
     results =
       fits && applied.every((item) => item !== null)
@@ -1321,8 +1329,16 @@ export const shellMutationTargets = (
   strict: Strict = false,
 ): string[] => {
   try {
+    // The registry guard reads a name the command does not set from the hook's own environment.
+    const env = new Map(
+      strict === "registry"
+        ? [...command.matchAll(/\$\{?([A-Za-z_]\w*)/g)]
+            .filter((match) => !/^(?:OLD)?PWD$/.test(match[1]))
+            .map((match) => [match[1], process.env[match[1]] ?? ""])
+        : [],
+    );
     return [
-      ...segmentTargets(cwd, command, dialect, 0, strict),
+      ...segmentTargets(cwd, command, dialect, 0, strict, env),
       ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
     ];
   } catch {
@@ -1411,6 +1427,44 @@ type Registry = "issued" | "approvals" | "grants";
 /** The config dirs whose workspaces.json is guarded: this env's and the account home's (grants). */
 const configDirs = (): string[] => [resolveConfigDir(), grantsDir()];
 
+/**
+ * The guarded paths a glob `target` may expand to, matched segment by
+ * segment (`*`, `?`, `[…]`) against the state registries Workit lists in
+ * its own state dir and the config files; the user's tree is never globbed.
+ */
+const globbed = (cwd: string, target: string, state: string, configs: string[]): string[] => {
+  if (!/[*?[]/.test(target)) return [];
+  const pattern = path.resolve(cwd, target).split(path.sep);
+  const segment = (glob: string, name: string) =>
+    new RegExp(
+      `^${glob
+        .replace(/[.+^$(){}|\\]/g, "\\$&")
+        .replace(/\[!/g, "[^")
+        .replaceAll("*", ".*")
+        .replaceAll("?", ".")}$`,
+      CASE_INSENSITIVE ? "i" : "",
+    ).test(name);
+  const hit = (file: string, below: boolean) => {
+    const parts = canonical(file).split(path.sep);
+    return (
+      (below ? pattern.length >= parts.length : pattern.length === parts.length) &&
+      parts.every((part, index) => segment(pattern[index], part))
+    );
+  };
+  let roots: string[] = [];
+  try {
+    roots = readdirSync(state).filter((name) => /^(?:issued|approvals$)/.test(name));
+  } catch {
+    // No state dir yet: no registry to hit.
+  }
+  return [
+    ...roots.map((name) => path.join(state, name)).filter((root) => hit(root, true)),
+    ...configs
+      .flatMap((dir) => [dir, path.join(dir, "workspaces.json")])
+      .filter((file) => hit(file, false)),
+  ];
+};
+
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
@@ -1420,6 +1474,9 @@ const registryTarget = (
   const configs = configDirs();
   for (const target of targets) {
     const file = homeExpanded(target);
+    const glob = globbed(cwd, file, state, configs)[0];
+    const viaGlob = glob === undefined ? null : registryTarget(cwd, [glob]);
+    if (viaGlob) return { file: target, registry: viaGlob.registry };
     const registry =
       underRegistry(state, cwd, file, process.platform, canonical) ??
       (configs.some((dir) => underConfig(dir, cwd, file, process.platform, canonical))

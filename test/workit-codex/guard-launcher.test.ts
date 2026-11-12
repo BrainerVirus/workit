@@ -35,7 +35,7 @@ for (const key of [
 ])
   delete env[key];
 
-const run = (command: string) => {
+const run = (command: string, extra: NodeJS.ProcessEnv = {}) => {
   const child = spawnSync(process.execPath, [LAUNCHER], {
     input: JSON.stringify({
       session_id: "session-1",
@@ -50,7 +50,7 @@ const run = (command: string) => {
       tool_input: { command },
     }),
     encoding: "utf8",
-    env,
+    env: { ...env, ...extra },
   });
   expect(child.status, child.stderr).toBe(0);
   return (
@@ -70,4 +70,15 @@ test("Given a shell write that names the default approvals dir in any spelling, 
     expect(run(command).permissionDecision, command).toBe("deny");
   expect(run("ls ~/.local/state/workit/approvals").permissionDecision).toBeUndefined();
   expect(run(`echo ok > ${root}/approvals.txt`).permissionDecision).toBeUndefined();
+}, 60_000);
+
+test("Given a write whose guarded path shows only once expanded (a glob, an env var), When the hook runs, Then the runtime denies it", () => {
+  const wc = path.join(base, "wc");
+  for (const [command, extra] of [
+    ["cp x.json ~/.con*/wor*/w*.json", {}],
+    ["rsync x.json ~/.local/st*/workit/appr*/grants/a.json", {}],
+    ["cp x.json $WORKIT_CONFIG/", { WORKIT_CONFIG: wc }],
+    ['echo {} > "${XDG_CONFIG_HOME:-$HOME/.config}/workit/work"*', {}],
+  ] as Array<[string, Record<string, string>]>)
+    expect(run(command, extra).permissionDecision, command).toBe("deny");
 }, 60_000);

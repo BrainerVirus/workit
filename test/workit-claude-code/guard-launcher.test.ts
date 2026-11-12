@@ -29,7 +29,7 @@ const env = {
 type Output = {
   hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
 };
-const decide = (toolName: string, toolInput: Record<string, unknown>) => {
+const decide = (toolName: string, toolInput: Record<string, unknown>, extra = {}) => {
   const run = runHook(
     PLUGIN_DIR,
     {
@@ -42,7 +42,7 @@ const decide = (toolName: string, toolInput: Record<string, unknown>) => {
       tool_input: toolInput,
       tool_use_id: "toolu_guard",
     },
-    env,
+    { ...env, ...extra },
   );
   expect(run.status, run.stderr).toBe(0);
   return (run.json as Output).hookSpecificOutput;
@@ -62,4 +62,15 @@ test("Given a repo with no task store, When a shell write or an edit names the d
   expect(decide("Write", { file_path: grant, content: "{}" })?.permissionDecision).toBe("deny");
   expect(decide("Bash", { command: "ls ~/.local/state/workit/approvals" })).toBeUndefined();
   expect(decide("Bash", { command: "echo ok > notes/approvals.txt" })).toBeUndefined();
+}, 60_000);
+
+test("Given a write whose guarded path shows only once expanded (a glob, an env var), When the hook runs, Then the runtime denies it", () => {
+  const wc = path.join(base, "wc");
+  for (const [command, extra] of [
+    ["cp x.json ~/.con*/wor*/w*.json", {}],
+    ["rsync x.json ~/.local/st*/workit/appr*/grants/a.json", {}],
+    ["cp x.json $WORKIT_CONFIG/", { WORKIT_CONFIG: wc }],
+    ['echo {} > "${XDG_CONFIG_HOME:-$HOME/.config}/workit/work"*', {}],
+  ] as Array<[string, Record<string, string>]>)
+    expect(decide("Bash", { command }, extra)?.permissionDecision, command).toBe("deny");
 }, 60_000);
