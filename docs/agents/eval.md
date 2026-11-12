@@ -165,6 +165,23 @@ result file (`scripts/eval/privacy.ts`):
   exists but cannot be read or parsed stops the bench before any run (exit 4,
   `private set: cannot read <file>: <reason>`, never its content); a missing
   one is fine.
+- **Host credentials.** The refusal also knows every credential the bench
+  host could reach, under the kind `host credential`: each string value of 20+
+  characters in the host's login (Claude Code's `~/.claude/.credentials.json`;
+  OpenCode's `opencode.db` `credential` rows and `auth.json`), and the value
+  of every variable in the host's environment whose name says key, token,
+  secret, password or credentials. The floor is 20 because every token and
+  key in use is longer, while the plan names, scopes and provider ids beside
+  them are mostly shorter; a longer non-secret in a login file reaches a
+  transcript only when the file was printed. The login is read at bench
+  start, before each run, in each world before it is removed (a token rotated
+  by rename, a key OpenCode wrote into its world) and again when the result
+  is written, so a credential refreshed mid-run is refused under its old and
+  its new value. A login file that exists but cannot be read stops the bench
+  at start (exit 4) and fails a run whose result it would have checked.
+  A call that names the world's own login (`<world>/home/.claude`,
+  `<world>/home/.claude.json`, `<world>/home/.local/share/opencode`) is
+  scrubbed as `host config`.
 - **Committed check.** `test/behavior/eval-privacy.test.ts` fails when any file
   under `evals/results/` holds an absolute path under a home dir (`/home/…`
   or `/Users/…`; the placeholders and the invented names `me`, `user` and
@@ -231,7 +248,7 @@ A bench run must never change your real Workit files (#822: a run rewrote
   - A change to a watched file is seen within 2 s, the watch interval, and the host is killed; the changed bytes stay until you act, so a live session that reads the file meanwhile sees them.
   - A bench agent can kill the runner, which ends detection. Under Landlock what it leaves running still cannot write your home. Everything the runner leaves on disk is writable and deletable by the same OS user, so the next start reports a leftover only if the agent left one and cannot prove it genuine; the digest the stopped run printed on your terminal is the only check, and it is yours to make.
   - A bench agent that attaches to the runner (ptrace, `/proc/<pid>/mem`) can change the snapshot in memory. With `kernel.yama.ptrace_scope` 1 or higher (Ubuntu's default) the kernel refuses a child attaching to its parent; with 0 nothing does.
-  - The host's login (`~/.claude/.credentials.json`, the world's copy of `~/.claude.json`'s sign-in keys, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise. With reads confined, a call that prints it through the world's own path (`<world>/home/…`) keeps its result, and the refusal does not know the token: read a transcript before you commit it.
+  - The host's login (`~/.claude/.credentials.json`, the world's copy of `~/.claude.json`'s sign-in keys, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise. A result that holds it is refused (see Host credentials above), in the form the login file stores it: a model that re-encodes a token (base64, split in two) or prints part of one gets past the refusal, and so does what OpenCode keeps in its `kv` rows.
   - Under Landlock the bench protects your real Workit files from change and your home from being read, except what the read rules list: the system dirs (`/etc/passwd` names your home; `/run` holds your runtime sockets), the temp dirs (other tools' scratch files), the toolchain install dirs (global packages and caches under `~/.bun`, for one) and the main checkout's `node_modules`. What a model reads there is scrubbed only when the call names the path (a spelling the scrub cannot read keeps its result); a model that quotes it in its answer is caught only by the refusal, which knows only the private strings above.
   - Without Landlock reads are unrestricted: a case that permits a shell wrapper is refused (or runs with `--unconfined`), and every case stores no tool result. What the model then writes itself (its answer, a later call's input) is caught only by the refusal.
   - After the runner dies without its check (SIGKILL, power loss, a second Ctrl-C), a changed real file stays changed until you act; the next start reports it with the original's copy and runs nothing. The dead run's world, with its login copies in a 0700 dir, stays until that start.
