@@ -167,8 +167,11 @@ const quietEvent = (): string | null => {
       text,
     ) ||
       guarded(text) ||
-      // A raw ytrack write asks the user first (hooks/ytrack-guard.ts), however quoted.
-      /ytrack/i.test(text.replace(/['"\\`]/g, "")) ||
+      // A raw ytrack write asks the user first (hooks/ytrack-guard.ts): a ytrack
+      // command word, past wrappers and runners (a copy of the Claude Code launcher's).
+      /(?:^|[;&|({\n`=]|\$\(|\s-c\s|\s--\s)\s*(?:(?:\w+=\S*|sudo|env|timeout|nohup|exec|command|time|nice|xargs|npx|bunx|pnpx|pnpm|npm|yarn|dlx|x|eval|which|stdbuf|builtin|if|then|do|else|while|until|!|\d\S*|-\S+(?:\s+[^-\s]\S*)?)\s+)*(?:\S*\/)?ytrack(?:\.exe)?(?=$|[\s;&|)`])/i.test(
+        text.replace(/['"\\]/g, ""),
+      ) ||
       writes ||
       maybeHeavy(text, value.cwd)
       ? null

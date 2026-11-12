@@ -67,3 +67,51 @@ test("G Claude Code's launcher, W raw ytrack writes plain, wrapped or respelled,
   for (const command of ["ytrack issue view X-1", "ytrack api /users/me --fields login", "ls"])
     expect(decide(command)?.permissionDecision, command).toBeUndefined();
 }, 60_000);
+
+// Every spelling the guard reads: these must reach the runtime.
+const ROUTED = [
+  "ytrack issue comment X-1 --body hi",
+  "cd /tmp && ytrack issue comment X-1 --body hi",
+  "bash -c 'ytrack issue comment X-1 --body hi'",
+  'eval "ytrack issue comment X-1 --body hi"',
+  "env YTRACK_HOST=a ytrack issue comment X-1 --body hi",
+  "sudo -u me ytrack issue comment X-1 --body hi",
+  "timeout 30 ytrack issue comment X-1 --body hi",
+  "npx -y ytrack issue comment X-1 --body hi",
+  "pnpm dlx ytrack issue comment X-1 --body hi",
+  "xargs ytrack issue comment X-1 --body hi",
+  "/opt/bin/ytrack issue comment X-1 --body hi",
+  'y"t"rack issue comment X-1 --body hi',
+  "workit check --name yt -- ytrack issue comment X-1 --body hi",
+  "alias yt=ytrack; yt issue comment X-1 --body hi",
+  'yt() { ytrack "$@"; }; yt issue comment X-1 --body hi',
+  "$(which ytrack) issue comment X-1 --body hi",
+  "echo ok\nytrack issue comment X-1 --body hi",
+];
+
+test("G Claude Code's launcher, W a command only mentions ytrack in a path or an argument, T it stays on the fast path; every ytrack command word still reaches the runtime", () => {
+  // A runtime that cannot start says so on stderr; the fast path never starts it.
+  const reached = (command: string) =>
+    runHook(
+      PLUGIN_DIR,
+      {
+        hook_event_name: "PreToolUse",
+        session_id: "11111111-2222-3333-4444-555555555555",
+        transcript_path: "/tmp/x.jsonl",
+        cwd: repo,
+        permission_mode: "default",
+        tool_name: "Bash",
+        tool_input: { command, description: "d" },
+        tool_use_id: "toolu_ytrack",
+      },
+      { ...env, WORKIT_CLAUDE_RUNTIME: "source", WORKIT_BUN: path.join(base, "no-bun") },
+    ).stderr.includes("hook unavailable");
+  for (const command of [
+    "cat docs/ytrack-notes.md",
+    "ls /tmp/ytrack/x",
+    "echo see the ytrack skill",
+    "grep -rn ytrack docs",
+  ])
+    expect(reached(command), command).toBe(false);
+  for (const command of ROUTED) expect(reached(command), command).toBe(true);
+}, 60_000);

@@ -69,8 +69,11 @@ const HOOK_ENTRIES = [
 // ceiling is that baseline plus 12 KB for the rest of wave 7.5. 2026-11-12: the registry
 // guard (#818), the account home (#826) and the raw-ytrack ask (#780, hooks/ytrack-guard.ts,
 // +3,911 B on core run) added code after that split: core run 527,047 B, Claude Code 520,510 B,
-// Cursor 516,096 B, Codex 515,708 B, so the ceiling is core run plus 2,000 B.
-const BUDGET = 529_047;
+// Cursor 516,096 B, Codex 515,708 B, so the ceiling was core run plus 2,000 B. Its fix round
+// (verdict mwdbd0km: --help, aliases, nesting, faithful mapping, respellings) adds 2,996 B:
+// core run 530,043 B, Claude Code 523,506 B, Cursor 519,092 B, Codex 518,704 B; the ceiling is
+// core run plus 2,000 B.
+const BUDGET = 532_043;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
@@ -185,8 +188,9 @@ test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab
     // A Workit ceiling, not a Codex limit: 2026-11-12 (#818) the entry sends the
     // registry guard writes that name the approvals or state dir, a glob, an env var,
     // a hard link or a symlink, a quoted marker, and script runs (after a wrapper
-    // too); 5,186 B measured, plus 256 B.
-    expect(statSync(entry).size).toBeLessThanOrEqual(5_442);
+    // too); 5,186 B measured, plus 256 B. 2026-11-12 (#780): it also sends a ytrack command
+    // word, past wrappers and runners, and keeps a mere mention quiet; 5,508 B, plus 256 B.
+    expect(statSync(entry).size).toBeLessThanOrEqual(5_764);
     const repo = path.join(out, "repo");
     spawnSync("git", ["init", "-q", "-b", "feature/x", repo]);
     mkdirSync(path.join(repo, ".git", "workit"));
