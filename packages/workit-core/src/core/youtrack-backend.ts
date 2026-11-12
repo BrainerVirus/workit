@@ -14,6 +14,8 @@ import {
   ytrackLogin,
   ytrackMissingUnblock,
   ytrackRunner,
+  ytrackSupports,
+  type YtrackFeature,
   type YtrackRun,
 } from "./youtrack-ytrack";
 import { youTrackBaseUrl } from "./youtrack";
@@ -82,8 +84,15 @@ export interface YouTrackBackend {
   readonly kind: BackendKind;
   showIssue(issueId: string): Promise<IssueOutcome<IssueView>>;
   createIssue(input: CreateInput): Promise<IssueOutcome<Created>>;
-  addComment(issueId: string, text: string): Promise<WriteResult>;
+  /** One comment; `attachments` (paths) ride on it: `![](name)` in the text shows one inline. */
+  addComment(issueId: string, text: string, attachments?: readonly string[]): Promise<WriteResult>;
   addWorkItem(issueId: string, item: WorkItemInput): Promise<WriteResult>;
+  /** Files attached to the issue itself, with no comment. */
+  attachFiles(issueId: string, files: readonly string[]): Promise<WriteResult>;
+  /** A YouTrack command (`State Done`, `tag Bug`) applied to the issue. */
+  applyCommand(issueId: string, command: string): Promise<WriteResult>;
+  /** Whether this ytrack has a feature a write needs; `missing` without ytrack. */
+  supports(feature: YtrackFeature): "ok" | "missing" | "old";
   /** Comment or work item texts, for the marker read-back; null when unreadable. */
   texts(issueId: string, where: "comments" | "workItems"): Promise<Texts | null>;
   /** The current user's comments or work items on the issue; null when unreadable. */
@@ -180,6 +189,20 @@ function ranJson(run: YtrackRun, args: string[], input?: string): Ran {
   }
 }
 
+/** A ytrack call whose output Workit does not read: only its exit counts. */
+function ranPlain(run: YtrackRun, args: string[]): Ran {
+  const out = run(args);
+  const what = `ytrack ${args.slice(0, 2).join(" ")}`;
+  if (out.missing) return { ok: false, status: null, error: `${what}: ${YTRACK_MISSING}` };
+  if (out.status === YTRACK_EXIT.ok) return { ok: true, json: null };
+  const detail = ytrackDetail(out);
+  return {
+    ok: false,
+    status: out.status,
+    error: `${what} failed (exit ${out.status ?? "signal"})${detail ? `: ${detail}` : ""}`,
+  };
+}
+
 /** The unblock for a failure that sent nothing: install ytrack, or log in to `host`. */
 const unblockFor = (ran: RanFailure, host: string | null): { unblock?: string } =>
   ran.status === null
@@ -235,10 +258,19 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
         },
       };
     },
-    async addComment(issueId, text) {
+    async addComment(issueId, text, attachments = []) {
       const ran = ranJson(
         run,
-        ["issue", "comment", issueId, "--body-file", "-", "--json", "id,url"],
+        [
+          "issue",
+          "comment",
+          issueId,
+          "--body-file",
+          "-",
+          ...attachments.flatMap((file) => ["--attach", file]),
+          "--json",
+          "id,url",
+        ],
         text,
       );
       if (!ran.ok) return writeFailure(ran, host);
@@ -272,6 +304,19 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
           dateMs: item.dateMs,
         },
       };
+    },
+    async attachFiles(issueId, files) {
+      const ran = ranPlain(run, ["issue", "attach", issueId, ...files]);
+      if (!ran.ok) return writeFailure(ran, host);
+      return { ok: true, data: { issueId, attached: files.length } };
+    },
+    async applyCommand(issueId, command) {
+      const ran = ranPlain(run, ["issue", "command", issueId, command]);
+      if (!ran.ok) return writeFailure(ran, host);
+      return { ok: true, data: { issueId, command } };
+    },
+    supports(feature) {
+      return ytrackSupports(run, feature);
     },
     async texts(issueId, where) {
       const ran =

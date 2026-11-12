@@ -27,7 +27,8 @@ import {
   type ApprovalFields,
 } from "../approvals/store";
 
-export const ISSUE_RE = /^[A-Z]+-\d+$/;
+/** A YouTrack issue id: a project short name (a letter, then letters, digits or `_`), a dash, a number. */
+export const ISSUE_RE = /^[A-Z][A-Z0-9_]*-\d+$/;
 export const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // The config dir comes from core/workit-paths.mjs; default env (no args) routes
