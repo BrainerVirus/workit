@@ -585,3 +585,24 @@ test("G a script operand behind an option that takes a value, or a preloaded mod
   ])
     expect(decide(command).kind, command).toBe("none");
 });
+
+test("G an inline interpreter that only names the config dir, or an editor -c that cannot write, W it runs, T nothing is denied; a write of the file still is", () => {
+  const cfg = sh(CONFIG);
+  const fromHome = sh(path.relative(home, CONFIG));
+  const f = sh(KINDS[2].file);
+  for (const command of [
+    `python3 -c "print('~/${fromHome}')"`,
+    `node -e "console.log('$HOME/${fromHome}')"`,
+    `node -e "require('fs').readdirSync('${cfg}')"`,
+    `vim -c 'set ro' ${f}`,
+    `vim -c 'syntax on' +/merge ${f}`,
+    `vim +10 -c '/grants' ${f}`,
+  ])
+    expect(decide(command).kind, command).toBe("none");
+  for (const command of [
+    `python3 -c "import shutil; shutil.copy('x.json', '${cfg}/workspaces.json')"`,
+    `vim -c 'set ro' -c wq ${f}`,
+    `vim -c 'set ro' -s cmds.vim ${f}`,
+  ])
+    expect(decide(command).kind, command).toBe("deny");
+});

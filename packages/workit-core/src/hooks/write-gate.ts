@@ -189,6 +189,15 @@ const WRAPPERS: Record<string, string> = {
   bunx: "p",
 };
 
+const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/;
+
+/** Whether `file` is a config dir itself: how code names where config lives, not a write. */
+const isConfigDir = (file: string): boolean =>
+  configDirs().some((dir) => canonical(dir) === canonical(file));
+
+/** An editor command that cannot write: `set`, `syntax`, `colorscheme`, a search or a line number. */
+const INERT_EDIT = /^:?(?:se(?:t)?|sy(?:ntax)?|colo(?:rscheme)?)\b|^[/?]|^\d+$/;
+
 /** Options that take a value, by interpreter (the shape of WRAPPERS); a preload option's value runs too. */
 const SCRIPT_OPTIONS: Array<[RegExp, RegExp]> = [
   [/^(?:(?:ba|z|k|da)?sh|source|\.)$/, /^(?:[-+][oO]|--(?:rcfile|init-file))$/],
@@ -1348,7 +1357,7 @@ const segmentTargets = (
           shells.push(...(segment.stdin ?? []), ...inputs.flatMap(read), ...piped);
         else if (shellScript(run) === null) shells.push(...read(named));
         shells.push(...preloads.flatMap(read));
-      } else if (/^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/.test(verb)) {
+      } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
         const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
         if (code >= 0) others.push(args[code + 1] ?? "");
@@ -1373,13 +1382,14 @@ const segmentTargets = (
           ...text.matchAll(/(?:["'][^"'\s,*?[]+["']\s*[,/+]\s*)+["'][^"'\s,*?[]+["']/g),
         ].map((match) => match[0].replace(/["']\s*[,/+]\s*["']/g, "/").replace(/["']/g, ""));
         // Each path as spelled, and each under the home dir (`home + "/.config/…"`).
-        for (const spelled of pathsIn(text)) targets.push(...atAll(spelled));
-        // The config dir itself is how a script names where config lives, not a write.
-        const dirs = new Set(configDirs().map(canonical));
-        for (const spelled of [...pathsIn(text), ...joined]) {
-          const under = path.join(homeExpanded("~"), spelled.replace(/^~/, ""));
-          if (!dirs.has(canonical(under))) targets.push(under);
-        }
+        const spelled = pathsIn(text);
+        for (const file of [
+          ...spelled.flatMap((word) => atAll(word)),
+          ...[...spelled, ...joined].map((word) =>
+            path.join(homeExpanded("~"), word.replace(/^~/, "")),
+          ),
+        ])
+          if (!isConfigDir(file)) targets.push(file);
       }
       // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
       if (
@@ -1387,8 +1397,11 @@ const segmentTargets = (
         (segment.stdin ||
           inputs.length > 0 ||
           feeder ||
-          args.some((arg) =>
-            /^(?:-[a-zA-Z]*[cse]|--(?:cmd|batch|eval|script))$|^\+(?!\d*$|\/)/.test(arg),
+          args.some(
+            (arg, index) =>
+              /^(?:-[a-zA-Z]*[se]|--(?:batch|eval|script))$/.test(arg) ||
+              (/^(?:-c|--cmd)$/.test(arg) && !INERT_EDIT.test(args[index + 1] ?? "")) ||
+              (arg.startsWith("+") && !INERT_EDIT.test(arg.slice(1) || "1")),
           ))
       )
         for (const file of operands(args)) targets.push(...atAll(file));
@@ -1428,9 +1441,12 @@ const segmentTargets = (
       const here = segment.unanalyzable
         ? DIR_TARGET
         : `${OPAQUE_TARGET}${encodeURIComponent(runner?.split(/[\\/]/).at(-1) ?? "a command")}`;
+      // An interpreter's code that only names the config dir does not write it.
+      const quiet = strict === "registry" && INTERPRETERS.test(runner?.split(/[\\/]/).at(-1) ?? "");
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
-          targets.push(file === "." ? path.join(resolved, here) : resolved);
+          if (!quiet || !isConfigDir(resolved))
+            targets.push(file === "." ? path.join(resolved, here) : resolved);
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);
       // The registry guard: a hard link is a second name for its source; a symbolic one only points.
