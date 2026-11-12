@@ -1,11 +1,11 @@
 import type { Judgment } from "../task-contract";
-import { TaskStore } from "../task-store";
+import { TaskReader } from "../task-read";
 import { latestJudgment } from "./derive";
 
 /** The open task's latest judgment (the one policy/derive.ts reads), or null when none is recorded. Never throws. */
 export function currentJudgment(cwd: string): Judgment | null {
   try {
-    const store = new TaskStore(cwd);
+    const store = new TaskReader(cwd);
     const listed = store.listTaskIndex();
     const key = store.currentKey();
     if (!listed.ok || !key.ok) return null;

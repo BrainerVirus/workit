@@ -97,7 +97,6 @@ import {
 } from "./task-read";
 
 export {
-  MIGRATION_PENDING,
   fileSignature,
   racySignature,
   runtimeVersion,

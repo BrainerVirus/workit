@@ -17,7 +17,7 @@ import {
   type Worker,
 } from "./task-contract";
 import { checkoutRootOf } from "../store/paths";
-import { sameDirectoryIdentity, type TaskStore } from "./task-store";
+import { sameDirectoryIdentity, type TaskReader } from "./task-read";
 import { compactTaskContext, type InheritedDecisions } from "./task-context";
 import type { NativeWorkerVerifier } from "./workers";
 import {
@@ -54,7 +54,7 @@ export const sameSession = (value: unknown, context: OperationContext): boolean 
   (value as any).host === context.caller.host &&
   (value as any).handle === context.caller.actor;
 
-export function contextRootError(store: TaskStore, context: OperationContext): Result<null> {
+export function contextRootError(store: TaskReader, context: OperationContext): Result<null> {
   try {
     // The same checkout: any directory inside it resolves to its top level.
     realpathSync(context.root);
@@ -100,7 +100,7 @@ export function helperTaskGuard(
 }
 
 export function taskView(
-  store: TaskStore,
+  store: TaskReader,
   context: OperationContext,
   task: TaskRecord,
   capture = true,
@@ -143,11 +143,11 @@ export function taskView(
  * detected by evidence, close, resume, and full inspection, which capture.
  */
 export function compactContext(
-  store: TaskStore,
+  store: TaskReader,
   context: OperationContext,
   taskId: string | null,
   freshness?: Freshness,
-  /** The base branch's task (TaskStore.originTaskEntry), whose decisions are inherited. */
+  /** The base branch's task (TaskReader.originTaskEntry), whose decisions are inherited. */
   origin: { origin: string; taskId: string } | null = null,
 ): Result<string> {
   const root = contextRootError(store, context);
