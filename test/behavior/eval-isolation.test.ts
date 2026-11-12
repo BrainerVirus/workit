@@ -66,7 +66,21 @@ beforeEach(() => {
     ".config/workit",
   ])
     mkdirSync(path.join(realHome, dir), { recursive: true });
-  writeFileSync(path.join(realHome, ".claude.json"), '{"oauthAccount":{}}', { mode: 0o600 });
+  writeFileSync(
+    path.join(realHome, ".claude.json"),
+    JSON.stringify({
+      hasCompletedOnboarding: true,
+      userID: "u-example",
+      oauthAccount: {
+        accountUuid: "a-1",
+        emailAddress: "ada@example.invalid",
+        organizationName: "Acme Example",
+      },
+      projects: { "/srv/acme-example": { history: ["a prompt"] } },
+      mcpServers: { example: {} },
+    }),
+    { mode: 0o600 },
+  );
   writeFileSync(path.join(realHome, ".claude", ".credentials.json"), "token-1", { mode: 0o600 });
   writeFileSync(path.join(realHome, ".claude", "settings.json"), '{"permissions":{}}');
   writeFileSync(path.join(realHome, ".claude", "CLAUDE.md"), "house rules");
@@ -204,7 +218,12 @@ test.each(["claude-code", "opencode"] as const)(
     if (host === "claude-code") {
       const copy = path.join(world.home, ".claude.json");
       expect(lstatSync(copy).isFile()).toBe(true);
-      expect(readFileSync(copy, "utf8")).toBe('{"oauthAccount":{}}');
+      // Only the sign-in keys: no e-mail, names, projects map, history or MCP servers.
+      expect(JSON.parse(readFileSync(copy, "utf8"))).toEqual({
+        hasCompletedOnboarding: true,
+        userID: "u-example",
+        oauthAccount: { accountUuid: "a-1" },
+      });
     }
   },
 );

@@ -44,6 +44,57 @@ const HOST_LOGIN: Record<Host, { link: string[]; copy: string[] }> = {
   opencode: { link: [], copy: [] },
 };
 
+/**
+ * The keys of ~/.claude.json a world's copy keeps: what `claude -p` needs to
+ * start signed in, and nothing that names the account (e-mail, names,
+ * organization), its projects, history, MCP servers or caches.
+ */
+const CLAUDE_STATE_KEYS = [
+  "hasCompletedOnboarding",
+  "lastOnboardingVersion",
+  "userID",
+  "migrationVersion",
+  "installMethod",
+  "autoUpdates",
+];
+const CLAUDE_ACCOUNT_KEYS = [
+  "accountUuid",
+  "organizationUuid",
+  "billingType",
+  "organizationType",
+  "organizationRole",
+  "workspaceRole",
+  "organizationRateLimitTier",
+  "userRateLimitTier",
+  "seatTier",
+  "hasExtraUsageEnabled",
+];
+
+const pick = (from: Record<string, unknown>, keys: string[]): Record<string, unknown> =>
+  Object.fromEntries(keys.filter((key) => key in from).map((key) => [key, from[key]]));
+
+/** The world's ~/.claude.json: the sign-in keys of the real one only. */
+const copyClaudeState = (real: string, into: string): void => {
+  let state: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(real, "utf8"));
+    if (parsed && typeof parsed === "object") state = parsed as Record<string, unknown>;
+  } catch {
+    // An unreadable state file: the world starts with none of it.
+  }
+  const account = state.oauthAccount;
+  writeFileSync(
+    into,
+    JSON.stringify({
+      ...pick(state, CLAUDE_STATE_KEYS),
+      ...(account && typeof account === "object"
+        ? { oauthAccount: pick(account as Record<string, unknown>, CLAUDE_ACCOUNT_KEYS) }
+        : {}),
+    }),
+    { mode: 0o600 },
+  );
+};
+
 /** The OpenCode db tables a fresh world copies: schema state and the provider credentials. */
 const OPENCODE_ROWS = ["__drizzle_migrations", "migration", "kv", "credential"];
 
@@ -105,6 +156,7 @@ export const linkLogin = (home: string, host: Host, realHome: string): string[] 
     const into = path.join(home, rel);
     mkdirSync(path.dirname(into), { recursive: true, mode: 0o700 });
     if (link.includes(rel)) symlinkSync(real, into);
+    else if (rel === ".claude.json") copyClaudeState(real, into);
     else copyFileSync(real, into);
     done.push(rel);
   }
