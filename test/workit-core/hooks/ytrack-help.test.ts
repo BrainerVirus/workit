@@ -41,3 +41,44 @@ test("G a write whose body value is the text --help, W it runs, T it is still ju
   ])
     expect(ytrackGate(root, command, "posix", false)?.kind, command).toBe("deny");
 });
+
+// Decision for PR #827: a word that clears a call (`--help`, `-h`, `--dry-run`,
+// `-X GET`) clears it only when it stands alone; after an option Workit does not
+// know it may be that option's value, so the call is judged as the write.
+const NOT_ALONE = [
+  "ytrack issue comment X-1 --body hi --template --help",
+  "ytrack issue comment X-1 --body hi -t -h",
+  "ytrack issue edit X-1 --summary x --template -h",
+  "ytrack api /issues -X POST -H -h",
+  "ytrack issue comment X-1 --body hi -- --help",
+  "ytrack issue --template x comment X-1 --body hi",
+  "ytrack -H x issue comment X-1 --body hi",
+  "ytrack issue command X-1 'State Fixed' --comment --dry-run",
+  "ytrack api /issues -f a=b -X GET -X POST",
+  "ytrack api /issues -f -X GET",
+  "ytrack -H 'X: y' api /issues -X POST",
+];
+
+test("G a clearing word after an option Workit does not know, W the hook judges it, T it is the write no verb covers", () => {
+  for (const command of NOT_ALONE) {
+    expect(ytrackGate(root, command, "posix", true)?.kind, command).toBe("ask");
+    const out = ytrackGate(root, command, "posix", false);
+    expect(out?.kind, command).toBe("deny");
+    const reason = out?.kind === "deny" ? out.reason : "";
+    expect(reason, command).toContain("in their own terminal");
+    expect(reason, command).not.toContain("`workit youtrack");
+  }
+});
+
+test("G a clearing word that stands alone, W the hook judges it, T it still passes", () => {
+  for (const command of [
+    "ytrack --debug issue comment --help",
+    "ytrack help issue comment",
+    "ytrack --host acme issue comment --help",
+    "ytrack work-item add X-1 --duration 30m --meeting --help",
+    "ytrack api /issues --paginate -X GET -f q=x",
+    "ytrack issue command X-1 'State Fixed' --dry-run",
+  ])
+    for (const ask of [true, false])
+      expect(ytrackGate(root, command, "posix", ask), `${ask}: ${command}`).toBeNull();
+});

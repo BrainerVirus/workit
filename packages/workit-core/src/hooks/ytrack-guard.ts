@@ -17,16 +17,6 @@ const name = (word = "") =>
 const quote = (word: string) =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 
-/** The value of the first of `flags` in `args` (`--f v`, `--f=v`), or undefined. */
-const valueOf = (args: readonly string[], ...flags: string[]): string | undefined => {
-  for (const [at, arg] of args.entries())
-    for (const flag of flags) {
-      if (arg === flag) return args[at + 1];
-      if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
-    }
-  return undefined;
-};
-
 /** ytrack's `--duration` in whole minutes (`90`, `1h30m`, `1.5h`, `2 hours 15 minutes`), or null. */
 const minutesOf = (text = ""): number | null => {
   if (/^\d+$/.test(text.trim())) return Number(text) > 0 ? Number(text) : null;
@@ -54,9 +44,27 @@ const VALUE = new Set(
   ).split(" "),
 );
 
-/** `ytrack … --help` (or `-h`) as an option, not a value: it only prints help. */
-const asksHelp = (args: readonly string[]): boolean =>
-  args.some((arg, at) => /^(?:--help|-h)$/.test(arg) && !VALUE.has(args[at - 1] ?? ""));
+/** Flags known to take no value (ytrack skill and ytrack's own `--help`). */
+const BARE = new Set(
+  "--debug --no-color --paginate --include --dry-run --silent --yes --meeting --help -h".split(" "),
+);
+/**
+ * Whether the word at `at` stands alone, so it is no option's value: no `--`
+ * before it, and the word before it is no option, a `--flag=value`, or a flag
+ * known to take no value. After any other option it may be that option's value.
+ */
+const standsAlone = (args: readonly string[], at: number): boolean => {
+  const before = args[at - 1] ?? "";
+  const end = args.indexOf("--");
+  return (
+    (end < 0 || at < end) && (!before.startsWith("-") || before.includes("=") || BARE.has(before))
+  );
+};
+/** A clearing word (`--help`, `--dry-run`) present and standing alone. */
+const flagged = (args: readonly string[], flag: RegExp): boolean =>
+  args.some((arg, at) => flag.test(arg) && standsAlone(args, at));
+/** `ytrack … --help` (or `-h`) standing alone: it only prints help. */
+const asksHelp = (args: readonly string[]): boolean => flagged(args, /^(?:--help|-h)$/);
 
 /**
  * ytrack's command groups Workit judges, with their aliases. The repo's own
@@ -186,24 +194,36 @@ const classify = (args: readonly string[]): Mapped | null => {
   if (asksHelp(args)) return null;
   // The words that are no option or option value: the group, its verb, then
   // operands, past global flags such as `--host <h>`, `--debug`, `--no-color`.
-  const words = args.filter((arg, at) => !arg.startsWith("-") && !VALUE.has(args[at - 1] ?? ""));
+  // An option Workit does not know may take the next word or not: read both
+  // ways, and the stricter reading (the one that finds a write) wins.
+  const lenient = args.filter((arg, at) => !arg.startsWith("-") && !VALUE.has(args[at - 1] ?? ""));
+  const strict = args.filter((arg, at) => !arg.startsWith("-") && standsAlone(args, at));
+  return judge(args, lenient) ?? judge(args, strict);
+};
+
+/** The write `args` makes, read with `words` as its group, verb and operands. */
+const judge = (args: readonly string[], words: readonly string[]): Mapped | null => {
   const group = GROUPS[words[0] ?? ""];
   const verb = words[1] ?? "";
   if (group === "api") {
-    const method =
-      valueOf(args, "-X", "--method") ??
-      args
-        .find((a) => /^-X./.test(a))
-        ?.slice(2)
-        .replace(/^=/, "");
-    return (method ? ASKS.test(method) : args.some((a) => BODY.test(a))) ? UNCOVERED : null;
+    // A write method anywhere makes it a write; only a read method standing alone clears a body.
+    const methods = args.flatMap((arg, at) =>
+      /^(?:-X|--method)$/.test(arg)
+        ? [{ value: args[at + 1] ?? "", alone: standsAlone(args, at) }]
+        : /^(?:-X.|--method=)/.test(arg)
+          ? [{ value: arg.replace(/^(?:-X=?|--method=)/, ""), alone: standsAlone(args, at) }]
+          : [],
+    );
+    if (methods.some((method) => ASKS.test(method.value))) return UNCOVERED;
+    if (methods.some((method) => method.alone)) return null;
+    return args.some((a) => BODY.test(a)) ? UNCOVERED : null;
   }
   if (group === "work-item" && /^(?:add|create)$/.test(verb)) return mapWrite("time", args);
   if (group === "work-item") return /^(?:edit|update|delete|rm)$/.test(verb) ? UNCOVERED : null;
   if (group !== "issue") return null;
   if (verb === "comment") return mapWrite("note", args);
   if (verb === "create") return mapWrite("create", args);
-  if (verb === "command") return args.includes("--dry-run") ? null : UNCOVERED;
+  if (verb === "command") return flagged(args, /^--dry-run$/) ? null : UNCOVERED;
   return /^(?:edit|update|delete|rm)$/.test(verb) ? UNCOVERED : null;
 };
 
