@@ -4,6 +4,7 @@
 // wrapper starts only after the world passes the self-check. HOME points at a
 // fake real home for the whole file, so a broken isolation lands there and
 // never in the account's.
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -14,13 +15,16 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { EvalCase } from "@/scripts/eval/cases";
-import { linkLogin, permitsShellWrappers, selfCheck } from "@/scripts/eval/isolation";
+import { carryBack, linkLogin, permitsShellWrappers, selfCheck } from "@/scripts/eval/isolation";
 import { opencodeEnv } from "@/scripts/eval/opencode";
 import { childEnv, main } from "@/scripts/eval/run";
 import { makeWorld, type World } from "@/scripts/eval/scaffold";
@@ -46,9 +50,25 @@ beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), "workit-isolation-test-"));
   roots.push(root);
   realHome = path.join(root, "real-home");
-  for (const dir of [".claude", ".local/share/opencode", ".config/workit"])
+  for (const dir of [
+    ".claude/skills",
+    ".local/share/opencode",
+    ".cache/opencode",
+    ".config/workit",
+  ])
     mkdirSync(path.join(realHome, dir), { recursive: true });
-  writeFileSync(path.join(realHome, ".claude.json"), "{}");
+  writeFileSync(path.join(realHome, ".claude.json"), '{"oauthAccount":{}}', { mode: 0o600 });
+  writeFileSync(path.join(realHome, ".claude", ".credentials.json"), "token-1", { mode: 0o600 });
+  writeFileSync(path.join(realHome, ".claude", "settings.json"), '{"permissions":{}}');
+  writeFileSync(path.join(realHome, ".claude", "CLAUDE.md"), "house rules");
+  writeFileSync(path.join(realHome, ".local", "share", "opencode", "auth.json"), "{}");
+  const db = new Database(path.join(realHome, ".local", "share", "opencode", "opencode.db"));
+  db.run("CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT)");
+  db.run("CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT)");
+  db.run("CREATE INDEX session_title ON session (title)");
+  db.run("INSERT INTO credential VALUES ('c1', 'opencode', 'sk-zen')");
+  db.run("INSERT INTO session VALUES ('s1', 'a private session')");
+  db.close();
   writeFileSync(path.join(realHome, ".config", "workit", "workspaces.json"), '{"workspaces":[]}');
   process.env.HOME = realHome;
 });
@@ -94,12 +114,59 @@ test.each(["claude-code", "opencode"] as const)(
   "Given a %s world, Then only the host's own login is linked in from the real home",
   (host) => {
     const { world } = worldFor(host);
-    const login = host === "claude-code" ? ".claude" : ".local/share/opencode";
-    expect(readlinkSync(path.join(world.home, login))).toBe(path.join(realHome, login));
-    expect(existsSync(path.join(world.home, ".config", "workit"))).toBe(false);
-    expect(lstatSync(world.home).isSymbolicLink()).toBe(false);
+    const dir = host === "claude-code" ? ".claude" : ".local/share/opencode";
+    if (host === "claude-code")
+      expect(readlinkSync(path.join(world.home, ".claude/.credentials.json"))).toBe(
+        path.join(realHome, ".claude/.credentials.json"),
+      );
+    else {
+      // OpenCode's keys are rows in its db: a copy with only those, never the real db.
+      const db = new Database(path.join(world.home, dir, "opencode.db"), { readonly: true });
+      expect(db.query("SELECT value FROM credential").all()).toEqual([{ value: "sk-zen" }]);
+      expect(db.query("SELECT count(*) AS n FROM session").get()).toEqual({ n: 0 });
+      db.close();
+      expect(lstatSync(path.join(world.home, dir, "opencode.db")).isSymbolicLink()).toBe(false);
+    }
+    // A real dir: `cd -P ~/.claude/..` stays in the world.
+    expect(lstatSync(path.join(world.home, dir)).isDirectory()).toBe(true);
+    expect(realpathSync(path.join(world.home, dir, ".."))).not.toStartWith(realHome);
+    for (const absent of [
+      ".claude/settings.json",
+      ".claude/CLAUDE.md",
+      ".claude/skills",
+      ".local/share/opencode/auth.json",
+      ".cache/opencode",
+      ".config/workit",
+    ])
+      expect(existsSync(path.join(world.home, absent))).toBe(false);
+    if (host === "claude-code") {
+      const copy = path.join(world.home, ".claude.json");
+      expect(lstatSync(copy).isFile()).toBe(true);
+      expect(readFileSync(copy, "utf8")).toBe('{"oauthAccount":{}}');
+    }
   },
 );
+
+test("Given the host refreshed its credential in place, Then the real file has it and nothing is carried back", () => {
+  const { world } = worldFor("claude-code");
+  writeFileSync(path.join(world.home, ".claude", ".credentials.json"), "token-2");
+  expect(readFileSync(path.join(realHome, ".claude", ".credentials.json"), "utf8")).toBe("token-2");
+  expect(carryBack(world.home, "claude-code", realHome)).toEqual([]);
+});
+
+test("Given the host refreshed its credential by rename over the link, Then the new bytes are written back into the real file in place", () => {
+  const { world } = worldFor("claude-code");
+  const real = path.join(realHome, ".claude", ".credentials.json");
+  const inode = statSync(real).ino;
+  const tmp = path.join(world.home, ".claude", "tmp");
+  writeFileSync(tmp, "token-3");
+  renameSync(tmp, path.join(world.home, ".claude", ".credentials.json"));
+
+  expect(carryBack(world.home, "claude-code", realHome)).toEqual([real]);
+  expect(readFileSync(real, "utf8")).toBe("token-3");
+  expect(statSync(real).ino).toBe(inode);
+  expect(statSync(real).mode & 0o777).toBe(0o600);
+});
 
 const WRITER = `#!/bin/sh
 # Every way #822's agent could reach the config: $HOME, ~, python, the CLI.
@@ -211,6 +278,15 @@ test("Given a case that permits python3 and a world whose workit resolves a path
   expect(stored.refused).toBe("isolation");
   expect(stored.grade.failures[0].rule).toBe("isolation");
   expect(stored.grade.failures[0].detail).toContain("/etc/workit-outside");
+});
+
+test("Given a case that permits python3 and a world whose workit prints no path, When run, Then the host never starts: no path is no proof", () => {
+  const lines: string[] = [];
+  const { starts } = bench("ok", lines);
+  expect(starts).toBe(0);
+  const stored = JSON.parse(readFileSync(path.join(root, "results", "haiku", "wrap.json"), "utf8"));
+  expect(stored.refused).toBe("isolation");
+  expect(stored.grade.failures[0].detail).toContain("no path in its output");
 });
 
 test("Given a case that permits python3 and a world that passes the self-check, When run, Then the host starts", () => {

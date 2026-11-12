@@ -28,6 +28,7 @@ import {
   type Provider,
 } from "./opencode";
 import {
+  carryBack,
   isolateHome,
   linkLogin,
   permitsShellWrappers,
@@ -397,6 +398,8 @@ type Options = {
   guard: Guard;
   /** The tripwire's lock, on-disk snapshot and rescued bytes (tripwire.ts). */
   tripwire: string;
+  /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
+  carried: string[];
   /** The account home the host's login is linked from. */
   realHome: string;
 };
@@ -454,6 +457,7 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
       const run = attempt(spec, opts, opencodeArgs(provider), env, world);
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
     } finally {
+      opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
       rmSync(world.dir, { recursive: true, force: true });
     }
     if (last.limit === null) return last;
@@ -474,6 +478,7 @@ const runClaude = (spec: EvalCase, opts: Options): Attempt => {
       limit: null,
     };
   } finally {
+    opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
     rmSync(world.dir, { recursive: true, force: true });
   }
 };
@@ -750,6 +755,7 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       : guardFor(accountHome(), process.env),
     realHome: path.resolve(values["real-home"] ?? accountHome()),
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
+    carried: [],
   };
   const holder = acquire(opts.tripwire);
   if (holder !== null) {
@@ -843,6 +849,10 @@ const bench = (
       const result = runCase(spec, key, version, opts, run);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
+      if (opts.carried.length > 0)
+        print(
+          `    the host refreshed its login by rename; written back to ${opts.carried.splice(0).join(", ")}`,
+        );
       if (result.outsideWrite) {
         writeSummary(dir);
         print(
