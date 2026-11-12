@@ -461,6 +461,12 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   a `merge.unverified` ledger row, but never over a current independent
   failed verdict ([grants](grants.md#merging)). `type-check-only` never
   satisfies the gate.
+- A verdict recorded in another clone or worktree of the same remote counts,
+  even after that clone is deleted, and the PR branch need not be local:
+  `workit pr merge --pr <n>` reads the head from the forge, fetches that
+  commit for the check, and removes the ref it made. A local branch at another
+  commit is still refused `head_mismatch`; a head it cannot fetch is refused
+  `head_unfetched` with the head SHA and the `git fetch` to run.
 - `pr merge` ends one of two ways. A merge exits 0 and prints
   `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout.
   Anything else exits non-zero and ends with
