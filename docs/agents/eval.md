@@ -84,8 +84,9 @@ same question of each and never takes a per-host answer.
 Each case gets a throwaway world under the OS temp dir: a git repo on the
 case's branch with its files, uncommitted changes, `.workit/checks.json`, an
 optional bare `origin` and an optional second worktree, plus its own
-`WORKIT_STATE_DIR` and `WORKIT_CONFIG_DIR` (branch policy: `feature/*`
-allowed, `main` protected). Then, in the repo:
+`WORKIT_STATE_DIR`, `WORKIT_CONFIG_DIR` (branch policy: `feature/*`
+allowed, `main` protected) and `HOME` ([isolation](#isolation-and-the-tripwire)).
+Then, in the repo:
 
 ```bash
 claude -p --model <m> --output-format stream-json --verbose --max-turns <n> \
@@ -113,6 +114,42 @@ transcript.
 The transcript is stored with the world path (and Claude's project slug of
 it) as `<world>`, the checkout as `<workit>`, the home dir as `~` and the
 login name as `<user>`.
+
+## Isolation and the tripwire
+
+A bench run must never change your real Workit files (#822: a run rewrote
+`~/.config/workit/workspaces.json` through a `python3` heredoc).
+
+- **World HOME.** `HOME` and the four `XDG_*_HOME` bases point inside the
+  world, so `~`, `$HOME` and every Workit path derived from them (config,
+  grants, state, `approvals/`, the issued registry) resolve there. Only the
+  host's login is symlinked in from the real home: Claude Code's `~/.claude`,
+  `~/.claude.json` and its `share`, `state` and `cache` dirs; OpenCode's
+  `~/.opencode` and its `share`, `state` and `cache` dirs. Links, not copies:
+  both hosts refresh their tokens in place.
+- **Grants dir.** Workit reads grants from the account home (the OS record,
+  never `$HOME`, D15). The bench runs the CLI and hooks from this checkout
+  with bun, and under bun that record follows `$HOME`, so it is the world's
+  too. A plugin dir that runs Workit on node would read the real one: the
+  self-check catches that.
+- **Self-check.** Before a case whose prompt names a shell wrapper (`bash`,
+  `sh`, `python3`, `node`, `bun`, `eval`, ...), or whose allow list or
+  permission mode lets one run, the runner resolves every guarded path in a
+  child with the run's env (`run.ts --isolation-probe`: the real resolvers,
+  then `workit dir config|state`, `workit grant show`, `workit workspace
+  list`). Any path outside the world refuses the case: the host never starts
+  and the run fails as `isolation`.
+- **Tripwire.** Before each run the runner snapshots the real guarded files:
+  `workspaces.json`, its `.bak` and `config.json` in the account's config dir
+  (and the one your env points at), and `approvals/`, `issued/` and
+  `issued-tokens/` in the state dir. After the run a changed or deleted file
+  is put back byte for byte (a created config file is removed), the run fails
+  as `outside_write` naming each path and the transcript, no further run
+  starts, and the runner exits 3. A new state file is reported, not removed:
+  a live session may have made it. `--replay` never re-grades such a run.
+- **Limits.** No unprivileged user namespace here (Ubuntu's AppArmor
+  restriction), so a write to the real home's absolute path, or through
+  `~/.claude/..`, is not stopped; the tripwire catches it.
 
 ## Cases
 
