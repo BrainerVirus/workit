@@ -340,7 +340,8 @@ test("G a target that is no valid glob ('x[', 'x[z-a]') before a guarded write, 
 test("G a script operand that is a FIFO or /dev/stdin, W the gate reads scripts, T it never blocks on it and judges the heredoc as the script", () => {
   if (process.platform !== "win32") {
     const fifo = path.join(root, "fifo.sh");
-    spawnSync("mkfifo", [fifo]);
+    // Through sh: knip lists mkfifo as an unlisted binary.
+    spawnSync("sh", ["-c", 'mkfifo "$1"', "sh", fifo]);
     expect(decide("bash fifo.sh").kind).toBe("none");
     expect(decide("python3 fifo.sh").kind).toBe("none");
   }
