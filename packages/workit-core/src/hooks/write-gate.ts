@@ -1841,21 +1841,17 @@ export function shellGate(
   } catch {
     // The registry check is never dropped: a command it could not analyse that
     // names a guarded path is denied.
-    const text = command
-      .replace(/['"\\]/g, "")
-      .replaceAll("\\", "/")
-      .toLowerCase();
+    const text = command.replaceAll("\\", "/").replace(/['"]/g, "").toLowerCase();
     if (
       /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(text) ||
       [resolveStateDir(), ...configDirs()].some((dir) =>
         text.includes(dir.replaceAll("\\", "/").toLowerCase()),
       )
     ) {
-      const unblock =
-        "Split the command so each write is a plain command Workit can read; a change to the user's Workit config is theirs to make: ask them to run `workit grant set <ws> <kind>=<value>` in a terminal outside this host.";
+      const { unblock } = REGISTRY_DENY.grants;
       return {
         kind: "deny",
-        reason: `workit registry guard: Workit could not analyse this command, and it names Workit's issued or approvals registry or the user's workspaces.json. ${unblock}`,
+        reason: `workit registry guard: Workit could not analyse this command, which names a guarded path; split it into plain commands. ${unblock}`,
         unblock,
       };
     }
