@@ -10,7 +10,11 @@ import {
 import path from "node:path";
 import { createHash } from "node:crypto";
 import pkg from "../../package.json" with { type: "json" };
-import { claudeWorkitInstalls } from "../admin/host-install";
+import {
+  claudeConfigDir,
+  claudeStaleWorkitRecords,
+  claudeWorkitInstalls,
+} from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
 import { type HostCommandResult } from "../admin/host-install";
 import { recordHookNode } from "../admin/hook-node";
@@ -95,11 +99,53 @@ const applyInstallPreview = async (
   });
 };
 
+/** Where the upgrade backup keeps its copy of a config file. */
+const backupCopy = (backup: string, file: string): string =>
+  path.join(
+    backup,
+    createHash("sha256").update(file).digest("hex").slice(0, 12) + "-" + path.basename(file),
+  );
+
+const CLAUDE_INSTALL = "claude plugin install workit@workit --scope user";
+
+/**
+ * A failed Claude Code repair, said plainly: the state the registry is left
+ * in (a successful uninstall before a failed install leaves no Workit record),
+ * the command to rerun, and the registry's copy in the upgrade backup. Nothing
+ * restores the backup by itself.
+ */
+const claudeRepairFailure = (
+  problems: string,
+  paths: ReturnType<typeof upgradePaths>,
+  backup: string | undefined,
+  fix: string,
+): HostOutcome => {
+  const { home, env } = paths;
+  const registry = path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
+  const none =
+    claudeWorkitInstalls(home, env, null).length === 0 &&
+    claudeStaleWorkitRecords(home, env).length === 0;
+  const state = none
+    ? `${registry} now has no Workit record, so Claude Code loads no Workit plugin until you rerun ${CLAUDE_INSTALL}`
+    : `${registry} still lists Workit; rerun ${fix}`;
+  const copy = backup ? backupCopy(backup, registry) : null;
+  return {
+    host: "claude-code",
+    status: "failed",
+    reason: `repair failed: ${problems}; ${state}${copy && existsSync(copy) ? `; registry before the repair: ${copy}` : ""}`,
+    fix: none ? CLAUDE_INSTALL : fix,
+  };
+};
+
 /** Repair a registered-but-broken host with its host-only install, then prove it: a second plan is empty. */
 const applyRepair = async (
   entry: PlanEntry,
   preview: SetupPreview,
-  context: { runAsync: ReturnType<typeof asyncRunner>; paths: ReturnType<typeof upgradePaths> },
+  context: {
+    runAsync: ReturnType<typeof asyncRunner>;
+    paths: ReturnType<typeof upgradePaths>;
+    backup?: string;
+  },
 ): Promise<HostOutcome> => {
   const { home, env, configDir, opencodeConfig } = context.paths;
   const options = { home, env, cwd: home, dir: configDir, opencodeConfig };
@@ -113,6 +159,8 @@ const applyRepair = async (
   const problems = result.entries
     .filter((one) => one.status === "Failed")
     .map((one) => briefDetail(one.detail ?? `${one.file} failed`));
+  if (problems.length && entry.host === "claude-code")
+    return claudeRepairFailure(problems.join("; "), context.paths, context.backup, entry.fix);
   if (problems.length) return fail(`repair failed: ${problems.join("; ")}`);
   // Pi may install into a root only `pi list` names: prove the repair there.
   let piPackageRoot: string | null = null;
@@ -215,6 +263,7 @@ const applyEntry = async (
     paths: ReturnType<typeof upgradePaths>;
     configDir: string;
     opencodeReady?: UpgradeDeps["opencodeReady"];
+    backup?: string;
   },
 ): Promise<HostOutcome> => {
   const { runAsync, paths, configDir } = context;
@@ -428,10 +477,7 @@ export async function applyUpgrade(
   mkdirSync(backup, { recursive: true, mode: 0o700 });
   for (const file of Object.keys(plan.configDigests))
     if (existsSync(file)) {
-      const target = path.join(
-        backup,
-        createHash("sha256").update(file).digest("hex").slice(0, 12) + "-" + path.basename(file),
-      );
+      const target = backupCopy(backup, file);
       copyFileSync(file, target);
       chmodSync(target, 0o600);
     }
@@ -544,6 +590,7 @@ export async function applyUpgrade(
           paths,
           configDir,
           opencodeReady: deps.opencodeReady,
+          backup,
         });
         if (entry.host === "codex" && outcome.status === "updated") {
           const agents = await refreshCodexAgents(runAsync, paths.codexHome);

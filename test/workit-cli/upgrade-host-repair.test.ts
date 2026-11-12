@@ -301,3 +301,34 @@ test("Given Pi installs Workit into a root only `pi list` names, When upgrade re
     expect.objectContaining({ host: "pi", reason: "already current (2.0.0)" }),
   ]);
 });
+
+test("Given the Claude Code repair's uninstall succeeds and its install fails, Then the failed row names the registry's state, the command to rerun and the backup", async () => {
+  const w = world();
+  const registry = path.join(w.home, ".claude/plugins/installed_plugins.json");
+  rmSync(path.join(w.home, ".claude/plugins/cache"), { recursive: true });
+  const original = readFileSync(registry, "utf8");
+  w.effects.claude = (args) => {
+    if (args[1] === "uninstall") write(registry, { version: 2, plugins: {} });
+  };
+  const run = (command: string, args: string[]) =>
+    path.basename(command) === "claude" && args[1] === "install"
+      ? { status: 1, stdout: "", stderr: "network unreachable" }
+      : w.deps.run(command, args);
+  const deps = { ...w.deps, run };
+  const result = await applyUpgrade(previewUpgrade(["claude-code"], deps), deps);
+  const row = result.hosts.find((entry) => entry.host === "claude-code");
+  expect(row?.status).toBe("failed");
+  expect(row?.fix).toBe("claude plugin install workit@workit --scope user");
+  expect(row?.reason).toContain("network unreachable");
+  expect(row?.reason).toContain(
+    `${registry} now has no Workit record, so Claude Code loads no Workit plugin until you rerun claude plugin install workit@workit --scope user`,
+  );
+  const backup = readdirSync(result.backup!).find((name) =>
+    name.endsWith("-installed_plugins.json"),
+  );
+  expect(backup).toBeDefined();
+  expect(row?.reason).toContain(
+    `registry before the repair: ${path.join(result.backup!, backup!)}`,
+  );
+  expect(readFileSync(path.join(result.backup!, backup!), "utf8")).toBe(original);
+});
