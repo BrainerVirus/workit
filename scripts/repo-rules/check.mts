@@ -22,7 +22,17 @@ const OXLINT = path.join(REPO, "node_modules/oxlint/bin/oxlint");
 const BASELINE = "scripts/repo-rules/baseline.json";
 const WRITE = "bun run lint:rules --write";
 
-export type Hit = { rule: string; file: string; line: number; column: number; message: string };
+export type Hit = {
+  rule: string;
+  file: string;
+  line: number;
+  column: number;
+  /** A byte offset, for a hit the private-names scan found in raw bytes. */
+  byte?: number;
+  message: string;
+};
+const where = (hit: Hit): string =>
+  hit.byte === undefined ? `${hit.file}:${hit.line}:${hit.column}` : `${hit.file}@${hit.byte}`;
 /** rule -> repo-relative file -> hits allowed. */
 export type Baseline = Record<string, Record<string, number>>;
 type Io = { out: (line: string) => void; err: (line: string) => void };
@@ -189,8 +199,7 @@ export function main(args: readonly string[], io: Io): number {
   }
   const { over, stale } = compare(hits, baseline);
   for (const entry of over) {
-    for (const hit of entry.hits)
-      io.err(`${hit.file}:${hit.line}:${hit.column} workit/${hit.rule}: ${hit.message}`);
+    for (const hit of entry.hits) io.err(`${where(hit)} workit/${hit.rule}: ${hit.message}`);
     if (entry.allowed > 0)
       io.err(
         `  ${entry.file} has ${entry.hits.length} workit/${entry.rule} hits; the baseline allows ${entry.allowed}: fix the new one`,
