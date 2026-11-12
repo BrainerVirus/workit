@@ -58,6 +58,7 @@ import {
   workitVocabulary,
   type Account,
   type PrivateSet,
+  type Scrub,
 } from "./privacy";
 import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
 import {
@@ -200,9 +201,10 @@ const writeJson = (file: string, value: unknown): void => {
 /**
  * Path- and user-free transcripts: the world (also as Claude's project slug),
  * the checkout, the account's home, user and host become placeholders, and a
- * read outside the world keeps only its path class and length (privacy.ts).
+ * tool result that may hold what a call read outside the world keeps only its
+ * path class, its length and the grader's answers about it (privacy.ts).
  */
-const sanitize = (text: string, world: World, account: Account): string =>
+const sanitize = (text: string, world: World, account: Account, scrub: Scrub): string =>
   scrubOutsideReads(
     scrubAccount(
       text
@@ -211,6 +213,7 @@ const sanitize = (text: string, world: World, account: Account): string =>
         .replaceAll(REPO, "<workit>"),
       account,
     ),
+    scrub,
   );
 
 /** Why `files` (name to text) may not be written: each file with the kinds of private string it holds. */
@@ -598,7 +601,14 @@ const attempt = async (
   clearInterval(watch);
   killGroup(child);
   opts.child = null;
-  return { transcript: sanitize(stdout, world, opts.account), stderr, exit, timedOut };
+  // Only Landlock read confinement says what the host could read.
+  const bounded = opts.confinement.on && opts.confinement.reads.on;
+  return {
+    transcript: sanitize(stdout, world, opts.account, { bounded, spec }),
+    stderr,
+    exit,
+    timedOut,
+  };
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */

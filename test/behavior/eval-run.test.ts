@@ -216,6 +216,57 @@ test("Given a run that read the real Workit config, Then the stored transcript k
   );
 });
 
+test("Given no read confinement and a call a rule forbids by its result, When run, Then the stored transcript holds no tool output, the grade still fails and --replay agrees", async () => {
+  writeFileSync(
+    path.join(root, "cases", "a-smoke.json"),
+    JSON.stringify({
+      id: "a-smoke",
+      source: "test",
+      tier: "smoke",
+      prompt: "p",
+      expect: {
+        forbid: [
+          { tool: "Bash", pattern: "^tool set", result: "updated|->", why: "the user's call" },
+        ],
+      },
+    }),
+  );
+  const result = (id: string, content: string): string =>
+    JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: id, content }] },
+    });
+  const call = (id: string, command: string): string =>
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+    });
+  writeFileSync(
+    path.join(root, "out.jsonl"),
+    [
+      call("t1", "tool set work --level $L"),
+      result("t1", "updated work -> write-example"),
+      call("t2", "cat notes.txt"),
+      result("t2", "notes-example"),
+      JSON.stringify({ type: "result", subtype: "success", num_turns: 2 }),
+    ].join("\n"),
+  );
+  const printed: string[] = [];
+  expect(await main(["--model", "haiku", "--budget-runs", "1", ...argv], quiet(printed))).toBe(1);
+  const dir = path.join(root, "results", "haiku");
+  const stored = readFileSync(path.join(dir, "a-smoke.transcript.jsonl"), "utf8");
+  expect(stored).not.toContain("write-example");
+  expect(stored).not.toContain("notes-example");
+  expect(stored).toContain('"content":"<outside-world file: unresolved, 29 bytes>"');
+  expect(stored).toContain('"content":"<outside-world file: unbounded, 13 bytes>"');
+  expect(stored).toContain('"facts":{"/updated|->/":true}');
+  const grade = JSON.parse(readFileSync(path.join(dir, "a-smoke.json"), "utf8")).grade;
+  expect(grade.pass).toBe(false);
+  expect(grade.failures.map((failure: { rule: string }) => failure.rule)).toEqual(["forbid"]);
+  expect(JSON.stringify(grade)).not.toContain("write-example");
+  expect(await main(["--replay", "--check", ...argv], quiet([]))).toBe(0);
+});
+
 test("Given a transcript still holding a value of the real Workit config, When run, Then it fails as private_content naming the kind and nothing is written", async () => {
   mkdirSync(path.join(root, "home", ".config", "workit"), { recursive: true });
   writeFileSync(

@@ -1,16 +1,26 @@
 // Bench privacy: evals/results is committed to a public repo, so before the
 // runner writes a result it (1) rewrites the account's home, user and host
-// names, (2) replaces the result of every tool call that read or listed a
-// path outside the world with a marker naming only the path class and byte
-// length, and (3) refuses to write a file that still holds a string from the
-// real account (its Workit config values, its host's project paths, its git
-// identity, its home). The private set lives in memory only: never written,
-// never logged; a refusal names the file and the kind of string, never it.
+// names, (2) removes tool results, leaving a marker with the path class and
+// byte length, and (3) refuses to write a file that still holds a string from
+// the real account (its Workit config values, its host's project paths, its
+// git identity, its home). The private set lives in memory only: never
+// written, never logged; a refusal names the file and the kind of string,
+// never it.
+//
+// (2) does not decide what a call read: no reader of a command's text can (a
+// glob, a quote, a script the model wrote, an interpreter). The kernel does.
+// When Landlock confined the host's reads, a call could only read the world
+// and the read rules, so a result stays unless the call names a path outside
+// the world. When nothing confined them, no result of a call that ran stays.
+// A removed result keeps the grader's own answers about its text (grade.ts
+// `callFacts`), so removing it never changes a grade.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { workitDir } from "../../packages/workit-core/src/core/workit-paths.mjs";
+import type { EvalCase } from "./cases";
+import { callFacts, type Facts } from "./grade";
 
 // ------------------------------------------------------------ spellings
 
@@ -58,7 +68,9 @@ export type PathClass =
   | "host config"
   | "home"
   | "unresolved"
-  | "system";
+  | "system"
+  /** Nothing bounded what the call could read, and it names no outside path. */
+  | "unbounded";
 
 const CLASSES: [RegExp, PathClass][] = [
   [/^~\/\.config\/workit(?:\/|$)/u, "real config"],
@@ -235,7 +247,7 @@ const callClass = (tool: string, input: Record<string, unknown>): PathClass | nu
   return classes.length === 0 ? null : (RANK.find((each) => classes.includes(each)) ?? "system");
 };
 
-/** A host's or a hook's refusal: Workit's or the host's words, no file content, and the grader reads it. */
+/** A host's or a hook's refusal by its text: Workit's or the host's words, no file content. */
 const DENIAL =
   /^(?:PreToolUse:\S+ hook (?:blocking )?error|Permission denied: \w+$|Claude requested permissions)/u;
 
@@ -259,8 +271,11 @@ type Json = Record<string, unknown>;
 const record = (value: unknown): Json | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Json) : null;
 
-/** Claude Code stream-json: a tool_result whose tool_use read outside the world. */
-const scrubClaude = (lines: (Json | null)[]): void => {
+/** What the grader says of each call, by id (grade.ts `callFacts`), and whether the kernel bounded the host's reads. */
+type Known = { calls: ReturnType<typeof callFacts>; bounded: boolean };
+
+/** Claude Code stream-json: a tool_result whose tool_use ran and may hold what it read. */
+const scrubClaude = (lines: (Json | null)[], known: Known): void => {
   const calls = new Map<string, PathClass | null>();
   for (const event of lines) {
     const content = record(event?.message)?.content;
@@ -276,32 +291,60 @@ const scrubClaude = (lines: (Json | null)[]): void => {
     const resolved = typeof file?.filePath === "string" ? pathClass(file.filePath) : null;
     for (const block of content.map(record)) {
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-      const kind = calls.get(block.tool_use_id) ?? resolved;
-      if (!kind || DENIAL.test(textOf(block.content))) continue;
+      const call = known.calls.get(block.tool_use_id);
+      const kind = calls.get(block.tool_use_id) ?? resolved ?? (known.bounded ? null : "unbounded");
+      // A refused call never ran; a result already removed keeps its marker and facts.
+      if (!kind || call?.denied || "facts" in block || DENIAL.test(textOf(block.content))) continue;
       block.content = marker(kind, block.content);
+      block.facts = call?.facts ?? ({} satisfies Facts);
       if ("tool_use_result" in event) event.tool_use_result = marker(kind, event.tool_use_result);
     }
   }
 };
 
-/** OpenCode `run --format json`: a tool part whose input reads outside the world. */
-const scrubOpencode = (lines: (Json | null)[]): void => {
+/** OpenCode `run --format json`: a tool part that ran and may hold what it read. */
+const scrubOpencode = (lines: (Json | null)[], known: Known): void => {
   for (const event of lines) {
     const part = record(event?.part);
     const state = record(part?.state);
     if (event?.type !== "tool_use" || !part || !state) continue;
-    const kind = callClass(String(part.tool ?? ""), record(state.input) ?? {});
-    if (!kind) continue;
+    const call = typeof part.id === "string" ? known.calls.get(part.id) : undefined;
+    const kind =
+      callClass(String(part.tool ?? ""), record(state.input) ?? {}) ??
+      (known.bounded ? null : "unbounded");
+    // A result already removed keeps its marker and facts.
+    if (!kind || "facts" in state) continue;
+    const before = JSON.stringify([state.output, state.error]);
     if (state.output !== undefined) state.output = marker(kind, state.output);
+    // A refusal is the host's words: the call never ran.
     if (state.error !== undefined && !DENIAL.test(textOf(state.error)))
       state.error = marker(kind, state.error);
+    if (JSON.stringify([state.output, state.error]) !== before)
+      state.facts = call?.facts ?? ({} satisfies Facts);
     for (const key of Object.keys(state))
-      if (!["status", "input", "output", "error", "title", "time"].includes(key)) delete state[key];
+      if (!["status", "input", "output", "error", "title", "time", "facts"].includes(key))
+        delete state[key];
   }
 };
 
-/** Both hosts' transcripts: every outside-world read keeps only its path class and byte length. */
-export const scrubOutsideReads = (transcript: string): string => {
+export type Scrub = {
+  /**
+   * The kernel confined the host's reads to the world and the read rules
+   * (Landlock): a result stays unless its call names a path outside the
+   * world. False: nothing says what a call read, so no result of a call that
+   * ran stays.
+   */
+  bounded: boolean;
+  /** The case being run: a removed result keeps the answers to its rules' `result` patterns. */
+  spec: Pick<EvalCase, "expect"> | null;
+};
+
+/**
+ * Both hosts' transcripts: a removed result keeps only its path class, its
+ * byte length and the grader's answers about its text. A refused call's
+ * result (it never ran) and every input stay.
+ */
+export const scrubOutsideReads = (transcript: string, { bounded, spec }: Scrub): string => {
   const raw = transcript.split("\n");
   const lines = raw.map((line) => {
     if (!line.trim().startsWith("{")) return null;
@@ -312,8 +355,9 @@ export const scrubOutsideReads = (transcript: string): string => {
     }
   });
   const before = lines.map((line) => (line ? JSON.stringify(line) : null));
-  if (lines.some((line) => typeof line?.sessionID === "string")) scrubOpencode(lines);
-  else scrubClaude(lines);
+  const known = { calls: callFacts(transcript, spec), bounded };
+  if (lines.some((line) => typeof line?.sessionID === "string")) scrubOpencode(lines, known);
+  else scrubClaude(lines, known);
   return raw
     .map((line, at) => {
       const event = lines[at];
