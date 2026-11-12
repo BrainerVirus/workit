@@ -3,26 +3,21 @@
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
   "provider": "free",
-  "workitVersion": "workit-dev-v1.7.0+16c7f0cd97",
-  "key": "5e38ebce0805b0b9",
-  "date": "2026-11-12T02:25:35.251Z",
+  "workitVersion": "workit-dev-v1.7.0+f14f98128a",
+  "key": "044ee5f6881da314",
+  "date": "2026-11-12T02:32:42.911Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 10,
-    "durationMs": 33207,
+    "turns": 6,
+    "durationMs": 14121,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": false,
-    "calls": 10,
-    "failures": [
-      {
-        "rule": "at-most",
-        "detail": "2 calls match /\\bgit( --cwd \\S+)? branch( --cwd \\S+)? --kind\\b|\\bgit (switch -c|checkout -b)\\b/, at most 1: the npx branch call runs as `workit git branch`: no denial, so no second branch call (#3, #7)"
-      }
-    ]
+    "pass": true,
+    "calls": 6,
+    "failures": []
   }
 }
