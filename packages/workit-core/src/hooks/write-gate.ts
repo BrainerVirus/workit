@@ -980,6 +980,14 @@ const homeExpanded = (file: string): string => {
 };
 
 /**
+ * How far segmentTargets looks: false, the edit analysis; true, an
+ * implementer's confinement (opaque writers, `-c` scripts, unknowns as
+ * placeholders); "registry", that plus what only the registry guard reads
+ * (eval, a heredoc-fed shell, a scripted editor, a script held in a variable).
+ */
+type Strict = boolean | "registry";
+
+/**
  * Per top-level segment, the files it writes (redirects, `touch`, `rm`,
  * `sed -i`…) and `workit git commit|branch|stage|unstage`, resolved against the
  * directory that segment runs in (`cd`, `pushd`/`popd`, `( … )` groups). A
@@ -990,7 +998,7 @@ const segmentTargets = (
   command: string,
   dialect: ShellDialect,
   depth = 0,
-  strict = false,
+  strict: Strict = false,
   inherited: ReadonlyMap<string, string> = new Map(),
 ): string[] => {
   const targets: string[] = [];
@@ -1163,7 +1171,11 @@ const segmentTargets = (
       moved(plain);
       continue;
     }
-    const inner = depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+    const literal =
+      depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+    // `S='…'; bash -c "$S"`: the script a variable set in this command holds.
+    const held = literal !== null && strict === "registry" ? expansions(literal, vars, loops) : [];
+    const inner = held.length === 1 ? held[0] : literal;
     const unPwd = () => new Map([...vars].filter(([key]) => key !== "PWD"));
     if (inner !== null && dir !== undefined)
       for (const runIn of workitRunDir(dir, words, atAll))
@@ -1178,10 +1190,38 @@ const segmentTargets = (
             runIn === dir ? vars : unPwd(),
           ),
         );
+    if (strict === "registry" && dir !== undefined && depth < 4) {
+      const run = words.slice(
+        Math.max(
+          0,
+          words.findIndex((word) => !PREFIXES.has(word)),
+        ),
+      );
+      const [verb = "", ...args] = run.map((word, index) =>
+        index ? word : (word.split(/[\\/]/).at(-1) ?? "").toLowerCase(),
+      );
+      const scripts =
+        verb === "eval"
+          ? [args.join(" ")]
+          : SCRIPT_SHELLS.has(verb) && !args.some((arg) => !arg.startsWith("-"))
+            ? (segment.stdin ?? [])
+            : [];
+      for (const script of scripts)
+        targets.push(...segmentTargets(dir, script, "posix", depth + 1, strict, vars));
+      // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
+      if (
+        /^(?:n?vim?|ex|ed|emacs)$/.test(verb) &&
+        (segment.stdin ||
+          args.some((arg) =>
+            /^(?:-[a-zA-Z]*[cse]|--(?:cmd|batch|eval|script))$|^\+(?!\d*$|\/)/.test(arg),
+          ))
+      )
+        for (const file of operands(args)) targets.push(...atAll(file));
+    }
     if (strict && dir !== undefined) {
       const runIn = dir;
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
-        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, true, vars));
+        targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, strict, vars));
       const expanding = new Set(segment.expands ?? []);
       const scriptOf = (index: number): string | undefined => {
         const word = body[index];
@@ -1214,8 +1254,14 @@ const segmentTargets = (
         for (const resolved of atAll(file))
           targets.push(file === "." ? path.join(resolved, here) : resolved);
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
-      if (ln >= 0 && words.slice(0, ln).every((word) => PREFIXES.has(word)))
-        targets.push(...linkSources(words.slice(ln + 1), at));
+      const lnArgs = words.slice(ln + 1);
+      // The registry guard: a hard link is a second name for its source; a symbolic one only points.
+      if (
+        ln >= 0 &&
+        words.slice(0, ln).every((word) => PREFIXES.has(word)) &&
+        (strict !== "registry" || !lnArgs.some((arg) => /^-[a-zA-Z]*s|^--symbolic$/.test(arg)))
+      )
+        targets.push(...linkSources(lnArgs, at));
     }
     for (const file of segment.redirects)
       if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
@@ -1272,7 +1318,7 @@ export const shellMutationTargets = (
   cwd: string,
   command: string,
   dialect: ShellDialect = "posix",
-  strict = false,
+  strict: Strict = false,
 ): string[] => {
   try {
     return [
@@ -1439,7 +1485,8 @@ export const underConfig = (
   real: (file: string) => string = (file) => file,
 ): boolean => {
   const parts = partsUnder(dir, cwd, target, platform, real);
-  return parts?.length === 1 && (parts[0] === "" || parts[0] === "workspaces.json");
+  // DIR_TARGET: a mutating git or an unknown edit run in the dir itself.
+  return parts?.length === 1 && ["", "workspaces.json", DIR_TARGET].includes(parts[0]);
 };
 
 /**
@@ -1488,9 +1535,11 @@ const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: st
 
 const registryDeny = ({ file, registry }: { file: string; registry: Registry }): HookDecision => {
   const { label, what, unblock } = REGISTRY_DENY[registry];
+  // A placeholder (`<dir>/.workit-live-target`) names the dir it stands in.
+  const named = path.basename(file).startsWith(".workit-") ? path.dirname(file) : file;
   return {
     kind: "deny",
-    reason: `workit ${label}: ${file} is under ${what}. ${unblock}`,
+    reason: `workit ${label}: ${named} is under ${what}. ${unblock}`,
     unblock,
   };
 };
@@ -1537,7 +1586,7 @@ export function shellGate(
   try {
     const windows = unquotedWindowsRegistry(command);
     const forged =
-      registryTarget(cwd, segmentTargets(cwd, command, dialect)) ??
+      registryTarget(cwd, shellMutationTargets(cwd, command, dialect, "registry")) ??
       (windows ? { file: `the ${windows} registry`, registry: windows } : null);
     if (forged) return registryDeny(forged);
   } catch {
