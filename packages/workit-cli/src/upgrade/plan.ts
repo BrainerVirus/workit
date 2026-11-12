@@ -9,6 +9,7 @@ import { readSetupState } from "../admin/setup-state";
 import { type HostId } from "../admin/detect-hosts";
 import {
   claudeConfigDir,
+  claudeRegistryProblem,
   claudeStaleWorkitRecords,
   claudeWorkitInstalls,
   hostCommand,
@@ -524,8 +525,20 @@ const planRepairs = (
         );
   // The first registration of each host names the repaired entry.
   const selectors = new Map(installed.toReversed().map((source) => [source.host, source.selector]));
+  // A registry Claude Code cannot be read from is reported, never read as healthy.
+  const claudeRegistry = hosts.includes("claude-code") ? claudeRegistryProblem(home, env) : null;
+  if (claudeRegistry) {
+    repaired.add("claude-code");
+    plan.failed.push({
+      host: "claude-code",
+      status: "failed",
+      reason: claudeRegistry,
+      fix: "repair the file Claude Code reads (claude plugin list), then workit upgrade --hosts=claude-code",
+    });
+  }
   for (const host of INSTALLER_REPAIRS) {
-    if (!hosts.includes(host) || conflicted.has(host) || !registered(host)) continue;
+    if (!hosts.includes(host) || conflicted.has(host) || repaired.has(host) || !registered(host))
+      continue;
     const repair = planHostOnlyInstall(host, {
       home,
       env,

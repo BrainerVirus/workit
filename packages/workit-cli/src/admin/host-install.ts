@@ -200,6 +200,46 @@ export const isPiWorkitInstalled = (
   }
 };
 
+/**
+ * Why a host's own JSON file cannot be read, as `cannot read <file>: <why>:
+ * not repaired`; null when it is missing or readable. `shape` names a key
+ * with the wrong shape. Nothing plans a rewrite of a file it cannot read.
+ */
+export const hostFileProblem = (
+  file: string,
+  shape: (value: Record<string, unknown>) => string | null = () => null,
+): string | null => {
+  if (!existsSync(file)) return null;
+  const problem = (why: string) => `cannot read ${file}: ${why}: not repaired`;
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return problem("not readable");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return problem("not valid JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return problem("not a JSON object");
+  const why = shape(value as Record<string, unknown>);
+  return why ? problem(why) : null;
+};
+
+const piSettingsFile = (home: string, env: NodeJS.ProcessEnv): string =>
+  path.join(env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent"), "settings.json");
+
+/** Pi's user settings, when they cannot be read. */
+export const piSettingsProblem = (home: string, env: NodeJS.ProcessEnv = process.env) =>
+  hostFileProblem(piSettingsFile(home, env), (settings) =>
+    settings.packages !== undefined && !Array.isArray(settings.packages)
+      ? "`packages` is not a list"
+      : null,
+  );
+
 const PI_PACKAGE = "@workit-dev/pi";
 const PI_EXTENSION = "dist/workit.js";
 
@@ -510,6 +550,21 @@ export const claudeStaleWorkitRecords = (
     )
     .map(([id]) => id);
 };
+
+/** Claude Code's plugin registry, when it cannot be read. */
+export const claudeRegistryProblem = (home: string, env: NodeJS.ProcessEnv = process.env) =>
+  hostFileProblem(
+    path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json"),
+    ({ plugins }) => {
+      if (plugins === undefined) return null;
+      if (!plugins || typeof plugins !== "object" || Array.isArray(plugins))
+        return "`plugins` is not an object";
+      const bad = Object.entries(plugins).find(
+        ([id, entries]) => id.startsWith("workit@") && !Array.isArray(entries),
+      );
+      return bad ? `\`${bad[0]}\` is not a list` : null;
+    },
+  );
 
 /** A Workit install Claude Code loads for this user (any project). */
 export const isClaudeWorkitInstalled = (

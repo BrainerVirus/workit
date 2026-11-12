@@ -416,3 +416,53 @@ test("Given a host id the planner does not know, Then it refuses with an error n
     );
   }
 });
+
+// --- Unreadable host registries ---
+
+test("Given Claude Code's plugin registry cannot be read, Then nothing is planned and a note names the file", () => {
+  const registry = (home: string) => path.join(home, ".claude/plugins/installed_plugins.json");
+  for (const [content, why] of [
+    ["{not json", "not valid JSON"],
+    [JSON.stringify({ version: 2, plugins: [] }), "`plugins` is not an object"],
+    [
+      JSON.stringify({ version: 2, plugins: { "workit@workit": {} } }),
+      "`workit@workit` is not a list",
+    ],
+  ]) {
+    const w = world();
+    write(registry(w.home), content);
+    const plan = w.plan("claude-code");
+    expect(plan.preview.mutations, why).toEqual([]);
+    expect(plan.notes).toContain(`cannot read ${registry(w.home)}: ${why}: not repaired`);
+  }
+});
+
+test("Given Pi's settings cannot be read, Then nothing is planned and a note names the file", () => {
+  const w = world();
+  const settings = path.join(w.home, ".pi/agent/settings.json");
+  write(settings, JSON.stringify({ packages: "npm:@workit-dev/pi" }));
+  const plan = w.plan("pi");
+  expect(plan.preview.mutations).toEqual([]);
+  expect(plan.notes).toContain(`cannot read ${settings}: \`packages\` is not a list: not repaired`);
+});
+
+test("Given Cursor's settings or mcp.json cannot be read, Then nothing is planned and a note names the file", () => {
+  for (const name of ["settings.json", "mcp.json"]) {
+    const w = world();
+    const file = path.join(w.home, ".cursor", name);
+    write(file, "{not json");
+    const plan = w.plan("cursor");
+    expect(plan.preview.mutations, name).toEqual([]);
+    expect(plan.notes).toContain(`cannot read ${file}: not valid JSON: not repaired`);
+  }
+});
+
+test("Given OpenCode's config cannot be read, Then the plan is blocked with the file's error", () => {
+  const w = world();
+  const config = path.join(w.home, ".config/opencode/opencode.json");
+  write(config, "{not json");
+  const plan = w.plan("opencode");
+  expect(plan.preview.ok).toBe(false);
+  expect(plan.preview.mutations).toEqual([]);
+  expect(plan.preview.blocked.join("\n")).toContain(`${config} is not valid JSON`);
+});

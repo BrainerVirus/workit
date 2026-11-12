@@ -257,3 +257,17 @@ test("Given Cursor registered with an empty plugin dir, When upgrade --hosts=cur
   ).toBe("2.0.0");
   expect(snapshot(w.home, skip)).toEqual(before);
 });
+
+test("Given Claude Code's plugin registry is not valid JSON, When upgrade previews Claude Code, Then it reports the file instead of reading as healthy", () => {
+  const w = world();
+  const registry = path.join(w.home, ".claude/plugins/installed_plugins.json");
+  write(registry, "{not json");
+  const plan = previewUpgrade(["claude-code"], w.deps);
+  expect(plan.entries).toEqual([]);
+  expect(plan.failed).toEqual([
+    expect.objectContaining({
+      host: "claude-code",
+      reason: `cannot read ${registry}: not valid JSON: not repaired`,
+    }),
+  ]);
+});

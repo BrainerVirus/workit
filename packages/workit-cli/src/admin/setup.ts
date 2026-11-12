@@ -65,6 +65,9 @@ import {
   isClaudeWorkitInstalled,
   claudeConfigDir,
   openCodeInstalledPlugin,
+  claudeRegistryProblem,
+  hostFileProblem,
+  piSettingsProblem,
   piWorkitPackage,
   planHostInstall,
   runHostInstall,
@@ -509,7 +512,7 @@ export function planHostOnlyInstall(
       notes.push(
         "OpenCode downloads and refreshes the npm package of its pin itself when it loads",
       );
-      if ("error" in registration) return plan(platformMutations(host, res));
+      if ("error" in registration) return plan([], [registration.error]);
       if (
         registration.pin.startsWith("file://") &&
         !existsSync(registration.pin.slice("file://".length))
@@ -518,6 +521,20 @@ export function planHostOnlyInstall(
           `the configured pin ${registration.pin} names a missing file; a local pin is kept as is: rebuild the checkout or change the pin`,
         );
       return plan(registered(registration) ? [] : platformMutations(host, res));
+    }
+    // A host file that cannot be read is reported, never rewritten.
+    const unreadable = (
+      host === "claude-code"
+        ? [claudeRegistryProblem(res.home, env)]
+        : host === "pi"
+          ? [piSettingsProblem(res.home, env)]
+          : host === "cursor"
+            ? [hostFileProblem(res.cursorSettings), hostFileProblem(res.cursorMcp)]
+            : []
+    ).filter((problem): problem is string => problem !== null);
+    if (unreadable.length) {
+      notes.push(...unreadable);
+      return plan([]);
     }
     if (host === "cursor")
       return plan(
