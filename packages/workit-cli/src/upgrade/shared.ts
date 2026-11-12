@@ -136,6 +136,8 @@ export type Source = {
   kind: "floating" | "pinned" | "local" | "repair";
   /** Codex: registered under the old marketplace name; the upgrade re-registers it. */
   migrate?: boolean;
+  /** Pi: the package root `pi list` printed for the entry. */
+  packageRoot?: string;
 };
 export type PlanEntry = {
   host: HostId;
@@ -358,11 +360,18 @@ export function errorText(error: unknown): string {
 
 // Pi lists the configured source followed by its resolved package directory.
 // Confirm the package identity and version rather than accepting a source name alone.
-export const piInstalledVersion = (listing: string, selector: string): string | undefined => {
+/** The package root `pi list` prints under an entry, when it names one. */
+export const piListedRoot = (listing: string, selector: string): string | undefined => {
   const lines = listing.split(/\r?\n/).map((line) => line.trim());
   const index = lines.indexOf(selector);
   if (index < 0 || !lines[index + 1] || !path.isAbsolute(lines[index + 1])) return undefined;
-  const found = objectOrNull(path.join(lines[index + 1], "package.json"));
+  return lines[index + 1];
+};
+
+export const piInstalledVersion = (listing: string, selector: string): string | undefined => {
+  const root = piListedRoot(listing, selector);
+  if (!root) return undefined;
+  const found = objectOrNull(path.join(root, "package.json"));
   return found?.name === "@workit-dev/pi" ? found.version : undefined;
 };
 

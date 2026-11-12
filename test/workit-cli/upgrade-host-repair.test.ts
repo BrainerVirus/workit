@@ -271,3 +271,33 @@ test("Given Claude Code's plugin registry is not valid JSON, When upgrade previe
     }),
   ]);
 });
+
+test("Given Pi installs Workit into a root only `pi list` names, When upgrade repairs Pi, Then the repair is proved at that root and the next preview reads it current", async () => {
+  const w = world();
+  rmSync(w.piRoot, { recursive: true });
+  const listed = path.join(w.home, "pi-resolved/node_modules/@workit-dev/pi");
+  const run = (command: string, args: string[]) => {
+    if (path.basename(command) === "pi" && args[0] === "list") {
+      w.calls.push(["pi", ...args].join(" "));
+      const there = readdirSync(path.dirname(path.dirname(listed))).length > 0;
+      return { status: 0, stdout: `npm:@workit-dev/pi\n${there ? `  ${listed}\n` : ""}` };
+    }
+    return w.deps.run(command, args);
+  };
+  mkdirSync(path.dirname(path.dirname(listed)), { recursive: true });
+  w.effects.pi = (args) => {
+    if (args[0] !== "install") return;
+    write(path.join(listed, "package.json"), { name: "@workit-dev/pi", version: "2.0.0" });
+    write(path.join(listed, "dist/workit.js"), "");
+  };
+  const deps = { ...w.deps, run };
+  const plan = previewUpgrade(["pi"], deps);
+  expect(plan.entries).toEqual([expect.objectContaining({ host: "pi", repair: true })]);
+  const result = await applyUpgrade(plan, deps);
+  expect(result.hosts).toEqual([expect.objectContaining({ host: "pi", status: "updated" })]);
+  const next = previewUpgrade(["pi"], deps);
+  expect(next.entries).toEqual([]);
+  expect(next.skipped).toEqual([
+    expect.objectContaining({ host: "pi", reason: "already current (2.0.0)" }),
+  ]);
+});

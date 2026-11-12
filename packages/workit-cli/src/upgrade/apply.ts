@@ -47,6 +47,7 @@ import {
   object,
   objectOrNull,
   piInstalledVersion,
+  piListedRoot,
   failureReason,
   stderrTail,
   asyncRunner,
@@ -113,7 +114,13 @@ const applyRepair = async (
     .filter((one) => one.status === "Failed")
     .map((one) => briefDetail(one.detail ?? `${one.file} failed`));
   if (problems.length) return fail(`repair failed: ${problems.join("; ")}`);
-  const left = planHostOnlyInstall(entry.host, options);
+  // Pi may install into a root only `pi list` names: prove the repair there.
+  let piPackageRoot: string | null = null;
+  if (entry.host === "pi") {
+    const listing = await context.runAsync("pi", ["list"]);
+    if (listing.status === 0) piPackageRoot = piListedRoot(listing.stdout, entry.selector) ?? null;
+  }
+  const left = planHostOnlyInstall(entry.host, { ...options, piPackageRoot });
   if (left.preview.mutations.length)
     return fail(
       `the repair ran, but ${entry.host} still needs: ${[...left.diff.files, ...left.diff.commands].join("; ")}`,

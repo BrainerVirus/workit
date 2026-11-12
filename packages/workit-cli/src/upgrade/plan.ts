@@ -44,6 +44,7 @@ import {
   object,
   objectOrNull,
   piInstalledVersion,
+  piListedRoot,
   registryVersion,
   runner,
   upgradePaths,
@@ -147,8 +148,11 @@ export const sources = (
       if (found.kind === "floating") {
         const inventory = run("pi", ["list"]);
         if (inventory.timedOut) throw new Error(`could not check: ${inventory.stderr}`);
-        if (inventory.status === 0)
+        if (inventory.status === 0) {
           found.installedVersion = piInstalledVersion(inventory.stdout, source);
+          const root = piListedRoot(inventory.stdout, source);
+          if (root) found.packageRoot = root;
+        }
       }
       result.push(found);
     }
@@ -524,7 +528,7 @@ const planRepairs = (
             (host !== "pi" || (source.kind === "floating" && !source.installedVersion)),
         );
   // The first registration of each host names the repaired entry.
-  const selectors = new Map(installed.toReversed().map((source) => [source.host, source.selector]));
+  const firsts = new Map(installed.toReversed().map((source) => [source.host, source]));
   // A registry Claude Code cannot be read from is reported, never read as healthy.
   const claudeRegistry = hosts.includes("claude-code") ? claudeRegistryProblem(home, env) : null;
   if (claudeRegistry) {
@@ -545,6 +549,7 @@ const planRepairs = (
       cwd: home,
       dir: paths.configDir,
       opencodeConfig: paths.opencodeConfig,
+      piPackageRoot: firsts.get(host)?.packageRoot ?? null,
     });
     if (!repair.preview.ok) {
       repaired.add(host);
@@ -564,7 +569,7 @@ const planRepairs = (
     }
     plan.entries.push({
       host,
-      selector: selectors.get(host) ?? `@workit-dev/${host}`,
+      selector: firsts.get(host)?.selector ?? `@workit-dev/${host}`,
       latest: registryVersion(run, `@workit-dev/${host}`) ?? "latest",
       commands: repair.preview.mutations.flatMap((mutation) =>
         mutation.type === "install-host" ? mutation.commands : [],
