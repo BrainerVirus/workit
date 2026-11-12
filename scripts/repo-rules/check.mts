@@ -10,6 +10,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { RULES } from "./plugin.mts";
+import { RULE as PRIVATE_NAMES, scanPrivateNames } from "./private-names.mts";
+
+/** The oxlint rules plus the text scan oxlint cannot run on Markdown or JSON. */
+const known = (rule: string): boolean => RULES[rule] !== undefined || rule === PRIVATE_NAMES;
 
 const HERE = import.meta.dir;
 const REPO = path.resolve(HERE, "../..");
@@ -64,7 +68,9 @@ function lint(root: string): Hit[] {
       },
     ];
   });
-  return hits.toSorted((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+  return [...hits, ...scanPrivateNames(root)].toSorted(
+    (a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column,
+  );
 }
 
 const count = (hits: readonly Hit[]): Baseline => {
@@ -112,7 +118,7 @@ export function compare(
   const stale: Stale[] = [];
   for (const [rule, files] of Object.entries(baseline)) {
     for (const [file, allowed] of Object.entries(files)) {
-      const n = RULES[rule] === undefined ? 0 : (found[rule]?.[file] ?? 0);
+      const n = !known(rule) ? 0 : (found[rule]?.[file] ?? 0);
       if (n < allowed) stale.push({ rule, file, allowed, found: n });
     }
   }
@@ -124,7 +130,7 @@ export function shrink(hits: readonly Hit[], baseline: Baseline): Baseline {
   const found = count(hits);
   const next: Baseline = {};
   for (const [rule, files] of Object.entries(baseline)) {
-    if (RULES[rule] === undefined) continue;
+    if (!known(rule)) continue;
     for (const [file, allowed] of Object.entries(files)) {
       const n = Math.min(allowed, found[rule]?.[file] ?? 0);
       if (n > 0) (next[rule] ??= {})[file] = n;
@@ -154,8 +160,10 @@ export function main(args: readonly string[], io: Io): number {
   const root = path.resolve(option(args, "--root") ?? REPO);
   const baselineFile = path.resolve(root, option(args, "--baseline") ?? BASELINE);
   const seed = option(args, "--grandfather");
-  if (seed !== undefined && RULES[seed] === undefined) {
-    io.err(`repo rules: unknown rule ${seed}; rules: ${Object.keys(RULES).join(", ")}`);
+  if (seed !== undefined && !known(seed)) {
+    io.err(
+      `repo rules: unknown rule ${seed}; rules: ${[...Object.keys(RULES), PRIVATE_NAMES].join(", ")}`,
+    );
     return 2;
   }
   let hits: Hit[];

@@ -237,3 +237,40 @@ test("Given a newly added rule, When --grandfather names it, Then only that rule
   });
   expect(run("--grandfather", "no-such-rule").code).toBe(2);
 });
+
+// The private names are joined from fragments so the repo itself never spells them.
+const ORG = ["Eng", "houseGlobal"].join("");
+const ALIAS = ["github", "-work.com"].join("");
+const REPO = ["ui", "-kit"].join("");
+const AUTHOR = ["Cris", "thofer ", "Pin", "cetti"].join("");
+
+test("Given a private work name in a Markdown or JSON file, When the repo rules run, Then they fail at its line naming the neutral value, and the author credit stays allowed", () => {
+  const files = {
+    "docs/guides/remote.md": `# Remotes\n\nAn alias such as \`git@${ALIAS}:${ORG}/${REPO}.git\`.\n`,
+    "test/behavior/cases/grant.json": `{ "argv": ["workspace", "set", "${REPO.toUpperCase()}"] }\n`,
+    LICENSE: `MIT License\n\nCopyright (c) 2026 ${AUTHOR}\n`,
+    "docs/credits.md": `Written by ${AUTHOR}.\n`,
+  };
+  for (const [file, source] of Object.entries(files)) write(file, source);
+  try {
+    setBaseline(Object.fromEntries(CITED.map((entry) => [entry.rule, { [entry.file]: 1 }])));
+    const { code, err } = run();
+    expect(code).toBe(1);
+    const hits = err.split("\n").filter((line) => line.includes("workit/private-names: "));
+    expect(hits.map((line) => line.split(" ")[0])).toEqual([
+      "docs/credits.md:1:12",
+      "docs/credits.md:1:23",
+      "docs/guides/remote.md:3:23",
+      "docs/guides/remote.md:3:39",
+      "docs/guides/remote.md:3:54",
+      "test/behavior/cases/grant.json:1:33",
+    ]);
+    expect(err).toContain("Fix: use the neutral sample value acme.");
+    expect(err).toContain("Fix: use the neutral sample value work-gh.");
+    expect(err).toContain("Fix: use the neutral sample value widgets.");
+    expect(err).not.toContain("LICENSE:");
+    expect(err).toContain("repo rules: 6 new hits.");
+  } finally {
+    for (const file of Object.keys(files)) rmSync(path.join(root, file));
+  }
+});
