@@ -132,14 +132,14 @@ workit youtrack update ABC-123 --file notes.md --attach shot.png --attach report
   names as `![](shot.png)` shows inline in it; the others sit alongside it.
   Without a comment the files are attached to the issue itself. Two files
   with the same name are refused (ytrack keeps files by name).
-- `--minutes <n>`, with `--text` and `--date` as for `time`: a work item.
+- `--minutes <n>`, with `--text` and `--date` as for `time` (either one needs `--minutes`): a work item.
 - `--state <S>` (the command `State <S>`) and `--command '<command>'`.
 
 Pass at least one. Before asking, Workit checks that each file exists and that
 your ytrack supports `--attach` (an older one fails with `ytrack upgrade` as
 the fix); nothing is asked or posted until both hold. The request you approve
 lists every part on that issue and host: the comment's first three lines, each
-file's name and size, the time (`2h45m`) and the state or command. After your
+file's name, size and content hash, the time (`2h45m`) and the state or command. After your
 yes the parts run in order (comment, time, then commands) and the result lists
 each one. The run stops at the first failure and says what landed and what
 was not applied; rerunning skips a comment or time that landed (its marker),
