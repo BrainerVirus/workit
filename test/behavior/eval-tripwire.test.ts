@@ -497,3 +497,65 @@ test("Given a runner SIGKILLed after an outside write, When the bench starts aga
   expect(existsSync(path.join(base, "journal"))).toBe(false);
   expect(await main(argv(fakeClaude(false)), () => {})).toBe(0);
 }, 30_000);
+
+const alive = (pidFile: string): boolean => {
+  try {
+    process.kill(Number(file(root, pidFile)), 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Decision test 7: a long fake run, so the signal lands mid-host, never at its natural end.
+test.each([
+  ["SIGINT", false, true, 130],
+  ["SIGTERM", false, true, 143],
+  ["SIGINT", true, true, 130],
+  ["SIGINT", false, false, 130],
+] as const)(
+  "Given a long run, When %s reaches the runner (to its group: %p; the host wrote: %p), Then within 5 s it exits %p with the file back, the host's group dead, its world gone, no holder, no journal and no result",
+  async (signal, group, write, code) => {
+    const run = runner(fakeClaude(write, 300), "--watch-ms", "600000");
+    expect(
+      await waitFor(
+        () => starts() === 1 && existsSync(path.join(root, "sleep.pid")) && (!write || changed()),
+      ),
+    ).toBe(true);
+    const world = path.dirname(file(root, "starts.log").trim());
+
+    if (group) process.kill(-(run.child.pid ?? 0), signal);
+    else run.child.kill(signal);
+    const exit = await Promise.race([run.exited, Bun.sleep(5000).then(() => "timeout")]);
+
+    if (exit === "timeout") run.child.kill("SIGKILL");
+    killPids();
+    expect(exit).toBe(code);
+    expect(file(ws)).toBe(ORIGINAL);
+    expect(alive("claude.pid")).toBe(false);
+    expect(alive("sleep.pid")).toBe(false);
+    expect(existsSync(world)).toBe(false);
+    expect(readdirSync(path.join(base, "holders"))).toEqual([]);
+    expect(existsSync(path.join(base, "journal"))).toBe(false);
+    expect(run.out()).toContain(`STOPPED by ${signal}`);
+    expect(run.out()).toContain(write ? ws : "no real Workit file changed");
+    expect(existsSync(result("a-case"))).toBe(false);
+    expect(starts()).toBe(1);
+  },
+  30_000,
+);
+
+// Decision test 8
+test("Given a host that changes the real workspaces.json and keeps running, Then the watch kills it within about 5 s, the file comes back and the run fails as outside_write", async () => {
+  const started = Date.now();
+  const exit = await main(argv(fakeClaude(true, 300)), () => {});
+  const took = Date.now() - started;
+  killPids();
+
+  expect(exit).toBe(3);
+  expect(took).toBeLessThan(8000);
+  expect(file(ws)).toBe(ORIGINAL);
+  expect(alive("sleep.pid")).toBe(false);
+  const stored = JSON.parse(readFileSync(result("a-case"), "utf8"));
+  expect(stored.grade.failures[0].rule).toBe("outside_write");
+}, 30_000);

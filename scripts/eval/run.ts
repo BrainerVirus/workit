@@ -10,7 +10,7 @@
  *   bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash [...]
  *   bun scripts/eval/run.ts --replay [--host opencode] [--model haiku] [--check]
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -48,6 +48,7 @@ import {
   inspectJournal,
   release,
   restoreJournal,
+  restoredChanged,
   tripDetail,
   tripwireBase,
   writeJournal,
@@ -405,6 +406,12 @@ type Options = {
   tripwire: string;
   /** The in-memory snapshot armed once at bench start: the only thing restored automatically. */
   snapshot: Snapshot | null;
+  /** How often a running host's restored set is re-checked (test seam: --watch-ms). */
+  watchMs: number;
+  /** The signal that asked the bench to stop, once one has. */
+  stop: string | null;
+  /** The host running now, in its own process group. */
+  child: RunningHost | null;
   /** Real host credential files a run's host refreshed by rename, written back (isolation.ts carryBack). */
   carried: string[];
   /** The account home the host's login is linked from. */
@@ -421,32 +428,75 @@ type Attempt = {
   limit: string | null;
 };
 
-const attempt = (
+/** What the runner keeps of a running host: its pid leads its own process group. */
+type RunningHost = { pid?: number };
+
+/** SIGKILL a host's whole process group (its shells and their children too). */
+const killGroup = (child: RunningHost | null): void => {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // The group is gone.
+  }
+};
+
+const MAX_OUTPUT = 256 * 1024 * 1024;
+
+/**
+ * Run the host in its own process group, so a signal handler can stop it at
+ * once (the runner stays responsive: no spawnSync), and a watch can kill it
+ * when the restored set changes mid-run.
+ */
+const attempt = async (
   spec: EvalCase,
   opts: Options,
   args: string[],
   env: Record<string, string>,
   world: World,
-): Omit<Attempt, "limit"> & { stderr: string } => {
-  const run = spawnSync(opts.bin, args, {
+): Promise<Omit<Attempt, "limit"> & { stderr: string }> => {
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  const child = spawn(opts.bin, args, {
     cwd: world.repo,
     env,
-    input: promptFor(spec, world),
-    encoding: "utf8",
-    timeout: opts.timeoutMs,
-    killSignal: "SIGKILL",
-    maxBuffer: 256 * 1024 * 1024,
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
   });
-  return {
-    transcript: sanitize(run.stdout ?? "", world),
-    stderr: run.stderr ?? "",
-    exit: run.status,
-    timedOut: run.error !== undefined && (run.error as NodeJS.ErrnoException).code === "ETIMEDOUT",
-  };
+  opts.child = child;
+  child.stdin?.on("error", () => {});
+  child.stdin?.end(promptFor(spec, world));
+  child.stdout?.on("data", (chunk) => {
+    if (stdout.length < MAX_OUTPUT) stdout += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    if (stderr.length < MAX_OUTPUT) stderr += String(chunk);
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killGroup(child);
+  }, opts.timeoutMs);
+  const snapshot = opts.snapshot;
+  const watch = setInterval(() => {
+    if (snapshot && restoredChanged(snapshot)) killGroup(child);
+  }, opts.watchMs);
+  const exit = await new Promise<number | null>((resolve) => {
+    child.on("error", (error) => {
+      stderr += String(error);
+      resolve(null);
+    });
+    child.on("close", (code) => resolve(code));
+  });
+  clearTimeout(timer);
+  clearInterval(watch);
+  killGroup(child);
+  opts.child = null;
+  return { transcript: sanitize(stdout, world), stderr, exit, timedOut };
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
-const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
+const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   let last: Attempt = { transcript: "", exit: null, timedOut: false, limit: null };
   while (opts.providers.length > 0) {
     const [provider] = opts.providers;
@@ -461,27 +511,27 @@ const runOpencode = (spec: EvalCase, opts: Options): Attempt => {
       const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
-      const run = attempt(spec, opts, opencodeArgs(provider), env, world);
+      const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
       last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
     } finally {
       opts.carried.push(...carryBack(world.home, opts.host, opts.realHome));
       rmSync(world.dir, { recursive: true, force: true });
     }
-    if (last.limit === null) return last;
+    if (last.limit === null || opts.stop) return last;
     opts.limits.push({ provider: provider.name, error: last.limit });
     opts.providers.shift();
   }
   return last;
 };
 
-const runClaude = (spec: EvalCase, opts: Options): Attempt => {
+const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
     return {
-      ...attempt(spec, opts, claudeArgs(spec, opts.model, opts.pluginDir), env, world),
+      ...(await attempt(spec, opts, claudeArgs(spec, opts.model, opts.pluginDir), env, world)),
       limit: null,
     };
   } finally {
@@ -490,23 +540,25 @@ const runClaude = (spec: EvalCase, opts: Options): Attempt => {
   }
 };
 
-const runCase = (
+/** One run: its result, or null when a signal stopped it (no result is written), and what the tripwire found. */
+const runCase = async (
   spec: EvalCase,
   key: string,
   version: string,
   opts: Options,
   index = 1,
-): RunResult => {
+): Promise<{ result: RunResult | null; trip: Trip | null }> => {
   const snapshot = opts.snapshot;
   if (!snapshot) throw new Error("the tripwire is not armed");
   let run: Attempt;
   try {
-    run = opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts);
+    run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
   } catch (error) {
     checkSnapshot(opts.tripwire, snapshot);
     throw error;
   }
   const trip = checkSnapshot(opts.tripwire, snapshot);
+  if (opts.stop) return { result: null, trip };
   const dir = modelDir(opts.results, resultName(opts.host, opts.model));
   mkdirSync(dir, { recursive: true });
   const base = runBase(spec.id, index);
@@ -543,7 +595,7 @@ const runCase = (
     ...(trip ? { outsideWrite: trip } : {}),
   };
   writeJson(path.join(dir, `${base}.json`), result);
-  return result;
+  return { result, trip };
 };
 
 type Row = {
@@ -683,7 +735,10 @@ const USAGE =
 
 const BINS: Record<Host, string> = { "claude-code": "claude", opencode: "opencode" };
 
-export const main = (argv: string[], print: (text: string) => void = console.log): number => {
+export const main = async (
+  argv: string[],
+  print: (text: string) => void = console.log,
+): Promise<number> => {
   if (argv[0] === PROBE_FLAG) {
     print(JSON.stringify(probe()));
     return 0;
@@ -712,6 +767,8 @@ export const main = (argv: string[], print: (text: string) => void = console.log
       "real-home": { type: "string" },
       "tripwire-restore": { type: "string" },
       "tripwire-discard": { type: "boolean", default: false },
+      // Test seam: how often a running host's restored set is re-checked.
+      "watch-ms": { type: "string", default: "2000" },
       results: { type: "string", default: path.join(REPO, "evals", "results") },
       "cases-dir": { type: "string", default: path.join(REPO, "evals", "cases") },
       help: { type: "boolean", default: false },
@@ -768,12 +825,15 @@ export const main = (argv: string[], print: (text: string) => void = console.log
     realHome: path.resolve(values["real-home"] ?? accountHome()),
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
+    watchMs: Number(values["watch-ms"]),
+    stop: null,
+    child: null,
     carried: [],
   };
   return tripwired(
     opts,
     print,
-    () =>
+    async () =>
       bench(opts, print, {
         selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
         repeat,
@@ -792,12 +852,14 @@ export const main = (argv: string[], print: (text: string) => void = console.log
  * journal, arm the in-memory snapshot (printing its digest on the user's
  * terminal) and write the crash journal; drop it at the end.
  */
-const tripwired = (
+const SIGNAL_EXIT: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
+
+const tripwired = async (
   opts: Options,
   print: (text: string) => void,
-  run: () => number,
+  run: () => Promise<number>,
   settleFlags: { restore: string | undefined; discard: boolean },
-): number => {
+): Promise<number> => {
   const bad = ensureBase(opts.tripwire);
   if (bad) {
     print(`tripwire: ${bad}; nothing runs`);
@@ -847,16 +909,31 @@ const tripwired = (
     opts.snapshot = armSnapshot(opts.guard);
     print(`tripwire armed: ${opts.snapshot.files} files, digest ${opts.snapshot.digest}`);
     writeJournal(opts.tripwire, opts.snapshot);
-    const code = run();
-    dropJournal(opts.tripwire);
-    return code;
+    // The handler only flags the stop and kills the host's group; the normal
+    // unwind restores from memory, removes the world and drops the journal.
+    // A second signal exits at once and leaves the journal for the next start.
+    const onSignal = (signal: NodeJS.Signals): void => {
+      if (opts.stop) process.exit(SIGNAL_EXIT[signal] ?? 1);
+      opts.stop = signal;
+      killGroup(opts.child);
+    };
+    for (const signal of SIGNALS) process.on(signal, onSignal);
+    try {
+      const code = await run();
+      dropJournal(opts.tripwire);
+      return opts.stop ? (SIGNAL_EXIT[opts.stop] ?? 1) : code;
+    } finally {
+      for (const signal of SIGNALS) process.off(signal, onSignal);
+    }
   } finally {
     release(opts.tripwire);
   }
 };
 
+const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
 /** Every selected case, `repeat` runs each, under the tripwire `main` holds. */
-const bench = (
+const bench = async (
   opts: Options,
   print: (text: string) => void,
   {
@@ -870,7 +947,7 @@ const bench = (
     budget: number;
     force: boolean;
   },
-): number => {
+): Promise<number> => {
   const { host } = opts;
   const version = workitVersion(host);
   const label = host === "opencode" ? `opencode ${opts.model}` : opts.model;
@@ -903,7 +980,11 @@ const bench = (
       const callsModel = host !== "opencode" || opts.providers.length > 0;
       if (callsModel && runs === 0) ensurePlugin(host, opts.pluginDir);
       if (callsModel) runs += 1;
-      const result = runCase(spec, key, version, opts, run);
+      // A signal is handled when the runner reaches its event loop: give it the chance.
+      await new Promise((resolve) => setImmediate(resolve));
+      if (opts.stop) return stopped(opts, null, print);
+      const { result, trip } = await runCase(spec, key, version, opts, run);
+      if (!result) return stopped(opts, trip, print);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
       if (opts.carried.length > 0)
@@ -952,4 +1033,12 @@ const bench = (
   return failed > 0 || limited.length > 0 ? 1 : 0;
 };
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+/** A signal stopped the bench: say what the tripwire found; `tripwired` exits with the signal's code. */
+const stopped = (opts: Options, trip: Trip | null, print: (text: string) => void): number => {
+  print(
+    `STOPPED by ${opts.stop}: ${trip ? tripDetail(trip, "none (the interrupted run writes no result)") : "no real Workit file changed"}`,
+  );
+  return SIGNAL_EXIT[opts.stop ?? ""] ?? 1;
+};
+
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

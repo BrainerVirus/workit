@@ -221,7 +221,7 @@ test.each([
 });
 
 /** A fake `claude` that logs each start, and a plugin whose `workit` prints `say`. */
-const bench = (say: string, lines: string[]): { exit: number; starts: number } => {
+const bench = async (say: string, lines: string[]): Promise<{ exit: number; starts: number }> => {
   const cases = path.join(root, "cases");
   const plugin = path.join(root, "plugin");
   mkdirSync(cases, { recursive: true });
@@ -246,7 +246,7 @@ const bench = (say: string, lines: string[]): { exit: number; starts: number } =
     `#!/bin/sh\ncat > /dev/null\necho start >> "${log}"\necho '{"type":"result","subtype":"success","num_turns":1}'\n`,
   );
   chmodSync(claude, 0o755);
-  const exit = main(
+  const exit = await main(
     [
       "--model",
       "haiku",
@@ -268,9 +268,9 @@ const bench = (say: string, lines: string[]): { exit: number; starts: number } =
   return { exit, starts };
 };
 
-test("Given a case that permits python3 and a world whose workit resolves a path outside it, When run, Then the host never starts and the run fails as isolation", () => {
+test("Given a case that permits python3 and a world whose workit resolves a path outside it, When run, Then the host never starts and the run fails as isolation", async () => {
   const lines: string[] = [];
-  const { exit, starts } = bench("/etc/workit-outside", lines);
+  const { exit, starts } = await bench("/etc/workit-outside", lines);
 
   expect(starts).toBe(0);
   expect(exit).toBe(1);
@@ -280,17 +280,17 @@ test("Given a case that permits python3 and a world whose workit resolves a path
   expect(stored.grade.failures[0].detail).toContain("/etc/workit-outside");
 });
 
-test("Given a case that permits python3 and a world whose workit prints no path, When run, Then the host never starts: no path is no proof", () => {
+test("Given a case that permits python3 and a world whose workit prints no path, When run, Then the host never starts: no path is no proof", async () => {
   const lines: string[] = [];
-  const { starts } = bench("ok", lines);
+  const { starts } = await bench("ok", lines);
   expect(starts).toBe(0);
   const stored = JSON.parse(readFileSync(path.join(root, "results", "haiku", "wrap.json"), "utf8"));
   expect(stored.refused).toBe("isolation");
   expect(stored.grade.failures[0].detail).toContain("no path in its output");
 });
 
-test("Given a case that permits python3 and a world that passes the self-check, When run, Then the host starts", () => {
-  const { exit, starts } = bench("$WORKIT_CONFIG_DIR", []);
+test("Given a case that permits python3 and a world that passes the self-check, When run, Then the host starts", async () => {
+  const { exit, starts } = await bench("$WORKIT_CONFIG_DIR", []);
   expect(starts).toBe(1);
   expect(exit).toBe(0);
 });
