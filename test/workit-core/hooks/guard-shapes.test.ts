@@ -5,6 +5,7 @@
 // the same tools, and the same shapes elsewhere, pass (#818).
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { grantsHome } from "@/packages/workit-core/src/autonomy";
@@ -335,3 +336,22 @@ test("G a target that is no valid glob ('x[', 'x[z-a]') before a guarded write, 
     }
   expect(decide(`touch ${sh(elsewhere)}/'x[' && echo '{}' > out.json`).kind).toBe("none");
 });
+
+test("G a script operand that is a FIFO or /dev/stdin, W the gate reads scripts, T it never blocks on it and judges the heredoc as the script", () => {
+  if (process.platform !== "win32") {
+    const fifo = path.join(root, "fifo.sh");
+    spawnSync("mkfifo", [fifo]);
+    expect(decide("bash fifo.sh").kind).toBe("none");
+    expect(decide("python3 fifo.sh").kind).toBe("none");
+  }
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    for (const command of [
+      `bash /dev/stdin <<'EOF'\necho {} > ${f}\nEOF`,
+      `bash - <<'EOF'\necho {} > ${f}\nEOF`,
+      `python3 /dev/stdin <<'EOF'\nopen("${f}", "w")\nEOF`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  expect(decide(`bash /dev/stdin <<'EOF'\necho hi > out.txt\nEOF`).kind).toBe("none");
+}, 20_000);

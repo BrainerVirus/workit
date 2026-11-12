@@ -1220,13 +1220,18 @@ const segmentTargets = (
           const made = written.get(script);
           if (made !== undefined) return [made];
           try {
-            const text = statSync(script).size <= 262_144 ? readFileSync(script, "utf8") : "\0";
+            // Only a regular file: a FIFO or a device would block the hook.
+            const stat = statSync(script);
+            const text =
+              stat.isFile() && stat.size <= 262_144 ? readFileSync(script, "utf8") : "\0";
             return text.includes("\0") ? [] : [text];
           } catch {
             return [];
           }
         });
-      const named = args.find((arg) => !arg.startsWith("-") && arg !== "run");
+      // `/dev/stdin` (like `-`) is the heredoc the command feeds it, never the hook's own stdin.
+      const operand = args.find((arg) => !arg.startsWith("-") && arg !== "run");
+      const named = operand === "/dev/stdin" ? undefined : operand;
       const shells: string[] = verb === "eval" ? [args.join(" ")] : [];
       const others: string[] = [];
       if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
