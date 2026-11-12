@@ -137,6 +137,12 @@ const classify = (args: readonly string[]): { workit: string | null } | null => 
 
 type YtrackWrite = { command: string; workit: string | null };
 
+const SHELLS = /^(?:sh|bash|zsh|dash|ksh|ash|mksh|yash|fish)$/;
+/** Nested scripts read this deep; deeper ones that name ytrack are refused. */
+const MAX_DEPTH = 4;
+/** Scripts already read (the same text, the same writes), so nesting costs one read per level. */
+const READ = new Map<string, YtrackWrite[]>();
+
 /** The ytrack writes one command line runs: past a package runner (`npx -y ytrack`, `pnpm dlx ytrack`) or `workit check --`. */
 const ytrackArgs = (line: readonly string[], found: YtrackWrite[], depth: number): void => {
   const tail = workitCheckTail(line);
@@ -148,6 +154,14 @@ const ytrackArgs = (line: readonly string[], found: YtrackWrite[], depth: number
         depth + 1,
       ),
     );
+  // A shell's `-c` script or eval's text is read here too, one level per call,
+  // so nesting past commandLines' own depth is judged or refused, never passed.
+  const flag = SHELLS.test(name(line[0]))
+    ? line.findIndex((word, index) => index > 0 && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(word))
+    : -1;
+  const script =
+    flag > 0 ? line[flag + 1] : name(line[0]) === "eval" ? line.slice(1).join(" ") : undefined;
+  if (script !== undefined) return void found.push(...ytrackWrites(script, "posix", depth + 1));
   let at = 0;
   const runner = name(line[0]);
   if (
@@ -174,8 +188,13 @@ const ytrackWrites = (
   depth = 0,
 ): YtrackWrite[] => {
   const found: YtrackWrite[] = [];
-  if (depth > 4 || !/ytrack/i.test(command.replace(/['"\\`]/g, ""))) return found;
+  if (!/ytrack/i.test(command.replace(/['"\\`]/g, ""))) return found;
+  if (depth > MAX_DEPTH) throw new Error("ytrack nested too deep");
+  const known = READ.get(command);
+  if (known) return known;
   for (const line of commandLines(command, dialect)) ytrackArgs(line, found, depth);
+  READ.set(command, found);
+  if (READ.size > 64) READ.delete(READ.keys().next().value as string);
   return found;
 };
 
@@ -195,7 +214,9 @@ export const ytrackGate = (
 ): HookDecision | null => {
   let writes: YtrackWrite[];
   try {
-    writes = ytrackWrites(command, dialect);
+    writes = [
+      ...new Map(ytrackWrites(command, dialect).map((write) => [write.command, write])).values(),
+    ];
   } catch {
     // Unanalysable and naming ytrack: denied unless the user opted out.
     if (writesMode(cwd) === "auto") return null;
