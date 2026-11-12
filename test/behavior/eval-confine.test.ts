@@ -447,6 +447,13 @@ test.skipIf(!landlock)(
     const result = JSON.parse(readFileSync(resultFile("a-case.json"), "utf8"));
     expect(result.grade.pass).toBe(true);
     expect(result.outsideWrite).toBeUndefined();
+    // The result and the summary carry it (O1): the path under `~` and what happened, no content.
+    expect(result.outsideChanges).toEqual([
+      { path: ["~", ".config", "workit", "workspaces.json"].join("/"), change: "changed" },
+    ]);
+    const summary = JSON.parse(readFileSync(resultFile("summary.json"), "utf8"));
+    expect(summary.outsideChanges).toBe(1);
+    expect(summary.cases[0].outsideChanges).toBe(1);
     expect(existsSync(journal())).toBe(false);
     // The next bench starts: nothing is left over, and the change is not reported twice.
     const next: string[] = [];
@@ -470,6 +477,50 @@ test("Given no write confinement, When another process appends to a guarded file
     await main([...argv(fakeClaude(":")), "--confine", "off"], (text) => next.push(text)),
   ).toBe(3);
   expect(next.join("\n")).toContain("LEFTOVER: ");
+}, 30_000);
+
+// The last run's check is over and the journal is not yet dropped: the summary line prints in between.
+const afterLastCheck = async (
+  extra: string[],
+  change: () => void,
+): Promise<{ exit: number; said: string }> => {
+  const lines: string[] = [];
+  const exit = await main([...argv(fakeClaude(":")), ...extra], (text) => {
+    lines.push(text);
+    if (/ model run\(s\), /u.test(text)) change();
+  });
+  return { exit, said: lines.join("\n") };
+};
+
+test.skipIf(!landlock)(
+  "Given write confinement, When another process changes a guarded file after the last run's check, Then the last check reports it, no journal is left and the exit is 0",
+  async () => {
+    const file = path.join(config, "workspaces.json");
+    const { exit, said } = await afterLastCheck([], () => appendFileSync(file, "\n"));
+    expect(said).toContain(
+      "outside change, not this bench's: write confinement was on, so this change was made by another process; it came after the last run's check, so no result records it, and the next bench starts.",
+    );
+    expect(said).toContain(`  ${file}\n    was: file, mode 600, 18 B, sha `);
+    expect(said).not.toContain("STOPPED");
+    expect(exit).toBe(0);
+    expect(existsSync(journal())).toBe(false);
+    const next: string[] = [];
+    expect(await main([...argv(fakeClaude(":")), "--force"], (text) => next.push(text))).toBe(0);
+    expect(next.join("\n")).not.toMatch(/LEFTOVER|outside change/u);
+  },
+  30_000,
+);
+
+test("Given no write confinement, When a guarded file changes after the last run's check, Then the last check stops the bench with exit 3 and the journal stays", async () => {
+  const file = path.join(config, "workspaces.json");
+  const { exit, said } = await afterLastCheck(["--confine", "off"], () =>
+    appendFileSync(file, "\n"),
+  );
+  expect(said).toContain("STOPPED: real Workit files changed after the last run's check.");
+  expect(said).toContain(file);
+  expect(said).not.toContain("another process");
+  expect(exit).toBe(3);
+  expect(existsSync(journal())).toBe(true);
 }, 30_000);
 
 test.skipIf(!landlock)(
