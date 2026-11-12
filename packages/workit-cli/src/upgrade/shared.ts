@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { type HostId } from "../admin/detect-hosts";
 import { hostCommand, runHostCommand, type HostInstallCommand } from "../admin/host-install";
 import { type DoctorCheck } from "../admin/doctor";
+import { type HostInstallDiff, type SetupPreview } from "../admin/setup";
 import { type InstallNode } from "../install/node";
 import { type PathWorkit } from "../install/verify";
 import { type Progress } from "../progress";
@@ -146,6 +147,8 @@ export type PlanEntry = {
   commands: Command[];
   /** A registered host whose plugin files are missing: reinstall, never just update. */
   repair?: boolean;
+  /** The host-only install that repairs it (Claude Code, OpenCode, Pi), and what it changes. */
+  install?: { preview: SetupPreview; diff: HostInstallDiff };
   installedVersion?: string;
   fix: string;
 };

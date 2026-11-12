@@ -14,7 +14,13 @@ import { claudeWorkitInstalls } from "../admin/host-install";
 import { readSetupState } from "../admin/setup-state";
 import { type HostCommandResult } from "../admin/host-install";
 import { recordHookNode } from "../admin/hook-node";
-import { applySetupPreview, type SetupPreview } from "../admin/setup";
+import {
+  applySetupPreview,
+  planHostOnlyInstall,
+  type ApplySetupOptions,
+  type SetupPreview,
+  type SetupResult,
+} from "../admin/setup";
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import { stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { describeInstall, describeInstallAt, listInstalls } from "../install/discover";
@@ -52,6 +58,75 @@ import {
   type UpgradePlan,
 } from "./shared";
 import { CODEX_LEGACY_MARKETPLACE } from "./codex-marketplace";
+
+/**
+ * Apply a host-only setup preview: its host commands run on the async runner
+ * (so the spinner keeps moving), then setup's synchronous installer replays
+ * their recorded results and goes on with the file steps.
+ */
+const applyInstallPreview = async (
+  preview: SetupPreview,
+  runAsync: ReturnType<typeof asyncRunner>,
+  options: ApplySetupOptions,
+): Promise<SetupResult> => {
+  const recorded = new Map<object, HostCommandResult>();
+  let history = "";
+  for (const command of preview.mutations.flatMap((mutation) =>
+    mutation.type === "install-host" ? mutation.commands : [],
+  )) {
+    if (command.skipWhenOutputIncludes && history.includes(command.skipWhenOutputIncludes))
+      continue;
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the install commands are ordered: each needs the one before it, and the first failure stops the rest.
+    const outcome = await runAsync(command.command, command.args);
+    const result = {
+      exitCode: outcome.status ?? 1,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr ?? "",
+    };
+    recorded.set(command, result);
+    history += `\n${result.stdout}\n${result.stderr}`;
+    if (result.exitCode !== 0) break;
+  }
+  return applySetupPreview(preview, {
+    ...options,
+    runHostCommand: (command) =>
+      recorded.get(command) ?? { exitCode: 1, stdout: "", stderr: "command did not run" },
+  });
+};
+
+/** Repair a registered-but-broken host with its host-only install, then prove it: a second plan is empty. */
+const applyRepair = async (
+  entry: PlanEntry,
+  preview: SetupPreview,
+  context: { runAsync: ReturnType<typeof asyncRunner>; paths: ReturnType<typeof upgradePaths> },
+): Promise<HostOutcome> => {
+  const { home, env, configDir, opencodeConfig } = context.paths;
+  const options = { home, env, cwd: home, dir: configDir, opencodeConfig };
+  const fail = (reason: string): HostOutcome => ({
+    host: entry.host,
+    status: "failed",
+    reason,
+    fix: entry.fix,
+  });
+  const result = await applyInstallPreview(preview, context.runAsync, options);
+  const problems = result.entries
+    .filter((one) => one.status === "Failed")
+    .map((one) => briefDetail(one.detail ?? `${one.file} failed`));
+  if (problems.length) return fail(`repair failed: ${problems.join("; ")}`);
+  const left = planHostOnlyInstall(entry.host, options);
+  if (left.preview.mutations.length)
+    return fail(
+      `the repair ran, but ${entry.host} still needs: ${[...left.diff.files, ...left.diff.commands].join("; ")}`,
+    );
+  return {
+    host: entry.host,
+    status: "updated",
+    reason:
+      entry.host === "opencode"
+        ? `re-registered Workit in ${preview.mutations.map((mutation) => mutation.path).join(", ")}`
+        : `reinstalled missing plugin files (${entry.latest})`,
+  };
+};
 
 /** A setup entry's detail: its first line, then the last five when it ran long. */
 const briefDetail = (detail: string): string => {
@@ -143,6 +218,7 @@ const applyEntry = async (
     reason,
     fix: entry.fix,
   });
+  if (entry.install) return applyRepair(entry, entry.install.preview, context);
   if (entry.host === "cursor") {
     // The init wizard's installer: setup's install-host + install-adapter
     // mutations, scoped to Cursor; workspaces and other config stay untouched.
@@ -150,25 +226,6 @@ const applyEntry = async (
       ...command,
       purpose: command.purpose ?? "Upgrade Cursor",
     }));
-    // The host commands (npm) wait on the async runner so the spinner keeps
-    // moving; setup's synchronous installer then replays their recorded results
-    // and goes on with the file steps (copy, settings, mcp.json).
-    const recorded = new Map<object, HostCommandResult>();
-    let history = "";
-    for (const command of commands) {
-      if (command.skipWhenOutputIncludes && history.includes(command.skipWhenOutputIncludes))
-        continue;
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- the install commands are ordered: each needs the one before it, and the first failure stops the rest.
-      const outcome = await runAsync(command.command, command.args);
-      const result = {
-        exitCode: outcome.status ?? 1,
-        stdout: outcome.stdout,
-        stderr: outcome.stderr ?? "",
-      };
-      recorded.set(command, result);
-      history += `\n${result.stdout}\n${result.stderr}`;
-      if (result.exitCode !== 0) break;
-    }
     const cursorSettings = path.join(home, ".cursor", "settings.json");
     const cursorMcp = path.join(home, ".cursor", "mcp.json");
     const preview: SetupPreview = {
@@ -192,17 +249,11 @@ const applyEntry = async (
         { type: "register-platform", platform: "cursor", path: cursorMcp },
       ],
     };
-    const result = applySetupPreview(preview, {
+    const result = await applyInstallPreview(preview, runAsync, {
       home,
       env,
       cwd: home,
       preferInstalledAdapter: true,
-      runHostCommand: (command) =>
-        recorded.get(command) ?? {
-          exitCode: 1,
-          stdout: "",
-          stderr: "command did not run",
-        },
     });
     const installed = objectOrNull(path.join(paths.cursorRoot, "package.json"));
     const problems = result.entries

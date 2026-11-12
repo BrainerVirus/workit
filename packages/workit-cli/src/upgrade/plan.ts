@@ -7,7 +7,14 @@ import os from "node:os";
 import { isWorkitPlugin } from "../admin/registration";
 import { readSetupState } from "../admin/setup-state";
 import { type HostId } from "../admin/detect-hosts";
-import { claudeWorkitInstalls, hostCommand, planHostInstall } from "../admin/host-install";
+import {
+  claudeConfigDir,
+  claudeStaleWorkitRecords,
+  claudeWorkitInstalls,
+  hostCommand,
+  planHostInstall,
+} from "../admin/host-install";
+import { planHostOnlyInstall } from "../admin/setup";
 import { OPENCODE_V1_FIX } from "../admin/doctor";
 import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix";
 import cliPackage from "../../package.json" with { type: "json" };
@@ -45,6 +52,7 @@ import {
   type HostOutcome,
   type Source,
   type UpgradeDeps,
+  type UpgradeHost,
   type UpgradePlan,
 } from "./shared";
 
@@ -326,6 +334,7 @@ export function previewUpgrade(
       });
   }
   const conflicted = new Set(plan.failed.map((entry) => entry.host));
+  const repaired = planRepairs(plan, installedSources, hosts, conflicted, { paths, run });
   for (const source of installedSources.filter(
     (candidate, index, list) =>
       !conflicted.has(candidate.host) &&
@@ -333,6 +342,7 @@ export function previewUpgrade(
         (entry) => entry.host === candidate.host && entry.selector === candidate.selector,
       ) === index,
   )) {
+    if (repaired.has(source.host)) continue;
     if (source.kind === "pinned" || source.kind === "local") {
       plan.skipped.push({
         host: source.host,
@@ -481,6 +491,76 @@ export function previewUpgrade(
   plan.ok = plan.blocked.length === 0 && plan.failed.length === 0;
   return plan;
 }
+
+/** Hosts whose registered-but-broken install the host-only installer repairs;
+ *  Cursor and Codex repair through their own plan kinds above. */
+const INSTALLER_REPAIRS = ["claude-code", "opencode", "pi"] as const;
+
+/**
+ * Registered, but the plugin files or the registration are missing or broken:
+ * plan the host-only install that repairs it (#423), with no Workit config,
+ * workspace or other-host change. A repaired host is not also updated this
+ * run; the next upgrade compares its version. Returns the repaired hosts.
+ */
+const planRepairs = (
+  plan: UpgradePlan,
+  installed: Source[],
+  hosts: HostId[],
+  conflicted: Set<UpgradeHost>,
+  context: { paths: ReturnType<typeof upgradePaths>; run: ReturnType<typeof runner> },
+): Set<HostId> => {
+  const { paths, run } = context;
+  const { home, env } = paths;
+  const repaired = new Set<HostId>();
+  const registered = (host: HostId): boolean =>
+    host === "claude-code"
+      ? claudeStaleWorkitRecords(home, env).length > 0 &&
+        claudeWorkitInstalls(home, env, null).length === 0
+      : installed.some(
+          (source) =>
+            source.host === host &&
+            // Pi: only when `pi list` showed no installed package for the entry.
+            (host !== "pi" || (source.kind === "floating" && !source.installedVersion)),
+        );
+  for (const host of INSTALLER_REPAIRS) {
+    if (!hosts.includes(host) || conflicted.has(host) || !registered(host)) continue;
+    const repair = planHostOnlyInstall(host, {
+      home,
+      env,
+      cwd: home,
+      dir: paths.configDir,
+      opencodeConfig: paths.opencodeConfig,
+    });
+    if (!repair.preview.ok) {
+      repaired.add(host);
+      plan.failed.push({
+        host,
+        status: "failed",
+        reason: `cannot plan the repair: ${repair.preview.blocked.join("; ")}`,
+        fix: `workit upgrade --hosts=${host}`,
+      });
+      continue;
+    }
+    if (repair.preview.mutations.length === 0) continue;
+    repaired.add(host);
+    if (host === "claude-code") {
+      const registry = path.join(claudeConfigDir(home, env), "plugins", "installed_plugins.json");
+      plan.configDigests[registry] = digest(registry);
+    }
+    plan.entries.push({
+      host,
+      selector: installed.find((source) => source.host === host)?.selector ?? `@workit-dev/${host}`,
+      latest: registryVersion(run, `@workit-dev/${host}`) ?? "latest",
+      commands: repair.preview.mutations.flatMap((mutation) =>
+        mutation.type === "install-host" ? mutation.commands : [],
+      ),
+      repair: true,
+      install: { preview: repair.preview, diff: repair.diff },
+      fix: `workit upgrade --hosts=${host}`,
+    });
+  }
+  return repaired;
+};
 
 /**
  * The CLI, part of every default upgrade: the Workit-owned install under
