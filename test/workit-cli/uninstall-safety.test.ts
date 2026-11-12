@@ -99,3 +99,29 @@ test("D3: Given an agent session and Cursor installed, When --yes or a bare --ho
   }
   expect(existsSync(path.join(home, ".cursor/plugins/local/workit"))).toBe(true);
 });
+
+test("D1: Given an unreadable or invalid host file, When the plan is shown, Then each is a row naming the file and the reason, never its content", async () => {
+  const home = await cursorHome("unreadable");
+  const cliConfig = path.join(home, ".cursor/cli-config.json");
+  chmodSync(cliConfig, 0o000);
+  write(path.join(home, ".cursor/mcp.json"), '{"mcpServers": {"workit": SECRET\n');
+  write(path.join(home, ".claude/settings.json"), "not json SECRET\n");
+  const run = io(home, {}, true);
+  expect(await uninstall(["--hosts=cursor,claude-code", "--preview"], run.io)).toBe(0);
+  const rows = lastJson(run.out()).data.actions as { host: string; kind: string; path: string }[];
+  const unreadable = rows.filter((row) => row.kind === "unreadable");
+  expect(unreadable.map((row) => [row.host, row.path])).toEqual([
+    ["cursor", path.join(home, ".cursor/mcp.json")],
+    ["cursor", cliConfig],
+    ["claude-code", path.join(home, ".claude/settings.json")],
+  ]);
+  expect(rows.some((row) => row.kind === "edit-json-remove" && row.path.endsWith("mcp.json"))).toBe(
+    false,
+  );
+  expect(run.all()).not.toContain("SECRET");
+  const text = io(home);
+  expect(await uninstall(["--hosts=cursor", "--preview"], text.io)).toBe(0);
+  expect(text.all()).toContain(`unreadable ${cliConfig}`);
+  expect(text.all()).toContain("is not readable");
+  chmodSync(cliConfig, 0o600);
+});

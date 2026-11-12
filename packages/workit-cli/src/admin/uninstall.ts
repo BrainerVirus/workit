@@ -29,6 +29,7 @@ import {
   type PermissionHost,
 } from "./host-permissions";
 import {
+  claudeConfigDir,
   claudeWorkitInstalls,
   findHostExecutable,
   runHostCommand,
@@ -59,7 +60,9 @@ export type UninstallAction =
   /** A ytrack skill directory Workit installed (its own record, exact path only). */
   | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost }
   /** A foreign file at the launcher's place: reported, never touched. */
-  | { kind: "keep-foreign"; path: string; detail: string };
+  | { kind: "keep-foreign"; path: string; detail: string }
+  /** A file the plan must read that exists but cannot be read or parsed: its host is left untouched. */
+  | { kind: "unreadable"; path: string; detail: string };
 
 type UninstallHostPlan = {
   host: UninstallHost;
@@ -366,6 +369,18 @@ export function uninstallKeyChanges(action: UninstallAction, paths: UninstallPat
   return droppedKeys(existing.value, cleaner(existing.value).next, "");
 }
 
+/** A file the plan cannot read: named with the reason, never its content. */
+const unreadable = (file: string, existing: Existing): UninstallAction[] =>
+  existing.kind === "malformed"
+    ? [
+        {
+          kind: "unreadable",
+          path: file,
+          detail: `${existing.error}; fix or restore it, then run again`,
+        },
+      ]
+    : [];
+
 /** What uninstall says about Workit's own config: it stays, named at its resolved path. */
 export const configKeptNote = (
   env: NodeJS.ProcessEnv = process.env,
@@ -384,15 +399,16 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   const opencode: UninstallHostPlan = {
     host: "opencode",
     installed: ocDirty,
-    actions: ocDirty
-      ? [
-          {
-            kind: "edit-json-remove",
-            path: res.opencodeConfig,
-            detail: "remove workit plugin entries from opencode.json",
-          },
-        ]
-      : [],
+    actions:
+      ocExisting.kind === "record" && ocDirty
+        ? [
+            {
+              kind: "edit-json-remove",
+              path: res.opencodeConfig,
+              detail: "remove workit plugin entries from opencode.json",
+            },
+          ]
+        : unreadable(res.opencodeConfig, ocExisting),
   };
 
   const settingsExisting = readJsonRecord(res.cursorSettings);
@@ -407,15 +423,18 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     mcpExisting.kind === "malformed" ||
     (mcpExisting.kind === "record" && cleanCursorMcp(mcpExisting.value).changed);
   const dirExists = existsSync(res.cursorPluginDir);
-  const actions: UninstallAction[] = [];
-  if (settingsDirty) {
+  const actions: UninstallAction[] = [
+    ...unreadable(res.cursorSettings, settingsExisting),
+    ...unreadable(res.cursorMcp, mcpExisting),
+  ];
+  if (settingsDirty && settingsExisting.kind === "record") {
     actions.push({
       kind: "edit-json-remove",
       path: res.cursorSettings,
       detail: "remove workit enabled_plugins/plugin_dirs entries from settings.json",
     });
   }
-  if (mcpDirty) {
+  if (mcpDirty && mcpExisting.kind === "record") {
     actions.push({
       kind: "edit-json-remove",
       path: res.cursorMcp,
@@ -451,15 +470,16 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   const pi: UninstallHostPlan = {
     host: "pi",
     installed: piDirty,
-    actions: piDirty
-      ? [
-          {
-            kind: "edit-json-remove",
-            path: res.piConfig,
-            detail: "remove workit pi extension/skills entries",
-          },
-        ]
-      : [],
+    actions:
+      piExisting.kind === "record" && piDirty
+        ? [
+            {
+              kind: "edit-json-remove",
+              path: res.piConfig,
+              detail: "remove workit pi extension/skills entries",
+            },
+          ]
+        : unreadable(res.piConfig, piExisting),
   };
 
   // Claude Code: one native `claude plugin uninstall <id> --scope <scope>`
@@ -472,19 +492,28 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     paths.env ?? process.env,
     paths.cwd ?? process.cwd(),
   );
+  const claudeRegistry = path.join(
+    claudeConfigDir(home, paths.env ?? process.env),
+    "plugins",
+    "installed_plugins.json",
+  );
+  const registryUnreadable = unreadable(claudeRegistry, readJsonRecord(claudeRegistry));
   const claude: UninstallHostPlan = {
     host: "claude-code",
-    installed: claudeInstalls.length > 0,
-    actions: claudeInstalls.map((install) => ({
-      kind: "host-command" as const,
-      path: install.installPath,
-      detail: `claude plugin uninstall ${install.id} --scope ${install.scope}${
-        install.projectPath ? ` (in ${install.projectPath})` : ""
-      }`,
-      command: "claude" as const,
-      args: ["plugin", "uninstall", install.id, "--scope", install.scope],
-      cwd: install.projectPath,
-    })),
+    installed: claudeInstalls.length > 0 || registryUnreadable.length > 0,
+    actions: [
+      ...registryUnreadable,
+      ...claudeInstalls.map((install) => ({
+        kind: "host-command" as const,
+        path: install.installPath,
+        detail: `claude plugin uninstall ${install.id} --scope ${install.scope}${
+          install.projectPath ? ` (in ${install.projectPath})` : ""
+        }`,
+        command: "claude" as const,
+        args: ["plugin", "uninstall", install.id, "--scope", install.scope],
+        cwd: install.projectPath,
+      })),
+    ],
   };
 
   // Workit's permission blocks (issue #297). They do not mark a host as
@@ -494,6 +523,7 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     [cursor, "cursor", res.cursorCliConfig],
   ] as const) {
     const existing = readJsonRecord(file);
+    plan.actions.push(...unreadable(file, existing));
     if (existing.kind !== "record") continue;
     if (!permissionCleaner(host, file, paths)(existing.value).changed) continue;
     plan.actions.push({
@@ -688,6 +718,9 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
       let detail: string | undefined;
       if (action.kind === "keep-foreign") {
         status = "skipped";
+        detail = action.detail;
+      } else if (action.kind === "unreadable") {
+        status = "failed";
         detail = action.detail;
       } else if (action.kind === "remove-completion") {
         const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
