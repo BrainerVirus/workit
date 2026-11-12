@@ -60,20 +60,34 @@ every host behaves the same; only how the host shows the ask differs.
 
 A raw `ytrack` write an agent runs itself asks first too (`hooks/ytrack-guard.ts`,
 wired in `hooks/handle.ts`): `issue comment|create|edit|update|delete|command`
-(not `--dry-run`), `work-item add|edit|update|delete`, and `ytrack api` with
-`-X`/`--method` POST, PUT, PATCH or DELETE (`-XPOST`, `=` forms) or a body
-(`-f`, `-F`, `--field`, `--input`) without a read method. It finds them through
+(not `--dry-run`), `work-item` (alias `workitem`) `add|edit|update|delete`, and
+`ytrack api` with `-X`/`--method` POST, PUT, PATCH or DELETE (`-XPOST`, `=`
+forms) or a body (`-f`, `-F`, `--field`, `--input`) without a read method, past
+global flags before the group (`--host`, `--debug`, `--no-color`). A call with
+`--help` or `-h` as an option only prints help and passes. It finds them through
 `raw-git.ts` `commandLines` (chains, pipes, `cd`, env prefixes, wrappers,
 `bash -c`, eval, heredoc-fed shells, substitutions, variables) plus
-`workit check -- …`, `npx`/`bunx`/`pnpm dlx` and full-path spellings; the npx
-`workit` form is normalised first (#816), so it gets the same answer. A write
-`workit youtrack note|time|meeting|create` covers is denied naming that exact
-call; reads, `ytrack api` GET and `youtrack.writes: auto` pass.
+`workit check -- …`, `npx`/`bunx`/`pnpm dlx`, full-path spellings, an alias or
+function defined in the same command and `$(which ytrack)`; the npx `workit`
+form is normalised first (#816), so it gets the same answer. Scripts nested
+deeper than four levels that name ytrack are denied as unanalysable. A write is
+denied naming a `workit youtrack note|time|create` call only when that call
+makes the same write: every option is one the mapping carries (`--body`/`-b`,
+`--body-file`, `--duration` in whole minutes, `--text`, `--date`,
+`--project`/`-p`, `--summary`/`-s`, `--description`, `--description-file`) and
+every value is a literal with no `$` or backtick; a value starting with `-` is
+written `--flag=value`. Anything else (`--host`, `--tag`, `--meeting`, text on
+stdin, a URL for the issue) is treated as a write no verb covers, naming the
+part Workit cannot carry. Reads, `ytrack api` GET and `youtrack.writes: auto`
+pass.
 
-- **Claude Code:** N. The launcher sends any command whose text names `ytrack`
-  to the runtime; a write no verb covers gets `permissionDecision: "ask"`.
-- **Codex:** N. The hook entry sends it to the runtime; a write no verb covers
-  is denied, handing the command to the user's terminal (the hook cannot ask).
+- **Claude Code:** N. The launcher sends a command with a `ytrack` command word
+  (a segment start, or after `$(`, `-c`, `--`, `=`, `{` or a wrapper or runner)
+  to the runtime, so a mere mention stays on the fast path; a write no verb
+  covers gets `permissionDecision: "ask"`.
+- **Codex:** N. The hook entry sends the same commands to the runtime; a write
+  no verb covers is denied, handing the command to the user's terminal (the
+  hook cannot ask).
 - **Cursor:** N. `beforeShellExecution` denies the same way.
 - **Pi:** N. The `tool_call` hook blocks the same way (it drops an ask).
 - **OpenCode:** N. `permission.evaluate` (`v2/permissions.ts`) denies the same
