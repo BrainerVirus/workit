@@ -270,14 +270,16 @@ const ytrackArgs = (
  */
 const aliases = (command: string): Map<string, string[]> => {
   const found = new Map<string, string[]>();
-  for (const [, alias, value] of command
-    .matchAll(/\balias\s+([\w.-]+)=(?:'([^']*)'|"([^"]*)"|([^\s;&|)]+))/g)
-    .map(([all, n, a, b, c]) => [all, n, a ?? b ?? c ?? ""]))
+  for (const [, alias, a, b, c] of command.matchAll(
+    /\balias\s+([\w.-]+)=(?:'([^']*)'|"([^"]*)"|([^\s;&|)]+))/g,
+  )) {
+    const value = a ?? b ?? c ?? "";
     if (/^(?:\S*\/)?ytrack(?:\s|$)/.test(value)) found.set(alias, value.split(/\s+/).slice(1));
-  for (const [, named, fn] of command
-    .matchAll(/(?:\bfunction\s+([\w.-]+)(?:\s*\(\s*\))?|\b([\w.-]+)\s*\(\s*\))\s*\{([^}]*)\}/g)
-    .map(([all, a, b, body]) => [all, a ?? b ?? "", body ?? ""]))
-    if (/(?:^|[\s;&|])(?:\S*\/)?ytrack\s/.test(fn)) found.set(named, []);
+  }
+  for (const [, a, b, body] of command.matchAll(
+    /(?:\bfunction\s+([\w.-]+)(?:\s*\(\s*\))?|\b([\w.-]+)\s*\(\s*\))\s*\{([^}]*)\}/g,
+  ))
+    if (/(?:^|[\s;&|])(?:\S*\/)?ytrack\s/.test(body ?? "")) found.set(a ?? b ?? "", []);
   return found;
 };
 
