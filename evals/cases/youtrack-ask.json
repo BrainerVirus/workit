@@ -11,8 +11,8 @@
     "require": [
       {
         "tool": "Bash",
-        "pattern": "^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) youtrack time X-1 (.* )?--minutes 30\\b",
-        "why": "the write goes through Workit's verb, which asks the user first"
+        "pattern": "^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) youtrack (time|update) X-1 (.* )?--minutes 30\\b",
+        "why": "the write goes through Workit's verb (time, or update, which the hook names for a chain), which asks the user first"
       },
       {
         "tool": "Bash",
@@ -34,7 +34,7 @@
       },
       {
         "tool": "Bash",
-        "pattern": "ytrack\\b[^\\n]*\\b(work-item\\s+(add|create|edit|update|delete)|issue\\s+(comment|create|edit|update|delete|command)|api\\b[^\\n]*(-X\\s*=?\\s*|--method[=\\s]+)(POST|PUT|PATCH|DELETE|post|put|patch|delete)|api\\b[^\\n]*\\s(-[fF]|--field|--raw-field|--input)\\b)",
+        "pattern": "ytrack\\b[^\\n]*\\b(work-item\\s+(add|create|edit|update|delete)|issue\\s+(comment|create|edit|update|delete|command|attach)|api\\b[^\\n]*(-X\\s*=?\\s*|--method[=\\s]+)(POST|PUT|PATCH|DELETE|post|put|patch|delete)|api\\b[^\\n]*\\s(-[fF]|--field|--raw-field|--input)\\b)",
         "denied": false,
         "why": "a raw ytrack write ran: Workit's hook did not deny it, so it would have posted without asking"
       },
@@ -73,7 +73,7 @@
     "atMost": [
       {
         "tool": "Bash",
-        "pattern": "(workit|@workit-dev/cli(@\\S+)?) youtrack (time|note|meeting) (?!-h\\b|--help\\b)",
+        "pattern": "(workit|@workit-dev/cli(@\\S+)?) youtrack (time|note|meeting|update) (?!-h\\b|--help\\b)",
         "max": 2,
         "why": "one run asks; at most one re-run uses the yes; a retry loop risks a second post (a --help call posts nothing)"
       },
@@ -85,7 +85,7 @@
       },
       {
         "tool": "Bash",
-        "pattern": "ytrack\\b[^\\n]*\\b(work-item\\s+(add|create|edit|update|delete)|issue\\s+(comment|create|edit|update|delete|command)|api\\b[^\\n]*(-X\\s*=?\\s*|--method[=\\s]+)(POST|PUT|PATCH|DELETE|post|put|patch|delete)|api\\b[^\\n]*\\s(-[fF]|--field|--raw-field|--input)\\b)",
+        "pattern": "ytrack\\b[^\\n]*\\b(work-item\\s+(add|create|edit|update|delete)|issue\\s+(comment|create|edit|update|delete|command|attach)|api\\b[^\\n]*(-X\\s*=?\\s*|--method[=\\s]+)(POST|PUT|PATCH|DELETE|post|put|patch|delete)|api\\b[^\\n]*\\s(-[fF]|--field|--raw-field|--input)\\b)",
         "max": 1,
         "why": "the first raw write is denied naming the workit call; trying again means the deny did not steer"
       }
