@@ -286,6 +286,9 @@ function attachments(io: Io, files: readonly string[]): Attachment[] | string {
     } catch {
       return `--attach ${file}: no such file`;
     }
+    const twin = out.find((earlier) => earlier.name === path.basename(full));
+    if (twin)
+      return `--attach ${file} has the same name as ${twin.path}: ytrack refuses two files with one name, so rename one`;
     out.push({
       path: full,
       name: path.basename(full),

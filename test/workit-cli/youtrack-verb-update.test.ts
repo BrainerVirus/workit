@@ -266,3 +266,21 @@ it("Given create with a file and a command, When the user's one yes is used, The
     "issue command AB2-7 State Open",
   ]);
 });
+
+it("Given two --attach files with the same name, When the update runs, Then it fails naming both before any request", async () => {
+  mkdirSync(path.join(dir, "sub"), { recursive: true });
+  writeFileSync(path.join(dir, "sub", "a.png"), "other");
+  const out = await call([
+    "update",
+    "AB2-142",
+    "--markdown",
+    "hi",
+    "--attach",
+    "a.png",
+    "--attach",
+    "sub/a.png",
+  ]);
+  expect(out.code).toBe(2);
+  expect(out.json().error).toContain("same name");
+  expect(requests()).toEqual([]);
+});

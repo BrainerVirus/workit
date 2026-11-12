@@ -25,7 +25,7 @@ setDefaultTimeout(process.platform === "win32" ? 60_000 : 20_000);
 const fixture = makeDoctorFixture();
 afterAll(() => fixture.cleanup());
 
-// `auth paths --host <h>` answers paths-<h>.json, else no globs; `old` makes it an older ytrack.
+// `auth paths --host <h>` answers paths-<h>.json, else no globs (ytrack prints an array of {host, paths}); `old` makes it an older ytrack.
 const STUB = `#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 case "$1 $2" in
@@ -34,7 +34,7 @@ case "$1 $2" in
   "auth paths")
     if [ -f "$STUB_DIR/old" ]; then echo "Error: unknown command \\"paths\\" for \\"ytrack auth\\"" >&2; exit 1; fi
     case "$*" in *--add*|*--remove*) exit 0 ;; esac
-    if [ -f "$STUB_DIR/paths-$4.json" ]; then cat "$STUB_DIR/paths-$4.json"; else printf '{"host":"%s","paths":[]}' "$4"; fi ;;
+    if [ -f "$STUB_DIR/paths-$4.json" ]; then cat "$STUB_DIR/paths-$4.json"; else printf '[{"host":"%s","paths":[]}]' "$4"; fi ;;
 esac
 exit 0
 `;
@@ -119,7 +119,7 @@ describe.skipIf(process.platform === "win32")("ytrack auth paths (POSIX stub)", 
     writeWorkspaces([WORK]);
     writeFileSync(
       path.join(stubDir, "paths-home.youtrack.cloud.json"),
-      JSON.stringify({ host: "home.youtrack.cloud", paths: ["/w/work/**"] }),
+      JSON.stringify([{ host: "home.youtrack.cloud", paths: ["/w/work/**"] }]),
     );
     const found = row(doctor());
     expect(found?.detail).toContain(
