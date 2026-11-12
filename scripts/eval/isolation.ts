@@ -5,7 +5,7 @@
 // still sign in. Grants are the exception HOME cannot move (the account home
 // comes from the OS record, core/account-home.ts): every world is marked and
 // named by WORKIT_EVAL_WORLD, so its grants dir is its own config dir and its
-// entry only lowers the account's (autonomy.ts grantsDir, benchWorld). The
+// entry only lowers the account's (autonomy.ts shownGrantsDir, benchWorld). The
 // self-check proves it per world before a case that permits a shell wrapper
 // starts; the tripwire (tripwire.ts) catches the rest.
 import { Database, type SQLQueryBindings } from "bun:sqlite";
@@ -23,7 +23,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { approvalsDir } from "../../packages/workit-core/src/approvals/store";
-import { grantsDir } from "../../packages/workit-core/src/autonomy";
+import { shownGrantsDir } from "../../packages/workit-core/src/autonomy";
 import { resolveConfigDir } from "../../packages/workit-core/src/core/config";
 import { resolveStateDir } from "../../packages/workit-core/src/core/logger";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
@@ -187,7 +187,7 @@ export const grantShowProof = (text: string, world: string): string | null => {
 
 /**
  * The CLI verbs the probe runs. `grant show --all --json` prints the file
- * grants are listed from and `grant set` writes (autonomy.ts grantsDir);
+ * grants are listed from and `grant set` writes (autonomy.ts shownGrantsDir);
  * `grant show --json` is judged by grantShowProof, then by its paths.
  */
 const PROBE_VERBS = [
@@ -204,7 +204,7 @@ export const probe = (): Record<string, string> => {
   const paths: Record<string, string> = {
     home: os.homedir(),
     config: resolveConfigDir(),
-    grants: grantsDir(),
+    grants: shownGrantsDir(),
     state: resolveStateDir(),
     approvals: approvalsDir(),
     issued: path.join(resolveStateDir(), "issued"),

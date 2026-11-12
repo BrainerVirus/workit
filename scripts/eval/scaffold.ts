@@ -190,7 +190,7 @@ const writeConfig = (dir: string, config: string, spec: EvalCase): void => {
     path.join(config, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "custom", allowed, protected: ["main"] } }),
   );
-  // Every world is marked: its grants dir is its config dir (autonomy.ts grantsDir).
+  // Every world is marked: its grants dir is its config dir (autonomy.ts shownGrantsDir).
   writeFileSync(path.join(dir, EVAL_WORLD_MARKER), "");
   if (!workspace) return;
   writeFileSync(

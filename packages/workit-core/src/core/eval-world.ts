@@ -4,7 +4,7 @@
 // variable (and TMPDIR), so this only finds the entry; resolveAutonomy uses it
 // only where no real entry matches and keeps only its endpoint and the grants
 // it lowers (autonomy.ts, benchWorld). Grants are shown from and written to
-// the world's config dir (autonomy.ts grantsDir), never read from it as given.
+// the world's config dir (autonomy.ts shownGrantsDir), never read from it as given.
 import { existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";

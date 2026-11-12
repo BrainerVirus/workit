@@ -7,6 +7,7 @@ import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import {
   DEFAULT_GRANTS,
   grantsDir,
+  shownGrantsDir,
   listGrants,
   resolveAutonomy,
   writeGrants,
@@ -158,7 +159,9 @@ test("Given a bench world and a cwd in it, When grants are shown or written, The
   const accountFile = path.join(configHome.configDir, "workspaces.json");
   const before = readFileSync(accountFile, "utf8");
   inDir(repo, () => {
-    expect(grantsDir()).toBe(path.join(world, "config"));
+    expect(shownGrantsDir()).toBe(path.join(world, "config"));
+    // What the write guard protects and every grant is read from stays the account's.
+    expect(grantsDir()).toBe(configHome.configDir);
     expect(listGrants().path).toBe(path.join(world, "config", "workspaces.json"));
     const written = writeGrants("eval", [{ kind: "push", value: false }]);
     expect(written.ok && written.path).toBe(path.join(world, "config", "workspaces.json"));
@@ -173,7 +176,7 @@ test("Given a bench world whose own file raises grants, When its repo resolves t
   makeWorld(world, { autonomy: { merge: true, push: true, release: true } });
   const repo = path.join(world, "repo");
   inDir(repo, () => {
-    expect(grantsDir()).toBe(path.join(world, "config"));
+    expect(shownGrantsDir()).toBe(path.join(world, "config"));
     const resolved = resolveAutonomy(repo);
     expect(resolved.grants).toEqual({ ...DEFAULT_GRANTS });
     expect(resolved.configured).toEqual([]);
@@ -182,11 +185,11 @@ test("Given a bench world whose own file raises grants, When its repo resolves t
 
 test("Given the variable without a marker, or a cwd outside the world, Then the account's grants dir is used", () => {
   makeWorld(world, { defaultEndpoint: "pr" });
-  expect(grantsDir()).toBe(configHome.configDir);
-  inDir(path.join(real, "repo"), () => expect(grantsDir()).toBe(configHome.configDir));
+  expect(shownGrantsDir()).toBe(configHome.configDir);
+  inDir(path.join(real, "repo"), () => expect(shownGrantsDir()).toBe(configHome.configDir));
   rmSync(path.join(world, EVAL_WORLD_MARKER));
   try {
-    inDir(path.join(world, "repo"), () => expect(grantsDir()).toBe(configHome.configDir));
+    inDir(path.join(world, "repo"), () => expect(shownGrantsDir()).toBe(configHome.configDir));
   } finally {
     writeFileSync(path.join(world, EVAL_WORLD_MARKER), "");
   }
