@@ -177,7 +177,7 @@ const PLAIN = [
   `nohup ${W} &`,
   `timeout -k 5 30 ${W}`,
   `nice -n 5 ${W}`,
-  `FOO=1 ${W}`,
+  `X=1; ${W}`,
   `bash -lc '${W}'`,
   `eval "${W}"`,
   `npx -y ${W}`,
@@ -208,4 +208,66 @@ test("G a plain ytrack write, W the hook judges it, T both readings name the wor
         "`workit youtrack note X-1 --markdown hi`",
       );
     }
+});
+
+// Verdict mwddsnbw: an env assignment that reaches the ytrack call (a prefix,
+// `env NAME=v`, an export earlier in the command, inside a script the gate
+// enters) can change its host, account, config or binary, so no call is named.
+const ENVIRONED = [
+  `HOME=/x ${W}`,
+  `XDG_CONFIG_HOME=/x ${W}`,
+  `PATH=/x ${W}`,
+  `FOO=1 ${W}`,
+  `env HOME=/x ${W}`,
+  `env ${W}`,
+  `env -u HOME ${W}`,
+  `env - ${W}`,
+  `export HOME=/x; ${W}`,
+  `HOME=/x; export HOME; ${W}`,
+  `declare -x HOME=/x; ${W}`,
+  `typeset -x HOME=/x; ${W}`,
+  `set -a; HOME=/x; ${W}`,
+  `set -o allexport; HOME=/x; ${W}`,
+  `bash -c 'HOME=/x ${W}'`,
+  `HOME=/x bash -c '${W}'`,
+  `export HOME=/x; bash -c '${W}'`,
+  `exec -c ${W}`,
+  `exec -a yt ${W}`,
+  `command -p ${W}`,
+];
+
+test("G an env assignment or env-changing option that reaches the ytrack call, W the hook judges it, T no workit call is named: Claude Code asks, the other hosts deny with the rerun hint", () => {
+  for (const command of ENVIRONED) {
+    expect(ytrackGate(root, command, "posix", true)?.kind, command).toBe("ask");
+    const out = ytrackGate(root, command, "posix", false);
+    expect(out?.kind, command).toBe("deny");
+    const reason = out?.kind === "deny" ? out.reason : "";
+    expect(reason, command).toContain("in their own terminal");
+    expect(reason, command).not.toContain("`workit youtrack");
+    expect(reason, command).toContain("rerun the ytrack call as one plain command");
+  }
+});
+
+/** Each pass-through prefix, and why it cannot change what the call posts. */
+const PASS_THROUGH: Array<[string, string]> = [
+  ["command", "skips aliases and functions only: the same ytrack from the same PATH runs"],
+  ["exec", "replaces the shell with the same ytrack, arguments and environment"],
+  ["nohup", "only ignores the hangup signal"],
+  ["setsid", "only starts a new session"],
+  ["time", "only prints the time taken"],
+  ["nice -n 5", "only lowers CPU priority"],
+  ["ionice -c3", "only lowers I/O priority"],
+  ["stdbuf -o0", "only changes output buffering"],
+  ["chronic", "only hides output unless the call fails"],
+  ["unbuffer", "only gives the call a terminal for its output"],
+  ["timeout -k 5 30", "may stop the call, never changes what it sends"],
+];
+
+test("G each pass-through prefix, W it runs a plain ytrack write, T the named call stays, because the prefix cannot change what is posted", () => {
+  for (const [prefix, why] of PASS_THROUGH) {
+    const out = ytrackGate(root, `${prefix} ${W}`, "posix", false);
+    expect(out?.kind === "deny" ? out.reason : "", `${prefix}: ${why}`).toContain(
+      "`workit youtrack note X-1 --markdown hi`",
+    );
+  }
 });

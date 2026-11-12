@@ -324,23 +324,37 @@ const aliases = (command: string): Map<string, string[]> => {
   return found;
 };
 
-/** Prefix words that run the command after them once, with its own arguments, user and environment. */
-const PASS = /^(?:command|exec|nohup|setsid|time|nice|ionice|stdbuf|chronic|unbuffer|timeout|env)$/;
+/**
+ * Prefix words that run the command after them once, with the same arguments,
+ * environment and binary: they change only signals, session, priority,
+ * buffering, timing or what is printed (`env` is not one: it edits the environment).
+ */
+const PASS = /^(?:command|exec|nohup|setsid|time|nice|ionice|stdbuf|chronic|unbuffer|timeout)$/;
 /** Words that repeat, define or group commands: a script holding one is not plain. */
 const COMPOUND = /^(?:for|select|while|until|repeat|do|done|function|case|foreach|coproc)$/;
+/** A command that exports variables to later ones (`export`, `declare -x`, `set -a`). */
+const exportsVars = (words: readonly string[]): boolean => {
+  const [verb = "", ...rest] = words;
+  if (verb === "export") return true;
+  if (/^(?:declare|typeset|local|readonly)$/.test(verb))
+    return rest.some((word) => /^-\w*x/.test(word));
+  return verb === "set" && rest.some((word) => /^-\w*a/.test(word) || word === "allexport");
+};
 
-/** `words` past env assignments and pass-through prefixes with their options and numbers; [] after a YTRACK_* assignment. */
+/**
+ * `words` past pass-through prefixes with their options and numbers, or []
+ * (not plain) when anything changes the call's environment or binary: an
+ * assignment in front of it, `exec` with an option (`-c` clears the
+ * environment, `-a` renames it), `command -p` (a default PATH).
+ */
 const passed = (words: readonly string[]): string[] => {
   let at = 0;
   for (; at < words.length; at++) {
     const word = words[at];
-    if (/^[A-Za-z_]\w*=/.test(word)) {
-      if (word.startsWith("YTRACK_")) return [];
-      continue;
-    }
+    if (/^[A-Za-z_]\w*=/.test(word)) return [];
     if (!PASS.test(word)) break;
-    // `env` takes assignments only; the others take options and numbers.
-    if (word !== "env") while (/^(?:-|\d)/.test(words[at + 1] ?? "")) at++;
+    if (/^(?:exec|command)$/.test(word) && words[at + 1]?.startsWith("-")) return [];
+    while (/^(?:-|\d)/.test(words[at + 1] ?? "")) at++;
   }
   return words.slice(at);
 };
@@ -348,16 +362,21 @@ const passed = (words: readonly string[]): string[] => {
 /**
  * The command lines of a plain script, or null: simple commands joined by
  * `;`, `&&`, `||`, `|`, `&` or newlines, with no group, substitution, loop,
- * function or YTRACK_* assignment, where every one that names ytrack has no
- * word the shell expands and runs past pass-through prefixes only.
+ * function or export before the call, where every one that names ytrack has
+ * no word the shell expands and runs past pass-through prefixes only. A plain
+ * unexported variable (`X=1; ytrack …`) never reaches the call.
  */
 const plainLines = (command: string, dialect: ShellDialect): string[][] | null => {
   const lines: string[][] = [];
+  let exported = false;
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.group || segment.unanalyzable || segment.subs?.length) return null;
     if (COMPOUND.test(segment.words[0] ?? "")) return null;
     if (segment.words.some((word) => /^YTRACK_\w*=/.test(word))) return null;
+    exported ||= exportsVars(segment.words);
     if (!namesYtrack([...segment.words, ...(segment.stdin ?? [])].join(" "))) continue;
+    // An exported variable reaches the call and may change its host, account or binary.
+    if (exported) return null;
     // A word the shell expands (`$`, a glob, a substitution) is not what runs.
     if (segment.expands?.length) return null;
     lines.push(passed(segment.words));
