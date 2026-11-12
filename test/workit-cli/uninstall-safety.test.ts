@@ -9,6 +9,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -124,4 +126,67 @@ test("D1: Given an unreadable or invalid host file, When the plan is shown, Then
   expect(text.all()).toContain(`unreadable ${cliConfig}`);
   expect(text.all()).toContain("is not readable");
   chmodSync(cliConfig, 0o600);
+});
+
+/** Every file under `dir` with its bytes. */
+const snapshot = (dir: string, files = new Map<string, string>()): Map<string, string> => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) snapshot(file, files);
+    else files.set(file, readFileSync(file, "utf8"));
+  }
+  return files;
+};
+
+test("D2a: Given Cursor with an invalid mcp.json and a clean Codex, When --yes runs for both, Then Cursor is left byte-identical and named, Codex is removed, and it exits non-zero with the command to run again", async () => {
+  const home = await cursorHome("partial", true);
+  write(path.join(home, ".cursor/mcp.json"), "{ broken\n");
+  const cursorBefore = snapshot(path.join(home, ".cursor"));
+  const run = io(home);
+  expect(await uninstall(["--hosts=cursor,codex", "--yes"], run.io)).toBe(1);
+  expect(snapshot(path.join(home, ".cursor"))).toEqual(cursorBefore);
+  expect(existsSync(path.join(home, ".codex/rules/workit.rules"))).toBe(false);
+  const text = run.all();
+  expect(text).toContain("cursor left untouched");
+  expect(text).toContain(path.join(home, ".cursor/mcp.json"));
+  expect(text).toContain(`removed ${path.join(home, ".codex/rules/workit.rules")}`);
+  expect(text).toContain("workit uninstall --hosts=cursor,codex --yes");
+  const json = io(home, {}, true);
+  expect(await uninstall(["--hosts=cursor", "--yes"], json.io)).toBe(1);
+  const envelope = lastJson(json.out());
+  expect(envelope.data.skipped).toEqual(["cursor"]);
+  expect(envelope.unblock).toContain("workit uninstall --hosts=cursor --yes");
+  expect(snapshot(path.join(home, ".cursor"))).toEqual(cursorBefore);
+});
+
+test("D2b: Given a host command that fails, When --yes runs, Then it ran first, nothing after it ran, and the output lists what was and was not removed", async () => {
+  if (process.platform === "win32") return; // the fake host is a POSIX shell script
+  const home = path.join(scratch, "host-fails");
+  mkdirSync(path.join(home, ".claude"), { recursive: true });
+  expect(await setup(["--hosts=claude-code", "--no-shell", "--yes"], io(home).io)).toBe(0);
+  const plugin = path.join(home, ".claude/plugins/cache/workit/workit/1.0.0");
+  write(
+    path.join(plugin, ".claude-plugin/plugin.json"),
+    JSON.stringify({ name: "workit", repository: "https://github.com/BrainerVirus/workit" }),
+  );
+  write(
+    path.join(home, ".claude/plugins/installed_plugins.json"),
+    JSON.stringify({
+      version: 2,
+      plugins: { "workit@workit": [{ installPath: plugin, version: "1.0.0", scope: "user" }] },
+    }),
+  );
+  const bin = path.join(home, "bin");
+  write(path.join(bin, "claude"), "#!/bin/sh\necho 'claude: plugin store locked' >&2\nexit 7\n");
+  chmodSync(path.join(bin, "claude"), 0o755);
+  const settings = path.join(home, ".claude/settings.json");
+  const before = readFileSync(settings, "utf8");
+  const run = io(home, { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  expect(await uninstall(["--hosts=claude-code", "--yes"], run.io)).toBe(1);
+  expect(readFileSync(settings, "utf8")).toBe(before);
+  const text = run.all();
+  expect(text).toContain("failed");
+  expect(text).toContain("claude: plugin store locked");
+  expect(text).toContain(`not-run ${settings}`);
+  expect(text).toContain("workit uninstall --hosts=claude-code --yes");
 });

@@ -148,8 +148,16 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
       return emit(io, ok({ ...summary, removed: [] }), () => "Nothing removed.");
   }
   const result = applyUninstall(plan, paths);
-  const data = { ...summary, removed: result.entries };
-  if (!result.ok)
+  const data = { ...summary, removed: result.entries, skipped: result.skipped };
+  const lines = [
+    ...result.entries.map(
+      (e) =>
+        `${e.status === "removed" ? style.ok(e.status) : e.status} ${style.path(e.path)}${e.detail ? ` (${e.detail})` : ""}`,
+    ),
+    ...result.skipped.map((host) => `${host} left untouched: a file it needs cannot be read`),
+  ];
+  if (!result.ok) {
+    if (!io.json) for (const line of lines) io.stdout(`${line}\n`);
     return emit(
       io,
       fail(
@@ -158,14 +166,9 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
           .filter((e) => e.status === "failed")
           .map((e) => `${e.path}: ${e.detail ?? "failed"}`)
           .join("; "),
-        { data },
+        { data, unblock: `fix what failed above, then run ${command}` },
       ),
     );
-  return emit(io, ok(data), () => [
-    ...result.entries.map(
-      (e) =>
-        `${e.status === "removed" ? style.ok(e.status) : e.status} ${style.path(e.path)}${e.detail ? ` (${e.detail})` : ""}`,
-    ),
-    "Restart the host sessions to unload Workit.",
-  ]);
+  }
+  return emit(io, ok(data), () => [...lines, "Restart the host sessions to unload Workit."]);
 }

@@ -74,7 +74,8 @@ export type UninstallPlan = {
   hosts: UninstallHostPlan[];
 };
 
-type UninstallResultStatus = "removed" | "skipped" | "failed";
+/** `not-run`: left alone because its host has an unreadable file or an earlier step failed. */
+type UninstallResultStatus = "removed" | "skipped" | "failed" | "not-run";
 
 type UninstallResultEntry = {
   host: UninstallHost;
@@ -86,6 +87,8 @@ type UninstallResultEntry = {
 export type UninstallResult = {
   ok: boolean;
   entries: UninstallResultEntry[];
+  /** Hosts left untouched because a file their removal needs cannot be read. */
+  skipped: UninstallHost[];
 };
 
 /** Injectable homes mirroring setup's ApplySetupOptions subset (D-07). */
@@ -706,101 +709,154 @@ const applyClaudeUninstall = (
     : { status: "failed", detail: result.stderr || `exit ${result.exitCode}` };
 };
 
+/** Runs one reviewed action. */
+function applyAction(
+  action: UninstallAction,
+  res: ResolvedUninstall,
+  paths: UninstallPaths,
+): { status: UninstallResultStatus; detail?: string } {
+  let status: UninstallResultStatus;
+  let detail: string | undefined;
+  if (action.kind === "keep-foreign") {
+    status = "skipped";
+    detail = action.detail;
+  } else if (action.kind === "unreadable") {
+    status = "failed";
+    detail = action.detail;
+  } else if (action.kind === "remove-completion") {
+    const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
+    status = removed.includes(action.path) || !existsSync(action.path) ? "removed" : "failed";
+    detail =
+      status === "failed" ? `${action.path} is no longer Workit's completion script` : undefined;
+  } else if (action.kind === "remove-ytrack-skill") {
+    const recorded = readYtrackSkillRecord(stateDirOf(paths)).find(
+      (install) => install.host === action.host && install.path === action.path,
+    );
+    const [root, home] = skillRootOf(action.host, paths);
+    const outcome = recorded
+      ? removeYtrackSkill(recorded, stateDirOf(paths), { root, home })
+      : { status: "skipped" as const, detail: "no longer recorded as Workit's" };
+    status = outcome.status;
+    detail = outcome.detail;
+  } else if (action.kind === "remove-owned-cli") {
+    const outcome = applyOwnedRemoval(action, cliEnvOf(paths), paths.platform);
+    status = outcome.status;
+    detail = outcome.detail;
+  } else if (action.kind === "remove-file") {
+    try {
+      const removed = removeCodexRules(action.path, permissionPathsOf(paths));
+      status = removed ? "removed" : "failed";
+      detail = removed ? undefined : `${action.path} is not Workit's Codex rules file`;
+      if (removed) forgetOwnership("codex", permissionPathsOf(paths));
+    } catch (error) {
+      status = "failed";
+      detail = error instanceof Error ? error.message : String(error);
+    }
+  } else if (action.kind === "host-command") {
+    const outcome = applyClaudeUninstall(action, paths);
+    status = outcome.status;
+    detail = outcome.detail;
+  } else if (action.kind === "remove-dir") {
+    // Resolve before comparing so ".."/symlink tricks can never widen the rm.
+    const resolved = path.resolve(action.path);
+    const allowed =
+      canonicalRemoveDirAllowed(resolved, res) ||
+      (resolved === path.resolve(res.codexPluginDir) &&
+        path.basename(resolved) === "workit" &&
+        path.basename(path.dirname(resolved)) === "plugins");
+    if (!allowed) {
+      status = "failed";
+      detail = `refusing to remove non-canonical plugin directory: ${resolved}`;
+    } else if (!existsSync(resolved)) {
+      status = "skipped";
+      detail = "directory already absent";
+    } else {
+      try {
+        rmSync(resolved, { recursive: true, force: true });
+        status = "removed";
+      } catch (error) {
+        status = "failed";
+        detail = error instanceof Error ? error.message : String(error);
+      }
+    }
+  } else {
+    const cleaner = jsonCleanerFor(action.path, res, paths);
+    if (cleaner === null) {
+      status = "failed";
+      detail = `${action.path} is not a recognized uninstall target for this host`;
+    } else {
+      const outcome = applyEditJsonRemove(action.path, cleaner);
+      status = outcome.status;
+      detail = outcome.detail;
+      const permissionHost: PermissionHost | null =
+        action.path === res.claudeSettings
+          ? "claude-code"
+          : action.path === res.cursorCliConfig
+            ? "cursor"
+            : null;
+      if (permissionHost && status !== "failed")
+        forgetOwnership(permissionHost, permissionPathsOf(paths));
+    }
+  }
+  return { status, detail };
+}
+
+/** The plan's files that cannot be read now: their host is left untouched. */
+const unreadableNow = (actions: readonly UninstallAction[]): Map<UninstallAction, string> => {
+  const found = new Map<UninstallAction, string>();
+  for (const action of actions) {
+    if (action.kind === "unreadable") found.set(action, action.detail);
+    else if (action.kind === "edit-json-remove") {
+      const existing = readJsonRecord(action.path);
+      if (existing.kind === "malformed")
+        found.set(action, `${existing.error}; fix or restore it, then run again`);
+    }
+  }
+  return found;
+};
+
 /** Applies ONLY the reviewed plan actions with the given path options. Each
- *  planned action yields exactly one result entry; malformed host JSON fails
- *  its own action untouched while the remaining actions proceed (CA-13). */
+ *  planned action yields exactly one result entry. A host with a file that
+ *  cannot be read is left untouched; within a host the host command runs
+ *  first, and a failed step stops the steps after it (CA-13). */
 export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}): UninstallResult {
   const res = resolveUninstallPaths(paths);
   const entries: UninstallResultEntry[] = [];
+  const skipped: UninstallHost[] = [];
   for (const hostPlan of plan.hosts) {
-    for (const action of hostPlan.actions) {
-      let status: UninstallResultStatus;
-      let detail: string | undefined;
-      if (action.kind === "keep-foreign") {
-        status = "skipped";
-        detail = action.detail;
-      } else if (action.kind === "unreadable") {
-        status = "failed";
-        detail = action.detail;
-      } else if (action.kind === "remove-completion") {
-        const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
-        status = removed.includes(action.path) || !existsSync(action.path) ? "removed" : "failed";
-        detail =
-          status === "failed"
-            ? `${action.path} is no longer Workit's completion script`
-            : undefined;
-      } else if (action.kind === "remove-ytrack-skill") {
-        const recorded = readYtrackSkillRecord(stateDirOf(paths)).find(
-          (install) => install.host === action.host && install.path === action.path,
-        );
-        const [root, home] = skillRootOf(action.host, paths);
-        const outcome = recorded
-          ? removeYtrackSkill(recorded, stateDirOf(paths), { root, home })
-          : { status: "skipped" as const, detail: "no longer recorded as Workit's" };
-        status = outcome.status;
-        detail = outcome.detail;
-      } else if (action.kind === "remove-owned-cli") {
-        const outcome = applyOwnedRemoval(action, cliEnvOf(paths), paths.platform);
-        status = outcome.status;
-        detail = outcome.detail;
-      } else if (action.kind === "remove-file") {
-        try {
-          const removed = removeCodexRules(action.path, permissionPathsOf(paths));
-          status = removed ? "removed" : "failed";
-          detail = removed ? undefined : `${action.path} is not Workit's Codex rules file`;
-          if (removed) forgetOwnership("codex", permissionPathsOf(paths));
-        } catch (error) {
-          status = "failed";
-          detail = error instanceof Error ? error.message : String(error);
-        }
-      } else if (action.kind === "host-command") {
-        const outcome = applyClaudeUninstall(action, paths);
-        status = outcome.status;
-        detail = outcome.detail;
-      } else if (action.kind === "remove-dir") {
-        // Resolve before comparing so ".."/symlink tricks can never widen the rm.
-        const resolved = path.resolve(action.path);
-        const allowed =
-          canonicalRemoveDirAllowed(resolved, res) ||
-          (resolved === path.resolve(res.codexPluginDir) &&
-            path.basename(resolved) === "workit" &&
-            path.basename(path.dirname(resolved)) === "plugins");
-        if (!allowed) {
-          status = "failed";
-          detail = `refusing to remove non-canonical plugin directory: ${resolved}`;
-        } else if (!existsSync(resolved)) {
-          status = "skipped";
-          detail = "directory already absent";
-        } else {
-          try {
-            rmSync(resolved, { recursive: true, force: true });
-            status = "removed";
-          } catch (error) {
-            status = "failed";
-            detail = error instanceof Error ? error.message : String(error);
-          }
-        }
-      } else {
-        const cleaner = jsonCleanerFor(action.path, res, paths);
-        if (cleaner === null) {
-          status = "failed";
-          detail = `${action.path} is not a recognized uninstall target for this host`;
-        } else {
-          const outcome = applyEditJsonRemove(action.path, cleaner);
-          status = outcome.status;
-          detail = outcome.detail;
-          const permissionHost: PermissionHost | null =
-            action.path === res.claudeSettings
-              ? "claude-code"
-              : action.path === res.cursorCliConfig
-                ? "cursor"
-                : null;
-          if (permissionHost && status !== "failed")
-            forgetOwnership(permissionHost, permissionPathsOf(paths));
-        }
-      }
-      entries.push({ host: hostPlan.host, path: action.path, status, detail });
+    const host = hostPlan.host;
+    const blocked = unreadableNow(hostPlan.actions);
+    if (blocked.size > 0) {
+      skipped.push(host);
+      const files = [...blocked.keys()].map((action) => action.path).join(", ");
+      for (const action of hostPlan.actions)
+        entries.push({
+          host,
+          path: action.path,
+          ...(blocked.has(action)
+            ? { status: "failed" as const, detail: blocked.get(action) }
+            : {
+                status: "not-run" as const,
+                detail: `${host} left untouched until ${files} can be read`,
+              }),
+        });
+      continue;
+    }
+    const ordered = hostPlan.actions.toSorted(
+      (a, b) => Number(b.kind === "host-command") - Number(a.kind === "host-command"),
+    );
+    let failed = false;
+    for (const action of ordered) {
+      const outcome: { status: UninstallResultStatus; detail?: string } = failed
+        ? { status: "not-run", detail: `an earlier step for ${host} failed` }
+        : applyAction(action, res, paths);
+      if (outcome.status === "failed") failed = true;
+      entries.push({ host, path: action.path, ...outcome });
     }
   }
-  return { ok: entries.every((e) => e.status !== "failed"), entries };
+  return {
+    ok: entries.every((e) => e.status === "removed" || e.status === "skipped"),
+    entries,
+    skipped,
+  };
 }
