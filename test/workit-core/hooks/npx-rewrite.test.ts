@@ -124,3 +124,39 @@ test("npx of another package is not touched on any host", () => {
     expect(decision.kind === "rewrite" || decision.kind === "deny", host).toBe(false);
   }
 });
+
+// The npx spelling gets the plain call's decision from every gate: an ask or
+// deny verbatim; a pass becomes the plain call (rewrite, or a deny naming it).
+const GATED = [
+  "workit pr merge --unverified",
+  "workit git push --overwrite-unintegrated",
+  "workit grant set foo",
+  "workit grant raise foo",
+  "workit ledger void abc",
+  "workit release notes approve",
+  "workit approve ap_abcdefgh",
+];
+const HOSTS = [...REWRITERS, ...DENIERS];
+const APPROVE_STEP = new Set(["claude_code", "pi"]);
+
+test.each(GATED.flatMap((plain) => HOSTS.map(([d, host]) => [plain, host, d] as const)))(
+  "`%s` on %s: the npx spelling gets the plain call's decision",
+  (plain, host, descriptor) => {
+    const want = shellPre(descriptor, host, plain);
+    const got = shellPre(
+      descriptor,
+      host,
+      `npx -y @workit-dev/cli ${plain.slice("workit ".length)}`,
+    );
+    if (plain.startsWith("workit approve ") && APPROVE_STEP.has(host)) {
+      // The host's approve step asks and records only on the plain call: name it.
+      expect(got.kind).toBe("deny");
+      expect(got.kind === "deny" && got.unblock).toBe(plain);
+      return;
+    }
+    if (want.kind !== "none" && want.kind !== "context") return expect(got).toEqual(want);
+    if (REWRITERS.some(([, h]) => h === host))
+      expect(got).toMatchObject({ kind: "rewrite", command: plain });
+    else expect(got).toMatchObject({ kind: "deny", unblock: plain });
+  },
+);

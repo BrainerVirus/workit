@@ -11,6 +11,7 @@ import { workspaceTrailers } from "../core/workspaces";
 import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
 import { cdWorkitSplit, cwdRewrite, npxWorkit, verbFirst } from "./cwd-normalize";
 import { workitOnPath } from "../core/heavy";
+import { approveCallDeny, approveCallIn } from "../approvals/call";
 import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
@@ -226,6 +227,30 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       );
     }
     case "shell.pre": {
+      // `npx @workit-dev/cli …` with `workit` on PATH is judged as the `workit …`
+      // call it runs, by every gate below; only a pass becomes that call.
+      const npx = npxWorkit(event.command);
+      if (npx && workitOnPath()) {
+        const canDeny = usable(descriptor.shellPolicy.deny);
+        // Claude Code and Pi ask for and record an approval only on the plain call.
+        const approve = approveCallIn(npx, event.dialect);
+        if (approve && canDeny && (input.host === "claude_code" || input.host === "pi")) {
+          const fix = approve.plain ? `workit approve ${approve.ids.join(" ")}` : approve.fix;
+          return { kind: "deny", reason: approveCallDeny(fix), unblock: fix };
+        }
+        const plain = decide({ ...input, event: { ...event, command: npx } }, deps);
+        if (plain.kind !== "none" && plain.kind !== "context") return plain;
+        if (usable(descriptor.shellPolicy.rewrite))
+          return {
+            kind: "rewrite",
+            command: npx,
+            input: event.toolInput ? { ...event.toolInput, command: npx } : null,
+            text: plain.kind === "context" ? plain.text : null,
+          };
+        if (canDeny)
+          return { kind: "deny", reason: `Run \`${npx}\`: workit is on PATH.`, unblock: npx };
+        return plain;
+      }
       const skillRead = skillReadIn(event.command, event.dialect);
       if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);
@@ -290,20 +315,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const rewrites = usable(descriptor.shellPolicy.rewrite);
       if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
       const lease = plan.kind === "rewrite" && rewrites ? plan : null;
-      // `npx @workit-dev/cli …` runs as the `workit …` on PATH, which the allow rules match.
-      const npx = lease ? null : npxWorkit(event.command);
-      const npxCall = npx && workitOnPath() ? npx : null;
-      if (npxCall && !rewrites && canDeny)
-        return { kind: "deny", reason: `Run \`${npxCall}\`: workit is on PATH.`, unblock: npxCall };
       // `cd <dir> && workit …` becomes `workit <verb> --cwd <dir> …` (issue
       // #388), and `workit --cwd <dir> <verb>` puts the verb first (#297), so
       // Workit's enumerated allow rules match. A workit command is never heavy
       // itself, so the lease plan wins when set.
       const cwdCommand =
-        (rewrites && npxCall) ||
-        (!lease && rewrites && input.host === "claude_code"
+        !lease && rewrites && input.host === "claude_code"
           ? (cwdRewrite(event.command) ?? verbFirst(event.command))
-          : null);
+          : null;
       const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
       // command, without one) can tell whether a raw commit moved it.
