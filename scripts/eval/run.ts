@@ -432,7 +432,7 @@ type Options = {
   limits: NonNullable<RunResult["limits"]>;
   /** The real config and state files the tripwire guards. */
   guard: Guard;
-  /** The tripwire's holders, journal and rescued bytes (tripwire.ts). */
+  /** The tripwire's dir: its holders and journal (tripwire.ts). */
   tripwire: string;
   /** The in-memory snapshot armed once at bench start: the only thing restored automatically. */
   snapshot: Snapshot | null;
