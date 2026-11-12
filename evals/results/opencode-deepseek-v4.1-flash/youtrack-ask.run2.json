@@ -3,33 +3,22 @@
   "run": 2,
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
-  "provider": "go",
-  "limits": [
-    {
-      "provider": "free",
-      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
-    }
-  ],
-  "workitVersion": "workit-dev-v1.5.0+2f9b1327f1",
-  "key": "85f7bd8e2663f675",
-  "date": "2026-11-11T16:39:54.223Z",
+  "provider": "free",
+  "workitVersion": "workit-dev-v1.7.0+4a4605abbd",
+  "key": "a0d2f73ddbbd509f",
+  "date": "2026-11-12T08:41:39.701Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 8,
-    "durationMs": 55236,
+    "turns": 5,
+    "durationMs": 15459,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 1,
-    "pass": false,
-    "calls": 8,
-    "failures": [
-      {
-        "rule": "at-most",
-        "detail": "3 calls match /workit youtrack (time|note|meeting)\\b/, at most 2: one run asks; at most one re-run uses the yes; a retry loop risks a second post (#2, #3, #5)"
-      }
-    ]
+    "pass": true,
+    "calls": 7,
+    "failures": []
   }
 }
