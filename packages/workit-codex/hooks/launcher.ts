@@ -83,18 +83,16 @@ const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 const WRITE_TOOLS = new Set(["applypatch", "edit", "write"]);
 
 /**
- * Text that may name a state registry or the config dir's workspaces.json
- * (the guards in write-gate.ts judge it): the config dir by its last two
- * parts, so `~/.config/workit` and `$HOME/...` match too.
+ * Text that may name a state registry, the config dir or its workspaces.json
+ * (the guards in write-gate.ts judge it); `.config/workit` catches `~` and
+ * `$HOME` spellings of the default dir.
  */
-const mentionsGuarded = (text: string): boolean => {
-  const flat = (value: string) => value.replaceAll("\\", "/").toLowerCase();
-  const tail = (dir: string) => flat(dir).split("/").slice(-2).join("/");
+const guarded = (text: string): boolean => {
+  const flat = (s: string) => s.replaceAll("\\", "/").toLowerCase();
+  const all = flat(text);
   return (
-    /issued|workspaces\.json/i.test(text) ||
-    [stateDir(process.env), tail(configDir(process.env)), tail(configDir({}))].some((part) =>
-      flat(text).includes(flat(part)),
-    )
+    /issued|workspaces\.json|\.config\/workit/.test(all) ||
+    [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env))))
   );
 };
 
@@ -138,7 +136,7 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    return /\b(?:git|gh|glab)\b/.test(text) || mentionsGuarded(text) || maybeHeavy(text, value.cwd)
+    return /\b(?:git|gh|glab)\b/.test(text) || guarded(text) || maybeHeavy(text, value.cwd)
       ? null
       : event;
   } catch {
