@@ -179,6 +179,7 @@ test("Given a local branch behind the forge head, Then head_mismatch is unchange
   const result = await run(["pr", "merge", "--pr", "12", "--json"], repo.cwd, "author-1");
   expect(result.json()).toMatchObject({ ok: false, data: { reason: "head_mismatch" } });
   expect(result.json().error).toContain("head_mismatch: the verdict check reads feature/x at");
+  expect(result.json().unblock).toContain("git switch feature/x");
   expect(merges()).toBe(0);
 });
 
@@ -193,4 +194,46 @@ test("Given the forge head cannot be fetched, Then the refusal names the head an
   expect(result.json().unblock).toContain("git fetch origin feature/x");
   expect(merges()).toBe(0);
   expect(refs(repo.cwd)).toBe(before);
+});
+
+test("Given a tracking ref created at another commit while the head is fetched, Then it is left untouched, the refusal is head_mismatch, and no private ref is left", async () => {
+  const { repo, clone, merges } = setup();
+  await verifyInClone(clone);
+  const other = repo.git("rev-parse", "main");
+  const tracking = "refs/remotes/origin/feature/x";
+  // Another process fetches feature/x the moment Workit's own fetch lands.
+  writeFileSync(
+    path.join(repo.cwd, ".git", "hooks", "reference-transaction"),
+    [
+      "#!/bin/sh",
+      '[ "$1" = committed ] || exit 0',
+      "grep -q ' refs/workit/' || exit 0",
+      `git rev-parse -q --verify ${tracking} >/dev/null && exit 0`,
+      `git update-ref ${tracking} ${other}`,
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const before = refs(repo.cwd);
+
+  const result = await run(["pr", "merge", "--pr", "12", "--json"], repo.cwd, "author-1");
+  expect(result.json()).toMatchObject({ ok: false, data: { reason: "head_mismatch" } });
+  expect(merges()).toBe(0);
+  expect(repo.git("rev-parse", tracking)).toBe(other);
+  expect(refs(repo.cwd)).toBe(`${before}\n${tracking} ${other}`.split("\n").toSorted().join("\n"));
+});
+
+test("Given only a stale tracking ref and no local branch, Then head_mismatch names the tracking ref and git fetch, not git switch", async () => {
+  const { repo, clone, merges } = setup();
+  await verifyInClone(clone);
+  repo.git("update-ref", "refs/remotes/origin/feature/x", "main");
+
+  const result = await run(["pr", "merge", "--pr", "12", "--json"], repo.cwd, "author-1");
+  expect(result.json()).toMatchObject({ ok: false, data: { reason: "head_mismatch" } });
+  expect(result.json().error).toContain(
+    "head_mismatch: the verdict check reads origin/feature/x (no local branch) at",
+  );
+  expect(result.json().unblock).toContain("git fetch origin feature/x");
+  expect(result.json().unblock).not.toContain("git switch");
+  expect(merges()).toBe(0);
 });
