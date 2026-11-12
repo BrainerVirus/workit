@@ -397,3 +397,22 @@ test("Given Cursor without Workit, When its install is applied twice, Then the s
   expect(snapshot(w.home, [cursor, path.join(w.home, ".local/state")])).toEqual(before);
   expect(w.plan("cursor").preview.mutations).toEqual([]);
 });
+
+// --- Host ids ---
+
+test("Given a host id the planner does not know, Then it refuses with an error naming the valid ids", () => {
+  const w = world();
+  for (const id of ["Claude-Code", "PI", "nope"]) {
+    let error: unknown;
+    try {
+      w.plan(id as HostId);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error, id).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("UnknownHostError");
+    expect((error as Error).message).toBe(
+      `unknown host "${id}"; valid hosts: claude-code, opencode, codex, cursor, pi`,
+    );
+  }
+});

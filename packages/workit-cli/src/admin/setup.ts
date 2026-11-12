@@ -458,17 +458,28 @@ const cursorHealthy = (res: ResolvedApply, opts: HostOnlyInstallOptions): boolea
   return registered(cursorSettingsRegistration(res)) && registered(cursorMcpRegistration(res));
 };
 
+const HOST_IDS: readonly HostId[] = ["claude-code", "opencode", "codex", "cursor", "pi"];
+
+/** A host id the host-only planner does not know: never read as "already healthy". */
+class UnknownHostError extends Error {
+  override name = "UnknownHostError";
+  constructor(host: string) {
+    super(`unknown host "${host}"; valid hosts: ${HOST_IDS.join(", ")}`);
+  }
+}
+
 /**
  * Plan the install, or the repair, of one host's Workit plugin: its plugin
  * files, its own config keys and its native commands, never the Workit config,
  * workspaces, project files or another host. A healthy host plans nothing, so
  * applying twice changes nothing. Read-only; apply with applySetupPreview and
- * the same options.
+ * the same options. Throws UnknownHostError for a host id it does not know.
  */
 export function planHostOnlyInstall(
   host: HostId,
   opts: HostOnlyInstallOptions = {},
 ): HostOnlyInstallPlan {
+  if (!HOST_IDS.includes(host)) throw new UnknownHostError(host);
   const env = opts.env ?? process.env;
   const state = readSetupState(opts.dir ?? opts.configDir ?? resolveConfigDir());
   const res: ResolvedApply = {
