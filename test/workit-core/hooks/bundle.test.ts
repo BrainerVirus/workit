@@ -63,15 +63,20 @@ const HOOK_ENTRIES = [
 // unzip/mkfifo and git output writers, workit wrappers and entries) takes core run to ~526 KB, so the ceiling is 528 KB.
 // Wave 7 (#792 items 23/26/27/28, approvals core per docs/workit-next/host-approval.md): each slice
 // trims first; together they need ~8 KB more, so the ceiling is 540 KB. The read-only TaskStore
-// split for hooks (#807) is the fix that lowers it again.
-const BUDGET = 540_000;
+// split (#807, 2026-11-11): hooks read through TaskReader (core/task-read.ts) and never load the
+// write side (core/task-store.ts: appends, binding, compaction, 2.x migration). Core run went
+// from 537,270 B to 511,615 B (Claude Code 505,078 B, Cursor 499,833 B, Codex 499,445 B), so the
+// ceiling is that baseline plus 12 KB for the rest of wave 7.5.
+const BUDGET = 523_615;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
 const sizeCheckApplies = Bun.version === PINNED_BUN;
-const FORBIDDEN = /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$/;
+// The task store's write side: hooks only read (core/task-read.ts, #807).
+const FORBIDDEN =
+  /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$|\/core\/task-store\.ts$/;
 
-test("a hook bundle loads no doctor/setup modules or the core barrel, within its size budget", () => {
+test("a hook bundle loads no doctor/setup modules, the core barrel or the task store's write side, within its size budget", () => {
   const out = mkdtempSync(path.join(tmpdir(), "workit-hook-bundle-"));
   try {
     for (const [index, entry] of HOOK_ENTRIES.entries()) {

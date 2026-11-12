@@ -14,9 +14,9 @@ import {
   fileSignature,
   MIGRATION_PENDING,
   racySignature,
-  TaskStore,
+  TaskReader,
   type TaskIndexEntry,
-} from "../core/task-store";
+} from "../core/task-read";
 import { capabilitiesFor, type HostDescriptor } from "./descriptor";
 import type { HookInput } from "./protocol";
 
@@ -83,7 +83,7 @@ const otherConversation = (entry: TaskIndexEntry, session: SessionHandle): boole
   );
 
 const implicitTaskEntry = (
-  store: TaskStore,
+  store: TaskReader,
   entries: TaskIndexEntry[],
   session: SessionHandle,
 ): TaskIndexEntry | null => {
@@ -166,7 +166,7 @@ const cache = new Map<string, CachedContext>();
  * unchanged. Documents modified within the racy window are never trusted.
  */
 export function sessionCompactContext(
-  store: TaskStore,
+  store: TaskReader,
   session: SessionHandle,
   context: OperationContext,
   selection: HostDescriptor["context"]["task"] = "session-bound",
@@ -180,7 +180,7 @@ export function sessionCompactContext(
 }
 
 function entryCompactContext(
-  store: TaskStore,
+  store: TaskReader,
   entry: TaskIndexEntry | null,
   session: SessionHandle,
   context: OperationContext,
@@ -280,7 +280,7 @@ export const sessionContextText = (
   let compact = "";
   let offer: string | null = null;
   try {
-    const store = new TaskStore(input.cwd);
+    const store = new TaskReader(input.cwd);
     const listed = store.listTaskIndex();
     // Hooks never migrate (hot path, possibly a live 2.x writer): say how.
     if (migrationPending(listed))
@@ -344,7 +344,7 @@ export const whereLine = (cwd: string): string | null => {
 export const turnContextText = (input: HookInput, descriptor: HostDescriptor): string | null => {
   try {
     const text = sessionCompactContext(
-      new TaskStore(input.cwd),
+      new TaskReader(input.cwd),
       { host: input.host, handle: input.session.id },
       hookOperationContext(input, descriptor),
       descriptor.context.task,

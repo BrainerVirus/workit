@@ -35,7 +35,7 @@ import {
   type CheckConfig,
 } from "../check-config";
 import { worktreeSignal, worktreeTree } from "../git/rev";
-import { runtimeVersion } from "./task-store";
+import { runtimeVersion } from "./task-read";
 import { derivedRuleStatus, ledgerView } from "./policy/derive";
 
 export type CandidateEnvironment =
