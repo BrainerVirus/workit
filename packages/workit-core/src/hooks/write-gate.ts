@@ -17,6 +17,8 @@ import {
   type LiveDeps,
   type LiveOwner,
 } from "../core/live-session";
+import { grantsDir } from "../autonomy";
+import { resolveConfigDir } from "../core/config";
 import { resolveStateDir } from "../core/logger";
 import { workspaceLiveSessionGuard } from "../core/workspaces";
 import { appendHookObserved, ledgerPath } from "../ledger";
@@ -1349,37 +1351,61 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
 export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
   paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
-// --- the issued-registry and approvals guard (#292) ------------------------
-
-/** The registries only Workit's hooks and the CLI write, by their dir under the state dir. */
-type Registry = "issued" | "approvals";
+// --- the issued-registry, approvals and config guard (#292) ----------------
 
 /**
- * The first of `targets` an agent tool call writes under `<state>/issued*`
- * (the issued-id records and their token hashes) or `<state>/approvals/` (the
- * host-approval requests and grants), with its registry. Only the hook and the
- * CLI write there; an agent that could would forge an issued session, a
- * token or the user's yes by hand.
+ * What only Workit's hooks and the CLI write (`<state>/issued*`,
+ * `<state>/approvals/`) or only the user changes (the config dir's
+ * workspaces.json: grants, roles, youtrack.writes). An agent that could write
+ * one would forge an issued session, a token or the user's yes, or raise its
+ * own grants.
  */
+type Registry = "issued" | "approvals" | "grants";
+
+/** The config dirs whose workspaces.json is guarded: this env's and the account home's (grants). */
+const configDirs = (): string[] => [resolveConfigDir(), grantsDir()];
+
+/** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
   targets: readonly string[],
 ): { file: string; registry: Registry } | null => {
   const state = resolveStateDir();
+  const configs = configDirs();
   for (const target of targets) {
-    const registry = underRegistry(state, cwd, homeExpanded(target), process.platform, canonical);
+    const file = homeExpanded(target);
+    const registry =
+      underRegistry(state, cwd, file, process.platform, canonical) ??
+      (configs.some((dir) => underConfig(dir, cwd, file, process.platform, canonical))
+        ? "grants"
+        : null);
     if (registry) return { file: target, registry };
   }
   return null;
 };
 
 /**
- * Which guarded registry `target` (resolved against `cwd`) is or is inside:
- * `<state>/issued*` or `<state>/approvals`. Pure over `platform`, so Windows
- * shapes are testable anywhere: mixed `\` and `/`, drive-letter case, and the
- * `/c/Users/...` form a POSIX shell on Windows uses. `real` resolves symlinks
- * and 8.3 short names (RUNNER~1) on the live platform.
+ * The parts of `target` (resolved against `cwd`) below `dir`, or null outside
+ * it. Pure over `platform`, so Windows shapes are testable anywhere: mixed `\`
+ * and `/`, case, and the `/c/Users/...` form a POSIX shell on Windows uses.
+ * `real` resolves symlinks and 8.3 short names (RUNNER~1) on the live platform.
  */
+const partsUnder = (
+  dir: string,
+  cwd: string,
+  target: string,
+  platform: NodeJS.Platform,
+  real: (file: string) => string,
+): string[] | null => {
+  const win = platform === "win32";
+  const p = win ? path.win32 : path.posix;
+  const fold = (value: string) => (win || platform === "darwin" ? value.toLowerCase() : value);
+  const named = win ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target;
+  const relative = p.relative(fold(real(p.resolve(dir))), fold(real(p.resolve(cwd, named))));
+  return relative.startsWith("..") || p.isAbsolute(relative) ? null : relative.split(p.sep);
+};
+
+/** Which state registry `target` is or is inside: `<state>/issued*` or `<state>/approvals`. */
 export const underRegistry = (
   state: string,
   cwd: string,
@@ -1387,14 +1413,8 @@ export const underRegistry = (
   platform: NodeJS.Platform = process.platform,
   real: (file: string) => string = (file) => file,
 ): Registry | null => {
-  const win = platform === "win32";
-  const p = win ? path.win32 : path.posix;
-  const fold = (value: string) => (win || platform === "darwin" ? value.toLowerCase() : value);
-  const named = win ? target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:") : target;
-  const relative = p.relative(fold(real(p.resolve(state))), fold(real(p.resolve(cwd, named))));
-  if (relative.startsWith("..") || p.isAbsolute(relative)) return null;
-  const first = relative.split(p.sep)[0];
-  if (first.startsWith("issued")) return "issued";
+  const first = partsUnder(state, cwd, target, platform, real)?.[0];
+  if (first?.startsWith("issued")) return "issued";
   return first === "approvals" ? "approvals" : null;
 };
 
@@ -1406,6 +1426,21 @@ export const underIssued = (
   platform: NodeJS.Platform = process.platform,
   real: (file: string) => string = (file) => file,
 ): boolean => underRegistry(state, cwd, target, platform, real) === "issued";
+
+/**
+ * Whether `target` is `<dir>/workspaces.json`, or `dir` itself (a copy, move
+ * or removal of the dir can replace the file). Other files there grant nothing.
+ */
+export const underConfig = (
+  dir: string,
+  cwd: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+  real: (file: string) => string = (file) => file,
+): boolean => {
+  const parts = partsUnder(dir, cwd, target, platform, real);
+  return parts?.length === 1 && (parts[0] === "" || parts[0] === "workspaces.json");
+};
 
 /**
  * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
@@ -1421,29 +1456,38 @@ const unquotedWindowsRegistry = (command: string): Registry | null => {
     ? "issued"
     : text.includes(`${state}/approvals`)
       ? "approvals"
-      : null;
+      : configDirs().some((dir) => text.includes(`${flat(dir)}/workspaces.json`))
+        ? "grants"
+        : null;
   return registry && shellWrites(command).writes ? registry : null;
 };
 
-const REGISTRY_DENY: Record<Registry, { label: string; unblock: string }> = {
+const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: string }> = {
   issued: {
     label: "issued-registry guard",
+    what: "Workit's issued-session state",
     unblock:
       "Issued ids and tokens are written only by Workit's SubagentStart hook. Run the verifier or reviewer agent so the host issues its own session; never edit the issued registries by hand.",
   },
   approvals: {
     label: "approvals guard",
+    what: "Workit's host-approval state",
     unblock:
       "Approval requests and the user's yes are written only by Workit: run `workit approve <id>` as its own call so the host asks the user, or ask the user to run it in their own terminal; never edit the approvals registry by hand.",
+  },
+  grants: {
+    label: "config guard",
+    what: "the user's Workit config (grants, roles, youtrack.writes)",
+    unblock:
+      "Only the user changes it: ask them to run `workit grant set <ws> <kind>=<value>` or `workit workspace set <ws> <key>=<value>` in a terminal outside this host. `workit grant show` and `workit workspace show` read it.",
   },
 };
 
 const registryDeny = ({ file, registry }: { file: string; registry: Registry }): HookDecision => {
-  const { label, unblock } = REGISTRY_DENY[registry];
-  const what = registry === "issued" ? "issued-session state" : "host-approval state";
+  const { label, what, unblock } = REGISTRY_DENY[registry];
   return {
     kind: "deny",
-    reason: `workit ${label}: ${file} is under Workit's ${what}. ${unblock}`,
+    reason: `workit ${label}: ${file} is under ${what}. ${unblock}`,
     unblock,
   };
 };
