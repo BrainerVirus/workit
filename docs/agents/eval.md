@@ -120,16 +120,28 @@ result file (`scripts/eval/privacy.ts`):
   `<world>`, the checkout `<workit>`, the account's home in every absolute
   spelling (the OS record's, the runtime's, resolved) `~` (`<home>` as a
   project slug), the login name `<user>` and the host name `<host>`. The
-  dirs the bench itself puts a host in become placeholders too, before the
-  refusal looks: a checkout or store this checkout's `node_modules` link into
-  is `<linked>` (a linked worktree's packages are symlinks into the main
-  checkout, and an error raised inside one names the main checkout's real
-  path), and a toolchain's install dir the read rules allow under your home is
+  dirs the bench itself puts a host in become placeholders too: a checkout or
+  store this checkout's `node_modules` link into is `<linked>` (a linked
+  worktree's packages are symlinks into the main checkout), and a
+  toolchain's install dir the read rules allow under your home is
   `<toolchain:bun>`, `<toolchain:node>`, `<toolchain:git>` or
   `<toolchain:<host binary>>`, each in every spelling (its path, and that path
   under `~`, `$HOME` and `${HOME}`). Such a path is the bench's own doing: it
   can spell one of your host's project paths or a workspace's name without
-  holding either. A call that names one is outside the world (`system`).
+  holding either. Three rules keep a placeholder from hiding anything of
+  yours. A root is replaced only where it stands as a whole path: not before
+  and not after a character a path segment goes on with (a letter, a digit,
+  `_`, `.`, `@`, `+`, `~`, `-`), so `<root>/x` and `"<root>"` are the root and
+  `<root>-client`, `<root>x` and `/mnt<root>` stay as written. The refusal
+  looks at the text before the roots become placeholders and lets through
+  only a string that lies wholly inside a root named that way (the root
+  itself, a part of it): a private value that starts with a root, contains
+  one or sits beside one is still refused. And a root is never your home, a
+  dir above it or a dir that holds a guarded path: such a store gets no
+  placeholder. The checkout's `<workit>` follows the first two rules as well:
+  it goes in as a whole path only, and the refusal puts it back to look, so a
+  private value under the checkout or beside it is still refused. A call that
+  names a root's path is outside the world.
 - **Scrub.** The scrub does not decide what a call read: nothing that reads a
   command's text can (a glob, a quote, a script the model wrote, a path an
   interpreter builds). The kernel does, so there are two regimes:
@@ -232,21 +244,32 @@ result file (`scripts/eval/privacy.ts`):
 
   ```
   where (shown here only, in no file; no value is shown; an id is salted per bench start: equal ids are one value):
-    <case>.transcript.jsonl: event 9, user result of Bash(tool trace): host project path, 41 chars, id 3f9a1c2e, from ~/.claude.json: projects, key 3 of 9 (as a ~ path)
+    <case>.transcript.jsonl: event 9, user result of Bash call (14 chars; starts with workit): host project path, 41 chars, id 3f9a1c2e, from ~/.claude.json: projects, key 3 of 9 (as a ~ path)
     <case>.transcript.jsonl: event 12, assistant (the model's text): real Workit config value, 12 chars, id 0b7d44a1, from ~/.config/workit/workspaces.json: workspaces[0].name
   ```
 
   A line names the file, the event (its 1-based line in the transcript; a key
   path in the result file), the event's type and the field (a tool's input, a
-  call's result with the call's command cut to 100 characters and any private
-  string in it shown as `<kind>`, the model's text, the answer text, or a key
-  path), the kind, the value's length, an id (the first 8 hex of a sha256
-  salted per bench start: two hits with one id are one value, and an id means
-  nothing in another bench start) and where the runner read the value from:
-  the file, with your home as `~`, and the key path, the `projects` key's
-  position, the git key, the database row and column, or `a variable named as
-  a secret` for the environment. A key you chose yourself (not one of
-  Workit's or the host's schema) shows as its position, `{key 2}`. A shape
+  call's result, the model's text, the answer text, or a key path), the kind,
+  the value's length, an id (the first 8 hex of a sha256 salted per bench
+  start: two hits with one id are one value, and an id means nothing in
+  another bench start) and where the runner read the value from.
+
+  A line holds structure only, never text a model or you wrote: no excerpt of
+  a command, a path or a result. A call is named by its tool, and a shell call
+  by its command's length and its first word when that word is on a fixed
+  list of commands (`workit`, `git`, `ls`, `cat` and the like; otherwise `a
+  command not on the list`). An event type, a tool and a key are named only
+  when they are on the fixed lists of the two transcript formats and the
+  result file (`scripts/eval/privacy.ts`); anything else is `an event`, `a
+  tool` or the key's position, `{key 2}`. An origin names only well-known
+  files (`~/.config/workit/workspaces.json`, `~/.claude.json`,
+  `~/.gitconfig`, the hosts' login files) with the key path, the `projects`
+  key's position, the git key or the database row and column; a file in a
+  place you chose is named by its class (`the Workit config dir's
+  workspaces.json`, `a git config file included from ~/.gitconfig, include
+  1`), a key you chose by its position, and an environment secret as `a
+  variable named as a secret`. A shape
   the committed check refuses (a home path, a projects map) has a place and a
   kind only. Read it as: the same id in a tool's result and then in the
   model's text is one value the model repeated; a path-length value whose
@@ -296,7 +319,8 @@ A bench run must never change your real Workit files (#822: a run rewrote
   workspace or account refuses the case: the host never starts and the run
   fails as `isolation`.
 - **Tripwire.** The tripwire only detects. It never writes, removes or renames anything in your home. On a change this bench could have made it kills the host, fails the run as `outside_write`, stops the bench with exit 3, and prints for each path what was there, what is there now, where the original copy is, and for the simple cases the command to put it back.
-  - A change another process made is reported and stops nothing. That is decided from the run itself: Landlock write confinement was applied to it (the bench start printed `write confinement: on`, the case was not refused, the launcher did not exit 126), the change is one Landlock's rights govern (a guarded path's content, kind or presence changed; its mode and link count did not), and the path is not one the run's ruleset made writable. The kernel refused this bench that write, so another process made it: a second session recording a verdict, you editing your config. The runner prints `outside change, not this bench's: write confinement was on, so this change was made by another process; …` with what changed and, for a watched file, where its copy from the bench start is (in the journal, until this bench ends). The host is not killed, the run's result is written as usual, the change becomes the state later checks compare with, the journal is dropped at the end as for a clean run, and the summary line counts them (`; 1 outside change(s) by another process, reported above`). The exit code does not change.
+  - A change another process made is reported and stops nothing. That is decided from the run itself: Landlock write confinement was applied to it (the bench start printed `write confinement: on`, the case was not refused, the launcher did not exit 126), the change is one Landlock's rights govern (a guarded path's content, kind or presence changed; its mode and link count did not), and the path is not one the run's ruleset made writable. The kernel refused this bench that write, so another process made it: a second session recording a verdict, you editing your config. The runner prints `outside change, not this bench's: write confinement was on, so this change was made by another process; …` with what changed and, for a watched file, where its copy from the bench start is (in the journal, until this bench ends). The host is not killed, the run's result is written as usual and records the change (`outsideChanges`: each path under `~` with `created`, `changed` or `removed`, no content; `summary.json` counts them per case and in total), the change becomes the state later checks compare with, the journal is dropped at the end as for a clean run, and the summary line counts them (`; 1 outside change(s) by another process, reported above`). The exit code does not change.
+  - One more check runs after the last run and before the journal is dropped, and also when a run threw. A change it finds is handled by the same rule with the bench's own confinement: another process's change is reported (no result records it: no run was under way); anything else prints `STOPPED: real Workit files changed after the last run's check`, keeps the journal and exits 3.
   - Everything else stops as before: any change without write confinement (no Landlock, `--confine off`, a refused case, a launcher that could not apply the rules); and with it, a mode change, a link count change, a replaced root, an unreachable path, a file over 64 MB, or a change to a guarded path the ruleset made writable.
   - Watched: the config dir, whole (tokens, `vcs.json`, `templates/`, backups included), and the state files that grant or pick what runs (`host-permissions.json`, `host-permissions-backup/`, `node.json`). At bench start, after taking the lock, the runner snapshots them into its own memory and re-checks them after each run and every 2 s while a host runs.
   - Reported the same way: the state trees `approvals/`, `issued/`, `issued-tokens/` and `verdicts/`, which live sessions also change.
