@@ -606,3 +606,25 @@ test("G an inline interpreter that only names the config dir, or an editor -c th
   ])
     expect(decide(command).kind, command).toBe("deny");
 });
+
+test("G a glob whose segments do not start with a dot, W it would reach a guarded path only through a dot dir, T the shell would not expand it there, so no deny", () => {
+  const homeState = path.join(home, ".local", "state", "workit");
+  set({ WORKIT_STATE_DIR: homeState });
+  mkdirSync(path.join(homeState, "approvals", "grants"), { recursive: true });
+  const fromHome = sh(path.relative(home, CONFIG)).split("/");
+  // The default config dir has a dot dir only off Windows (%APPDATA%\\workit there).
+  const dotted =
+    process.platform === "win32"
+      ? []
+      : [
+          `cp x.json ~/${fromHome.map(() => "*").join("/")}/workspaces.json`,
+          `cp x.json ~/?${fromHome[0].slice(2)}/${fromHome.slice(1).join("/")}/workspaces.json`,
+        ];
+  for (const command of [`rm ~/*/*/*/approvals/grants/a.json`, ...dotted])
+    expect(decide(command).kind, command).toBe("none");
+  for (const command of [
+    `rm ~/.*/*/*/approvals/grants/a.json`,
+    `cp x.json ~/${fromHome.map((part) => (part.startsWith(".") ? ".*" : "*")).join("/")}/workspaces.json`,
+  ])
+    expect(decide(command).kind, command).toBe("deny");
+});

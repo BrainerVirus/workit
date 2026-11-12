@@ -1625,7 +1625,8 @@ const globbed = (cwd: string, target: string, state: string, configs: string[]):
   const segment = (glob: string, name: string) => {
     try {
       return new RegExp(
-        `^${glob
+        // Like the shell, `*` and `?` never match a leading dot unless the pattern spells it.
+        `^${glob.startsWith(".") ? "" : "(?!\\.)"}${glob
           .replace(/[.+^$(){}|\\]/g, "\\$&")
           .replace(/\[!/g, "[^")
           .replaceAll("*", ".*")
