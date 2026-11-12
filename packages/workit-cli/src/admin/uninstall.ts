@@ -24,6 +24,7 @@ import {
   forgetOwnership,
   permissionTarget,
   readOwnership,
+  codexRulesText,
   removeCodexRules,
   removeOwnedEntries,
   type PermissionHost,
@@ -372,6 +373,19 @@ export function uninstallKeyChanges(action: UninstallAction, paths: UninstallPat
   return droppedKeys(existing.value, cleaner(existing.value).next, "");
 }
 
+/** Workit's Codex rules file as this version writes it, changed by someone, or unreadable. */
+const codexRulesState = (file: string): "unchanged" | "changed" | "unreadable" => {
+  try {
+    return readFileSync(file, "utf8") === codexRulesText() ? "unchanged" : "changed";
+  } catch {
+    return "unreadable";
+  }
+};
+
+/** What uninstall says about a Codex rules file someone changed: kept, with the manual step. */
+const codexRulesKept = (file: string): string =>
+  `${file} changed since Workit wrote it: kept; move any rules of your own out of it, then delete it`;
+
 /** A file the plan cannot read: named with the reason, never its content. */
 const unreadable = (file: string, existing: Existing): UninstallAction[] =>
   existing.kind === "malformed"
@@ -535,12 +549,20 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
       detail: `remove Workit's permission block from ${path.basename(file)}`,
     });
   }
-  if (existsSync(res.codexRules))
-    codex.actions.push({
-      kind: "remove-file",
-      path: res.codexRules,
-      detail: "remove Workit's Codex rules file",
-    });
+  if (existsSync(res.codexRules)) {
+    const rules = codexRulesState(res.codexRules);
+    codex.actions.push(
+      rules === "unchanged"
+        ? { kind: "remove-file", path: res.codexRules, detail: "remove Workit's Codex rules file" }
+        : rules === "changed"
+          ? { kind: "keep-foreign", path: res.codexRules, detail: codexRulesKept(res.codexRules) }
+          : {
+              kind: "unreadable",
+              path: res.codexRules,
+              detail: `${res.codexRules} is not readable; fix or restore it, then run again`,
+            },
+    );
+  }
 
   // The ytrack skill directories Workit recorded installing, and only those,
   // each at exactly its host's `<skills root>/ytrack` with no symlink on the
@@ -742,6 +764,9 @@ function applyAction(
     const outcome = applyOwnedRemoval(action, cliEnvOf(paths), paths.platform);
     status = outcome.status;
     detail = outcome.detail;
+  } else if (action.kind === "remove-file" && codexRulesState(action.path) === "changed") {
+    status = "skipped";
+    detail = codexRulesKept(action.path);
   } else if (action.kind === "remove-file") {
     try {
       const removed = removeCodexRules(action.path, permissionPathsOf(paths));

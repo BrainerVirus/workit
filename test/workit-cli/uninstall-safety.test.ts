@@ -190,3 +190,27 @@ test("D2b: Given a host command that fails, When --yes runs, Then it ran first, 
   expect(text).toContain(`not-run ${settings}`);
   expect(text).toContain("workit uninstall --hosts=claude-code --yes");
 });
+
+test("O1: Given Workit's Codex rules file with a line the user added, When uninstall runs, Then the preview says it changed and --yes keeps it with the manual step", async () => {
+  const home = path.join(scratch, "codex-changed");
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  expect(await setup(["--hosts=codex", "--no-shell", "--yes"], io(home).io)).toBe(0);
+  const rules = path.join(home, ".codex/rules/workit.rules");
+  writeFileSync(rules, `${readFileSync(rules, "utf8")}# my own rule\n`);
+  const changed = readFileSync(rules, "utf8");
+  const preview = io(home);
+  expect(await uninstall(["--hosts=codex", "--preview"], preview.io)).toBe(0);
+  expect(preview.all()).toContain("changed since Workit wrote it");
+  const run = io(home);
+  expect(await uninstall(["--hosts=codex", "--yes"], run.io)).toBe(0);
+  expect(readFileSync(rules, "utf8")).toBe(changed);
+  expect(run.all()).toContain(`skipped ${rules} (${rules} changed since Workit wrote it`);
+});
+
+test("O1: Given Workit's Codex rules file unchanged, When --yes runs, Then it is deleted", async () => {
+  const home = path.join(scratch, "codex-unchanged");
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  expect(await setup(["--hosts=codex", "--no-shell", "--yes"], io(home).io)).toBe(0);
+  expect(await uninstall(["--hosts=codex", "--yes"], io(home).io)).toBe(0);
+  expect(existsSync(path.join(home, ".codex/rules/workit.rules"))).toBe(false);
+});
