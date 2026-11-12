@@ -1067,6 +1067,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `workit --session=<v> approve <id>` and `workit --token <v> approve <id>` reach the approve step in the Claude Code hook launcher
 - On Windows, copying the config `workspaces.json` or an issued file out to another path is no longer denied
 - `workit upgrade --hosts=<h>` repairs a registered-but-missing Workit plugin on Claude Code, OpenCode and Pi too (Cursor and Codex already were): it plans the reinstall for that host only, applies it, and checks the host plans clean afterwards
+- The eval bench no longer stores private data in a result: it replaces what a host read outside the bench world with a marker, refuses to write a run that still holds a string from the real account, confines host reads with Landlock, and copies only the sign-in keys of `~/.claude.json`. The one committed transcript that held a real config is redacted.
 
 ### Removed
 
