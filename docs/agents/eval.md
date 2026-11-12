@@ -120,20 +120,38 @@ result file (`scripts/eval/privacy.ts`):
   `<world>`, the checkout `<workit>`, the account's home in every absolute
   spelling (the OS record's, the runtime's, resolved) `~` (`<home>` as a
   project slug), the login name `<user>` and the host name `<host>`.
-- **Scrub.** A tool call that read or listed a path outside the world (Claude
-  Code's Read, Grep, Glob, Edit, Write, Bash; OpenCode's read, grep, glob,
-  list, shell) keeps its input, but its result becomes `<outside-world file:
-  <class>, <n> bytes>`, the class being `real config`, `real state`, `host
-  config`, `home`, `unresolved` or `system`. Every path is resolved first: a
-  relative one against the call's working directory (the world's project dir,
-  unless the call's `workdir` or an earlier `cd` in the same script says
-  otherwise); `$HOME` and the `XDG_*_HOME` bases expand as `~`, which counts as
-  outside. A `..`, an unknown variable, a command substitution or a relative
-  path after a `cd` it cannot follow is `unresolved` (or the class its tail
-  names, such as `.config/workit`), never inside. Paths under `<world>` and
-  `<workit>` and `/dev` streams stay. A hook's or the
-  host's denial stays: it holds no file content and the grader reads it. The
-  stored, scrubbed transcript is the one graded, so `--replay` agrees.
+- **Scrub.** The scrub does not decide what a call read: nothing that reads a
+  command's text can (a glob, a quote, a script the model wrote, a path an
+  interpreter builds). The kernel does, so there are two regimes:
+  - _Reads confined_ (`read confinement: on`): a call could read only the
+    world and the read rules below, whatever its command spells. A result
+    stays unless the call names a path outside the world (Claude Code's Read,
+    Grep, Glob, Edit, Write, Bash; OpenCode's read, grep, glob, list, shell).
+    Every named path is resolved first: a relative one against the call's
+    working directory (the world's project dir, unless the call's `workdir` or
+    an earlier `cd` in the same script says otherwise); `$HOME` and the
+    `XDG_*_HOME` bases expand as `~`, which counts as outside. A `..`, an
+    unknown variable, a command substitution or a relative path after a `cd`
+    it cannot follow is `unresolved` (or the class its tail names, such as
+    `.config/workit`), never inside. Paths under `<world>` and `<workit>` and
+    `/dev` streams stay.
+  - _Reads not confined_ (no Landlock, or `read confinement: off`): no result
+    of a call that ran is stored, for any tool.
+
+  A removed result becomes `<outside-world file: <class>, <n> bytes>`, the
+  class being `real config`, `real state`, `host config`, `home`,
+  `unresolved`, `system` or `unbounded` (nothing confined the read and the
+  call names no outside path). Inputs always stay. A refused call's result
+  stays: the call never ran, so it is the hook's or the host's words.
+- **A removed result never changes a grade.** Before the text goes, the scrub
+  stores beside the marker the grader's own answers about it (`facts`: each
+  `result` pattern of the case, and for a spawn the refusal test, to whether
+  the real text matched), and the grader answers from them. The stored
+  transcript is the one graded, so `--replay` agrees with the live grade. A
+  `result` pattern added or changed after the run has no stored answer: it
+  counts against the run (a `forbid` or `atMost` rule matches, a `require`
+  rule does not), so re-run the case. A failure's detail quotes the marker,
+  never the removed text.
 - **Refusal.** At bench start the runner builds, in memory only, the real
   account's private strings: every string of 6+ characters in its Workit
   `workspaces.json` and `config.json` (Workit's own vocabulary aside: the
@@ -213,9 +231,9 @@ A bench run must never change your real Workit files (#822: a run rewrote
   - A change to a watched file is seen within 2 s, the watch interval, and the host is killed; the changed bytes stay until you act, so a live session that reads the file meanwhile sees them.
   - A bench agent can kill the runner, which ends detection. Under Landlock what it leaves running still cannot write your home. Everything the runner leaves on disk is writable and deletable by the same OS user, so the next start reports a leftover only if the agent left one and cannot prove it genuine; the digest the stopped run printed on your terminal is the only check, and it is yours to make.
   - A bench agent that attaches to the runner (ptrace, `/proc/<pid>/mem`) can change the snapshot in memory. With `kernel.yama.ptrace_scope` 1 or higher (Ubuntu's default) the kernel refuses a child attaching to its parent; with 0 nothing does.
-  - The host's login (`~/.claude/.credentials.json`, the world's copy of `~/.claude.json`'s sign-in keys, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise.
-  - Under Landlock the bench protects your real Workit files from change and your home from being read, except what the read rules list: the system dirs (`/etc/passwd` names your home; `/run` holds your runtime sockets), the temp dirs (other tools' scratch files), the toolchain install dirs (global packages and caches under `~/.bun`, for one) and the main checkout's `node_modules`. What a model reads there is scrubbed only when the call names the path; a model that quotes it in its answer is caught only by the refusal, which knows only the private strings above.
-  - Without Landlock reads are unrestricted: a case that permits a shell wrapper is refused (or runs with `--unconfined`), and every other case relies on the scrub and the refusal alone.
+  - The host's login (`~/.claude/.credentials.json`, the world's copy of `~/.claude.json`'s sign-in keys, the OpenCode provider keys) is readable by the bench agent by design: the host cannot sign in otherwise. With reads confined, a call that prints it through the world's own path (`<world>/home/…`) keeps its result, and the refusal does not know the token: read a transcript before you commit it.
+  - Under Landlock the bench protects your real Workit files from change and your home from being read, except what the read rules list: the system dirs (`/etc/passwd` names your home; `/run` holds your runtime sockets), the temp dirs (other tools' scratch files), the toolchain install dirs (global packages and caches under `~/.bun`, for one) and the main checkout's `node_modules`. What a model reads there is scrubbed only when the call names the path (a spelling the scrub cannot read keeps its result); a model that quotes it in its answer is caught only by the refusal, which knows only the private strings above.
+  - Without Landlock reads are unrestricted: a case that permits a shell wrapper is refused (or runs with `--unconfined`), and every case stores no tool result. What the model then writes itself (its answer, a later call's input) is caught only by the refusal.
   - After the runner dies without its check (SIGKILL, power loss, a second Ctrl-C), a changed real file stays changed until you act; the next start reports it with the original's copy and runs nothing. The dead run's world, with its login copies in a 0700 dir, stays until that start.
   - The tripwire checks that each of its own dirs under `~/.cache/workit-bench-tripwire/` is a real directory you own, then lists it and unlinks by name. A process running as you that swaps one of those dirs for a symlink between the check and the unlink can redirect that unlink; a confined host cannot write there, an unconfined one (`--unconfined`) can. Open, not accepted: it needs a directory-handle walk that `node:fs` does not offer.
   - A process the agent moved out of the host's process group (`setsid`) outlives its run; what it writes later is caught by a later check in the same bench, and by nothing after the last one.
