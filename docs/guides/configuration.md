@@ -221,7 +221,7 @@ covers the dir `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR` or `XDG_CONFIG_HOME` points
 at and the default dir grants are read from, reached through `~`, a symlink or
 `..` too. The deny names the `workit grant set` or `workit workspace set`
 command for you to run in your own terminal. Reading the file,
-`workit grant show`, `workit workspace show` and writes to the dir's other
+`workit grant show`, `workit workspace list` and writes to the dir's other
 files are unaffected.
 
 `remotes` lists the remote URLs a workspace owns: a checkout anywhere whose

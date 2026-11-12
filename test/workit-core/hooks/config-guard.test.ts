@@ -130,14 +130,14 @@ test("G the default dir under ~, W a shell writes through ~, $HOME, a symlink or
   );
 });
 
-test("G the config file, W a session reads it, runs grant or workspace show, or writes a file that grants nothing, T nothing is denied", () => {
+test("G the config file, W a session reads it, runs grant show or workspace list, or writes a file that grants nothing, T nothing is denied", () => {
   const dir = path.join(home, ".config", "workit");
   for (const command of [
     `cat ${dir}/workspaces.json`,
     `grep merge ${dir}/workspaces.json`,
     `jq . ${dir}/workspaces.json > /tmp/out.json`,
     "workit grant show",
-    "workit workspace show personal",
+    "workit workspace list",
     `echo x > ${dir}/rules/team.md`,
     `cp ${dir}/workspaces.json /tmp/copy.json`,
     `echo x > ${dir}/workspaces.json.bak`,

@@ -1479,7 +1479,7 @@ const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: st
     label: "config guard",
     what: "the user's Workit config (grants, roles, youtrack.writes)",
     unblock:
-      "Only the user changes it: ask them to run `workit grant set <ws> <kind>=<value>` or `workit workspace set <ws> <key>=<value>` in a terminal outside this host. `workit grant show` and `workit workspace show` read it.",
+      "Only the user changes it: ask them to run `workit grant set <ws> <kind>=<value>` or `workit workspace set <ws> <key>=<value>` in a terminal outside this host. `workit grant show` and `workit workspace list` read it.",
   },
 };
 
