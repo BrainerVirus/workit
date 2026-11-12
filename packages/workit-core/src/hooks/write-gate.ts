@@ -1287,10 +1287,11 @@ const segmentTargets = (
       // `/dev/stdin` (like `-`) is the heredoc the command feeds it, never the hook's own stdin.
       const operand = args.find((arg) => !arg.startsWith("-") && arg !== "run");
       const named = operand === "/dev/stdin" ? undefined : operand;
-      // What a literal producer pipes in: `echo`/`printf` words, `cat` of a heredoc or files.
+      // What a literal producer pipes in: `echo`/`printf` words (a printf format
+      // too, which may be the script itself), `cat` of a heredoc or files.
       const maker = feeder ? commandWords(feeder.words) : [];
       const piped: string[] = /^(?:echo|printf)$/.test(maker[0] ?? "")
-        ? [maker.slice(maker[0] === "printf" ? 2 : 1).join("\n")]
+        ? [maker.slice(1).join("\n").replaceAll("\\n", "\n")]
         : maker[0] === "cat"
           ? [...(feeder?.stdin ?? []), ...operands(maker.slice(1)).flatMap(read)]
           : [];

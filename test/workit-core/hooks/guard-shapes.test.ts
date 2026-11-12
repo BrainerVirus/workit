@@ -518,3 +518,16 @@ test("G a shell or interpreter fed by a literal echo, printf or cat <<EOF pipe, 
   ])
     expect(decide(command).kind, command).toBe("none");
 });
+
+test("G a script piped from printf, W the script is the format string itself, T it is judged like its arguments", () => {
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    for (const command of [
+      `printf 'echo x > ${f}\\n' | sh`,
+      `printf 'cd /tmp\\necho x > ${f}\\n' | bash`,
+      `printf '%s\\n' 'echo x > ${f}' | sh`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+  }
+  expect(decide(`printf 'echo hi > out.txt\\n' | sh`).kind).toBe("none");
+});
