@@ -122,11 +122,14 @@ A bench run must never change your real Workit files (#822: a run rewrote
 
 - **World HOME.** `HOME` and the four `XDG_*_HOME` bases point inside the
   world, so `~`, `$HOME` and every Workit path derived from them (config,
-  grants, state, `approvals/`, the issued registry) resolve there. Only the
-  host's login is symlinked in from the real home: Claude Code's `~/.claude`,
-  `~/.claude.json` and its `share`, `state` and `cache` dirs; OpenCode's
-  `~/.opencode` and its `share`, `state` and `cache` dirs. Links, not copies:
-  both hosts refresh their tokens in place.
+  grants, state, `approvals/`, the issued registry) resolve there. The host
+  gets only its login, into real world dirs (so `cd -P ~/.claude/..` stays in
+  the world): Claude Code's `~/.claude/.credentials.json` is symlinked (it
+  refreshes in place; a host that replaces the link by rename has the new
+  bytes written back to the real file, and the runner prints that) and
+  `~/.claude.json` is copied; OpenCode gets a fresh `opencode.db` with the
+  real one's schema and only its `credential`, `kv` and migration rows. No
+  settings, `CLAUDE.md`, skills, hooks, plugins, sessions or caches.
 - **Grants dir.** Workit reads grants from the account home (the OS record,
   never `$HOME`, D15). The bench runs the CLI and hooks from this checkout
   with bun, and under bun that record follows `$HOME`, so it is the world's
@@ -137,19 +140,38 @@ A bench run must never change your real Workit files (#822: a run rewrote
   permission mode lets one run, the runner resolves every guarded path in a
   child with the run's env (`run.ts --isolation-probe`: the real resolvers,
   then `workit dir config|state`, `workit grant show`, `workit workspace
-  list`). Any path outside the world refuses the case: the host never starts
-  and the run fails as `isolation`.
-- **Tripwire.** Before each run the runner snapshots the real guarded files:
-  `workspaces.json`, its `.bak` and `config.json` in the account's config dir
-  (and the one your env points at), and `approvals/`, `issued/` and
-  `issued-tokens/` in the state dir. After the run a changed or deleted file
-  is put back byte for byte (a created config file is removed), the run fails
-  as `outside_write` naming each path and the transcript, no further run
-  starts, and the runner exits 3. A new state file is reported, not removed:
-  a live session may have made it. `--replay` never re-grades such a run.
+  list`). A path outside the world, or a verb that prints no path, refuses the
+  case: the host never starts and the run fails as `isolation`.
+- **Tripwire.** Before each run the runner snapshots, to disk, the real:
+  - config dir, whole (tokens, `vcs.json`, `templates/`, backups included),
+    and the state files that grant or pick what runs
+    (`host-permissions.json`, `host-permissions-backup/`, `node.json`):
+    after the run every change is put back in place (same inode, so hard
+    links hold, with its mode and mtime; a symlink as a symlink; a created
+    file removed);
+  - state trees `approvals/`, `issued/`, `issued-tokens/` and `verdicts/`:
+    a new, changed or missing file is reported and nothing is restored, since
+    a live session adds and consumes them (putting back a consumed approval
+    would re-arm it).
+
+  `leases/`, `logs/`, `hook-runs/`, `live-sessions/`, `worktrees/` and the
+  other caches every session rewrites are not guarded; none grants anything.
+  Any change fails the run as `outside_write` naming each path and the
+  transcript, no further run starts, and the runner exits 3. `--replay` never
+  re-grades such a run.
+- **Concurrency and crashes.** The snapshot, a lock naming the runner's pid
+  and rescued bytes live in `~/.cache/workit-bench-tripwire/` (0700, files
+  0600: tokens are in it; the snapshot goes after a clean run). A second bench
+  run while one holds the lock exits 4. A change the user or a live session
+  makes to a restored file during a run is rolled back too, but its bytes are
+  saved first under `rescued/<time>/` and the failure names that dir. SIGINT,
+  SIGTERM and SIGHUP check and restore before exiting; after a crash or
+  SIGKILL the next start finds the snapshot, restores, reports `RECOVERED`
+  and runs nothing (exit 3).
 - **Limits.** No unprivileged user namespace here (Ubuntu's AppArmor
-  restriction), so a write to the real home's absolute path, or through
-  `~/.claude/..`, is not stopped; the tripwire catches it.
+  restriction), so a write to the real home's absolute path, or through the
+  credential symlink's target, is not stopped; the tripwire catches the
+  guarded paths.
 
 ## Cases
 
