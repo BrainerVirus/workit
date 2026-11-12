@@ -11,7 +11,7 @@
  *   bun scripts/eval/run.ts --replay [--host opencode] [--model haiku] [--check]
  */
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -32,6 +32,7 @@ import {
   confinementLine,
   binaryOf,
   linkedPackages,
+  linkedRoots,
   readableDirs,
   toolchainDir,
   writableDirs,
@@ -53,14 +54,20 @@ import {
   committedLeaks,
   envCredentials,
   hostCredentials,
+  privateHits,
   privateKinds,
   privateStrings,
   PrivateSetUnreadable,
+  rootSpellings,
   scrubAccount,
   scrubOutsideReads,
+  scrubRoots,
+  shownHit,
   workitVocabulary,
   type Account,
+  type Origins,
   type PrivateSet,
+  type Root,
   type Scrub,
 } from "./privacy";
 import { makeWorld, promptFor, sweepWorlds, type World } from "./scaffold";
@@ -203,17 +210,27 @@ const writeJson = (file: string, value: unknown): void => {
 
 /**
  * Path- and user-free transcripts: the world (also as Claude's project slug),
- * the checkout, the account's home, user and host become placeholders, and a
- * tool result that may hold what a call read outside the world keeps only its
- * path class, its length and the grader's answers about it (privacy.ts).
+ * the checkout, the roots the bench links to or runs a toolchain from, the
+ * account's home, user and host become placeholders, and a tool result that
+ * may hold what a call read outside the world keeps only its path class, its
+ * length and the grader's answers about it (privacy.ts).
  */
-const sanitize = (text: string, world: World, account: Account, scrub: Scrub): string =>
+const sanitize = (
+  text: string,
+  world: World,
+  account: Account,
+  roots: Root[],
+  scrub: Scrub,
+): string =>
   scrubOutsideReads(
     scrubAccount(
-      text
-        .replaceAll(world.dir, "<world>")
-        .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
-        .replaceAll(REPO, "<workit>"),
+      scrubRoots(
+        text
+          .replaceAll(world.dir, "<world>")
+          .replaceAll(world.dir.replaceAll(/[^\w]/g, "-"), "<world>")
+          .replaceAll(REPO, "<workit>"),
+        roots,
+      ),
       account,
     ),
     scrub,
@@ -408,6 +425,46 @@ const readRules = (opts: Options): string[] => {
   );
 };
 
+/**
+ * The dirs the bench itself puts a host in besides its world and this
+ * checkout, each with the placeholder a transcript shows (privacy.ts `Root`):
+ * the checkouts or stores this checkout's `node_modules` link into (a linked
+ * worktree's main checkout, `<linked>`), and each toolchain's install dir the
+ * read rules allow under the real home (`<toolchain:bun>`), each in every
+ * spelling (`rootSpellings`). A path under one is the bench's own doing (an
+ * error raised inside a linked package names it, and the model repeats it),
+ * and it can spell a host project path or a workspace's name without holding
+ * either.
+ */
+const benchRoots = (opts: Options): Root[] => {
+  const roots = new Map<string, string>();
+  const outside = (dir: string): boolean => dir !== REPO && !dir.startsWith(`${REPO}${path.sep}`);
+  for (const dir of linkedRoots(path.join(REPO, "node_modules")).filter(outside))
+    roots.set(dir, roots.size === 0 ? "<linked>" : `<linked-${roots.size + 1}>`);
+  const pathEnv = process.env.PATH ?? "";
+  const readable = new Set(readRules(opts));
+  const toolchains: [string, string][] = [
+    ["bun", process.execPath],
+    ["node", "node"],
+    ["git", "git"],
+    [path.basename(opts.bin), opts.bin],
+  ];
+  for (const [name, binary] of toolchains) {
+    const dir = toolchainDir(binary, pathEnv);
+    if (
+      dir &&
+      readable.has(dir) &&
+      dir.startsWith(`${opts.realHome}${path.sep}`) &&
+      !roots.has(dir)
+    )
+      roots.set(dir, `<toolchain:${name}>`);
+  }
+  return rootSpellings(
+    [...roots].map(([dir, as]) => ({ dir, as })),
+    opts.account.homes,
+  );
+};
+
 /** `cmd` behind the Landlock launcher when confinement is on; as is when it is off. */
 const withConfinement = (opts: Options, world: World, cmd: string[]): string[] => {
   if (!opts.confinement.on) return cmd;
@@ -535,16 +592,23 @@ type Options = {
    * one is not written.
    */
   reachable: PrivateSet;
+  /** Where each private string came from (a file and key path, never a value): a refusal's diagnosis names it. */
+  origins: Origins;
+  /** The salt of this bench start's hit ids: an id says "the same value", never which. */
+  salt: string;
   /** The login files the current run could not read (file and reason): its result is not written. */
   unreadLogins: string[];
+  /** The roots a transcript shows as placeholders besides the world and the checkout (`benchRoots`). */
+  roots: Root[];
 };
 
 /** Add the credentials and account ids the host's login under `home` holds now; an unreadable login file is remembered. */
 const noteCredentials = (opts: Options, home: string): void => {
+  const origins = { to: opts.origins, home: home === opts.realHome ? "~" : "<world>/home" };
   try {
-    for (const value of hostCredentials(home, opts.host))
+    for (const value of hostCredentials(home, opts.host, origins))
       opts.reachable.set(value, "host credential");
-    for (const value of accountIds(home, opts.host))
+    for (const value of accountIds(home, opts.host, origins))
       if (!opts.reachable.has(value)) opts.reachable.set(value, "account id");
   } catch (error) {
     if (!(error instanceof PrivateSetUnreadable)) throw error;
@@ -630,7 +694,7 @@ const attempt = async (
   // Only Landlock read confinement says what the host could read.
   const bounded = opts.confinement.on && opts.confinement.reads.on;
   return {
-    transcript: sanitize(stdout, world, opts.account, { bounded, spec }),
+    transcript: sanitize(stdout, world, opts.account, opts.roots, { bounded, spec }),
     stderr,
     exit,
     timedOut,
@@ -651,7 +715,8 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
         opts.pluginDir,
       );
       const env = opencodeEnv(childEnv(world, CLI_BIN), config, world);
-      for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
+      for (const value of envCredentials(env, opts.origins))
+        opts.reachable.set(value, "host credential");
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
       const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
@@ -673,7 +738,8 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
-    for (const value of envCredentials(env)) opts.reachable.set(value, "host credential");
+    for (const value of envCredentials(env, opts.origins))
+      opts.reachable.set(value, "host credential");
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
     return {
@@ -688,14 +754,18 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   }
 };
 
-/** One run: its result, or null when a signal stopped it (no result is written), and what the tripwire found. */
+/**
+ * One run: its result, or null when a signal stopped it (no result is
+ * written), what the tripwire found, and for a `private_content` refusal
+ * where each hit is (for the terminal only: it is in no stored file).
+ */
 const runCase = async (
   spec: EvalCase,
   key: string,
   version: string,
   opts: Options,
   index = 1,
-): Promise<{ result: RunResult | null; trip: Trip | null }> => {
+): Promise<{ result: RunResult | null; trip: Trip | null; hits?: string[] }> => {
   const snapshot = opts.snapshot;
   if (!snapshot) throw new Error("the tripwire is not armed");
   // The value a refresh during the run rotates away.
@@ -752,15 +822,14 @@ const runCase = async (
   // The value a refresh during the run left: read again at write time.
   noteCredentials(opts, opts.realHome);
   const [unread] = opts.unreadLogins;
+  const files = {
+    [path.relative(REPO, transcript) || transcript]: run.transcript,
+    [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
+  };
+  const privates = new Map([...opts.privateSet, ...opts.reachable]);
   const leaked = unread
     ? `cannot read ${unread}, so the host's credential is unknown; nothing was written`
-    : privateContent(
-        {
-          [path.relative(REPO, transcript) || transcript]: run.transcript,
-          [path.relative(REPO, json) || json]: `${JSON.stringify(stored, null, 2)}\n`,
-        },
-        new Map([...opts.privateSet, ...opts.reachable]),
-      );
+    : privateContent(files, privates);
   if (leaked) {
     result.grade = {
       ...result.grade,
@@ -768,7 +837,8 @@ const runCase = async (
       failures: [{ rule: "private_content", detail: leaked }, ...result.grade.failures],
     };
     result.refused = "private_content";
-    return { result, trip };
+    const hits = unread ? [] : privateHits(files, privates, opts.origins, opts.salt).map(shownHit);
+    return { result, trip, hits };
   }
   writeFileSync(transcript, run.transcript);
   writeJson(json, stored);
@@ -1000,16 +1070,20 @@ export const main = async (
   // A real account file that exists but cannot be read would leave the set short: nothing runs.
   let privateSet: PrivateSet = new Map();
   const reachable: PrivateSet = new Map();
+  const origins: Origins = new Map();
   if (!settling)
     try {
       privateSet = privateStrings(
         path.resolve(values["real-home"] ?? accountHome()),
         workitVocabulary(REPO),
         values["real-home"] ? undefined : process.env,
+        origins,
       );
       const home = path.resolve(values["real-home"] ?? accountHome());
-      for (const value of accountIds(home, host)) reachable.set(value, "account id");
-      for (const value of hostCredentials(home, host)) reachable.set(value, "host credential");
+      const from = { to: origins, home: "~" };
+      for (const value of accountIds(home, host, from)) reachable.set(value, "account id");
+      for (const value of hostCredentials(home, host, from))
+        reachable.set(value, "host credential");
     } catch (error) {
       if (!(error instanceof PrivateSetUnreadable)) throw error;
       print(`private set: cannot read ${error.message}; fix or remove it, nothing runs`);
@@ -1031,7 +1105,10 @@ export const main = async (
     account: accountOf(path.resolve(values["real-home"] ?? accountHome())),
     privateSet,
     reachable,
+    origins,
+    salt: randomBytes(16).toString("hex"),
     unreadLogins: [],
+    roots: [],
     tripwire: tripwireBase(path.resolve(values["real-home"] ?? accountHome())),
     snapshot: null,
     watchMs: Number(values["watch-ms"]),
@@ -1043,6 +1120,7 @@ export const main = async (
     child: null,
     carried: [],
   };
+  opts.roots = benchRoots(opts);
   return tripwired(
     opts,
     print,
@@ -1220,10 +1298,17 @@ const bench = async (
       // A signal is handled when the runner reaches its event loop: give it the chance.
       await new Promise((resolve) => setImmediate(resolve));
       if (opts.stop) return stopped(opts, null, print);
-      const { result, trip } = await runCase(spec, key, version, opts, run);
+      const { result, trip, hits } = await runCase(spec, key, version, opts, run);
       if (!result) return stopped(opts, trip, print);
       outcomes.push(result);
       print(line(result.grade.pass ? "pass" : "FAIL", result));
+      if (hits && hits.length > 0)
+        print(
+          [
+            "    where (shown here only, in no file; no value is shown; an id is salted per bench start: equal ids are one value):",
+            ...hits.map((hit) => `      ${hit}`),
+          ].join("\n"),
+        );
       if (opts.carried.length > 0)
         print(
           `    the host refreshed its login by rename; written back to ${opts.carried.splice(0).join(", ")}`,

@@ -290,10 +290,24 @@ test("Given a transcript still holding a value of the real Workit config, When r
   expect(said).toContain("a-smoke.transcript.jsonl holds real Workit config value");
   expect(said).toContain("nothing was written");
   expect(said).not.toContain("acme-example");
+  // Where the hit is, on the terminal only: the event and field, the kind, the length, a salted id
+  // and the file and key path the value came from.
+  expect(said).toContain("where (shown here only, in no file; no value is shown;");
+  expect(said).toMatch(
+    /a-smoke\.transcript\.jsonl: event 2, assistant \(the model's text\): real Workit config value, 12 chars, id [0-9a-f]{8}, from ~\/\.config\/workit\/workspaces\.json: workspaces\[0\]\.name$/mu,
+  );
   const written = existsSync(path.join(root, "results", "haiku"))
     ? readdirSync(path.join(root, "results", "haiku"))
     : [];
   expect(written.filter((name) => name.startsWith("a-smoke"))).toEqual([]);
+  // The diagnosis is in no file the run left.
+  const left = existsSync(path.join(root, "results"))
+    ? readdirSync(path.join(root, "results"), { recursive: true, withFileTypes: true })
+    : [];
+  for (const entry of left.filter((each) => each.isFile()))
+    expect(readFileSync(path.join(entry.parentPath, entry.name), "utf8")).not.toMatch(
+      /where \(shown|event 2,|workspaces\[0\]/u,
+    );
 });
 
 test("Given a real Workit config that exists but is not valid JSON, When run, Then the bench refuses to start, naming the file and the reason, and no host runs", async () => {

@@ -21,6 +21,7 @@
 // output that is not an event is not stored.
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -64,6 +65,41 @@ export const scrubAccount = (text: string, account: Account): string => {
   if (account.user.length > 1) out = out.replaceAll(account.user, "<user>");
   if (account.host.length > 2 && account.host !== "localhost")
     out = out.replaceAll(whole(account.host), "<host>");
+  return out;
+};
+
+/**
+ * A dir a transcript may name that is neither the world nor this checkout,
+ * and the placeholder that stands for it: a checkout the bench links to (the
+ * main checkout behind a linked worktree's `node_modules`), a toolchain's
+ * install dir under the home. The bench put the host there, so its path is
+ * the bench's own, not what the account keeps private.
+ */
+export type Root = { dir: string; as: string };
+
+/**
+ * `roots` with every spelling a transcript may give one under a home: its
+ * path, and that path under `~`, `$HOME` and `${HOME}` (a model that saw the
+ * path in an error names it in its own command as it likes).
+ */
+export const rootSpellings = (roots: Root[], homes: string[]): Root[] =>
+  roots.flatMap((root) => [
+    root,
+    ...homes
+      .filter((home) => root.dir.startsWith(`${home}/`))
+      .flatMap((home) =>
+        ["~", "$HOME", "${HOME}"].map((as) => ({
+          dir: `${as}${root.dir.slice(home.length)}`,
+          as: root.as,
+        })),
+      ),
+  ]);
+
+/** `text` with each root replaced by its placeholder, the longest root first. */
+export const scrubRoots = (text: string, roots: Root[]): string => {
+  let out = text;
+  for (const { dir, as } of roots.toSorted((a, b) => b.dir.length - a.dir.length))
+    out = out.replaceAll(dir, as);
   return out;
 };
 
@@ -156,6 +192,7 @@ const resolveName = (raw: string, cwd: string | null): { inside: string } | { ki
   if (name === "" || name.startsWith("//") || DEV.test(name)) return { inside: name };
   if (name.split("/").includes("..")) return { kind: byTail(name) };
   if (WORLD_LOGIN.test(name)) return { kind: "host config" };
+  if (OUTSIDE_ROOT.test(name)) return { kind: "system" };
   if (name.startsWith("<world>") || name.startsWith("<workit>")) return { inside: name };
   if (name.startsWith("/") || name.startsWith("~") || /^[A-Za-z]:[\\/]/u.test(name))
     return { kind: CLASSES.find(([pattern]) => pattern.test(name))?.[1] ?? "system" };
@@ -169,7 +206,12 @@ export const pathClass = (raw: string, cwd: string | null = WORLD_CWD): PathClas
   return "kind" in resolved ? resolved.kind : null;
 };
 
-const PLACEHOLDER = /^<(?:world|workit)>/u;
+/** The roots a transcript shows as placeholders (run.ts `sanitize`, `Root`). */
+const ROOT = String.raw`<(?:world|workit|linked(?:-\d+)?|toolchain:[\w.-]+)>`;
+const PLACEHOLDER = new RegExp(`^${ROOT}`, "u");
+/** A root the bench links to or runs a toolchain from: outside the world. */
+const OUTSIDE_ROOT = /^<(?:linked(?:-\d+)?|toolchain:[\w.-]+)>/u;
+const REDIRECTION = new RegExp(String.raw`^\d*(?:[<>]+(?=${ROOT})|[<>]+)`, "u");
 
 /** A shell script's segments (split on `&&`, `||`, `;`, `|`, `&`, newlines, parentheses) as words, quotes removed. */
 const segments = (script: string): string[][] => {
@@ -231,9 +273,7 @@ const shellClasses = (script: string, start: string | null): PathClass[] => {
       ...(command.includes("/") ? [command] : []),
       ...rest.flatMap((each) => {
         // A redirection's target; a `<world>` or `<workit>` placeholder is a path, not one.
-        const word = PLACEHOLDER.test(each)
-          ? each
-          : each.replace(/^\d*(?:[<>]+(?=<(?:world|workit)>)|[<>]+)/u, "");
+        const word = PLACEHOLDER.test(each) ? each : each.replace(REDIRECTION, "");
         if (word === "" || word.startsWith("&")) return [];
         if (word.startsWith("-"))
           return word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : [];
@@ -415,6 +455,13 @@ export type PrivateKind =
   | "account id";
 export type PrivateSet = Map<string, PrivateKind>;
 
+/**
+ * Where each private string came from, for a refusal's diagnosis: the file
+ * (the home as `~`) and the key path or position in it. Never a value, and
+ * a key the user chose shows as its position.
+ */
+export type Origins = Map<string, string>;
+
 /** Workit's own vocabulary (enums, presets, model names, default branches): public, never a leak. */
 export const workitVocabulary = (repo: string): ((text: string) => boolean) => {
   const dir = path.join(repo, "packages", "workit-core", "schemas");
@@ -477,17 +524,33 @@ const readJson = (file: string): unknown => {
   }
 };
 
-const collect = (value: unknown, into: string[]): void => {
-  if (typeof value === "string") into.push(value);
-  else if (Array.isArray(value)) for (const each of value) collect(each, into);
+/**
+ * Every string under `value` (keys too) with its key path. A key `shown`
+ * does not vouch for is the user's own, so the path names its position.
+ */
+const collect = (
+  value: unknown,
+  where: string,
+  shown: (key: string) => boolean,
+  into: [string, string][],
+): void => {
+  if (typeof value === "string") into.push([value, where === "" ? "the whole file" : where]);
+  else if (Array.isArray(value))
+    for (const [at, each] of value.entries()) collect(each, `${where}[${at}]`, shown, into);
   else if (record(value))
-    for (const [key, each] of Object.entries(value as Json)) {
+    for (const [at, [key, each]] of Object.entries(value as Json).entries()) {
       // `$schema` names the published package: public.
       if (key.startsWith("$")) continue;
-      into.push(key);
-      collect(each, into);
+      const name = shown(key) ? key : `{key ${at + 1}}`;
+      const next = where === "" ? name : `${where}.${name}`;
+      into.push([key, `${next} (the key itself)`]);
+      collect(each, next, shown, into);
     }
 };
+
+/** A file as a diagnosis names it: under the home as `~/…`, else by its name only. */
+const shownFile = (file: string, home: string): string =>
+  file.startsWith(`${home}${path.sep}`) ? `~${file.slice(home.length)}` : path.basename(file);
 
 /** The values of `pattern` keys in a git config file; exit 1 is no match, anything else a file git cannot parse. */
 const gitValues = (file: string, pattern: string): string[] => {
@@ -512,7 +575,7 @@ const gitValues = (file: string, pattern: string): string[] => {
 const gitIdentities = (
   home: string,
   env: NodeJS.ProcessEnv,
-): { names: string[]; emails: string[] } => {
+): { names: [string, string][]; emails: [string, string][] } => {
   const xdg = env.XDG_CONFIG_HOME ?? path.join(home, ".config");
   const files = [path.join(home, ".gitconfig"), path.join(xdg, "git", "config")].filter(existsSync);
   // An include may include more: the loop reaches files pushed while it runs.
@@ -523,9 +586,13 @@ const gitIdentities = (
         : path.resolve(path.dirname(file), include);
       if (existsSync(full) && !files.includes(full)) files.push(full);
     }
+  const valuesOf = (pattern: string): [string, string][] =>
+    files.flatMap((file) =>
+      gitValues(file, pattern).map((value): [string, string] => [value, file]),
+    );
   return {
-    names: files.flatMap((file) => gitValues(file, String.raw`^user\.name$`)),
-    emails: files.flatMap((file) => gitValues(file, String.raw`^user\.email$`)),
+    names: valuesOf(String.raw`^user\.name$`),
+    emails: valuesOf(String.raw`^user\.email$`),
   };
 };
 
@@ -540,10 +607,13 @@ export const privateStrings = (
   realHome: string,
   isPublic: (text: string) => boolean,
   env?: NodeJS.ProcessEnv,
+  origins?: Origins,
 ): PrivateSet => {
   const set: PrivateSet = new Map();
-  const add = (text: string, kind: PrivateKind, min = 6): void => {
-    if (text.length >= min && !set.has(text)) set.set(text, kind);
+  const add = (text: string, kind: PrivateKind, from: string, min = 6): void => {
+    if (text.length < min || set.has(text)) return;
+    set.set(text, kind);
+    origins?.set(text, from);
   };
   const dirs = new Set([
     workitDir("config", { HOME: realHome }),
@@ -551,20 +621,28 @@ export const privateStrings = (
   ]);
   for (const dir of dirs)
     for (const name of ["workspaces.json", "config.json"]) {
-      const strings: string[] = [];
-      collect(readJson(path.join(dir, name)), strings);
-      for (const text of strings) if (!isPublic(text)) add(text, "real Workit config value");
+      const strings: [string, string][] = [];
+      const file = path.join(dir, name);
+      collect(readJson(file), "", isPublic, strings);
+      for (const [text, where] of strings)
+        if (!isPublic(text))
+          add(text, "real Workit config value", `${shownFile(file, realHome)}: ${where}`);
     }
-  const projects = record(record(readJson(path.join(realHome, ".claude.json")))?.projects);
-  for (const project of Object.keys(projects ?? {})) {
-    add(project, "host project path");
+  const projects = Object.keys(
+    record(record(readJson(path.join(realHome, ".claude.json")))?.projects) ?? {},
+  );
+  for (const [at, project] of projects.entries()) {
+    const from = `~/.claude.json: projects, key ${at + 1} of ${projects.length}`;
+    add(project, "host project path", from);
     if (project.startsWith(`${realHome}/`))
-      add(`~${project.slice(realHome.length)}`, "host project path");
+      add(`~${project.slice(realHome.length)}`, "host project path", `${from} (as a ~ path)`);
   }
   const git = gitIdentities(realHome, env ?? {});
-  for (const name of git.names) add(name, "git user name", 3);
-  for (const email of git.emails) add(email, "git user email", 3);
-  add(realHome, "home path", 2);
+  for (const [name, file] of git.names)
+    add(name, "git user name", `${shownFile(file, realHome)}: user.name`, 3);
+  for (const [email, file] of git.emails)
+    add(email, "git user email", `${shownFile(file, realHome)}: user.email`, 3);
+  add(realHome, "home path", "the account's home dir", 2);
   return set;
 };
 
@@ -594,19 +672,52 @@ const LOGIN: Record<Host, { files: string[]; dbs: string[] }> = {
   },
 };
 
-/** Every string value under `value` (never a key); a string that is itself JSON is opened too. */
-const stringsIn = (value: unknown, into: Set<string>): void => {
+/** The keys of a host's login files a diagnosis may name: the hosts' own schema, never a name the user chose. */
+const HOST_KEYS = new Set([
+  "claudeAiOauth",
+  "accessToken",
+  "refreshToken",
+  "oauthAccount",
+  "userID",
+  "accountUuid",
+  "organizationUuid",
+  "emailAddress",
+  "key",
+  "access",
+  "refresh",
+  "token",
+]);
+
+/** Every string value under `value` (never a key) to where it sits; a string that is itself JSON is opened too. */
+const stringsIn = (value: unknown, where: string, into: Map<string, string>): void => {
+  const note = (text: string): void => {
+    if (!into.has(text))
+      into.set(text, where.endsWith(": ") ? `${where}the whole file` : where.trimEnd());
+  };
   if (typeof value === "string") {
-    into.add(value);
+    note(value);
     if (!/^\s*[[{]/u.test(value)) return;
     try {
-      stringsIn(JSON.parse(value), into);
+      stringsIn(JSON.parse(value), where, into);
     } catch {
       // Not JSON after all: the string itself is the value.
     }
-  } else if (value instanceof Uint8Array) into.add(Buffer.from(value).toString("utf8"));
-  else if (Array.isArray(value)) for (const each of value) stringsIn(each, into);
-  else if (record(value)) for (const each of Object.values(value as Json)) stringsIn(each, into);
+  } else if (value instanceof Uint8Array) note(Buffer.from(value).toString("utf8"));
+  else if (Array.isArray(value))
+    for (const [at, each] of value.entries()) stringsIn(each, `${where}[${at}]`, into);
+  else if (record(value))
+    for (const [at, [key, each]] of Object.entries(value as Json).entries()) {
+      const name = HOST_KEYS.has(key) ? key : `{key ${at + 1}}`;
+      stringsIn(each, /[: ]$/u.test(where) ? `${where}${name}` : `${where}.${name}`, into);
+    }
+};
+
+/** Where a caller wants the origins of what it reads: the map, and how the home read is shown (`~`, `<world>/home`). */
+export type OriginsOf = { to: Origins; home: string };
+
+const noteOrigins = (found: Map<string, string>, origins: OriginsOf | undefined): void => {
+  if (origins)
+    for (const [value, where] of found) origins.to.set(value, `${origins.home}/${where}`);
 };
 
 /** An OpenCode db's `credential` rows; none when the file or the table is missing. */
@@ -635,21 +746,29 @@ const credentialRows = (file: string): Json[] => {
  * `credential` rows (the provider key; every column of a table without one).
  * A login file that exists but cannot be read throws PrivateSetUnreadable.
  */
-export const hostCredentials = (home: string, host: Host): string[] => {
-  const found = new Set<string>();
+export const hostCredentials = (home: string, host: Host, origins?: OriginsOf): string[] => {
+  const found = new Map<string, string>();
   for (const rel of LOGIN[host].files) {
     const text = readAccountFile(path.join(home, rel));
     if (text === null) continue;
     try {
-      stringsIn(JSON.parse(text), found);
+      stringsIn(JSON.parse(text), `${rel}: `, found);
     } catch {
-      for (const word of text.split(/\s+/u)) found.add(word);
+      for (const [at, word] of text.split(/\s+/u).entries())
+        if (!found.has(word)) found.set(word, `${rel}: word ${at + 1}`);
     }
   }
   for (const rel of LOGIN[host].dbs)
-    for (const row of credentialRows(path.join(home, rel)))
-      stringsIn("value" in row ? row.value : Object.values(row), found);
-  return [...found].filter((value) => value.length >= CREDENTIAL_FLOOR);
+    for (const [at, row] of credentialRows(path.join(home, rel)).entries())
+      stringsIn(
+        "value" in row ? row.value : Object.values(row),
+        `${rel}: credential row ${at + 1}, column value `,
+        found,
+      );
+  // Deleting during a Map's iteration is defined: the entry is skipped.
+  for (const value of found.keys()) if (value.length < CREDENTIAL_FLOOR) found.delete(value);
+  noteOrigins(found, origins);
+  return [...found.keys()];
 };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
@@ -672,22 +791,31 @@ const isAccountId = (key: string, value: unknown): value is string =>
  * the host may fetch back into its world (the e-mail address); for OpenCode
  * the other columns of its db's `credential` rows.
  */
-export const accountIds = (home: string, host: Host): string[] => {
-  const found = new Set<string>();
-  const note = (entries: [string, unknown][]): void => {
-    for (const [key, value] of entries) if (isAccountId(key, value)) found.add(value);
+export const accountIds = (home: string, host: Host, origins?: OriginsOf): string[] => {
+  const found = new Map<string, string>();
+  const note = (entries: [string, unknown][], where: string): void => {
+    for (const [key, value] of entries)
+      if (isAccountId(key, value) && !found.has(value))
+        found.set(
+          value,
+          `${where}${HOST_KEYS.has(key) || where.includes("column") ? key : "a key"}`,
+        );
   };
   if (host === "claude-code") {
     const state = record(readJson(path.join(home, ".claude.json")));
     if (state) {
-      note(Object.entries(claudeSignIn(state)));
-      note(Object.entries(record(state.oauthAccount) ?? {}));
+      note(Object.entries(claudeSignIn(state)), ".claude.json: ");
+      note(Object.entries(record(state.oauthAccount) ?? {}), ".claude.json: oauthAccount.");
     }
   }
   for (const rel of LOGIN[host].dbs)
-    for (const row of credentialRows(path.join(home, rel)))
-      note(Object.entries(row).filter(([column]) => column !== "value"));
-  return [...found];
+    for (const [at, row] of credentialRows(path.join(home, rel)).entries())
+      note(
+        Object.entries(row).filter(([column]) => column !== "value"),
+        `${rel}: credential row ${at + 1}, column `,
+      );
+  noteOrigins(found, origins);
+  return [...found.keys()];
 };
 
 /** A variable whose name says it holds a secret: a key, a token, a secret, a password. */
@@ -695,10 +823,14 @@ const SECRET_NAME =
   /(?:^|[^a-z])(?:api_?key|key|token|secret|password|passwd|credentials?)(?:$|[^a-z])|authtoken/iu;
 
 /** The credentials in an environment a host is given: the values of secret-named variables, of CREDENTIAL_FLOOR+ characters. */
-export const envCredentials = (env: Record<string, string>): string[] =>
+export const envCredentials = (env: Record<string, string>, origins?: Origins): string[] =>
   Object.entries(env)
     .filter(([name, value]) => SECRET_NAME.test(name) && value.length >= CREDENTIAL_FLOOR)
-    .map(([, value]) => value);
+    .map(([, value]) => {
+      // A variable's name can itself name an employer or a service: it is not shown.
+      origins?.set(value, "the host's environment: a variable named as a secret");
+      return value;
+    });
 
 /** The kinds of private string `text` still holds (as is or JSON-escaped); never the strings. */
 export const privateKinds = (text: string, set: PrivateSet): PrivateKind[] => {
@@ -708,6 +840,180 @@ export const privateKinds = (text: string, set: PrivateSet): PrivateKind[] => {
       kinds.add(kind);
   return [...kinds];
 };
+
+// ------------------------------------------------------------ a refusal's diagnosis
+
+/**
+ * One place a result file holds a private string: where it sits and what it
+ * is, never the string. `id` is a salted fingerprint, so two hits of one
+ * value show the same id and two values different ones; `from` is where the
+ * value came from (a file and key path), when the runner read it from one.
+ */
+export type Hit = {
+  file: string;
+  where: string;
+  kind: PrivateKind | Leak;
+  /** The value's length; null for a shape the committed scan knows (a home path, a projects map). */
+  length: number | null;
+  id: string | null;
+  from: string | null;
+};
+
+type Leaf = { at: (string | number)[]; text: string };
+
+/** Every string under `value` with its path; an object's key is a leaf of its own. */
+const leaves = (value: unknown, at: (string | number)[], into: Leaf[]): void => {
+  if (typeof value === "string") into.push({ at, text: value });
+  else if (Array.isArray(value))
+    for (const [index, each] of value.entries()) leaves(each, [...at, index], into);
+  else if (record(value))
+    for (const [key, each] of Object.entries(value as Json)) {
+      into.push({ at: [...at, "{key}"], text: key });
+      leaves(each, [...at, key], into);
+    }
+};
+
+/** A path as a diagnosis shows it: a host's schema keys; a long or path-like key (the user's) as `{key}`. */
+const shownPath = (at: (string | number)[]): string =>
+  at
+    .map((part) =>
+      typeof part === "number"
+        ? `[${part}]`
+        : /^[\w{}$-]{1,40}$/u.test(part)
+          ? `.${part}`
+          : ".{key}",
+    )
+    .join("")
+    .replace(/^\./u, "");
+
+/** The field of a transcript event a leaf sits in: the event's type, the tool and input, result or text. */
+const fieldOf = (event: Json, at: (string | number)[], tools: Map<string, string>): string => {
+  const type = `${String(event.type ?? "event")}${typeof event.subtype === "string" ? `/${event.subtype}` : ""}`;
+  const part = record(event.part);
+  if (part && at[0] === "part") {
+    const tool = String(part.tool ?? "tool");
+    if (at[1] === "state" && at[2] === "input") return `${type} ${tool} input`;
+    if (at[1] === "state") return `${type} result of ${shownCall(tool, record(part.state)?.input)}`;
+    if (at[1] === "text") return `${type} (the model's text)`;
+  }
+  const content = record(event.message)?.content;
+  if (at[0] === "message" && at[1] === "content" && Array.isArray(content)) {
+    const block = record(content[Number(at[2])]);
+    if (block?.type === "tool_use") return `${type} ${String(block.name ?? "tool")} input`;
+    if (block?.type === "tool_result")
+      return `${type} result of ${tools.get(String(block.tool_use_id)) ?? "a call"}`;
+    if (at[3] === "text") return `${type} (the model's text)`;
+  }
+  if (at[0] === "tool_use_result") return `${type} result (the host's copy)`;
+  if (event.type === "result" && at[0] === "result") return `${type} (the answer text)`;
+  return `${type} ${shownPath(at)}`;
+};
+
+/** A call as a diagnosis names it: the tool, and its command or input cut short. */
+const shownCall = (tool: string, input: unknown): string => {
+  const command = record(input)?.command;
+  const text = (typeof command === "string" ? command : JSON.stringify(input ?? {}))
+    .replaceAll(/\s+/gu, " ")
+    .slice(0, 100);
+  return `${tool}(${text})`;
+};
+
+/** Each Claude Code call id to the call, as a diagnosis names it. */
+const toolNames = (events: (Json | null)[]): Map<string, string> => {
+  const tools = new Map<string, string>();
+  for (const event of events) {
+    const content = record(event?.message)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content.map(record))
+      if (block?.type === "tool_use" && typeof block.id === "string")
+        tools.set(block.id, shownCall(String(block.name ?? "tool"), block.input));
+  }
+  return tools;
+};
+
+const parsed = (line: string): Json | null => {
+  try {
+    return record(JSON.parse(line));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Where `files` (name to text) hold a private string or a shape the
+ * committed scan refuses: per transcript event and field, per key path of a
+ * result file. `salt` makes the ids: pass one per bench start. A result's
+ * hit names its call by the call's command, cut short, with any private
+ * string in it replaced by its kind.
+ */
+export const privateHits = (
+  files: Record<string, string>,
+  set: PrivateSet,
+  origins: Origins,
+  salt: string,
+): Hit[] => {
+  const hits: Hit[] = [];
+  const id = (secret: string): string =>
+    createHash("sha256").update(salt).update("\0").update(secret).digest("hex").slice(0, 8);
+  const seen = new Set<string>();
+  const add = (hit: Hit): void => {
+    const key = JSON.stringify(hit);
+    if (!seen.has(key)) hits.push(hit);
+    seen.add(key);
+  };
+  const scan = (file: string, text: string, where: string): boolean => {
+    let found = false;
+    for (const [secret, kind] of set)
+      if (text.includes(secret) || text.includes(JSON.stringify(secret).slice(1, -1))) {
+        found = true;
+        add({
+          file,
+          where,
+          kind,
+          length: secret.length,
+          id: id(secret),
+          from: origins.get(secret) ?? null,
+        });
+      }
+    for (const kind of committedLeaks(text)) {
+      found = true;
+      add({ file, where, kind, length: null, id: null, from: null });
+    }
+    return found;
+  };
+  // A call's command is shown beside its result's hit: never with a private string in it.
+  const veiled = (where: string): string => {
+    let out = where;
+    for (const [secret, kind] of set) out = out.replaceAll(secret, `<${kind}>`);
+    return out;
+  };
+  for (const [file, text] of Object.entries(files)) {
+    const lines = file.endsWith(".jsonl") ? text.split("\n") : [text];
+    const events = lines.map(parsed);
+    const tools = toolNames(events);
+    for (const [index, line] of lines.entries()) {
+      // A line with no hit as a whole has none in a field.
+      if (privateKinds(line, set).length === 0 && committedLeaks(line).length === 0) continue;
+      const event = events[index];
+      const here = file.endsWith(".jsonl") ? `event ${index + 1}` : "result file";
+      const found: Leaf[] = [];
+      if (event) leaves(event, [], found);
+      let located = false;
+      for (const leaf of found) {
+        const field =
+          file.endsWith(".jsonl") && event ? fieldOf(event, leaf.at, tools) : shownPath(leaf.at);
+        located = scan(file, leaf.text, veiled(`${here}, ${field}`)) || located;
+      }
+      // Seen only across fields (a shape of the event itself, a line that is not JSON).
+      if (!located) scan(file, line, `${here}, across its fields`);
+    }
+  }
+  return hits;
+};
+
+/** A hit as the terminal shows it. */
+export const shownHit = (hit: Hit): string =>
+  `${hit.file}: ${hit.where}: ${hit.kind}${hit.length === null ? "" : `, ${hit.length} chars, id ${hit.id}`}${hit.from === null ? "" : `, from ${hit.from}`}`;
 
 // ------------------------------------------------------------ committed results
 

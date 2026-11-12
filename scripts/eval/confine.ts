@@ -230,6 +230,22 @@ export const linkedPackages = (dir: string): string[] => {
     .map(real);
 };
 
+/**
+ * The checkouts or stores the symlinked packages of a `node_modules` dir live
+ * in (a Workit worktree links its packages into the main checkout): for each
+ * resolved package, the nearest dir above it that holds a `.git`, else the
+ * dir its `node_modules` sits in, else its parent.
+ */
+export const linkedRoots = (dir: string): string[] => {
+  const rootOf = (target: string): string => {
+    for (let at = path.dirname(target); at !== path.dirname(at); at = path.dirname(at))
+      if (existsSync(path.join(at, ".git"))) return at;
+    const store = target.split(`${path.sep}node_modules${path.sep}`);
+    return store.length > 1 ? (store[0] ?? target) : path.dirname(target);
+  };
+  return [...new Set(linkedPackages(dir).map(rootOf))];
+};
+
 /** The install dir of a binary on `PATH`: its resolved dir, or that dir's parent when it is a `bin`. */
 export const toolchainDir = (binary: string, pathEnv: string): string | null => {
   const found = binaryOf(binary, pathEnv);

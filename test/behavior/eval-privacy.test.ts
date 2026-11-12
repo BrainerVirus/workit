@@ -11,12 +11,15 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadCases, type EvalCase } from "@/scripts/eval/cases";
+import { linkedRoots } from "@/scripts/eval/confine";
 import { grade } from "@/scripts/eval/grade";
 import {
   accountIds,
@@ -24,11 +27,16 @@ import {
   envCredentials,
   hostCredentials,
   pathClass,
+  privateHits,
   privateKinds,
   privateStrings,
+  rootSpellings,
   scrubAccount,
   scrubOutsideReads,
+  scrubRoots,
+  shownHit,
   workitVocabulary,
+  type Origins,
 } from "@/scripts/eval/privacy";
 
 const REPO = path.join(import.meta.dir, "..", "..");
@@ -1034,4 +1042,255 @@ test("a call that prints the world's sign-in state without naming it keeps its r
     const open = scrubOutsideReads(runOf(host, [step], "done"), { bounded: false, spec: null });
     expect(privateKinds(open, set), host).toEqual([]);
   }
+});
+
+// ------------------------------------------------------------ a refusal's diagnosis
+
+const CONFIG_FILE = ["~", ".config", "workit", "workspaces.json"].join("/");
+
+test("the private set remembers where each string came from: a file and a key path, never a value", () => {
+  const home = fakeHome();
+  writeFileSync(
+    path.join(home, ".config", "workit", "config.json"),
+    JSON.stringify({ "acme-custom-key": { nested: "acme-custom-value" } }),
+  );
+  const origins: Origins = new Map();
+  privateStrings(home, workitVocabulary(REPO), undefined, origins);
+  expect(origins.get("acme-example")).toBe(`${CONFIG_FILE}: workspaces[0].name`);
+  expect(origins.get("~/code/acme-example/**")).toBe(`${CONFIG_FILE}: workspaces[0].glob`);
+  expect(origins.get("https://acme-example.youtrack.invalid")).toBe(
+    `${CONFIG_FILE}: workspaces[0].youtrack.baseUrl`,
+  );
+  // A key the user chose is private too: the path names its position, not the key.
+  const custom = "~/.config/workit/config.json";
+  expect(origins.get("acme-custom-value")).toBe(`${custom}: {key 1}.{key 1}`);
+  expect(origins.get("acme-custom-key")).toBe(`${custom}: {key 1} (the key itself)`);
+  expect(origins.get(path.join(home, "code", "widget-example"))).toBe(
+    "~/.claude.json: projects, key 1 of 1",
+  );
+  expect(origins.get("~/code/widget-example")).toBe(
+    "~/.claude.json: projects, key 1 of 1 (as a ~ path)",
+  );
+  expect(origins.get("Ada Example")).toBe("~/.gitconfig.d/work.inc: user.name");
+  expect(origins.get("ada@example.invalid")).toBe("~/.gitconfig.d/work.inc: user.email");
+  expect(origins.get(home)).toBe("the account's home dir");
+  const said = [...origins.values()].join("\n");
+  for (const secret of ["acme-example", "acme-custom", "widget-example", "Ada", "ada@", home])
+    expect(said).not.toContain(secret);
+});
+
+test("a host's credentials and account ids remember their file and key or column; an environment key never its variable's name", () => {
+  const home = loginHome();
+  writeFileSync(
+    path.join(home, ".claude", ".credentials.json"),
+    JSON.stringify({
+      claudeAiOauth: { accessToken: ACCESS, refreshToken: REFRESH },
+      "acme-server-example": { secret: ZEN_KEY },
+    }),
+  );
+  writeFileSync(path.join(home, ".claude.json"), claudeState());
+  const db = new Database(path.join(home, ".local", "share", "opencode", "opencode.db"));
+  db.run("CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT)");
+  db.run("INSERT INTO credential VALUES (?, 'opencode', ?)", [
+    ROW_ID,
+    JSON.stringify({ type: "api", key: GO_KEY }),
+  ]);
+  db.close();
+  const origins: Origins = new Map();
+  const from = { to: origins, home: "~" };
+  hostCredentials(home, "claude-code", from);
+  accountIds(home, "claude-code", from);
+  hostCredentials(home, "opencode", from);
+  accountIds(home, "opencode", { to: origins, home: "<world>/home" });
+  envCredentials({ ACME_EXAMPLE_API_KEY: AUTH_KEY }, origins);
+  expect(origins.get(ACCESS)).toBe("~/.claude/.credentials.json: claudeAiOauth.accessToken");
+  expect(origins.get(REFRESH)).toBe("~/.claude/.credentials.json: claudeAiOauth.refreshToken");
+  // A key the host's schema does not have is the user's: its position only.
+  expect(origins.get(ZEN_KEY)).toBe("~/.claude/.credentials.json: {key 2}.{key 1}");
+  expect(origins.get(USER_ID)).toBe("~/.claude.json: userID");
+  expect(origins.get(ACCOUNT_UUID)).toBe("~/.claude.json: oauthAccount.accountUuid");
+  expect(origins.get(GO_KEY)).toBe(
+    "~/.local/share/opencode/opencode.db: credential row 1, column value key",
+  );
+  expect(origins.get(ROW_ID)).toBe(
+    "<world>/home/.local/share/opencode/opencode.db: credential row 1, column id",
+  );
+  expect(origins.get(AUTH_KEY)).toBe("the host's environment: a variable named as a secret");
+  const said = [...origins.values()].join("\n");
+  for (const secret of [ACCESS, ZEN_KEY, GO_KEY, USER_ID, ROW_ID, "ACME_EXAMPLE", "acme-server"])
+    expect(said).not.toContain(secret);
+});
+
+test("a refusal's hits say the event, the call and field, the kind, the length, a salted id and the origin on both hosts, never the value", () => {
+  const home = fakeHome();
+  const origins: Origins = new Map();
+  const set = privateStrings(home, workitVocabulary(REPO), undefined, origins);
+  const project = "~/code/widget-example";
+  const steps: Step[] = [
+    { tool: "Bash", input: { command: "ls acme-example" }, result: "nothing here" },
+    {
+      tool: "Bash",
+      input: { command: "tool trace" },
+      result: `at run (${project}/node_modules/x.js:1)`,
+    },
+  ];
+  for (const host of HOSTS) {
+    const name = `results/${host}/a-case.transcript.jsonl`;
+    const transcript = runOf(host, steps, `It is in ${project}, the acme-example one.`);
+    const files = {
+      [name]: transcript,
+      "results/a-case.json": JSON.stringify({
+        case: "a-case",
+        grade: { failures: [{ rule: "forbid", detail: "#1 Bash(ls acme-example) ran" }] },
+      }),
+    };
+    const hits = privateHits(files, set, origins, "salt-one");
+    const shown = hits.map(shownHit);
+    const said = shown.join("\n");
+    const tool = host === "claude-code" ? "Bash" : "shell";
+    const [input, result, answer] =
+      host === "claude-code"
+        ? [
+            "event 1, assistant Bash input",
+            "event 4, user result of",
+            "event 5, result/success (the answer text)",
+          ]
+        : [
+            "event 2, tool_use shell input",
+            "event 3, tool_use result of",
+            "event 4, text (the model's text)",
+          ];
+    const id = (where: string, kind: string): string =>
+      hits.find((hit) => hit.where.startsWith(where) && hit.kind === kind)?.id ??
+      `none at ${where}`;
+    expect(shown, host).toContain(
+      `${name}: ${input}: real Workit config value, 12 chars, id ${id(input, "real Workit config value")}, from ${CONFIG_FILE}: workspaces[0].name`,
+    );
+    expect(shown, host).toContain(
+      `${name}: ${result} ${tool}(tool trace): host project path, ${project.length} chars, id ${id(result, "host project path")}, from ~/.claude.json: projects, key 1 of 1 (as a ~ path)`,
+    );
+    // A call's command is shown beside its result's hit: a private string in it shows as its kind.
+    const veiled: Step = { tool: "Bash", input: { command: "ls acme-example" }, result: project };
+    expect(
+      privateHits({ [name]: runOf(host, [veiled], "done") }, set, origins, "salt-one").map(
+        shownHit,
+      ),
+      host,
+    ).toContain(
+      `${name}: event 2, ${host === "claude-code" ? "user" : "tool_use"} result of ${tool}(ls <real Workit config value>): host project path, ${project.length} chars, id ${id(result, "host project path")}, from ~/.claude.json: projects, key 1 of 1 (as a ~ path)`,
+    );
+    expect(said, host).toContain(`${name}: ${answer}: host project path, `);
+    expect(said, host).toContain(
+      "results/a-case.json: result file, grade.failures[0].detail: real Workit config value, 12 chars, ",
+    );
+    // One value, one id wherever it sits; another value, another id; another bench start, other ids.
+    expect(id(input, "real Workit config value"), host).toMatch(/^[0-9a-f]{8}$/u);
+    expect(id(answer, "real Workit config value"), host).toBe(
+      id(input, "real Workit config value"),
+    );
+    expect(id(answer, "host project path"), host).toBe(id(result, "host project path"));
+    expect(id(result, "host project path"), host).not.toBe(id(input, "real Workit config value"));
+    expect(
+      privateHits(files, set, origins, "salt-two").find((hit) => hit.where.startsWith(input))?.id,
+      host,
+    ).not.toBe(id(input, "real Workit config value"));
+    for (const secret of ["acme-example", "widget-example", home])
+      expect(said, host).not.toContain(secret);
+  }
+  // A shape the committed scan refuses has a place and a kind, no value to measure.
+  const leak = privateHits(
+    { "t.transcript.jsonl": runOf("claude-code", [], "see /home/someone-example/notes") },
+    new Map(),
+    new Map(),
+    "salt-one",
+  ).map(shownHit);
+  expect(leak).toEqual([
+    "t.transcript.jsonl: event 1, result/success (the answer text): home path",
+  ]);
+});
+
+// ------------------------------------------------------------ roots the bench links to
+
+test("a path under a checkout the bench links to is no private string once the root is a placeholder; another project's path still is", () => {
+  // A linked worktree: its packages are symlinks into the main checkout, which is a project of the
+  // host and sits under a dir named like a workspace (the first real refusal, 2026-11-12).
+  const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), "workit-privacy-linked-")));
+  temps.push(home);
+  const main = path.join(home, "work", "acme-example", "main-checkout");
+  const worktree = path.join(home, "state", "worktrees", "slice");
+  mkdirSync(path.join(main, ".git"), { recursive: true });
+  mkdirSync(path.join(main, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(path.join(main, "packages", "own"), { recursive: true });
+  mkdirSync(path.join(worktree, "node_modules", "@scope"), { recursive: true });
+  mkdirSync(path.join(worktree, "node_modules", "local"));
+  symlinkSync(path.join(main, "node_modules", "pkg"), path.join(worktree, "node_modules", "pkg"));
+  symlinkSync(
+    path.join(main, "packages", "own"),
+    path.join(worktree, "node_modules", "@scope", "own"),
+  );
+  expect(linkedRoots(path.join(worktree, "node_modules"))).toEqual([main]);
+
+  mkdirSync(path.join(home, ".config", "workit"), { recursive: true });
+  writeFileSync(
+    path.join(home, ".config", "workit", "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "acme-example", glob: "~/work/acme-example/**" }] }),
+  );
+  const other = path.join(home, "work", "acme-example", "other-project");
+  writeFileSync(
+    path.join(home, ".claude.json"),
+    JSON.stringify({ projects: { [main]: {}, [other]: {} } }),
+  );
+  const set = privateStrings(home, workitVocabulary(REPO));
+  const account = { homes: [home], user: "nobody-example", host: "box-example" };
+  // What a real run printed: a stack frame through a package the worktree links to.
+  const trace = `Error: no terminal\n    at render (${path.join(main, "node_modules", "pkg", "index.js")}:12:3)`;
+  expect(privateKinds(scrubAccount(trace, account), set).toSorted()).toEqual([
+    "host project path",
+    "real Workit config value",
+  ]);
+  const roots = [{ dir: main, as: "<linked>" }];
+  const stored = scrubAccount(scrubRoots(trace, roots), account);
+  expect(stored).toContain("at render (<linked>/node_modules/pkg/index.js:12:3)");
+  expect(privateKinds(stored, set)).toEqual([]);
+  // The refusal is not weaker: another project's path, and the workspace's name in prose, still hit.
+  expect(
+    privateKinds(scrubAccount(scrubRoots(`cat ${other}/notes`, roots), account), set),
+  ).toContain("host project path");
+  expect(privateKinds(scrubRoots("the acme-example workspace", roots), set)).toEqual([
+    "real Workit config value",
+  ]);
+  // The longest root goes first, so a root inside another keeps its own placeholder.
+  expect(
+    scrubRoots(`${main}/tools/x ${main}/y`, [
+      { dir: main, as: "<linked>" },
+      { dir: path.join(main, "tools"), as: "<toolchain:x>" },
+    ]),
+  ).toBe("<toolchain:x>/x <linked>/y");
+
+  // A model that saw the root's real path names it in its own command as it likes: under `~`,
+  // `$HOME` or `${HOME}` (the second real refusal, in a call's input).
+  const spelled = rootSpellings(roots, [home]);
+  for (const command of [
+    "ls ~/work/acme-example/main-checkout/node_modules/react",
+    "ls $HOME/work/acme-example/main-checkout/node_modules/react",
+    "ls ${HOME}/work/acme-example/main-checkout/node_modules/react",
+    `ls ${main}/node_modules/react`,
+  ]) {
+    const kept = scrubAccount(scrubRoots(command, spelled), account);
+    expect(kept, command).toBe("ls <linked>/node_modules/react");
+    expect(privateKinds(kept, set), command).toEqual([]);
+    // A call that names the root is outside the world: its result is removed, as before.
+    expect(pathClass("<linked>/node_modules/react"), command).toBe("system");
+  }
+  // Without the spellings the `~` one still names the project and the workspace: the false refusal.
+  expect(
+    privateKinds(
+      scrubAccount(scrubRoots("ls ~/work/acme-example/main-checkout/node_modules", roots), account),
+      set,
+    ).toSorted(),
+  ).toEqual(["host project path", "real Workit config value"]);
+  // A root that is not under a home has only its own spelling.
+  expect(rootSpellings([{ dir: "/srv/acme-example", as: "<linked>" }], [home])).toEqual([
+    { dir: "/srv/acme-example", as: "<linked>" },
+  ]);
 });
