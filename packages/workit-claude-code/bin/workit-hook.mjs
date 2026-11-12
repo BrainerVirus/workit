@@ -171,7 +171,7 @@ const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*-
 // request or denies a wrapped call, PostToolUse records the grant. Anchored at
 // the verb, after any global option: `release notes approve` is not it.
 const WORKIT_APPROVE =
-  /(?:^|[\s;&|(`])(?:\S*[\\/])?workit(?:-cli)?(?:\s+(?:--json|--cwd[\s=]\S+|--session\s+\S+))*\s+approve\b/;
+  /(?:^|[\s;&|(`])(?:\S*[\\/])?workit(?:-cli)?(?:\s+(?:--json|--(?:cwd|session|token)[\s=]\S+))*\s+approve\b/;
 // A Workit call that may carry a bypass flag, however quoted, goes to the
 // runtime, which asks the user (hooks/delivery-verbs.ts workitBypassFlag).
 const mayBypass = (command) =>

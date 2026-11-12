@@ -96,3 +96,19 @@ test("Given workit release notes approve or a commit message that says approve, 
   ])
     expect(reached(command), command).toBe(true);
 }, 60_000);
+
+test("Given a session or token global before the verb, When the launcher classifies workit approve on PreToolUse and PostToolUse, Then the call reaches the runtime", () => {
+  const noRuntime = { ...env, WORKIT_CLAUDE_RUNTIME: "source", WORKIT_BUN: path.join(base, "no") };
+  const reached = (event: "PreToolUse" | "PostToolUse", command: string) =>
+    runHook(PLUGIN_DIR, payload(event, command), noRuntime).stderr.includes("hook unavailable");
+  for (const event of ["PreToolUse", "PostToolUse"] as const) {
+    for (const command of [
+      "workit --session=s1 approve ap_k3m7q2xa",
+      "workit --token t1 approve ap_k3m7q2xa",
+      "workit --token=t1 approve ap_k3m7q2xa",
+      "workit --json --session s1 --token=t1 approve ap_k3m7q2xa",
+    ])
+      expect(reached(event, command), `${event} ${command}`).toBe(true);
+    expect(reached(event, "workit --token t1 release notes approve 4.5.0"), event).toBe(false);
+  }
+}, 60_000);
