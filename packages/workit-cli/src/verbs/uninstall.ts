@@ -22,7 +22,8 @@ const USAGE = "workit uninstall [--hosts=claude-code,codex,cursor,opencode,pi [-
 type Args = { hosts: string[]; preview: boolean; yes: boolean };
 
 const parse = (argv: readonly string[]): Args | string => {
-  let hosts: string[] | null = null;
+  // Repeated --hosts merge; a duplicate keeps its first place.
+  let hosts: Set<string> | null = null;
   let preview = false;
   let yes = false;
   for (let i = 0; i < argv.length; i += 1) {
@@ -32,18 +33,19 @@ const parse = (argv: readonly string[]): Args | string => {
     else if (arg === "--json") continue;
     else if (arg === "--hosts" || arg.startsWith("--hosts=")) {
       const value = arg === "--hosts" ? argv[++i] : arg.slice("--hosts=".length);
-      hosts = (value ?? "")
+      const named = (value ?? "")
         .split(",")
         .map((h) => h.trim())
         .filter(Boolean);
-      const unknown = hosts.filter((h) => !ALL_HOSTS.includes(h));
-      if (hosts.length === 0) return `--hosts needs a value; hosts: ${ALL_HOSTS.join(", ")}`;
+      const unknown = named.filter((h) => !ALL_HOSTS.includes(h));
+      if (named.length === 0) return `--hosts needs a value; hosts: ${ALL_HOSTS.join(", ")}`;
       if (unknown.length > 0) return `unknown host ${unknown[0]}; hosts: ${ALL_HOSTS.join(", ")}`;
+      hosts = new Set([...(hosts ?? []), ...named]);
     } else return `unknown argument ${arg}`;
   }
   if (preview && yes) return "--preview and --yes cannot be combined";
   if (!hosts) return "--preview and --yes need --hosts=<h,…>";
-  return { hosts, preview, yes };
+  return { hosts: [...hosts], preview, yes };
 };
 
 export async function run(argv: string[], io: Io): Promise<number> {
