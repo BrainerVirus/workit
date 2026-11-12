@@ -460,3 +460,69 @@ describe("Given a wrapped write to the config, When a rule matches the call's re
     );
   });
 });
+
+describe("a result the privacy scrub removed", () => {
+  /** One Bash call whose result is the scrub's marker, with the answers stored beside it. */
+  const scrubbed = (facts: Record<string, boolean>, extra: Record<string, unknown> = {}): string =>
+    [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "tu0", name: "Bash", input: { command: "tool $X" } }],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu0",
+              content: "<outside-world file: unresolved, 22 bytes>",
+              facts,
+              ...extra,
+            },
+          ],
+        },
+      }),
+      JSON.stringify({ type: "result", subtype: "success", result: "done" }),
+    ].join("\n");
+  const forbid = spec({
+    expect: { forbid: [{ tool: "Bash", pattern: "^tool", result: "updated|->", why: "w" }] },
+  });
+  const require = spec({
+    expect: { require: [{ tool: "Bash", pattern: "^tool", result: "updated|->", why: "w" }] },
+  });
+  const atMost = spec({
+    expect: {
+      atMost: [{ tool: "Bash", pattern: "^tool", result: "updated|->", max: 0, why: "w" }],
+    },
+  });
+
+  test("answers a rule's result pattern from the stored answer, never from the marker's text", () => {
+    expect(grade(scrubbed({ "/updated|->/": true }), forbid).failures.map((f) => f.rule)).toEqual([
+      "forbid",
+    ]);
+    expect(grade(scrubbed({ "/updated|->/": false }), forbid).pass).toBe(true);
+    expect(grade(scrubbed({ "/updated|->/": true }), require).pass).toBe(true);
+    expect(grade(scrubbed({ "/updated|->/": false }), require).failures.map((f) => f.rule)).toEqual(
+      ["require"],
+    );
+    // The marker's own text matches /outside/: the stored answer says the real result did not.
+    const marker = spec({
+      expect: { forbid: [{ tool: "Bash", pattern: "^tool", result: "outside", why: "w" }] },
+    });
+    expect(grade(scrubbed({ "/outside/": false }), marker).pass).toBe(true);
+  });
+
+  test("counts against the run when it has no answer for a pattern (the rule changed since the run)", () => {
+    expect(grade(scrubbed({}), forbid).failures.map((f) => f.rule)).toEqual(["forbid"]);
+    expect(grade(scrubbed({}), atMost).failures.map((f) => f.rule)).toEqual(["at-most"]);
+    expect(grade(scrubbed({}), require).failures.map((f) => f.rule)).toEqual(["require"]);
+  });
+
+  test("names the marker, not the removed text, in a failure's detail", () => {
+    const [failure] = grade(scrubbed({ "/updated|->/": true }), forbid).failures;
+    expect(failure?.detail).toContain("(<outside-world file: unresolved, 22 bytes>)");
+  });
+});
