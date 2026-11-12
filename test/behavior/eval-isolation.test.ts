@@ -33,6 +33,7 @@ import {
   permitsShellWrappers,
   selfCheck,
 } from "@/scripts/eval/isolation";
+import { confined, writableDirs } from "@/scripts/eval/confine";
 import { opencodeEnv } from "@/scripts/eval/opencode";
 import { childEnv, main } from "@/scripts/eval/run";
 import { makeWorld, type World } from "@/scripts/eval/scaffold";
@@ -247,23 +248,53 @@ workit grant set eval merge=true
 exit 0
 `;
 
-test.each(["claude-code", "opencode"] as const)(
+/** Whether this kernel runs Landlock, read from the kernel. */
+const landlock = (() => {
+  try {
+    return (
+      process.platform === "linux" &&
+      readFileSync("/sys/kernel/security/lsm", "utf8").split(",").includes("landlock")
+    );
+  } catch {
+    return false;
+  }
+})();
+if (!landlock)
+  console.log(
+    "eval-isolation: the writer test is skipped: it runs the real `workit grant set` only under Landlock (scripts/eval/confine.ts), and this kernel runs none",
+  );
+
+// The writer runs the real CLI's grant and workspace writes: under Landlock
+// with only the world (and /dev) writable, so a world the code under test
+// failed to mark or resolve cannot reach the account's real file.
+test.skipIf(!landlock).each(["claude-code", "opencode"] as const)(
   "Given a %s world, When a script writes the config and state through $HOME, ~, python and workit grant|workspace verbs, Then nothing outside the world changes",
   (host) => {
-    const { world, env } = worldFor(host);
+    const { world, env } = worldFor(host, { ...SPEC, scaffold: { workspace: {} } });
     const snapshot = armSnapshot(guardFor(realHome));
-    const accountFile = path.join(workitConfigDir({ HOME: accountHome() }), "workspaces.json");
+    const accountDir = workitConfigDir({ HOME: accountHome() });
+    const accountFile = path.join(accountDir, "workspaces.json");
     const accountBefore = read(accountFile);
     const script = path.join(root, "writer.sh");
     writeFileSync(script, WRITER);
     chmodSync(script, 0o755);
+    const dirs = writableDirs(world.dir, [realHome, accountDir, os.homedir()]);
+    // No writable dir holds the account's config dir or the fake real home.
+    for (const guarded of [accountDir, realHome])
+      expect(dirs.filter((dir) => !path.relative(dir, guarded).startsWith(".."))).toEqual([]);
 
-    const run = spawnSync(script, [], { cwd: world.repo, env, encoding: "utf8", timeout: 60_000 });
+    const [bin = "", ...args] = confined(dirs, [], [script]);
+    const run = spawnSync(bin, args, { cwd: world.repo, env, encoding: "utf8", timeout: 60_000 });
 
-    expect(run.status).toBe(0);
+    expect(run.status, run.stderr).toBe(0);
     expect(checkSnapshot(snapshot)).toBeNull();
     // The account's own file (the OS record's home, which HOME does not move) is never written.
     expect(read(accountFile)).toBe(accountBefore);
+    // The CLI lowered the world's grant in the world's own file; the raise was refused.
+    expect(
+      JSON.parse(readFileSync(path.join(world.config, "workspaces.json"), "utf8")).workspaces[0]
+        .autonomy,
+    ).toEqual({ merge: false });
     expect(
       readFileSync(path.join(world.home, ".config", "workit", "workspaces.json"), "utf8"),
     ).toContain("merge");
