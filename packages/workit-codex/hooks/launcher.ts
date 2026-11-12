@@ -76,6 +76,12 @@ const { standingPending } = await import("@workit-dev/core/src/hooks/standing-si
 const { recordHookRun } = await import("@workit-dev/core/src/hooks/hook-runs");
 // The worker tool-call budget: every PreToolUse counts, quiet or not.
 const { observeHookBudget } = await import("@workit-dev/core/src/hooks/budget-signal");
+/** `ytrack` where a command name can end, in any position: a copy of core hooks/ytrack-word.ts. */
+const YTRACK_WORD = /ytrack(?![\w/-]|\.(?!exe|cmd))/i;
+const namesYtrack = (text: string): boolean => {
+  const bare = text.replace(/['"\\]/g, "");
+  return YTRACK_WORD.test(bare) || YTRACK_WORD.test(bare.replace(/`/g, ""));
+};
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -167,6 +173,8 @@ const quietEvent = (): string | null => {
       text,
     ) ||
       guarded(text) ||
+      // Text that may run ytrack (hooks/ytrack-word.ts: the gate's own first test).
+      namesYtrack(text) ||
       writes ||
       maybeHeavy(text, value.cwd)
       ? null

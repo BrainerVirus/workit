@@ -136,8 +136,24 @@ A PR backlink (`issues.backlink: true`) asks the same way: `workit pr create`
 reports it `pending` with the request to approve, and the next
 `workit pr create` or `workit pr edit` of that PR posts it once.
 
+An agent that runs a `ytrack` write itself (`ytrack issue comment`,
+`ytrack work-item add`, `ytrack issue create|edit|delete|command`, or
+`ytrack api` with POST, PUT, PATCH or DELETE), plain or wrapped in `bash -c`,
+a chain, a pipe, `npx` or a full path, is stopped by Workit's shell hook. When
+a `workit youtrack` verb does the same thing, the hook names that exact call,
+which asks you first. For a write no verb covers:
+
+| Host | What happens |
+| --- | --- |
+| Claude Code | The permission prompt on the call: you decide it there. |
+| Codex, Cursor, Pi, OpenCode | The call is refused; the agent asks you, and you run the command in your own terminal if you agree. |
+
+Reads (`ytrack issue view`, `ytrack work-item list`, `ytrack api` GET) are
+never stopped.
+
 To post without asking in one workspace, set this yourself in its entry in
-`workspaces.json`; writes there then need `WORKIT_YT_WRITE=1` instead:
+`workspaces.json`; writes there then need `WORKIT_YT_WRITE=1` instead, and the
+shell hook lets raw `ytrack` writes through:
 
 ```json
 { "name": "work", "glob": "/home/*/work/**", "youtrack": { "writes": "auto" } }

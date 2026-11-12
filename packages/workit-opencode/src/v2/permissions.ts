@@ -7,6 +7,7 @@ import {
   shellPolicy,
   writeGate,
 } from "@workit-dev/core/hooks";
+import { ytrackGate } from "@workit-dev/core/src/hooks/ytrack-guard";
 
 export type PermissionEvaluationEvent = {
   sessionID?: string;
@@ -55,6 +56,9 @@ export const evaluateShellPermission = (
     const cwd = (event.sessionID && workdirs.get(event.sessionID)) || root;
     const decision = shellPolicy(cwd, resource, "posix");
     if (decision.kind === "deny") return deny(decision.reason);
+    // A raw ytrack write asks the user first (#780): OpenCode's hook denies it with the workit call.
+    const ytrack = ytrackGate(cwd, resource, "posix", false);
+    if (ytrack?.kind === "deny") return deny(ytrack.reason);
     const raw = rawGitPre(
       {
         host: "opencode",

@@ -57,6 +57,41 @@ post nothing; `auto`, which the user sets, keeps the `WORKIT_YT_WRITE=1` gate
 (`youTrackWriteGate`). A pending PR backlink posts once on the next
 `workit pr create` or `workit pr edit` of that PR. Both run in the CLI, so
 every host behaves the same; only how the host shows the ask differs.
+
+A raw `ytrack` write an agent runs itself asks first too (`hooks/ytrack-guard.ts`,
+wired in `hooks/handle.ts`): `issue comment|create|edit|update|delete|command`
+(not `--dry-run`), `work-item` (alias `workitem`) `add|edit|update|delete`, and
+`ytrack api` with `-X`/`--method` POST, PUT, PATCH or DELETE (`-XPOST`, `=`
+forms) or a body (`-f`, `-F`, `--field`, `--input`) without a read method, past
+global flags before the group (`--host`, `--debug`, `--no-color`). A call with `--help` or `-h` only prints help and passes when that word stands alone: no `--` before it, and the word before it is no option, a `--flag=value`, or a flag known to take no value (`--debug`, `--no-color`, `--paginate`, `--include`, `--dry-run`, `--silent`, `--yes`, `--meeting`); after any other option it may be that option's value, so the call is judged as the write it carries. `--dry-run` and `-X GET` clear a call under the same rule, and a write method anywhere makes `ytrack api` a write. An option Workit does not know is read both as taking the next word and as not; the stricter reading wins. It finds them through
+`raw-git.ts` `commandLines` (chains, pipes, `cd`, env prefixes, wrappers,
+`bash -c`, eval, heredoc-fed shells, substitutions, variables) plus
+`workit check -- …`, `npx`/`bunx`/`pnpm dlx`, full-path spellings, an alias or
+function defined in the same command and `$(which ytrack)`; the npx `workit`
+form is normalised first (#816), so it gets the same answer. Scripts nested
+deeper than four levels that name ytrack are denied as unanalysable. A write is
+denied naming a `workit youtrack note|time|create` call only when that call
+makes the same write: every option is one the mapping carries (`--body`/`-b`,
+`--body-file`, `--duration` in whole minutes, `--text`, `--date`,
+`--project`/`-p`, `--summary`/`-s`, `--description`, `--description-file`) and
+every value is a literal with no `$` or backtick; a value starting with `-` is
+written `--flag=value`. The call must also be a plain command: it must be the first command of the hook command, and of any script reached through `sh -c`, `eval`, `workit check --` or a package runner. Whatever precedes it, even a `cd` or a variable assignment, makes it a write no verb covers, because it can change the directory, the environment or the files the call reads. The call may sit behind only `command`, `exec`, `nohup`, `setsid`, `time`, `nice`, `ionice`, `stdbuf`, `chronic`, `unbuffer` or `timeout` (which change signals, session, priority, buffering, timing or output), with no assignment in front of it, no `env`, no `exec` option or `command -p`, no group, substitution, loop, function or `YTRACK_*` assignment, and no word the shell expands (`$`, a glob, a leading `~`). What follows it may only handle output or run other commands (`| jq …`, `> out 2>&1`, `&`, `; echo done`); a later ytrack write is never named. Any other write (`xargs`, `find -exec`, `parallel`, `watch`, `sudo`, a loop, an alias, a function, a variable, a shell fed on stdin) is judged as one no verb covers, so nothing can fill in or repeat a named call. Anything else (`--host`, `--tag`, `--meeting`, text on
+stdin, a URL for the issue) is treated as a write no verb covers, naming the
+part Workit cannot carry. Reads, `ytrack api` GET and `youtrack.writes: auto`
+pass.
+
+- **Claude Code:** N. The launcher sends a command to the runtime when its text, with quotes and backslashes removed (and again with backticks removed), has `ytrack` not followed by `[\w/-]` or by a `.` other than `.exe`/`.cmd`, in any position (`hooks/ytrack-word.ts`, the test the gate itself starts with): `cat docs/ytrack-notes.md` stays on the fast path, `grep -rn ytrack docs` loads the runtime and passes; a write no verb covers gets `permissionDecision: "ask"`.
+- **Codex:** N. The hook entry uses the same test; a write
+  no verb covers is denied, handing the command to the user's terminal (the
+  hook cannot ask).
+- **Cursor:** N. `beforeShellExecution` denies the same way.
+- **Pi:** N. The `tool_call` hook blocks the same way (it drops an ask).
+- **OpenCode:** N. `permission.evaluate` (`v2/permissions.ts`) denies the same
+  way, after `execute.before` rewrote an npx workit call.
+- (L) A ytrack name the text does not spell as a word (`$a$b`, `xargs -IEXT ytrackEXT`, `$'\x79track'`, a glob, cmd `^`), a variable only the nested shell sees (`YT=ytrack bash -c '$YT …'`), an alias or function from an earlier call, `ssh`, `docker` or `su -c` running it elsewhere, and an interpreter or script file that runs it are not seen. (P) A help or read call whose `--help` or `-X GET` directly follows an option Workit does not know is asked: put it first.
+
+A launcher pre-filter is the gate's own first test, copied byte for byte and compared by a test, and it may skip the runtime only on a property the gate itself passes on; it never lists the positions, wrappers or commands where a tool name counts, because a list of places to look misses every place it does not name.
+
 `findYtrack` ignores `PATH` when `WORKIT_NO_YTRACK=1`,
 which the test preload sets, so a test never spawns a developer's real ytrack:
 tests use a stub `ytrack` on a `PATH` in an env they build.
@@ -341,12 +376,38 @@ Hook run limits (#433):
 Issued-registry guard limits (#292):
 
 - It judges agent tool calls only; the CLI and the `SubagentStart` hook write
-  the registries unhindered. It reads edit paths and recognizable shell writes
-  (redirects, `tee`, `cp`, `mv`, `rm`, `sed -i`, `touch`, through `cd`, `~`,
-  `$HOME` and `workit check -- bash -c`). An interpreter (`python -c`), an
-  unexpanded other variable or a command substitution is not seen (L, every
-  host), so this is a guard against hand edits, not a sandbox (#329 moves the
-  state into the DB).
+  the registries unhindered. It is a guard against hand edits, not a sandbox
+  (#329 moves the state into the DB). What survived the second attempt (ledger
+  decision mwcyh6ku, #818), every host:
+  - (L) A program that computes the guarded path at run time (a script that
+    joins or decodes it, a binary, a package script, `make`) is not seen by any
+    hook on any host; only the host OS sandbox stops it.
+  - (L) A shell script produced at run time (`bash -c "$(…)"`, `curl … | bash`)
+    or changed after the hook read it is not judged.
+  - (L) A path the command computes at run time (`$(…)`, a `read` variable,
+    text piped from a program that is not a literal `echo`, `printf` or `cat`)
+    is not resolved.
+  - (L) A variable whose value in the command shell differs from the hook's own
+    environment is not resolved.
+  - (L) A hard link made and written inside a program Workit cannot read is not
+    seen.
+  - (L) A command handed to a scheduler (`at`, `crontab`, `systemd-run`) is not
+    judged.
+  - (L) An archive extracted into a directory above a guarded path is judged by
+    its destination only; its contents are not read.
+  - (L) On Claude Code in a repo with no task store, and on Codex, the launcher
+    sends a command to the runtime by its text; a write whose text hides every
+    marker is not seen.
+  - (L) Tool calls no Workit hook is registered for are not guarded: MCP server
+    tools, Claude Code Monitor, Codex `write_stdin`, Cursor edits that name no
+    path, tools from other Pi extensions; and every hook fails open when its
+    runtime cannot load (#820).
+  - (L, #815) Any proof kept in files the agent's OS user can write is
+    forgeable by that user.
+  - (P) Removing a directory above a guarded path is not denied; it can only
+    remove grants or approvals.
+  - (P) An inline interpreter that only reads a guarded file is denied: use
+    `workit grant show`, `cat` or `jq`.
 - The Claude Code launcher's fast path and the Codex launcher's quiet path
   send any edit or shell command whose text names `issued` or the state dir to
   the runtime, so a checkout with no task store is guarded too. Windows paths

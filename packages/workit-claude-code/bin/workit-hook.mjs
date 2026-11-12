@@ -186,6 +186,14 @@ const MAYBE_GATED =
 // and, for a judge, scripts fed on stdin or by eval.
 const IMPLEMENTER_GATED =
   /\b(?:unlink|chmod|chown|chgrp|shred|chattr|setfacl|rsync|find|xargs|g?awk|python[\d.]*|node|bun|deno|ruby|php|sh|bash|zsh|dash|ksh|workit|mkfifo|wget|tar|unzip|eval|source)\b|\$\(|`|<\(|\/dev\/(?:stdin|fd)/i;
+// Text that may run ytrack (a raw write asks the user first): `ytrack` where a command
+// name can end, in any position. The same test opens workit-core hooks/ytrack-guard.ts
+// (hooks/ytrack-word.ts) and the Codex launcher: never a list of positions or wrappers.
+const YTRACK_WORD = /ytrack(?![\w/-]|\.(?!exe|cmd))/i;
+const namesYtrack = (text) => {
+  const bare = text.replace(/['"\\]/g, "");
+  return YTRACK_WORD.test(bare) || YTRACK_WORD.test(bare.replace(/`/g, ""));
+};
 const SHELLS = new Set(["Bash", "PowerShell"]);
 const HEAVY_WORDS = new Set(
   (
@@ -510,7 +518,8 @@ const fastAllow = (() => {
         WORKIT_DELIVERY.test(command) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
-        mayBypass(command)
+        mayBypass(command) ||
+        namesYtrack(command)
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
