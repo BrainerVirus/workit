@@ -57,6 +57,19 @@ const VALUE = new Set(
 const asksHelp = (args: readonly string[]): boolean =>
   args.some((arg, at) => /^(?:--help|-h)$/.test(arg) && !VALUE.has(args[at - 1] ?? ""));
 
+/**
+ * ytrack's command groups Workit judges, with their aliases. The repo's own
+ * ytrack surface (core/youtrack-backend.ts, the bench's fake ytrack in
+ * scripts/eval/scaffold.ts, docs/guides/youtrack.md) names `issue`, `work-item`
+ * and `api`; `workitem` is the alias ytrack's `work-item --help` lists.
+ */
+const GROUPS: Record<string, string> = {
+  issue: "issue",
+  "work-item": "work-item",
+  workitem: "work-item",
+  api: "api",
+};
+
 const ASKS = /^(?:post|put|patch|delete)$/i;
 const BODY = /^(?:-[fF]|--(?:field|raw-field|input))(?:=|$)|^-[fF]./;
 
@@ -64,9 +77,13 @@ const BODY = /^(?:-[fF]|--(?:field|raw-field|input))(?:=|$)|^-[fF]./;
 const classify = (args: readonly string[]): { workit: string | null } | null => {
   // Past the global `--host <h>`.
   if (asksHelp(args)) return null;
-  const rest = args.filter((arg, at) => !/^--host(?:=|$)/.test(arg) && args[at - 1] !== "--host");
-  const [group, verb] = rest;
-  const issue = rest[2] && !rest[2].startsWith("-") ? rest[2] : "<ISSUE>";
+  const rest = args;
+  // The words that are no option or option value: the group, its verb, then
+  // operands, past global flags such as `--host <h>`, `--debug`, `--no-color`.
+  const words = args.filter((arg, at) => !arg.startsWith("-") && !VALUE.has(args[at - 1] ?? ""));
+  const group = GROUPS[words[0] ?? ""];
+  const verb = words[1];
+  const issue = words[2] ?? "<ISSUE>";
   if (group === "api") {
     const method = valueOf(rest, "-X", "--method") ?? rest.find((a) => /^-X./.test(a))?.slice(2);
     return (method ? ASKS.test(method) : rest.some((a) => BODY.test(a))) ? { workit: null } : null;
