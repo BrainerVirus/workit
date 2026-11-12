@@ -169,8 +169,13 @@ A bench run must never change your real Workit files (#822: a run rewrote
   files, and otherwise prints `LEFTOVER` with each path and a `diff -u` line,
   exits 3 and runs nothing until you settle it with `--tripwire-restore
   <digest>` (refused unless the digest equals the one the stopped run printed,
-  every path is inside the guarded roots and every blob matches) or
-  `--tripwire-discard`.
+  every path is inside the guarded roots, none sits under a recorded symlink
+  and every blob matches) or `--tripwire-discard`. Both restores (from memory
+  and from the journal) put a symlink back as a symlink and never write
+  through one: a link planted above a guarded path is removed and the real
+  dir restored, files are opened with `O_NOFOLLOW`, and a path that still
+  cannot be put back is named while the rest is restored, the exit is
+  non-zero and the journal stays.
 - **Stopping and other runs.** Ctrl-C, SIGTERM or SIGHUP kill the host's
   process group; the run unwinds (its world removed, the real files restored
   from memory, the journal dropped), prints `STOPPED by <signal>`, writes no
@@ -178,7 +183,10 @@ A bench run must never change your real Workit files (#822: a run rewrote
   at a time (`holders/<pid>.<start>`); a second one exits 4. A change you or a
   live session make to a restored file during a run is rolled back too, its
   bytes kept in `rescued/` (the 5 newest, none older than 7 days). Each start
-  removes the `workit-eval-*` worlds a dead runner left in the temp dir.
+  removes the `workit-eval-*` worlds a dead runner left in the temp dir. The
+  start-time sweep also removes a directory named `workit-eval-*` under the
+  temp dir that has no `.runner` marker and is older than 24 h, even if the
+  runner did not make it.
 - **Open and limits.**
   - A write by absolute path to a real file outside the guarded set is neither stopped nor seen. Landlock, which this kernel has and which needs no user namespace, can confine a host to its world; that is #824, not a final limit.
   - A change to a guarded file stands for up to 2 s, the watch interval, before the host is killed and the bytes are put back; a live session that reads the file in that window sees the changed bytes.
