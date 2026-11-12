@@ -454,3 +454,46 @@ test("G a script or editor commands fed by `<`, a pipe, or a cd/pushd into a glo
   expect(decide("node tool.mjs < x.json").kind).toBe("none");
   expect(decide("bash < fed/missing.sh").kind).toBe("none");
 });
+
+test("G a write behind a wrapper with options, `!`, a target-directory option, a function, trap or alias, W it names a guarded path, T denied; wrapped reads pass", () => {
+  const scripts = path.join(root, "wrapped");
+  mkdirSync(scripts, { recursive: true });
+  for (const kind of KINDS) {
+    const f = sh(kind.file);
+    const d = sh(kind.dir);
+    const b = path.basename(kind.file);
+    writeFileSync(path.join(scripts, `${kind.name}.sh`), `echo '{}' > ${f}\n`);
+    for (const command of [
+      `sudo -u $USER cp x.json ${f}`,
+      `sudo -E tee ${f} < x.json`,
+      `env -i tee ${f} < x.json`,
+      `time -p cp x.json ${f}`,
+      `nice cp x.json ${f}`,
+      `nice -n 5 sh wrapped/${kind.name}.sh`,
+      `timeout 5 cp x.json ${f}`,
+      `stdbuf -oL tee ${f} < x.json`,
+      `! cp x.json ${f}`,
+      `timeout 5 bash -c 'echo {} > ${f}'`,
+      `env -i bash -c 'echo {} > ${f}'`,
+      `sudo -u $USER bash wrapped/${kind.name}.sh`,
+      `cp --target-directory=${d} x.json`,
+      `cp --target-directory ${d} x.json`,
+      `cp -t${d} x.json`,
+      `install -t ${d} x.json`,
+      `function g { cp x.json ${f}; }; g`,
+      `trap 'cp x.json ${f}' EXIT`,
+      `alias w='cp x.json ${f}'; w`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
+    for (const command of [
+      `sudo -u me cat ${f}`,
+      `timeout 5 cat ${f}`,
+      `nice -n 5 grep x ${f}`,
+      `cp -t /tmp ${f}`,
+      `trap 'cat ${f}' EXIT`,
+      `alias c='cat ${d}/${b}'`,
+    ])
+      expect(decide(command).kind, `${kind.name}: ${command}`).toBe("none");
+  }
+  expect(decide("timeout 5 nice cp x.json y.json").kind).toBe("none");
+});

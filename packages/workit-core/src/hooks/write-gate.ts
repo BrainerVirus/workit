@@ -115,8 +115,9 @@ const editsOf = (input: string[]): string[] | null => {
     case "cp":
     case "ln":
     case "install": {
-      const target = args.indexOf("-t");
-      if (target >= 0) return args[target + 1] ? [args[target + 1]] : null;
+      // `-t D`, `-tD`, `--target-directory[=]D`.
+      const into = valueOf(args, /^(?:-t|--target-directory=?)(.*)$/s);
+      if (into !== undefined) return [into];
       const last = operands(args).at(-1);
       return last ? [last] : null;
     }
@@ -165,6 +166,38 @@ const editsOf = (input: string[]): string[] | null => {
     default:
       return [];
   }
+};
+
+/** Wrappers that run their operand as the command, with the option letters that take a value. */
+const WRAPPERS: Record<string, string> = {
+  sudo: "ugCDhpRrTtU",
+  doas: "uC",
+  env: "uCS",
+  nice: "n",
+  ionice: "cnp",
+  timeout: "sk",
+  stdbuf: "ioe",
+  time: "fo",
+  nohup: "",
+  command: "",
+  exec: "a",
+  setsid: "",
+  builtin: "",
+  "!": "",
+};
+
+/** The command a wrapper runs, past its options, values, assignments and a leading number; null with no wrapper. */
+const unwrapped = (words: readonly string[]): string[] | null => {
+  let at = 0;
+  for (
+    let takes: string | undefined;
+    (takes = WRAPPERS[words[at]?.split(/[\\/]/).at(-1) ?? ""]) !== undefined;
+  ) {
+    at++;
+    while (at < words.length && /^-|^\w+=|^\d[\w.]*$/.test(words[at]))
+      at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
+  }
+  return at ? words.slice(at) : null;
 };
 
 /** A `bash -c '<script>'` (any SCRIPT_SHELLS) script, else null. */
@@ -743,7 +776,9 @@ const assignmentsOf = (words: readonly string[]): Array<[string, string]> => {
 /** `words` without the leading `do`, `then`, `else`… that only introduce the command. */
 const commandWords = (words: readonly string[]): string[] => {
   let start = 0;
-  while (start < words.length && COMPOUND.has(words[start])) start++;
+  // `function name { … }`: the name is not the command.
+  while (start < words.length && COMPOUND.has(words[start]))
+    if (words[start++] === "function") start++;
   return words.slice(start);
 };
 
@@ -1204,6 +1239,22 @@ const segmentTargets = (
             runIn === dir ? vars : unPwd(),
           ),
         );
+    // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
+    const bare = strict === "registry" && depth < 4 ? unwrapped(words) : null;
+    if (bare?.length && dir !== undefined)
+      targets.push(
+        ...segmentTargets(
+          dir,
+          bare
+            .flatMap((word) => expansions(word, vars, loops))
+            .map(quoteWord)
+            .join(" "),
+          "posix",
+          depth + 1,
+          strict,
+          vars,
+        ),
+      );
     if (strict === "registry" && dir !== undefined && depth < 4) {
       const run = words.slice(
         Math.max(
@@ -1237,7 +1288,15 @@ const segmentTargets = (
       const operand = args.find((arg) => !arg.startsWith("-") && arg !== "run");
       const named = operand === "/dev/stdin" ? undefined : operand;
       const inputs = (segment.inputs ?? []).filter((file) => file !== "/dev/null");
-      const shells: string[] = verb === "eval" ? [args.join(" ")] : [];
+      // `eval`, `trap '<script>' SIG` and `alias n='<script>'` hold shell text.
+      const shells: string[] =
+        verb === "eval"
+          ? [args.join(" ")]
+          : verb === "trap"
+            ? args.slice(0, 1)
+            : verb === "alias"
+              ? args.map((arg) => arg.replace(/^[^=]*=/, ""))
+              : [];
       const others: string[] = [];
       if (SCRIPT_SHELLS.has(verb) || verb === "." || verb === "source") {
         // No script operand: the heredoc, or the file `<` feeds it (`bash < x.sh`).
