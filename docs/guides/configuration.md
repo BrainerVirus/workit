@@ -313,7 +313,8 @@ YouTrack, a GitLab one in GitLab issues.
 ```
 
 - `youtrack.writes` (default `ask`, in every workspace that does not set it):
-  each `workit youtrack note|time|meeting|create` waits for your yes through
+  each `workit youtrack note|time|meeting|create` and each YouTrack PR
+  backlink waits for your yes through
   `workit approve` ([YouTrack](youtrack.md#writes-ask-you-first)). `auto` posts
   without asking and needs `WORKIT_YT_WRITE=1` instead; set it yourself, in
   your own terminal.
@@ -340,9 +341,9 @@ YouTrack, a GitLab one in GitLab issues.
   `skipped` with a note. Your
   host's permission prompt for `workit pr create` is what allows the comment.
   A YouTrack backlink follows `youtrack.writes`: with `ask` (the default) the
-  PR opens and the backlink is reported `pending` with the `workit youtrack
-  note` command that asks you and posts it once; with `auto` it posts behind
-  `WORKIT_YT_WRITE=1`. A failed comment is reported and never undoes the PR.
+  PR opens and the backlink is reported `pending` with a request to approve;
+  after your yes the next `workit pr create` or `workit pr edit` posts it
+  once. With `auto` it posts behind `WORKIT_YT_WRITE=1`. A failed comment is reported and never undoes the PR.
 
 An issue on another forge than the PR's cannot be closed from it, so it gets a
 `Related to: <issue URL>` line instead of `Closes`.
