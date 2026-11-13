@@ -1058,7 +1058,14 @@ export function latestReleaseNotesApproval(
 export function recordReleaseNotesApproval(
   cwd: string,
   actor: LedgerActor,
-  draft: ReleaseNotesDraft & { version: string; tag: string; package?: string | null },
+  draft: ReleaseNotesDraft & {
+    version: string;
+    tag: string;
+    package?: string | null;
+    /** Where the yes came from: the user's terminal or a host's prompt (#864). */
+    via?: "terminal" | "host";
+    host?: string | null;
+  },
 ): void {
   record(cwd, actor, {
     type: "release.notes.approved",
@@ -1067,6 +1074,8 @@ export function recordReleaseNotesApproval(
     ...(draft.package ? { package: draft.package } : {}),
     sha256: draft.sha256,
     path: draft.path,
+    ...(draft.via ? { via: draft.via } : {}),
+    ...(draft.host ? { host: draft.host } : {}),
   });
 }
 
@@ -1113,14 +1122,14 @@ export function releaseNotesDecision(
         publish: false,
         mode: "review",
         blocked: `release_notes_unapproved: releaseNotes is review (${where}) and ${label} has no draft`,
-        unblock: `${draftCmd}  # write the Highlights, show the user, then ask the user to run, in a terminal outside the agent host: ${approveCmd}`,
+        unblock: `${draftCmd}  # write the Highlights, show the user the full draft, then run: ${approveCmd}`,
       };
     if (!approved || approved.sha256 !== draft.sha256)
       return {
         publish: false,
         mode: "review",
         blocked: `release_notes_unapproved: releaseNotes is review (${where}) and the draft of ${label} (${draft.path}) ${approved ? "changed after the user approved it" : "is not approved"}`,
-        unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${approveCmd}  # the draft: ${draftCmd}`,
+        unblock: `${approveCmd}  # show the user the full draft first (workit release notes show ${label}); the host asks them on this call (Claude Code, Pi), elsewhere they run it in a terminal outside the agent host`,
       };
     return {
       publish: true,

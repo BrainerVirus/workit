@@ -1,7 +1,12 @@
 // Claude Code: command hooks mapped onto the protocol. The plugin that
 // registers them ships separately; this is the field mapping only.
 import { approveCallDeny, approveCallIn } from "../../approvals/call";
-import { inlineAskFor, inlineCallDeny, inlineCallIn } from "../../approvals/inline";
+import {
+  inlineAskFor,
+  inlineCallDeny,
+  inlineCallIn,
+  isReleaseNotesCall,
+} from "../../approvals/inline";
 import {
   INLINE_TICKET_ENV,
   INLINE_UNASKED_ENV,
@@ -433,8 +438,10 @@ type ApproveStep = (decision: HookDecision) => Stepped;
  * ask row is recorded and the call runs with its ticket as an env prefix, so
  * the verb uses the yes in that same call. In any other mode the call runs
  * with the mode named, and the verb refuses. A wrapped call is denied with
- * the plain form. Another gate's deny or ask wins.
+ * the plain form. Another gate's deny or ask wins, except the user-only ask
+ * on `release notes approve`, which this ask replaces.
  */
+const NO_DECISION: HookDecision = { kind: "none" };
 const inlineStepOf = (
   raw: Record<string, unknown>,
   env: NodeJS.ProcessEnv,
@@ -442,12 +449,16 @@ const inlineStepOf = (
 ): ApproveStep | null => {
   const call = inlineCallIn(command, dialectOf(raw));
   if (!call) return null;
+  // `release notes approve` is user-only: its host ask (full text, a ticket)
+  // replaces the shared user-only ask, as `workit approve`'s does.
+  const userOnly = isReleaseNotesCall(call.plain ? call.words : call.fix.split(" ").slice(1));
   return (decision) => {
-    if (decision.kind === "deny" || decision.kind === "ask") return { decision };
+    const shared = userOnly && decision.kind === "ask" ? NO_DECISION : decision;
+    if (shared.kind === "deny" || shared.kind === "ask") return { decision };
     // A rewrite (`cd x && workit …` → --cwd) would run the call unasked: the plain form instead.
     if (!call.plain)
       return { decision: { kind: "deny", reason: inlineCallDeny(call.fix), unblock: call.fix } };
-    if (decision.kind !== "none" && decision.kind !== "context") return { decision };
+    if (shared.kind !== "none" && shared.kind !== "context") return { decision };
     const cwd = typeof raw.cwd === "string" ? raw.cwd : "";
     const ask = inlineAskFor(call.words, cwd);
     if (!ask) return { decision };

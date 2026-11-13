@@ -28,7 +28,12 @@ import {
 } from "@workit-dev/core/hooks";
 import { roleSteering } from "@workit-dev/core/src/hooks/steering";
 import { approveCallDeny, approveCallIn } from "@workit-dev/core/src/approvals/call";
-import { inlineAskFor, inlineCallDeny, inlineCallIn } from "@workit-dev/core/src/approvals/inline";
+import {
+  inlineAskFor,
+  inlineCallDeny,
+  inlineCallIn,
+  isReleaseNotesCall,
+} from "@workit-dev/core/src/approvals/inline";
 import {
   INLINE_TICKET_ENV,
   recordInlineAsk,
@@ -250,8 +255,8 @@ const approveInDialog = async (
 };
 
 /**
- * The ask on the action itself (#864): a plain `workit youtrack note|…` call
- * in Pi's TUI shows its full text in a dialog; on Approve the ask is
+ * The ask on the action itself (#864): a plain `workit youtrack note|…` or
+ * `workit release notes approve <v>` call in Pi's TUI shows its full text in a dialog; on Approve the ask is
  * recorded here and the call runs with its ticket, so the verb posts in that
  * same call. Reject or a dismissed dialog blocks it. Never throws.
  */
@@ -265,13 +270,14 @@ const askInline = async (
     const ask = inlineAskFor(words, ctx.cwd);
     if (!ask) return undefined;
     const choice = await ctx.ui.select(ask.text, [APPROVE, REJECT]);
+    const nothing = ask.kind === "release-notes" ? "nothing was approved" : "nothing was posted";
     if (choice !== APPROVE)
       return {
         block: true,
         reason:
           choice === REJECT
-            ? `The user rejected ${ask.action}: nothing was posted. Do not retry it; report that it was not approved.`
-            : `The user dismissed the dialog for ${ask.action}: nothing was posted.`,
+            ? `The user rejected ${ask.action}: ${nothing}. Do not retry it; report that it was not approved.`
+            : `The user dismissed the dialog for ${ask.action}: ${nothing}.`,
       };
     const { ticket } = recordInlineAsk({
       kind: ask.kind,
@@ -319,11 +325,15 @@ export const enforceToolPolicy = (
     if (inline && !inline.plain) return { block: true, reason: inlineCallDeny(inline.fix) };
     if (inline?.plain && ctx.mode === "tui" && ctx.hasUI) {
       // The shared gates judge the call first; only a pass reaches the dialog.
-      const gated = gate({
-        kind: "shell.pre",
-        command: command as string,
-        toolUseId: event.toolCallId ?? null,
-      });
+      // `release notes approve` is user-only, so the dialog is its gate, as
+      // `workit approve`'s is.
+      const gated = isReleaseNotesCall(inline.words)
+        ? undefined
+        : gate({
+            kind: "shell.pre",
+            command: command as string,
+            toolUseId: event.toolCallId ?? null,
+          });
       return gated ?? askInline(inline.words, command as string, event, ctx);
     }
     return typeof command === "string"

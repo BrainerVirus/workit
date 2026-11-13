@@ -1,7 +1,7 @@
 // The calls a host asks about on the action itself (#864, decisions
 // mwf752f2 and mwf752sv): one prompt on the call, showing its full text, and
-// a yes runs it in that same call. Today: the `workit youtrack` writes.
-// Release-notes approval plugs in at `asked` and `inlineAskFor`.
+// a yes runs it in that same call: the `workit youtrack` writes and
+// `workit release notes approve <v>`.
 //
 // A host acts only on one plain call: anything around it (a chain, a pipe, a
 // redirect, a substitution, a variable, a leading cd, a shell's -c script)
@@ -10,6 +10,7 @@
 import { youTrackWritesMode } from "../autonomy";
 import { segmentsOf, type ShellDialect } from "../hooks/shell-words";
 import { isWorkitWord, verbIndex } from "./call";
+import { isReleaseNotesApprove, releaseNotesAskAt } from "./release-notes-ask";
 import type { ApprovalKind } from "./store";
 import { isYouTrackWriteVerb, youTrackAsk } from "./youtrack-ask";
 
@@ -28,9 +29,13 @@ export type InlineAsk = {
   contentHash: string;
 };
 
-/** Whether `words` (past `workit`) is a call asked on itself; release notes joins here. */
+/** `workit release notes approve …`: a user-only call whose host ask replaces the user-only one. */
+export const isReleaseNotesCall = (words: readonly string[]): boolean =>
+  words[0] === "release" && isReleaseNotesApprove(words.slice(1));
+
+/** Whether `words` (past `workit`) is a call asked on itself. */
 const asked = (words: readonly string[]): boolean =>
-  words[0] === "youtrack" && isYouTrackWriteVerb(words[1]);
+  (words[0] === "youtrack" && isYouTrackWriteVerb(words[1])) || isReleaseNotesCall(words);
 
 const quote = (word: string): string =>
   /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
@@ -47,7 +52,7 @@ export const inlineCallIn = (
     const { words } = segment;
     // A shell's script word (`bash -c '…'`): never plain; its text is the fix.
     const script = (words[0] ?? "").endsWith("sh")
-      ? words.find((word) => /\bworkit\s+youtrack\s/u.test(word))
+      ? words.find((word) => /\bworkit\s+(?:youtrack|release\s+notes\s+approve)\s/u.test(word))
       : undefined;
     if (script) return { plain: false, fix: script.trim() };
     const start = words.findIndex(isWorkitWord);
@@ -76,11 +81,15 @@ export const inlineCallIn = (
 
 /**
  * The ask for a plain call's words, or null when nothing asks: the verb
- * refuses the call itself, or `youtrack.writes: auto` keeps the
- * WORKIT_YT_WRITE gate instead.
+ * refuses the call itself (no draft to show), or `youtrack.writes: auto`
+ * keeps the WORKIT_YT_WRITE gate instead.
  */
-export const inlineAskFor = (words: readonly string[], cwd: string): InlineAsk | null =>
-  asked(words) && youTrackWritesMode(cwd) !== "auto" ? youTrackAsk(words.slice(1), cwd) : null;
+export const inlineAskFor = (words: readonly string[], cwd: string): InlineAsk | null => {
+  if (isReleaseNotesCall(words)) return releaseNotesAskAt(words.slice(3), cwd);
+  return asked(words) && youTrackWritesMode(cwd) !== "auto"
+    ? youTrackAsk(words.slice(1), cwd)
+    : null;
+};
 
 /** The deny reason for an inline-asked call inside something else. */
 export const inlineCallDeny = (fix: string): string =>
