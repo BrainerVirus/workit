@@ -29,6 +29,19 @@ for (const key of ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID", "W
 for (const key of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"])
   delete process.env[key];
 
+// A shell that exports a host's config dir (often the developer's real one)
+// would point a test's host commands and settings at it, which the run marker
+// then refuses (#859): every test resolves them under its own HOME unless it
+// sets them itself.
+for (const key of [
+  "CLAUDE_CONFIG_DIR",
+  "CODEX_HOME",
+  "PI_CODING_AGENT_DIR",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_CONFIG",
+])
+  delete process.env[key];
+
 // Always a fresh dir, never an inherited one: `bun test --parallel` workers
 // inherit the coordinator's env, and a shared dir made every worker share one
 // ledger and its locks, and the first worker to finish deleted it under the
