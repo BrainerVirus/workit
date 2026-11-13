@@ -456,7 +456,7 @@ test.skipIf(!landlock || process.getuid?.() === 0)(
     const bin = path.join(root, "claude-throws");
     writeFileSync(
       bin,
-      `#!/bin/sh\ncat > /dev/null\n${LOCK_WORLD}\nsleep 3\nprintf '%s\\n' '${RESULT}'\n`,
+      `#!/bin/sh\ncat > /dev/null\n${LOCK_WORLD}\nsleep 10\nprintf '%s\\n' '${RESULT}'\n`,
     );
     chmodSync(bin, 0o755);
     const lines: string[] = [];
@@ -465,13 +465,13 @@ test.skipIf(!landlock || process.getuid?.() === 0)(
         [...argv(bin, "--confine", "auto"), "--watch-ms", "100", "--cases", "a-case"],
         (text) => lines.push(text),
       );
-      for (
-        let waited = 0;
-        waited < 10_000 && !lines.some((each) => /read confinement: /u.test(each));
-        waited += 20
-      )
-        await Bun.sleep(20);
-      await Bun.sleep(400);
+      // The changes come once the host has locked its world (a confined start can be slow).
+      const modeOf = (dir: string): number =>
+        (statSync(path.join(root, dir, "repo", "locked"), { throwIfNoEntry: false })?.mode ?? 0) &
+        0o777;
+      const locked = (): boolean =>
+        readdirSync(root).some((dir) => dir.startsWith("workit-eval-") && modeOf(dir) === 0o500);
+      for (let waited = 0; waited < 20_000 && !locked(); waited += 20) await Bun.sleep(20);
       // Another process appends (the kernel refused the host that write); the mode is the run's.
       writeFileSync(ws, `${ORIGINAL}\n`);
       chmodSync(token, 0o644);
