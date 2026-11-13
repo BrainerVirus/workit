@@ -4,6 +4,11 @@
 the result as evidence. A repo also declares **groups**: named lists of those
 checks that `workit check <group>` runs one after another.
 
+If the checked command removes the checkout it ran in (a worktree deleted while
+the check ran), nothing is recorded: Workit prints the path, says the result was
+not recorded, and exits with the command's own exit code. It never recreates the
+removed directory.
+
 ```json
 {
   "checks": {
