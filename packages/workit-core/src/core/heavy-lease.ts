@@ -2,7 +2,7 @@
 // prune what no longer holds or waits, reap a stuck holder, cancel queued
 // waiters, and keep a holder's heartbeat while its check prints or uses CPU.
 // Only the CLI imports this module; hooks never do.
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -270,19 +270,35 @@ function groupMembers(pgid: number): Array<{ pid: string; fields: string[] }> {
   return members;
 }
 
-/** Resident memory (bytes) of process group `pgid` now: /proc VmRSS on Linux, `ps` rss on macOS; null elsewhere. */
-export function groupRssBytes(pgid: number, run: typeof spawnSync = spawnSync): number | null {
-  if (!(pgid > 0)) return null;
-  if (process.platform === "darwin") {
-    const result = run("ps", ["-axo", "pgid=,rss="], { encoding: "utf8", timeout: 5000 });
-    if (result.error || result.status !== 0 || typeof result.stdout !== "string") return null;
-    let total = 0;
-    for (const line of result.stdout.split("\n")) {
-      const [group, rss] = line.trim().split(/\s+/u);
-      if (Number(group) === pgid && Number(rss) > 0) total += Number(rss) * 1024;
-    }
-    return total || null;
+/** The rss (KiB in `ps -axo pgid=,rss=` output) of group `pgid`, in bytes, or null. */
+export function psGroupRss(stdout: string, pgid: number): number | null {
+  let total = 0;
+  for (const line of stdout.split("\n")) {
+    const [group, rss] = line.trim().split(/\s+/u);
+    if (Number(group) === pgid && Number(rss) > 0) total += Number(rss) * 1024;
   }
+  return total || null;
+}
+
+/** `ps` may take this long for one RSS sample; past it the sample is skipped. */
+const PS_RSS_TIMEOUT_MS = 2_000;
+
+/**
+ * Resident memory (bytes) of process group `pgid` now: /proc VmRSS on Linux,
+ * `ps` rss on macOS (asynchronous and bounded, so a slow `ps` never blocks the
+ * check's output or heartbeat); null elsewhere or when it cannot be read.
+ */
+export async function groupRssBytes(pgid: number): Promise<number | null> {
+  if (!(pgid > 0)) return null;
+  if (process.platform === "darwin")
+    return new Promise((resolve) => {
+      execFile(
+        "ps",
+        ["-axo", "pgid=,rss="],
+        { encoding: "utf8", timeout: PS_RSS_TIMEOUT_MS },
+        (error, stdout) => resolve(error ? null : psGroupRss(stdout, pgid)),
+      );
+    });
   if (process.platform !== "linux") return null;
   let total = 0;
   for (const { pid } of groupMembers(pgid)) {
@@ -314,7 +330,7 @@ export function startHeartbeat(
   options: {
     everyMs?: number;
     cpu?: () => number | null;
-    rss?: () => number | null;
+    rss?: () => number | null | Promise<number | null>;
     rssEveryMs?: number;
     now?: () => number;
   } = {},
@@ -336,9 +352,22 @@ export function startHeartbeat(
     });
   }, options.everyMs ?? HEARTBEAT_EVERY_MS);
   timer.unref?.();
+  // One sample at a time, off the heartbeat: a slow sample is skipped, never queued.
+  let sampling = false;
   const sampler = setInterval(() => {
-    const bytes = rss();
-    if (bytes !== null && bytes > peak) peak = bytes;
+    if (sampling) return;
+    sampling = true;
+    void Promise.resolve()
+      .then(rss)
+      .then(
+        (bytes) => {
+          if (bytes !== null && bytes > peak) peak = bytes;
+        },
+        () => {},
+      )
+      .finally(() => {
+        sampling = false;
+      });
   }, options.rssEveryMs ?? RSS_EVERY_MS);
   sampler.unref?.();
   return {

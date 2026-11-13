@@ -98,6 +98,8 @@ side:
   Linux reads PSI (`/proc/pressure/memory` and `cpu`, `some avg10`; critical at
   10% memory or 80% CPU). Without PSI, Linux and macOS sample the 1-minute load
   (critical at 2 per CPU) and Windows samples CPU busy time (critical at 95%).
-  A source it cannot read leaves the gate open. `workit doctor` shows the
+  A source it cannot read leaves the gate open, and pressure alone holds a
+  check at most 5 minutes: a machine whose load never drops slows checks down
+  but never stalls them. `workit doctor` shows the
   source on its `pressure_gate` row; `resources.pressure: false` in your
   workspaces.json turns the gate off.

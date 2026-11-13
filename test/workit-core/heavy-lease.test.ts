@@ -22,6 +22,7 @@ import {
   groupCpuTicks,
   groupRssBytes,
   psGroupCpu,
+  psGroupRss,
 } from "@/packages/workit-core/src/core/heavy-lease";
 import {
   acquireLease,
@@ -321,17 +322,40 @@ test("G a held lease, W the heartbeat samples its group's RSS, T the peak is not
   got.lease.release();
 });
 
-test("groupRssBytes sums one process group's rss from ps (KiB) and returns null for an absent group", () => {
-  const ps = fakePs("  10 2048\n  11 1024\n  12 4096\n");
-  if (process.platform === "darwin") {
-    expect(groupRssBytes(10, ps)).toBe(2048 * 1024);
-    expect(groupRssBytes(99, ps)).toBeNull();
-  } else if (process.platform === "linux") {
-    // This test process's own group has resident memory.
+test("psGroupRss sums one process group's rss from ps (KiB); groupRssBytes reads this process's group on Linux", async () => {
+  expect(psGroupRss("  10 2048\n  11 1024\n  10 4096\n", 10)).toBe(6144 * 1024);
+  expect(psGroupRss("  10 2048\n", 99)).toBeNull();
+  if (process.platform === "linux") {
     const stat = readFileSync("/proc/self/stat", "utf8");
     const pgid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]);
-    expect(groupRssBytes(pgid)).toBeGreaterThan(0);
-  } else expect(groupRssBytes(10, ps)).toBeNull();
+    expect(await groupRssBytes(pgid)).toBeGreaterThan(0);
+  }
+  if (process.platform === "win32") expect(await groupRssBytes(10)).toBeNull();
+});
+
+test("G an RSS sample slower than the sampling interval, W the heartbeat runs, T samples never pile up and a failed one is skipped", async () => {
+  const dir = leasesDir();
+  const got = await acquireLease(options(dir));
+  if (!got.ok) throw new Error(got.reason);
+  let calls = 0;
+  let release: (bytes: number) => void = () => {};
+  const beat = startHeartbeat(got.lease, {
+    everyMs: 1000,
+    rssEveryMs: 5,
+    cpu: () => null,
+    rss: () => {
+      calls += 1;
+      if (calls === 1) return new Promise<number>((resolve) => (release = resolve));
+      throw new Error("ps timed out");
+    },
+  });
+  await sleep(60);
+  expect(calls).toBe(1);
+  release(700);
+  await until(() => calls >= 2, 1000);
+  beat.stop();
+  expect(measuredRss(dir, "test", got.lease.record.cwd)).toBe(700);
+  got.lease.release();
 });
 
 const fakePs = (stdout: string, status = 0) =>

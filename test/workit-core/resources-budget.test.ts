@@ -23,6 +23,7 @@ import {
   type QueueStatus,
 } from "@/packages/workit-core/src/core/resources";
 import { readPressure } from "@/packages/workit-core/src/core/pressure";
+import { describeEstimate, estimateWait } from "@/packages/workit-core/src/core/heavy-eta";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -299,6 +300,42 @@ test("Given a fake /proc/pressure above the critical line, When a heavy check as
   const after = await acquireLease(options(dir, { budget, waitMs: 0 }));
   expect(after.ok).toBe(true);
   if (after.ok) after.lease.release();
+});
+
+test("Given load that never drops, When a check waits on pressure alone, Then its first wait line names it and it runs once pressure has held it its maximum", async () => {
+  const dir = leases();
+  const budget = units({
+    pressureMaxWaitMs: 80,
+    pressure: () => readPressure({ platform: "darwin", loadavg: () => [20, 10, 5], cpus: () => 4 }),
+  });
+  const statuses: QueueStatus[] = [];
+  const got = await acquireLease(
+    options(dir, { budget, waitMs: 10_000, onStatus: (status) => statuses.push(status) }),
+  );
+  expect(got.ok).toBe(true);
+  expect(got.ok && got.lease.waitedMs).toBeGreaterThanOrEqual(80);
+  expect(statuses[0].first).toBe(true);
+  expect(describeHolder(statuses[0].holders[0])).toBe(
+    "CPU pressure: 1-minute load 5 per CPU (critical at 2)",
+  );
+  if (got.ok) got.lease.release();
+});
+
+test("Given a wait held by the pressure gate and a server, When it is estimated, Then only checks count: no 'never measured' for the gate", () => {
+  const now = Date.parse("2026-11-13T12:00:00Z");
+  const at = new Date(now).toISOString();
+  const estimate = estimateWait({
+    slots: 1,
+    holders: [
+      { pid: 0, check: "CPU pressure: …", cwd: "", session: null, startedAt: at, kind: "pressure" },
+      { pid: 7, check: "vite", cwd: "/w", session: null, startedAt: at, kind: "server" },
+      { pid: 8, check: "test", cwd: "/w", session: null, startedAt: at },
+    ],
+    ahead: [],
+    durationOf: ({ check }) => (check === "test" ? 60_000 : null),
+    now,
+  });
+  expect(describeEstimate(estimate)).toBe("estimated wait ~1m (last measured runs)");
 });
 
 test("Given CPU over the load line on a machine without PSI, When a check asks, Then the wait names CPU pressure", async () => {

@@ -66,6 +66,12 @@ const RESERVE_MAX_BYTES = 6 * 1024 ** 3;
 const reserveCores = (cpus: number): number => (cpus >= 8 ? 2 : 1);
 /** A waiter queued this long holds its place: nobody behind it backfills the budget it needs. */
 export const DEFAULT_AGING_MS = 5 * 60_000;
+/**
+ * Pressure alone holds a check at most this long: past it the check runs and
+ * the pressure stays named on its lease's wait, so a machine whose load never
+ * drops (a busy Mac) slows checks down but never stalls them.
+ */
+export const PRESSURE_MAX_WAIT_MS = 5 * 60_000;
 /** A slot file nobody could parse is a writer mid-create; after this it is debris. */
 const UNREADABLE_TTL_MS = 30_000;
 /** A reclaim guard lives for microseconds; one older than this was abandoned. */
@@ -165,6 +171,8 @@ export type Budget = {
   /** The memory charge of a check with no measured run and no weight (its MemoryMax). */
   defaultBytes: number;
   agingMs: number;
+  /** How long pressure alone may hold a check (default PRESSURE_MAX_WAIT_MS). */
+  pressureMaxWaitMs?: number;
   /** False when the machine turned the pressure gate off (`resources.pressure: false`). */
   pressureGate: boolean;
   /** The pressure gate's reader; null reads nothing (the gate is open). */
@@ -1603,10 +1611,17 @@ export function admit(options: AdmitOptions): AdmitResult {
 /** The machine's default budget, with the real pressure gate. */
 const defaultBudget = (): Budget => withGate(resolveWith([], hostShape()).budget);
 
-/** `budget` reading the real pressure source, unless the machine turned the gate off. */
+/**
+ * `budget` reading the real pressure source, unless the machine turned the
+ * gate off or WORKIT_NO_PRESSURE_GATE=1 (the test suite's preload sets it, so
+ * the runner's own load never decides a test that is not about the gate).
+ */
 const withGate = (budget: Budget): Budget => ({
   ...budget,
-  pressure: budget.pressureGate ? () => readPressure() : null,
+  pressure:
+    budget.pressureGate && process.env.WORKIT_NO_PRESSURE_GATE !== "1"
+      ? () => readPressure()
+      : null,
 });
 
 function writeTicket(file: string, record: LeaseRecord): void {
@@ -1718,6 +1733,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     queued = false;
   };
   let nextStatus = 0;
+  let pressedSince: number | null = null;
   let limitMs = options.waitMs;
   let requeuedAfterMs: number | null = null;
   const maxHold = options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
@@ -1738,7 +1754,14 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
       const aheadOf = waiters.map((waiter) => waiter.holder);
       const ahead = aheadOf.length;
       const reading = budget.pressure?.() ?? null;
-      const pressed = reading?.critical ? reading : null;
+      if (reading?.critical) pressedSince ??= clock.now();
+      else pressedSince = null;
+      const pressed =
+        reading?.critical &&
+        clock.now() - (pressedSince ?? clock.now()) <
+          (budget.pressureMaxWaitMs ?? PRESSURE_MAX_WAIT_MS)
+          ? reading
+          : null;
       const use = weighted
         ? budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHold)
         : null;
