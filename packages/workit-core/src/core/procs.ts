@@ -48,9 +48,6 @@ export const noticeFile = (env: NodeJS.ProcessEnv, session: string | null): stri
 export const newProcId = (now = Date.now()): string =>
   `p${now.toString(36)}${randomBytes(2).toString("hex")}`;
 
-const ID = /^p[a-z0-9]{6,20}$/u;
-export const isProcId = (value: string): boolean => ID.test(value);
-
 // ---------------------------------------------------------------------------
 // per-row facts the v1 table has no column for
 

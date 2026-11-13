@@ -10,6 +10,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { runDeps } from "@/packages/workit-cli/src/verbs/run";
 import { procsDeps, readExtra } from "@/packages/workit-core/src/core/procs";
+import { procTree } from "@/packages/workit-core/src/core/proc-tree";
 import { openThreadsStore } from "@/packages/workit-core/src/store/threads/store";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 
@@ -197,15 +198,12 @@ test("Given `workit stop <id>`, Then the whole group is gone (the child ignoring
   const { root, env } = setup();
   const started = await start(root, env, [], [fakeServer(root, 4321)]);
   const { id, pid } = started.data;
-  expect(
-    await waitFor(
-      () =>
-        spawnSync("pgrep", ["-g", String(pid)])
-          .stdout.toString()
-          .trim()
-          .split("\n").length >= 2,
-    ),
-  ).toBe(true);
+  // The leader and the child that ignores SIGTERM are both in its group.
+  const members = () =>
+    (procTree.table() ?? "")
+      .split("\n")
+      .filter((line) => Number(line.trim().split(/\s+/u)[0]) === pid).length;
+  expect(await waitFor(() => members() >= 2)).toBe(true);
   const stopped = await run(root, ["stop", id, "--reason", "work delivered"], env);
   expect(stopped.code, stopped.stderr).toBe(0);
   expect(stopped.stdout).toContain(`stopped (SIGKILL) ${id}`);
@@ -332,3 +330,19 @@ test("Given `workit run` without --bg or without a command, Then it refuses with
     "needs --reason",
   );
 });
+
+test("Given a running server, When `workit stop --within .` runs in its checkout, Then it stops, and ps then lists nothing running", async () => {
+  const { root, env } = setup();
+  const started = await start(root, env, [], [fakeServer(root, 4321)]);
+  const elsewhere = temp("wk-run-else-");
+  const none = await run(elsewhere, ["stop", "--within", "."], env);
+  expect(none.stdout).toContain("nothing to stop");
+  expect(alive(started.data.pid)).toBe(true);
+  const stopped = await run(root, ["stop", "--within", ".", "--reason", "delivered"], env);
+  expect(stopped.code, stopped.stderr).toBe(0);
+  expect(stopped.stdout).toContain(`${started.data.id} -- `);
+  expect(await waitFor(() => !alive(-started.data.pid))).toBe(true);
+  expect((await run(root, ["ps"], env)).stdout).toContain(
+    "no registered background processes running",
+  );
+}, 20_000);

@@ -351,7 +351,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage:
       "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply] | --procs [--apply]",
     summary:
-      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies; --worktrees lists (--apply removes) clean worktrees whose work is on the trunk; --branches lists (--apply deletes) local branches whose work is on the trunk; --procs lists (--apply stops) registered background processes whose owner's host process is gone",
+      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies; --worktrees lists (--apply removes) clean worktrees whose work is on the trunk; --branches lists (--apply deletes) local branches whose work is on the trunk; --procs lists (--apply stops) orphaned background processes",
     load: () => import("./gc"),
   },
   {
@@ -529,7 +529,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage:
       'workit run --bg [--port <n>] [--name <n>] [--restart <id>] [--no-lease --reason "<why>"] -- <cmd…>',
     summary:
-      "Start a long-running command (a dev server, docker compose up) in the background under Workit's process registry; prints its id, pid, port and log",
+      "Start a dev server or docker compose up in the background, registered; prints its id, pid, port and log",
     examples: [
       "workit run --bg -- npm run dev",
       "workit run --bg --port 4200 -- ng serve",
@@ -549,7 +549,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: "workit ps [--all]",
     summary:
-      "List the registered background processes: id, name, kind, pid, port, RSS, owner session, age, directory and command (--all adds recently ended ones)",
+      "List the registered background processes: id, pid, port, RSS, owner (--all adds ended ones)",
     examples: ["workit ps", "workit ps --all --json"],
     load: () => import("./ps"),
   },
@@ -558,7 +558,7 @@ export const VERBS: readonly VerbEntry[] = [
     group: "delivery",
     usage: 'workit stop <id>… | --session <s> | --within <dir> | --orphans [--reason "<why>"]',
     summary:
-      "Stop registered background processes: SIGTERM to the process group, then SIGKILL after 10 s; docker rows stop only their own containers; each stop is a proc.stopped ledger row",
+      "Stop registered background processes (the process group: SIGTERM, SIGKILL after 10 s), with a ledger row each",
     examples: [
       "workit stop p1abc2def3",
       'workit stop --within . --reason "work delivered"',

@@ -29,7 +29,8 @@ type Parsed = {
   reason: string | null;
 };
 
-function parse(argv: string[]): Parsed | string {
+/** `--within` is resolved against `cwd`: it selects rows by their recorded cwd, nothing on disk is read. */
+function parse(argv: string[], cwd: string): Parsed | string {
   const parsed: Parsed = { ids: [], session: null, within: null, orphans: false, reason: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -49,8 +50,9 @@ function parse(argv: string[]): Parsed | string {
       parsed.session = value();
       if (!parsed.session) return "--session takes a session id";
     } else if (arg === "--within") {
-      parsed.within = value();
-      if (!parsed.within) return "--within takes a directory";
+      const dir = value();
+      if (!dir) return "--within takes a directory";
+      parsed.within = path.resolve(cwd, dir);
     } else if (arg === "--reason") {
       parsed.reason = value();
       if (!parsed.reason) return '--reason takes "<why>"';
@@ -83,7 +85,7 @@ const stopLines = (data: StopReport & Partial<OrphanReport>): string[] => [
 ];
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  const parsed = parse(argv);
+  const parsed = parse(argv, io.cwd);
   if (typeof parsed === "string") return emit(io, fail("invalid_input", `${parsed}: ${USAGE}`));
   const real = realHostSession(io.env);
   const context = {
@@ -100,7 +102,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         {
           ...(parsed.ids.length ? { ids: parsed.ids } : {}),
           ...(parsed.session !== null ? { session: parsed.session } : {}),
-          ...(parsed.within !== null ? { within: path.resolve(io.cwd, parsed.within) } : {}),
+          ...(parsed.within !== null ? { within: parsed.within } : {}),
         },
         parsed.reason ?? "stopped by workit stop",
         context,

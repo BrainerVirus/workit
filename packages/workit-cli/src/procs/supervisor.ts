@@ -80,8 +80,11 @@ export function checkoutBudget(sources: ResourceSource[], env: NodeJS.ProcessEnv
 }
 
 /** Container ids in `after` that were not running `before`. */
-const added = (before: string[] | null, after: string[] | null): string[] | null =>
-  before === null || after === null ? null : after.filter((id) => !before.includes(id));
+const added = (before: string[] | null, after: string[] | null): string[] | null => {
+  if (before === null || after === null) return null;
+  const running = new Set(before);
+  return after.filter((id) => !running.has(id));
+};
 
 export async function supervise(spec: SupervisorSpec, env: NodeJS.ProcessEnv): Promise<number> {
   const store = openProcs(env);
