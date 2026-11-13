@@ -7,7 +7,8 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { INLINE_ASK_TTL_MS } from "@/packages/workit-core/src/approvals/store";
+import { consumeInlineAsk, INLINE_ASK_TTL_MS } from "@/packages/workit-core/src/approvals/store";
+import { youTrackAsk } from "@/packages/workit-core/src/approvals/youtrack-ask";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { codexAdapter } from "@/packages/workit-core/src/hooks/hosts/codex";
 import { cursorAdapter } from "@/packages/workit-core/src/hooks/hosts/cursor";
@@ -164,4 +165,76 @@ test("Given a script file carrying a ticket, When the agent writes it with Write
 
 test("Given an inline ask, Then it lives two minutes", () => {
   expect(INLINE_ASK_TTL_MS).toBe(2 * 60_000);
+});
+
+// A rejected prompt stops the turn; the next thing is the user's own message.
+// Every unused ask of the session is closed then (and a lead's at its Stop),
+// so a ticket can only be used in the turn of its yes.
+const event = (name: "UserPromptSubmit" | "Stop", extra: Record<string, unknown> = {}) =>
+  dispatchHook(
+    claudeCodeAdapter,
+    {
+      session_id: "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11",
+      transcript_path: path.join(base, "t.jsonl"),
+      cwd: base,
+      permission_mode: "auto",
+      hook_event_name: name,
+      ...(name === "UserPromptSubmit"
+        ? { prompt: "no, do not post that" }
+        : { stop_hook_active: false }),
+      ...extra,
+    },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  );
+
+const ticketOf = (agent?: string) => {
+  const out = (dispatchHook(
+    claudeCodeAdapter,
+    {
+      session_id: "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11",
+      transcript_path: path.join(base, "t.jsonl"),
+      cwd: base,
+      permission_mode: "auto",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "workit youtrack note X-1 --file note.md", description: "d" },
+      tool_use_id: "toolu_03",
+      ...(agent ? { agent_id: agent, agent_type: "general-purpose" } : {}),
+    },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  ).json.hookSpecificOutput ?? {}) as Out;
+  return /^WORKIT_APPROVAL_TICKET=(\S+) /u.exec(out.updatedInput?.command ?? "")?.[1] ?? "";
+};
+const posts = (ticket: string) => {
+  const ask = youTrackAsk(["note", "X-1", "--file", "note.md"], base);
+  return consumeInlineAsk({
+    ticket,
+    kind: "youtrack-write",
+    argvHash: ask?.argvHash ?? "",
+    contentHash: ask?.contentHash ?? "",
+    verb: "youtrack note",
+    session: null,
+  }).ok;
+};
+
+test("Given an ask the user rejected, When the user's next message arrives, Then the same ticket no longer posts", () => {
+  const ticket = ticketOf();
+  event("UserPromptSubmit");
+  expect(posts(ticket)).toBe(false);
+});
+
+test("Given a lead's unused ask, When its turn stops, Then the ticket no longer posts; a subagent's ask survives the lead's Stop but not the user's next message", () => {
+  const lead = ticketOf();
+  event("Stop");
+  expect(posts(lead)).toBe(false);
+  const worker = ticketOf("a1b2c3");
+  event("Stop");
+  expect(posts(worker)).toBe(true);
+  const next = ticketOf("a1b2c3");
+  event("UserPromptSubmit");
+  expect(posts(next)).toBe(false);
+});
+
+test("Given an ask in the same turn, When the call uses its ticket before any new message, Then it posts", () => {
+  expect(posts(ticketOf())).toBe(true);
 });

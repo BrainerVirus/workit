@@ -94,10 +94,10 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
     if (text !== undefined) lines.push("description:", ...shownText(text));
   } else {
     if (!target || !/^[A-Z][A-Z0-9_]*-\d+$/u.test(target) || extra !== undefined) return null;
-    if (text !== undefined) lines.push(`comment on ${target}:`, ...shownText(text));
+    if (text !== undefined) lines.push("comment:", ...shownText(text));
     if (values.minutes)
       lines.push(
-        `time on ${target}: ${values.minutes} minutes on ${values.date ?? "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
+        `time: ${values.minutes} minutes on ${values.date ?? "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
       );
     if (values.state) lines.push(`state: ${values.state}`);
   }
@@ -111,7 +111,7 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
   return {
     kind: "youtrack-write",
     action,
-    text: [`Workit: ${action} posts this to YouTrack once if you say yes:`, ...lines].join("\n"),
+    text: [`Workit: yes runs ${action} once, posting:`, ...lines].join("\n"),
     argvHash: sha256(canonicalJson(args)),
     contentHash: sha256(canonicalJson({ args, files })),
   };

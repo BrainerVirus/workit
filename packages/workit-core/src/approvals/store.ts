@@ -522,10 +522,30 @@ export type InlineAsked = {
   contentHash: string;
   host: string;
   session: string | null;
+  /** The subagent that made the call; null for the session's own (lead) call. */
+  agent: string | null;
   toolUseId: string | null;
   at: string;
   expires: string;
 };
+
+/** Delete every inline row `drop` matches (and any unreadable one). */
+const dropInline = (drop: (row: InlineAsked) => boolean): void => {
+  for (const name of names("inline")) {
+    const file = path.join(dirOf("inline"), name);
+    const row = readJson(file) as InlineAsked | null;
+    if (!row || drop(row)) rmSync(file, { force: true });
+  }
+};
+
+/**
+ * Close the unused asks of `session` (#864): the user's next message (all of
+ * them) or the end of its lead's turn (`lead`: only the session's own calls),
+ * so a yes is used in the turn it was given and a rejected prompt's ticket
+ * dies with the turn.
+ */
+export const dropInlineAsks = (session: string, lead = false): void =>
+  dropInline((row) => row.session === session && !(lead && row.agent));
 
 const TICKET = /^[A-Za-z0-9_-]{32}$/u;
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
@@ -540,12 +560,7 @@ export const recordInlineAsk = (
   now: Date = new Date(),
   ttlMs: number = INLINE_ASK_TTL_MS,
 ): { ticket: string; asked: InlineAsked } => {
-  for (const name of names("inline")) {
-    const file = path.join(dirOf("inline"), name);
-    const row = readJson(file) as InlineAsked | null;
-    if (!row || (row.argvHash === input.argvHash && row.contentHash === input.contentHash))
-      rmSync(file, { force: true });
-  }
+  dropInline((row) => row.argvHash === input.argvHash && row.contentHash === input.contentHash);
   const ticket = randomBytes(24).toString("base64url");
   const asked: InlineAsked = {
     ...input,

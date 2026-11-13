@@ -83,9 +83,7 @@ const inlineRows = () => {
 test("Given auto mode, When the agent runs workit youtrack time X-1 --minutes 30, Then the hook asks with the entry and runs that call with a ticket", () => {
   const out = hook("PreToolUse", "workit youtrack time X-1 --minutes 30 --text 'code review'");
   expect(out.permissionDecision).toBe("ask");
-  expect(out.permissionDecisionReason).toContain(
-    'time on X-1: 30 minutes on today ("code review")',
-  );
+  expect(out.permissionDecisionReason).toContain('time: 30 minutes on today ("code review")');
   expect(out.updatedInput?.command).toMatch(
     /^WORKIT_APPROVAL_TICKET=[A-Za-z0-9_-]{32} workit youtrack time X-1 --minutes 30 --text 'code review'$/u,
   );
@@ -99,7 +97,7 @@ test("Given a comment longer than the prompt shows, When the hook asks, Then the
   expect(out.permissionDecisionReason).toContain("line 60");
   expect(out.permissionDecisionReason).not.toContain("line 61");
   expect(out.permissionDecisionReason).toContain("… 15 more lines");
-  expect(out.permissionDecisionReason).toContain("time on X-1: 15 minutes");
+  expect(out.permissionDecisionReason).toContain("time: 15 minutes");
 });
 
 test("Given a YouTrack write inside a pipe, a chain or bash -c, When the hook runs, Then it denies naming the plain call and records nothing", () => {

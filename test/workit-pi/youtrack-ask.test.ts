@@ -3,7 +3,7 @@
 // and the verb posts in it; Reject blocks it. Print and RPC modes have no
 // dialog: the call runs unticketed and the verb refuses with the terminal line.
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { consumeInlineAsk } from "@/packages/workit-core/src/approvals/store";
@@ -88,6 +88,8 @@ test("Given Pi's TUI, When the user rejects or dismisses, Then the call is block
     });
     expect(command).toBe(COMMAND);
   }
+  // A rejected or dismissed dialog leaves no ask row, so nothing can be replayed (#864).
+  expect(existsSync(path.join(process.env.WORKIT_STATE_DIR!, "approvals", "inline"))).toBe(false);
 });
 
 test("Given Pi print mode, When the call runs, Then no dialog shows and no ticket is added", async () => {

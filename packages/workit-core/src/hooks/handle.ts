@@ -12,6 +12,7 @@ import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-sessio
 import { cdWorkitSplit, cwdRewrite, npxWorkit, verbFirst } from "./cwd-normalize";
 import { workitOnPath } from "../core/heavy";
 import { approveCallDeny, approveCallIn } from "../approvals/call";
+import { namesTicket, TICKET_DENY } from "../approvals/store";
 import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
 import { shellPolicy } from "./policy";
@@ -391,6 +392,9 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       return NONE;
     case "write.pre": {
       if (!usable(descriptor.events["write.pre"].support)) return NONE;
+      // Only a host's own prompt puts an approval ticket on a call (#864).
+      if (event.text && namesTicket(event.text))
+        return { kind: "deny", reason: TICKET_DENY, unblock: null };
       const role = agentRole(input, descriptor);
       if (role) {
         const targets = liveTargets(input.cwd, event.paths);

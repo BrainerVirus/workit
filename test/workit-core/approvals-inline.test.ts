@@ -72,7 +72,10 @@ const asked = {
   contentHash: "c".repeat(64),
 };
 const ask = (now?: Date) =>
-  recordInlineAsk({ ...asked, host: "claude_code", session: "s", toolUseId: "toolu_1" }, now);
+  recordInlineAsk(
+    { ...asked, host: "claude_code", session: "s", agent: null, toolUseId: "toolu_1" },
+    now,
+  );
 const use = (ticket: string, over: Partial<typeof asked> = {}) =>
   consumeInlineAsk({ ticket, ...asked, ...over, verb: "youtrack note", session: "s" });
 

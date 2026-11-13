@@ -39,23 +39,17 @@ const quote = (word: string): string =>
 export const inlineCallIn = (
   command: string,
   dialect: ShellDialect = "posix",
-  depth = 0,
 ): InlineCall | null => {
-  if (!/\bworkit\b/u.test(command) || depth > 3) return null;
+  if (!/\bworkit\b/u.test(command)) return null;
   const segments = segmentsOf(command, dialect);
   for (const segment of segments) {
     if (segment.unanalyzable) continue;
     const { words } = segment;
-    // A shell's `-c` script: never plain, whatever runs inside.
-    const flag = /^(?:.*\/)?(?:ba|z|da|k)?sh$/u.test(words[0] ?? "")
-      ? words.findIndex((word, at) => at > 0 && /^-\w*c/u.test(word))
-      : -1;
-    const inner = flag > 0 ? inlineCallIn(words[flag + 1] ?? "", "posix", depth + 1) : null;
-    if (inner)
-      return {
-        plain: false,
-        fix: inner.plain ? `workit ${inner.words.map(quote).join(" ")}` : inner.fix,
-      };
+    // A shell's script word (`bash -c '…'`): never plain; its text is the fix.
+    const script = (words[0] ?? "").endsWith("sh")
+      ? words.find((word) => /\bworkit\s+youtrack\s/u.test(word))
+      : undefined;
+    if (script) return { plain: false, fix: script.trim() };
     const start = words.findIndex(isWorkitWord);
     if (start < 0) continue;
     const at = verbIndex(words, start + 1);
@@ -90,4 +84,4 @@ export const inlineAskFor = (words: readonly string[], cwd: string): InlineAsk |
 
 /** The deny reason for an inline-asked call inside something else. */
 export const inlineCallDeny = (fix: string): string =>
-  `Run \`${fix}\` as its own call, nothing around it: the host then shows the user its text and asks.`;
+  `Run \`${fix}\` as its own call, nothing around it, so the host can ask the user.`;

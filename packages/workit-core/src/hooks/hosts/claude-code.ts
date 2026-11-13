@@ -6,10 +6,9 @@ import {
   INLINE_TICKET_ENV,
   INLINE_UNASKED_ENV,
   liveApprovalRequest,
-  namesTicket,
-  TICKET_DENY,
   recordApprovalAsked,
   recordApprovalGrant,
+  dropInlineAsks,
   recordInlineAsk,
   renderApprovalRequest,
 } from "../../approvals/store";
@@ -201,6 +200,7 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
             tool: value.tool_name,
             paths: writeTargets(value.tool_input),
             toolUseId,
+            text: JSON.stringify(value.tool_input),
           },
         };
       if (value.tool_name === "Skill")
@@ -469,6 +469,7 @@ const inlineStepOf = (
       contentHash: ask.contentHash,
       host: "claude_code",
       session: optionalText(raw.session_id),
+      agent: optionalText(raw.agent_id),
       toolUseId: optionalText(raw.tool_use_id),
     });
     return {
@@ -484,13 +485,6 @@ const approveStepOf = (
   env: NodeJS.ProcessEnv,
 ): ApproveStep | null => {
   if (native !== "PreToolUse" && native !== "PostToolUse") return null;
-  // A file an agent writes never carries a ticket (#864).
-  if (
-    native === "PreToolUse" &&
-    isWriteTool(raw.tool_name) &&
-    namesTicket(JSON.stringify(raw.tool_input))
-  )
-    return () => ({ decision: { kind: "deny", reason: TICKET_DENY, unblock: null } });
   if (!SHELL_TOOLS.has(String(raw.tool_name))) return null;
   const command = toolCommand(raw);
   if (command && native === "PreToolUse") {
@@ -598,6 +592,14 @@ export const claudeCodeAdapter: HostAdapter = {
     if (!cwd) return fail("cwd must be an existing absolute directory");
     const event = eventOf(native, raw);
     if (!event.ok) return fail(event.error);
+    // A yes is used in the turn it was given (#864): the user's next message
+    // closes every unused ask of the session, the lead's Stop its own.
+    if (native === "UserPromptSubmit" || native === "Stop")
+      try {
+        dropInlineAsks(raw.session_id, native === "Stop");
+      } catch {
+        // Fails open: the ask still expires.
+      }
     approveStep = approveStepOf(native, raw, env);
     return {
       ok: true,

@@ -226,6 +226,7 @@ test("Given an ask past its lifetime, When the call runs with its ticket, Then i
       contentHash: ask.contentHash,
       host: "claude_code",
       session: "s",
+      agent: null,
       toolUseId: "toolu_1",
     },
     new Date(Date.now() - 11 * 60_000),
