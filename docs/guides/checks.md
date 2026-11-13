@@ -75,4 +75,29 @@ side:
   `resources.heavy`.
 - **More slots.** One heavy check runs at a time by default. On a machine with
   room for more, raise `resources.slots` in your workspaces.json
-  ([configuration](configuration.md#heavy-check-slots)).
+  ([configuration](configuration.md#heavy-check-slots)), or give it a weighted
+  `resources.budget`.
+- **The memory budget and its default reserve.** Memory is counted in bytes of
+  measured peak RSS: each heavy check is charged what it last used in that
+  checkout (the lease samples it while the check runs), and a check never
+  measured is charged its `memoryMax` (default 40% of RAM). With nothing
+  configured, Workit keeps an automatic reserve for the desktop and IDE: a
+  quarter of the RAM, at least 2 GiB and at most 6 GiB (6 GiB on a 32 GiB
+  machine, 4 GiB on 16 GiB). Checks and dev servers share the rest, one heavy
+  check at a time. `resources.reserve` overrides it. With only
+  `resources.slots` set, checks are counted by slot as before; a dev server
+  never takes a slot either way.
+- **The pressure gate.** When the machine is already under pressure, a heavy
+  check waits even with budget free, and the wait line names it instead of a
+  holder:
+
+  ```text
+  workit: waiting for the heavy-check lease (1 slot): held by memory pressure: PSI some avg10 34.5% (critical at 10%); queued at position 1, ...
+  ```
+
+  Linux reads PSI (`/proc/pressure/memory` and `cpu`, `some avg10`; critical at
+  10% memory or 80% CPU). Without PSI, Linux and macOS sample the 1-minute load
+  (critical at 2 per CPU) and Windows samples CPU busy time (critical at 95%).
+  A source it cannot read leaves the gate open. `workit doctor` shows the
+  source on its `pressure_gate` row; `resources.pressure: false` in your
+  workspaces.json turns the gate off.

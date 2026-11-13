@@ -20,12 +20,14 @@ import {
   reapStuck,
   startHeartbeat,
   groupCpuTicks,
+  groupRssBytes,
   psGroupCpu,
 } from "@/packages/workit-core/src/core/heavy-lease";
 import {
   acquireLease,
   autoReapReason,
   leaseSlots,
+  measuredRss,
   resolveResourceSettings,
   stuckReason,
   type AcquireOptions,
@@ -292,6 +294,44 @@ test("G a held lease, W its check prints or its group uses CPU, T the heartbeat 
   await until(() => read() !== second, 1000);
   beat.stop();
   got.lease.release();
+});
+
+test("G a held lease, W the heartbeat samples its group's RSS, T the peak is noted on the lease and kept as the check's measured charge when it stops (#326)", async () => {
+  const dir = leasesDir();
+  const got = await acquireLease(options(dir));
+  if (!got.ok) throw new Error(got.reason);
+  let rss = 300;
+  const beat = startHeartbeat(got.lease, {
+    everyMs: 10,
+    rssEveryMs: 5,
+    cpu: () => null,
+    rss: () => rss,
+  });
+  await sleep(30);
+  rss = 900;
+  await sleep(30);
+  rss = 100;
+  await sleep(30);
+  beat.touch();
+  const peakOnLease = () =>
+    (JSON.parse(readFileSync(got.lease.file, "utf8")) as LeaseRecord).peakRssBytes;
+  await until(() => peakOnLease() === 900, 1000);
+  beat.stop();
+  expect(measuredRss(dir, "test", got.lease.record.cwd)).toBe(900);
+  got.lease.release();
+});
+
+test("groupRssBytes sums one process group's rss from ps (KiB) and returns null for an absent group", () => {
+  const ps = fakePs("  10 2048\n  11 1024\n  12 4096\n");
+  if (process.platform === "darwin") {
+    expect(groupRssBytes(10, ps)).toBe(2048 * 1024);
+    expect(groupRssBytes(99, ps)).toBeNull();
+  } else if (process.platform === "linux") {
+    // This test process's own group has resident memory.
+    const stat = readFileSync("/proc/self/stat", "utf8");
+    const pgid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]);
+    expect(groupRssBytes(pgid)).toBeGreaterThan(0);
+  } else expect(groupRssBytes(10, ps)).toBeNull();
 });
 
 const fakePs = (stdout: string, status = 0) =>

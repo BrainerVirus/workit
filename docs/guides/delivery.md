@@ -1286,6 +1286,10 @@ only tighten them, so a repo cannot break the machine-wide limit: it can add
 | `heavy`         | `test`, `build`, `packaging` | both      | Named checks that take the lease; a repo only adds to the list         |
 | `light`         | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease; a repo cannot set it           |
 | `slots`         | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
+| `budget`        | RAM less `reserve`           | workspace | Weighted budget: units (`3`) or memory (`"24G"`, `"60%"`); a repo can only lower it |
+| `reserve`       | 25% of RAM, 2-6 GiB          | workspace | Memory kept for the desktop; a repo can only raise it                  |
+| `weights`       | 1 unit, measured peak RSS    | workspace | Per check: units (`2`) or a fixed memory charge (`"6G"`); a repo can only raise one |
+| `pressure`      | `true`                       | workspace | `false` turns the PSI/load pressure gate off                           |
 | `memoryMax`     | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
 | `cpuQuota`      | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
 | `wait`          | `1800`                       | both      | Seconds (or a duration such as `"30m"`) to wait for the lease before exit 4 |

@@ -164,7 +164,9 @@ export type Budget = {
   /** The memory charge of a check with no measured run and no weight (its MemoryMax). */
   defaultBytes: number;
   agingMs: number;
-  /** The pressure gate; null turns it off (tests). */
+  /** False when the machine turned the pressure gate off (`resources.pressure: false`). */
+  pressureGate: boolean;
+  /** The pressure gate's reader; null reads nothing (the gate is open). */
   pressure: (() => PressureReading) | null;
 };
 
@@ -186,6 +188,7 @@ export const slotsBudget = (slots: number, host: HostShape = hostShape()): Budge
     weights: {},
     defaultBytes: Math.floor(host.totalMemBytes * DEFAULT_MEMORY_SHARE),
     agingMs: DEFAULT_AGING_MS,
+    pressureGate: true,
     pressure: null,
   };
 };
@@ -219,7 +222,7 @@ export function resolveResourceSettings(
   host?: HostShape,
 ): { settings: ResourceSettings; warnings: string[]; budget: Budget } {
   const resolved = resolveWith(sources, host ?? hostShape());
-  if (!host) resolvedBudget = { ...resolved.budget, pressure: () => readPressure() };
+  if (!host) resolvedBudget = withGate(resolved.budget);
   return resolved;
 }
 
@@ -239,6 +242,7 @@ function resolveWith(
   let units: number | null = null;
   let memoryBudget: number | null = null;
   let reserve: number | null = null;
+  let pressureGate = true;
   const weights: Record<string, Partial<Charge>> = {};
   const settings: ResourceSettings = {
     slots: DEFAULT_SLOTS,
@@ -306,6 +310,11 @@ function resolveWith(
         memoryBudget = bytes as number;
         units = null;
       }
+    }
+    if (value.pressure !== undefined) {
+      if (repo) machineOnly("pressure");
+      else if (typeof value.pressure === "boolean") pressureGate = value.pressure;
+      else warn("pressure", "must be true or false");
     }
     if (value.reserve !== undefined) {
       const next = memoryValue(value.reserve, host);
@@ -417,6 +426,7 @@ function resolveWith(
     weights,
     defaultBytes: memory,
     agingMs: DEFAULT_AGING_MS,
+    pressureGate,
     pressure: null,
   };
   return { settings, warnings, budget };
@@ -1590,9 +1600,12 @@ export function admit(options: AdmitOptions): AdmitResult {
 }
 
 /** The machine's default budget, with the real pressure gate. */
-const defaultBudget = (): Budget => ({
-  ...resolveWith([], hostShape()).budget,
-  pressure: () => readPressure(),
+const defaultBudget = (): Budget => withGate(resolveWith([], hostShape()).budget);
+
+/** `budget` reading the real pressure source, unless the machine turned the gate off. */
+const withGate = (budget: Budget): Budget => ({
+  ...budget,
+  pressure: budget.pressureGate ? () => readPressure() : null,
 });
 
 function writeTicket(file: string, record: LeaseRecord): void {
