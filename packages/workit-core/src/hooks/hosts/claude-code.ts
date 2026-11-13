@@ -399,7 +399,11 @@ const personAsked = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): bool
 /** Why no person sees an ask here, as the verb names it. */
 const unaskedMode = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): string => {
   const entry = sdkEntry(env);
-  return entry ? `the ${entry} entrypoint` : `${String(raw.permission_mode ?? "an unknown")} mode`;
+  // One shell word: only letters, digits and dashes survive.
+  return (entry ? `the ${entry} entrypoint` : `${String(raw.permission_mode)} mode`).replace(
+    /[^\w -]/gu,
+    "",
+  );
 };
 
 /**
@@ -426,10 +430,6 @@ const approveAsk = (ids: readonly string[]): string | null => {
  */
 type Stepped = { decision: HookDecision; input?: Record<string, unknown> };
 type ApproveStep = (decision: HookDecision) => Stepped;
-
-/** A shell value as one word. */
-const shellWord = (word: string): string =>
-  /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 
 /**
  * The ask on the action itself (#864): a plain `workit youtrack note|…` call
@@ -462,7 +462,7 @@ const inlineStepOf = (
           kind: "update-input",
           input: {
             ...toolInput,
-            command: `${INLINE_UNASKED_ENV}=${shellWord(unaskedMode(raw, env))} ${command}`,
+            command: `${INLINE_UNASKED_ENV}='${unaskedMode(raw, env)}' ${command}`,
           },
           text: null,
         },
@@ -474,7 +474,6 @@ const inlineStepOf = (
       host: "claude_code",
       session: optionalText(raw.session_id),
       toolUseId: optionalText(raw.tool_use_id),
-      state: "asked",
     });
     return {
       decision: { kind: "ask", reason: ask.text },
@@ -570,7 +569,6 @@ const render = (decision: HookDecision, native: string | null) => {
         hookSpecificOutput: {
           ...(rendered.json.hookSpecificOutput as Record<string, unknown>),
           updatedInput: final.input,
-          ...(decision.kind === "context" ? { additionalContext: decision.text } : {}),
         },
       },
     };

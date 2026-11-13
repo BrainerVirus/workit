@@ -9,105 +9,33 @@
 // every file they name, so a parse difference can only change what is shown,
 // never what the yes covers.
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { canonicalJson } from "../core/task-contract";
 import { shownText } from "./store";
 
-export const YOUTRACK_WRITE_VERBS = ["note", "time", "meeting", "update", "create"] as const;
-export type YouTrackWriteVerb = (typeof YOUTRACK_WRITE_VERBS)[number];
-export const isYouTrackWriteVerb = (word: string | undefined): word is YouTrackWriteVerb =>
-  (YOUTRACK_WRITE_VERBS as readonly string[]).includes(word ?? "");
-
-type Spec = Record<string, "value" | "list">;
-const TIME: Spec = {
-  markdown: "value",
-  file: "value",
-  minutes: "value",
-  text: "value",
-  date: "value",
-};
-const SPECS: Record<YouTrackWriteVerb, Spec> = {
+/** Each write verb's value flags; `attach` may repeat. */
+const TIME = "markdown file minutes text date";
+const FLAGS: Record<string, string> = {
   note: TIME,
   time: TIME,
   meeting: TIME,
-  update: { ...TIME, attach: "list", state: "value", command: "value" },
-  create: {
-    project: "value",
-    summary: "value",
-    description: "value",
-    file: "value",
-    attach: "list",
-    command: "value",
-  },
+  update: `${TIME} attach state command`,
+  create: "project summary description file attach command",
 };
 
-type Parsed = {
-  values: Record<string, string>;
-  lists: Record<string, string[]>;
-  positionals: string[];
-};
-
-const parse = (args: readonly string[], spec: Spec): Parsed | null => {
-  const parsed: Parsed = { values: {}, lists: {}, positionals: [] };
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--") {
-      parsed.positionals.push(...args.slice(index + 1));
-      break;
-    }
-    if (arg === "--json") continue;
-    if (!arg.startsWith("--")) {
-      parsed.positionals.push(arg);
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    const name = arg.slice(2, eq < 0 ? undefined : eq);
-    const kind = spec[name];
-    if (!kind) return null;
-    const value = eq >= 0 ? arg.slice(eq + 1) : args[++index];
-    if (value === undefined || value === "" || (eq < 0 && value.startsWith("--"))) return null;
-    if (kind === "list") (parsed.lists[name] ??= []).push(value);
-    else parsed.values[name] = value;
-  }
-  return parsed;
-};
+export const isYouTrackWriteVerb = (word: string | undefined): boolean =>
+  Object.hasOwn(FLAGS, word ?? "");
 
 const sha256 = (data: string | Buffer): string => createHash("sha256").update(data).digest("hex");
-
-type ReadFile = { path: string; name: string; bytes: number; sha256: string; text: string };
-
-const readNamed = (cwd: string, file: string): ReadFile | null => {
-  try {
-    const full = realpathSync(path.resolve(cwd, file));
-    if (!statSync(full).isFile()) return null;
-    const content = readFileSync(full);
-    return {
-      path: full,
-      name: path.basename(full),
-      bytes: content.length,
-      sha256: sha256(content),
-      text: content.toString("utf8"),
-    };
-  } catch {
-    return null;
-  }
-};
-
-const size = (bytes: number): string =>
-  bytes < 1024
-    ? `${bytes} B`
-    : bytes < 1048576
-      ? `${(bytes / 1024).toFixed(1)} KB`
-      : `${(bytes / 1048576).toFixed(1)} MB`;
 
 /** What the host shows and binds for one `workit youtrack <verb> …` call. */
 export type YouTrackAsk = {
   kind: "youtrack-write";
   /** The call as the person reads it: `workit youtrack note ABC-1`. */
   action: string;
-  /** The prompt body: what posts, in full (long texts end with "N more lines"). */
-  lines: string[];
+  /** The prompt: what posts, in full (long texts end with "N more lines"). */
+  text: string;
   argvHash: string;
   contentHash: string;
 };
@@ -118,60 +46,75 @@ export type YouTrackAsk = {
  * it before writing (an unknown flag, a missing issue, an unreadable file).
  */
 export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk | null => {
-  const [verb, ...rest] = args;
+  const [verb = "", ...rest] = args;
   if (!isYouTrackWriteVerb(verb)) return null;
-  const flags = parse(rest, SPECS[verb]);
-  if (!flags) return null;
-  const { values } = flags;
-  const files: ReadFile[] = [];
-  const named = (file: string | undefined): ReadFile | null | undefined => {
-    if (file === undefined) return undefined;
-    const read = readNamed(cwd, file);
-    if (read) files.push(read);
-    return read;
+  const known = FLAGS[verb]?.split(" ") ?? [];
+  const values: Record<string, string> = {};
+  const attach: string[] = [];
+  const positionals: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index] ?? "";
+    if (arg === "--") {
+      positionals.push(...rest.slice(index + 1));
+      break;
+    }
+    if (arg === "--json") continue;
+    if (!arg.startsWith("--")) {
+      positionals.push(arg);
+      continue;
+    }
+    const eq = arg.indexOf("=");
+    const name = arg.slice(2, eq < 0 ? undefined : eq);
+    const value = eq >= 0 ? arg.slice(eq + 1) : rest[++index];
+    if (!known.includes(name) || !value || (eq < 0 && value.startsWith("--"))) return null;
+    if (name === "attach") attach.push(value);
+    else values[name] = value;
+  }
+  const files: [string, string][] = [];
+  const read = (file: string): Buffer | null => {
+    try {
+      const full = realpathSync(path.resolve(cwd, file));
+      const content = readFileSync(full);
+      files.push([full, sha256(content)]);
+      return content;
+    } catch {
+      return null;
+    }
   };
-  const textFile = named(values.file);
-  if (textFile === null) return null;
-  const attached = (flags.lists.attach ?? []).map((file) => named(file));
-  if (attached.some((file) => file === null)) return null;
-  const text = textFile ? textFile.text : (values.markdown ?? values.description);
+  const fromFile = values.file === undefined ? undefined : read(values.file);
+  if (fromFile === null) return null;
   const lines: string[] = [];
-  let action: string;
+  const text = fromFile?.toString("utf8") ?? values.markdown ?? values.description;
+  const [target, extra] = positionals;
+  let action = `workit youtrack ${verb} ${target}`;
   if (verb === "create") {
-    if (!values.project || !values.summary?.trim() || flags.positionals.length) return null;
+    if (!values.project || !values.summary?.trim() || target !== undefined) return null;
     action = `workit youtrack create --project ${values.project}`;
     lines.push(`new issue in ${values.project}: ${values.summary.trim()}`);
     if (text !== undefined) lines.push("description:", ...shownText(text));
   } else {
-    const [issue, extra] = flags.positionals;
-    if (!issue || !/^[A-Z][A-Z0-9_]*-\d+$/u.test(issue) || extra !== undefined) return null;
-    action = `workit youtrack ${verb} ${issue}`;
-    if (text !== undefined) lines.push(`comment on ${issue}:`, ...shownText(text));
+    if (!target || !/^[A-Z][A-Z0-9_]*-\d+$/u.test(target) || extra !== undefined) return null;
+    if (text !== undefined) lines.push(`comment on ${target}:`, ...shownText(text));
     if (values.minutes)
       lines.push(
-        `time on ${issue}: ${values.minutes} minutes on ${values.date && values.date !== "auto" ? values.date : "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
+        `time on ${target}: ${values.minutes} minutes on ${values.date && values.date !== "auto" ? values.date : "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
       );
     if (values.state) lines.push(`state: ${values.state}`);
   }
   if (values.command) lines.push(`command: ${values.command}`);
-  for (const file of attached)
-    if (file)
-      lines.push(`attach: ${file.name} (${size(file.bytes)}, sha256 ${file.sha256.slice(0, 12)})`);
+  for (const file of attach) {
+    const content = read(file);
+    if (!content) return null;
+    lines.push(
+      `attach: ${path.basename(file)} (${content.length} bytes, sha256 ${files.at(-1)?.[1].slice(0, 12)})`,
+    );
+  }
   if (!lines.length) return null;
   return {
     kind: "youtrack-write",
     action,
-    lines,
+    text: [`Workit: ${action} posts this to YouTrack once if you say yes:`, ...lines].join("\n"),
     argvHash: sha256(canonicalJson(args)),
-    contentHash: sha256(
-      canonicalJson({ args, files: files.map((file) => [file.path, file.sha256]) }),
-    ),
+    contentHash: sha256(canonicalJson({ args, files })),
   };
 };
-
-/** The prompt a host shows for `ask`: no id, nothing to type. */
-export const youTrackAskText = (ask: YouTrackAsk): string =>
-  [
-    `Workit: ${ask.action} writes this to YouTrack. Yes posts it in this call, once; No posts nothing.`,
-    ...ask.lines,
-  ].join("\n");

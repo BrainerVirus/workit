@@ -227,7 +227,6 @@ test("Given an ask past its lifetime, When the call runs with its ticket, Then i
       host: "claude_code",
       session: "s",
       toolUseId: "toolu_1",
-      state: "asked",
     },
     new Date(Date.now() - 11 * 60_000),
   );

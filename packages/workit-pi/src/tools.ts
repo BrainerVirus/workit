@@ -280,7 +280,6 @@ const askInline = async (
       host: "pi",
       session: hookInput(ctx, { kind: "context.turn" }).session.id || null,
       toolUseId: event.toolCallId ?? null,
-      state: "approved",
     });
     (event.input as { command: string }).command = `${INLINE_TICKET_ENV}=${ticket} ${command}`;
     return undefined;

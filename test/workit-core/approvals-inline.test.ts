@@ -39,7 +39,7 @@ const comment = (text: string): ApprovalFields => ({
 test("Given the same comment refused three times, When the requests are listed, Then there is one request and one id", () => {
   const ids = [1, 2, 3].map(() => {
     const used = consumeApproval(comment("same text"), { session: "s", verb: "youtrack note" });
-    return used.ok ? null : (used.request?.id ?? null);
+    return used.ok ? "" : (used.request?.id ?? "");
   });
   expect(new Set(ids).size).toBe(1);
   expect(pendingApprovalRequests().map((request) => request.id)).toEqual([ids[0]]);
@@ -72,10 +72,7 @@ const asked = {
   contentHash: "c".repeat(64),
 };
 const ask = (now?: Date) =>
-  recordInlineAsk(
-    { ...asked, host: "claude_code", session: "s", toolUseId: "toolu_1", state: "asked" },
-    now,
-  );
+  recordInlineAsk({ ...asked, host: "claude_code", session: "s", toolUseId: "toolu_1" }, now);
 const use = (ticket: string, over: Partial<typeof asked> = {}) =>
   consumeInlineAsk({ ticket, ...asked, ...over, verb: "youtrack note", session: "s" });
 

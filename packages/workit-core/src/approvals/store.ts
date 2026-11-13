@@ -254,10 +254,10 @@ export const SHOWN_LINES = 60;
 
 /** `text` indented, cut after SHOWN_LINES lines with how many more there are. */
 export const shownText = (text: string, indent = "    "): string[] => {
-  const lines = text.replace(/\s+$/u, "").split(/\r?\n/u);
-  const shown = lines.slice(0, SHOWN_LINES).map((line) => `${indent}${line}`);
+  const lines = text.trimEnd().split(/\r?\n/u);
   const more = lines.length - SHOWN_LINES;
-  return more > 0 ? [...shown, `${indent}… ${more} more line${more === 1 ? "" : "s"}`] : shown;
+  if (more > 0) lines.splice(SHOWN_LINES, more, `… ${more} more lines`);
+  return lines.map((line) => indent + line);
 };
 
 /** Each subject field; a text of several lines is shown in full, below its name. */
@@ -517,8 +517,6 @@ export type InlineAsked = {
   host: string;
   session: string | null;
   toolUseId: string | null;
-  /** `asked`: the yes comes with the call (Claude Code); `approved`: the host already has it (Pi). */
-  state: "asked" | "approved";
   at: string;
   expires: string;
 };

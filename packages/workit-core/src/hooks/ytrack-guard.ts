@@ -433,10 +433,7 @@ const NOT_PLAIN: Mapped = gap(
  */
 const timeOnly = (effect: Effect | undefined): boolean =>
   effect?.minutes !== undefined &&
-  effect.markdown === undefined &&
-  effect.file === undefined &&
-  !effect.attach?.length &&
-  effect.command === undefined;
+  Object.keys(effect).every((key) => /^(?:issue|minutes|text|date)$/u.test(key));
 
 /** The same write, unmapped: a named call is only for a plain command. A time log keeps its call as a hint. */
 const ungrant = (write: YtrackWrite): YtrackWrite =>
