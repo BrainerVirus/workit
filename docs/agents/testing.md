@@ -111,7 +111,10 @@ The test preload (`test/shared/state-isolation.ts`) also sets the run marker
 `WORKIT_TEST_RUN` to its temp dir, which every child process inherits: there
 grants and the seal resolve to `<marker>/account-home`, never the OS account's
 (D15 holds without the marker), grants stay at or below the D4 defaults, and
-`writeSeal` refuses the account's own config dir. A marker that is not a
+the seal, grant, workspace and host-permission writers refuse any file under
+the OS account's host settings or Workit dirs (`testRunWriteRefusal`). A test
+that strips `WORKIT_*` from a child's env uses `stripsWorkitKey`
+(`test/shared/helpers/env.ts`), which keeps the marker. A marker that is not a
 directory inside the OS temp dir is refused (no account, no grants), so it is
 not a way to move grants. `test/shared/real-state-guard.ts` snapshots the
 account's `workspaces.json`, its seal and the host settings Workit writes
