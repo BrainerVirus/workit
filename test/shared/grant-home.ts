@@ -10,7 +10,15 @@
 // file and reads grants sees them as written. A test about the seal itself
 // passes `{ seal: "manual" }`, or calls sealConfig, which turns the
 // self-sealing off for that home. In-process only: no env var seals.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { grantsHome } from "@/packages/workit-core/src/autonomy";
@@ -45,7 +53,10 @@ export const useConfigHome = (
 ): ConfigHome => {
   const previousConfig = process.env.WORKIT_CONFIG;
   const previousResolve = grantsHome.resolve;
-  const home = mkdtempSync(path.join(os.tmpdir(), prefix));
+  // The real path (macOS /var is a link to /private/var): the seal is written
+  // with writeFileAtomic, which refuses a symlinked path, so the account dir,
+  // sealBefore and the seal file must all name the same real dir.
+  const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
   // The grants dir for this home on this OS (APPDATA-style on Windows).
   const configDir = workitConfigDir({ HOME: home });
   mkdirSync(configDir, { recursive: true });
