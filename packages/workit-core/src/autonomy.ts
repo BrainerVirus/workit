@@ -223,7 +223,7 @@ export const grantsOverride = (): string | null => {
 
 /** The unblock of a grant a config redirect lowered to the D4 defaults. */
 const redirectUnblock = (): string =>
-  `ask the user: grants above the D4 defaults apply only without a config redirect (WORKIT_CONFIG, WORKIT_CONFIG_DIR, XDG_CONFIG_HOME), and are read from ${path.join(grantsDir(), "workspaces.json")}`;
+  `ask the user: grants above the D4 defaults apply only without a config redirect (WORKIT_CONFIG, WORKIT_CONFIG_DIR or XDG_CONFIG_HOME), and are read from ${path.join(grantsDir(), "workspaces.json")}`;
 
 export const GRANT_KINDS = ["push", "pr", "merge", "release", "rerun"] as const;
 export type GrantKind = (typeof GRANT_KINDS)[number];
@@ -609,7 +609,9 @@ function accountAuthority(
   const current = resolveWith(fileSource(), cwd, world, target);
   const seal = sealOf();
   if (seal.state !== "broken") {
-    if (seal.state === "valid") return current;
+    // A bench world's entry (no real entry matched) is not the account's file:
+    // it only ever lowers (benchWorld), so a missing seal leaves it as it is.
+    if (seal.state === "valid" || current.world) return current;
     // Never sealed: the D4 defaults are the sealed value; a note only when it lowers.
     const capped = stricter(current, autonomyOf(null), NO_SEAL_NOTE, NO_SEAL_UNBLOCK);
     return authorityKey(capped) === authorityKey(current) ? current : capped;
@@ -1304,7 +1306,7 @@ export function sealAccount(): { ok: true; path: string } | { ok: false; error: 
 /**
  * Why a forge verb may not use the runtime identity (`runtime`, the resolved
  * workspace's vcs): the seal is broken, a last sealed entry resolves for
- * `cwd`, and its provider, account, tokenFile or host differ. Null otherwise:
+ * `cwd`, and its provider, account, credential file or host differ. Null otherwise:
  * no seal, no sealed entry here, or a config redirect (grants are then at most
  * the D4 defaults). A sealed entry that cannot resolve is a denial.
  */
@@ -1321,7 +1323,7 @@ export function identityDenial(cwd: string, runtime: { vcs?: unknown } | null): 
     return `identity_unsealed: workspaces.json does not match its seal and the sealed entries do not resolve here (${error instanceof Error ? error.message : String(error)})`;
   }
   if (!sealed || identityOf(sealed.vcs) === identityOf(runtime?.vcs)) return null;
-  return `identity_unsealed: workspace ${sealed.name}'s forge identity (vcs.provider, account, tokenFile, host) differs from the sealed one, and workspaces.json does not match its seal (${seal.reason})`;
+  return `identity_unsealed: workspace ${sealed.name}'s forge identity (vcs.provider, account, credential file, host) differs from the sealed one, and workspaces.json does not match its seal (${seal.reason})`;
 }
 
 /** Every workspace's grants, for `workit grant show --all`. */

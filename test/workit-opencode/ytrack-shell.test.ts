@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { observeShellBefore, type ShellWorkdirs } from "@/packages/workit-opencode/src/v2/shell";
+import { useConfigHome } from "../shared/grant-home";
 
 const base = mkdtempSync(path.join(os.tmpdir(), "workit-v2-ytrack-"));
 const root = path.join(base, "repo");
@@ -81,13 +82,20 @@ test("G OpenCode and the default ask, W a raw ytrack write plain, wrapped or res
 test("G OpenCode, W ytrack reads, or writes with youtrack.writes auto, T the host's own decision stands", () => {
   for (const command of ["ytrack issue view X-1", "ytrack api /users/me --fields login"])
     expect(permission(command).effect, command).toBe("allow");
-  writeFileSync(
-    path.join(config, "workspaces.json"),
-    `${JSON.stringify({
-      workspaces: [
-        { name: "yt", glob: `${root.replaceAll("\\", "/")}/**`, youtrack: { writes: "auto" } },
-      ],
-    })}\n`,
-  );
-  expect(permission("ytrack issue comment X-1 --body hi").effect).toBe("allow");
+  // Only the account's own, sealed file gives auto (#819): a temp account home, no redirect.
+  const home = useConfigHome("wk-v2-ytrack-config-");
+  try {
+    process.env.WORKIT_CONFIG_DIR = home.configDir;
+    writeFileSync(
+      path.join(home.configDir, "workspaces.json"),
+      `${JSON.stringify({
+        workspaces: [
+          { name: "yt", glob: `${root.replaceAll("\\", "/")}/**`, youtrack: { writes: "auto" } },
+        ],
+      })}\n`,
+    );
+    expect(permission("ytrack issue comment X-1 --body hi").effect).toBe("allow");
+  } finally {
+    home.restore();
+  }
 });

@@ -30,7 +30,9 @@ const selfSeal = (configDir: string): void => {
   try {
     text = readFileSync(path.join(configDir, "workspaces.json"), "utf8");
   } catch {
-    return; // No file: nothing above the defaults to seal.
+    // No file: nothing above the defaults to seal, and no stale seal of ours either.
+    if (lastSealed.delete(configDir)) rmSync(path.join(configDir, SEAL_FILE), { force: true });
+    return;
   }
   if (lastSealed.get(configDir) === text && existsSync(path.join(configDir, SEAL_FILE))) return;
   writeSeal(configDir, text);

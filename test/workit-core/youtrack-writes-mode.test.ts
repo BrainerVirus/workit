@@ -39,14 +39,23 @@ test("Given a workspace with youtrack.writes auto, Then only that workspace skip
   withWorkspaces(
     [
       { name: "work", glob: "/srv/work/**", youtrack: { writes: "auto" } },
-      {
-        name: "home",
-        glob: "/srv/home/**",
-        youtrack: { writes: "yes please" },
-      },
+      { name: "home", glob: "/srv/home/**", youtrack: { writes: "ask" } },
     ],
     () => {
       expect(youTrackWritesMode("/srv/work/repo")).toBe("auto");
+      expect(youTrackWritesMode("/srv/home/repo")).toBe("ask");
+    },
+  );
+});
+
+test("Given a writes value the schema does not know, Then the file does not validate and every workspace asks", () => {
+  withWorkspaces(
+    [
+      { name: "work", glob: "/srv/work/**", youtrack: { writes: "auto" } },
+      { name: "home", glob: "/srv/home/**", youtrack: { writes: "yes please" } },
+    ],
+    () => {
+      expect(youTrackWritesMode("/srv/work/repo")).toBe("ask");
       expect(youTrackWritesMode("/srv/home/repo")).toBe("ask");
     },
   );

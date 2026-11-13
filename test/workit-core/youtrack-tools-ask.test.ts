@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { recordApprovalGrant } from "@/packages/workit-core/src/approvals/store";
 import { defaultOperations } from "@/packages/workit-core/src/core/youtrack-tools";
+import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
 const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-yt-tools-ask-")));
 const work = path.join(dir, "work");
@@ -50,10 +51,12 @@ else if (args[0] === "issue" && args[1] === "comment") {
 else process.exit(1);
 `;
 
+// The account's own config (a temp home): only its sealed file gives writes auto (#819).
+let configHome: ConfigHome;
 beforeAll(() => {
   writeFileSync(path.join(dir, "ytrack"), STUB);
   chmodSync(path.join(dir, "ytrack"), 0o755);
-  process.env.WORKIT_CONFIG = dir;
+  configHome = useConfigHome("wk-yt-tools-ask-config-");
   process.env.WORKIT_YOUTRACK_CONFIG = path.join(dir, "youtrack.json");
   writeFileSync(
     process.env.WORKIT_YOUTRACK_CONFIG,
@@ -63,12 +66,13 @@ beforeAll(() => {
   process.env.PATH = [dir, saved.PATH ?? ""].join(path.delimiter);
 });
 afterEach(() => {
-  rmSync(path.join(dir, "workspaces.json"), { force: true });
+  rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
   for (const name of ["calls", "comments.json"]) rmSync(path.join(dir, name), { force: true });
   process.env.WORKIT_STATE_DIR = path.join(dir, `state-${++stateRun}`);
   delete process.env.WORKIT_YT_WRITE;
 });
 afterAll(() => {
+  configHome.restore();
   for (const key of KEYS)
     if (saved[key] === undefined) delete process.env[key];
     else process.env[key] = saved[key];
@@ -77,7 +81,7 @@ afterAll(() => {
 
 const writesMode = (writes: "auto" | null) =>
   writeFileSync(
-    path.join(dir, "workspaces.json"),
+    path.join(configHome.configDir, "workspaces.json"),
     JSON.stringify({
       workspaces: [{ name: "w", glob: `${work}/**`, ...(writes ? { youtrack: { writes } } : {}) }],
     }),
