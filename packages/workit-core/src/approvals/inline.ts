@@ -84,4 +84,4 @@ export const inlineAskFor = (words: readonly string[], cwd: string): InlineAsk |
 
 /** The deny reason for an inline-asked call inside something else. */
 export const inlineCallDeny = (fix: string): string =>
-  `Run \`${fix}\` as its own call, nothing around it, so the host can ask the user.`;
+  `Run \`${fix}\` as its own call so the host can ask the user.`;

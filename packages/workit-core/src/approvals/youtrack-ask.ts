@@ -90,14 +90,14 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
   if (verb === "create") {
     if (!values.project || !values.summary?.trim() || target !== undefined) return null;
     action = `workit youtrack create --project ${values.project}`;
-    lines.push(`new issue in ${values.project}: ${values.summary.trim()}`);
+    lines.push(`new ${values.project} issue: ${values.summary.trim()}`);
     if (text !== undefined) lines.push("description:", ...shownText(text));
   } else {
     if (!target || !/^[A-Z][A-Z0-9_]*-\d+$/u.test(target) || extra !== undefined) return null;
     if (text !== undefined) lines.push("comment:", ...shownText(text));
     if (values.minutes)
       lines.push(
-        `time: ${values.minutes} minutes on ${values.date ?? "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
+        `time: ${values.minutes}m on ${values.date ?? "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
       );
     if (values.state) lines.push(`state: ${values.state}`);
   }
@@ -111,7 +111,7 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
   return {
     kind: "youtrack-write",
     action,
-    text: [`Workit: yes runs ${action} once, posting:`, ...lines].join("\n"),
+    text: [`Yes runs ${action} once:`, ...lines].join("\n"),
     argvHash: sha256(canonicalJson(args)),
     contentHash: sha256(canonicalJson({ args, files })),
   };

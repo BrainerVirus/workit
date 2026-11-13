@@ -270,6 +270,7 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
           tool: input.tool_name!,
           paths: writeTargets(input.tool_input),
           toolUseId,
+          text: JSON.stringify(input.tool_input),
         };
       return { kind: "tool.pre", tool: input.tool_name!, toolUseId };
     }

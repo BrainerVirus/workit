@@ -24,7 +24,7 @@ import {
   injectHistoryOffer,
   injectModelSwitch,
 } from "./injection";
-import { evaluateShellPermission } from "./permissions";
+import { checkWriteArgs, evaluateShellPermission } from "./permissions";
 import { childSessionId } from "@workit-dev/core/src/host-session";
 import { childDenial, childMayInspect, childMayRecord, childTaskMissing } from "./child-identity";
 import { observeShellBefore, observeShellResult, type ShellWorkdirs } from "./shell";
@@ -229,6 +229,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const spawnNotes: SpawnNotes = new Map();
   const switchNotices: SwitchNotices = new Set();
   await ctx.tool.hook("execute.before", async (event) => {
+    // A write naming an approval ticket is refused before it runs (#864).
+    checkWriteArgs(event.tool, event.input);
     const budgetEvent = {
       tool: event.tool,
       sessionID: String(event.sessionID),

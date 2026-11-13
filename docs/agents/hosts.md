@@ -511,15 +511,17 @@ library passes it, and real unforgeability needs another OS principal.
   ticket. A shell command naming either (quotes and backslashes removed) is
   denied by the shell gate every host runs (`ytrackGate`, also OpenCode's
   `permission.evaluate`), and a file write whose input names either is denied
-  in `handle.ts` `write.pre` (the event's `text`: Claude Code `Write`/`Edit`,
-  Pi `write`/`edit`). Turn binding: `UserPromptSubmit` closes every unused ask
-  of the session and the lead's `Stop` its own, so a rejected prompt's ticket
-  dies with its turn and a name built at run time or a file an interpreter
-  writes has nothing left to replay. L: Codex's, Cursor's and OpenCode's
-  adapters pass no write `text` (Codex's `apply_patch` input and Cursor's
-  `preToolUse` input could carry it; their adapters are another slice), and
-  their launchers do not route the names; no ticket is ever minted there, so
-  this is no gap for a ticket. For `workit
+  on every host: `handle.ts` `write.pre` reads the event's `text`, which each
+  adapter fills from its write tool's input (Claude Code `Write`/`Edit`, Codex
+  `apply_patch`, Cursor `preToolUse` write tools, Pi `write`/`edit`); OpenCode's
+  `permission.evaluate` sees paths only, so its plugin checks the write tool's
+  args in `execute.before` (`checkWriteArgs`, the same test). Turn binding:
+  `UserPromptSubmit` closes every unused ask of the session and the lead's
+  `Stop` its own, so a rejected prompt's ticket dies with its turn and a name
+  built at run time or a file an interpreter writes has nothing left to
+  replay. Write tools reach the runtime on every launcher (Codex sends
+  `apply_patch` there). L: Codex's and Cursor's shell fast paths do not route
+  a command naming the variables; no ticket is ever minted there. For `workit
   approve <id>`: `PreToolUse` asks with the request rendered from the
   store and writes `asked` (one hash per id) in `default`, `acceptEdits`,
   `plan` and `auto` (auto mode's classifier never answers a hook's ask: the

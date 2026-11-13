@@ -14,6 +14,7 @@ import { codexAdapter } from "@/packages/workit-core/src/hooks/hosts/codex";
 import { cursorAdapter } from "@/packages/workit-core/src/hooks/hosts/cursor";
 import { ytrackGate } from "@/packages/workit-core/src/hooks/ytrack-guard";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
+import { checkWriteArgs } from "@/packages/workit-opencode/src/v2/permissions";
 import { fixture } from "./hook-fixtures";
 
 const base = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-ticket-")));
@@ -237,4 +238,56 @@ test("Given a lead's unused ask, When its turn stops, Then the ticket no longer 
 
 test("Given an ask in the same turn, When the call uses its ticket before any new message, Then it posts", () => {
   expect(posts(ticketOf())).toBe(true);
+});
+
+// Parity: every host's write gate gets the write's content (#864).
+const TICKETED = "WORKIT_APPROVAL_TICKET=abc workit youtrack note X-1 --markdown hi\n";
+const codexPatch = (body: string) =>
+  (
+    dispatchHook(
+      codexAdapter,
+      fixture("codex", "pre-tool-use-apply-patch", base, {
+        tool_input: {
+          command: `*** Begin Patch\n*** Add File: post.sh\n+${body}*** End Patch\n`,
+        },
+      }),
+    ).json as { hookSpecificOutput?: { permissionDecision?: string } }
+  ).hookSpecificOutput?.permissionDecision;
+const cursorWrite = (content: string) =>
+  (
+    dispatchHook(
+      cursorAdapter,
+      fixture("cursor", "pre-tool-use", base, {
+        tool_input: { file_path: path.join(base, "post.sh"), content },
+      }),
+    ).json as { permission?: string }
+  ).permission;
+const opencodeWrite = (tool: string, input: Record<string, unknown>): string | null => {
+  try {
+    checkWriteArgs(tool, input);
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+};
+
+test("Given Codex apply_patch, Cursor's Write and OpenCode's write, edit and patch tools, When a write names the ticket variable, Then it is refused; a normal write is not", () => {
+  expect(codexPatch(TICKETED)).toBe("deny");
+  expect(codexPatch("echo hello\n")).not.toBe("deny");
+  expect(cursorWrite(TICKETED)).toBe("deny");
+  expect(cursorWrite("echo hello\n")).not.toBe("deny");
+  const file = path.join(base, "post.sh");
+  expect(opencodeWrite("write", { filePath: file, content: TICKETED })).toContain(
+    "approval ticket",
+  );
+  expect(
+    opencodeWrite("edit", {
+      filePath: file,
+      oldString: "a",
+      newString: 'WORKIT_APPROVAL_"UNASKED"=x',
+    }),
+  ).toContain("approval ticket");
+  expect(opencodeWrite("patch", { patchText: TICKETED })).toContain("approval ticket");
+  expect(opencodeWrite("write", { filePath: file, content: "echo hello\n" })).toBeNull();
+  expect(opencodeWrite("read", { filePath: file, note: TICKETED })).toBeNull();
 });

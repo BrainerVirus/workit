@@ -505,7 +505,7 @@ export const INLINE_UNASKED_ENV = "WORKIT_APPROVAL_UNASKED";
  */
 export const namesTicket = (text: string): boolean =>
   /WORKIT_APPROVAL_(?:TICKET|UNASKED)/u.test(text.replace(/['"\\]/gu, ""));
-export const TICKET_DENY = "Only the host's own prompt puts an approval ticket on a call (#864).";
+export const TICKET_DENY = "Only the host's prompt adds an approval ticket.";
 
 /**
  * A host prompt that showed one call's full text (Claude Code PreToolUse,

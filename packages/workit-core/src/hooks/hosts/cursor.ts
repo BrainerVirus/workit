@@ -244,6 +244,7 @@ const protocolEvent = (input: CursorHookInput): HookEvent => {
             tool: input.tool_name ?? "",
             paths: writeTargets(input.tool_input),
             toolUseId: null,
+            text: JSON.stringify(input.tool_input),
           }
         : { kind: "tool.pre", tool: input.tool_name ?? "", toolUseId: null };
     case "subagentStart":

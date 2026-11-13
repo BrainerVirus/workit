@@ -7,6 +7,7 @@ import {
   shellPolicy,
   writeGate,
 } from "@workit-dev/core/hooks";
+import { namesTicket, TICKET_DENY } from "@workit-dev/core/src/approvals/store";
 import { userOnlyWorkitCall } from "@workit-dev/core/src/hooks/delivery-verbs";
 import { ytrackGate } from "@workit-dev/core/src/hooks/ytrack-guard";
 
@@ -19,6 +20,19 @@ export type PermissionEvaluationEvent = {
 };
 
 const WRITE_ACTIONS = new Set(["edit", "write", "patch"]);
+
+/** OpenCode's file-writing tools; `permission.evaluate` sees their paths only, not their text. */
+const WRITE_TOOLS = new Set(["write", "edit", "multiedit", "patch", "apply_patch"]);
+
+/**
+ * The write gate's content check (#864, handle.ts `write.pre` text) on a write
+ * tool's args, from `execute.before`: only a host's own prompt puts an approval
+ * ticket on a call, so a file an agent writes naming one is refused (throws).
+ */
+export const checkWriteArgs = (tool: string, input: unknown): void => {
+  if (WRITE_TOOLS.has(tool) && namesTicket(JSON.stringify(input ?? {})))
+    throw new Error(TICKET_DENY);
+};
 
 /**
  * Branch policy on direct literal branch-creation commands, raw git/forge
