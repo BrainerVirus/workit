@@ -11,7 +11,7 @@
 //   - samples the group's RSS every `sampleMs`, keeps the row and the budget
 //     charge current, and writes one notice past the ceiling;
 //   - ends the row when the command exits on its own.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -30,12 +30,14 @@ import {
   openProcs,
   procLogFile,
   readExtra,
+  stopRequestFile,
   updateExtra,
   writeRssNotice,
   type ProcKind,
+  type StopRequest,
 } from "@workit-dev/core/src/core/procs";
 import { readProc, upsertProc } from "@workit-dev/core/src/store/threads/procs";
-import { groupRss, procTree } from "@workit-dev/core/src/core/proc-tree";
+import { groupRss, procTree, stopGroup } from "@workit-dev/core/src/core/proc-tree";
 
 /** The env var carrying the spec to a supervisor process. */
 export const SUPERVISE_ENV = "WORKIT_PROC_SPEC";
@@ -72,6 +74,54 @@ export type SupervisorSpec = {
 export const checkoutBudget = (sources: ResourceSource[]): Budget =>
   withGate(resolveResourceSettings(sources, hostShape()).budget);
 
+/** How often the supervisor looks for a stop request. */
+const STOP_POLL_MS = 200;
+
+/** The pending stop request for `id`, removed as it is read; null when there is none. */
+function takeStopRequest(env: NodeJS.ProcessEnv, id: string): StopRequest | null {
+  const file = stopRequestFile(env, id);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+    fs.rmSync(file, { force: true });
+  } catch {
+    return null;
+  }
+  try {
+    const value = JSON.parse(text) as Partial<StopRequest>;
+    return value?.version === 1 && typeof value.graceMs === "number"
+      ? (value as StopRequest)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * End the child this supervisor holds and its tree. POSIX: its process group,
+ * SIGTERM then SIGKILL after the grace, each after the start-time check.
+ * Windows: `taskkill /T` on the child, then `/T /F` after the grace; the
+ * supervisor holds the child's handle, so its pid cannot have been reused.
+ */
+async function endChild(
+  pid: number,
+  pidStart: string | null,
+  graceMs: number,
+  exited: Promise<unknown>,
+): Promise<"SIGTERM" | "SIGKILL" | null> {
+  if (procTree.platform !== "win32") {
+    const result = await stopGroup({ pid, pgid: pid, pidStart }, graceMs);
+    return result.outcome === "stopped" ? result.signal : null;
+  }
+  const ended = exited.then(() => true);
+  const within = (ms: number) =>
+    Promise.race([ended, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms))]);
+  spawnSync("taskkill", ["/T", "/PID", String(pid)], { windowsHide: true, timeout: 10_000 });
+  if (await within(graceMs)) return "SIGTERM";
+  spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { windowsHide: true, timeout: 10_000 });
+  return "SIGKILL";
+}
+
 /** Container ids in `after` that were not running `before`. */
 const added = (before: string[] | null, after: string[] | null): string[] | null => {
   if (before === null || after === null) return null;
@@ -87,7 +137,10 @@ export async function supervise(spec: SupervisorSpec, env: NodeJS.ProcessEnv): P
   const ceiling = spec.ceilingBytes ?? budget.defaultBytes;
   let admission: Admission | null = null;
   try {
-    updateExtra(env, spec.id, { supervisorPid: process.pid });
+    updateExtra(env, spec.id, {
+      supervisorPid: process.pid,
+      supervisorStart: procTree.start(process.pid),
+    });
     if (!spec.noLease) {
       const admitted = admit({
         dir: leaseDir(env),
@@ -178,9 +231,23 @@ export async function supervise(spec: SupervisorSpec, env: NodeJS.ProcessEnv): P
     // A first sample soon after the start, then every sampleMs.
     const first = setTimeout(sample, Math.min(2_000, spec.sampleMs));
     const timer = setInterval(sample, spec.sampleMs);
+    // The stop channel (ruling C): `workit stop` asks here, where the child is held.
+    const stop: { done: Promise<unknown> | null } = { done: null };
+    const channel = setInterval(() => {
+      if (stop.done) return;
+      const request = takeStopRequest(env, spec.id);
+      if (!request) return;
+      stop.done = endChild(pid, procTree.start(pid), request.graceMs, exited).then((stopSignal) =>
+        updateExtra(env, spec.id, { stopSignal }),
+      );
+    }, STOP_POLL_MS);
     const { code, signal } = await exited;
     clearTimeout(first);
     clearInterval(timer);
+    clearInterval(channel);
+    // A stop in progress finishes (its grace, its SIGKILL to what is left of the
+    // group) and records its signal before the row reads as exited.
+    if (stop.done) await stop.done;
     sampleContainers();
     const containers = readExtra(env, spec.id)?.containers;
     // `docker run -d` exits at once and leaves its container: the row lives until `workit stop`.

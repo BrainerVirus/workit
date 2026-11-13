@@ -26,7 +26,15 @@ import { appendObserved, type LedgerActor } from "../ledger";
 import { openThreadsStore, type ThreadsStore } from "../store/threads/store";
 import { readProc, upsertProc, type ProcKind, type ProcRow } from "../store/threads/procs";
 import { leadOf } from "./live-session";
-import { groupAlive, identity, pidAlive, procTree, STOP_GRACE_MS, stopGroup } from "./proc-tree";
+import {
+  groupAlive,
+  identity,
+  pidAlive,
+  procTree,
+  STOP_GRACE_MS,
+  stopGroup,
+  type GroupStop,
+} from "./proc-tree";
 import { stateDir } from "./workit-paths.mjs";
 
 export type { ProcRow, ProcKind };
@@ -39,6 +47,9 @@ export const procLogFile = (env: NodeJS.ProcessEnv, id: string): string =>
   path.join(procsDir(env), "logs", `${id}.log`);
 const extraFile = (env: NodeJS.ProcessEnv, id: string): string =>
   path.join(procsDir(env), "rows", `${id}.json`);
+/** The stop channel: a request the row's supervisor polls for and acts on. */
+export const stopRequestFile = (env: NodeJS.ProcessEnv, id: string): string =>
+  path.join(procsDir(env), "rows", `${id}.stop`);
 const sessionFileName = (session: string): string =>
   `${session.replace(/[^A-Za-z0-9_.@+-]/gu, "-").slice(0, 120) || "none"}.json`;
 export const noticeFile = (env: NodeJS.ProcessEnv, session: string | null): string =>
@@ -63,6 +74,10 @@ export type ProcExtra = {
   hostPidStart: string | null;
   /** The supervisor that runs the command and samples its memory. */
   supervisorPid: number | null;
+  /** The supervisor's start time, so a reused supervisor pid is never taken for it. */
+  supervisorStart: string | null;
+  /** The signal the supervisor's own stop ended its child with (the stop channel). */
+  stopSignal: "SIGTERM" | "SIGKILL" | null;
   /** Containers this start created or started (a `docker ps -q` diff); null when the diff could not be read. */
   containers: string[] | null;
   /** The command's exit code once it ended on its own. */
@@ -81,6 +96,8 @@ const blankExtra = (name: string): ProcExtra => ({
   argv: null,
   hostPidStart: null,
   supervisorPid: null,
+  supervisorStart: null,
+  stopSignal: null,
   containers: [],
   exitCode: null,
   message: null,
@@ -302,7 +319,73 @@ export const procsDeps = {
     };
   },
   graceMs: STOP_GRACE_MS,
+  /**
+   * How a stop reaches the process: `auto` signals the group itself on POSIX
+   * and asks the supervisor on Windows (ruling C); `supervisor` always asks the
+   * supervisor (tests drive the Windows path on any platform with it).
+   */
+  stopVia: "auto" as "auto" | "supervisor",
+  /** How long a stop waits for the supervisor's answer past the grace. */
+  answerMs: 5_000,
 };
+
+export type StopRequest = { version: 1; reason: string; graceMs: number; at: string };
+
+/** Whether the row's supervisor still runs: its pid alive and, where readable, the same start time. */
+export function supervisorAlive(env: NodeJS.ProcessEnv, id: string): boolean {
+  const extra = readExtra(env, id);
+  if (!extra?.supervisorPid) return false;
+  const who = identity(extra.supervisorPid, extra.supervisorStart);
+  return who === "same" || who === "unknown";
+}
+
+/**
+ * Stop through the supervisor that holds the child (ruling C; the only stop
+ * on Windows): write a stop request it polls for, and wait for the row's
+ * process to end. With the supervisor gone the stop is report-only: nothing
+ * is signalled, so a pid another process took is never touched.
+ */
+export async function stopViaSupervisor(
+  env: NodeJS.ProcessEnv,
+  row: ProcRow,
+  reason: string,
+  graceMs: number,
+): Promise<GroupStop> {
+  if (!supervisorAlive(env, row.id))
+    return {
+      outcome: "refused",
+      detail:
+        "its supervisor is gone, so Workit cannot prove which process is its child: report only, nothing signalled",
+    };
+  const request: StopRequest = { version: 1, reason, graceMs, at: new Date().toISOString() };
+  writeJson(stopRequestFile(env, row.id), request);
+  const deadline = procTree.now() + graceMs + procsDeps.answerMs;
+  while (procTree.now() < deadline) {
+    const extra = readExtra(env, row.id);
+    if (extra?.state === "exited" || extra?.state === "failed")
+      return extra.stopSignal
+        ? { outcome: "stopped", signal: extra.stopSignal }
+        : { outcome: "gone" };
+    if (!supervisorAlive(env, row.id)) break;
+    await procTree.sleep(100);
+  }
+  try {
+    fs.rmSync(stopRequestFile(env, row.id), { force: true });
+  } catch {
+    // the supervisor took it meanwhile
+  }
+  const extra = readExtra(env, row.id);
+  if (extra?.state === "exited")
+    return extra.stopSignal
+      ? { outcome: "stopped", signal: extra.stopSignal }
+      : { outcome: "gone" };
+  return {
+    outcome: "refused",
+    detail: supervisorAlive(env, row.id)
+      ? `its supervisor did not confirm the stop within ${Math.round((graceMs + procsDeps.answerMs) / 1000)} s`
+      : "its supervisor ended without confirming the stop: report only",
+  };
+}
 
 /** Running container ids (`docker ps -q --no-trunc`), or null when docker cannot be asked. */
 export function dockerIds(cwd?: string): string[] | null {
@@ -344,10 +427,13 @@ export async function stopProc(
         reason: `docker stop failed: ${(stopped.stderr || stopped.stdout).trim().split("\n")[0] || `exit ${stopped.status}`}`,
       };
   }
-  const result = await stopGroup(
-    { pid: row.pid, pgid: row.pgid, pidStart: row.pidStart },
-    context.graceMs ?? procsDeps.graceMs,
-  );
+  const graceMs = context.graceMs ?? procsDeps.graceMs;
+  const viaSupervisor =
+    (procsDeps.stopVia === "supervisor" || procTree.platform === "win32") &&
+    (row.pid !== null || row.pgid !== null);
+  const result = viaSupervisor
+    ? await stopViaSupervisor(context.env, row, reason, graceMs)
+    : await stopGroup({ pid: row.pid, pgid: row.pgid, pidStart: row.pidStart }, graceMs);
   if (result.outcome === "refused") return { id: row.id, cmd: row.cmd, reason: result.detail };
   const signal = result.outcome === "stopped" ? result.signal : null;
   const endReason =
