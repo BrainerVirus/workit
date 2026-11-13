@@ -386,6 +386,13 @@ export const workspaceConfigSchema = z
       .describe(
         "Named release tracks: production and integration branches, naming and versioning.",
       ),
+    // Read leniently (core/release-packages.ts): a bad entry is reported and ignored.
+    releasePackages: z
+      .unknown()
+      .optional()
+      .describe(
+        "Packages released from this repository's own release line under their own tag namespace (`pkg-a@0.1.0`): keyed by package name, each `{ tagNamespace?, changelogPath? }` (default namespace `<name>@`). `workit release package <name> <version>` tags and publishes one.",
+      ),
   })
   .passthrough()
   .superRefine((workspace, context) => {
@@ -1228,6 +1235,20 @@ const inheritedSetting = (
     workspace: selected.name,
     source: [selected, ...enclosing].find(has) ?? null,
   };
+};
+
+/**
+ * The raw `releasePackages` of cwd's workspace, unvalidated, inherited like
+ * `changelogPath`: the runtime reads it leniently (core/release-packages.ts).
+ */
+export const resolveRuntimeReleasePackages = (
+  cwd: string,
+  dir?: string,
+): { workspace: string; releasePackages: unknown } | null => {
+  const found = inheritedSetting(cwd, dir, (entry) => entry.releasePackages !== undefined);
+  return found?.source
+    ? { workspace: found.source.name, releasePackages: found.source.releasePackages }
+    : null;
 };
 
 /** Whether `pr merge` deletes the head branch by default: true unless a covering entry sets `deleteBranch: false`. */

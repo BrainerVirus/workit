@@ -29,6 +29,7 @@ import path from "node:path";
 import { releaseBranch, resolveBranchPolicyFor, validateBranchNameFor } from "../core/branch";
 import { grantsMatter, rawGrantDenial, type GrantKind } from "../autonomy";
 import { releaseTagPrefixOf } from "../core/branch-policy";
+import { packageTagShapes, workspaceReleasePackages } from "../core/release-packages";
 import { readConfigTyped } from "../core/config";
 import { pushTarget, remoteKey, type LazyTarget } from "../core/remotes";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
@@ -1724,8 +1725,9 @@ const tagRefusal = (action: PushAction, facts: RefFacts, dir: string): string | 
   ];
   if (!tags.length && !action.allTags) return null;
   const shape = `${releaseTagPrefixOf(dir)}<version>`;
+  const shapes = [shape, ...packageTagShapes(workspaceReleasePackages(dir).packages)];
   const named = tags.length ? tags.join(" --release ") : shape;
-  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (${shape} tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
+  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (${shapes.join(", ")} tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
 };
 
 /** The remote's branches (`ls-remote --heads`, bounded); null when it cannot be read. */

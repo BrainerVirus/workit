@@ -193,6 +193,22 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
     },
   ],
   [entry.releaseNotes, enumOf(RELEASE_NOTES_MODES)],
+  [
+    entry.releasePackages,
+    {
+      type: "object",
+      propertyNames: { pattern: String.raw`^\S(.*\S)?$` },
+      additionalProperties: closed({
+        tagNamespace: {
+          type: "string",
+          pattern: String.raw`^[A-Za-z@]([\w.@/+-]*[A-Za-z_.@/+-])?$`,
+          description:
+            "This package's tag prefix (default `<name>@`): its tags are `<tagNamespace><version>`.",
+        },
+        changelogPath: repoPath("This package's changelog, repo-relative."),
+      }),
+    },
+  ],
   [releaseTrackSchema.shape.releaseNotes, enumOf(RELEASE_NOTES_MODES)],
   [entry.vcs.unwrap().shape.host, nonBlankString],
   [entry.issues.unwrap().shape.relation, enumOf(["closes", "refs"])],

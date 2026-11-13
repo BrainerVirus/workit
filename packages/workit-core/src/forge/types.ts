@@ -192,7 +192,17 @@ export type PrEdit = {
 export type ForgeRelease = { tag: string; url: string | null };
 
 /** What `workit release finish` asks the forge for: a release on an existing tag. */
-export type CreateReleaseInput = { tag: string; name: string; body: string };
+export type CreateReleaseInput = {
+  tag: string;
+  name: string;
+  body: string;
+  /**
+   * Whether the release takes the forge's Latest mark; unset leaves the
+   * forge's default (GitHub: the newest semver release). GitLab has no such
+   * mark and ignores it.
+   */
+  latest?: boolean;
+};
 
 /** A repository as the forge sees it: id and the repo it was forked from. */
 export type RepoInfo = { id: number | null; parent: string | null };

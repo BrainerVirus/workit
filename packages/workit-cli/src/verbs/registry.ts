@@ -799,9 +799,15 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "notes",
         usage:
-          "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--track <t>]",
+          "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--package <name>] [--track <t>]",
         summary:
-          "Draft the forge release notes (Highlights, Breaking changes, Changes, Full changelog) in .git/workit/release-notes/, show them, or approve them (the user only, at a terminal; releaseNotes: review)",
+          "Draft the forge release notes (Highlights, Breaking changes, Changes, Full changelog) in .git/workit/release-notes/, show them, or approve them (the user only, at a terminal; releaseNotes: review); a release package's tag (pkg-a@0.1.0) or --package reads that package's changelog",
+      },
+      {
+        name: "package",
+        usage: "workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]",
+        summary:
+          "Tag a release package (workspace releasePackages) <namespace><version> on the workspace's release commit (default: the newest release tag on the remote production branch), push it under the release grant, publish its forge release from its changelog (not Latest unless --latest) and verify it",
       },
     ],
     examples: [
@@ -810,6 +816,7 @@ export const VERBS: readonly VerbEntry[] = [
       "workit release notes draft 1.4.0",
       "workit release finish --dry-run",
       "workit release finish",
+      "workit release package pkg-a 0.1.0 --dry-run",
     ],
     load: () => import("./release"),
   }),

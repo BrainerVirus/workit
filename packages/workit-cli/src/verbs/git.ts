@@ -462,13 +462,14 @@ async function releasePush(names: string[], io: Io, options: PushOptions): Promi
   if (!plan.ok) return forgeFail(io, plan);
   // Each pushed release tag's notes (workspace or track releaseNotes); under
   // review an unapproved draft refuses before anything is pushed.
-  const tagNotes: Array<{ tag: string; version: string; decision: ReleaseNotesDecision }> = [];
+  const tagNotes: TagNotes[] = [];
   if (options.forgeRelease)
     for (const ref of plan.data.refs)
       if (ref.kind === "tag" && ref.release)
         tagNotes.push({
           tag: ref.name,
           version: ref.release.version,
+          package: ref.release.package ?? null,
           decision: releaseNotesForTag(io.cwd, {
             name: ref.name,
             production: ref.production ?? plan.data.production ?? "main",
@@ -541,6 +542,13 @@ async function releasePush(names: string[], io: Io, options: PushOptions): Promi
 }
 
 type TagRelease = { tag: string; url: string | null; created: boolean };
+type TagNotes = {
+  tag: string;
+  version: string;
+  /** A release package's tag: its forge release never takes Latest. */
+  package: string | null;
+  decision: ReleaseNotesDecision;
+};
 
 /**
  * The forge release of each pushed tag, with its release notes: found when
@@ -549,7 +557,7 @@ type TagRelease = { tag: string; url: string | null; created: boolean };
  */
 function publishTagReleases(
   io: Io,
-  tagNotes: Array<{ tag: string; version: string; decision: ReleaseNotesDecision }>,
+  tagNotes: TagNotes[],
   local: boolean,
 ): ForgeResult<{ forgeReleases: TagRelease[]; notes: string[] }> {
   const forgeReleases: TagRelease[] = [];
@@ -578,6 +586,8 @@ function publishTagReleases(
         tag: entry.tag,
         name: entry.tag,
         body: entry.decision.body,
+        // The workspace's own release keeps Latest: `workit release package --latest` takes it.
+        ...(entry.package ? { latest: false } : {}),
       });
       if (!created.ok) return created;
       release = { tag: entry.tag, url: created.data.url, created: true };
@@ -588,6 +598,7 @@ function publishTagReleases(
       actor: actorFromEnv(io.env),
       version: entry.version,
       tag: entry.tag,
+      ...(entry.package ? { package: entry.package } : {}),
       url: release.url,
       created: release.created,
     });

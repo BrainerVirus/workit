@@ -403,7 +403,7 @@ export function verifyReleased(
 ): ForgeResult<DeliveryReport> {
   if (!input.tag && !input.pkg)
     return failure("invalid_input", "released needs --tag <tag> and/or --package <name[@version]>");
-  if (input.tag && (input.tag.startsWith("-") || !/^[0-9A-Za-z._/+-]+$/u.test(input.tag)))
+  if (input.tag && (input.tag.startsWith("-") || !/^[0-9A-Za-z._/+@-]+$/u.test(input.tag)))
     return failure("invalid_input", "--tag must be a plain tag name");
   const observations: Observation[] = [];
   let tagSha: string | null = null;
