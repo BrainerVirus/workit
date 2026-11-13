@@ -527,6 +527,7 @@ test("packed CLI: help lists task, grant, handoff, and uninstall commands", () =
       "workit <family> <action> [options]",
       "workit grant [show|set|unset] [options]",
       "workit handoff --task <id>",
+      "workit install --hosts",
       "workit uninstall",
     ]) {
       expect(help.stdout, command).toContain(command);

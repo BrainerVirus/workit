@@ -52,6 +52,7 @@ const PARSERS: Record<string, string[]> = {
   launch: ["upgrade.ts#runLaunchCommand"],
   doctor: ["verbs/doctor.ts"],
   gc: ["verbs/gc.ts"],
+  install: ["verbs/install.ts"],
   uninstall: ["verbs/uninstall.ts"],
   grant: ["verbs/grant.ts"],
   approve: ["verbs/approve.ts"],

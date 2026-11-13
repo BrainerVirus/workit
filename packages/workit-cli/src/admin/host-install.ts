@@ -39,18 +39,19 @@ export type HostCommandResult = {
 export type HostCommandRunner = (step: HostInstallCommand) => HostCommandResult;
 export type HostCommandContext = { home?: string; env?: NodeJS.ProcessEnv };
 
+/** Why a host command cannot run: one text for the install and uninstall plans and their apply. */
+export const missingExecutable = (name: string): string =>
+  path.isAbsolute(name) || name.includes("/") || name.includes("\\")
+    ? `${name} does not exist or is not executable`
+    : `${name} executable was not found on PATH or supported user bin directories`;
+
 export function hostCommand(
   name: string,
   args: string[],
   options: HostInstallOptions = {},
 ): HostInstallCommand {
   const executable = findHostExecutable(name, options);
-  if (!executable)
-    throw new Error(
-      path.isAbsolute(name) || name.includes("/") || name.includes("\\")
-        ? `${name} does not exist or is not executable`
-        : `${name} executable was not found on PATH or supported user bin directories`,
-    );
+  if (!executable) throw new Error(missingExecutable(name));
   if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
     const node = findHostExecutable("node", options);
     if (!node) throw new Error(`Node.js is required to run the ${name} Windows shim`);

@@ -1271,6 +1271,7 @@ const cursorSettingsRegistration = (res: ResolvedApply): Registration => {
     merged: mergeCursorSettings(
       existing.kind === "record" ? existing.value : {},
       res.cursorPluginDir,
+      res.home,
     ),
   };
 };

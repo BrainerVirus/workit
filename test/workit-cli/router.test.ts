@@ -298,6 +298,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   launch: [[], ["nohost"]],
   doctor: [["--fix-lock", "--force"]],
   gc: [["--dry-run"]],
+  install: [[]],
   uninstall: [[]],
   task: [[], ["bogus"]],
   policy: [["bogus"]],

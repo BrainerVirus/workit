@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   CURSOR_PRETOOLUSE_MATCHER,
@@ -12,6 +14,7 @@ import {
   mergeCursorEnabledPlugins,
   mergeCursorHooks,
   mergeCursorMcp,
+  cursorPluginDirKey,
   mergeCursorPluginDirs,
   mergeCursorSettings,
   mergeOpenCodeConfig,
@@ -258,6 +261,48 @@ test("mergeCursorPluginDirs keeps other directories and appends the canonical on
   const { config, changed } = mergeCursorPluginDirs([OTHER_PLUGIN_DIR], CURSOR_PLUGIN_DIR);
   expect(config).toEqual([OTHER_PLUGIN_DIR, CURSOR_PLUGIN_DIR]);
   expect(changed).toEqual(["plugin_dirs"]);
+});
+
+test("Given a ~ spelling of the plugin dir, Then mergeCursorPluginDirs keeps it and adds no absolute twin", () => {
+  const home = path.join("/home", "someone");
+  const dir = path.join(home, ".cursor", "plugins", "local", "workit");
+  for (const existing of ["~/.cursor/plugins/local/workit", "~/.cursor/plugins/local/workit/"]) {
+    const { config, changed } = mergeCursorPluginDirs([existing], dir, home);
+    expect(config).toEqual([existing]);
+    expect(changed).toEqual([]);
+  }
+  // `~user` is another user's home: never read as this one.
+  expect(mergeCursorPluginDirs(["~other/.cursor/plugins/local/workit"], dir, home).config).toEqual([
+    "~other/.cursor/plugins/local/workit",
+    dir,
+  ]);
+});
+
+test("Given plugin_dirs names the dir twice, Then mergeCursorPluginDirs keeps the first spelling and drops the rest", () => {
+  const home = path.join("/home", "someone");
+  const dir = path.join(home, ".cursor", "plugins", "local", "workit");
+  const { config, changed } = mergeCursorPluginDirs(
+    [OTHER_PLUGIN_DIR, "~/.cursor/plugins/local/workit", `${dir}${path.sep}`, dir],
+    dir,
+    home,
+  );
+  expect(config).toEqual([OTHER_PLUGIN_DIR, "~/.cursor/plugins/local/workit"]);
+  expect(changed).toEqual(["plugin_dirs"]);
+});
+
+test("cursorPluginDirKey expands ~ and ~/ only, and resolves an existing symlinked path", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "wk-plugin-dir-key-"));
+  try {
+    const dir = path.join(home, ".cursor", "plugins", "local", "workit");
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(path.join(home, ".cursor", "plugins"), path.join(home, "plugins-link"));
+    const key = cursorPluginDirKey(dir, home);
+    expect(cursorPluginDirKey("~/.cursor/plugins/local/workit/", home)).toBe(key);
+    expect(cursorPluginDirKey(path.join(home, "plugins-link", "local", "workit"), home)).toBe(key);
+    expect(cursorPluginDirKey("~other/.cursor/plugins/local/workit", home)).not.toBe(key);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("mergeOpenCodeConfig does not mutate the caller's nested skills object", () => {

@@ -75,6 +75,7 @@ import {
   cursorHookDrift,
   cursorHooksEntry,
   cursorMcpServerEntry,
+  cursorPluginDirKey,
   isWorkitPlugin,
 } from "./registration";
 import {
@@ -2400,14 +2401,14 @@ const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
           `cursor enables ${keys.length} workit plugin identities (${keys.join(", ")})`,
         );
     }
+    // Entries naming this Workit plugin dir, compared as setup's merge does
+    // (cursorPluginDirKey): a similarly-named unrelated dir (`local/workit-extra`)
+    // or another user's `~other/…` is never counted (CA-09).
+    const pluginKey = cursorPluginDirKey(res.cursorPluginDir, res.home);
     const dirs = Array.isArray(settings?.plugin_dirs)
-      ? settings.plugin_dirs.map(String).filter((d) => {
-          // Exact local plugin-dir identities only (CA-09): a similarly-named
-          // unrelated dir (e.g. `local/workit-extra`) is preserved and must
-          // never be counted as a Workit entry.
-          const n = d.replaceAll("\\", "/").replace(/\/+$/, "");
-          return isWorkitPlugin(d) || n.endsWith("local/workit");
-        })
+      ? settings.plugin_dirs
+          .map(String)
+          .filter((d) => isWorkitPlugin(d) || cursorPluginDirKey(d, res.home) === pluginKey)
       : [];
     if (dirs.length > 1) problems.push(`cursor plugin_dirs has ${dirs.length} workit entries`);
   }

@@ -62,11 +62,20 @@ Or install a single host by hand. Whatever the install path, every host
 updates with `workit upgrade` and uninstalls with `workit uninstall` (pick the
 host); the native commands below are the fallback.
 
+To install or repair Workit on some hosts without the wizard, name them:
+`workit install --hosts=cursor --preview` prints the exact files, config keys,
+host commands and notes and changes nothing; `--yes` installs them. A healthy
+host plans nothing, so a second run changes nothing; a host whose CLI is not on
+PATH shows a blocked row. It never touches another host or `~/.config/workit`.
+
 To remove Workit from some hosts without the picker, name them:
 `workit uninstall --hosts=cursor --preview` prints the exact files, config keys
 and host commands it would remove and changes nothing; `--yes` removes them.
-Other hosts, your own rules and `~/.config/workit` stay as they are. An agent
-may run `--preview`; `--yes` and the picker are yours, in your own terminal.
+Other hosts, your own rules and `~/.config/workit` stay as they are.
+
+`workit setup`, `workit install` and `workit uninstall` are yours to run, in
+your own terminal: the CLI refuses `--yes` from an agent session and hands you
+the command, and the host asks about or denies an agent's call.
 
 Coming from `@brainervirus/workit-*` (14.x)? The packages moved to
 `@workit-dev/*` and restarted at 1.0.0: run
@@ -367,6 +376,7 @@ text.
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit completion zsh\|bash\|fish\|powershell` | Print the shell completion script (setup and upgrade install it for `$SHELL`) |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
+| `workit install --hosts=<h,…> [--preview\|--yes]` | Install or repair Workit on the named hosts only; a healthy host changes nothing |
 | `workit uninstall [--hosts=<h,…> [--preview\|--yes]]` | Pick hosts (and the owned CLI install), or name them, and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
 | `workit workspace list\|add\|set` | List, add or edit workspace entries without the wizard; never raises a grant |

@@ -56,6 +56,18 @@ or the launcher's directory first on PATH. The row lists every `workit` install 
 order, then the ones PATH does not reach. The npx cache copy that runs the upgrade is never
 listed or removed.
 
+## Installing or repairing a host
+
+`workit install --hosts=cursor --preview` lists the files, config keys, host commands and
+notes Workit would write to install Cursor, and changes nothing; `workit install
+--hosts=cursor --yes` applies them. It touches the named hosts only: never another host, the
+Workit config or a workspace. A host that is already healthy plans nothing, so the command
+is safe to run again; a registered host with missing plugin files (an empty
+`~/.cursor/plugins/local/workit`, a Claude Code record whose files are gone) is repaired. A
+host whose CLI (`claude`, `codex`, `pi`) is not on PATH shows a `blocked` row in the preview,
+and the same row when applied, with nothing of that host run. Without `--yes` it asks at a
+terminal; from an agent session `--yes` is refused with the command to run yourself.
+
 ## Removing a host
 
 `workit uninstall --hosts=cursor --preview` lists the files, config keys and host commands

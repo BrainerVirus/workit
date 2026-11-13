@@ -25,6 +25,11 @@ const executable = (file: string) => {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, "#!/usr/bin/env node\n", { mode: 0o755 });
 };
+/** A bin dir holding a fake `claude`, for a PATH. */
+const claudeBin = (home: string): string => {
+  executable(path.join(home, "bin", "claude"));
+  return path.join(home, "bin");
+};
 const REPO = path.resolve(import.meta.dir, "../..");
 const CORE_VERSION = JSON.parse(
   readFileSync(path.join(REPO, "packages/workit-core/package.json"), "utf8"),
@@ -258,7 +263,8 @@ test("doctor warns only when a newer Claude Code plugin version is published wit
 test("uninstall previews a native `claude plugin uninstall` per Workit install and runs only that argv", () => {
   const home = temp("workit-claude-uninstall-");
   try {
-    const env = { HOME: home };
+    // The plan runs `claude`: a fake one on PATH (a missing one blocks the host).
+    const env = { HOME: home, PATH: claudeBin(home) };
     expect(planUninstall({ home, env }).hosts.find((h) => h.host === "claude-code")).toEqual({
       host: "claude-code",
       installed: false,
@@ -326,6 +332,27 @@ test("uninstall previews a native `claude plugin uninstall` per Workit install a
   }
 });
 
+test("Given a Workit install and no `claude` on PATH, Then uninstall's plan blocks Claude Code with one missing-executable row", () => {
+  const home = temp("workit-claude-missing-");
+  try {
+    recordInstall(path.join(home, ".claude"), { id: "workit@workit" });
+    const claude = planUninstall({
+      home,
+      env: { HOME: home, PATH: path.join(home, "none") },
+    }).hosts.find((h) => h.host === "claude-code")!;
+    expect(claude.actions).toEqual([
+      {
+        kind: "missing-executable",
+        path: "claude",
+        detail:
+          "claude executable was not found on PATH or supported user bin directories; install Claude Code or put claude on PATH, then run again: claude-code is left untouched until then",
+      },
+    ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("project and local installs count only inside their project, and uninstall from it with --scope", () => {
   const home = temp("workit-claude-scope-");
   try {
@@ -333,7 +360,8 @@ test("project and local installs count only inside their project, and uninstall 
     const other = path.join(home, "elsewhere");
     mkdirSync(path.join(project, "src"), { recursive: true });
     mkdirSync(other, { recursive: true });
-    const env = { HOME: home };
+    // The plan runs `claude`: a fake one on PATH (a missing one blocks the host).
+    const env = { HOME: home, PATH: claudeBin(home) };
     recordInstall(path.join(home, ".claude"), { scope: "project", projectPath: project });
     // Outside the project (and with no project at all) nothing applies.
     expect(isClaudeWorkitInstalled(home, env, other)).toBe(false);
