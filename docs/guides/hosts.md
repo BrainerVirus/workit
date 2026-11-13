@@ -69,7 +69,7 @@ It allows only the delivery and state verbs `git`, `pr`, `ci`, `stack`,
 `release`, `task`, `ledger`, `evidence`, `finding`, `decision`, `worker`,
 `verify-delivery`, `policy`, `doctor`, `help` and `workit --version`. Never
 `check` or `lock run` (they run any command), `grant` (authority), `fanout`,
-`test-audit`, `gc`, `init`, `upgrade` or `uninstall`. It refuses inside an
+`test-audit`, `gc`, `init`, `upgrade`, `install` or `uninstall`. It refuses inside an
 agent session (`CLAUDECODE`, `WORKIT_SESSION_ID`, `CODEX_THREAD_ID`,
 `OPENCODE_SESSION_ID`, `PI_SESSION_ID` or `CURSOR_AGENT` set) and prints the
 command to run yourself. `workit uninstall` removes the entries it added
@@ -91,11 +91,20 @@ indent and line endings (an object written on one line inside it comes back one
 entry per line). Workit's Codex rules file is kept and named when it differs
 from what this Workit version writes: `workit upgrade` rewrites an older
 Workit's file, and rules you added are yours to move out before you delete it.
-A host whose file cannot be read is left untouched and the preview lists that
-file alone.
-In an agent session only `--preview` runs: `--yes` and the picker are refused
-with `workit uninstall --hosts=<h,…> --yes` to run yourself. With no flags it
-opens the interactive picker.
+A host whose file cannot be read, or Claude Code with `claude` not on PATH, is
+left untouched and the preview lists that row alone, as apply reports it.
+The CLI refuses `--yes` and the picker in an agent session, with
+`workit uninstall --hosts=<h,…> --yes` to run yourself; the host asks about or
+denies an agent's call. With no flags it opens the interactive picker.
+
+`workit install --hosts=<h,…>` is its counterpart: it installs or repairs the
+named hosts only, with each host's native mechanism (Claude Code's and Codex's
+marketplace commands, `pi install`, Cursor's local plugin dir with its
+`settings.json` and `mcp.json` entries, OpenCode's `plugins` entry). `--preview`
+prints each file, config key, host command and note and changes nothing;
+`--yes` applies it. A healthy host plans nothing, a host whose CLI is not on
+PATH shows a `blocked` row, and the Workit config is never written. Like
+`uninstall`, it is yours to run in your own terminal.
 
 | Host | What `workit setup` writes |
 | --- | --- |
