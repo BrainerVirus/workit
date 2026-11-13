@@ -100,7 +100,7 @@ const holdBudget = (env: NodeJS.ProcessEnv, root: string) => {
     cwd: root,
     session: "s-holder",
     ref: "pholder0001",
-    budget: checkoutBudget(machine({ budget: "1G" }), env),
+    budget: checkoutBudget(machine({ budget: "1G" })),
   });
   if (!held.ok) throw new Error(held.line);
   releases.push(held.admission.release);
@@ -140,8 +140,8 @@ test("Given a full heavy budget, When the start passes --no-lease --reason, Then
 
 test("Given two checkouts resolved in one process, When each admits a server, Then each uses its own budget", () => {
   const env: NodeJS.ProcessEnv = { ...process.env, WORKIT_STATE_DIR: temp("wk-runb-two-") };
-  const small = checkoutBudget(machine({ budget: "1G" }), env);
-  const large = checkoutBudget(machine({ budget: "3G" }), env);
+  const small = checkoutBudget(machine({ budget: "1G" }));
+  const large = checkoutBudget(machine({ budget: "3G" }));
   expect(small.memoryBytes).toBe(GiB);
   expect(large.memoryBytes).toBe(3 * GiB);
   const ask = (budget: typeof small) =>

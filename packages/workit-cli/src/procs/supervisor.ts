@@ -19,11 +19,11 @@ import {
   hostShape,
   leaseDir,
   resolveResourceSettings,
+  withGate,
   type Admission,
   type Budget,
   type ResourceSource,
 } from "@workit-dev/core/src/core/resources";
-import { readPressure } from "@workit-dev/core/src/core/pressure";
 import {
   dockerIds,
   endProc,
@@ -66,18 +66,11 @@ export type SupervisorSpec = {
 };
 
 /**
- * The budget of the caller's checkout, with the pressure gate the CLI's own
- * budget has (unless the machine turned it off, or the test preload did).
- * Passing the host keeps this resolution out of any module-level state.
+ * The budget of the caller's checkout, with the real pressure gate. Passing
+ * the host keeps the resolution pure: nothing carries over to another checkout.
  */
-export function checkoutBudget(sources: ResourceSource[], env: NodeJS.ProcessEnv): Budget {
-  const { budget } = resolveResourceSettings(sources, hostShape());
-  return {
-    ...budget,
-    pressure:
-      budget.pressureGate && env.WORKIT_NO_PRESSURE_GATE !== "1" ? () => readPressure() : null,
-  };
-}
+export const checkoutBudget = (sources: ResourceSource[]): Budget =>
+  withGate(resolveResourceSettings(sources, hostShape()).budget);
 
 /** Container ids in `after` that were not running `before`. */
 const added = (before: string[] | null, after: string[] | null): string[] | null => {
@@ -90,7 +83,7 @@ export async function supervise(spec: SupervisorSpec, env: NodeJS.ProcessEnv): P
   const store = openProcs(env);
   const childEnv = { ...env };
   delete childEnv[SUPERVISE_ENV];
-  const budget = checkoutBudget(spec.sources, env);
+  const budget = checkoutBudget(spec.sources);
   const ceiling = spec.ceilingBytes ?? budget.defaultBytes;
   let admission: Admission | null = null;
   try {

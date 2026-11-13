@@ -93,6 +93,8 @@ import {
   leaseDir,
   recordGroup,
   resolveResourceSettings,
+  withGate,
+  type Budget,
   runScoped,
   scopePrefix,
   scopeSupport,
@@ -587,6 +589,7 @@ function noteReclaimed(io: Io, reclaimed: readonly Reclaimed[]) {
 async function prepareHeavy(
   io: Io,
   settings: ResourceSettings,
+  budget: Budget,
   label: string,
   runCwd: string,
   timeoutMs: number,
@@ -620,6 +623,8 @@ async function prepareHeavy(
   const acquired = await acquireLease({
     dir,
     slots: settings.slots,
+    // This checkout's own budget and weights, never another checkout's (#857 follow-up).
+    budget,
     check: label,
     cwd: runCwd,
     session,
@@ -930,7 +935,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let light: LightCommand | null = null;
   if (!options.noLease && (options.heavy || options.command === null)) {
     const workspace = await workspaceResources(io);
-    const { settings, warnings } = resolveResourceSettings([
+    const { settings, warnings, budget } = resolveResourceSettings([
       { label: "workspaces.json", trust: "machine", value: workspace.value },
       { label: CHECKS_FILE, trust: "repo", value: config.resources },
     ]);
@@ -950,6 +955,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       const prepared = await prepareHeavy(
         io,
         settings,
+        withGate(budget),
         name ?? command.join(" "),
         runCwd,
         options.timeoutMs,
