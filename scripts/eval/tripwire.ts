@@ -19,8 +19,8 @@
 // a created dir is reported, not descended; at most 50 created paths per root.
 //
 // The only writes in this file are to the tripwire dir: ensureBase, ownDir,
-// removeOwnTree, acquire, release, writeJournal and dropJournal, each through
-// lstat-verified real dirs this user owns, never a recursive rm
+// removeOwnTree, acquire, release, writeJournal, recordDrop and dropJournal,
+// each through lstat-verified real dirs this user owns, never a recursive rm
 // (test/behavior/eval-tripwire.test.ts holds that by name and by behaviour).
 import { createHash } from "node:crypto";
 import {
@@ -727,9 +727,79 @@ export const writeJournal = (base: string, snapshot: Snapshot): void => {
   );
 };
 
-/** Delete the journal dir and nothing else: never through a link, never a recursive rm. */
-export const dropJournal = (base: string): void => {
-  removeOwnTree(journalDir(base));
+/** Why a journal was dropped: (a) --tripwire-discard, (b) a start found nothing differs, (c) a bench ended clean. */
+export type DropReason = "a-discard" | "b-leftover-unchanged" | "c-run-end";
+
+/** The journal's own digest, read through a verified dir; null when the manifest is unreadable. */
+const journalDigest = (dir: string): string | null => {
+  const bytes = readRegular(path.join(dir, "manifest.json"));
+  if (!bytes) return null;
+  try {
+    const journal = JSON.parse(new TextDecoder().decode(bytes)) as Journal;
+    return typeof journal.entries === "object" && journal.entries !== null
+      ? digestOf(Object.entries(journal.entries))
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Append one line to `<base>/drops.jsonl` (0600): opened without following a
+ * link, and only when it is a regular file this user owns.
+ */
+const recordDrop = (base: string, line: string): void => {
+  const file = path.join(base, "drops.jsonl");
+  let fd: number;
+  try {
+    fd = openSync(
+      file,
+      constants.O_WRONLY |
+        constants.O_APPEND |
+        constants.O_CREAT |
+        constants.O_NOFOLLOW |
+        constants.O_NONBLOCK,
+      0o600,
+    );
+  } catch {
+    throw new TripwireRefused(`${file} is not a regular file this user owns (a symlink or a fifo)`);
+  }
+  try {
+    const stat = fstatSync(fd);
+    const me = uid();
+    if (!stat.isFile() || (me !== undefined && stat.uid !== me))
+      throw new TripwireRefused(`${file} is not a regular file this user owns`);
+    writeSync(fd, `${line}\n`);
+  } finally {
+    closeSync(fd);
+  }
+};
+
+/**
+ * Delete the journal dir and nothing else: never through a link, never a
+ * recursive rm. Each drop is first appended to `<base>/drops.jsonl` (time,
+ * reason, pid, the runner's git head, the journal's digest), so no journal
+ * goes without a record; the line is returned for the runner to print. Null
+ * when there was no journal: nothing is dropped or recorded.
+ */
+export const dropJournal = (
+  base: string,
+  reason: DropReason,
+  head: string | null,
+): string | null => {
+  const dir = journalDir(base);
+  if (!lstat(dir)) return null;
+  ownDir(dir);
+  const line = JSON.stringify({
+    time: new Date().toISOString(),
+    reason,
+    pid: process.pid,
+    head,
+    digest: journalDigest(dir),
+  });
+  recordDrop(base, line);
+  removeOwnTree(dir);
+  return line;
 };
 
 /** What a leftover journal says, compared against roots the runner recomputes, never the journal's own. */
