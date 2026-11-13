@@ -305,9 +305,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "gc",
     group: "setup",
-    usage: "workit gc [--dry-run] [--prune-recovery --yes] [--worktrees [--apply]]",
+    usage:
+      "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply]",
     summary:
-      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies; --worktrees lists (--apply removes) clean worktrees whose work is on the trunk",
+      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies; --worktrees lists (--apply removes) clean worktrees whose work is on the trunk; --branches lists (--apply deletes) local branches whose work is on the trunk",
     load: () => import("./gc"),
   },
   {

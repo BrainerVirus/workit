@@ -202,6 +202,43 @@ const isKnownMarker = (file: string, kind: keyof typeof MARKER_FIELDS): boolean 
 };
 
 /**
+ * `file` (checkout-relative, `/`-separated; a trailing `/` names a directory)
+ * is under `.workit/` and holds only what an older runtime wrote there: the
+ * workspace marker pointing at the shared store, the moved store marker, a
+ * 2.x task stub, a generated `.gitignore`. A directory counts when everything
+ * in it does. Any other file is data (#835).
+ */
+export function isWorkitMarkerPath(checkout: string, file: string): boolean {
+  const rel = file.replaceAll("\\", "/").replace(/\/+$/u, "");
+  if (!rel.startsWith(".workit/") && rel !== ".workit") return false;
+  const abs = path.join(checkout, rel);
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(abs);
+  } catch {
+    return false;
+  }
+  if (stat.isDirectory()) {
+    try {
+      return fs.readdirSync(abs).every((name) => isWorkitMarkerPath(checkout, `${rel}/${name}`));
+    } catch {
+      return false;
+    }
+  }
+  if (!stat.isFile()) return false;
+  const inner = rel.slice(".workit/".length);
+  if (inner === "workspace.json") return isKnownMarker(abs, "workspace");
+  if (inner === "store.moved.json") return isKnownMarker(abs, "moved");
+  if (/^tasks\/[^/]+$/u.test(inner)) return isKnownMarker(abs, "stub");
+  if (inner !== ".gitignore") return false;
+  try {
+    return GENERATED_GITIGNORES.has(fs.readFileSync(abs, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Move `from` (file or directory) to `to`, merging into a directory already
  * there. A file whose name is taken keeps both: identical bytes collapse,
  * different ones land beside it under a content suffix. Nothing is lost.

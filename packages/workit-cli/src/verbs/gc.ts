@@ -8,13 +8,72 @@
 // `workit gc --worktrees [--apply]` (#653) instead lists what finished
 // changes left on disk: merged clean worktrees in Workit's places, stale
 // registrations, merged branches whose remote is gone. Dry run unless --apply.
+//
+// `workit gc --branches [--apply]` (#835) lists local branches whose work is
+// on the trunk (a merged PR at the tip, `git cherry`, a squash proof) and
+// deletes them with --apply; see core/cleanup.ts sweepBranches.
+//
+// Every form refuses an argument it does not know (exit 2), so a caller built
+// for an older or newer CLI never falls through to the task-store gc.
 import { progressFor } from "../progress";
 import { LOG_RETENTION, pruneCheckLogs } from "@workit-dev/core/src/checks";
 import { TaskStore } from "@workit-dev/core/src/core/task-store";
 import { emit, fail, ok, type Io } from "../output";
 import { workspaceRootFor } from "../task";
-import { sweepWorktrees, type WorktreeSweep } from "@workit-dev/core/src/core/cleanup";
+import {
+  sweepBranches,
+  sweepWorktrees,
+  type BranchForge,
+  type BranchSweep,
+  type WorktreeSweep,
+} from "@workit-dev/core/src/core/cleanup";
+import { resolveForge } from "@workit-dev/core/src/forge/resolve";
 import { actorFromEnv } from "@workit-dev/core/src/ledger";
+import { forgeDeps } from "./forge-common";
+
+/** The usage line (the registry's gc entry carries the same text). */
+const GC_USAGE =
+  "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply]";
+
+/** Bound on reaching the forge for the merged-PR check. */
+const FORGE_BUDGET_MS = 15_000;
+
+/** How `gc --branches` reaches the forge; tests swap it for a fake. */
+export const gcDeps = {
+  forge: (io: Io): BranchForge | { skipped: string } => {
+    const resolved = resolveForge(io.cwd, {
+      env: io.env,
+      runner: forgeDeps.runner,
+      now: forgeDeps.now,
+      deadline: forgeDeps.now() + FORGE_BUDGET_MS,
+    });
+    return resolved.ok ? resolved.data : { skipped: resolved.error };
+  },
+};
+
+const ALLOWED: Record<"worktrees" | "branches" | "store", ReadonlySet<string>> = {
+  worktrees: new Set(["--worktrees", "--apply", "--dry-run", "--json"]),
+  branches: new Set(["--branches", "--apply", "--dry-run", "--json"]),
+  store: new Set(["--dry-run", "--prune-recovery", "--yes", "--json"]),
+};
+
+const branchLines = (data: BranchSweep): string[] => {
+  const deleted = new Set(data.deleted);
+  return [
+    `workit gc --branches${data.apply ? "" : " (dry run; --apply deletes)"}`,
+    ...(data.forgeSkipped ? [`merged-PR check skipped: ${data.forgeSkipped}`] : []),
+    ...(data.deletable.length ? [] : ["nothing to delete"]),
+    ...data.deletable.map(
+      (entry) =>
+        `${data.apply ? (deleted.has(entry.name) ? "deleted" : "not deleted") : "would delete"} branch ${entry.name}: ${entry.reason}`,
+    ),
+    ...data.kept.map((entry) => `kept branch ${entry.name}: ${entry.reason}`),
+    ...data.notes,
+    ...(data.recorded && "error" in data.recorded
+      ? [`ledger: not recorded (${data.recorded.error})`]
+      : []),
+  ];
+};
 
 const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 
@@ -47,17 +106,34 @@ const sweepLines = (data: WorktreeSweep): string[] => {
 };
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  if (argv.includes("--worktrees")) {
-    const unknown = argv.find(
-      (arg) => !["--worktrees", "--apply", "--dry-run", "--json"].includes(arg),
+  if (argv.includes("--worktrees") && argv.includes("--branches"))
+    return emit(io, fail("invalid_input", `pass --worktrees or --branches, not both: ${GC_USAGE}`));
+  const form = argv.includes("--worktrees")
+    ? "worktrees"
+    : argv.includes("--branches")
+      ? "branches"
+      : "store";
+  const unknown = argv.find((arg) => !ALLOWED[form].has(arg));
+  if (unknown) return emit(io, fail("invalid_input", `unknown argument ${unknown}: ${GC_USAGE}`));
+  if (form !== "store" && argv.includes("--apply") && argv.includes("--dry-run"))
+    return emit(io, fail("invalid_input", "pass --apply or --dry-run, not both"));
+  if (form === "branches") {
+    const reached = gcDeps.forge(io);
+    const forge = "skipped" in reached ? null : reached;
+    const sweep = progressFor(io).runSync(
+      "Sweeping branches",
+      () =>
+        sweepBranches(io.cwd, {
+          apply: argv.includes("--apply"),
+          actor: actorFromEnv(io.env),
+          forge,
+          ...("skipped" in reached ? { forgeSkipped: reached.skipped } : {}),
+        }),
+      () => "done",
     );
-    if (unknown)
-      return emit(
-        io,
-        fail("invalid_input", `unknown argument ${unknown}: workit gc --worktrees [--apply]`),
-      );
-    if (argv.includes("--apply") && argv.includes("--dry-run"))
-      return emit(io, fail("invalid_input", "pass --apply or --dry-run, not both"));
+    return emit(io, ok(sweep), branchLines);
+  }
+  if (form === "worktrees") {
     const sweep = progressFor(io).runSync(
       "Sweeping worktrees",
       () =>
