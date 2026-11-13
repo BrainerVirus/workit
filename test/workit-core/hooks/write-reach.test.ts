@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { shellGate, writeGate } from "@/packages/workit-core/src/hooks/write-gate";
-import { editReaches, mayReach } from "@/packages/workit-core/src/hooks/write-reach";
+import { editReaches, mayReach, reachDirs } from "@/packages/workit-core/src/hooks/write-reach";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const base = realpathSync(mkdtempSync(path.join(tmpdir(), "wk-reach-")));
@@ -256,9 +256,35 @@ test("G the Claude Code launcher, W its source is read, T it holds write-reach.t
   };
   const erase = (code: string, loader: "ts" | "js") =>
     new Bun.Transpiler({ loader, deadCodeElimination: false }).transformSync(
-      `${code}\nexport { hasTaskStore, fileReaches, mayReachWith };`,
+      `${code}\nexport { hasTaskStore, fileReaches, mayReachWith, guardedDirs };`,
     );
   expect(erase(region("packages/workit-claude-code/bin/workit-hook.mjs"), "js")).toBe(
     erase(region("packages/workit-core/src/hooks/write-reach.ts"), "ts"),
   );
+});
+
+test("G the guarded dirs, W the launcher and core build them for one fixture env, T both feed the shared region the same workit-paths builders", () => {
+  // The launcher's workit-paths.mjs is core's, byte for byte.
+  expect(
+    readFileSync(path.join(ROOT, "packages/workit-claude-code/bin/workit-paths.mjs"), "utf8"),
+  ).toBe(readFileSync(path.join(ROOT, "packages/workit-core/src/core/workit-paths.mjs"), "utf8"));
+  const flat = (file: string) => readFileSync(path.join(ROOT, file), "utf8").replace(/\s+/g, " ");
+  expect(flat("packages/workit-claude-code/bin/workit-hook.mjs")).toContain(
+    "guardedDirs(process.env, { configDir: workitConfigDir, stateDir: workitStateDir, userHome })",
+  );
+  expect(flat("packages/workit-claude-code/bin/workit-hook.mjs")).toMatch(
+    /configDir as workitConfigDir, migrateLegacyDirs, stateDir as workitStateDir, userHome, \} from "\.\/workit-paths\.mjs"/,
+  );
+  expect(flat("packages/workit-core/src/hooks/write-reach.ts")).toContain(
+    "guardedDirs(env, { configDir, stateDir, userHome })",
+  );
+  const env = {
+    HOME: path.join(base, "fixture-home"),
+    WORKIT_STATE_DIR: path.join(base, "fixture-state"),
+    WORKIT_CONFIG_DIR: path.join(base, "fixture-config"),
+  };
+  const dirs = reachDirs(env);
+  expect(dirs.state).toBe(env.WORKIT_STATE_DIR);
+  expect(dirs.configs[0]).toBe(env.WORKIT_CONFIG_DIR);
+  expect(dirs.home).toBe(env.HOME);
 });

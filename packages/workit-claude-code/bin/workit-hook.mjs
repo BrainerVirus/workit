@@ -35,6 +35,7 @@ import {
   configDir as workitConfigDir,
   migrateLegacyDirs,
   stateDir as workitStateDir,
+  userHome,
 } from "./workit-paths.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -425,9 +426,11 @@ const mayReachWith = (text, cwd, dirs) => {
   }
   return false;
 };
-// write-reach:end
-/** The guarded dirs as this hook process sees them (write-reach.ts reachDirs). */
-const reachDirs = () => {
+/**
+ * The guarded dirs for `env`: its state and config dirs, the default config
+ * dir and the OS account's, each built by core/workit-paths.mjs (`paths`).
+ */
+const guardedDirs = (env, paths) => {
   let account = null;
   try {
     account = os.userInfo().homedir;
@@ -435,17 +438,21 @@ const reachDirs = () => {
     // No account record: the env's dirs only.
   }
   return {
-    state: stateDir(),
+    state: paths.stateDir(env),
     configs: [
-      workitConfigDir(process.env),
-      workitConfigDir({}),
-      ...(account ? [workitConfigDir({ HOME: account, USERPROFILE: account })] : []),
+      paths.configDir(env),
+      paths.configDir({}),
+      ...(account ? [paths.configDir({ HOME: account, USERPROFILE: account })] : []),
     ],
-    home: os.homedir(),
-    env: process.env,
+    home: paths.userHome(env),
+    env,
     fold: process.platform === "darwin" || process.platform === "win32",
   };
 };
+// write-reach:end
+/** The guarded dirs for this hook process's env (write-reach.ts reachDirs). */
+const reachDirs = () =>
+  guardedDirs(process.env, { configDir: workitConfigDir, stateDir: workitStateDir, userHome });
 
 /**
  * Text that may name a state registry or the config dir's workspaces.json

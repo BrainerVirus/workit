@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { configDir, stateDir } from "../core/workit-paths.mjs";
+import { configDir, stateDir, userHome } from "../core/workit-paths.mjs";
 
 /** The guarded dirs and what a shell expands, as the hook process sees them. */
 export type ReachDirs = {
@@ -20,6 +20,13 @@ export type ReachDirs = {
   home: string;
   env: Record<string, string | undefined>;
   fold: boolean;
+};
+
+/** The core/workit-paths.mjs builders the guarded dirs come from. */
+type ReachPaths = {
+  configDir: (env: NodeJS.ProcessEnv) => string;
+  stateDir: (env: NodeJS.ProcessEnv) => string;
+  userHome: (env: NodeJS.ProcessEnv) => string;
 };
 
 // write-reach:begin
@@ -160,10 +167,11 @@ const mayReachWith = (text: string, cwd: string, dirs: ReachDirs): boolean => {
   }
   return false;
 };
-// write-reach:end
-
-/** The guarded dirs for this process: the state dir, this env's, the default and the account's config dirs. */
-export const reachDirs = (env: NodeJS.ProcessEnv = process.env): ReachDirs => {
+/**
+ * The guarded dirs for `env`: its state and config dirs, the default config
+ * dir and the OS account's, each built by core/workit-paths.mjs (`paths`).
+ */
+const guardedDirs = (env: NodeJS.ProcessEnv, paths: ReachPaths): ReachDirs => {
   let account: string | null = null;
   try {
     account = os.userInfo().homedir;
@@ -171,17 +179,22 @@ export const reachDirs = (env: NodeJS.ProcessEnv = process.env): ReachDirs => {
     // No account record: the env's dirs only.
   }
   return {
-    state: stateDir(env),
+    state: paths.stateDir(env),
     configs: [
-      configDir(env),
-      configDir({}),
-      ...(account ? [configDir({ HOME: account, USERPROFILE: account })] : []),
+      paths.configDir(env),
+      paths.configDir({}),
+      ...(account ? [paths.configDir({ HOME: account, USERPROFILE: account })] : []),
     ],
-    home: os.homedir(),
+    home: paths.userHome(env),
     env,
     fold: process.platform === "darwin" || process.platform === "win32",
   };
 };
+// write-reach:end
+
+/** The guarded dirs for this process's env (core/workit-paths.mjs builds each). */
+export const reachDirs = (env: NodeJS.ProcessEnv = process.env): ReachDirs =>
+  guardedDirs(env, { configDir, stateDir, userHome });
 
 /** Whether shell `text` run in `cwd` may write at or above a guarded path (see the header). */
 export const mayReach = (text: string, cwd: string): boolean =>
