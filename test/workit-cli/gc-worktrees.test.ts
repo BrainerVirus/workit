@@ -1,3 +1,4 @@
+import "@/test/shared/state-isolation";
 import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {

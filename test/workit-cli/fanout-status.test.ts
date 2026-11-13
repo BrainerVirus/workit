@@ -1,3 +1,4 @@
+import "@/test/shared/state-isolation";
 import {
   afterAll,
   afterEach,
