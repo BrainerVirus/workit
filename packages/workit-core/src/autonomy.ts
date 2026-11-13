@@ -147,8 +147,9 @@ const sealNote = (seal: SealCheck = sealOf()): string | null =>
  * workspace): each write needs the user's yes through the approval channel.
  * `auto` is the opt-out a user sets in the workspace entry
  * (`youtrack: { writes: "auto" }`); it keeps the WORKIT_YT_WRITE gate alone.
- * A broken seal reads as `ask`. Here, not in core/youtrack-writes.ts, so the
- * shell hook's raw ytrack guard reads it without the YouTrack client.
+ * Only the account's sealed file gives `auto` (see youTrackWritesMode). Here,
+ * not in core/youtrack-writes.ts, so the shell hook's raw ytrack guard reads
+ * it without the YouTrack client.
  */
 export type YouTrackWritesMode = "ask" | "auto";
 
