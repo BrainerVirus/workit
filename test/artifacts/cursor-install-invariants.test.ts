@@ -23,6 +23,7 @@ import {
   packWorkspacePackages,
   REPO_ROOT,
 } from "@/test/shared/helpers/packages";
+import { stripsWorkitKey } from "@/test/shared/helpers/env";
 
 const CURSOR = "@workit-dev/cursor";
 const CLI = "@workit-dev/cli";
@@ -179,7 +180,7 @@ const syncToolsAvailable =
 
 const syncEnv = (home: string, lockDir: string, repo: string): Record<string, string> => ({
   ...Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("WORKIT_") && key !== "HOME"),
+    Object.entries(process.env).filter(([key]) => !stripsWorkitKey(key) && key !== "HOME"),
   ),
   HOME: home,
   XDG_CONFIG_HOME: path.join(home, ".config"),

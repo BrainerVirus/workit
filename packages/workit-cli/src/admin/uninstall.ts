@@ -6,9 +6,10 @@
 // (CA-11, CA-12, CA-13, CA-14). Homes are injectable exactly like setup/doctor
 // path options (D-07): tests pass explicit paths and no default ever resolves
 // to a real user directory in tests.
-import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { hostCommandRefusal, rmSync, writeFileSync } from "./guarded-fs";
 import { configDir, stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import {
   readYtrackSkillRecord,
@@ -859,6 +860,8 @@ const applyClaudeUninstall = (
     ...(action.cwd === null ? {} : { cwd: action.cwd }),
     purpose: `Uninstall the Workit Claude Code plugin ${id} (${scope} scope)`,
   };
+  const refused = paths.runHostCommand ? null : hostCommandRefusal(home, step.purpose);
+  if (refused) return { status: "failed", detail: refused };
   const result = paths.runHostCommand
     ? paths.runHostCommand(step)
     : runHostCommand(step, { home, env });

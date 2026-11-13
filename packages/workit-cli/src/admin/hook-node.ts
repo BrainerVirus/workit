@@ -5,9 +5,10 @@
 // record the node they run on in <state dir>/node.json for them, and
 // `workit doctor` reports which Node the hooks will end up on.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
+import { mkdirSync, writeFileAtomic } from "./guarded-fs";
+
 import {
   HOOK_NODE_FLOOR,
   compareVersions,
