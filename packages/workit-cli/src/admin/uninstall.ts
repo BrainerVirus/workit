@@ -61,11 +61,21 @@ export type UninstallAction =
   | { kind: "remove-owned-cli"; path: string; detail: string; part: OwnedPart }
   | { kind: "remove-completion"; path: string; detail: string }
   /** A ytrack skill directory Workit installed (its own record, exact path only). */
-  | { kind: "remove-ytrack-skill"; path: string; detail: string; host: SkillHost }
+  | {
+      kind: "remove-ytrack-skill";
+      path: string;
+      detail: string;
+      host: SkillHost;
+    }
   /** A path left in place (a foreign or changed file, a record still in use): reported, never touched. */
   | { kind: "keep-foreign"; path: string; detail: string }
   /** Drop the host's entry from Workit's permission ownership record (state dir). */
-  | { kind: "forget-ownership"; path: string; detail: string; permissionHost: PermissionHost }
+  | {
+      kind: "forget-ownership";
+      path: string;
+      detail: string;
+      permissionHost: PermissionHost;
+    }
   /** A file the plan must read that exists but cannot be read or parsed: its host is left untouched. */
   | { kind: "unreadable"; path: string; detail: string }
   /** A host command whose executable is not found (path: its name): its host is left untouched. */
@@ -326,7 +336,7 @@ const skillRootOf = (host: SkillHost, paths: UninstallPaths): [root: string, hom
 
 /** Inverse of `workit setup`: the entries the ownership record names (else the canonical ones). */
 const permissionCleaner =
-  (host: "claude-code" | "cursor", file: string, paths: UninstallPaths): JsonCleaner =>
+  (host: "claude-code" | "cursor" | "opencode", file: string, paths: UninstallPaths): JsonCleaner =>
   (record) => {
     const resolved = permissionPathsOf(paths);
     const owned = readOwnership(resolved).hosts[host];
@@ -335,7 +345,17 @@ const permissionCleaner =
       owned?.file === file ? owned.owned : null,
       host,
       resolved.env,
+      resolved,
     );
+  };
+
+/** opencode.json: the plugin entries, then Workit's `permission.edit` deny patterns (#820). */
+const openCodeCleaner =
+  (file: string, paths: UninstallPaths): JsonCleaner =>
+  (record) => {
+    const plugin = cleanOpenCodeConfig(record);
+    const deny = permissionCleaner("opencode", file, paths)(plugin.next);
+    return { next: deny.next, changed: plugin.changed || deny.changed };
   };
 
 const jsonCleanerFor = (
@@ -347,7 +367,7 @@ const jsonCleanerFor = (
     return permissionCleaner("claude-code", res.claudeSettings, paths);
   if (target === res.cursorCliConfig)
     return permissionCleaner("cursor", res.cursorCliConfig, paths);
-  if (target === res.opencodeConfig) return cleanOpenCodeConfig;
+  if (target === res.opencodeConfig) return openCodeCleaner(res.opencodeConfig, paths);
   if (target === res.cursorSettings) return (r) => cleanCursorSettings(r, res.cursorPluginDir);
   if (target === res.cursorMcp) return cleanCursorMcp;
   if (target === res.piConfig) return cleanPiConfig;
@@ -430,7 +450,8 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   const ocExisting = readJsonRecord(res.opencodeConfig);
   const ocDirty =
     ocExisting.kind === "malformed" ||
-    (ocExisting.kind === "record" && cleanOpenCodeConfig(ocExisting.value).changed);
+    (ocExisting.kind === "record" &&
+      openCodeCleaner(res.opencodeConfig, paths)(ocExisting.value).changed);
   const opencode: UninstallHostPlan = {
     host: "opencode",
     installed: ocDirty,
@@ -494,7 +515,13 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     host: "codex",
     installed: codexInstalled,
     actions: codexInstalled
-      ? [{ kind: "remove-dir", path: res.codexPluginDir, detail: "remove Codex workit plugin dir" }]
+      ? [
+          {
+            kind: "remove-dir",
+            path: res.codexPluginDir,
+            detail: "remove Codex workit plugin dir",
+          },
+        ]
       : [],
   };
 
@@ -585,9 +612,17 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     const rules = codexRulesState(res.codexRules);
     codex.actions.push(
       rules === "unchanged"
-        ? { kind: "remove-file", path: res.codexRules, detail: "remove Workit's Codex rules file" }
+        ? {
+            kind: "remove-file",
+            path: res.codexRules,
+            detail: "remove Workit's Codex rules file",
+          }
         : rules === "changed"
-          ? { kind: "keep-foreign", path: res.codexRules, detail: codexRulesKept(res.codexRules) }
+          ? {
+              kind: "keep-foreign",
+              path: res.codexRules,
+              detail: codexRulesKept(res.codexRules),
+            }
           : {
               kind: "unreadable",
               path: res.codexRules,
@@ -605,6 +640,7 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     [claude, "claude-code", res.claudeSettings],
     [cursor, "cursor", res.cursorCliConfig],
     [codex, "codex", res.codexRules],
+    [opencode, "opencode", res.opencodeConfig],
   ] as const) {
     if (owned[host]?.file !== file) continue;
     const kept = plan.actions.some((a) => a.kind === "keep-foreign" && a.path === file);
@@ -660,7 +696,12 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   const cliActions: UninstallAction[] = planOwnedRemoval(cliEnvOf(paths), paths.platform).map(
     (step) =>
       step.kind === "remove"
-        ? { kind: "remove-owned-cli", path: step.path, detail: step.detail, part: step.part }
+        ? {
+            kind: "remove-owned-cli",
+            path: step.path,
+            detail: step.detail,
+            part: step.part,
+          }
         : { kind: "keep-foreign", path: step.path, detail: step.detail },
   );
   // The shell completion scripts setup/upgrade wrote belong to the CLI; a
@@ -805,7 +846,10 @@ const applyClaudeUninstall = (
         : path.resolve(install.projectPath) === path.resolve(action.cwd ?? "")),
   );
   if (!recorded)
-    return { status: "skipped", detail: `${id} (${scope} scope) is no longer installed` };
+    return {
+      status: "skipped",
+      detail: `${id} (${scope} scope) is no longer installed`,
+    };
   const executable = findHostExecutable("claude", { home, env });
   if (!executable && !paths.runHostCommand)
     return { status: "failed", detail: missingExecutable("claude") };
@@ -820,7 +864,10 @@ const applyClaudeUninstall = (
     : runHostCommand(step, { home, env });
   return result.exitCode === 0
     ? { status: "removed", detail: action.detail }
-    : { status: "failed", detail: result.stderr.trim() || `exit ${result.exitCode}` };
+    : {
+        status: "failed",
+        detail: result.stderr.trim() || `exit ${result.exitCode}`,
+      };
 };
 
 /** Runs one reviewed action. */
@@ -866,7 +913,10 @@ function applyAction(
     const [root, home] = skillRootOf(action.host, paths);
     const outcome = recorded
       ? removeYtrackSkill(recorded, stateDirOf(paths), { root, home })
-      : { status: "skipped" as const, detail: "no longer recorded as Workit's" };
+      : {
+          status: "skipped" as const,
+          detail: "no longer recorded as Workit's",
+        };
     status = outcome.status;
     detail = outcome.detail;
   } else if (action.kind === "remove-owned-cli") {
