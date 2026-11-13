@@ -17,7 +17,7 @@ import {
   type SkillHost,
 } from "@workit-dev/core/src/core/ytrack-skill";
 import { hostSkillsRoot } from "../upgrade/skill-roots";
-import { completionFile, ownedCompletionFiles, removeCompletions } from "../completion/install";
+import { completionFile, ownedCompletionFiles, removeCompletion } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
 import {
@@ -844,18 +844,21 @@ function applyAction(
     status = kept ? "skipped" : "removed";
     detail = kept ? CODEX_RECORD_KEPT : undefined;
   } else if (action.kind === "remove-completion") {
+    // This row's file only: another row's file is that row's to report.
     const platform = paths.platform ?? process.platform;
-    // Changed since the plan: kept in the plan's words for a file not Workit's.
     const ours = ownedCompletionFiles(cliEnvOf(paths), platform).includes(action.path);
-    const removed = ours && removeCompletions(cliEnvOf(paths), platform).includes(action.path);
-    const gone = !existsSync(action.path);
-    status = removed || gone ? "removed" : ours ? "failed" : "skipped";
-    detail =
-      status === "failed"
-        ? `${action.path} could not be removed`
-        : status === "skipped"
-          ? COMPLETION_NOT_OURS
-          : undefined;
+    const removed = ours && removeCompletion(action.path, cliEnvOf(paths), platform);
+    if (removed) status = "removed";
+    else if (!existsSync(action.path)) {
+      status = "skipped";
+      detail = "already absent";
+    } else if (ours) {
+      status = "failed";
+      detail = `${action.path} could not be removed`;
+    } else {
+      status = "skipped";
+      detail = COMPLETION_NOT_OURS;
+    }
   } else if (action.kind === "remove-ytrack-skill") {
     const recorded = readYtrackSkillRecord(stateDirOf(paths)).find(
       (install) => install.host === action.host && install.path === action.path,

@@ -8,9 +8,12 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -90,8 +93,17 @@ export function ytrackSkillSupport(run: YtrackRun): YtrackSkillSupport {
   return stamped ? { state: "supported", version: stamped } : { state: "unsupported", version };
 }
 
-/** One skill install Workit made: uninstall removes `path` and only that. */
-export type YtrackSkillInstall = { host: SkillHost; path: string; version: string };
+/**
+ * One skill install Workit made: uninstall removes the files it wrote under
+ * `path` and only those. `files` lists them (relative, `/`-separated) as the
+ * install left them; a record from before it was kept has none.
+ */
+export type YtrackSkillInstall = {
+  host: SkillHost;
+  path: string;
+  version: string;
+  files?: string[];
+};
 
 const recordFile = (stateDir: string): string => path.join(stateDir, "ytrack-skill.json");
 
@@ -105,7 +117,10 @@ export const readYtrackSkillRecord = (stateDir: string): YtrackSkillInstall[] =>
         row !== null &&
         typeof (row as YtrackSkillInstall).host === "string" &&
         typeof (row as YtrackSkillInstall).path === "string" &&
-        typeof (row as YtrackSkillInstall).version === "string",
+        typeof (row as YtrackSkillInstall).version === "string" &&
+        ((row as YtrackSkillInstall).files === undefined ||
+          (Array.isArray((row as YtrackSkillInstall).files) &&
+            (row as YtrackSkillInstall).files!.every((file) => typeof file === "string"))),
     );
   } catch {
     return [];
@@ -201,12 +216,64 @@ export function syncYtrackSkill(options: {
         host,
         path: dir,
         version: installed.version,
+        files: filesUnder(dir),
       });
     }
   }
   writeRecord(options.stateDir, recorded);
   return { state: "synced", version: support.version, results };
 }
+
+/** Every non-directory entry under `dir` (links not followed), relative and `/`-separated. */
+const filesUnder = (dir: string, prefix = ""): string[] => {
+  let entries;
+  try {
+    entries = readdirSync(path.join(dir, prefix), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .flatMap((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      return entry.isDirectory() ? filesUnder(dir, rel) : [rel];
+    })
+    .toSorted();
+};
+
+/** Every directory under `dir` (links not followed), relative. */
+const dirsUnder = (dir: string, prefix = ""): string[] => {
+  let entries;
+  try {
+    entries = readdirSync(path.join(dir, prefix), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      return [rel, ...dirsUnder(dir, rel)];
+    });
+};
+
+/**
+ * The files the ytrack skill install wrote: the record's list, or for a
+ * record from before Workit kept one, the layout `ytrack skill install`
+ * documents (SKILL.md and its references/ directory).
+ */
+const skillFiles = (install: YtrackSkillInstall): Set<string> =>
+  new Set(
+    install.files ?? [
+      "SKILL.md",
+      ...filesUnder(install.path).filter((file) => file.startsWith("references/")),
+    ],
+  );
+
+/** What stays in a skill directory once the skill's own files go. */
+const othersIn = (install: YtrackSkillInstall): string[] => {
+  const ours = skillFiles(install);
+  return filesUnder(install.path).filter((file) => !ours.has(file));
+};
 
 const isLink = (file: string): boolean => {
   try {
@@ -261,13 +328,16 @@ export function ytrackSkillPathRefusal(
 
 /** What uninstall does with one recorded skill directory, in the words preview and apply share. */
 export type YtrackSkillRemoval =
-  | { kind: "remove"; detail: string }
+  /** `kept`: files of someone else's stay, and so does the directory. */
+  | { kind: "remove"; detail: string; kept: boolean }
   /** Nothing left to delete: only Workit's record of it goes. */
   | { kind: "absent"; detail: string }
   /** Not a path Workit may delete, or no longer the skill Workit installed: left as it is. */
   | { kind: "keep"; detail: string };
 
 const YTRACK_SKILL_REMOVE = "remove the ytrack skill Workit installed";
+const ytrackSkillKept = (dir: string, others: string[]) =>
+  `remove the ytrack skill's files; ${dir} kept (holds ${others.join(", ")})`;
 const YTRACK_SKILL_ABSENT = "ytrack skill already absent; Workit forgets its record of it";
 const YTRACK_SKILL_NOT_OURS = "no longer holds the ytrack skill Workit installed; left untouched";
 
@@ -282,7 +352,10 @@ export function ytrackSkillRemoval(
     return { kind: "absent", detail: YTRACK_SKILL_ABSENT };
   if (isLink(install.path) || installedSkillVersion(install.path) === null)
     return { kind: "keep", detail: YTRACK_SKILL_NOT_OURS };
-  return { kind: "remove", detail: YTRACK_SKILL_REMOVE };
+  const others = othersIn(install);
+  return others.length > 0
+    ? { kind: "remove", detail: ytrackSkillKept(install.path, others), kept: true }
+    : { kind: "remove", detail: YTRACK_SKILL_REMOVE, kept: false };
 }
 
 /**
@@ -309,11 +382,19 @@ export function removeYtrackSkill(
     forget();
     return { status: "skipped", detail: removal.detail };
   }
+  // Only the files the install wrote; then each directory left empty, deepest first.
   try {
-    rmSync(install.path, { recursive: true, force: true });
+    // Listed without following a link, so a linked subdirectory is never entered.
+    const ours = skillFiles(install);
+    for (const file of filesUnder(install.path))
+      if (ours.has(file)) unlinkSync(path.join(install.path, ...file.split("/")));
+    const dirs = [install.path];
+    for (const file of dirsUnder(install.path)) dirs.push(path.join(install.path, file));
+    for (const dir of dirs.toSorted((a, b) => b.length - a.length))
+      if (readdirSync(dir).length === 0) rmdirSync(dir);
   } catch (error) {
     return { status: "failed", detail: error instanceof Error ? error.message : String(error) };
   }
   forget();
-  return { status: "removed" };
+  return removal.kept ? { status: "removed", detail: removal.detail } : { status: "removed" };
 }
