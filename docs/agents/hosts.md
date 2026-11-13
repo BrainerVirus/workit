@@ -51,14 +51,16 @@ the OpenCode init action ytrack's version and per-host login. Setup and init
 write `youtrack.json` without a token; a leftover `youtrack.token` is only
 checked for existence (doctor warns it can be deleted, setup leaves it
 untouched); `test/workit-core/youtrack-no-token.test.ts` scans shipped source
-so no token read comes back. Every write asks the user first (#780):
-with `youtrack.writes` ask (the default) `workit youtrack` writes and
-`ytrackWrite` (`defaultOperations`, which PR backlinks use) consume a
-`youtrack-write` approval (`consumeApproval`), else record the request and
-post nothing; `auto`, which the user sets, keeps the `WORKIT_YT_WRITE=1` gate
-(`youTrackWriteGate`). A pending PR backlink posts once on the next
-`workit pr create` or `workit pr edit` of that PR. Both run in the CLI, so
-every host behaves the same; only how the host shows the ask differs.
+so no token read comes back. Every write asks the user first (#780, #864):
+with `youtrack.writes` ask (the default) a plain `workit youtrack
+note|time|meeting|update|create` call is asked on the call itself where the
+host can (Claude Code `PreToolUse`, Pi's TUI dialog; see the host-approval
+limits below) and posts in that call; otherwise the verb and `ytrackWrite`
+(`defaultOperations`, which PR backlinks use) consume a terminal
+`youtrack-write` approval (`consumeApproval`), else record one request per
+text and post nothing; `auto`, which the user sets, keeps the
+`WORKIT_YT_WRITE=1` gate (`youTrackWriteGate`). A pending PR backlink posts
+once on the next `workit pr create` or `workit pr edit` of that PR.
 
 `workit youtrack update <ISSUE>` puts a comment (with `--attach` files), time
 and commands (`--state`, `--command`) on one issue under one `youtrack-write`
@@ -477,10 +479,13 @@ Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
   them only within the age bound.
 
 Host-approval channel limits ([host-approval.md](../workit-next/host-approval.md);
-#419, #649, #768, #774). The first PR ships the registry, `workit approve`, the
-Claude Code and Pi recording and the consume API (`approvals/store.ts`); no
-consumer verb uses it yet. Every host keeps the terminal fallback: the user runs
-`workit approve <id>…` at a real TTY (L, D18: a pseudo-terminal passes it). The
+#419, #649, #768, #774, #864). The registry, `workit approve`, the Claude
+Code and Pi recording and the consume API live in `approvals/store.ts`; the
+`workit youtrack` writes use it, asked on the call itself where the host can
+(`approvals/inline.ts`, decisions mwf752f2 and mwf752sv). One live request per
+hash: a refusal reuses it. Every host keeps the terminal fallback: the user
+runs `workit approve` at a real TTY, with an id only when several requests
+wait (L, D18: a pseudo-terminal passes it). The
 issued-registry guard covers `<state>/approvals/` too ([Host parity](#host-parity)).
 A host acts only on one plain `workit approve <id>…` call (`approvals/call.ts`):
 a chain, substitution, leading `cd`, env prefix, redirect or `--cwd` is denied
@@ -491,23 +496,40 @@ whose `asked` row names the same host and hash. L (D18): the `asked` row is a
 hand-edit check, not proof; a forger who writes both files or calls the store
 library passes it, and real unforgeability needs another OS principal.
 
-- **Claude Code:** N. `PreToolUse` asks with the request rendered from the
-  store and writes `asked` (one hash per id) in `default`, `acceptEdits` and
-  `plan` only; `PostToolUse` of the same `tool_use_id` writes one grant per id
+- **Claude Code:** N, on the action itself for the YouTrack writes: `PreToolUse`
+  on a plain `workit youtrack note|time|meeting|update|create` answers `ask`
+  with the full text (cut after 60 lines with "N more lines") and an
+  `updatedInput` that prefixes `WORKIT_APPROVAL_TICKET=<random>` to that one
+  call (claude 2.1.323 keeps an asking hook's `updatedInput`); the store keeps
+  only the ticket's sha256 with the call's argv and content hashes (words plus
+  the bytes of each file it names) for 10 minutes, a newer ask for the same
+  call closes older ones, and the verb uses it once. A wrapped call (pipe,
+  chain, redirect, `bash -c`, variable, leading `cd`) is denied with the plain
+  form. L (D18): the hook's output, ticket included, is in the host transcript,
+  so an agent that reads its own transcript could replay a rejected prompt's
+  call until the row is used, expires or is replaced. U: the launcher fast
+  path must send these calls to the runtime (follow-up of #864). For `workit
+  approve <id>`: `PreToolUse` asks with the request rendered from the
+  store and writes `asked` (one hash per id) in `default`, `acceptEdits`,
+  `plan` and `auto` (auto mode's classifier never answers a hook's ask: the
+  person sees it, #864); `PostToolUse` of the same `tool_use_id` writes one grant per id
   from argv. Claude Code fires `PostToolUse` only for a call that succeeded
   (a failure is `PostToolUseFailure`, not registered); a sent non-zero
   `exit_code` records nothing. The adapter's parse sets the approve step and
   its render applies it (`dispatchHook` runs both in one synchronous call);
   the launcher's fast path sends every `workit approve` call to the runtime on
   both events (`bin/workit-hook.mjs` `WORKIT_APPROVE`). Setup adds the `ask` rule `Bash(workit approve*)`. L: a grant proves the call
-  ran after an ask, not that a person answered, and no hook sees a reject. U:
-  whether auto mode, `bypassPermissions`, `dontAsk`, an SDK `canUseTool`
-  callback or `--permission-prompt-tool` answer an ask without a person; until
-  probed they record nothing (an `sdk-*` `CLAUDE_CODE_ENTRYPOINT`, which
-  `claude -p` and the SDKs set, records nothing either). L: the grant's
+  ran after an ask, not that a person answered, and no hook sees a reject.
+  L: `bypassPermissions`, `dontAsk`, an SDK `canUseTool` callback and
+  `--permission-prompt-tool` answer without a person, so they record nothing
+  (an `sdk-*` `CLAUDE_CODE_ENTRYPOINT`, which `claude -p` and the SDKs set,
+  records nothing either); a YouTrack write there runs with
+  `WORKIT_APPROVAL_UNASKED=<mode>` and the verb refuses naming it. L: the grant's
   `asked` row (host `claude_code`) catches a hand edit, not a forger.
-- **OpenCode:** fallback-only. The user-only call is asked as before; the CLI
-  records nothing in its shell. U: `permission.asked`/`permission.replied` are
+- **OpenCode:** fallback-only, YouTrack writes included: the verb refuses with
+  one short terminal command (`workit approve`). The user-only call is asked as
+  before; the CLI records nothing in its shell. L: no hook can rewrite a call's
+  input with an ask, so there is no ask on the action itself. U: `permission.asked`/`permission.replied` are
   in the installed types but unused by Workit, `question` has no reply event
   there, and a `subagent` spawn may not pass `permission.evaluate`. A grant
   naming `opencode` is refused.
@@ -515,11 +537,13 @@ library passes it, and real unforgeability needs another OS principal.
   `PreToolUse` hook denies it as a user-only call. L: the hook can deny but not
   ask; prompts come only from prefix rules. U: the `permission_mode` values
   under `approval_policy = never` and how a "don't ask again" answer caches.
-  A grant naming `codex` is refused.
+  A grant naming `codex` is refused. L: no ask on the action itself (the hook
+  cannot ask or rewrite); a YouTrack write refuses with `workit approve`.
 - **Cursor:** fallback-only. `Shell(workit approve)` is a `permissions.deny`
   entry and `beforeShellExecution` denies it. `afterShellExecution` is offered
   but not registered (X). U: whether auto-run skips an `ask`. A grant naming
-  `cursor` is refused.
+  `cursor` is refused. L: `beforeShellExecution` cannot rewrite a call, so no
+  ask on the action itself; a YouTrack write refuses with `workit approve`.
 - **Pi:** N in the TUI: the `tool_call` hook shows `ctx.ui.select` (Approve once
   / Reject / Edit) with the stored request, writes the grant (or the rejection;
   Edit closes the request) and blocks the shell call with a result naming the
@@ -527,7 +551,12 @@ library passes it, and real unforgeability needs another OS principal.
   (`hasUI` false); in RPC mode the dialog goes to the RPC client, which may be
   a program, so RPC is fallback-only (L): the shared gate denies the call.
   The hook writes an `asked` row (host `pi`) before the grant; L: it catches a
-  hand edit, not a forger.
+  hand edit, not a forger. On the action itself (#864): a plain `workit
+  youtrack …` write shows its full text in `ctx.ui.select` (Approve once /
+  Reject) on the tool call; Approve records the ask (only after the yes, so a
+  rejected dialog leaves nothing to reuse) and mutates the command to carry
+  its ticket, and the verb posts in that call. Print and RPC fall back to the
+  terminal line.
 
 ## Design background
 

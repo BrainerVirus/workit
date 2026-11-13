@@ -138,8 +138,8 @@ workit youtrack update ABC-123 --file notes.md --attach shot.png --attach report
 Pass at least one. Before asking, Workit checks that each file exists and that
 your ytrack supports `--attach` (an older one fails with `ytrack upgrade` as
 the fix); nothing is asked or posted until both hold. The request you approve
-lists every part on that issue and host: the comment's first three lines, each
-file's name, size and content hash, the time (`2h45m`) and the state or command. After your
+lists every part on that issue and host: the whole comment (a long one ends
+with "N more lines"), each file's name, size and content hash, the time (`2h45m`) and the state or command. After your
 yes the parts run in order (comment, time, then commands) and the result lists
 each one. The run stops at the first failure and says what landed and what
 was not applied; rerunning skips a comment or time that landed (its marker),
@@ -148,11 +148,19 @@ but a command or a file-only attach has no marker, so check the issue first.
 ## Writes ask you first
 
 Every write (`create`, `note`, `time`, `meeting`, `update`) waits for your yes, in every
-workspace. The first run records a request and refuses with
-`approval_needed`; nothing is posted. The agent runs `workit approve <id>`,
-your host shows the issue, the text, the minutes and the day, and the agent's
-next run uses your yes once. See [Approvals](approvals.md) for how each host
-asks and for the terminal fallback. A changed text or length needs a new yes.
+workspace. How you give it depends on the host (#864):
+
+| Host | How you approve |
+| --- | --- |
+| Claude Code (also in auto mode) | The permission prompt on the `workit youtrack …` call itself shows the full text; Yes posts it in that call, once. No id, no second command. In `bypassPermissions`, `dontAsk` or `claude -p` nobody sees a prompt, so nothing is approved and the call names the mode. |
+| Pi (TUI) | A dialog on the call shows the full text; Approve once posts it in that call. |
+| OpenCode, Codex, Cursor, Pi print/RPC | The call records one request for that text and refuses with `approval_needed`. You run `workit approve` in a terminal: it shows the full text and asks y/N (with an id only when several requests wait). The agent's next run uses your yes once. |
+
+A changed text or length needs a new yes. Refusing the same text again reuses
+its request: one text, one id. The agent must run the call as its own plain
+command (no pipe, chain, redirect, `bash -c` or variable around it), or the
+host cannot show it to you; a wrapped call is denied with the plain form. See
+[Approvals](approvals.md) for the other approvals.
 
 Before asking, Workit reads the issue back:
 
@@ -173,7 +181,9 @@ An agent that runs a `ytrack` write itself (`ytrack issue comment`,
 `ytrack api` with POST, PUT, PATCH or DELETE), plain or wrapped in `bash -c`,
 a chain, a pipe, `npx` or a full path, is stopped by Workit's shell hook. When
 a `workit youtrack` verb does the same thing, the hook names that exact call,
-which asks you first. Several writes on one issue chained with `&&` or `;`
+which asks you first. A time log (`ytrack work-item add`) is named as its
+`workit youtrack time` call even when the agent's command was not plain (a
+leading `cd`, a loop, `bash -c`). Several writes on one issue chained with `&&` or `;`
 (a comment with `--attach`, `ytrack issue attach`, `ytrack work-item add`,
 `ytrack issue command`, or a hand-built `ytrack api` POST to the issue's
 `comments` or `attachments`) are named as one `workit youtrack update` call,
@@ -182,7 +192,7 @@ so you answer one ask for the whole update. For a write no verb covers:
 | Host | What happens |
 | --- | --- |
 | Claude Code | The permission prompt on the call: you decide it there. |
-| Codex, Cursor, Pi, OpenCode | The call is refused; the agent asks you, and you run the command in your own terminal if you agree. |
+| Codex, Cursor, Pi, OpenCode | The call is refused; the agent asks you, and you run the command in a terminal if you agree. |
 
 Reads (`ytrack issue view`, `ytrack work-item list`, `ytrack api` GET) are
 never stopped.

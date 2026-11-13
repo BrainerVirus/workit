@@ -1141,6 +1141,23 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The guard on the approvals dir now works on Claude Code and Codex for the common spellings (`~/.local/state/workit/approvals/…`, `$HOME/…`, `cd <state> && … > approvals/…`): the launchers used to skip the check
 - The guard on the issued registry, the approvals dir and the config `workspaces.json` also denies writes it used to miss: `bash -c` and script files (shell, Python, Node, tsx), scripts fed by a pipe or heredoc, `rsync` and other writers, `git -C <dir> checkout`, editor write commands, paths spelled through env vars, globs or built from the home dir, hardlinks, and wrappers such as `sudo -u`, `env -i` and `timeout`. It is steering, not a sandbox: docs/agents/hosts.md lists what a hook cannot see
 
+### Fixed (#864: approve a YouTrack write on the action itself)
+
+- A `workit youtrack note|time|meeting|update|create` call is approved by one
+  click on the host's own prompt on that call. Claude Code (auto mode
+  included) and Pi's TUI show the full text, and Yes posts it in the same
+  call: no `workit approve`, no id. Before, auto mode recorded nothing, every
+  refusal minted a new id and the user was sent to a terminal.
+- In `bypassPermissions`, `dontAsk` or `claude -p` nobody sees a prompt, so
+  nothing is approved and the call names the mode.
+- Refusing the same text again reuses its one request. On OpenCode, Codex,
+  Cursor and Pi print/RPC the refusal is one short command: `workit approve`
+  in a terminal shows the full text and asks y/N, with an id only when several
+  requests wait.
+- The raw-ytrack guard names `workit youtrack time` for a time log even when
+  the agent's command was not plain, and no longer says "your own terminal"
+  where the host asks.
+
 ## [0.6.0] - 2026-08-10
 
 ### Added
