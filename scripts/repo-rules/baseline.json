@@ -93,7 +93,6 @@
     "test/workit-cli/fanout-brief.test.ts": 7,
     "test/workit-cli/fanout-merged-branch.test.ts": 3,
     "test/workit-cli/fanout-squash.test.ts": 1,
-    "test/workit-cli/fanout-status.test.ts": 21,
     "test/workit-cli/ledger-standing-retire.test.ts": 1,
     "test/workit-core/fanout-worktree-deps.test.ts": 1,
     "test/workit-core/fanout-worktree-stack.test.ts": 1,

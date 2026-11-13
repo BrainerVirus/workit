@@ -76,10 +76,10 @@ test(
     // legacy_scope passes (no pre-1.0.0 install).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 43,
+      passed: 44,
       warned: 1,
       failed: 1,
-      total: 45,
+      total: 46,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -126,10 +126,10 @@ test(
       // legacy_scope passes (no pre-1.0.0 install).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 43,
+        passed: 44,
         warned: 1,
         failed: 1,
-        total: 45,
+        total: 46,
         fixes: 1,
       });
     } finally {
