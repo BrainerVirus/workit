@@ -78,6 +78,9 @@ test.each([
   ["cd x && workit workspace seal", "workspace seal"],
   ["workit --cwd /x --json grant set ws merge=true", "grant set"],
   ["workit --json ledger void mwbe83fk --reason x", "ledger void"],
+  ["workit gr\\\nant set a b=c", "grant set"],
+  ["work\\\nit setup --yes", "setup"],
+  ["workit s$'e'tup --yes", "setup"],
 ])(
   "Given a config allow for `%s`, When the plugin evaluates it, Then it asks naming the call",
   (command, words) => {

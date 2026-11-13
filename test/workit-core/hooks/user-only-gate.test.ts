@@ -217,6 +217,25 @@ test("G setup, uninstall, install and workspace seal behind any wrapper or globa
     }
 }, 600_000);
 
+// Spellings the gate's own parser resolves (ruling hook-reach-2026-11-13, 4.1):
+// a backslash-newline inside a word, ANSI-C quoting.
+test.each([
+  ["workit gr\\\nant set a b=c", ["grant", "set"]],
+  ["work\\\nit setup --yes", ["setup"]],
+  ["workit s$'e'tup --yes", ["setup"]],
+])(
+  "G `%s`, W an agent runs it, T every host's entry asks or denies it",
+  (command, words) => {
+    const root = noStore();
+    expect(userOnlyWorkitCall(command)).toEqual(words);
+    expect(claudeLauncher(root, command)?.permissionDecision).toBe("ask");
+    expect(codexLauncher(root, command)?.permissionDecision).toBe("deny");
+    expect(cursor(root, command).permission).toBe("deny");
+    expect(pi(root, command)?.block).toBe(true);
+  },
+  120_000,
+);
+
 test.each([
   ["workit help setup"],
   ["workit check -- npm install"],

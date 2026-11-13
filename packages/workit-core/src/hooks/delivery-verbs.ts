@@ -66,14 +66,16 @@ export const USER_ONLY_WORD = new RegExp(
 /**
  * Whether `text` may run a user-only Workit call: the word `workit` and a
  * user-only first word anywhere, read with quotes and backslashes removed
- * (and again with backticks removed). The one test the gate starts with and
+ * (and again with backticks removed), backslash-newlines joined first; a `$'…'` or
+ * `$"…"` spelling counts as any word. The one test the gate starts with and
  * both launchers copy byte for byte (docs/agents/hosts.md): never a list of
  * positions, wrappers or global options.
  */
 export const mayRunUserOnly = (text: string): boolean => {
-  const bare = text.replace(/['"\\]/g, "");
+  const joined = text.replace(/\\\r?\n/g, "");
+  const bare = joined.replace(/['"\\]/g, "");
   return [bare, bare.replace(/`/g, "")].some(
-    (all) => /\bworkit\b/.test(all) && USER_ONLY_WORD.test(all),
+    (all) => /\bworkit\b/.test(all) && (USER_ONLY_WORD.test(all) || /\$['"]/.test(joined)),
   );
 };
 

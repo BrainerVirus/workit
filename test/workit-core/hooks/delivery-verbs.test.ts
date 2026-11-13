@@ -39,6 +39,10 @@ const USER_ONLY_SHAPES = [
   "/usr/local/bin/workit-cli ledger void mwbe83fk --reason x",
   "workit approve ap_aaaaaaaa",
   "workit --json release notes approve 1.0.0",
+  // Spellings the gate's own parser resolves (ruling hook-reach-2026-11-13, 4.1).
+  "workit gr\\\nant set a b=c",
+  "work\\\nit setup --yes",
+  "workit s$'e'tup --yes",
 ];
 
 test("G every user-only shape, W the gate and its first test read it, T the gate names the call and the test passes it", () => {
@@ -66,15 +70,25 @@ test("G a help call, a call after `--` or a quoted mention, W the gate reads it,
 
 test("G both launchers, W their sources are read, T each holds the gate's first test byte for byte", () => {
   const root = path.resolve(import.meta.dir, "../../..");
+  /** The function's text after its signature, through its closing brace. */
+  const fn = (file: string) => {
+    const source = readFileSync(path.join(root, file), "utf8");
+    const found =
+      /const mayRunUserOnly = \(text(?:: string)?\)(?:: boolean)? => (\{\n[\s\S]*?\n\};)/.exec(
+        source,
+      );
+    expect(found, file).not.toBeNull();
+    return { source, body: found?.[1] ?? "" };
+  };
+  const core = fn("packages/workit-core/src/hooks/delivery-verbs.ts").body;
+  expect(core).toContain('text.replace(/\\\\\\r?\\n/g, "")');
+  expect(core).toContain("/\\$['\"]/.test(joined)");
   for (const launcher of [
     "packages/workit-claude-code/bin/workit-hook.mjs",
     "packages/workit-codex/hooks/launcher.ts",
   ]) {
-    const source = readFileSync(path.join(root, launcher), "utf8");
+    const { source, body } = fn(launcher);
     expect(source, launcher).toContain(`const USER_ONLY_WORD = ${String(USER_ONLY_WORD)};`);
-    expect(source, launcher).toContain(`const bare = text.replace(/['"\\\\]/g, "");`);
-    expect(source, launcher).toContain(
-      'return [bare, bare.replace(/`/g, "")].some(\n    (all) => /\\bworkit\\b/.test(all) && USER_ONLY_WORD.test(all),\n  );',
-    );
+    expect(body, launcher).toBe(core);
   }
 });
