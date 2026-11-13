@@ -132,16 +132,40 @@ test("Given workit __complete check '', Then it lists the configured check names
   expect(run(["check", "u"]).stdout).toBe("unit\n");
 });
 
-test("Given workit __complete fanout worktree create '', Then it lists the slice ids in under 300 ms", () => {
+// Completion runs on every <Tab>, so it must stay cheap: no subprocess and one
+// read of each plan. Counted, not timed: a wall-clock budget fails on a loaded
+// machine (784 ms at load ~29) while the work it guards stays the same.
+const probe = path.join(scratch, "probe-preload.ts");
+writeFileSync(
+  probe,
+  `import fs from "node:fs";
+const spawns = [];
+const reads = [];
+// node:child_process spawns through these too.
+for (const name of ["spawn", "spawnSync"]) {
+  const real = Bun[name];
+  Bun[name] = (...args) => (spawns.push(JSON.stringify(args[0]?.cmd ?? args[0])), real(...args));
+}
+const realRead = fs.readFileSync;
+fs.readFileSync = (file, ...rest) => (reads.push(String(file)), realRead(file, ...rest));
+const realWrite = fs.writeFileSync;
+process.on("exit", () => realWrite(process.env.WK_PROBE_OUT, JSON.stringify({ spawns, reads })));
+`,
+);
+
+test("Given workit __complete fanout worktree create '', Then it lists the slice ids without a subprocess and reads the plan once", () => {
   expect(run(["fanout", "worktree", ""]).stdout).toBe("create\nrelease\n");
-  const timings: number[] = [];
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const start = performance.now();
-    const result = run(["fanout", "worktree", "create", ""]);
-    timings.push(performance.now() - start);
-    expect(result.stdout).toBe("cli-help\ndocs\n");
-  }
-  expect(Math.min(...timings)).toBeLessThan(300);
+  const out = path.join(scratch, "probe.json");
+  const result = spawnSync(
+    process.execPath,
+    ["--preload", probe, mainEntry, "__complete", "fanout", "worktree", "create", ""],
+    { cwd: repo, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", WK_PROBE_OUT: out } },
+  );
+  expect(result.stdout).toBe("cli-help\ndocs\n");
+  const seen = JSON.parse(readFileSync(out, "utf8")) as { spawns: string[]; reads: string[] };
+  expect(seen.spawns).toEqual([]);
+  const plan = path.join(store.data, "batch.json");
+  expect(seen.reads.filter((file) => path.resolve(repo, file) === plan)).toHaveLength(1);
 });
 
 test("Given words mid-command, Then __complete offers subcommands, flags, fixed words and help topics, and nothing after a value flag", async () => {
