@@ -608,6 +608,12 @@ export type AcquireOptions = {
   probe?: LeaseProbe;
   pid?: number;
   clock?: Clock;
+  /**
+   * false: poll only, no file watching. A test on a fake clock sets it, so a
+   * late real watch event (macOS FSEvents can deliver one for a write made
+   * before the watch began) never adds a settle to the fake waited time.
+   */
+  watch?: boolean;
 };
 
 /** Where a waiter stands: 1 is next in line. */
@@ -738,7 +744,12 @@ export type LeaseWake = {
  * without file watching only polls. The waiter's own ticket (`own`) never
  * wakes it: a late watch event for its own write would only add a settle.
  */
-export function leaseWake(dir: string, clock: Clock = realClock, own?: string): LeaseWake {
+export function leaseWake(
+  dir: string,
+  clock: Clock = realClock,
+  own?: string,
+  watch = true,
+): LeaseWake {
   let changed = false;
   let wake: (() => void) | null = null;
   const watchers: fs.FSWatcher[] = [];
@@ -750,6 +761,7 @@ export function leaseWake(dir: string, clock: Clock = realClock, own?: string): 
   for (const target of [dir, queueDir(dir)]) {
     try {
       fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+      if (!watch) continue;
       const watcher = fs.watch(target, { persistent: false }, onChange);
       watcher.on("error", () => watcher.close());
       watchers.push(watcher);
@@ -1115,7 +1127,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   const holding = () =>
     liveHolders(options.dir, slotRange(options.dir, options.slots), options.probe, maxHold);
   // Watching starts before the first read, so a release right after it still wakes this waiter.
-  const wake = leaseWake(options.dir, clock, name);
+  const wake = leaseWake(options.dir, clock, name, options.watch ?? true);
   try {
     for (;;) {
       const waited = clock.now() - started;
