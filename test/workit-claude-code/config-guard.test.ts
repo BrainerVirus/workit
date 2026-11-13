@@ -1,6 +1,7 @@
 // The launcher's fast paths answer `{}` before the runtime loads. An Edit,
 // Write or shell write to the config dir's workspaces.json must reach the
 // runtime, whose write gate denies it, even in a repo with no task store.
+// Its seal (workspaces.json.seal, #819) matches the same pre-filter.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,6 +34,8 @@ const payload = (toolName: string, toolInput: Record<string, unknown>) => ({
   tool_use_id: "toolu_config",
 });
 
+const FILES = ["workspaces.json", "workspaces.json.seal"];
+
 type Output = {
   hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
 };
@@ -50,19 +53,21 @@ test("Given a repo with no task store, When an Edit, Write or shell write target
   ];
   for (const { extra, dir } of forms) {
     mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "workspaces.json");
-    for (const tool of ["Edit", "Write"]) {
-      const out = decide(tool, { file_path: file, content: "{}" }, extra);
-      expect(out?.permissionDecision, `${tool} ${file}`).toBe("deny");
-      expect(out?.permissionDecisionReason).toContain("workit grant set <ws>");
-    }
+    for (const name of FILES)
+      for (const tool of ["Edit", "Write"]) {
+        const file = path.join(dir, name);
+        const out = decide(tool, { file_path: file, content: "{}" }, extra);
+        expect(out?.permissionDecision, `${tool} ${file}`).toBe("deny");
+        expect(out?.permissionDecisionReason).toContain("workit grant set <ws>");
+      }
     expect(decide("Bash", { command: `cp /tmp/x.json ${dir}/` }, extra)?.permissionDecision).toBe(
       "deny",
     );
   }
-  expect(
-    decide("Bash", { command: "echo '{}' > ~/.config/workit/workspaces.json" })?.permissionDecision,
-  ).toBe("deny");
+  for (const name of FILES)
+    expect(
+      decide("Bash", { command: `echo '{}' > ~/.config/workit/${name}` })?.permissionDecision,
+    ).toBe("deny");
   expect(decide("Write", { file_path: path.join(repo, "a.ts"), content: "x" })).toBeUndefined();
   expect(decide("Bash", { command: `cat ${base}/.config/workit/workspaces.json` })).toBeUndefined();
 }, 60_000);
