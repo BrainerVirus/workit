@@ -882,6 +882,17 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   }
 };
 
+/** A run that threw: what the tripwire found by then; `bench` reports it and throws `cause` on. */
+class RunThrew extends Error {
+  constructor(
+    cause: unknown,
+    readonly trip: Trip | null,
+    readonly other: Trip | null,
+  ) {
+    super("a bench run threw", { cause });
+  }
+}
+
 /**
  * One run: its result, or null when a signal stopped it (no result is
  * written), what the tripwire found, and for a `private_content` refusal
@@ -903,11 +914,19 @@ const runCase = async (
   try {
     run = await (opts.host === "opencode" ? runOpencode(spec, opts) : runClaude(spec, opts));
   } catch (error) {
-    // Only a change this bench could have made keeps the journal; another
-    // process's is reported by the last check (`holdTripwire`).
+    // As after a run that ends: only a change this bench could have made keeps
+    // the journal; another process's is taken as the new state and counted.
+    // `bench` reports both before the error goes on.
     const during = checkSnapshot(snapshot);
-    if (during && splitTrip(opts, opts.confinement.on, during).own) opts.keepJournal = true;
-    throw error;
+    const { other, own } = during
+      ? splitTrip(opts, opts.confinement.on, during)
+      : { other: null, own: null };
+    if (other) {
+      adopt(snapshot, other);
+      opts.otherChanges += tripCount(other);
+    }
+    if (own) opts.keepJournal = true;
+    throw new RunThrew(error, own, other);
   }
   const found = checkSnapshot(snapshot);
   // The ruleset the run really had: the launcher exits 126 without the host when it cannot apply it.
@@ -1391,14 +1410,14 @@ const holdTripwire = async (
         thrown = { error };
       }
       // One more look before the journal goes: a change after the last run's
-      // check, or during a run that threw, is otherwise never seen. No host is
+      // check (a run that threw had its own, in `runCase`) is otherwise never seen. No host is
       // alive, so the policy is the bench's: confined or not.
       const late = opts.keepJournal ? null : checkSnapshot(opts.snapshot);
       if (late) {
         const { other, own } = splitTrip(opts, opts.confinement.on, late);
         if (other) {
           opts.otherChanges += tripCount(other);
-          print(otherChange(other, true));
+          print(otherChange(other, "late"));
         }
         if (own) {
           opts.keepJournal = true;
@@ -1488,7 +1507,22 @@ const bench = async (
       // A signal is handled when the runner reaches its event loop: give it the chance.
       await new Promise((resolve) => setImmediate(resolve));
       if (opts.stop) return stopped(opts, null, print);
-      const { result, trip, hits, other } = await runCase(spec, key, version, opts, run);
+      let ran: Awaited<ReturnType<typeof runCase>>;
+      try {
+        ran = await runCase(spec, key, version, opts, run);
+      } catch (error) {
+        if (!(error instanceof RunThrew)) throw error;
+        if (error.other) print(otherChange(error.other, "threw"));
+        if (error.trip)
+          print(
+            [
+              `STOPPED: ${spec.id} changed real Workit files outside its world, then the runner failed (its error follows). Nothing was put back; no further run starts. ${tripDetail(error.trip, "none (the failed run writes no result)")}`,
+              ...findingLines(error.trip.findings),
+            ].join("\n"),
+          );
+        throw error.cause;
+      }
+      const { result, trip, hits, other } = ran;
       if (other) print(otherChange(other));
       if (!result) return stopped(opts, trip, print);
       outcomes.push(result);
@@ -1549,14 +1583,20 @@ const bench = async (
   return failed > 0 || limited.length > 0 ? 1 : 0;
 };
 
+const OTHER_WHEN = {
+  run: "the run goes on, its result is written and the next bench starts",
+  late: "it came after the last run's check, so no result records it, and the next bench starts",
+  threw: "the run threw, so no result records it; this change stops nothing",
+} as const;
+
 /**
  * The report of a change another process made (`notOurs`): what changed and
- * where the copy taken at arm is, for the terminal. The run goes on; `late`
- * is the last check, after the last run, which no result records.
+ * where the copy taken at arm is, for the terminal: during a run (which goes
+ * on), at the last check after the last run, or when a run threw.
  */
-const otherChange = (trip: Trip, late = false): string =>
+const otherChange = (trip: Trip, when: "run" | "late" | "threw" = "run"): string =>
   [
-    `outside change, not this bench's: write confinement was on, so this change was made by another process; ${late ? "it came after the last run's check, so no result records it, and the next bench starts" : "the run goes on, its result is written and the next bench starts"}. ${[
+    `outside change, not this bench's: write confinement was on, so this change was made by another process; ${OTHER_WHEN[when]}. ${[
       trip.reported.added.length > 0 ? `added ${trip.reported.added.join(", ")}` : "",
       trip.reported.changed.length > 0 ? `changed ${trip.reported.changed.join(", ")}` : "",
       trip.reported.missing.length > 0 ? `missing ${trip.reported.missing.join(", ")}` : "",

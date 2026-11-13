@@ -51,7 +51,14 @@ export const accountOf = (realHome: string): Account => {
 };
 
 const escape = (text: string): string => text.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-const whole = (text: string): RegExp => new RegExp(`(?<![\\w.-])${escape(text)}(?![\\w-])`, "gu");
+/**
+ * Right after a one-letter option glued to its value at the start of a
+ * token (`-C<dir>`, `"-I<dir>"`): the value starts a path there although a
+ * letter comes before it. `a-C<dir>` is one word, not an option.
+ */
+const OPTION_GLUED = String.raw`(?<=(?:^|[\s"'=(])-[A-Za-z])`;
+const whole = (text: string): RegExp =>
+  new RegExp(`(?:(?<![\\w.-])|${OPTION_GLUED})${escape(text)}(?![\\w-])`, "gu");
 /** A host's project slug: the path with each separator a `-`, so more of it may follow. */
 const slug = (text: string): RegExp => new RegExp(`(?<!\\w)${escape(text)}(?!\\w)`, "gu");
 
@@ -118,14 +125,15 @@ type Span = { start: number; end: number; as: string };
  * Every place `text` names a root as a whole path: not after and not before
  * a character a path segment goes on with, so `<root>/x` and `"<root>"` are
  * the root and `<root>-client`, `<root>x` and `/mnt<root>` are other paths.
- * The longest root wins where two start at one place.
+ * A root glued to a one-letter option (`-C<root>`) is the root too
+ * (`OPTION_GLUED`). The longest root wins where two start at one place.
  */
 const rootSpans = (text: string, roots: Root[]): Span[] => {
   if (roots.length === 0) return [];
   const sorted = roots.toSorted((a, b) => b.dir.length - a.dir.length);
   const as = new Map(sorted.map((root) => [root.dir, root.as]));
   const pattern = new RegExp(
-    `(?<!${SEGMENT})(?:${sorted.map((root) => escape(root.dir)).join("|")})(?!${SEGMENT})`,
+    `(?:(?<!${SEGMENT})|${OPTION_GLUED})(?:${sorted.map((root) => escape(root.dir)).join("|")})(?!${SEGMENT})`,
     "gu",
   );
   return [...text.matchAll(pattern)].map((match) => ({
@@ -1313,8 +1321,15 @@ export const shownHit = (hit: Hit): string =>
 /** Home-dir names a committed result may show: the runner's `<user>` and invented examples. */
 const NEUTRAL_USERS = new Set(["<user>", "me", "user", "example"]);
 
-/** An absolute path under a home dir; a placeholder root (`<world>/home/…`) is not one. */
-const HOME_PATH = /(?<![\w>.~-])\/(?:home|Users)\/([^/\s"'\\]+)\//gu;
+/**
+ * An absolute path under a home dir, also glued to a one-letter option
+ * (`-C/home/…`, as the scrub reads it); a placeholder root (`<world>/home/…`)
+ * is not one.
+ */
+const HOME_PATH = new RegExp(
+  String.raw`(?:(?<![\w>.~-])|${OPTION_GLUED})\/(?:home|Users)\/([^/\s"'\\]+)\/`,
+  "gu",
+);
 /** A host config's `projects` map: absolute (or `~`) paths as keys. */
 const PROJECTS_MAP = /\\*"projects\\*"\s*:\s*\{\s*\\*"(?:\/|~|[A-Za-z]:)/u;
 /** A workspace glob under the real home: a world's config globs `<world>/**`. */
