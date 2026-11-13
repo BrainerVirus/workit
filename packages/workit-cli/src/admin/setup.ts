@@ -50,7 +50,7 @@ import {
 import { runDoctor, type DoctorReport } from "./doctor";
 import { sealAfterWrite, sealBefore } from "@workit-dev/core/src/autonomy";
 import { SEAL_COMMAND } from "@workit-dev/core/src/core/grant-seal";
-import { agentMarker } from "../verbs/grant";
+import { agentMarker } from "../upgrade/agent-marker";
 import { CODEX_MARKETPLACE } from "../upgrade/codex-marketplace";
 import { writeFileExclusive } from "@workit-dev/core/src/core/safe-write";
 import {

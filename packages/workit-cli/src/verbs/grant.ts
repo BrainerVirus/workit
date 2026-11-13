@@ -87,23 +87,13 @@ import { isChangelogGlob, resolveChangelogPaths } from "@workit-dev/core/src/cor
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
 import { createStyle, type Style } from "../style";
+import { agentMarker } from "../upgrade/agent-marker";
 import { vcsView } from "./config-vcs";
 
 const USAGE =
   "workit grant show [<workspace>] [--all] | grant set <workspace> <kind>=<true|false|verified>… [defaultEndpoint=commit|pr|green|merged] [verification=proportional|self|independent] | grant unset <workspace> <kind>…  (kinds: push, pr, merge, release, rerun, defaultEndpoint, verification)";
 
-/** Agent hosts that export a marker into the shells they run (best effort). */
-const AGENT_ENV = [
-  "CLAUDECODE",
-  "OPENCODE",
-  "CURSOR_AGENT",
-  "PI_CODING_AGENT",
-  "AI_AGENT",
-  "AGENT",
-];
-export const agentMarker = (env: NodeJS.ProcessEnv): string | undefined =>
-  AGENT_ENV.find((name) => env[name]) ??
-  Object.keys(env).find((name) => name.startsWith("CODEX_") && env[name]);
+export { agentMarker };
 
 export type GrantDeps = {
   /** True only for a person at a terminal: stdin and stdout are TTYs. */
