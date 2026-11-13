@@ -74,7 +74,10 @@ const HOOK_ENTRIES = [
 // core run 530,043 B, Claude Code 523,506 B, Cursor 519,092 B, Codex 518,704 B; the ceiling is
 // core run plus 2,000 B. The one-approval `workit youtrack update` routing (chained writes on one
 // issue joined into one call) adds 3,974 B: core run 536,017 B; the ceiling is core run plus 2,000 B.
-const BUDGET = 538_017;
+// Wave 8 round 2 (2026-11-13), measured on Bun 1.4.4 at #834: core run 536,017 B, Claude Code
+// 529,486 B, Cursor 525,072 B, Codex 524,684 B. One ceiling for the round, core run plus 6,000 B:
+// hook-reach, grant-seal-core and grant-seal-cli may spend it, each printing its delta in its PR.
+const BUDGET = 542_017;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
