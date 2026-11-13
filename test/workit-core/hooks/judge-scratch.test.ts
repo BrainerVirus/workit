@@ -609,3 +609,37 @@ test("Given git config, remote and bisect reads, When a judge runs them, Then re
   ])
     expect(bash(command), command).toBe("deny");
 });
+
+test("Given a judge's git hidden in a nested script, a shell fed from a pipe, or an executable in scratch or the candidate, When judged, Then it is denied; reading about git is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  mkdirSync(scratch, { recursive: true });
+  for (const command of [
+    `bash -c 'g=gi; \${g}t -C ${wt} commit -m x'`,
+    `sh <<EOF\ng=gi; \\\${g}t -C ${wt} commit -m x\nEOF`,
+    `echo $(g=gi; \${g}t -C ${wt} commit -m x)`,
+    `sh -c "sh -c 'sh -c \\"sh -c true\\"'"`,
+    `printf 'git -C ${wt} commit -m x' | sh`,
+    `cat ${path.join(scratch, "x.sh")} | sh`,
+    `./git -C ${wt} log`,
+    `${path.join(scratch, "git")} -C ${wt} log`,
+    `${path.join(wt, "git")} -C ${wt} log`,
+    `${path.join(scratch, "tool.sh")}`,
+    `timeout 5 ${path.join(scratch, "git")} -C ${wt} log`,
+    `BASH_ENV=${path.join(scratch, "x.sh")} bash -c true`,
+  ])
+    expect(bash(command), command).toBe("deny");
+  for (const command of [
+    "which git",
+    "command -v git",
+    "command -V git",
+    "type git",
+    `test -x ${path.join(scratch, "git")}`,
+    `[ -x ${path.join(scratch, "git")} ]`,
+    `mkdir -p ${path.join(scratch, "git")}`,
+    `ls ${path.join(scratch, "git")}`,
+    `cd ${path.join(scratch, "git")} && ls`,
+    "/usr/bin/git --version",
+    `bash -c 'git -C ${wt} log --oneline'`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+});

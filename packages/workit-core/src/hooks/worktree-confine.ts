@@ -817,7 +817,13 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
     // hash entry; readers that only print the word are fine.
     let start = words.findIndex((word) => /(?:^|[\\/])git(?:\.exe)?(?:=|$)/.test(word));
     if (start > at) {
-      if (/^(?:grep|egrep|rg|echo|printf|ls|wc|head|tail|cat)$/.test(name)) start = -1;
+      if (
+        /^(?:grep|egrep|rg|echo|printf|ls|wc|head|tail|cat|which|type|test|\[|cd|mkdir)$/.test(
+          name,
+        ) ||
+        (name === "command" && /^-[vV]$/.test(words[at + 1] ?? ""))
+      )
+        start = -1;
       else if (
         !/^(?:timeout|nice|time|command)$/.test(name) ||
         words.slice(at + 1, start).some((word) => !/^(?:-[\w-]+|\d[\w.]*)$/.test(word))
@@ -825,8 +831,12 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
         why = `\`${name}\` runs git`;
     }
     if (start >= 0 && words[start].includes("=")) why = "git is redefined";
+    // An executable by path runs only from outside scratch and the judged repository.
+    for (const run of [words[at], words[start]])
+      if (run?.includes("/") && (!path.isAbsolute(run) || literalIn(run, repo, true)))
+        why ??= `\`${run}\` is an executable Workit does not judge`;
     // A command named by an expansion (`g?t`, `{git,x}`, `$X`) may be git with any arguments.
-    if (segment.expands?.includes(at) || /\{[^}]*,/.test(words[at] ?? ""))
+    if ((segment.expands?.includes(at) && name !== "[") || /\{[^}]*,/.test(words[at] ?? ""))
       why = "the command's name is expanded by the shell";
     // The words git receives are the words Workit reads: nothing the shell expands.
     if (
@@ -837,7 +847,8 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
     if (/^(?:export|declare|local|readonly|typeset)$/.test(name))
       lead.push(...words.slice(at + 1).filter((word) => /^\w+\+?=/.test(word)));
     // The environment a git in this command sees (assignments to exported names too).
-    for (const word of runsGit ? lead : [])
+    // BASH_ENV and ENV run a script in any shell, git in it or not.
+    for (const word of runsGit ? lead : lead.filter((set) => /^(?:BASH_)?ENV=/.test(set)))
       if (!/^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0|(?:LC_\w+|LANG|TZ)=[^$`]*)$/.test(word))
         why ??= `\`${word}\` is not allowed`;
     let index = start < 0 ? words.length : start + 1;
@@ -866,10 +877,19 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
           why = "`git status` refreshes the index outside scratch: add --no-optional-locks";
       }
     }
-    // Scripts it carries: `bash -c "…"`, `$(…)`, a heredoc fed to a shell.
-    for (const script of [...words, ...(segment.subs ?? []), ...(segment.stdin ?? [])])
-      if (!why && depth < 3 && /\bgit\b|GIT_/.test(script) && /\s/.test(script))
-        why = judgeGit(script, repo, depth + 1);
+    // Scripts it runs, whatever their text: `$(…)`, and a shell's `-c` operand or heredoc.
+    const shell = /^(?:sh|bash|zsh|dash|ksh|mksh|ash)$/.test(name);
+    for (const script of [
+      ...(segment.subs ?? []),
+      ...(shell
+        ? [
+            ...words.filter((_, after) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(words[after - 1] ?? "")),
+            ...(segment.stdin ?? []),
+          ]
+        : []),
+    ])
+      why ??=
+        depth < 4 ? judgeGit(script, repo, depth + 1) : "scripts nest too deep for Workit to read";
     if (why) return why;
   }
   return null;
