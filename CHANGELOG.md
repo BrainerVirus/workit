@@ -89,7 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Latest mark (`--latest` takes it) and verifies it. `workit git push --release`
   accepts a package tag with the same rules as a workspace release tag, the
   raw-push denial names it, and `workit release notes draft|show|approve` take
-  `pkg-a@0.1.0` or `--package <name>`. See
+  `pkg-a@0.1.0` or `--package <name>`. `workit workspace set` writes
+  `releasePackages.<name>.tagNamespace|changelogPath`, `workit grant show`
+  lists the packages, `workit doctor` warns on a bad entry or a missing
+  changelog file, and a refused package push deletes the tag it just made. See
   [docs/guides/configuration.md](docs/guides/configuration.md#release-packages).
 
 ### Fixed (release packages)

@@ -202,6 +202,9 @@ workit release notes show 1.4.0              # the draft and whether it is appro
 workit release notes approve 1.4.0           # the user only, in their own terminal
 ```
 
+A [release package](configuration.md#release-packages) (`pkg-a@0.1.0`) has
+its own draft, from its own changelog: `workit release notes draft pkg-a@0.1.0`.
+
 The draft lives in the git directory, never in a commit. The agent adds a
 `## Highlights` section at its top from the user's pointers; running `draft`
 again rebuilds the rest from the changelog and keeps the Highlights unless

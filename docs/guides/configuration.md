@@ -966,6 +966,17 @@ mark, so the flag does nothing there. `workit release notes draft|show|approve`
 take the package tag (`pkg-a@0.1.0`) or `--package <name> <version>`, and keep
 the package's draft apart from the main version's.
 
+If the push is refused (`--at` names a commit production does not have yet),
+the command deletes the local tag it just made, only while the remote lacks
+it, so a rerun with the right `--at` is not blocked by `tag_exists`.
+
+Set a package from the CLI with `workit workspace set <workspace>
+releasePackages.pkg-a.changelogPath=projects/pkg-a/CHANGELOG.md` (or
+`.tagNamespace=<prefix>`; `releasePackages.pkg-a=null` removes it); a value the
+reader would ignore is refused. `workit grant show` lists each package's tag
+shape and changelog, and `workit doctor` warns (`release_packages`) on a bad
+entry or a `changelogPath` that names no file in the checkout.
+
 With a `changelogPath` list or glob, `workit release notes draft 4.6.0` reads
 the `## [4.6.0]` section from every matching changelog and prefers one no
 package claims.
