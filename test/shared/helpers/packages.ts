@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stripsWorkitKey } from "./env";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 
@@ -302,7 +303,7 @@ export function isolatedEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKIT_") || k.startsWith("XDG_")) continue;
+    if (stripsWorkitKey(k) || k.startsWith("XDG_")) continue;
     if (STRIPPED_ENV_VARS.has(k)) continue;
     env[k] = v;
   }

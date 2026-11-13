@@ -4,6 +4,18 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 
+/**
+ * What a child keeps when a test strips WORKIT_* from its env: the run marker,
+ * so the child's grants and seal stay in the run's temp account home and its
+ * writes to the real home's host settings are refused (#859). The children
+ * that strip get a temp HOME or WORKIT_STATE_DIR of their own.
+ */
+const RUN_ISOLATION_KEYS: ReadonlySet<string> = new Set(["WORKIT_TEST_RUN"]);
+
+/** Whether a test that strips Workit's env from a child drops `key` (never the run marker). */
+export const stripsWorkitKey = (key: string): boolean =>
+  key.startsWith("WORKIT_") && !RUN_ISOLATION_KEYS.has(key);
+
 // WORKIT_CONFIG -> dir; restored afterwards; dir removed.
 export const withIsolatedConfig = (dir: string, fn: () => void) => {
   const previous = process.env.WORKIT_CONFIG;

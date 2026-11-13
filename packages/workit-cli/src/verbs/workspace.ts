@@ -62,6 +62,7 @@ import {
   VERIFICATION_STRICTNESS,
   type VerificationMode,
 } from "@workit-dev/core/src/autonomy";
+import { testRunWriteRefusal } from "@workit-dev/core/src/core/account-home";
 import { checkoutRemotes, remotePattern } from "@workit-dev/core/src/core/remotes";
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import {
@@ -314,6 +315,9 @@ const save = (
   const latest = readWorkspacesResult(path.dirname(current.path));
   if (latest.revision !== current.revision)
     return { ok: false, error: `${current.path} changed; retry` };
+  // A test run never writes the real home's file (#859).
+  const real = testRunWriteRefusal(current.path);
+  if (real) return { ok: false, error: real };
   let backup: string | null = null;
   try {
     if (existsSync(current.path)) {
