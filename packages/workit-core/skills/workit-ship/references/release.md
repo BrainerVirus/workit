@@ -23,9 +23,10 @@
    get, from the user's pointers, in their words, not commit subjects.
    Rerunning draft keeps them. Under `review`, finish refuses
    (`release_notes_unapproved`) until the user approves: show the user the
-   draft and stop. They run `workit release notes approve <version>` in
-   their own terminal; never run it for them. Edit the draft after approval
-   only when they ask, then they approve again.
+   full draft in chat, then run `workit release notes approve <version>`
+   as its own call: Claude Code and Pi ask the user on it. If refused, ask
+   the user to run the command it names in their terminal. Edit the draft
+   after approval only when they ask, then they approve again.
 4. Interrupted (a conflict, a failed push, no forge release yet): fix the
    cause and rerun the `resume` command it printed. Steps already done are
    skipped, never repeated.

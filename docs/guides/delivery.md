@@ -199,7 +199,7 @@ stays the changelog section.
 ```bash
 workit release notes draft 1.4.0 [--reset]   # write .git/workit/release-notes/1.4.0.md and print it
 workit release notes show 1.4.0              # the draft and whether it is approved
-workit release notes approve 1.4.0           # the user only, in their own terminal
+workit release notes approve 1.4.0           # the host asks the user (Claude Code, Pi), else their terminal
 ```
 
 A [release package](configuration.md#release-packages) (`pkg-a@0.1.0`) has
@@ -217,14 +217,22 @@ again rebuilds the rest from the changelog and keeps the Highlights unless
 - `review`: `finish` and `finish --dry-run` exit 3 with
   `release_notes_unapproved` before any merge, tag or push until the newest
   `release.notes.approved` row holds the sha256 of the current draft; the
-  release body is then exactly that draft. `approve` refuses an agent shell
-  or a session without a terminal (as raising a grant does), prints the notes
-  and asks the user to type the version; an edit after it needs a new
-  approval. Like a grant raise, this check reads the shell it runs in: it
-  keeps a cooperating agent from approving, but an agent that hides its
-  environment can get past it. What stops that is the host asking the user
-  before an unknown command runs, so keep review-mode workspaces on a host
-  permission mode that asks (not a bypass or auto-approve mode).
+  release body is then exactly that draft; an edit after the approval needs
+  a new one. The agent shows the user the full draft in chat, then runs
+  `workit release notes approve <v>` as its own plain call:
+  - On Claude Code (auto mode included) and in Pi's TUI the host asks the
+    user on that call, showing the whole draft. Yes records the approval of
+    exactly the text shown: the call carries a one-use ticket bound to the
+    session, the turn and the draft's sha256, and a draft edited before the
+    call runs is refused (`approval_not_bound`); the next prompt shows the
+    new text. A `--package <name>` call is not asked on: use the package's
+    tag (`workit release notes approve pkg-a@0.1.0`).
+  - Where nobody sees a prompt (`bypassPermissions`, `dontAsk`,
+    `claude -p`, Pi print/RPC) or on OpenCode, Codex and Cursor, nothing is
+    approved: the call refuses with one command for the user's own terminal.
+    There `approve` prints the notes and asks the user to type the version;
+    it refuses an agent shell or a session without a terminal, as raising a
+    grant does.
 
 Outside git-flow the same modes apply in two places:
 
