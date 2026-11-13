@@ -556,24 +556,46 @@ const inScratch = (real: string, repo: string | null): boolean => {
 /** Whether real path `real` is a `.git` file or inside a `.git` dir: git's own files, written only through git. */
 const inGitDir = (real: string): boolean => real.split(/[\\/]/).includes(".git");
 
-/** The value of `[core] key` in git config text `text`, else undefined. */
-const coreValue = (text: string, key: string): string | undefined => {
-  let core = false;
+/**
+ * git config keys that run a command Workit never sees (aliases, hooks,
+ * pagers, editors, diff and merge drivers, filters, helpers) or pull in more
+ * config (includes). Lowercased `section.subsection.name`.
+ */
+const RUNS_CODE =
+  /^(?:alias\..*|core\.(?:hookspath|fsmonitor|pager|sshcommand|editor|askpass|gitproxy)|diff\.(?:external|.*\.(?:command|textconv))|merge\..*\.driver|filter\..*|credential\.(?:.*\.)?helper|pager\..*|sequence\.editor|gpg\.(?:.*\.)?program|interactive\.difffilter|.*\.(?:uploadpack|receivepack|packobjectshook)|(?:man|browser|difftool|mergetool)\..*\.(?:cmd|path)|include(?:if)?\..*)$/;
+
+/** git environment that runs a command, or reads config Workit does not see. */
+const RUNS_CODE_ENV =
+  /^(?:GIT_(?:EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|SSH|SSH_COMMAND|ASKPASS|EXEC_PATH|TEMPLATE_DIR|PROXY_COMMAND|CONFIG\w*)|SSH_ASKPASS|PAGER|EDITOR|VISUAL|HOME|XDG_CONFIG_HOME)$/;
+
+/** Each `key = value` of git config text, keys as lowercased `section.subsection.name`. */
+const configEntries = (text: string): Array<[string, string]> => {
+  const entries: Array<[string, string]> = [];
+  let section = "";
   for (const line of text.split(/\r?\n/)) {
-    const section = /^\s*\[\s*([^\]\s"]+)/.exec(line)?.[1];
-    if (section !== undefined) core = section.toLowerCase() === "core";
-    else if (core) {
-      const value = new RegExp(`^\\s*${key}\\s*=\\s*(.*?)\\s*$`, "i").exec(line)?.[1];
-      if (value !== undefined) return value.replace(/^"(.*)"$/, "$1");
+    const header = /^\s*\[\s*([^\]\s"]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]/.exec(line);
+    if (header) section = header[2] === undefined ? header[1] : `${header[1]}.${header[2]}`;
+    else {
+      const entry = /^\s*([\w-]+)\s*(?:=\s*(.*?))?\s*$/.exec(line);
+      if (entry)
+        entries.push([
+          `${section}.${entry[1]}`.toLowerCase(),
+          (entry[2] ?? "true").replace(/^"(.*)"$/, "$1"),
+        ]);
     }
   }
-  return undefined;
+  return entries;
 };
+
+/** Whether real dir `dir` is itself a git dir (a bare repository or a `.git`). */
+const isGitDir = (dir: string): boolean =>
+  ["HEAD", "objects", "refs"].every((name) => fs.existsSync(path.join(dir, name)));
 
 /**
  * The real git dir, common dir and configured work tree git uses when run
  * in real dir `dir` ([] outside every repository); null when Workit cannot
- * tell: a `.git` file with no gitdir line, `core.bare`, or a config include.
+ * tell or git would run code it does not see: a `.git` file with no gitdir
+ * line, or a config that includes another or sets a key in `RUNS_CODE`.
  */
 const gitDirsAt = (dir: string): string[] | null => {
   for (let at = dir; ; at = path.dirname(at)) {
@@ -588,6 +610,7 @@ const gitDirsAt = (dir: string): string[] | null => {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+      if (isGitDir(at)) gitDir = canonical(at);
     }
     if (gitDir !== null) {
       const common = path.join(gitDir, "commondir");
@@ -602,13 +625,10 @@ const gitDirsAt = (dir: string): string[] | null => {
         } catch {
           continue;
         }
-        if (
-          /^\s*\[\s*include/im.test(text) ||
-          /^(?:true|yes|on|1)$/i.test(coreValue(text, "bare") ?? "")
-        )
-          return null;
-        const worktree = coreValue(text, "worktree");
-        if (worktree !== undefined) dirs.push(canonical(path.resolve(gitDir, worktree)));
+        for (const [key, value] of configEntries(text)) {
+          if (RUNS_CODE.test(key)) return null;
+          if (key === "core.worktree") dirs.push(canonical(path.resolve(gitDir, value)));
+        }
       }
       return dirs;
     }
@@ -620,49 +640,80 @@ const gitDirsAt = (dir: string): string[] | null => {
 const GIT_PATH_ENV =
   /^GIT_(?:DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)$/;
 
+/** git global options that take the next word. */
+const GIT_GLOBAL_VALUE =
+  /^(?:-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--super-prefix)$/;
+/** `git config` options that only read, and those that take the next word. */
+const CONFIG_READ = /^(?:-l|--list|--get(?:-\w+)?|--unset(?:-all)?|-e|--edit)$/;
+const CONFIG_VALUE = /^(?:-f|--file|--blob|--type)$/;
+
 /**
  * Why `command` points a judge's git somewhere other than the repository it
- * runs in, outside scratch (#790): `--git-dir`, `--work-tree`, a `GIT_*` path
- * variable, `-c core.worktree=` or `git config core.worktree` whose value is
- * not a literal absolute path in scratch, and any `core.bare`, config include,
- * `--config-env` or `GIT_CONFIG*`. Null when it does not.
+ * runs in, or makes it run a command Workit cannot see (#790): `--git-dir`,
+ * `--work-tree`, a `GIT_*` path variable or `core.worktree` not naming a
+ * literal absolute path in scratch; a `RUNS_CODE` key set through `-c`,
+ * `--config-env`, `git config` or `git clone -c`; `--exec-path`, `--template`;
+ * environment in `RUNS_CODE_ENV`. Null when it does neither.
  */
 const gitRetarget = (command: string, repo: string | null, depth = 0): string | null => {
+  const hidden = (what: string) => `${what} runs code Workit cannot see`;
   const check = (what: string, value: string | undefined): string | null => {
-    if (value === undefined || /[$`]/.test(value) || !path.isAbsolute(value))
-      return `${what} must name a literal absolute path in scratch`;
-    return inScratch(canonical(value), repo) ? null : `${what} points outside scratch`;
+    return value !== undefined &&
+      !/[$`]/.test(value) &&
+      path.isAbsolute(value) &&
+      inScratch(canonical(value), repo)
+      ? null
+      : `${what} must be a literal path in scratch`;
+  };
+  const setting = (key: string, value: string | undefined): string | null => {
+    const name = key.toLowerCase();
+    if (name === "core.worktree") return check("core.worktree", value);
+    return RUNS_CODE.test(name) ? hidden(key) : null;
+  };
+  const pair = (text = ""): string | null => {
+    const at = text.indexOf("=");
+    return at < 0 ? setting(text, undefined) : setting(text.slice(0, at), text.slice(at + 1));
   };
   for (const segment of segmentsOf(command)) {
     const words = segment.words;
-    const isGit = words.some((word) => /^git(?:\.exe)?$/.test(path.basename(word)));
-    for (let index = 0; index < words.length; index++) {
-      const word = words[index];
-      const next = words[index + 1];
+    let why: string | null = null;
+    // Environment counts only when the command runs git somewhere (`export X=…; git …` too).
+    for (const word of /\bgit\b/.test(command) ? words : []) {
       const assigned = /^([A-Za-z_]\w*)=([\s\S]*)$/.exec(word);
-      let why: string | null = null;
-      if (assigned && GIT_PATH_ENV.test(assigned[1])) why = check(assigned[1], assigned[2]);
-      else if (assigned && assigned[1].startsWith("GIT_CONFIG"))
-        why = `${assigned[1]} changes git's configuration`;
-      else if (isGit) {
-        const flag = /^--(git-dir|work-tree)(?:=([\s\S]*))?$/.exec(word);
-        const key = (word === "-c" ? next : /^-c(.+)$/.exec(word)?.[1])?.toLowerCase() ?? "";
-        if (flag) why = check(`--${flag[1]}`, flag[2] ?? next);
-        else if (word.startsWith("--config-env")) why = "--config-env changes git's configuration";
-        else if (key.startsWith("core.worktree="))
-          why = check("core.worktree", (word === "-c" ? next : word.slice(2))?.slice(14));
-        else if (/^(?:core\.bare|include)/.test(key)) why = `-c ${key} retargets git`;
-        else if (/^core\.worktree$/i.test(word)) why = check("core.worktree", next);
-        else if (/^(?:core\.bare|include(?:if)?\.)/i.test(word)) why = `\`${word}\` retargets git`;
+      if (!assigned) continue;
+      if (GIT_PATH_ENV.test(assigned[1])) why ??= check(assigned[1], assigned[2]);
+      else if (RUNS_CODE_ENV.test(assigned[1])) why ??= hidden(assigned[1]);
+    }
+    const start = words.findIndex((word) => /^git(?:\.exe)?$/.test(path.basename(word)));
+    let index = start < 0 ? words.length : start + 1;
+    for (; !why && words[index]?.startsWith("-"); index++) {
+      const word = words[index];
+      const next = GIT_GLOBAL_VALUE.test(word) ? words[++index] : undefined;
+      const flag = /^--(git-dir|work-tree)(?:=([\s\S]*))?$/.exec(word);
+      if (flag) why = check(`--${flag[1]}`, flag[2] ?? next);
+      else if (word === "-c") why = pair(next);
+      else if (/^--(?:config-env|exec-path)/.test(word)) why = hidden(word.split("=")[0]);
+    }
+    const sub = words[index];
+    const rest = words.slice(index + 1);
+    if (!why && sub === "config" && !rest.some((word) => CONFIG_READ.test(word))) {
+      const named = rest.filter(
+        (word, at) => !word.startsWith("-") && !CONFIG_VALUE.test(rest[at - 1] ?? ""),
+      );
+      const [key, value] = named[0] === "set" ? named.slice(1) : named;
+      if (key !== undefined) why = setting(key, value);
+    }
+    if (!why && (sub === "init" || sub === "clone"))
+      for (let at = 0; at < rest.length && !why; at++) {
+        const word = rest[at];
+        if (/^--template(?:=|$)/.test(word)) why = hidden("--template");
+        else if (/^(?:-c|--config)$/.test(word)) why = pair(rest[at + 1]);
       }
-      if (!why && depth < 3 && /\s/.test(word) && /\bgit\b|GIT_/.test(word))
-        why = gitRetarget(word, repo, depth + 1);
-      if (why) return why;
-    }
-    for (const body of [...(segment.subs ?? []), ...(segment.stdin ?? [])]) {
-      const why = depth < 3 ? gitRetarget(body, repo, depth + 1) : null;
-      if (why) return why;
-    }
+    // Scripts it carries: `bash -c "…"`, `$(…)`, a heredoc fed to a shell.
+    for (const script of [...words, ...(segment.subs ?? []), ...(segment.stdin ?? [])])
+      if (!why && depth < 3 && /\bgit\b|GIT_/.test(script) && /\s/.test(script))
+        why = gitRetarget(script, repo, depth + 1);
+    if (why) return why;
   }
   return null;
 };
@@ -901,7 +952,7 @@ export function confineJudge(
       if (gitDirs === null)
         return judgeDeny(
           input,
-          `git in ${shown(target)} uses a git dir Workit cannot read (a .git file without a gitdir line, core.bare or an include): use a plain scratch repository`,
+          `git in ${shown(target)} uses a git dir or config Workit cannot check`,
         );
       if (
         runsGit

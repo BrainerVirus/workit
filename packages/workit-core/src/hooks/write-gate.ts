@@ -603,10 +603,10 @@ const worktreeOperands = (rest: readonly string[]): string[] => {
 
 /**
  * What git writes outside the edit analysis (#790): `init` and `clone` their
- * directory, `worktree add|move|remove|repair` the worktrees they name,
- * `format-patch` its patches, `archive -o`, `bundle create`, any `--output`,
- * a `config` write its file, and `fetch`, `gc` and `branch` writes the
- * repository ("."); paths are under `-C`. Null for the rest.
+ * directory and any `--separate-git-dir`, `worktree add|move|remove|repair`
+ * the worktrees they name, `format-patch` its patches, `archive -o`, `bundle
+ * create`, any `--output`, a `config` write its file, and `fetch`, `gc` and
+ * `branch` writes the repository ("."); paths are under `-C`. Null for the rest.
  */
 const gitOutputs = (args: readonly string[]): string[] | null => {
   let at = 0;
@@ -625,15 +625,17 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
     sub === "archive" ? /^(?:-o|--output=?)(.*)$/s : /^--output=?(.*)$/s,
   );
   if (output !== undefined) files.push(output);
-  if (sub === "init") files.push(names[0] ?? ".");
+  // `init` makes its directory the repository: the directory itself, not git run in it.
+  if (sub === "init") files.push(names[0] ?? "./");
+  if (sub === "init" || sub === "clone") {
+    const separate = valueOf(rest, /^--separate-git-dir=?(.*)$/s);
+    if (separate !== undefined) files.push(separate);
+  }
   // `worktree add|move|remove|repair` write the worktrees they name (repair: this one by default).
   if (sub === "worktree") {
     const named = worktreeOperands(rest.slice(1));
-    const verb = rest[0];
-    if (verb === "add" && named[0] !== undefined) files.push(named[0]);
-    if (verb === "move" || verb === "remove")
-      files.push(...named.slice(0, verb === "move" ? 2 : 1));
-    if (verb === "repair") files.push(...(named.length ? named : ["."]));
+    const count = { add: 1, move: 2, remove: 1, repair: named.length || 1 }[rest[0] ?? ""] ?? 0;
+    files.push(...(named.length ? named : ["."]).slice(0, count));
   }
   if (sub === "clone")
     files.push(

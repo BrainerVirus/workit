@@ -146,3 +146,14 @@ test("Given git worktree add after --, move, remove or repair, When the gate rea
   expect(repaired).toContain(path.join(base, "d"));
   expect(repaired).toContain(path.join(base, "e"));
 });
+
+test("Given git init or clone with --separate-git-dir, When the gate reads it, Then the separate git dir is a write", () => {
+  const targets = (command: string) =>
+    shellMutationTargets(root, command, "posix", true).map((target) => path.resolve(root, target));
+  const sep = path.join(base, "sep");
+  expect(targets(`git init --separate-git-dir=${sh(sep)} d`)).toContain(sep);
+  expect(targets(`git init --separate-git-dir ${sh(sep)} d`)).toContain(sep);
+  expect(targets(`git clone --separate-git-dir ${sh(sep)} https://example.invalid/r d`)).toContain(
+    sep,
+  );
+});

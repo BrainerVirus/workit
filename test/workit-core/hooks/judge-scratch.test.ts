@@ -197,7 +197,6 @@ test("Given a scratch repository retargeted at another git dir (a .git file, --g
     `GIT_INDEX_FILE=${path.join(mainGit, "index")} git -C ${rt} add -A`,
     `git -c core.worktree=${wt} -C ${rt} commit -qm x`,
     `git -C ${rt} config core.worktree ${wt}`,
-    `git -C ${rt} config core.bare true`,
     `git -C ${rt} config include.path ${path.join(mainGit, "config")}`,
     'GIT_DIR="$X" git commit -qm x',
   ])
@@ -253,4 +252,91 @@ test("Given a path through more than 40 symlinks, each a short chain, When judge
   symlinkSync(scratch, path.join(lead, "hops-link"), linkType);
   const target = path.join(lead, "hops-link", ...Array(45).fill("n"), "a.txt");
   expect(write(target)).toBeUndefined();
+});
+
+test("Given a judge's git, When it sets or inherits config, env or flags that run a command (aliases, hooks, pagers, editors, drivers, filters, helpers, exec path, templates), Then it is denied", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "run");
+  git(wt, "init", "-q", "-b", "main", rt);
+  for (const command of [
+    `git -C ${rt} -c alias.x='!touch /tmp/y' x`,
+    `git -C ${rt} config alias.x '!touch /tmp/y'`,
+    `git -C ${rt} config set alias.x '!touch /tmp/y'`,
+    `git -C ${rt} config core.hooksPath /tmp/h`,
+    `git -C ${rt} config core.fsmonitor /tmp/f`,
+    `git -C ${rt} config core.pager /tmp/p`,
+    `git -C ${rt} config core.sshCommand /tmp/s`,
+    `git -C ${rt} config core.editor /tmp/e`,
+    `git -C ${rt} config diff.ext.command /tmp/d`,
+    `git -C ${rt} config diff.external /tmp/d`,
+    `git -C ${rt} config merge.m.driver /tmp/m`,
+    `git -C ${rt} config filter.f.clean /tmp/c`,
+    `git -C ${rt} config credential.helper /tmp/h`,
+    `git -C ${rt} --config-env=core.pager=X log`,
+    `git -C ${rt} --exec-path=/tmp/x status`,
+    `GIT_EXTERNAL_DIFF=/tmp/d git -C ${rt} diff`,
+    `GIT_PAGER=/tmp/p git -C ${rt} log`,
+    `GIT_EDITOR=/tmp/e git -C ${rt} commit`,
+    `GIT_SSH=/tmp/s git -C ${rt} fetch`,
+    `GIT_SSH_COMMAND=/tmp/s git -C ${rt} fetch`,
+    `GIT_ASKPASS=/tmp/a git -C ${rt} fetch`,
+    `GIT_EXEC_PATH=/tmp/x git -C ${rt} status`,
+    `git init --template=/tmp/t ${path.join(scratch, "tpl")}`,
+    `git clone -c core.hooksPath=/tmp/h ${rt} ${path.join(scratch, "cl")}`,
+    `HOME=${scratch} git -C ${rt} commit -qm x`,
+    `XDG_CONFIG_HOME=${scratch} git -C ${rt} commit -qm x`,
+    `GIT_CONFIG_GLOBAL=${path.join(scratch, "g")} git -C ${rt} commit -qm x`,
+    `GIT_CONFIG_NOSYSTEM=1 git -C ${rt} commit -qm x`,
+    `export HOME=${scratch}; git -C ${rt} commit -qm x`,
+  ])
+    expect(bash(command), command).toBe("deny");
+  // A scratch repository whose config already runs a command.
+  for (const [key, value] of [
+    ["alias.x", "!true"],
+    ["core.hooksPath", "/tmp/h"],
+    ["filter.f.smudge", "/tmp/s"],
+  ]) {
+    const armed = path.join(scratch, `armed-${key.replaceAll(".", "-")}`);
+    git(wt, "init", "-q", "-b", "main", armed);
+    git(armed, "config", key, value);
+    expect(bash(`git -C ${armed} commit -qm x`), key).toBe("deny");
+  }
+  for (const file of [path.join(rt, ".git", "hooks", "pre-commit")]) {
+    expect(write(file)).toBe("deny");
+    expect(bash(`printf x > ${file}`)).toBe("deny");
+  }
+});
+
+test("Given a judge's git init or clone with --separate-git-dir, When the git dir is outside scratch, Then it is denied; inside scratch it is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  expect(
+    bash(`git init --separate-git-dir=${path.join(root, "sep")} ${path.join(scratch, "sg")}`),
+  ).toBe("deny");
+  expect(
+    bash(`git init --separate-git-dir ${path.join(root, "sep")} ${path.join(scratch, "sg")}`),
+  ).toBe("deny");
+  expect(
+    bash(`git init --separate-git-dir=${path.join(scratch, "sep")} ${path.join(scratch, "sg")}`),
+  ).toBeUndefined();
+});
+
+test("Given a new dir under scratch, a config key named only as text, or a bare scratch repository, When a judge runs git, Then it is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "allowed");
+  git(wt, "init", "-q", "-b", "main", rt);
+  mkdirSync(path.join(scratch, "ni2"), { recursive: true });
+  mkdirSync(path.join(scratch, "ni3"), { recursive: true });
+  const bare = path.join(scratch, "b.git");
+  git(wt, "init", "-q", "--bare", bare);
+  for (const command of [
+    `mkdir ${path.join(scratch, "ni")} && git -C ${path.join(scratch, "ni")} init`,
+    `git -C ${path.join(scratch, "ni2")} init`,
+    `cd ${path.join(scratch, "ni3")} && git init`,
+    `git -C ${rt} grep core.worktree`,
+    `git -C ${rt} log --grep include.path`,
+    `git -C ${rt} config --get core.worktree`,
+    `git -C ${rt} config core.bare true`,
+    `git -C ${bare} fetch ${rt}`,
+  ])
+    expect(bash(command), command).toBeUndefined();
 });
