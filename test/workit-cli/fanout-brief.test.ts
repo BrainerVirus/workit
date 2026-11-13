@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:te
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -140,6 +141,7 @@ afterEach(() => {
 });
 /** Where `fanout plan` puts slice `id` of the repo `app` by default. */
 const managedWt = (id: string) => path.join(testState, "worktrees", "app", id);
+const managedScratch = (id: string) => path.join(testState, "scratch", "app", id);
 
 test("ledger standing: given one fanout, when the lead adds two orders, clears one by id, then clears all, then the list follows each step in the order given", async () => {
   const { root, cwd } = repo();
@@ -207,7 +209,7 @@ test("ledger standing: given two fanouts, when orders go to each with --fanout, 
 // ---------------------------------------------------------------------------
 // brief
 
-test("fanout brief: given a planned slice, two standing orders and no worktree yet, when rendered, then it is the full brief in MODE new with the plan's fields, every standing order verbatim and a scratch dir git ignores", async () => {
+test("fanout brief: given a planned slice, two standing orders and no worktree yet, when rendered, then it is the full brief in MODE new with the plan's fields, every standing order verbatim and a scratch dir outside the repo", async () => {
   const { root, cwd } = repo();
   await plan(cwd, root, "usage", [
     slice("a", ["src/a.ts", "test/a.test.ts"], {
@@ -226,7 +228,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
     branch: "feature/a",
     base: "main",
     tier: "mundane",
-    scratch: ".workit-scratch",
+    scratch: managedScratch("a"),
     session: "lead-1-w-a",
   });
   expect(data.text).toBe(
@@ -244,7 +246,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "REASON: parallel",
       "TIER: mundane",
       "TIMEBOX: 45 minutes, 120 tool calls (run your full VERIFY gates by call 72); past it without a new commit you will be replaced",
-      "SCRATCH: .workit-scratch/ at your worktree root (mkdir -p it; git ignores it; never a shared path)",
+      `SCRATCH: ${managedScratch("a")}  (mkdir -p it; yours alone, outside the repo; never a shared path)`,
       "FORBIDDEN: no edits outside SCOPE; no new packages",
       "FAN-IN: one PR per slice. Never rebase, retarget, merge or force-push: the lead owns topology.",
       "REPORT: branch, head SHA, files changed, each VERIFY command with its exit code,",
@@ -267,7 +269,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
       "",
     ].join("\n"),
   );
-  // A native-worktree worker's scratch dir stays out of `git add -A`.
+  // A judge's probe dir in the candidate worktree stays out of `git add -A`.
   expect(readFileSync(path.join(cwd, ".git", "info", "exclude"), "utf8")).toContain(
     "/.workit-scratch/",
   );
@@ -275,7 +277,7 @@ test("fanout brief: given a planned slice, two standing orders and no worktree y
   expect((await run(cwd, ["fanout", "brief", "a"])).stdout).toBe(data.text);
 });
 
-test("fanout brief: given the slice's worktree made by fanout worktree create and a commit on its branch, when rendered, then SCRATCH is that worktree's absolute scratch dir and MODE is resume from the branch head", async () => {
+test("fanout brief: given the slice's worktree made by fanout worktree create and a commit on its branch, when rendered, then SCRATCH is the slice's absolute scratch dir outside the worktree and MODE is resume from the branch head", async () => {
   const { root, cwd } = repo();
   await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
   const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
@@ -287,7 +289,12 @@ test("fanout brief: given the slice's worktree made by fanout worktree create an
   const head = git(wt, "rev-parse", "HEAD");
 
   const data = await brief(cwd, "a");
-  expect(data).toMatchObject({ mode: "resume", scratch: path.join(wt, ".workit-scratch") });
+  expect(data).toMatchObject({ mode: "resume", scratch: managedScratch("a") });
+  expect(data.text).toContain(
+    `SCRATCH: ${managedScratch("a")}  (yours alone, outside the repo; temp files go here, never a shared path)`,
+  );
+  expect(created.json().data.scratch).toBe(managedScratch("a"));
+  expect(existsSync(path.join(wt, ".workit-scratch"))).toBe(false);
   expect(data.text).toContain(
     `  resume: continue feature/a from ${head.slice(0, 12)}; read \`git log main..feature/a\``,
   );
@@ -312,6 +319,9 @@ test("fanout brief: given a worktree fanout worktree create just made, with no c
   const data = await brief(cwd, "a");
   expect(data.mode).toBe("new");
   expect(data.text).toStartWith("MODE: new\n");
+  expect(data.text).toContain(
+    `SCRATCH: ${managedScratch("a")}  (yours alone, outside the repo; temp files go here, never a shared path)`,
+  );
   expect(data.text).not.toContain("  resume:");
   expect(data.text).toContain("already on feature/a: edit files under it");
   expect(data.text).not.toContain("INSTALL:");
@@ -343,6 +353,10 @@ test("fanout brief: given a race of two attempts at one slice, when each is rend
   const two = await brief(cwd, "hard", "--attempt", "2");
   expect([one.branch, two.branch]).toEqual(["feature/hard-try1", "feature/hard-try2"]);
   expect([one.session, two.session]).toEqual(["lead-1-w-hard+try1", "lead-1-w-hard+try2"]);
+  expect([one.scratch, two.scratch]).toEqual([
+    managedScratch("hard+try1"),
+    managedScratch("hard+try2"),
+  ]);
   expect(two.text).toContain(
     "  1. First command: `workit git branch feature/hard-try2 --base main`",
   );
@@ -1121,6 +1135,11 @@ test("fanout brief: given a Claude Code lead and a made worktree, when rendered,
       '  verifier SPAWN: Agent subagent_type: "workit:verifier", model: "sonnet", effort: "medium", run_in_background: true',
     );
     const wt = managedWt("a");
+    // The worker's scratch is outside the repo; a judge's probes stay in the candidate worktree.
+    expect(text).toContain(
+      `the candidate branch with this slice's ACCEPTANCE and VERIFY; probes go in ${wt}/.workit-scratch`,
+    );
+    expect(text).toContain(`SCRATCH: ${managedScratch("a")}  (yours alone, outside the repo;`);
     expect(path.isAbsolute(wt)).toBe(true);
     const cwdFlags = [...text.matchAll(/--cwd (\S+)/gu)].map((match) => match[1]);
     expect(cwdFlags.length).toBeGreaterThan(0);
