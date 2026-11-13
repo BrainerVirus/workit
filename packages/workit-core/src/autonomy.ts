@@ -546,8 +546,8 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   if (override) return { ...autonomyOf(null), note: override };
   // Resolved once even when a broken seal resolves twice.
   let resolved: GrantTarget | undefined;
-  const once =
-    typeof target === "function" ? () => (resolved ??= target()) : (target as LazyTarget);
+  const once: LazyTarget | undefined =
+    typeof target === "function" ? () => (resolved ??= target()) : target;
   const current = resolveWith(fileSource(), cwd, world, once);
   const seal = sealOf();
   if (seal.state !== "broken") return current;
@@ -749,14 +749,7 @@ const claimsOf = (remotes: CheckoutRemote[], dir: string | null) => {
     claiming.flatMap((entry) => {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
       return pattern
-        ? [
-            {
-              remote: remote.name,
-              url: remote.url,
-              workspace: entry.name,
-              pattern,
-            },
-          ]
+        ? [{ remote: remote.name, url: remote.url, workspace: entry.name, pattern }]
         : [];
     }),
   );
@@ -794,10 +787,7 @@ export function remoteFindings(
   if (!unclaimed && !remotesClaimed(dir)) return { warnings: [], notes: [] };
   const remotes = checkoutRemotes(cwd);
   if (remotes instanceof Error && remotesClaimed(dir))
-    return {
-      warnings: [`${remotes.message}: grants here are capped at nothing`],
-      notes: [],
-    };
+    return { warnings: [`${remotes.message}: grants here are capped at nothing`], notes: [] };
   const listed = remotes instanceof Error ? [] : remotes;
   const others = claimsOf(listed, dir).filter((claim) => claim.workspace !== own?.name);
   const warnings = others.map(
@@ -937,10 +927,7 @@ export function rawGrantDenial(
   if (!claimed || !lazy) return null;
   const claims = claimsIn(lazy(), entries);
   if (claims instanceof Error)
-    return {
-      error: `${kind}: ${claims.message}`,
-      unblock: "name a target workit can resolve",
-    };
+    return { error: `${kind}: ${claims.message}`, unblock: "name a target workit can resolve" };
   // Any entry of that name, current or last sealed, that does not grant `kind`.
   const strict = claims.find(({ workspace: name }) =>
     entries.some((item) => item.name === name && autonomyOf(item).grants[kind] === false),

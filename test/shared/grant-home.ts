@@ -10,11 +10,7 @@ import { grantsHome } from "@/packages/workit-core/src/autonomy";
 import { SEAL_FILE, sealDocument } from "@/packages/workit-core/src/core/grant-seal";
 import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
-export type ConfigHome = {
-  home: string;
-  configDir: string;
-  restore: () => void;
-};
+export type ConfigHome = { home: string; configDir: string; restore: () => void };
 
 export const useConfigHome = (prefix: string): ConfigHome => {
   const previousConfig = process.env.WORKIT_CONFIG;
