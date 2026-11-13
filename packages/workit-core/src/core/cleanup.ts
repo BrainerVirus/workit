@@ -92,6 +92,16 @@ export function placeOf(worktree: string, env: NodeJS.ProcessEnv = process.env):
   return "other";
 }
 
+/**
+ * A host's own isolated worktree (Claude Code's `.claude/worktrees/agent-*`):
+ * the host owns the directory, so Workit never removes it; its branch goes
+ * once merged and checked out nowhere (`gc --branches`).
+ */
+const hostOwned = (worktree: string): boolean =>
+  /\/\.claude\/worktrees\/[^/]+$/u.test(canonical(worktree));
+
+const HOST_OWNED = "a host-owned worktree (.claude/worktrees); the host removes it";
+
 /** `workit fanout worktree create` marked this worktree's admin dir with its token. */
 const isFanoutWorktree = (worktree: string): boolean => {
   const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
@@ -490,6 +500,10 @@ export function cleanupAfterMerge(
       out.notes.push(`local ${branch} is checked out in ${entry.path}; kept it`);
       return out;
     }
+    if (hostOwned(entry.path)) {
+      out.notes.push(`local ${branch} is checked out in ${entry.path}, ${HOST_OWNED}; kept both`);
+      return out;
+    }
     const place = placeOf(entry.path, env);
     if (place !== "managed" && !isFanoutWorktree(entry.path)) {
       out.notes.push(
@@ -676,6 +690,10 @@ export function sweepWorktrees(
     }
     if (entry.locked) {
       keep("locked");
+      continue;
+    }
+    if (hostOwned(entry.path)) {
+      keep(HOST_OWNED);
       continue;
     }
     const place = placeOf(entry.path, env);
