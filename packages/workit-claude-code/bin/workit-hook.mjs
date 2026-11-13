@@ -153,15 +153,15 @@ if (tooOld && hookNode)
 // Every Bash/PowerShell call and every file edit reaches this hook (branch
 // policy, raw git/forge steering and the before-write gate). Fast paths
 // answer `{}` before the runtime loads: a shell command with no git/gh/glab,
-// no redirect and no writing verb can need none of them; with no Workit task
-// store for the checkout there is no task to gate a non-git edit on; and a
-// PostToolUse only matters after a `git commit`. A workit delivery verb
+// no file redirect and no writing verb can need none of them, and a
+// PostToolUse only matters after a `git commit`. Every edit and every such
+// write goes to the runtime, with or without a Workit task store (its guards
+// judge a write in any checkout). A workit delivery verb
 // (`workit pr create`, `workit ci wait`) may get the workit-ship nudge. A
 // command that may be heavy (a catalog word or a pattern's first word, the
 // copy of core/heavy-words.ts below) goes to the heavy-command gate.
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
-const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
 const WORKIT_DELIVERY =
   /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
 // The runtime moves the verb first (`cd <dir> && workit …`, `workit --cwd
@@ -181,6 +181,20 @@ const mayBypass = (command) =>
     /--unverified|--overwrite-unintegrated/.test(command.replace(/['"\\`]/g, "")));
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
+// Redirects that write no file, as the write gate reads them (write-gate.ts
+// shellWrites): an fd duplication (`2>&1`, `>&2`, `>&-`) or a device.
+const NO_FILE_REDIRECT = /\d*>&[\d-]|[\d&]*>>?\s*\/dev\/(?:null|stdout|stderr|tty)(?![\w/.-])/g;
+const maybeGated = (command) => MAYBE_GATED.test(command.replace(NO_FILE_REDIRECT, " "));
+// A user-only Workit call (`workit setup`, `workit grant set`, …) goes to the
+// runtime, which asks: a copy of workit-core hooks/delivery-verbs.ts
+// mayRunUserOnly, the gate's own first test (a test holds them equal).
+const USER_ONLY_WORD = /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace)\b/;
+const mayRunUserOnly = (text) => {
+  const bare = text.replace(/['"\\]/g, "");
+  return [bare, bare.replace(/`/g, "")].some(
+    (all) => /\bworkit\b/.test(all) && USER_ONLY_WORD.test(all),
+  );
+};
 // What an agent's confinement also judges (hooks/worktree-confine.ts):
 // writers the edit analysis cannot see, `-c` scripts, `$(…)`, Workit's verbs
 // and, for a judge, scripts fed on stdin or by eval.
@@ -266,36 +280,7 @@ const maybeHeavy = (command, cwd) => {
     return true;
   }
 };
-const EDITS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READS = new Set(["Read", "Grep", "Glob"]);
-
-/** `<git-common-dir>/workit` (or `<dir>/.workit` outside git) holds tasks. */
-const hasTaskStore = (cwd) => {
-  try {
-    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
-      const dotGit = path.join(dir, ".git");
-      if (existsSync(dotGit)) {
-        let gitDir = dotGit;
-        if (statSync(dotGit).isFile()) {
-          const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
-          if (!target) return true;
-          gitDir = path.resolve(dir, target);
-          const common = path.join(gitDir, "commondir");
-          if (existsSync(common))
-            gitDir = path.resolve(gitDir, readFileSync(common, "utf8").trim());
-        }
-        const store = path.join(gitDir, "workit");
-        return (
-          existsSync(path.join(store, "tasks")) || existsSync(path.join(store, "task-index.json"))
-        );
-      }
-      if (existsSync(path.join(dir, ".workit"))) return true;
-      if (path.dirname(dir) === dir) return false;
-    }
-  } catch {
-    return true;
-  }
-};
 
 /**
  * Text that may name a state registry or the config dir's workspaces.json
@@ -510,8 +495,7 @@ const fastAllow = (() => {
     if (mentionsGuarded(JSON.stringify(value.tool_input ?? {}))) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
     // An implementer's writes are confined to its Workit worktree, a verifier's
-    // or reviewer's to its scratch dir, with or without a task store
-    // (hooks/worktree-confine.ts).
+    // or reviewer's to its scratch dir (hooks/worktree-confine.ts).
     const confined = /^workit:(?:implementer|verifier|reviewer)$/.test(value.agent_type ?? "");
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (
@@ -519,20 +503,20 @@ const fastAllow = (() => {
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         mayBypass(command) ||
-        namesYtrack(command)
+        namesYtrack(command) ||
+        mayRunUserOnly(command)
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
       if (RUNS_PATH.test(command) || wordsOf(command).some((word) => SCRIPT_RUNNERS.has(word)))
         return false;
-      if (
-        (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command)) &&
-        (GUARD_SPELLING.test(command) ||
-          hardLinkNamed(command.split(/[\s;&|()<>`'"]+/u), String(value.cwd ?? ".")))
-      )
-        return false;
-      if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;
-      return !confined && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
+      if (maybeGated(command)) return false;
+      if (!IMPLEMENTER_GATED.test(command)) return true;
+      return (
+        !confined &&
+        !GUARD_SPELLING.test(command) &&
+        !hardLinkNamed(command.split(/[\s;&|()<>`'"]+/u), String(value.cwd ?? "."))
+      );
     }
     // A spawn with isolation (any type) or an implementer without a brief meets the
     // spawn gate (hooks/spawn-gate.ts, the same WORKTREE test). One that names its
@@ -551,16 +535,9 @@ const fastAllow = (() => {
         typeof spawn.model === "string" && spawn.model.trim() !== "" && !roleModelsConfigured()
       );
     }
-    // Read, Grep and Glob reach this hook only to be counted against a budget.
-    if (READS.has(value.tool_name)) return true;
-    const cwd = String(value.cwd ?? ".");
-    const input = value.tool_input ?? {};
-    return (
-      EDITS.has(value.tool_name) &&
-      !confined &&
-      !hardLinkNamed([input.file_path, input.notebook_path], cwd) &&
-      !hasTaskStore(cwd)
-    );
+    // Read, Grep and Glob reach this hook only to be counted against a budget;
+    // every edit goes to the runtime.
+    return READS.has(value.tool_name);
   } catch {
     return false;
   }

@@ -67,3 +67,36 @@ test("Given a config deny for `workit pr merge`, When the plugin evaluates it, T
 test("Given an ask for a non-shell action, When the plugin evaluates it, Then it stays ask", () => {
   expect(evaluate("workit pr merge", "ask", "webfetch")).toBe("ask");
 });
+
+// Only the user runs these (#615, round 2): even when the user's config allows
+// bash outright, the plugin turns the allow into an ask naming the call.
+test.each([
+  ["workit setup --yes", "setup"],
+  ["env -u CLAUDECODE workit setup --yes", "setup"],
+  ["AI_AGENT=1 workit uninstall --hosts=cursor --yes", "uninstall"],
+  ["command workit install --hosts=cursor --yes", "install"],
+  ["cd x && workit workspace seal", "workspace seal"],
+  ["workit --cwd /x --json grant set ws merge=true", "grant set"],
+  ["workit --json ledger void mwbe83fk --reason x", "ledger void"],
+])(
+  "Given a config allow for `%s`, When the plugin evaluates it, Then it asks naming the call",
+  (command, words) => {
+    for (const effect of ["allow", "ask"]) {
+      const event = { sessionID: "s1", action: "shell", resources: [command], effect, message: "" };
+      evaluateShellPermission(root, event);
+      expect(event.effect, effect).toBe("ask");
+      expect(event.message).toContain(`\`workit ${words}\``);
+    }
+  },
+);
+
+test.each([["workit help setup"], ["workit check -- npm install"], ['echo "workit setup"']])(
+  "Given a config allow for `%s`, When the plugin evaluates it, Then the allow stands",
+  (command) => {
+    expect(evaluate(command, "allow")).toBe("allow");
+  },
+);
+
+test("Given a config deny for `workit setup`, When the plugin evaluates it, Then deny stands", () => {
+  expect(evaluate("workit setup --yes", "deny")).toBe("deny");
+});

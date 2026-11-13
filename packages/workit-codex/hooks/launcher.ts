@@ -6,14 +6,15 @@
 //   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
 //     a shell command that names git, gh, glab, a state registry or the
 //     config file, runs a script (a shell, an interpreter, `.` or a path),
-//     writes through a glob, an env var or a hard link (the registry guard),
-//     or may be heavy (the heavy-command gate's cheap pre-check) can be
-//     denied or nudged;
+//     has a writer verb or a file redirect (the before-write gate and the
+//     registry guard, with or without a task store), may run ytrack or a
+//     user-only Workit call, or may be heavy (the heavy-command gate's cheap
+//     pre-check) can be denied or nudged;
 //   - unless a standing-order revision this agent has not seen is pending,
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -82,6 +83,14 @@ const namesYtrack = (text: string): boolean => {
   const bare = text.replace(/['"\\]/g, "");
   return YTRACK_WORD.test(bare) || YTRACK_WORD.test(bare.replace(/`/g, ""));
 };
+/** A user-only Workit call's words: a copy of core hooks/delivery-verbs.ts mayRunUserOnly. */
+const USER_ONLY_WORD = /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace)\b/;
+const mayRunUserOnly = (text: string): boolean => {
+  const bare = text.replace(/['"\\]/g, "");
+  return [bare, bare.replace(/`/g, "")].some(
+    (all) => /\bworkit\b/.test(all) && USER_ONLY_WORD.test(all),
+  );
+};
 
 let payload = "";
 for await (const chunk of process.stdin) payload += String(chunk);
@@ -145,29 +154,12 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
-    // A write that may name a guarded file only once the runtime expands it (a
-    // glob, a variable) or through a second name (a word naming a hard link).
+    // A writer verb or a file redirect; an fd duplication (`2>&1`, `>&2`) or a
+    // device (`>/dev/null`) writes no file (write-gate.ts shellWrites).
     const writes =
       /[>]|\b(?:cp|mv|rm|rmdir|mkdir|tee|ln|install|rsync|touch|sed|perl|dd|curl|wget|tar|unzip|truncate|patch|chmod|chown|chgrp|chattr|find|xargs|unlink|g?awk|shred|mkfifo)\b/.test(
-        text,
-      ) &&
-      (/(?:^|[\s=<>|;&("'])(?:~|\/|\$|\.\.)[^\s'"]*[*?[]|\$\{?(?:WORKIT_|XDG_|APPDATA|HOME)/.test(
-        text,
-      ) ||
-        text.split(/[\s;&|()<>`'"]+/).some((word) => {
-          // A hard link, or a symlink (or symlinked dir) whose real path is guarded.
-          const file = path.resolve(String(value.cwd), word);
-          try {
-            const stat = statSync(file, { throwIfNoEntry: false });
-            if (stat?.isFile() && stat.nlink > 1) return true;
-            const real = stat
-              ? realpathSync(file)
-              : path.join(realpathSync(path.dirname(file)), path.basename(file));
-            return real !== file && guarded(real);
-          } catch {
-            return false;
-          }
-        }));
+        text.replace(/\d*>&[\d-]|[\d&]*>>?\s*\/dev\/(?:null|stdout|stderr|tty)(?![\w/.-])/g, " "),
+      );
     // A script run the registry guard reads at hook time: a shell, an interpreter, `.` or a path.
     return /\b(?:git|gh|glab|node|tsx|ts-node|bash|sh|zsh|dash|ksh|ruby|perl|php|source)\b|(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:(?:time|exec|sudo|nice|nohup|env|command|builtin|timeout|stdbuf|if|then|do|while|until|!)\s+(?:-\S+\s+|\d\S*\s+)*)*(?:\.\s+\S|\.{0,2}\/)/.test(
       text,
@@ -175,6 +167,7 @@ const quietEvent = (): string | null => {
       guarded(text) ||
       // Text that may run ytrack (hooks/ytrack-word.ts: the gate's own first test).
       namesYtrack(text) ||
+      mayRunUserOnly(text) ||
       writes ||
       maybeHeavy(text, value.cwd)
       ? null

@@ -7,6 +7,7 @@ import {
   shellPolicy,
   writeGate,
 } from "@workit-dev/core/hooks";
+import { userOnlyWorkitCall } from "@workit-dev/core/src/hooks/delivery-verbs";
 import { ytrackGate } from "@workit-dev/core/src/hooks/ytrack-guard";
 
 export type PermissionEvaluationEvent = {
@@ -81,6 +82,14 @@ export const evaluateShellPermission = (
       const plan = heavyGate(cwd, resource, { host: "opencode" });
       if (plan.kind === "split") return deny(plan.reason);
     }
+  }
+  // Only the user runs these (#615): an allow from the user's config becomes
+  // an ask, so the user decides each one (a deny returned above already).
+  const userOnly = resources.map((resource) => userOnlyWorkitCall(resource, "posix")).find(Boolean);
+  if (userOnly) {
+    event.effect = "ask";
+    event.message = `Only the user runs \`workit ${userOnly.join(" ")}\`: the user decides this call.`;
+    return;
   }
   // Issue #297: an ask for Workit's enumerated delivery verbs only becomes an
   // allow; their own grants and verdict gates decide. Never check, lock or

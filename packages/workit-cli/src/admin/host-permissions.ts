@@ -83,6 +83,9 @@ const AUTO_MODE_ENVIRONMENT =
 const AUTO_MODE_ENVIRONMENT_V1 =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
 const AUTO_MODE_ALLOW =
+  "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+/** The auto-mode line from #615 until the whole-verb user-only calls; a refresh replaces it and uninstall still removes it. */
+const AUTO_MODE_ALLOW_V2 =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
 /** The auto-mode line before #615; a refresh replaces it and uninstall still removes it. */
 const AUTO_MODE_ALLOW_V1 =
@@ -120,7 +123,7 @@ export const codexRulesText = (): string => {
   const grant = `prefix_rule(\n    pattern = ["workit", "grant"],\n    decision = "prompt",\n    justification = "Changing Workit grants needs the user",\n)\n`;
   const userOnly = WORKIT_USER_ONLY.map(
     (words) =>
-      `prefix_rule(\n    pattern = ${JSON.stringify(["workit", ...words])},\n    decision = "prompt",\n    justification = "Only the user runs this Workit call (approval or grant change)",\n)\n`,
+      `prefix_rule(\n    pattern = ${JSON.stringify(["workit", ...words])},\n    decision = "prompt",\n    justification = "Only the user runs this Workit call (an approval, a grant change, host setup or a seal)",\n)\n`,
   );
   return `${CODEX_HEADER}\n${[...rules, ...lease, grant, ...userOnly].join("\n")}`;
 };
@@ -308,7 +311,7 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
 const PRIOR_ENTRIES: Record<"claude-code" | "cursor", Record<string, readonly string[]>> = {
   "claude-code": {
     "autoMode.environment": [AUTO_MODE_ENVIRONMENT_V1],
-    "autoMode.allow": [AUTO_MODE_ALLOW_V1],
+    "autoMode.allow": [AUTO_MODE_ALLOW_V1, AUTO_MODE_ALLOW_V2],
   },
   cursor: {},
 };

@@ -16,6 +16,7 @@ import {
 } from "@/packages/workit-cli/src/admin/host-permissions";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { codexRules } from "@/packages/workit-core/src/core/heavy-rules";
+import { WORKIT_USER_ONLY } from "@/packages/workit-core/src/hooks/delivery-verbs";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 
@@ -95,6 +96,10 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
     "Bash(workit grant raise*)",
     "Bash(workit ledger void*)",
     "Bash(workit approve*)",
+    "Bash(workit setup*)",
+    "Bash(workit uninstall*)",
+    "Bash(workit install*)",
+    "Bash(workit workspace seal*)",
   ]);
   expect(value.autoMode.environment.slice(0, 2)).toEqual([
     "$defaults",
@@ -223,6 +228,10 @@ test("Given a Codex home, When setup and uninstall run, Then Workit's rules file
     "workit grant raise",
     "workit ledger void",
     "workit approve",
+    "workit setup",
+    "workit uninstall",
+    "workit install",
+    "workit workspace seal",
   ]);
   applyUninstall(planUninstall({ home, env }), { home, env });
   expect(existsSync(file)).toBe(false);
@@ -515,39 +524,64 @@ test("Given a tampered ownership record naming the user's own `Bash(workit …)`
 
 const OLD_AUTO_ALLOW =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--unverified`, `--admin` or any bypass flag.";
+/** The line from #615 until `setup`, `uninstall`, `install` and `workspace seal` became user-only. */
+const V2_AUTO_ALLOW =
+  "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
 
-test("Given a block with the old auto-mode line, When `workit upgrade` refreshes, Then the old line is replaced once and uninstall removes the new one", async () => {
-  const { env, home, settings } = sandbox();
-  writeFileSync(settings, JSON.stringify(USER_SETTINGS, null, 2) + "\n");
+test.each([
+  ["the #297 line", OLD_AUTO_ALLOW],
+  ["the #615 line", V2_AUTO_ALLOW],
+])(
+  "Given a block with %s, When `workit upgrade` refreshes, Then the old line is replaced once and uninstall removes the new one",
+  async (_name, oldLine) => {
+    const { env, home, settings } = sandbox();
+    writeFileSync(settings, JSON.stringify(USER_SETTINGS, null, 2) + "\n");
+    expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+    const value = JSON.parse(readFileSync(settings, "utf8"));
+    value.autoMode.allow = ["$defaults", oldLine];
+    writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+    editRecord(env, (record) => {
+      const host = record.hosts["claude-code"];
+      host.owned.lists["autoMode.allow"] = [oldLine];
+      host.offered["autoMode.allow"] = [oldLine];
+    });
+    const plan = planHostPermissions({
+      home,
+      env,
+      hosts: ["claude-code"],
+      refreshOnly: true,
+    });
+    expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
+    const after = JSON.parse(readFileSync(settings, "utf8"));
+    expect(after.autoMode.allow).toHaveLength(2);
+    expect(after.autoMode.allow[1]).not.toBe(oldLine);
+    for (const words of WORKIT_USER_ONLY)
+      expect(after.autoMode.allow[1]).toContain(
+        words.join(" ") === "grant set" || words.join(" ") === "grant raise"
+          ? "`workit grant set|raise`"
+          : `\`workit ${words.join(" ")}\``,
+      );
+
+    const result = applyUninstall(planUninstall({ home, env }), { home, env });
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual(USER_SETTINGS);
+  },
+);
+
+test("Given settings with the old auto-mode lines and the current one and no record, When uninstall runs, Then every Workit line is removed", async () => {
+  const { env, settings: file } = sandbox();
   expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
-  const value = JSON.parse(readFileSync(settings, "utf8"));
-  value.autoMode.allow = ["$defaults", OLD_AUTO_ALLOW];
-  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
-  editRecord(env, (record) => {
-    const host = record.hosts["claude-code"];
-    host.owned.lists["autoMode.allow"] = [OLD_AUTO_ALLOW];
-    host.offered["autoMode.allow"] = [OLD_AUTO_ALLOW];
-  });
-  const plan = planHostPermissions({
-    home,
-    env,
-    hosts: ["claude-code"],
-    refreshOnly: true,
-  });
-  expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
-  const after = JSON.parse(readFileSync(settings, "utf8"));
-  expect(after.autoMode.allow).toHaveLength(2);
-  expect(after.autoMode.allow[1]).toContain("workit grant set|raise");
-
-  const result = applyUninstall(planUninstall({ home, env }), { home, env });
-  expect(result.ok).toBe(true);
-  expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual(USER_SETTINGS);
-});
-
-test("Given settings with only the old auto-mode line and no record, When uninstall runs, Then the old line is removed", () => {
-  const settings = { autoMode: { allow: ["$defaults", OLD_AUTO_ALLOW] } };
-  const { next } = removeOwnedEntries(settings, null, "claude-code");
-  expect(next.autoMode).toEqual({ allow: ["$defaults"] });
+  const current = JSON.parse(readFileSync(file, "utf8")).autoMode.allow.at(-1) as string;
+  expect(current).toStartWith("Workit-gated delivery:");
+  for (const allow of [
+    [OLD_AUTO_ALLOW],
+    [V2_AUTO_ALLOW],
+    [OLD_AUTO_ALLOW, V2_AUTO_ALLOW, current],
+  ]) {
+    const settings = { autoMode: { allow: ["$defaults", ...allow] } };
+    const { next } = removeOwnedEntries(settings, null, "claude-code");
+    expect(next.autoMode, allow.join("\n")).toEqual({ allow: ["$defaults"] });
+  }
 });
 
 test("Given Codex and Cursor, When rules are written, Then Codex prompts and Cursor denies the user-only calls", () => {
@@ -561,6 +595,14 @@ test("Given Codex and Cursor, When rules are written, Then Codex prompts and Cur
   // Host-approval channel: Codex and Cursor are fallback-only until probed (hosts.md).
   expect(codexRulesText()).toContain('pattern = ["workit","approve"],\n    decision = "prompt"');
   expect(CURSOR_DENY).toContain("Shell(workit approve)");
+  // Whole verbs: host setup, removal and the workspace seal, previews included.
+  for (const words of [["setup"], ["uninstall"], ["install"], ["workspace", "seal"]]) {
+    expect(codexRulesText()).toContain(
+      `pattern = ${JSON.stringify(["workit", ...words])},\n    decision = "prompt"`,
+    );
+    expect(CURSOR_DENY).toContain(`Shell(workit ${words.join(" ")})`);
+    expect(CLAUDE_ASK).toContain(`Bash(workit ${words.join(" ")}*)`);
+  }
 });
 
 // A command that only mentions a user-only call or a bypass flag in its text
@@ -588,6 +630,10 @@ test("Given a real user-only call or bypass flag, Then a Claude Code ask rule ma
     "workit ledger void mwbe83fk --reason x",
     "workit approve ap_aaaaaaaa ap_bbbbbbbb",
     "workit grant set ws merge=true",
+    "workit setup --preview",
+    "workit uninstall --hosts=cursor --yes",
+    "workit install --hosts=cursor --yes",
+    "workit workspace seal",
     "workit pr merge --unverified --reason x",
     "workit stack land --unverified --reason x",
     "workit git push --force-with-lease --overwrite-unintegrated",
