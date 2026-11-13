@@ -481,8 +481,9 @@ Heavy-check lease limits (#729, `core/resources.ts`), the same on every host:
 Host-approval channel limits ([host-approval.md](../workit-next/host-approval.md);
 #419, #649, #768, #774, #864). The registry, `workit approve`, the Claude
 Code and Pi recording and the consume API live in `approvals/store.ts`; the
-`workit youtrack` writes use it, asked on the call itself where the host can
-(`approvals/inline.ts`, decisions mwf752f2 and mwf752sv). One live request per
+`workit youtrack` writes and `workit release notes approve <v>` use it, asked
+on the call itself where the host can (`approvals/inline.ts`, decisions
+mwf752f2 and mwf752sv). One live request per
 hash: a refusal reuses it. Every host keeps the terminal fallback: the user
 runs `workit approve` at a real TTY, with an id only when several requests
 wait (L, D18: a pseudo-terminal passes it). The
@@ -540,7 +541,17 @@ library passes it, and real unforgeability needs another OS principal.
   `--permission-prompt-tool` answer without a person, so they record nothing
   (an `sdk-*` `CLAUDE_CODE_ENTRYPOINT`, which `claude -p` and the SDKs set,
   records nothing either); a YouTrack write there runs with
-  `WORKIT_APPROVAL_UNASKED=<mode>` and the verb refuses naming it. L: the grant's
+  `WORKIT_APPROVAL_UNASKED=<mode>` and the verb refuses naming it. Release
+  notes (#864, `approvals/release-notes-ask.ts`): a plain `workit release
+  notes approve <v>` is asked on the same way, its user-only ask replaced by
+  one showing the whole draft (no line cap); the ticket binds the call's
+  words and the draft text's sha256, the verb reads the draft once, consumes
+  the ticket and records `release.notes.approved` with `via: host`. In a mode
+  where no person sees a prompt it runs unasked and the verb refuses with one
+  terminal command. L: a `--package <name>` call is not asked on (its tag
+  needs the config, which the hook does not read); the user-only ask stays and
+  the verb refuses in the agent shell, so the agent uses the tag form
+  (`pkg-a@0.1.0`). L: the grant's
   `asked` row (host `claude_code`) catches a hand edit, not a forger.
 - **OpenCode:** fallback-only, YouTrack writes included: the verb refuses with
   one short terminal command (`workit approve`). The user-only call is asked as
@@ -548,18 +559,23 @@ library passes it, and real unforgeability needs another OS principal.
   input with an ask, so there is no ask on the action itself. U: `permission.asked`/`permission.replied` are
   in the installed types but unused by Workit, `question` has no reply event
   there, and a `subagent` spawn may not pass `permission.evaluate`. A grant
-  naming `opencode` is refused.
+  naming `opencode` is refused. Release notes: terminal-only; `workit
+  release notes approve <v>` stays user-only and the verb refuses in the
+  agent shell with one terminal command.
 - **Codex:** fallback-only. The rules file prompts on `workit approve` and the
   `PreToolUse` hook denies it as a user-only call. L: the hook can deny but not
   ask; prompts come only from prefix rules. U: the `permission_mode` values
   under `approval_policy = never` and how a "don't ask again" answer caches.
   A grant naming `codex` is refused. L: no ask on the action itself (the hook
-  cannot ask or rewrite); a YouTrack write refuses with `workit approve`.
+  cannot ask or rewrite); a YouTrack write refuses with `workit approve`, and
+  release notes are terminal-only (the user runs `workit release notes
+  approve <v>` in their terminal).
 - **Cursor:** fallback-only. `Shell(workit approve)` is a `permissions.deny`
   entry and `beforeShellExecution` denies it. `afterShellExecution` is offered
   but not registered (X). U: whether auto-run skips an `ask`. A grant naming
   `cursor` is refused. L: `beforeShellExecution` cannot rewrite a call, so no
-  ask on the action itself; a YouTrack write refuses with `workit approve`.
+  ask on the action itself; a YouTrack write refuses with `workit approve`,
+  and release notes are terminal-only.
 - **Pi:** N in the TUI: the `tool_call` hook shows `ctx.ui.select` (Approve once
   / Reject / Edit) with the stored request, writes the grant (or the rejection;
   Edit closes the request) and blocks the shell call with a result naming the
@@ -571,8 +587,12 @@ library passes it, and real unforgeability needs another OS principal.
   youtrack …` write shows its full text in `ctx.ui.select` (Approve once /
   Reject) on the tool call; Approve records the ask (only after the yes, so a
   rejected dialog leaves nothing to reuse) and mutates the command to carry
-  its ticket, and the verb posts in that call. Print and RPC fall back to the
-  terminal line.
+  its ticket, and the verb posts in that call. A plain `workit release notes
+  approve <v>` shows the whole draft the same way, the dialog its only gate
+  (as for `workit approve`), and the verb records the approval in that call;
+  a `--package <name>` call is not asked on (denied as user-only). Print and
+  RPC fall back to the terminal line; release notes there are terminal-only
+  (the shared gate denies the user-only call).
 
 ## Design background
 

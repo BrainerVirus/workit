@@ -60,7 +60,7 @@ import {
   type ApprovalFields,
 } from "@workit-dev/core/src/approvals/store";
 import { youTrackAsk } from "@workit-dev/core/src/approvals/youtrack-ask";
-import { hostSessionFromEnv, realHostSession } from "@workit-dev/core/src/host-session";
+import { inlineAskSession } from "@workit-dev/core/src/approvals/ask-session";
 import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import {
   youTrackBackend,
@@ -733,22 +733,6 @@ async function runStep(io: Io, plan: Plan, entry: Step, yt: YouTrackBackend): Pr
   return outcome;
 }
 
-/**
- * The host session a ticket must come from (#864): the host's own shell
- * variable (Pi's PI_SESSION_ID, which its bash tool sets on every call) when
- * it belongs to the host WORKIT_HOST names, else the declared
- * WORKIT_SESSION_ID (Claude Code's SessionStart export). A Pi worker's shell
- * also carries WORKIT_SESSION_ID `<lead>:<worker>`, which is not what its
- * dialog recorded.
- */
-const askingSession = (env: NodeJS.ProcessEnv): string | null => {
-  const real = realHostSession(env);
-  const declared = env.WORKIT_HOST?.trim().replace(/_(?:cli|desktop)$/u, "");
-  return real.kind === "derived" && (!declared || real.host?.startsWith(declared))
-    ? real.session
-    : hostSessionFromEnv(env).session;
-};
-
 /** The `approval.consumed` ledger row; a checkout without a ledger records none. */
 const recordConsumed = (io: Io, row: Record<string, unknown>): void => {
   try {
@@ -784,7 +768,7 @@ function askFirst(
           argvHash: ask.argvHash,
           contentHash: ask.contentHash,
           verb,
-          session: askingSession(io.env),
+          session: inlineAskSession(io.env),
         })
       : { ok: false as const, reason: "Workit cannot read this call's text" };
     if (used.ok) {
