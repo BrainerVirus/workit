@@ -61,6 +61,10 @@ if (mode === "open" || mode === "open-as") {
     console.error(error.name + ": " + error.message);
     process.exitCode = 3;
   }
+} else if (mode === "open-together") {
+  signal("waiting-" + args[0]);
+  waitFor("go");
+  openThreadsStore({ env }).close();
 } else if (mode === "race") {
   const [name, count] = args;
   const store = openThreadsStore({ env });
@@ -135,8 +139,20 @@ const worker = (runtime: Runtime, ...args: string[]): Promise<Run> =>
     ? run(process.execPath, [bunWorker, ...args])
     : run("node", [nodeWorker, ...args]);
 
-const waitForFile = async (file: string): Promise<void> => {
-  while (!existsSync(file)) await Bun.sleep(5);
+/** Waits for `file`; fails naming the worker's output when it exits first (a hang otherwise). */
+const waitForFile = async (file: string, child: Promise<Run>): Promise<void> => {
+  let exited: Run | undefined;
+  void child.then(
+    (result) => (exited = result),
+    (error: unknown) => (exited = { code: null, stdout: "", stderr: String(error) }),
+  );
+  while (!existsSync(file)) {
+    if (exited)
+      throw new Error(
+        `the worker exited (code ${exited.code}) before writing ${path.basename(file)}: ${exited.stderr}`,
+      );
+    await Bun.sleep(5);
+  }
 };
 
 const sha = (file: string): string => createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -172,7 +188,10 @@ test.each(["bun", "node"] as const)(
     const file = path.join(state, "threads.db");
     if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
 
-    const db = new Database(file, { readonly: true });
+    // Read-write: after the node child's last close, SQLite has removed the
+    // -wal and -shm files, and macOS's system SQLite (Bun's there) cannot open
+    // such a WAL file read-only ("unable to open database file").
+    const db = new Database(file);
     try {
       expect(db.query("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
       const columns = db
@@ -221,8 +240,8 @@ test.each([
       worker(first, "race", state, "a", String(count)),
       worker(second, "race", state, "b", String(count)),
     ];
-    await waitForFile(path.join(state, "ready-a"));
-    await waitForFile(path.join(state, "ready-b"));
+    await waitForFile(path.join(state, "ready-a"), racers[0]);
+    await waitForFile(path.join(state, "ready-b"), racers[1]);
     writeFileSync(path.join(state, "go"), "");
     const results = await Promise.all(racers);
     for (const result of results) expect(result).toMatchObject({ code: 0, stderr: "" });
@@ -244,7 +263,7 @@ test.each(["bun", "node"] as const)(
     const env = { WORKIT_STATE_DIR: state };
     openThreadsStore({ env }).close();
     const holder = worker(runtime, "hold", state);
-    await waitForFile(path.join(state, "holding"));
+    await waitForFile(path.join(state, "holding"), holder);
 
     const store = openThreadsStore({ env, busyTimeoutMs: 50 });
     try {
@@ -544,3 +563,48 @@ test("Given an unsafe threads.db, When opened in process, Then the error is a Th
   expect(failure).toBeInstanceOf(ThreadsUnsafeError);
   expect(failure).toMatchObject({ file: dbIn(state), reason: "not-file" });
 });
+
+test.each(["node", "bun"] as const)(
+  "Given no DB, When two %s processes open it at the same moment, Then both open it at v1 in WAL",
+  async (runtime) => {
+    // Switching a fresh file to WAL fails at once while another process has
+    // it open; before the retry, about half of these rounds lost one opener.
+    for (let round = 0; round < 6; round++) {
+      const state = tempDir("wk-threads-open-");
+      const openers = [
+        worker(runtime, "open-together", state, "a"),
+        worker(runtime, "open-together", state, "b"),
+      ];
+      await waitForFile(path.join(state, "waiting-a"), openers[0]);
+      await waitForFile(path.join(state, "waiting-b"), openers[1]);
+      writeFileSync(path.join(state, "go"), "");
+      for (const opened of await Promise.all(openers))
+        expect(opened).toMatchObject({ code: 0, stderr: "" });
+      const db = new Database(dbIn(state));
+      try {
+        expect(db.query("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+        expect(db.query("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({
+          value: "1",
+        });
+      } finally {
+        db.close();
+      }
+    }
+  },
+);
+
+// Only threads.db itself must not be a link: macOS's temp dirs sit under
+// /var, itself a link to /private/var.
+test.skipIf(process.platform === "win32").each(["bun", "node"] as const)(
+  "Given a state dir reached through a symbolic link, When a %s process opens the store, Then it opens",
+  async (runtime) => {
+    const linked = path.join(tempDir("wk-threads-via-"), "state");
+    symlinkSync(tempDir("wk-threads-real-"), linked);
+    const opened = await worker(runtime, "open", linked);
+    expect(opened.stderr).toBe("");
+    expect(JSON.parse(opened.stdout)).toEqual({
+      file: path.join(linked, "threads.db"),
+      version: "1",
+    });
+  },
+);

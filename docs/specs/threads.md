@@ -31,6 +31,13 @@ through one adapter on both runtimes Workit runs on.
 - `busy_timeout` 5000 ms on every connection: a writer that finds the write
   lock held waits and retries for that long, then fails with a clear
   "busy" error naming the file. Callers may pass a shorter wait.
+- Switching a fresh file to WAL needs every other connection gone, and SQLite
+  answers "database is locked" at once (no busy handler) while another process
+  has it open, so two processes opening a fresh file together would lose one.
+  Opening retries the version read, the WAL switch and the migration with
+  backoff until the same deadline.
+- Only `threads.db` itself (and `-wal`, `-shm`) must not be a link: a state dir
+  reached through a link (macOS's `/var` is one to `/private/var`) is fine.
 - One user, one machine. No sync between machines; no transcripts (pointers
   only).
 

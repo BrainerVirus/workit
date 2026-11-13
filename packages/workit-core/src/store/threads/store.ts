@@ -222,6 +222,43 @@ const migrate = (db: SqlDb, file: string, waitMs: number): void =>
     );
   });
 
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (ms: number): void => {
+  Atomics.wait(pause, 0, 0, ms);
+};
+
+/**
+ * Brings an open file to WAL at SCHEMA_VERSION, refusing a newer schema
+ * before the WAL switch (which would rewrite its header). Switching a
+ * rollback-journal file to WAL needs every other connection gone, and SQLite
+ * answers SQLITE_BUSY at once, without its busy handler, while another
+ * process has the file open: two processes opening a fresh file at the same
+ * moment hit it every few runs. So the whole step retries, with backoff,
+ * until the busy timeout's deadline.
+ */
+const settle = (db: SqlDb, file: string, waitMs: number): void => {
+  const deadline = Date.now() + waitMs;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const found = schemaVersion(db);
+      if (found > SCHEMA_VERSION) throw new ThreadsSchemaError(file, found);
+      const mode = db.get("PRAGMA journal_mode = WAL");
+      // SQLite may also decline the switch without an error, naming the old mode.
+      if (String(mode?.journal_mode).toLowerCase() !== "wal")
+        throw new ThreadsBusyError(file, waitMs);
+      if (found < SCHEMA_VERSION) migrate(db, file, waitMs);
+      return;
+    } catch (error) {
+      if (!(error instanceof ThreadsBusyError) && !isBusy(error)) throw error;
+      if (Date.now() >= deadline)
+        throw error instanceof ThreadsBusyError
+          ? error
+          : new ThreadsBusyError(file, waitMs, { cause: error });
+      sleep(Math.min(5 * attempt, 50) + Math.floor(Math.random() * 5));
+    }
+  }
+};
+
 /**
  * Opens (creating and migrating when needed) the threads store. Throws
  * ThreadsUnsafeError for a file it will not trust (checked before SQLite
@@ -237,16 +274,7 @@ export const openThreadsStore = (options: OpenOptions = {}): ThreadsStore => {
   const db = openSqlite(file);
   try {
     db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(waitMs))}`);
-    // Refuse a newer file before the WAL switch, which would rewrite its header.
-    const found = schemaVersion(db);
-    if (found > SCHEMA_VERSION) throw new ThreadsSchemaError(file, found);
-    try {
-      db.exec("PRAGMA journal_mode = WAL");
-    } catch (error) {
-      if (isBusy(error)) throw new ThreadsBusyError(file, waitMs, { cause: error });
-      throw error;
-    }
-    if (found < SCHEMA_VERSION) migrate(db, file, waitMs);
+    settle(db, file, waitMs);
   } catch (error) {
     db.close();
     if (isNotDatabase(error))
