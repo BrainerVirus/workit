@@ -1,8 +1,8 @@
 // #780: a raw `ytrack` write an agent runs asks the user first on every host.
 // The shell hook denies it naming the `workit youtrack …` call that asks, or,
 // for a write no verb covers, asks on Claude Code and hands it to the user
-// elsewhere; reads pass, and `youtrack.writes: auto` turns the guard off
-// unless the grant seal is broken (#819).
+// elsewhere; reads pass, and `youtrack.writes: auto` in the account's own,
+// sealed file turns the guard off; never under a config redirect (#819).
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -255,11 +255,25 @@ const writesFile = (dir: string, writes?: string) =>
     })}\n`,
   );
 
-test("G youtrack.writes auto for this workspace, W any raw ytrack write, T nothing is denied or asked", () => {
-  writesFile(config, "auto");
+test("G youtrack.writes auto in the sealed account file and no redirect, W any raw ytrack write, T nothing is denied or asked", () => {
+  process.env.WORKIT_CONFIG_DIR = account;
+  writesFile(account, "auto");
+  sealConfig(account);
   for (const command of [...COVERED.map(([raw]) => raw), ...UNCOVERED, ...WRAPPED.slice(0, 6)])
     for (const [host, run] of Object.entries(HOSTS))
       expect(run(command).kind, `${host}: ${command}`).toBe("pass");
+});
+
+test("G youtrack.writes auto only in a redirected config file (the account sealed), W a raw ytrack write, T it is denied or asked as with ask", () => {
+  writesFile(account);
+  sealConfig(account);
+  writesFile(config, "auto");
+  for (const [command, call] of COVERED)
+    for (const [host, run] of Object.entries(HOSTS)) {
+      const out = run(command);
+      expect(out.kind, `${host}: ${command}`).toBe("deny");
+      expect(out.reason, `${host}: ${command}`).toContain(`\`${call}\``);
+    }
 });
 
 test("G a seal taken while writes asked, W the file is changed to auto, T every raw write is denied or asked as with ask", () => {

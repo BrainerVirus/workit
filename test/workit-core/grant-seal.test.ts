@@ -2,7 +2,8 @@
 // written. When `<account config dir>/workspaces.json.seal` exists and the
 // authority fields no longer match it, every authority value is the stricter
 // of its current and last sealed value, and the note names the terminal
-// command that accepts the change. Without a seal nothing changes.
+// command that accepts the change. Without a seal the D4 defaults are the
+// sealed value.
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -13,6 +14,8 @@ import {
   rawGrantDenial,
   requireGrant,
   resolveAutonomy,
+  sealAfterWrite,
+  sealBefore,
 } from "@/packages/workit-core/src/autonomy";
 import { SEAL_FILE, sealDocument } from "@/packages/workit-core/src/core/grant-seal";
 import { sshSeam } from "@/packages/workit-core/src/core/remotes";
@@ -26,7 +29,7 @@ const savedName = process.env.WORKIT_WORKSPACE_NAME;
 beforeAll(() => {
   delete process.env.WORKIT_WORKSPACE_NAME;
   sshSeam.read = () => ({ text: "", home: os.tmpdir() });
-  configHome = useConfigHome("wk-grant-seal-config-");
+  configHome = useConfigHome("wk-grant-seal-config-", { seal: "manual" });
   root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-grant-seal-"))).replaceAll("\\", "/");
   for (const dir of ["strict/repo", "open/repo", "other/repo"])
     mkdirSync(path.join(root, dir), { recursive: true });
@@ -73,7 +76,7 @@ const tamper = (sealed: Entry[], current: Entry[]) => {
   write(current);
 };
 
-test("Given a matching seal, Then grants, endpoint, verification and youtrack.writes are as without one", () => {
+test("Given a matching seal, Then grants, endpoint, verification and youtrack.writes are as written", () => {
   const entries = [
     strict({ verification: "independent" }),
     open({
@@ -84,22 +87,39 @@ test("Given a matching seal, Then grants, endpoint, verification and youtrack.wr
     }),
   ];
   write(entries);
-  const unsealed = [at("strict"), at("open"), at("other")].map((cwd) => resolveAutonomy(cwd));
-  const writes = youTrackWritesMode(at("open"));
+  expect(youTrackWritesMode(at("open"))).toBe("ask");
   sealConfig(configHome.configDir);
-  expect([at("strict"), at("open"), at("other")].map((cwd) => resolveAutonomy(cwd))).toEqual(
-    unsealed,
+  const [strictAt, openAt, otherAt] = [at("strict"), at("open"), at("other")].map((cwd) =>
+    resolveAutonomy(cwd),
   );
-  expect(writes).toBe("auto");
+  expect(strictAt.grants.push).toBe(false);
+  expect(strictAt.verification).toBe("independent");
+  expect(openAt.grants).toEqual({ push: true, pr: true, merge: true, release: true, rerun: true });
+  expect(openAt.effectiveEndpoint).toBe("merged");
+  expect(openAt.verification).toBe("self");
+  expect(otherAt.workspace).toBeNull();
+  for (const autonomy of [strictAt, openAt, otherAt]) expect(autonomy.note).toBeUndefined();
   expect(youTrackWritesMode(at("open"))).toBe("auto");
-  expect(resolveAutonomy(at("open")).note).toBeUndefined();
 });
 
-test("Given no seal, When grants are raised in the file, Then they are honoured as today", () => {
-  write([open({ autonomy: { merge: true }, defaultEndpoint: "merged" })]);
+test("Given no seal, When grants are raised above the D4 defaults in the file, Then they fall back to the defaults and the note names the seal command", () => {
+  write([open({ autonomy: { merge: true }, defaultEndpoint: "merged", verification: "self" })]);
   const autonomy = resolveAutonomy(at("open"));
-  expect(autonomy.grants.merge).toBe(true);
-  expect(autonomy.effectiveEndpoint).toBe("merged");
+  expect(autonomy.grants.merge).toBe(false);
+  expect(autonomy.effectiveEndpoint).toBe("commit");
+  expect(autonomy.verification).toBe("proportional");
+  expect(autonomy.note).toContain(SEAL);
+  expect(autonomy.unblocks?.merge).toContain(SEAL);
+  expect(grantsMatter("merge")).toBe(true);
+  const decision = requireGrant(at("open"), "merge");
+  expect(decision.allowed).toBe(false);
+  if (!decision.allowed) expect(decision.unblock).toContain(SEAL);
+});
+
+test("Given no seal, When the file only lowers below the defaults, Then it applies with no note", () => {
+  write([strict()]);
+  const autonomy = resolveAutonomy(at("strict"));
+  expect(autonomy.grants.push).toBe(false);
   expect(autonomy.note).toBeUndefined();
 });
 
@@ -303,4 +323,25 @@ test("Given push below the D4 default in both sealed and current, When the seal 
   // No sealed value at all (D4 push is true) never raises it either.
   writeFileSync(path.join(configHome.configDir, SEAL_FILE), "garbage");
   expect(resolveAutonomy(at("strict")).grants.push).toBe(false);
+});
+
+test("Given a terminal writer and a matching seal, When another write lands between its write and the reseal, Then only the writer's own entries could be sealed: the seal is left mismatched", () => {
+  write([open()]);
+  sealConfig(configHome.configDir);
+  const before = sealBefore(configHome.configDir);
+  const own = [open({ autonomy: { push: true, pr: true, merge: false } })];
+  write(own);
+  // Someone else's raise lands before the writer re-reads.
+  write([open({ autonomy: { push: true, pr: true, merge: true, release: true } })]);
+  expect(sealAfterWrite(before, true, own)).toBe("mismatch");
+  expect(resolveAutonomy(at("open")).grants.release).toBe(false);
+  // Without the race, the writer's entries are sealed.
+  write(own);
+  expect(sealAfterWrite(sealBefore(configHome.configDir), true, own)).toBe("unchanged");
+  write([open()]);
+  sealConfig(configHome.configDir);
+  const clean = sealBefore(configHome.configDir);
+  write(own);
+  expect(sealAfterWrite(clean, true, own)).toBe("resealed");
+  expect(resolveAutonomy(at("open")).note).toBeUndefined();
 });

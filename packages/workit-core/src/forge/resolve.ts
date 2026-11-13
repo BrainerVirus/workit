@@ -12,6 +12,7 @@
 //   <vcs.account>`, else the CLI's default login. The token is never printed.
 // Config is read, never written.
 import fs from "node:fs";
+import { identityDenial, SEAL_UNBLOCK } from "../autonomy";
 import { configFilePath } from "../core/config";
 import { readVcsConfig } from "../core/vcs-config";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
@@ -297,6 +298,10 @@ export function resolveForge(
       `fix ${configFilePath("workspaces.json")} (workit init → Workspaces)`,
     );
   }
+  // A broken seal binds the forge identity to the sealed one (#819): checked
+  // before any token file is read or forge program runs.
+  const unsealed = identityDenial(cwd, workspace);
+  if (unsealed) return failure("blocked", unsealed, SEAL_UNBLOCK);
   const hosts = configuredHosts();
   const pushed = pushForge(cwd, { branch: options.branch, hosts, sshConfig: options.sshConfig });
   if (!pushed.ok) return failure(pushed.code, pushed.error, pushed.unblock);
@@ -438,6 +443,10 @@ export function checkPushIdentity(
       `fix ${configFilePath("workspaces.json")} (workit init → Workspaces)`,
     );
   }
+  // A broken seal binds the forge identity to the sealed one (#819): checked
+  // before any token file is read or forge program runs.
+  const unsealed = identityDenial(cwd, workspace);
+  if (unsealed) return failure("blocked", unsealed, SEAL_UNBLOCK);
   const account = workspace?.vcs?.account ?? null;
   const skipped = (forge: PushIdentity["forge"], reason: string, unblock?: string) =>
     success<PushIdentity>({

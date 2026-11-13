@@ -298,8 +298,13 @@ asks once and lists only the entries whose globs can match the removed folders.
 `workit workspace set --global models.roles.verifier.claude_code=sonnet` edits
 the file's top-level `models` key (grant keys are refused, as in `workspace set`). The
 `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR` and `XDG_CONFIG_HOME`
-overrides never redirect grants: while one is set, grants resolve to the
-defaults.
+overrides never redirect grants, the endpoint, verification, the account
+requirement or remote claims: those are always read from the account's own
+`workspaces.json`, and a redirect only adds a cap at the defaults. While one is
+set, each grant is the stricter of the default and the account's value, the
+endpoint is `commit`, verification is the stricter of `proportional` and the
+account's, and `youtrack.writes` is `ask`. A redirect never raises anything
+the account's sealed file does not give.
 
 ## The seal
 
@@ -309,11 +314,34 @@ when grants are read instead, however the file was written.
 `workspaces.json.seal`, beside `workspaces.json` in the account's config dir
 (no `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME` or
 `WORKIT_STATE_DIR` moves it), holds a hash of each entry's authority fields
-and their last sealed values: `name`, `glob`, entry order, `remotes`,
-`vcs.account`, `vcs.provider`, `autonomy`, legacy `autoApprove`,
-`defaultEndpoint`, `verification` and `youtrack.writes`. Only your own
-terminal writes it; the hooks deny an agent's writes to it on every host,
-the same as to `workspaces.json`.
+and their last sealed values: `name`, `glob`, entry order, `remotes`, the
+forge identity (`vcs.provider`, `vcs.account`, `vcs.tokenFile`, `vcs.host`),
+`autonomy`, legacy `autoApprove`, `defaultEndpoint`, `verification` and
+`youtrack.writes`. `vcs.defaultTargetBranch`, roles, branch policy and checks
+are outside it.
+
+`workit workspace seal`, in your own terminal, shows what changed since the
+last seal (the first time, every authority field) and writes the seal when
+you answer y; n writes nothing. It is refused in an agent's shell and without
+a terminal, and the hooks deny an agent's writes to the seal on every host,
+the same as to `workspaces.json`. The writers keep it current where that is
+safe: `workit grant set|unset`, `workit workspace add|set|rm` and the setup
+wizard reseal by themselves at your terminal when the seal matched before the
+write; elsewhere (an agent, a script) only a write that lowers the sealed
+values reseals. Any other change leaves the file unsealed, and the verb says
+so with the command; at your terminal it shows the change and offers to seal.
+A write to a redirected config file never touches the seal.
+
+An existing setup has no seal yet. Then every authority value is the stricter
+of the file and the defaults: anything above them (a merge or release grant,
+an endpoint past `commit`, `verification: self`, `youtrack.writes: auto`) waits
+for the seal. `workit upgrade` and `workit setup` at your terminal show the
+fields once and offer to seal them. The upgrade that installs this release
+asks as soon as the new CLI takes over, `--yes` or not, whenever it runs at
+your terminal outside an agent; afterwards a plain `workit upgrade` or
+`workit setup` asks, and `--yes`, `--json`, `--preview` or `--dry-run` do not.
+`workit doctor` warns (`grant_seal`, also under "Left after upgrade") until
+you do.
 
 When a seal exists and the file no longer matches it, or the seal is
 malformed or unreadable, nothing the change raised is honoured:
@@ -322,20 +350,25 @@ malformed or unreadable, nothing the change raised is honoured:
   default when the seal holds none), and so are `defaultEndpoint` (the lower)
   and `verification` (the stricter);
 - `youtrack.writes` falls back to `ask`;
-- every remote claim, current or sealed, caps the checkouts it claims.
+- every remote claim, current or sealed, caps the checkouts it claims;
+- where a sealed entry still covers the checkout, the forge identity must be
+  the sealed one: a changed `vcs.provider`, `account`, `tokenFile` or `host`
+  blocks the forge verbs (`identity_unsealed`) before any token is read.
 
 A broken seal never raises anything, and settings outside that list (roles,
 branch policy, checks) still apply. The note in `workit grant show` and each
 grant denial names the fix: if you made the change, re-seal from your own
-terminal with the command the note gives. Without a seal file, grants read
-as before.
+terminal with the command the note gives. With no seal, under a redirect or
+for an entry the seal does not hold, the identity is the file's as before,
+and the grants are at most the defaults.
 
 ## Trust model
 
 This stops an honest agent from raising its own grants, not an adversarial
 one: a process that drives a pseudo-terminal, clears the agent markers or
 edits `workspaces.json` directly can get past it (with a seal, only by also
-forging the seal: it is a check, not a proof). The hard boundary is your
+forging the seal: it is a check, not a proof, D18). `vcs.json` hosts are
+neither sealed nor write-guarded. The hard boundary is your
 host's permission prompt: deny or ask on `workit grant set` and on edits under
 `~/.config/workit`, and allowlist only read verbs (such as `workit pr status`
 and `workit grant show`). The block `workit setup` writes follows that rule:

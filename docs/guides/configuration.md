@@ -214,6 +214,18 @@ covers the removed glob. `rm` never removes the last entry. Raise a grant
 with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 
+`workspaces.json.seal`, beside it in the account's config dir, holds the
+authority fields you last accepted with `workit workspace seal` in your own
+terminal: grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
+`name`, `glob`, entry order, `remotes` and the forge identity (`vcs.provider`,
+`account`, `tokenFile`, `host`). While it is missing or does not match, each
+of them is the stricter of the file and the last seal (the defaults when there
+is none). A write at your terminal reseals when the seal matched before; any
+other write reseals only when it lowers them. A redirected config dir
+(`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`) is never read for
+authority and only lowers it; see [the seal](grants.md#the-seal). It is a
+check, not a proof (D18): a process that rewrites the seal as well passes it.
+
 An agent session never writes `workspaces.json` itself. On every host, the
 write gate denies an edit or a shell write (redirect, `tee`, `cp`, `mv`,
 `sed -i`…) to it, or a copy, move or removal of the config dir itself. That

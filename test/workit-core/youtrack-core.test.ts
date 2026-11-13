@@ -15,6 +15,7 @@ import {
 import { defaultOperations } from "@/packages/workit-core/src/core/youtrack-tools";
 import { youTrackWriteGate } from "@/packages/workit-core/src/core/youtrack-backend";
 import type { YtrackResult, YtrackRun } from "@/packages/workit-core/src/core/youtrack-ytrack";
+import { useConfigHome } from "../shared/grant-home";
 
 const cfg = (overrides: Record<string, unknown> = {}) => ({
   baseUrl: "https://yt.example.test",
@@ -229,23 +230,21 @@ test("default scripts delegate only to read-only youtrack helpers", () => {
   expect(duration).toBeDefined();
 });
 
-/** A workspace with `youtrack.writes: auto`, the opt-out that keeps the WORKIT_YT_WRITE gate. */
+/**
+ * A workspace with `youtrack.writes: auto`, the opt-out that keeps the
+ * WORKIT_YT_WRITE gate: in a temp account home, sealed, as only the account's
+ * own file gives auto (#819).
+ */
 const autoWrites = (fn: (root: string) => Promise<void>) => {
-  const config = mkdtempSync(path.join(os.tmpdir(), "wk-yt-auto-"));
-  const previous = process.env.WORKIT_CONFIG;
-  const root = path.join(config, "work");
+  const home = useConfigHome("wk-yt-auto-");
+  const root = path.join(home.configDir, "work");
   writeFileSync(
-    path.join(config, "workspaces.json"),
+    path.join(home.configDir, "workspaces.json"),
     JSON.stringify({
       workspaces: [{ name: "w", glob: `${root}/**`, youtrack: { writes: "auto" } }],
     }),
   );
-  process.env.WORKIT_CONFIG = config;
-  return fn(root).finally(() => {
-    if (previous === undefined) delete process.env.WORKIT_CONFIG;
-    else process.env.WORKIT_CONFIG = previous;
-    rmSync(config, { recursive: true, force: true });
-  });
+  return fn(root).finally(() => home.restore());
 };
 
 test("Given youtrack.writes auto and no WORKIT_YT_WRITE, When a write goes through the default operations, Then it is refused before ytrack runs", () =>

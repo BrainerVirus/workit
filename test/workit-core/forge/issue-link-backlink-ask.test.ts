@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { postBacklinks, type IssueLink } from "@/packages/workit-core/src/forge/issue-link";
 import type { ResolvedForge } from "@/packages/workit-core/src/forge/resolve";
+import { useConfigHome } from "../../shared/grant-home";
 
 const dir = mkdtempSync(path.join(os.tmpdir(), "wk-backlink-ask-"));
 const saved = {
@@ -42,15 +43,21 @@ test("Given the default (ask), When pr create backlinks a YouTrack issue, Then i
   expect(outcome.note).toContain("re-run workit pr create to post it once");
 });
 
-test("Given youtrack.writes auto, Then the backlink keeps today's WORKIT_YT_WRITE gate", async () => {
-  writeFileSync(
-    path.join(dir, "workspaces.json"),
-    JSON.stringify({
-      workspaces: [{ name: "w", glob: `${dir}/**`, youtrack: { writes: "auto" } }],
-    }),
-  );
-  const [gated] = await postBacklinks(dir, resolved, PR, [LINK], { env: { PATH: env.PATH } });
-  expect(gated).toMatchObject({ status: "failed" });
-  expect(gated.note).toContain("WORKIT_YT_WRITE=1");
-  rmSync(path.join(dir, "workspaces.json"));
+test("Given youtrack.writes auto in the account's sealed file, Then the backlink keeps today's WORKIT_YT_WRITE gate", async () => {
+  // Only the account's own, sealed file gives auto (#819): a temp account home.
+  const home = useConfigHome("wk-backlink-ask-config-");
+  try {
+    writeFileSync(
+      path.join(home.configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [{ name: "w", glob: `${dir}/**`, youtrack: { writes: "auto" } }],
+      }),
+    );
+    const [gated] = await postBacklinks(dir, resolved, PR, [LINK], { env: { PATH: env.PATH } });
+    expect(gated).toMatchObject({ status: "failed" });
+    expect(gated.note).toContain("WORKIT_YT_WRITE=1");
+  } finally {
+    home.restore();
+    process.env.WORKIT_CONFIG = dir;
+  }
 });

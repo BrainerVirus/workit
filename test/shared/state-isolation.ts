@@ -7,6 +7,7 @@ import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { grantsHome } from "@/packages/workit-core/src/core/account-home";
 import { guardRealState } from "./real-state-guard";
 
 // Fail the run if a test left a worktree in the real state dir (a child given
@@ -35,6 +36,14 @@ process.env.WORKIT_STATE_DIR = dir;
 // Never let a test reach the developer's real, logged-in ytrack (youtrack-ytrack.ts findYtrack).
 process.env.WORKIT_NO_YTRACK = "1";
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// Grants are read from the OS account's home, which no env var moves (D15):
+// in-process, every test reads them from a run-scoped temp home instead, so
+// the real account's workspaces.json and its seal are never read here
+// (useConfigHome swaps in its own home). Child processes still read the
+// account record, as bench worlds do; keep grant assertions in-process.
+const accountHomeForRun = path.join(dir, "account-home");
+grantsHome.resolve = () => accountHomeForRun;
 
 // Throwaway test repos never need git's auto-maintenance, which every commit
 // started as an extra process (53 of 1,285 spawns in ledger-gates; costly on

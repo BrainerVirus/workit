@@ -78,7 +78,7 @@ test("G Codex config enables a workit plugin whose cache is gone, W doctor runs,
   expect(row(bare.run()).status).toBe("pass");
 });
 
-test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it runs the version, asset, agent and permission checks and nothing else", () => {
+test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it runs the version, asset, agent, permission and grant-seal checks and nothing else", () => {
   const doctor = doctorFor("upgrade-only");
   const report = runDoctor({
     host: "cli",
@@ -109,6 +109,7 @@ test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it r
       "claude_grant_rules",
       "codex_grant_rules",
       "cursor_grant_rules",
+      "grant_seal",
     ].toSorted(),
   );
 });

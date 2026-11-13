@@ -32,7 +32,17 @@
 //   agent or headless shell, like `grant set`, and needs a y/N at the
 //   user's own terminal; several names confirm once. It never removes the last entry.
 // Every write keeps the previous file as workspaces.json.bak, like grant set.
+// - `seal` (#819) accepts the authority fields of the account's
+//   workspaces.json: it shows what changed since the last seal (the first
+//   time, every field) and writes workspaces.json.seal on the user's y. It is
+//   the user's alone: refused in an agent shell or without a terminal. A
+//   write here reseals by itself only when the seal matched before and the
+//   user is at a terminal, or when it only lowers the sealed values; any other
+//   change waits for `seal`, and until then authority is the stricter of the
+//   file and the last seal. A write to a redirected config file never touches
+//   the seal (grants are read from the account's file only).
 import { copyFileSync, existsSync } from "node:fs";
+import path from "node:path";
 import {
   DEFAULT_ENDPOINT,
   DEFAULT_GRANTS,
@@ -42,7 +52,11 @@ import {
   isDefaultEndpoint,
   raises,
   raisesEndpoint,
+  sealAfterWrite,
+  sealBefore,
+  sealStatus,
   verificationOf,
+  type SealAfter,
   type DefaultEndpoint,
   type Grants,
   VERIFICATION_STRICTNESS,
@@ -74,10 +88,18 @@ import { closest } from "../help";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
 import { createStyle, type Style } from "../style";
-import { agentMarker, confirmWith, type GrantDeps } from "./grant";
+import {
+  agentMarker,
+  atTerminal,
+  confirmWith,
+  offerSeal,
+  sealLines,
+  settleSeal,
+  type GrantDeps,
+} from "./grant";
 
 const USAGE =
-  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace set --global <key>=<value>… | workspace rm <name>…";
+  "workit workspace list | workspace add <name> --glob <g> [--from <parent>] | workspace set <name> <key>=<value>… | workspace set --global <key>=<value>… | workspace rm <name>… | workspace seal";
 
 /** What `--from` copies: never a grant, the endpoint or verification. */
 export const INHERITED_KEYS = [
@@ -257,12 +279,20 @@ const load = (io: Io): WorkspacesResult | number => {
 
 const entriesOf = (current: WorkspacesResult): Entry[] => current.entries;
 
-/** Validate, re-read for a concurrent edit, back up and write atomically. */
+/**
+ * Validate, re-read for a concurrent edit, back up and write atomically. The
+ * seal is read before the write and settled after it (autonomy.ts
+ * sealAfterWrite); `terminal` is the user at a terminal outside an agent.
+ */
 const save = (
   current: WorkspacesResult,
   entries: Entry[],
   topLevel: Record<string, unknown> = {},
-): { ok: true; path: string; backup: string | null } | { ok: false; error: string } => {
+  terminal = false,
+):
+  | { ok: true; path: string; backup: string | null; seal: SealAfter }
+  | { ok: false; error: string } => {
+  const before = sealBefore(path.dirname(current.path));
   const document = withSchemaRef("workspaces.json", {
     ...current.document,
     ...topLevel,
@@ -287,11 +317,16 @@ const save = (
       error: `failed to write ${current.path}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  return { ok: true, path: current.path, backup };
+  return {
+    ok: true,
+    path: current.path,
+    backup,
+    seal: sealAfterWrite(before, terminal, entries),
+  };
 };
 
-const written = (path: string, backup: string | null) =>
-  `${path}${backup ? ` (previous copy: ${backup})` : ""}`;
+const written = (file: string, backup: string | null) =>
+  `${file}${backup ? ` (previous copy: ${backup})` : ""}`;
 
 const styleOf = (io: Io): Style =>
   createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
@@ -494,8 +529,9 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
     ...clampToShadowed(shadowedCeiling(entries)),
     ...(remotes ? { remotes } : {}),
   };
-  const result = save(current, [...entries, entry]);
+  const result = save(current, [...entries, entry], {}, atTerminal(io, deps));
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
+  const seal = await settleSeal(io, deps, result.seal);
   const ceiling = ceilingOf(entry);
   const style = styleOf(io);
   return emit(
@@ -510,6 +546,7 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       grants: ceiling.grants,
       defaultEndpoint: ceiling.endpoint,
       verification: ceiling.verification,
+      seal,
     }),
     (data) => [
       `${style.bold(name)} ${style.dim(`(${glob})`)} ${style.raise("added")} to ${written(data.path, data.backup)}`,
@@ -530,6 +567,7 @@ async function add(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       `  grants start at the strictest level of every workspace and the defaults:`,
       `  grants: ${ceilingLine(style, { grants: data.grants, endpoint: data.defaultEndpoint, verification: data.verification })}`,
       `  raising a grant needs the user, in their own terminal: workit grant set ${name} <kind>=<value>`,
+      ...sealLines(data.seal),
     ],
   );
 }
@@ -744,8 +782,9 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
     if (!answer)
       return emit(io, fail("blocked", "youtrack.writes change not confirmed; nothing was written"));
   }
-  const result = global ? save(current, entries, topLevel) : save(current, entries);
+  const result = save(current, entries, global ? topLevel : {}, atTerminal(io, deps));
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
+  const seal = await settleSeal(io, deps, result.seal);
   const style = styleOf(io);
   return emit(
     io,
@@ -754,6 +793,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
       backup: result.backup,
       ...(global ? { global: true, settings: topLevel } : { workspace: entry }),
       changes: moves,
+      seal,
     }),
     (data) => [
       `${style.bold(global ? "global" : name)}: ${changes.map((change) => change.path.join(".")).join(", ")} updated in ${written(data.path, data.backup)}`,
@@ -766,6 +806,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
               : style.lower;
         return paint(`  ${style.bold(move.key)}: ${brief(move.from)} -> ${brief(move.to)}`);
       }),
+      ...sealLines(data.seal),
     ],
   );
 }
@@ -920,8 +961,9 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
     if (!answer)
       return emit(io, fail("blocked", "workspace removal not confirmed; nothing was written"));
   }
-  const result = save(current, remaining);
+  const result = save(current, remaining, {}, atTerminal(io, deps));
   if (!result.ok) return emit(io, fail("invalid_input", result.error));
+  const seal = await settleSeal(io, deps, result.seal);
   const results = gone.map((removed) => {
     const at = globRoot(removed.glob);
     let covers: { at: string; workspace: string | null; error?: string };
@@ -959,6 +1001,7 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
       covers: one ? results[0].covers : results.map((item) => item.covers),
       takers: takers.map((entry) => entry.name),
       raises: raised.map(({ taker, kinds, reason }) => ({ taker, kinds, reason })),
+      seal,
     }),
     (data) => [
       ...results.flatMap(({ removed, covers, was }) => [
@@ -973,8 +1016,53 @@ async function rm(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
           ]
         : []),
       "  workit workspace list --cwd <folder> shows which entry applies to a folder",
+      ...sealLines(data.seal),
     ],
   );
+}
+
+/**
+ * `workit workspace seal`: the user accepts the authority fields of the
+ * account's workspaces.json as they are now (see the header). Never in an
+ * agent shell or without a terminal.
+ */
+async function sealVerb(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
+  if (argv.length) return usage(io, `unexpected argument ${argv[0]}`);
+  const agent = agentMarker(io.env);
+  if (!deps.interactive() || agent)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `seal_refused: sealing accepts every grant, endpoint, verification, remote and forge identity in workspaces.json, so it needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
+        {
+          unblock:
+            "ask the user to run, in a terminal outside the agent host (not Claude Code's `!` prefix or an agent shell): workit workspace seal",
+        },
+      ),
+    );
+  const status = sealStatus();
+  if (status.state === "no_account") return emit(io, fail("failed", status.note));
+  if (status.error) return emit(io, fail("invalid_input", status.error));
+  const file = path.join(status.dir, "workspaces.json");
+  if (status.state === "valid")
+    return emit(io, ok({ path: file, sealed: true, changed: false }), () => [
+      `${file}: already sealed; nothing changed`,
+    ]);
+  const offered = await offerSeal(
+    io,
+    deps,
+    status.state === "none"
+      ? `${file} has never been sealed. Sealing accepts these authority fields:`
+      : `${file} does not match its seal (${status.reason}). Sealing accepts:`,
+  );
+  if (offered === "cancelled") return cancelled(io);
+  if (offered === "declined")
+    return emit(io, fail("blocked", "seal not confirmed; nothing was written"));
+  if (offered !== "sealed") return emit(io, fail("failed", `${file}: the seal was not written`));
+  return emit(io, ok({ path: file, sealed: true, changed: true }), () => [
+    `${file}: sealed; its grants, endpoint, verification and youtrack.writes apply as written`,
+  ]);
 }
 
 export async function runWorkspace(
@@ -988,6 +1076,7 @@ export async function runWorkspace(
   if (sub === "add") return add(rest, io, deps);
   if (sub === "set") return set(rest, io, deps);
   if (sub === "rm") return rm(rest, io, deps);
+  if (sub === "seal") return sealVerb(rest, io, deps);
   return usage(io, `unknown subcommand "${sub}"`);
 }
 

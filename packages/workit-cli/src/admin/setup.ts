@@ -48,6 +48,9 @@ import {
   OPENCODE_NPM_PIN,
 } from "./registration";
 import { runDoctor, type DoctorReport } from "./doctor";
+import { sealAfterWrite, sealBefore } from "@workit-dev/core/src/autonomy";
+import { SEAL_COMMAND } from "@workit-dev/core/src/core/grant-seal";
+import { agentMarker } from "../upgrade/agent-marker";
 import { CODEX_MARKETPLACE } from "../upgrade/codex-marketplace";
 import { writeFileExclusive } from "@workit-dev/core/src/core/safe-write";
 import {
@@ -682,6 +685,12 @@ export type ApplySetupOptions = {
   runHostCommand?: HostCommandRunner;
   /** Prefer staged npm adapter assets, used by the explicit upgrade flow. */
   preferInstalledAdapter?: boolean;
+  /**
+   * The user at an interactive terminal outside an agent (default: both
+   * stdio streams are TTYs and no agent marker is set): a workspaces.json
+   * write then reseals when the seal matched before (autonomy.ts sealAfterWrite).
+   */
+  terminal?: boolean;
 };
 
 type ResolvedApply = {
@@ -813,7 +822,7 @@ const workspaceEntriesAlreadyMatch = (
   }
 };
 
-function applyMutation(m: CoreMutation): SetupResultEntry {
+function applyMutation(m: CoreMutation, terminal = false): SetupResultEntry {
   const dir = path.dirname(m.path);
   switch (m.type) {
     case "create-file": {
@@ -894,6 +903,8 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
       if (prev === next)
         return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       mkdirSync(dir, { recursive: true });
+      // Read before the write: the account's seal decides whether it reseals.
+      const before = sealBefore(dir);
       const tmp = `${m.path}.${process.pid}.tmp`;
       try {
         writeFileSync(tmp, next, "utf8");
@@ -916,9 +927,15 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
           detail: `failed to write ${m.path}: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
+      const unsealed =
+        sealAfterWrite(before, terminal, m.entries) === "mismatch"
+          ? {
+              detail: `not sealed: grants, endpoint and verification above the last seal (or the D4 defaults) apply after the user runs, in their own terminal: ${SEAL_COMMAND}`,
+            }
+          : {};
       return prev === null
-        ? { platform: "core", file: m.path, status: "Installed" }
-        : { platform: "core", file: m.path, status: "Configured" };
+        ? { platform: "core", file: m.path, status: "Installed", ...unsealed }
+        : { platform: "core", file: m.path, status: "Configured", ...unsealed };
     }
     case "append-gitignore": {
       const existing = readFileSafe(m.path) ?? "";
@@ -1437,6 +1454,11 @@ export function applySetupPreview(
   }
 
   const res = resolveApply(preview, options);
+  const terminal =
+    options.terminal ??
+    (process.stdin.isTTY === true &&
+      process.stdout.isTTY === true &&
+      !agentMarker(options.env ?? process.env));
   // Hook launchers find a Node >= the floor from this record when the PATH node is older.
   recordHookNode(options.stateDir ? { ...res.env, WORKIT_STATE_DIR: options.stateDir } : res.env);
   const entries: SetupResultEntry[] = [];
@@ -1510,7 +1532,7 @@ export function applySetupPreview(
       continue;
     }
     if (mutation.type !== "register-platform" && mutation.type !== "install-adapter") {
-      entries.push(applyMutation(mutation));
+      entries.push(applyMutation(mutation, terminal));
       continue;
     }
     const platform = mutation.platform;

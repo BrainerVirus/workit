@@ -34,11 +34,20 @@
 //   permission prompt applies in addition: a host deny always wins.
 import { copyFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { accountHome } from "./core/account-home";
+import { grantsHome } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
 import { evalWorld, evalWorldEntry } from "./core/eval-world";
-import { checkSeal, SEAL_COMMAND, type SealCheck } from "./core/grant-seal";
+import {
+  checkSeal,
+  identityOf,
+  sealDiffLines,
+  sealedProjection,
+  sealProjection,
+  SEAL_COMMAND,
+  writeSeal,
+  type SealCheck,
+} from "./core/grant-seal";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -52,7 +61,6 @@ import {
   loadWorkspacesFrom,
   readWorkspacesResult,
   resolveWorkspaceFrom,
-  resolveRuntimeWorkspaceVcs,
   resolveWorkspaceFromEntries,
   validateWorkspacesDocument,
   type WorkspaceConfig,
@@ -63,15 +71,11 @@ import {
  * config dir under the account home (`~/.config/workit`, `%APPDATA%\\workit` on
  * Windows; D15, see grantsHome). The WORKIT_CONFIG(_DIR) and
  * XDG_CONFIG_HOME overrides that redirect the rest of the config never
- * redirect grants: an agent could point them at a file it wrote. While an
- * override points elsewhere, grants resolve to the D4 defaults.
+ * redirect authority: an agent could point them at a file it wrote. While an
+ * override points elsewhere, authority is the stricter of the D4 defaults and
+ * the account's own (seal-aware) values: a redirect only ever lowers it.
  */
-/**
- * Where grants are read from: the OS account record's home directory, never
- * `$HOME` (an agent can set that for one command). Tests swap `resolve`
- * in-process; nothing outside this process can change it.
- */
-export const grantsHome = { resolve: accountHome };
+export { grantsHome };
 
 /**
  * The default config dir (core/workit-paths.mjs) for the account home, with
@@ -123,7 +127,10 @@ const sealOf = (): SealCheck => {
   return dir === null ? { state: "none" } : checkSeal(dir);
 };
 
-const SEAL_UNBLOCK = `if the user made this change, ask them to run, in their own terminal: ${SEAL_COMMAND}`;
+/** The unblock of a value a broken seal, or an identity that differs from the sealed one, lowered. */
+export const SEAL_UNBLOCK = `if the user made this change, ask them to run, in their own terminal: ${SEAL_COMMAND}`;
+const NO_SEAL_UNBLOCK = `ask the user to review and seal the grants, in their own terminal: ${SEAL_COMMAND}`;
+const NO_SEAL_NOTE = `workspaces.json has no seal yet (${SEAL_COMMAND} has never run), so grants, endpoint, verification and youtrack.writes stay at or below the D4 defaults; ${NO_SEAL_UNBLOCK}`;
 
 /**
  * Why authority falls back (a seal that exists and does not match, see
@@ -140,20 +147,35 @@ const sealNote = (seal: SealCheck = sealOf()): string | null =>
  * workspace): each write needs the user's yes through the approval channel.
  * `auto` is the opt-out a user sets in the workspace entry
  * (`youtrack: { writes: "auto" }`); it keeps the WORKIT_YT_WRITE gate alone.
- * A broken seal reads as `ask`. Here, not in core/youtrack-writes.ts, so the
- * shell hook's raw ytrack guard reads it without the YouTrack client.
+ * Only the account's sealed file gives `auto` (see youTrackWritesMode). Here,
+ * not in core/youtrack-writes.ts, so the shell hook's raw ytrack guard reads
+ * it without the YouTrack client.
  */
 export type YouTrackWritesMode = "ask" | "auto";
 
+/**
+ * `auto` only from the account's own file with a valid seal, never under a
+ * config redirect (WORKIT_CONFIG, WORKIT_CONFIG_DIR, XDG_CONFIG_HOME) or in a
+ * bench world; with WORKIT_WORKSPACE_NAME, the named entry and the folder's
+ * unnamed one must both say auto. Anything that throws reads as `ask`.
+ */
 export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
-  const youtrack = resolveRuntimeWorkspaceVcs(cwd)?.youtrack;
-  return youtrack &&
-    typeof youtrack === "object" &&
-    (youtrack as { writes?: unknown }).writes === "auto" &&
-    !sealNote()
-    ? "auto"
-    : "ask";
+  try {
+    const dir = accountDir();
+    if (dir === null || redirected(dir) || evalWorld(cwd)) return "ask";
+    if (checkSeal(dir).state !== "valid") return "ask";
+    const auto = (entry: WorkspaceConfig | null) =>
+      (entry?.youtrack as { writes?: unknown } | undefined)?.writes === "auto";
+    const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
+    if (!auto(resolveWorkspaceFrom(cwd, dir, name))) return "ask";
+    return !name || auto(resolveWorkspaceFrom(cwd, dir)) ? "auto" : "ask";
+  } catch {
+    return "ask";
+  }
 };
+
+/** Whether the config dir the rest of the config reads is not the account's own. */
+const redirected = (dir: string): boolean => path.resolve(resolveConfigDir()) !== path.resolve(dir);
 
 /**
  * Where `grant show --all` lists grants and `grant set` writes them: the
@@ -196,8 +218,12 @@ export const grantsOverride = (): string | null => {
   const configured = path.resolve(resolveConfigDir());
   return configured === path.resolve(shown)
     ? null
-    : `the config directory is redirected to ${configured} (WORKIT_CONFIG, WORKIT_CONFIG_DIR or XDG_CONFIG_HOME), but that override does not apply to grants: grants are read only from ${path.join(grantsDir(), "workspaces.json")}, so the D4 defaults apply until grants are set there`;
+    : `the config directory is redirected to ${configured} (WORKIT_CONFIG, WORKIT_CONFIG_DIR or XDG_CONFIG_HOME), but that override does not apply to grants: grants are read only from ${path.join(grantsDir(), "workspaces.json")}, and under a redirect they never exceed the D4 defaults`;
 };
+
+/** The unblock of a grant a config redirect lowered to the D4 defaults. */
+const redirectUnblock = (): string =>
+  `ask the user: grants above the D4 defaults apply only without a config redirect (WORKIT_CONFIG, WORKIT_CONFIG_DIR or XDG_CONFIG_HOME), and are read from ${path.join(grantsDir(), "workspaces.json")}`;
 
 export const GRANT_KINDS = ["push", "pr", "merge", "release", "rerun"] as const;
 export type GrantKind = (typeof GRANT_KINDS)[number];
@@ -563,25 +589,54 @@ function capAt(
 export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const world = benchWorld(cwd);
   const override = world ? null : grantsOverride();
-  // No entry: the D4 defaults.
-  if (override) return { ...autonomyOf(null), note: override };
+  // No account record: no grants are read, the D4 defaults.
+  if (override === NO_ACCOUNT) return { ...autonomyOf(null), note: override };
   // Resolved once even when a broken seal resolves twice.
   let resolved: GrantTarget | undefined;
   const once: LazyTarget | undefined =
     typeof target === "function" ? () => (resolved ??= target()) : target;
-  const current = resolveWith(fileSource(), cwd, world, once);
+  const account = accountAuthority(cwd, world, once);
+  // A redirect only ever adds a cap at the defaults: never above the account.
+  return override ? stricter(account, autonomyOf(null), override, redirectUnblock()) : account;
+}
+
+/** The account file's authority for `cwd`, seal-aware (#819). */
+function accountAuthority(
+  cwd: string,
+  world: WorkspaceConfig | null,
+  target: LazyTarget | undefined,
+): Autonomy {
+  const current = resolveWith(fileSource(), cwd, world, target);
   const seal = sealOf();
-  if (seal.state !== "broken") return current;
+  if (seal.state !== "broken") {
+    // A bench world's entry (no real entry matched) is not the account's file:
+    // it only ever lowers (benchWorld), so a missing seal leaves it as it is.
+    if (seal.state === "valid" || current.world) return current;
+    // Never sealed: the D4 defaults are the sealed value; a note only when it lowers.
+    const capped = stricter(current, autonomyOf(null), NO_SEAL_NOTE, NO_SEAL_UNBLOCK);
+    return authorityKey(capped) === authorityKey(current) ? current : capped;
+  }
   // No sealed value: the D4 defaults. Sealed entries that no longer resolve
   // (a tie, a name they do not have): nothing granted.
   let sealed: Autonomy | null = autonomyOf(null);
   try {
-    if (seal.sealed) sealed = resolveWith(sealedSource(seal.sealed), cwd, world, once);
+    if (seal.sealed) sealed = resolveWith(sealedSource(seal.sealed), cwd, world, target);
   } catch {
     sealed = null;
   }
-  return stricter(current, sealed, sealNote(seal)!);
+  return stricter(current, sealed, sealNote(seal)!, SEAL_UNBLOCK);
 }
+
+/** What an agent may do with an autonomy (not its notes or unblocks). */
+const authorityKey = (autonomy: Autonomy): string =>
+  JSON.stringify([
+    autonomy.grants,
+    autonomy.configured,
+    autonomy.accountConfigured,
+    autonomy.defaultEndpoint,
+    autonomy.effectiveEndpoint,
+    autonomy.verification,
+  ]);
 
 function resolveWith(
   source: Source,
@@ -619,18 +674,24 @@ const needsAccount = (autonomy: Autonomy): boolean =>
   autonomy.configured.length > 0 && !autonomy.accountConfigured;
 
 /**
- * A broken seal (#819): every authority value is the stricter of the current
- * one and the last sealed one (`sealed`; null means nothing granted). A
- * broken seal never raises anything; settings that are not authority stay.
+ * A broken or missing seal (#819), or a config redirect: every authority value
+ * is the stricter of the current one and `sealed` (the last sealed one, or the
+ * D4 defaults; null means nothing granted), and each lowered value carries
+ * `unblock`. It never raises anything; settings that are not authority stay.
  */
-function stricter(current: Autonomy, sealed: Autonomy | null, note: string): Autonomy {
+function stricter(
+  current: Autonomy,
+  sealed: Autonomy | null,
+  note: string,
+  unblock: string,
+): Autonomy {
   const grants = { ...current.grants };
   const unblocks = { ...current.unblocks };
   for (const kind of GRANT_KINDS) {
     const floor = sealed ? sealed.grants[kind] : false;
     if (!raises(kind, floor, grants[kind])) continue;
     grants[kind] = floor;
-    unblocks[kind] = SEAL_UNBLOCK;
+    unblocks[kind] = unblock;
   }
   const configured = GRANT_KINDS.filter(
     (kind) => current.configured.includes(kind) || sealed?.configured.includes(kind),
@@ -664,9 +725,9 @@ function stricter(current: Autonomy, sealed: Autonomy | null, note: string): Aut
     accountConfigured,
     defaultEndpoint,
     effectiveEndpoint: endpoint,
-    endpointReason: endpoint === current.effectiveEndpoint ? current.endpointReason : SEAL_UNBLOCK,
+    endpointReason: endpoint === current.effectiveEndpoint ? current.endpointReason : unblock,
     verification: looser ? strict : current.verification,
-    unblocks,
+    unblocks: Object.keys(unblocks).length > 0 ? unblocks : current.unblocks,
     note: current.note ? `${current.note}; ${note}` : note,
   };
 }
@@ -721,15 +782,20 @@ function capAtRemotes(
  * costs no git call (the shell hook asks first).
  */
 export const grantsMatter = (kind: GrantKind): boolean => {
-  if (grantsOverride()) return false;
-  const matters = entriesIn(accountDir()).some((entry) => {
+  const override = grantsOverride();
+  if (override === NO_ACCOUNT) return false;
+  const entries = entriesIn(accountDir());
+  const matters = entries.some((entry) => {
     const autonomy = autonomyOf(entry);
     return entry.remotes?.length || autonomy.grants[kind] === false || needsAccount(autonomy);
   });
-  // A broken seal falls back to sealed entries or, with none, the D4 defaults.
+  // A broken seal falls back to sealed entries or, with none, the D4 defaults;
+  // a missing seal and a config redirect fall back to the D4 defaults.
   const seal = sealOf();
+  const defaults = entries.length > 0 && DEFAULT_GRANTS[kind] === false;
   return (
     matters ||
+    ((seal.state === "none" || override !== null) && defaults) ||
     (seal.state === "broken" &&
       (seal.sealed ? seal.sealed.length > 0 : DEFAULT_GRANTS[kind] === false))
   );
@@ -976,12 +1042,16 @@ export type GrantWrite =
       grants: Grants;
       configured: GrantKind[];
       verification: VerificationMode;
+      seal: SealAfter;
     })
   | {
       ok: false;
       code: "not_found" | "invalid_input" | "failed";
       error: string;
     };
+
+/** What a write did to the seal (see sealAfterWrite). */
+export type SealAfter = "unchanged" | "resealed" | "mismatch";
 
 /**
  * Set (`value`) or unset (`undefined`) grants of a named workspace in the
@@ -998,8 +1068,11 @@ export function writeGrants(
   endpoint?: DefaultEndpoint | null,
   /** A new verification mode; `null` removes it (back to `proportional`). */
   verification?: VerificationMode | null,
+  /** The user at an interactive terminal outside an agent (see sealAfterWrite). */
+  terminal = false,
 ): GrantWrite {
   if (dir === null) return { ok: false, code: "failed", error: NO_ACCOUNT };
+  const before = sealBefore(dir);
   const current = readWorkspacesResult(dir);
   if (current.status === "missing")
     return {
@@ -1093,7 +1166,197 @@ export function writeGrants(
       accountConfigured: Boolean(accountOf(entry)),
     }),
     verification: verificationOf(entry),
+    seal: sealAfterWrite(before, terminal, document.workspaces ?? []),
   };
+}
+
+/** The seal as a writer found it before writing (see sealAfterWrite). */
+export type SealBefore = {
+  dir: string;
+  check: SealCheck;
+  entries: WorkspaceConfig[];
+} | null;
+
+/**
+ * Read before a write to `<dir>/workspaces.json`: null unless `dir` is the
+ * account's own dir (a redirected file or a bench world's never touches the
+ * seal), so "the seal matched before" is judged on the pre-write read.
+ */
+export function sealBefore(dir: string): SealBefore {
+  const account = accountDir();
+  if (account === null || path.resolve(dir) !== path.resolve(account)) return null;
+  if (evalWorld(process.cwd())) return null;
+  const read = readWorkspacesResult(dir);
+  return { dir, check: checkSeal(dir), entries: read.entries };
+}
+
+/**
+ * After a write to the account's workspaces.json. When the authority fields
+ * did not move, the seal stays as it was. Otherwise a terminal write
+ * (`terminal`: the user, outside an agent) reseals when the seal matched
+ * before; any other write reseals only when its result only lowers the sealed
+ * values (lowersOnly). Everything else leaves the seal mismatched: then the
+ * stricter-of fallback applies until the user runs `workit workspace seal`.
+ * Only `written`, the entries this writer wrote, are ever sealed: when the
+ * file holds anything else by now (another write landed in between), the
+ * seal is left mismatched.
+ */
+export function sealAfterWrite(
+  before: SealBefore,
+  terminal: boolean,
+  written: readonly unknown[],
+): SealAfter {
+  if (before === null) return "unchanged";
+  const projection = (entries: readonly unknown[]) => JSON.stringify(sealProjection(entries));
+  const after = readWorkspacesResult(before.dir).entries;
+  if (projection(after) === projection(before.entries)) return "unchanged";
+  if (projection(after) !== projection(written)) return "mismatch";
+  const sealed =
+    before.check.state === "valid"
+      ? before.entries
+      : before.check.state === "broken"
+        ? before.check.sealed
+        : null;
+  const reseal = terminal
+    ? before.check.state === "valid"
+    : sealed !== null && lowersOnly(sealed, written);
+  if (!reseal) return "mismatch";
+  writeSeal(before.dir, written);
+  return "resealed";
+}
+
+const SCOPE_FIELDS = new Set([
+  "autonomy",
+  "autoApprove",
+  "defaultEndpoint",
+  "verification",
+  "youtrack",
+]);
+
+/**
+ * Whether `next` keeps every entry of `sealed` in place (name, glob, remotes,
+ * forge identity) and only lowers grants, endpoint, verification and
+ * youtrack.writes, or keeps them. Anything else (an entry added, removed or
+ * moved, a glob, remote or identity change) is not a lowering.
+ */
+export function lowersOnly(sealed: readonly unknown[], next: readonly unknown[]): boolean {
+  if (sealed.length !== next.length) return false;
+  const scope = (entry: Record<string, unknown>) =>
+    JSON.stringify(
+      Object.fromEntries(
+        Object.entries(entry)
+          .filter(([key]) => !SCOPE_FIELDS.has(key))
+          .toSorted(([a], [b]) => (a < b ? -1 : 1)),
+      ),
+    );
+  const [was, now] = [sealProjection(sealed), sealProjection(next)];
+  return was.every((entry, at) => {
+    if (scope(entry) !== scope(now[at])) return false;
+    const before = autonomyOf(sealed[at] as WorkspaceConfig);
+    const after = autonomyOf(next[at] as WorkspaceConfig);
+    const writes = (item: unknown) =>
+      (item as { youtrack?: { writes?: unknown } }).youtrack?.writes === "auto";
+    return (
+      !GRANT_KINDS.some((kind) => raises(kind, before.grants[kind], after.grants[kind])) &&
+      !raisesEndpoint(before.defaultEndpoint, after.defaultEndpoint) &&
+      VERIFICATION_STRICTNESS.indexOf(after.verification) <=
+        VERIFICATION_STRICTNESS.indexOf(before.verification) &&
+      !(needsAccount(before) && !needsAccount(after)) &&
+      (writes(sealed[at]) || !writes(next[at]))
+    );
+  });
+}
+
+/** The account's seal for doctor, `workspace seal` and the setup/upgrade offer. */
+export type SealStatus =
+  | { state: "no_account"; note: string }
+  | {
+      state: "none" | "valid" | "broken";
+      dir: string;
+      reason?: string;
+      /** What sealing now would accept (sealDiffLines). */
+      diff: string[];
+      /** The account file cannot be read: nothing can be sealed. */
+      error?: string;
+      entries: WorkspaceConfig[];
+    };
+
+/** The seal of the account's own workspaces.json (never a redirected one). */
+export function sealStatus(): SealStatus {
+  const dir = accountDir();
+  if (dir === null) return { state: "no_account", note: NO_ACCOUNT };
+  const check = checkSeal(dir);
+  const read = readWorkspacesResult(dir);
+  const error = read.status === "malformed" || read.status === "invalid" ? read.error : undefined;
+  return {
+    state: check.state,
+    dir,
+    ...(check.state === "broken" ? { reason: check.reason } : {}),
+    diff: check.state === "valid" ? [] : sealDiffLines(sealedProjection(dir), read.entries),
+    ...(error ? { error } : {}),
+    entries: read.entries,
+  };
+}
+
+/**
+ * Seal the account's workspaces.json as it is now; the user's terminal only.
+ * `shown`: the entries whose authority fields the user was shown; when the
+ * file's differ by now, nothing is written (they did not see what would be sealed).
+ */
+export function sealAccount(
+  shown?: readonly unknown[],
+): { ok: true; path: string } | { ok: false; error: string } {
+  const status = sealStatus();
+  if (status.state === "no_account") return { ok: false, error: status.note };
+  if (status.error) return { ok: false, error: status.error };
+  if (
+    shown &&
+    JSON.stringify(sealProjection(shown)) !== JSON.stringify(sealProjection(status.entries))
+  )
+    return {
+      ok: false,
+      error: `workspaces.json changed while you were asked; nothing was sealed. Run ${SEAL_COMMAND} again`,
+    };
+  try {
+    return { ok: true, path: writeSeal(status.dir, status.entries) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Why a forge verb may not use the runtime identity (`runtime`, the resolved
+ * workspace's vcs): the seal is broken, a last sealed entry resolves for
+ * `cwd`, and its provider, account, credential file or host differ. Null otherwise:
+ * no seal, no sealed entry here, or a config redirect (grants are then at most
+ * the D4 defaults). A sealed entry that cannot resolve is a denial.
+ */
+export function identityDenial(
+  cwd: string,
+  runtime: { name?: string; vcs?: unknown } | null,
+): string | null {
+  const dir = accountDir();
+  if (dir === null || redirected(dir)) return null;
+  const seal = checkSeal(dir);
+  if (seal.state !== "broken" || !seal.sealed) return null;
+  const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
+  let sealed: WorkspaceConfig | null;
+  try {
+    sealed = resolveWorkspaceFromEntries(cwd, seal.sealed, name);
+  } catch (error) {
+    return `identity_unsealed: workspaces.json does not match its seal and the sealed entries do not resolve here (${error instanceof Error ? error.message : String(error)})`;
+  }
+  // The runtime entry is picked the same way (resolveRuntimeWorkspaceVcs reads
+  // WORKIT_WORKSPACE_NAME too); should the two ever pick differently, the
+  // sealed entry of the runtime's own name must match as well (fail safe).
+  const named = runtime?.name
+    ? seal.sealed.find((entry) => entry.name === runtime.name)
+    : undefined;
+  const differs = [sealed, named].find(
+    (entry) => entry && identityOf(entry.vcs) !== identityOf(runtime?.vcs),
+  );
+  if (!differs) return null;
+  return `identity_unsealed: workspace ${differs.name}'s forge identity (vcs.provider, account, credential file, host) differs from the sealed one, and workspaces.json does not match its seal (${seal.reason})`;
 }
 
 /** Every workspace's grants, for `workit grant show --all`. */
