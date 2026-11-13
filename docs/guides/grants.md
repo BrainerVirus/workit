@@ -301,11 +301,41 @@ the file's top-level `models` key (grant keys are refused, as in `workspace set`
 overrides never redirect grants: while one is set, grants resolve to the
 defaults.
 
+## The seal
+
+The hooks predict writes from a command's text, so a program that computes
+the path at run time can still rewrite `workspaces.json`. The seal is checked
+when grants are read instead, however the file was written.
+`workspaces.json.seal`, beside `workspaces.json` in the account's config dir
+(no `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME` or
+`WORKIT_STATE_DIR` moves it), holds a hash of each entry's authority fields
+and their last sealed values: `name`, `glob`, entry order, `remotes`,
+`vcs.account`, `vcs.provider`, `autonomy`, legacy `autoApprove`,
+`defaultEndpoint`, `verification` and `youtrack.writes`. Only your own
+terminal writes it; the hooks deny an agent's writes to it on every host,
+the same as to `workspaces.json`.
+
+When a seal exists and the file no longer matches it, or the seal is
+malformed or unreadable, nothing the change raised is honoured:
+
+- each grant is the stricter of its current and last sealed value (the
+  default when the seal holds none), and so are `defaultEndpoint` (the lower)
+  and `verification` (the stricter);
+- `youtrack.writes` falls back to `ask`;
+- every remote claim, current or sealed, caps the checkouts it claims.
+
+A broken seal never raises anything, and settings outside that list (roles,
+branch policy, checks) still apply. The note in `workit grant show` and each
+grant denial names the fix: if you made the change, re-seal from your own
+terminal with the command the note gives. Without a seal file, grants read
+as before.
+
 ## Trust model
 
 This stops an honest agent from raising its own grants, not an adversarial
 one: a process that drives a pseudo-terminal, clears the agent markers or
-edits `workspaces.json` directly can get past it. The hard boundary is your
+edits `workspaces.json` directly can get past it (with a seal, only by also
+forging the seal: it is a check, not a proof). The hard boundary is your
 host's permission prompt: deny or ask on `workit grant set` and on edits under
 `~/.config/workit`, and allowlist only read verbs (such as `workit pr status`
 and `workit grant show`). The block `workit setup` writes follows that rule:

@@ -1,15 +1,19 @@
 // #780: a raw `ytrack` write an agent runs asks the user first on every host.
 // The shell hook denies it naming the `workit youtrack …` call that asks, or,
 // for a write no verb covers, asks on Claude Code and hands it to the user
-// elsewhere; reads pass, and `youtrack.writes: auto` turns the guard off.
+// elsewhere; reads pass, and `youtrack.writes: auto` turns the guard off
+// unless the grant seal is broken (#819).
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { grantsHome } from "@/packages/workit-core/src/autonomy";
+import { configDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { codexAdapter } from "@/packages/workit-core/src/hooks/hosts/codex";
 import { cursorAdapter } from "@/packages/workit-core/src/hooks/hosts/cursor";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { fixture, tempRoot } from "./hook-fixtures";
+import { sealConfig } from "../../shared/grant-home";
 
 const base = realpathSync(tempRoot("workit-ytrack-guard-"));
 const root = path.join(base, "repo");
@@ -18,12 +22,19 @@ mkdirSync(root, { recursive: true });
 mkdirSync(config, { recursive: true });
 const KEYS = ["WORKIT_CONFIG_DIR", "WORKIT_STATE_DIR"];
 const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
+const savedResolve = grantsHome.resolve;
+// The account's config dir, where the grant seal lives (never the real one).
+const account = configDir({ HOME: path.join(base, "account") });
+mkdirSync(account, { recursive: true });
 beforeEach(() => {
   process.env.WORKIT_CONFIG_DIR = config;
   process.env.WORKIT_STATE_DIR = path.join(base, "state");
-  rmSync(path.join(config, "workspaces.json"), { force: true });
+  grantsHome.resolve = () => path.join(base, "account");
+  for (const dir of [config, account]) rmSync(path.join(dir, "workspaces.json"), { force: true });
+  rmSync(path.join(account, "workspaces.json.seal"), { force: true });
 });
 afterEach(() => {
+  grantsHome.resolve = savedResolve;
   for (const key of KEYS)
     if (saved[key] === undefined) delete process.env[key];
     else process.env[key] = saved[key];
@@ -230,20 +241,42 @@ test("G the default ask, W ytrack reads or a mention, T no host denies or asks",
       expect(run(command).kind, `${host}: ${command}`).toBe("pass");
 });
 
-test("G youtrack.writes auto for this workspace, W any raw ytrack write, T nothing is denied or asked", () => {
+const writesFile = (dir: string, writes?: string) =>
   writeFileSync(
-    path.join(config, "workspaces.json"),
+    path.join(dir, "workspaces.json"),
     `${JSON.stringify({
       workspaces: [
         {
           name: "yt",
           glob: `${root.replaceAll("\\", "/")}/**`,
-          youtrack: { writes: "auto" },
+          ...(writes ? { youtrack: { writes } } : {}),
         },
       ],
     })}\n`,
   );
+
+test("G youtrack.writes auto for this workspace, W any raw ytrack write, T nothing is denied or asked", () => {
+  writesFile(config, "auto");
   for (const command of [...COVERED.map(([raw]) => raw), ...UNCOVERED, ...WRAPPED.slice(0, 6)])
     for (const [host, run] of Object.entries(HOSTS))
       expect(run(command).kind, `${host}: ${command}`).toBe("pass");
+});
+
+test("G a seal taken while writes asked, W the file is changed to auto, T every raw write is denied or asked as with ask", () => {
+  writesFile(account);
+  sealConfig(account);
+  for (const dir of [account, config]) writesFile(dir, "auto");
+  for (const [command, call] of COVERED)
+    for (const [host, run] of Object.entries(HOSTS)) {
+      const out = run(command);
+      expect(out.kind, `${host}: ${command}`).toBe("deny");
+      expect(out.reason, `${host}: ${command}`).toContain(`\`${call}\``);
+    }
+  for (const command of UNCOVERED) {
+    expect(claude(command).kind, command).toBe("ask");
+    for (const [host, run] of Object.entries({ codex, cursor, pi }))
+      expect(run(command).kind, `${host}: ${command}`).toBe("deny");
+  }
+  for (const [host, run] of Object.entries(HOSTS))
+    expect(run("ytrack issue comment APP-1 hello").kind, host).not.toBe("pass");
 });

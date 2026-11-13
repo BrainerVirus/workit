@@ -19,6 +19,7 @@ import {
 } from "../core/live-session";
 import { grantsDir } from "../autonomy";
 import { resolveConfigDir } from "../core/config";
+import { SEAL_FILE } from "../core/grant-seal";
 import { resolveStateDir } from "../core/logger";
 import { workspaceLiveSessionGuard } from "../core/workspaces";
 import { appendHookObserved, ledgerPath } from "../ledger";
@@ -1669,6 +1670,9 @@ export const liveTargets = (cwd: string, paths: readonly string[] | null): strin
  */
 type Registry = "issued" | "approvals" | "grants";
 
+/** The config files only the user writes: grants and the seal that vouches for them (#819). */
+const CONFIG_FILES = ["workspaces.json", SEAL_FILE];
+
 /** The config dirs whose workspaces.json is guarded: this env's and the account home's (grants). */
 const configDirs = (): string[] => [resolveConfigDir(), grantsDir()];
 
@@ -1721,7 +1725,7 @@ const globbed = (cwd: string, target: string, state: string, configs: string[]):
   return [
     ...roots.map((name) => path.join(state, name)).filter((root) => hit(root, true)),
     ...configs
-      .flatMap((dir) => [dir, path.join(dir, "workspaces.json")])
+      .flatMap((dir) => [dir, ...CONFIG_FILES.map((name) => path.join(dir, name))])
       .filter((file) => hit(file, false)),
   ];
 };
@@ -1738,7 +1742,7 @@ const guardedInodes = (state: string, configs: string[]): Map<string, Registry> 
       for (const name of readdirSync(file)) add(path.join(file, name), registry);
   };
   try {
-    for (const dir of configs) add(path.join(dir, "workspaces.json"), "grants");
+    for (const dir of configs) for (const name of CONFIG_FILES) add(path.join(dir, name), "grants");
     for (const name of readdirSync(state))
       if (/^(?:issued|approvals$)/.test(name))
         add(path.join(state, name), name === "approvals" ? "approvals" : "issued");
@@ -1833,8 +1837,9 @@ export const underIssued = (
 ): boolean => underRegistry(state, cwd, target, platform, real) === "issued";
 
 /**
- * Whether `target` is `<dir>/workspaces.json`, or `dir` itself (a copy, move
- * or removal of the dir can replace the file). Other files there grant nothing.
+ * Whether `target` is `<dir>/workspaces.json` or its seal (#819), or `dir`
+ * itself (a copy, move or removal of the dir can replace them). Other files
+ * there grant nothing.
  */
 export const underConfig = (
   dir: string,
@@ -1845,7 +1850,7 @@ export const underConfig = (
 ): boolean => {
   const parts = partsUnder(dir, cwd, target, platform, real);
   // DIR_TARGET: a mutating git or an unknown edit run in the dir itself.
-  return parts?.length === 1 && ["", "workspaces.json", DIR_TARGET].includes(parts[0]);
+  return parts?.length === 1 && ["", ...CONFIG_FILES, DIR_TARGET].includes(parts[0]);
 };
 
 /**
@@ -1890,7 +1895,9 @@ export const unquotedWindowsRegistry = (
         "/",
       );
       return registry === "grants"
-        ? configs.some((cfg) => [cfg, `${cfg}/`, `${cfg}/workspaces.json`].includes(at))
+        ? configs.some((cfg) =>
+            [cfg, `${cfg}/`, ...CONFIG_FILES.map((name) => `${cfg}/${name}`)].includes(at),
+          )
         : at.includes(`${state}/${registry}`);
     });
   return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;

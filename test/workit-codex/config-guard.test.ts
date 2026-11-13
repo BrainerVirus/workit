@@ -1,6 +1,7 @@
 // The Codex hook entry answers quietly, before the runtime loads, for shell
 // commands that cannot matter. A shell write to the config dir's
-// workspaces.json must reach the runtime, whose write gate denies it.
+// workspaces.json or its seal (#819) must reach the runtime, whose write gate
+// denies it.
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -57,6 +58,8 @@ test("Given a shell write to the config file, When the Codex hook runs, Then it 
   for (const command of [
     `echo '{}' > ${dir}/workspaces.json`,
     "sed -i s/false/true/ ~/.config/workit/workspaces.json",
+    `echo '{}' > ${dir}/workspaces.json.seal`,
+    "mv /tmp/forged ~/.config/workit/workspaces.json.seal",
     `cp /tmp/x.json ${dir}/`,
   ]) {
     const out = run(command);

@@ -1,16 +1,20 @@
 // #780: asking before a YouTrack write is the default for every workspace,
 // existing ones included; `youtrack: { writes: "auto" }` is the only opt-out.
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { youTrackWritesMode } from "@/packages/workit-core/src/core/youtrack-writes";
-import { withIsolatedConfig } from "../shared/helpers/env";
+import { useConfigHome } from "../shared/grant-home";
 
+// A temp account home: an `auto` reads the grant seal there (#819), never the real one.
 const withWorkspaces = (workspaces: unknown[], fn: () => void) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-yt-mode-"));
-  writeFileSync(path.join(dir, "workspaces.json"), JSON.stringify({ workspaces }));
-  withIsolatedConfig(dir, fn);
+  const home = useConfigHome("wk-yt-mode-");
+  try {
+    writeFileSync(path.join(home.configDir, "workspaces.json"), JSON.stringify({ workspaces }));
+    fn();
+  } finally {
+    home.restore();
+  }
 };
 
 test("Given workspaces that never set youtrack.writes, When a write's mode is resolved, Then it asks", () => {

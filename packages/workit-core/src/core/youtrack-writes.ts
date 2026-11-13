@@ -11,7 +11,6 @@ import type { ApprovalFields } from "../approvals/store";
 import { resolveStateDir } from "./logger";
 import { writeFileAtomic } from "./safe-write";
 import { sha256 } from "./task-contract";
-import { resolveRuntimeWorkspaceVcs } from "./workspaces";
 import { youTrackBaseUrl, youTrackWorkTimezone } from "./youtrack";
 import { youTrackBackend, type OwnEntry, type YouTrackBackend } from "./youtrack-backend";
 
@@ -84,22 +83,8 @@ export async function writeOnce(
 
 // ------------------------------------------------- asking first (#780)
 
-/**
- * `ask` (the default, every workspace): each write needs the user's yes
- * through the approval channel. `auto` is the opt-out a user sets in the
- * workspace entry (`youtrack: { writes: "auto" }`); it keeps the
- * WORKIT_YT_WRITE gate alone.
- */
-export type YouTrackWritesMode = "ask" | "auto";
-
-export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
-  const youtrack = resolveRuntimeWorkspaceVcs(cwd)?.youtrack;
-  return youtrack &&
-    typeof youtrack === "object" &&
-    (youtrack as { writes?: unknown }).writes === "auto"
-    ? "auto"
-    : "ask";
-};
+// One reader for the hooks and the verbs: autonomy.ts youTrackWritesMode.
+export { youTrackWritesMode, type YouTrackWritesMode } from "../autonomy";
 
 /** What the user approves for one `workit youtrack` write: the issue, the text, the minutes, the day. */
 export const youTrackApprovalFields = (input: {

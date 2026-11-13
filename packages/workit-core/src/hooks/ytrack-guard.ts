@@ -4,8 +4,9 @@
 // wrappers, `bash -c`, eval, heredoc-fed shells, substitutions, variables),
 // plus `workit check -- …` and package runners (`npx ytrack`), and routes it to
 // the `workit youtrack …` call that asks first; one with no such verb needs
-// the user's own yes. `youtrack.writes: auto` turns the guard off.
-import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
+// the user's own yes. `youtrack.writes: auto` turns the guard off, unless the
+// grant seal is broken (#819, autonomy.ts youTrackWritesMode).
+import { youTrackWritesMode } from "../autonomy";
 import type { HookDecision } from "./protocol";
 import { commandLines, workitCheckTail } from "./raw-git";
 import { segmentsOf, type ShellDialect } from "./shell-words";
@@ -640,9 +641,6 @@ const ytrackWrites = (
   return found;
 };
 
-const writesMode = (cwd: string): unknown =>
-  (resolveRuntimeWorkspaceVcs(cwd)?.youtrack as { writes?: unknown } | undefined)?.writes;
-
 /**
  * The hook's answer to raw ytrack writes in a shell command, or null: a deny
  * naming each `workit youtrack …` call; for a write no verb covers, an ask on
@@ -668,14 +666,14 @@ export const ytrackGate = (
     writes = [...merged.values()];
   } catch {
     // Unanalysable and naming ytrack: denied unless the user opted out.
-    if (writesMode(cwd) === "auto") return null;
+    if (youTrackWritesMode(cwd) === "auto") return null;
     return {
       kind: "deny",
       reason: `Workit could not analyse this command, which names ytrack: run each ytrack call as its own plain command so a YouTrack write can ask the user first (#780).`,
       unblock: null,
     };
   }
-  if (!writes.length || writesMode(cwd) === "auto") return null;
+  if (!writes.length || youTrackWritesMode(cwd) === "auto") return null;
   const calls = writes.flatMap((write) => (write.workit ? [`\`${write.workit}\``] : []));
   const bare = writes
     .filter((write) => !write.workit)
