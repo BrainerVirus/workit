@@ -770,7 +770,7 @@ anything else there is ignored with the machine-only warning.
 ```
 
 - **`budget`**: a number is units (each check weighs 1 unless `weights` says
-  more); a size (`"24G"`) or a percent of RAM (`"60%"`) is a memory budget,
+  more, and checks are counted, not charged memory); a size (`"24G"`) or a percent of RAM (`"60%"`) is a memory budget,
   under which as many checks run as their measured memory allows. Without it
   the memory budget is the RAM less the reserve.
 - **`weights`**: per check, a whole number of units, or a fixed memory charge

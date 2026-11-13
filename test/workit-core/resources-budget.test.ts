@@ -254,6 +254,18 @@ test("Given a big suite queued past the aging bound, When a small lint arrives t
   for (const got of [first, second]) if (got.ok) got.lease.release();
 });
 
+test("Given a units budget of 3, When three weight-1 checks ask, Then all run whatever their memory charge: a units budget counts, it does not weigh memory", async () => {
+  const dir = leases();
+  const budget = units({ memoryBytes: 1, defaultBytes: GIB });
+  const held = [];
+  for (const session of ["s-a", "s-b", "s-c"])
+    held.push(await acquireLease(options(dir, { budget, check: "lint", session, waitMs: 0 })));
+  expect(held.map((got) => got.ok)).toEqual([true, true, true]);
+  const fourth = await acquireLease(options(dir, { budget, check: "lint", waitMs: 0 }));
+  expect(fourth).toMatchObject({ ok: false, reason: "timeout" });
+  for (const got of held) if (got.ok) got.lease.release();
+});
+
 test("fitsBudget: backfill passes a waiter that does not fit; an aged one holds the line; a charge over the budget runs alone", () => {
   const budget = { units: 3, memoryBytes: 10, agingMs: 100 };
   const used = { units: 2, bytes: 0 };

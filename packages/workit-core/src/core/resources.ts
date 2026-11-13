@@ -150,7 +150,8 @@ export type Charge = { units: number; bytes: number };
  * `resources.weights` says more) and `memoryBytes` (RAM less the reserve, or a
  * `resources.budget` size), charged in bytes of measured peak RSS. A dev
  * server holds memory and no units; with only `resources.slots` configured
- * (`mode: "slots"`) checks are counted as before, not charged memory.
+ * (`mode: "slots"`) checks are counted as before, and a units budget weighs
+ * them in units only: in both, only `admit` reads the memory budget.
  */
 export type Budget = {
   mode: "slots" | "units" | "memory" | "default";
@@ -1751,6 +1752,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
                 waitedMs: clock.now() - Date.parse(waiter.holder.startedAt),
               })),
               charge,
+              // A units budget is the owner's count: checks are weighed in units only.
+              budget.mode !== "units",
             )
           : slotLeft(new Set(before.keys()), line, options.slots);
       if (!pressed && fitsNow(use, waiters)) {
