@@ -129,3 +129,40 @@ test("Given another repository's .workit-scratch or a variable-built path, When 
   expect(bash('touch "$UNSET_DIR/x"')).toBe("deny");
   expect(bash(`touch "$(ls ${wt})/.workit-scratch/x"`)).toBe("deny");
 });
+
+test("Given a judge, When it adds a worktree of the judged repository into scratch, Then it is denied (it writes the repository's worktree list and branch); a scratch repository's own worktree add stays allowed", () => {
+  const into = path.join(wt, ".workit-scratch", "x");
+  mkdirSync(path.join(wt, ".workit-scratch"), { recursive: true });
+  expect(bash(`git -C ${wt} worktree add -b feature/y ${into}`)).toBe("deny");
+  expect(bash(`git -C ${wt} worktree add ${into}`)).toBe("deny");
+  expect(bash(`git worktree add --detach ${into}`)).toBe("deny");
+  expect(bash(`cd ${wt} && git worktree add ${into}`)).toBe("deny");
+  // Run from inside scratch, git still finds and writes the judged repository.
+  const scratch = path.join(wt, ".workit-scratch");
+  expect(bash(`git -C ${scratch} worktree add -b feature/y ${into}`)).toBe("deny");
+  expect(bash(`cd ${scratch} && git worktree add ${into}`)).toBe("deny");
+  expect(bash(`git -C ${scratch} commit -qm x`)).toBe("deny");
+  expect(bash(`cd ${scratch} && git branch -D feature/slice`)).toBe("deny");
+  const repo = path.join(wt, ".workit-scratch", "own");
+  git(wt, "init", "-q", "-b", "main", repo);
+  expect(
+    bash(`git -C ${repo} worktree add -b feature/y ${path.join(wt, ".workit-scratch", "own2")}`),
+  ).toBeUndefined();
+});
+
+test("Given a symlink in scratch that points outside it, When a judge writes through link/.. , Then the target is judged where the shell lands (outside) and denied", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const outsideDir = path.join(root, "outside", "deep");
+  mkdirSync(outsideDir, { recursive: true });
+  mkdirSync(scratch, { recursive: true });
+  symlinkSync(
+    outsideDir,
+    path.join(scratch, "up-link"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  expect(bash(`touch ${path.join(scratch, "up-link")}/../y`)).toBe("deny");
+  expect(write(`${path.join(scratch, "up-link")}/../new/y`)).toBe("deny");
+  expect(bash(`cd ${scratch} && touch up-link/../y`)).toBe("deny");
+  expect(bash(`touch ${path.join(scratch, "sub")}/../y`)).toBeUndefined();
+  expect(write(`${path.join(scratch, "sub")}/../y`)).toBeUndefined();
+});

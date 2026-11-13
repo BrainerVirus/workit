@@ -124,3 +124,25 @@ test("Given git worktree add into a guarded dir (the issued registry, the accoun
     expect(run(free).deny, `${host}: ${free}`).toBeFalse();
   }
 });
+
+test("Given git worktree add after --, move, remove or repair, When the gate reads it, Then each named worktree path is a write", () => {
+  const targets = (command: string) =>
+    shellMutationTargets(root, command, "posix", true).map((target) => path.resolve(root, target));
+  expect(targets("git worktree add -- -x")).toContain(path.join(root, "-x"));
+  expect(targets(`git -C ${sh(base)} worktree add -b feature/z -- -x`)).toContain(
+    path.join(base, "-x"),
+  );
+  const moved = targets(
+    `git worktree move ${sh(path.join(base, "a"))} ${sh(path.join(base, "b"))}`,
+  );
+  expect(moved).toContain(path.join(base, "a"));
+  expect(moved).toContain(path.join(base, "b"));
+  expect(targets(`git worktree remove --force ${sh(path.join(base, "c"))}`)).toContain(
+    path.join(base, "c"),
+  );
+  const repaired = targets(
+    `git worktree repair ${sh(path.join(base, "d"))} ${sh(path.join(base, "e"))}`,
+  );
+  expect(repaired).toContain(path.join(base, "d"));
+  expect(repaired).toContain(path.join(base, "e"));
+});

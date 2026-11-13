@@ -55,30 +55,50 @@ export const FANOUT_TOKEN_FILE = "workit-fanout-token";
 const NONE: HookDecision = { kind: "none" };
 const CASE_INSENSITIVE = process.platform === "darwin" || process.platform === "win32";
 
-/**
- * The real path of `file`'s nearest existing ancestor, plus the rest; a
- * dangling symlink on the way is followed to where a write through it lands.
- */
-const canonical = (file: string, hops = 0): string => {
+/** The real path of absolute, normalized `file`'s nearest existing ancestor, plus the rest. */
+const realOf = (file: string): string => {
   let rest = "";
-  for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+  for (let dir = file; ; dir = path.dirname(dir)) {
     try {
       return path.join(fs.realpathSync.native(dir), rest);
     } catch {
-      if (path.dirname(dir) === dir) return path.resolve(file);
-      let link: string | null = null;
-      try {
-        link = fs.readlinkSync(dir);
-      } catch {
-        // Not a link: a part that does not exist yet.
-      }
-      if (link !== null)
-        return hops < 40
-          ? canonical(path.join(path.resolve(path.dirname(dir), link), rest), hops + 1)
-          : path.resolve(file);
+      if (path.dirname(dir) === dir) return file;
       rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
     }
   }
+};
+
+/**
+ * Where a write to `file` lands: walked one component at a time as the OS
+ * does, following each symlink (a dangling one too) before a later `..`
+ * applies, so `link/../y` is judged beside the link's target. Parts that do
+ * not exist yet are kept as spelled.
+ */
+const canonical = (file: string, hops = { left: 40 }): string => {
+  const start = path.isAbsolute(file) ? file : `${process.cwd()}${path.sep}${file}`;
+  const { root } = path.parse(start);
+  let at = root;
+  let missing = false;
+  for (const part of start.slice(root.length).split(/[\\/]+/)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      at = path.dirname(at);
+      continue;
+    }
+    const next = path.join(at, part);
+    let link: string | null = null;
+    if (!missing)
+      try {
+        link = fs.readlinkSync(next);
+      } catch (error) {
+        missing = (error as NodeJS.ErrnoException).code !== "EINVAL";
+      }
+    if (link === null) at = next;
+    else if (hops.left-- > 0)
+      at = canonical(path.isAbsolute(link) ? link : `${at}${path.sep}${link}`, hops);
+    else return path.resolve(file);
+  }
+  return realOf(at);
 };
 
 const within = (child: string, parent: string): boolean => {
@@ -734,8 +754,9 @@ const judgeDeny = (input: HookInput, what: string, target?: string): HookDecisio
 /**
  * Judge a verifier's or reviewer's edit or command by the absolute paths it
  * changes: each must be in the scratch dir of a checkout of the judged
- * repository (the hook cwd's). A path built from a variable or a directory
- * change Workit cannot resolve is denied too.
+ * repository (the hook cwd's). git is judged by the repository it runs
+ * against, so only a scratch repository's own git writes pass. A path built
+ * from a variable or a directory change Workit cannot resolve is denied too.
  */
 export function confineJudge(input: HookInput, targets: readonly string[]): HookDecision {
   try {
@@ -749,7 +770,12 @@ export function confineJudge(input: HookInput, targets: readonly string[]): Hook
           input,
           "it writes to a path Workit cannot resolve (a variable, a command substitution or `cd -`): spell the path out",
         );
-      if (inScratch(canonical(target), repo)) continue;
+      const real = canonical(target);
+      // git writes the repository it finds from where it runs, not that directory.
+      const at = /^\.workit-(?:runs-git|live-target)$/.test(path.basename(real))
+        ? (checkoutOf(real)?.root ?? real)
+        : real;
+      if (inScratch(at, repo)) continue;
       const runner = runnerAt(target);
       return judgeDeny(
         input,

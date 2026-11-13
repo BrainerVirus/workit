@@ -591,18 +591,22 @@ export const configWrites = (rest: readonly string[]): boolean => {
 const GIT_VALUE =
   /^(?:-[Ccbouj]|--(?:git-dir|work-tree|namespace|config-env|branch|origin|config|depth|reference(?:-if-able)?|template|separate-git-dir|upload-pack|jobs|filter|initial-branch|object-format))$/;
 
-/** The `<path>` of `git worktree add` (`rest`: the words after `add`), past `-b`/`-B`/`--reason` values. */
-const worktreeAddPath = (rest: readonly string[]): string | undefined =>
-  rest.find(
-    (arg, index) => !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(rest[index - 1] ?? ""),
+/** The operands of `git worktree <verb>` (`rest`: the words after the verb), past `-b`/`-B`/`--reason` values and up to `--`. */
+const worktreeOperands = (rest: readonly string[]): string[] => {
+  const end = rest.indexOf("--");
+  const named = (end < 0 ? rest : rest.slice(0, end)).filter(
+    (arg, index, words) =>
+      !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(words[index - 1] ?? ""),
   );
+  return end < 0 ? named : [...named, ...rest.slice(end + 1)];
+};
 
 /**
  * What git writes outside the edit analysis (#790): `init` and `clone` their
- * directory, `worktree add` its new checkout, `format-patch` its patches,
- * `archive -o`, `bundle create`, any `--output`, a `config` write its file,
- * and `fetch`, `gc` and `branch` writes the repository ("."); paths are under
- * `-C`. Null for the rest.
+ * directory, `worktree add|move|remove|repair` the worktrees they name,
+ * `format-patch` its patches, `archive -o`, `bundle create`, any `--output`,
+ * a `config` write its file, and `fetch`, `gc` and `branch` writes the
+ * repository ("."); paths are under `-C`. Null for the rest.
  */
 const gitOutputs = (args: readonly string[]): string[] | null => {
   let at = 0;
@@ -622,9 +626,15 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
   );
   if (output !== undefined) files.push(output);
   if (sub === "init") files.push(names[0] ?? ".");
-  const added =
-    sub === "worktree" && rest[0] === "add" ? worktreeAddPath(rest.slice(1)) : undefined;
-  if (added !== undefined) files.push(added);
+  // `worktree add|move|remove|repair` write the worktrees they name (repair: this one by default).
+  if (sub === "worktree") {
+    const named = worktreeOperands(rest.slice(1));
+    const verb = rest[0];
+    if (verb === "add" && named[0] !== undefined) files.push(named[0]);
+    if (verb === "move" || verb === "remove")
+      files.push(...named.slice(0, verb === "move" ? 2 : 1));
+    if (verb === "repair") files.push(...(named.length ? named : ["."]));
+  }
   if (sub === "clone")
     files.push(
       names[1] ??
@@ -1226,7 +1236,7 @@ const segmentTargets = (
       const home = homeExpanded(text);
       if (strict && unresolvedRefs(home).length > 0) return [unknownVarTarget(home)];
       if (path.isAbsolute(home)) return [home];
-      return base === undefined ? [] : [path.resolve(base, home)];
+      return base === undefined ? [] : [resolvedUnder(base, home)];
     });
   const at = (file: string): string | null => {
     const all = atAll(file);
@@ -1728,9 +1738,21 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
   for (const target of guarded(targets)) claimLiveSession(target, owner, deps);
 };
 
+/**
+ * `file` resolved against `dir`, except that a path with a `..` part is only
+ * joined: after a symlink, `..` climbs from the link's target, so the judge
+ * walks it on the real filesystem instead of collapsing it here.
+ */
+const resolvedUnder = (dir: string, file: string): string =>
+  !/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(file)
+    ? path.resolve(dir, file)
+    : path.isAbsolute(file)
+      ? file
+      : `${dir}${path.sep}${file}`;
+
 /** The absolute paths an edit touches: its files, or cwd itself when unknown. */
 export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
-  paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
+  paths?.length ? paths.map((file) => resolvedUnder(cwd, file)) : [path.join(cwd, DIR_TARGET)];
 
 // --- the issued-registry, approvals and config guard (#292) ----------------
 
