@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   packageOfTag,
   readReleasePackages,
+  releasePackagesDoctor,
+  releasePackagesReport,
   workspaceReleasePackages,
 } from "@/packages/workit-core/src/core/release-packages";
 import { createGitHubForge } from "@/packages/workit-core/src/forge/github";
@@ -156,6 +158,63 @@ test("Given releasePackages configured, When an agent pushes a package tag raw, 
   const reason = String(out.hookSpecificOutput?.permissionDecisionReason);
   expect(reason).toContain("workit git push --release pkg-a@0.1.0");
   expect(reason).toContain("<version>, pkg-a@<version> tags");
+});
+
+test("Given releasePackages {pkg-a:{}} and no local tag pkg-a@0.9.0, When an agent pushes it raw, Then the denial is a tag push naming git tag -a and workit git push --release, not a feature-branch hint", () => {
+  const root = repo({ autonomy: { release: true }, releasePackages: { "pkg-a": {} } });
+  const origin = path.join(root, "origin.git");
+  git(root, "init", "-q", "--bare", origin);
+  git(root, "remote", "add", "origin", origin);
+  const out = dispatchHook(claudeCodeAdapter, {
+    hook_event_name: "PreToolUse",
+    session_id: "s-raw-unmade-tag",
+    cwd: root,
+    tool_name: "Bash",
+    tool_input: { command: "git push origin pkg-a@0.9.0" },
+  }).json as {
+    hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+  };
+  expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
+  const reason = String(out.hookSpecificOutput?.permissionDecisionReason);
+  expect(reason).toContain("workit git push --release pkg-a@0.9.0");
+  expect(reason).toContain("git tag -a pkg-a@0.9.0");
+  expect(reason).not.toContain("feature");
+});
+
+test("Given releasePackages with a missing changelog file and a bad namespace, When the report and the doctor finding are read, Then each package shows its tag shape and changelog, both problems warn with a fix; none configured is silent", () => {
+  const root = repo(
+    {
+      releasePackages: {
+        "pkg-a": { changelogPath: "projects/pkg-a/CHANGELOG.md" },
+        "pkg-b": { changelogPath: "projects/pkg-b/CHANGELOG.md" },
+        "pkg-c": {},
+        bad: { tagNamespace: "9x" },
+      },
+    },
+    { "projects/pkg-a/CHANGELOG.md": section("0.1.0", "a") },
+  );
+  const report = releasePackagesReport(root);
+  expect(report.workspace).toBe("w");
+  expect(report.packages).toEqual([
+    { name: "pkg-a", tagShape: "pkg-a@<version>", changelogPath: "projects/pkg-a/CHANGELOG.md" },
+    { name: "pkg-b", tagShape: "pkg-b@<version>", changelogPath: "projects/pkg-b/CHANGELOG.md" },
+    { name: "pkg-c", tagShape: "pkg-c@<version>", changelogPath: null },
+  ]);
+  const found = releasePackagesDoctor(root);
+  expect(found?.status).toBe("warn");
+  expect(found?.detail).toContain(
+    'release package "pkg-b" changelogPath projects/pkg-b/CHANGELOG.md: no such file',
+  );
+  expect(found?.detail).toContain('release package "bad" tagNamespace "9x"');
+  expect(found?.detail).not.toContain('"pkg-a" changelogPath');
+  expect(found?.fix).toContain("workit workspace set w releasePackages.<name>.changelogPath=");
+
+  const fine = repo(
+    { releasePackages: { "pkg-a": { changelogPath: "projects/pkg-a/CHANGELOG.md" } } },
+    { "projects/pkg-a/CHANGELOG.md": section("0.1.0", "a") },
+  );
+  expect(releasePackagesDoctor(fine)?.status).toBe("pass");
+  expect(releasePackagesDoctor(repo({}))).toBeNull();
 });
 
 test("Given the GitHub forge, When createRelease gets latest false, true or nothing, Then the body carries make_latest false, true or no such key", () => {

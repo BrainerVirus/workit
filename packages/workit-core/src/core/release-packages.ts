@@ -7,6 +7,9 @@
 //
 // readReleasePackages is the lenient runtime reader (D17): a malformed entry
 // or field is reported and ignored, never fatal.
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { gitDirs } from "../git/facts";
 import { changelogPathOf, resolveRuntimeReleasePackages } from "./workspaces";
 
 export type ReleasePackage = {
@@ -120,3 +123,84 @@ export function packageOfTag(
 /** The tag shapes the packages accept (`pkg-a@<version>`). */
 export const packageTagShapes = (packages: readonly ReleasePackage[]): string[] =>
   packages.map((entry) => `${entry.tagNamespace}<version>`);
+
+export type ReleasePackagesReport = {
+  workspace: string | null;
+  packages: { name: string; tagShape: string; changelogPath: string | null }[];
+  /** Reader issues and configured changelogPaths with no file in this checkout. */
+  issues: string[];
+};
+
+/**
+ * cwd's release packages for display (grant show, doctor): each one's tag
+ * shape and changelog, the reader's issues, and a configured changelogPath
+ * that names no file in this checkout.
+ */
+export function releasePackagesReport(cwd: string, dir?: string): ReleasePackagesReport {
+  let raw: ReturnType<typeof resolveRuntimeReleasePackages>;
+  try {
+    raw = resolveRuntimeReleasePackages(cwd, dir);
+  } catch (error) {
+    return {
+      workspace: null,
+      packages: [],
+      issues: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+  const read = readReleasePackages(raw?.releasePackages);
+  const root = gitDirs(cwd)?.top ?? null;
+  const missing = root
+    ? read.packages
+        .filter((pkg) => pkg.changelogPath && !existsSync(path.join(root, pkg.changelogPath)))
+        .map(
+          (pkg) =>
+            `release package ${JSON.stringify(pkg.name)} changelogPath ${pkg.changelogPath}: no such file in this checkout`,
+        )
+    : [];
+  return {
+    workspace: raw?.workspace ?? null,
+    packages: read.packages.map((pkg) => ({
+      name: pkg.name,
+      tagShape: `${pkg.tagNamespace}<version>`,
+      changelogPath: pkg.changelogPath,
+    })),
+    issues: [...read.issues, ...missing],
+  };
+}
+
+/** One human line per fact, shared by grant show and doctor; none without packages. */
+export const describeReleasePackages = (report: ReleasePackagesReport): string[] =>
+  report.packages.length === 0 && report.issues.length === 0
+    ? []
+    : [
+        `release packages: ${
+          report.packages
+            .map(
+              (pkg) =>
+                `${pkg.name} (${pkg.tagShape}; changelog ${pkg.changelogPath ?? "found among the workspace's"})`,
+            )
+            .join(", ") || "(none usable)"
+        }`,
+        ...report.issues.map((issue) => `note: ${issue}`),
+      ];
+
+/**
+ * The doctor's release-packages finding: null when none is configured (and
+ * the reader has nothing to say), a warn with a fix on any reader issue or a
+ * changelogPath with no file, else a pass listing them.
+ */
+export function releasePackagesDoctor(
+  cwd: string,
+  dir?: string,
+): { status: "pass" | "warn"; detail: string; fix?: string } | null {
+  const report = releasePackagesReport(cwd, dir);
+  const lines = describeReleasePackages(report);
+  if (lines.length === 0) return null;
+  if (report.issues.length === 0) return { status: "pass", detail: lines.join("; ") };
+  const ws = report.workspace ?? "<workspace>";
+  return {
+    status: "warn",
+    detail: lines.join("; "),
+    fix: `Fix the reported releasePackages entries: workit workspace set ${ws} releasePackages.<name>.changelogPath=<repo-relative file> (or tagNamespace=<prefix>; =null unsets)`,
+  };
+}

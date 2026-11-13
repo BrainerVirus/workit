@@ -42,6 +42,7 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@workit-dev/core/src/core/release-tracks";
+import { releasePackagesDoctor } from "@workit-dev/core/src/core/release-packages";
 import { repoBranchPreset } from "@workit-dev/core/src/core/branch-policy";
 import {
   getDiagnosticLogger,
@@ -216,6 +217,7 @@ type DoctorCheckId =
   | "checks_config"
   | "workit_notes"
   | "config_schema"
+  | "release_packages"
   | "updates"
   | "claude_permissions"
   | "codex_permissions"
@@ -2666,6 +2668,12 @@ const checkWorkspaceMatch = (res: Resolved): DoctorCheck => {
   };
 };
 
+/** Release packages (#860): silent without any; reader issues or a missing changelog warn. */
+const checkReleasePackages = (res: Resolved): DoctorCheck | null => {
+  const found = releasePackagesDoctor(res.cwd, res.configDir);
+  return found && { id: "release_packages", ...found };
+};
+
 /** The configured workspace this directory belongs to, or null (none, or unreadable config). */
 const matchedWorkspace = (res: Resolved): WorkspaceConfig | null => {
   try {
@@ -4478,6 +4486,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkMalformedConfig,
   checkConfigSchema,
   checkWorkspaceMismatch,
+  checkReleasePackages,
   checkWorkspaceLock,
   checkSessionHook,
   checkYouTrack,

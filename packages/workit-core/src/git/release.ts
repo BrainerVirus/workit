@@ -1336,3 +1336,17 @@ export function tagReleasePackage(
   });
   return success(undefined);
 }
+
+/**
+ * After a refused push, delete the package tag this run made, when the remote
+ * provably lacks it: a rerun after fixing --at is then not blocked by
+ * tag_exists. Kept (false) when the remote has it or cannot be read.
+ */
+export function untagReleasePackage(cwd: string, plan: PackageReleasePlan): boolean {
+  const raw = plan.remote ? pushUrl(cwd, plan.remote) : null;
+  if (raw) {
+    const tip = remoteRefTip(cwd, raw, `refs/tags/${plan.tag}`);
+    if (!tip.ok || tip.sha) return false;
+  }
+  return git(cwd, ["tag", "-d", plan.tag]).ok;
+}

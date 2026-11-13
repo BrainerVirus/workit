@@ -237,6 +237,77 @@ test("Given no workspace release tag on the remote production branch, When relea
   expect(repo.git("tag", "-l")).toBe("");
 });
 
+test("Given a finished 1.0.0, When release package pkg-a 0.2.0 --at a commit not on production is refused at the push, Then the local tag it made is deleted and a rerun --at 1.0.0 tags and pushes", async () => {
+  const repo = flowRepo();
+  workspace(repo, PACKAGES);
+  const release = await finished(repo);
+  repo.write("unreleased.txt", "x\n");
+  repo.git("add", "-A");
+  repo.git("commit", "-qm", "feat: unreleased");
+  const refused = await run(
+    ["release", "package", "pkg-a", "0.2.0", "--at", "HEAD", "--json"],
+    repo.cwd,
+  );
+  expect(refused.code).not.toBe(0);
+  expect(refused.json().error).toContain("tag_unreleased");
+  expect(refused.json().error).toContain("deleted the local tag pkg-a@0.2.0 this run made");
+  expect(refused.json().data).toMatchObject({ step: "push", untagged: "pkg-a@0.2.0" });
+  expect(repo.git("tag", "-l", "pkg-a@*")).toBe("");
+  expect(remoteTag(repo, "pkg-a@0.2.0")).toBeNull();
+  const again = await run(
+    ["release", "package", "pkg-a", "0.2.0", "--at", "1.0.0", "--json"],
+    repo.cwd,
+  );
+  expect(again.code, again.stdout + again.stderr).toBe(0);
+  expect(remoteTag(repo, "pkg-a@0.2.0")).toBe(release);
+});
+
+test("Given workspace w, When workspace set writes releasePackages.pkg-a.changelogPath, Then workspaces.json holds it and grant show lists pkg-a's tag shape and changelog; a bad namespace is refused with the reader's message and unset removes the package", async () => {
+  const repo = flowRepo();
+  workspace(repo, {});
+  const file = path.join(configDir, "workspaces.json");
+  const set = await run(
+    [
+      "workspace",
+      "set",
+      "w",
+      "releasePackages.pkg-a.changelogPath=projects/pkg-a/CHANGELOG.md",
+      "--json",
+    ],
+    repo.cwd,
+  );
+  expect(set.code, set.stdout + set.stderr).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8")).workspaces[0].releasePackages).toEqual({
+    "pkg-a": { changelogPath: "projects/pkg-a/CHANGELOG.md" },
+  });
+  const shown = await run(["grant", "show", "--json"], repo.cwd);
+  expect(shown.code, shown.stdout + shown.stderr).toBe(0);
+  expect(shown.json().data.releasePackages.packages).toEqual([
+    { name: "pkg-a", tagShape: "pkg-a@<version>", changelogPath: "projects/pkg-a/CHANGELOG.md" },
+  ]);
+  const text = await run(["grant", "show"], repo.cwd);
+  expect(text.stdout).toContain(
+    "release packages: pkg-a (pkg-a@<version>; changelog projects/pkg-a/CHANGELOG.md)",
+  );
+
+  const bad = await run(
+    ["workspace", "set", "w", "releasePackages.pkg-a.tagNamespace=9x", "--json"],
+    repo.cwd,
+  );
+  expect(bad.code).not.toBe(0);
+  expect(bad.json().error).toContain('release package "pkg-a" tagNamespace "9x": not a tag prefix');
+  expect(JSON.parse(readFileSync(file, "utf8")).workspaces[0].releasePackages["pkg-a"]).toEqual({
+    changelogPath: "projects/pkg-a/CHANGELOG.md",
+  });
+
+  const unset = await run(
+    ["workspace", "set", "w", "releasePackages.pkg-a=null", "--json"],
+    repo.cwd,
+  );
+  expect(unset.code, unset.stdout + unset.stderr).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8")).workspaces[0].releasePackages).toEqual({});
+});
+
 // ---------------------------------------------------------------------------
 // forge releases (replayed gh)
 

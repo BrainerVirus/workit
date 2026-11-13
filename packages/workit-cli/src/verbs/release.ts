@@ -40,6 +40,7 @@ import {
   releaseToPublish,
   switchToRelease,
   tagReleasePackage,
+  untagReleasePackage,
   type FinishPlan,
 } from "@workit-dev/core/src/git/release";
 import { parseRemoteUrl, pushUrl } from "@workit-dev/core/src/git/rev";
@@ -607,7 +608,22 @@ async function releasePackage(argv: string[], io: Io): Promise<number> {
       ),
     (r) => (r.ok ? "done" : "failed"),
   );
-  if (!pushed.ok) return emit(io, { ...pushed, data: { ...pushed.data, step: "push", resume } });
+  if (!pushed.ok) {
+    // Only the tag this run made, and only while the remote lacks it.
+    const untagged = untagReleasePackage(io.cwd, plan);
+    if (!untagged)
+      return emit(io, {
+        ...pushed,
+        unblock: `${resume}  # or drop the local tag: git tag -d ${plan.tag}`,
+        data: { ...pushed.data, step: "push", resume },
+      });
+    return emit(io, {
+      ...pushed,
+      error: `${pushed.error}; deleted the local tag ${plan.tag} this run made (the remote never had it), so a rerun can tag again`,
+      unblock: `fix what the push refused, then rerun: workit release package ${plan.package} ${plan.version} --at <a commit ${plan.production} has>`,
+      data: { ...pushed.data, step: "push", untagged: plan.tag },
+    });
+  }
   const notes: string[] = [];
   let forgeRelease: { url: string | null; created: boolean } | null = null;
   if (!decision.publish) {
