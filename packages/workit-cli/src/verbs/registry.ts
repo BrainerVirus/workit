@@ -335,8 +335,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "install",
     group: "setup",
     usage: "workit install --hosts=<h,…> [--preview | --yes]",
-    summary:
-      "Install or repair Workit's plugin on the named hosts only; a healthy host changes nothing",
+    summary: "Install or repair Workit on the named hosts only",
     notes: [
       "--hosts takes claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys, host commands and notes and changes nothing; --yes installs them; with neither it asks at a terminal. It never changes the Workit config, a workspace or another host, and a host whose CLI is not on PATH shows a blocked row. Only the user runs it, in their own terminal: a host asks about or denies an agent's call, and the CLI refuses one.",
     ],
