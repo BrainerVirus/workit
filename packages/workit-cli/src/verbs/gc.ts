@@ -51,10 +51,10 @@ export const gcDeps = {
   },
 };
 
-const ALLOWED: Record<"worktrees" | "branches" | "store", readonly string[]> = {
-  worktrees: ["--worktrees", "--apply", "--dry-run", "--json"],
-  branches: ["--branches", "--apply", "--dry-run", "--json"],
-  store: ["--dry-run", "--prune-recovery", "--yes", "--json"],
+const ALLOWED: Record<"worktrees" | "branches" | "store", ReadonlySet<string>> = {
+  worktrees: new Set(["--worktrees", "--apply", "--dry-run", "--json"]),
+  branches: new Set(["--branches", "--apply", "--dry-run", "--json"]),
+  store: new Set(["--dry-run", "--prune-recovery", "--yes", "--json"]),
 };
 
 const branchLines = (data: BranchSweep): string[] => {
@@ -113,7 +113,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     : argv.includes("--branches")
       ? "branches"
       : "store";
-  const unknown = argv.find((arg) => !ALLOWED[form].includes(arg));
+  const unknown = argv.find((arg) => !ALLOWED[form].has(arg));
   if (unknown) return emit(io, fail("invalid_input", `unknown argument ${unknown}: ${GC_USAGE}`));
   if (form !== "store" && argv.includes("--apply") && argv.includes("--dry-run"))
     return emit(io, fail("invalid_input", "pass --apply or --dry-run, not both"));
