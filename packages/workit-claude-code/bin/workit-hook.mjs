@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
@@ -184,7 +185,7 @@ const mayBypass = (command) =>
   (/\$['"]/.test(command) ||
     /--unverified|--overwrite-unintegrated/.test(command.replace(/['"\\`]/g, "")));
 const MAYBE_GATED =
-  /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
+  /\b(?:git|gh|glab)\b|>|\b(?:tee|sponge|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
 // Redirects that write no file, as the write gate reads them (write-gate.ts
 // shellWrites): an fd duplication (`2>&1`, `>&2`, `>&-`) or a device.
 const NO_FILE_REDIRECT =
@@ -323,15 +324,30 @@ const hasTaskStore = (cwd) => {
 /** The guarded dirs' tests: `at` a guarded path or below it, `above` one (an ancestor). */
 const reachTests = (dirs) => {
   const fold = (value) => (dirs.fold ? value.toLowerCase() : value);
-  // write-gate.ts canonical: the nearest existing ancestor's real path, then the rest.
+  // write-gate.ts canonical: the nearest existing ancestor's real path, then the
+  // rest; a dangling symlink on the way is followed to the file a write creates.
   const canon = (file) => {
+    let dir = path.resolve(file);
     let rest = "";
-    for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+    for (let hops = 0; ;) {
       try {
         return fold(path.join(realpathSync.native(dir), rest));
       } catch {
-        if (path.dirname(dir) === dir) return fold(path.resolve(file));
-        rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+        let link = null;
+        try {
+          if (hops < 40) link = path.resolve(path.dirname(dir), readlinkSync(dir));
+        } catch {
+          // Not a symlink: the next ancestor.
+        }
+        if (link !== null) {
+          hops++;
+          dir = path.join(link, rest);
+          rest = "";
+        } else if (path.dirname(dir) === dir) return fold(path.resolve(file));
+        else {
+          rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+          dir = path.dirname(dir);
+        }
       }
     }
   };

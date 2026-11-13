@@ -182,6 +182,27 @@ test("G an edit whose file reaches a guarded path, W the gate denies it, T editR
   expect(count).toBeGreaterThan(10);
 });
 
+test("G a dangling symlink in the repo to a guarded file not made yet, W a shell write or an edit names it, T the gate denies and mayReach and editReaches say yes (#837)", () => {
+  const seal = path.join(config, "workspaces.json.seal");
+  const grant = path.join(state, "approvals", "not-yet.json");
+  for (const [name, target] of [
+    ["dangling-seal", seal],
+    ["dangling-grant", grant],
+  ]) {
+    rmSync(target, { force: true });
+    symlinkSync(target, path.join(repo, name));
+    expect(shellGate(repo, `echo x > ${name}`, null).kind, name).toBe("deny");
+    expect(writeGate(repo, [path.join(repo, name)], null).kind, name).toBe("deny");
+    expect(mayReach(`echo x > ${name}`, repo), name).toBe(true);
+    expect(editReaches(name, repo), name).toBe(true);
+    rmSync(path.join(repo, name));
+  }
+  symlinkSync(path.join(repo, "not-yet.txt"), path.join(repo, "dangling-plain"));
+  expect(mayReach("echo x > dangling-plain", repo)).toBe(false);
+  expect(editReaches("dangling-plain", repo)).toBe(false);
+  rmSync(path.join(repo, "dangling-plain"));
+});
+
 test.skipIf(ON_WINDOWS)(
   "G plain writes and reads inside the repo, W mayReach reads them, T none reaches a guarded path",
   () => {

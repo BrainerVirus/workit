@@ -162,3 +162,28 @@ test("Given a TypeScript script that writes a guarded file, When tsx or ts-node 
   ])
     expect(run(command).permissionDecision, command).toBe("deny");
 }, 60_000);
+
+test("Given a guarded file written by `>& file`, `>&file` or `| sponge file`, or a dangling symlink in the repo to one, When the Codex hook runs, Then it is denied; fd duplications stay quiet (#843, #837)", () => {
+  const config = path.join(home, ".config", "workit");
+  const targets = [
+    path.join(config, "workspaces.json"),
+    path.join(config, "workspaces.json.seal"),
+    path.join(state, "issued", "s9.json"),
+    path.join(state, "approvals", "grants", "d.json"),
+  ];
+  for (const [index, file] of targets.entries()) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    rmSync(file, { force: true });
+    symlinkSync(file, path.join(root, `dangling-${index}`));
+    for (const command of [
+      `echo '{}' >& ${file}`,
+      `echo '{}' >&${file}`,
+      `echo '{}' | sponge ${file}`,
+      `echo '{}' > dangling-${index}`,
+      `echo '{}' | sponge dangling-${index}`,
+    ])
+      expect(run(command).permissionDecision, command).toBe("deny");
+  }
+  for (const command of ["echo ok 2>&1", "echo ok >&2", "echo ok >&-"])
+    expect(run(command).permissionDecision, command).toBeUndefined();
+}, 60_000);
