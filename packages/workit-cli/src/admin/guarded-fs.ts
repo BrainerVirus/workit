@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import path from "node:path";
 import { testRunWriteRefusal } from "@workit-dev/core/src/core/account-home";
 import * as safe from "@workit-dev/core/src/core/safe-write";
+import { WORKIT_DIR_XDG } from "@workit-dev/core/src/core/workit-paths.mjs";
 
 /** The account home the guard protects (test seam; undefined: the OS account record's). */
 export const guardedHome: { value: string | null | undefined } = { value: undefined };
@@ -27,12 +28,12 @@ const refuseWrite = (file: fs.PathLike | number): void => {
 const HOST_DIR_VARS = [
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
+  WORKIT_DIR_XDG.config,
+  WORKIT_DIR_XDG.data,
   "PI_CODING_AGENT_DIR",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_CONFIG",
-] as const;
+];
 
 /**
  * Why a host CLI must not run against `home` in a test run (it writes the
