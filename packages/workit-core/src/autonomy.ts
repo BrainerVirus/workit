@@ -52,6 +52,7 @@ import {
   loadWorkspacesFrom,
   readWorkspacesResult,
   resolveWorkspaceFrom,
+  resolveRuntimeWorkspaceVcs,
   resolveWorkspaceFromEntries,
   validateWorkspacesDocument,
   type WorkspaceConfig,
@@ -129,10 +130,30 @@ const SEAL_UNBLOCK = `if the user made this change, ask them to run, in their ow
  * core/grant-seal.ts), with the terminal command that accepts the change;
  * null when the seal matches or there is none.
  */
-export const sealNote = (seal: SealCheck = sealOf()): string | null =>
+const sealNote = (seal: SealCheck = sealOf()): string | null =>
   seal.state === "broken"
     ? `workspaces.json does not match its seal (${seal.reason}), so grants, endpoint, verification and youtrack.writes are the stricter of their current and last sealed values; ${SEAL_UNBLOCK}`
     : null;
+
+/**
+ * How a YouTrack write is approved (#780). `ask` (the default, every
+ * workspace): each write needs the user's yes through the approval channel.
+ * `auto` is the opt-out a user sets in the workspace entry
+ * (`youtrack: { writes: "auto" }`); it keeps the WORKIT_YT_WRITE gate alone.
+ * A broken seal reads as `ask`. Here, not in core/youtrack-writes.ts, so the
+ * shell hook's raw ytrack guard reads it without the YouTrack client.
+ */
+export type YouTrackWritesMode = "ask" | "auto";
+
+export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
+  const youtrack = resolveRuntimeWorkspaceVcs(cwd)?.youtrack;
+  return youtrack &&
+    typeof youtrack === "object" &&
+    (youtrack as { writes?: unknown }).writes === "auto" &&
+    !sealNote()
+    ? "auto"
+    : "ask";
+};
 
 /**
  * Where `grant show --all` lists grants and `grant set` writes them: the

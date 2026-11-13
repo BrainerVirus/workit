@@ -5,8 +5,8 @@
 // plus `workit check -- …` and package runners (`npx ytrack`), and routes it to
 // the `workit youtrack …` call that asks first; one with no such verb needs
 // the user's own yes. `youtrack.writes: auto` turns the guard off, unless the
-// grant seal is broken (#819, core/youtrack-writes.ts youTrackWritesMode).
-import { youTrackWritesMode } from "../core/youtrack-writes";
+// grant seal is broken (#819, autonomy.ts youTrackWritesMode).
+import { youTrackWritesMode } from "../autonomy";
 import type { HookDecision } from "./protocol";
 import { commandLines, workitCheckTail } from "./raw-git";
 import { segmentsOf, type ShellDialect } from "./shell-words";
