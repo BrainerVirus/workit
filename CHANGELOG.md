@@ -516,6 +516,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit youtrack update <ISSUE>` makes a whole issue update under one yes: a comment with `--attach` files (`![](name)` in the text shows one inline), time (`--minutes`, `--text`, `--date`) and `--state`/`--command`, in that order, stopping at the first failure and naming what landed. The request lists every part; missing files and a ytrack without `--attach` are refused before asking (fix: `ytrack upgrade`). `workit youtrack create` takes `--attach` and `--command` under its one yes.
 - `workit doctor` has a `ytrack_paths` row: each workspace with a `youtrack.baseUrl` should have its glob mapped to that host in ytrack (`ytrack auth paths`), so an agent's own ytrack there reaches it; drift (missing, on another host, ytrack too old) comes with the exact fix. `workit setup` plans and runs the `ytrack auth paths --add` calls.
 - `workit dir notes` prints (and creates) the per-clone notes dir, `<git-common-dir>/workit/notes`, the same from every worktree. `workit doctor` has a `workit_notes` row that counts untracked files left in a checkout's `.workit/` (other than team config such as `checks.json`, and the old store files the task store backs up itself), and `workit doctor --fix` moves each into `workit dir notes` keeping its path, never overwriting and never touching tracked files.
+- `workit install --hosts=<h,...> [--preview | --yes]` installs or repairs Workit on only the named hosts (claude-code, codex, cursor, opencode, pi) and is idempotent: a healthy host plans nothing. It changes no Workit config or workspace. Only the user runs it, in their own terminal; a host asks about or denies an agent's call.
 
 ### Changed
 
@@ -1077,6 +1078,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - On Windows, copying the config `workspaces.json` or an issued file out to another path is no longer denied
 - `workit upgrade --hosts=<h>` repairs a registered-but-missing Workit plugin on Claude Code, OpenCode and Pi too (Cursor and Codex already were): it plans the reinstall for that host only, applies it, and checks the host plans clean afterwards
 - The eval bench no longer stores private data in a result: it replaces what a host read outside the bench world with a marker, refuses to write a run that still holds a string from the real account, confines host reads with Landlock, and copies only the sign-in keys of `~/.claude.json`. The one committed transcript that held a real config is redacted.
+- `workit install` and `workit uninstall --hosts` previews show a missing host command (`claude`, `codex`, `pi` not on PATH) as a blocked row at plan time, the same text apply prints; apply runs nothing for that host.
+- A Cursor repair no longer adds a second `plugin_dirs` entry when the existing one is spelled with `~` (which made `workit doctor` report `duplicate_registration`).
 
 ### Removed
 
