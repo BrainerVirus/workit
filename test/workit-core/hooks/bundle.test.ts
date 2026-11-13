@@ -77,7 +77,11 @@ const HOOK_ENTRIES = [
 // Wave 8 round 2 (2026-11-13), measured on Bun 1.4.4 at #834: core run 536,017 B, Claude Code
 // 529,486 B, Cursor 525,072 B, Codex 524,684 B. One ceiling for the round, core run plus 6,000 B:
 // hook-reach, grant-seal-core and grant-seal-cli may spend it, each printing its delta in its PR.
-const BUDGET = 542_017;
+// Wave 9 (2026-11-13), measured on Bun 1.4.4 at #855: round 2's grant seal (#841, #851), hook reach (#845) and the
+// write-gate gaps (#855) took core run to 541,650 B (Claude Code 535,119 B, Cursor 530,705 B, Codex 530,317 B).
+// One ceiling for the rest of wave 9, core run plus 8,000 B: procs-route (dev-server routing, the RSS notice) and
+// session-teardown (the session-end stop) may spend it, each printing its delta in its PR.
+const BUDGET = 549_650;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
