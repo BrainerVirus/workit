@@ -417,7 +417,7 @@ export function changelogSection(
  * the workspace changelog in a directory named like the package (its last
  * `/` segment: `@scope/pkg-a` is `pkg-a`). Null when none matches.
  */
-export function packageChangelogFile(
+function packageChangelogFile(
   cwd: string,
   ref: string,
   pkg: ReleasePackage,

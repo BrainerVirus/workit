@@ -35,7 +35,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * after it).
  */
 const NAMESPACE = /^[A-Za-z@][\w.@/+-]*$/u;
-export const validTagNamespace = (value: string): boolean =>
+const validTagNamespace = (value: string): boolean =>
   NAMESPACE.test(value) &&
   !value.includes("..") &&
   !value.includes("@{") &&
