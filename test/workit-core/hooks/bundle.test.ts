@@ -85,7 +85,11 @@ const HOOK_ENTRIES = [
 // of verbs with per-verb option tables, wrappers and environment, plus git-dir and config checks
 // for scratch repositories, took core run to 557,693 B. The ceiling is that plus ~2,000 B, since
 // ap-core's one-click approvals land next on the same bundle.
-const BUDGET = 559_700;
+// #864 ap-core (2026-11-13), rebased on judge-scratch: the inline ask on the action (youtrack
+// request rendering, ticket binding, replay and write-content checks on every host) took core run
+// to 564,108 B. The ceiling is that plus ~2,400 B. procs-route and session-teardown, which the
+// wave 9 ceiling above left room for, print their own delta and raise it in their PRs.
+const BUDGET = 566_500;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

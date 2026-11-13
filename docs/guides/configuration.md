@@ -325,9 +325,10 @@ YouTrack, a GitLab one in GitLab issues.
 ```
 
 - `youtrack.writes` (default `ask`, in every workspace that does not set it):
-  each `workit youtrack note|time|meeting|create` and each YouTrack PR
-  backlink waits for your yes through
-  `workit approve` ([YouTrack](youtrack.md#writes-ask-you-first)). `auto` posts
+  each `workit youtrack note|time|meeting|update|create` and each YouTrack PR
+  backlink waits for your yes: one click on your host's prompt on that call
+  (Claude Code, Pi), else `workit approve` in a terminal
+  ([Approvals](approvals.md), [YouTrack](youtrack.md#writes-ask-you-first)). `auto` posts
   without asking and needs `WORKIT_YT_WRITE=1` instead; set it yourself, in
   your own terminal.
 

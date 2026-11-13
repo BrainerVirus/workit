@@ -1,9 +1,11 @@
-// `workit approve <id>…` (docs/workit-next/host-approval.md): the one prompted
+// `workit approve [<id>…]` (docs/workit-next/host-approval.md): the prompted
 // verb of the host-approval channel. It prints each request as Workit stored
-// it. In an agent shell it records nothing: the host records the user's
-// answer to its own prompt on this call (Claude Code's hook, Pi's dialog).
-// The fallback on every host is the user running it in a real terminal: a
-// TTY, no agent marker, then y at the confirm, as `grant set` does (#615).
+// it, in full. In an agent shell it records nothing: the host records the
+// user's answer to its own prompt on this call (Claude Code's hook, Pi's
+// dialog). The fallback on every host is the user running it in a real
+// terminal: a TTY, no agent marker, then y at the confirm, as `grant set`
+// does (#615). With no id it takes the one pending request (#864); with
+// several pending it lists them and asks for an id.
 //
 // Limit (D18, verbs/grant.ts): an agent that allocates a pseudo-terminal and
 // scrubs the markers passes the terminal check; the host's prompt on the call
@@ -11,6 +13,7 @@
 import {
   isApprovalId,
   liveApprovalRequest,
+  pendingApprovalRequests,
   recordApprovalGrant,
   renderApprovalRequest,
   type ApprovalGrant,
@@ -20,7 +23,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { askOrCancel, cancelled, confirmKey } from "../prompt";
 import { agentMarker } from "./grant";
 
-const USAGE = "workit approve <id>…";
+const USAGE = "workit approve [<id>…]";
 
 export type ApproveDeps = {
   /** True only for a person at a terminal: stdin and stdout are TTYs. */
@@ -48,16 +51,36 @@ export async function runApprove(
 ): Promise<number> {
   const ids = argv.filter((arg) => arg !== "--json" && arg !== "--");
   const wrong = ids.filter((id) => !isApprovalId(id));
-  if (ids.length === 0 || wrong.length > 0)
+  if (wrong.length > 0)
     return emit(
       io,
       fail(
         "invalid_input",
-        `${wrong.length ? `not a request id: ${wrong.join(", ")} (ids look like ap_xxxxxxxx)` : "name the request ids to approve"}\nusage: ${USAGE}`,
+        `not a request id: ${wrong.join(", ")} (ids look like ap_xxxxxxxx)\nusage: ${USAGE}`,
       ),
     );
   const requests: ApprovalRequest[] = [];
   const missing: string[] = [];
+  if (ids.length === 0) {
+    const pending = pendingApprovalRequests();
+    if (pending.length === 0)
+      return emit(
+        io,
+        fail("not_found", "no request is waiting for a yes", {
+          unblock: "run the refused verb again: it records the request to approve",
+        }),
+      );
+    if (pending.length > 1)
+      return emit(
+        io,
+        fail(
+          "invalid_input",
+          `${pending.length} requests are waiting: name the one to approve\n${pending.map(renderApprovalRequest).join("\n")}`,
+          { unblock: `workit approve ${pending[0]?.id ?? "<id>"}` },
+        ),
+      );
+    requests.push(...pending);
+  }
   for (const id of ids) {
     const found = liveApprovalRequest(id);
     if (found.ok) requests.push(found.request);
@@ -67,10 +90,10 @@ export async function runApprove(
     return emit(
       io,
       fail("not_found", missing.join("; "), {
-        unblock: "run the refused verb again: it writes a new request and prints its id",
+        unblock: "run the refused verb again: it records the request to approve",
       }),
     );
-  const command = `workit approve ${ids.join(" ")}`;
+  const command = ids.length ? `workit approve ${ids.join(" ")}` : "workit approve";
   const rendered = requests.map(renderApprovalRequest);
   const agent = agentMarker(io.env);
   if (agent || !deps.interactive()) {
@@ -79,7 +102,7 @@ export async function runApprove(
       : "no interactive terminal";
     return emit(io, ok<Shown>({ recorded: false, requests, reason }), () => [
       ...rendered,
-      `Not recorded by this shell: ${reason}. If your host asked the user about this call and they said yes, the host recorded it; otherwise ask the user to run, in their own terminal: ${command}`,
+      `Not recorded by this shell: ${reason}. On Claude Code and Pi the host records the user's answer to its prompt on this call; on other hosts the user runs \`${command}\` in a terminal.`,
     ]);
   }
   for (const text of rendered) io.stdout(`${text}\n`);

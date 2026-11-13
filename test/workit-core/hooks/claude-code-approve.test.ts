@@ -121,7 +121,6 @@ test("Given a call that exited non-zero, a PostToolUse with no ask before it, or
 });
 
 test.each([
-  ["auto mode", { permission_mode: "auto" }, CLI_ENV],
   ["bypassPermissions", { permission_mode: "bypassPermissions" }, CLI_ENV],
   ["dontAsk", { permission_mode: "dontAsk" }, CLI_ENV],
   ["an SDK prompt tool", {}, { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" }],

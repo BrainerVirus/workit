@@ -1,8 +1,9 @@
 # Host-approval channel: spec
 
-Status: decided (2026-11-11); first PR shipped: the approvals guard, the request store and consume
-API (`packages/workit-core/src/approvals/`), `workit approve`, Claude Code and Pi recording; no
-consumer is wired yet · Issues: #419, #649, #768, #774 · Builds on #615 (user-only calls) and #798 (ask rules anchored at the verb)
+Status: decided (2026-11-11), revised 2026-11-13 (#864: decision 1 superseded); shipped: the
+approvals guard, the request store and consume API (`packages/workit-core/src/approvals/`),
+`workit approve`, Claude Code and Pi recording, and the ask on the action itself for the
+`workit youtrack` writes · Issues: #419, #649, #768, #774, #864 · Builds on #615 (user-only calls) and #798 (ask rules anchored at the verb)
 
 ## Problem
 
@@ -44,7 +45,60 @@ another OS principal than the agent.
 | Form | Used when | The yes is |
 | --- | --- | --- |
 | **Inline ask** | The gated action is one host tool call that a Workit hook already judges (Agent spawn, raw `git push --force`, `git reset --hard`, `WORKIT_LIVE_SESSION=override`) | The host prompt on that call; on yes the call runs once. Nothing is stored except an audit row |
-| **Request and approve** | A Workit CLI verb decides inside its run (release-notes gate, branch policy on `workit git push`, `grant set`, secrets in `workit git commit`) | `workit approve <id>…`, the one prompted verb; host-side code records the yes; the verb runs again and consumes it |
+| **Ask on the action** (#864) | A Workit CLI verb whose request a hook can compute from argv and files before it runs (`workit youtrack note\|time\|meeting\|update\|create`; release-notes approval next), on a host whose hook can ask and pass the call a ticket (Claude Code, Pi TUI) | The host prompt on that call, showing the full text; on yes the call runs with a one-use ticket and the verb consumes it in the same run. No id is shown or typed |
+| **Request and approve** | A Workit CLI verb decides inside its run (branch policy on `workit git push`, `grant set`, secrets in `workit git commit`), and every case on a host with no ask on the action | `workit approve` (no id when one request is pending), the one prompted verb; host-side code or the user's terminal records the yes; the verb runs again and consumes it |
+
+### The ask on the action itself (#864)
+
+The user's decision (2026-11-13, ledger mwf752f2): a user-yes action is approved by one click on the
+host's native prompt on the action itself, showing the full text, with no id to type, and Claude
+Code's auto mode counts as a person's click. Scope (mwf752sv): YouTrack writes, time logs and
+release-notes approval; grant raises and the workspace seal stay a terminal step with a short
+command and no id.
+
+1. The hook reads a plain `workit youtrack …` call (one segment, `workit` first, no chain, pipe,
+   redirect, substitution, variable or leading `cd`; `approvals/inline.ts`) and computes what the
+   verb would post from the same words and files (`approvals/youtrack-ask.ts`): the full text (cut
+   after 60 lines with "N more lines"), the argv hash and the content hash (the words plus the bytes
+   of every file they name). A wrapped call is denied with the plain form.
+2. In a mode where a person answers (Claude Code `default`, `acceptEdits`, `plan`, `auto`; Pi TUI
+   after Approve), it records an `inline` row `{ sha256(ticket), kind, argvHash, contentHash, host,
+   session, toolUseId, expires: +2 min }`, closes every older unused row for the same call and
+   content, and runs the call with `WORKIT_APPROVAL_TICKET=<ticket>` in front (Claude Code:
+   `permissionDecision: "ask"` plus `updatedInput`, which claude 2.1.323 keeps on an ask; Pi: the
+   mutable `tool_call` input).
+3. The verb reads each file the call names once, hashes those bytes and posts exactly them (an
+   attachment from a private copy), so nothing is re-read between the check and the post. Right
+   before the write it consumes the row once (exclusive create), only from the host session that
+   asked: the host's own shell variable where it sets one (Pi's `PI_SESSION_ID`, set by its bash
+   tool on every call; a Pi worker's dialog records the same, its own session, never
+   `<lead>:<worker>`), else the declared `WORKIT_SESSION_ID` (Claude Code), then appends
+   `approval.consumed` to the ledger. A missing, foreign, changed, used, expired or replaced
+   ticket, or one used from another session, refuses `approval_not_bound` and posts nothing.
+   Claude Code puts no subagent id in a shell (subagents share the session id), so a lead's
+   ticket and its subagents' are told apart by delivery: each ticket exists only in the one call
+   the hook rewrote, and any other call naming the variable is denied (below).
+4. In `bypassPermissions`, `dontAsk` or an `sdk-*` entrypoint nobody sees a prompt: nothing is
+   recorded, the call runs with `WORKIT_APPROVAL_UNASKED=<mode>`, and the verb refuses naming it.
+
+Security binding (ruling mwf7pjfs): an asked row is consumed only by its own call. A script,
+`bash -c`, an MCP tool or a second call has no ticket; the store holds only the ticket's hash, so
+the row on disk cannot be replayed. The hook's output, ticket included, is written to the host's
+transcript (claude 2.1.323 records each hook's stdout as a `hook_success` attachment, and
+`updatedInput` is the only field that reaches the call, so the ticket cannot be kept out of it), so a rejected prompt's rewritten command could be copied from it: every host's shell
+gate denies a command naming `WORKIT_APPROVAL_TICKET` or `WORKIT_APPROVAL_UNASKED` (quotes and
+backslashes removed; prefix, `export`, `env`, `bash -c`, a heredoc), and a file write whose input
+names either is denied in `handle.ts` (`write.pre` carries the tool input as `text` where the host
+passes it: Claude Code and Pi), so the only way a ticket reaches a verb is the hook's own rewrite.
+A yes is also bound to its turn: when the user rejects a Claude Code prompt the turn stops and the
+next event is the user's own message, so `UserPromptSubmit` closes every unused ask of the session
+and the lead's `Stop` closes its own (a subagent's survives the lead's Stop until the next user
+message). On Pi a rejected or dismissed dialog writes no row at all. The row also lives at most 2
+minutes. Residual risk (D18), now narrowed to the turn of the yes: a ticket can be replayed only
+between an ask and the end of that same turn, which on a rejection is never (the turn stops), so the
+remaining case is an agent that, after the user said yes, replays the same call and content again
+before it runs; the consume-once row refuses the second use. A host session with no
+`UserPromptSubmit` (`claude -p`) records no ask in the first place.
 
 ## Request shape
 
@@ -81,7 +135,7 @@ not a sandbox ([hosts.md](../agents/hosts.md#host-parity), issued-registry limit
 
 ## Recording the answer, per host
 
-The prompted call `workit approve <id>…` writes nothing in an agent shell: it prints the request
+The prompted call `workit approve [<id>…]` writes nothing in an agent shell: it prints the request
 and "the host records your answer". Host-side code writes `approval.granted { id, hash, host,
 session, toolUseId, at, expires }` (15 minutes), or `approval.rejected` where the host reports a
 no. Host rules for `workit approve` are anchored at the verb, like #798. A hook acts only on one
@@ -91,17 +145,20 @@ when that call exited 0 (Pi: from the dialog answer), one per id read from argv 
 
 | Host | Request and approve | Inline ask | Recorded limit and fallback |
 | --- | --- | --- | --- |
-| Claude Code | `PreToolUse` answers `permissionDecision: "ask"` for `workit approve` with the rendered request as the reason and writes `asked { toolUseId, ids, hashes }`; `PostToolUse` for the same `toolUseId` writes the grants. Setup adds `ask` `Bash(workit approve *)` | `PreToolUse` `ask` on the call (Agent spawn, Bash), reason rendered from a request it writes itself | L: a grant proves the call ran after an ask, not that a person answered, and no hook sees a reject (the request expires). U: whether auto mode, `bypassPermissions`, an SDK `canUseTool` callback or `--permission-prompt-tool` answer an ask without a person; until probed no grant is recorded in those modes (`asked` is written only in `default`, `acceptEdits` or `plan`) |
-| OpenCode | `permission.evaluate` answers `ask` for `workit approve` on every call (never `allow`), so a stored `always` never skips it; the plugin writes the grant on `permission.replied` `once` or `always` (both once) or the rejection on `reject`, matched through `permission.asked`. U: both events are in the installed `@opencode/schema` types, but nothing in Workit consumes them yet. U: Approve / Reject / Edit through `question` (no reply event in the installed plugin types) | `permission.evaluate` `ask` for a shell call it gates; U: whether a `subagent` spawn passes through `permission.evaluate`, else spawns use request and approve | Fallback-only until the U items are probed |
+| Claude Code | `PreToolUse` answers `permissionDecision: "ask"` for `workit approve` with the rendered request as the reason and writes `asked { toolUseId, ids, hashes }`; `PostToolUse` for the same `toolUseId` writes the grants. Setup adds `ask` `Bash(workit approve *)` | `PreToolUse` `ask` on the call (Agent spawn, Bash); for `workit youtrack` writes, `ask` with the full text plus `updatedInput` carrying the ticket (above) | L: a grant proves the call ran after an ask, not that a person answered, and no hook sees a reject (the request expires or a newer ask replaces the row). Auto mode records (the user confirmed a person sees a hook's ask there, #864); `bypassPermissions`, `dontAsk`, an SDK `canUseTool` callback and `--permission-prompt-tool` record nothing. L: the transcript replay above |
+| OpenCode | `permission.evaluate` answers `ask` for `workit approve` on every call (never `allow`), so a stored `always` never skips it; the plugin writes the grant on `permission.replied` `once` or `always` (both once) or the rejection on `reject`, matched through `permission.asked`. U: both events are in the installed `@opencode/schema` types, but nothing in Workit consumes them yet. U: Approve / Reject / Edit through `question` (no reply event in the installed plugin types) | `permission.evaluate` `ask` for a shell call it gates; U: whether a `subagent` spawn passes through `permission.evaluate`, else spawns use request and approve. L: no ask can carry a ticket into the call, so YouTrack writes use request and approve | Fallback-only until the U items are probed: the refusal is one short command, `workit approve` |
 | Codex | Workit's `rules/workit.rules` gets a `prompt` rule for `workit approve` (the `PreToolUse` hook no longer denies it); `PostToolUse` writes the grant only when the hook input's `permission_mode` shows a mode that prompts | L: the hook can deny but not ask; prompts come only from prefix rules, so inline cases deny and name the request id | U: which `permission_mode` values Codex sends under `approval_policy = never` and whether a "don't ask again" answer caches by prefix; until probed Codex is fallback-only (L) |
 | Cursor | `beforeShellExecution` answers `permission: "ask"` for `workit approve`; `afterShellExecution` (X today: offered, not registered) writes the grant | `beforeShellExecution` `ask` for shell calls; L: no spawn hook can ask, and role models are advisory there, so #768 has nothing to override | U: whether auto-run ("run everything") skips an `ask`; the IDE's handling is unverified (#635). Until both are probed Cursor is fallback-only |
-| Pi | The `tool_call` hook intercepts `workit approve`, shows `ctx.ui.select` (Approve / Reject / Edit) with the rendered request, writes the answer, and blocks the shell call with a result naming it | `tool_call` → `ctx.ui.confirm` before the call runs | Records only in the TUI (`ctx.mode`). L: print mode has no dialog (`hasUI` false); in RPC mode `hasUI` is true but the dialog goes to the RPC client, which may be a program, so RPC is fallback-only |
+| Pi | The `tool_call` hook intercepts `workit approve`, shows `ctx.ui.select` (Approve / Reject / Edit) with the rendered request, writes the answer, and blocks the shell call with a result naming it | `tool_call` → `ctx.ui.select` before the call runs; for `workit youtrack` writes the dialog shows the full text and Approve records the row and puts the ticket on the mutable command | Records only in the TUI (`ctx.mode`). L: print mode has no dialog (`hasUI` false); in RPC mode `hasUI` is true but the dialog goes to the RPC client, which may be a program, so RPC is fallback-only |
 
-**Fallback, every host:** `workit approve <id>…` run by the user in a real terminal shows the
+**Fallback, every host:** `workit approve` (an id only when several requests are pending; each
+refusal of the same text reuses its one request) run by the user in a real terminal shows the
 same rendered request and records `via: terminal` after today's #615 checks: a TTY, no agent
 marker, then y at the confirm prompt (as `grant set` and `release notes approve` do). L (D18,
-`verbs/grant.ts`): an agent that allocates a pseudo-terminal and scrubs the markers passes it. Every refusal prints this line; a host with a channel adds "or approve it when
-your host asks". A host that is fallback-only says so in `workit doctor` (`host_approval`).
+`verbs/grant.ts`): an agent that allocates a pseudo-terminal and scrubs the markers passes it. Every
+refusal on a host with no ask on the action prints this line as one short command; on Claude Code a
+refusal means the hook did not see the call (a script, `bash -c`), so it names the plain call that
+makes the host ask. A host that is fallback-only says so in `workit doctor` (`host_approval`).
 
 ## How a CLI verb checks an approval
 
@@ -167,8 +224,11 @@ and a fallback-only host test that asserts the deny names the request id and the
 
 1. **Two steps or a one-call ticket on Claude Code?** `PreToolUse` could answer `ask` and add a
    hook-minted ticket through `updatedInput`, so the consumer verb runs once. Decided: two
-   steps everywhere for CLI verbs (ruling mwc2mk56): Cursor cannot rewrite, Codex prompts only via
-   prefix rules, and one record path is easier to keep honest.
+   steps everywhere for CLI verbs (ruling mwc2mk56). **Superseded 2026-11-13** by the user's
+   decision mwf752f2 (#864): the two-step channel recorded nothing in auto mode, minted a new id on
+   every refusal and sent the user to a terminal every time. Now one click on the action itself on
+   Claude Code and Pi (the ticket above, ruling mwf7pjfs); Cursor, Codex and OpenCode keep request
+   and approve with a terminal fallback that needs no id when one request is pending.
 2. **Expiry.** Decided: request 30 minutes, grant 15 minutes after the yes, both
    configurable only in user config.
 3. **OpenCode `always`.** Decided: recorded as once; Workit never stores a standing approval.

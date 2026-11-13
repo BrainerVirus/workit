@@ -47,6 +47,8 @@ export type HookEvent =
       /** The files written; null when they cannot be read (unknown targets, gated). */
       paths: string[] | null;
       toolUseId: string | null;
+      /** What the tool writes (its input as JSON), where the host passes it: Claude Code, Pi. */
+      text?: string;
     }
   | {
       kind: "shell.post";

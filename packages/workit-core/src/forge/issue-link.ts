@@ -377,11 +377,18 @@ export type BacklinkOutcome = {
   approval?: string;
 };
 
+/** A shell word: plain, or single-quoted. */
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
 /**
  * One YouTrack backlink, posted at most once: the marker is read back, and in
  * ask mode an identical comment of the user's counts as posted, both before
  * the ask. The post goes through ytrackWrite, which consumes the user's yes or
- * leaves the backlink pending on a new request.
+ * leaves the backlink pending on a new request. On Claude Code and Pi a
+ * pending one names the plain `workit youtrack note` call that posts the same
+ * text: the host asks on that call, showing it (#864), and a later `pr
+ * create` finds the comment as an identical one of the user's.
  */
 async function youTrackBacklink(
   root: string,
@@ -389,6 +396,7 @@ async function youTrackBacklink(
   text: string,
   marker: string,
   ask: boolean,
+  env: NodeJS.ProcessEnv,
 ): Promise<Omit<BacklinkOutcome, "issue">> {
   if (ask) {
     const backend = youTrackBackend();
@@ -422,12 +430,17 @@ async function youTrackBacklink(
       };
     }
   });
-  if (approval !== null && outcome.status === "failed")
+  if (approval !== null && outcome.status === "failed") {
+    const call = `workit youtrack note ${issueId} --markdown ${shellWord(text)}`;
     return {
       status: "pending",
-      note: `${outcome.error}; after the yes, re-run workit pr create to post it once`,
+      note:
+        env.CLAUDECODE || env.PI_CODING_AGENT
+          ? `approval_needed: nothing was posted. Run \`${call}\` as its own call: the host shows the user the backlink and a yes posts it.`
+          : `${outcome.error}; after the yes, re-run workit pr create to post it once`,
       approval,
     };
+  }
   return { status: outcome.status, ...("error" in outcome ? { note: outcome.error } : {}) };
 }
 
@@ -493,7 +506,7 @@ export async function postBacklinks(
         issueId: link.id,
         pr: pr.url,
       });
-      out.push({ issue, ...(await youTrackBacklink(cwd, link.id, text, marker, ask)) });
+      out.push({ issue, ...(await youTrackBacklink(cwd, link.id, text, marker, ask, env)) });
       continue;
     }
     const forge = issueForge(resolved, link, deps.runner);

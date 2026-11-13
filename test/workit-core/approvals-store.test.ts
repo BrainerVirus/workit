@@ -62,7 +62,8 @@ test("Given a request, Then it carries id, kind, action, target, effect, subject
   expect(Date.parse(request.expires) - T0.getTime()).toBe(REQUEST_TTL_MS);
   expect(liveApprovalRequest(request.id, at(REQUEST_TTL_MS - 1)).ok).toBe(true);
   expect(liveApprovalRequest(request.id, at(REQUEST_TTL_MS))).toMatchObject({ ok: false });
-  expect(createApprovalRequest(draft("aaa"), { session: "s1", now: T0 }).id).not.toBe(request.id);
+  // #864: the same fields again are the same request, never a second id.
+  expect(createApprovalRequest(draft("aaa"), { session: "s1", now: T0 }).id).toBe(request.id);
 });
 
 test("Given a request file changed after it was written, Then it is no request at all", () => {
@@ -104,15 +105,16 @@ test("Given a granted request, When the consumer runs twice, Then the first cons
   expect(second).toMatchObject({ ok: false, code: "approval_consumed", request: null });
 });
 
-test("Given a grant 15 minutes old, When the consumer runs, Then it is not accepted and a new request is written", () => {
+test("Given a grant 15 minutes old, When the consumer runs, Then it is not accepted and the live request is asked again", () => {
   const request = createApprovalRequest(draft("aaa"), { session: "s1", now: T0 });
   hostYes(request.id, T0);
   const late = consumeApproval(draft("aaa"), use, at(GRANT_TTL_MS));
   expect(late.ok).toBe(false);
   if (late.ok) return;
   expect(late.code).toBe("approval_needed");
-  expect(late.request?.id).not.toBe(request.id);
-  expect(late.message).toContain(`workit approve ${late.request?.id}`);
+  expect(late.request?.id).toBe(request.id);
+  // The only pending request: the terminal command needs no id.
+  expect(late.message).toContain("`workit approve` in a terminal");
 });
 
 test("Given an approved draft edited by one byte, When the consumer runs, Then it refuses approval_stale naming both hash prefixes and a new id", () => {
@@ -124,7 +126,8 @@ test("Given an approved draft edited by one byte, When the consumer runs, Then i
   expect(stale.code).toBe("approval_stale");
   expect(stale.message).toContain(request.hash.slice(0, 12));
   expect(stale.message).toContain(approvalHash(draft("aab")).slice(0, 12));
-  expect(stale.message).toContain(`workit approve ${stale.request?.id}`);
+  expect(stale.request?.id).not.toBe(request.id);
+  expect(stale.message).toContain("`workit approve` in a terminal");
   // The original grant was not used by the refused run.
   expect(consumeApproval(draft("aaa"), use, at(2000)).ok).toBe(true);
 });

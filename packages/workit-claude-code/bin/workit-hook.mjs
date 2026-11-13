@@ -178,6 +178,15 @@ const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*-
 // the verb, after any global option: `release notes approve` is not it.
 const WORKIT_APPROVE =
   /(?:^|[\s;&|(`])(?:\S*[\\/])?workit(?:-cli)?(?:\s+(?:--json|--(?:cwd|session|token)[\s=]\S+))*\s+approve\b/;
+// A `workit youtrack` write is asked on the call itself (#864, workit-core
+// approvals/inline.ts): PreToolUse goes to the runtime, which asks with the
+// full text and runs the call with its ticket.
+const WORKIT_INLINE_ASK =
+  /(?:^|[\s;&|(`'"])(?:\S*[\\/])?workit(?:-cli)?(?:\s+(?:--json|--(?:cwd|session)[\s=]\S+))*\s+youtrack\s+(?:note|time|meeting|update|create)\b/;
+// Only the hook's own rewrite puts a ticket on a call: any tool input naming
+// one (quotes and backslashes removed) goes to the runtime, which denies it.
+const namesTicket = (input) =>
+  /WORKIT_APPROVAL_(?:TICKET|UNASKED)/.test(JSON.stringify(input ?? {}).replace(/['"\\]/g, ""));
 // A Workit call that may carry a bypass flag, however quoted, goes to the
 // runtime, which asks the user (hooks/delivery-verbs.ts workitBypassFlag).
 const mayBypass = (command) =>
@@ -693,6 +702,7 @@ const fastAllow = (() => {
     if (value?.hook_event_name !== "PreToolUse") return false;
     if (budgetDue) return false;
     if (mentionsGuarded(JSON.stringify(value.tool_input ?? {}))) return false;
+    if (namesTicket(value.tool_input)) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
     // An implementer's writes are confined to its Workit worktree, a verifier's
     // or reviewer's to its scratch dir (hooks/worktree-confine.ts).
@@ -702,6 +712,7 @@ const fastAllow = (() => {
         WORKIT_DELIVERY.test(command) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
+        WORKIT_INLINE_ASK.test(command) ||
         mayBypass(command) ||
         namesYtrack(command) ||
         mayRunUserOnly(command)

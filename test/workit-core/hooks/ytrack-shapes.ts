@@ -77,8 +77,14 @@ export const FAST = [
   "rg -n ytrackRunner packages",
   "YTRACK_HOST=acme ls",
   "cat ytrack.md",
-  "workit youtrack note X-1 --markdown hi",
 ];
+
+/**
+ * A `workit youtrack` write: it names no ytrack, so the ytrack word stays
+ * quiet on it, but Claude Code's launcher routes it to the runtime, which
+ * asks on the call itself (#864).
+ */
+export const WORKIT_YOUTRACK_WRITES = ["workit youtrack note X-1 --markdown hi"];
 
 /** Mentions the shared test routes to the runtime, where the gate decides nothing. */
 export const ROUTED_MENTIONS = ["echo see the ytrack skill", "grep -rn ytrack docs"];

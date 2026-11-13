@@ -128,7 +128,8 @@ test.skipIf(process.platform === "win32")(
     expect(first).toMatchObject({ ok: false, outcome: "not_applied" });
     expect(String(first?.error)).toStartWith("approval_needed: nothing was posted");
     const id = String(first?.approval);
-    expect(String(first?.unblock)).toContain(`workit approve ${id}`);
+    // #864: the one pending request needs no id at the terminal.
+    expect(String(first?.unblock)).toContain("`workit approve` in a terminal");
     const stored = storedRequest(id);
     expect(stored).toMatchObject({
       kind: "youtrack-write",

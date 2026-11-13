@@ -3,10 +3,12 @@
 // `ytrack … --json`, the only path to YouTrack (its token stays in the OS
 // keyring); without ytrack every verb fails with the install unblock. Agents use
 // these verbs, or the ytrack skill, instead of calling the API. Writes (note,
-// time, meeting, create) ask the user first by default (#780): the verb writes
-// an approval request and refuses until the user approves it through
-// `workit approve <id>`, then the re-run consumes that yes once. A workspace
-// with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead.
+// time, meeting, update, create) ask the user first by default (#780, #864):
+// on Claude Code and Pi the host asks on this very call, showing its full
+// text (approvals/youtrack-ask.ts), and a yes posts in the same call; on the
+// other hosts the verb records one request per text and refuses with the
+// terminal step (`workit approve`), then the re-run consumes that yes once. A
+// workspace with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead.
 // Every comment or work item carries a deterministic marker and is read back
 // first, so a retry after a lost response never posts twice; an identical
 // entry by the same user is refused as `duplicate_entry`; a write an earlier
@@ -26,7 +28,8 @@
 // before asking: each file must exist and ytrack must have --attach.
 import { progressFor } from "../progress";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { youTrackBaseUrl, youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
 import { ISSUE_RE } from "@workit-dev/core/src/core/youtrack-tools";
@@ -50,9 +53,15 @@ import {
 import {
   approveLine,
   consumeApproval,
+  consumeInlineAsk,
   createApprovalRequest,
+  INLINE_TICKET_ENV,
+  INLINE_UNASKED_ENV,
   type ApprovalFields,
 } from "@workit-dev/core/src/approvals/store";
+import { youTrackAsk } from "@workit-dev/core/src/approvals/youtrack-ask";
+import { hostSessionFromEnv, realHostSession } from "@workit-dev/core/src/host-session";
+import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import {
   youTrackBackend,
   youTrackWriteGate,
@@ -73,8 +82,31 @@ import { parseFlags, positiveInt, usage } from "./forge-common";
 const USAGE =
   "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …] | youtrack update <ISSUE> [--markdown <t> | --file <p>] [--attach <file>]... [--minutes <n> [--text <t>] [--date …]] [--state <S>] [--command '<command>'] | youtrack show <ISSUE> | youtrack create --project <P> --summary <s> [--description <t> | --file <p>] [--attach <file>]... [--command '<command>']";
 
-/** Test seams: the workspace's `youtrack.writes` mode for a cwd. */
-export type YouTrackDeps = { writes?: (cwd: string) => YouTrackWritesMode };
+/** Test seams: the workspace's `youtrack.writes` mode for a cwd, and how a named file is read. */
+export type YouTrackDeps = {
+  writes?: (cwd: string) => YouTrackWritesMode;
+  read?: (file: string) => Buffer;
+};
+
+/**
+ * Each file a call names is read once per run (#864): the bytes the yes is
+ * checked against (youTrackAsk's content hash) are the bytes that post. An
+ * attachment posts from a private copy of those bytes, never from its path.
+ */
+const loaders = new WeakMap<Io, (file: string) => Buffer>();
+const load = (io: Io, file: string): Buffer =>
+  (loaders.get(io) ?? ((full: string) => readFileSync(full)))(path.resolve(io.cwd, file));
+const copies = new WeakMap<Io, string>();
+const copyOf = (io: Io, name: string, content: Buffer): string => {
+  let dir = copies.get(io);
+  if (!dir) {
+    dir = mkdtempSync(path.join(tmpdir(), "workit-attach-"));
+    copies.set(io, dir);
+  }
+  const file = path.join(dir, name);
+  writeFileSync(file, content, { mode: 0o600 });
+  return file;
+};
 
 type Write = (yt: YouTrackBackend, marked: (text: string) => string) => Promise<WriteResult>;
 
@@ -114,10 +146,33 @@ export async function run(
   backend: () => YouTrackBackend = () => youTrackBackend(io.env),
   deps: YouTrackDeps = {},
 ): Promise<number> {
+  const read = deps.read ?? ((full: string) => readFileSync(full));
+  const seen = new Map<string, Buffer>();
+  loaders.set(io, (full) => {
+    const known = seen.get(full) ?? read(full);
+    seen.set(full, known);
+    return known;
+  });
+  try {
+    return await runVerb(argv, io, backend, deps);
+  } finally {
+    const dir = copies.get(io);
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    loaders.delete(io);
+    copies.delete(io);
+  }
+}
+
+async function runVerb(
+  argv: string[],
+  io: Io,
+  backend: () => YouTrackBackend,
+  deps: YouTrackDeps,
+): Promise<number> {
   const [sub, ...rest] = argv;
   const writesMode = () => (deps.writes ?? youTrackWritesMode)(io.cwd);
   if (sub === "show") return show(rest, io, backend);
-  if (sub === "create") return create(rest, io, backend, writesMode());
+  if (sub === "create") return create(rest, io, backend, writesMode(), argv);
   if (sub !== "note" && sub !== "time" && sub !== "meeting" && sub !== "update")
     return usage(io, `unknown subcommand "${sub ?? ""}"`, USAGE);
   const flags = parseFlags(rest, {
@@ -152,7 +207,7 @@ export async function run(
       ? updatePlan(io, issueId, flags, minutes, when)
       : legacyPlan(io, sub, issueId, flags, minutes, when);
   if (typeof plan === "string") return usage(io, plan, USAGE);
-  return runPlan(io, plan, backend, writesMode());
+  return runPlan(io, plan, backend, writesMode(), argv);
 }
 
 type Flags = Exclude<ReturnType<typeof parseFlags>, string>;
@@ -172,7 +227,7 @@ function commentText(io: Io, flags: Flags, required: boolean): string | null | {
   let text = markdown ?? "";
   if (file !== undefined)
     try {
-      text = readFileSync(path.resolve(io.cwd, file), "utf8");
+      text = load(io, file).toString("utf8");
     } catch (error) {
       return { error: `cannot read ${file}: ${String(error)}` };
     }
@@ -272,7 +327,8 @@ const sizeText = (bytes: number): string =>
       ? `${(bytes / 1024).toFixed(1)} KB`
       : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-type Attachment = { path: string; name: string; bytes: number; sha256: string };
+/** `post`: the private copy of the bytes read, which is what is attached. */
+type Attachment = { path: string; name: string; bytes: number; sha256: string; post: string };
 
 /** Each --attach file read once (name, size, content hash), or the first one that is not a readable file. */
 function attachments(io: Io, files: readonly string[]): Attachment[] | string {
@@ -282,7 +338,7 @@ function attachments(io: Io, files: readonly string[]): Attachment[] | string {
     let content: Buffer;
     try {
       if (!statSync(full).isFile()) return `--attach ${file} is not a file`;
-      content = readFileSync(full);
+      content = load(io, full);
     } catch {
       return `--attach ${file}: no such file`;
     }
@@ -294,6 +350,7 @@ function attachments(io: Io, files: readonly string[]): Attachment[] | string {
       name: path.basename(full),
       bytes: content.length,
       sha256: createHash("sha256").update(content).digest("hex"),
+      post: copyOf(io, path.basename(full), content),
     });
   }
   return out;
@@ -348,7 +405,7 @@ function updatePlan(
   const steps: Step[] = [];
   const effects: string[] = [];
   const subject: Record<string, unknown> = {};
-  const paths = files.map((file) => file.path);
+  const paths = files.map((file) => file.post);
   const hashes = files.map((file) => file.sha256);
   if (comment !== null) {
     steps.push({
@@ -366,8 +423,8 @@ function updatePlan(
     effects.push(
       `comment "${firstLines(comment)}"${files.length ? ` with ${fileList(files)}` : ""}`,
     );
-    subject.comment = firstLines(comment);
-    subject.commentSha256 = createHash("sha256").update(comment).digest("hex");
+    // The whole text: the yes covers exactly what the user read (#864).
+    subject.comment = comment;
   } else if (files.length) {
     steps.push({
       label: "attach",
@@ -490,6 +547,7 @@ async function runPlan(
   plan: Plan,
   backend: () => YouTrackBackend,
   mode: YouTrackWritesMode,
+  argv: readonly string[],
 ): Promise<number> {
   const { issueId, steps } = plan;
   if (mode === "auto") {
@@ -551,6 +609,7 @@ async function runPlan(
       }),
       `youtrack ${plan.verb}`,
       { issueId, steps: results, earlier },
+      argv,
     );
     if (asked !== null) return asked;
   }
@@ -675,28 +734,106 @@ async function runStep(io: Io, plan: Plan, entry: Step, yt: YouTrackBackend): Pr
 }
 
 /**
- * Consume the user's yes for `fields` right before the write, or refuse with
- * the request to approve (`approval_needed`, `approval_stale`) or
- * `approval_consumed`. null when the write may go ahead.
+ * The host session a ticket must come from (#864): the host's own shell
+ * variable (Pi's PI_SESSION_ID, which its bash tool sets on every call) when
+ * it belongs to the host WORKIT_HOST names, else the declared
+ * WORKIT_SESSION_ID (Claude Code's SessionStart export). A Pi worker's shell
+ * also carries WORKIT_SESSION_ID `<lead>:<worker>`, which is not what its
+ * dialog recorded.
+ */
+const askingSession = (env: NodeJS.ProcessEnv): string | null => {
+  const real = realHostSession(env);
+  const declared = env.WORKIT_HOST?.trim().replace(/_(?:cli|desktop)$/u, "");
+  return real.kind === "derived" && (!declared || real.host?.startsWith(declared))
+    ? real.session
+    : hostSessionFromEnv(env).session;
+};
+
+/** The `approval.consumed` ledger row; a checkout without a ledger records none. */
+const recordConsumed = (io: Io, row: Record<string, unknown>): void => {
+  try {
+    appendObserved(io.cwd, { type: "approval.consumed", actor: actorFromEnv(io.env), ...row });
+  } catch {
+    // The yes is used either way; the store keeps the consumed record.
+  }
+};
+
+/**
+ * Consume the user's yes right before the write, or refuse. The yes comes
+ * from the host's prompt on this very call (its ticket, Claude Code and Pi),
+ * else from a terminal `workit approve` of the request for `fields`. Refuses
+ * `approval_not_bound` when the ticket does not cover this call, else
+ * `approval_needed`, `approval_stale` or `approval_consumed` with the one
+ * request for this text. null when the write may go ahead.
  */
 function askFirst(
   io: Io,
   fields: ApprovalFields,
   verb: string,
   data: Record<string, unknown>,
+  argv: readonly string[],
 ): number | null {
   const session = io.env.WORKIT_SESSION_ID || null;
+  const ticket = io.env[INLINE_TICKET_ENV];
+  if (ticket) {
+    const ask = youTrackAsk(argv, io.cwd, (full) => load(io, full));
+    const used = ask
+      ? consumeInlineAsk({
+          ticket,
+          kind: ask.kind,
+          argvHash: ask.argvHash,
+          contentHash: ask.contentHash,
+          verb,
+          session: askingSession(io.env),
+        })
+      : { ok: false as const, reason: "Workit cannot read this call's text" };
+    if (used.ok) {
+      recordConsumed(io, {
+        kind: used.asked.kind,
+        verb,
+        via: "inline",
+        host: used.asked.host,
+        contentHash: used.asked.contentHash,
+        session,
+        askSession: used.asked.session,
+      });
+      return null;
+    }
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `approval_not_bound: nothing was posted; the yes from the host's prompt does not cover this call: ${used.reason}. Run the call again as its own plain command and the host asks the user again.`,
+        { data: { ...data, reason: "approval_not_bound", posted: false } },
+      ),
+    );
+  }
   const used = consumeApproval(fields, { session, verb });
-  if (used.ok) return null;
+  if (used.ok) {
+    recordConsumed(io, {
+      kind: fields.kind,
+      verb,
+      via: used.grant.via,
+      host: used.grant.host,
+      approval: used.consumed.id,
+      hash: used.consumed.hash,
+      session,
+      grantSession: used.consumed.grantSession,
+    });
+    return null;
+  }
   // approval_consumed: the yes went to a run that did not land, so this run
-  // gets its own request rather than a dead end. The line names only what
-  // happened and the approve line: "needs the user's yes" read to weak models
-  // as "do not run workit approve yourself".
+  // gets its own request rather than a dead end.
   const request = used.request ?? createApprovalRequest(fields, { session });
-  const message = `${used.code}: nothing was posted. ${approveLine([request.id])}`;
+  const unasked = io.env[INLINE_UNASKED_ENV];
+  const why = unasked
+    ? ` The host ran this call in ${unasked.startsWith("sdk") ? `the ${unasked} entrypoint` : `${unasked} mode`}, where no person sees a prompt, so nothing was approved.`
+    : io.env.CLAUDECODE
+      ? " Claude Code asks the user only on a plain `workit youtrack …` call it sees: run it as its own call (no script, bash -c, pipe or redirect) and the host shows the user the text."
+      : "";
   return emit(
     io,
-    fail("blocked", message, {
+    fail("blocked", `${used.code}: nothing was posted.${why} ${approveLine(request)}`, {
       data: { ...data, reason: used.code, posted: false, approval: request.id },
     }),
   );
@@ -759,6 +896,7 @@ async function create(
   io: Io,
   backend: () => YouTrackBackend,
   mode: YouTrackWritesMode,
+  words: readonly string[],
 ): Promise<number> {
   const flags = parseFlags(argv, {
     project: "value",
@@ -779,7 +917,7 @@ async function create(
   let description = flags.values.description;
   if (file)
     try {
-      description = readFileSync(path.resolve(io.cwd, file), "utf8");
+      description = load(io, file).toString("utf8");
     } catch (error) {
       return usage(io, `cannot read ${file}: ${String(error)}`, USAGE);
     }
@@ -828,6 +966,7 @@ async function create(
       }),
       "youtrack create",
       { project },
+      words,
     );
     if (asked !== null) return asked;
   }
@@ -853,7 +992,7 @@ async function create(
             write: () =>
               yt.attachFiles(
                 issueId,
-                files.map((one) => one.path),
+                files.map((one) => one.post),
               ),
           },
         ]

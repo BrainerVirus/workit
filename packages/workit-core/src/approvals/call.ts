@@ -11,10 +11,10 @@ export type ApproveCall =
   /** A `workit approve` call inside something else: the plain command to run instead. */
   | { plain: false; fix: string };
 
-const isWorkitWord = (word: string): boolean => /^(?:.*[\\/])?workit(?:-cli)?$/u.test(word);
+export const isWorkitWord = (word: string): boolean => /^(?:.*[\\/])?workit(?:-cli)?$/u.test(word);
 
 /** Global options the CLI reads before its verb. */
-const verbIndex = (words: readonly string[], start: number): number => {
+export const verbIndex = (words: readonly string[], start: number): number => {
   let at = start;
   for (;;) {
     const word = words[at];
