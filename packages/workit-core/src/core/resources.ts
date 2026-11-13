@@ -1796,7 +1796,8 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
           : tryOnce(options, record, reclaimed);
         if ("slot" in outcome) {
           recordGrant(options.dir, self, clock.now());
-          const waitedMs = queued ? waited : 0;
+          // Measured at the grant, not the loop top: the gates above read the clock later.
+          const waitedMs = queued ? clock.now() - started : 0;
           leave();
           const { file, slot } = outcome;
           let released = false;
