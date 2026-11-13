@@ -125,15 +125,16 @@ const sweepLines = (data: WorktreeSweep): string[] => {
 };
 
 export async function run(argv: string[], io: Io): Promise<number> {
-  const forms = (["--worktrees", "--branches", "--procs"] as const).filter((flag) =>
-    argv.includes(flag),
-  );
-  if (forms.length > 1)
-    return emit(
-      io,
-      fail("invalid_input", `pass one of ${forms.join(", ")}, not several: ${GC_USAGE}`),
-    );
-  const form = forms.length ? (forms[0].slice(2) as "worktrees" | "branches" | "procs") : "store";
+  if (argv.includes("--worktrees") && argv.includes("--branches"))
+    return emit(io, fail("invalid_input", `pass --worktrees or --branches, not both: ${GC_USAGE}`));
+  // Any other second form is an unknown argument of the first.
+  const form = argv.includes("--worktrees")
+    ? "worktrees"
+    : argv.includes("--branches")
+      ? "branches"
+      : argv.includes("--procs")
+        ? "procs"
+        : "store";
   const unknown = argv.find((arg) => !ALLOWED[form].has(arg));
   if (unknown) return emit(io, fail("invalid_input", `unknown argument ${unknown}: ${GC_USAGE}`));
   if (form !== "store" && argv.includes("--apply") && argv.includes("--dry-run"))
