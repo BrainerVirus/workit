@@ -229,3 +229,49 @@ test("Given a test run and upgrade --yes into a temp home that is not the accoun
     guardedHome.value = undefined;
   }
 });
+
+/** `upgrade --check --json` in process: npm view answers 2.0.0 on both runners. */
+const checkUpgrade = async (home: string) => {
+  const out: string[] = [];
+  const view = (command: string, args: string[]) =>
+    command === "npm" && args[0] === "view"
+      ? { status: 0, stdout: "2.0.0\n", stderr: "" }
+      : { status: 0, stdout: "", stderr: "" };
+  const code = await runUpgradeCommand(["--check", "--json"], {
+    home,
+    processes: () => [],
+    out: { write: (text) => void out.push(text) },
+    progress: createProgress({ json: true }),
+    run: view,
+    runAsync: async (command, args) => view(command, args),
+  });
+  return { code, out: out.join("") };
+};
+
+test("Given a test run and upgrade --check against the fake account home, When it checks, Then it reports and writes no update cache there", async () => {
+  const home = cursorHome("wk-check-account-");
+  guardedHome.value = home;
+  try {
+    const before = snapshot(home);
+    const { out } = await checkUpgrade(home);
+    expect(out).toContain("2.0.0");
+    expect(snapshot(home)).toEqual(before);
+  } finally {
+    guardedHome.value = undefined;
+  }
+});
+
+test("Given a test run and upgrade --check against a temp home that is not the account's, When it checks, Then it writes its update cache there", async () => {
+  const home = cursorHome("wk-check-home-");
+  guardedHome.value = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-check-elsewhere-")));
+  roots.push(guardedHome.value);
+  try {
+    const before = snapshot(home);
+    const { out } = await checkUpgrade(home);
+    expect(out).toContain("2.0.0");
+    const added = Object.keys(snapshot(home)).filter((file) => !(file in before));
+    expect(added.some((file) => file.startsWith(".local/state/workit/"))).toBe(true);
+  } finally {
+    guardedHome.value = undefined;
+  }
+});

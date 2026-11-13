@@ -1,7 +1,8 @@
 // The `updates` setting and the launch-check cache. Local files only, so
 // doctor reads them without the launch check's prompt, styles and runners.
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { mkdirSync, renameSync, writeFileSync } from "./admin/guarded-fs";
 import { stateDir } from "@workit-dev/core/src/core/heavy-words";
 import { configDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { isConfigObject, isUpdatesMode, type UpdatesMode } from "@workit-dev/core/src/core/config";

@@ -2,8 +2,9 @@
 // the owned launcher and its bin/, the `current` link and versions/. Only the
 // exact paths ownedPaths() derives are ever touched; a file at the launcher's
 // place that does not point into the owned install is foreign and stays.
-import { lstatSync, readdirSync, readlinkSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
+import { lstatSync, readdirSync, readlinkSync } from "node:fs";
 import path from "node:path";
+import { rmSync, rmdirSync, unlinkSync } from "../admin/guarded-fs";
 import { isOwnedLauncher } from "./owned";
 import { ownedPaths, packageDirOf, packageVersion, realpathOr } from "./paths";
 

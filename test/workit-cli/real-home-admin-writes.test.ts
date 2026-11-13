@@ -125,7 +125,7 @@ test.each(HOSTS)(
   },
 );
 
-test("Given admin/**, upgrade/**, upgrade.ts and completion/install.ts, Then no module writes the filesystem except through guarded-fs", () => {
+test("Given admin/**, upgrade/**, install/**, upgrade.ts, update-settings.ts and completion/install.ts, Then no module writes the filesystem except through guarded-fs", () => {
   const WRITES =
     /\b(writeFileSync|writeFile|appendFileSync|mkdirSync|mkdtempSync|rmSync|rmdirSync|unlinkSync|renameSync|cpSync|copyFileSync|symlinkSync|linkSync|chmodSync|writeFileAtomic|writeFileExclusive)\b/u;
   const offenders: string[] = [];
@@ -134,7 +134,9 @@ test("Given admin/**, upgrade/**, upgrade.ts and completion/install.ts, Then no 
       .filter((name) => /\.tsx?$/u.test(name))
       .map((name) => path.join(dir, name)),
   );
-  modules.push("upgrade.ts", path.join("completion", "install.ts"));
+  modules.push("upgrade.ts", "update-settings.ts", path.join("completion", "install.ts"));
+  for (const name of readdirSync(path.join(CLI_SRC, "install")))
+    if (/\.tsx?$/u.test(name)) modules.push(path.join("install", name));
   expect(modules.length).toBeGreaterThan(10);
   for (const file of modules) {
     if (file === path.join("admin", "guarded-fs.ts")) continue;
