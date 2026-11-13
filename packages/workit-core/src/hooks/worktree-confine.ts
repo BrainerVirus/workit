@@ -22,7 +22,8 @@
 //
 // A verifier or reviewer (a judge, #790) writes only in a scratch dir:
 // `.workit-scratch/` at the root of a checkout of the judged repository, the
-// candidate worktree's included. Every other write target,
+// candidate worktree's included, and a scratch git repository made inside
+// it. Every other write target,
 // in a repository or not, is denied naming the scratch dir, and so is an
 // unquoted heredoc whose body runs a command substitution.
 import { createHash } from "node:crypto";
@@ -54,14 +55,27 @@ export const FANOUT_TOKEN_FILE = "workit-fanout-token";
 const NONE: HookDecision = { kind: "none" };
 const CASE_INSENSITIVE = process.platform === "darwin" || process.platform === "win32";
 
-/** The real path of `file`'s nearest existing ancestor, plus the rest. */
-const canonical = (file: string): string => {
+/**
+ * The real path of `file`'s nearest existing ancestor, plus the rest; a
+ * dangling symlink on the way is followed to where a write through it lands.
+ */
+const canonical = (file: string, hops = 0): string => {
   let rest = "";
   for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
     try {
       return path.join(fs.realpathSync.native(dir), rest);
     } catch {
       if (path.dirname(dir) === dir) return path.resolve(file);
+      let link: string | null = null;
+      try {
+        link = fs.readlinkSync(dir);
+      } catch {
+        // Not a link: a part that does not exist yet.
+      }
+      if (link !== null)
+        return hops < 40
+          ? canonical(path.join(path.resolve(path.dirname(dir), link), rest), hops + 1)
+          : path.resolve(file);
       rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
     }
   }
@@ -502,17 +516,17 @@ const commonDir = (root: string): string => {
 };
 
 /**
- * Whether the real path `real` is in the scratch dir at the root of its
- * checkout, and that checkout is one of repository `repo`'s (its common dir;
- * null outside every repository: any).
+ * Whether the real path `real` is in the scratch dir at the root of a
+ * checkout of repository `repo` (its common dir; null outside every
+ * repository: any), a scratch git repository made inside it included.
  */
 const inScratch = (real: string, repo: string | null): boolean => {
-  const checkout = checkoutOf(real);
-  return (
-    checkout !== null &&
-    within(real, path.join(checkout.root, SCRATCH)) &&
-    (repo === null || commonDir(checkout.root) === repo)
-  );
+  for (let dir = real; path.dirname(dir) !== dir; dir = path.dirname(dir)) {
+    if (path.basename(dir) !== SCRATCH) continue;
+    const root = path.dirname(dir);
+    if (checkoutOf(root)?.root === root && (repo === null || commonDir(root) === repo)) return true;
+  }
+  return false;
 };
 
 /** The workit verbs a judge runs, with their allowed subverbs (true: all); any other verb, a new one too, is denied. */
@@ -779,16 +793,24 @@ export function confineJudgeShell(
       );
     let git: string[] = [];
     try {
-      git = rawInvocations(command, dialect).flatMap(({ tool, dir, args }) =>
-        tool === "git" && (args[0] === "push" || leadOwnedGit(args))
-          ? [
-              path.join(
-                dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? "."),
-                `${OPAQUE_TARGET}git`,
-              ),
-            ]
-          : [],
-      );
+      git = rawInvocations(command, dialect).flatMap(({ tool, dir, args }) => {
+        if (tool !== "git" || (args[0] !== "push" && !leadOwnedGit(args))) return [];
+        const at = dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? ".");
+        // `git worktree add <path>` also writes the new checkout at <path>.
+        const added =
+          args[0] === "worktree" && args[1] === "add"
+            ? args
+                .slice(2)
+                .find(
+                  (arg, index, rest) =>
+                    !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(rest[index - 1] ?? ""),
+                )
+            : undefined;
+        return [
+          path.join(at, `${OPAQUE_TARGET}git`),
+          ...(added === undefined ? [] : [path.resolve(at, added)]),
+        ];
+      });
     } catch {
       // The strict analysis below still judges the command.
     }
