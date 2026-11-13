@@ -1255,7 +1255,7 @@ export function lowersOnly(sealed: readonly unknown[], next: readonly unknown[])
       VERIFICATION_STRICTNESS.indexOf(after.verification) <=
         VERIFICATION_STRICTNESS.indexOf(before.verification) &&
       !(needsAccount(before) && !needsAccount(after)) &&
-      (writes(before) || !writes(next[at]))
+      (writes(sealed[at]) || !writes(next[at]))
     );
   });
 }
@@ -1291,11 +1291,25 @@ export function sealStatus(): SealStatus {
   };
 }
 
-/** Seal the account's workspaces.json as it is now; the user's terminal only. */
-export function sealAccount(): { ok: true; path: string } | { ok: false; error: string } {
+/**
+ * Seal the account's workspaces.json as it is now; the user's terminal only.
+ * `shown`: the entries whose authority fields the user was shown; when the
+ * file's differ by now, nothing is written (they did not see what would be sealed).
+ */
+export function sealAccount(
+  shown?: readonly unknown[],
+): { ok: true; path: string } | { ok: false; error: string } {
   const status = sealStatus();
   if (status.state === "no_account") return { ok: false, error: status.note };
   if (status.error) return { ok: false, error: status.error };
+  if (
+    shown &&
+    JSON.stringify(sealProjection(shown)) !== JSON.stringify(sealProjection(status.entries))
+  )
+    return {
+      ok: false,
+      error: `workspaces.json changed while you were asked; nothing was sealed. Run ${SEAL_COMMAND} again`,
+    };
   try {
     return { ok: true, path: writeSeal(status.dir, status.entries) };
   } catch (error) {
@@ -1310,7 +1324,10 @@ export function sealAccount(): { ok: true; path: string } | { ok: false; error: 
  * no seal, no sealed entry here, or a config redirect (grants are then at most
  * the D4 defaults). A sealed entry that cannot resolve is a denial.
  */
-export function identityDenial(cwd: string, runtime: { vcs?: unknown } | null): string | null {
+export function identityDenial(
+  cwd: string,
+  runtime: { name?: string; vcs?: unknown } | null,
+): string | null {
   const dir = accountDir();
   if (dir === null || redirected(dir)) return null;
   const seal = checkSeal(dir);
@@ -1322,8 +1339,17 @@ export function identityDenial(cwd: string, runtime: { vcs?: unknown } | null): 
   } catch (error) {
     return `identity_unsealed: workspaces.json does not match its seal and the sealed entries do not resolve here (${error instanceof Error ? error.message : String(error)})`;
   }
-  if (!sealed || identityOf(sealed.vcs) === identityOf(runtime?.vcs)) return null;
-  return `identity_unsealed: workspace ${sealed.name}'s forge identity (vcs.provider, account, credential file, host) differs from the sealed one, and workspaces.json does not match its seal (${seal.reason})`;
+  // The runtime entry is picked the same way (resolveRuntimeWorkspaceVcs reads
+  // WORKIT_WORKSPACE_NAME too); should the two ever pick differently, the
+  // sealed entry of the runtime's own name must match as well (fail safe).
+  const named = runtime?.name
+    ? seal.sealed.find((entry) => entry.name === runtime.name)
+    : undefined;
+  const differs = [sealed, named].find(
+    (entry) => entry && identityOf(entry.vcs) !== identityOf(runtime?.vcs),
+  );
+  if (!differs) return null;
+  return `identity_unsealed: workspace ${differs.name}'s forge identity (vcs.provider, account, credential file, host) differs from the sealed one, and workspaces.json does not match its seal (${seal.reason})`;
 }
 
 /** Every workspace's grants, for `workit grant show --all`. */

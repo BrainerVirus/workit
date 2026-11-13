@@ -334,3 +334,27 @@ test("10. In every test process the grants home is a run-scoped temp dir, never 
   if (real) expect(preloadGrantsDir.startsWith(real)).toBe(false);
   expect(typeof grantsHome.resolve).toBe("function");
 });
+
+test("6b. With WORKIT_WORKSPACE_NAME, the sealed and the runtime entry are picked the same way, and an entry of the runtime's own name must match its sealed identity too", () => {
+  const broad = (vcs: Entry) => ({ name: "broad", glob: `${root}/**`, vcs });
+  const agentVcs = { provider: "github", account: "agent" };
+  sealAccount([broad(account), open()]);
+  write(configHome.configDir, [broad(agentVcs), open()]);
+  const { calls, runner } = counting();
+  // Named: the runtime acts as broad's rewritten identity: blocked.
+  process.env.WORKIT_WORKSPACE_NAME = "broad";
+  const named = resolveForge(at("open"), { runner });
+  expect(named.ok).toBe(false);
+  if (!named.ok) expect(named.error).toContain("identity_unsealed");
+  expect(identityDenial(at("open"), { name: "broad", vcs: agentVcs })).toContain("broad");
+  // Unnamed: the folder's own entry, unchanged: free.
+  delete process.env.WORKIT_WORKSPACE_NAME;
+  expect(identityDenial(at("open"), { name: "open", vcs: account })).toBeNull();
+  // Had the runtime picked broad while the sealed pick is open, broad's sealed
+  // identity (b0) still binds it, though open's (me) matches.
+  sealAccount([broad({ provider: "github", account: "b0" }), open()]);
+  write(configHome.configDir, [broad(account), open({ autonomy: { push: false } })]);
+  expect(identityDenial(at("open"), { name: "open", vcs: account })).toBeNull();
+  expect(identityDenial(at("open"), { name: "broad", vcs: account })).toContain("workspace broad");
+  expect(calls).toHaveLength(0);
+});

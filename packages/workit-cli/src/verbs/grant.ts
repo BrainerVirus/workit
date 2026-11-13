@@ -141,7 +141,8 @@ export async function offerSeal(io: Io, deps: GrantDeps, intro: string): Promise
   );
   if (answer === null) return "cancelled";
   if (!answer) return "declined";
-  const sealed = sealAccount();
+  // Only what was shown: a file changed while the user was asked is not sealed.
+  const sealed = sealAccount(status.entries);
   if (!sealed.ok) say(`seal not written: ${sealed.error}\n`);
   return sealed.ok ? "sealed" : "failed";
 }

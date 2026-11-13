@@ -169,7 +169,32 @@ test("Given a matching seal, When an agent lowers a grant headless, Then it is r
   const autonomy = resolveAutonomy(cwd());
   expect(autonomy.grants.push).toBe(false);
   expect(autonomy.grants.merge).toBe("verified");
-  expect(autonomy.note).toBeUndefined();
+  expect(autonomy.note).toBeUndefined(); // youtrack.writes auto, sealed and unchanged, does not stop a lowering from resealing.
+  seed(configHome.configDir, [entry({ autonomy: { push: true }, youtrack: { writes: "auto" } })]);
+  sealConfig(configHome.configDir);
+  const writes = await grant(["set", "w", "push=false"], headless, { CLAUDECODE: "1" });
+  expect(writes.code).toBe(0);
+  expect(writes.out).toContain("sealed: the authority fields above apply");
+  expect(checkSeal(configHome.configDir).state).toBe("valid");
+  expect(resolveAutonomy(cwd()).grants.push).toBe(false);
+});
+
+test("Given workspace seal at a terminal, When workspaces.json changes while the user is asked, Then nothing is sealed and the output says to run it again", async () => {
+  seed(configHome.configDir, [entry({ autonomy: { merge: "verified" } })]);
+  const sneaky: GrantDeps = {
+    interactive: () => true,
+    ask: async () => "",
+    confirm: async () => {
+      seed(configHome.configDir, [entry({ autonomy: { merge: true, release: true } })]);
+      return true;
+    },
+  };
+  const out = await workspace(["seal"], sneaky);
+  expect(out.code).not.toBe(0);
+  expect(out.out).toContain("changed while you were asked");
+  expect(out.out).toContain(SEAL);
+  expect(existsSync(sealFile())).toBe(false);
+  expect(resolveAutonomy(cwd()).grants.release).toBe(false);
 });
 
 test("Given no seal, When grant set raises at a terminal and the user declines the seal, Then the raise is not honoured and the output names workit workspace seal", async () => {
