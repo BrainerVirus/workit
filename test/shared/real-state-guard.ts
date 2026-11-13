@@ -98,7 +98,7 @@ export const guardRealState = (env: NodeJS.ProcessEnv = process.env): void => {
  * The files under the account's home a test must never change: its grants
  * and seal, and the host settings setup and upgrade write (#859).
  */
-export const realHomeFiles = (home: string): string[] => {
+const realHomeFiles = (home: string): string[] => {
   const config = workitConfigDir({ HOME: home });
   return [
     path.join(config, "workspaces.json"),
@@ -123,7 +123,7 @@ const fingerprint = (file: string): string => {
 };
 
 /** The files of `before` whose mtime or content differs now. */
-export const changedFiles = (before: ReadonlyMap<string, string>): string[] =>
+const changedFiles = (before: ReadonlyMap<string, string>): string[] =>
   [...before].filter(([file, print]) => fingerprint(file) !== print).map(([file]) => file);
 
 /**
