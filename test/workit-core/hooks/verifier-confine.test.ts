@@ -154,8 +154,9 @@ const inside = (agent: Agent) => [
   () => bash("workit ledger verdict verified --kind unit --branch feature/a --how 'ran x'", agent),
   () => bash("workit ledger finding add 'x > y' --severity minor", agent),
   () => bash(`workit check --cwd ${wt} test`, agent),
-  () => bash(`git -C ${wt} rev-parse HEAD && git -C ${wt} status --short`, agent),
-  () => bash("git diff $(git merge-base main HEAD) --stat", agent),
+  () =>
+    bash(`git -C ${wt} rev-parse HEAD && git --no-optional-locks -C ${wt} status --short`, agent),
+  () => bash("git diff main...HEAD --stat", agent),
   () => bash("grep -rn core src 2>/dev/null | head", agent),
 ];
 

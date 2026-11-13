@@ -593,9 +593,10 @@ const GIT_VALUE =
 
 /**
  * What git writes outside the edit analysis (#790): `init` and `clone` their
- * directory, `format-patch` its patches, `archive -o`, `bundle create`, any
- * `--output`, a `config` write its file, and `fetch`, `gc` and `branch`
- * writes the repository ("."); paths are under `-C`. Null for the rest.
+ * directory and any `--separate-git-dir`, `worktree add|move|remove|repair`
+ * the worktrees they name, `format-patch` its patches, `archive -o`, `bundle
+ * create`, any `--output`, a `config` write its file, and `fetch`, `gc` and
+ * `branch` writes the repository ("."); paths are under `-C`. Null for the rest.
  */
 const gitOutputs = (args: readonly string[]): string[] | null => {
   let at = 0;
@@ -614,7 +615,28 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
     sub === "archive" ? /^(?:-o|--output=?)(.*)$/s : /^--output=?(.*)$/s,
   );
   if (output !== undefined) files.push(output);
-  if (sub === "init") files.push(names[0] ?? ".");
+  // `init` makes its directory the repository: the directory itself, not git run in it.
+  if (sub === "init") files.push(names[0] ?? "./");
+  if (sub === "init" || sub === "clone") {
+    const separate = valueOf(rest, /^--separate-git-dir=?(.*)$/s);
+    if (separate !== undefined) files.push(separate);
+  }
+  // `worktree add|move|remove|repair` write the worktrees they name (repair: this one by default).
+  if (sub === "worktree") {
+    // Its operands, past `-b`/`-B`/`--reason` values; all after `--`.
+    const end = rest.includes("--") ? rest.indexOf("--") : rest.length;
+    const named = [
+      ...rest
+        .slice(1, end)
+        .filter(
+          (arg, index, words) =>
+            !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(words[index - 1] ?? ""),
+        ),
+      ...rest.slice(end + 1),
+    ];
+    const count = { add: 1, move: 2, remove: 1, repair: named.length || 1 }[rest[0] ?? ""] ?? 0;
+    files.push(...(named.length ? named : ["."]).slice(0, count));
+  }
   if (sub === "clone")
     files.push(
       names[1] ??
@@ -804,6 +826,40 @@ const MUTATING_WORKIT_GIT = new Set(["commit", "branch", "stage", "unstage"]);
 
 /** A placeholder file name that stands for its directory (an unknown write, a git command). */
 const DIR_TARGET = ".workit-live-target";
+
+/**
+ * The placeholders each target list holds, so a real file that carries a
+ * placeholder's name is told apart from one; `collecting` gathers them while
+ * one analysis runs.
+ */
+const PLACEHOLDERS = new WeakMap<readonly string[], ReadonlySet<string>>();
+let collecting: Set<string> | null = null;
+
+/** `dir`'s placeholder `name`, recorded as one for the analysis running. */
+const placeholderIn = (dir: string, name: string): string => {
+  const target = path.join(dir, name);
+  collecting?.add(target);
+  return target;
+};
+
+/** `make()`'s target list, with the placeholders made while it ran recorded for it. */
+const recording = (make: () => string[]): string[] => {
+  const outer = collecting;
+  const found = new Set<string>();
+  collecting = found;
+  try {
+    const targets = make();
+    PLACEHOLDERS.set(targets, found);
+    for (const target of found) outer?.add(target);
+    return targets;
+  } finally {
+    collecting = outer;
+  }
+};
+
+/** The placeholders (not files a command names) in a list `shellMutationTargets` or `liveTargets` returned. */
+export const placeholdersOf = (targets: readonly string[]): ReadonlySet<string> =>
+  PLACEHOLDERS.get(targets) ?? new Set();
 
 /**
  * For an implementer's confinement: a placeholder file name, then the command's
@@ -1216,7 +1272,7 @@ const segmentTargets = (
       const home = homeExpanded(text);
       if (strict && unresolvedRefs(home).length > 0) return [unknownVarTarget(home)];
       if (path.isAbsolute(home)) return [home];
-      return base === undefined ? [] : [path.resolve(base, home)];
+      return base === undefined ? [] : [resolvedUnder(base, home)];
     });
   const at = (file: string): string | null => {
     const all = atAll(file);
@@ -1568,7 +1624,13 @@ const segmentTargets = (
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
           if (!quiet || !isRoot(resolved))
-            targets.push(file === "." ? path.join(resolved, here) : resolved);
+            targets.push(
+              file === "."
+                ? placeholderIn(resolved, here)
+                : path.basename(resolved).startsWith(OPAQUE_TARGET)
+                  ? placeholderIn(path.dirname(resolved), path.basename(resolved))
+                  : resolved,
+            );
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);
       // The registry guard: a hard link is a second name for its source; a symbolic one only points.
@@ -1583,7 +1645,7 @@ const segmentTargets = (
       if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
     const edits = editsOf(body);
     if (edits === null) {
-      if (dir !== undefined) targets.push(path.join(dir, DIR_TARGET));
+      if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
     } else for (const file of edits) targets.push(...atAll(file));
     if (dir !== undefined)
       for (const invocation of workitInvocations(body.map(quoteWord).join(" "), "posix")) {
@@ -1593,7 +1655,7 @@ const segmentTargets = (
           MUTATING_WORKIT_GIT.has(args[1] ?? "") &&
           !inert(args.slice(2), "")
         )
-          targets.push(...runsIn.map((runs) => path.join(runs, DIR_TARGET)));
+          targets.push(...runsIn.map((runs) => placeholderIn(runs, DIR_TARGET)));
       }
   }
   return targets;
@@ -1645,10 +1707,10 @@ export const shellMutationTargets = (
             .map((match) => [match[1], process.env[match[1]] ?? ""])
         : [],
     );
-    return [
+    return recording(() => [
       ...segmentTargets(cwd, command, dialect, 0, strict, env),
-      ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
-    ];
+      ...gitMutationDirs(cwd, command, dialect).map((dir) => placeholderIn(dir, DIR_TARGET)),
+    ]);
   } catch (error) {
     if (strict === "registry") throw error;
     return [];
@@ -1718,9 +1780,25 @@ const claimAll = (owner: LiveOwner, targets: readonly string[], deps?: LiveDeps)
   for (const target of guarded(targets)) claimLiveSession(target, owner, deps);
 };
 
+/**
+ * `file` resolved against `dir`, except that a path with a `..` part is only
+ * joined: after a symlink, `..` climbs from the link's target, so the judge
+ * walks it on the real filesystem instead of collapsing it here.
+ */
+const resolvedUnder = (dir: string, file: string): string =>
+  !/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(file)
+    ? path.resolve(dir, file)
+    : path.isAbsolute(file)
+      ? file
+      : `${dir}${path.sep}${file}`;
+
 /** The absolute paths an edit touches: its files, or cwd itself when unknown. */
 export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
-  paths?.length ? paths.map((file) => path.resolve(cwd, file)) : [path.join(cwd, DIR_TARGET)];
+  recording(() =>
+    paths?.length
+      ? paths.map((file) => resolvedUnder(cwd, file))
+      : [placeholderIn(cwd, DIR_TARGET)],
+  );
 
 // --- the issued-registry, approvals and config guard (#292) ----------------
 
