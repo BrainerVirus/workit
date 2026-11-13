@@ -154,7 +154,7 @@ const DENY_AT: Record<JsonHost, string> = {
 };
 
 /** The dirs whose files only Workit or the user writes, each as written and through its links. */
-export type GuardedDirs = { state: string[]; config: string[] };
+type GuardedDirs = { state: string[]; config: string[] };
 
 /** `dir` through its links: the deepest existing ancestor resolved, the rest kept (cursor-agent resolves a write target so). */
 const realDir = (dir: string): string => {
@@ -177,7 +177,7 @@ const spellings = (dir: string): string[] =>
  * (workspaces.json and its seal; the default config dir of the setup's home,
  * as the grants are read) these options resolve to.
  */
-export const guardedDirs = (options: PermissionPaths = {}): GuardedDirs => {
+const guardedDirs = (options: PermissionPaths = {}): GuardedDirs => {
   const { home, stateDir } = resolvePaths(options);
   return {
     state: spellings(stateDir),
@@ -194,7 +194,7 @@ const STATE_NAMES: Record<JsonHost, readonly string[]> = {
 const CONFIG_NAMES = ["workspaces.json", SEAL_FILE];
 
 /** One host's deny entries for `dirs`: `Edit(//<abs>)` (Claude Code), `Write(<abs>)` (Cursor), a bare pattern (OpenCode). */
-export const nativeDenyEntries = (host: JsonHost, dirs: GuardedDirs): string[] => {
+const nativeDenyEntries = (host: JsonHost, dirs: GuardedDirs): string[] => {
   const rule = (dir: string, name: string): string => {
     if (host === "claude-code")
       return `Edit(//${dir.replace(/[*?[\]]/gu, "\\$&").replace(/^\/+/u, "")}/${name})`;
