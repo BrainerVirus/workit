@@ -1,7 +1,7 @@
 // The calls a host asks about on the action itself (#864, decisions
 // mwf752f2 and mwf752sv): one prompt on the call, showing its full text, and
 // a yes runs it in that same call. Today: the `workit youtrack` writes.
-// Release-notes approval plugs in as another entry of ASKS.
+// Release-notes approval plugs in at `asked` and `inlineAskFor`.
 //
 // A host acts only on one plain call: anything around it (a chain, a pipe, a
 // redirect, a substitution, a variable, a leading cd, a shell's -c script)
@@ -28,25 +28,9 @@ export type InlineAsk = {
   contentHash: string;
 };
 
-/**
- * Each entry: the ask for `words` (past `workit`) run in `cwd`, undefined
- * when the words are no call it asks about, null when it asks nothing (the
- * verb refuses the call itself, or the workspace turned the ask off).
- */
-const ASKS: ReadonlyArray<
-  (words: readonly string[], cwd: string | null) => InlineAsk | null | undefined
-> = [
-  (words, cwd) => {
-    if (words[0] !== "youtrack" || !isYouTrackWriteVerb(words[1])) return undefined;
-    // `youtrack.writes: auto` keeps the WORKIT_YT_WRITE gate instead.
-    return cwd === null || youTrackWritesMode(cwd) === "auto"
-      ? null
-      : youTrackAsk(words.slice(1), cwd);
-  },
-];
-
+/** Whether `words` (past `workit`) is a call asked on itself; release notes joins here. */
 const asked = (words: readonly string[]): boolean =>
-  ASKS.some((entry) => entry(words, null) !== undefined);
+  words[0] === "youtrack" && isYouTrackWriteVerb(words[1]);
 
 const quote = (word: string): string =>
   /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
@@ -96,15 +80,14 @@ export const inlineCallIn = (
   return null;
 };
 
-/** The ask for a plain call's words, or null when nothing asks. */
-export const inlineAskFor = (words: readonly string[], cwd: string): InlineAsk | null => {
-  for (const entry of ASKS) {
-    const found = entry(words, cwd);
-    if (found !== undefined) return found;
-  }
-  return null;
-};
+/**
+ * The ask for a plain call's words, or null when nothing asks: the verb
+ * refuses the call itself, or `youtrack.writes: auto` keeps the
+ * WORKIT_YT_WRITE gate instead.
+ */
+export const inlineAskFor = (words: readonly string[], cwd: string): InlineAsk | null =>
+  asked(words) && youTrackWritesMode(cwd) !== "auto" ? youTrackAsk(words.slice(1), cwd) : null;
 
 /** The deny reason for an inline-asked call inside something else. */
 export const inlineCallDeny = (fix: string): string =>
-  `Run \`${fix}\` as its own call (no pipe, chain, redirect, cd, variable or substitution; text in a file via --file): then the host shows the user its full text and a yes runs it.`;
+  `Run \`${fix}\` as its own call, nothing around it: the host then shows the user its text and asks.`;

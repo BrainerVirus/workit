@@ -491,15 +491,21 @@ export const consumeApproval = (
 
 // --- the ask on the action itself (#864) -----------------------------------
 
-/**
- * An inline ask lives this long after the host showed it: the person reads
- * the full text before answering. The ticket, not the clock, binds it.
- */
-export const INLINE_ASK_TTL_MS = 10 * 60_000;
+/** An inline ask lives this long after the host showed it: time to read the text and answer. */
+export const INLINE_ASK_TTL_MS = 2 * 60_000;
 /** The env prefix the host adds to the one call it asked about: the ticket. */
 export const INLINE_TICKET_ENV = "WORKIT_APPROVAL_TICKET";
 /** The env prefix naming a host mode where no person sees a prompt: the verb names it. */
 export const INLINE_UNASKED_ENV = "WORKIT_APPROVAL_UNASKED";
+
+/**
+ * Only the host's own rewrite puts either name on a call: a command or file an
+ * agent writes that names one (quotes and backslashes removed) is refused, so
+ * a ticket read from the transcript cannot be replayed.
+ */
+export const namesTicket = (text: string): boolean =>
+  /WORKIT_APPROVAL_(?:TICKET|UNASKED)/u.test(text.replace(/['"\\]/gu, ""));
+export const TICKET_DENY = "Only the host's own prompt puts an approval ticket on a call (#864).";
 
 /**
  * A host prompt that showed one call's full text (Claude Code PreToolUse,

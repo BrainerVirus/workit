@@ -6,6 +6,7 @@
 // the `workit youtrack …` call that asks first; one with no such verb needs
 // the user's own yes. `youtrack.writes: auto` turns the guard off, unless the
 // grant seal is broken (#819, autonomy.ts youTrackWritesMode).
+import { namesTicket, TICKET_DENY } from "../approvals/store";
 import { youTrackWritesMode } from "../autonomy";
 import type { HookDecision } from "./protocol";
 import { commandLines, workitCheckTail } from "./raw-git";
@@ -672,6 +673,8 @@ export const ytrackGate = (
   dialect: ShellDialect,
   ask: boolean,
 ): HookDecision | null => {
+  // Every host's shell gate runs this first: no agent command carries a ticket (#864).
+  if (namesTicket(command)) return { kind: "deny", reason: TICKET_DENY, unblock: null };
   let writes: YtrackWrite[];
   try {
     // A write found twice, or once unmapped, is unmapped.
@@ -707,13 +710,9 @@ export const ytrackGate = (
       reason: `${bare.join(", ")} writes to YouTrack: the user decides this call (#780).`,
     };
   const why = `A raw ytrack write posts to YouTrack without the user's yes (#780).`;
-  // Claude Code asks on the workit call itself (#864); elsewhere the verb names the terminal step.
+  // Claude Code and Pi ask on the workit call itself (#864); elsewhere the verb names the terminal step.
   const run = calls.length
-    ? ` Run ${calls.join(", then ")} instead, each as its own plain call: ${
-        ask
-          ? "the host shows the user the full text and asks once, and a yes posts it in that call."
-          : "it asks the user first."
-      }`
+    ? ` Run ${calls.join(", then ")} instead, each as its own plain call: it asks the user first.`
     : "";
   const user = bare.length
     ? ask

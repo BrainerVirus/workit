@@ -191,12 +191,10 @@ test("G the default ask, W raw ytrack writes a workit verb covers, T every host 
       const out = run(command);
       expect(out.kind, `${host}: ${command}`).toBe("deny");
       expect(out.reason, `${host}: ${command}`).toContain(`\`${call}\``);
-      // #864: no approve id to relay; Claude Code asks on the workit call itself.
+      // #864: no approve id to relay; the workit call itself asks.
       expect(out.reason, `${host}: ${command}`).not.toContain("workit approve");
       expect(out.reason, `${host}: ${command}`).toContain(
-        host === "claude"
-          ? "the host shows the user the full text and asks once"
-          : "it asks the user first",
+        "as its own plain call: it asks the user first",
       );
     }
 });

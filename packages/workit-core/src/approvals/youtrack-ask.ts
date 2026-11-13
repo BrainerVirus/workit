@@ -97,7 +97,7 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
     if (text !== undefined) lines.push(`comment on ${target}:`, ...shownText(text));
     if (values.minutes)
       lines.push(
-        `time on ${target}: ${values.minutes} minutes on ${values.date && values.date !== "auto" ? values.date : "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
+        `time on ${target}: ${values.minutes} minutes on ${values.date ?? "today"}${values.text === undefined ? "" : ` ("${values.text}")`}`,
       );
     if (values.state) lines.push(`state: ${values.state}`);
   }
@@ -105,9 +105,7 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
   for (const file of attach) {
     const content = read(file);
     if (!content) return null;
-    lines.push(
-      `attach: ${path.basename(file)} (${content.length} bytes, sha256 ${files.at(-1)?.[1].slice(0, 12)})`,
-    );
+    lines.push(`attach: ${path.basename(file)} (${content.length} bytes)`);
   }
   if (!lines.length) return null;
   return {

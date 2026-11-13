@@ -6,6 +6,8 @@ import {
   INLINE_TICKET_ENV,
   INLINE_UNASKED_ENV,
   liveApprovalRequest,
+  namesTicket,
+  TICKET_DENY,
   recordApprovalAsked,
   recordApprovalGrant,
   recordInlineAsk,
@@ -396,15 +398,9 @@ const sdkEntry = (env: NodeJS.ProcessEnv): string | null => {
 };
 const personAsked = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): boolean =>
   ASKING_MODES.has(String(raw.permission_mode)) && sdkEntry(env) === null;
-/** Why no person sees an ask here, as the verb names it. */
-const unaskedMode = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): string => {
-  const entry = sdkEntry(env);
-  // One shell word: only letters, digits and dashes survive.
-  return (entry ? `the ${entry} entrypoint` : `${String(raw.permission_mode)} mode`).replace(
-    /[^\w -]/gu,
-    "",
-  );
-};
+/** Why no person sees an ask here, as one shell word: the `sdk-*` entrypoint or the mode. */
+const unaskedMode = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): string =>
+  (sdkEntry(env) ?? String(raw.permission_mode)).replace(/[^\w-]/gu, "");
 
 /**
  * The ask for a plain `workit approve <id>…`: every request rendered from the
@@ -462,7 +458,7 @@ const inlineStepOf = (
           kind: "update-input",
           input: {
             ...toolInput,
-            command: `${INLINE_UNASKED_ENV}='${unaskedMode(raw, env)}' ${command}`,
+            command: `${INLINE_UNASKED_ENV}=${unaskedMode(raw, env)} ${command}`,
           },
           text: null,
         },
@@ -488,6 +484,13 @@ const approveStepOf = (
   env: NodeJS.ProcessEnv,
 ): ApproveStep | null => {
   if (native !== "PreToolUse" && native !== "PostToolUse") return null;
+  // A file an agent writes never carries a ticket (#864).
+  if (
+    native === "PreToolUse" &&
+    isWriteTool(raw.tool_name) &&
+    namesTicket(JSON.stringify(raw.tool_input))
+  )
+    return () => ({ decision: { kind: "deny", reason: TICKET_DENY, unblock: null } });
   if (!SHELL_TOOLS.has(String(raw.tool_name))) return null;
   const command = toolCommand(raw);
   if (command && native === "PreToolUse") {

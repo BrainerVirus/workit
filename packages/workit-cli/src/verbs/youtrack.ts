@@ -761,7 +761,7 @@ function askFirst(
   const request = used.request ?? createApprovalRequest(fields, { session });
   const unasked = io.env[INLINE_UNASKED_ENV];
   const why = unasked
-    ? ` The host ran this call in ${unasked}, where no person sees a prompt, so nothing was approved.`
+    ? ` The host ran this call in ${unasked.startsWith("sdk") ? `the ${unasked} entrypoint` : `${unasked} mode`}, where no person sees a prompt, so nothing was approved.`
     : io.env.CLAUDECODE
       ? " Claude Code asks the user only on a plain `workit youtrack …` call it sees: run it as its own call (no script, bash -c, pipe or redirect) and the host shows the user the text."
       : "";

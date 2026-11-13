@@ -31,7 +31,9 @@ import { approveCallDeny, approveCallIn } from "@workit-dev/core/src/approvals/c
 import { inlineAskFor, inlineCallDeny, inlineCallIn } from "@workit-dev/core/src/approvals/inline";
 import {
   INLINE_TICKET_ENV,
+  namesTicket,
   recordInlineAsk,
+  TICKET_DENY,
   liveApprovalRequest,
   recordApprovalAsked,
   recordApprovalGrant,
@@ -344,6 +346,7 @@ export const enforceToolPolicy = (
     return undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
+  if (namesTicket(JSON.stringify(event.input ?? {}))) return { block: true, reason: TICKET_DENY };
   // Pi project trust is host policy and stays enforced.
   if (!ctx.isProjectTrusted()) return { block: true, reason: "Pi project is not trusted" };
   return gate({

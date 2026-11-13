@@ -92,7 +92,10 @@ test("G Claude Code's launcher, W a command only mentions ytrack in a path or an
       },
       { ...env, WORKIT_CLAUDE_RUNTIME: "source", WORKIT_BUN: path.join(base, "no-bun") },
     ).stderr.includes("hook unavailable");
-  for (const command of FAST) expect(reached(command), command).toBe(false);
+  // A `workit youtrack` write is asked on the call itself (#864), so Claude
+  // Code's launcher routes it (inline-ask-launcher.test.ts); the rest stay fast.
+  for (const command of FAST.filter((one) => !one.startsWith("workit youtrack ")))
+    expect(reached(command), command).toBe(false);
   // The shared test routes a bare mention; the gate then decides nothing.
   for (const command of ROUTED_MENTIONS) {
     expect(reached(command), command).toBe(true);
