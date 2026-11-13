@@ -2,10 +2,11 @@
 // default) it never posts behind WORKIT_YT_WRITE alone. The PR still opens;
 // the backlink records a request through the approval channel and is pending
 // until the user's yes, which a re-run of `workit pr create` consumes.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { inlineAskFor, inlineCallIn } from "@/packages/workit-core/src/approvals/inline";
 import { postBacklinks, type IssueLink } from "@/packages/workit-core/src/forge/issue-link";
 import type { ResolvedForge } from "@/packages/workit-core/src/forge/resolve";
 import { useConfigHome } from "../../shared/grant-home";
@@ -14,10 +15,16 @@ const dir = mkdtempSync(path.join(os.tmpdir(), "wk-backlink-ask-"));
 const saved = {
   WORKIT_YOUTRACK_CONFIG: process.env.WORKIT_YOUTRACK_CONFIG,
   WORKIT_CONFIG: process.env.WORKIT_CONFIG,
+  WORKIT_STATE_DIR: process.env.WORKIT_STATE_DIR,
 };
+let stateRun = 0;
 beforeAll(() => {
   process.env.WORKIT_YOUTRACK_CONFIG = path.join(dir, "youtrack.json");
   process.env.WORKIT_CONFIG = dir;
+});
+// Each test gets its own approvals registry, never the real one.
+beforeEach(() => {
+  process.env.WORKIT_STATE_DIR = path.join(dir, `state-${++stateRun}`);
 });
 afterAll(() => {
   for (const [key, value] of Object.entries(saved))
@@ -39,8 +46,23 @@ test("Given the default (ask), When pr create backlinks a YouTrack issue, Then i
   expect(outcome).toMatchObject({ issue: "IRPT-74", status: "pending" });
   expect(outcome.approval).toMatch(/^ap_[a-z2-7]{8}$/u);
   expect(outcome.note).toStartWith("approval_needed: nothing was posted");
-  expect(outcome.note).toContain(`workit approve ${outcome.approval}`);
+  // #864: the one pending request needs no id at the terminal.
+  expect(outcome.note).toContain("`workit approve` in a terminal");
   expect(outcome.note).toContain("re-run workit pr create to post it once");
+});
+
+test("Given Claude Code or Pi, When the backlink is pending, Then the note names one plain workit youtrack call whose host ask shows the full backlink text, with no id", async () => {
+  for (const host of [{ CLAUDECODE: "1" }, { PI_CODING_AGENT: "1" }]) {
+    const [outcome] = await postBacklinks(dir, resolved, PR, [LINK], { env: { ...env, ...host } });
+    expect(outcome).toMatchObject({ issue: "IRPT-74", status: "pending" });
+    const call = /`(workit youtrack note [^`]+)`/u.exec(outcome.note ?? "")?.[1] ?? "";
+    expect(call, JSON.stringify(host)).toStartWith("workit youtrack note IRPT-74 --markdown ");
+    expect(outcome.note).not.toMatch(/ap_[a-z2-7]{8}|workit approve/u);
+    const plain = inlineCallIn(call);
+    expect(plain?.plain).toBe(true);
+    const ask = plain?.plain ? inlineAskFor(plain.words, dir) : null;
+    expect(ask?.text).toContain("Linked from PR #5: https://github.com/o/r/pull/5");
+  }
 });
 
 test("Given youtrack.writes auto in the account's sealed file, Then the backlink keeps today's WORKIT_YT_WRITE gate", async () => {

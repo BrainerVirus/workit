@@ -386,6 +386,13 @@ const youTrackServer = () => {
 test("pr create: given backlink true, a YouTrack issue and the default youtrack.writes ask, then the PR opens and the backlink is pending on a request to approve, even with WORKIT_YT_WRITE=1", async () => {
   const yt = youTrackServer();
   const previous = process.env.WORKIT_YT_WRITE;
+  // A host with no ask on the action: the terminal fallback (#864).
+  const hosts = {
+    CLAUDECODE: process.env.CLAUDECODE,
+    PI_CODING_AGENT: process.env.PI_CODING_AGENT,
+  };
+  delete process.env.CLAUDECODE;
+  delete process.env.PI_CODING_AGENT;
   try {
     const { repo } = setup("github", githubRoutes());
     writeFileSync(
@@ -398,9 +405,11 @@ test("pr create: given backlink true, a YouTrack issue and the default youtrack.
     expect(out.code).toBe(0);
     const [pending] = out.json().data.backlinks;
     expect(pending).toMatchObject({ issue: "IRPT-74", status: "pending" });
-    expect(pending.note).toContain(`workit approve ${pending.approval}`);
+    expect(pending.note).toContain("`workit approve` in a terminal");
     expect(yt.requests).toEqual([]);
   } finally {
+    for (const [key, value] of Object.entries(hosts))
+      if (value !== undefined) process.env[key] = value;
     if (previous === undefined) delete process.env.WORKIT_YT_WRITE;
     else process.env.WORKIT_YT_WRITE = previous;
     await yt.stop();
