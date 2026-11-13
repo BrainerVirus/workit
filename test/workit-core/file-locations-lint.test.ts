@@ -72,11 +72,6 @@ const ALLOW: Allow[] = [
   },
   { file: "packages/workit-cli/src/admin/doctor.ts", match: ".bun/bin/bun", why: "the bun binary" },
   {
-    file: "packages/workit-core/src/hooks/worktree-confine.ts",
-    match: "|VISUAL|HOME|XDG_CONFIG_HOME)$/",
-    why: "env vars that steer git's own config, denied on a judge's git; it builds no location",
-  },
-  {
     file: "packages/workit-core/src/core/runtime-identity.ts",
     match: "XDG_CACHE_HOME",
     why: "pnpm's dlx cache, a package manager's location, not Workit's",

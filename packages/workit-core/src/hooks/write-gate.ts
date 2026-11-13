@@ -591,16 +591,6 @@ export const configWrites = (rest: readonly string[]): boolean => {
 const GIT_VALUE =
   /^(?:-[Ccbouj]|--(?:git-dir|work-tree|namespace|config-env|branch|origin|config|depth|reference(?:-if-able)?|template|separate-git-dir|upload-pack|jobs|filter|initial-branch|object-format))$/;
 
-/** The operands of `git worktree <verb>` (`rest`: the words after the verb), past `-b`/`-B`/`--reason` values and up to `--`. */
-const worktreeOperands = (rest: readonly string[]): string[] => {
-  const end = rest.indexOf("--");
-  const named = (end < 0 ? rest : rest.slice(0, end)).filter(
-    (arg, index, words) =>
-      !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(words[index - 1] ?? ""),
-  );
-  return end < 0 ? named : [...named, ...rest.slice(end + 1)];
-};
-
 /**
  * What git writes outside the edit analysis (#790): `init` and `clone` their
  * directory and any `--separate-git-dir`, `worktree add|move|remove|repair`
@@ -633,7 +623,17 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
   }
   // `worktree add|move|remove|repair` write the worktrees they name (repair: this one by default).
   if (sub === "worktree") {
-    const named = worktreeOperands(rest.slice(1));
+    // Its operands, past `-b`/`-B`/`--reason` values; all after `--`.
+    const end = rest.includes("--") ? rest.indexOf("--") : rest.length;
+    const named = [
+      ...rest
+        .slice(1, end)
+        .filter(
+          (arg, index, words) =>
+            !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(words[index - 1] ?? ""),
+        ),
+      ...rest.slice(end + 1),
+    ];
     const count = { add: 1, move: 2, remove: 1, repair: named.length || 1 }[rest[0] ?? ""] ?? 0;
     files.push(...(named.length ? named : ["."]).slice(0, count));
   }

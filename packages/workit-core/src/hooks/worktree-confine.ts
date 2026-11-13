@@ -121,13 +121,8 @@ const checkoutOf = (file: string): { root: string; workit: boolean } | null => {
   for (let dir = canonical(file); ; dir = path.dirname(dir)) {
     const dotGit = path.join(dir, ".git");
     if (fs.existsSync(dotGit)) {
-      if (!fs.statSync(dotGit).isFile()) return { root: dir, workit: false };
-      const admin = /^gitdir:\s*(.+)$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim();
-      return {
-        root: dir,
-        workit:
-          Boolean(admin) && fs.existsSync(path.join(path.resolve(dir, admin!), FANOUT_TOKEN_FILE)),
-      };
+      const admin = fs.statSync(dotGit).isFile() ? gitDirsAt(dir, null, false)?.[0] : undefined;
+      return { root: dir, workit: !!admin && fs.existsSync(path.join(admin, FANOUT_TOKEN_FILE)) };
     }
     if (path.dirname(dir) === dir) return null;
   }
@@ -215,24 +210,13 @@ export const hostIsolated = (cwd: string, agentId: string | null): boolean => {
     if (!checkout) return false;
     const dotGit = path.join(checkout.root, ".git");
     if (!fs.statSync(dotGit).isFile()) return false;
-    const admin = /^gitdir:\s*(.+)$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim();
-    if (!admin) return false;
-    const adminDir = path.resolve(checkout.root, admin);
+    const [adminDir, gitDir] = gitDirsAt(checkout.root, null, false) ?? [];
     // The admin dir must point back at this checkout: a forged `.git` file
     // naming a sibling's admin dir does not make a directory that sibling's.
     const back = fs.readFileSync(path.join(adminDir, "gitdir"), "utf8").trim();
     if (path.relative(canonical(path.resolve(adminDir, back)), canonical(dotGit)) !== "")
       return false;
-    const common = path.join(adminDir, "commondir");
-    const gitDir = fs.existsSync(common)
-      ? path.resolve(adminDir, fs.readFileSync(common, "utf8").trim())
-      : adminDir;
-    const expected = path.join(
-      path.dirname(canonical(gitDir)),
-      ".claude",
-      "worktrees",
-      `agent-${agentId}`,
-    );
+    const expected = path.join(path.dirname(gitDir), ".claude", "worktrees", `agent-${agentId}`);
     return path.relative(canonical(expected), checkout.root) === "";
   } catch {
     return false;
@@ -526,18 +510,7 @@ const INLINE = /^-[a-zA-Z]*[ceEpm]$|^--(?:eval|print|test|version|help)$|^-[hvV]
 const VALUED = /^-[WXIrC]$|^--(?:require|import|loader|conditions|input-type)$/;
 
 /** The git common dir of the checkout at `root`: what its linked worktrees share. */
-const commonDir = (root: string): string => {
-  const dotGit = path.join(root, ".git");
-  if (!fs.statSync(dotGit).isFile()) return canonical(dotGit);
-  const admin = path.resolve(
-    root,
-    /^gitdir:\s*(.+)$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim() ?? "",
-  );
-  const common = path.join(admin, "commondir");
-  return canonical(
-    fs.existsSync(common) ? path.resolve(admin, fs.readFileSync(common, "utf8").trim()) : admin,
-  );
-};
+const commonDir = (root: string): string => gitDirsAt(root, null, false)?.[1] ?? "";
 
 /**
  * Whether the real path `real` is in the scratch dir at the root of a
@@ -556,48 +529,42 @@ const inScratch = (real: string, repo: string | null): boolean => {
 /** Whether real path `real` is a `.git` file or inside a `.git` dir: git's own files, written only through git. */
 const inGitDir = (real: string): boolean => real.split(/[\\/]/).includes(".git");
 
-/**
- * git config keys that run a command Workit never sees (aliases, hooks,
- * pagers, editors, diff and merge drivers, filters, helpers) or pull in more
- * config (includes). Lowercased `section.subsection.name`.
- */
-const RUNS_CODE =
-  /^(?:alias\..*|core\.(?:hookspath|fsmonitor|pager|sshcommand|editor|askpass|gitproxy)|diff\.(?:external|.*\.(?:command|textconv))|merge\..*\.driver|filter\..*|credential\.(?:.*\.)?helper|pager\..*|sequence\.editor|gpg\.(?:.*\.)?program|interactive\.difffilter|.*\.(?:uploadpack|receivepack|packobjectshook)|(?:man|browser|difftool|mergetool)\..*\.(?:cmd|path)|include(?:if)?\..*)$/;
+/** The config keys a scratch repository may hold (lowercased); `remote.*.url` is checked as a path. */
+const SAFE_KEY =
+  /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|user\..*|init\..*|commit\.gpgsign|extensions\.(?:objectformat|refstorage)|branch\..*\.(?:remote|merge)|remote\..*\.fetch)$/;
 
-/** git environment that runs a command, or reads config Workit does not see. */
-const RUNS_CODE_ENV =
-  /^(?:GIT_(?:EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|SSH|SSH_COMMAND|ASKPASS|EXEC_PATH|TEMPLATE_DIR|PROXY_COMMAND|CONFIG\w*)|SSH_ASKPASS|PAGER|EDITOR|VISUAL|HOME|XDG_CONFIG_HOME)$/;
+/** Whether `value` is a literal absolute path in scratch or, with `checkout`, in a checkout of repository `repo`. */
+const literalIn = (value: string, repo: string | null, checkout = false): boolean => {
+  if (/[$`]/.test(value) || !path.isAbsolute(value)) return false;
+  const real = canonical(value);
+  const root = checkout ? checkoutOf(real)?.root : undefined;
+  return (
+    inScratch(real, repo) || (root !== undefined && (repo === null || commonDir(root) === repo))
+  );
+};
 
 /** Each `key = value` of git config text, keys as lowercased `section.subsection.name`. */
 const configEntries = (text: string): Array<[string, string]> => {
   const entries: Array<[string, string]> = [];
   let section = "";
-  for (const line of text.split(/\r?\n/)) {
-    const header = /^\s*\[\s*([^\]\s"]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]/.exec(line);
-    if (header) section = header[2] === undefined ? header[1] : `${header[1]}.${header[2]}`;
-    else {
-      const entry = /^\s*([\w-]+)\s*(?:=\s*(.*?))?\s*$/.exec(line);
-      if (entry)
-        entries.push([
-          `${section}.${entry[1]}`.toLowerCase(),
-          (entry[2] ?? "true").replace(/^"(.*)"$/, "$1"),
-        ]);
-    }
+  for (const line of text.split("\n")) {
+    // A subsection's name never changes which keys are safe: `remote "x"` reads as `remote.x`.
+    const header = /^\s*\[\s*([\w.-]+)(\s+")?/.exec(line);
+    const entry = /^\s*([\w-]+)\s*(?:=\s*"?(.*?)"?)?\s*$/.exec(line);
+    if (header) section = header[2] ? `${header[1]}.x` : header[1];
+    else if (entry) entries.push([`${section}.${entry[1]}`.toLowerCase(), entry[2] ?? "true"]);
   }
   return entries;
 };
-
-/** Whether real dir `dir` is itself a git dir (a bare repository or a `.git`). */
-const isGitDir = (dir: string): boolean =>
-  ["HEAD", "objects", "refs"].every((name) => fs.existsSync(path.join(dir, name)));
 
 /**
  * The real git dir, common dir and configured work tree git uses when run
  * in real dir `dir` ([] outside every repository); null when Workit cannot
  * tell or git would run code it does not see: a `.git` file with no gitdir
- * line, or a config that includes another or sets a key in `RUNS_CODE`.
+ * line, or a config key outside `SAFE_KEY` (a remote not in scratch or the
+ * judged repository).
  */
-const gitDirsAt = (dir: string): string[] | null => {
+function gitDirsAt(dir: string, repo: string | null, scan = true): string[] | null {
   for (let at = dir; ; at = path.dirname(at)) {
     const dotGit = path.join(at, ".git");
     let gitDir: string | null = null;
@@ -610,7 +577,9 @@ const gitDirsAt = (dir: string): string[] | null => {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
-      if (isGitDir(at)) gitDir = canonical(at);
+      // A bare repository, or a `.git` dir run in.
+      if (["HEAD", "objects", "refs"].every((name) => fs.existsSync(path.join(at, name))))
+        gitDir = canonical(at);
     }
     if (gitDir !== null) {
       const common = path.join(gitDir, "commondir");
@@ -618,7 +587,9 @@ const gitDirsAt = (dir: string): string[] | null => {
         ? canonical(path.resolve(gitDir, fs.readFileSync(common, "utf8").trim()))
         : gitDir;
       const dirs = [gitDir, shared];
-      for (const config of new Set([path.join(gitDir, "config"), path.join(shared, "config")])) {
+      for (const config of scan
+        ? new Set([path.join(gitDir, "config"), path.join(shared, "config")])
+        : []) {
         let text = "";
         try {
           text = fs.readFileSync(config, "utf8");
@@ -626,93 +597,108 @@ const gitDirsAt = (dir: string): string[] | null => {
           continue;
         }
         for (const [key, value] of configEntries(text)) {
-          if (RUNS_CODE.test(key)) return null;
           if (key === "core.worktree") dirs.push(canonical(path.resolve(gitDir, value)));
+          else if (
+            /^remote\..*\.url$/.test(key) ? !literalIn(value, repo, true) : !SAFE_KEY.test(key)
+          )
+            return null;
         }
       }
       return dirs;
     }
     if (path.dirname(at) === at) return [];
   }
-};
+}
 
-/** git environment that moves its git dir, work tree, index or objects: each value must be in scratch. */
-const GIT_PATH_ENV =
-  /^GIT_(?:DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)$/;
-
-/** git global options that take the next word. */
-const GIT_GLOBAL_VALUE =
-  /^(?:-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--super-prefix)$/;
-/** `git config` options that only read, and those that take the next word. */
-const CONFIG_READ = /^(?:-l|--list|--get(?:-\w+)?|--unset(?:-all)?|-e|--edit)$/;
-const CONFIG_VALUE = /^(?:-f|--file|--blob|--type)$/;
+const READ_GIT =
+  "log show diff status rev-parse rev-list ls-files ls-tree cat-file blame describe merge-base for-each-ref shortlog show-ref name-rev grep format-patch";
+const WRITE_GIT =
+  "init add commit checkout switch restore reset rm mv merge stash apply am fetch clone";
 
 /**
- * Why `command` points a judge's git somewhere other than the repository it
- * runs in, or makes it run a command Workit cannot see (#790): `--git-dir`,
- * `--work-tree`, a `GIT_*` path variable or `core.worktree` not naming a
- * literal absolute path in scratch; a `RUNS_CODE` key set through `-c`,
- * `--config-env`, `git config` or `git clone -c`; `--exec-path`, `--template`;
- * environment in `RUNS_CODE_ENV`. Null when it does neither.
+ * What git `args` (the verb first) are for a judge: "read" anywhere, "write"
+ * only in a scratch repository, null refused. `branch`/`tag` list or write;
+ * `config` reads, or sets only user.name|email, init.defaultBranch or
+ * commit.gpgsign=false; `worktree list|add|remove`; `remote [-v]`.
  */
-const gitRetarget = (command: string, repo: string | null, depth = 0): string | null => {
-  const hidden = (what: string) => `${what} runs code Workit cannot see`;
-  const check = (what: string, value: string | undefined): string | null => {
-    return value !== undefined &&
-      !/[$`]/.test(value) &&
-      path.isAbsolute(value) &&
-      inScratch(canonical(value), repo)
-      ? null
-      : `${what} must be a literal path in scratch`;
-  };
-  const setting = (key: string, value: string | undefined): string | null => {
-    const name = key.toLowerCase();
-    if (name === "core.worktree") return check("core.worktree", value);
-    return RUNS_CODE.test(name) ? hidden(key) : null;
-  };
-  const pair = (text = ""): string | null => {
-    const at = text.indexOf("=");
-    return at < 0 ? setting(text, undefined) : setting(text.slice(0, at), text.slice(at + 1));
-  };
+const gitKind = (args: readonly string[]): "read" | "write" | null => {
+  const [verb = "", ...rest] = args;
+  const has = (pattern: RegExp) => rest.some((arg) => pattern.test(arg));
+  const named = rest.filter((arg) => !arg.startsWith("-"));
+  if (READ_GIT.split(" ").includes(verb))
+    return has(/^--(?:ext-diff|textconv|open-files-in-pager|filters)(?:=|$)|^-O/) ? null : "read";
+  if (verb === "branch" || verb === "tag")
+    return leadOwnedGit(args) ||
+      (named.length > 0 && !has(/^(?:-l|--list|--contains|--(?:no-)?merged|--points-at)$/))
+      ? "write"
+      : "read";
+  if (verb === "config") {
+    if (has(/^(?:-l|--list|--get(?:-all|-regexp)?)$/) || /^(?:get|list)$/.test(named[0] ?? ""))
+      return "read";
+    const [key = "", value] = named[0] === "set" ? named.slice(1) : named;
+    return rest.length === named.length &&
+      (/^(?:user\.(?:name|email)|init\.defaultbranch)$/i.test(key) ||
+        (/^commit\.gpgsign$/i.test(key) && value === "false"))
+      ? "write"
+      : null;
+  }
+  if (verb === "worktree")
+    return named[0] === "list" ? "read" : /^(?:add|remove)$/.test(named[0] ?? "") ? "write" : null;
+  if (verb === "remote") return rest.every((arg) => /^(?:-v|--verbose)$/.test(arg)) ? "read" : null;
+  if (!WRITE_GIT.split(" ").includes(verb)) return null;
+  // Built-in merge strategies only: `-s` names a program on PATH.
+  return has(/^(?:--template|--upload-pack|--receive-pack|--config|--exec|-s|--strategy)(?:=|$)/) ||
+    (/^(?:fetch|clone)$/.test(verb) && has(/^-[uc]$/))
+    ? null
+    : "write";
+};
+
+const JUDGE_GIT = `a judge runs git ${READ_GIT} anywhere; ${WRITE_GIT}, branch, tag, worktree, config user.* in a scratch repo; no -c, no env but PAGER=cat, LC_*, LANG, TZ`;
+
+/**
+ * Why a judge may not run the git in `command` (#790): a verb, global option,
+ * environment or source outside the allowlist (`gitKind`, `JUDGE_GIT`), or
+ * `--git-dir`/`--work-tree` outside scratch. Null when it may.
+ */
+const judgeGit = (command: string, repo: string | null, depth = 0): string | null => {
+  const runsGit = /\bgit\b/.test(command);
   for (const segment of segmentsOf(command)) {
     const words = segment.words;
     let why: string | null = null;
-    // Environment counts only when the command runs git somewhere (`export X=…; git …` too).
-    for (const word of /\bgit\b/.test(command) ? words : []) {
-      const assigned = /^([A-Za-z_]\w*)=([\s\S]*)$/.exec(word);
-      if (!assigned) continue;
-      if (GIT_PATH_ENV.test(assigned[1])) why ??= check(assigned[1], assigned[2]);
-      else if (RUNS_CODE_ENV.test(assigned[1])) why ??= hidden(assigned[1]);
+    // The environment a git in this command sees: prefixes, `export`, `env` (assignments to exported names too).
+    for (let at = runsGit ? 0 : words.length; !why && at < words.length; at++) {
+      const word = words[at];
+      if (/^(?:env|export|declare|local|readonly|typeset|-\w+)$/.test(word)) continue;
+      if (!/^\w+\+?=/.test(word)) break;
+      if (!/^(?:(?:GIT_)?PAGER=cat|(?:LC_\w+|LANG|TZ)=.*)$/s.test(word))
+        why = `\`${word}\` is not allowed`;
     }
     const start = words.findIndex((word) => /^git(?:\.exe)?$/.test(path.basename(word)));
     let index = start < 0 ? words.length : start + 1;
     for (; !why && words[index]?.startsWith("-"); index++) {
       const word = words[index];
-      const next = GIT_GLOBAL_VALUE.test(word) ? words[++index] : undefined;
       const flag = /^--(git-dir|work-tree)(?:=([\s\S]*))?$/.exec(word);
-      if (flag) why = check(`--${flag[1]}`, flag[2] ?? next);
-      else if (word === "-c") why = pair(next);
-      else if (/^--(?:config-env|exec-path)/.test(word)) why = hidden(word.split("=")[0]);
+      const value =
+        flag?.[2] ?? (/^(?:-C|--git-dir|--work-tree)$/.test(word) ? words[++index] : "");
+      if (flag ? !literalIn(value, repo) : !/^(?:-C|-P|--no-pager|--no-optional-locks)$/.test(word))
+        why = `\`${word}\` is not allowed`;
     }
-    const sub = words[index];
-    const rest = words.slice(index + 1);
-    if (!why && sub === "config" && !rest.some((word) => CONFIG_READ.test(word))) {
-      const named = rest.filter(
-        (word, at) => !word.startsWith("-") && !CONFIG_VALUE.test(rest[at - 1] ?? ""),
-      );
-      const [key, value] = named[0] === "set" ? named.slice(1) : named;
-      if (key !== undefined) why = setting(key, value);
+    const args = words.slice(index);
+    const kind = start < 0 || why ? "read" : gitKind(args);
+    if (!kind) why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
+    else if (!why && start >= 0 && (args[0] === "fetch" || args[0] === "clone")) {
+      const source = args.slice(1).find((arg) => !arg.startsWith("-"));
+      if (
+        source &&
+        !(args[0] === "fetch" && /^[\w.-]+$/.test(source)) &&
+        !literalIn(source, repo, true)
+      )
+        why = `\`${source}\` is not local`;
     }
-    if (!why && (sub === "init" || sub === "clone"))
-      for (let at = 0; at < rest.length && !why; at++) {
-        const word = rest[at];
-        if (/^--template(?:=|$)/.test(word)) why = hidden("--template");
-        else if (/^(?:-c|--config)$/.test(word)) why = pair(rest[at + 1]);
-      }
     // Scripts it carries: `bash -c "…"`, `$(…)`, a heredoc fed to a shell.
     for (const script of [...words, ...(segment.subs ?? []), ...(segment.stdin ?? [])])
       if (!why && depth < 3 && /\bgit\b|GIT_/.test(script) && /\s/.test(script))
-        why = gitRetarget(script, repo, depth + 1);
+        why = judgeGit(script, repo, depth + 1);
     if (why) return why;
   }
   return null;
@@ -948,7 +934,7 @@ export function confineJudge(
       const runsGit =
         placeholders.has(target) &&
         /^\.workit-(?:runs-git|live-target)$/.test(path.basename(target));
-      const gitDirs = runsGit ? gitDirsAt(path.dirname(real)) : [];
+      const gitDirs = runsGit ? gitDirsAt(path.dirname(real), repo) : [];
       if (gitDirs === null)
         return judgeDeny(
           input,
@@ -1000,8 +986,8 @@ export function confineJudgeShell(
     if (!refused && dialect === "posix") {
       const judged = checkoutOf(input.cwd);
       try {
-        const why = gitRetarget(command, judged ? commonDir(judged.root) : null);
-        if (why) refused = `${why}: run git in a scratch repository without moving its git dir`;
+        const why = judgeGit(command, judged ? commonDir(judged.root) : null);
+        if (why) refused = `${why}: ${JUDGE_GIT}`;
       } catch {
         refused = "Workit cannot read this command: split it into simpler ones";
       }
@@ -1015,7 +1001,10 @@ export function confineJudgeShell(
     let git: string[] = [];
     try {
       git = rawInvocations(command, dialect).flatMap(({ tool, dir, args }) =>
-        tool === "git" && (args[0] === "push" || leadOwnedGit(args))
+        tool === "git" &&
+        (args[0] === "push" ||
+          leadOwnedGit(args) ||
+          (gitKind(args) === "write" && !/^(?:init|clone)$/.test(args[0])))
           ? [
               path.join(
                 dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? "."),

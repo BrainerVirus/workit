@@ -205,9 +205,9 @@ test("Given a scratch repository retargeted at another git dir (a .git file, --g
     `git -C ${rt} commit -qm x`,
     `git -C ${rt} config user.name t`,
     `git --git-dir=${path.join(rt, ".git")} --work-tree=${rt} commit -qm x`,
-    `GIT_DIR=${path.join(rt, ".git")} git -C ${rt} commit -qm x`,
   ])
     expect(bash(command), command).toBeUndefined();
+  expect(bash(`GIT_DIR=${path.join(rt, ".git")} git -C ${rt} commit -qm x`)).toBe("deny");
 });
 
 test("Given a judge, When it writes a .git file or into a .git dir inside scratch, Then it is denied", () => {
@@ -335,8 +335,86 @@ test("Given a new dir under scratch, a config key named only as text, or a bare 
     `git -C ${rt} grep core.worktree`,
     `git -C ${rt} log --grep include.path`,
     `git -C ${rt} config --get core.worktree`,
-    `git -C ${rt} config core.bare true`,
     `git -C ${bare} fetch ${rt}`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+  expect(bash(`git -C ${rt} config core.bare true`)).toBe("deny");
+});
+
+test("Given a judge's git, When it uses a verb, option, transport or env outside the allowlist, Then it is denied naming what is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "allow-rt");
+  git(wt, "init", "-q", "-b", "main", rt);
+  const remoteOut = path.join(scratch, "remote-out");
+  git(wt, "init", "-q", "-b", "main", remoteOut);
+  git(remoteOut, "config", "remote.o.url", path.join(root, "elsewhere"));
+  const trailer = path.join(scratch, "trailer");
+  git(wt, "init", "-q", "-b", "main", trailer);
+  git(trailer, "config", "trailer.t.cmd", "touch /tmp/y");
+  for (const command of [
+    `git -C ${rt} rebase -x 'touch /tmp/y' HEAD~1`,
+    `git -C ${rt} bisect run /tmp/x`,
+    `git -C ${rt} filter-branch --tree-filter 'touch /tmp/y' HEAD`,
+    `git -C ${rt} submodule foreach 'touch /tmp/y'`,
+    `git -C ${rt} difftool --extcmd=/tmp/x`,
+    `git -C ${rt} fetch --upload-pack=/tmp/x ${wt}`,
+    `git clone --upload-pack /tmp/x ${wt} ${path.join(scratch, "c2")}`,
+    `git ls-remote --upload-pack=/tmp/x ${wt}`,
+    `git -C ${wt} grep -O x`,
+    `git -C ${wt} grep --open-files-in-pager=vi x`,
+    `git -C ${rt} fetch 'ext::sh -c touch% /tmp/y'`,
+    `GIT_ALLOW_PROTOCOL=ext git -C ${rt} fetch x`,
+    `git -C ${rt} config submodule.s.update '!touch /tmp/y'`,
+    `git -C ${rt} config trailer.t.cmd x`,
+    `git -C ${rt} config remote.o.vcs x`,
+    `PATH=${scratch}:/usr/bin git -C ${rt} status`,
+    `GIT_TRACE=/tmp/t git -C ${rt} status`,
+    `git -C ${rt} -c trace2.eventTarget=/tmp/t status`,
+    `git -C ${rt} checkout-index --prefix=/tmp/x/ -a`,
+    `git -C ${rt} fast-export --export-marks=/tmp/m HEAD`,
+    `git -C ${rt} index-pack -o /tmp/x p.pack`,
+    `git -C ${wt} log --output=/tmp/x`,
+    `git -C ${wt} diff --ext-diff`,
+    `git -C ${rt} merge -s custom HEAD`,
+    `git clone https://example.invalid/r ${path.join(scratch, "c3")}`,
+    `git -C ${rt} fetch ${path.join(root, "elsewhere")}`,
+    `git -C ${remoteOut} fetch o`,
+    `git -C ${trailer} commit -qm x`,
+    `export FOO=1; git -C ${wt} log`,
+  ]) {
+    const out = verifier("Bash", { command: posix(command) });
+    expect(out, command).toBe("deny");
+  }
+});
+
+test("Given ordinary verifier flows, When a judge runs them, Then each is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const flow = path.join(scratch, "flow");
+  expect(bash(`git init ${flow}`)).toBeUndefined();
+  git(wt, "init", "-q", "-b", "main", flow);
+  for (const command of [
+    `git -C ${flow} add -A`,
+    `git -C ${flow} commit -qm x`,
+    `git -C ${flow} branch feature/x`,
+    `git -C ${flow} config user.name t`,
+    `git -C ${flow} config user.email t@t`,
+    `git -C ${wt} log --oneline -5`,
+    `git -C ${wt} diff HEAD --stat`,
+    `git -C ${wt} show HEAD`,
+    `git -C ${wt} grep -n core`,
+    `git -C ${wt} status --short`,
+    `GIT_PAGER=cat git -C ${wt} log`,
+    `PAGER=cat git -C ${wt} log`,
+    `LC_ALL=C git -C ${wt} log`,
+    `git --no-pager -C ${wt} log`,
+    `git -C ${wt} branch --list`,
+    `git -C ${wt} branch -a`,
+    `git -C ${wt} worktree list`,
+    `git -C ${wt} remote -v`,
+    `git -C ${wt} config --get user.name`,
+    `git -C ${flow} fetch ${wt} HEAD`,
+    `git -C ${flow} worktree add ${path.join(scratch, "flow-wt")} FETCH_HEAD`,
+    `git clone ${wt} ${path.join(scratch, "cl2")}`,
   ])
     expect(bash(command), command).toBeUndefined();
 });
