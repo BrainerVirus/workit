@@ -520,6 +520,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `workit setup` summary lists the `ytrack auth paths` changes it will make before you apply (`ytrack paths: <globs> -> <host>`), or why they were skipped.
 - Raw ytrack writes on one issue chained in one command (a comment with `--attach`, `ytrack issue attach`, `ytrack work-item add`, `ytrack issue command`, a hand-built `ytrack api` POST to the issue's comments or attachments) are denied naming one `workit youtrack update` call, so the user answers one ask instead of one per write.
 - `workit pr create --issue` accepts a YouTrack issue URL (`/issue/AB2-142[/slug]`, `/projects/AB2/issues/AB2-142`) on the workspace's YouTrack, and YouTrack issue ids whose project has digits (`AB2-142`); a URL on another YouTrack is refused naming the configured host.
 - A raw `ytrack` write an agent runs (`ytrack issue comment`, `ytrack work-item add`, `ytrack issue create|update|delete`, `ytrack api` with a write method) now asks first by default on every host: it is denied with the exact `workit youtrack …` call to run, or asked natively on Claude Code when no Workit verb covers it. Wrapped and respelled forms get the same answer; reads are untouched; `youtrack.writes: auto` turns it off
