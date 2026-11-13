@@ -111,7 +111,9 @@ directory or managed `<repo>` directory if that leaves it empty (and the old
 `~/.cache/workit-wt/` root once nothing is left in it). It also
 deletes local branches whose remote branch is gone (`git fetch --prune`
 reports them as `[gone]`) and whose commits are on the trunk. A gone branch
-that is not merged is kept and listed. Everything removed goes into one
+that is not merged, or that is long-lived (see
+[Sweeping branches](#sweeping-branches-workit-gc---branches)), is kept and
+listed. Everything removed goes into one
 `cleanup.removed` ledger row.
 
 Everything not listed for removal is reported as `kept` with the reason. For

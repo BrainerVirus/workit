@@ -346,3 +346,25 @@ test("after a merge, a worktree with a bisect in progress is kept with its branc
   expect(out.notes).toEqual([expect.stringContaining("a bisect is in progress")]);
   expect(existsSync(dir)).toBe(true);
 });
+
+test("Given a merged release/x and a merged feature/g whose remote branches are gone, When gc --worktrees --apply runs, Then release/x is kept as long-lived and feature/g goes", () => {
+  const env = setup();
+  const bare = path.join(env.root, "remote.git");
+  execFileSync("git", ["init", "-q", "--bare", bare]);
+  git(env.main, "remote", "add", "origin", bare);
+  git(env.main, "branch", "release/x", "main");
+  git(env.main, "branch", "feature/g", "main");
+  git(env.main, "push", "-q", "-u", "origin", "main", "release/x", "feature/g");
+  git(env.main, "push", "-q", "origin", "--delete", "release/x", "feature/g");
+  git(env.main, "fetch", "-q", "--prune", "origin");
+
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+  expect(applied.deletedBranches).toContain("feature/g");
+  expect(applied.deletedBranches).not.toContain("release/x");
+  expect(applied.kept).toContainEqual({
+    path: "",
+    branch: "release/x",
+    reason: "remote branch gone, but a long-lived branch of the branch policy",
+  });
+  expect(git(env.main, "branch", "--list", "release/x")).not.toBe("");
+});

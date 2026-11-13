@@ -769,8 +769,17 @@ export function sweepWorktrees(
   }
   const sweptBranches = new Set(out.removable.map((entry) => entry.branch).filter(Boolean));
   const checkedOut = new Set(trees.map((entry) => shortBranch(entry.branch)));
+  const isLongLived = gone.size ? longLived(cwd, trunkName) : () => false;
   for (const [name, tip] of gone) {
     if (name === trunkName || sweptBranches.has(name) || checkedOut.has(name)) continue;
+    if (isLongLived(name)) {
+      out.kept.push({
+        path: "",
+        branch: name,
+        reason: "remote branch gone, but a long-lived branch of the branch policy",
+      });
+      continue;
+    }
     const proof = proven(tip);
     if (proof) out.goneBranches.push({ name, reason: proof });
     else
