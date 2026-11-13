@@ -39,3 +39,19 @@ spawn a fresh verifier or reviewer.
 OpenCode and Pi load Workit in-process as a plugin or extension. A load error
 there is the host's own plugin error; `workit doctor` checks them with
 `opencode_version` and `pi_extension`.
+
+## OpenCode stays one Workit version behind
+
+`workit doctor` reports `stale_install` when OpenCode's Workit plugin is older
+than the version on npm. Run `workit upgrade`: it waits for OpenCode to load
+its plugins, then updates the plugin.
+
+A release can reach npm a few minutes after the CLI it ships with. An upgrade
+that runs in that window installs the previous OpenCode plugin. Its result row
+then says that the newer version appeared after the run read the registry. Run
+`workit upgrade` again.
+
+To update by hand, run `opencode plugin update @workit-dev/opencode` from your
+home directory. OpenCode loads plugins separately for each directory, in the
+background. In a directory it has not used before, the first call can answer
+`Plugin is not configured`. Run the same command a second time.

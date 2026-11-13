@@ -101,6 +101,24 @@ const readOpencodePlugin = async (run: AsyncRun, home: string): Promise<Opencode
   parsePluginApi(await run("opencode", pluginApiArgs(home), { cwd: home })) ??
   parsePluginList(await run("opencode", PLUGIN_LIST, { cwd: home }));
 
+/**
+ * The `@workit-dev/opencode` version the registry serves now, read again after
+ * the update: a release can reach the registry minutes after the CLI it ships
+ * with (#792 item 57), so the version planning read can already be behind.
+ */
+export const publishedOpencodeVersion = async (
+  run: AsyncRun,
+  home: string,
+): Promise<string | undefined> => {
+  try {
+    const result = await run("npm", ["view", OPENCODE_PACKAGE, "version"], { cwd: home });
+    const version = result.stdout.trim();
+    return result.status === 0 && /^\d+\.\d+\.\d+$/.test(version) ? version : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 type ReadyOptions = NonNullable<UpgradeDeps["opencodeReady"]>;
 
 /**

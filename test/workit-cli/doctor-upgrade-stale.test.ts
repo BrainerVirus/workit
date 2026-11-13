@@ -59,6 +59,42 @@ test("Given a stale Cursor install and a stale OpenCode @latest cache, When upgr
   expect(stale?.fix).toContain("opencode plugin update");
 });
 
+// #792 item 57: in a directory OpenCode has not loaded yet, the bare update
+// answers "Plugin is not configured"; the fix says where and how to run it.
+test("Given a stale OpenCode @latest cache, When doctor runs, Then the fix names `workit upgrade`, the home directory and a second try, never the bare command alone", () => {
+  const home = path.join(base, "cold-home");
+  const cache = path.join(home, "oc-cache");
+  write(path.join(cache, "node_modules/@workit-dev/opencode/package.json"), {
+    name: "@workit-dev/opencode",
+    version: "1.9.0",
+  });
+  write(path.join(home, ".config/opencode/opencode.json"), { plugins: ["@workit-dev/opencode"] });
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.9.1",
+  };
+  delete env.WORKIT_DEV;
+  delete env.XDG_CONFIG_HOME;
+  const report = runDoctor({
+    host: "opencode",
+    home,
+    cwd: home,
+    workspaceRoot: home,
+    configDir: path.join(home, ".config/workit"),
+    stateDir: path.join(home, ".local/state/workit"),
+    opencodePackageCacheDir: cache,
+    env,
+  });
+  const stale = report.checks.find((check) => check.id === "stale_install");
+  expect(stale?.status).toBe("fail");
+  const fix = stale?.fix ?? "";
+  expect(fix.startsWith("workit upgrade")).toBe(true);
+  expect(fix).toContain("from your home directory");
+  expect(fix).toContain('a second time if the first says "Plugin is not configured"');
+  expect(fix.startsWith("opencode plugin update")).toBe(false);
+});
+
 test("Given XDG_CONFIG_HOME, When doctor checks the OpenCode cache, Then it reads the OpenCode config there, as upgrade does", () => {
   const home = path.join(base, "xdg-home");
   const cwd = path.join(base, "xdg-cwd");

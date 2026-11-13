@@ -74,6 +74,9 @@ const internalDependencies = (root: string, pkg: string): string[] => {
   );
 };
 
+/** The user entry point: published last, after every host package is visible. */
+const CLI = "workit-cli";
+
 /**
  * The order packages reach the registry (W2.38): each one after every release
  * package it installs, and workit-cli last. `npx @workit-dev/cli@latest
@@ -93,9 +96,8 @@ export function publishOrder(root: string): string[] {
     visiting.delete(pkg);
     order.push(pkg);
   };
-  const cli = "workit-cli";
-  for (const pkg of RELEASE_PACKAGES) if (pkg !== cli) visit(pkg, []);
-  visit(cli, []);
+  for (const pkg of RELEASE_PACKAGES) if (pkg !== CLI) visit(pkg, []);
+  visit(CLI, []);
   return order;
 }
 
@@ -218,6 +220,47 @@ function publishOne(run: Run, cwd: string, pause: (ms: number) => void): "publis
   }
 }
 
+/** How long the CLI publish waits for the packages before it to be visible (decider ruling 12; measured lag 7m10s). */
+const VISIBILITY_TIMEOUT_MS = 15 * 60_000;
+const VISIBILITY_INTERVAL_MS = 15_000;
+
+/**
+ * Waits until `npm view <name>@<version> version` answers for every package
+ * in `pkgs`, polling every `intervalMs` for at most `timeoutMs`. Returns the
+ * ones still missing. A finished `npm publish` is not a visible package: npm
+ * prints "Your package is being processed" and served v1.9.1's OpenCode
+ * package 7 minutes after it and 4 after the CLI (#792 item 57), so an
+ * upgrade in that window installed the CLI with the previous host package.
+ */
+function waitUntilVisible(
+  run: Run,
+  root: string,
+  pkgs: readonly string[],
+  pause: (ms: number) => void,
+  bound: { timeoutMs?: number; intervalMs?: number } = {},
+): string[] {
+  const timeoutMs = bound.timeoutMs ?? VISIBILITY_TIMEOUT_MS;
+  const intervalMs = bound.intervalMs ?? VISIBILITY_INTERVAL_MS;
+  const versionOf = (pkg: string): string =>
+    (
+      JSON.parse(readFileSync(resolve(root, "packages", pkg, "package.json"), "utf8")) as {
+        version: string;
+      }
+    ).version;
+  const specOf = (pkg: string) => `${npmName(pkg)}@${versionOf(pkg)}`;
+  let missing = [...pkgs];
+  const polls = 1 + Math.floor(timeoutMs / intervalMs);
+  for (let poll = 1; missing.length > 0 && poll <= polls; poll++) {
+    if (poll > 1) pause(intervalMs);
+    missing = missing.filter((pkg) => !onRegistry(run, root, specOf(pkg), versionOf(pkg)));
+    if (missing.length > 0 && poll === 1)
+      console.log(
+        `waiting up to ${timeoutMs / 60_000} min for the registry to serve ${missing.map(specOf).join(", ")} before the CLI`,
+      );
+  }
+  return missing;
+}
+
 /**
  * The packages a release ships and the tag each one was diffed from (null:
  * shipped without a diff). Everything ships on a first-ever release (no
@@ -274,8 +317,10 @@ export function publishChanged(opts: {
   /** Ship every package whatever changed (PUBLISH_ALL=1 or `--all`). */
   all?: boolean;
   run?: Run;
-  /** Wait before the single publish retry. Default: a blocking sleep. */
+  /** Wait before the single publish retry and between visibility polls. Default: a blocking sleep. */
   pause?: (ms: number) => void;
+  /** The bound on the wait for the packages before the CLI to be visible (default 15 min at 15 s). */
+  visibility?: { timeoutMs?: number; intervalMs?: number };
 }): { published: string[]; skipped: string[]; tag: string | null } {
   const { root, dryRun = false } = opts;
   // stdout is captured so `npm view` can be read; stderr (npm's progress and
@@ -314,14 +359,23 @@ export function publishChanged(opts: {
       console.log(`skip ${pkg} (no payload change since ${baseOf.get(pkg) ?? tag})`);
       continue;
     }
-    const blockedBy = internalDependencies(root, pkg).filter((dep) =>
-      failed.some((f) => f.pkg === dep),
-    );
+    // The CLI installs every host package @latest: any failure before it holds it back.
+    const blockedBy =
+      pkg === CLI
+        ? failed.map((f) => f.pkg)
+        : internalDependencies(root, pkg).filter((dep) => failed.some((f) => f.pkg === dep));
     if (blockedBy.length > 0) {
-      const error = `not published: its dependency ${blockedBy.join(", ")} failed to publish`;
+      const error = `not published: ${pkg === CLI ? "the host package" : "its dependency"} ${blockedBy.join(", ")} failed to publish`;
       failed.push({ pkg, error });
       console.log(`publish failed ${pkg}: ${error}`);
       continue;
+    }
+    if (pkg === CLI && !dryRun) {
+      const missing = waitUntilVisible(run, root, published, pause, opts.visibility);
+      if (missing.length > 0)
+        console.log(
+          `::warning::the registry does not serve ${missing.join(", ")} yet; publishing the CLI anyway, so an upgrade before they appear installs their previous release`,
+        );
     }
     const cwd = resolve(root, "packages", pkg);
     let outcome: "published" | "present" = "published";
