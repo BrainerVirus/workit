@@ -71,6 +71,19 @@ test("Given a package without changelogPath and no changelog in a directory name
   expect(check?.fix).toContain("workit workspace set w releasePackages.pkg-x.changelogPath=");
 });
 
+test("Given two packages whose changelogs resolve to no file, When doctor runs, Then the fix names a changelogPath command for each", () => {
+  const check = row(
+    {
+      changelogPath: ["projects/*/CHANGELOG.md"],
+      releasePackages: { "pkg-n": {}, "pkg-x": { changelogPath: "nope/CHANGELOG.md" } },
+    },
+    ["projects/pkg-a/CHANGELOG.md"],
+  );
+  expect(check?.status).toBe("warn");
+  expect(check?.fix).toContain("workit workspace set w releasePackages.pkg-n.changelogPath=");
+  expect(check?.fix).toContain("workit workspace set w releasePackages.pkg-x.changelogPath=");
+});
+
 test("Given a scoped package without changelogPath whose directory holds a workspace changelog, When doctor runs, Then the row is ok and names the file found", () => {
   const check = row(
     { changelogPath: ["projects/*/CHANGELOG.md"], releasePackages: { "@s/pkg-a": {} } },

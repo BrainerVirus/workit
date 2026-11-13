@@ -155,8 +155,8 @@ export type ReleasePackagesReport = {
   }[];
   /** Reader issues, and packages whose changelog names or resolves to no file. */
   issues: string[];
-  /** A package whose changelog needs a changelogPath, for the fix line. */
-  unresolved: string | null;
+  /** Every package whose changelog needs a changelogPath, for the fix line. */
+  unresolved: string[];
 };
 
 /**
@@ -173,14 +173,14 @@ export function releasePackagesReport(cwd: string, dir?: string): ReleasePackage
       workspace: null,
       packages: [],
       issues: [error instanceof Error ? error.message : String(error)],
-      unresolved: null,
+      unresolved: [],
     };
   }
   const read = readReleasePackages(raw?.releasePackages);
   const root = gitDirs(cwd)?.top ?? null;
   const issues = [...read.issues];
   const files = root ? resolveChangelogPaths(cwd, workspaceChangelog(cwd, dir).paths) : [];
-  let unresolved: string | null = null;
+  const unresolved: string[] = [];
   const packages = read.packages.map((pkg) => {
     let changelog: string | null = null;
     if (root) {
@@ -194,7 +194,7 @@ export function releasePackagesReport(cwd: string, dir?: string): ReleasePackage
         issues.push(
           `release package ${JSON.stringify(pkg.name)}: no changelog found (no changelogPath, and no workspace changelogPath file is in a directory named ${pkg.name.split("/").at(-1)})`,
         );
-      if (!changelog) unresolved ??= pkg.name;
+      if (!changelog) unresolved.push(pkg.name);
     }
     return {
       name: pkg.name,
@@ -239,6 +239,6 @@ export function releasePackagesDoctor(
   return {
     status: "warn",
     detail: lines.join("; "),
-    fix: `Fix the reported releasePackages entries: workit workspace set ${ws} releasePackages.${report.unresolved ?? "<name>"}.changelogPath=<repo-relative file> (or tagNamespace=<prefix>; =null unsets)`,
+    fix: `Fix the reported releasePackages entries: ${(report.unresolved.length ? report.unresolved : ["<name>"]).map((name) => `workit workspace set ${ws} releasePackages.${name}.changelogPath=<repo-relative file>`).join("; ")} (or tagNamespace=<prefix>; =null unsets)`,
   };
 }
