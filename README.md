@@ -382,7 +382,7 @@ text.
 | `workit upgrade --check` / `--set-updates=prompt\|auto\|off` | Compare installed and latest versions; choose how a launch handles a new release |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit completion zsh\|bash\|fish\|powershell` | Print the shell completion script (setup and upgrade install it for `$SHELL`) |
-| `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs |
+| `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs; `--worktrees`, `--branches` and `--procs` list (`--apply` removes or stops) what finished work left |
 | `workit install --hosts=<h,…> [--preview\|--yes]` | Install or repair Workit on the named hosts only; a healthy host changes nothing |
 | `workit uninstall [--hosts=<h,…> [--preview\|--yes]]` | Pick hosts (and the owned CLI install), or name them, and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
@@ -392,6 +392,9 @@ text.
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
 | `workit check <name>` | Run a configured check and record observed evidence |
 | `workit lock status\|wait\|run\|heavy` | The machine-wide heavy-check lease: holders, waiting, running a command under it, heavy patterns |
+| `workit run --bg [--port <n>] [--name <n>] -- <cmd…>` | Start a dev server or `docker compose up` under the process registry: one server per repo, charged to the heavy budget ([background processes](docs/guides/processes.md)) |
+| `workit ps [--all]` | The registered background processes: id, pid, port, RSS, owner session |
+| `workit stop <id>… \| --session <s> \| --within <dir> \| --orphans` | Stop registered processes (process group, SIGTERM then SIGKILL; docker rows stop only their containers), with a ledger row each |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
 | `workit deslop scan\|result` | Class the comments, suppressions and debug leftovers a branch adds, by review lane, with no agent; record one result line per PR ([review depth](docs/guides/review.md)) |
 | `workit knowledge lint` | Lint AGENTS.md budget, local links, scaffold-only and duplicated rules; register as `workit check knowledge` |
@@ -490,6 +493,7 @@ More: [configuration and storage](docs/guides/configuration.md).
   [Other hosts](docs/guides/hosts.md) ·
   [Verification](docs/guides/verification.md) ·
   [Delivery and stacks](docs/guides/delivery.md) ·
+  [Background processes](docs/guides/processes.md) ·
   [Grants](docs/guides/grants.md) ·
   [Configuration](docs/guides/configuration.md) ·
   [Migration](docs/guides/migration.md)
