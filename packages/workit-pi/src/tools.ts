@@ -326,14 +326,15 @@ export const enforceToolPolicy = (
     if (inline?.plain && ctx.mode === "tui" && ctx.hasUI) {
       // The shared gates judge the call first; only a pass reaches the dialog.
       // `release notes approve` is user-only, so the dialog is its gate, as
-      // `workit approve`'s is.
-      const gated = isReleaseNotesCall(inline.words)
-        ? undefined
-        : gate({
-            kind: "shell.pre",
-            command: command as string,
-            toolUseId: event.toolCallId ?? null,
-          });
+      // `workit approve`'s is, but only when there is an ask to show.
+      const gated =
+        isReleaseNotesCall(inline.words) && inlineAskFor(inline.words, ctx.cwd)
+          ? undefined
+          : gate({
+              kind: "shell.pre",
+              command: command as string,
+              toolUseId: event.toolCallId ?? null,
+            });
       return gated ?? askInline(inline.words, command as string, event, ctx);
     }
     return typeof command === "string"

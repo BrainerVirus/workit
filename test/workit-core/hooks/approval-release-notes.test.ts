@@ -197,3 +197,20 @@ test("Given Pi without a dialog (print mode), When the agent runs approve, Then 
   expect((result as { reason?: string }).reason).toContain("Only the user runs");
   expect(command).toBe(COMMAND);
 });
+
+test("Given Pi's TUI and no ask to show (no draft, or --package), When the agent runs approve, Then the shared gate's user-only deny applies: no dialog, no ticket", async () => {
+  writeDraft();
+  for (const [command, drop] of [
+    ["workit release notes approve 1.0.0 --package pkg-a", false],
+    [COMMAND, true],
+  ] as const) {
+    if (drop) rmSync(DRAFT, { force: true });
+    const shown: string[] = [];
+    const event = { toolName: "bash", toolCallId: "call-2", input: { command } };
+    const result = await enforceToolPolicy(event as never, pi("tui", "Approve once", shown));
+    expect((result as { block?: boolean } | undefined)?.block, command).toBe(true);
+    expect((result as { reason?: string }).reason, command).toContain("Only the user runs");
+    expect(shown, command).toEqual([]);
+    expect(event.input.command, command).toBe(command);
+  }
+});
