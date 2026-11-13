@@ -93,3 +93,12 @@ export const accountHome = (platform = process.platform, io: AccountIo = hostIo)
     return null;
   }
 };
+
+/**
+ * Where grants are read from: the OS account record's home directory, never
+ * `$HOME` (an agent can set that for one command). Tests swap `resolve`
+ * in-process (the test preload points it at a run-scoped temp home); nothing
+ * outside this process can change it. Here, with builtins only, so the
+ * preload sets it without loading the config schemas.
+ */
+export const grantsHome: { resolve: () => string | null } = { resolve: () => accountHome() };

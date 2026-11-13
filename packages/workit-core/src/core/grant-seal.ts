@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "./safe-write";
 import {
   readWorkspacesResult,
   validateWorkspacesDocument,
@@ -52,8 +53,14 @@ const ENTRY_KEYS = [
 ] as const;
 
 /**
+ * The forge identity of an entry (provider, account, tokenFile, host): a
+ * sealed grant rides on it, so it is authority too.
+ */
+export const IDENTITY_KEYS = ["provider", "account", "tokenFile", "host"] as const;
+
+/**
  * The authority fields of every entry, in entry order: name, glob, remotes,
- * vcs.account and vcs.provider, autonomy, legacy autoApprove, defaultEndpoint,
+ * the forge identity (vcs.provider, account, tokenFile, host), autonomy, legacy autoApprove, defaultEndpoint,
  * verification and youtrack.writes. Roles, branch policy, checks and the rest
  * stay outside, so changing them keeps the seal valid.
  */
@@ -63,7 +70,7 @@ export const sealProjection = (entries: readonly unknown[]): Record<string, unkn
     return pick(
       {
         ...all,
-        vcs: pick(all.vcs, ["provider", "account"]),
+        vcs: pick(all.vcs, IDENTITY_KEYS),
         youtrack: pick(all.youtrack, ["writes"]),
       },
       ENTRY_KEYS,
@@ -79,6 +86,9 @@ const canonical = (value: unknown): string =>
         )
       : item,
   );
+
+/** One comparable string for an entry's forge identity (IDENTITY_KEYS of its vcs). */
+export const identityOf = (vcs: unknown): string => canonical(pick(vcs, IDENTITY_KEYS) ?? {});
 
 export const sealDigest = (projection: readonly unknown[]): string =>
   createHash("sha256").update(canonical(projection)).digest("hex");
@@ -132,4 +142,71 @@ export function checkSeal(dir: string): SealCheck {
   return ok && sealDigest(sealProjection(current.entries)) === seal.sha256
     ? { state: "valid" }
     : broken("workspaces.json changed since it was sealed", sealed.entries);
+}
+
+/** The projection the seal holds, or null when there is no readable, intact seal. */
+export function sealedProjection(dir: string): Record<string, unknown>[] | null {
+  try {
+    const seal = JSON.parse(readFileSync(path.join(dir, SEAL_FILE), "utf8")) as Partial<Seal>;
+    return seal?.version === SEAL_VERSION &&
+      Array.isArray(seal.projection) &&
+      seal.sha256 === sealDigest(seal.projection)
+      ? (seal.projection as Record<string, unknown>[])
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Seal the authority fields of `<dir>/workspaces.json` as it is now (the
+ * user's terminal, or a writer whose change only lowers the sealed values).
+ */
+export function writeSeal(dir: string, entries: readonly unknown[], now = new Date()): string {
+  const file = path.join(dir, SEAL_FILE);
+  writeFileAtomic(file, `${JSON.stringify(sealDocument(entries, now), null, 2)}\n`);
+  return file;
+}
+
+const show = (value: unknown): string => (value === undefined ? "(unset)" : canonical(value));
+
+/**
+ * What sealing would accept, one line per change: every authority field of
+ * every entry when nothing is sealed yet, else what was added, removed or
+ * changed since the seal (entry order counts: the first match wins a tie).
+ */
+export function sealDiffLines(
+  sealed: readonly Record<string, unknown>[] | null,
+  current: readonly unknown[],
+): string[] {
+  const now = sealProjection(current);
+  const label = (entry: Record<string, unknown>, at: number) =>
+    typeof entry.name === "string" ? entry.name : `#${at + 1}`;
+  const fields = (entry: Record<string, unknown>) =>
+    ENTRY_KEYS.filter((key) => key !== "name" && entry[key] !== undefined).map(
+      (key) => `${key}=${show(entry[key])}`,
+    );
+  if (sealed === null)
+    return now.length
+      ? now.map((entry, at) => `+ ${label(entry, at)}: ${fields(entry).join(", ")}`)
+      : ["(no workspace entries: nothing above the defaults)"];
+  const lines: string[] = [];
+  const byName = (list: readonly Record<string, unknown>[]) =>
+    new Map(list.map((entry, at) => [label(entry, at), entry]));
+  const before = byName(sealed);
+  const after = byName(now);
+  for (const [name, entry] of after) {
+    const old = before.get(name);
+    if (!old) {
+      lines.push(`+ ${name}: ${fields(entry).join(", ")}`);
+      continue;
+    }
+    for (const key of ENTRY_KEYS)
+      if (key !== "name" && show(old[key]) !== show(entry[key]))
+        lines.push(`~ ${name}.${key}: ${show(old[key])} -> ${show(entry[key])}`);
+  }
+  for (const name of before.keys()) if (!after.has(name)) lines.push(`- ${name}`);
+  const order = (list: Map<string, unknown>) => [...list.keys()].join("\0");
+  if (lines.length === 0 && order(before) !== order(after)) lines.push("~ entry order changed");
+  return lines;
 }
