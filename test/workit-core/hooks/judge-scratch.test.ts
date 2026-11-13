@@ -166,3 +166,91 @@ test("Given a symlink in scratch that points outside it, When a judge writes thr
   expect(bash(`touch ${path.join(scratch, "sub")}/../y`)).toBeUndefined();
   expect(write(`${path.join(scratch, "sub")}/../y`)).toBeUndefined();
 });
+
+test("Given a scratch repository retargeted at another git dir (a .git file, --git-dir, --work-tree, GIT_* env, -c core.worktree, git config core.worktree|core.bare), When a judge runs git there, Then it is denied; the plain scratch repository stays allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "rt");
+  git(wt, "init", "-q", "-b", "main", rt);
+  const mainGit = path.join(lead, ".git");
+  // A .git file naming the judged repository's git dir.
+  const fake = path.join(scratch, "fake");
+  mkdirSync(fake, { recursive: true });
+  writeFileSync(path.join(fake, ".git"), `gitdir: ${mainGit}\n`);
+  // A .git file Workit cannot read as one.
+  const garbled = path.join(scratch, "garbled");
+  mkdirSync(garbled, { recursive: true });
+  writeFileSync(path.join(garbled, ".git"), "not a gitdir line\n");
+  // A scratch repository whose config moves its work tree to the candidate.
+  const moved = path.join(scratch, "moved");
+  git(wt, "init", "-q", "-b", "main", moved);
+  git(moved, "config", "core.worktree", wt);
+  for (const command of [
+    `git -C ${fake} commit -qm x`,
+    `git -C ${garbled} commit -qm x`,
+    `git -C ${moved} commit -qm x`,
+    `git --git-dir=${mainGit} -C ${rt} commit -qm x`,
+    `git -C ${rt} --git-dir ${mainGit} commit -qm x`,
+    `git --work-tree=${wt} -C ${rt} checkout -- .`,
+    `GIT_DIR=${mainGit} git -C ${rt} commit -qm x`,
+    `export GIT_WORK_TREE=${wt}; git -C ${rt} add -A`,
+    `GIT_COMMON_DIR=${mainGit} git -C ${rt} commit -qm x`,
+    `GIT_INDEX_FILE=${path.join(mainGit, "index")} git -C ${rt} add -A`,
+    `git -c core.worktree=${wt} -C ${rt} commit -qm x`,
+    `git -C ${rt} config core.worktree ${wt}`,
+    `git -C ${rt} config core.bare true`,
+    `git -C ${rt} config include.path ${path.join(mainGit, "config")}`,
+    'GIT_DIR="$X" git commit -qm x',
+  ])
+    expect(bash(command), command).toBe("deny");
+  for (const command of [
+    `git -C ${rt} commit -qm x`,
+    `git -C ${rt} config user.name t`,
+    `git --git-dir=${path.join(rt, ".git")} --work-tree=${rt} commit -qm x`,
+    `GIT_DIR=${path.join(rt, ".git")} git -C ${rt} commit -qm x`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+});
+
+test("Given a judge, When it writes a .git file or into a .git dir inside scratch, Then it is denied", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "rt-write");
+  git(wt, "init", "-q", "-b", "main", rt);
+  expect(write(path.join(scratch, "new-repo", ".git"))).toBe("deny");
+  expect(write(path.join(rt, ".git", "config"))).toBe("deny");
+  expect(
+    bash(`printf 'gitdir: ${path.join(lead, ".git")}' > ${path.join(scratch, "new2", ".git")}`),
+  ).toBe("deny");
+  expect(bash(`ln -s ${path.join(lead, ".git")} ${path.join(scratch, "new3", ".git")}`)).toBe(
+    "deny",
+  );
+  expect(bash(`echo x >> ${path.join(rt, ".git", "config")}`)).toBe("deny");
+});
+
+test("Given files in scratch named like Workit's placeholders, When a judge writes them, Then they are real files and allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  mkdirSync(scratch, { recursive: true });
+  for (const name of [".workit-runs-git", ".workit-live-target"]) {
+    expect(write(path.join(scratch, name)), name).toBeUndefined();
+    expect(bash(`touch ${path.join(scratch, name)}`), name).toBeUndefined();
+    expect(bash(`printf x > ${path.join(scratch, name)}`), name).toBeUndefined();
+  }
+});
+
+test("Given a path through more than 40 symlinks, each a short chain, When judged, Then each link resolves and a scratch target is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch", "hops");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  let dir = scratch;
+  const dirs: string[] = [];
+  for (let index = 0; index < 45; index++) {
+    dirs.push(dir);
+    mkdirSync(dir, { recursive: true });
+    dir = path.join(scratch, `r${index + 1}`);
+  }
+  dirs.push(dir);
+  mkdirSync(dir, { recursive: true });
+  for (let index = 0; index < 45; index++)
+    symlinkSync(dirs[index + 1], path.join(dirs[index], "n"), linkType);
+  symlinkSync(scratch, path.join(lead, "hops-link"), linkType);
+  const target = path.join(lead, "hops-link", ...Array(45).fill("n"), "a.txt");
+  expect(write(target)).toBeUndefined();
+});

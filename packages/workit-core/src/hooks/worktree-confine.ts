@@ -44,6 +44,7 @@ import { segmentsOf, type ShellDialect } from "./shell-words";
 import {
   configWrites,
   OPAQUE_TARGET,
+  placeholdersOf,
   shellMutationTargets,
   UNKNOWN_DIR,
   UNKNOWN_VAR,
@@ -74,7 +75,7 @@ const realOf = (file: string): string => {
  * applies, so `link/../y` is judged beside the link's target. Parts that do
  * not exist yet are kept as spelled.
  */
-const canonical = (file: string, hops = { left: 40 }): string => {
+const canonical = (file: string, hops = { chain: 40, total: 1000 }): string => {
   const start = path.isAbsolute(file) ? file : `${process.cwd()}${path.sep}${file}`;
   const { root } = path.parse(start);
   let at = root;
@@ -93,8 +94,11 @@ const canonical = (file: string, hops = { left: 40 }): string => {
       } catch (error) {
         missing = (error as NodeJS.ErrnoException).code !== "EINVAL";
       }
-    if (link === null) at = next;
-    else if (hops.left-- > 0)
+    // A chain of links is capped at 40 like the OS's; the total bounds cycles through real dirs.
+    if (link === null) {
+      at = next;
+      hops.chain = 40;
+    } else if (hops.chain-- > 0 && hops.total-- > 0)
       at = canonical(path.isAbsolute(link) ? link : `${at}${path.sep}${link}`, hops);
     else return path.resolve(file);
   }
@@ -549,6 +553,120 @@ const inScratch = (real: string, repo: string | null): boolean => {
   return false;
 };
 
+/** Whether real path `real` is a `.git` file or inside a `.git` dir: git's own files, written only through git. */
+const inGitDir = (real: string): boolean => real.split(/[\\/]/).includes(".git");
+
+/** The value of `[core] key` in git config text `text`, else undefined. */
+const coreValue = (text: string, key: string): string | undefined => {
+  let core = false;
+  for (const line of text.split(/\r?\n/)) {
+    const section = /^\s*\[\s*([^\]\s"]+)/.exec(line)?.[1];
+    if (section !== undefined) core = section.toLowerCase() === "core";
+    else if (core) {
+      const value = new RegExp(`^\\s*${key}\\s*=\\s*(.*?)\\s*$`, "i").exec(line)?.[1];
+      if (value !== undefined) return value.replace(/^"(.*)"$/, "$1");
+    }
+  }
+  return undefined;
+};
+
+/**
+ * The real git dir, common dir and configured work tree git uses when run
+ * in real dir `dir` ([] outside every repository); null when Workit cannot
+ * tell: a `.git` file with no gitdir line, `core.bare`, or a config include.
+ */
+const gitDirsAt = (dir: string): string[] | null => {
+  for (let at = dir; ; at = path.dirname(at)) {
+    const dotGit = path.join(at, ".git");
+    let gitDir: string | null = null;
+    try {
+      if (fs.statSync(dotGit).isDirectory()) gitDir = canonical(dotGit);
+      else {
+        const named = /^gitdir:\s*(.+?)\s*$/mu.exec(fs.readFileSync(dotGit, "utf8"))?.[1];
+        if (!named) return null;
+        gitDir = canonical(path.resolve(at, named));
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+    }
+    if (gitDir !== null) {
+      const common = path.join(gitDir, "commondir");
+      const shared = fs.existsSync(common)
+        ? canonical(path.resolve(gitDir, fs.readFileSync(common, "utf8").trim()))
+        : gitDir;
+      const dirs = [gitDir, shared];
+      for (const config of new Set([path.join(gitDir, "config"), path.join(shared, "config")])) {
+        let text = "";
+        try {
+          text = fs.readFileSync(config, "utf8");
+        } catch {
+          continue;
+        }
+        if (
+          /^\s*\[\s*include/im.test(text) ||
+          /^(?:true|yes|on|1)$/i.test(coreValue(text, "bare") ?? "")
+        )
+          return null;
+        const worktree = coreValue(text, "worktree");
+        if (worktree !== undefined) dirs.push(canonical(path.resolve(gitDir, worktree)));
+      }
+      return dirs;
+    }
+    if (path.dirname(at) === at) return [];
+  }
+};
+
+/** git environment that moves its git dir, work tree, index or objects: each value must be in scratch. */
+const GIT_PATH_ENV =
+  /^GIT_(?:DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES)$/;
+
+/**
+ * Why `command` points a judge's git somewhere other than the repository it
+ * runs in, outside scratch (#790): `--git-dir`, `--work-tree`, a `GIT_*` path
+ * variable, `-c core.worktree=` or `git config core.worktree` whose value is
+ * not a literal absolute path in scratch, and any `core.bare`, config include,
+ * `--config-env` or `GIT_CONFIG*`. Null when it does not.
+ */
+const gitRetarget = (command: string, repo: string | null, depth = 0): string | null => {
+  const check = (what: string, value: string | undefined): string | null => {
+    if (value === undefined || /[$`]/.test(value) || !path.isAbsolute(value))
+      return `${what} must name a literal absolute path in scratch`;
+    return inScratch(canonical(value), repo) ? null : `${what} points outside scratch`;
+  };
+  for (const segment of segmentsOf(command)) {
+    const words = segment.words;
+    const isGit = words.some((word) => /^git(?:\.exe)?$/.test(path.basename(word)));
+    for (let index = 0; index < words.length; index++) {
+      const word = words[index];
+      const next = words[index + 1];
+      const assigned = /^([A-Za-z_]\w*)=([\s\S]*)$/.exec(word);
+      let why: string | null = null;
+      if (assigned && GIT_PATH_ENV.test(assigned[1])) why = check(assigned[1], assigned[2]);
+      else if (assigned && assigned[1].startsWith("GIT_CONFIG"))
+        why = `${assigned[1]} changes git's configuration`;
+      else if (isGit) {
+        const flag = /^--(git-dir|work-tree)(?:=([\s\S]*))?$/.exec(word);
+        const key = (word === "-c" ? next : /^-c(.+)$/.exec(word)?.[1])?.toLowerCase() ?? "";
+        if (flag) why = check(`--${flag[1]}`, flag[2] ?? next);
+        else if (word.startsWith("--config-env")) why = "--config-env changes git's configuration";
+        else if (key.startsWith("core.worktree="))
+          why = check("core.worktree", (word === "-c" ? next : word.slice(2))?.slice(14));
+        else if (/^(?:core\.bare|include)/.test(key)) why = `-c ${key} retargets git`;
+        else if (/^core\.worktree$/i.test(word)) why = check("core.worktree", next);
+        else if (/^(?:core\.bare|include(?:if)?\.)/i.test(word)) why = `\`${word}\` retargets git`;
+      }
+      if (!why && depth < 3 && /\s/.test(word) && /\bgit\b|GIT_/.test(word))
+        why = gitRetarget(word, repo, depth + 1);
+      if (why) return why;
+    }
+    for (const body of [...(segment.subs ?? []), ...(segment.stdin ?? [])]) {
+      const why = depth < 3 ? gitRetarget(body, repo, depth + 1) : null;
+      if (why) return why;
+    }
+  }
+  return null;
+};
+
 /** The workit verbs a judge runs, with their allowed subverbs (true: all); any other verb, a new one too, is denied. */
 const JUDGE_VERBS: Readonly<Record<string, true | readonly string[]>> = {
   check: true,
@@ -758,7 +876,11 @@ const judgeDeny = (input: HookInput, what: string, target?: string): HookDecisio
  * against, so only a scratch repository's own git writes pass. A path built
  * from a variable or a directory change Workit cannot resolve is denied too.
  */
-export function confineJudge(input: HookInput, targets: readonly string[]): HookDecision {
+export function confineJudge(
+  input: HookInput,
+  targets: readonly string[],
+  placeholders: ReadonlySet<string> = placeholdersOf(targets),
+): HookDecision {
   try {
     if (!input.session.agentId) return NONE;
     const judged = checkoutOf(input.cwd);
@@ -771,11 +893,24 @@ export function confineJudge(input: HookInput, targets: readonly string[]): Hook
           "it writes to a path Workit cannot resolve (a variable, a command substitution or `cd -`): spell the path out",
         );
       const real = canonical(target);
-      // git writes the repository it finds from where it runs, not that directory.
-      const at = /^\.workit-(?:runs-git|live-target)$/.test(path.basename(real))
-        ? (checkoutOf(real)?.root ?? real)
-        : real;
-      if (inScratch(at, repo)) continue;
+      // git writes the git dir it finds from where it runs, not that directory.
+      const runsGit =
+        placeholders.has(target) &&
+        /^\.workit-(?:runs-git|live-target)$/.test(path.basename(target));
+      const gitDirs = runsGit ? gitDirsAt(path.dirname(real)) : [];
+      if (gitDirs === null)
+        return judgeDeny(
+          input,
+          `git in ${shown(target)} uses a git dir Workit cannot read (a .git file without a gitdir line, core.bare or an include): use a plain scratch repository`,
+        );
+      if (
+        runsGit
+          ? gitDirs.length > 0
+            ? gitDirs.every((dir) => inScratch(dir, repo))
+            : inScratch(real, repo)
+          : inScratch(real, repo) && !inGitDir(real)
+      )
+        continue;
       const runner = runnerAt(target);
       return judgeDeny(
         input,
@@ -811,6 +946,15 @@ export function confineJudgeShell(
     } catch {
       refused = "Workit cannot read this command: split it into simpler ones";
     }
+    if (!refused && dialect === "posix") {
+      const judged = checkoutOf(input.cwd);
+      try {
+        const why = gitRetarget(command, judged ? commonDir(judged.root) : null);
+        if (why) refused = `${why}: run git in a scratch repository without moving its git dir`;
+      } catch {
+        refused = "Workit cannot read this command: split it into simpler ones";
+      }
+    }
     if (refused) return judgeDeny(input, refused);
     if (dialect === "posix" && substitutingHeredoc(command))
       return judgeDeny(
@@ -832,11 +976,15 @@ export function confineJudgeShell(
     } catch {
       // The strict analysis below still judges the command.
     }
-    return confineJudge(input, [
-      ...shellMutationTargets(input.cwd, command, dialect, true),
-      ...fed.flatMap((body) => shellMutationTargets(input.cwd, body, "posix", true)),
-      ...git,
-    ]);
+    const lists = [
+      shellMutationTargets(input.cwd, command, dialect, true),
+      ...fed.map((body) => shellMutationTargets(input.cwd, body, "posix", true)),
+    ];
+    return confineJudge(
+      input,
+      [...lists.flat(), ...git],
+      new Set([...git, ...lists.flatMap((list) => [...placeholdersOf(list)])]),
+    );
   } catch {
     return NONE;
   }

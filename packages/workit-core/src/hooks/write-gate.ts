@@ -826,6 +826,40 @@ const MUTATING_WORKIT_GIT = new Set(["commit", "branch", "stage", "unstage"]);
 const DIR_TARGET = ".workit-live-target";
 
 /**
+ * The placeholders each target list holds, so a real file that carries a
+ * placeholder's name is told apart from one; `collecting` gathers them while
+ * one analysis runs.
+ */
+const PLACEHOLDERS = new WeakMap<readonly string[], ReadonlySet<string>>();
+let collecting: Set<string> | null = null;
+
+/** `dir`'s placeholder `name`, recorded as one for the analysis running. */
+const placeholderIn = (dir: string, name: string): string => {
+  const target = path.join(dir, name);
+  collecting?.add(target);
+  return target;
+};
+
+/** `make()`'s target list, with the placeholders made while it ran recorded for it. */
+const recording = (make: () => string[]): string[] => {
+  const outer = collecting;
+  const found = new Set<string>();
+  collecting = found;
+  try {
+    const targets = make();
+    PLACEHOLDERS.set(targets, found);
+    for (const target of found) outer?.add(target);
+    return targets;
+  } finally {
+    collecting = outer;
+  }
+};
+
+/** The placeholders (not files a command names) in a list `shellMutationTargets` or `liveTargets` returned. */
+export const placeholdersOf = (targets: readonly string[]): ReadonlySet<string> =>
+  PLACEHOLDERS.get(targets) ?? new Set();
+
+/**
  * For an implementer's confinement: a placeholder file name, then the command's
  * name (URI-encoded), standing for the directory a writer Workit cannot see
  * into (an interpreter's inline script, a `-c` shell, `curl -O`) runs in.
@@ -1588,7 +1622,13 @@ const segmentTargets = (
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
           if (!quiet || !isRoot(resolved))
-            targets.push(file === "." ? path.join(resolved, here) : resolved);
+            targets.push(
+              file === "."
+                ? placeholderIn(resolved, here)
+                : path.basename(resolved).startsWith(OPAQUE_TARGET)
+                  ? placeholderIn(path.dirname(resolved), path.basename(resolved))
+                  : resolved,
+            );
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);
       // The registry guard: a hard link is a second name for its source; a symbolic one only points.
@@ -1603,7 +1643,7 @@ const segmentTargets = (
       if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
     const edits = editsOf(body);
     if (edits === null) {
-      if (dir !== undefined) targets.push(path.join(dir, DIR_TARGET));
+      if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
     } else for (const file of edits) targets.push(...atAll(file));
     if (dir !== undefined)
       for (const invocation of workitInvocations(body.map(quoteWord).join(" "), "posix")) {
@@ -1613,7 +1653,7 @@ const segmentTargets = (
           MUTATING_WORKIT_GIT.has(args[1] ?? "") &&
           !inert(args.slice(2), "")
         )
-          targets.push(...runsIn.map((runs) => path.join(runs, DIR_TARGET)));
+          targets.push(...runsIn.map((runs) => placeholderIn(runs, DIR_TARGET)));
       }
   }
   return targets;
@@ -1665,10 +1705,10 @@ export const shellMutationTargets = (
             .map((match) => [match[1], process.env[match[1]] ?? ""])
         : [],
     );
-    return [
+    return recording(() => [
       ...segmentTargets(cwd, command, dialect, 0, strict, env),
-      ...gitMutationDirs(cwd, command, dialect).map((dir) => path.join(dir, DIR_TARGET)),
-    ];
+      ...gitMutationDirs(cwd, command, dialect).map((dir) => placeholderIn(dir, DIR_TARGET)),
+    ]);
   } catch (error) {
     if (strict === "registry") throw error;
     return [];
@@ -1752,7 +1792,11 @@ const resolvedUnder = (dir: string, file: string): string =>
 
 /** The absolute paths an edit touches: its files, or cwd itself when unknown. */
 export const liveTargets = (cwd: string, paths: readonly string[] | null): string[] =>
-  paths?.length ? paths.map((file) => resolvedUnder(cwd, file)) : [path.join(cwd, DIR_TARGET)];
+  recording(() =>
+    paths?.length
+      ? paths.map((file) => resolvedUnder(cwd, file))
+      : [placeholderIn(cwd, DIR_TARGET)],
+  );
 
 // --- the issued-registry, approvals and config guard (#292) ----------------
 
