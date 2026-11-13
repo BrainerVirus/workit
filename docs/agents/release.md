@@ -49,8 +49,18 @@ version already there counts as published. Otherwise it retries once, in a new
 process, which covers transient errors such as sigstore's
 `TLOG_CREATE_ENTRY_ERROR` (409). A package that still fails makes the job fail
 with a summary after the others are published. Packages that install it are
-held back, because their `^X` range could not resolve. Re-publish them by hand
-from the tag, in the same order.
+held back, because their `^X` range could not resolve, and so is `workit-cli`
+after any failed package. Re-publish them by hand from the tag, in the same
+order.
+
+A finished `npm publish` does not make a package visible: npm answers "Your
+package is being processed" and can serve it minutes later. In v1.9.1 the
+OpenCode package became visible 7 minutes after its publish and 4 minutes
+after the CLI, and an upgrade in that window got the previous OpenCode
+package. So before it publishes `workit-cli`, the job polls
+`npm view <name>@<version> version` every 15 s for every package it published
+in this run, for at most 15 minutes. When the bound runs out it publishes the
+CLI anyway, with a `::warning::` that names the packages still missing.
 
 Releases that went out header-only or without a GitHub release can be repaired
 with `bun scripts/backfill-release-notes.ts <from-tag>..<to-tag>`. It

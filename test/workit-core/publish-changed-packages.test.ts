@@ -17,6 +17,9 @@ import { REPO_ROOT } from "@/test/shared/helpers/packages";
 // is the release list with workit-cli moved last (W2.38).
 const ORDER = [...RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-cli"), "workit-cli"];
 
+/** `npm view <name>@<version> version` for a package the registry already serves: the version. */
+const visible = (args: string[]): string => `${args[1].slice(args[1].lastIndexOf("@") + 1)}\n`;
+
 // Measured over 15 s per test on loaded Windows runners (#415).
 if (process.platform === "win32") setDefaultTimeout(60_000);
 
@@ -249,7 +252,8 @@ describe("publishChanged", () => {
       const cwds: string[] = [];
       const result = publishChanged({
         root: r.root,
-        run: (_cmd, _args, opts) => {
+        run: (_cmd, args, opts) => {
+          if (args[0] === "view") return visible(args);
           cwds.push(opts.cwd);
         },
       });
@@ -258,7 +262,7 @@ describe("publishChanged", () => {
       expect(result.tag).toBeNull();
       expect(cwds).toEqual(ORDER.map((pkg) => path.join(r.root, "packages", pkg)));
       const log = spyOn(console, "log");
-      publishChanged({ root: r.root, run: () => {} });
+      publishChanged({ root: r.root, run: (_cmd, args) => visible(args) });
       expect(log.mock.calls.map((c) => c[0])).toEqual(
         ORDER.map((pkg) => `published ${pkg} @ ${path.join(r.root, "packages", pkg)}`),
       );
@@ -398,6 +402,8 @@ describe("the first @workit-dev release and the registry baseline", () => {
     const published: string[] = [];
     const run = (_cmd: string, args: string[], opts: { cwd: string }) => {
       if (args[0] === "view") {
+        // A versioned spec is the visibility poll before the CLI: what this run published is served.
+        if (/^@[^@]+@/.test(args[1])) return visible(args);
         const version = versions[args[1]];
         if (version === undefined) throw new Error(`E404 ${args[1]}`);
         return `${version}\n`;
@@ -415,7 +421,7 @@ describe("the first @workit-dev release and the registry baseline", () => {
     try {
       execFileSync("git", ["tag", "v14.6.0"], { cwd: r.root });
       r.change("packages/workit-opencode/src/i.ts", "c\n");
-      const result = publishChanged({ root: r.root, run: () => "" });
+      const result = publishChanged({ root: r.root, run: (_cmd, args) => visible(args) });
       expect(result.tag).toBeNull();
       expect(result.published).toEqual(ORDER);
     } finally {
@@ -577,6 +583,7 @@ describe("publish order (W2.38)", () => {
       publishChanged({
         root: r.root,
         run: (_cmd, args, opts) => {
+          if (args[0] === "view") return visible(args);
           if (args[0] === "publish") published.push(path.basename(opts.cwd));
         },
       });
@@ -616,10 +623,87 @@ describe("publish order (W2.38)", () => {
       const message = (err as Error).message;
       expect(message).toContain("publish failed for 2 package(s): workit-cursor, workit-cli");
       expect(lines).toContain(
-        "publish failed workit-cli: not published: its dependency workit-cursor failed to publish",
+        "publish failed workit-cli: not published: the host package workit-cursor failed to publish",
       );
     } finally {
       r.cleanup();
     }
+  });
+});
+
+// #792 item 57: npm accepted @workit-dev/opencode@1.9.1 at 11:21 and served it
+// at 11:28, after the CLI (11:24): publishing the CLI last did not make it
+// visible last. The CLI publish waits for every package before it.
+describe("the CLI publish waits until the registry serves the packages before it", () => {
+  // A first-ever release ships every package; `visibleOn(pkg)` is the poll
+  // on which the registry starts serving it (Infinity: never).
+  function release(visibleOn: (pkg: string) => number, failing: string[] = []) {
+    const r = repo({ tagged: false });
+    const events: string[] = [];
+    const pauses: number[] = [];
+    const polls = new Map<string, number>();
+    const log = spyOn(console, "log");
+    let error: Error | undefined;
+    let lines: string[] = [];
+    try {
+      publishChanged({
+        root: r.root,
+        pause: (ms) => pauses.push(ms),
+        run: (_cmd, args, opts) => {
+          const pkg = path.basename(opts.cwd);
+          if (args[0] === "view") {
+            const name = args[1].slice(0, args[1].lastIndexOf("@"));
+            const target = RELEASE_PACKAGES.find((each) => npmName(each) === name) ?? name;
+            const poll = (polls.get(target) ?? 0) + 1;
+            polls.set(target, poll);
+            events.push(`view ${target} #${poll}`);
+            return poll >= visibleOn(target) ? visible(args) : "";
+          }
+          if (failing.includes(pkg)) throw new Error("E403 forbidden");
+          events.push(`publish ${pkg}`);
+          return "";
+        },
+      });
+    } catch (e) {
+      error = e as Error;
+    } finally {
+      lines = log.mock.calls.map((c) => String(c[0]));
+      log.mockRestore();
+      r.cleanup();
+    }
+    return { events, pauses, error, lines };
+  }
+  const HOSTS = ORDER.filter((pkg) => pkg !== "workit-cli");
+
+  test("Given host packages the registry serves only on the third poll, When the publisher runs, Then the CLI publishes after the third poll", () => {
+    const out = release(() => 3);
+    const cli = out.events.indexOf("publish workit-cli");
+    expect(cli).toBe(out.events.length - 1);
+    for (const pkg of HOSTS) expect(out.events.indexOf(`view ${pkg} #3`), pkg).toBeGreaterThan(-1);
+    expect(out.events.slice(0, cli).filter((e) => e.startsWith("view")).length).toBe(
+      HOSTS.length * 3,
+    );
+    expect(out.pauses).toEqual([15_000, 15_000]);
+    expect(out.error).toBeUndefined();
+    expect(out.lines.some((line) => line.startsWith("::warning::"))).toBe(false);
+  });
+
+  test("Given a host package the registry never serves, When the publisher runs, Then the CLI publishes after the 15-minute bound with a warning naming it", () => {
+    const out = release((pkg) => (pkg === "workit-opencode" ? Infinity : 1));
+    expect(out.events.at(-1)).toBe("publish workit-cli");
+    expect(out.events.filter((e) => e.startsWith("view workit-opencode")).length).toBe(61);
+    expect(out.pauses.reduce((sum, ms) => sum + ms, 0)).toBe(15 * 60_000);
+    const warnings = out.lines.filter((line) => line.startsWith("::warning::"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("workit-opencode");
+    expect(warnings[0]).not.toContain("workit-cursor");
+    expect(out.error).toBeUndefined();
+  });
+
+  test("Given a host package whose own publish failed, Then the job fails before the CLI publish, with no wait", () => {
+    const out = release((pkg) => (pkg === "workit-opencode" ? Infinity : 1), ["workit-opencode"]);
+    expect(out.events).not.toContain("publish workit-cli");
+    expect(out.events.some((e) => e.startsWith("view workit-cursor"))).toBe(false);
+    expect(out.error?.message).toContain("workit-opencode, workit-cli");
   });
 });
