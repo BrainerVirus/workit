@@ -9,6 +9,12 @@ import path from "node:path";
 import { consumeInlineAsk } from "@/packages/workit-core/src/approvals/store";
 import { youTrackAsk } from "@/packages/workit-core/src/approvals/youtrack-ask";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
+import type { Io } from "@/packages/workit-cli/src/output";
+import { run as youtrack } from "@/packages/workit-cli/src/verbs/youtrack";
+import type {
+  WriteResult,
+  YouTrackBackend,
+} from "@/packages/workit-core/src/core/youtrack-backend";
 
 const base = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-pi-yt-ask-")));
 const saved = { state: process.env.WORKIT_STATE_DIR, config: process.env.WORKIT_CONFIG };
@@ -106,4 +112,75 @@ test("Given a wrapped YouTrack write in Pi, When it is called, Then it is blocke
     block: true,
     reason: expect.stringContaining(`Run \`${COMMAND}\` as its own call`),
   });
+});
+
+// A supervised Pi worker (worker.ts): its pi process has WORKIT_PI_WORKER_SESSION
+// and WORKIT_SESSION_ID `<lead>:<worker>`, and its bash tool exports its own
+// PI_SESSION_ID. The ask and the verb must name the same session.
+const workerCtx = (session: string) =>
+  ({
+    cwd: base,
+    mode: "tui",
+    hasUI: true,
+    isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => session },
+    ui: { select: async () => "Approve once" },
+  }) as never;
+
+const postedBy = async (ticket: string, shell: NodeJS.ProcessEnv) => {
+  const posts: string[] = [];
+  const done = (text: string): WriteResult => {
+    posts.push(text);
+    return { ok: true, data: { id: "1" } };
+  };
+  const yt = {
+    kind: "ytrack",
+    showIssue: async () => ({ ok: false, code: "failed", error: "unused" }),
+    createIssue: async () => ({ ok: false, code: "failed", error: "unused" }),
+    addComment: async (_issue: string, text: string) => done(text),
+    addWorkItem: async () => done("work"),
+    texts: async () => ({ texts: [], complete: true }),
+    ownEntries: async () => [],
+    attachFiles: async () => ({ ok: true, data: {} }),
+    applyCommand: async () => ({ ok: true, data: {} }),
+    supports: () => "ok",
+  } as unknown as YouTrackBackend;
+  const io: Io = {
+    json: false,
+    cwd: base,
+    env: { ...shell, WORKIT_APPROVAL_TICKET: ticket },
+    stdout: () => {},
+    stderr: () => {},
+  };
+  await youtrack(["note", "X-1", "--file", "note.md"], io, () => yt, { writes: () => "ask" });
+  return posts.length;
+};
+
+test("Given a Pi worker's yes in its dialog, When the call runs in that worker's shell, Then it posts; in the lead's shell or another worker's it does not", async () => {
+  writeFileSync(path.join(base, "note.md"), NOTE);
+  const before = process.env.WORKIT_PI_WORKER_SESSION;
+  process.env.WORKIT_PI_WORKER_SESSION = "worker-1";
+  const tickets: string[] = [];
+  try {
+    for (let i = 0; i < 3; i += 1) {
+      const event = { toolName: "bash", toolCallId: `c-${i}`, input: { command: COMMAND } };
+      await enforceToolPolicy(event as never, workerCtx("worker-1"));
+      tickets.push(/^WORKIT_APPROVAL_TICKET=(\S+) /u.exec(event.input.command)?.[1] ?? "");
+    }
+  } finally {
+    if (before === undefined) delete process.env.WORKIT_PI_WORKER_SESSION;
+    else process.env.WORKIT_PI_WORKER_SESSION = before;
+  }
+  const worker = (id: string) => ({
+    WORKIT_HOST: "pi",
+    WORKIT_SESSION_ID: `lead-1:${id}`,
+    WORKIT_PI_WORKER_SESSION: id,
+    PI_SESSION_ID: id,
+    PI_CODING_AGENT: "1",
+  });
+  // Each ask replaced the one before it: only the last ticket is live.
+  const ticket = tickets[2] ?? "";
+  expect(await postedBy(ticket, { PI_SESSION_ID: "lead-1", PI_CODING_AGENT: "1" })).toBe(0);
+  expect(await postedBy(ticket, worker("worker-2"))).toBe(0);
+  expect(await postedBy(ticket, worker("worker-1"))).toBe(1);
 });

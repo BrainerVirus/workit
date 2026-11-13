@@ -278,7 +278,9 @@ const askInline = async (
       argvHash: ask.argvHash,
       contentHash: ask.contentHash,
       host: "pi",
-      session: hookInput(ctx, { kind: "context.turn" }).session.id || null,
+      // What this process's bash tool exports as PI_SESSION_ID (a worker's
+      // own session, never `<lead>:<worker>`): the verb reads the same (#864).
+      session: ctx.sessionManager?.getSessionId() || null,
       agent: null,
       toolUseId: event.toolCallId ?? null,
     });

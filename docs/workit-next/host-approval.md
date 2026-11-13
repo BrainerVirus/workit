@@ -70,7 +70,9 @@ command and no id.
 3. The verb reads each file the call names once, hashes those bytes and posts exactly them (an
    attachment from a private copy), so nothing is re-read between the check and the post. Right
    before the write it consumes the row once (exclusive create), only from the host session that
-   asked (the shell's `WORKIT_SESSION_ID`, or the host's own session variable), then appends
+   asked: the host's own shell variable where it sets one (Pi's `PI_SESSION_ID`, set by its bash
+   tool on every call; a Pi worker's dialog records the same, its own session, never
+   `<lead>:<worker>`), else the declared `WORKIT_SESSION_ID` (Claude Code), then appends
    `approval.consumed` to the ledger. A missing, foreign, changed, used, expired or replaced
    ticket, or one used from another session, refuses `approval_not_bound` and posts nothing.
    Claude Code puts no subagent id in a shell (subagents share the session id), so a lead's
