@@ -3,7 +3,7 @@
 // the backlink records a request through the approval channel and is pending
 // until the user's yes, which a re-run of `workit pr create` consumes.
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { inlineAskFor, inlineCallIn } from "@/packages/workit-core/src/approvals/inline";
@@ -11,7 +11,7 @@ import { postBacklinks, type IssueLink } from "@/packages/workit-core/src/forge/
 import type { ResolvedForge } from "@/packages/workit-core/src/forge/resolve";
 import { useConfigHome } from "../../shared/grant-home";
 
-const dir = mkdtempSync(path.join(os.tmpdir(), "wk-backlink-ask-"));
+const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-backlink-ask-")));
 const saved = {
   WORKIT_YOUTRACK_CONFIG: process.env.WORKIT_YOUTRACK_CONFIG,
   WORKIT_CONFIG: process.env.WORKIT_CONFIG,

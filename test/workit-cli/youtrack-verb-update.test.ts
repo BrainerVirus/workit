@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -53,7 +54,7 @@ const saved = {
 };
 
 beforeAll(() => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "wk-yt-update-"));
+  dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-yt-update-")));
   writeFileSync(
     path.join(dir, "youtrack.json"),
     JSON.stringify({ baseUrl: "https://acme.youtrack.cloud", timezone: "UTC" }),

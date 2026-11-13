@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -38,7 +39,7 @@ beforeEach(() => {
 const realFetch = globalThis.fetch;
 
 beforeAll(() => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "wk-yt-verb-"));
+  dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-yt-verb-")));
   // A leftover legacy token file and key: Workit must never read or send either.
   const token = path.join(dir, "youtrack.token");
   writeFileSync(token, "legacy-test-token\n");

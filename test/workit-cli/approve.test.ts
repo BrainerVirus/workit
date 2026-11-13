@@ -2,7 +2,7 @@
 // a person at a real TTY outside an agent confirms and the grant is
 // recorded; an agent shell (or no TTY) only shows the requests.
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -13,7 +13,7 @@ import {
   type ApprovalFields,
 } from "@/packages/workit-core/src/approvals/store";
 
-const base = mkdtempSync(path.join(tmpdir(), "workit-approve-cli-"));
+const base = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-approve-cli-")));
 const saved = process.env.WORKIT_STATE_DIR;
 let run = 0;
 beforeEach(() => {
