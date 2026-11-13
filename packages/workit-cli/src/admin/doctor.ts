@@ -67,7 +67,7 @@ import {
 } from "@workit-dev/core/src/check-config";
 import { probeScope, type ScopeProbe } from "@workit-dev/core/src/core/heavy-scope";
 import { repoDir } from "@workit-dev/core/src/core/repo-paths";
-import { CHECKOUT_LEFTOVERS } from "@workit-dev/core/src/core/task-store";
+import { CHECKOUT_LEFTOVERS } from "@workit-dev/core/src/core/checkout-leftovers";
 import { packageRoot } from "@workit-dev/core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,

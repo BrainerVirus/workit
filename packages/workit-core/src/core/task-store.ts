@@ -68,6 +68,7 @@ import {
   type LogRead,
   type StoreEvent,
 } from "../store/event-log";
+import { CHECKOUT_LEFTOVERS } from "./checkout-leftovers";
 import { diff } from "../store/patch";
 import { checkoutSlug, type TaskKey } from "../store/paths";
 import {
@@ -173,24 +174,6 @@ export type ImplicitInput = {
 };
 export type ImplicitTask = { task: TaskRecord; created: boolean; key: TaskKey };
 
-/**
- * What older runtimes left in a git checkout's `.workit/`: moved into the
- * store's backup (known markers deleted), so `.workit/` keeps only team config.
- */
-export const CHECKOUT_LEFTOVERS = [
-  "workspace.json",
-  "index.json",
-  "tasks",
-  "recovery",
-  "metadata.lock",
-  "store.moved.json",
-  "task-index.json",
-  "checkouts",
-  "blobs",
-  "legacy",
-  "ledger",
-  "keys",
-];
 /** The `.gitignore` bodies older runtimes wrote into `.workit/`. */
 const GENERATED_GITIGNORES = new Set(["*\n", "*\n!risk-paths\n"]);
 /** Every field of a marker this runtime wrote (3.x workspace marker, 2.x task stub, moved store marker). */
