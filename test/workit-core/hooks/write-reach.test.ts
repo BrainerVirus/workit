@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   linkSync,
+  readdirSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -124,33 +125,43 @@ const WRITERS: [string, (t: string) => string][] = [
   ["of=", (t) => `dd if=${repo}/a.txt of=${t}`],
 ];
 
+// On Windows the launchers send every write (and every edit) to the runtime
+// (ruling hook-reach-2026-11-13 item 4; ruling mweicn74), so mayReach's
+// precision protects only POSIX: the differential tests run there, and the
+// Windows rule has its own test below.
+const ON_WINDOWS = process.platform === "win32";
+
 const GUARD = /^workit (?:issued-registry|approvals|config|registry) guard/;
 const denied: { cwd: string; command: string }[] = [];
 
-test("G every root × writer × spelling × working dir, W the registry guard denies one, T mayReach says yes; the guard denies at least the floor", () => {
-  const cwds = [repo, home, path.dirname(config), config];
-  const misses: string[] = [];
-  let total = 0;
-  for (const cwd of cwds)
-    ROOTS.forEach((root, index) => {
-      for (const [label, prefix, target] of spellings(root, index, cwd))
-        for (const [writer, make] of WRITERS) {
-          const command = prefix + make(target);
-          total += 1;
-          const oracle = shellGate(cwd, command, null);
-          if (oracle.kind !== "deny" || !GUARD.test(oracle.reason)) continue;
-          denied.push({ cwd, command });
-          if (!mayReach(command, cwd))
-            misses.push(`${root.name} / ${writer} / ${label} in ${cwd}: ${command}`);
-        }
-    });
-  expect(misses).toEqual([]);
-  // Not vacuous: most of the matrix is a write the guard denies, also from the
-  // repo, where only the word test (not the working dir) can say yes.
-  expect(total).toBeGreaterThan(5000);
-  expect(denied.length).toBeGreaterThan(5000);
-  expect(denied.filter((item) => item.cwd === repo).length).toBeGreaterThan(1200);
-}, 600_000);
+test.skipIf(ON_WINDOWS)(
+  "G every root × writer × spelling × working dir, W the registry guard denies one, T mayReach says yes; the guard denies at least the floor",
+  () => {
+    const cwds = [repo, home, path.dirname(config), config];
+    const misses: string[] = [];
+    let total = 0;
+    for (const cwd of cwds)
+      ROOTS.forEach((root, index) => {
+        for (const [label, prefix, target] of spellings(root, index, cwd))
+          for (const [writer, make] of WRITERS) {
+            const command = prefix + make(target);
+            total += 1;
+            const oracle = shellGate(cwd, command, null);
+            if (oracle.kind !== "deny" || !GUARD.test(oracle.reason)) continue;
+            denied.push({ cwd, command });
+            if (!mayReach(command, cwd))
+              misses.push(`${root.name} / ${writer} / ${label} in ${cwd}: ${command}`);
+          }
+      });
+    expect(misses).toEqual([]);
+    // Not vacuous: most of the matrix is a write the guard denies, also from the
+    // repo, where only the word test (not the working dir) can say yes.
+    expect(total).toBeGreaterThan(5000);
+    expect(denied.length).toBeGreaterThan(5000);
+    expect(denied.filter((item) => item.cwd === repo).length).toBeGreaterThan(1200);
+  },
+  600_000,
+);
 
 test("G an edit whose file reaches a guarded path, W the gate denies it, T editReaches or mayReach says yes", () => {
   let count = 0;
@@ -171,27 +182,30 @@ test("G an edit whose file reaches a guarded path, W the gate denies it, T editR
   expect(count).toBeGreaterThan(10);
 });
 
-test("G plain writes and reads inside the repo, W mayReach reads them, T none reaches a guarded path", () => {
-  for (const command of [
-    "mkdir out",
-    `mkdir -p ${repo}/out`,
-    "rm -f a.txt",
-    "cp a.txt b.txt",
-    "echo x > a.txt",
-    `echo x > ${path.join(base, "elsewhere.txt")}`,
-    "sed -i s/a/b/ a.txt",
-    "sed -n 1,5p a.ts",
-    "find . -name '*.ts'",
-    "awk '{print $1}' a.ts",
-    "rg '=>' .",
-    "ls 2>&1 | tail",
-    "ls >/dev/null",
-  ]) {
-    expect(mayReach(command, repo), command).toBe(false);
-    expect(shellGate(repo, command, null).kind, command).not.toBe("deny");
-  }
-  expect(editReaches(path.join(repo, "a.ts"), repo)).toBe(false);
-});
+test.skipIf(ON_WINDOWS)(
+  "G plain writes and reads inside the repo, W mayReach reads them, T none reaches a guarded path",
+  () => {
+    for (const command of [
+      "mkdir out",
+      `mkdir -p ${repo}/out`,
+      "rm -f a.txt",
+      "cp a.txt b.txt",
+      "echo x > a.txt",
+      `echo x > ${path.join(base, "elsewhere.txt")}`,
+      "sed -i s/a/b/ a.txt",
+      "sed -n 1,5p a.ts",
+      "find . -name '*.ts'",
+      "awk '{print $1}' a.ts",
+      "rg '=>' .",
+      "ls 2>&1 | tail",
+      "ls >/dev/null",
+    ]) {
+      expect(mayReach(command, repo), command).toBe(false);
+      expect(shellGate(repo, command, null).kind, command).not.toBe("deny");
+    }
+    expect(editReaches(path.join(repo, "a.ts"), repo)).toBe(false);
+  },
+);
 
 const launch = (entry: string[], payload: Record<string, unknown>) => {
   const child = spawnSync(entry[0] ?? "node", entry.slice(1), {
@@ -205,45 +219,49 @@ const launch = (entry: string[], payload: Record<string, unknown>) => {
     .hookSpecificOutput?.permissionDecision;
 };
 
-test("G a sample of the guard's denies, W each goes through Claude Code's and Codex's real launcher, T both deny", () => {
-  expect(denied.length).toBeGreaterThan(5000);
-  const fromRepo = denied.filter((item) => item.cwd === repo);
-  const step = Math.max(1, Math.floor(fromRepo.length / 32));
-  const sample = fromRepo.filter((_, index) => index % step === 0).slice(0, 32);
-  expect(sample.length).toBeGreaterThanOrEqual(30);
-  for (const { cwd, command } of sample) {
-    const claude = launch(
-      ["node", path.join(ROOT, "packages/workit-claude-code/bin/workit-hook.mjs")],
-      {
-        hook_event_name: "PreToolUse",
-        session_id: "11111111-2222-3333-4444-555555555555",
-        transcript_path: "/tmp/x.jsonl",
-        cwd,
-        permission_mode: "default",
-        tool_name: "Bash",
-        tool_input: { command, description: "d" },
-        tool_use_id: "toolu_reach",
-      },
-    );
-    expect(claude, `claude: ${command}`).toBe("deny");
-    const codex = launch(
-      [process.execPath, path.join(ROOT, "packages/workit-codex/hooks/launcher.ts")],
-      {
-        session_id: "session-1",
-        cwd,
-        model: "gpt-5",
-        permission_mode: "default",
-        transcript_path: null,
-        hook_event_name: "PreToolUse",
-        turn_id: "turn-1",
-        tool_use_id: "tool-1",
-        tool_name: "bash",
-        tool_input: { command },
-      },
-    );
-    expect(codex, `codex: ${command}`).toBe("deny");
-  }
-}, 600_000);
+test.skipIf(ON_WINDOWS)(
+  "G a sample of the guard's denies, W each goes through Claude Code's and Codex's real launcher, T both deny",
+  () => {
+    expect(denied.length).toBeGreaterThan(5000);
+    const fromRepo = denied.filter((item) => item.cwd === repo);
+    const step = Math.max(1, Math.floor(fromRepo.length / 32));
+    const sample = fromRepo.filter((_, index) => index % step === 0).slice(0, 32);
+    expect(sample.length).toBeGreaterThanOrEqual(30);
+    for (const { cwd, command } of sample) {
+      const claude = launch(
+        ["node", path.join(ROOT, "packages/workit-claude-code/bin/workit-hook.mjs")],
+        {
+          hook_event_name: "PreToolUse",
+          session_id: "11111111-2222-3333-4444-555555555555",
+          transcript_path: "/tmp/x.jsonl",
+          cwd,
+          permission_mode: "default",
+          tool_name: "Bash",
+          tool_input: { command, description: "d" },
+          tool_use_id: "toolu_reach",
+        },
+      );
+      expect(claude, `claude: ${command}`).toBe("deny");
+      const codex = launch(
+        [process.execPath, path.join(ROOT, "packages/workit-codex/hooks/launcher.ts")],
+        {
+          session_id: "session-1",
+          cwd,
+          model: "gpt-5",
+          permission_mode: "default",
+          transcript_path: null,
+          hook_event_name: "PreToolUse",
+          turn_id: "turn-1",
+          tool_use_id: "tool-1",
+          tool_name: "bash",
+          tool_input: { command },
+        },
+      );
+      expect(codex, `codex: ${command}`).toBe("deny");
+    }
+  },
+  600_000,
+);
 
 test("G the Claude Code launcher, W its source is read, T it holds write-reach.ts's region equal after type erasure", () => {
   const region = (file: string) => {
@@ -288,3 +306,117 @@ test("G the guarded dirs, W the launcher and core build them for one fixture env
   expect(dirs.configs[0]).toBe(env.WORKIT_CONFIG_DIR);
   expect(dirs.home).toBe(env.HOME);
 });
+
+test("G any text or file, Windows-shaped included, W mayReach and editReaches read it on this platform, T each answers a boolean and never throws", () => {
+  const short = path.join(base, "RUNNER~1", "AppData", "Local", "Temp");
+  for (const text of [
+    "ls",
+    "mkdir out",
+    `mkdir -p ${repo}/out`,
+    `mkdir -p ${short}\\wk\\repo/out`,
+    "echo x > C:\\Users\\RUNNER~1\\AppData\\Roaming\\workit\\workspaces.json",
+    "Set-Content -Path $env:APPDATA\\workit\\x -Value 1",
+    "cd /d C:\\x && del y",
+    "rm -rf ~/x/*",
+    "",
+  ]) {
+    expect(typeof mayReach(text, repo), text).toBe("boolean");
+    expect(typeof mayReach(text, short), text).toBe("boolean");
+    expect(typeof editReaches(text || "a.ts", repo), text).toBe("boolean");
+  }
+});
+
+/** Did a launcher answer on its own, without the runtime? */
+const answeredAlone = {
+  claude: (payload: Record<string, unknown>) => {
+    const child = spawnSync(
+      "node",
+      [path.join(ROOT, "packages/workit-claude-code/bin/workit-hook.mjs")],
+      {
+        input: JSON.stringify(payload),
+        encoding: "utf8",
+        // A runtime that cannot start says so on stderr; the fast path never starts it.
+        env: {
+          ...saved,
+          ...ENV,
+          WORKIT_SESSION_ID: "",
+          WORKIT_CLAUDE_RUNTIME: "source",
+          WORKIT_BUN: path.join(base, "no-bun"),
+        },
+        timeout: 60_000,
+      },
+    );
+    expect(child.status, child.stderr).toBe(0);
+    return !child.stderr.includes("hook unavailable");
+  },
+  codex: (entry: string, payload: Record<string, unknown>) => {
+    const child = spawnSync("node", [entry], {
+      input: JSON.stringify(payload),
+      encoding: "utf8",
+      env: { ...saved, ...ENV, WORKIT_SESSION_ID: "" },
+      timeout: 60_000,
+    });
+    return (
+      child.status === 0 &&
+      child.stdout.trim() === '{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}'
+    );
+  },
+};
+
+test.if(ON_WINDOWS)(
+  "G Windows and a repo with no task store, W an agent writes from the shell or edits, T both launchers' real entries send every write and edit to the runtime",
+  () => {
+    // The Codex entry as built, its runtime and failure chunks removed: only the quiet path answers.
+    const out = path.join(base, "codex-build");
+    const built = spawnSync(
+      process.execPath,
+      [path.join(ROOT, "packages/workit-codex/scripts/build.ts"), out],
+      { encoding: "utf8", timeout: 300_000 },
+    );
+    expect(built.status, built.stderr).toBe(0);
+    const dist = path.join(out, "dist");
+    for (const file of readdirSync(dist))
+      if (
+        file !== "workit-hook.js" &&
+        /runCodexHook|answerRuntimeFailure/.test(readFileSync(path.join(dist, file), "utf8"))
+      )
+        rmSync(path.join(dist, file));
+    const codex = path.join(dist, "workit-hook.js");
+    const pre = (tool_name: string, tool_input: Record<string, unknown>) => ({
+      hook_event_name: "PreToolUse",
+      session_id: "11111111-2222-3333-4444-555555555555",
+      transcript_path: "x.jsonl",
+      cwd: repo,
+      permission_mode: "default",
+      tool_name,
+      tool_input,
+      tool_use_id: "toolu_win",
+    });
+    for (const command of [
+      "mkdir out",
+      "rm -f a.txt",
+      "cp a.txt b.txt",
+      "echo x | tee a.txt",
+      "echo x > a.txt",
+      "sed -i s/a/b/ a.txt",
+    ]) {
+      expect(answeredAlone.claude(pre("Bash", { command })), `claude: ${command}`).toBe(false);
+      expect(answeredAlone.claude(pre("PowerShell", { command })), `pwsh: ${command}`).toBe(false);
+      expect(answeredAlone.codex(codex, pre("bash", { command })), `codex: ${command}`).toBe(false);
+    }
+    const file = path.join(repo, "a.ts");
+    for (const [tool, input] of [
+      ["Edit", { file_path: file, old_string: "a", new_string: "b" }],
+      ["Write", { file_path: file, content: "x" }],
+      ["MultiEdit", { file_path: file, edits: [] }],
+      ["NotebookEdit", { notebook_path: path.join(repo, "a.ipynb"), new_source: "x" }],
+    ] as const)
+      expect(answeredAlone.claude(pre(tool, input)), tool).toBe(false);
+    expect(answeredAlone.codex(codex, pre("apply_patch", { command: "*** Begin Patch" }))).toBe(
+      false,
+    );
+    // A read stays with the launcher, so the probe can tell the two apart.
+    expect(answeredAlone.claude(pre("Read", { file_path: file }))).toBe(true);
+  },
+  600_000,
+);
