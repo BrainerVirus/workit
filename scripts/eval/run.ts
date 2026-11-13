@@ -92,6 +92,7 @@ import {
   tripwireBase,
   watchedFindings,
   writeJournal,
+  type DropReason,
   type Finding,
   type Guard,
   type Snapshot,
@@ -1339,12 +1340,26 @@ const tripwired = async (
   }
 };
 
+/** The commit this runner's checkout is at, for the drop record; null when git cannot say. */
+const runnerHead = (): string | null => {
+  const run = spawnSync("git", ["-C", import.meta.dir, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  return run.status === 0 ? run.stdout.trim() || null : null;
+};
+
 const holdTripwire = async (
   opts: Options,
   print: (text: string) => void,
   run: () => Promise<number>,
   settleFlags: { discard: boolean },
 ): Promise<number> => {
+  // Every drop leaves a line in drops.jsonl, printed here too.
+  const drop = (reason: DropReason): void => {
+    const record = dropJournal(opts.tripwire, reason, runnerHead());
+    if (record) print(`tripwire: journal drop recorded in ${opts.tripwire}/drops.jsonl: ${record}`);
+  };
   const bad = ensureBase(opts.tripwire);
   if (bad) {
     print(`tripwire: ${bad}; nothing runs`);
@@ -1367,7 +1382,7 @@ const holdTripwire = async (
     for (const why of swept.failed)
       print(`tripwire: could not remove a dead bench run's world: ${why}`);
     if (settleFlags.discard) {
-      dropJournal(opts.tripwire);
+      drop("a-discard");
       print("tripwire: the leftover journal is dropped; nothing else was touched");
       return 0;
     }
@@ -1376,7 +1391,7 @@ const holdTripwire = async (
       print(
         `tripwire: a leftover journal (digest ${left.digest}): nothing differs from the real files; dropped`,
       );
-      dropJournal(opts.tripwire);
+      drop("b-leftover-unchanged");
     } else if (left) {
       print(
         [
@@ -1434,7 +1449,7 @@ const holdTripwire = async (
         print(
           `tripwire: real Workit files changed, so the journal stays at ${opts.tripwire}/journal as your recovery copy`,
         );
-      else dropJournal(opts.tripwire);
+      else drop("c-run-end");
       if (thrown) throw thrown.error;
       return opts.stop ? (SIGNAL_EXIT[opts.stop] ?? 1) : code;
     } finally {

@@ -567,6 +567,114 @@ test("Given a garbage manifest.json left over, When the bench starts, Then it ex
   expect(starts()).toBe(0);
 });
 
+// Every drop of the journal leaves one line in drops.jsonl, printed too.
+const DROPS_LINE = /^tripwire: journal drop recorded in .*\/drops\.jsonl: (\{.*\})$/mu;
+const drops = (): {
+  time: string;
+  reason: string;
+  pid: number;
+  head: string | null;
+  digest: string | null;
+}[] => {
+  const at = path.join(base, "drops.jsonl");
+  return existsSync(at)
+    ? file(at)
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    : [];
+};
+const printedDrops = (lines: string[]): unknown[] =>
+  lines.flatMap((line) => {
+    const found = DROPS_LINE.exec(line)?.[1];
+    return found ? [JSON.parse(found)] : [];
+  });
+const repoHead = (): string | null => {
+  const run = spawnSync("git", ["-C", REPO, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  });
+  return run.status === 0 ? run.stdout.trim() : null;
+};
+
+test("Given a leftover journal, When --tripwire-discard runs (a), Then drops.jsonl gains one 0600 line with the reason, pid, head and the journal's digest, and it is printed", async () => {
+  const snapshot = armed();
+  const lines: string[] = [];
+
+  expect(await main(["--real-home", home, "--tripwire-discard"], (text) => lines.push(text))).toBe(
+    0,
+  );
+
+  expect(existsSync(path.join(base, "journal"))).toBe(false);
+  const [only, ...rest] = drops();
+  expect(rest).toEqual([]);
+  expect(only).toMatchObject({
+    reason: "a-discard",
+    pid: process.pid,
+    head: repoHead(),
+    digest: snapshot.digest,
+  });
+  expect(Number.isNaN(Date.parse(only?.time ?? ""))).toBe(false);
+  expect(printedDrops(lines)).toEqual([only]);
+  expect(lstatSync(path.join(base, "drops.jsonl")).mode & 0o777).toBe(0o600);
+});
+
+test("Given no journal, When --tripwire-discard runs, Then nothing is dropped and drops.jsonl gains nothing", async () => {
+  mkdirSync(base, { recursive: true });
+  const lines: string[] = [];
+  expect(await main(["--real-home", home, "--tripwire-discard"], (text) => lines.push(text))).toBe(
+    0,
+  );
+  expect(drops()).toEqual([]);
+  expect(printedDrops(lines)).toEqual([]);
+});
+
+test("Given a leftover journal that matches the real files, When the bench starts (b) and ends clean (c), Then drops.jsonl records both drops in order and each is printed", async () => {
+  const snapshot = armed();
+  const lines: string[] = [];
+
+  expect(await main(argv(fakeClaude(":")), (text) => lines.push(text))).toBe(0);
+
+  const recorded = drops();
+  expect(recorded.map((each) => each.reason)).toEqual(["b-leftover-unchanged", "c-run-end"]);
+  expect(recorded[0]?.digest).toBe(snapshot.digest);
+  expect(recorded[1]?.digest).toBe(snapshot.digest);
+  expect(printedDrops(lines)).toEqual(recorded);
+  expect(lines.join("\n")).toContain("nothing differs from the real files; dropped");
+});
+
+test("Given a clean bench (c), Then its end writes one drops.jsonl line with the armed digest and prints it", async () => {
+  const lines: string[] = [];
+
+  expect(await main(argv(fakeClaude(":")), (text) => lines.push(text))).toBe(0);
+
+  const armedDigest = /^tripwire armed: \d+ files, digest ([0-9a-f]{16})$/mu.exec(
+    lines.join("\n"),
+  )?.[1];
+  const recorded = drops();
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]).toMatchObject({
+    reason: "c-run-end",
+    digest: armedDigest,
+  });
+  expect(printedDrops(lines)).toEqual(recorded);
+});
+
+test("Given drops.jsonl is a symlink to a victim file, When --tripwire-discard runs, Then it is refused with exit 4, the journal stays and the victim is unchanged", async () => {
+  const victim = victimDir();
+  const before = listing(victim);
+  armed();
+  symlinkSync(path.join(victim, "a.txt"), path.join(base, "drops.jsonl"));
+  const lines: string[] = [];
+
+  expect(await main(["--real-home", home, "--tripwire-discard"], (text) => lines.push(text))).toBe(
+    4,
+  );
+
+  expect(lines.join("\n")).toContain(`${path.join(base, "drops.jsonl")} is not a regular file`);
+  expect(existsSync(path.join(base, "journal", "manifest.json"))).toBe(true);
+  expect(listing(victim)).toEqual(before);
+});
+
 test("Given two starts over unchanged files, Then the armed digest is the same; one changed watched byte changes it", async () => {
   const digests: string[] = [];
   const capture = (text: string) => {
@@ -917,6 +1025,7 @@ test("Given scripts/eval/tripwire.ts, Then write-type fs calls appear only in th
     "acquire",
     "release",
     "writeJournal",
+    "recordDrop",
     "dropJournal",
   ]);
   // No recursive remover, no aliased fs import, no child process: each would hide a write from this test.
