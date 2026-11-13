@@ -41,6 +41,14 @@ export type EvalCase = {
     worktree?: string;
     /** A bare `origin` remote the branch can be pushed to. */
     remote?: boolean;
+    /**
+     * A fake forge (scaffold.ts FAKE_GH): `origin` fetches from the bare
+     * remote with the case's branch on it and pushes to
+     * `https://github.example.invalid/eval/demo.git`, `gh` answers only the
+     * reads `workit pr create` makes and opens one canned PR, and the
+     * workspace entry links YouTrack issues with `backlink: true`.
+     */
+    forge?: "github";
     /** Branch policy patterns Workit allows; `feature/*` when absent. */
     allowedBranches?: string[];
     /** `main` has no commit yet: `files` and `dirty` stay uncommitted; `remote`, `branch`, `commits` and `worktree` are ignored. */
@@ -85,6 +93,11 @@ export const loadCases = (dir: string): EvalCase[] =>
       if (spec.tier !== "smoke" && spec.tier !== "full")
         throw new Error(`${name}: tier must be smoke or full`);
       if (!spec.prompt || !spec.source) throw new Error(`${name}: prompt and source are required`);
+      const forge = spec.scaffold?.forge;
+      if (forge !== undefined && forge !== "github")
+        throw new Error(`${name}: scaffold.forge must be github`);
+      if (forge && spec.scaffold?.unborn)
+        throw new Error(`${name}: scaffold.forge needs a commit to push; drop unborn`);
       return spec;
     });
 

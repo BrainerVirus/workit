@@ -62,7 +62,7 @@ export type World = {
   worktree: string | null;
   state: string;
   config: string;
-  /** Leads the child's PATH: the fake `ytrack` (FAKE_YTRACK), so no run reaches a real YouTrack. */
+  /** Leads the child's PATH: the fake `ytrack` (FAKE_YTRACK) and, for `scaffold.forge`, the fake `gh` (FAKE_GH), so no run reaches a real YouTrack or forge. */
   bin: string;
   /** The case gave the world a workspace entry (the runner sets WORKIT_EVAL_WORLD for every world). */
   workspace?: boolean;
@@ -111,6 +111,65 @@ case "$1 $2" in
 esac
 `;
 
+/** The fake forge's push URL: a reserved `.invalid` host, so a push never leaves the machine. */
+export const FAKE_FORGE_URL = "https://github.example.invalid/eval/demo.git";
+/** The YouTrack the forge world's issues link to: a reserved `.invalid` host. */
+export const FAKE_YOUTRACK_URL = "https://yt.example.invalid";
+
+/**
+ * The world's `gh` (`scaffold.forge: "github"`): it answers only the reads
+ * `workit pr create` makes (the user `eval`, repo `eval/demo`, `main` and
+ * its rules, the open-PR search) and opens one canned PR #1 (`POST pulls`),
+ * kept in `<world>/forge-pr` so a re-run finds it open. Every other call
+ * exits 1 having sent nothing: no run reaches a real forge with the user's
+ * login, and a raw `gh api …/comments` backlink cannot land.
+ */
+const FAKE_GH = `#!/bin/sh
+# workit-eval fake gh
+all="$*"
+refuse() { echo "workit eval: the fake gh refuses this call and sent nothing ($all)" >&2; exit 1; }
+world=$(cd "$(dirname "$0")/.." && pwd -P) || refuse
+opened="$world/forge-pr"
+[ "$1" = api ] || refuse
+shift
+method=GET endpoint= head= query=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X|--method) [ $# -ge 2 ] || refuse; method=$2; shift 2 ;;
+    -f|-F|--field|--raw-field)
+      [ $# -ge 2 ] || refuse
+      case "$2" in head=*) head=\${2#head=} ;; query=*) query=\${2#query=} ;; esac
+      shift 2 ;;
+    -*) refuse ;;
+    *) [ -z "$endpoint" ] || refuse; endpoint=$1; shift ;;
+  esac
+done
+sha() { git -C "$world/repo" rev-parse --verify -q "refs/heads/$1" || echo 0000000000000000000000000000000000000000; }
+url=https://github.example.invalid/eval/demo/pull/1
+case "$method $endpoint" in
+  "GET user") echo '{"login":"eval","id":1,"type":"User"}' ;;
+  "GET repos/eval/demo") echo '{"id":1,"full_name":"eval/demo","fork":false}' ;;
+  "GET repos/eval/demo/branches/main") echo '{"name":"main","protected":false}' ;;
+  "GET repos/eval/demo/rules/branches/main") echo '[]' ;;
+  "GET graphql")
+    case "$query" in *"pullRequests(headRefName"*) ;; *) refuse ;; esac
+    node=
+    if [ -n "$head" ] && [ -f "$opened" ] && [ "$(cat "$opened")" = "$head" ]; then
+      node=$(printf '{"number":1,"url":"%s","state":"OPEN","baseRefName":"main","headRefName":"%s","headRefOid":"%s","headRepositoryOwner":{"login":"eval"}}' "$url" "$head" "$(sha "$head")")
+    fi
+    printf '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}}}}\\n' "$node" ;;
+  "POST repos/eval/demo/pulls")
+    { [ -n "$head" ] && [ ! -f "$opened" ]; } || refuse
+    printf '%s' "$head" > "$opened"
+    printf '{"number":1,"html_url":"%s","state":"open","base":{"ref":"main"},"head":{"ref":"%s","sha":"%s"},"user":{"login":"eval"}}\\n' "$url" "$head" "$(sha "$head")" ;;
+  "GET repos/eval/demo/pulls/1")
+    [ -f "$opened" ] || refuse
+    head=$(cat "$opened")
+    printf '{"number":1,"html_url":"%s","state":"open","base":{"ref":"main"},"head":{"ref":"%s","sha":"%s"},"user":{"login":"eval"}}\\n' "$url" "$head" "$(sha "$head")" ;;
+  *) refuse ;;
+esac
+`;
+
 /** Refuses a `scaffold.home` path that is absolute, has a `..` segment or is not below HOME. */
 const checkHomeFiles = (files: Record<string, string> = {}): void => {
   for (const name of Object.keys(files)) {
@@ -136,6 +195,10 @@ export const makeWorld = (spec: EvalCase): World => {
   writeFileSync(path.join(bin, "ytrack"), FAKE_YTRACK);
   chmodSync(path.join(bin, "ytrack"), 0o755);
   const scaffold = spec.scaffold ?? {};
+  if (scaffold.forge) {
+    writeFileSync(path.join(bin, "gh"), FAKE_GH);
+    chmodSync(path.join(bin, "gh"), 0o755);
+  }
   writeAll(home, scaffold.home);
 
   git(repo, "init", "-q", "-b", "main");
@@ -163,7 +226,7 @@ export const makeWorld = (spec: EvalCase): World => {
   }
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "chore: init");
-  if (scaffold.remote) {
+  if (scaffold.remote || scaffold.forge) {
     const origin = path.join(dir, "origin.git");
     git(dir, "init", "-q", "--bare", origin);
     git(repo, "remote", "add", "origin", origin);
@@ -182,6 +245,11 @@ export const makeWorld = (spec: EvalCase): World => {
     git(repo, "worktree", "add", "-q", "-b", scaffold.worktree, worktree);
   }
   writeAll(worktree ?? repo, scaffold.dirty);
+  if (scaffold.forge) {
+    // The branch is already on origin (fetches stay local); the push URL names the fake forge.
+    git(repo, "push", "-q", "origin", "HEAD");
+    git(repo, "remote", "set-url", "--push", "origin", FAKE_FORGE_URL);
+  }
 
   writeConfig(dir, config, spec);
   return {
@@ -191,23 +259,29 @@ export const makeWorld = (spec: EvalCase): World => {
     state,
     config,
     bin,
-    workspace: Boolean(scaffold.workspace),
+    workspace: Boolean(scaffold.workspace || scaffold.forge),
     home,
   };
 };
 
 const writeConfig = (dir: string, config: string, spec: EvalCase): void => {
-  const { allowedBranches: allowed = ["feature/*"], workspace } = spec.scaffold ?? {};
+  const { allowedBranches: allowed = ["feature/*"], workspace, forge } = spec.scaffold ?? {};
   writeFileSync(
     path.join(config, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "custom", allowed, protected: ["main"] } }),
   );
   // Every world is marked: its grants dir is its config dir (autonomy.ts shownGrantsDir).
   writeFileSync(path.join(dir, EVAL_WORLD_MARKER), "");
-  if (!workspace) return;
+  if (forge)
+    writeFileSync(
+      path.join(config, "youtrack.json"),
+      JSON.stringify({ baseUrl: FAKE_YOUTRACK_URL }),
+    );
+  if (!workspace && !forge) return;
+  const issues = forge ? { issues: { provider: "youtrack", backlink: true } } : {};
   writeFileSync(
     path.join(config, "workspaces.json"),
-    JSON.stringify({ workspaces: [{ name: "eval", glob: `${dir}/**`, ...workspace }] }),
+    JSON.stringify({ workspaces: [{ name: "eval", glob: `${dir}/**`, ...issues, ...workspace }] }),
   );
 };
 

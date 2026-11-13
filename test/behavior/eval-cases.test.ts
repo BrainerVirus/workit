@@ -1,7 +1,8 @@
 // Every committed bench case must load, compile its regexes and build its
 // scaffold before it can spend a model run (docs/agents/eval.md).
 import { expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { loadCases } from "@/scripts/eval/cases";
 import { makeWorld, promptFor } from "@/scripts/eval/scaffold";
@@ -36,3 +37,19 @@ test.each(CASES.map((spec) => [spec.id, spec] as const))(
     }
   },
 );
+
+test.each([
+  [{ forge: "gitlab" }, "scaffold.forge must be github"],
+  [{ forge: "github", unborn: true }, "scaffold.forge needs a commit"],
+])("Given a case with scaffold %j, Then loading the cases refuses it", (scaffold, error) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-eval-cases-"));
+  try {
+    writeFileSync(
+      path.join(dir, "bad.json"),
+      JSON.stringify({ id: "bad", tier: "full", prompt: "x", source: "#1", scaffold }),
+    );
+    expect(() => loadCases(dir)).toThrow(error);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
