@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
@@ -27,8 +27,59 @@ const writeJson = (p: string, value: unknown) =>
 // The legacy pin is assembled at runtime so the tracked-file selector scan
 // (test/artifacts/manifests.test.ts) never trips on the fixture bytes.
 const LEGACY_PIN = ["@workit-dev/cursor@", "0.8.0"].join("");
+
+// The installers end in a full offline doctor, which spawns every host CLI and
+// npm/npx it finds on PATH (a hook run and a launcher probe each fall back to
+// `npx --offline`). On a developer PATH that started the user's real npx, npm,
+// workit, opencode and codex several times per doctor run, and gh/ssh to
+// github.com from a GitHub checkout: most of a test's wall time on a loaded
+// machine, and real network calls. These fakes shadow them and fail at once,
+// as an empty npm cache and an unreachable registry would.
+const FAKE_TOOLS: Record<string, string> = {
+  npx: "npm error code ENOTCACHED",
+  npm: "npm error code ECONNREFUSED",
+  gh: "gh: no network in the install-scripts fixture",
+  glab: "glab: no network in the install-scripts fixture",
+  ssh: "ssh: no network in the install-scripts fixture",
+  "systemd-run": "systemd-run: no user manager in the install-scripts fixture",
+  workit: "workit: not installed in the install-scripts fixture",
+  opencode: "opencode: not installed in the install-scripts fixture",
+  codex: "codex: not installed in the install-scripts fixture",
+  claude: "claude: not installed in the install-scripts fixture",
+  pi: "pi: not installed in the install-scripts fixture",
+};
+let fakeToolsDir: string | null = null;
+const fakeTools = (): string => {
+  if (fakeToolsDir) return fakeToolsDir;
+  fakeToolsDir = mkdtempSync(path.join(os.tmpdir(), "wk-install-fake-tools-"));
+  for (const [name, message] of Object.entries(FAKE_TOOLS))
+    writeFileSync(
+      path.join(fakeToolsDir, name),
+      `#!/bin/sh\necho ${JSON.stringify(message)} >&2\nexit 1\n`,
+      { mode: 0o755 },
+    );
+  return fakeToolsDir;
+};
+afterAll(() => {
+  if (fakeToolsDir) rmSync(fakeToolsDir, { recursive: true, force: true });
+});
+
+// Variables that would point a fixture run at the user's real config, state,
+// host homes or forge credentials.
+const REAL_HOME_ENV =
+  /^(WORKIT_|XDG_(CONFIG|DATA|STATE|CACHE)_HOME$|CODEX_HOME$|PI_CODING_AGENT_DIR$|CLAUDE_CONFIG_DIR$|CLAUDE_ENV_FILE$|GH_|GITHUB_TOKEN$|GLAB_|GITLAB_TOKEN$)/;
+
+/** The fixture env: a fixture HOME, the supported-node shim, Bun, the fakes, then the caller's PATH. */
+const fixtureEnv = (home: string, extra: Record<string, string> = {}) => {
+  const env = envWithSupportedNode({ HOME: home, ...extra });
+  for (const key of Object.keys(env))
+    if (REAL_HOME_ENV.test(key) && !(key in extra)) delete env[key];
+  const [nodeShim, ...rest] = env.PATH.split(path.delimiter);
+  env.PATH = [nodeShim, fakeTools(), path.dirname(process.execPath), ...rest].join(path.delimiter);
+  return env;
+};
 const installEnv = (home: string, stub: string, extra: Record<string, string> = {}) =>
-  envWithSupportedNode({ HOME: home, WORKIT_DEV: stub, ...extra });
+  fixtureEnv(home, { WORKIT_DEV: stub, ...extra });
 function makeStaleCursorHome(home: string, pluginDir: string) {
   mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
   mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
@@ -150,6 +201,7 @@ test(
           `bun "${path.join(fixture.stub, "packages/workit-cli/scripts/doctor-check.ts")}" cursor`,
         ],
         {
+          cwd: fixture.stub,
           env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
@@ -205,6 +257,7 @@ test(
           `bun "${path.join(fixture.stub, "packages/workit-cli/scripts/doctor-check.ts")}" cursor`,
         ],
         {
+          cwd: fixture.stub,
           env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
@@ -559,13 +612,13 @@ test(
         path.join(share, "packages/workit-opencode/src/plugin.ts"),
         "export default {};\n",
       );
-      const { WORKIT_DEV: _ignored, ...env } = process.env;
+      const { WORKIT_DEV: _ignored, ...env } = fixtureEnv(fixture.home);
       const installed = spawnSync(
         "bash",
         ["packages/workit-core/scripts/install-opencode-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: { ...env, HOME: fixture.home },
+          env,
           encoding: "utf8",
         },
       );
@@ -790,6 +843,20 @@ function makeDependencyFreeCheckout() {
   return checkout;
 }
 
+// The bun wrapper's fake build copies the checkout's built Cursor bundles, so a
+// test that rebuilds through it needs a prior `bun run build`: say so at once
+// rather than fail on a cp error deep in sync-runtime.
+function requireBuiltCursorDist() {
+  const dist = path.join(repoRoot, "packages/workit-cursor/dist");
+  const missing = ["mcp-server.js", "cursor-session-start.js"].filter(
+    (entry) => !existsSync(path.join(dist, entry)),
+  );
+  if (missing.length > 0)
+    throw new Error(
+      `${dist} has no ${missing.join(", ")}: run \`bun run build\` in ${repoRoot} first`,
+    );
+}
+
 function writeOfflineBunWrapper(binDir: string, name = "selected-runtime") {
   const wrapper = path.join(binDir, name);
   writeFileSync(
@@ -914,6 +981,7 @@ test(
   "sync-runtime installs frozen dependencies before rebuilding and replacing stale Cursor dist",
   () => {
     if (!bashAvailable() || !flockAvailable()) return;
+    requireBuiltCursorDist();
     const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
     const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
     const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));

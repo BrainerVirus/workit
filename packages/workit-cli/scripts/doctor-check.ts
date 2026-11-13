@@ -13,7 +13,22 @@ import { runDoctor } from "../src/admin/doctor";
 const hostArg = process.argv[2];
 const host = hostArg === "cursor" ? "cursor" : hostArg === "cli" ? "cli" : "opencode";
 const staleOnly = process.argv.includes("--stale");
-const report = runDoctor({ host, installer: true });
+// Only INSTALLER_REQUIRED checks decide the exit and only failures print, so the
+// machine-wide probes behind the heavy_scope and running-session rows (a
+// throwaway systemd scope, `ps` scans) cannot change an installer's outcome:
+// skip them, so an install on a loaded machine does not wait on them.
+const report = runDoctor({
+  host,
+  installer: true,
+  scopeProbe: () => ({
+    effective: false,
+    supported: false,
+    reason: "not probed by the installer",
+    delegate: null,
+  }),
+  claudeProcesses: () => [],
+  codexProcesses: () => [],
+});
 
 if (staleOnly) {
   const stale = report.checks.find((c) => c.id === "stale_install");
