@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import React from "react";
 import { Wizard } from "../../packages/workit-cli/src/steps";
+import { YtrackPathsLines } from "../../packages/workit-cli/src/steps/finish-screens";
 import type { SetupValues } from "../../packages/workit-cli/src/wizard-state";
 import { emptyDetection } from "../../packages/workit-cli/src/admin/detect-hosts";
 import { renderInk, type InkTty } from "../shared/helpers/ink-tty";
@@ -714,3 +715,45 @@ test("Given a profile was just edited, When Done returns to the profile list and
     tty.unmount();
   });
 }, 60_000);
+
+test("Given a preview with two planned ytrack path fixes, When the summary lines render, Then each glob and its host show before Apply", async () => {
+  const fix = (host: string, add: string[]) => ({
+    host,
+    add,
+    remove: [],
+    command: "ytrack",
+  });
+  const tty = await renderInk(
+    React.createElement(YtrackPathsLines, {
+      paths: {
+        planned: [
+          fix("https://a.yt.example.test", ["~/work/a/**", "~/work/b/**"]),
+          fix("https://c.yt.example.test", ["~/work/c/**"]),
+        ],
+      },
+    }),
+  );
+  const frame = tty.lastFrame();
+  tty.unmount();
+  expect(frame).toContain("~/work/a/**, ~/work/b/** -> https://a.yt.example.test");
+  expect(frame).toContain("~/work/c/** -> https://c.yt.example.test");
+});
+
+test("Given a skipped ytrack paths plan, When the summary lines render, Then one warn line shows the reason and the unblock; given none, nothing", async () => {
+  const skipped = await renderInk(
+    React.createElement(YtrackPathsLines, {
+      paths: {
+        skipped: "ytrack is too old",
+        unblock: "ytrack upgrade, then run workit setup again",
+      },
+    }),
+  );
+  const frame = skipped.lastFrame();
+  skipped.unmount();
+  expect(frame).toContain("ytrack paths: skipped — ytrack is too old · ytrack upgrade");
+  expect(frame.match(/ytrack paths:/gu)).toHaveLength(1);
+  const none = await renderInk(React.createElement(YtrackPathsLines, { paths: undefined }));
+  const empty = none.lastFrame();
+  none.unmount();
+  expect(empty).not.toContain("ytrack paths");
+});
