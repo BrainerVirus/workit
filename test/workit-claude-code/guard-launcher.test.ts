@@ -186,3 +186,17 @@ test("Given a guarded file written by `>& file`, `>&file` or `| sponge file`, or
   for (const command of ["echo ok 2>&1", "echo ok >&2", "echo ok >&-"])
     expect(decide("Bash", { command }), command).toBeUndefined();
 }, 60_000);
+
+test("Given a relative dangling link to a guarded file inside a dir linked at another depth, When a write or an edit names it through the dir link, Then the launcher sends it to the runtime, which denies it (#855)", () => {
+  const deep = path.join(base, "deep", "x", "y", "z");
+  mkdirSync(deep, { recursive: true });
+  symlinkSync(deep, path.join(repo, "ld"));
+  const grant = path.join(state, "approvals", "grants", "depth.json");
+  rmSync(grant, { force: true });
+  symlinkSync(path.relative(deep, grant), path.join(deep, "rl"));
+  for (const command of ["echo '{}' > ld/rl", "echo '{}' | sponge ld/rl"])
+    expect(decide("Bash", { command })?.permissionDecision, command).toBe("deny");
+  expect(
+    decide("Write", { file_path: path.join(repo, "ld", "rl"), content: "{}" })?.permissionDecision,
+  ).toBe("deny");
+}, 60_000);

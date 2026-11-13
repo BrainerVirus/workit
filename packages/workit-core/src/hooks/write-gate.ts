@@ -45,10 +45,20 @@ const NONE: HookDecision = { kind: "none" };
 
 const CASE_INSENSITIVE = process.platform === "darwin" || process.platform === "win32";
 
-/** Where the symlink `file` points, resolved against its directory; null for no symlink. */
+/**
+ * Where the symlink `file` points: a relative target against the real path of
+ * its directory, as the OS reads it (`ld/rl` inside a linked dir); null for no symlink.
+ */
 const linkTarget = (file: string): string | null => {
   try {
-    return path.resolve(path.dirname(file), readlinkSync(file));
+    const to = readlinkSync(file);
+    let from = path.dirname(file);
+    try {
+      from = realpathSync.native(from);
+    } catch {
+      // A directory not made yet: as spelled.
+    }
+    return path.resolve(from, to);
   } catch {
     return null;
   }
@@ -58,9 +68,9 @@ const linkTarget = (file: string): string | null => {
  * The real path of `file`: the nearest existing ancestor resolved through
  * symlinks (macOS /var → /private/var), then the not-yet-existing rest. With
  * `dangling`, a symlink whose target does not exist yet is followed too: a
- * write through it creates that target (#837).
+ * write through it creates that target (#837). Null past 40 links.
  */
-const canonical = (file: string, dangling = true): string => {
+const realPath = (file: string, dangling = true): string | null => {
   let dir = path.resolve(file);
   let rest = "";
   for (let hops = 0; ;) {
@@ -68,9 +78,9 @@ const canonical = (file: string, dangling = true): string => {
       // Native resolution also expands Windows 8.3 short names (RUNNER~1).
       return path.join(realpathSync.native(dir), rest);
     } catch {
-      const link = dangling && hops < 40 ? linkTarget(dir) : null;
+      const link = dangling ? linkTarget(dir) : null;
       if (link !== null) {
-        hops++;
+        if (++hops > 40) return null;
         dir = path.join(link, rest);
         rest = "";
       } else if (path.dirname(dir) === dir) return path.resolve(file);
@@ -81,6 +91,9 @@ const canonical = (file: string, dangling = true): string => {
     }
   }
 };
+
+const canonical = (file: string, dangling = true): string =>
+  realPath(file, dangling) ?? path.resolve(file);
 
 /**
  * Writes the gate never blocks: files outside the checkout (e.g. /tmp),
@@ -1719,6 +1732,8 @@ export const liveTargets = (cwd: string, paths: readonly string[] | null): strin
  * own grants.
  */
 type Registry = "issued" | "approvals" | "grants";
+/** A guarded registry, or "link": a symlink chain too long to follow, which may reach one. */
+type Denied = Registry | "link";
 
 /** The config files only the user writes: grants and the seal that vouches for them (#819). */
 const CONFIG_FILES = ["workspaces.json", SEAL_FILE];
@@ -1823,12 +1838,13 @@ const hardLinked = (
 const registryTarget = (
   cwd: string,
   targets: readonly string[],
-): { file: string; registry: Registry } | null => {
+): { file: string; registry: Denied } | null => {
   const state = resolveStateDir();
   const configs = configDirs();
   const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
+    if (realPath(path.resolve(cwd, file)) === null) return { file: target, registry: "link" };
     const glob = globbed(cwd, file, state, configs)[0];
     const viaGlob = glob === undefined ? null : registryTarget(cwd, [glob]);
     if (viaGlob) return { file: target, registry: viaGlob.registry };
@@ -1955,7 +1971,12 @@ export const unquotedWindowsRegistry = (
   return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };
 
-const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: string }> = {
+const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: string }> = {
+  link: {
+    label: "registry guard",
+    what: "a symlink chain Workit could not resolve (over 40 links), which may reach a guarded path",
+    unblock: "Write to the file's real path.",
+  },
   issued: {
     label: "issued-registry guard",
     what: "Workit's issued-session state",
@@ -1976,7 +1997,7 @@ const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: st
   },
 };
 
-const registryDeny = ({ file, registry }: { file: string; registry: Registry }): HookDecision => {
+const registryDeny = ({ file, registry }: { file: string; registry: Denied }): HookDecision => {
   const { label, what, unblock } = REGISTRY_DENY[registry];
   if (path.basename(file) === UNRESOLVED_TARGET)
     return {

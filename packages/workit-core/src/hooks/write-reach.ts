@@ -59,10 +59,14 @@ const hasTaskStore = (cwd: string): boolean => {
 };
 
 /** The guarded dirs' tests: `at` a guarded path or below it, `above` one (an ancestor). */
+/** canon's answer for a symlink chain too long to follow: it may reach a guarded path. */
+const LOST = "\0lost";
+
 const reachTests = (dirs: ReachDirs) => {
   const fold = (value: string) => (dirs.fold ? value.toLowerCase() : value);
   // write-gate.ts canonical: the nearest existing ancestor's real path, then the
-  // rest; a dangling symlink on the way is followed to the file a write creates.
+  // rest; a dangling symlink on the way is followed to the file a write creates,
+  // a relative one from its directory's real path; past 40 links, LOST.
   const canon = (file: string): string => {
     let dir = path.resolve(file);
     let rest = "";
@@ -72,12 +76,19 @@ const reachTests = (dirs: ReachDirs) => {
       } catch {
         let link: string | null = null;
         try {
-          if (hops < 40) link = path.resolve(path.dirname(dir), readlinkSync(dir));
+          const to = readlinkSync(dir);
+          let from = path.dirname(dir);
+          try {
+            from = realpathSync.native(from);
+          } catch {
+            // A directory not made yet: as spelled.
+          }
+          link = path.resolve(from, to);
         } catch {
           // Not a symlink: the next ancestor.
         }
         if (link !== null) {
-          hops++;
+          if (++hops > 40) return LOST;
           dir = path.join(link, rest);
           rest = "";
         } else if (path.dirname(dir) === dir) return fold(path.resolve(file));
@@ -95,6 +106,7 @@ const reachTests = (dirs: ReachDirs) => {
   const state = canon(dirs.state);
   const configs = dirs.configs.map(canon);
   const at = (file: string) =>
+    file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
       /^(?:issued[^\\/]*|approvals)(?:[\\/]|$)/.test(path.relative(state, file)));

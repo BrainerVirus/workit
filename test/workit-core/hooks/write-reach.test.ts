@@ -197,6 +197,24 @@ test("G a dangling symlink in the repo to a guarded file not made yet, W a shell
     expect(editReaches(name, repo), name).toBe(true);
     rmSync(path.join(repo, name));
   }
+  // A relative dangling link inside a dir reached through a link at another depth (#855).
+  const deep = path.join(base, "deep", "x", "y", "z");
+  mkdirSync(deep, { recursive: true });
+  symlinkSync(deep, path.join(repo, "ld"));
+  symlinkSync(path.relative(deep, grant), path.join(deep, "rl"));
+  expect(shellGate(repo, "echo x > ld/rl", null).kind).toBe("deny");
+  expect(mayReach("echo x > ld/rl", repo)).toBe(true);
+  expect(editReaches("ld/rl", repo)).toBe(true);
+  rmSync(path.join(repo, "ld"));
+  // A chain past 40 links: it may reach anything.
+  let previous = path.join(base, "chain-end.txt");
+  for (let index = 1; index <= 41; index++) {
+    symlinkSync(previous, path.join(base, `c${index}`));
+    previous = path.join(base, `c${index}`);
+  }
+  expect(mayReach(`echo x > ${path.join(base, "c41")}`, repo)).toBe(true);
+  expect(editReaches(path.join(base, "c41"), repo)).toBe(true);
+  expect(mayReach(`echo x > ${path.join(base, "c40")}`, repo)).toBe(false);
   symlinkSync(path.join(repo, "not-yet.txt"), path.join(repo, "dangling-plain"));
   expect(mayReach("echo x > dangling-plain", repo)).toBe(false);
   expect(editReaches("dangling-plain", repo)).toBe(false);

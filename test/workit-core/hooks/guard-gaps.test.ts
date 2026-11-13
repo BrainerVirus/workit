@@ -288,3 +288,52 @@ test("G interpreter code that builds a write target from a guarded dir and a val
   const taken = shellGate(root, `python3 -c "import shutil; shutil.rmtree('${sh(CONFIG)}')"`, null);
   expect(taken.kind === "deny" ? taken.reason : "").toContain(CONFIG);
 });
+
+test("G a dir link in the repo to a dir at another depth, holding a relative dangling link to a guarded file, W a write, sponge, tee or edit names it through the dir link, T every host denies (#855)", () => {
+  // repo/ld -> <base>/deep/x/y/z; z/rl -> ../../../../state/approvals/grants/new.json: the
+  // relative target climbs from z's real path, not from repo/ld.
+  const deep = path.join(base, "deep", "x", "y", "z");
+  mkdirSync(deep, { recursive: true });
+  const ld = path.join(root, "ld");
+  symlinkSync(deep, ld, "junction");
+  for (const [index, { name, file }] of GUARDED.entries()) {
+    rmSync(file, { force: true });
+    symlinkSync(path.relative(deep, file), path.join(deep, `rl${index}`));
+    const link = `ld/rl${index}`;
+    for (const command of [
+      `echo x > ${link}`,
+      `echo x >& ${link}`,
+      `echo x | sponge ${link}`,
+      `echo x | tee ${link}`,
+    ])
+      for (const [host, run] of Object.entries(SHELLS))
+        expect(run(command).deny, `${name} ${host}: ${command}`).toBe(true);
+    for (const [host, run] of Object.entries(EDITS))
+      expect(run(path.join(root, link)).deny, `${name} ${host}`).toBe(true);
+  }
+  // The same depth trick to a plain file stays allowed.
+  symlinkSync(path.relative(deep, path.join(base, "plain-new.txt")), path.join(deep, "plain"));
+  everyShell("echo x > ld/plain", false);
+  rmSync(ld);
+  rmSync(path.join(base, "deep"), { recursive: true, force: true });
+});
+
+test("G a chain of more than 40 symlinks, W a write or an edit names its head, T every host denies it as a link Workit could not resolve; a chain of 40 is followed", () => {
+  const chain = path.join(root, "chain");
+  mkdirSync(chain, { recursive: true });
+  let previous = path.join(base, "chain-end.txt");
+  for (let index = 1; index <= 41; index++) {
+    symlinkSync(previous, path.join(chain, `c${index}`));
+    previous = path.join(chain, `c${index}`);
+  }
+  for (const [host, run] of Object.entries(SHELLS)) {
+    const out = run("echo x > chain/c41");
+    expect(out.deny, host).toBe(true);
+    expect(out.reason, host).toContain("could not resolve");
+  }
+  for (const [host, run] of Object.entries(EDITS))
+    expect(run(path.join(chain, "c41")).deny, host).toBe(true);
+  // 40 links to a plain file: followed to the end, allowed.
+  everyShell("echo x > chain/c40", false);
+  rmSync(chain, { recursive: true, force: true });
+});
