@@ -93,7 +93,8 @@ async function runSetup(argv: string[], io: Io): Promise<number> {
       io,
       fail("blocked", plan.refused, {
         data: summary,
-        unblock: `workit setup --hosts=${plan.changes.map((c) => c.host).join(",")}`,
+        unblock:
+          plan.unblock ?? `workit setup --hosts=${plan.changes.map((c) => c.host).join(",")}`,
       }),
     );
   // The completion script for $SHELL: user files only, never an rc file.

@@ -1,5 +1,14 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -11,6 +20,7 @@ import {
   CURSOR_ALLOW,
   CURSOR_DENY,
   removeOwnedEntries,
+  permissionDiff,
   permissionHealth,
   planHostPermissions,
 } from "@/packages/workit-cli/src/admin/host-permissions";
@@ -83,7 +93,8 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
 
   const value = JSON.parse(written);
   expect(value.model).toBe("opus");
-  expect(value.permissions.deny).toEqual(["Bash(rm *)"]);
+  expect(value.permissions.deny[0]).toBe("Bash(rm *)");
+  expect(value.permissions.deny.slice(1).every((e: string) => e.startsWith("Edit(//"))).toBe(true);
   expect(value.permissions.allow[0]).toBe("Bash(npm test)");
   expect(value.permissions.allow.filter((e: string) => e === "Bash(workit git *)")).toHaveLength(1);
   expect(value.permissions.allow).toContain("Bash(workit ledger *)");
@@ -241,7 +252,7 @@ test("Given hosts without a permission layer or not installed, When setup runs, 
   const { env, home } = sandbox();
   const run = await cli(["setup", "--hosts=opencode,pi,cursor", "--yes"], env);
   expect(run.code).toBe(0);
-  expect(run.stdout).toContain("opencode: nothing to write");
+  expect(run.stdout).toContain("opencode: not installed");
   expect(run.stdout).toContain("pi: nothing to write");
   expect(run.stdout).toContain("cursor: not installed");
   expect(existsSync(path.join(home, ".cursor"))).toBe(false);
@@ -480,7 +491,7 @@ test("Given a tampered ownership record, When uninstall runs, Then only Workit-s
   writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
   editRecord(env, (record) => {
     const owned = record.hosts["claude-code"].owned;
-    owned.lists["permissions.deny"] = ["Bash(rm *)"];
+    owned.lists["permissions.deny"].push("Bash(rm *)");
     owned.lists["permissions.allow"].push("Bash(npm test)");
     owned.lists["autoMode.environment"].push("Org-specific CLIs: acme — deploy tool");
     owned.env.ANTHROPIC_BASE_URL = "https://example.test";
@@ -662,7 +673,12 @@ test("Given mid-command ask globs an older Workit wrote and one the user wrote, 
     host.offered["permissions.ask"].push(...old);
   });
 
-  const plan = planHostPermissions({ home, env, hosts: ["claude-code"], refreshOnly: true });
+  const plan = planHostPermissions({
+    home,
+    env,
+    hosts: ["claude-code"],
+    refreshOnly: true,
+  });
   expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
   const ask = JSON.parse(readFileSync(settings, "utf8")).permissions.ask as string[];
   expect(ask).toContain(userGlob);
@@ -671,4 +687,182 @@ test("Given mid-command ask globs an older Workit wrote and one the user wrote, 
 
   expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
   expect(JSON.parse(readFileSync(settings, "utf8")).permissions.ask).toEqual([userGlob]);
+});
+
+// #820: native deny rules for the guarded paths ride the same managed block.
+const realHome = (home: string) => realpathSync(home).replaceAll("\\", "/");
+const guardedTails = ["state/issued*", "state/approvals", ".config/workit/workspaces.json"];
+
+test("Given a fixture home and settings.json with the user's own rules, When `workit setup --hosts=claude-code --yes` runs, Then permissions.deny gains an Edit(//…) rule for every guarded path, a second setup changes nothing, and uninstall restores the user's file byte for byte", async () => {
+  const { env, home, settings } = sandbox();
+  const original = JSON.stringify(USER_SETTINGS, null, 2) + "\n";
+  writeFileSync(settings, original);
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const written = readFileSync(settings, "utf8");
+  const deny = JSON.parse(written).permissions.deny as string[];
+  const root = realHome(home).replace(/^\/+/u, "");
+  expect(deny[0]).toBe("Bash(rm *)");
+  for (const tail of [
+    "state/issued*",
+    "state/issued*/**",
+    "state/approvals",
+    "state/approvals/**",
+    ".config/workit/workspaces.json",
+    ".config/workit/workspaces.json.seal",
+  ])
+    expect(deny).toContain(`Edit(//${root}/${tail})`);
+
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  expect(readFileSync(settings, "utf8")).toBe(written);
+  expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
+  expect(readFileSync(settings, "utf8")).toBe(original);
+});
+
+test("Given a deny rule Workit wrote for a guarded path that moved and the user's own rule of the same shape, When setup runs again, Then only Workit's stale rule goes", async () => {
+  const { env, home, settings } = sandbox();
+  const user = "Edit(//srv/bench/state/approvals/**)";
+  writeFileSync(settings, JSON.stringify({ permissions: { deny: [user] } }, null, 2) + "\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const stale = "Edit(//old/home/.local/state/workit/issued*)";
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  value.permissions.deny.push(stale);
+  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+  editRecord(env, (record) =>
+    record.hosts["claude-code"].owned.lists["permissions.deny"].push(stale),
+  );
+
+  const plan = planHostPermissions({ home, env, hosts: ["claude-code"] });
+  expect(plan.changes).toHaveLength(1);
+  expect(permissionDiff(plan.changes[0])).toMatch(
+    /^- +"Edit\(\/\/old\/home\/\.local\/state\/workit\/issued\*\)"$/mu,
+  );
+  expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
+  const deny = JSON.parse(readFileSync(settings, "utf8")).permissions.deny as string[];
+  expect(deny).toContain(user);
+  expect(deny).not.toContain(stale);
+  const record = JSON.parse(
+    readFileSync(path.join(env.WORKIT_STATE_DIR!, "host-permissions.json"), "utf8"),
+  );
+  expect(record.hosts["claude-code"].owned.lists["permissions.deny"]).not.toContain(stale);
+
+  expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
+  expect(JSON.parse(readFileSync(settings, "utf8")).permissions.deny).toEqual([user]);
+});
+
+test("Given Cursor CLI config with the user's deny rule, When setup and uninstall run, Then Write(<abs>) rules for every guarded path come and go and the file is restored byte for byte", async () => {
+  const { env, home } = sandbox();
+  const file = path.join(home, ".cursor", "cli-config.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  const original =
+    JSON.stringify({ permissions: { allow: [], deny: ["Shell(rm)"] } }, null, 2) + "\n";
+  writeFileSync(file, original);
+  expect((await cli(["setup", "--hosts=cursor", "--yes"], env)).code).toBe(0);
+  const deny = JSON.parse(readFileSync(file, "utf8")).permissions.deny as string[];
+  expect(deny[0]).toBe("Shell(rm)");
+  for (const rule of CURSOR_DENY) expect(deny).toContain(rule);
+  for (const tail of [...guardedTails, "state/approvals/*", ".config/workit/workspaces.json.seal"])
+    expect(deny).toContain(`Write(${realHome(home)}/${tail})`);
+  expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
+  expect(readFileSync(file, "utf8")).toBe(original);
+});
+
+const OPENCODE_USER = {
+  $schema: "https://opencode.ai/config.json",
+  plugins: ["acme-plugin"],
+  permission: { bash: "ask", edit: { "*": "allow", "/srv/secret/*": "deny" } },
+};
+
+test("Given OpenCode's global opencode.json with the user's edit rules, When setup runs twice and uninstall runs, Then the guarded paths' deny patterns come after the user's (the last match wins), nothing changes the second time, and the file is restored byte for byte", async () => {
+  const { env, home } = sandbox();
+  const file = path.join(home, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  const original = JSON.stringify(OPENCODE_USER, null, 2) + "\n";
+  writeFileSync(file, original);
+  expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+  const written = readFileSync(file, "utf8");
+  const edit = JSON.parse(written).permission.edit as Record<string, string>;
+  expect(Object.keys(edit).slice(0, 2)).toEqual(["*", "/srv/secret/*"]);
+  expect(edit["*"]).toBe("allow");
+  for (const tail of [...guardedTails, "state/approvals/*", ".config/workit/workspaces.json.seal"])
+    expect(edit[`${realHome(home)}/${tail}`]).toBe("deny");
+  expect(JSON.parse(written).permission.bash).toBe("ask");
+
+  expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+  expect(readFileSync(file, "utf8")).toBe(written);
+  const plan = planUninstall({ home, env });
+  expect(plan.hosts.find((h) => h.host === "opencode")!.actions.map((a) => a.kind)).toEqual([
+    "edit-json-remove",
+    "forget-ownership",
+  ]);
+  expect(applyUninstall(plan, { home, env }).ok).toBe(true);
+  expect(readFileSync(file, "utf8")).toBe(original);
+});
+
+test("Given OpenCode configs Workit cannot merge into (permission.edit one action for every path, only an opencode.jsonc), When setup runs, Then each is reported blocked and left byte for byte", async () => {
+  const single = sandbox();
+  const file = path.join(single.home, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  const text = JSON.stringify({ permission: { edit: "allow" } }, null, 2) + "\n";
+  writeFileSync(file, text);
+  const run = await cli(["setup", "--hosts=opencode", "--yes"], single.env);
+  expect(run.stdout).toContain("permission.edit is one action for every path");
+  expect(readFileSync(file, "utf8")).toBe(text);
+
+  const commented = sandbox();
+  const jsonc = path.join(commented.home, ".config", "opencode", "opencode.jsonc");
+  mkdirSync(path.dirname(jsonc), { recursive: true });
+  writeFileSync(jsonc, '{\n  // mine\n  "permission": {}\n}\n');
+  const second = await cli(["setup", "--hosts=opencode", "--yes"], commented.env);
+  expect(second.stdout).toContain("opencode.jsonc holds the OpenCode config");
+  expect(existsSync(path.join(commented.home, ".config", "opencode", "opencode.json"))).toBe(false);
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given a state dir reached through a symlink, When `workit setup --yes` runs, Then it is blocked with the symlinked dir and the WORKIT_STATE_DIR fix, and neither the host file nor the record is written",
+  async () => {
+    const { env, home, settings } = sandbox();
+    const real = path.join(home, "real-state");
+    mkdirSync(real, { recursive: true });
+    symlinkSync(real, path.join(home, "state-link"));
+    env.WORKIT_STATE_DIR = path.join(home, "state-link");
+    const original = JSON.stringify(USER_SETTINGS, null, 2) + "\n";
+    writeFileSync(settings, original);
+
+    const run = await cli(["setup", "--hosts=claude-code", "--yes"], env);
+    expect(run.code).not.toBe(0);
+    const out = run.stdout + run.stderr;
+    expect(out).toContain(`${path.join(home, "state-link")} is a symbolic link`);
+    expect(out).toContain(`export WORKIT_STATE_DIR=${realpathSync(real)}`);
+    expect(out).not.toMatch(/^\s+at /mu);
+    expect(readFileSync(settings, "utf8")).toBe(original);
+    expect(existsSync(path.join(real, "host-permissions.json"))).toBe(false);
+
+    // A plan made before the link appeared is refused at apply, the same way.
+    const plan = planHostPermissions({
+      home,
+      env: { ...env, WORKIT_STATE_DIR: real },
+      hosts: ["claude-code"],
+    });
+    expect(plan.refused).toBeUndefined();
+    const applied = applyHostPermissions(plan, { home, env });
+    expect(applied[0].status).toBe("failed");
+    expect(applied[0].detail).toContain("is a symbolic link");
+    expect(readFileSync(settings, "utf8")).toBe(original);
+  },
+);
+
+test("Given a home whose path holds parentheses, When setup writes Claude Code's rules, Then each parenthesis is spelled [(] or [)] and Cursor's rule keeps it as is", async () => {
+  const { env, home } = sandbox();
+  const odd = path.join(home, "Work (x86)");
+  mkdirSync(path.join(odd, ".claude"), { recursive: true });
+  mkdirSync(path.join(odd, ".cursor"), { recursive: true });
+  const oddEnv = { ...env, HOME: odd, WORKIT_STATE_DIR: path.join(odd, "state") };
+  expect((await cli(["setup", "--hosts=claude-code,cursor", "--yes"], oddEnv)).code).toBe(0);
+  const root = realHome(odd);
+  const claude = JSON.parse(readFileSync(path.join(odd, ".claude", "settings.json"), "utf8"));
+  expect(claude.permissions.deny).toContain(
+    `Edit(//${root.replace(/^\/+/u, "").replace("(x86)", "[(]x86[)]")}/state/issued*)`,
+  );
+  const cursor = JSON.parse(readFileSync(path.join(odd, ".cursor", "cli-config.json"), "utf8"));
+  expect(cursor.permissions.deny).toContain(`Write(${root}/state/issued*)`);
 });

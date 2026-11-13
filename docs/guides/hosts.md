@@ -75,11 +75,31 @@ agent session (`CLAUDECODE`, `WORKIT_SESSION_ID`, `CODEX_THREAD_ID`,
 command to run yourself. `workit uninstall` removes the entries it added
 (recorded in Workit's state dir, and only entries shaped like Workit's own:
 `Bash(workit …)`, `Shell(workit …)`, its two `autoMode` lines, the
-`CLAUDE_CODE_SHELL` bash path it set, the Codex rules file).
+`CLAUDE_CODE_SHELL` bash path it set, the Codex rules file, the deny rules
+below).
 `workit upgrade` adds only the entries new in this Workit
 version to a block it already wrote, never one you removed, and prints the
 diff in the preview and again when it applies. `workit doctor` has a
 `claude_permissions`, `codex_permissions` and `cursor_permissions` row.
+
+The same block carries deny rules for the files only Workit or you may write:
+`<state dir>/issued*` and `<state dir>/approvals/` (the sessions Workit issued
+and your approvals) and `workspaces.json` with its `workspaces.json.seal` in
+your config dir (your grants). Workit's hooks already deny an agent's write
+there; these host rules still hold when a hook fails to load. They name the
+directories your setup resolved (each as written and, when a link leads
+elsewhere, also the real path), so a moved state dir gets new rules on the
+next `workit setup` or `workit upgrade`, which drops the old ones Workit wrote.
+`workit uninstall` removes exactly them. When the state dir is reached through
+a symbolic link, setup writes nothing (Workit never writes its record of these
+entries through a link) and tells you to point `WORKIT_STATE_DIR` at the real
+path. `workit doctor` reports them in its `native_deny` row per host (present,
+missing, stale, or a file setup cannot merge into, with the edit to make by
+hand) with the host's sandbox
+setting: Claude Code's `sandbox.enabled` (with it on, the deny rules also stop
+shell commands), Cursor's `sandbox.mode`, Codex's `sandbox_mode` (Codex has no
+path deny rule: the row warns when its sandbox is `danger-full-access` or a
+`writable_roots` entry holds one of those files).
 
 `workit uninstall --hosts=<h,…>` removes Workit from the named hosts only: the
 plugin files and registrations, the MCP entry, the permission block above and
@@ -108,10 +128,10 @@ PATH shows a `blocked` row, and the Workit config is never written. Like
 
 | Host | What `workit setup` writes |
 | --- | --- |
-| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit pr merge *--unverified*)`, `Bash(workit stack land *--unverified*)`, `Bash(workit git push *--overwrite-unintegrated*)` and `Bash(workit <user-only call>*)` (`release notes approve`, `grant set|raise`, `ledger void`) as a second layer: each is anchored at its verb, so a call that only mentions one in its text (a verdict's `--how`, a changelog entry) is not asked, and a refresh removes the older `Bash(workit * …)` rules Workit wrote, never yours (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you (a word with a `$VAR`, glob or `$(…)` is not read, so it never asks: the merge grant and `--reason` stay the gate). With the hooks off (Node below 24) only the anchored rules stand, and they miss a global option placed between the verb and its subcommand: `workit pr --cwd X merge --unverified` matches the `workit pr *` allow, so the merge grant and `--reason` are its only gate; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it) |
-| Codex | `~/.codex/rules/workit.rules` (or under `$CODEX_HOME`), a file Workit owns: one `prefix_rule(pattern=["workit", "<verb>"], decision="allow")` per verb and `["workit", "grant"]` → `prompt`. `config.toml` and its sandbox settings are untouched |
-| Cursor | `Shell(workit <verb>)` per verb in `~/.cursor/cli-config.json` `permissions.allow` (cursor-agent matches the rule as a command prefix) |
-| OpenCode | Nothing: the Workit plugin's `permission.evaluate` turns an `ask` for a command made only of allowed Workit calls into `allow`. A config `deny` still wins, and `check`, `lock`, `grant`, `--session`, a bypass flag, an expansion (`$VAR`, glob), a redirect or a substitution stay `ask` |
+| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit pr merge *--unverified*)`, `Bash(workit stack land *--unverified*)`, `Bash(workit git push *--overwrite-unintegrated*)` and `Bash(workit <user-only call>*)` (`release notes approve`, `grant set|raise`, `ledger void`) as a second layer: each is anchored at its verb, so a call that only mentions one in its text (a verdict's `--how`, a changelog entry) is not asked, and a refresh removes the older `Bash(workit * …)` rules Workit wrote, never yours (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you (a word with a `$VAR`, glob or `$(…)` is not read, so it never asks: the merge grant and `--reason` stay the gate). With the hooks off (Node below 24) only the anchored rules stand, and they miss a global option placed between the verb and its subcommand: `workit pr --cwd X merge --unverified` matches the `workit pr *` allow, so the merge grant and `--reason` are its only gate; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it); `permissions.deny` `Edit(//<state dir>/issued*)`, `Edit(//<state dir>/issued*/**)`, `Edit(//<state dir>/approvals)`, `Edit(//<state dir>/approvals/**)`, `Edit(//<config dir>/workspaces.json)` and `Edit(//<config dir>/workspaces.json.seal)` (an `Edit` rule also covers `Write` and `NotebookEdit`) |
+| Codex | `~/.codex/rules/workit.rules` (or under `$CODEX_HOME`), a file Workit owns: one `prefix_rule(pattern=["workit", "<verb>"], decision="allow")` per verb and `["workit", "grant"]` → `prompt`. `config.toml` and its sandbox settings are untouched (Codex has no path deny rule) |
+| Cursor | `Shell(workit <verb>)` per verb in `~/.cursor/cli-config.json` `permissions.allow` (cursor-agent matches the rule as a command prefix); `permissions.deny` `Write(<state dir>/issued*)`, `Write(<state dir>/approvals)`, `Write(<state dir>/approvals/*)`, `Write(<config dir>/workspaces.json)` and `Write(<config dir>/workspaces.json.seal)` (they stop Cursor's edit tools, not shell commands) |
+| OpenCode | No allow rule: the Workit plugin's `permission.evaluate` turns an `ask` for a command made only of allowed Workit calls into `allow`. A config `deny` still wins, and `check`, `lock`, `grant`, `--session`, a bypass flag, an expansion (`$VAR`, glob), a redirect or a substitution stay `ask`. In the global `opencode.json` (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`): `permission.edit` patterns `<state dir>/issued*`, `<state dir>/approvals`, `<state dir>/approvals/*`, `<config dir>/workspaces.json` and `<config dir>/workspaces.json.seal` set to `"deny"`, after your own patterns (OpenCode's last matching rule wins; they stop the edit, write and patch tools, not `bash`). Setup leaves the file alone and says so when `permission.edit` is a single action such as `"allow"` or your config is an `opencode.jsonc` |
 | Pi | Nothing: Pi has no permission layer |
 
 Write the verb first: `workit <verb> --cwd <dir> …`. A host rule cannot match

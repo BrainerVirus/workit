@@ -8,8 +8,17 @@
 //     `autoMode.allow` line, and `env.CLAUDE_CODE_SHELL` (zsh users only);
 //   - Codex: `rules/workit.rules`, a file Workit owns;
 //   - Cursor: enumerated `Shell(workit <verb>)` in `~/.cursor/cli-config.json`.
-// OpenCode needs no write (its plugin turns an ask into an allow) and Pi has
-// no permission layer. Every host also allows the lease verbs agents run
+// OpenCode needs no allow (its plugin turns an ask into an allow) and Pi has
+// no permission layer. Native deny rules for the guarded paths (#820:
+// `<state>/issued*`, `<state>/approvals/`, the account config's
+// workspaces.json and its seal) ride the same block, so they hold when a hook
+// fails to load: Claude Code `Edit(//<abs>)` deny rules (its sandbox also
+// denies those paths to Bash), Cursor `Write(<abs>)` deny rules, and OpenCode
+// `permission.edit` patterns set to "deny" in its global opencode.json. The
+// paths come from the env at setup time; a refresh drops the ones Workit wrote
+// for paths that moved. Codex has no path deny (its sandbox's writable roots
+// are an allowlist): the doctor reports its sandbox mode instead.
+// Every host also allows the lease verbs agents run
 // (#429): `workit check <name>` for the standard check names (a prefix rule
 // cannot exclude `workit check -- <cmd>`, so the names are listed and the CLI
 // refuses `workit check <name> -- <cmd>`) and `workit lock status|wait`.
@@ -23,6 +32,7 @@
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   readdirSync,
   mkdirSync,
   readFileSync,
@@ -32,17 +42,23 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { SEAL_FILE } from "@workit-dev/core/src/core/grant-seal";
 import { stateDir as workitStateDir } from "@workit-dev/core/src/core/heavy-words";
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
+import { configDir as workitConfigDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { WORKIT_ALLOWED_VERBS, WORKIT_USER_ONLY } from "@workit-dev/core/src/hooks/delivery-verbs";
+import { configHome } from "../upgrade/skill-roots";
 import { claudeConfigDir } from "./host-install";
 
-export type PermissionHost = "claude-code" | "codex" | "cursor";
+export type PermissionHost = "claude-code" | "codex" | "cursor" | "opencode";
 const PERMISSION_HOSTS: ReadonlySet<string> = new Set<PermissionHost>([
   "claude-code",
   "codex",
   "cursor",
+  "opencode",
 ]);
+/** The hosts whose block is merged into a JSON config. */
+type JsonHost = Exclude<PermissionHost, "codex">;
 
 /** Lease verbs for hosts whose rules match a prefix: standard check names, read-only lock verbs. */
 const CHECK_NAMES = ["test", "lint", "typecheck", "build", "format", "docs"] as const;
@@ -129,6 +145,98 @@ export const codexRulesText = (): string => {
 };
 
 // ---------------------------------------------------------------------------
+// Native deny rules for the guarded paths (#820)
+// ---------------------------------------------------------------------------
+
+/** Where each JSON host keeps its path deny rules: a list, or OpenCode's pattern map. */
+const DENY_AT: Record<JsonHost, string> = {
+  "claude-code": "permissions.deny",
+  cursor: "permissions.deny",
+  opencode: "permission.edit",
+};
+
+/** The dirs whose files only Workit or the user writes, each as written and through its links. */
+type GuardedDirs = { state: string[]; config: string[] };
+
+/** `dir` through its links: the deepest existing ancestor resolved, the rest kept (cursor-agent resolves a write target so). */
+const realDir = (dir: string): string => {
+  const rest: string[] = [];
+  for (let probe = dir; ; probe = path.dirname(probe)) {
+    try {
+      return path.join(realpathSync(probe), ...rest.toReversed());
+    } catch {
+      if (path.dirname(probe) === probe) return dir;
+      rest.push(path.basename(probe));
+    }
+  }
+};
+
+const spellings = (dir: string): string[] =>
+  [...new Set([path.resolve(dir), realDir(path.resolve(dir))])].map((s) => s.replaceAll("\\", "/"));
+
+/**
+ * The state dir (`issued*`, `approvals/`) and the account config dir
+ * (workspaces.json and its seal; the default config dir of the setup's home,
+ * as the grants are read) these options resolve to.
+ */
+const guardedDirs = (options: PermissionPaths = {}): GuardedDirs => {
+  const { home, stateDir } = resolvePaths(options);
+  return {
+    state: spellings(stateDir),
+    config: spellings(workitConfigDir({ HOME: home })),
+  };
+};
+
+/** The entries under the state dir per host: Claude Code reads gitignore patterns, Cursor and OpenCode a `*` that crosses `/`. */
+const STATE_NAMES: Record<JsonHost, readonly string[]> = {
+  "claude-code": ["issued*", "issued*/**", "approvals", "approvals/**"],
+  cursor: ["issued*", "approvals", "approvals/*"],
+  opencode: ["issued*", "approvals", "approvals/*"],
+};
+const CONFIG_NAMES = ["workspaces.json", SEAL_FILE];
+
+/**
+ * A dir as a literal in a Claude Code rule: gitignore glob characters
+ * backslash-escaped, then each parenthesis as `[(]`/`[)]`, the spelling claude
+ * 2.1.323's rule check suggests (an unbalanced one is ambiguous).
+ */
+const claudeLiteral = (dir: string): string =>
+  dir.replace(/[*?[\]]/gu, "\\$&").replace(/[()]/gu, "[$&]");
+
+/**
+ * One host's deny entries for `dirs`: `Edit(//<abs>)` (Claude Code),
+ * `Write(<abs>)` (Cursor), a bare pattern (OpenCode). Cursor and OpenCode
+ * escape every regex character but their own wildcards, so a dir is written
+ * as is; a `*` or `?` in it only widens the rule.
+ */
+const nativeDenyEntries = (host: JsonHost, dirs: GuardedDirs): string[] => {
+  const rule = (dir: string, name: string): string => {
+    if (host === "claude-code") return `Edit(//${claudeLiteral(dir).replace(/^\/+/u, "")}/${name})`;
+    return host === "cursor" ? `Write(${dir}/${name})` : `${dir}/${name}`;
+  };
+  return [
+    ...dirs.state.flatMap((dir) => STATE_NAMES[host].map((name) => rule(dir, name))),
+    ...dirs.config.flatMap((dir) => CONFIG_NAMES.map((name) => rule(dir, name))),
+  ];
+};
+
+/** The shape of a native deny entry Workit writes, for any guarded dir: what uninstall may trust a record for. */
+const NATIVE_SHAPE: Record<JsonHost, RegExp> = {
+  "claude-code":
+    /^Edit\(\/\/.+\/(?:issued\*(?:\/\*\*)?|approvals(?:\/\*\*)?|workspaces\.json(?:\.seal)?)\)$/u,
+  cursor: /^Write\(.+\/(?:issued\*|approvals(?:\/\*)?|workspaces\.json(?:\.seal)?)\)$/u,
+  opencode: /^.+\/(?:issued\*|approvals(?:\/\*)?|workspaces\.json(?:\.seal)?)$/u,
+};
+
+const isJsonHost = (host: string): host is JsonHost => Object.hasOwn(DENY_AT, host);
+
+const isNativeDeny = (host: string, dotted: string, entry: unknown): entry is string =>
+  isJsonHost(host) &&
+  DENY_AT[host] === dotted &&
+  typeof entry === "string" &&
+  NATIVE_SHAPE[host].test(entry);
+
+// ---------------------------------------------------------------------------
 // Pure merges and removals
 // ---------------------------------------------------------------------------
 
@@ -206,7 +314,7 @@ const appendList = (
 type HostMerge = { config: Json; owned: OwnedEntries; error?: string };
 
 /** Remove the entries a past Workit version offered that this one replaced (#615). */
-const dropPrior = (config: Json, host: "claude-code" | "cursor"): void => {
+const dropPrior = (config: Json, host: JsonHost): void => {
   for (const [dotted, prior] of Object.entries(PRIOR_ENTRIES[host])) {
     const at = valueAt(config, dotted);
     const list = at?.parent[at.key];
@@ -224,23 +332,92 @@ const dropRetired = (config: Json, ownedAsk: readonly string[]): void => {
     at.parent[at.key] = list.filter((entry) => !retired.has(entry as string));
 };
 
+/** The deny entries at `dotted`: a list's strings, or a pattern map's keys set to "deny". */
+const denyEntriesAt = (root: Json, dotted: string): string[] => {
+  const value = valueFrom(root, ...dotted.split("."));
+  if (Array.isArray(value)) return stringList(value);
+  return isRecord(value) ? Object.keys(value).filter((key) => value[key] === "deny") : [];
+};
+
+/** Drop the native deny entries Workit wrote (`ownedDeny`) for guarded paths that moved; a user's entry stays. */
+const dropStaleDeny = (
+  config: Json,
+  host: JsonHost,
+  current: readonly string[],
+  ownedDeny: readonly string[],
+): void => {
+  const dotted = DENY_AT[host];
+  const wanted = new Set(current);
+  const stale = new Set(
+    ownedDeny.filter((entry) => isNativeDeny(host, dotted, entry) && !wanted.has(entry)),
+  );
+  const at = valueAt(config, dotted);
+  const value = at?.parent[at.key];
+  if (!at || stale.size === 0) return;
+  if (Array.isArray(value))
+    at.parent[at.key] = value.filter((entry) => !stale.has(entry as string));
+  else if (isRecord(value)) for (const key of stale) if (value[key] === "deny") delete value[key];
+};
+
+/** Set each missing pattern of `entries` to "deny" in the pattern map at `dotted` (OpenCode). */
+const appendDenyMap = (
+  root: Json,
+  dotted: string,
+  entries: readonly string[],
+  owned: OwnedEntries,
+  skip: Skip,
+): string | null => {
+  const skipped = new Set(skip[dotted] ?? []);
+  const wanted = entries.filter((entry) => !skipped.has(entry));
+  if (wanted.length === 0) return null;
+  const keys = dotted.split(".");
+  const parent = objectAt(root, keys.slice(0, -1), owned);
+  const leaf = keys.at(-1)!;
+  if (!parent) return `${keys.slice(0, -1).join(".")} is not an object`;
+  if (typeof parent[leaf] === "string")
+    return `${dotted} is one action for every path ("${parent[leaf]}"); make it a pattern map to take Workit's deny patterns`;
+  if (parent[leaf] === undefined) {
+    parent[leaf] = {};
+    owned.created.push(dotted);
+  }
+  const map = parent[leaf];
+  if (!isRecord(map)) return `${dotted} is not an object`;
+  for (const entry of wanted)
+    if (map[entry] === undefined) {
+      map[entry] = "deny";
+      (owned.lists[dotted] ??= []).push(entry);
+    }
+  return null;
+};
+
+/** What a merge needs besides the config: the native deny entries, the refresh skips, the record. */
+type MergeInput = {
+  deny: readonly string[];
+  skip: Skip;
+  previous?: OwnedEntries;
+};
+
+/** The strings Workit recorded adding at `dotted` (a tampered record yields none). */
+const ownedList = (previous: OwnedEntries | undefined, dotted: string): string[] => {
+  const lists: unknown = previous?.lists;
+  return isRecord(lists) ? stringList(lists[dotted]) : [];
+};
+
 /**
  * Claude Code user settings with Workit's block. `shell` (a bash path) is set
  * as `env.CLAUDE_CODE_SHELL` only when no value is set; `skip` leaves out the
  * entries an earlier write offered (the upgrade refresh).
  */
-function mergeClaudeSettings(
-  settings: Json,
-  shell: string | null,
-  skip: Skip = {},
-  ownedAsk: readonly string[] = [],
-): HostMerge {
+function mergeClaudeSettings(settings: Json, shell: string | null, input: MergeInput): HostMerge {
+  const { deny, skip, previous } = input;
   const config = clone(settings);
   const owned = emptyOwned();
-  dropRetired(config, ownedAsk);
+  dropRetired(config, ownedList(previous, "permissions.ask"));
+  dropStaleDeny(config, "claude-code", deny, ownedList(previous, DENY_AT["claude-code"]));
   const error =
     appendList(config, "permissions.allow", CLAUDE_ALLOW, owned, [], skip) ??
     appendList(config, "permissions.ask", CLAUDE_ASK, owned, [], skip) ??
+    appendList(config, "permissions.deny", deny, owned, [], skip) ??
     appendList(config, "autoMode.environment", [AUTO_MODE_ENVIRONMENT], owned, [DEFAULTS], skip) ??
     appendList(config, "autoMode.allow", [AUTO_MODE_ALLOW], owned, [DEFAULTS], skip);
   if (error) return { config: settings, owned: emptyOwned(), error };
@@ -261,37 +438,49 @@ function mergeClaudeSettings(
   return { config, owned };
 }
 
-/** Cursor CLI config with Workit's `Shell(workit <verb>)` allows. */
-function mergeCursorCliConfig(config: Json, skip: Skip = {}): HostMerge {
+/** Cursor CLI config with Workit's `Shell(workit <verb>)` allows and its `Write(<abs>)` denies. */
+function mergeCursorCliConfig(config: Json, input: MergeInput): HostMerge {
+  const { deny, skip, previous } = input;
   const next = clone(config);
   const owned = emptyOwned();
+  dropStaleDeny(next, "cursor", deny, ownedList(previous, DENY_AT.cursor));
   const error =
     appendList(next, "permissions.allow", CURSOR_ALLOW, owned, [], skip) ??
-    appendList(next, "permissions.deny", CURSOR_DENY, owned, [], skip);
+    appendList(next, "permissions.deny", [...CURSOR_DENY, ...deny], owned, [], skip);
   return error ? { config, owned: emptyOwned(), error } : { config: next, owned };
 }
 
-/** The canonical entries per list, for a host with no ownership record. */
-const CANONICAL: Record<"claude-code" | "cursor", OwnedEntries> = {
+/** OpenCode's global opencode.json with Workit's `permission.edit` deny patterns. */
+function mergeOpenCodeConfig(config: Json, input: MergeInput): HostMerge {
+  const { deny, skip, previous } = input;
+  const next = clone(config);
+  const owned = emptyOwned();
+  dropStaleDeny(next, "opencode", deny, ownedList(previous, DENY_AT.opencode));
+  const error = appendDenyMap(next, DENY_AT.opencode, deny, owned, skip);
+  return error ? { config, owned: emptyOwned(), error } : { config: next, owned };
+}
+
+/** The entries per list that need no path, for a host with no ownership record. */
+const STATIC_LISTS: Record<JsonHost, Record<string, string[]>> = {
   "claude-code": {
-    lists: {
-      "permissions.allow": [...CLAUDE_ALLOW],
-      "permissions.ask": [...CLAUDE_ASK],
-      "autoMode.environment": [AUTO_MODE_ENVIRONMENT],
-      "autoMode.allow": [AUTO_MODE_ALLOW],
-    },
-    created: [],
-    env: {},
+    "permissions.allow": [...CLAUDE_ALLOW],
+    "permissions.ask": [...CLAUDE_ASK],
+    "autoMode.environment": [AUTO_MODE_ENVIRONMENT],
+    "autoMode.allow": [AUTO_MODE_ALLOW],
   },
   cursor: {
-    lists: {
-      "permissions.allow": [...CURSOR_ALLOW],
-      "permissions.deny": [...CURSOR_DENY],
-    },
-    created: [],
-    env: {},
+    "permissions.allow": [...CURSOR_ALLOW],
+    "permissions.deny": [...CURSOR_DENY],
   },
+  opencode: {},
 };
+
+/** Every entry this version writes for `host`, its native deny entries (`deny`) included. */
+const canonicalOwned = (host: JsonHost, deny: readonly string[]): OwnedEntries => ({
+  lists: unionLists(STATIC_LISTS[host], { [DENY_AT[host]]: deny }),
+  created: [],
+  env: {},
+});
 
 const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | null => {
   const keys = dotted.split(".");
@@ -308,34 +497,37 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
  * host and dotted path. Add an entry here when it leaves the canonical lists,
  * so uninstall still removes it, and a merge drops them from the list it writes.
  */
-const PRIOR_ENTRIES: Record<"claude-code" | "cursor", Record<string, readonly string[]>> = {
+const PRIOR_ENTRIES: Record<JsonHost, Record<string, readonly string[]>> = {
   "claude-code": {
     "autoMode.environment": [AUTO_MODE_ENVIRONMENT_V1],
     "autoMode.allow": [AUTO_MODE_ALLOW_V1, AUTO_MODE_ALLOW_V2],
   },
   cursor: {},
+  opencode: {},
 };
 
-/** Every entry any shipped Workit version offered at `dotted`: the one set uninstall may remove. */
-const offeredAt = (host: "claude-code" | "cursor", dotted: string): ReadonlySet<string> =>
+/** Every path-free entry any shipped Workit version offered at `dotted`. */
+const offeredAt = (host: JsonHost, dotted: string): ReadonlySet<string> =>
   new Set([
-    ...(CANONICAL[host].lists[dotted] ?? []),
+    ...(STATIC_LISTS[host][dotted] ?? []),
     ...(PRIOR_ENTRIES[host][dotted] ?? []),
     ...(host === "claude-code" && dotted === "permissions.ask" ? RETIRED_CLAUDE_ASK : []),
   ]);
 
 /** The containers a merge may create, per host. */
-const CREATED_PATHS: Record<"claude-code" | "cursor", ReadonlySet<string>> = {
+const CREATED_PATHS: Record<JsonHost, ReadonlySet<string>> = {
   "claude-code": new Set([
     "permissions",
     "permissions.allow",
     "permissions.ask",
+    "permissions.deny",
     "autoMode",
     "autoMode.environment",
     "autoMode.allow",
     "env",
   ]),
   cursor: new Set(["permissions", "permissions.allow", "permissions.deny"]),
+  opencode: new Set(["permission", "permission.edit"]),
 };
 
 /** Where `findBash` looks first, so a Workit-written `CLAUDE_CODE_SHELL` is one of these or the PATH hit. */
@@ -347,20 +539,24 @@ const isWorkitBash = (value: unknown, env: NodeJS.ProcessEnv): value is string =
 
 /**
  * An ownership record cut down to what Workit could have written: its own
- * list paths with the exact entries a shipped version offered, only the
+ * list paths with the exact entries a shipped version offered (or a native
+ * deny entry's shape, whose path the setup's env decided), only the
  * `CLAUDE_CODE_SHELL` value `findBash` yields, and its own containers. A
  * stale or edited record never makes uninstall remove a user's entry.
  */
 const trustedOwned = (
   owned: OwnedEntries,
-  host: "claude-code" | "cursor",
+  host: JsonHost,
   env: NodeJS.ProcessEnv,
 ): OwnedEntries => {
   const lists: Record<string, string[]> = {};
   for (const [dotted, entries] of Object.entries(isRecord(owned.lists) ? owned.lists : {})) {
     const offered = offeredAt(host, dotted);
-    if (!Array.isArray(entries) || offered.size === 0) continue;
-    lists[dotted] = entries.filter((entry) => typeof entry === "string" && offered.has(entry));
+    if (!Array.isArray(entries) || (offered.size === 0 && DENY_AT[host] !== dotted)) continue;
+    lists[dotted] = entries.filter(
+      (entry) =>
+        typeof entry === "string" && (offered.has(entry) || isNativeDeny(host, dotted, entry)),
+    );
   }
   const shell = isRecord(owned.env) ? owned.env.CLAUDE_CODE_SHELL : undefined;
   return {
@@ -372,37 +568,52 @@ const trustedOwned = (
   };
 };
 
-/** The canonical entries plus the prior ones, for removal without a record. */
-const withPrior = (host: "claude-code" | "cursor"): OwnedEntries => ({
-  ...CANONICAL[host],
-  lists: unionLists(CANONICAL[host].lists, PRIOR_ENTRIES[host]),
-});
+/** The canonical entries (native deny ones for `deny`) plus the prior ones, for removal without a record. */
+const withPrior = (host: JsonHost, deny: readonly string[]): OwnedEntries => {
+  const canonical = canonicalOwned(host, deny);
+  return {
+    ...canonical,
+    lists: unionLists(canonical.lists, PRIOR_ENTRIES[host]),
+  };
+};
 
 /**
- * The inverse of a merge: drop the entries `owned` names, the env values it
- * set (when unchanged), and the containers it created once they hold nothing
- * but their seed. Without a record, the canonical entries are dropped; with
- * one, only the entries a shipped version offered (`trustedOwned`).
+ * The inverse of a merge: drop the entries `owned` names (a pattern map's
+ * key only while it still says "deny"), the env values it set (when
+ * unchanged), and the containers it created once they hold nothing but their
+ * seed. Without a record, the canonical entries are dropped, the native deny
+ * ones for the paths `paths` resolves; with one, only the entries a shipped
+ * version offered (`trustedOwned`).
  */
 export function removeOwnedEntries(
   config: Json,
   owned: OwnedEntries | null,
-  host: "claude-code" | "cursor",
+  host: JsonHost,
   shellEnv: NodeJS.ProcessEnv = process.env,
+  paths: PermissionPaths = {},
 ): { next: Json; changed: boolean } {
   const next = clone(config);
-  const record = owned ? trustedOwned(owned, host, shellEnv) : withPrior(host);
+  const record = owned
+    ? trustedOwned(owned, host, shellEnv)
+    : withPrior(host, nativeDenyEntries(host, guardedDirs({ env: shellEnv, ...paths })));
   let changed = false;
   for (const [dotted, entries] of Object.entries(record.lists)) {
     const at = valueAt(next, dotted);
-    const list = at?.parent[at.key];
-    if (!at || !Array.isArray(list)) continue;
-    const drop = new Set<unknown>(entries);
-    const kept = list.filter((entry) => !drop.has(entry));
-    if (kept.length !== list.length) {
-      at.parent[at.key] = kept;
-      changed = true;
-    }
+    const value = at?.parent[at.key];
+    if (!at) continue;
+    if (Array.isArray(value)) {
+      const drop = new Set<unknown>(entries);
+      const kept = value.filter((entry) => !drop.has(entry));
+      if (kept.length !== value.length) {
+        at.parent[at.key] = kept;
+        changed = true;
+      }
+    } else if (isRecord(value) && dotted === DENY_AT[host])
+      for (const entry of entries)
+        if (value[entry] === "deny") {
+          delete value[entry];
+          changed = true;
+        }
   }
   const env = next.env;
   if (isRecord(env))
@@ -427,10 +638,10 @@ export function removeOwnedEntries(
   return { next, changed };
 }
 
-/** Workit entries missing from a host config (empty when the block is whole). */
-function missingEntries(config: Json, host: "claude-code" | "cursor"): string[] {
+/** Workit's path-free entries missing from a host config (empty when that block is whole). */
+function missingEntries(config: Json, host: JsonHost): string[] {
   const missing: string[] = [];
-  for (const [dotted, entries] of Object.entries(CANONICAL[host].lists)) {
+  for (const [dotted, entries] of Object.entries(STATIC_LISTS[host])) {
     const at = valueAt(config, dotted);
     const list = at?.parent[at.key];
     const present = new Set<unknown>(Array.isArray(list) ? list : []);
@@ -474,6 +685,10 @@ export const permissionTarget = (
   if (host === "codex") {
     const dir = env.CODEX_HOME || path.join(home, ".codex");
     return { file: path.join(dir, "rules", "workit.rules"), hostDir: dir };
+  }
+  if (host === "opencode") {
+    const dir = path.join(configHome(home, env), "opencode");
+    return { file: path.join(dir, "opencode.json"), hostDir: dir };
   }
   const dir = path.join(home, ".cursor");
   return { file: path.join(dir, "cli-config.json"), hostDir: dir };
@@ -570,8 +785,10 @@ export type PermissionChange = {
 };
 
 export type PermissionPlan = {
-  /** Set inside an agent session: the command the user must run instead. */
+  /** Why nothing may be written (an agent session, a state dir Workit cannot record in). */
   refused?: string;
+  /** What the user runs or changes to clear `refused`, when it is not the setup command itself. */
+  unblock?: string;
   changes: PermissionChange[];
   /** One line per host with nothing to write, and why. */
   notes: string[];
@@ -616,6 +833,27 @@ const findBash = (env: NodeJS.ProcessEnv): string | null => {
 const setupCommand = (hosts: readonly string[]): string =>
   `workit setup --hosts=${hosts.join(",")}`;
 
+/** OpenCode's config when only an `opencode.jsonc` holds it (Workit would drop its comments). */
+const onlyJsonc = (file: string): string | null => {
+  const jsonc = file.replace(/\.json$/u, ".jsonc");
+  return !existsSync(file) && existsSync(jsonc) ? jsonc : null;
+};
+const JSONC_BLOCKED =
+  "holds the OpenCode config (comments Workit would drop); add Workit's permission.edit deny patterns by hand";
+
+/** One JSON host's merge (`bash`: the Claude Code shell to set, or null). */
+const mergeFor = (
+  host: JsonHost,
+  parsed: Json,
+  bash: string | null,
+  input: MergeInput,
+): HostMerge =>
+  host === "claude-code"
+    ? mergeClaudeSettings(parsed, bash, input)
+    : host === "cursor"
+      ? mergeCursorCliConfig(parsed, input)
+      : mergeOpenCodeConfig(parsed, input);
+
 export function planHostPermissions(options: PlanOptions): PermissionPlan {
   const paths = resolvePaths(options);
   const plan: PermissionPlan = { changes: [], notes: [], blocked: [] };
@@ -623,11 +861,8 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
   const hosts = options.refreshOnly
     ? options.hosts.filter((h) => record.hosts[h as PermissionHost])
     : options.hosts;
+  const guarded = guardedDirs(paths);
   for (const host of hosts) {
-    if (host === "opencode") {
-      plan.notes.push("opencode: nothing to write; the Workit plugin allows its delivery verbs");
-      continue;
-    }
     if (host === "pi") {
       plan.notes.push("pi: nothing to write; Pi has no permission layer");
       continue;
@@ -636,6 +871,11 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
     const target = permissionTarget(host as PermissionHost, paths);
     if (!existsSync(target.hostDir)) {
       plan.notes.push(`${host}: not installed (${target.hostDir} is missing); nothing written`);
+      continue;
+    }
+    const jsonc = host === "opencode" ? onlyJsonc(target.file) : null;
+    if (jsonc) {
+      plan.blocked.push(`${jsonc} ${JSONC_BLOCKED}; left untouched`);
       continue;
     }
     const before = readText(target.file);
@@ -671,11 +911,14 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
           ? findBash(paths.env)
           : options.bash
         : null;
-      const ownedAsk = previous?.owned.lists["permissions.ask"];
-      const merged =
-        host === "claude-code"
-          ? mergeClaudeSettings(parsed, bash, skip, Array.isArray(ownedAsk) ? ownedAsk : [])
-          : mergeCursorCliConfig(parsed, skip);
+      const jsonHost = host as JsonHost;
+      const deny = nativeDenyEntries(jsonHost, guarded);
+      const input: MergeInput = {
+        deny,
+        skip,
+        ...(previous ? { previous: previous.owned } : {}),
+      };
+      const merged = mergeFor(jsonHost, parsed, bash, input);
       if (merged.error) {
         plan.blocked.push(`${target.file}: ${merged.error}; left untouched`);
         continue;
@@ -686,7 +929,7 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
       }
       after = JSON.stringify(merged.config, null, 2) + "\n";
       owned = merged.owned;
-      offered = CANONICAL[host as "claude-code" | "cursor"].lists;
+      offered = canonicalOwned(jsonHost, deny).lists;
     }
     if (before === after) {
       plan.notes.push(`${host}: Workit's permission block is already in ${target.file}`);
@@ -706,8 +949,37 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
     plan.refused = `refusing to change host permissions from inside an agent session (${agent} is set): they decide what agents may run, so run \`${setupCommand(
       plan.changes.map((c) => c.host),
     )}\` yourself in a terminal`;
+  else if (plan.changes.length > 0) {
+    const refusal = recordRefusal(paths.stateDir);
+    if (refusal) Object.assign(plan, refusal);
+  }
   return plan;
 }
+
+/**
+ * Why Workit cannot write its ownership record under `stateDir`: a symlinked
+ * dir on the way (`writeFileAtomic` never writes through one). Host files are
+ * never written without the record, or uninstall could not remove the entries.
+ */
+const recordRefusal = (stateDir: string): { refused: string; unblock: string } | null => {
+  const file = path.resolve(stateDir, RECORD_FILE);
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    let link = false;
+    try {
+      link = lstatSync(dir).isSymbolicLink();
+    } catch {
+      // Missing: created later, not a link.
+    }
+    if (link) {
+      const real = realDir(path.resolve(stateDir));
+      return {
+        refused: `nothing written: Workit records the entries it adds in ${file}, and ${dir} is a symbolic link, which Workit does not write through (without that record, uninstall could not remove them)`,
+        unblock: `point WORKIT_STATE_DIR at the real path (export WORKIT_STATE_DIR=${real}) and run the command again`,
+      };
+    }
+    if (path.dirname(dir) === dir) return null;
+  }
+};
 
 /** A unified-style line diff of one change (`-` removed, `+` added, two lines of context). */
 export function permissionDiff(change: PermissionChange): string {
@@ -770,7 +1042,33 @@ export function applyHostPermissions(
       status: "failed",
       detail: plan.refused,
     }));
+  const failAll = (detail: string): PermissionApplyEntry[] =>
+    plan.changes.map((c) => ({ host: c.host, file: c.file, status: "failed", detail }));
+  const refusal = recordRefusal(paths.stateDir);
+  if (refusal) return failAll(`${refusal.refused}; ${refusal.unblock}`);
   const record = readOwnership(paths);
+  // The record first, naming every entry about to be written: a host file is
+  // never left with entries no record owns. It is rewritten below with only
+  // the changes that were written.
+  const next = (change: PermissionChange): HostRecord => {
+    const previous = record.hosts[change.host];
+    return {
+      file: change.file,
+      owned: forgetDropped(unionOwned(previous?.owned, change.owned), change),
+      offered: unionLists(previous?.offered, change.offered),
+    };
+  };
+  const pending = plan.changes.filter((change) => readText(change.file) === change.before);
+  if (pending.length > 0)
+    try {
+      const intent: OwnershipRecord = { version: 1, hosts: { ...record.hosts } };
+      for (const change of pending) intent.hosts[change.host] = next(change);
+      writeOwnership(intent, paths.stateDir);
+    } catch (error) {
+      return failAll(
+        `nothing written: Workit could not write its ownership record in ${paths.stateDir} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
   const entries: PermissionApplyEntry[] = [];
   for (const change of plan.changes) {
     if (readText(change.file) !== change.before) {
@@ -798,12 +1096,7 @@ export function applyHostPermissions(
       }
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileAtomic(target, change.after);
-      const previous = record.hosts[change.host];
-      record.hosts[change.host] = {
-        file: change.file,
-        owned: forgetDropped(unionOwned(previous?.owned, change.owned), change),
-        offered: unionLists(previous?.offered, change.offered),
-      };
+      record.hosts[change.host] = next(change);
       entries.push({ host: change.host, file: change.file, status: "written" });
     } catch (error) {
       entries.push({
@@ -814,34 +1107,46 @@ export function applyHostPermissions(
       });
     }
   }
-  if (entries.some((e) => e.status === "written")) writeOwnership(record, paths.stateDir);
+  if (pending.length > 0)
+    try {
+      writeOwnership(record, paths.stateDir);
+    } catch {
+      // The intent record stands: it names a superset of what was written.
+    }
   return entries;
 }
 
 /**
- * `owned` without the retired ask globs the write dropped, so a user who adds
- * the same entry later never has it removed as Workit's.
+ * `owned` without the retired ask globs the write dropped, and without the
+ * native deny entries the file no longer holds (a moved path's), so a user
+ * who adds the same entry later never has it removed as Workit's.
  */
 const forgetDropped = (owned: OwnedEntries, change: PermissionChange): OwnedEntries => {
-  const ask = owned.lists["permissions.ask"];
-  if (change.host !== "claude-code" || !ask) return owned;
-  let kept: unknown = [];
+  if (change.host === "codex") return owned;
+  let after: unknown;
   try {
-    const after: unknown = JSON.parse(change.after);
-    kept = isRecord(after) && isRecord(after.permissions) ? after.permissions.ask : [];
+    after = JSON.parse(change.after);
   } catch {
     return owned;
   }
-  const present = new Set(Array.isArray(kept) ? kept : []);
-  return {
-    ...owned,
-    lists: {
-      ...owned.lists,
-      "permissions.ask": ask.filter(
-        (entry) => !RETIRED_CLAUDE_ASK.includes(entry) || present.has(entry),
-      ),
-    },
-  };
+  if (!isRecord(after)) return owned;
+  const lists = { ...owned.lists };
+  const ask = lists["permissions.ask"];
+  if (change.host === "claude-code" && ask) {
+    const present = new Set(stringList(valueFrom(after, "permissions", "ask")));
+    lists["permissions.ask"] = ask.filter(
+      (entry) => !RETIRED_CLAUDE_ASK.includes(entry) || present.has(entry),
+    );
+  }
+  const dotted = DENY_AT[change.host];
+  const deny = lists[dotted];
+  if (deny) {
+    const present = new Set(denyEntriesAt(after, dotted));
+    lists[dotted] = deny.filter(
+      (entry) => !isNativeDeny(change.host, dotted, entry) || present.has(entry),
+    );
+  }
+  return { ...owned, lists };
 };
 
 /** Remove Workit's Codex rules file (exact path only). */
@@ -886,12 +1191,140 @@ export function permissionHealth(
   }
   if (!isRecord(value)) return { state: "unreadable", detail: `${target.file} is not an object` };
   const missing = missingEntries(value, host);
-  const total = Object.values(CANONICAL[host].lists).flat().length;
+  const total = Object.values(STATIC_LISTS[host]).flat().length;
   if (missing.length === 0) return { state: "ok" };
   if (missing.length === total) return { state: "absent" };
   return {
     state: "drift",
     detail: `${target.file} lacks ${missing.length} Workit entr${missing.length === 1 ? "y" : "ies"} (${missing[0]}${missing.length > 1 ? ", …" : ""})`,
+  };
+}
+
+export type NativeDenyHost = PermissionHost | "pi";
+
+/**
+ * One host's native deny rules for the guarded paths (#820): `present` when
+ * every entry for the current paths is there and none for an old path,
+ * `stale` when one the ownership record says Workit wrote names a path that
+ * moved (what the next setup drops; a rule no record names is the user's), `missing` when an
+ * entry is absent; `none` where the host has no path deny (Codex, Pi).
+ * `sandbox` is the host's OS sandbox setting where it has one; `risk` says
+ * when that sandbox lets agents write a guarded path.
+ */
+export type NativeDenyHealth = {
+  host: NativeDenyHost;
+  state: "no-host" | "present" | "missing" | "stale" | "unreadable" | "blocked" | "none";
+  file?: string;
+  /** `blocked`: why setup cannot write the rules, as its blocked line says. */
+  reason?: string;
+  missing: string[];
+  stale: string[];
+  /** The ownership record names this host: the user consented to Workit's block before. */
+  recorded: boolean;
+  sandbox?: string;
+  risk?: string;
+};
+
+/** `sandbox_mode` and the `[sandbox_workspace_write]` writable roots of a Codex config.toml (flat reads; no TOML parser). */
+const codexSandbox = (text: string): { mode: string | null; roots: string[] } => {
+  const top = text.split(/^\s*\[/mu)[0] ?? "";
+  const mode = /^\s*sandbox_mode\s*=\s*"([^"]*)"/mu.exec(top)?.[1] ?? null;
+  const table = /^\s*\[sandbox_workspace_write\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/mu.exec(
+    text,
+  )?.[1];
+  const list = /^\s*writable_roots\s*=\s*\[([^\]]*)\]/mu.exec(table ?? "")?.[1] ?? "";
+  return {
+    mode,
+    roots: [...list.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/gu)].map((m) => m[1] ?? m[2]),
+  };
+};
+
+/** Is `dir` (posix form) `root` or inside it? */
+const within = (dir: string, root: string): boolean => {
+  const base = root.replaceAll("\\", "/").replace(/\/+$/u, "");
+  return dir === base || dir.startsWith(`${base}/`);
+};
+
+export function nativeDenyHealth(
+  host: NativeDenyHost,
+  options: PermissionPaths = {},
+): NativeDenyHealth {
+  const { home } = resolvePaths(options);
+  const base = { host, missing: [], stale: [], recorded: false };
+  if (host === "pi")
+    return existsSync(path.join(home, ".pi"))
+      ? { ...base, state: "none" }
+      : { ...base, state: "no-host" };
+  const target = permissionTarget(host, options);
+  if (!existsSync(target.hostDir)) return { ...base, state: "no-host" };
+  const guarded = guardedDirs(options);
+  if (host === "codex") {
+    const config = path.join(target.hostDir, "config.toml");
+    const { mode, roots } = codexSandbox(readText(config) ?? "");
+    const open = roots.find((root) =>
+      [...guarded.state, ...guarded.config].some((dir) => within(dir, root)),
+    );
+    const risk =
+      mode === "danger-full-access"
+        ? `sandbox_mode "danger-full-access" in ${config} lets agent commands write the guarded paths`
+        : open
+          ? `writable_roots in ${config} holds ${open}, which holds a guarded path`
+          : undefined;
+    return {
+      ...base,
+      state: "none",
+      file: config,
+      sandbox: `sandbox_mode ${mode ? `"${mode}"` : "not set (Codex picks one per project trust)"}`,
+      ...(risk ? { risk } : {}),
+    };
+  }
+  const recorded = readOwnership(options).hosts[host] !== undefined;
+  const jsonc = host === "opencode" ? onlyJsonc(target.file) : null;
+  if (jsonc)
+    return {
+      ...base,
+      recorded,
+      state: "blocked",
+      file: jsonc,
+      missing: nativeDenyEntries(host, guarded),
+      reason: JSONC_BLOCKED,
+    };
+  const value = readRecord(target.file);
+  const text = readText(target.file);
+  if (text !== null && text.trim() !== "" && value === null)
+    return { ...base, recorded, state: "unreadable", file: target.file };
+  const config = value ?? {};
+  const dotted = DENY_AT[host];
+  const expected = nativeDenyEntries(host, guarded);
+  const wanted = new Set(expected);
+  const present = new Set(denyEntriesAt(config, dotted));
+  const previous = readOwnership(options).hosts[host]?.owned;
+  const owned = new Set(ownedList(previous, dotted));
+  // What setup would refuse to merge into (OpenCode's `permission.edit: "allow"`, a list that is not one).
+  const blocked = mergeFor(host, config, null, {
+    deny: expected,
+    skip: {},
+    ...(previous ? { previous } : {}),
+  }).error;
+  const stale = [...present].filter(
+    (entry) => isNativeDeny(host, dotted, entry) && !wanted.has(entry) && owned.has(entry),
+  );
+  const missing = expected.filter((entry) => !present.has(entry));
+  const sandbox =
+    host === "claude-code"
+      ? `sandbox ${valueFrom(config, "sandbox", "enabled") === true ? "on" : "off"}`
+      : host === "cursor"
+        ? `sandbox.mode ${String(valueFrom(config, "sandbox", "mode") ?? "disabled")}`
+        : undefined;
+  return {
+    host,
+    state: stale.length ? "stale" : missing.length ? (blocked ? "blocked" : "missing") : "present",
+    file: target.file,
+    missing,
+    stale,
+    recorded,
+    ...(blocked && missing.length ? { reason: blocked } : {}),
+    ...(sandbox ? { sandbox } : {}),
   };
 }
 
