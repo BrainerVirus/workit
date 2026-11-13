@@ -1547,6 +1547,55 @@ test("D5: the refusal looks before the roots become placeholders: a private valu
   expect(where).toEqual(["event 1, assistant Bash input: host project path, 22"]);
 });
 
+test("#833: a root or home glued to a one-letter option at a token's start is a whole path; a root glued inside a word, a path or before more is not", () => {
+  const roots = rootSpellings([{ dir: "/home/inv/proj/main", as: "<linked>" }], ["/home/inv"]);
+  const set = new Map([
+    ["/home/inv/proj/main", "host project path"],
+    ["~/proj/main", "host project path"],
+    ["inv/proj", "real Workit config value"],
+    ["mainsecret", "real Workit config value"],
+  ] as const);
+  // `git -C <root>`, a compiler's `-I<root>`, quoted, and a long option's `=`: the root's placeholder.
+  for (const root of ["/home/inv/proj/main", "~/proj/main", "$HOME/proj/main"])
+    for (const [text, stored] of [
+      [`git -C${root}/x status`, "git -C<linked>/x status"],
+      [`cc -I${root}`, "cc -I<linked>"],
+      [`git "-C${root}" log`, 'git "-C<linked>" log'],
+      [`run --dir=${root}`, "run --dir=<linked>"],
+      [`-L${root}/lib`, "-L<linked>/lib"],
+      [`sh -c '(-C${root})'`, "sh -c '(-C<linked>)'"],
+    ] as const) {
+      expect(scrubRoots(text, roots), text).toBe(stored);
+      expect(refusalKinds(text, set, roots), text).toEqual([]);
+    }
+  // In a transcript the quote is JSON-escaped: still the root.
+  expect(
+    refusalKinds(JSON.stringify({ command: 'git "-C/home/inv/proj/main" log' }), set, roots),
+  ).toEqual([]);
+  // Glued inside a word or a path, or with more glued after it: another path, still refused.
+  for (const text of [
+    "x/home/inv/proj/main/a",
+    "/mnt/home/inv/proj/main/a",
+    "a-C/home/inv/proj/main/a",
+    "--C/home/inv/proj/main/a",
+    "-C/home/inv/proj/mainsecret",
+  ]) {
+    expect(scrubRoots(text, roots), text).toBe(text);
+    expect(refusalKinds(text, set, roots), text).not.toEqual([]);
+  }
+  // The home scrub reads the same: `~` after a glued option, the home's name elsewhere.
+  const account = { homes: ["/home/inv"], user: "nobody-example", host: "box-example" };
+  expect(scrubAccount('git -C/home/inv/x "-I/home/inv/y" --dir=/home/inv', account)).toBe(
+    'git -C~/x "-I~/y" --dir=~',
+  );
+  for (const text of ["x/home/inv/a", "/mnt/home/inv/a", "a-C/home/inv/a", "-C/home/inv-other/a"])
+    expect(scrubAccount(text, account), text).not.toContain("~");
+  // The committed scan sees a home path glued to an option too; a placeholder world's stays clean.
+  expect(committedLeaks('{"command":"git -C/home/alice-example/src log"}')).toEqual(["home path"]);
+  expect(committedLeaks('"-I/Users/alice-example/include/"')).toEqual(["home path"]);
+  expect(committedLeaks("git -C<world>/home/.claude/x")).toEqual([]);
+});
+
 test("D5: the checkout's own placeholder hides nothing either: put back, a private value under the checkout is refused and the checkout is not", () => {
   // `<workit>` goes in early (the outside-read scrub needs it), so the refusal puts it back to look.
   const checkout = { dir: "~/proj/workit", as: "<workit>" };

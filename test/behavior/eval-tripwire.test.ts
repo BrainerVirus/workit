@@ -395,6 +395,105 @@ test("Given the host ran chmod 644 on the real token, Then the finding reads mod
   expect(out).not.toContain(`diff -u`);
 });
 
+// A runner that throws after the run changed a guarded file (#833): the host locks a dir in its
+// world, so removing the world fails once the host is gone.
+const LOCK_WORLD = `mkdir -p "$PWD/locked/x"; chmod 500 "$PWD/locked"`;
+/** `fn` with worlds made under `root`, every locked dir in them opened again afterwards. */
+const worldsUnderRoot = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const tmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = root;
+  try {
+    return await fn();
+  } finally {
+    if (tmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = tmpdir;
+    for (const name of readdirSync(root))
+      if (name.startsWith("workit-eval-")) {
+        const locked = path.join(root, name, "repo", "locked");
+        if (existsSync(locked)) chmodSync(locked, 0o700);
+      }
+  }
+};
+const lsm = ((): string => {
+  try {
+    return readFileSync("/sys/kernel/security/lsm", "utf8");
+  } catch {
+    return "";
+  }
+})();
+const landlock = process.platform === "linux" && lsm.split(",").includes("landlock");
+
+test.skipIf(process.getuid?.() === 0)(
+  "Given the host changed the real workspaces.json and the runner then throws, Then the terminal shows the STOPPED line and the finding, the journal stays and the error goes on",
+  async () => {
+    const lines: string[] = [];
+    const run = worldsUnderRoot(() =>
+      main(argv(fakeClaude(`${LOCK_WORLD}; ${WRITE}`)), (text) => lines.push(text)),
+    );
+
+    // Today's exit: the error leaves `main`, as before.
+    await expect(run).rejects.toThrow(/EACCES|permission denied/iu);
+    const out = lines.join("\n");
+    expect(out).toContain(
+      "STOPPED: a-case changed real Workit files outside its world, then the runner failed (its error follows). Nothing was put back; no further run starts.",
+    );
+    expect(out).toContain(`  ${ws}`);
+    expect(out).toMatch(/was: file, mode 600/u);
+    expect(out).toContain(`$ diff -u '`);
+    expect(out).toContain("the journal stays");
+    expect(existsSync(path.join(base, "journal"))).toBe(true);
+    expect(file(ws)).toBe(EVIL);
+    expect(existsSync(result("a-case"))).toBe(false);
+    expect(existsSync(result("b-case"))).toBe(false);
+  },
+  30_000,
+);
+
+test.skipIf(!landlock || process.getuid?.() === 0)(
+  "Given write confinement, When another process changes a guarded file, the run changes a mode and the runner then throws, Then both are reported, only the mode stops the bench and the journal stays",
+  async () => {
+    // Under Landlock the host writes only in its world: it locks a dir there and waits.
+    const bin = path.join(root, "claude-throws");
+    writeFileSync(
+      bin,
+      `#!/bin/sh\ncat > /dev/null\n${LOCK_WORLD}\nsleep 10\nprintf '%s\\n' '${RESULT}'\n`,
+    );
+    chmodSync(bin, 0o755);
+    const lines: string[] = [];
+    const run = worldsUnderRoot(async () => {
+      const running = main(
+        [...argv(bin, "--confine", "auto"), "--watch-ms", "100", "--cases", "a-case"],
+        (text) => lines.push(text),
+      );
+      // The changes come once the host has locked its world (a confined start can be slow).
+      const modeOf = (dir: string): number =>
+        (statSync(path.join(root, dir, "repo", "locked"), { throwIfNoEntry: false })?.mode ?? 0) &
+        0o777;
+      const locked = (): boolean =>
+        readdirSync(root).some((dir) => dir.startsWith("workit-eval-") && modeOf(dir) === 0o500);
+      for (let waited = 0; waited < 20_000 && !locked(); waited += 20) await Bun.sleep(20);
+      // Another process appends (the kernel refused the host that write); the mode is the run's.
+      writeFileSync(ws, `${ORIGINAL}\n`);
+      chmodSync(token, 0o644);
+      return running;
+    });
+
+    await expect(run).rejects.toThrow(/EACCES|permission denied/iu);
+    const out = lines.join("\n");
+    expect(out).toMatch(/^write confinement: on /mu);
+    expect(out).toContain(
+      "outside change, not this bench's: write confinement was on, so this change was made by another process; the run threw, so no result records it; this change stops nothing.",
+    );
+    expect(out).toContain(`  ${ws}`);
+    expect(out).toContain(
+      "STOPPED: a-case changed real Workit files outside its world, then the runner failed (its error follows).",
+    );
+    expect(out).toMatch(/now: file, 1 link, mode 644/u);
+    expect(out).toContain("the journal stays");
+    expect(existsSync(path.join(base, "journal"))).toBe(true);
+  },
+  30_000,
+);
 test("Given a run that writes nothing outside its world, Then the bench records no outside write and leaves no journal", async () => {
   const { exit } = await bench(":");
   expect(exit).toBe(0);
