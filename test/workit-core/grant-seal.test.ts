@@ -14,6 +14,8 @@ import {
   rawGrantDenial,
   requireGrant,
   resolveAutonomy,
+  sealAfterWrite,
+  sealBefore,
 } from "@/packages/workit-core/src/autonomy";
 import { SEAL_FILE, sealDocument } from "@/packages/workit-core/src/core/grant-seal";
 import { sshSeam } from "@/packages/workit-core/src/core/remotes";
@@ -321,4 +323,25 @@ test("Given push below the D4 default in both sealed and current, When the seal 
   // No sealed value at all (D4 push is true) never raises it either.
   writeFileSync(path.join(configHome.configDir, SEAL_FILE), "garbage");
   expect(resolveAutonomy(at("strict")).grants.push).toBe(false);
+});
+
+test("Given a terminal writer and a matching seal, When another write lands between its write and the reseal, Then only the writer's own entries could be sealed: the seal is left mismatched", () => {
+  write([open()]);
+  sealConfig(configHome.configDir);
+  const before = sealBefore(configHome.configDir);
+  const own = [open({ autonomy: { push: true, pr: true, merge: false } })];
+  write(own);
+  // Someone else's raise lands before the writer re-reads.
+  write([open({ autonomy: { push: true, pr: true, merge: true, release: true } })]);
+  expect(sealAfterWrite(before, true, own)).toBe("mismatch");
+  expect(resolveAutonomy(at("open")).grants.release).toBe(false);
+  // Without the race, the writer's entries are sealed.
+  write(own);
+  expect(sealAfterWrite(sealBefore(configHome.configDir), true, own)).toBe("unchanged");
+  write([open()]);
+  sealConfig(configHome.configDir);
+  const clean = sealBefore(configHome.configDir);
+  write(own);
+  expect(sealAfterWrite(clean, true, own)).toBe("resealed");
+  expect(resolveAutonomy(at("open")).note).toBeUndefined();
 });

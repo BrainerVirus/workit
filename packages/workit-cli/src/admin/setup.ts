@@ -928,7 +928,7 @@ function applyMutation(m: CoreMutation, terminal = false): SetupResultEntry {
         };
       }
       const unsealed =
-        sealAfterWrite(before, terminal) === "mismatch"
+        sealAfterWrite(before, terminal, m.entries) === "mismatch"
           ? {
               detail: `not sealed: grants, endpoint and verification above the last seal (or the D4 defaults) apply after the user runs, in their own terminal: ${SEAL_COMMAND}`,
             }

@@ -1166,7 +1166,7 @@ export function writeGrants(
       accountConfigured: Boolean(accountOf(entry)),
     }),
     verification: verificationOf(entry),
-    seal: sealAfterWrite(before, terminal),
+    seal: sealAfterWrite(before, terminal, document.workspaces ?? []),
   };
 }
 
@@ -1197,13 +1197,20 @@ export function sealBefore(dir: string): SealBefore {
  * before; any other write reseals only when its result only lowers the sealed
  * values (lowersOnly). Everything else leaves the seal mismatched: then the
  * stricter-of fallback applies until the user runs `workit workspace seal`.
+ * Only `written`, the entries this writer wrote, are ever sealed: when the
+ * file holds anything else by now (another write landed in between), the
+ * seal is left mismatched.
  */
-export function sealAfterWrite(before: SealBefore, terminal: boolean): SealAfter {
+export function sealAfterWrite(
+  before: SealBefore,
+  terminal: boolean,
+  written: readonly unknown[],
+): SealAfter {
   if (before === null) return "unchanged";
+  const projection = (entries: readonly unknown[]) => JSON.stringify(sealProjection(entries));
   const after = readWorkspacesResult(before.dir).entries;
-  const same =
-    JSON.stringify(sealProjection(after)) === JSON.stringify(sealProjection(before.entries));
-  if (same) return "unchanged";
+  if (projection(after) === projection(before.entries)) return "unchanged";
+  if (projection(after) !== projection(written)) return "mismatch";
   const sealed =
     before.check.state === "valid"
       ? before.entries
@@ -1212,9 +1219,9 @@ export function sealAfterWrite(before: SealBefore, terminal: boolean): SealAfter
         : null;
   const reseal = terminal
     ? before.check.state === "valid"
-    : sealed !== null && lowersOnly(sealed, after);
+    : sealed !== null && lowersOnly(sealed, written);
   if (!reseal) return "mismatch";
-  writeSeal(before.dir, after);
+  writeSeal(before.dir, written);
   return "resealed";
 }
 

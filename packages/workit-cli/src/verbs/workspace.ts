@@ -317,7 +317,12 @@ const save = (
       error: `failed to write ${current.path}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  return { ok: true, path: current.path, backup, seal: sealAfterWrite(before, terminal) };
+  return {
+    ok: true,
+    path: current.path,
+    backup,
+    seal: sealAfterWrite(before, terminal, entries),
+  };
 };
 
 const written = (file: string, backup: string | null) =>
