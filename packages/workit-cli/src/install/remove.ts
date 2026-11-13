@@ -296,7 +296,8 @@ export const applyOwnedRemoval = (
       }
       case "versions": {
         const kept = foreignVersions(step.path);
-        const ours = readdirSync(step.path).filter((name) => !kept.includes(name));
+        const foreign = new Set(kept);
+        const ours = readdirSync(step.path).filter((name) => !foreign.has(name));
         if (kept.length > 0 && ours.length === 0)
           return { status: "skipped", detail: noVersion(step.path, kept) };
         for (const name of ours)

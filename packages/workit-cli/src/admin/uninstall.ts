@@ -665,9 +665,11 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   );
   // The shell completion scripts setup/upgrade wrote belong to the CLI; a
   // file of someone else's at their place stays, and the plan says so.
-  const ownedScripts = ownedCompletionFiles(cliEnvOf(paths), paths.platform ?? process.platform);
+  const ownedScripts = new Set(
+    ownedCompletionFiles(cliEnvOf(paths), paths.platform ?? process.platform),
+  );
   for (const file of completionPlaces(paths))
-    if (ownedScripts.includes(file))
+    if (ownedScripts.has(file))
       cliActions.push({
         kind: "remove-completion",
         path: file,
