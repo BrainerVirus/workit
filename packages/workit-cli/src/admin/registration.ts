@@ -4,8 +4,9 @@
 // never rewritten — their values round-trip JSON-identical. The install
 // scripts (`packages/workit-core/scripts/install-*-plugin.sh`) import these so
 // there is exactly one source of truth for registration merging.
-import os from "node:os";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { userHome } from "@workit-dev/core/src/core/workit-paths.mjs";
 
 /** Canonical published OpenCode plugin identity (OpenCode resolves from npm). */
 export const OPENCODE_NPM_PIN = "@workit-dev/opencode";
@@ -97,26 +98,48 @@ export function mergeCursorEnabledPlugins(enabled: unknown): MergeResult<Record<
   return { config: next, changed };
 }
 
-/** Append the plugin dir once; `home` expands an existing `~` entry for the comparison. */
+/**
+ * One Cursor plugin-dir entry as a comparable key, shared by setup's merge and
+ * doctor's duplicate_registration row so both count the same entries as one
+ * dir: `~` and `~/…` expand to `home` (never `~other`, another user's home),
+ * the path is normalized without a trailing separator, and an absolute path
+ * that exists resolves through its symlinks.
+ */
+export function cursorPluginDirKey(dir: string, home: string): string {
+  const expanded = /^~(?=$|[\\/])/.test(dir) ? home + dir.slice(1) : dir;
+  const joined = path.join(expanded);
+  const stripped = path.dirname(joined) === joined ? joined : joined.replace(/[\\/]+$/, "");
+  if (!path.isAbsolute(stripped) || !existsSync(stripped)) return stripped;
+  try {
+    return realpathSync.native(stripped);
+  } catch {
+    return stripped;
+  }
+}
+
+/**
+ * Register the plugin dir once: an entry naming the same dir (see
+ * cursorPluginDirKey) counts, the first one keeps the user's spelling, and
+ * later ones naming that dir again are dropped.
+ */
 export function mergeCursorPluginDirs(
   pluginDirs: unknown,
   pluginDir: string,
-  home: string = os.homedir(),
+  home: string = userHome(process.env),
 ): MergeResult<string[]> {
-  // path.join does not strip a single trailing separator; do it explicitly for
-  // the dedup comparison (guarding the filesystem-root case). A `~` entry is
-  // the same dir as its absolute spelling.
-  const strip = (p: string) => {
-    const j = path.join(/^~(?=$|[\\/])/.test(p) ? home + p.slice(1) : p);
-    return path.dirname(j) === j ? j : j.replace(/[\\/]+$/, "");
-  };
-  const normalized = strip(pluginDir);
+  const key = cursorPluginDirKey(pluginDir, home);
   const prev = Array.isArray(pluginDirs) ? pluginDirs.map(String) : [];
-  // Normalize both sides for comparison so a trailing-slash variant of an
-  // existing entry is not appended as a duplicate; existing entries are kept
-  // verbatim.
-  const exists = prev.some((d) => strip(d) === normalized);
-  const next = exists ? prev : [...prev, normalized];
+  let seen = false;
+  const kept = prev.filter((dir) => {
+    if (cursorPluginDirKey(dir, home) !== key) return true;
+    if (seen) return false;
+    seen = true;
+    return true;
+  });
+  const stripped = path.join(pluginDir);
+  const next = seen
+    ? kept
+    : [...kept, path.dirname(stripped) === stripped ? stripped : stripped.replace(/[\\/]+$/, "")];
   const changed = JSON.stringify(next) !== JSON.stringify(prev) ? ["plugin_dirs"] : [];
   return { config: next, changed };
 }
@@ -125,7 +148,7 @@ export function mergeCursorPluginDirs(
 export function mergeCursorSettings(
   settings: unknown,
   pluginDir: string,
-  home: string = os.homedir(),
+  home: string = userHome(process.env),
 ): MergeResult<Record<string, unknown>> {
   const base = isRecord(settings) ? { ...settings } : {};
   const changed: string[] = [];

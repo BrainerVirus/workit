@@ -14,10 +14,12 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { run as install } from "@/packages/workit-cli/src/verbs/install";
 import { run as uninstall } from "@/packages/workit-cli/src/verbs/uninstall";
@@ -188,24 +190,82 @@ test("Given Cursor registered with an empty plugin dir, When `workit install --h
   expect(snapshot(w.home, [cursor])).toEqual(before);
 });
 
-test("Given Cursor's settings name the plugin dir as ~/…, When install runs twice, Then one plugin_dirs entry stays, in the user's spelling, and the second run changes nothing", async () => {
-  const w = world();
-  const cursor = path.join(w.home, ".cursor");
-  const settings = path.join(cursor, "settings.json");
-  write(settings, { plugin_dirs: ["~/.cursor/plugins/local/workit"] });
+/** Doctor's duplicate_registration row for Cursor in this home. */
+const duplicateRow = (w: ReturnType<typeof world>) =>
+  runDoctor({ host: "cursor", home: w.home, env: w.env, cwd: w.home }).checks.find(
+    (check) => check.id === "duplicate_registration",
+  )?.status;
 
-  const first = await runIn(install, w, ["--hosts=cursor", "--yes"]);
-  expect(first.code, first.text).toBe(0);
-  expect(first.text).not.toContain("duplicate_registration");
+// Each spelling of Cursor's plugin_dirs: what is there before, and the one list
+// both setup's merge and doctor's duplicate row accept after.
+const SPELLINGS: [string, (home: string) => string[], (home: string) => string[]][] = [
+  ["~/…", () => ["~/.cursor/plugins/local/workit"], () => ["~/.cursor/plugins/local/workit"]],
+  [
+    "a symlink to the dir",
+    (h) => {
+      symlinkSync(path.join(h, ".cursor/plugins/local/workit"), path.join(h, "link-to-workit"));
+      return [path.join(h, "link-to-workit")];
+    },
+    (h) => [path.join(h, "link-to-workit")],
+  ],
+  [
+    "a path through a symlinked parent",
+    (h) => {
+      symlinkSync(path.join(h, ".cursor/plugins"), path.join(h, "plugins-link"));
+      return [path.join(h, "plugins-link/local/workit")];
+    },
+    (h) => [path.join(h, "plugins-link/local/workit")],
+  ],
+  [
+    "another user's ~other/…",
+    () => ["~other/.cursor/plugins/local/workit"],
+    (h) => ["~other/.cursor/plugins/local/workit", path.join(h, ".cursor/plugins/local/workit")],
+  ],
+  [
+    "a duplicate (~/… and the absolute path)",
+    (h) => ["~/.cursor/plugins/local/workit/", path.join(h, ".cursor/plugins/local/workit")],
+    () => ["~/.cursor/plugins/local/workit/"],
+  ],
+];
+
+for (const [name, before, after] of SPELLINGS) {
+  test(`Given Cursor's plugin_dirs holds ${name}, When install runs twice, Then one entry names the dir, in the user's spelling, doctor's duplicate row passes, and the second run changes nothing`, async () => {
+    const w = world();
+    const settings = path.join(w.home, ".cursor/settings.json");
+    mkdirSync(path.join(w.home, ".cursor/plugins/local/workit"), { recursive: true });
+    write(settings, { plugin_dirs: before(w.home) });
+
+    const first = await runIn(install, w, ["--hosts=cursor", "--yes"]);
+    expect(first.code, first.text).toBe(0);
+    expect(JSON.parse(readFileSync(settings, "utf8")).plugin_dirs).toEqual(after(w.home));
+    expect(duplicateRow(w)).toBe("pass");
+    const between = snapshot(w.home);
+
+    const second = await runIn(install, w, ["--hosts=cursor", "--yes"]);
+    expect(second.code, second.text).toBe(0);
+    expect(second.text).toContain("Workit is already installed on cursor: nothing to change.");
+    expect(snapshot(w.home)).toEqual(between);
+  });
+}
+
+test("Given a healthy Cursor install with a duplicate plugin_dirs entry, Then install plans its repair instead of reporting nothing to change", async () => {
+  const w = world();
+  expect((await runIn(install, w, ["--hosts=cursor", "--yes"])).code).toBe(0);
+  const settings = path.join(w.home, ".cursor/settings.json");
+  const record = JSON.parse(readFileSync(settings, "utf8"));
+  record.plugin_dirs = ["~/.cursor/plugins/local/workit", ...record.plugin_dirs];
+  write(settings, record);
+  expect(duplicateRow(w)).toBe("fail");
+
+  const preview = await runIn(install, w, ["--hosts=cursor", "--preview"]);
+  expect(preview.text).toContain(`+ ${settings}: plugin_dirs`);
+  const repaired = await runIn(install, w, ["--hosts=cursor", "--yes"]);
+
+  expect(repaired.code, repaired.text).toBe(0);
   expect(JSON.parse(readFileSync(settings, "utf8")).plugin_dirs).toEqual([
     "~/.cursor/plugins/local/workit",
   ]);
-  const between = snapshot(w.home);
-
-  const second = await runIn(install, w, ["--hosts=cursor", "--yes"]);
-  expect(second.code, second.text).toBe(0);
-  expect(second.text).toContain("Workit is already installed on cursor: nothing to change.");
-  expect(snapshot(w.home)).toEqual(between);
+  expect(duplicateRow(w)).toBe("pass");
 });
 
 for (const host of ["claude-code", "codex", "cursor", "opencode", "pi"]) {
