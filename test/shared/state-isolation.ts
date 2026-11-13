@@ -35,6 +35,9 @@ const dir = mkdtempSync(path.join(tmpdir(), "wk-test-state-"));
 process.env.WORKIT_STATE_DIR = dir;
 // Never let a test reach the developer's real, logged-in ytrack (youtrack-ytrack.ts findYtrack).
 process.env.WORKIT_NO_YTRACK = "1";
+// Never let the runner's own load hold a heavy check back (core/pressure.ts):
+// the pressure gate's tests inject their own reading.
+process.env.WORKIT_NO_PRESSURE_GATE = "1";
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 // Grants are read from the OS account's home, which no env var moves (D15):

@@ -10,6 +10,11 @@ import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { actorFromEnv, appendObserved } from "@/packages/workit-core/src/ledger";
+import {
+  admit,
+  leaseDir,
+  resolveResourceSettings,
+} from "@/packages/workit-core/src/core/resources";
 
 const BUN = process.execPath;
 const MAIN = path.resolve(import.meta.dir, "../../packages/workit-cli/src/main.ts");
@@ -45,7 +50,14 @@ const setup = (
   writeFileSync(
     path.join(config, "workspaces.json"),
     JSON.stringify({
-      workspaces: [{ name: "here", glob: "**", resources: { scope: false, ...options.resources } }],
+      // The pressure gate is off: these cases are about the budget, not the machine's load.
+      workspaces: [
+        {
+          name: "here",
+          glob: "**",
+          resources: { scope: false, pressure: false, ...options.resources },
+        },
+      ],
     }),
   );
   const leases = path.join(state, "leases");
@@ -198,3 +210,61 @@ test("Given a holder whose check was never measured, When a heavy check queues, 
   expect(run.code).toBe(4);
   expect(run.stderr).toContain("no wait estimate yet (no measured run of test)");
 }, 20_000);
+
+/** A dev server's weight, admitted the way the process registry does (it takes no slot). */
+const admitServer = (env: NodeJS.ProcessEnv, root: string, slots: number) =>
+  admit({
+    dir: leaseDir(env),
+    kind: "server",
+    label: "vite",
+    rssBytes: 1024 ** 3,
+    cwd: root,
+    session: "s-web",
+    ref: "srv-1",
+    budget: resolveResourceSettings([
+      { label: "workspaces.json", trust: "machine", value: { slots, pressure: false } },
+    ]).budget,
+  });
+
+test("Given only resources.slots configured and a running dev server registered, When a heavy check runs, Then the server takes no slot", async () => {
+  const { root, env } = setup({ resources: { slots: 1 } });
+  const server = admitServer(env, root, 1);
+  expect(server.ok).toBe(true);
+  const run = await check(root, env, ["test", "--no-wait"]);
+  expect(run.code, run.stderr).toBe(0);
+  expect(run.data.lease).toMatchObject({ slot: 0, waitedMs: 0 });
+  if (server.ok) server.admission.release();
+});
+
+test("Given an admitted dev server, When lock status runs, Then it lists it under admitted with its memory, apart from the slots, and the budget line", async () => {
+  const { root, env } = setup({ resources: { slots: 2 } });
+  const server = admitServer(env, root, 2);
+  expect(server.ok).toBe(true);
+  let stdout = "";
+  const code = await main(["lock", "status"], {
+    cwd: root,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  });
+  expect(code).toBe(0);
+  expect(stdout).toContain("heavy-check lease: 0 of 2 slots held");
+  expect(stdout).toMatch(
+    /budget: resources\.slots counts checks \(0 of 2\); admitted holders take no slot, only 1\.0 GiB of .* memory \(.* reserve, automatic\)/u,
+  );
+  expect(stdout).toContain("admitted (no slot): 1");
+  expect(stdout).toMatch(/ {2}server vite \(srv-1\), pid \d+, 1\.0 GiB, session s-web, /u);
+  let json = "";
+  await main(["lock", "status", "--json"], {
+    cwd: root,
+    env,
+    stdout: (text) => void (json += text),
+    stderr: () => {},
+  });
+  const data = (JSON.parse(json) as { data: Record<string, any> }).data;
+  expect(data.budget).toMatchObject({ mode: "slots", units: 2, reserve: "automatic" });
+  expect(data.admitted).toMatchObject([
+    { kind: "server", check: "vite", ref: "srv-1", bytes: 1024 ** 3, stale: null },
+  ]);
+  if (server.ok) server.admission.release();
+});

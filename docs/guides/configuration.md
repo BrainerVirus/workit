@@ -754,6 +754,39 @@ naming a `memoryMax` that fits. A repo's `.workit/checks.json` cannot change
 `slots`. `workit lock status` shows the slots, who holds them and each
 waiter's estimated wait.
 
+### Heavy-check budget
+
+Instead of a count of slots, a machine can weigh its heavy checks. These keys
+live in the workspaces.json entry only; a repo's `.workit/checks.json` can
+only tighten them (a lower `budget`, a larger `reserve`, a heavier weight), and
+anything else there is ignored with the machine-only warning.
+
+```json
+"resources": {
+  "budget": 3,
+  "weights": { "test": 2, "e2e": "6G" },
+  "reserve": "6G"
+}
+```
+
+- **`budget`**: a number is units (each check weighs 1 unless `weights` says
+  more, and checks are counted, not charged memory); a size (`"24G"`) or a percent of RAM (`"60%"`) is a memory budget,
+  under which as many checks run as their measured memory allows. Without it
+  the memory budget is the RAM less the reserve.
+- **`weights`**: per check, a whole number of units, or a fixed memory charge
+  (`"6G"`) in place of its measured peak RSS.
+- **`reserve`**: memory kept for the desktop and IDE. The default is automatic:
+  a quarter of the RAM, between 2 GiB and 6 GiB
+  ([checks guide](checks.md#waiting-for-the-heavy-check-lease)).
+- **`pressure`**: `false` turns the pressure gate off.
+
+A small check whose weight fits what is free runs ahead of a bigger one
+waiting (backfill), until the bigger one has waited 5 minutes: from then on
+nobody behind it takes what it needs. A dev server registered by the process
+registry holds memory only, never a slot or a queue place; a start that does
+not fit is refused at once, naming the holders and how to free the room.
+`workit lock status` shows the budget and the admitted holders.
+
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
 no forge tokens of its own.
 

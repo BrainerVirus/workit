@@ -40,6 +40,10 @@ import {
   readGrants,
   resolveResourceSettings,
   SILENT_MS,
+  admittedHolders,
+  formatBytes,
+  type AdmittedEntry,
+  type Budget,
   type QueueEntry,
   type SlotState,
 } from "@workit-dev/core/src/core/resources";
@@ -66,10 +70,31 @@ const USAGE =
 async function settingsFor(io: Io) {
   const workspace = await workspaceResources(io);
   const config = loadCheckConfig(io.cwd);
-  return resolveResourceSettings([
+  const resolved = resolveResourceSettings([
     { label: "workspaces.json", trust: "machine", value: workspace.value },
     { label: CHECKS_FILE, trust: "repo", value: config.resources },
-  ]).settings;
+  ]);
+  return Object.assign(resolved.settings, { budget: resolved.budget });
+}
+
+/** Past this many slots, `lock status` lists only the held ones (a memory budget allows up to 64 holders). */
+const LIST_FREE_UP_TO = 8;
+
+/** "budget: 2 of 3 units, 9.6 GiB of 26.0 GiB memory (6.0 GiB reserve, automatic)". */
+function budgetLine(budget: Budget, slots: SlotState[], admitted: AdmittedEntry[]): string {
+  const live = held(slots).length;
+  const units = slots
+    .filter((slot) => slot.holder && !slot.stale)
+    .reduce((sum, slot) => sum + (slot.units ?? 1), 0);
+  const bytes =
+    slots.reduce((sum, slot) => sum + (slot.holder && !slot.stale ? (slot.bytes ?? 0) : 0), 0) +
+    admitted.reduce((sum, entry) => sum + (entry.stale ? 0 : (entry.record.bytes ?? 0)), 0);
+  const memory = `${formatBytes(bytes)} of ${formatBytes(budget.memoryBytes)} memory (${formatBytes(budget.reserveBytes)} reserve, ${budget.reserveSource})`;
+  if (budget.mode === "slots")
+    return `budget: resources.slots counts checks (${live} of ${budget.units}); admitted holders take no slot, only ${memory}`;
+  return budget.mode === "memory"
+    ? `budget: ${memory}`
+    : `budget: ${units} of ${budget.units} unit${budget.units === 1 ? "" : "s"}, ${memory}`;
 }
 
 const held = (slots: SlotState[]) => slots.filter((slot) => slot.holder && !slot.stale);
@@ -133,9 +158,10 @@ function slotLines(slots: SlotState[], waiting: QueueEntry[], eta: Estimates): s
   const busy = held(slots).length;
   const stuck = slots.some((slot) => slot.stuck);
   const left = (slot: number) => eta.slots.find((item) => item.slot === slot)?.note;
+  const listed = slots.length > LIST_FREE_UP_TO ? slots.filter((slot) => slot.holder) : slots;
   return [
     `heavy-check lease: ${busy} of ${slots.length} slot${slots.length === 1 ? "" : "s"} held`,
-    ...slots.map((slot) =>
+    ...listed.map((slot) =>
       slot.holder
         ? `  slot ${slot.slot}: ${describeHolder(slot.holder)}${slot.stale ? ` (stale: ${slot.stale}; the next heavy check reclaims it)` : left(slot.slot) ? `; ${left(slot.slot)}` : ""}`
         : `  slot ${slot.slot}: free`,
@@ -156,11 +182,24 @@ async function status(io: Io): Promise<number> {
   const slots = leaseSlots(dir, settings.slots, {}, maxHold);
   const waiting = servingOrder(dir, slots, leaseQueue(dir));
   const eta = estimates(slots, waiting, settings.slots, ledgerDurations());
+  const admitted = admittedHolders(dir);
+  const budget = settings.budget;
   return emit(
     io,
     ok({
       dir,
       slots,
+      budget: {
+        mode: budget.mode,
+        units: budget.units,
+        memoryBytes: budget.memoryBytes,
+        reserveBytes: budget.reserveBytes,
+        reserve: budget.reserveSource,
+      },
+      admitted: admitted.map((entry) => ({
+        ...describeAdmitted(entry),
+        stale: entry.stale,
+      })),
       queue: waiting.map((entry) => entry.holder),
       estimates: eta,
       pruned,
@@ -171,12 +210,29 @@ async function status(io: Io): Promise<number> {
     () => [
       ...pruned.map(
         (item) =>
-          `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
+          `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : item.kind === "admitted" ? "a dead admitted holder" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
       ),
       ...slotLines(slots, waiting, eta),
+      budgetLine(budget, slots, admitted),
+      `admitted (no slot): ${admitted.length ? admitted.length : "none"}`,
+      ...admitted.map(
+        (entry) =>
+          `  ${describeHolder(describeAdmitted(entry))}${entry.stale ? ` (stale: ${entry.stale}; the next read drops it)` : ""}`,
+      ),
     ],
   );
 }
+
+const describeAdmitted = (entry: AdmittedEntry) => ({
+  pid: entry.record.pid,
+  check: entry.record.check,
+  cwd: entry.record.cwd,
+  session: entry.record.session,
+  startedAt: entry.record.startedAt,
+  kind: entry.record.kind ?? "admitted",
+  ref: entry.record.ref ?? null,
+  bytes: entry.record.bytes ?? 0,
+});
 
 const targetArg = (args: string[]): string | undefined => args.find((arg) => arg !== "--json");
 

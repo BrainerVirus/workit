@@ -20,12 +20,15 @@ import {
   reapStuck,
   startHeartbeat,
   groupCpuTicks,
+  groupRssBytes,
   psGroupCpu,
+  psGroupRss,
 } from "@/packages/workit-core/src/core/heavy-lease";
 import {
   acquireLease,
   autoReapReason,
   leaseSlots,
+  measuredRss,
   resolveResourceSettings,
   stuckReason,
   type AcquireOptions,
@@ -291,6 +294,67 @@ test("G a held lease, W its check prints or its group uses CPU, T the heartbeat 
   beat.touch();
   await until(() => read() !== second, 1000);
   beat.stop();
+  got.lease.release();
+});
+
+test("G a held lease, W the heartbeat samples its group's RSS, T the peak is noted on the lease and kept as the check's measured charge when it stops (#326)", async () => {
+  const dir = leasesDir();
+  const got = await acquireLease(options(dir));
+  if (!got.ok) throw new Error(got.reason);
+  let rss = 300;
+  const beat = startHeartbeat(got.lease, {
+    everyMs: 10,
+    rssEveryMs: 5,
+    cpu: () => null,
+    rss: () => rss,
+  });
+  await sleep(30);
+  rss = 900;
+  await sleep(30);
+  rss = 100;
+  await sleep(30);
+  beat.touch();
+  const peakOnLease = () =>
+    (JSON.parse(readFileSync(got.lease.file, "utf8")) as LeaseRecord).peakRssBytes;
+  await until(() => peakOnLease() === 900, 1000);
+  beat.stop();
+  expect(measuredRss(dir, "test", got.lease.record.cwd)).toBe(900);
+  got.lease.release();
+});
+
+test("psGroupRss sums one process group's rss from ps (KiB); groupRssBytes reads this process's group on Linux", async () => {
+  expect(psGroupRss("  10 2048\n  11 1024\n  10 4096\n", 10)).toBe(6144 * 1024);
+  expect(psGroupRss("  10 2048\n", 99)).toBeNull();
+  if (process.platform === "linux") {
+    const stat = readFileSync("/proc/self/stat", "utf8");
+    const pgid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]);
+    expect(await groupRssBytes(pgid)).toBeGreaterThan(0);
+  }
+  if (process.platform === "win32") expect(await groupRssBytes(10)).toBeNull();
+});
+
+test("G an RSS sample slower than the sampling interval, W the heartbeat runs, T samples never pile up and a failed one is skipped", async () => {
+  const dir = leasesDir();
+  const got = await acquireLease(options(dir));
+  if (!got.ok) throw new Error(got.reason);
+  let calls = 0;
+  let release: (bytes: number) => void = () => {};
+  const beat = startHeartbeat(got.lease, {
+    everyMs: 1000,
+    rssEveryMs: 5,
+    cpu: () => null,
+    rss: () => {
+      calls += 1;
+      if (calls === 1) return new Promise<number>((resolve) => (release = resolve));
+      throw new Error("ps timed out");
+    },
+  });
+  await sleep(60);
+  expect(calls).toBe(1);
+  release(700);
+  await until(() => calls >= 2, 1000);
+  beat.stop();
+  expect(measuredRss(dir, "test", got.lease.record.cwd)).toBe(700);
   got.lease.release();
 });
 

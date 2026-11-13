@@ -130,17 +130,19 @@ export function estimateWait(input: {
   now?: number;
 }): WaitEstimate {
   const now = input.now ?? Date.now();
+  // Only heavy checks end on a measured run: the pressure gate and a dev server do not.
+  const holders = input.holders.filter((holder) => !holder.kind);
   const unmeasured = new Set<string>();
   const measure = (holder: LeaseHolder): number => {
     const ms = input.durationOf(holder);
     if (ms === null) unmeasured.add(holder.check);
     return ms ?? 0;
   };
-  const free = input.holders.map((holder) =>
+  const free = holders.map((holder) =>
     Math.max(0, measure(holder) - (now - Date.parse(holder.startedAt))),
   );
   while (free.length < Math.max(1, input.slots)) free.push(0);
-  for (const waiter of input.ahead) {
+  for (const waiter of input.ahead.filter((holder) => !holder.kind)) {
     free.sort((a, b) => a - b);
     free[0] += measure(waiter);
   }

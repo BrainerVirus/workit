@@ -71,6 +71,11 @@ import {
   ensureWorkitDir,
 } from "@workit-dev/core/src/check-config";
 import { probeScope, type ScopeProbe } from "@workit-dev/core/src/core/heavy-scope";
+import {
+  describeSource,
+  readPressure,
+  type PressureReading,
+} from "@workit-dev/core/src/core/pressure";
 import { repoDir } from "@workit-dev/core/src/core/repo-paths";
 import { CHECKOUT_LEFTOVERS } from "@workit-dev/core/src/core/checkout-leftovers";
 import { packageRoot } from "@workit-dev/core/src/core/package-root";
@@ -199,6 +204,7 @@ type DoctorCheckId =
   | "gitlab_identity"
   | "log_writable"
   | "heavy_scope"
+  | "pressure_gate"
   | "hook_deadline"
   | "grant_endpoint"
   | "grant_remotes"
@@ -277,6 +283,8 @@ export type DoctorOptions = {
   installer?: boolean;
   /** The heavy-check scope probe (test seam; default starts a real throwaway scope). */
   scopeProbe?: (env: NodeJS.ProcessEnv) => ScopeProbe;
+  /** The heavy-check pressure gate's reading (test seam; default reads PSI or samples the load). */
+  pressureProbe?: () => PressureReading;
   /** Running `claude` processes (test seam; default reads `ps`; null = unreadable). */
   claudeProcesses?: () => ClaudeProcess[] | null;
   /** Running Codex app-server and CLI processes (test seam; default reads `ps`; null = unreadable). */
@@ -317,6 +325,7 @@ type Resolved = {
   installer: boolean;
   cliVersion: string | null;
   scopeProbe: (env: NodeJS.ProcessEnv) => ScopeProbe;
+  pressureProbe: () => PressureReading;
   claudeProcesses: () => ClaudeProcess[] | null;
   codexProcesses: () => ClaudeProcess[] | null;
 };
@@ -405,6 +414,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     installer: options.installer ?? false,
     cliVersion: options.cliVersion ?? null,
     scopeProbe: options.scopeProbe ?? probeScope,
+    pressureProbe: options.pressureProbe ?? (() => readPressure()),
     claudeProcesses: options.claudeProcesses ?? listClaudeProcesses,
     codexProcesses: options.codexProcesses ?? listCodexProcesses,
   };
@@ -3347,6 +3357,18 @@ const checkHeavyScope = (res: Resolved): DoctorCheck => {
   };
 };
 
+// The pressure gate (#326): which source it reads (PSI, load or CPU sampling),
+// or that it is open because none is readable. Over its critical line heavy
+// checks wait; that is a passing state of the machine, so the row stays info.
+const checkPressureGate = (res: Resolved): DoctorCheck => {
+  const reading = res.pressureProbe();
+  return {
+    id: "pressure_gate",
+    status: reading.source === "psi" && !reading.critical ? "pass" : "info",
+    detail: `pressure gate reads ${describeSource(reading)}${reading.critical ? "; over its critical line now, so heavy checks wait (`workit lock status` shows who holds the budget)" : ""}`,
+  };
+};
+
 // A hook past its own deadline answers a minimal result instead of being
 // killed by the host (#309); each one is a line in the state dir's
 // hook-skips.jsonl (core hooks/deadline.ts writes it; read here directly so
@@ -4465,6 +4487,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkGitLabIdentity,
   checkLogWritable,
   checkHeavyScope,
+  checkPressureGate,
   checkHookDeadline,
   checkGrantEndpoint,
   checkGrantRemotes,
