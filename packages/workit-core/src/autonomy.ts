@@ -724,7 +724,7 @@ function stricter(
     effectiveEndpoint: endpoint,
     endpointReason: endpoint === current.effectiveEndpoint ? current.endpointReason : unblock,
     verification: looser ? strict : current.verification,
-    unblocks,
+    unblocks: Object.keys(unblocks).length > 0 ? unblocks : current.unblocks,
     note: current.note ? `${current.note}; ${note}` : note,
   };
 }

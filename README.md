@@ -236,7 +236,13 @@ then babysit CI, review threads and required rebases until it is merge-ready,
 never merging) or `merged` (`green`, then `workit pr merge`; it acts as `green`
 until the workspace has the merge grant). Without the `push` or `pr` grant any
 of them acts as `commit`; `workit grant show` reports the effective endpoint. Raising a grant or the endpoint needs
-you at a terminal; agents can only lower them. See
+you at a terminal; agents can only lower them. The authority fields are sealed
+(`workspaces.json.seal`): `workit workspace seal`, in your own terminal, shows
+what changed and accepts it; while the seal is missing or does not match,
+nothing above the last seal (or the defaults) applies, a changed forge identity
+blocks forge verbs, and `workit doctor` warns (`grant_seal`). It stops an
+honest agent, not one that also forges the seal (D18). A config redirect
+(`WORKIT_CONFIG` and the like) never raises a grant. See
 [grants](docs/guides/grants.md). `workit workspace list|add|set` adds or
 adjusts one entry without the wizard and never raises a grant
 ([configuration](docs/guides/configuration.md#config-files)).
@@ -379,7 +385,7 @@ text.
 | `workit install --hosts=<h,…> [--preview\|--yes]` | Install or repair Workit on the named hosts only; a healthy host changes nothing |
 | `workit uninstall [--hosts=<h,…> [--preview\|--yes]]` | Pick hosts (and the owned CLI install), or name them, and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
-| `workit workspace list\|add\|set` | List, add or edit workspace entries without the wizard; never raises a grant |
+| `workit workspace list\|add\|set\|rm\|seal` | List, add, edit or remove workspace entries without the wizard (never raises a grant); `seal` accepts the authority fields at your terminal |
 | `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer) runs on for a host |
 | `workit task status\|start\|note\|close\|adopt` | The current branch's task |
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
@@ -464,7 +470,7 @@ repair. The table maps common symptoms to those ids.
 | Something is off after install or upgrade | `versions`, `stale_install`, `stale_pin` | `workit upgrade`; each finding names its repair |
 | Hook says `workit migration pending` | none | Run `workit task status` once in that checkout; hooks never migrate |
 | A command returns `busy` (exit 4) | `workspace_lock` | Another workit process holds the store or stack lock; retry. A dead holder is reclaimed automatically; `workit doctor --fix-lock` clears a stale one. For the heavy-check lease, `workit lock status` names the holder |
-| `blocked` (exit 3) on push/PR/merge | `grant_endpoint`, `github_identity`, `gitlab_identity` | Read `unblock` in the output: usually a missing grant (`workit grant show`) or a `gh`/`glab` login that is not the workspace account |
+| `blocked` (exit 3) on push/PR/merge | `grant_endpoint`, `grant_seal`, `github_identity`, `gitlab_identity` | Read `unblock` in the output: usually a missing grant (`workit grant show`), an unsealed change (`workit workspace seal` in your own terminal) or a `gh`/`glab` login that is not the workspace account |
 | Agents get permission prompts for `workit` verbs | `claude_permissions`, `codex_permissions`, `cursor_permissions`, `*_grant_rules` | `workit setup` in your own terminal |
 | Hook answers `workit context skipped: host under load` | `hook_deadline` | Rare under normal load; see the [Claude Code guide](docs/guides/claude-code.md) for `WORKIT_HOOK_DEADLINE_MS` |
 | Store grows large | none | `workit gc --dry-run`, then `workit gc` |
