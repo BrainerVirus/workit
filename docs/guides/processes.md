@@ -100,8 +100,11 @@ workit gc --procs --apply  # stop them, with a proc.stopped ledger row each
 ## Limits
 
 - Windows: there is no process group or start time Workit can check, so
-  `workit stop` there reports the process and leaves it running; end it in Task
-  Manager.
+  `workit stop` asks the supervisor that holds the process instead (a stop
+  request it polls for). The supervisor ends the child's tree (`taskkill /T`,
+  then `/T /F` after 10 s); it holds the child's handle, so the pid is still
+  that process. When the supervisor is gone, the stop only reports the process
+  and signals nothing; end it in Task Manager.
 - Marking a process kept comes with the end-of-work cleanup in a later
   release (a ledger decision naming `proc:<id>`); the registry already honors
   the keep flag.
@@ -113,6 +116,7 @@ workit gc --procs --apply  # stop them, with a proc.stopped ledger row each
 | `<state>/threads.db` | the registry rows (`procs` table, [threads spec](../specs/threads.md)) |
 | `<state>/procs/logs/<id>.log` | the process's stdout and stderr |
 | `<state>/procs/notices/<session>.json` | RSS ceiling notices for one owner session |
-| `<state>/procs/rows/<id>.json` | per-row facts the table has no column for (name, command, host pid start, containers, start state) |
+| `<state>/procs/rows/<id>.json` | per-row facts the table has no column for (name, command, host pid start, containers, start state; [sidecar](../specs/threads.md#the-per-row-sidecar)) |
+| `<state>/procs/rows/<id>.stop` | a pending stop request for the row's supervisor (the Windows stop path) |
 
 `<state>` is Workit's state dir (`workit dir state`).
