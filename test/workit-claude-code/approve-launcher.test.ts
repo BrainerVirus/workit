@@ -109,6 +109,24 @@ test("Given a session or token global before the verb, When the launcher classif
       "workit --json --session s1 --token=t1 approve ap_k3m7q2xa",
     ])
       expect(reached(event, command), `${event} ${command}`).toBe(true);
-    expect(reached(event, "workit --token t1 release notes approve 4.5.0"), event).toBe(false);
   }
+  // `release notes approve` is not `workit approve`: PostToolUse records no
+  // grant, so it stays on the fast path. PreToolUse sends it on, as it does any
+  // text with `workit` and a user-only first word (the user-only gate's own
+  // first test, delivery-verbs.ts mayRunUserOnly); `--token` is no CLI global
+  // option, so the gate does not read a user-only call there and the runtime
+  // answers nothing.
+  const call = "workit --token t1 release notes approve 4.5.0";
+  expect(reached("PostToolUse", call)).toBe(false);
+  expect(reached("PreToolUse", call)).toBe(true);
+  const pre = runHook(PLUGIN_DIR, payload("PreToolUse", call), env);
+  expect(pre.status, pre.stderr).toBe(0);
+  expect((pre.json as Output).hookSpecificOutput?.permissionDecision).toBeUndefined();
+  // Without the stray option it is the user-only call: the runtime asks.
+  const plain = runHook(
+    PLUGIN_DIR,
+    payload("PreToolUse", "workit release notes approve 4.5.0"),
+    env,
+  );
+  expect((plain.json as Output).hookSpecificOutput?.permissionDecision).toBe("ask");
 }, 60_000);

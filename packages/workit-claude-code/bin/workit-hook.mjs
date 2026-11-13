@@ -27,6 +27,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
@@ -34,6 +35,7 @@ import {
   configDir as workitConfigDir,
   migrateLegacyDirs,
   stateDir as workitStateDir,
+  userHome,
 } from "./workit-paths.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -153,9 +155,11 @@ if (tooOld && hookNode)
 // Every Bash/PowerShell call and every file edit reaches this hook (branch
 // policy, raw git/forge steering and the before-write gate). Fast paths
 // answer `{}` before the runtime loads: a shell command with no git/gh/glab,
-// no redirect and no writing verb can need none of them; with no Workit task
-// store for the checkout there is no task to gate a non-git edit on; and a
-// PostToolUse only matters after a `git commit`. A workit delivery verb
+// no file redirect and no writing verb can need none of them; with no Workit
+// task store for the checkout there is no task to gate a write on, so only a
+// write that may reach a guarded path (mayReachWith, a copy of workit-core
+// hooks/write-reach.ts) goes to the registry guard; and a PostToolUse only
+// matters after a `git commit`. A workit delivery verb
 // (`workit pr create`, `workit ci wait`) may get the workit-ship nudge. A
 // command that may be heavy (a catalog word or a pattern's first word, the
 // copy of core/heavy-words.ts below) goes to the heavy-command gate.
@@ -181,6 +185,22 @@ const mayBypass = (command) =>
     /--unverified|--overwrite-unintegrated/.test(command.replace(/['"\\`]/g, "")));
 const MAYBE_GATED =
   /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i;
+// Redirects that write no file, as the write gate reads them (write-gate.ts
+// shellWrites): an fd duplication (`2>&1`, `>&2`, `>&-`) or a device.
+const NO_FILE_REDIRECT =
+  /\d*>&(?:\d+|-)(?![^\s;&|()<>])|[\d&]*>>?\s*\/dev\/(?:null|stdout|stderr|tty)(?![^\s;&|()<>])/g;
+const maybeGated = (command) => MAYBE_GATED.test(command.replace(NO_FILE_REDIRECT, " "));
+// A user-only Workit call (`workit setup`, `workit grant set`, …) goes to the
+// runtime, which asks: a copy of workit-core hooks/delivery-verbs.ts
+// mayRunUserOnly, the gate's own first test (a test holds them equal).
+const USER_ONLY_WORD = /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace)\b/;
+const mayRunUserOnly = (text) => {
+  const joined = text.replace(/\\\r?\n/g, "");
+  const bare = joined.replace(/['"\\]/g, "");
+  return [bare, bare.replace(/`/g, "")].some(
+    (all) => /\bworkit\b/.test(all) && (USER_ONLY_WORD.test(all) || /\$['"]/.test(joined)),
+  );
+};
 // What an agent's confinement also judges (hooks/worktree-confine.ts):
 // writers the edit analysis cannot see, `-c` scripts, `$(…)`, Workit's verbs
 // and, for a judge, scripts fed on stdin or by eval.
@@ -269,6 +289,9 @@ const maybeHeavy = (command, cwd) => {
 const EDITS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READS = new Set(["Read", "Grep", "Glob"]);
 
+// A copy of workit-core hooks/write-reach.ts between its markers, types removed
+// (test/workit-core/hooks/write-reach.test.ts holds them equal).
+// write-reach:begin
 /** `<git-common-dir>/workit` (or `<dir>/.workit` outside git) holds tasks. */
 const hasTaskStore = (cwd) => {
   try {
@@ -296,6 +319,140 @@ const hasTaskStore = (cwd) => {
     return true;
   }
 };
+
+/** The guarded dirs' tests: `at` a guarded path or below it, `above` one (an ancestor). */
+const reachTests = (dirs) => {
+  const fold = (value) => (dirs.fold ? value.toLowerCase() : value);
+  // write-gate.ts canonical: the nearest existing ancestor's real path, then the rest.
+  const canon = (file) => {
+    let rest = "";
+    for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+      try {
+        return fold(path.join(realpathSync.native(dir), rest));
+      } catch {
+        if (path.dirname(dir) === dir) return fold(path.resolve(file));
+        rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+      }
+    }
+  };
+  const within = (parent, child) => {
+    const rel = path.relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  const state = canon(dirs.state);
+  const configs = dirs.configs.map(canon);
+  const at = (file) =>
+    configs.some((dir) => within(dir, file)) ||
+    (within(state, file) &&
+      /^(?:issued[^\\/]*|approvals)(?:[\\/]|$)/.test(path.relative(state, file)));
+  const above = (file) => within(file, state) || configs.some((dir) => within(file, dir));
+  const linked = (file) => {
+    try {
+      const stat = statSync(file, { throwIfNoEntry: false });
+      return Boolean(stat?.isFile() && stat.nlink > 1);
+    } catch {
+      return false;
+    }
+  };
+  return { canon, at, above, linked };
+};
+
+/** Whether an edit of `file` may reach a guarded path: through a symlink, a hard link, or by name. */
+const fileReaches = (file, cwd, dirs) => {
+  const { canon, at, linked } = reachTests(dirs);
+  const target = canon(path.resolve(cwd, file));
+  return at(target) || linked(target);
+};
+
+/** Whether shell `text` run in `cwd` may write at or above a guarded path. */
+const mayReachWith = (text, cwd, dirs) => {
+  const { canon, at, above, linked } = reachTests(dirs);
+  // a. The command runs at or above a guarded path.
+  const here = canon(cwd);
+  if (at(here) || above(here)) return true;
+  // b. A guarded path the word split below cannot spell.
+  const BREAKS = /[\s;&|()<>=:,]/;
+  if ([dirs.state, ...dirs.configs].some((dir) => BREAKS.test(dir)) && /[/~]/.test(text))
+    return true;
+  // c. Spellings this test does not resolve.
+  const joined = text.replace(/\\\r?\n/g, "");
+  const bare = joined.replace(/['"\\]/g, "");
+  if (
+    /\$['"]/.test(joined) ||
+    /~[\w+-]|\$\{(?:!|\w+[^\w}])|\bpopd\b/.test(bare) ||
+    /(?:^|[\s;&|(])(?:cd|pushd|chdir)(?:\s+-\S*)*\s*(?:$|[;&|)\n$`])/.test(bare) ||
+    (dirs.env.CDPATH !== undefined && /\b(?:cd|pushd)\b/.test(bare))
+  )
+    return true;
+  // d. Every word as a path, from every directory a `cd` may reach.
+  const bound = (name) =>
+    new RegExp(`(?:^|[^\\w$])${name}=|\\bfor\\s+${name}\\b|\\bread\\b[^;&|\\n]*\\b${name}\\b`).test(
+      bare,
+    );
+  const expanded = bare.replace(/\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)/g, (all, braced, plain) => {
+    const name = braced ?? plain ?? "";
+    return /^(?:OLD)?PWD$/.test(name) || bound(name) ? all : (dirs.env[name] ?? "");
+  });
+  const words = expanded.split(/[\s;&|()<>=:,]+/).filter(Boolean);
+  if (words.length > 64) return true;
+  const home = dirs.env.HOME || dirs.home;
+  const literal = (word) => {
+    const cut = word.split(/[$`*?[{]/)[0] ?? "";
+    return cut === "~" || cut.startsWith("~/") ? home + cut.slice(1) : cut;
+  };
+  const bases = [path.resolve(cwd)];
+  for (let index = 0; index < words.length; index++) {
+    if (!/^(?:cd|pushd|chdir)$/.test(words[index] ?? "")) continue;
+    let next = index + 1;
+    while (words[next]?.startsWith("-")) next++;
+    const target = literal(words[next] ?? "");
+    bases.push(...bases.map((base) => path.resolve(base, target)));
+    if (bases.length > 8) return true;
+  }
+  const globby = /[$`*?[{]/.test(expanded);
+  const seen = new Set();
+  for (const word of words) {
+    const forms = [word];
+    if (word.startsWith("-"))
+      for (let from = 1; from < word.length; from++) forms.push(word.slice(from));
+    for (const form of forms)
+      for (const base of bases) {
+        const file = canon(path.resolve(base, literal(form)));
+        if (seen.has(file)) continue;
+        seen.add(file);
+        if (at(file) || linked(file)) return true;
+        if (globby && (above(file) || above(path.dirname(file)))) return true;
+      }
+  }
+  return false;
+};
+/**
+ * The guarded dirs for `env`: its state and config dirs, the default config
+ * dir and the OS account's, each built by core/workit-paths.mjs (`paths`).
+ */
+const guardedDirs = (env, paths) => {
+  let account = null;
+  try {
+    account = os.userInfo().homedir;
+  } catch {
+    // No account record: the env's dirs only.
+  }
+  return {
+    state: paths.stateDir(env),
+    configs: [
+      paths.configDir(env),
+      paths.configDir({}),
+      ...(account ? [paths.configDir({ HOME: account, USERPROFILE: account })] : []),
+    ],
+    home: paths.userHome(env),
+    env,
+    fold: process.platform === "darwin" || process.platform === "win32",
+  };
+};
+// write-reach:end
+/** The guarded dirs for this hook process's env (write-reach.ts reachDirs). */
+const reachDirs = () =>
+  guardedDirs(process.env, { configDir: workitConfigDir, stateDir: workitStateDir, userHome });
 
 /**
  * Text that may name a state registry or the config dir's workspaces.json
@@ -510,8 +667,7 @@ const fastAllow = (() => {
     if (mentionsGuarded(JSON.stringify(value.tool_input ?? {}))) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
     // An implementer's writes are confined to its Workit worktree, a verifier's
-    // or reviewer's to its scratch dir, with or without a task store
-    // (hooks/worktree-confine.ts).
+    // or reviewer's to its scratch dir (hooks/worktree-confine.ts).
     const confined = /^workit:(?:implementer|verifier|reviewer)$/.test(value.agent_type ?? "");
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (
@@ -519,20 +675,29 @@ const fastAllow = (() => {
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         mayBypass(command) ||
-        namesYtrack(command)
+        namesYtrack(command) ||
+        mayRunUserOnly(command)
       )
         return false;
       if (maybeHeavy(command, String(value.cwd ?? "."))) return false;
       if (RUNS_PATH.test(command) || wordsOf(command).some((word) => SCRIPT_RUNNERS.has(word)))
         return false;
+      const cwd = String(value.cwd ?? ".");
+      if (RAW_TOOLS.test(command)) return false;
+      if (confined && (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command))) return false;
       if (
         (MAYBE_GATED.test(command) || IMPLEMENTER_GATED.test(command)) &&
-        (GUARD_SPELLING.test(command) ||
-          hardLinkNamed(command.split(/[\s;&|()<>`'"]+/u), String(value.cwd ?? ".")))
+        (GUARD_SPELLING.test(command) || hardLinkNamed(command.split(/[\s;&|()<>`'"]+/u), cwd))
       )
         return false;
-      if (!MAYBE_GATED.test(command) && !(confined && IMPLEMENTER_GATED.test(command))) return true;
-      return !confined && !RAW_TOOLS.test(command) && !hasTaskStore(String(value.cwd ?? "."));
+      // A write: to the before-write gate with a task store (and always on
+      // Windows or PowerShell, whose paths this test does not spell).
+      if (
+        maybeGated(command) &&
+        (process.platform === "win32" || value.tool_name === "PowerShell" || hasTaskStore(cwd))
+      )
+        return false;
+      return !mayReachWith(command, cwd, reachDirs());
     }
     // A spawn with isolation (any type) or an implementer without a brief meets the
     // spawn gate (hooks/spawn-gate.ts, the same WORKTREE test). One that names its
@@ -553,13 +718,23 @@ const fastAllow = (() => {
     }
     // Read, Grep and Glob reach this hook only to be counted against a budget.
     if (READS.has(value.tool_name)) return true;
+    // An edit goes to the runtime with a task store, for a confined agent, on
+    // Windows, or when its file may reach a guarded path (a name the check
+    // above missed, a symlink, a hard link).
+    if (!EDITS.has(value.tool_name)) return false;
     const cwd = String(value.cwd ?? ".");
     const input = value.tool_input ?? {};
+    const files = [input.file_path, input.notebook_path].filter(
+      (file) => typeof file === "string" && file,
+    );
     return (
-      EDITS.has(value.tool_name) &&
       !confined &&
-      !hardLinkNamed([input.file_path, input.notebook_path], cwd) &&
-      !hasTaskStore(cwd)
+      process.platform !== "win32" &&
+      !hardLinkNamed(files, cwd) &&
+      !hasTaskStore(cwd) &&
+      !files.some(
+        (file) => fileReaches(file, cwd, reachDirs()) || mayReachWith(file, cwd, reachDirs()),
+      )
     );
   } catch {
     return false;

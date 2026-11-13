@@ -119,3 +119,136 @@ test.each([["workit grant show"], ["workit help grant set"], ["workit release no
     expect(pi(root, command)?.block).toBeUndefined();
   },
 );
+
+// Whole-verb user-only calls (round 2 user decision): setup, uninstall,
+// install and workspace seal, behind every wrapper an agent reaches for, in a
+// repo with no task store, through each host's real entry point: Claude Code's
+// and Codex's launchers as processes, Cursor's and Pi's hook handlers.
+const WHOLE_VERBS = [
+  ["workit setup --yes", ["setup"]],
+  ["workit uninstall --hosts=cursor --yes", ["uninstall"]],
+  ["workit install --hosts=cursor --yes", ["install"]],
+  ["workit workspace seal", ["workspace", "seal"]],
+] as const;
+const WRAPPED = (command: string): string[] => {
+  const rest = command.replace(/^workit /u, "");
+  return [
+    command,
+    `env -u CLAUDECODE ${command}`,
+    `AI_AGENT=1 ${command}`,
+    `command ${command}`,
+    `cd x && ${command}`,
+    `workit --cwd /x ${rest}`,
+    `workit --json ${rest}`,
+  ];
+};
+const ROOT = path.resolve(import.meta.dir, "../../..");
+const noStore = () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-user-only-ns-")));
+  dirs.push(root);
+  spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
+  return root;
+};
+const launcherEnv = (root: string): NodeJS.ProcessEnv => ({
+  ...process.env,
+  HOME: root,
+  CLAUDE_CONFIG_DIR: path.join(root, ".claude-home"),
+  CODEX_HOME: path.join(root, ".codex-home"),
+  WORKIT_STATE_DIR: path.join(root, ".state"),
+  WORKIT_CONFIG_DIR: path.join(root, ".config"),
+});
+const launch = (entry: [string, string], root: string, payload: Record<string, unknown>) => {
+  const child = spawnSync(entry[0], entry.slice(1), {
+    input: JSON.stringify(payload),
+    encoding: "utf8",
+    env: launcherEnv(root),
+    timeout: 60_000,
+  });
+  expect(child.status, child.stderr).toBe(0);
+  return (
+    JSON.parse(child.stdout) as {
+      hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+    }
+  ).hookSpecificOutput;
+};
+const claudeLauncher = (root: string, command: string) =>
+  launch(["node", path.join(ROOT, "packages/workit-claude-code/bin/workit-hook.mjs")], root, {
+    hook_event_name: "PreToolUse",
+    session_id: "11111111-2222-3333-4444-555555555555",
+    transcript_path: "/tmp/x.jsonl",
+    cwd: root,
+    permission_mode: "default",
+    tool_name: "Bash",
+    tool_input: { command, description: "d" },
+    tool_use_id: "toolu_user_only",
+  });
+const codexLauncher = (root: string, command: string) =>
+  launch([process.execPath, path.join(ROOT, "packages/workit-codex/hooks/launcher.ts")], root, {
+    session_id: "session-1",
+    cwd: root,
+    model: "gpt-5",
+    permission_mode: "default",
+    transcript_path: null,
+    hook_event_name: "PreToolUse",
+    turn_id: "turn-1",
+    tool_use_id: "tool-1",
+    tool_name: "bash",
+    tool_input: { command },
+  });
+
+test("G setup, uninstall, install and workspace seal behind any wrapper or global option, W an agent runs one in a repo with no task store, T Claude Code asks, Codex, Cursor and Pi deny naming the user's terminal", () => {
+  const root = noStore();
+  for (const [call, words] of WHOLE_VERBS)
+    for (const command of WRAPPED(call)) {
+      expect(userOnlyWorkitCall(command), command).toEqual([...words]);
+      const named = `\`workit ${words.join(" ")}\``;
+      const asked = claudeLauncher(root, command);
+      expect(asked?.permissionDecision, command).toBe("ask");
+      expect(asked?.permissionDecisionReason, command).toContain(named);
+      const denied = codexLauncher(root, command);
+      expect(denied?.permissionDecision, command).toBe("deny");
+      expect(denied?.permissionDecisionReason, command).toContain("run it in your own terminal");
+      const out = cursor(root, command);
+      expect(out.permission, command).toBe("deny");
+      expect(out.agent_message, command).toContain("run it in your own terminal");
+      const blocked = pi(root, command);
+      expect(blocked?.block, command).toBe(true);
+      expect(blocked?.reason, command).toContain("run it in your own terminal");
+    }
+}, 600_000);
+
+// Spellings the gate's own parser resolves (ruling hook-reach-2026-11-13, 4.1):
+// a backslash-newline inside a word, ANSI-C quoting.
+test.each([
+  ["workit gr\\\nant set a b=c", ["grant", "set"]],
+  ["work\\\nit setup --yes", ["setup"]],
+  ["workit s$'e'tup --yes", ["setup"]],
+])(
+  "G `%s`, W an agent runs it, T every host's entry asks or denies it",
+  (command, words) => {
+    const root = noStore();
+    expect(userOnlyWorkitCall(command)).toEqual(words);
+    expect(claudeLauncher(root, command)?.permissionDecision).toBe("ask");
+    expect(codexLauncher(root, command)?.permissionDecision).toBe("deny");
+    expect(cursor(root, command).permission).toBe("deny");
+    expect(pi(root, command)?.block).toBe(true);
+  },
+  120_000,
+);
+
+test.each([
+  ["workit help setup"],
+  ["workit check -- npm install"],
+  ['workit ledger decision "never run workit setup --yes" --why x'],
+])(
+  "G `%s`, W the launchers and hooks run it, T it is not a user-only call",
+  (command) => {
+    const root = noStore();
+    expect(userOnlyWorkitCall(command)).toBeNull();
+    expect(claudeLauncher(root, command)?.permissionDecision).toBeUndefined();
+    expect(codexLauncher(root, command)?.permissionDecision).toBeUndefined();
+    expect(cursor(root, command).permission).not.toBe("deny");
+    expect(pi(root, command)?.block).toBeUndefined();
+  },
+  120_000,
+);

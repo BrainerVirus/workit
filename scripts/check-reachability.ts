@@ -25,6 +25,7 @@ const ENTRIES = [
   "packages/workit-cursor/hooks/workit-hook.ts",
   "packages/workit-cursor/hooks/session-start.ts",
   "packages/workit-codex/hooks/workit-hook.ts",
+  "packages/workit-codex/hooks/launcher.ts", // Codex dist/workit-hook.js launcher (loads write-reach as its own chunk)
   "packages/workit-codex/scripts/launch-mcp.ts",
   "packages/workit-claude-code/src/hook.ts", // Claude Code dist/workit-hook.js
   "packages/workit-claude-code/src/run.ts", // Claude Code local-pin hook process

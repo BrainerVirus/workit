@@ -38,7 +38,9 @@ export const WORKIT_BYPASS_FLAGS = ["--unverified", "--overwrite-unintegrated"] 
 
 /**
  * Calls only the user runs (issue #615; `ledger void`, #759; `approve`, the host-approval
- * channel, where Claude Code's hook asks with the rendered request). The CLI's TTY and agent-marker check
+ * channel, where Claude Code's hook asks with the rendered request; `setup`, `uninstall`,
+ * `install` and `workspace seal` as whole verbs, `--preview` and `--dry-run` included,
+ * because they write host config, grants or seals). The CLI's TTY and agent-marker check
  * deters a cooperating agent; the host's prompt is what stops a determined
  * one, so no host rule or hook allow may cover these. `release` is an allowed
  * verb and `release notes approve` is inside it, so each host also asks or
@@ -50,7 +52,32 @@ export const WORKIT_USER_ONLY: readonly (readonly string[])[] = [
   ["grant", "raise"],
   ["ledger", "void"],
   ["approve"],
+  ["setup"],
+  ["uninstall"],
+  ["install"],
+  ["workspace", "seal"],
 ];
+
+/** A user-only call's first word, as a word anywhere in a text. */
+export const USER_ONLY_WORD = new RegExp(
+  `\\b(?:${[...new Set(WORKIT_USER_ONLY.map((words) => words[0]))].join("|")})\\b`,
+);
+
+/**
+ * Whether `text` may run a user-only Workit call: the word `workit` and a
+ * user-only first word anywhere, read with quotes and backslashes removed
+ * (and again with backticks removed), backslash-newlines joined first; a `$'…'` or
+ * `$"…"` spelling counts as any word. The one test the gate starts with and
+ * both launchers copy byte for byte (docs/agents/hosts.md): never a list of
+ * positions, wrappers or global options.
+ */
+export const mayRunUserOnly = (text: string): boolean => {
+  const joined = text.replace(/\\\r?\n/g, "");
+  const bare = joined.replace(/['"\\]/g, "");
+  return [bare, bare.replace(/`/g, "")].some(
+    (all) => /\bworkit\b/.test(all) && (USER_ONLY_WORD.test(all) || /\$['"]/.test(joined)),
+  );
+};
 
 const ALLOWED = new Set<string>(WORKIT_ALLOWED_VERBS);
 
@@ -140,6 +167,7 @@ export const userOnlyWorkitCall = (
   command: string,
   dialect: ShellDialect = "posix",
 ): string[] | null => {
+  if (!mayRunUserOnly(command)) return null;
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.unanalyzable) continue;
     const start = segment.words.findIndex(isWorkitWord);

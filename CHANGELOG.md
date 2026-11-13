@@ -627,6 +627,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit-implement` runs a codemod or schematic one area at a time (run, `workit check`, commit, then the next area), never as one repo-wide commit (#779)
 - Hooks start from a bundle about 25 KB smaller on every host: they read tasks through a read-only store and no longer load the task write path
 - A fanout worker's scratch dir is now `<state>/scratch/<repo dir>/<slice>` (mode 0700) instead of `.workit-scratch/` inside its worktree, so a shared repo never has to ignore a Workit file. `workit fanout worktree release`, `workit gc --worktrees --apply` and the cleanup after a merge remove it with the worktree, race attempts' `<slice>+try<n>` dirs included. Verifier and reviewer probes still go in the candidate worktree's `.workit-scratch/`.
+- `workit setup`, `workit uninstall`, `workit install` and `workit workspace seal` are user-only on every host as whole verbs: Claude Code asks, Codex, Cursor and Pi deny naming the user's terminal, and OpenCode asks even when its config allows bash. Clearing the agent markers, a wrapper (`env -u`, `command`, `cd x &&`), a global option or a respelling (`$'…'`, a backslash-newline) no longer gets past it.
+- On Claude Code and Codex, a shell write or an edit whose text may reach a guarded path (Workit's config, `<state>/issued*`, `<state>/approvals`) now always reaches the hook runtime, also in a repo with no task store; a plain write inside the working directory stays on the launcher's fast path. In a repo with a task store, a Codex shell write now meets the before-write gate, as on Claude Code.
 
 ### Fixed
 
