@@ -546,8 +546,9 @@ function ensureScratch(dir: string): string | Error {
 
 /**
  * The worker scratch dirs of the worktree at `worktree`: the one its default
- * place names, and those `create` recorded for it (its
- * `fanout.worktree.created` rows), under the scratch root only. An old
+ * place names, those `create` recorded for it (its
+ * `fanout.worktree.created` rows), and each race attempt's `<that>+try<n>`
+ * beside them, under the scratch root only. An old
  * in-tree `.workit-scratch` is not one of them: it goes with the worktree.
  */
 export function workerScratchesOf(
@@ -570,6 +571,19 @@ export function workerScratchesOf(
       samePath(row.path, worktree)
     )
       out.add(row.scratch);
+  // Race attempts run in the slice's worktree, each with its own `<slice>+try<n>` scratch.
+  for (const dir of out) {
+    const own = path.basename(dir);
+    let siblings: string[] = [];
+    try {
+      siblings = fs.readdirSync(path.dirname(dir));
+    } catch {
+      continue;
+    }
+    for (const name of siblings)
+      if (name.startsWith(`${own}+try`) && /^\d+$/u.test(name.slice(own.length + 4)))
+        out.add(path.join(path.dirname(dir), name));
+  }
   return [...out];
 }
 

@@ -67,6 +67,7 @@ import {
 } from "@workit-dev/core/src/check-config";
 import { probeScope, type ScopeProbe } from "@workit-dev/core/src/core/heavy-scope";
 import { repoDir } from "@workit-dev/core/src/core/repo-paths";
+import { CHECKOUT_LEFTOVERS } from "@workit-dev/core/src/core/task-store";
 import { packageRoot } from "@workit-dev/core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -3455,8 +3456,17 @@ export const fixChecksConfig = (options: DoctorOptions = {}): ChecksConfigFix =>
 // A repo's `.workit/` holds only committed team config. Notes an agent or user
 // wrote there belong in `workit dir notes` (<git-common-dir>/workit/notes), so
 // no repo tool scans them and no repo has to ignore a Workit file (#742).
-/** Files in `.workit/` that are team config (or git's own), never notes. */
-const WORKIT_DIR_KEEP = new Set(["checks.json", "risk-paths", ".gitignore"]);
+/**
+ * Top-level names in `.workit/` that are never notes: team config, git's own
+ * `.gitignore`, and what the task store moves into its legacy backup itself
+ * (a live legacy `metadata.lock` stays with its holder).
+ */
+const WORKIT_DIR_KEEP = new Set<string>([
+  "checks.json",
+  "risk-paths",
+  ".gitignore",
+  ...CHECKOUT_LEFTOVERS,
+]);
 
 /** The checkout top and its untracked `.workit/` notes (relative to `.workit/`); null outside git. */
 const workitNotes = (cwd: string): { top: string; notes: string[] } | null => {
@@ -3484,7 +3494,7 @@ const workitNotes = (cwd: string): { top: string; notes: string[] } | null => {
     .split("\0")
     .filter((file) => file.startsWith(".workit/") && !file.endsWith("/"))
     .map((file) => file.slice(".workit/".length))
-    .filter((rel) => !WORKIT_DIR_KEEP.has(rel));
+    .filter((rel) => !WORKIT_DIR_KEEP.has(rel.split("/")[0]));
   return { top, notes };
 };
 

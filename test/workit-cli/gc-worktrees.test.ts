@@ -165,6 +165,10 @@ test("gc --worktrees --apply removes a merged fanout worktree with its out-of-tr
       writeFileSync(path.join(wt, ".workit-scratch", "probe.txt"), "probe\n");
     }
     const [a, b] = made;
+    // A race attempt at slice a ran in a's worktree with its own scratch.
+    const attempt = `${a.scratch}+try1`;
+    mkdirSync(attempt);
+    writeFileSync(path.join(attempt, "draft.md"), "try 1\n");
     const outside = path.join(root, "outside");
     mkdirSync(outside);
     writeFileSync(path.join(outside, "keep.txt"), "keep\n");
@@ -175,7 +179,8 @@ test("gc --worktrees --apply removes a merged fanout worktree with its out-of-tr
     expect(result.code, result.stdout).toBe(0);
     const data = JSON.parse(result.stdout).data;
     expect(data.removed).toHaveLength(2);
-    expect(data.removedScratch).toEqual([a.scratch]);
+    expect(data.removedScratch).toEqual([a.scratch, attempt]);
+    expect(existsSync(attempt)).toBe(false);
     for (const wt of [a.path, b.path]) expect(existsSync(wt)).toBe(false);
     expect(existsSync(a.scratch)).toBe(false);
     expect(lstatSync(b.scratch).isSymbolicLink()).toBe(true);

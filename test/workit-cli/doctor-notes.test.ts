@@ -137,6 +137,29 @@ test("Given notes, team config and tracked files in .workit/, When doctor --fix 
   });
 });
 
+test("Given .workit/ holding the task store's legacy leftovers (ledger/, tasks/, workspace.json, metadata.lock) and one note, When doctor and --fix run, Then the row counts 1 and only the note moves; the store's leftovers stay for its own backup", () => {
+  const leftovers = {
+    ".workit/ledger/x.jsonl": "{}\n",
+    ".workit/tasks/a.json": "{}\n",
+    ".workit/workspace.json": "{}\n",
+    ".workit/metadata.lock": "pid 1\n",
+  };
+  const root = repo({ ...leftovers, ".workit/note.md": "mine\n" });
+  const found = row(root);
+  expect(found.status).toBe("warn");
+  expect(found.detail).toBe(
+    "1 untracked file in .workit/ besides team config (checks.json, risk-paths): note.md",
+  );
+  expect(fixWorkitNotes({ cwd: root })).toEqual({
+    action: "moved",
+    moves: [{ from: ".workit/note.md", to: path.join(notesDir(root), "note.md") }],
+    detail: `moved 1 into ${notesDir(root)}`,
+  });
+  for (const [file, text] of Object.entries(leftovers))
+    expect(readFileSync(path.join(root, file), "utf8")).toBe(text);
+  expect(row(root).status).toBe("pass");
+});
+
 test("Given a linked worktree with notes in its .workit/, When --fix runs there, Then they go to the clone's one notes dir, the same `workit dir notes` prints", async () => {
   const root = repo({});
   const wt = path.join(scratch, `wt-${count++}`);

@@ -721,10 +721,18 @@ test("fanout worktree: given a planned slice, when created, released while dirty
   expect(existsSync(scratch)).toBe(true);
   expect(existsSync(path.join(wt, ".workit-scratch"))).toBe(false);
   expect(readFileSync(path.join(wt, "a.ts"), "utf8")).toBe("export const a = 2;\n");
+  // A race attempt runs in the slice's worktree with the scratch its brief names.
+  const attempt = await run(cwd, ["fanout", "brief", "a", "--attempt", "1", "--json"]);
+  const attemptScratch = attempt.json().data.scratch;
+  expect(attemptScratch).toBe(`${scratch}+try1`);
+  mkdirSync(attemptScratch, { recursive: true });
+  writeFileSync(path.join(attemptScratch, "draft.md"), "try 1\n");
   const clean = await run(cwd, ["fanout", "worktree", "release", "a"]);
   expect(clean.code, clean.stderr + clean.stdout).toBe(0);
   expect(clean.stdout).toContain(`removed scratch ${scratch}`);
+  expect(clean.stdout).toContain(`removed scratch ${attemptScratch}`);
   expect(existsSync(scratch)).toBe(false);
+  expect(existsSync(attemptScratch)).toBe(false);
 });
 
 test("fanout worktree: given a created slice, then its scratch is a 0700 dir outside the worktree; release keeps a symlink put in its place (never followed) and still removes a judge's in-tree .workit-scratch with the worktree", async () => {

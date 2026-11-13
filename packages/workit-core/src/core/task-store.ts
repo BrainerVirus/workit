@@ -177,7 +177,7 @@ export type ImplicitTask = { task: TaskRecord; created: boolean; key: TaskKey };
  * What older runtimes left in a git checkout's `.workit/`: moved into the
  * store's backup (known markers deleted), so `.workit/` keeps only team config.
  */
-const CHECKOUT_LEFTOVERS = [
+export const CHECKOUT_LEFTOVERS = [
   "workspace.json",
   "index.json",
   "tasks",
