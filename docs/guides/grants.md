@@ -311,9 +311,9 @@ when grants are read instead, however the file was written.
 `WORKIT_STATE_DIR` moves it), holds a hash of each entry's authority fields
 and their last sealed values: `name`, `glob`, entry order, `remotes`,
 `vcs.account`, `vcs.provider`, `autonomy`, legacy `autoApprove`,
-`defaultEndpoint`, `verification` and `youtrack.writes`. You write it from
-your own terminal with `workit workspace seal`; the hooks deny an agent's
-writes to it on every host, the same as to `workspaces.json`.
+`defaultEndpoint`, `verification` and `youtrack.writes`. Only your own
+terminal writes it; the hooks deny an agent's writes to it on every host,
+the same as to `workspaces.json`.
 
 When a seal exists and the file no longer matches it, or the seal is
 malformed or unreadable, nothing the change raised is honoured:
@@ -326,9 +326,9 @@ malformed or unreadable, nothing the change raised is honoured:
 
 A broken seal never raises anything, and settings outside that list (roles,
 branch policy, checks) still apply. The note in `workit grant show` and each
-grant denial names the fix: if you made the change, run
-`workit workspace seal` in your own terminal. Without a seal file, grants
-read as before.
+grant denial names the fix: if you made the change, re-seal from your own
+terminal with the command the note gives. Without a seal file, grants read
+as before.
 
 ## Trust model
 
