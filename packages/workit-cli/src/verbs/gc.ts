@@ -32,7 +32,7 @@ import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { forgeDeps } from "./forge-common";
 
 /** The usage line (the registry's gc entry carries the same text). */
-export const GC_USAGE =
+const GC_USAGE =
   "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply]";
 
 /** Bound on reaching the forge for the merged-PR check. */
