@@ -3,13 +3,18 @@
 // in-process (autonomy.grantsHome) and point the config override at the same
 // directory, so grants and the rest of the config agree. Run grant-reading
 // verbs in-process (main/run), never as a subprocess, so the swap applies.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { grantsHome } from "@/packages/workit-core/src/autonomy";
+import { SEAL_FILE, sealDocument } from "@/packages/workit-core/src/core/grant-seal";
 import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
-export type ConfigHome = { home: string; configDir: string; restore: () => void };
+export type ConfigHome = {
+  home: string;
+  configDir: string;
+  restore: () => void;
+};
 
 export const useConfigHome = (prefix: string): ConfigHome => {
   const previousConfig = process.env.WORKIT_CONFIG;
@@ -30,4 +35,24 @@ export const useConfigHome = (prefix: string): ConfigHome => {
       rmSync(home, { recursive: true, force: true });
     },
   };
+};
+
+/**
+ * Seal the authority fields of `<configDir>/workspaces.json` as it is now
+ * (#819), the way the user's terminal does; an absent file seals no entries.
+ */
+export const sealConfig = (configDir: string): void => {
+  let entries: unknown[] = [];
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(configDir, "workspaces.json"), "utf8")) as {
+      workspaces?: unknown[];
+    };
+    entries = parsed.workspaces ?? [];
+  } catch {
+    // No file: an empty list.
+  }
+  writeFileSync(
+    path.join(configDir, SEAL_FILE),
+    `${JSON.stringify(sealDocument(entries, new Date()), null, 2)}\n`,
+  );
 };

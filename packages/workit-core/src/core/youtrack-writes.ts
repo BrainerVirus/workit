@@ -8,6 +8,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { ApprovalFields } from "../approvals/store";
+import { sealNote } from "../autonomy";
 import { resolveStateDir } from "./logger";
 import { writeFileAtomic } from "./safe-write";
 import { sha256 } from "./task-contract";
@@ -88,7 +89,7 @@ export async function writeOnce(
  * `ask` (the default, every workspace): each write needs the user's yes
  * through the approval channel. `auto` is the opt-out a user sets in the
  * workspace entry (`youtrack: { writes: "auto" }`); it keeps the
- * WORKIT_YT_WRITE gate alone.
+ * WORKIT_YT_WRITE gate alone. A broken authority seal (#819) reads as `ask`.
  */
 export type YouTrackWritesMode = "ask" | "auto";
 
@@ -96,7 +97,8 @@ export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
   const youtrack = resolveRuntimeWorkspaceVcs(cwd)?.youtrack;
   return youtrack &&
     typeof youtrack === "object" &&
-    (youtrack as { writes?: unknown }).writes === "auto"
+    (youtrack as { writes?: unknown }).writes === "auto" &&
+    !sealNote()
     ? "auto"
     : "ask";
 };

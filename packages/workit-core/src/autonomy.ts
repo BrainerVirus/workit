@@ -38,6 +38,7 @@ import { accountHome } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
 import { evalWorld, evalWorldEntry } from "./core/eval-world";
+import { checkSeal, SEAL_COMMAND, type SealCheck } from "./core/grant-seal";
 import { writeFileAtomic } from "./core/safe-write";
 import {
   checkoutRemotes,
@@ -51,6 +52,7 @@ import {
   loadWorkspacesFrom,
   readWorkspacesResult,
   resolveWorkspaceFrom,
+  resolveWorkspaceFromEntries,
   validateWorkspacesDocument,
   type WorkspaceConfig,
 } from "./core/workspaces";
@@ -95,11 +97,42 @@ const NO_ACCOUNT =
 const entriesIn = (dir: string | null): WorkspaceConfig[] =>
   dir === null ? [] : loadWorkspacesFrom(dir);
 
-/** The account's entry for `cwd` (or the named one); none without an account home. */
-const resolveFrom = (cwd: string, name?: string): WorkspaceConfig | null => {
-  const dir = accountDir();
-  return dir === null ? null : resolveWorkspaceFrom(cwd, dir, name);
+/**
+ * Where authority entries come from: the account's workspaces.json, or the
+ * last sealed entries of a broken seal (core/grant-seal.ts).
+ */
+type Source = {
+  resolve: (cwd: string, name?: string) => WorkspaceConfig | null;
+  entries: () => WorkspaceConfig[];
 };
+
+const fileSource = (dir: string | null = accountDir()): Source => ({
+  resolve: (cwd, name) => (dir === null ? null : resolveWorkspaceFrom(cwd, dir, name)),
+  entries: () => entriesIn(dir),
+});
+
+const sealedSource = (entries: WorkspaceConfig[]): Source => ({
+  resolve: (cwd, name) => resolveWorkspaceFromEntries(cwd, entries, name),
+  entries: () => entries,
+});
+
+/** The account's seal (#819); none without an account home. */
+const sealOf = (): SealCheck => {
+  const dir = accountDir();
+  return dir === null ? { state: "none" } : checkSeal(dir);
+};
+
+const SEAL_UNBLOCK = `if the user made this change, ask them to run, in their own terminal: ${SEAL_COMMAND}`;
+
+/**
+ * Why authority falls back (a seal that exists and does not match, see
+ * core/grant-seal.ts), with the terminal command that accepts the change;
+ * null when the seal matches or there is none.
+ */
+export const sealNote = (seal: SealCheck = sealOf()): string | null =>
+  seal.state === "broken"
+    ? `workspaces.json does not match its seal (${seal.reason}), so grants, endpoint, verification and youtrack.writes are the stricter of their current and last sealed values; ${SEAL_UNBLOCK}`
+    : null;
 
 /**
  * Where `grant show --all` lists grants and `grant set` writes them: the
@@ -450,6 +483,7 @@ function autonomyOf(workspace: WorkspaceConfig | null): Autonomy {
  * capping entry, never the named one. Settings that are not authority stay.
  */
 function capAt(
+  source: Source,
   named: Autonomy,
   where: string | Error | { entry: WorkspaceConfig },
   by: string,
@@ -460,7 +494,7 @@ function capAt(
   let none = "";
   try {
     if (where instanceof Error) throw where;
-    folder = autonomyOf(typeof where === "string" ? resolveFrom(where) : where.entry);
+    folder = autonomyOf(typeof where === "string" ? source.resolve(where) : where.entry);
   } catch (error) {
     // Its entries tie (the only resolver error once `named` resolved), or git
     // did not answer (`where`): nothing granted.
@@ -510,23 +544,110 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const override = world ? null : grantsOverride();
   // No entry: the D4 defaults.
   if (override) return { ...autonomyOf(null), note: override };
+  // Resolved once even when a broken seal resolves twice.
+  let resolved: GrantTarget | undefined;
+  const once =
+    typeof target === "function" ? () => (resolved ??= target()) : (target as LazyTarget);
+  const current = resolveWith(fileSource(), cwd, world, once);
+  const seal = sealOf();
+  if (seal.state !== "broken") return current;
+  // No sealed value: the D4 defaults. Sealed entries that no longer resolve
+  // (a tie, a name they do not have): nothing granted.
+  let sealed: Autonomy | null = autonomyOf(null);
+  try {
+    if (seal.sealed) sealed = resolveWith(sealedSource(seal.sealed), cwd, world, once);
+  } catch {
+    sealed = null;
+  }
+  return stricter(current, sealed, sealNote(seal)!);
+}
+
+function resolveWith(
+  source: Source,
+  cwd: string,
+  world: WorkspaceConfig | null,
+  target?: LazyTarget,
+): Autonomy {
   const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
   // A real entry always wins over a bench world.
-  const real = resolveFrom(cwd, name);
+  const real = source.resolve(cwd, name);
   let autonomy = autonomyOf(real ?? world);
   if (!real && world) autonomy.world = evalWorld(cwd) ?? undefined;
   if (name)
-    autonomy = capAt(autonomy, cwd, `WORKIT_WORKSPACE_NAME=${name}`, "a name never raises grants");
+    autonomy = capAt(
+      source,
+      autonomy,
+      cwd,
+      `WORKIT_WORKSPACE_NAME=${name}`,
+      "a name never raises grants",
+    );
   const above = checkoutsAbove(cwd);
   for (const where of above instanceof Error ? [above] : above)
     autonomy = capAt(
+      source,
       autonomy,
       where,
       where instanceof Error ? "git" : `checkout ${where}`,
       "a worktree or submodule never exceeds it",
       true,
     );
-  return capAtRemotes(autonomy, cwd, target);
+  return capAtRemotes(source, autonomy, cwd, target);
+}
+
+const needsAccount = (autonomy: Autonomy): boolean =>
+  autonomy.configured.length > 0 && !autonomy.accountConfigured;
+
+/**
+ * A broken seal (#819): every authority value is the stricter of the current
+ * one and the last sealed one (`sealed`; null means nothing granted). A
+ * broken seal never raises anything; settings that are not authority stay.
+ */
+function stricter(current: Autonomy, sealed: Autonomy | null, note: string): Autonomy {
+  const grants = { ...current.grants };
+  const unblocks = { ...current.unblocks };
+  for (const kind of GRANT_KINDS) {
+    const floor = sealed ? sealed.grants[kind] : false;
+    if (!raises(kind, floor, grants[kind])) continue;
+    grants[kind] = floor;
+    unblocks[kind] = SEAL_UNBLOCK;
+  }
+  const configured = GRANT_KINDS.filter(
+    (kind) => current.configured.includes(kind) || sealed?.configured.includes(kind),
+  );
+  const accountConfigured =
+    !needsAccount(current) &&
+    !(sealed && needsAccount(sealed)) &&
+    (current.accountConfigured || Boolean(sealed?.accountConfigured));
+  const lower = (a: DefaultEndpoint, b: DefaultEndpoint) => (raisesEndpoint(a, b) ? a : b);
+  const defaultEndpoint = lower(
+    current.defaultEndpoint,
+    sealed?.defaultEndpoint ?? DEFAULT_ENDPOINT,
+  );
+  const effective = effectiveEndpoint(defaultEndpoint, {
+    workspace: current.workspace,
+    grants,
+    configured,
+    accountConfigured,
+  });
+  const endpoint = lower(
+    lower(effective.endpoint, current.effectiveEndpoint),
+    sealed?.effectiveEndpoint ?? DEFAULT_ENDPOINT,
+  );
+  const strict = sealed?.verification ?? "independent";
+  const looser =
+    VERIFICATION_STRICTNESS.indexOf(current.verification) > VERIFICATION_STRICTNESS.indexOf(strict);
+  return {
+    ...current,
+    grants,
+    configured,
+    accountConfigured,
+    defaultEndpoint,
+    effectiveEndpoint: endpoint,
+    endpointReason: endpoint === current.effectiveEndpoint ? current.endpointReason : SEAL_UNBLOCK,
+    verification: looser ? strict : current.verification,
+    unblocks,
+    note: current.note ? `${current.note}; ${note}` : note,
+  };
 }
 
 /**
@@ -536,8 +657,13 @@ export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
  * folder's grants. Git is asked only when some entry claims remotes; a git
  * error or an unreadable URL caps at nothing.
  */
-function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Autonomy {
-  const claiming = entriesIn(accountDir()).filter((entry) => entry.remotes?.length);
+function capAtRemotes(
+  source: Source,
+  autonomy: Autonomy,
+  cwd: string,
+  target?: LazyTarget,
+): Autonomy {
+  const claiming = source.entries().filter((entry) => entry.remotes?.length);
   if (claiming.length === 0) return autonomy;
   // The action's own target when the verb names it (a fork pushes to its own
   // origin with the folder's grants); every remote otherwise.
@@ -546,6 +672,7 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Aut
     target === undefined ? checkoutRemotes(cwd) : typeof target === "function" ? target() : target;
   if (remotes instanceof Error)
     return capAt(
+      source,
       autonomy,
       remotes,
       target === undefined ? "git" : "target",
@@ -557,6 +684,7 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Aut
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
       if (pattern)
         capped = capAt(
+          source,
           capped,
           { entry },
           `remote ${remote.name} ${remote.url} (workspace ${entry.name} claims ${pattern})`,
@@ -571,28 +699,41 @@ function capAtRemotes(autonomy: Autonomy, cwd: string, target?: LazyTarget): Aut
  * or an entry leaves `kind` ungranted (or has grants but no account). False
  * costs no git call (the shell hook asks first).
  */
-export const grantsMatter = (kind: GrantKind): boolean =>
-  !grantsOverride() &&
-  entriesIn(accountDir()).some((entry) => {
+export const grantsMatter = (kind: GrantKind): boolean => {
+  if (grantsOverride()) return false;
+  const matters = entriesIn(accountDir()).some((entry) => {
     const autonomy = autonomyOf(entry);
-    return (
-      entry.remotes?.length ||
-      autonomy.grants[kind] === false ||
-      (autonomy.configured.length > 0 && !autonomy.accountConfigured)
-    );
+    return entry.remotes?.length || autonomy.grants[kind] === false || needsAccount(autonomy);
   });
+  // A broken seal falls back to sealed entries or, with none, the D4 defaults.
+  const seal = sealOf();
+  return (
+    matters ||
+    (seal.state === "broken" &&
+      (seal.sealed ? seal.sealed.length > 0 : DEFAULT_GRANTS[kind] === false))
+  );
+};
+
+/** The entries authority reads: the account's, plus a broken seal's last sealed ones. */
+const authorityEntries = (): WorkspaceConfig[] => {
+  const seal = sealOf();
+  return [...entriesIn(accountDir()), ...(seal.state === "broken" ? (seal.sealed ?? []) : [])];
+};
 
 /** Whether any workspace claims remotes (then targets are worth resolving). */
 export const remotesClaimed = (dir: string | null = accountDir()): boolean =>
   entriesIn(dir).some((entry) => entry.remotes?.length);
 
 /** The entries whose `remotes` claim one of a target's URLs (grant show). */
-export function targetClaims(
+export const targetClaims = (target: GrantTarget, dir: string | null = accountDir()) =>
+  claimsIn(target, entriesIn(dir));
+
+function claimsIn(
   target: GrantTarget,
-  dir: string | null = accountDir(),
+  entries: WorkspaceConfig[],
 ): { url: string; workspace: string; pattern: string }[] | Error {
   if (target instanceof Error) return target;
-  const claiming = entriesIn(dir).filter((entry) => entry.remotes?.length);
+  const claiming = entries.filter((entry) => entry.remotes?.length);
   return target.remotes.flatMap((remote) =>
     claiming.flatMap((entry) => {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
@@ -608,7 +749,14 @@ const claimsOf = (remotes: CheckoutRemote[], dir: string | null) => {
     claiming.flatMap((entry) => {
       const pattern = entry.remotes!.find((item) => remoteMatches(item, remote.key));
       return pattern
-        ? [{ remote: remote.name, url: remote.url, workspace: entry.name, pattern }]
+        ? [
+            {
+              remote: remote.name,
+              url: remote.url,
+              workspace: entry.name,
+              pattern,
+            },
+          ]
         : [];
     }),
   );
@@ -646,7 +794,10 @@ export function remoteFindings(
   if (!unclaimed && !remotesClaimed(dir)) return { warnings: [], notes: [] };
   const remotes = checkoutRemotes(cwd);
   if (remotes instanceof Error && remotesClaimed(dir))
-    return { warnings: [`${remotes.message}: grants here are capped at nothing`], notes: [] };
+    return {
+      warnings: [`${remotes.message}: grants here are capped at nothing`],
+      notes: [],
+    };
   const listed = remotes instanceof Error ? [] : remotes;
   const others = claimsOf(listed, dir).filter((claim) => claim.workspace !== own?.name);
   const warnings = others.map(
@@ -756,7 +907,8 @@ export function rawGrantDenial(
   kind: GrantKind,
   target?: LazyTarget,
 ): { error: string; unblock: string } | null {
-  const claimed = remotesClaimed();
+  const entries = authorityEntries();
+  const claimed = entries.some((entry) => entry.remotes?.length);
   if (!grantsMatter(kind)) return null;
   // Resolved once: the cap and the claim check below share it.
   let resolved: GrantTarget | undefined;
@@ -783,14 +935,16 @@ export function rawGrantDenial(
   // A folder outside every workspace: judged only by a workspace that claims
   // the target and does not grant `kind` (a default-false grant records no cap).
   if (!claimed || !lazy) return null;
-  const claims = targetClaims(lazy());
+  const claims = claimsIn(lazy(), entries);
   if (claims instanceof Error)
-    return { error: `${kind}: ${claims.message}`, unblock: "name a target workit can resolve" };
-  const entries = entriesIn(accountDir());
-  const strict = claims.find(({ workspace: name }) => {
-    const entry = entries.find((item) => item.name === name);
-    return entry && autonomyOf(entry).grants[kind] === false;
-  });
+    return {
+      error: `${kind}: ${claims.message}`,
+      unblock: "name a target workit can resolve",
+    };
+  // Any entry of that name, current or last sealed, that does not grant `kind`.
+  const strict = claims.find(({ workspace: name }) =>
+    entries.some((item) => item.name === name && autonomyOf(item).grants[kind] === false),
+  );
   return strict
     ? {
         error: `${kind} is not granted for workspace ${strict.workspace}, which claims ${strict.url} (${strict.pattern})`,
