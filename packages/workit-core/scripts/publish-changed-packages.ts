@@ -232,7 +232,7 @@ const VISIBILITY_INTERVAL_MS = 15_000;
  * package 7 minutes after it and 4 after the CLI (#792 item 57), so an
  * upgrade in that window installed the CLI with the previous host package.
  */
-export function waitUntilVisible(
+function waitUntilVisible(
   run: Run,
   root: string,
   pkgs: readonly string[],
