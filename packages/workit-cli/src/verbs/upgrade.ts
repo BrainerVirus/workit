@@ -7,6 +7,7 @@
 // reaches the real home (#859).
 import pkg from "../../package.json" with { type: "json" };
 import { type Io } from "../output";
+import { createProgress } from "../progress";
 import { runUpgradeCommand } from "../upgrade";
 import { type UpgradeDeps } from "../upgrade/shared";
 import { offerFirstSeal } from "../upgrade/seal-offer";
@@ -38,8 +39,29 @@ export const sealOfferDue = (
   return onDisk === undefined || onDisk === pkg.version;
 };
 
+/**
+ * Where the upgrade prints: a real terminal keeps its spinner, screens and
+ * color (the upgrade's own process.stdout/stderr defaults); a caller that
+ * replaced io.stdout or io.stderr gets the report and the steps there.
+ */
+const upgradeOutput = (argv: readonly string[], io: Io): Pick<UpgradeDeps, "out" | "progress"> => ({
+  ...(io.terminals?.stdout ? {} : { out: { write: (text: string) => io.stdout(text) } }),
+  ...(io.terminals?.stderr
+    ? {}
+    : {
+        progress: createProgress({
+          stream: { write: (text: string) => io.stderr(text) },
+          env: io.env,
+          json: io.json || argv.includes("--json") || argv.includes("--apply"),
+        }),
+      }),
+});
+
 export const run = async (argv: string[], io?: Io, deps: UpgradeVerbDeps = {}): Promise<number> => {
-  const code = await (deps.upgrade ?? runUpgradeCommand)(argv, { env: io?.env ?? process.env });
+  const code = await (deps.upgrade ?? runUpgradeCommand)(argv, {
+    env: io?.env ?? process.env,
+    ...(io ? upgradeOutput(argv, io) : {}),
+  });
   if (io && code === 0 && sealOfferDue(argv, io.env, deps.versionOnDisk))
     await offerFirstSeal(io, deps.terminal);
   return code;

@@ -130,9 +130,11 @@ console.log(JSON.stringify({ setup, upgrade, deny, out: out.join("") }));`;
     deny: string[];
     out: string;
   };
-  // The upgrade report goes to the process's stdout, not io.stdout.
-  const report = `${result.out}${lines.join("\n")}`;
+  // The upgrade report and its steps go to io.stdout/io.stderr, never the process's.
+  const report = result.out;
   expect([result.setup, result.upgrade], report).toEqual([0, 0]);
+  expect(lines).toEqual([]);
+  expect(child.stderr).toBe("");
   // Both ran against the fixture: setup wrote its native deny there, and the
   // upgrade's closing doctor read the fixture's settings and found it gone.
   const sealDeny = `Edit(/${path.join(fixture, ".config/workit/workspaces.json.seal")})`;

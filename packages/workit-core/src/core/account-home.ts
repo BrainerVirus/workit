@@ -7,9 +7,10 @@
 // absolute path with a fixed env, a timeout and no shell. With no record
 // there is no home (null), never a fallback path: no grants are read.
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { configDir, dataDir, stateDir } from "./workit-paths.mjs";
 
 /** What accountHome reads; tests pass their own with a platform. */
 export type AccountIo = {
@@ -152,3 +153,51 @@ export const grantsHome: { resolve: () => string | null } = { resolve: defaultRe
  */
 export const grantsFromTestRun = (): boolean =>
   grantsHome.resolve === defaultResolve && process.env[TEST_RUN_ENV] !== undefined;
+
+/** `file` with its deepest existing ancestor resolved (macOS /var is /private/var). */
+const resolvedPath = (file: string): string => {
+  let dir = path.resolve(file);
+  const rest: string[] = [];
+  while (!existsSync(dir) && path.dirname(dir) !== dir) {
+    rest.unshift(path.basename(dir));
+    dir = path.dirname(dir);
+  }
+  try {
+    return path.join(realpathSync(dir), ...rest);
+  } catch {
+    return path.resolve(file);
+  }
+};
+
+const within = (root: string, file: string): boolean => {
+  const inside = path.relative(root, file);
+  return inside === "" || (!inside.startsWith("..") && !path.isAbsolute(inside));
+};
+
+/**
+ * Why a test run must not write `file` (#859), or null: under the test run
+ * marker, nothing is written in the OS account home's host settings (Claude
+ * Code, Cursor, Codex, Pi, ~/.config) or Workit's own config, state and data
+ * dirs (its worktrees aside). `home` is a test seam (default the account
+ * record's). Without the marker, null: a user's run writes where it always did.
+ */
+export const testRunWriteRefusal = (
+  file: string,
+  home?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null => {
+  if (env[TEST_RUN_ENV] === undefined) return null;
+  const account = home === undefined ? accountHome() : home;
+  if (account === null) return null;
+  const homeEnv = { HOME: account, USERPROFILE: account };
+  const roots = [
+    ...[".claude", ".cursor", ".codex", ".pi", ".config"].map((dir) => path.join(account, dir)),
+    configDir(homeEnv),
+    stateDir(homeEnv),
+    dataDir(homeEnv),
+  ].map(resolvedPath);
+  const target = resolvedPath(file);
+  const worktrees = path.join(resolvedPath(stateDir(homeEnv)), "worktrees");
+  if (within(worktrees, target) || !roots.some((root) => within(root, target))) return null;
+  return `refusing to write ${file}: a test run (${TEST_RUN_ENV}) never writes the OS account's home (#859)`;
+};

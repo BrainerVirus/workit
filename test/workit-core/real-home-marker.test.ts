@@ -13,6 +13,7 @@ import {
   TEST_RUN_ENV,
   accountHome,
   testRunHome,
+  testRunWriteRefusal,
 } from "@/packages/workit-core/src/core/account-home";
 import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
@@ -124,4 +125,23 @@ test("Given a test run, When writeSeal targets the account's own config dir, The
   expect(existsSync(path.join(config, SEAL_FILE))).toBe(false);
   const other = temp("wk-other-config-");
   expect(writeSeal(other, [], new Date(), home)).toBe(path.join(other, SEAL_FILE));
+});
+
+test("Given a fake account home, When testRunWriteRefusal judges a path, Then only its host settings and Workit dirs are refused, its worktrees and other dirs are not, and nothing is refused without the marker", () => {
+  const home = temp("wk-fake-account-");
+  const marked = { [TEST_RUN_ENV]: home };
+  const refused = (file: string, env: NodeJS.ProcessEnv = marked) =>
+    testRunWriteRefusal(path.join(home, file), home, env);
+  for (const file of [
+    ".claude/settings.json",
+    ".cursor/cli-config.json",
+    ".codex/rules/workit.rules",
+    ".pi/agent/settings.json",
+    ".config/opencode/opencode.json",
+    ".local/state/workit/host-permissions.json",
+  ])
+    expect(refused(file)).toContain(`refusing to write ${path.join(home, file)}`);
+  expect(refused(".local/state/workit/worktrees/workit/slice/file.ts")).toBeNull();
+  expect(refused("projects/repo/.claude/settings.json")).toBeNull();
+  expect(refused(".claude/settings.json", {})).toBeNull();
 });

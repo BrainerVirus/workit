@@ -10,11 +10,10 @@
 // storage is one file so a principal outside the agent's OS user (#815) can
 // own it later.
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { TEST_RUN_ENV, accountHome } from "./account-home";
+import { testRunWriteRefusal } from "./account-home";
 import { writeFileAtomic } from "./safe-write";
-import { configDir as workitConfigDir } from "./workit-paths.mjs";
 import {
   readWorkspacesResult,
   validateWorkspacesDocument,
@@ -174,25 +173,11 @@ export function writeSeal(
   home?: string | null,
 ): string {
   const file = path.join(dir, SEAL_FILE);
-  if (process.env[TEST_RUN_ENV] !== undefined && isAccountDir(dir, home))
-    throw new Error(
-      `refusing to write ${file}: a test run (${TEST_RUN_ENV}) never writes the OS account's seal`,
-    );
+  const refusal = testRunWriteRefusal(file, home);
+  if (refusal) throw new Error(refusal);
   writeFileAtomic(file, `${JSON.stringify(sealDocument(entries, now), null, 2)}\n`);
   return file;
 }
-
-const real = (dir: string): string => {
-  try {
-    return realpathSync(dir);
-  } catch {
-    return path.resolve(dir);
-  }
-};
-
-/** Whether `dir` is the OS account record's own config dir (core/account-home.ts). */
-const isAccountDir = (dir: string, home: string | null = accountHome()): boolean =>
-  home !== null && real(dir) === real(workitConfigDir({ HOME: home }));
 
 const show = (value: unknown): string => (value === undefined ? "(unset)" : canonical(value));
 

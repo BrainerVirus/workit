@@ -44,6 +44,7 @@ import os from "node:os";
 import path from "node:path";
 import { SEAL_FILE } from "@workit-dev/core/src/core/grant-seal";
 import { stateDir as workitStateDir } from "@workit-dev/core/src/core/heavy-words";
+import { testRunWriteRefusal } from "@workit-dev/core/src/core/account-home";
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import { configDir as workitConfigDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { WORKIT_ALLOWED_VERBS, WORKIT_USER_ONLY } from "@workit-dev/core/src/hooks/delivery-verbs";
@@ -658,6 +659,8 @@ export type PermissionPaths = {
   home?: string;
   env?: NodeJS.ProcessEnv;
   stateDir?: string;
+  /** The OS account's home a test run never writes (test seam; default the account record's). */
+  accountHome?: string | null;
 };
 
 type ResolvedPaths = { home: string; env: NodeJS.ProcessEnv; stateDir: string };
@@ -1044,6 +1047,11 @@ export function applyHostPermissions(
     }));
   const failAll = (detail: string): PermissionApplyEntry[] =>
     plan.changes.map((c) => ({ host: c.host, file: c.file, status: "failed", detail }));
+  // A test run never writes the real host settings or Workit's state (#859).
+  const real = [...plan.changes.map((c) => c.file), paths.stateDir]
+    .map((file) => testRunWriteRefusal(file, options.accountHome))
+    .find((reason) => reason !== null);
+  if (real) return failAll(real);
   const refusal = recordRefusal(paths.stateDir);
   if (refusal) return failAll(`${refusal.refused}; ${refusal.unblock}`);
   const record = readOwnership(paths);
@@ -1153,6 +1161,8 @@ const forgetDropped = (owned: OwnedEntries, change: PermissionChange): OwnedEntr
 export const removeCodexRules = (file: string, options: PermissionPaths = {}): boolean => {
   const expected = permissionTarget("codex", options).file;
   if (path.resolve(file) !== path.resolve(expected) || !existsSync(expected)) return false;
+  const refusal = testRunWriteRefusal(expected, options.accountHome);
+  if (refusal) throw new Error(refusal);
   rmSync(expected);
   return true;
 };
