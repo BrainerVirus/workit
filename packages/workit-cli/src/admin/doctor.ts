@@ -4371,6 +4371,8 @@ const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck | null>([
   checkStalePin,
   checkStaleInstall,
   checkYtrackSkill,
+  // An upgrade may be what starts the seal fallback (#819): say so after it.
+  checkGrantSeal,
   ...RUN_CHECKS.slice(-6),
 ]);
 

@@ -336,8 +336,12 @@ An existing setup has no seal yet. Then every authority value is the stricter
 of the file and the defaults: anything above them (a merge or release grant,
 an endpoint past `commit`, `verification: self`, `youtrack.writes: auto`) waits
 for the seal. `workit upgrade` and `workit setup` at your terminal show the
-fields once and offer to seal them, and `workit doctor` warns (`grant_seal`)
-until you do.
+fields once and offer to seal them. The upgrade that installs this release
+asks as soon as the new CLI takes over, `--yes` or not, whenever it runs at
+your terminal outside an agent; afterwards a plain `workit upgrade` or
+`workit setup` asks, and `--yes`, `--json`, `--preview` or `--dry-run` do not.
+`workit doctor` warns (`grant_seal`, also under "Left after upgrade") until
+you do.
 
 When a seal exists and the file no longer matches it, or the seal is
 malformed or unreadable, nothing the change raised is honoured:

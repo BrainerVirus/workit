@@ -240,7 +240,8 @@ you at a terminal; agents can only lower them. The authority fields are sealed
 (`workspaces.json.seal`): `workit workspace seal`, in your own terminal, shows
 what changed and accepts it; while the seal is missing or does not match,
 nothing above the last seal (or the defaults) applies, a changed forge identity
-blocks forge verbs, and `workit doctor` warns (`grant_seal`). It stops an
+blocks forge verbs, and `workit doctor` warns (`grant_seal`); `workit upgrade`
+and `workit setup` at your terminal offer the first seal. It stops an
 honest agent, not one that also forges the seal (D18). A config redirect
 (`WORKIT_CONFIG` and the like) never raises a grant. See
 [grants](docs/guides/grants.md). `workit workspace list|add|set` adds or

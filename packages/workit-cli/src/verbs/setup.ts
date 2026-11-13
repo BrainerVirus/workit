@@ -15,6 +15,7 @@ import { askLine, askOrCancel, cancelled } from "../prompt";
 import { colorDiff, createStyle, type Style } from "../style";
 import { type HostOutcome } from "../upgrade/shared";
 import { offerFirstSeal } from "../upgrade/seal-offer";
+import { type GrantDeps } from "./grant";
 import { refreshYtrackSkill, workitHosts } from "../upgrade/ytrack-skill";
 
 const ALL_HOSTS = ["claude-code", "codex", "cursor", "opencode", "pi"];
@@ -49,11 +50,18 @@ const parse = (
   return { hosts, yes, dryRun, shell };
 };
 
-export async function run(argv: string[], io: Io): Promise<number> {
-  const code = await runSetup(argv, io);
-  // Existing users: the one-time seal offer at the user's own terminal (#819).
+/** Test seams: the setup itself and the terminal the seal offer asks on. */
+export type SetupVerbDeps = {
+  setup?: (argv: string[], io: Io) => Promise<number>;
+  terminal?: GrantDeps;
+};
+
+export async function run(argv: string[], io: Io, deps: SetupVerbDeps = {}): Promise<number> {
+  const code = await (deps.setup ?? runSetup)(argv, io);
+  // Existing users: the one-time seal offer at the user's own terminal (#819);
+  // never for a script's --yes or a --dry-run.
   if (code === 0 && !argv.includes("--yes") && !argv.includes("--dry-run"))
-    await offerFirstSeal(io);
+    await offerFirstSeal(io, deps.terminal);
   return code;
 }
 

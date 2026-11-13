@@ -51,6 +51,8 @@ import {
 } from "@/packages/workit-cli/src/admin/detect-hosts";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
+import { checkSeal } from "@/packages/workit-core/src/core/grant-seal";
+import { sealConfig, useConfigHome } from "../shared/grant-home";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -1254,4 +1256,37 @@ test("detected hosts across all four platforms are preselected", () => {
     true,
   );
   expect(preselectedPlatforms(detection)).toEqual(["cursor", "codex", "pi"]);
+});
+
+// #819: the wizard's workspaces.json write settles the account's seal. At the
+// user's terminal it reseals when the seal matched before; headless, a change
+// that is not only a lowering leaves the seal and the row says how to seal.
+test("Given a matching seal, When the wizard writes workspaces.json, Then it reseals at a terminal and leaves it (with the command) headless", () => {
+  for (const terminal of [true, false]) {
+    const home = useConfigHome("wk-wizard-seal-", { seal: "manual" });
+    try {
+      const dir = home.configDir;
+      const file = path.join(dir, "workspaces.json");
+      writeFileSync(file, JSON.stringify({ workspaces: [wsEntry("work", "/work/**")] }));
+      sealConfig(dir);
+      const preview = buildSetupPreview(
+        values({ workspaces: [wsEntry("work", "/work/**"), wsEntry("home", "/home/**")] }),
+        { dir, env: {} },
+      );
+      const result = applySetupPreview(preview, {
+        configDir: dir,
+        home: home.home,
+        cwd: dir,
+        env: {},
+        terminal,
+      });
+      const row = result.entries.find((entry) => entry.file === file);
+      expect(row?.status, String(terminal)).toBe("Configured");
+      expect(checkSeal(dir).state, String(terminal)).toBe(terminal ? "valid" : "broken");
+      if (terminal) expect(row?.detail).toBeUndefined();
+      else expect(row?.detail).toContain("workit workspace seal");
+    } finally {
+      home.restore();
+    }
+  }
 });

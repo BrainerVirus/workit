@@ -1,4 +1,5 @@
-// Existing users (#819): with no seal at all, `workit upgrade` and
+// Existing users (#819): with no seal at all, `workit upgrade` (also the new
+// CLI's half of the upgrade that installs it) and
 // `workit setup` at the user's terminal show the authority fields once and
 // offer to seal them; y writes the seal, n leaves it. Never on a mismatch,
 // never headless, in an agent's shell or under --json.
@@ -9,6 +10,8 @@ import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
 import type { GrantDeps } from "@/packages/workit-cli/src/verbs/grant";
 import { offerFirstSeal } from "@/packages/workit-cli/src/upgrade/seal-offer";
+import { run as runSetup } from "@/packages/workit-cli/src/verbs/setup";
+import { run as runUpgrade } from "@/packages/workit-cli/src/verbs/upgrade";
 import { resolveAutonomy } from "@/packages/workit-core/src/autonomy";
 import { checkSeal, SEAL_FILE } from "@/packages/workit-core/src/core/grant-seal";
 import { sealConfig, useConfigHome, type ConfigHome } from "../shared/grant-home";
@@ -94,4 +97,72 @@ test("Given a mismatched seal, a headless run, an agent shell or --json, Then no
   expect(asked).toEqual([]);
   expect(existsSync(sealFile())).toBe(false);
   expect(before).toContain("sha256");
+});
+
+// The verbs that make the offer: `workit upgrade` (including the half an
+// older CLI re-executes with --yes after installing this one) and `workit setup`.
+const upgradeRun = async (
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+  terminal: GrantDeps,
+  versionOnDisk: () => string | undefined = () => undefined,
+) => {
+  const ran: string[][] = [];
+  const shown = io(env, argv.includes("--json"));
+  const code = await runUpgrade(argv, shown.value, {
+    upgrade: async (args) => {
+      ran.push(args);
+      return 0;
+    },
+    terminal,
+    versionOnDisk,
+  });
+  return { code, ran, out: shown.out() };
+};
+const HANDOFF = ["--yes", "--hosts=none"];
+const CONTINUE = { WORKIT_UPGRADE_CONTINUE: "[]" };
+
+test("Given the new CLI finishing an upgrade an older one started (--yes, WORKIT_UPGRADE_CONTINUE), When it runs at the user's terminal, Then it offers the seal and y writes it", async () => {
+  seed({ merge: "verified" });
+  const asked: string[] = [];
+  const run = await upgradeRun(HANDOFF, CONTINUE, deps(true, asked));
+  expect(run.code).toBe(0);
+  expect(run.ran).toEqual([HANDOFF]);
+  expect(asked).toHaveLength(1);
+  expect(checkSeal(configHome.configDir).state).toBe("valid");
+});
+
+test("Given that handoff headless, in an agent's shell or under --json, Then nothing is offered", async () => {
+  seed({ merge: "verified" });
+  const asked: string[] = [];
+  await upgradeRun(HANDOFF, CONTINUE, deps(true, asked, false));
+  await upgradeRun(HANDOFF, { ...CONTINUE, CLAUDECODE: "1" }, deps(true, asked));
+  await upgradeRun([...HANDOFF, "--json"], CONTINUE, deps(true, asked));
+  expect(asked).toEqual([]);
+  expect(existsSync(sealFile())).toBe(false);
+});
+
+test("Given a plain upgrade the user started, Then it offers at the terminal, but not with --yes, --preview or after handing off to a newer CLI", async () => {
+  seed({ merge: "verified" });
+  const asked: string[] = [];
+  await upgradeRun(["--yes"], {}, deps(false, asked));
+  await upgradeRun(["--preview"], {}, deps(false, asked));
+  await upgradeRun([], {}, deps(false, asked), () => "999.0.0");
+  expect(asked).toEqual([]);
+  await upgradeRun([], {}, deps(false, asked));
+  expect(asked).toHaveLength(1);
+  expect(existsSync(sealFile())).toBe(false);
+});
+
+test("Given workit setup, Then a plain run offers the seal at the terminal and --yes or --dry-run does not", async () => {
+  seed({ merge: "verified" });
+  const asked: string[] = [];
+  const setup = (argv: string[], answer: boolean) =>
+    runSetup(argv, io().value, { setup: async () => 0, terminal: deps(answer, asked) });
+  expect(await setup(["--yes"], true)).toBe(0);
+  expect(await setup(["--dry-run"], true)).toBe(0);
+  expect(asked).toEqual([]);
+  expect(await setup([], true)).toBe(0);
+  expect(asked).toHaveLength(1);
+  expect(checkSeal(configHome.configDir).state).toBe("valid");
 });
