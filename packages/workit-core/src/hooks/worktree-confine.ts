@@ -793,24 +793,16 @@ export function confineJudgeShell(
       );
     let git: string[] = [];
     try {
-      git = rawInvocations(command, dialect).flatMap(({ tool, dir, args }) => {
-        if (tool !== "git" || (args[0] !== "push" && !leadOwnedGit(args))) return [];
-        const at = dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? ".");
-        // `git worktree add <path>` also writes the new checkout at <path>.
-        const added =
-          args[0] === "worktree" && args[1] === "add"
-            ? args
-                .slice(2)
-                .find(
-                  (arg, index, rest) =>
-                    !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(rest[index - 1] ?? ""),
-                )
-            : undefined;
-        return [
-          path.join(at, `${OPAQUE_TARGET}git`),
-          ...(added === undefined ? [] : [path.resolve(at, added)]),
-        ];
-      });
+      git = rawInvocations(command, dialect).flatMap(({ tool, dir, args }) =>
+        tool === "git" && (args[0] === "push" || leadOwnedGit(args))
+          ? [
+              path.join(
+                dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? "."),
+                `${OPAQUE_TARGET}git`,
+              ),
+            ]
+          : [],
+      );
     } catch {
       // The strict analysis below still judges the command.
     }

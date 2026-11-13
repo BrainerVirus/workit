@@ -591,11 +591,18 @@ export const configWrites = (rest: readonly string[]): boolean => {
 const GIT_VALUE =
   /^(?:-[Ccbouj]|--(?:git-dir|work-tree|namespace|config-env|branch|origin|config|depth|reference(?:-if-able)?|template|separate-git-dir|upload-pack|jobs|filter|initial-branch|object-format))$/;
 
+/** The `<path>` of `git worktree add` (`rest`: the words after `add`), past `-b`/`-B`/`--reason` values. */
+const worktreeAddPath = (rest: readonly string[]): string | undefined =>
+  rest.find(
+    (arg, index) => !arg.startsWith("-") && !/^(?:-[bB]|--reason)$/.test(rest[index - 1] ?? ""),
+  );
+
 /**
  * What git writes outside the edit analysis (#790): `init` and `clone` their
- * directory, `format-patch` its patches, `archive -o`, `bundle create`, any
- * `--output`, a `config` write its file, and `fetch`, `gc` and `branch`
- * writes the repository ("."); paths are under `-C`. Null for the rest.
+ * directory, `worktree add` its new checkout, `format-patch` its patches,
+ * `archive -o`, `bundle create`, any `--output`, a `config` write its file,
+ * and `fetch`, `gc` and `branch` writes the repository ("."); paths are under
+ * `-C`. Null for the rest.
  */
 const gitOutputs = (args: readonly string[]): string[] | null => {
   let at = 0;
@@ -615,6 +622,9 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
   );
   if (output !== undefined) files.push(output);
   if (sub === "init") files.push(names[0] ?? ".");
+  const added =
+    sub === "worktree" && rest[0] === "add" ? worktreeAddPath(rest.slice(1)) : undefined;
+  if (added !== undefined) files.push(added);
   if (sub === "clone")
     files.push(
       names[1] ??
