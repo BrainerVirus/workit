@@ -52,11 +52,11 @@ const cli = async (cwd: string, argv: string[], env: Record<string, string> = {}
   return { code, stdout, stderr };
 };
 
-test("Given a clone and its linked worktree, When `workit dir plans|retros|handoffs` runs in each, Then both print the clone's <git-common-dir>/workit/<kind> and it exists", async () => {
+test("Given a clone and its linked worktree, When `workit dir plans|retros|handoffs|notes` runs in each, Then both print the clone's <git-common-dir>/workit/<kind> and it exists", async () => {
   const root = repo();
   const worktree = path.join(tempDir(), "wt");
   git(root, "worktree", "add", "-q", "-b", "feature/x", worktree);
-  for (const kind of ["plans", "retros", "handoffs"]) {
+  for (const kind of ["plans", "retros", "handoffs", "notes"]) {
     const expected = path.join(root, ".git", "workit", kind);
     expect(existsSync(expected)).toBe(false);
     const fromWorktree = await cli(worktree, ["dir", kind]);
@@ -65,6 +65,23 @@ test("Given a clone and its linked worktree, When `workit dir plans|retros|hando
     expect((await cli(root, ["dir", kind])).stdout).toBe(`${expected}\n`);
   }
   expect(existsSync(path.join(worktree, ".workit"))).toBe(false);
+  expect(existsSync(path.join(root, ".workit"))).toBe(false);
+});
+
+test("Given `workit dir notes --json` in a linked worktree, Then the path is under the git dir, not any working tree", async () => {
+  const root = repo();
+  const worktree = path.join(tempDir(), "wt");
+  git(root, "worktree", "add", "-q", "-b", "feature/n", worktree);
+  const result = await cli(worktree, ["dir", "notes", "--json"]);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    ok: true,
+    data: { kind: "notes", scope: "clone", path: path.join(root, ".git", "workit", "notes") },
+  });
+  const status = spawnSync("git", ["status", "--porcelain", "--ignored", "-uall"], {
+    cwd: worktree,
+    encoding: "utf8",
+  });
+  expect(status.stdout).toBe("");
 });
 
 test("Given `workit dir state --json`, Then it prints the resolver's state dir in an ok envelope and creates nothing", async () => {
@@ -83,15 +100,15 @@ test("Given `workit dir state --json`, Then it prints the resolver's state dir i
 
 test("Given an unknown or missing kind, Then `workit dir` refuses with its usage (exit 2)", async () => {
   const root = repo();
-  const unknown = await cli(root, ["dir", "notes"]);
+  const unknown = await cli(root, ["dir", "scratch"]);
   expect(unknown.code).toBe(2);
-  expect(unknown.stderr).toContain("unknown kind notes");
-  expect(unknown.stderr).toContain("plans|retros|handoffs|config|state|data|cache|runtime");
+  expect(unknown.stderr).toContain("unknown kind scratch");
+  expect(unknown.stderr).toContain("plans|retros|handoffs|notes|config|state|data|cache|runtime");
   expect((await cli(root, ["dir"])).code).toBe(2);
   expect((await cli(root, ["dir", "plans", "extra"])).code).toBe(2);
 });
 
-test("Given docs/agents/file-locations.md, Then its repository table lists .workit/, every per-clone store dir and the worktree scratch dir", () => {
+test("Given docs/agents/file-locations.md, Then its repository table lists .workit/, every per-clone store dir and the judges' probe dir, and the state row names the worker scratch dir", () => {
   const doc = readFileSync(
     path.join(import.meta.dir, "../../docs/agents/file-locations.md"),
     "utf8",
@@ -104,4 +121,7 @@ test("Given docs/agents/file-locations.md, Then its repository table lists .work
     expect(named).toContain(`\`<git-common-dir>/workit/${kind}\``);
   expect(named).toContain("`<worktree>/.workit-scratch`");
   for (const kind of REPO_DIR_KINDS) expect(section).toContain(`workit dir ${kind}`);
+  const state = doc.split("\n").find((line) => line.startsWith("| state "));
+  expect(state).toContain("`scratch/<repo>/<slice>`");
+  expect(doc).toContain("never asks a repository to ignore");
 });

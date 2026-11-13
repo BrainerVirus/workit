@@ -208,6 +208,27 @@ test("after a merge, a clean worktree under the managed root and its branch go, 
   expect(out.recorded).toEqual({ id: String(rows[0]?.id) });
 });
 
+test("after a merge, a managed slice worktree's out-of-tree worker scratch (<state>/scratch/<repo>/<slice>) goes with it; another slice's scratch stays", () => {
+  const env = setup();
+  const repoDir = path.join(managedWorktreeRoot(env.env), "proj");
+  const dir = worktree(env.main, path.join(repoDir, "slice"), "feature/x", "x\n");
+  const scratch = path.join(String(env.env.WORKIT_STATE_DIR), "scratch", "proj", "slice");
+  const neighbour = path.join(String(env.env.WORKIT_STATE_DIR), "scratch", "proj", "other");
+  for (const kept of [scratch, neighbour]) {
+    mkdirSync(kept, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(kept, "draft.md"), "draft\n");
+  }
+  const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+    actor,
+    trigger: "pr merge",
+    env: env.env,
+  });
+  expect(out).toMatchObject({ branchDeleted: true, dirty: null, notes: [] });
+  expect(norm(out.scratchRemoved)).toEqual([key(scratch)]);
+  expect(existsSync(scratch)).toBe(false);
+  expect(existsSync(path.join(neighbour, "draft.md"))).toBe(true);
+});
+
 test("after a merge, a dirty managed worktree is kept with its branch; the note names the paths and the release command", () => {
   const env = setup();
   const dir = worktree(

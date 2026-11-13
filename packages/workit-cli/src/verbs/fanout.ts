@@ -407,6 +407,7 @@ function worktree(argv: string[], io: Io): number {
     data.removed
       ? `released slice ${data.slice}: removed ${data.path}${data.dirty.length ? ` (dropped ${data.dirty.length} uncommitted change${data.dirty.length === 1 ? "" : "s"}, recorded in the ledger)` : ""}; branch ${data.branch} kept`
       : `slice ${data.slice}: nothing released`,
+    ...data.scratch.map((dir) => `  removed scratch ${dir}`),
     ...data.notes.map((note) => `note: ${note}`),
   ]);
 }

@@ -1002,10 +1002,13 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   minutes), SCRATCH, FORBIDDEN, the fan-in rule, REPORT, the standing orders
   in force, the worker's `WORKIT_SESSION_ID` (`<lead session>-w-<slice>`) and
   the worker rules. MODE is `resume` when the branch exists, else `new`
-  (`--mode` overrides; `resume` needs the branch). SCRATCH is
-  `<worktree>/.workit-scratch` when the slice's worktree exists, else
-  `.workit-scratch/` at the worker's own worktree root; either way
-  `info/exclude` hides it from git. `--attempt <n>` (1-9) renders one attempt
+  (`--mode` overrides; `resume` needs the branch). SCRATCH is the worker's
+  own dir outside every working tree, `<state>/scratch/<repo>/<slice>`
+  (`~/.local/state/workit/scratch/…` by default; `+try<n>` for an attempt), so
+  Prettier, ESLint or Jest in the worktree never see it and no repo has to
+  ignore a Workit file. The verifier SPAWN line still sends a judge's probes
+  to `<worktree>/.workit-scratch`, which `info/exclude` hides from git.
+  `--attempt <n>` (1-9) renders one attempt
   of a race on branch `<branch>-try<n>` (refused when another slice has that
   branch), worktree `<worktree>+try<n>` and session `<lead>-w-<slice>+try<n>`.
   The lead needs a `WORKIT_SESSION_ID` (it refuses without one); a worker id
@@ -1079,8 +1082,11 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   its native isolation) adds the slice's worktree at its planned path. A new
   slice starts at its base and gets its branch through `workit git branch`
   (branch policy applies); an existing branch is checked out as it is (`MODE:
-resume`). It also makes `<worktree>/.workit-scratch`, hidden from git
-  through the repository's `info/exclude`, for the worker's temp files.
+resume`). It also makes the worker's scratch dir for its temp files,
+  `<state>/scratch/<repo>/<slice>` (mode 0700, the same `<repo>` name as the
+  worktree's dir), outside the worktree: nothing Workit adds there shows in
+  `git status --ignored` or in a repo tool's scan. Writing there is never
+  denied to a confined implementer: it is outside every checkout.
   Where the main checkout has `node_modules` (also `packages/*/node_modules`)
   that git ignores, the worktree gets its own: relative links such as
   workspace packages (`../../packages/<name>`) and `.bin` entries resolve
@@ -1119,8 +1125,10 @@ fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
   judged, so the merge gate and a non-author verdict still check the diff.
 - `worktree release` records the worktree's `git status` in the ledger
   (`fanout.worktree.released`) before anything else, refuses while there are
-  uncommitted changes unless `--force`, then removes the scratch dir and the
-  worktree with `git worktree remove`. The branch is kept. It removes only a
+  uncommitted changes unless `--force`, then removes the worktree with `git
+  worktree remove` (an old in-tree `.workit-scratch` with it) and the
+  worker's out-of-tree scratch dir: only a real directory this user owns
+  under `<state>/scratch`, never through a symlink. The branch is kept. It removes only a
   worktree that `create` made for this fanout, slice and path, even with
   `--force`: its ledger row says so, no later release removed it, and git's
   admin dir for the worktree (`.git/worktrees/<id>`) holds the random token

@@ -881,6 +881,14 @@ worktree, kept across worktree removal and `git clean`), or in
   `tasks/`, `workspace.json`) move once into `.git/workit/legacy/<checkout>/v2/`
   on the first CLI write or read; only exact Workit markers and empty dirs are
   deleted.
+- Workit never asks a repository to ignore anything: notes go to
+  `workit dir notes` (`.git/workit/notes`, the same from every worktree), a
+  fanout worker's scratch to `<state>/scratch/<repo>/<slice>`, so no repo
+  needs a Workit entry in `.gitignore`, `.prettierignore` or a tool's
+  ignores. `workit doctor` warns when `.workit/` holds untracked files other
+  than team config; `workit doctor --fix` moves each into `workit dir notes`
+  at the same relative path, never overwriting (a taken name gets a numbered
+  one) and never touching tracked files or team config.
 - `workit gc` folds long logs into a checkpoint plus their 50 most recent
   events, removes unreferenced blobs, temp files and old check logs.
   `--dry-run` writes nothing; `--prune-recovery --yes` removes 2.x recovery

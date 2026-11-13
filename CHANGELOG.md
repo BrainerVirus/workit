@@ -513,9 +513,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The local eval bench can give a test world a workspace (endpoint, lower grants, capped at the defaults) and run each case `--repeat N` times, passing only when at least two thirds of the runs pass.
 - `workit approve <id>`: the first piece of the host-approval channel. Requests are stored under the Workit state dir (agents cannot write there), Claude Code asks the user natively and records their yes once, Pi records it from its TUI dialog, other hosts and agent-free terminals use a confirmed terminal fallback; a grant expires and is consumed once. No verb uses it yet.
 - YouTrack writes (`workit youtrack note|time|meeting|create`) ask the user first by default through `workit approve`; set `youtrack.writes: auto` on a workspace to keep the old `WORKIT_YT_WRITE=1` gate. An identical comment or work item by the same user is refused with `duplicate_entry`, and after an interrupted write the next call reports whether it landed.
-
 - `workit youtrack update <ISSUE>` makes a whole issue update under one yes: a comment with `--attach` files (`![](name)` in the text shows one inline), time (`--minutes`, `--text`, `--date`) and `--state`/`--command`, in that order, stopping at the first failure and naming what landed. The request lists every part; missing files and a ytrack without `--attach` are refused before asking (fix: `ytrack upgrade`). `workit youtrack create` takes `--attach` and `--command` under its one yes.
 - `workit doctor` has a `ytrack_paths` row: each workspace with a `youtrack.baseUrl` should have its glob mapped to that host in ytrack (`ytrack auth paths`), so an agent's own ytrack there reaches it; drift (missing, on another host, ytrack too old) comes with the exact fix. `workit setup` plans and runs the `ytrack auth paths --add` calls.
+- `workit dir notes` prints (and creates) the per-clone notes dir, `<git-common-dir>/workit/notes`, the same from every worktree. `workit doctor` has a `workit_notes` row that counts untracked files left in a checkout's `.workit/` (other than team config such as `checks.json`, and the old store files the task store backs up itself), and `workit doctor --fix` moves each into `workit dir notes` keeping its path, never overwriting and never touching tracked files.
 
 ### Changed
 
@@ -625,6 +625,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Verdict gates read HEAD and branch tips from the repository files (fresh on every read, git as the fallback whenever a read is uncertain) and the origin URL once per gate, so a gate check spawns 8 git processes instead of 10.
 - `workit-implement` runs a codemod or schematic one area at a time (run, `workit check`, commit, then the next area), never as one repo-wide commit (#779)
 - Hooks start from a bundle about 25 KB smaller on every host: they read tasks through a read-only store and no longer load the task write path
+- A fanout worker's scratch dir is now `<state>/scratch/<repo dir>/<slice>` (mode 0700) instead of `.workit-scratch/` inside its worktree, so a shared repo never has to ignore a Workit file. `workit fanout worktree release`, `workit gc --worktrees --apply` and the cleanup after a merge remove it with the worktree, race attempts' `<slice>+try<n>` dirs included. Verifier and reviewer probes still go in the candidate worktree's `.workit-scratch/`.
 
 ### Fixed
 

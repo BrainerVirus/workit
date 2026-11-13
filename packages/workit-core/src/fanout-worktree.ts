@@ -4,14 +4,18 @@
 // create: the slice's worktree at its planned path. A new slice starts
 // detached at its planned base and gets its branch through `workit git
 // branch` (core gitBranch: branch policy, release tracks); an existing branch
-// (MODE: resume) is checked out as it is. It also makes the per-worker
-// scratch dir `<worktree>/.workit-scratch`, hidden from git through the
-// repository's info/exclude, and records `fanout.worktree.created`.
+// (MODE: resume) is checked out as it is. It also makes the worker's scratch
+// dir outside the working tree, `<state>/scratch/<repo dir>/<slice>` (0700),
+// so no repo tool (Prettier, ESLint, Jest) ever scans it and no repo has to
+// ignore a Workit file, and records `fanout.worktree.created`. Judges'
+// probes stay in `<worktree>/.workit-scratch`, hidden from git through the
+// repository's info/exclude (hooks/worktree-confine.ts).
 //
 // release: records `git status` of the worktree in the ledger first
 // (`fanout.worktree.released`), refuses while it has uncommitted changes
-// unless forced, then runs `git worktree remove` (which takes the scratch dir
-// with it). The branch is kept. It only removes a worktree that `create` made
+// unless forced, then runs `git worktree remove` (which takes an in-tree
+// `.workit-scratch` with it) and removes the worker's out-of-tree scratch
+// dir. The branch is kept. It only removes a worktree that `create` made
 // for this fanout, slice and path, on the slice's branch or detached; never
 // the main checkout, the one the command runs in, or a worktree someone else
 // made there, not even with --force. "Made by create" is exact: create writes
@@ -33,6 +37,7 @@ import { detectLanding, forgeBreaker, sliceStart } from "./fanout-landed";
 import { recordSliceStack } from "./fanout-stack";
 import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
 import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
+import { stateDir } from "./core/workit-paths.mjs";
 import {
   branchRef,
   fanoutFail,
@@ -40,6 +45,7 @@ import {
   mainCheckout,
   nulList,
   trunkRef,
+  worktreeRoot,
   type FanoutFile,
   type FanoutResult,
   type Slice,
@@ -469,10 +475,135 @@ function staleBunInstall(main: string): string | null {
   return problems.length ? problems.join("; ") : null;
 }
 
-function ensureScratch(worktree: string): string {
-  const scratch = path.join(worktree, SCRATCH_DIR);
-  fs.mkdirSync(scratch, { recursive: true });
-  return scratch;
+/**
+ * `<state>/scratch`: the workers' scratch dirs. Beside the managed worktrees,
+ * never inside `<state>/worktrees` (gc and cleanup expect only checkouts there).
+ */
+export const scratchRoot = (env: NodeJS.ProcessEnv = process.env): string =>
+  path.join(stateDir(env), "scratch");
+
+/**
+ * A worker's scratch dir, outside every working tree so no repo tool scans it:
+ * `<state>/scratch/<repo dir>/<worker>`, where the repo dir is the managed
+ * worktree root's name (`<repo>` or `<repo>-<hash>`) and the worker is the
+ * slice id (`<slice>+try<n>` for a race attempt).
+ */
+export const workerScratch = (
+  cwd: string,
+  worker: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string => path.join(scratchRoot(env), path.basename(worktreeRoot(cwd, env)), worker);
+
+const underRoot = (dir: string, root: string): boolean => {
+  const relative = path.relative(path.resolve(root), path.resolve(dir));
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+};
+
+/** `dir` names a place under the scratch root (whatever is there now). */
+export const isWorkerScratch = (dir: string, env: NodeJS.ProcessEnv = process.env): boolean =>
+  underRoot(dir, scratchRoot(env));
+
+/**
+ * Why `dir` cannot be this user's scratch dir, or null: it must sit under the
+ * scratch root through real directories only (no symlink on the way) and,
+ * where it exists, be made of directories this user owns.
+ */
+function scratchProblem(dir: string, env: NodeJS.ProcessEnv): string | null {
+  const root = path.resolve(scratchRoot(env));
+  const target = path.resolve(dir);
+  if (!underRoot(target, root)) return `${dir} is not under ${root}`;
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  for (let probe = target; ; probe = path.dirname(probe)) {
+    let stat: fs.Stats | null = null;
+    try {
+      stat = fs.lstatSync(probe);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        return `cannot read ${probe}: ${(error as Error).message}`;
+    }
+    if (stat?.isSymbolicLink()) return `${probe} is a symlink`;
+    if (stat && !stat.isDirectory()) return `${probe} is not a directory`;
+    if (stat && uid !== null && stat.uid !== uid) return `${probe} belongs to another user`;
+    if (probe === root) return null;
+  }
+}
+
+const scratchBlocked = (problem: Error) =>
+  fanoutFail(
+    "blocked",
+    `the worker scratch dir is not safe to use: ${problem.message}`,
+    "move that path away (Workit makes it as a real directory this user owns), then run create again",
+  );
+
+/** Make the worker's scratch dir (mode 0700); an Error when its place is not safe to use. */
+function ensureScratch(dir: string): string | Error {
+  const problem = scratchProblem(dir, process.env);
+  if (problem) return new Error(problem);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  return dir;
+}
+
+/**
+ * The worker scratch dirs of the worktree at `worktree`: the one its default
+ * place names, those `create` recorded for it (its
+ * `fanout.worktree.created` rows), and each race attempt's `<that>+try<n>`
+ * beside them, under the scratch root only. An old
+ * in-tree `.workit-scratch` is not one of them: it goes with the worktree.
+ */
+export function workerScratchesOf(
+  cwd: string,
+  worktree: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const root = scratchRoot(env);
+  const out = new Set<string>();
+  // A slice's default place, `<worktree root>/<slice>`, maps to its scratch by name.
+  if (samePath(path.dirname(worktree), worktreeRoot(cwd, env)))
+    out.add(workerScratch(cwd, path.basename(worktree), env));
+  const ledger = readLedger(cwd);
+  for (const row of ledger.ok ? ledger.value.rows : [])
+    if (
+      row.type === "fanout.worktree.created" &&
+      typeof row.scratch === "string" &&
+      typeof row.path === "string" &&
+      underRoot(row.scratch, root) &&
+      samePath(row.path, worktree)
+    )
+      out.add(row.scratch);
+  // Race attempts run in the slice's worktree, each with its own `<slice>+try<n>` scratch.
+  for (const dir of out) {
+    const own = path.basename(dir);
+    let siblings: string[] = [];
+    try {
+      siblings = fs.readdirSync(path.dirname(dir));
+    } catch {
+      continue;
+    }
+    for (const name of siblings)
+      if (name.startsWith(`${own}+try`) && /^\d+$/u.test(name.slice(own.length + 4)))
+        out.add(path.join(path.dirname(dir), name));
+  }
+  return [...out];
+}
+
+/**
+ * Remove a worker's out-of-tree scratch dir: only a real directory this user
+ * owns under the scratch root, reached through no symlink (rm unlinks a
+ * symlink inside it, never follows one). Its repo dir goes too once empty.
+ * True when it was removed.
+ */
+export function removeWorkerScratch(dir: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (scratchProblem(dir, env) || !fs.existsSync(dir)) return false;
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+  const parent = path.dirname(path.resolve(dir));
+  if (parent !== path.resolve(scratchRoot(env)))
+    try {
+      fs.rmdirSync(parent);
+    } catch {
+      // Another worker's scratch is still there.
+    }
+  return true;
 }
 
 export function createSliceWorktree(
@@ -495,6 +626,9 @@ export function createSliceWorktree(
       "re-plan it with workit fanout plan",
     );
   const target = slicePath(cwd, slice);
+  const scratch = workerScratch(cwd, slice.id);
+  const unsafe = scratchProblem(scratch, process.env);
+  if (unsafe) return scratchBlocked(new Error(unsafe));
   const worktrees = listWorktrees(cwd);
   const localRef = `refs/heads/${slice.branch}`;
   const existing = worktrees.find((entry) => samePath(entry.path, target));
@@ -519,12 +653,14 @@ export function createSliceWorktree(
         `remove it yourself (git worktree remove ${target}) once you know what it holds`,
       );
     excludeScratch(cwd);
+    const kept = ensureScratch(scratch);
+    if (kept instanceof Error) return scratchBlocked(kept);
     const deps = worktreeDependencies(mainCheckout(cwd), target);
     return {
       ok: true,
       data: {
         ...base,
-        scratch: ensureScratch(target),
+        scratch,
         head: existing.head ?? "",
         mode: resolveRef(cwd, localRef) ? "resume" : "new",
         created: false,
@@ -631,7 +767,8 @@ export function createSliceWorktree(
     }
   }
   excludeScratch(cwd);
-  const scratch = ensureScratch(target);
+  const made = ensureScratch(scratch);
+  if (made instanceof Error) return scratchBlocked(made);
   const deps = worktreeDependencies(mainCheckout(cwd), target);
   notes.push(...deps.notes);
   const head = gitRun(target, ["rev-parse", "HEAD"]).stdout.trim();
@@ -768,6 +905,8 @@ export type ReleaseOutcome = {
   dirty: string[];
   forced: boolean;
   removed: boolean;
+  /** The worker's out-of-tree scratch dirs removed with the worktree. */
+  scratch: string[];
   /** Local commits not on the remote branch; null when it cannot tell. */
   unpushed: number | null;
   notes: string[];
@@ -793,6 +932,7 @@ export function releaseSliceWorktree(
     dirty: [],
     forced: input.force,
     removed: false,
+    scratch: [],
     unpushed: null,
     notes: [],
   };
@@ -879,6 +1019,7 @@ export function releaseSliceWorktree(
       `commit them on ${slice.branch} (workit git commit), or pass --force to drop them`,
       { ...out },
     );
+  const scratches = workerScratchesOf(cwd, entry.path);
   const args = ["worktree", "remove", ...(input.force ? ["--force"] : []), entry.path];
   let removed = gitRun(cwd, args, SLOW);
   if (!removed.ok && entries.some(inScratch)) {
@@ -895,6 +1036,7 @@ export function releaseSliceWorktree(
       { ...out },
     );
   out.removed = true;
+  out.scratch = scratches.filter((dir) => removeWorkerScratch(dir));
   if (made.dirExisted === true) fs.mkdirSync(entry.path, { recursive: true });
   if (out.unpushed)
     out.notes.push(`${slice.branch} is kept with ${out.unpushed} commit(s) not on the remote`);

@@ -26,7 +26,7 @@ everything.
 | Kind    | Linux and macOS                                            | Windows                                    | Env override (first wins)                           | What lives there                                                                                                                                                                                          | Written by                                                                                    |
 | ------- | ---------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | config  | `$XDG_CONFIG_HOME/workit`, else `~/.config/workit`         | `%APPDATA%\workit`                         | `WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME` | `workspaces.json` (grants, roles; the hooks' write gate denies an agent's write to it, [configuration](../guides/configuration.md)), `config.json`, `vcs.json`, `youtrack.json`, `rules/`. Grants are read only from the default dir under the account home, which comes from the OS account record on every runtime and never from `HOME`, `USERPROFILE` or an override (D15, `core/account-home.ts`); a bench world (`WORKIT_EVAL_WORLD`, [eval.md](eval.md)) shows and writes grants in its own `config/` dir and counts only where no real workspace matches, and only for its endpoint and lowered grants. A bench run gets a world `HOME`, so none of these resolve to yours ([isolation](eval.md#isolation-and-the-tripwire)). | the user, `workit init`, `workit setup`, `workit grant`, `workit upgrade` (update settings)    |
-| state   | `$XDG_STATE_HOME/workit`, else `~/.local/state/workit`     | `%LOCALAPPDATA%\workit`                    | `WORKIT_STATE_DIR`, `XDG_STATE_HOME`                | `logs/`, `node.json` (the hook Node), `heavy-commands.json`, `hook-runs/`, `hook-skips.jsonl`, `leases/`, `issued/`, `approvals/` (approval requests and the user's grants, which agents may not write), `model-limits.json`, `notices/`, `ytrack-skill.json` (the ytrack skill dirs Workit installed, so uninstall removes only those), `upgrades/` (config backups), heartbeats, and managed worktrees in `worktrees/<repo>/<slice>` (`<repo>-<hash>` when another checkout with that name already has worktrees there); they hold uncommitted work, so they are state | the CLI, every host's hooks and launchers, `workit setup` and `workit upgrade`               |
+| state   | `$XDG_STATE_HOME/workit`, else `~/.local/state/workit`     | `%LOCALAPPDATA%\workit`                    | `WORKIT_STATE_DIR`, `XDG_STATE_HOME`                | `logs/`, `node.json` (the hook Node), `heavy-commands.json`, `hook-runs/`, `hook-skips.jsonl`, `leases/`, `issued/`, `approvals/` (approval requests and the user's grants, which agents may not write), `model-limits.json`, `notices/`, `ytrack-skill.json` (the ytrack skill dirs Workit installed, so uninstall removes only those), `upgrades/` (config backups), heartbeats, managed worktrees in `worktrees/<repo>/<slice>` (`<repo>-<hash>` when another checkout with that name already has worktrees there); they hold uncommitted work, so they are state; and each fanout worker's scratch dir in `scratch/<repo>/<slice>` (the same `<repo>` dir name, mode 0700, outside every working tree; race attempts use `<slice>+try<n>` beside it; they go with the slice's worktree on `fanout worktree release`, `workit gc --worktrees --apply` and the cleanup after a merge) | the CLI, every host's hooks and launchers, `workit setup` and `workit upgrade`               |
 | data    | `$XDG_DATA_HOME/workit`, else `~/.local/share/workit`      | `%LOCALAPPDATA%\workit` (install in `install\`) | `WORKIT_INSTALL_ROOT` (the install root), `XDG_DATA_HOME` | the owned CLI install: `versions/`, `current`, `bin/workit`                                                                                                                                   | `workit upgrade --cli`; the dev share-clone installers (`install-*.sh`, via `workit_data_dir`; `install-cursor-plugin.sh` embeds `DATA_DIR_SH` because it runs piped) |
 | cache   | `$XDG_CACHE_HOME/workit`, else `~/.cache/workit`           | `%LOCALAPPDATA%\workit\cache`              | `XDG_CACHE_HOME`                                    | reserved: regenerable files. Worktrees from before the move stay in `~/.cache/workit-wt` (never moved; cleanup and `workit gc --worktrees --apply` sweep merged ones and remove the dir once empty; `workit doctor` `legacy_dirs` reports it as info until then) | nothing yet                                                                                   |
 | runtime | `$XDG_RUNTIME_DIR/workit`, else `$TMPDIR/workit-<uid>`     | `%TEMP%\workit`                            | `XDG_RUNTIME_DIR`                                   | sockets and locks that die with the session                                                                                                                                                              | the dev `sync-runtime.sh` lock (`sync.lock`), via `workit_runtime_dir` in `scripts/lib/config-dir.sh` |
@@ -85,6 +85,11 @@ dir (sources in [hosts.md](hosts.md#host-parity)): `~/.claude/skills`
 
 ## Repository locations
 
+Workit never asks a repository to ignore anything: no Workit file it or an
+agent writes lands in a working tree where Prettier, ESLint or Jest would scan
+it, so no Workit name has to enter a shared repo's `.gitignore`,
+`.prettierignore` or tool config (#742).
+
 Per-repo files have two homes. A repo's `.workit/` holds only committed team
 config; everything a clone writes for itself lives in the store,
 `<git-common-dir>/workit/`, which every worktree of the clone shares and which
@@ -102,7 +107,8 @@ the per-clone kinds.
 | `<git-common-dir>/workit/plans`      | per clone                 | plan files (shape, fanout plan JSON): `workit dir plans`                                             | agents                                                |
 | `<git-common-dir>/workit/retros`     | per clone                 | retro reports: `workit dir retros`                                                                  | agents (workit-retro)                                 |
 | `<git-common-dir>/workit/handoffs`   | per clone                 | handoff notes too long for `--note`: `workit dir handoffs`                                           | agents (workit-continue)                              |
-| `<worktree>/.workit-scratch`         | per worktree              | a fanout slice's temp files (hidden through `info/exclude`)                                        | `workit fanout worktree create`, the slice's worker   |
+| `<git-common-dir>/workit/notes`      | per clone                 | an agent's or user's notes, never in `.workit/`: `workit dir notes`                                 | agents, the user; `workit doctor --fix` moves untracked `.workit/` files here |
+| `<worktree>/.workit-scratch`         | per worktree              | a verifier's or reviewer's probes in the candidate worktree (hidden through `info/exclude`); a worker's scratch is `<state>/scratch/<repo>/<slice>` | the judge agents                                      |
 
 The store also holds the task store (`tasks/`, `checkouts/`, `store.json`) and
 `legacy/<checkout>/v2/`, the backup of what older runtimes left in a checkout's
@@ -112,6 +118,16 @@ store now moves those leftovers into the backup once, on the next write or CLI
 call, deleting only exact markers it wrote; `ensureWorkitDir` removes a
 generated `.gitignore` (`*`, or `*` with `!risk-paths`) on the next config write
 and keeps any other.
+
+`workit doctor` row `workit_notes` warns when a checkout's `.workit/` holds
+untracked files other than team config (`checks.json`, `risk-paths`; a
+`.gitignore` and the old store files the task store moves into its own
+`legacy/` backup, such as `ledger/`, `tasks/` or `metadata.lock`, are left
+alone too), with their count. `workit doctor --fix` moves
+each into `workit dir notes` at the same relative path, prints each move, never
+overwrites (a taken name gets `-2`, `-3`, … before its extension), never
+touches a tracked file or team config, removes the `.workit/` dirs it emptied,
+and does nothing outside git. A second run finds nothing to move.
 
 ## Not Workit locations
 

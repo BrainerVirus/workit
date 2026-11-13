@@ -24,6 +24,7 @@ let root: string;
 let lead: string;
 let wtA: string;
 let wtB: string;
+let scratchA: string;
 
 const git = (cwd: string, ...args: string[]): string => {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -77,7 +78,9 @@ beforeAll(async () => {
     JSON.stringify({ name: "wave", trunk: "main", slices: [slice("a"), slice("b")] }),
   );
   await cli(lead, ["fanout", "plan", plan, "--json"]);
-  wtA = (await cli(lead, ["fanout", "worktree", "create", "a", "--json"])).path;
+  const createdA = await cli(lead, ["fanout", "worktree", "create", "a", "--json"]);
+  wtA = createdA.path;
+  scratchA = createdA.scratch;
   wtB = (await cli(lead, ["fanout", "worktree", "create", "b", "--json"])).path;
 });
 
@@ -166,6 +169,26 @@ test("Given an implementer bound to worktree W by its first edit there, When it 
       { id: "impl-edit" },
     )?.permissionDecision,
   ).toBe("deny");
+});
+
+test("Given an implementer bound to W, When it writes into its out-of-tree scratch dir (Write or shell), Then confinement does not deny it: the scratch is in no checkout", () => {
+  expect(write(path.join(wtA, "a.ts"), { id: "impl-scratch" })?.permissionDecision).toBeUndefined();
+  expect(path.relative(wtA, scratchA).startsWith("..")).toBe(true);
+  for (const out of [
+    write(path.join(scratchA, "notes.md"), { id: "impl-scratch" }),
+    bash(`echo draft > ${path.join(scratchA, "body.md")}`, { id: "impl-scratch" }),
+    bash(
+      `mkdir -p ${path.join(scratchA, "probe")} && cp ${path.join(wtA, "a.ts")} ${path.join(scratchA, "probe")}`,
+      {
+        id: "impl-scratch",
+      },
+    ),
+  ])
+    expect(out?.permissionDecision).toBeUndefined();
+  // Still bound: the lead's checkout stays denied.
+  expect(write(path.join(lead, "src", "core.ts"), { id: "impl-scratch" })?.permissionDecision).toBe(
+    "deny",
+  );
 });
 
 test("Given an implementer bound to W, When it runs git and shell writes, Then raw git or a write in another checkout is denied naming W, while workit --cwd W git|check and git -C W pass", () => {
