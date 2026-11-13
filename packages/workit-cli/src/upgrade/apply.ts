@@ -39,6 +39,7 @@ import { classifyProcess, describe, listProcesses } from "./processes";
 import {
   OPENCODE_NOT_READY,
   OPENCODE_STALE,
+  publishedOpencodeVersion,
   waitForOpencodePlugin,
   waitForOpencodeVersion,
 } from "./opencode";
@@ -234,6 +235,16 @@ const opencodeOutcome = async (
     target !== undefined && (version === undefined || !versionAtLeast(version, target));
   const after = await waitForOpencodeVersion(runAsync, home, target, ready);
   const live = "OpenCode V2 loads it live";
+  // A version published after planning read the registry: the update could
+  // not have reached it, so the row asks for another run instead of "updated".
+  const late = target === undefined ? undefined : await publishedOpencodeVersion(runAsync, home);
+  if (target && late && !versionAtLeast(target, late) && !versionAtLeast(after ?? target, late))
+    return {
+      host: "opencode",
+      status: "skipped",
+      reason: `${before && after && after !== before ? `${before} -> ${after}, but published` : "published"} ${late} appeared after this run read the registry; run \`workit upgrade\` again`,
+      fix: "workit upgrade --hosts=opencode",
+    };
   if (before && target && versionAtLeast(before, target))
     return { host: "opencode", status: "current", reason: `already current (${before})` };
   if (after && below(after))

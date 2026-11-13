@@ -1,9 +1,13 @@
 // `workit upgrade` human text: the plan and result tables are plain for pipes,
 // agents and NO_COLOR (byte-identical to before), and colored in a terminal.
 import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { createStyle } from "@/packages/workit-cli/src/style";
-import { eraseAbove } from "@/packages/workit-cli/src/upgrade";
+import { eraseAbove, runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 import { summary, table } from "@/packages/workit-cli/src/upgrade/report";
 import type { HostOutcome, UpgradePlan } from "@/packages/workit-cli/src/upgrade/shared";
 
@@ -212,4 +216,92 @@ test("Given a repair with an empty diff, Then the row is the host and repair alo
   const text = summary(repairPlan({ files: [], keys: [], commands: [] }), []);
   expect(text).toBe(ROW([]));
   expect(text).not.toContain("reinstall missing plugin files");
+});
+
+// #792 item 57: the OpenCode package reached the registry after the CLI and
+// after this run's plan read it, so OpenCode installed the older release.
+test("Given an OpenCode step that installed 1.9.0 while 1.9.1 was published before the doctor pass, Then the report asks for another `workit upgrade` and never calls OpenCode updated", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "wk-upgrade-late-release-"));
+  const write = (file: string, value: unknown) => {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(value));
+  };
+  try {
+    const cache = path.join(home, "oc-cache");
+    write(path.join(home, ".config/opencode/opencode.json"), {
+      plugins: ["@workit-dev/opencode"],
+    });
+    let installed = "1.7.0";
+    // The fake registry: 1.9.0 while the plan reads it, 1.9.1 once the update ran.
+    let published = "1.9.0";
+    const run = (command: string, args: string[]) => {
+      const line = args.join(" ");
+      if (command === "npm" && line === "view @workit-dev/opencode version")
+        return { status: 0, stdout: `${published}\n` };
+      if (command === "npm" && args[0] === "view") return { status: 0, stdout: "1.9.1\n" };
+      if (command === "opencode" && line === "plugin --help")
+        return { status: 0, stdout: "Commands:\n  opencode plugin update <name>\n" };
+      if (command === "opencode" && args[0] === "api")
+        return { status: 1, stdout: "", stderr: 'Error: unknown command "api"\n' };
+      if (command === "opencode" && line === "plugin list")
+        return {
+          status: 0,
+          stdout: `ID      VERSION  SOURCE\nworkit  ${installed}    @workit-dev/opencode\n`,
+        };
+      if (command === "opencode" && line === "plugin update @workit-dev/opencode") {
+        installed = "1.9.0";
+        write(path.join(cache, "node_modules/@workit-dev/opencode/package.json"), {
+          name: "@workit-dev/opencode",
+          version: installed,
+        });
+        published = "1.9.1";
+      }
+      return { status: 0, stdout: "" };
+    };
+    const doctor = () => {
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: home,
+        WORKIT_DOCTOR_STALE_REGISTRY_VERSION: published,
+      };
+      delete env.WORKIT_DEV;
+      delete env.XDG_CONFIG_HOME;
+      const report = runDoctor({
+        host: "cli",
+        only: "upgrade",
+        home,
+        cwd: home,
+        workspaceRoot: home,
+        configDir: path.join(home, ".config/workit"),
+        stateDir: path.join(home, ".local/state/workit"),
+        opencodePackageCacheDir: cache,
+        env,
+      });
+      return { checks: report.checks.filter((check) => check.id === "stale_install") };
+    };
+    const out: string[] = [];
+    const code = await runUpgradeCommand(["--hosts=opencode", "--yes"], {
+      home,
+      env: { PATH: path.join(home, "bin") },
+      run,
+      processes: () => [],
+      confirm: async () => true,
+      doctor,
+      out: { write: (text: string) => void out.push(text) },
+      opencodeReady: { timeoutMs: 0, intervalMs: 0, sleep: async () => {} },
+      removeCopies: async () => false,
+    });
+    const text = out.join("");
+    expect(code, text).toBe(0);
+    expect(text).toContain("published 1.9.1 appeared after this run read the registry");
+    expect(text).not.toMatch(/opencode +updated/);
+    expect(text).not.toMatch(/opencode +already current/);
+    expect(text).toContain(
+      "stale_install: OpenCode @latest cache has workit-opencode 1.9.0 behind published 1.9.1",
+    );
+    const last = text.trimEnd().split("\n").at(-1) ?? "";
+    expect(last).toMatch(/^ +fix: workit upgrade \(run it again if one just ran/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

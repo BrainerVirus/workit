@@ -2130,6 +2130,17 @@ const installedOpenCodeCache = (res: Resolved): { version: string; dir: string }
   return { version: found.version, dir };
 };
 
+/**
+ * How to refresh OpenCode's Workit plugin (#792 item 57). `workit upgrade`
+ * waits for OpenCode to load its plugins in the home directory, then updates.
+ * By hand the command only works where OpenCode sees the global `plugins`
+ * entry, and a never-used directory answers the first call with "Plugin is
+ * not configured" while it loads them in the background: so the home
+ * directory, and one retry. Run again after an upgrade: a release can reach
+ * the registry minutes after the CLI it ships with.
+ */
+const OPENCODE_UPDATE_FIX = `workit upgrade (run it again if one just ran: the newer version was published after it read the registry); by hand, from your home directory, \`opencode plugin update ${OPENCODE_NPM_PIN}\`, a second time if the first says "Plugin is not configured"`;
+
 /** OpenCode freezes the first `@latest` resolve in its package cache — detect lag. */
 const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
   if (!existsSync(res.opencodeConfig)) {
@@ -2179,7 +2190,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       registryProbed: true,
       detail:
         "registry_unreachable: cannot compare OpenCode @latest cache against published workit-opencode",
-      fix: `Retry when npm is reachable; to update, opencode plugin update ${OPENCODE_NPM_PIN}`,
+      fix: `Retry when npm is reachable; to update, ${OPENCODE_UPDATE_FIX}`,
     };
   }
   if (!semverAtLeast(installed, expected)) {
@@ -2188,7 +2199,7 @@ const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbe
       status: "fail",
       registryProbed: true,
       detail: `stale_install: OpenCode @latest cache has workit-opencode ${installed} behind published ${expected}`,
-      fix: `opencode plugin update ${OPENCODE_NPM_PIN} (OpenCode 2.x loads it live, no restart); without that verb, remove ${cache.dir} and relaunch OpenCode`,
+      fix: `${OPENCODE_UPDATE_FIX}; OpenCode 2.x loads it live, no restart. Without that verb, remove ${cache.dir} and relaunch OpenCode`,
     };
   }
   return {
