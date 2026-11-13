@@ -8,8 +8,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  constants as fsConstants,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -17,8 +19,10 @@ import {
   readFileSync,
   readlinkSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -62,6 +66,7 @@ import {
   ensureWorkitDir,
 } from "@workit-dev/core/src/check-config";
 import { probeScope, type ScopeProbe } from "@workit-dev/core/src/core/heavy-scope";
+import { repoDir } from "@workit-dev/core/src/core/repo-paths";
 import { packageRoot } from "@workit-dev/core/src/core/package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
@@ -194,6 +199,7 @@ type DoctorCheckId =
   | "codex_grant_rules"
   | "cursor_grant_rules"
   | "checks_config"
+  | "workit_notes"
   | "config_schema"
   | "updates"
   | "claude_permissions"
@@ -3446,6 +3452,147 @@ export const fixChecksConfig = (options: DoctorOptions = {}): ChecksConfigFix =>
   return { action: "moved", detail: `${LEGACY_CHECKS_FILE} -> ${CHECKS_FILE}` };
 };
 
+// A repo's `.workit/` holds only committed team config. Notes an agent or user
+// wrote there belong in `workit dir notes` (<git-common-dir>/workit/notes), so
+// no repo tool scans them and no repo has to ignore a Workit file (#742).
+/** Files in `.workit/` that are team config (or git's own), never notes. */
+const WORKIT_DIR_KEEP = new Set(["checks.json", "risk-paths", ".gitignore"]);
+
+/** The checkout top and its untracked `.workit/` notes (relative to `.workit/`); null outside git. */
+const workitNotes = (cwd: string): { top: string; notes: string[] } | null => {
+  const run = (args: string[]) =>
+    spawnSync("git", args, { cwd, encoding: "utf8", timeout: 20_000, windowsHide: true });
+  const shown = run(["rev-parse", "--show-toplevel"]);
+  if (shown.status !== 0) return null;
+  const top = shown.stdout.trim();
+  if (!top) return null;
+  try {
+    // A symlinked `.workit` is not the checkout's own dir: leave it alone.
+    if (!lstatSync(path.join(top, ".workit")).isDirectory()) return { top, notes: [] };
+  } catch {
+    return { top, notes: [] };
+  }
+  // Without --exclude-standard: ignored files are untracked too.
+  const listed = spawnSync("git", ["ls-files", "--others", "-z", "--", ".workit/"], {
+    cwd: top,
+    encoding: "utf8",
+    timeout: 20_000,
+    windowsHide: true,
+  });
+  if (listed.status !== 0) return null;
+  const notes = listed.stdout
+    .split("\0")
+    .filter((file) => file.startsWith(".workit/") && !file.endsWith("/"))
+    .map((file) => file.slice(".workit/".length))
+    .filter((rel) => !WORKIT_DIR_KEEP.has(rel));
+  return { top, notes };
+};
+
+const checkWorkitNotes = (res: Resolved): DoctorCheck => {
+  const found = workitNotes(res.cwd);
+  if (!found || found.notes.length === 0)
+    return {
+      id: "workit_notes",
+      status: "pass",
+      detail: found ? ".workit/ holds team config only" : "not a git checkout",
+    };
+  const count = found.notes.length;
+  return {
+    id: "workit_notes",
+    status: "warn",
+    detail: `${count} untracked file${count === 1 ? "" : "s"} in .workit/ besides team config (checks.json, risk-paths): ${found.notes.slice(0, 3).join(", ")}${count > 3 ? ", …" : ""}`,
+    fix: "workit doctor --fix (moves them into `workit dir notes`, keeping their paths)",
+  };
+};
+
+export type WorkitNotesFix = {
+  action: "moved" | "none" | "failed";
+  /** Each move, `.workit/<rel>` to its absolute place under the notes dir. */
+  moves: Array<{ from: string; to: string }>;
+  detail: string;
+};
+
+/** `<dir>/<stem>-<n><ext>` for the first n from 2 (n = 1 is the name as given). */
+const numbered = (file: string, n: number): string => {
+  if (n === 1) return file;
+  const ext = path.extname(file);
+  return `${file.slice(0, file.length - ext.length)}-${n}${ext}`;
+};
+
+/** Move `from` to `to` without ever replacing a file there; false when `to` exists. */
+const moveNoClobber = (from: string, to: string): boolean => {
+  const exists = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
+  if (lstatSync(from).isSymbolicLink()) {
+    try {
+      symlinkSync(readlinkSync(from), to);
+    } catch (error) {
+      if (exists(error)) return false;
+      throw error;
+    }
+  } else {
+    try {
+      linkSync(from, to);
+    } catch (error) {
+      if (exists(error)) return false;
+      // No hard link across devices or on this filesystem: an exclusive copy.
+      try {
+        copyFileSync(from, to, fsConstants.COPYFILE_EXCL);
+      } catch (copyError) {
+        if (exists(copyError)) return false;
+        throw copyError;
+      }
+    }
+  }
+  unlinkSync(from);
+  return true;
+};
+
+/**
+ * `workit doctor --fix`: move each untracked note out of the checkout's
+ * `.workit/` into `workit dir notes`, keeping its relative path. A name taken
+ * there gets a numbered one; tracked files, team config and anything outside
+ * git are left alone; emptied dirs under `.workit/` go.
+ */
+export const fixWorkitNotes = (options: DoctorOptions = {}): WorkitNotesFix => {
+  const cwd = resolve(options).cwd;
+  const found = workitNotes(cwd);
+  if (!found) return { action: "none", moves: [], detail: "not a git checkout" };
+  if (found.notes.length === 0)
+    return { action: "none", moves: [], detail: "no notes in .workit/" };
+  const notesDir = repoDir("notes", cwd);
+  if (notesDir instanceof Error) return { action: "failed", moves: [], detail: notesDir.message };
+  const workit = path.join(found.top, ".workit");
+  const moves: WorkitNotesFix["moves"] = [];
+  const failures: string[] = [];
+  for (const rel of found.notes) {
+    const from = path.join(workit, rel);
+    try {
+      const wanted = path.join(notesDir, rel);
+      mkdirSync(path.dirname(wanted), { recursive: true });
+      let n = 1;
+      while (!moveNoClobber(from, numbered(wanted, n))) n += 1;
+      moves.push({ from: `.workit/${rel}`, to: numbered(wanted, n) });
+      for (let dir = path.dirname(from); dir !== workit; dir = path.dirname(dir))
+        if (readdirSync(dir).length === 0) rmdirSync(dir);
+        else break;
+    } catch (error) {
+      failures.push(`.workit/${rel}: ${(error as Error).message}`);
+    }
+  }
+  try {
+    if (readdirSync(workit).length === 0) rmdirSync(workit);
+  } catch {
+    // Kept: it still holds team config.
+  }
+  return {
+    action: failures.length ? "failed" : "moved",
+    moves,
+    detail: failures.length
+      ? `moved ${moves.length}; could not move ${failures.join("; ")}`
+      : `moved ${moves.length} into ${notesDir}`,
+  };
+};
+
 const CLAUDE_PLUGIN_PACKAGE = "@workit-dev/claude-code";
 
 const versionBehind = (version: string, latest: string): boolean =>
@@ -4154,6 +4301,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkGrantRemotes,
   checkHookRuns,
   checkChecksConfig,
+  checkWorkitNotes,
   checkUpdates,
   checkHostPermissions("claude-code", "claude_permissions"),
   checkHostPermissions("codex", "codex_permissions"),

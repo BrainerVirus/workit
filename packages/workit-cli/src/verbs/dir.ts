@@ -1,8 +1,10 @@
 // `workit dir <kind>`: print where Workit keeps one kind of file, so agents
 // never invent a location (docs/agents/file-locations.md).
 //
-//   workit dir plans|retros|handoffs   per clone: <git-common-dir>/workit/<kind>,
-//                                      the same for every worktree; created here
+//   workit dir plans|retros|handoffs|notes   per clone: <git-common-dir>/workit/<kind>,
+//                                      the same for every worktree; created here.
+//                                      notes: an agent's or user's notes, never in
+//                                      the working tree (no repo ignores a Workit file)
 //   workit dir config|state|data|cache|runtime   per user (core/workit-paths.mjs)
 //
 // Read-only but for creating a missing per-clone directory.

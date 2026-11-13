@@ -37,6 +37,8 @@ import {
   listWorktrees,
   samePath,
   slicePath,
+  isWorkerScratch,
+  workerScratch,
 } from "./fanout-worktree";
 
 export type BriefMode = "new" | "resume";
@@ -57,7 +59,7 @@ export type BriefOutcome = {
   effort: string | null;
   /** The model and effort the lead spawns this slice's non-author verifier with, else null. */
   verifier: { model: string; effort: string | null } | null;
-  /** Absolute when the slice's worktree exists, else relative to the worker's worktree root. */
+  /** The worker's scratch dir, absolute and outside every working tree (`<state>/scratch/<repo dir>/<worker>`). */
   scratch: string;
   /** The host the brief was rendered for (`--host`, else the lead's), or null. */
   host: string | null;
@@ -379,11 +381,19 @@ export function renderBrief(
     );
 
   const exists = listWorktrees(cwd).some((entry) => samePath(entry.path, planned));
+  // Judges' probes stay in the candidate worktree, hidden through info/exclude.
   excludeScratch(cwd);
-  const scratch = exists ? `${planned}/${SCRATCH_DIR}` : SCRATCH_DIR;
-  const scratchLine = exists
-    ? `SCRATCH: ${scratch}  (yours alone; temp files go here, never a shared path)`
-    : `SCRATCH: ${SCRATCH_DIR}/ at your worktree root (mkdir -p it; git ignores it; never a shared path)`;
+  const probes = exists
+    ? `${planned}/${SCRATCH_DIR}`
+    : `${SCRATCH_DIR}/ at the candidate worktree root`;
+  const recorded = typeof made?.scratch === "string" ? made.scratch : null;
+  const scratch =
+    recorded && isWorkerScratch(recorded)
+      ? recorded
+      : workerScratch(cwd, `${slice.id}${input.attempt === null ? "" : `+try${input.attempt}`}`);
+  const scratchLine = fs.existsSync(scratch)
+    ? `SCRATCH: ${scratch}  (yours alone, outside the repo; temp files go here, never a shared path)`
+    : `SCRATCH: ${scratch}  (mkdir -p it; yours alone, outside the repo; never a shared path)`;
 
   const standing = activeStanding(ledger.value.rows, plan.name, planLeads(plan)).map((row) => ({
     id: row.id,
@@ -441,13 +451,7 @@ export function renderBrief(
           `  verifier: model ${verifier.model}${verifier.effort ? `  effort ${verifier.effort}` : ""}  (${verifier.source})`,
         ]
       : []),
-    ...spawnLines(
-      cwd,
-      host,
-      slice.id,
-      slice.tier,
-      exists ? scratch : `${SCRATCH_DIR}/ at the candidate worktree root`,
-    ),
+    ...spawnLines(cwd, host, slice.id, slice.tier, probes),
     `TIMEBOX: ${timeboxText(slice.timebox, slice.tier)}; past it without a new commit you will be replaced`,
     scratchLine,
     `FORBIDDEN: ${slice.forbidden.join("; ")}`,

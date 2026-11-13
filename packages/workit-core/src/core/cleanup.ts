@@ -16,7 +16,13 @@ import os from "node:os";
 import path from "node:path";
 import { loadCheckConfig } from "../check-config";
 import { defaultTrunk, gitRun, nulList, trunkRef } from "../fanout";
-import { SCRATCH_DIR, listWorktrees, type WorktreeEntry } from "../fanout-worktree";
+import {
+  SCRATCH_DIR,
+  listWorktrees,
+  removeWorkerScratch,
+  workerScratchesOf,
+  type WorktreeEntry,
+} from "../fanout-worktree";
 import { GIT_TIMEOUTS, pushRemoteName } from "../git/rev";
 import { FANOUT_TOKEN_FILE } from "../hooks/worktree-confine";
 import { appendObserved, type LedgerActor } from "../ledger";
@@ -314,6 +320,8 @@ export type MergeCleanup = {
   branchDeleted: boolean;
   /** The clean Workit worktree that was on the branch, removed. */
   worktreeRemoved: string | null;
+  /** Its out-of-tree worker scratch dirs, removed with it. */
+  scratchRemoved: string[];
   /** A worktree kept for uncommitted changes, with the paths. */
   dirty: { path: string; paths: string[] } | null;
   /** Why anything was kept: one line each. */
@@ -346,6 +354,7 @@ export function cleanupAfterMerge(
   const out: MergeCleanup = {
     branchDeleted: false,
     worktreeRemoved: null,
+    scratchRemoved: [],
     dirty: null,
     notes: [],
     recorded: null,
@@ -380,6 +389,7 @@ export function cleanupAfterMerge(
       );
       return out;
     }
+    const scratches = workerScratchesOf(cwd, entry.path, env);
     const removed = gitRun(cwd, ["worktree", "remove", entry.path], SLOW);
     if (!removed.ok) {
       out.notes.push(
@@ -388,6 +398,7 @@ export function cleanupAfterMerge(
       return out;
     }
     out.worktreeRemoved = entry.path;
+    out.scratchRemoved = scratches.filter((dir) => removeWorkerScratch(dir, env));
     tidyParent(entry.path, place, env);
   }
   if (!listWorktrees(cwd).some((entry) => entry.branch === ref)) {
@@ -462,6 +473,8 @@ export type WorktreeSweep = {
   removed: string[];
   deletedBranches: string[];
   removedDirs: string[];
+  /** --apply only: the removed worktrees' out-of-tree worker scratch dirs that went with them. */
+  removedScratch: string[];
   notes: string[];
   recorded: { id: string } | { error: string } | null;
 };
@@ -507,6 +520,7 @@ export function sweepWorktrees(
     removed: [],
     deletedBranches: [],
     removedDirs: [],
+    removedScratch: [],
     notes: [],
     recorded: null,
   };
@@ -584,6 +598,13 @@ export function sweepWorktrees(
   if (!options.apply) return out;
 
   let stale = false;
+  const scratches = new Map(
+    out.removable.map((candidate) => [candidate.path, workerScratchesOf(cwd, candidate.path, env)]),
+  );
+  const dropScratch = (worktree: string) => {
+    for (const dir of scratches.get(worktree) ?? [])
+      if (removeWorkerScratch(dir, env)) out.removedScratch.push(dir);
+  };
   for (const candidate of out.removable) {
     if (candidate.reason === "stale") {
       stale = true;
@@ -595,6 +616,7 @@ export function sweepWorktrees(
       continue;
     }
     out.removed.push(candidate.path);
+    dropScratch(candidate.path);
     const parent = tidyParent(candidate.path, candidate.place, env);
     if (parent) out.removedDirs.push(parent);
     if (
@@ -606,7 +628,10 @@ export function sweepWorktrees(
   if (stale) {
     const pruned = gitRun(cwd, ["worktree", "prune"], SLOW);
     if (pruned.ok)
-      out.removed.push(...out.removable.filter((c) => c.reason === "stale").map((c) => c.path));
+      for (const candidate of out.removable.filter((c) => c.reason === "stale")) {
+        out.removed.push(candidate.path);
+        dropScratch(candidate.path);
+      }
     else out.notes.push(`git worktree prune failed: ${firstLine(pruned.stderr)}`);
   }
   for (const entry of out.goneBranches) deleteBranch(cwd, entry.name, out);
@@ -618,6 +643,7 @@ export function sweepWorktrees(
       worktrees: out.removed,
       branches: out.deletedBranches,
       dirs: out.removedDirs,
+      ...(out.removedScratch.length ? { scratch: out.removedScratch } : {}),
     });
     out.recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
   }

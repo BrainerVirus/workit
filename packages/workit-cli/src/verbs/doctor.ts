@@ -2,9 +2,18 @@
 // reflects the health. Never writes the report to stderr (the logger owns that).
 // `--fix-lock` clears a stale .workit metadata lock first, so the report
 // reflects the cleaned state. `--fix` installs the prepare-commit-msg hook that adds the
-// Workit-Session trailer to plain git commits, in a Workit workspace only.
+// Workit-Session trailer to plain git commits, in a Workit workspace only, moves a
+// root workit.checks.json into .workit/, and moves untracked notes out of .workit/
+// into `workit dir notes`.
 import pkg from "../../package.json" with { type: "json" };
-import { fixChecksConfig, fixSessionHook, runDoctor, type DoctorReport } from "../admin/doctor";
+import {
+  fixChecksConfig,
+  fixSessionHook,
+  fixWorkitNotes,
+  runDoctor,
+  type DoctorReport,
+  type WorkitNotesFix,
+} from "../admin/doctor";
 import { lintKnowledge } from "@workit-dev/core/src/knowledge";
 import { clearStaleMetadataLock, inspectMetadataLock } from "@workit-dev/core/src/core/store-lock";
 import { emit, fail, type Io } from "../output";
@@ -94,6 +103,18 @@ export async function run(argv: string[], io: Io): Promise<number> {
       };
     }
   }
+  let notes: WorkitNotesFix | null = null;
+  if (argv.includes("--fix")) {
+    try {
+      notes = fixWorkitNotes({ host: "cli", cwd: io.cwd });
+    } catch (error) {
+      notes = {
+        action: "failed",
+        moves: [],
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   // The spinner draws only on a TTY and never under --json; the checks block the
   // thread, so its helper process keeps the frames moving.
   const report = progressFor(io).runSync(
@@ -140,7 +161,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       ...(firstFix ? { unblock: firstFix } : {}),
     };
     io.stdout(
-      `${JSON.stringify({ ...report, ...envelope, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), ...(checksConfig ? { checksConfig } : {}), knowledge: summary }, null, 2)}\n`,
+      `${JSON.stringify({ ...report, ...envelope, ...(fixLock ? { fixLock } : {}), ...(sessionHook ? { sessionHook } : {}), ...(checksConfig ? { checksConfig } : {}), ...(notes ? { notes } : {}), knowledge: summary }, null, 2)}\n`,
     );
     return report.exitCode;
   }
@@ -157,6 +178,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (sessionHook) io.stdout(`fix: session hook ${sessionHook.action}: ${sessionHook.detail}\n`);
   if (checksConfig && checksConfig.action !== "none")
     io.stdout(`fix: checks config ${checksConfig.action}: ${checksConfig.detail}\n`);
+  for (const move of notes?.moves ?? []) io.stdout(`fix: moved note ${move.from} -> ${move.to}\n`);
+  if (notes?.action === "failed") io.stdout(`fix: notes ${notes.detail}\n`);
   for (const line of renderDoctor(
     report,
     knowledgeLine,

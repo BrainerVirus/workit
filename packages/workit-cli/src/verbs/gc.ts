@@ -33,6 +33,7 @@ const sweepLines = (data: WorktreeSweep): string[] => {
       (entry) =>
         `${data.apply && !deleted.has(entry.name) ? "not deleted" : data.apply ? "deleted" : "would delete"} branch ${entry.name}: remote gone, ${entry.reason}`,
     ),
+    ...data.removedScratch.map((dir) => `removed worker scratch ${dir}`),
     ...data.removedDirs.map((dir) => `removed empty ${dir}`),
     ...data.kept.map(
       (entry) =>

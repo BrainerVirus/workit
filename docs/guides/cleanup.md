@@ -52,6 +52,10 @@ Some things are always kept, and the merge output says why:
   `.next` or `.cache` are rebuilt by tools, so they never keep a worktree.
   A repo adds its own generated directories in `.workit/checks.json`
   (see [Regenerable directories](#regenerable-directories)).
+  A fanout worker's scratch dir is not in the worktree at all: it lives in
+  `<state>/scratch/<repo>/<slice>` and goes with its worktree (removed only
+  when it is a real directory you own there, never through a symlink), so
+  Workit never asks a repository to ignore anything.
 - A local branch with commits that were not part of the merge.
 - The main checkout, the checkout you ran the command in, and any worktree that
   Workit did not make.

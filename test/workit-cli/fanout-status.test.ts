@@ -10,11 +10,13 @@ import {
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -651,21 +653,23 @@ test("fanout worktree: given a planned slice, when created, released while dirty
 
   const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
+  const scratch = path.join(testState, "scratch", "app", "a");
   expect(created.json().data).toMatchObject({
     slice: "a",
     branch: "feature/a",
     path: wt,
-    scratch: path.join(wt, ".workit-scratch"),
+    scratch,
     mode: "new",
     created: true,
     head: git(cwd, "rev-parse", "main"),
   });
   expect(git(wt, "branch", "--show-current")).toBe("feature/a");
-  // The scratch dir is invisible to git: a worker's temp files never get committed.
-  writeFileSync(path.join(wt, ".workit-scratch", "body.md"), "draft\n");
-  expect(git(wt, "status", "--porcelain")).toBe("");
+  // The scratch dir is outside the worktree: no git status entry, ignored or not.
+  writeFileSync(path.join(scratch, "body.md"), "draft\n");
+  expect(existsSync(path.join(wt, ".workit-scratch"))).toBe(false);
+  expect(git(wt, "status", "--porcelain", "--ignored", "-uall")).toBe("");
   expect(rowsOf(cwd, "fanout.worktree.created")).toMatchObject([
-    { fanout: "wave", slice: "a", branch: "feature/a", mode: "new" },
+    { fanout: "wave", slice: "a", branch: "feature/a", mode: "new", scratch },
   ]);
 
   const again = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
@@ -692,8 +696,10 @@ test("fanout worktree: given a planned slice, when created, released while dirty
     removed: true,
     dirty: ["?? a.ts"],
     forced: true,
+    scratch: [scratch],
   });
   expect(existsSync(wt)).toBe(false);
+  expect(existsSync(scratch)).toBe(false);
   expect(git(cwd, "worktree", "list")).not.toContain(wt);
   expect(git(cwd, "rev-parse", "--verify", "-q", "refs/heads/feature/a")).not.toBe("");
   expect(readFileSync(neighbour, "utf8")).toBe("mine\n");
@@ -710,11 +716,51 @@ test("fanout worktree: given a planned slice, when created, released while dirty
   git(cwd, "switch", "-q", "main");
   const resumed = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
   expect(resumed.code, resumed.stderr + resumed.stdout).toBe(0);
-  expect(resumed.json().data).toMatchObject({ mode: "resume", created: true });
+  expect(resumed.json().data).toMatchObject({ mode: "resume", created: true, scratch });
+  expect(existsSync(scratch)).toBe(true);
+  expect(existsSync(path.join(wt, ".workit-scratch"))).toBe(false);
   expect(readFileSync(path.join(wt, "a.ts"), "utf8")).toBe("export const a = 2;\n");
-  const clean = await run(cwd, ["fanout", "worktree", "release", "a", "--json"]);
+  const clean = await run(cwd, ["fanout", "worktree", "release", "a"]);
   expect(clean.code, clean.stderr + clean.stdout).toBe(0);
-  expect(clean.json().data).toMatchObject({ removed: true, dirty: [] });
+  expect(clean.stdout).toContain(`removed scratch ${scratch}`);
+  expect(existsSync(scratch)).toBe(false);
+});
+
+test("fanout worktree: given a created slice, then its scratch is a 0700 dir outside the worktree; release keeps a symlink put in its place (never followed) and still removes a judge's in-tree .workit-scratch with the worktree", async () => {
+  const { root, cwd } = localRepo();
+  await plan(cwd, root, [slice("a", ["a.ts"]), slice("b", ["b.ts"])]);
+  const wt = managedWt("a");
+  const scratch = path.join(testState, "scratch", "app", "a");
+  expect((await run(cwd, ["fanout", "worktree", "create", "a", "--json"])).code).toBe(0);
+  if (process.platform !== "win32") expect(statSync(scratch).mode & 0o777).toBe(0o700);
+  // A judge's probes in the candidate worktree (info/exclude hides them).
+  mkdirSync(path.join(wt, ".workit-scratch"));
+  writeFileSync(path.join(wt, ".workit-scratch", "probe.txt"), "probe\n");
+  // Someone swaps the scratch dir for a link to a directory outside the scratch root.
+  const outside = path.join(root, "outside");
+  mkdirSync(outside);
+  writeFileSync(path.join(outside, "keep.txt"), "keep\n");
+  rmSync(scratch, { recursive: true });
+  symlinkSync(outside, scratch, "junction");
+  const released = await run(cwd, ["fanout", "worktree", "release", "a", "--json"]);
+  expect(released.code, released.stderr + released.stdout).toBe(0);
+  expect(released.json().data).toMatchObject({ removed: true, dirty: [], scratch: [] });
+  expect(existsSync(wt)).toBe(false);
+  expect(readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("keep\n");
+  expect(lstatSync(scratch).isSymbolicLink()).toBe(true);
+  // create refuses a scratch place it cannot own, before it makes anything.
+  const refused = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toContain(`${scratch} is a symlink`);
+  expect(existsSync(wt)).toBe(false);
+  // Another slice of the same repo is unaffected and gets its own dir beside it.
+  expect(
+    (await run(cwd, ["fanout", "worktree", "create", "b", "--json"])).json().data,
+  ).toMatchObject({
+    scratch: path.join(testState, "scratch", "app", "b"),
+  });
+  expect((await run(cwd, ["fanout", "worktree", "release", "b", "--json"])).code).toBe(0);
+  rmSync(scratch);
 });
 
 test("fanout worktree release: given a plain directory at the slice's path, when released, then it is refused and the directory is untouched", async () => {
