@@ -126,7 +126,7 @@ test("D1: Given an unreadable or invalid host file, When the plan is shown, Then
   const text = io(home);
   expect(await uninstall(["--hosts=cursor", "--preview"], text.io)).toBe(0);
   expect(text.all()).toContain(`unreadable ${cliConfig}`);
-  expect(text.all()).toContain("is not readable");
+  expect(text.all()).toContain("not readable; fix or restore it");
   chmodSync(cliConfig, 0o600);
 });
 
@@ -373,6 +373,25 @@ test("V3: Given Cursor with an invalid mcp.json, When --preview then --yes run, 
   expect(run.rows.map((row) => [row.kind, row.path])).toEqual([["unreadable", mcp]]);
   expect(run.rows[0].detail).toContain("cursor is left untouched until then");
   expect(reported(run.outcomes)).toEqual(promised(run.rows));
+});
+
+test("V4: Given Cursor with an invalid mcp.json, When --preview and --yes run, Then every line names the file once", async () => {
+  const home = await cursorHome("malformed-once");
+  const mcp = path.join(home, ".cursor/mcp.json");
+  write(mcp, "{ broken\n");
+  const preview = io(home);
+  expect(await uninstall(["--hosts=cursor", "--preview"], preview.io)).toBe(0);
+  const run = io(home);
+  expect(await uninstall(["--hosts=cursor", "--yes"], run.io)).toBe(1);
+  const json = io(home, {}, true);
+  expect(await uninstall(["--hosts=cursor", "--yes"], json.io)).toBe(1);
+  const lines = [preview.all(), run.all(), JSON.stringify(lastJson(json.out()).error ?? "")]
+    .join("\n")
+    .split("\n")
+    .filter((line) => line.includes(mcp));
+  expect(lines.length).toBeGreaterThan(2);
+  for (const line of lines) expect(line.split(mcp).length - 1, line).toBe(1);
+  expect(run.all()).toContain(`${mcp}: not valid JSON; fix or restore it, then run again`);
 });
 
 test("P1: Given Workit on all five hosts, When each host is previewed then removed, Then the preview rows are exactly the outcomes --yes reports", async () => {

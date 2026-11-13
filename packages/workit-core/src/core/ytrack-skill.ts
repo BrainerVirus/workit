@@ -259,10 +259,37 @@ export function ytrackSkillPathRefusal(
   return null;
 }
 
+/** What uninstall does with one recorded skill directory, in the words preview and apply share. */
+export type YtrackSkillRemoval =
+  | { kind: "remove"; detail: string }
+  /** Nothing left to delete: only Workit's record of it goes. */
+  | { kind: "absent"; detail: string }
+  /** Not a path Workit may delete, or no longer the skill Workit installed: left as it is. */
+  | { kind: "keep"; detail: string };
+
+const YTRACK_SKILL_REMOVE = "remove the ytrack skill Workit installed";
+const YTRACK_SKILL_ABSENT = "ytrack skill already absent; Workit forgets its record of it";
+const YTRACK_SKILL_NOT_OURS = "no longer holds the ytrack skill Workit installed; left untouched";
+
+/** What `removeYtrackSkill` would do now with `install`; reads only. */
+export function ytrackSkillRemoval(
+  install: YtrackSkillInstall,
+  expected: { root: string; home: string },
+): YtrackSkillRemoval {
+  const refusal = ytrackSkillPathRefusal(install.path, expected.root, expected.home);
+  if (refusal) return { kind: "keep", detail: `ytrack skill left untouched: ${refusal}` };
+  if (!existsSync(install.path) && !isLink(install.path))
+    return { kind: "absent", detail: YTRACK_SKILL_ABSENT };
+  if (isLink(install.path) || installedSkillVersion(install.path) === null)
+    return { kind: "keep", detail: YTRACK_SKILL_NOT_OURS };
+  return { kind: "remove", detail: YTRACK_SKILL_REMOVE };
+}
+
 /**
  * Remove one recorded skill directory: only `<root>/ytrack` for the host's
  * skills root (`ytrackSkillPathRefusal`), a real directory that still holds
- * the ytrack skill; never a symlink, another path or another skill.
+ * the ytrack skill; never a symlink, another path or another skill. A kept
+ * directory is skipped with the plan's wording, so running again never fails.
  */
 export function removeYtrackSkill(
   install: YtrackSkillInstall,
@@ -276,17 +303,12 @@ export function removeYtrackSkill(
         (row) => !(row.host === install.host && row.path === install.path),
       ),
     );
-  const refusal = ytrackSkillPathRefusal(install.path, expected.root, expected.home);
-  if (refusal) return { status: "skipped", detail: `left untouched: ${refusal}` };
-  if (!existsSync(install.path) && !isLink(install.path)) {
+  const removal = ytrackSkillRemoval(install, expected);
+  if (removal.kind === "keep") return { status: "skipped", detail: removal.detail };
+  if (removal.kind === "absent") {
     forget();
-    return { status: "skipped", detail: "directory already absent" };
+    return { status: "skipped", detail: removal.detail };
   }
-  if (isLink(install.path) || installedSkillVersion(install.path) === null)
-    return {
-      status: "failed",
-      detail: `${install.path} no longer holds the ytrack skill Workit installed; left untouched`,
-    };
   try {
     rmSync(install.path, { recursive: true, force: true });
   } catch (error) {
