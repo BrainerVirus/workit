@@ -107,6 +107,24 @@ also turns off git auto-maintenance (`GIT_CONFIG_*`) in throwaway repos. Aggrega
 keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 
+The test preload (`test/shared/state-isolation.ts`) also sets the run marker
+`WORKIT_TEST_RUN` to its temp dir, which every child process inherits. The
+marker changes nothing a process reads: grants and the seal still come from
+the OS account record (D15), so an agent that sets it gains nothing. It only
+adds refusals: under it the seal, grant, workspace, host-permission, setup,
+upgrade, install and completion writers (`admin/guarded-fs.ts`, core
+`testRunWriteRefusal`) refuse any file under the account's host settings,
+`~/.config`, `~/.local/share`, `~/.local/bin` or Workit's dirs, naming it, and
+host CLI installs aimed there are not run. Keep grant assertions in-process,
+where the preload swaps the grants home. A test that strips `WORKIT_*` from a
+child's env uses `stripsWorkitKey` (`test/shared/helpers/env.ts`), which keeps
+the marker. `test/shared/real-state-guard.ts` snapshots the
+account's `workspaces.json`, its seal and the host settings Workit writes
+(Claude Code, Cursor, Codex, OpenCode, Pi) at preload and fails the run naming
+any file that changed (#859). Drive a verb that writes host or config state
+(`upgrade`, `setup`, `install`, `uninstall`, `doctor --fix`, `workspace`) with
+a temp `HOME` in `io.env` or its deps, never the real home.
+
 No file may dominate a Windows shard, since those run serially: the forge suites
 are split by area under `test/workit-core/forge/` (shared harness in
 `forge/shared.ts`). Windows shards cache the installed `node_modules` trees,

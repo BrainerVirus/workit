@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { testRunWriteRefusal } from "./account-home";
 import { writeFileAtomic } from "./safe-write";
 import {
   readWorkspacesResult,
@@ -164,8 +165,16 @@ export function sealedProjection(dir: string): Record<string, unknown>[] | null 
  * Seal the authority fields of `<dir>/workspaces.json` as it is now (the
  * user's terminal, or a writer whose change only lowers the sealed values).
  */
-export function writeSeal(dir: string, entries: readonly unknown[], now = new Date()): string {
+export function writeSeal(
+  dir: string,
+  entries: readonly unknown[],
+  now = new Date(),
+  /** The OS account's home (test seam; default the account record's). */
+  home?: string | null,
+): string {
   const file = path.join(dir, SEAL_FILE);
+  const refusal = testRunWriteRefusal(file, home);
+  if (refusal) throw new Error(refusal);
   writeFileAtomic(file, `${JSON.stringify(sealDocument(entries, now), null, 2)}\n`);
   return file;
 }

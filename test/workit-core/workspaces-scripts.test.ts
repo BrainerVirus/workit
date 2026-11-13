@@ -21,6 +21,7 @@ import {
 } from "@/packages/workit-core/src/core/repo-context";
 import { writeWorkspaces } from "@/packages/workit-cli/src/logic";
 import { stubCli } from "@/test/shared/helpers/stub-cli";
+import { stripsWorkitKey } from "@/test/shared/helpers/env";
 
 // Parity tests for the TS ports of scripts/vcs/config.sh resolve/load, pr-create.sh
 // missing-CLI guard, pr-create.sh --build-body issue linking, and pr-ready-context.sh
@@ -505,7 +506,7 @@ test.skipIf(process.platform === "win32")(
 const buildBody = (extra: Record<string, string>, cwd?: string): string => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || k.startsWith("WORKIT_")) continue;
+    if (v === undefined || stripsWorkitKey(k)) continue;
     env[k] = v;
   }
   return prBuildBody({ ...env, ...extra }, cwd ?? repoRoot);

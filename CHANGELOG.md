@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (retro 2026-11-07)
 
+- **Tests and probes never reach the real home** (#859): `upgrade`, `doctor`
+  and `workspace` take their paths from the injected env, every process of a
+  test run (`WORKIT_TEST_RUN`) refuses to write the account's seal, grants,
+  host settings and Workit dirs, and the run fails when the account's grants,
+  seal or host settings change.
 - **Implementer confinement follows shell variables, loops and inline
   interpreter scripts** (#744). `W=<worktree>; workit git --cwd $W commit` and
   `workit check --cwd $W …` are judged against the worktree, not the lead's

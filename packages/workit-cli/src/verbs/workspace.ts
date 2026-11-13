@@ -62,6 +62,7 @@ import {
   VERIFICATION_STRICTNESS,
   type VerificationMode,
 } from "@workit-dev/core/src/autonomy";
+import { testRunWriteRefusal } from "@workit-dev/core/src/core/account-home";
 import { checkoutRemotes, remotePattern } from "@workit-dev/core/src/core/remotes";
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import {
@@ -83,6 +84,7 @@ import {
   type WorkspacesResult,
 } from "@workit-dev/core/src/core/workspaces";
 import { configFilePath } from "@workit-dev/core/src/core/config";
+import { configDir as workitConfigDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { withSchemaRef } from "@workit-dev/core/src/core/config-schemas";
 import { readReleasePackages } from "@workit-dev/core/src/core/release-packages";
 import { closest } from "../help";
@@ -272,8 +274,15 @@ const unknownKeyHint = (key: string): string | null => {
 const usage = (io: Io, message: string): number =>
   emit(io, fail("invalid_input", `${message}\nusage: ${USAGE}`));
 
+/**
+ * The config dir `workspace` reads and writes: io.env over the process env,
+ * so an in-process call with a temp HOME or WORKIT_CONFIG never reaches the
+ * real one (#859). The seal stays the account's (sealBefore, sealStatus).
+ */
+const workspacesDir = (io: Io): string => workitConfigDir({ ...process.env, ...io.env });
+
 const load = (io: Io): WorkspacesResult | number => {
-  const current = readWorkspacesResult();
+  const current = readWorkspacesResult(workspacesDir(io));
   if (current.status === "malformed" || current.status === "invalid")
     return emit(io, fail("invalid_input", current.error ?? `${current.path} is invalid`));
   return current;
@@ -303,9 +312,12 @@ const save = (
   const validated = validateWorkspacesDocument(document, current.path);
   if (validated.status !== "valid")
     return { ok: false, error: validated.error ?? "invalid workspaces.json" };
-  const latest = readWorkspacesResult();
+  const latest = readWorkspacesResult(path.dirname(current.path));
   if (latest.revision !== current.revision)
     return { ok: false, error: `${current.path} changed; retry` };
+  // A test run never writes the real home's file (#859).
+  const real = testRunWriteRefusal(current.path);
+  if (real) return { ok: false, error: real };
   let backup: string | null = null;
   try {
     if (existsSync(current.path)) {

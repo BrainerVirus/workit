@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { hostCommandRefusal, mkdtempSync, rmSync, writeFileSync } from "./admin/guarded-fs";
 import pkg from "../package.json" with { type: "json" };
 import { type HostId } from "./admin/detect-hosts";
 import { hostCommand, type HostInstallCommand } from "./admin/host-install";
@@ -40,7 +41,16 @@ const USAGE =
   "Usage: workit upgrade [--hosts=opencode,cursor,codex,pi,claude-code|none] [--cli] [--preview | --yes | --apply --confirm] [--json]\n       workit upgrade --check [--json]\n       workit upgrade --set-updates=prompt|auto|off\n";
 
 export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}): Promise<number> {
-  const { env } = upgradePaths(deps);
+  const { env, home } = upgradePaths(deps);
+  // A test run never upgrades the OS account's home (#859): not its hosts, CLI,
+  // config, completion or skills. Only the read-only forms run against it.
+  if (!argv.includes("--check") && !argv.includes("--preview")) {
+    const refused = hostCommandRefusal(home, "workit upgrade", env);
+    if (refused) {
+      (deps.out ?? process.stderr).write(`workit upgrade: ${refused}\n`);
+      return 3;
+    }
+  }
   const handBack = env[CONTINUE_ENV] !== undefined ? env[ROWS_ENV] : undefined;
   const handed: { rows?: HostOutcome[] } = {};
   const code = await upgradeOnce(argv, deps, handed);

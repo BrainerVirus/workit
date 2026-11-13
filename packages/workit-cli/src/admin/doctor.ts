@@ -9,25 +9,27 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   constants as fsConstants,
-  copyFileSync,
   existsSync,
-  linkSync,
   lstatSync,
-  mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
   statSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  copyFileSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  rmdirSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "./guarded-fs";
 import {
   configuredGrants,
   entryMismatch,

@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { mkdtempSync, rmSync } from "../admin/guarded-fs";
 import { type HostId } from "../admin/detect-hosts";
 import { CLI_PACKAGE } from "../update-check";
 import { CODEX_INVENTORY_ARGS, codexInventory } from "./codex-inventory";

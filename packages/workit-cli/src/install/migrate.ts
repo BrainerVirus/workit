@@ -3,16 +3,9 @@
 // backed up under the upgrade's backup dir, then removed with its own tool.
 // A person at a terminal answers y/N first; anywhere else Workit removes
 // nothing and prints the exact commands.
-import {
-  copyFileSync,
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, readlinkSync } from "node:fs";
 import path from "node:path";
+import { copyFileSync, cpSync, mkdirSync, writeFileSync } from "../admin/guarded-fs";
 import { describeInstall, listInstalls, npmPackageOfFile, type FoundInstall } from "./discover";
 import { type InstallNode } from "./node";
 import { linkLauncher, removeFile, type InstallRun } from "./owned";

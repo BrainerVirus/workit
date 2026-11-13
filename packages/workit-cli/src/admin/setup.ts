@@ -1,21 +1,18 @@
-import {
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { recordHookNode } from "./hook-node";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import {
+  cpSync,
+  hostCommandRefusal,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileExclusive,
+  writeFileSync,
+} from "./guarded-fs";
 import { isDeepStrictEqual } from "node:util";
 import {
   mergePreset,
@@ -52,7 +49,7 @@ import { sealAfterWrite, sealBefore } from "@workit-dev/core/src/autonomy";
 import { SEAL_COMMAND } from "@workit-dev/core/src/core/grant-seal";
 import { agentMarker } from "../upgrade/agent-marker";
 import { CODEX_MARKETPLACE } from "../upgrade/codex-marketplace";
-import { writeFileExclusive } from "@workit-dev/core/src/core/safe-write";
+
 import {
   findYtrack,
   ytrackHostName,
@@ -1488,6 +1485,21 @@ export function applySetupPreview(
       const run =
         options.runHostCommand ??
         ((step: HostInstallCommand) => runHostCommand(step, { home: res.home, env: res.env }));
+      // A test run never installs into the OS account's host dirs (#859).
+      const refused = hostCommandRefusal(
+        res.home,
+        `the ${mutation.platform} host install`,
+        res.env,
+      );
+      if (refused) {
+        entries.push({
+          platform: mutation.platform,
+          file: mutation.path,
+          status: "Failed",
+          detail: refused,
+        });
+        continue;
+      }
       const installed = runHostInstall(mutation.commands, run);
       for (const { command, result } of installed.results) {
         entries.push({

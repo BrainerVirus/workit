@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { opencodeReading, opencodeScratchEnv, probeKey, type ProbeCache } from "./probes";
 import { CODEX_INVENTORY_ARGS, CODEX_INVENTORY_KEY, codexInventorySync } from "./codex-inventory";
 import { OPENCODE_NOT_READY } from "./opencode";
 import path from "node:path";
+import { mkdtempSync, rmSync } from "../admin/guarded-fs";
 import os from "node:os";
 import { isWorkitPlugin } from "../admin/registration";
 import { readSetupState } from "../admin/setup-state";

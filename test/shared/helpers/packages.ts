@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stripsWorkitKey } from "./env";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 
@@ -302,11 +303,22 @@ export function isolatedEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKIT_") || k.startsWith("XDG_")) continue;
+    if (stripsWorkitKey(k) || k.startsWith("XDG_")) continue;
     if (STRIPPED_ENV_VARS.has(k)) continue;
     env[k] = v;
   }
   env.HOME = home;
+  // Windows keeps Workit's config, state and data under %APPDATA% and
+  // %LOCALAPPDATA% (core/workit-paths.mjs), which a temp HOME does not move:
+  // point them into the temp home too, or a child writes the runner's real
+  // profile (#859). npm keeps its download cache where it was.
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA;
+    if (local && !env.npm_config_cache) env.npm_config_cache = path.join(local, "npm-cache");
+    env.USERPROFILE = home;
+    env.APPDATA = path.join(home, "AppData", "Roaming");
+    env.LOCALAPPDATA = path.join(home, "AppData", "Local");
+  }
   return { ...env, ...extra };
 }
 

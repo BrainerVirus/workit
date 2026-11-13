@@ -7,8 +7,10 @@
 // absolute path with a fixed env, a timeout and no shell. With no record
 // there is no home (null), never a fallback path: no grants are read.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
+import { configDir, dataDir, stateDir } from "./workit-paths.mjs";
 
 /** What accountHome reads; tests pass their own with a platform. */
 export type AccountIo = {
@@ -95,10 +97,95 @@ export const accountHome = (platform = process.platform, io: AccountIo = hostIo)
 };
 
 /**
+ * The test run marker (#859): the test preload sets it to its run-scoped temp
+ * dir, and every process the suite spawns inherits it. It changes nothing a
+ * process reads; it only adds refusals (testRunWriteRefusal), so setting it
+ * can only make a run stricter.
+ */
+export const TEST_RUN_ENV = "WORKIT_TEST_RUN";
+
+/**
  * Where grants are read from: the OS account record's home directory, never
- * `$HOME` (an agent can set that for one command). Tests swap `resolve`
- * in-process (the test preload points it at a run-scoped temp home); nothing
- * outside this process can change it. Here, with builtins only, so the
- * preload sets it without loading the config schemas.
+ * `$HOME` (an agent can set that for one command). The test run marker never
+ * moves it (it only adds write refusals, testRunWriteRefusal). Tests swap
+ * `resolve` in-process (the test preload points it at a run-scoped temp
+ * home); nothing outside this process can change it. Here, with builtins
+ * only, so the preload sets it without loading the config schemas.
  */
 export const grantsHome: { resolve: () => string | null } = { resolve: () => accountHome() };
+
+/**
+ * The account home testRunWriteRefusal protects (test seam, set in a test's
+ * own process; undefined: the OS account record's). It only picks what is
+ * refused, never what is read.
+ */
+export const refusedHome: { value: string | null | undefined } = { value: undefined };
+
+/** `file` with its deepest existing ancestor resolved (macOS /var is /private/var). */
+const resolvedPath = (file: string): string => {
+  let dir = path.resolve(file);
+  const rest: string[] = [];
+  while (!existsSync(dir) && path.dirname(dir) !== dir) {
+    rest.unshift(path.basename(dir));
+    dir = path.dirname(dir);
+  }
+  try {
+    // native: Windows 8.3 short names (C:\Users\RUNNER~1) resolve to the long one.
+    return path.join(realpathSync.native(dir), ...rest);
+  } catch {
+    return path.resolve(file);
+  }
+};
+
+const within = (root: string, file: string): boolean => {
+  const inside = path.relative(root, file);
+  return inside === "" || (!inside.startsWith("..") && !path.isAbsolute(inside));
+};
+
+/**
+ * Why a test run must not write `file` (#859), or null: under the test run
+ * marker, nothing is written in the OS account home's host settings (Claude
+ * Code, Cursor, Codex, Pi, ~/.config, ~/.local/share: shell completions,
+ * ~/.local/bin: launchers) or Workit's own config, state and data dirs as
+ * this platform puts them (core/workit-paths.mjs; %APPDATA% and
+ * %LOCALAPPDATA% under the home on Windows), its worktrees and the OS temp dir
+ * aside. Paths compare as the platform does (case-insensitive on Windows). `home` is a test seam (default the account
+ * record's). Without the marker, null: a user's run writes where it always did.
+ */
+export const testRunWriteRefusal = (
+  file: string,
+  home?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+  /** The OS temp dir (test seam). */
+  tempDir: string = os.tmpdir(),
+): string | null => {
+  if (env[TEST_RUN_ENV] === undefined) return null;
+  const account =
+    home !== undefined ? home : refusedHome.value !== undefined ? refusedHome.value : accountHome();
+  if (account === null) return null;
+  const homeEnv = { HOME: account, USERPROFILE: account };
+  const roots = [
+    ...[
+      ".claude",
+      ".cursor",
+      ".codex",
+      ".pi",
+      ".config",
+      path.join(".local", "share"),
+      path.join(".local", "bin"),
+    ].map((dir) => path.join(account, dir)),
+    configDir(homeEnv),
+    stateDir(homeEnv),
+    dataDir(homeEnv),
+  ].map(resolvedPath);
+  const target = resolvedPath(file);
+  // The OS temp dir holds fixture homes, never the account's own files: on
+  // Windows it is under the home (%LOCALAPPDATA%\Temp). A fake account home
+  // inside it (a test of this guard) is still protected.
+  const tmp = resolvedPath(tempDir);
+  const base = resolvedPath(account);
+  if (within(tmp, target) && !within(tmp, base)) return null;
+  const worktrees = path.join(resolvedPath(stateDir(homeEnv)), "worktrees");
+  if (within(worktrees, target) || !roots.some((root) => within(root, target))) return null;
+  return `refusing to write ${file}: a test run (${TEST_RUN_ENV}) never writes the OS account's home (#859)`;
+};

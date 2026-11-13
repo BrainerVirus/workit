@@ -35,6 +35,9 @@ const fakeEnv = (): Record<string, string> => {
       env[key] = value;
   for (const key of ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"])
     env[key] = FAKE;
+  // A user's shell, without the test run marker (#859); the marker would not
+  // change the home either. The children only resolve the home.
+  delete env.WORKIT_TEST_RUN;
   return env;
 };
 

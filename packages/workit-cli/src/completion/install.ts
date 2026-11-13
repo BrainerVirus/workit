@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../admin/guarded-fs";
 import { workitDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { COMPLETION_MARKER, completionScript, type Shell } from "./scripts";
 
@@ -63,7 +64,7 @@ export function zshFpath(env: Env, timeoutMs = 5000): string[] | null {
   // the timeout; with a file, the wait ends when zsh exits or is killed.
   let dir: string | null = null;
   try {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "workit-fpath-"));
+    dir = mkdtempSync(path.join(os.tmpdir(), "workit-fpath-"));
     const out = path.join(dir, "fpath");
     const fd = fs.openSync(out, "w");
     try {
@@ -85,7 +86,7 @@ export function zshFpath(env: Env, timeoutMs = 5000): string[] | null {
   } catch {
     return null;
   } finally {
-    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -155,8 +156,8 @@ export function installCompletion(options: {
   let status: CompletionInstall["status"] = "current";
   if (!exists || fs.readFileSync(file, "utf8") !== script) {
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, script);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, script);
       status = "written";
     } catch (error) {
       return {
@@ -220,7 +221,7 @@ export function removeCompletion(
   );
   if (!places.includes(file) || !owned(file)) return false;
   try {
-    fs.rmSync(file);
+    rmSync(file);
     return true;
   } catch {
     // left for the next run; doctor-free: a stale script only completes old verbs

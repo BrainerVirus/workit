@@ -2,21 +2,17 @@
 // resolved Node >= 24's own npm, a rename into versions/<v>, then an atomic
 // swap of the `current` link. A run killed at any point before the swap
 // leaves `current` (and so the launcher) on the previous version.
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import path from "node:path";
 import {
   chmodSync,
-  existsSync,
-  lstatSync,
   mkdirSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
-} from "node:fs";
-import path from "node:path";
+} from "../admin/guarded-fs";
 import { launcherCmd, launcherScript } from "./launcher";
 import { type InstallNode } from "./node";
 import {

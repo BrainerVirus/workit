@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
-import { envWithSupportedNode } from "@/test/shared/helpers/env";
+import { envWithSupportedNode, stripsWorkitKey } from "@/test/shared/helpers/env";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -794,7 +794,7 @@ function syncEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith("WORKIT_") || k === "XDG_RUNTIME_DIR" || k === "XDG_CONFIG_HOME") continue;
+    if (stripsWorkitKey(k) || k === "XDG_RUNTIME_DIR" || k === "XDG_CONFIG_HOME") continue;
     env[k] = v;
   }
   env.HOME = home;

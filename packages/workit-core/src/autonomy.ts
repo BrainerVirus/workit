@@ -34,7 +34,7 @@
 //   permission prompt applies in addition: a host deny always wins.
 import { copyFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { grantsHome } from "./core/account-home";
+import { grantsHome, testRunWriteRefusal } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
 import { evalWorld, evalWorldEntry } from "./core/eval-world";
@@ -1136,6 +1136,9 @@ export function writeGrants(
       code: "failed",
       error: `${current.path} changed; retry`,
     };
+  // A test run never writes the real account's file (#859).
+  const real = testRunWriteRefusal(current.path);
+  if (real) return { ok: false, code: "failed", error: real };
   let backup: string | null = null;
   try {
     if (existsSync(current.path)) {

@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import cliPkg from "@/packages/workit-cli/package.json" with { type: "json" };
 import type { DoctorCheck, DoctorReport } from "@/packages/workit-cli/src/admin/doctor";
+import { stripsWorkitKey } from "@/test/shared/helpers/env";
 import {
   manualTrailerLine,
   SESSION_HOOK_SCRIPT,
@@ -47,7 +48,7 @@ const sandbox = () => {
   for (const dir of [home, configDir, work]) mkdirSync(dir, { recursive: true });
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env))
-    if (v !== undefined && !STRIPPED.has(k) && !k.startsWith("WORKIT_") && !k.startsWith("GIT_"))
+    if (v !== undefined && !STRIPPED.has(k) && !stripsWorkitKey(k) && !k.startsWith("GIT_"))
       env[k] = v;
   Object.assign(env, {
     HOME: home,

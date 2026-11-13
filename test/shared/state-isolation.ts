@@ -7,12 +7,14 @@ import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { grantsHome } from "@/packages/workit-core/src/core/account-home";
-import { guardRealState } from "./real-state-guard";
+import { TEST_RUN_ENV, grantsHome } from "@/packages/workit-core/src/core/account-home";
+import { guardRealHome, guardRealState } from "./real-state-guard";
 
 // Fail the run if a test left a worktree in the real state dir (a child given
-// an env without this run's WORKIT_STATE_DIR). Before the env below changes.
+// an env without this run's WORKIT_STATE_DIR), or changed the account's
+// grants, seal or host settings (#859). Before the env below changes.
 guardRealState();
+guardRealHome();
 
 // A host shell running the suite (OpenCode, Pi, Codex, a Claude Code-launched
 // host) exports its own session id, which the CLI treats as the real session:
@@ -25,6 +27,19 @@ for (const key of ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID", "W
 // at the developer's real ~/.config (OpenCode config, Workit config): every
 // test resolves them under its own HOME unless it sets them itself.
 for (const key of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"])
+  delete process.env[key];
+
+// A shell that exports a host's config dir (often the developer's real one)
+// would point a test's host commands and settings at it, which the run marker
+// then refuses (#859): every test resolves them under its own HOME unless it
+// sets them itself.
+for (const key of [
+  "CLAUDE_CONFIG_DIR",
+  "CODEX_HOME",
+  "PI_CODING_AGENT_DIR",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_CONFIG",
+])
   delete process.env[key];
 
 // Always a fresh dir, never an inherited one: `bun test --parallel` workers
@@ -44,7 +59,11 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 // in-process, every test reads them from a run-scoped temp home instead, so
 // the real account's workspaces.json and its seal are never read here
 // (useConfigHome swaps in its own home). Child processes still read the
-// account record, as bench worlds do; keep grant assertions in-process.
+// account record (D15): the run marker they inherit changes nothing they read
+// and only makes them refuse to write the account's seal, grants or host
+// settings (core/account-home.ts testRunWriteRefusal). Keep grant assertions
+// in-process.
+process.env[TEST_RUN_ENV] = dir;
 const accountHomeForRun = path.join(dir, "account-home");
 grantsHome.resolve = () => accountHomeForRun;
 

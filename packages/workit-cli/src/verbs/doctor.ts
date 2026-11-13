@@ -56,7 +56,10 @@ async function confirmForcedLockClear(
 
 export async function run(argv: string[], io: Io): Promise<number> {
   // Without --force, --fix-lock removes only a lock whose owner is provably gone.
-  const root = workspaceRootFor();
+  // Every path comes from io.env and io.cwd, so an in-process call with a temp
+  // HOME reads and fixes only that home (#859).
+  const env = io.env;
+  const root = workspaceRootFor({ root: env.WORKIT_WORKSPACE_ROOT, cwd: io.cwd });
   const force = argv.includes("--force");
   let fixLock: ReturnType<typeof clearStaleMetadataLock> | null = null;
   if (argv.includes("--fix-lock")) {
@@ -83,7 +86,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let sessionHook: { action: string; detail: string } | null = null;
   if (argv.includes("--fix")) {
     try {
-      const fixed = fixSessionHook({ host: "cli", cwd: io.cwd, workspaceRoot: root });
+      const fixed = fixSessionHook({ host: "cli", cwd: io.cwd, workspaceRoot: root, env });
       sessionHook = { action: fixed.action, detail: fixed.detail };
     } catch (error) {
       sessionHook = {
@@ -95,7 +98,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let checksConfig: { action: string; detail: string } | null = null;
   if (argv.includes("--fix")) {
     try {
-      checksConfig = fixChecksConfig({ host: "cli", cwd: io.cwd });
+      checksConfig = fixChecksConfig({ host: "cli", cwd: io.cwd, env });
     } catch (error) {
       checksConfig = {
         action: "failed",
@@ -106,7 +109,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let notes: WorkitNotesFix | null = null;
   if (argv.includes("--fix")) {
     try {
-      notes = fixWorkitNotes({ host: "cli", cwd: io.cwd });
+      notes = fixWorkitNotes({ host: "cli", cwd: io.cwd, env });
     } catch (error) {
       notes = {
         action: "failed",
@@ -125,6 +128,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         cwd: io.cwd,
         workspaceRoot: root,
         cliVersion: pkg.version,
+        env,
       }),
     (done) => (done.ok ? "done" : "failed"),
   );
