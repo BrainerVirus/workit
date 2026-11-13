@@ -188,6 +188,26 @@ test("Given Cursor registered with an empty plugin dir, When `workit install --h
   expect(snapshot(w.home, [cursor])).toEqual(before);
 });
 
+test("Given Cursor's settings name the plugin dir as ~/…, When install runs twice, Then one plugin_dirs entry stays, in the user's spelling, and the second run changes nothing", async () => {
+  const w = world();
+  const cursor = path.join(w.home, ".cursor");
+  const settings = path.join(cursor, "settings.json");
+  write(settings, { plugin_dirs: ["~/.cursor/plugins/local/workit"] });
+
+  const first = await runIn(install, w, ["--hosts=cursor", "--yes"]);
+  expect(first.code, first.text).toBe(0);
+  expect(first.text).not.toContain("duplicate_registration");
+  expect(JSON.parse(readFileSync(settings, "utf8")).plugin_dirs).toEqual([
+    "~/.cursor/plugins/local/workit",
+  ]);
+  const between = snapshot(w.home);
+
+  const second = await runIn(install, w, ["--hosts=cursor", "--yes"]);
+  expect(second.code, second.text).toBe(0);
+  expect(second.text).toContain("Workit is already installed on cursor: nothing to change.");
+  expect(snapshot(w.home)).toEqual(between);
+});
+
 for (const host of ["claude-code", "codex", "cursor", "opencode", "pi"]) {
   test(`Given ${host} without Workit, When install runs twice, Then the second run plans and changes nothing and says so`, async () => {
     const w = world();

@@ -4,6 +4,7 @@
 // never rewritten — their values round-trip JSON-identical. The install
 // scripts (`packages/workit-core/scripts/install-*-plugin.sh`) import these so
 // there is exactly one source of truth for registration merging.
+import os from "node:os";
 import path from "node:path";
 
 /** Canonical published OpenCode plugin identity (OpenCode resolves from npm). */
@@ -96,15 +97,17 @@ export function mergeCursorEnabledPlugins(enabled: unknown): MergeResult<Record<
   return { config: next, changed };
 }
 
-/** Append the plugin dir once. */
+/** Append the plugin dir once; `home` expands an existing `~` entry for the comparison. */
 export function mergeCursorPluginDirs(
   pluginDirs: unknown,
   pluginDir: string,
+  home: string = os.homedir(),
 ): MergeResult<string[]> {
   // path.join does not strip a single trailing separator; do it explicitly for
-  // the dedup comparison (guarding the filesystem-root case).
+  // the dedup comparison (guarding the filesystem-root case). A `~` entry is
+  // the same dir as its absolute spelling.
   const strip = (p: string) => {
-    const j = path.join(p);
+    const j = path.join(/^~(?=$|[\\/])/.test(p) ? home + p.slice(1) : p);
     return path.dirname(j) === j ? j : j.replace(/[\\/]+$/, "");
   };
   const normalized = strip(pluginDir);
@@ -122,6 +125,7 @@ export function mergeCursorPluginDirs(
 export function mergeCursorSettings(
   settings: unknown,
   pluginDir: string,
+  home: string = os.homedir(),
 ): MergeResult<Record<string, unknown>> {
   const base = isRecord(settings) ? { ...settings } : {};
   const changed: string[] = [];
@@ -132,7 +136,7 @@ export function mergeCursorSettings(
     changed.push("enabled_plugins");
   }
 
-  const dirs = mergeCursorPluginDirs(base.plugin_dirs, pluginDir);
+  const dirs = mergeCursorPluginDirs(base.plugin_dirs, pluginDir, home);
   if (dirs.changed.length > 0) {
     base.plugin_dirs = dirs.config;
     changed.push("plugin_dirs");

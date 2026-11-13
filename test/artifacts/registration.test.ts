@@ -260,6 +260,21 @@ test("mergeCursorPluginDirs keeps other directories and appends the canonical on
   expect(changed).toEqual(["plugin_dirs"]);
 });
 
+test("Given a ~ spelling of the plugin dir, Then mergeCursorPluginDirs keeps it and adds no absolute twin", () => {
+  const home = path.join("/home", "someone");
+  const dir = path.join(home, ".cursor", "plugins", "local", "workit");
+  for (const existing of ["~/.cursor/plugins/local/workit", "~/.cursor/plugins/local/workit/"]) {
+    const { config, changed } = mergeCursorPluginDirs([existing], dir, home);
+    expect(config).toEqual([existing]);
+    expect(changed).toEqual([]);
+  }
+  // `~user` is another user's home: never read as this one.
+  expect(mergeCursorPluginDirs(["~other/.cursor/plugins/local/workit"], dir, home).config).toEqual([
+    "~other/.cursor/plugins/local/workit",
+    dir,
+  ]);
+});
+
 test("mergeOpenCodeConfig does not mutate the caller's nested skills object", () => {
   const skills = { paths: ["/x/share/workit/skills", "/other"], enabled: ["wk-commit"] };
   const input = { plugin: ["other-plugin"], skills };
