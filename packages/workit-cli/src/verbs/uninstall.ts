@@ -129,8 +129,10 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
       `Workit is not installed on ${args.hosts.join(", ")}: nothing to remove.`,
     ]);
   say(`${kept}\n`);
-  // Kept and unreadable rows remove nothing: the preview must not promise a removal.
-  const removes = actions.some((a) => a.kind !== "keep-foreign" && a.kind !== "unreadable");
+  // Kept and blocking rows remove nothing: the preview must not promise a removal.
+  const removes = actions.some(
+    (a) => a.kind !== "keep-foreign" && a.kind !== "unreadable" && a.kind !== "missing-executable",
+  );
   if (args.preview)
     return emit(io, ok({ ...summary, removed: [] }), () =>
       removes
@@ -163,7 +165,10 @@ async function uninstallHosts(args: Args, io: Io): Promise<number> {
       (e) =>
         `${e.status === "removed" ? style.ok(e.status) : e.status} ${style.path(e.path)}${e.detail ? ` (${e.detail})` : ""}`,
     ),
-    ...result.skipped.map((host) => `${host} left untouched: a file it needs cannot be read`),
+    ...result.skipped.map(
+      (host) =>
+        `${host} left untouched: a file it needs cannot be read or a command it runs is missing`,
+    ),
   ];
   if (!result.ok) {
     if (!io.json) for (const line of lines) io.stdout(`${line}\n`);

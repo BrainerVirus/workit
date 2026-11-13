@@ -34,6 +34,7 @@ import {
   claudeConfigDir,
   claudeWorkitInstalls,
   findHostExecutable,
+  missingExecutable,
   runHostCommand,
   type HostCommandRunner,
 } from "./host-install";
@@ -66,7 +67,9 @@ export type UninstallAction =
   /** Drop the host's entry from Workit's permission ownership record (state dir). */
   | { kind: "forget-ownership"; path: string; detail: string; permissionHost: PermissionHost }
   /** A file the plan must read that exists but cannot be read or parsed: its host is left untouched. */
-  | { kind: "unreadable"; path: string; detail: string };
+  | { kind: "unreadable"; path: string; detail: string }
+  /** A host command whose executable is not found (path: its name): its host is left untouched. */
+  | { kind: "missing-executable"; path: string; detail: string };
 
 type UninstallHostPlan = {
   host: UninstallHost;
@@ -522,11 +525,25 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     "installed_plugins.json",
   );
   const registryUnreadable = unreadable(claudeRegistry, readJsonRecord(claudeRegistry));
+  // The host command needs `claude`: the plan says so now, not apply later.
+  const claudeMissing: UninstallAction[] =
+    claudeInstalls.length > 0 &&
+    !paths.runHostCommand &&
+    !findHostExecutable("claude", { home, env: paths.env ?? process.env })
+      ? [
+          {
+            kind: "missing-executable",
+            path: "claude",
+            detail: `${missingExecutable("claude")}; install Claude Code or put claude on PATH, then run again`,
+          },
+        ]
+      : [];
   const claude: UninstallHostPlan = {
     host: "claude-code",
     installed: claudeInstalls.length > 0 || registryUnreadable.length > 0,
     actions: [
       ...registryUnreadable,
+      ...claudeMissing,
       ...claudeInstalls.map((install) => ({
         kind: "host-command" as const,
         path: install.installPath,
@@ -620,10 +637,13 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     );
   }
 
-  // A host with a file that cannot be read is left untouched: its plan is
-  // those files alone, so the preview lists no removal apply would not do.
+  // A host with a file that cannot be read, or a command that cannot run, is
+  // left untouched: its plan is those rows alone, so the preview lists no
+  // removal apply would not do.
   for (const plan of Object.values(byHost)) {
-    const blocked = plan.actions.filter((action) => action.kind === "unreadable");
+    const blocked = plan.actions.filter(
+      (action) => action.kind === "unreadable" || action.kind === "missing-executable",
+    );
     if (blocked.length > 0)
       plan.actions = blocked.map((action) => ({
         ...action,
@@ -771,7 +791,7 @@ const applyClaudeUninstall = (
     return { status: "skipped", detail: `${id} (${scope} scope) is no longer installed` };
   const executable = findHostExecutable("claude", { home, env });
   if (!executable && !paths.runHostCommand)
-    return { status: "failed", detail: "claude executable was not found on PATH" };
+    return { status: "failed", detail: missingExecutable("claude") };
   const step = {
     command: executable ?? "claude",
     args: action.args,
@@ -797,7 +817,7 @@ function applyAction(
   if (action.kind === "keep-foreign") {
     status = "skipped";
     detail = action.detail;
-  } else if (action.kind === "unreadable") {
+  } else if (action.kind === "unreadable" || action.kind === "missing-executable") {
     status = "failed";
     detail = action.detail;
   } else if (action.kind === "forget-ownership") {
@@ -882,7 +902,8 @@ function applyAction(
 const unreadableNow = (actions: readonly UninstallAction[]): Map<UninstallAction, string> => {
   const found = new Map<UninstallAction, string>();
   for (const action of actions) {
-    if (action.kind === "unreadable") found.set(action, action.detail);
+    if (action.kind === "unreadable" || action.kind === "missing-executable")
+      found.set(action, action.detail);
     else if (action.kind === "edit-json-remove") {
       const existing = readJsonRecord(action.path);
       if (existing.kind === "malformed")
