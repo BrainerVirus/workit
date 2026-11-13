@@ -11,6 +11,7 @@
 // Never forced: a dirty, locked or unmerged worktree, the main checkout and
 // the checkout the command runs in are kept and named.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,10 +24,16 @@ import {
   workerScratchesOf,
   type WorktreeEntry,
 } from "../fanout-worktree";
+import type { Forge } from "../forge/types";
 import { GIT_TIMEOUTS, pushRemoteName } from "../git/rev";
 import { FANOUT_TOKEN_FILE } from "../hooks/worktree-confine";
 import { appendObserved, type LedgerActor } from "../ledger";
-import { legacyWorktreesDir, worktreesDir } from "./workit-paths.mjs";
+import { gitFlowOf, isProtectedTarget, resolveBranchPolicyFor } from "./branch";
+import { LIVE_SESSION_TTL_MS, checkoutKey, liveProbe } from "./live-session";
+import { workspaceReleaseTracks, trackBranches } from "./release-tracks";
+import { leaseDir, parseLease, staleReason } from "./resources";
+import { isWorkitMarkerPath } from "./task-store";
+import { legacyWorktreesDir, stateDir, worktreesDir } from "./workit-paths.mjs";
 import { matchWorkspace } from "./workspaces";
 
 const SLOW = GIT_TIMEOUTS.worktree;
@@ -96,8 +103,8 @@ const isFanoutWorktree = (worktree: string): boolean => {
   }
 };
 
-/** Uncommitted paths (the scratch dir left out); null when git cannot say. */
-export function dirtyPaths(worktree: string): string[] | null {
+/** Uncommitted paths with their status code (the scratch dir left out); null when git cannot say. */
+function statusEntries(worktree: string): { code: string; file: string }[] | null {
   const status = gitRun(worktree, [
     "status",
     "--porcelain=v1",
@@ -106,24 +113,35 @@ export function dirtyPaths(worktree: string): string[] | null {
     "--ignore-submodules=none",
   ]);
   if (!status.ok) return null;
-  const out: string[] = [];
+  const out: { code: string; file: string }[] = [];
   const fields = nulList(status.stdout);
   for (let index = 0; index < fields.length; index++) {
     const line = fields[index];
     // A rename's source follows as its own field.
     if (line[0] === "R" || line[0] === "C") index++;
     const file = line.slice(3);
-    if (!file.startsWith(`${SCRATCH_DIR}/`)) out.push(file);
+    if (!file.startsWith(`${SCRATCH_DIR}/`)) out.push({ code: line.slice(0, 2), file });
   }
   return out;
 }
 
-/** Ignored paths under these directories are rebuilt by a tool; removing them loses nothing. */
+/** Uncommitted paths (the scratch dir left out); null when git cannot say. */
+export function dirtyPaths(worktree: string): string[] | null {
+  return statusEntries(worktree)?.map((entry) => entry.file) ?? null;
+}
+
+/**
+ * Ignored paths under these directories are rebuilt by a tool; removing them
+ * loses nothing. Only ignored paths are matched, so a tracked `bin/` of
+ * scripts never is.
+ */
 const REGENERABLE = new Set([
   "node_modules",
   SCRATCH_DIR,
   "dist",
   "build",
+  "bin",
+  "target",
   "coverage",
   ".turbo",
   ".next",
@@ -172,7 +190,9 @@ export function ignoredKeepers(
     "--directory",
   ]);
   if (!listed.ok) return null;
-  return nulList(listed.stdout).filter((file) => !regenerablePath(file, regenerable));
+  return nulList(listed.stdout).filter(
+    (file) => !regenerablePath(file, regenerable) && !isWorkitMarkerPath(worktree, file),
+  );
 }
 
 const IGNORED_REASON = "ignored files that are not regenerable";
@@ -180,23 +200,119 @@ const IGNORED_REASON = "ignored files that are not regenerable";
 const listed = (paths: readonly string[]): string =>
   `${paths.slice(0, DIRTY_SHOWN).join(", ")}${paths.length > DIRTY_SHOWN ? `, … (${paths.length} in all)` : ""}`;
 
-/** Why the worktree must stay (uncommitted or valuable ignored files), or null when it may go. */
+type Held = { paths: string[]; reason: string };
+
+/**
+ * Why the worktree must stay (uncommitted or valuable ignored files), or the
+ * untracked old-runtime `.workit/` markers to delete before it goes (`git
+ * worktree remove` refuses untracked files; ignored ones go with it).
+ */
 function keepReason(
   worktree: string,
   regenerable: readonly string[],
-): { paths: string[]; reason: string } | null {
-  const dirty = dirtyPaths(worktree);
-  if (dirty === null) return { paths: ["unreadable"], reason: "unreadable state" };
+): { held: Held } | { held: null; markers: string[] } {
+  const entries = statusEntries(worktree);
+  if (entries === null) return { held: { paths: ["unreadable"], reason: "unreadable state" } };
+  const markers = entries
+    .filter((entry) => entry.code === "??" && isWorkitMarkerPath(worktree, entry.file))
+    .map((entry) => entry.file);
+  const dirty = entries.map((entry) => entry.file).filter((file) => !markers.includes(file));
   if (dirty.length > 0)
     return {
-      paths: dirty,
-      reason: `${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} (${listed(dirty)})`,
+      held: {
+        paths: dirty,
+        reason: `${dirty.length} uncommitted change${dirty.length === 1 ? "" : "s"} (${listed(dirty)})`,
+      },
     };
   const ignored = ignoredKeepers(worktree, regenerable);
-  if (ignored === null) return { paths: ["unreadable"], reason: "unreadable state" };
+  if (ignored === null) return { held: { paths: ["unreadable"], reason: "unreadable state" } };
   if (ignored.length > 0)
-    return { paths: ignored, reason: `${IGNORED_REASON} (${listed(ignored)})` };
-  return null;
+    return { held: { paths: ignored, reason: `${IGNORED_REASON} (${listed(ignored)})` } };
+  return { held: null, markers };
+}
+
+/** Delete the untracked marker files keepReason found, each checked again; false when one changed. */
+const dropMarkers = (worktree: string, markers: readonly string[]): boolean => {
+  for (const file of markers) {
+    if (!isWorkitMarkerPath(worktree, file)) return false;
+    try {
+      fs.rmSync(path.join(worktree, file));
+    } catch {
+      return false;
+    }
+  }
+  return true;
+};
+
+/** A process start time as recorded; a reader that cannot tell gives null. */
+const startOf = (pid: number): string | null => {
+  try {
+    return liveProbe.start(pid);
+  } catch {
+    return null;
+  }
+};
+
+const running = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Why `worktree` is in use right now, or null: a live heavy-lease holder's
+ * cwd is inside it, or another session's live-session marker names it. A
+ * marker whose recorded pid is still that process (same start time) is live
+ * at any heartbeat age; one whose process cannot be read (another machine,
+ * no pid) counts while its heartbeat is fresh.
+ */
+export function liveHold(
+  worktree: string,
+  options: { env?: NodeJS.ProcessEnv; session?: string | null; now?: number } = {},
+): string | null {
+  const env = options.env ?? process.env;
+  const dir = leaseDir(env);
+  let slots: string[] = [];
+  try {
+    slots = fs.readdirSync(dir).filter((name) => /^slot-\d+\.json$/u.test(name));
+  } catch {
+    // no lease dir: no holder
+  }
+  for (const name of slots) {
+    let text: string | null = null;
+    try {
+      text = fs.readFileSync(path.join(dir, name), "utf8");
+    } catch {
+      continue;
+    }
+    const lease = parseLease(text);
+    if (lease?.cwd && inside(lease.cwd, worktree) && !staleReason(lease))
+      return `a heavy lease holder runs in it (${lease.check}, pid ${lease.pid})`;
+  }
+  const file = path.join(
+    stateDir(env),
+    "live-sessions",
+    `${createHash("sha256").update(checkoutKey(worktree)).digest("hex").slice(0, 32)}.json`,
+  );
+  let marker: Record<string, unknown>;
+  try {
+    marker = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const session = typeof marker.session === "string" ? marker.session : null;
+  if (!session || session === options.session) return null;
+  const pid = typeof marker.pid === "number" ? marker.pid : null;
+  const pidStart = typeof marker.pidStart === "string" ? marker.pidStart : null;
+  const here = marker.machine === os.hostname();
+  const live =
+    here && pid !== null
+      ? running(pid) && (pidStart === null || [null, pidStart].includes(startOf(pid)))
+      : (options.now ?? Date.now()) - Date.parse(String(marker.heartbeatAt)) <= LIVE_SESSION_TTL_MS;
+  return live ? `another live session works in it (${session}${pid ? `, pid ${pid}` : ""})` : null;
 }
 
 /** Bytes under a directory, symlinks not followed. */
@@ -381,12 +497,21 @@ export function cleanupAfterMerge(
       );
       return out;
     }
-    const held = keepReason(entry.path, repoRegenerable(cwd));
-    if (held) {
-      out.dirty = { path: entry.path, paths: held.paths.slice(0, DIRTY_SHOWN) };
+    const live = liveHold(entry.path, { env, session: options.actor.session });
+    if (live) {
+      out.notes.push(`worktree ${entry.path}: ${live}; kept it and local ${branch}`);
+      return out;
+    }
+    const state = keepReason(entry.path, repoRegenerable(cwd));
+    if (state.held) {
+      out.dirty = { path: entry.path, paths: state.held.paths.slice(0, DIRTY_SHOWN) };
       out.notes.push(
-        `worktree ${entry.path} has ${held.reason}; kept it and local ${branch}. Commit, move or discard them, then \`${RELEASE_COMMAND}\``,
+        `worktree ${entry.path} has ${state.held.reason}; kept it and local ${branch}. Commit, move or discard them, then \`${RELEASE_COMMAND}\``,
       );
+      return out;
+    }
+    if (!dropMarkers(entry.path, state.markers)) {
+      out.notes.push(`worktree ${entry.path} changed meanwhile; kept it and local ${branch}`);
       return out;
     }
     const scratches = workerScratchesOf(cwd, entry.path, env);
@@ -455,6 +580,8 @@ export type SweepCandidate = {
   /** merged / squash-merged into the trunk, or stale (its directory is gone). */
   reason: MergeProof | "stale";
   bytes: number;
+  /** Untracked old-runtime `.workit/` markers deleted before the worktree goes. */
+  markers?: string[];
 };
 
 export type SweepKept = { path: string; branch: string | null; reason: string };
@@ -563,14 +690,24 @@ export function sweepWorktrees(
       );
       continue;
     }
-    const held = keepReason(entry.path, regenerable);
-    if (held) {
-      keep(held.reason);
+    const live = liveHold(entry.path, { env, session: options.actor.session });
+    if (live) {
+      keep(live);
       continue;
     }
-    // A worktree with no landed work of its own (detached, or a branch never
-    // committed to) may be a live worker's fresh slice or a session's scratch base.
-    const finished = (branch && (gone.has(branch) || committedOn(cwd, branch))) || false;
+    const state = keepReason(entry.path, regenerable);
+    if (state.held) {
+      keep(state.held.reason);
+      continue;
+    }
+    // A worktree with no landed work of its own (a branch never committed to)
+    // may be a live worker's fresh slice. A detached Workit worktree on a
+    // trunk commit is a finished checkout (detached once its branch merged):
+    // the live guard above protects one in use.
+    const detachedOnTrunk =
+      !branch && proof === "merged" && (place === "managed" || isFanoutWorktree(entry.path));
+    const finished =
+      detachedOnTrunk || (branch && (gone.has(branch) || committedOn(cwd, branch))) || false;
     if (!finished && Date.now() - lastUsedMs(entry.path) < FRESH_MS) {
       keep("no commits of its own and used in the last 24 hours");
       continue;
@@ -580,6 +717,7 @@ export function sweepWorktrees(
       place,
       reason: proof,
       bytes: directoryBytes(entry.path),
+      ...(state.markers.length ? { markers: state.markers } : {}),
     });
   }
   const sweptBranches = new Set(out.removable.map((entry) => entry.branch).filter(Boolean));
@@ -608,6 +746,10 @@ export function sweepWorktrees(
   for (const candidate of out.removable) {
     if (candidate.reason === "stale") {
       stale = true;
+      continue;
+    }
+    if (!dropMarkers(candidate.path, candidate.markers ?? [])) {
+      out.notes.push(`could not remove ${candidate.path}: its .workit/ changed meanwhile`);
       continue;
     }
     const removed = gitRun(cwd, ["worktree", "remove", candidate.path], SLOW);
@@ -662,3 +804,224 @@ const deleteBranch = (cwd: string, branch: string, out: WorktreeSweep): void => 
   if (deleted.ok) out.deletedBranches.push(branch);
   else out.notes.push(`could not delete local ${branch}: ${firstLine(deleted.stderr)}`);
 };
+
+/** The forge calls the branch sweep makes; a ResolvedForge fits. */
+export type BranchForge = {
+  forge: Pick<Forge, "findPr" | "prMeta">;
+  headRepo: string;
+  headProjectId: number | null;
+};
+
+export type BranchSweep = {
+  apply: boolean;
+  trunk: string | null;
+  /** Why the merged-PR check did not run (no forge access), or null when it did. */
+  forgeSkipped: string | null;
+  /** Local branches proven merged: gc deletes them (with --apply) or would. */
+  deletable: { name: string; tip: string; reason: string }[];
+  kept: { name: string; reason: string }[];
+  /** --apply only: what went. */
+  deleted: string[];
+  notes: string[];
+  recorded: { id: string } | { error: string } | null;
+};
+
+/**
+ * The branches the workspace keeps receiving work on: the trunk and default
+ * target, git-flow develop and production, every release track's branches,
+ * and the policy's protected names. Never swept.
+ */
+function longLived(cwd: string, trunkName: string): (name: string) => boolean {
+  const names = new Set([trunkName]);
+  try {
+    const target = resolveBranchPolicyFor(cwd).defaultTargetBranch;
+    if (typeof target === "string" && target) names.add(target);
+  } catch {
+    // an unreadable policy adds nothing; isProtectedTarget fails closed below
+  }
+  const flow = gitFlowOf(cwd);
+  if (flow) for (const name of [flow.develop, flow.production]) names.add(name);
+  for (const name of trackBranches(workspaceReleaseTracks(cwd).tracks)) names.add(name);
+  return (name) => names.has(name) || isProtectedTarget(cwd, name);
+}
+
+/** When `branch` last moved (its newest reflog entry, else its tip's commit time), in ms. */
+const branchMovedMs = (cwd: string, branch: string): number => {
+  const reflog = gitRun(cwd, [
+    "log",
+    "-g",
+    "-n",
+    "1",
+    "--date=unix",
+    "--format=%gd",
+    `refs/heads/${branch}`,
+    "--",
+  ]);
+  const stamp = reflog.ok ? /@\{(\d+)\}/u.exec(reflog.stdout)?.[1] : undefined;
+  if (stamp) return Number(stamp) * 1000;
+  const commit = gitRun(cwd, ["log", "-n", "1", "--format=%ct", `refs/heads/${branch}`, "--"]);
+  return commit.ok ? Number(commit.stdout.trim()) * 1000 || 0 : 0;
+};
+
+/** Commits on `tip` that are not on `trunk` by patch id (`git cherry` `+` lines); null when git cannot say. */
+const unlandedCommits = (cwd: string, trunk: string, tip: string): number | null => {
+  const cherry = gitRun(cwd, ["cherry", trunk, tip]);
+  return cherry.ok ? cherry.stdout.split("\n").filter((line) => line.startsWith("+")).length : null;
+};
+
+type PrProof = { proof: string } | { keep: string } | null;
+
+/** What the forge says of `name` at `tip`: a merged PR into the trunk or a policy branch, an open PR, or nothing. */
+function prProof(
+  cwd: string,
+  forge: BranchForge,
+  name: string,
+  tip: string,
+  trunkName: string,
+  isLongLived: (name: string) => boolean,
+): PrProof {
+  const found = forge.forge.findPr(name, {
+    owner: forge.headRepo.split("/")[0] || null,
+    projectId: forge.headProjectId,
+    sha: tip,
+  });
+  if (!found.ok) return { keep: `PR lookup failed (${firstLine(found.error)})` };
+  const pr = found.data;
+  if (!pr) return null;
+  if (pr.state === "open") return { keep: `open PR #${pr.number}` };
+  if (pr.state !== "merged" || pr.headSha !== tip) return null;
+  const meta = forge.forge.prMeta(pr.number);
+  if (!meta.ok) return { keep: `PR #${pr.number} merged, but its base could not be read` };
+  const base = meta.data.base;
+  if (base === trunkName || isLongLived(base)) return { proof: `merged PR #${pr.number}` };
+  return {
+    keep: `PR #${pr.number} merged into ${base}, not ${trunkName} or a long-lived branch (a stack parent)`,
+  };
+}
+
+/**
+ * List (and with `apply`, delete) local branches whose work is on the trunk:
+ * the tip is the head of a PR merged into the trunk or a long-lived branch
+ * (forge connected), no commit is missing from the trunk by patch id (`git
+ * cherry`), or mergeProof holds. Kept and named: the trunk and long-lived
+ * policy branches, a branch checked out in any worktree (a host's
+ * `worktree-agent-*` one included), an open PR, a PR merged into a stack
+ * parent, a commit not on the trunk, and a branch with no commits of its own
+ * that moved in the last 24 hours. Deletions are recorded in one ledger row.
+ */
+export function sweepBranches(
+  cwd: string,
+  options: {
+    apply: boolean;
+    actor: LedgerActor;
+    /** null: no forge access; `forgeSkipped` names why. */
+    forge: BranchForge | null;
+    forgeSkipped?: string;
+    now?: number;
+  },
+): BranchSweep {
+  const trunkName = defaultTrunk(cwd);
+  const trunk = trunkRef(cwd, trunkName);
+  const out: BranchSweep = {
+    apply: options.apply,
+    trunk,
+    forgeSkipped: options.forge ? null : (options.forgeSkipped ?? "no forge access"),
+    deletable: [],
+    kept: [],
+    deleted: [],
+    notes: [],
+    recorded: null,
+  };
+  if (!trunk) {
+    out.notes.push(`no trunk ref for ${trunkName}; nothing can be proven merged`);
+    return out;
+  }
+  const refs = gitRun(cwd, [
+    "for-each-ref",
+    "--format=%(refname:short)%09%(objectname)",
+    "refs/heads",
+  ]);
+  if (!refs.ok) {
+    out.notes.push(`cannot list local branches: ${firstLine(refs.stderr)}`);
+    return out;
+  }
+  const checkedOut = new Map<string, string>();
+  for (const entry of listWorktrees(cwd)) {
+    const name = shortBranch(entry.branch);
+    if (name) checkedOut.set(name, entry.path);
+  }
+  const isLongLived = longLived(cwd, trunkName);
+  const now = options.now ?? Date.now();
+  const patches = new Map<string, Set<string>>();
+  for (const line of refs.stdout.split("\n")) {
+    const [name, tip] = line.split("\t");
+    if (!name || !tip || name === trunkName || name.startsWith("-")) continue;
+    const keep = (reason: string) => out.kept.push({ name, reason });
+    if (isLongLived(name)) {
+      keep("a long-lived branch of the branch policy");
+      continue;
+    }
+    const where = checkedOut.get(name);
+    if (where) {
+      keep(`checked out in ${where}`);
+      continue;
+    }
+    const unlanded = unlandedCommits(cwd, trunk, tip);
+    const own = gitRun(cwd, ["rev-list", "--count", `${trunk}..${tip}`]);
+    const noOwn = own.ok && own.stdout.trim() === "0" && !committedOn(cwd, name);
+    if (noOwn && now - branchMovedMs(cwd, name) < FRESH_MS) {
+      keep("no commits of its own and created or moved in the last 24 hours (fresh)");
+      continue;
+    }
+    const pr = options.forge
+      ? prProof(cwd, options.forge, name, tip, trunkName, isLongLived)
+      : null;
+    if (pr && "keep" in pr) {
+      keep(pr.keep);
+      continue;
+    }
+    let reason: string | null = pr?.proof ?? null;
+    if (!reason && unlanded === 0)
+      reason =
+        own.ok && own.stdout.trim() === "0"
+          ? `no commits off ${trunk}`
+          : `every commit is on ${trunk} (git cherry)`;
+    if (!reason) reason = mergeProof(cwd, tip, trunk, patches);
+    if (!reason) {
+      keep(
+        unlanded === null
+          ? `cannot tell whether its commits are on ${trunk}`
+          : `${unlanded} commit${unlanded === 1 ? "" : "s"} not on ${trunk} by patch id`,
+      );
+      continue;
+    }
+    out.deletable.push({ name, tip, reason });
+  }
+  if (!options.apply) return out;
+  for (const entry of out.deletable) {
+    const current = gitRun(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${entry.name}`]);
+    if (!current.ok || current.stdout.trim() !== entry.tip) {
+      out.notes.push(`${entry.name} moved meanwhile; kept it`);
+      continue;
+    }
+    const deleted = gitRun(cwd, ["branch", "-D", "--", entry.name]);
+    if (deleted.ok) out.deleted.push(entry.name);
+    else out.notes.push(`could not delete local ${entry.name}: ${firstLine(deleted.stderr)}`);
+  }
+  if (out.deleted.length) {
+    const row = appendObserved(cwd, {
+      type: "cleanup.removed",
+      actor: options.actor,
+      trigger: "gc --branches",
+      worktrees: [],
+      branches: out.deleted,
+      heads: Object.fromEntries(
+        out.deletable
+          .filter((entry) => out.deleted.includes(entry.name))
+          .map((entry) => [entry.name, entry.tip]),
+      ),
+    });
+    out.recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
+  }
+  return out;
+}
