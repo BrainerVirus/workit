@@ -333,8 +333,9 @@ const dropStaleDeny = (
   ownedDeny: readonly string[],
 ): void => {
   const dotted = DENY_AT[host];
+  const wanted = new Set(current);
   const stale = new Set(
-    ownedDeny.filter((entry) => isNativeDeny(host, dotted, entry) && !current.includes(entry)),
+    ownedDeny.filter((entry) => isNativeDeny(host, dotted, entry) && !wanted.has(entry)),
   );
   const at = valueAt(config, dotted);
   const value = at?.parent[at.key];
@@ -1200,15 +1201,13 @@ export function nativeDenyHealth(
   const config = value ?? {};
   const dotted = DENY_AT[host];
   const expected = nativeDenyEntries(host, guarded);
-  const present = denyEntriesAt(config, dotted);
-  const owned = recorded ? ownedList(readOwnership(options).hosts[host]?.owned, dotted) : null;
-  const stale = present.filter(
-    (entry) =>
-      isNativeDeny(host, dotted, entry) &&
-      !expected.includes(entry) &&
-      owned?.includes(entry) === true,
+  const wanted = new Set(expected);
+  const present = new Set(denyEntriesAt(config, dotted));
+  const owned = new Set(ownedList(readOwnership(options).hosts[host]?.owned, dotted));
+  const stale = [...present].filter(
+    (entry) => isNativeDeny(host, dotted, entry) && !wanted.has(entry) && owned.has(entry),
   );
-  const missing = expected.filter((entry) => !present.includes(entry));
+  const missing = expected.filter((entry) => !present.has(entry));
   const sandbox =
     host === "claude-code"
       ? `sandbox ${valueFrom(config, "sandbox", "enabled") === true ? "on" : "off"}`
