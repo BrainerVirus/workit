@@ -502,13 +502,20 @@ library passes it, and real unforgeability needs another OS principal.
   `updatedInput` that prefixes `WORKIT_APPROVAL_TICKET=<random>` to that one
   call (claude 2.1.323 keeps an asking hook's `updatedInput`); the store keeps
   only the ticket's sha256 with the call's argv and content hashes (words plus
-  the bytes of each file it names) for 10 minutes, a newer ask for the same
+  the bytes of each file it names) for 2 minutes, a newer ask for the same
   call closes older ones, and the verb uses it once. A wrapped call (pipe,
   chain, redirect, `bash -c`, variable, leading `cd`) is denied with the plain
-  form. L (D18): the hook's output, ticket included, is in the host transcript,
-  so an agent that reads its own transcript could replay a rejected prompt's
-  call until the row is used, expires or is replaced. U: the launcher fast
-  path must send these calls to the runtime (follow-up of #864). For `workit
+  form. The launcher sends these calls to the runtime (`bin/workit-hook.mjs`
+  `WORKIT_INLINE_ASK`), and any tool input naming `WORKIT_APPROVAL_TICKET` or
+  `WORKIT_APPROVAL_UNASKED` too. Replay: only the hook's rewrite carries a
+  ticket. A shell command naming either (quotes and backslashes removed) is
+  denied by the shell gate every host runs (`ytrackGate`, also OpenCode's
+  `permission.evaluate`), and a `Write`/`Edit` (Pi `write`/`edit`) whose input
+  names either is denied, so the rewritten command copied from the
+  transcript cannot be run again. L (D18): a name built at run time (`A=WORKIT_APPROVAL;
+  export ${A}_TICKET=…`) or a file written by an interpreter is not read;
+  Codex's and Cursor's launchers do not route the names (no ticket is ever
+  minted there). For `workit
   approve <id>`: `PreToolUse` asks with the request rendered from the
   store and writes `asked` (one hash per id) in `default`, `acceptEdits`,
   `plan` and `auto` (auto mode's classifier never answers a hook's ask: the

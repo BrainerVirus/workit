@@ -63,7 +63,7 @@ command and no id.
    of every file they name). A wrapped call is denied with the plain form.
 2. In a mode where a person answers (Claude Code `default`, `acceptEdits`, `plan`, `auto`; Pi TUI
    after Approve), it records an `inline` row `{ sha256(ticket), kind, argvHash, contentHash, host,
-   session, toolUseId, expires: +10 min }`, closes every older unused row for the same call and
+   session, toolUseId, expires: +2 min }`, closes every older unused row for the same call and
    content, and runs the call with `WORKIT_APPROVAL_TICKET=<ticket>` in front (Claude Code:
    `permissionDecision: "ask"` plus `updatedInput`, which claude 2.1.323 keeps on an ask; Pi: the
    mutable `tool_call` input).
@@ -75,11 +75,15 @@ command and no id.
 
 Security binding (ruling mwf7pjfs): an asked row is consumed only by its own call. A script,
 `bash -c`, an MCP tool or a second call has no ticket; the store holds only the ticket's hash, so
-the row on disk cannot be replayed. Residual risk (D18): the hook's output, ticket included, is
-written to the host's transcript, so an agent that reads its own transcript and replays the exact
-call with the exact content before the row is used, expires (10 minutes) or is replaced by a newer
-ask could post a text whose prompt was rejected. On Pi the row is written only after Approve, so a
-rejected dialog leaves nothing. Closing it needs a recorder running as another OS principal.
+the row on disk cannot be replayed. The hook's output, ticket included, is written to the host's
+transcript, so a rejected prompt's rewritten command could be copied from it: every host's shell
+gate denies a command naming `WORKIT_APPROVAL_TICKET` or `WORKIT_APPROVAL_UNASKED` (quotes and
+backslashes removed; prefix, `export`, `env`, `bash -c`, a heredoc), and a `Write`/`Edit` whose input
+names either is denied, so the only way a ticket reaches a verb is the hook's own rewrite. The row
+lives 2 minutes. Residual risk (D18): a name the agent builds at run time, or a script written by an
+interpreter, is not read; such a replay must also land before the row is used, expires or is
+replaced by a newer ask. On Pi the row is written only after Approve, so a rejected dialog leaves
+nothing. Closing it fully needs a recorder running as another OS principal.
 
 ## Request shape
 

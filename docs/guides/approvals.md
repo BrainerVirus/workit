@@ -1,51 +1,72 @@
 # Approvals
 
-Some Workit actions need your yes even when an agent runs them. When a Workit
-verb needs one and finds none, it writes a request and refuses:
+Some Workit actions need your yes even when an agent runs them. A yes typed in
+the chat never counts: your host's prompt or your own terminal records it.
+
+## One click on the action itself
+
+A YouTrack write (`workit youtrack note`, `time`, `meeting`, `update`,
+`create`) asks you on that very call:
+
+- **Claude Code** (`default`, `acceptEdits`, `plan` and auto mode): the
+  permission prompt on the `workit youtrack …` call shows the whole text it
+  will post (a long one ends with "N more lines"). Yes posts it in that call,
+  once. There is no id and nothing to type.
+- **Pi** (TUI): a dialog on the call shows the whole text. Approve once posts
+  it in that call; Reject posts nothing.
+
+Your yes covers that one call with exactly that text and those files. It is
+used once and lasts two minutes. In `bypassPermissions`, `dontAsk`,
+`claude -p` or the SDK nobody sees a prompt, so nothing is approved and the
+call says which mode it ran in.
+
+The agent must run the call as its own plain command, with no pipe, chain,
+redirect, `cd`, variable or `bash -c` around it; otherwise the host cannot
+show it to you, and Workit denies the call and names the plain form. Only the
+host's prompt can approve a call: a command or file of the agent's that names
+Workit's approval ticket is refused.
+
+## Hosts with no prompt on the action
+
+On OpenCode, Codex, Cursor and Pi print or RPC mode, the call records one
+request for that text and refuses:
 
 ```text
-approval_needed: workit git push --release 4.5.0 needs the user's yes. approve: run `workit approve ap_k3m7q2xa` now with your shell tool, as its own call with no cd, pipe or redirect; never ask the user to type it: your call makes the host ask them, and only their answer approves
+approval_needed: nothing was posted. approve: ask the user to run `workit approve` in a terminal (it shows the full text and asks y/N), then run this call again
 ```
 
-The agent then runs `workit approve ap_k3m7q2xa`. Your host shows you what
-Workit stored for that request: the action, its target, what happens on yes,
-the subject it binds to and a hash prefix. Your answer is recorded by the host,
-never by the agent. The verb then runs again and uses your yes once.
+Run it in a real terminal, outside any agent:
 
-No verb asks for an approval yet: this release ships the channel, and the
-release-notes, first-push, model-override and grant-change checks use it in
-later releases.
+```bash
+workit approve
+```
+
+It shows the full request and asks you to confirm with `y`. The agent's next
+run uses your yes once. When several requests wait, `workit approve` lists
+them and the refusal names the one to approve (`workit approve ap_k3m7q2xa`).
+Refusing the same text again reuses its request: one text, one id. In an
+agent's shell, or without a terminal, `workit approve` shows the request and
+records nothing.
+
+## Other approvals
+
+A Workit verb that decides inside its run writes a request and refuses the
+same way. On Claude Code and Pi the agent may run `workit approve <id>`
+itself: the host asks you on that call and records your answer (on Claude
+Code also in auto mode). Grant raises and the workspace seal stay a terminal
+step.
 
 ## Rules
 
 - One yes covers one run of exactly what you saw. A change to the subject (a
   one-byte draft edit) needs a new yes (`approval_stale`); a second run needs
   a new one too (`approval_consumed`).
-- A request lasts 30 minutes; your yes lasts 15 minutes.
+- A request lasts 30 minutes; a yes recorded by `workit approve` lasts 15
+  minutes; a yes on the action itself is used in that call.
 - `workit approve ap_a ap_b` asks once for several requests, for example one
   per repo of a multi-repo release.
-- A yes typed in the chat never counts.
 - Requests and approvals live in `<state dir>/approvals/`. Agents cannot edit
   that directory: Workit's hooks deny it on every host.
-
-## Per host
-
-| Host | How you answer |
-| --- | --- |
-| Claude Code | The permission prompt on the `workit approve` call. Yes records it in the `default`, `acceptEdits` and `plan` modes; auto mode, `bypassPermissions`, `dontAsk`, `claude -p` and the SDK record nothing. |
-| Pi | A dialog in the TUI: Approve once, Reject or Edit. Print and RPC modes use the terminal. |
-| OpenCode, Codex, Cursor | Your own terminal (below), until their prompts are verified. |
-
-## In your terminal
-
-Every host can use this. Outside any agent, in a real terminal:
-
-```bash
-workit approve ap_k3m7q2xa
-```
-
-It shows the same request and asks you to confirm with `y`. In an agent's
-shell, or without a terminal, it shows the request and records nothing.
 
 The terminal check stops an honest agent from approving its own action. It is
 not a sandbox: the host's prompt on the call is the hard boundary (see
