@@ -134,20 +134,36 @@ export const resetRefusalHome = (): void => {
   memoHome = undefined;
 };
 const memoizedHome = (): string | null => {
-  memoHome ??= { value: accountHomeLookup.resolve() };
-  return memoHome.value;
+  if (memoHome !== undefined) return memoHome.value;
+  const value = accountHomeLookup.resolve();
+  // A null (no record answered) is retried: it is never cached as "no home".
+  if (value !== null) memoHome = { value };
+  return value;
 };
 
 const MAX_LINKS = 40;
 
-/** `file` with every symlink component (dangling or not) followed, capped. */
+/** Thrown past the link cap: testRunWriteRefusal fails closed (refuses). */
+class LinkLoop extends Error {}
+
+/**
+ * `file` with every symlink component (dangling or not) followed, in order:
+ * a `..` applies to the already-resolved parent, never lexically before a
+ * link is followed. Past MAX_LINKS it throws LinkLoop.
+ */
 const followLinks = (file: string): string => {
-  let pending = path.resolve(file).split(path.sep);
-  let cur = pending.shift() || path.sep;
-  if (/^[A-Za-z]:$/u.test(cur)) cur += path.sep;
+  const abs = path.isAbsolute(file) ? file : path.join(process.cwd(), file);
+  const root = path.parse(abs).root;
+  const pending = abs.slice(root.length).split(/[\\/]+/u);
+  let cur = root;
   let links = 0;
   while (pending.length > 0) {
     const part = pending.shift()!;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      cur = path.dirname(cur);
+      continue;
+    }
     const next = path.join(cur, part);
     let target: string | undefined;
     try {
@@ -157,13 +173,13 @@ const followLinks = (file: string): string => {
     }
     if (target === undefined) {
       cur = next;
-    } else {
-      links += 1;
-      if (links > MAX_LINKS) return path.resolve(file);
-      const full = path.resolve(cur, target);
-      pending.unshift(...full.split(path.sep).slice(1));
-      cur = path.parse(full).root;
+      continue;
     }
+    links += 1;
+    if (links > MAX_LINKS) throw new LinkLoop(file);
+    const absolute = path.isAbsolute(target);
+    if (absolute) cur = path.parse(target).root;
+    pending.unshift(...target.slice(absolute ? cur.length : 0).split(/[\\/]+/u));
   }
   return cur;
 };
@@ -180,7 +196,7 @@ const resolvedPath = (file: string): string => {
     // native: Windows 8.3 short names (C:\Users\RUNNER~1) resolve to the long one.
     return path.join(realpathSync.native(dir), ...rest);
   } catch {
-    return path.resolve(file);
+    return path.join(dir, ...rest);
   }
 };
 
@@ -214,6 +230,15 @@ export const testRunWriteRefusal = (
         ? refusedHome.value
         : memoizedHome();
   if (account === null) return null;
+  try {
+    return judgeWrite(file, account, tempDir);
+  } catch (error) {
+    if (!(error instanceof LinkLoop)) throw error;
+    return `refusing to write ${file}: too many symlinks to judge (${TEST_RUN_ENV}, #859)`;
+  }
+};
+
+const judgeWrite = (file: string, account: string, tempDir: string): string | null => {
   const homeEnv = { HOME: account, USERPROFILE: account };
   const roots = [
     ...[
