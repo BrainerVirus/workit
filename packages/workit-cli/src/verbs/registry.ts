@@ -777,7 +777,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "release",
     group: "delivery",
     summary:
-      "git-flow releases without the git-flow binary: start a local release branch, finish it (merge, tag, merge back, push, forge release), publish it only when asked",
+      "git-flow releases without the git-flow binary: make a release locally, finish it (merge, tag, merge back, push, forge release), publish it, tag packages",
     subcommands: [
       {
         name: "start",
