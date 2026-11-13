@@ -3,7 +3,9 @@
 // rewrite workspaces.json. The seal is checked when authority is read, however
 // the file was written: `<account config dir>/workspaces.json.seal` holds the
 // digest of the authority fields of every entry, and the last sealed values
-// themselves. Only the user's terminal writes it (`workit workspace seal`).
+// themselves. The user's terminal writes it (`workit workspace seal`); a
+// writer reseals only where autonomy.ts sealAfterWrite allows. A missing seal
+// counts as the D4 defaults sealed.
 // Threat model (D18): a writer who also forges the seal passes it; the
 // storage is one file so a principal outside the agent's OS user (#815) can
 // own it later.

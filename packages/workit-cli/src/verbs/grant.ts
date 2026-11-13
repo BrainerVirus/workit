@@ -24,6 +24,11 @@
 // markers below or writes the file itself can get past it. The host's own
 // permission prompt (deny or ask on `workit grant set` and on edits under
 // ~/.config/workit) is the hard boundary.
+//
+// A write reseals workspaces.json.seal (#819) at the user's terminal when the
+// seal matched before, and anywhere when it only lowers the sealed values;
+// otherwise the terminal shows the change and offers to seal, and the output
+// names `workit workspace seal` (autonomy.ts sealAfterWrite).
 import {
   DEFAULT_ENDPOINT,
   DEFAULT_ENDPOINTS,
