@@ -18,6 +18,12 @@ import { failure, success, type ForgeResult } from "../forge/types";
 import { vcsConfig } from "../core/vcs-config";
 import { trackBranchName } from "../core/release-tracks";
 import { resolveChangelogPaths } from "../core/changelog-gate";
+import {
+  packageChangelogFile,
+  packageOfTag,
+  workspaceReleasePackages,
+  type ReleasePackage,
+} from "../core/release-packages";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -350,18 +356,11 @@ const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean 
   git(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]).ok;
 
 /**
- * The changelog section for `version` at `ref` (`file`: the first file the
- * workspace's changelogPath resolves to at `ref`, default CHANGELOG.md): a `## [1.4.0]`, `## 1.4.0` or
+ * The section for `version` in `file` at `ref`: a `## [1.4.0]`, `## 1.4.0` or
  * `# [1.4.0](…)` heading (a `v` before the version is fine), up to the next
  * heading of the same or a higher level. Null without one.
  */
-export function changelogSection(
-  cwd: string,
-  ref: string,
-  version: string,
-  file: string | undefined = resolveChangelogPaths(cwd, workspaceChangelog(cwd).paths, ref)[0],
-): string | null {
-  if (!file) return null;
+function sectionIn(cwd: string, ref: string, file: string, version: string): string | null {
   const shown = git(cwd, ["show", `${ref}:${file}`]);
   if (!shown.ok) return null;
   const lines = shown.stdout.split(/\r?\n/u);
@@ -383,6 +382,60 @@ export function changelogSection(
     .join("\n")
     .trim();
   return body || null;
+}
+
+/**
+ * The changelog section for `version` at `ref` (`file`, else every file the
+ * workspace's changelogPath resolves to at `ref`, default CHANGELOG.md). Of
+ * several files with that version, one no release package claims
+ * (packageChangelogFile) wins, then the first. Null without one.
+ */
+export function changelogSection(
+  cwd: string,
+  ref: string,
+  version: string,
+  file?: string,
+): string | null {
+  if (file) return sectionIn(cwd, ref, file, version);
+  const files = resolveChangelogPaths(cwd, workspaceChangelog(cwd).paths, ref);
+  const claimed = new Set(
+    workspaceReleasePackages(cwd).packages.map((entry) =>
+      packageChangelogFile(cwd, ref, entry, files),
+    ),
+  );
+  let fallback: string | null = null;
+  for (const candidate of files) {
+    const section = sectionIn(cwd, ref, candidate, version);
+    if (section === null) continue;
+    if (!claimed.has(candidate)) return section;
+    fallback ??= section;
+  }
+  return fallback;
+}
+
+/**
+ * Why a package's notes have no changelog section, or null when they have
+ * one: the file looked at, or that none resolved.
+ */
+export const missingSectionNote = (
+  ctx: { tag: string; version: string; changelog: string | null; changelogFile?: string | null },
+  name: string,
+): string | null =>
+  ctx.changelog
+    ? null
+    : ctx.changelogFile
+      ? `no ## [${ctx.version}] section in ${ctx.changelogFile}: the notes of ${ctx.tag} carry no changelog section`
+      : `no changelog resolved for release package ${name} (set releasePackages.${name}.changelogPath): the notes of ${ctx.tag} carry no changelog section`;
+
+/** A release package's changelog section for `version` at `ref`, or null. */
+export function packageChangelogSection(
+  cwd: string,
+  ref: string,
+  version: string,
+  pkg: ReleasePackage,
+): string | null {
+  const file = packageChangelogFile(cwd, ref, pkg);
+  return file ? sectionIn(cwd, ref, file, version) : null;
 }
 
 /** Preflight and state of a finish: nothing changes here except fetched remote-tracking refs. */
@@ -780,10 +833,14 @@ export type ReleaseNotesContext = {
   version: string;
   tag: string;
   track: string | null;
+  /** The release package the notes are for (`pkg-a@0.1.0`), or null for the workspace's version. */
+  package: string | null;
   mode: ReleaseNotesMode;
   /** Where the mode comes from (`track`, `workspace` or `default`). */
   modeFrom: "track" | "workspace" | "default";
   changelog: string | null;
+  /** A release package's changelog file (packageChangelogFile), null when none resolved. */
+  changelogFile?: string | null;
   /** The compare link from the previous tag, or null. */
   compare: string | null;
   previousTag: string | null;
@@ -814,18 +871,75 @@ function compareLink(
   };
 }
 
+/** The configured release package `name`, or a refusal naming the configured ones. */
+export function releasePackageNamed(cwd: string, name: string): ForgeResult<ReleasePackage> {
+  const { packages, issues } = workspaceReleasePackages(cwd);
+  const found = packages.find((entry) => entry.name === name);
+  if (found) return success(found);
+  return failure(
+    "invalid_input",
+    `no release package ${JSON.stringify(name)} (${packages.length ? `configured: ${packages.map((entry) => entry.name).join(", ")}` : "releasePackages is not set for this workspace"})${issues.length ? `; ${issues.join("; ")}` : ""}`,
+    `workit help release  # releasePackages: { "${name}": {} } in the workspace (docs/guides/configuration.md)`,
+  );
+}
+
+/**
+ * The notes of a release package's version: read at its tag when it exists
+ * here, else at HEAD (the release branch that dates its changelog), from the
+ * package's changelog; the workspace's own line and releaseNotes mode.
+ */
+function packageNotesContext(
+  cwd: string,
+  pkg: ReleasePackage,
+  version: string,
+): ReleaseNotesContext {
+  const line = releaseLinesOf(cwd)[0];
+  const tag = `${pkg.tagNamespace}${version}`;
+  const ref = resolveRef(cwd, `refs/tags/${tag}`) ? tag : "HEAD";
+  const mode = workspaceReleaseNotes(cwd, null);
+  return {
+    version,
+    tag,
+    track: null,
+    package: pkg.name,
+    mode: mode.mode,
+    modeFrom: mode.from,
+    changelog: packageChangelogSection(cwd, ref, version, pkg),
+    changelogFile: packageChangelogFile(cwd, ref, pkg),
+    ...compareLink(cwd, line.production, pkg.tagNamespace, version, tag),
+  };
+}
+
 /**
  * What the notes of `version` are built from: its release branch when one is
  * here (or the tag once finished, else HEAD), the line's tag prefix, and the
- * workspace's (or release track's) releaseNotes mode.
+ * workspace's (or release track's) releaseNotes mode. A release package's tag
+ * (`pkg-a@0.1.0`) or `package` reads that package's changelog instead.
  */
 export function releaseNotesContext(
   cwd: string,
-  input: { version: string; track?: string | null },
+  input: { version: string; track?: string | null; package?: string | null },
 ): ForgeResult<ReleaseNotesContext> {
-  const version = input.version.trim();
+  let version = input.version.trim();
+  let pkg: ReleasePackage | null = null;
+  const { packages } = workspaceReleasePackages(cwd);
+  if (input.package) {
+    const named = releasePackageNamed(cwd, input.package);
+    if (!named.ok) return named;
+    pkg = named.data;
+  } else {
+    const owned = packageOfTag(version, packages);
+    if (owned) ({ pkg, version } = owned);
+  }
   if (!validVersion(version))
-    return failure("invalid_input", `${JSON.stringify(version)} is not a version (e.g. 1.4.0)`);
+    return failure(
+      "invalid_input",
+      `${JSON.stringify(version)} is not a version (e.g. 1.4.0)${packages.length && !pkg ? ` or a release package tag (${packages.map((entry) => `${entry.tagNamespace}<version>`).join(", ")})` : ""}`,
+    );
+  if (pkg) {
+    if (input.track) return failure("invalid_input", "--track does not apply to a release package");
+    return success(packageNotesContext(cwd, pkg, version));
+  }
   const located = locate(cwd, version, input.track ?? null);
   let line: ReleaseLine;
   let ref = "HEAD";
@@ -847,6 +961,7 @@ export function releaseNotesContext(
     version,
     tag,
     track: line.track,
+    package: null,
     mode: mode.mode,
     modeFrom: mode.from,
     changelog: changelogSection(cwd, ref, version),
@@ -854,23 +969,43 @@ export function releaseNotesContext(
   });
 }
 
-/** Where the draft of `version` lives: the git common dir, never committed. */
-export const releaseNotesDraftPath = (cwd: string, version: string): string | null => {
+/**
+ * Where the draft of `version` lives: the git common dir, never committed. A
+ * release package's draft is keyed by its full tag (`packages/pkg-a@0.1.0.md`),
+ * so it never meets the workspace version's `0.1.0.md`.
+ */
+export const releaseNotesDraftPath = (
+  cwd: string,
+  version: string,
+  packageTag?: string | null,
+): string | null => {
   const common = gitCommonDir(cwd);
-  return common ? path.join(common, "workit", "release-notes", `${version}.md`) : null;
+  if (!common) return null;
+  const dir = path.join(common, "workit", "release-notes");
+  return packageTag
+    ? path.join(dir, "packages", `${packageTag.replaceAll("/", "%2F")}.md`)
+    : path.join(dir, `${version}.md`);
 };
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 export type ReleaseNotesDraft = { path: string; notes: string; sha256: string };
 
-/** The draft of `version`, or null when none was written. */
-export function readReleaseNotesDraft(cwd: string, version: string): ReleaseNotesDraft | null {
-  const file = releaseNotesDraftPath(cwd, version);
+/** The draft of `version` (of the release package tagged `packageTag`), or null when none was written. */
+export function readReleaseNotesDraft(
+  cwd: string,
+  version: string,
+  packageTag?: string | null,
+): ReleaseNotesDraft | null {
+  const file = releaseNotesDraftPath(cwd, version, packageTag);
   if (!file || !existsSync(file)) return null;
   const notes = readFileSync(file, "utf8");
   return { path: file, notes, sha256: sha256(notes) };
 }
+
+/** The tag a package's draft is keyed by; null for the workspace's version. */
+const packageTagOf = (context: { package?: string | null; tag: string }): string | null =>
+  context.package ? context.tag : null;
 
 /**
  * Write the draft of `version` from its changelog section. An existing
@@ -881,12 +1016,13 @@ export function writeReleaseNotesDraft(
   context: ReleaseNotesContext,
   options: { reset?: boolean } = {},
 ): ForgeResult<ReleaseNotesDraft & { keptHighlights: boolean }> {
-  const file = releaseNotesDraftPath(cwd, context.version);
+  const packageTag = packageTagOf(context);
+  const file = releaseNotesDraftPath(cwd, context.version, packageTag);
   if (!file) return failure("invalid_input", "not a git repository: nowhere to keep the draft");
-  const existing = options.reset ? null : readReleaseNotesDraft(cwd, context.version);
+  const existing = options.reset ? null : readReleaseNotesDraft(cwd, context.version, packageTag);
   const highlights = existing ? highlightsOf(existing.notes) : null;
   const notes = renderReleaseNotes({
-    version: context.version,
+    version: packageTag ?? context.version,
     changelog: context.changelog,
     highlights,
     compare: context.compare,
@@ -901,13 +1037,19 @@ export function writeReleaseNotesDraft(
   });
 }
 
-/** The newest `release.notes.approved` row of `version`, or null. */
+/** The newest `release.notes.approved` row of `version` (of the package tagged `packageTag`), or null. */
 export function latestReleaseNotesApproval(
   cwd: string,
   version: string,
+  packageTag?: string | null,
 ): { sha256: string } | null {
   const row = releaseRows(cwd).findLast(
-    (entry) => entry.type === "release.notes.approved" && entry.version === version,
+    (entry) =>
+      entry.type === "release.notes.approved" &&
+      entry.version === version &&
+      (packageTag
+        ? entry.package !== undefined && entry.tag === packageTag
+        : entry.package === undefined),
   );
   return row && typeof row.sha256 === "string" ? { sha256: row.sha256 } : null;
 }
@@ -916,12 +1058,13 @@ export function latestReleaseNotesApproval(
 export function recordReleaseNotesApproval(
   cwd: string,
   actor: LedgerActor,
-  draft: ReleaseNotesDraft & { version: string; tag: string },
+  draft: ReleaseNotesDraft & { version: string; tag: string; package?: string | null },
 ): void {
   record(cwd, actor, {
     type: "release.notes.approved",
     version: draft.version,
     tag: draft.tag,
+    ...(draft.package ? { package: draft.package } : {}),
     sha256: draft.sha256,
     path: draft.path,
   });
@@ -940,11 +1083,14 @@ export type ReleaseNotesDecision =
 /**
  * What finish publishes as the forge release body: nothing under `off`; the
  * draft (else the notes built from the changelog) under `auto`; under
- * `review` only the draft whose hash the newest approval names.
+ * `review` only the draft whose hash the newest approval names. A release
+ * package's draft and approval are keyed by its tag.
  */
 export function releaseNotesDecision(
   cwd: string,
-  plan: Pick<FinishPlan, "version" | "track" | "tag" | "tagPrefix" | "production" | "changelog">,
+  plan: Pick<FinishPlan, "version" | "track" | "tag" | "tagPrefix" | "production" | "changelog"> & {
+    package?: string | null;
+  },
 ): ReleaseNotesDecision {
   const setting = workspaceReleaseNotes(cwd, plan.track);
   const where =
@@ -955,23 +1101,25 @@ export function releaseNotesDecision(
       mode: "off",
       reason: `releaseNotes is off (${where}): no forge release`,
     };
-  const draft = readReleaseNotesDraft(cwd, plan.version);
+  const packageTag = packageTagOf(plan);
+  const label = packageTag ?? plan.version;
+  const draft = readReleaseNotesDraft(cwd, plan.version, packageTag);
   if (setting.mode === "review") {
-    const approved = latestReleaseNotesApproval(cwd, plan.version);
-    const draftCmd = `workit release notes draft ${plan.version}`;
-    const approveCmd = `workit release notes approve ${plan.version}`;
+    const approved = latestReleaseNotesApproval(cwd, plan.version, packageTag);
+    const draftCmd = `workit release notes draft ${label}`;
+    const approveCmd = `workit release notes approve ${label}`;
     if (!draft)
       return {
         publish: false,
         mode: "review",
-        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and ${plan.version} has no draft`,
+        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and ${label} has no draft`,
         unblock: `${draftCmd}  # write the Highlights, show the user, then ask the user to run, in a terminal outside the agent host: ${approveCmd}`,
       };
     if (!approved || approved.sha256 !== draft.sha256)
       return {
         publish: false,
         mode: "review",
-        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and the draft of ${plan.version} (${draft.path}) ${approved ? "changed after the user approved it" : "is not approved"}`,
+        blocked: `release_notes_unapproved: releaseNotes is review (${where}) and the draft of ${label} (${draft.path}) ${approved ? "changed after the user approved it" : "is not approved"}`,
         unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${approveCmd}  # the draft: ${draftCmd}`,
       };
     return {
@@ -987,7 +1135,7 @@ export function releaseNotesDecision(
     mode: "auto",
     source: "changelog",
     body: renderReleaseNotes({
-      version: plan.version,
+      version: label,
       changelog: plan.changelog,
       compare: compareLink(cwd, plan.production, plan.tagPrefix, plan.version, plan.tag).compare,
     }),
@@ -997,7 +1145,7 @@ export function releaseNotesDecision(
 /**
  * The notes decision for a release tag `workit git push --release` pushes
  * (the release PR path: the tag is made after the PR merged). The changelog
- * section is read at the tag.
+ * section is read at the tag: a release package's from its own changelog.
  */
 export function releaseNotesForTag(
   cwd: string,
@@ -1007,14 +1155,203 @@ export function releaseNotesForTag(
     version: string;
     track: string | null;
     tagPrefix: string;
+    package?: string;
   },
 ): ReleaseNotesDecision {
+  const ref = `refs/tags/${tag.name}`;
+  const pkg = tag.package
+    ? workspaceReleasePackages(cwd).packages.find((entry) => entry.name === tag.package)
+    : undefined;
   return releaseNotesDecision(cwd, {
     version: tag.version,
     track: tag.track,
     tag: tag.name,
     tagPrefix: tag.tagPrefix,
     production: tag.production,
-    changelog: changelogSection(cwd, `refs/tags/${tag.name}`, tag.version),
+    package: tag.package ?? null,
+    changelog: pkg
+      ? packageChangelogSection(cwd, ref, tag.version, pkg)
+      : changelogSection(cwd, ref, tag.version),
   });
+}
+
+// ---------------------------------------------------------------------------
+// release packages: a package's own tag on the workspace's release commit
+
+export type PackageReleasePlan = {
+  package: string;
+  version: string;
+  tag: string;
+  /** The package's tag namespace (`pkg-a@`). */
+  tagPrefix: string;
+  /** Packages ride the workspace's own line, never a track. */
+  track: null;
+  /** What `--at` named, or the workspace release tag it defaulted to. */
+  at: string;
+  /** The commit the tag marks. */
+  target: string;
+  production: string;
+  remote: string | null;
+  changelog: string | null;
+  /** The package's changelog file (packageChangelogFile), null when none resolved. */
+  changelogFile: string | null;
+};
+
+/**
+ * The newest workspace release tag (`<prefix><digit…>`, no package or track
+ * tag) the remote production branch has, after fetching it; null without one.
+ */
+function newestReleaseTag(
+  cwd: string,
+  remote: string,
+  production: string,
+  prefix: string,
+): ForgeResult<string | null> {
+  const fetched = fetchRefs(cwd, remote, [
+    `+refs/heads/${production}:refs/remotes/${remote}/${production}`,
+  ]);
+  if (!fetched.ok) return failure(fetched.code, fetched.error);
+  const listed = git(cwd, [
+    "tag",
+    "--list",
+    "--merged",
+    `refs/remotes/${remote}/${production}`,
+    "--sort=-v:refname",
+    `${prefix}[0-9]*`,
+  ]);
+  if (!listed.ok) return failure("failed", `git tag --merged failed: ${gitError(listed)}`);
+  const tags = listed.stdout.split("\n").filter(Boolean);
+  return success(tags.find((tag) => tag.startsWith(prefix)) ?? null);
+}
+
+/**
+ * Preflight of `workit release package <name> <version>`: the tag
+ * `<namespace><version>` on `at` (default: the newest workspace release tag
+ * on the remote production branch, the main release commit), refused when the
+ * tag exists here or on the remote. Nothing changes here except fetched
+ * remote-tracking refs.
+ */
+export function planReleasePackage(
+  cwd: string,
+  input: { name: string; version: string; at?: string | null },
+): ForgeResult<PackageReleasePlan> {
+  const named = releasePackageNamed(cwd, input.name);
+  if (!named.ok) return named;
+  const pkg = named.data;
+  const version = input.version.trim();
+  if (!validVersion(version) || !/^\d/u.test(version))
+    return failure(
+      "invalid_input",
+      `${JSON.stringify(version)} is not a version starting with a digit (e.g. 0.1.0)`,
+    );
+  const tag = `${pkg.tagNamespace}${version}`;
+  if (!git(cwd, ["check-ref-format", `refs/tags/${tag}`]).ok)
+    return failure("invalid_input", `${tag} is not a valid tag name`);
+  const line = releaseLinesOf(cwd)[0];
+  const production = line.production;
+  const remote = pushRemoteName(cwd, production);
+  let at = input.at?.trim() || null;
+  if (at?.startsWith("-")) return failure("invalid_input", `--at ${at} is not a ref`);
+  if (!at) {
+    if (!remote)
+      return failure(
+        "not_found",
+        "no push remote: name the release commit",
+        `workit release package ${pkg.name} ${version} --at <ref>`,
+      );
+    const newest = newestReleaseTag(cwd, remote, production, line.tagPrefix);
+    if (!newest.ok) return newest;
+    if (!newest.data)
+      return failure(
+        "not_found",
+        `no workspace release tag (${line.tagPrefix}<version>) is on ${remote}/${production} to tag ${tag} beside; finish the release first or name the commit`,
+        `workit release package ${pkg.name} ${version} --at <ref>`,
+      );
+    at = newest.data;
+  }
+  const target = resolveRef(cwd, at);
+  if (!target) return failure("not_found", `${at} is not a commit here`);
+  if (resolveRef(cwd, `refs/tags/${tag}`))
+    return failure(
+      "blocked",
+      `tag_exists: ${tag} already exists locally; a release tag never moves`,
+      `workit git push --release ${tag}  # when it is the right commit and not pushed yet; else tag the next version`,
+    );
+  const raw = remote ? pushUrl(cwd, remote) : null;
+  if (raw) {
+    const tip = remoteRefTip(cwd, raw, `refs/tags/${tag}`);
+    if (!tip.ok) return failure(tip.code, tip.error);
+    if (tip.sha)
+      return failure(
+        "blocked",
+        `tag_exists: ${remote} already has ${tag} at ${tip.sha.slice(0, 12)}; a release tag never moves`,
+        `git fetch ${remote} tag ${tag}  # tag the next version instead`,
+      );
+  }
+  return success({
+    package: pkg.name,
+    version,
+    tag,
+    tagPrefix: pkg.tagNamespace,
+    track: null,
+    at,
+    target,
+    production,
+    remote,
+    changelog: packageChangelogSection(cwd, target, version, pkg),
+    changelogFile: packageChangelogFile(cwd, target, pkg),
+  });
+}
+
+/** A ledger row for a release package step. */
+export function recordPackageStep(
+  cwd: string,
+  actor: LedgerActor,
+  plan: PackageReleasePlan,
+  row: ReleaseRow,
+): void {
+  record(cwd, actor, {
+    package: plan.package,
+    version: plan.version,
+    tag: plan.tag,
+    ...row,
+  });
+}
+
+/** The annotated package tag on the plan's commit (message: its changelog section), recorded. */
+export function tagReleasePackage(
+  cwd: string,
+  plan: PackageReleasePlan,
+  actor: LedgerActor,
+): ForgeResult<void> {
+  const tagged = git(cwd, [
+    "tag",
+    "-a",
+    "--cleanup=verbatim",
+    plan.tag,
+    "-m",
+    plan.changelog ?? `Release ${plan.tag}`,
+    plan.target,
+  ]);
+  if (!tagged.ok) return failure("failed", `git tag ${plan.tag} failed: ${gitError(tagged)}`);
+  recordPackageStep(cwd, actor, plan, {
+    type: "release.package_tagged",
+    head: plan.target,
+    at: plan.at,
+  });
+  return success(undefined);
+}
+
+/**
+ * After a refused push, delete the package tag this run made, when the remote
+ * provably lacks it: a rerun after fixing --at is then not blocked by
+ * tag_exists. Kept (false) when the remote has it or cannot be read.
+ */
+export function untagReleasePackage(cwd: string, plan: PackageReleasePlan): boolean {
+  const raw = plan.remote ? pushUrl(cwd, plan.remote) : null;
+  if (raw) {
+    const tip = remoteRefTip(cwd, raw, `refs/tags/${plan.tag}`);
+    if (!tip.ok || tip.sha) return false;
+  }
+  return git(cwd, ["tag", "-d", plan.tag]).ok;
 }

@@ -795,7 +795,12 @@ export function createGitHubForge(options: {
         ["api", "-X", "POST", `repos/${repo}/releases`, "--input", "-"],
         `release ${input.tag}`,
         undefined,
-        JSON.stringify({ tag_name: input.tag, name: input.name, body: input.body }),
+        JSON.stringify({
+          tag_name: input.tag,
+          name: input.name,
+          body: input.body,
+          ...(input.latest === undefined ? {} : { make_latest: input.latest ? "true" : "false" }),
+        }),
       );
       if (!created.ok) return created;
       return success({

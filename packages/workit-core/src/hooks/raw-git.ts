@@ -29,6 +29,12 @@ import path from "node:path";
 import { releaseBranch, resolveBranchPolicyFor, validateBranchNameFor } from "../core/branch";
 import { grantsMatter, rawGrantDenial, type GrantKind } from "../autonomy";
 import { releaseTagPrefixOf } from "../core/branch-policy";
+import {
+  packageOfTag,
+  packageTagShapes,
+  workspaceReleasePackages,
+  type ReleasePackage,
+} from "../core/release-packages";
 import { readConfigTyped } from "../core/config";
 import { pushTarget, remoteKey, type LazyTarget } from "../core/remotes";
 import { resolveRuntimeWorkspaceVcs } from "../core/workspaces";
@@ -1718,14 +1724,31 @@ const isTag = (facts: RefFacts, name: string): boolean =>
  * nudges (it pushes annotated tags the pushed commits already reach).
  */
 const tagRefusal = (action: PushAction, facts: RefFacts, dir: string): string | null => {
+  // A release package tag not made yet (`pkg-a@0.9.0`, no such ref here) is
+  // still a tag push, never a new branch: the config is read only for a name
+  // with a digit that is no local branch or tag.
+  let packages: ReleasePackage[] | undefined;
+  const unmade = action.targets.filter(
+    (name): name is string =>
+      name !== null &&
+      /\d/u.test(name) &&
+      !facts.tags.has(name) &&
+      !facts.heads.has(name) &&
+      packageOfTag(name, (packages ??= workspaceReleasePackages(dir).packages)) !== null,
+  );
   const tags = [
     ...(action.tags ?? []),
     ...action.targets.filter((name): name is string => name !== null && isTag(facts, name)),
+    ...unmade,
   ];
   if (!tags.length && !action.allTags) return null;
   const shape = `${releaseTagPrefixOf(dir)}<version>`;
+  const shapes = [shape, ...packageTagShapes(packages ?? workspaceReleasePackages(dir).packages)];
   const named = tags.length ? tags.join(" --release ") : shape;
-  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (${shape} tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).`;
+  const create = unmade.length
+    ? ` ${unmade.join(", ")} is not a tag here yet: create it first with ${quote(`git tag -a ${unmade[0]} -m '<notes>' <release commit>`)}, or let ${quote("workit release package <name> <version>")} tag, push and publish it.`
+    : "";
+  return `workit: raw ${quote(`git push${action.allTags ? " --tags" : ""}`)} of ${tags.length ? `tag ${tags.join(", ")}` : "tags"} bypasses the release grant. Push a release tag with ${quote(`workit git push --release ${named}`)} (${shapes.join(", ")} tags whose commit the production branch already has; a tag never moves), under the ${quote("release")} grant (if refused, ask the user to run ${quote("workit grant set <workspace> release=true")}).${create}`;
 };
 
 /** The remote's branches (`ls-remote --heads`, bounded); null when it cannot be read. */

@@ -737,6 +737,29 @@
               "required": ["productionBranch", "integrationBranch"],
               "additionalProperties": false
             }
+          },
+          "releasePackages": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^\\S(.*\\S)?$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "tagNamespace": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z@]([\\w.@/+-]*[A-Za-z_.@/+-])?$",
+                  "description": "This package's tag prefix (default `<name>@`): its tags are `<tagNamespace><version>`."
+                },
+                "changelogPath": {
+                  "type": "string",
+                  "pattern": "^(?![\\\\/]|[A-Za-z]:)(?!(?:.*[\\\\/])?\\.\\.(?:[\\\\/]|$)).*\\S",
+                  "description": "This package's changelog, repo-relative."
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "Packages released from this repository's own release line under their own tag namespace (`pkg-a@0.1.0`): keyed by package name, each `{ tagNamespace?, changelogPath? }` (default namespace `<name>@`). `workit release package <name> <version>` tags and publishes one."
           }
         },
         "required": ["name", "glob"],

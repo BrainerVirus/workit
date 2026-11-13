@@ -62,6 +62,10 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@workit-dev/core/src/core/release-tracks";
+import {
+  describeReleasePackages,
+  releasePackagesReport,
+} from "@workit-dev/core/src/core/release-packages";
 import { SEAL_COMMAND } from "@workit-dev/core/src/core/grant-seal";
 import { pushTarget } from "@workit-dev/core/src/core/remotes";
 import { roleModelIssues } from "@workit-dev/core/src/core/role-models";
@@ -398,6 +402,7 @@ function show(argv: string[], io: Io): number {
   // Release tracks ride along (read-only): which line this checkout is on
   // decides where push/pr/merge land, so the grant view shows it too.
   const tracks = releaseTracksReport(io.cwd);
+  const packages = releasePackagesReport(io.cwd);
   const tierModelIssues = [...workspaceTierModelIssues(io.cwd), ...roleModelIssues(io.cwd)];
   // Remote URLs another workspace claims (warning), or none claimed here (note, #549).
   const remotes = autonomy.note?.includes("grants are read only from")
@@ -421,6 +426,7 @@ function show(argv: string[], io: Io): number {
     ...(pushView ? { pushTarget: pushView } : {}),
     ...(remotes.notes.length ? { remoteNotes: remotes.notes } : {}),
     ...(tracks.tracks.length || tracks.error ? { releaseTracks: tracks } : {}),
+    ...(packages.packages.length || packages.issues.length ? { releasePackages: packages } : {}),
     ...(tierModelIssues.length ? { tierModelIssues } : {}),
   };
   const style = createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
@@ -465,6 +471,7 @@ function show(argv: string[], io: Io): number {
       : []),
     ...(endpointMismatch(data) ? [`note: ${endpointMismatch(data)}`] : []),
     ...describeReleaseTracks(tracks).map((line) => `  ${line}`),
+    ...describeReleasePackages(packages).map((line) => `  ${line}`),
     "raising a grant needs the user: workit grant set <workspace> <kind>=<value>",
     ...remotes.notes.map((note) => `note: ${note}`),
   ]);

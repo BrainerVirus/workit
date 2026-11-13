@@ -904,6 +904,87 @@ optional IANA `timezone` (else the process timezone). Comment text comes from
 the editable `issue-update` template (`templates/issue-update.md` overrides the
 bundled one). Work-item dates are calendar days sent as UTC midnight.
 
+## Release packages
+
+A repository that publishes several packages from one release line (git-flow
+`main` + `develop`, one `release/X.Y.Z` branch that bumps the main package
+and dates every changelog) tags each package under its own namespace on the
+same release commit: bare `4.6.0` for the main package, `pkg-a@0.1.0` and
+`pkg-b@0.2.0` beside it (bare main tags: `git config gitflow.prefix.versiontag ""`).
+Declare the packages under the workspace's `releasePackages`, keyed by
+package name:
+
+```json
+{
+  "name": "monorepo",
+  "glob": "/home/you/work/monorepo/**",
+  "branchPolicy": { "preset": "gitflow" },
+  "changelogPath": ["projects/*/CHANGELOG.md"],
+  "releasePackages": {
+    "pkg-a": {},
+    "pkg-b": { "tagNamespace": "pkg-b@", "changelogPath": "projects/pkg-b/CHANGELOG.md" }
+  }
+}
+```
+
+- `tagNamespace` (default `<name>@`): the package's tags are
+  `<tagNamespace><version>`, without the workspace's release tag prefix
+  (`pkg-a@0.1.0`, not `pkg-a@v0.1.0`). It starts with a letter or `@` and
+  does not end in a digit.
+- `changelogPath` (optional): the package's changelog. Without it, Workit
+  uses the `changelogPath` file in a directory named after the package
+  (`projects/pkg-a/CHANGELOG.md` for `pkg-a`).
+
+Packages are not release tracks: they have no branches of their own, so
+feature branches, PR targets and track resolution behave exactly as without
+them. A package tag is a release tag of the workspace's own line, with the
+same rules: `workit git push --release pkg-a@0.1.0` pushes it under the
+`release` grant only when its commit is already on the production branch, and
+a tag never moves. A raw `git push origin pkg-a@0.1.0` is denied with that
+command. An unknown field or a bad entry is reported and ignored.
+
+The flow, after `workit release start 4.6.0` and the release commit:
+
+```bash
+workit release notes draft 4.6.0             # the main version's notes
+workit release finish                        # merge, tag 4.6.0, merge back, push, forge release (Latest)
+workit release notes draft pkg-a@0.1.0       # optional: the package's notes, from its changelog
+workit release package pkg-a 0.1.0 --dry-run # the plan: tag pkg-a@0.1.0 on the 4.6.0 commit
+workit release package pkg-a 0.1.0           # tag, push, forge release (not Latest), verify
+workit release package pkg-b 0.2.0
+```
+
+`workit release package <name> <version>` tags the commit of the newest
+workspace release tag on the remote production branch (the release commit
+`finish` just pushed), or `--at <ref>`. It refuses when the tag already
+exists locally or on the remote. The push goes through
+`workit git push --release` (the `release` and `push` grants), the forge
+release follows `releaseNotes` exactly as `finish` does (`review` needs the
+approved draft of `pkg-a@0.1.0`, `off` skips it), and the release does not
+take GitHub's Latest mark unless you pass `--latest`. GitLab has no Latest
+mark, so the flag does nothing there. `workit release notes draft|show|approve`
+take the package tag (`pkg-a@0.1.0`) or `--package <name> <version>`, and keep
+the package's draft apart from the main version's.
+
+If the push is refused (`--at` names a commit production does not have yet),
+the command deletes the local tag it just made, only while the remote lacks
+it, so a rerun with the right `--at` is not blocked by `tag_exists`.
+
+Set a package from the CLI with `workit workspace set <workspace>
+releasePackages.pkg-a.changelogPath=projects/pkg-a/CHANGELOG.md` (or
+`.tagNamespace=<prefix>`; `releasePackages.pkg-a=null` removes it); a value the
+reader would ignore is refused. `workit grant show` lists each package's tag
+shape and the changelog it resolves to, and `workit doctor` warns
+(`release_packages`) on a bad entry or a package whose changelog (its
+`changelogPath`, or the one found by directory name) is no file in the
+checkout. `workit release package` and `release notes draft <pkg>@<version>`
+print a note, without blocking, when the package's changelog has no section
+for the version.
+
+With a `changelogPath` list or glob, `workit release notes draft 4.6.0` reads
+the `## [4.6.0]` section from every matching changelog and prefers one no
+package claims.
+
 ## Task store
 
 Task state lives in the git common directory, `.git/workit/` (shared by every

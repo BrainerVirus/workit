@@ -45,6 +45,7 @@ import { releaseTagPrefixOf } from "../core/branch-policy";
 import { detectCommitFlavor, matchCommitFlavor } from "../core/commit-flavors";
 import { pushTargetIsStable } from "../core/pr-create";
 import { readReleaseTracks, recordBranchBase, trackBranchName } from "../core/release-tracks";
+import { packageOfTag, packageTagShapes, workspaceReleasePackages } from "../core/release-packages";
 import { configFilePath } from "../core/config";
 import { vcsConfig, type ResolvedReleaseTrack } from "../core/vcs-config";
 import {
@@ -1488,8 +1489,12 @@ export type ReleaseRef = {
   sha: string;
   /** A tag's line production branch: the tag's commit must be on it. */
   production?: string | null;
-  /** A tag's version, line and prefix (`v` + `1.4.0`): its release notes are read from them. */
-  release?: { version: string; track: string | null; tagPrefix: string };
+  /**
+   * A tag's version, line and prefix (`v` + `1.4.0`): its release notes are
+   * read from them. `package` names a release package (`pkg-a@0.1.0`), on the
+   * workspace's own line.
+   */
+  release?: { version: string; track: string | null; tagPrefix: string; package?: string };
 };
 
 export type ReleasePushPlan = Omit<PushPlan, "branch" | "sha"> & {
@@ -1617,6 +1622,8 @@ export function releasePushPreflight(
     ]),
   ];
   const tagShape = `${lines[0].tagPrefix}<version>`;
+  const { packages } = workspaceReleasePackages(cwd);
+  const tagShapes = [tagShape, ...packageTagShapes(packages)].join(", ");
   const refs: ReleaseRef[] = [];
   for (const raw of wanted) {
     if (raw.startsWith("-") || raw.includes(":"))
@@ -1635,10 +1642,28 @@ export function releasePushPreflight(
       );
     if (tag) {
       const line = lineOfTag(tagName, lines);
+      // A package tag rides the workspace's own line: same production, same rules.
+      const owned = packageOfTag(tagName, packages);
+      if (owned && (!line || owned.pkg.tagNamespace.length > line.tagPrefix.length)) {
+        refs.push({
+          kind: "tag",
+          name: tagName,
+          ref: `refs/tags/${tagName}`,
+          sha: tag,
+          production,
+          release: {
+            version: owned.version,
+            track: null,
+            tagPrefix: owned.pkg.tagNamespace,
+            package: owned.pkg.name,
+          },
+        });
+        continue;
+      }
       if (!line)
         return failure(
           "blocked",
-          `release_push_refused: tag ${tagName} is not a release tag (${tagShape})`,
+          `release_push_refused: tag ${tagName} is not a release tag (${tagShapes})`,
           `git tag -a ${tagShape} -m <message>  # then: workit git push --release ${tagShape}`,
         );
       refs.push({

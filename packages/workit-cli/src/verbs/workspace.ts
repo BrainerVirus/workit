@@ -84,6 +84,7 @@ import {
 } from "@workit-dev/core/src/core/workspaces";
 import { configFilePath } from "@workit-dev/core/src/core/config";
 import { withSchemaRef } from "@workit-dev/core/src/core/config-schemas";
+import { readReleasePackages } from "@workit-dev/core/src/core/release-packages";
 import { closest } from "../help";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled, confirmKey } from "../prompt";
@@ -154,6 +155,7 @@ const SETTABLE_KEYS = new Set([
   "defaultProfile",
   "profiles",
   "releaseTracks",
+  "releasePackages",
   "resources",
 ]);
 /** Keys whose value is one of a fixed set: anything else is refused, never written. */
@@ -651,6 +653,16 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
         io,
         `${spec}: releaseNotes must be ${RELEASE_NOTES_MODES.join(", ")} (or null to unset)`,
       );
+    // A release package's fields are strings; the reader (below) judges them.
+    if (
+      keyPath[0] === "releasePackages" &&
+      keyPath.length > 2 &&
+      (keyPath.length > 3 || (value !== null && typeof value !== "string"))
+    )
+      return usage(
+        io,
+        `${spec}: releasePackages.<name> takes tagNamespace=<prefix> and changelogPath=<repo-relative path> (or null to unset)`,
+      );
     if (keyPath[0] === "changelogPath" && value !== null) {
       const paths = keyPath.length === 1 ? changelogPathsOf(value) : null;
       if (!paths)
@@ -739,6 +751,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
       ),
     );
   const wasAuto = !global && autoWrites(entry);
+  const packageIssues = new Set(readReleasePackages(entry.releasePackages).issues);
   const moves: { key: string; from: unknown; to: unknown }[] = [];
   for (const change of changes) {
     let target: Record<string, unknown> = entry;
@@ -757,6 +770,13 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
     });
     if (change.value === null) delete target[last];
     else target[last] = change.value;
+  }
+  // What the release-package reader would ignore is refused, never written.
+  if (changes.some((change) => change.path[0] === "releasePackages")) {
+    const added = readReleasePackages(entry.releasePackages).issues.filter(
+      (issue) => !packageIssues.has(issue),
+    );
+    if (added.length) return usage(io, added.join("; "));
   }
   if (!global && !wasAuto && autoWrites(entry)) {
     const command = `workit workspace set ${name} ${specs.map((spec) => `'${spec}'`).join(" ")}`;

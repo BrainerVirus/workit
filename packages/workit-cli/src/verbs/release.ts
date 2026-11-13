@@ -6,13 +6,19 @@
 //   workit release start <version> [--hotfix] [--track <t>]
 //   workit release finish [<version>] [--track <t>] [--dry-run]
 //   workit release publish [<version>]
-//   workit release notes draft|show|approve <version> [--track <t>]
+//   workit release notes draft|show|approve <version>|<pkg-tag> [--package <name>] [--track <t>]
+//   workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]
 //
 // Release notes (workspace or release track `releaseNotes`, default auto):
 // finish publishes the draft (`.git/workit/release-notes/<v>.md`), else the
 // notes built from the changelog section; `off` skips the forge release;
 // `review` refuses before any merge until the user approves the current
 // draft at their own terminal (approve refuses agent shells and no TTY).
+//
+// Release packages (#860, workspace `releasePackages`): `release package`
+// tags `<namespace><version>` on the workspace's release commit, pushes it
+// through `workit git push --release` and publishes its forge release from the
+// package's changelog, not Latest unless --latest.
 import { progressFor } from "../progress";
 import { requireGrant } from "@workit-dev/core/src/autonomy";
 import { pushTarget } from "@workit-dev/core/src/core/remotes";
@@ -21,7 +27,10 @@ import { deleteRemoteBranch, executePush, pushPreflight } from "@workit-dev/core
 import {
   finishLocally,
   planReleaseFinish,
+  planReleasePackage,
+  missingSectionNote,
   readReleaseNotesDraft,
+  recordPackageStep,
   recordReleaseNotesApproval,
   recordReleaseStep,
   releaseNotesContext,
@@ -31,6 +40,8 @@ import {
   releaseStart,
   releaseToPublish,
   switchToRelease,
+  tagReleasePackage,
+  untagReleasePackage,
   type FinishPlan,
 } from "@workit-dev/core/src/git/release";
 import { parseRemoteUrl, pushUrl } from "@workit-dev/core/src/git/rev";
@@ -44,8 +55,10 @@ const START_USAGE = "workit release start <version> [--hotfix] [--track <t>] [--
 const FINISH_USAGE = "workit release finish [<version>] [--track <t>] [--dry-run] [--json]";
 const PUBLISH_USAGE = "workit release publish [<version>] [--json]";
 const NOTES_USAGE =
-  "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--track <t>] [--json]";
-const USAGE = "workit release start|finish|publish|notes ... (workit help release)";
+  "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--package <name>] [--track <t>] [--json]";
+const PACKAGE_USAGE =
+  "workit release package <name> <version> [--at <ref>] [--latest] [--dry-run] [--json]";
+const USAGE = "workit release start|finish|publish|notes|package ... (workit help release)";
 
 const defaultDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
@@ -404,7 +417,7 @@ async function publish(argv: string[], io: Io): Promise<number> {
 /** The draft, its path and the next steps: what an agent fills and the user approves. */
 async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const [action, ...rest] = argv;
-  const flags = parseFlags(rest, { track: "value", reset: "boolean" });
+  const flags = parseFlags(rest, { track: "value", package: "value", reset: "boolean" });
   if (typeof flags === "string") return usage(io, flags, NOTES_USAGE);
   if (!["draft", "show", "approve"].includes(action ?? ""))
     return usage(
@@ -421,9 +434,9 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
   if (flags.booleans.has("reset") && action !== "draft")
     return usage(io, "--reset applies to draft only", NOTES_USAGE);
   const version = flags.positionals[0];
-  const track = flags.values.track ? ` --track ${flags.values.track}` : "";
-  const draftCmd = `workit release notes draft ${version}${track}`;
-  const approveCmd = `workit release notes approve ${version}${track}`;
+  const scope = `${flags.values.package ? ` --package ${flags.values.package}` : ""}${flags.values.track ? ` --track ${flags.values.track}` : ""}`;
+  const draftCmd = `workit release notes draft ${version}${scope}`;
+  const approveCmd = `workit release notes approve ${version}${scope}`;
   if (action === "approve") {
     // The user's decision, like raising a grant: never an agent shell, never headless.
     const agent = agentMarker(io.env);
@@ -442,30 +455,48 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
   const context = releaseNotesContext(io.cwd, {
     version,
     track: flags.values.track ?? null,
+    package: flags.values.package ?? null,
   });
   if (!context.ok) return forgeFail(io, context);
+  // A release package's draft and approval are keyed by its tag.
+  const packageTag = context.data.package ? context.data.tag : null;
   const mode = `releaseNotes: ${context.data.mode}${context.data.modeFrom === "default" ? " (default)" : ` (${context.data.modeFrom})`}`;
   if (action === "draft") {
     const written = writeReleaseNotesDraft(io.cwd, context.data, {
       reset: flags.booleans.has("reset"),
     });
     if (!written.ok) return forgeFail(io, written);
-    return emit(io, ok({ ...written.data, version, mode: context.data.mode }), (data) => [
-      `release notes draft for ${version}: ${data.path} (${mode}${data.keptHighlights ? "; kept its Highlights" : ""})`,
-      "",
-      data.notes.trimEnd(),
-      "",
-      data.keptHighlights
-        ? "next: edit the Highlights in that file if the user asks; re-running draft keeps them (--reset drops them)"
-        : "next: add a `## Highlights` section at the top of that file: 1-3 bullets of what users get, from the user's pointers",
-      ...(context.data.mode === "review"
-        ? [
-            `then show the user the draft and stop: they approve it in a terminal outside the agent host: ${approveCmd}`,
-          ]
-        : []),
-    ]);
+    const missing = context.data.package
+      ? missingSectionNote(context.data, context.data.package)
+      : null;
+    return emit(
+      io,
+      ok({
+        ...written.data,
+        version: context.data.version,
+        tag: context.data.tag,
+        package: context.data.package,
+        mode: context.data.mode,
+        ...(missing ? { note: missing } : {}),
+      }),
+      (data) => [
+        `release notes draft for ${version}: ${data.path} (${mode}${data.keptHighlights ? "; kept its Highlights" : ""})`,
+        "",
+        data.notes.trimEnd(),
+        "",
+        ...(missing ? [`note: ${missing}`] : []),
+        data.keptHighlights
+          ? "next: edit the Highlights in that file if the user asks; re-running draft keeps them (--reset drops them)"
+          : "next: add a `## Highlights` section at the top of that file: 1-3 bullets of what users get, from the user's pointers",
+        ...(context.data.mode === "review"
+          ? [
+              `then show the user the draft and stop: they approve it in a terminal outside the agent host: ${approveCmd}`,
+            ]
+          : []),
+      ],
+    );
   }
-  const draft = readReleaseNotesDraft(io.cwd, version);
+  const draft = readReleaseNotesDraft(io.cwd, context.data.version, packageTag);
   if (!draft)
     return emit(
       io,
@@ -473,7 +504,7 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
         unblock: draftCmd,
       }),
     );
-  const approval = latestReleaseNotesApproval(io.cwd, version);
+  const approval = latestReleaseNotesApproval(io.cwd, context.data.version, packageTag);
   const approved = approval?.sha256 === draft.sha256;
   if (action === "show")
     return emit(io, ok({ ...draft, version, mode: context.data.mode, approved }), (data) => [
@@ -494,7 +525,7 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
   if (answer.trim() !== version)
     return emit(io, fail("blocked", "release notes not approved; nothing was recorded"));
   // What the user read is what gets approved: a draft changed meanwhile is not.
-  const now = readReleaseNotesDraft(io.cwd, version);
+  const now = readReleaseNotesDraft(io.cwd, context.data.version, packageTag);
   if (now?.sha256 !== draft.sha256)
     return emit(
       io,
@@ -504,11 +535,165 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
     );
   recordReleaseNotesApproval(io.cwd, actorFromEnv(io.env), {
     ...draft,
-    version,
+    version: context.data.version,
     tag: context.data.tag,
+    package: context.data.package,
   });
   return emit(io, ok({ version, path: draft.path, sha256: draft.sha256 }), () => [
     `approved the release notes of ${version} (sha256 ${draft.sha256.slice(0, 12)}); an edit to the draft needs a new approval`,
+  ]);
+}
+
+/**
+ * `workit release package <name> <version>`: tag a release package on the
+ * workspace's release commit, push the tag through `workit git push
+ * --release` (same grants and checks), publish its forge release from the
+ * package's changelog (not Latest unless --latest) and verify the tag.
+ */
+async function releasePackage(argv: string[], io: Io): Promise<number> {
+  const flags = parseFlags(argv, { at: "value", latest: "boolean", "dry-run": "boolean" });
+  if (typeof flags === "string") return usage(io, flags, PACKAGE_USAGE);
+  if (flags.positionals.length !== 2)
+    return usage(
+      io,
+      flags.positionals.length > 2
+        ? `unexpected argument ${flags.positionals[2]}`
+        : "pass <name> <version>",
+      PACKAGE_USAGE,
+    );
+  const [name, version] = flags.positionals;
+  const latest = flags.booleans.has("latest");
+  const dryRun = flags.booleans.has("dry-run");
+  const planned = planReleasePackage(io.cwd, { name, version, at: flags.values.at ?? null });
+  if (!planned.ok) return forgeFail(io, planned);
+  const plan = planned.data;
+  const local = isLocalRemote(io.cwd, plan.remote);
+  const decision = releaseNotesDecision(io.cwd, plan);
+  // Once tagged, a rerun refuses the existing tag: the push path finishes the job.
+  const resume = `workit git push --release ${plan.tag}`;
+  const forgeStep = decision.publish
+    ? `forge release ${plan.tag} (notes: ${decision.source === "draft" ? "the draft" : "built from the changelog"}; ${latest ? "Latest" : "not Latest"})`
+    : `forge release ${plan.tag}: skipped (releaseNotes ${decision.mode}${decision.mode === "review" ? ": unapproved" : ""})`;
+  const steps = [
+    `tag ${plan.tag} (annotated) on ${plan.at} (${short(plan.target)})`,
+    `push ${plan.tag} (workit git push --release)`,
+    forgeStep,
+    `verify ${plan.tag} on the remote`,
+  ];
+  if ("blocked" in decision)
+    return emit(
+      io,
+      fail("blocked", `${decision.blocked}; nothing was tagged or pushed`, {
+        unblock: decision.unblock,
+        data: { ...plan, steps, reason: "release_notes_unapproved", step: "release-notes" },
+      }),
+    );
+  const target = plan.remote ? () => pushTarget(io.cwd, plan.remote as string) : undefined;
+  const release = requireGrant(io.cwd, "release", { target });
+  // Not a blocker: said before the forge release takes the bare body.
+  const missing = decision.publish ? missingSectionNote(plan, plan.package) : null;
+  if (dryRun) {
+    const data = {
+      ...plan,
+      latest,
+      steps,
+      grants: { release: release.allowed },
+      ...(missing ? { note: missing } : {}),
+    };
+    if (!release.allowed)
+      return emit(io, fail("blocked", release.error, { unblock: release.unblock, data }));
+    return emit(io, ok(data), () => [
+      `release package ${plan.package} ${plan.version} as ${plan.tag}:`,
+      ...steps.map((step) => `  todo  ${step}`),
+      ...(missing ? [`note: ${missing}`] : []),
+    ]);
+  }
+  if (!release.allowed) return blocked(io, release);
+  const actor = actorFromEnv(io.env);
+  const tagged = tagReleasePackage(io.cwd, plan, actor);
+  if (!tagged.ok) return forgeFail(io, tagged, { step: "tag" });
+  const pushed = await progressFor(io).run(
+    `Pushing ${plan.tag}`,
+    () =>
+      subVerb(
+        // This verb publishes the forge release itself (it decides Latest), not the push.
+        () => import("./git").then((verb) => ({ run: verb.runFinishPush })),
+        ["push", "--release", plan.tag],
+        io,
+      ),
+    (r) => (r.ok ? "done" : "failed"),
+  );
+  if (!pushed.ok) {
+    // Only the tag this run made, and only while the remote lacks it.
+    const untagged = untagReleasePackage(io.cwd, plan);
+    if (!untagged)
+      return emit(io, {
+        ...pushed,
+        unblock: `${resume}  # or drop the local tag: git tag -d ${plan.tag}`,
+        data: { ...pushed.data, step: "push", resume },
+      });
+    return emit(io, {
+      ...pushed,
+      error: `${pushed.error}; deleted the local tag ${plan.tag} this run made (the remote never had it), so a rerun can tag again`,
+      unblock: `fix what the push refused, then rerun: workit release package ${plan.package} ${plan.version} --at <a commit ${plan.production} has>`,
+      data: { ...pushed.data, step: "push", untagged: plan.tag },
+    });
+  }
+  const notes: string[] = missing ? [missing] : [];
+  if (missing) io.stderr(`note: ${missing}\n`);
+  let forgeRelease: { url: string | null; created: boolean } | null = null;
+  if (!decision.publish) {
+    notes.push(decision.reason);
+    recordPackageStep(io.cwd, actor, plan, {
+      type: "release.notes_skipped",
+      reason: decision.reason,
+    });
+  } else if (local) notes.push(`${plan.remote ?? "the remote"} is a local path: no forge release`);
+  else {
+    const connected = connect(io);
+    if (!connected.ok) return forgeFail(io, connected, { step: "forge-release", resume });
+    const forge = connected.data.forge;
+    const found = forge.findRelease(plan.tag);
+    if (!found.ok) return forgeFail(io, found, { step: "forge-release", resume });
+    if (found.data) forgeRelease = { url: found.data.url, created: false };
+    else {
+      const created = forge.createRelease({
+        tag: plan.tag,
+        name: plan.tag,
+        body: decision.body,
+        latest,
+      });
+      if (!created.ok) return forgeFail(io, created, { step: "forge-release", resume });
+      forgeRelease = { url: created.data.url, created: true };
+      if (forge.kind === "gitlab")
+        notes.push(
+          `GitLab has no Latest release flag: ${latest ? "--latest" : "not Latest"} does not apply there`,
+        );
+    }
+    recordPackageStep(io.cwd, actor, plan, {
+      type: "release.forge_released",
+      url: forgeRelease.url,
+      created: forgeRelease.created,
+      latest,
+    });
+  }
+  const verified = verifyReleased(io.cwd, { tag: plan.tag, actor }, forgeDeps.npm);
+  if (!verified.ok) return forgeFail(io, verified, { step: "verify" });
+  if (!verified.data.delivered)
+    return emit(
+      io,
+      fail("failed", `release_unverified: ${plan.tag} is not on ${plan.remote ?? "the remote"}`, {
+        data: { step: "verify", report: verified.data },
+      }),
+    );
+  return emit(io, ok({ ...plan, latest, push: pushed.data, forgeRelease, notes }), () => [
+    `tagged ${plan.tag} on ${plan.at} (${short(plan.target)}) and pushed it to ${plan.remote ?? "the remote"}; remote tag verified`,
+    ...(forgeRelease
+      ? [
+          `forge release ${plan.tag}${forgeRelease.created ? ` created (${latest ? "Latest" : "not Latest"})` : " already there"}${forgeRelease.url ? `: ${forgeRelease.url}` : ""}`,
+        ]
+      : []),
+    ...notes.map((note) => `note: ${note}`),
   ]);
 }
 
@@ -522,6 +707,7 @@ export async function runRelease(
   if (sub === "finish") return finish(rest, io);
   if (sub === "publish") return publish(rest, io);
   if (sub === "notes") return notesVerb(rest, io, deps);
+  if (sub === "package") return releasePackage(rest, io);
   return usage(
     io,
     sub && !sub.startsWith("-")

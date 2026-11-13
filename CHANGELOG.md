@@ -78,6 +78,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `workit ci wait --pr <n>`. A verifier's or reviewer's SubagentStart text
   lists the checks on Claude Code and Codex.
 
+### Added (release packages)
+
+- **Release several packages from one repository** (#860). A workspace's
+  `releasePackages` names packages tagged under their own namespace
+  (`pkg-a@0.1.0` beside the bare `4.6.0`) on the workspace's own release line.
+  `workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]`
+  tags the release commit, pushes the tag under the `release` grant, creates
+  its forge release from the package's changelog without taking GitHub's
+  Latest mark (`--latest` takes it) and verifies it. `workit git push --release`
+  accepts a package tag with the same rules as a workspace release tag, the
+  raw-push denial names it, and `workit release notes draft|show|approve` take
+  `pkg-a@0.1.0` or `--package <name>`. `workit workspace set` writes
+  `releasePackages.<name>.tagNamespace|changelogPath`, `workit grant show`
+  lists the packages and the changelog each resolves to, `workit doctor` warns
+  on a bad entry or a package with no changelog file (#861), `release package`
+  and `release notes draft <pkg>@<v>` note a missing changelog section, and a
+  refused package push deletes the tag it just made. See
+  [docs/guides/configuration.md](docs/guides/configuration.md#release-packages).
+
+### Fixed (release packages)
+
+- `workit release notes draft <version>` with a `changelogPath` list or glob
+  reads the version's section from whichever changelog has it, not only the
+  first file (#860).
+
 ### Added (retro 2026-11-07)
 
 - **CLI grammar aliases** (#743). `workit git add` is an alias of

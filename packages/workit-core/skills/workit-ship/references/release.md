@@ -37,3 +37,11 @@ into the trunk instead, its body the release notes (draft and approve them
 first, as in step 3). Once it merges, tag the merge and run
 `workit git push --release <tag>`: it publishes the forge release with the
 same notes (under `review`, only the approved draft).
+
+## Release package
+
+A workspace `releasePackages` entry, after the workspace release finished:
+`workit release package <name> <version>` tags `<name>@<version>` on the
+release commit (`--at <ref>`), pushes it, creates its forge release (not
+Latest; `--latest` only when asked) and verifies it. Notes:
+`workit release notes draft <name>@<version>`.
