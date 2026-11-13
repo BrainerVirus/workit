@@ -14,6 +14,7 @@ import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { colorDiff, createStyle, type Style } from "../style";
 import { type HostOutcome } from "../upgrade/shared";
+import { offerFirstSeal } from "../upgrade/seal-offer";
 import { refreshYtrackSkill, workitHosts } from "../upgrade/ytrack-skill";
 
 const ALL_HOSTS = ["claude-code", "codex", "cursor", "opencode", "pi"];
@@ -49,6 +50,14 @@ const parse = (
 };
 
 export async function run(argv: string[], io: Io): Promise<number> {
+  const code = await runSetup(argv, io);
+  // Existing users: the one-time seal offer at the user's own terminal (#819).
+  if (code === 0 && !argv.includes("--yes") && !argv.includes("--dry-run"))
+    await offerFirstSeal(io);
+  return code;
+}
+
+async function runSetup(argv: string[], io: Io): Promise<number> {
   const args = parse(argv);
   if (typeof args === "string") return emit(io, fail("invalid_input", args, { unblock: USAGE }));
   const plan = planHostPermissions({

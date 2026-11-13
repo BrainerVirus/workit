@@ -28,7 +28,12 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { configuredGrants, entryMismatch, remoteFindings } from "@workit-dev/core/src/autonomy";
+import {
+  configuredGrants,
+  entryMismatch,
+  remoteFindings,
+  sealStatus,
+} from "@workit-dev/core/src/autonomy";
 import { SUPPORT_MATRIX } from "@workit-dev/core/src/core/support-matrix";
 import { inspectMetadataLock } from "@workit-dev/core/src/core/store-lock";
 import { bundleHashOfFile, isEphemeralCachePath } from "@workit-dev/core/src/core/runtime-identity";
@@ -196,6 +201,7 @@ type DoctorCheckId =
   | "hook_deadline"
   | "grant_endpoint"
   | "grant_remotes"
+  | "grant_seal"
   | "hook_runs"
   | "claude_grant_rules"
   | "codex_grant_rules"
@@ -3407,6 +3413,34 @@ const checkGrantRemotes = (res: Resolved): DoctorCheck => {
   };
 };
 
+// The seal of the account's workspaces.json (#819): missing or mismatched,
+// authority above the last seal (or the D4 defaults) does not apply.
+const checkGrantSeal = (): DoctorCheck => {
+  const fix = "in your own terminal: workit workspace seal";
+  const status = sealStatus();
+  if (status.state === "no_account")
+    return { id: "grant_seal", status: "info", detail: status.note };
+  if (status.error)
+    return {
+      id: "grant_seal",
+      status: "warn",
+      detail: `workspaces.json cannot be sealed: ${status.error}`,
+    };
+  if (status.state === "valid")
+    return { id: "grant_seal", status: "pass", detail: "ok: workspaces.json matches its seal" };
+  if (status.state === "none" && status.entries.length === 0)
+    return { id: "grant_seal", status: "pass", detail: "no workspace entries: nothing to seal" };
+  return {
+    id: "grant_seal",
+    status: "warn",
+    detail:
+      status.state === "none"
+        ? "missing: workspaces.json has never been sealed, so grants, endpoint, verification and youtrack.writes above the D4 defaults do not apply"
+        : `mismatch: ${status.reason}, so each authority value is the stricter of the file and the last seal, and a changed forge identity blocks forge verbs`,
+    fix,
+  };
+};
+
 // The per-repo checks config lives in `.workit/checks.json`; a root
 // `workit.checks.json` is still read but is a legacy location.
 const checkChecksConfig = (res: Resolved): DoctorCheck => {
@@ -4310,6 +4344,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkHookDeadline,
   checkGrantEndpoint,
   checkGrantRemotes,
+  checkGrantSeal,
   checkHookRuns,
   checkChecksConfig,
   checkWorkitNotes,

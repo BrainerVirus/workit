@@ -42,8 +42,11 @@ import {
   remotesClaimed,
   targetClaims,
   resolveAutonomy,
+  sealAccount,
+  sealStatus,
   writeGrants,
   type DefaultEndpoint,
+  type SealAfter,
   type EndpointView,
   type GrantKind,
   type VerificationMode,
@@ -54,6 +57,7 @@ import {
   describeReleaseTracks,
   releaseTracksReport,
 } from "@workit-dev/core/src/core/release-tracks";
+import { SEAL_COMMAND } from "@workit-dev/core/src/core/grant-seal";
 import { pushTarget } from "@workit-dev/core/src/core/remotes";
 import { roleModelIssues } from "@workit-dev/core/src/core/role-models";
 import { pushRemoteName } from "@workit-dev/core/src/git/rev";
@@ -111,11 +115,65 @@ export const confirmWith = async (deps: GrantDeps, question: string): Promise<bo
     ? deps.confirm(question)
     : (await deps.ask(`${question} [y/N] `)).trim().toLowerCase() === "y";
 
-const defaultDeps: GrantDeps = {
+/** A person's terminal: interactive when stdin and stdout are TTYs. */
+export const terminalDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
   ask: (question) => askLine(question),
   confirm: (question) => confirmKey(question),
 };
+
+/** The user at an interactive terminal, outside an agent's shell. */
+export const atTerminal = (io: Io, deps: GrantDeps): boolean =>
+  deps.interactive() && !agentMarker(io.env);
+
+export type SealOffer = "sealed" | "declined" | "cancelled" | "failed" | "skipped";
+
+/**
+ * At the user's terminal: show what sealing accepts (every authority field
+ * the first time, else the change since the seal) and ask y/N. `skipped`
+ * when the seal already matches, there is no account, or the file is invalid.
+ */
+export async function offerSeal(io: Io, deps: GrantDeps, intro: string): Promise<SealOffer> {
+  const status = sealStatus();
+  if (status.state === "no_account" || status.state === "valid" || status.error) return "skipped";
+  const say = io.json ? io.stderr : io.stdout;
+  say(`${intro}\n${status.diff.map((line) => `  ${line}`).join("\n")}\n`);
+  const answer = await askOrCancel(io, () =>
+    confirmWith(
+      deps,
+      "Seal these authority fields? Agents may then act on them; until then, anything above the last seal (or the D4 defaults) does not apply.",
+    ),
+  );
+  if (answer === null) return "cancelled";
+  if (!answer) return "declined";
+  const sealed = sealAccount();
+  if (!sealed.ok) say(`seal not written: ${sealed.error}\n`);
+  return sealed.ok ? "sealed" : "failed";
+}
+
+/**
+ * After a write to the account's workspaces.json: at the user's terminal, a
+ * write the seal did not accept by itself offers to seal (sealAfterWrite).
+ */
+export async function settleSeal(io: Io, deps: GrantDeps, seal: SealAfter): Promise<SealAfter> {
+  if (seal !== "mismatch" || !atTerminal(io, deps)) return seal;
+  const offered = await offerSeal(
+    io,
+    deps,
+    "workspaces.json is not sealed as it is now, so its authority fields do not all apply yet. Sealing accepts:",
+  );
+  return offered === "sealed" ? "resealed" : seal;
+}
+
+/** What a write left of the seal, for a verb's output. */
+export const sealLines = (seal: SealAfter): string[] =>
+  seal === "resealed"
+    ? ["  sealed: the authority fields above apply"]
+    : seal === "mismatch"
+      ? [
+          `  not sealed: a raise here applies only after the user runs, in their own terminal: ${SEAL_COMMAND}`,
+        ]
+      : [];
 
 const parseValue = (raw: string): GrantValue | null =>
   raw === "true" || raw === "yes" || raw === "on"
@@ -495,8 +553,16 @@ async function change(
     if (!answer)
       return emit(io, fail("blocked", "grant change not confirmed; nothing was written"));
   }
-  const written = writeGrants(workspace, changes, undefined, endpoint, verification);
+  const written = writeGrants(
+    workspace,
+    changes,
+    undefined,
+    endpoint,
+    verification,
+    atTerminal(io, deps),
+  );
   if (!written.ok) return emit(io, fail(written.code, written.error));
+  const seal = await settleSeal(io, deps, written.seal);
   // Old -> new for every key the command named, so the output shows what moved.
   const moves: { key: string; from: string; to: string; mark: Mark }[] = [
     ...changes.map(({ kind, value }) => {
@@ -535,7 +601,7 @@ async function change(
   ];
   const style = createStyle({ stream: io.terminals?.stdout, env: io.env, json: io.json });
   const marks: Marks = Object.fromEntries(moves.map((move) => [move.key, move.mark]));
-  return emit(io, ok({ ...written, changes: moves }), (data) => [
+  return emit(io, ok({ ...written, seal, changes: moves }), (data) => [
     `${style.bold(data.workspace)}: grants updated in ${data.path}${data.backup ? ` (previous copy: ${data.backup})` : ""}`,
     ...moves.map((move) =>
       paintMark(
@@ -546,13 +612,14 @@ async function change(
       ),
     ),
     ...describe(data.grants, data.configured, data, data.verification, style, marks),
+    ...sealLines(data.seal),
   ]);
 }
 
 const usage = (io: Io, message: string): number =>
   emit(io, fail("invalid_input", `${message}\nusage: ${USAGE}`));
 
-export async function runGrant(argv: string[], io: Io, deps: GrantDeps = defaultDeps) {
+export async function runGrant(argv: string[], io: Io, deps: GrantDeps = terminalDeps) {
   // Workspaces and specs never start with --; a bare `--` before them is dropped.
   const end = argv.indexOf("--");
   const [sub, ...rest] = end < 0 ? argv : [...argv.slice(0, end), ...argv.slice(end + 1)];

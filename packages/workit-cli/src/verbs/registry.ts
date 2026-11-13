@@ -439,6 +439,12 @@ export const VERBS: readonly VerbEntry[] = [
           summary:
             "Remove one or more entries; if another entry or the defaults could grant their folders more, the user confirms once (y/N) at their own terminal",
         },
+        {
+          name: "seal",
+          usage: "workit workspace seal",
+          summary:
+            "Accept the authority fields of workspaces.json (grants, endpoint, verification, youtrack.writes, globs, remotes, forge identity): shows what changed since the last seal, then y/N; the user's terminal only",
+        },
       ],
       examples: [
         "workit workspace list",
@@ -450,6 +456,7 @@ export const VERBS: readonly VerbEntry[] = [
       notes: [
         "A new entry starts with no grants of its own. It starts at the strictest level of every entry and the defaults, so its folders never get more than they had. rm counts every other entry and the defaults as a possible taker of the removed folders: when any could grant more, it is refused in an agent or headless shell and the user answers a y/N at their own terminal (one confirmation for several names); it never removes the last entry. Raising a grant, defaultEndpoint or verification needs the user: workit grant set <name> <kind>=<value> in their own terminal.",
         "Every write keeps the previous file as workspaces.json.bak. `workit doctor` lists overlapping globs and which entry wins.",
+        "The seal (workspaces.json.seal) holds the authority fields the user last accepted. While it is missing or does not match, each grant, the endpoint, verification and youtrack.writes are the stricter of the file and the last seal (the D4 defaults when there is none), and a changed forge identity blocks forge verbs. A write at the user's terminal reseals when the seal matched before; elsewhere only a write that lowers them reseals. Limit (D18): a process that forges the seal too passes it.",
       ],
       load: () => import("./workspace"),
     },
