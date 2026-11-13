@@ -4122,9 +4122,10 @@ const checkNativeDeny = (res: Resolved): DoctorCheck => {
     (row) =>
       row.state === "stale" ||
       row.state === "unreadable" ||
-      (row.state === "missing" && row.recorded) ||
+      ((row.state === "missing" || row.state === "blocked") && row.recorded) ||
       row.risk !== undefined,
   );
+  const first = (list: string[]) => `${list[0]}${list.length > 1 ? ", …" : ""}`;
   const parts = rows.map((row) => {
     const state =
       row.state === "none"
@@ -4132,40 +4133,41 @@ const checkNativeDeny = (res: Resolved): DoctorCheck => {
           ? "no permission layer"
           : "no path deny rule"
         : row.state === "stale"
-          ? `stale (${row.stale[0]}${row.stale.length > 1 ? ", …" : ""} names a path that moved)`
+          ? `stale (${first(row.stale)} names a path that moved)`
           : row.state === "missing"
-            ? `missing ${row.missing.length} (${row.missing[0]}${row.missing.length > 1 ? ", …" : ""})`
-            : row.state === "unreadable"
-              ? `${row.file} is not a JSON object`
-              : "present";
+            ? `missing ${row.missing.length} (${first(row.missing)})`
+            : row.state === "blocked"
+              ? `missing ${row.missing.length}, and setup cannot write them: ${row.file} ${row.reason}`
+              : row.state === "unreadable"
+                ? `${row.file} is not a JSON object`
+                : "present";
     const extra = [row.sandbox, row.risk].filter(Boolean).join("; ");
     return `${row.host}: ${state}${extra ? ` (${extra})` : ""}`;
   });
-  const fixHosts = warned
-    .filter((row) => row.state !== "none" && row.state !== "unreadable")
+  // Setup fixes a stale or missing rule; a blocked file needs the user's own edit.
+  const setupHosts = rows
+    .filter((row) => row.state === "stale" || row.state === "missing")
     .map((row) => row.host);
+  const byHand = rows.flatMap((row) =>
+    row.state === "blocked"
+      ? [
+          row.host === "opencode"
+            ? `opencode: in ${row.file}, make permission.edit a pattern map and set ${row.missing.join(", ")} to "deny" after your own patterns, or move the config to opencode.json and run workit setup --hosts=opencode`
+            : `${row.host}: change ${row.file} by hand so that no longer holds (${row.reason}), then run workit setup --hosts=${row.host}`,
+        ]
+      : [],
+  );
   const status = warned.length
     ? "warn"
-    : rows.some((row) => row.state === "missing")
+    : rows.some((row) => row.state === "missing" || row.state === "blocked")
       ? "info"
       : "pass";
-  return {
-    id: "native_deny",
-    status,
-    detail: parts.join("; "),
-    ...(status === "pass"
-      ? {}
-      : {
-          fix: [
-            ...(fixHosts.length || status === "info"
-              ? [
-                  `workit setup --hosts=${(fixHosts.length ? fixHosts : rows.filter((row) => row.state === "missing").map((row) => row.host)).join(",")}`,
-                ]
-              : []),
-            ...rows.flatMap((row) => (row.risk ? [`${row.host}: ${row.risk}`] : [])),
-          ].join("; "),
-        }),
-  };
+  const fix = [
+    ...(setupHosts.length ? [`workit setup --hosts=${setupHosts.join(",")}`] : []),
+    ...byHand,
+    ...rows.flatMap((row) => (row.risk ? [`${row.host}: ${row.risk}`] : [])),
+  ].join("; ");
+  return { id: "native_deny", status, detail: parts.join("; "), ...(fix ? { fix } : {}) };
 };
 
 /**

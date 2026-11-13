@@ -32,6 +32,7 @@
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   readdirSync,
   mkdirSync,
   readFileSync,
@@ -46,6 +47,7 @@ import { stateDir as workitStateDir } from "@workit-dev/core/src/core/heavy-word
 import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
 import { configDir as workitConfigDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { WORKIT_ALLOWED_VERBS, WORKIT_USER_ONLY } from "@workit-dev/core/src/hooks/delivery-verbs";
+import { configHome } from "../upgrade/skill-roots";
 import { claudeConfigDir } from "./host-install";
 
 export type PermissionHost = "claude-code" | "codex" | "cursor" | "opencode";
@@ -193,11 +195,23 @@ const STATE_NAMES: Record<JsonHost, readonly string[]> = {
 };
 const CONFIG_NAMES = ["workspaces.json", SEAL_FILE];
 
-/** One host's deny entries for `dirs`: `Edit(//<abs>)` (Claude Code), `Write(<abs>)` (Cursor), a bare pattern (OpenCode). */
+/**
+ * A dir as a literal in a Claude Code rule: gitignore glob characters
+ * backslash-escaped, then each parenthesis as `[(]`/`[)]`, the spelling claude
+ * 2.1.323's rule check suggests (an unbalanced one is ambiguous).
+ */
+const claudeLiteral = (dir: string): string =>
+  dir.replace(/[*?[\]]/gu, "\\$&").replace(/[()]/gu, "[$&]");
+
+/**
+ * One host's deny entries for `dirs`: `Edit(//<abs>)` (Claude Code),
+ * `Write(<abs>)` (Cursor), a bare pattern (OpenCode). Cursor and OpenCode
+ * escape every regex character but their own wildcards, so a dir is written
+ * as is; a `*` or `?` in it only widens the rule.
+ */
 const nativeDenyEntries = (host: JsonHost, dirs: GuardedDirs): string[] => {
   const rule = (dir: string, name: string): string => {
-    if (host === "claude-code")
-      return `Edit(//${dir.replace(/[*?[\]]/gu, "\\$&").replace(/^\/+/u, "")}/${name})`;
+    if (host === "claude-code") return `Edit(//${claudeLiteral(dir).replace(/^\/+/u, "")}/${name})`;
     return host === "cursor" ? `Write(${dir}/${name})` : `${dir}/${name}`;
   };
   return [
@@ -673,9 +687,7 @@ export const permissionTarget = (
     return { file: path.join(dir, "rules", "workit.rules"), hostDir: dir };
   }
   if (host === "opencode") {
-    const xdg =
-      env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : "";
-    const dir = path.join(xdg || path.join(home, ".config"), "opencode");
+    const dir = path.join(configHome(home, env), "opencode");
     return { file: path.join(dir, "opencode.json"), hostDir: dir };
   }
   const dir = path.join(home, ".cursor");
@@ -773,8 +785,10 @@ export type PermissionChange = {
 };
 
 export type PermissionPlan = {
-  /** Set inside an agent session: the command the user must run instead. */
+  /** Why nothing may be written (an agent session, a state dir Workit cannot record in). */
   refused?: string;
+  /** What the user runs or changes to clear `refused`, when it is not the setup command itself. */
+  unblock?: string;
   changes: PermissionChange[];
   /** One line per host with nothing to write, and why. */
   notes: string[];
@@ -819,6 +833,27 @@ const findBash = (env: NodeJS.ProcessEnv): string | null => {
 const setupCommand = (hosts: readonly string[]): string =>
   `workit setup --hosts=${hosts.join(",")}`;
 
+/** OpenCode's config when only an `opencode.jsonc` holds it (Workit would drop its comments). */
+const onlyJsonc = (file: string): string | null => {
+  const jsonc = file.replace(/\.json$/u, ".jsonc");
+  return !existsSync(file) && existsSync(jsonc) ? jsonc : null;
+};
+const JSONC_BLOCKED =
+  "holds the OpenCode config (comments Workit would drop); add Workit's permission.edit deny patterns by hand";
+
+/** One JSON host's merge (`bash`: the Claude Code shell to set, or null). */
+const mergeFor = (
+  host: JsonHost,
+  parsed: Json,
+  bash: string | null,
+  input: MergeInput,
+): HostMerge =>
+  host === "claude-code"
+    ? mergeClaudeSettings(parsed, bash, input)
+    : host === "cursor"
+      ? mergeCursorCliConfig(parsed, input)
+      : mergeOpenCodeConfig(parsed, input);
+
 export function planHostPermissions(options: PlanOptions): PermissionPlan {
   const paths = resolvePaths(options);
   const plan: PermissionPlan = { changes: [], notes: [], blocked: [] };
@@ -838,11 +873,9 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
       plan.notes.push(`${host}: not installed (${target.hostDir} is missing); nothing written`);
       continue;
     }
-    const jsonc = target.file.replace(/\.json$/u, ".jsonc");
-    if (host === "opencode" && !existsSync(target.file) && existsSync(jsonc)) {
-      plan.blocked.push(
-        `${jsonc} holds the OpenCode config (comments Workit would drop); add Workit's permission.edit deny patterns by hand; left untouched`,
-      );
+    const jsonc = host === "opencode" ? onlyJsonc(target.file) : null;
+    if (jsonc) {
+      plan.blocked.push(`${jsonc} ${JSONC_BLOCKED}; left untouched`);
       continue;
     }
     const before = readText(target.file);
@@ -885,12 +918,7 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
         skip,
         ...(previous ? { previous: previous.owned } : {}),
       };
-      const merged =
-        jsonHost === "claude-code"
-          ? mergeClaudeSettings(parsed, bash, input)
-          : jsonHost === "cursor"
-            ? mergeCursorCliConfig(parsed, input)
-            : mergeOpenCodeConfig(parsed, input);
+      const merged = mergeFor(jsonHost, parsed, bash, input);
       if (merged.error) {
         plan.blocked.push(`${target.file}: ${merged.error}; left untouched`);
         continue;
@@ -921,8 +949,37 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
     plan.refused = `refusing to change host permissions from inside an agent session (${agent} is set): they decide what agents may run, so run \`${setupCommand(
       plan.changes.map((c) => c.host),
     )}\` yourself in a terminal`;
+  else if (plan.changes.length > 0) {
+    const refusal = recordRefusal(paths.stateDir);
+    if (refusal) Object.assign(plan, refusal);
+  }
   return plan;
 }
+
+/**
+ * Why Workit cannot write its ownership record under `stateDir`: a symlinked
+ * dir on the way (`writeFileAtomic` never writes through one). Host files are
+ * never written without the record, or uninstall could not remove the entries.
+ */
+const recordRefusal = (stateDir: string): { refused: string; unblock: string } | null => {
+  const file = path.resolve(stateDir, RECORD_FILE);
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    let link = false;
+    try {
+      link = lstatSync(dir).isSymbolicLink();
+    } catch {
+      // Missing: created later, not a link.
+    }
+    if (link) {
+      const real = realDir(path.resolve(stateDir));
+      return {
+        refused: `nothing written: Workit records the entries it adds in ${file}, and ${dir} is a symbolic link, which Workit does not write through (without that record, uninstall could not remove them)`,
+        unblock: `point WORKIT_STATE_DIR at the real path (export WORKIT_STATE_DIR=${real}) and run the command again`,
+      };
+    }
+    if (path.dirname(dir) === dir) return null;
+  }
+};
 
 /** A unified-style line diff of one change (`-` removed, `+` added, two lines of context). */
 export function permissionDiff(change: PermissionChange): string {
@@ -985,7 +1042,33 @@ export function applyHostPermissions(
       status: "failed",
       detail: plan.refused,
     }));
+  const failAll = (detail: string): PermissionApplyEntry[] =>
+    plan.changes.map((c) => ({ host: c.host, file: c.file, status: "failed", detail }));
+  const refusal = recordRefusal(paths.stateDir);
+  if (refusal) return failAll(`${refusal.refused}; ${refusal.unblock}`);
   const record = readOwnership(paths);
+  // The record first, naming every entry about to be written: a host file is
+  // never left with entries no record owns. It is rewritten below with only
+  // the changes that were written.
+  const next = (change: PermissionChange): HostRecord => {
+    const previous = record.hosts[change.host];
+    return {
+      file: change.file,
+      owned: forgetDropped(unionOwned(previous?.owned, change.owned), change),
+      offered: unionLists(previous?.offered, change.offered),
+    };
+  };
+  const pending = plan.changes.filter((change) => readText(change.file) === change.before);
+  if (pending.length > 0)
+    try {
+      const intent: OwnershipRecord = { version: 1, hosts: { ...record.hosts } };
+      for (const change of pending) intent.hosts[change.host] = next(change);
+      writeOwnership(intent, paths.stateDir);
+    } catch (error) {
+      return failAll(
+        `nothing written: Workit could not write its ownership record in ${paths.stateDir} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
   const entries: PermissionApplyEntry[] = [];
   for (const change of plan.changes) {
     if (readText(change.file) !== change.before) {
@@ -1013,12 +1096,7 @@ export function applyHostPermissions(
       }
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileAtomic(target, change.after);
-      const previous = record.hosts[change.host];
-      record.hosts[change.host] = {
-        file: change.file,
-        owned: forgetDropped(unionOwned(previous?.owned, change.owned), change),
-        offered: unionLists(previous?.offered, change.offered),
-      };
+      record.hosts[change.host] = next(change);
       entries.push({ host: change.host, file: change.file, status: "written" });
     } catch (error) {
       entries.push({
@@ -1029,7 +1107,12 @@ export function applyHostPermissions(
       });
     }
   }
-  if (entries.some((e) => e.status === "written")) writeOwnership(record, paths.stateDir);
+  if (pending.length > 0)
+    try {
+      writeOwnership(record, paths.stateDir);
+    } catch {
+      // The intent record stands: it names a superset of what was written.
+    }
   return entries;
 }
 
@@ -1130,8 +1213,10 @@ export type NativeDenyHost = PermissionHost | "pi";
  */
 export type NativeDenyHealth = {
   host: NativeDenyHost;
-  state: "no-host" | "present" | "missing" | "stale" | "unreadable" | "none";
+  state: "no-host" | "present" | "missing" | "stale" | "unreadable" | "blocked" | "none";
   file?: string;
+  /** `blocked`: why setup cannot write the rules, as its blocked line says. */
+  reason?: string;
   missing: string[];
   stale: string[];
   /** The ownership record names this host: the user consented to Workit's block before. */
@@ -1194,6 +1279,16 @@ export function nativeDenyHealth(
     };
   }
   const recorded = readOwnership(options).hosts[host] !== undefined;
+  const jsonc = host === "opencode" ? onlyJsonc(target.file) : null;
+  if (jsonc)
+    return {
+      ...base,
+      recorded,
+      state: "blocked",
+      file: jsonc,
+      missing: nativeDenyEntries(host, guarded),
+      reason: JSONC_BLOCKED,
+    };
   const value = readRecord(target.file);
   const text = readText(target.file);
   if (text !== null && text.trim() !== "" && value === null)
@@ -1203,7 +1298,14 @@ export function nativeDenyHealth(
   const expected = nativeDenyEntries(host, guarded);
   const wanted = new Set(expected);
   const present = new Set(denyEntriesAt(config, dotted));
-  const owned = new Set(ownedList(readOwnership(options).hosts[host]?.owned, dotted));
+  const previous = readOwnership(options).hosts[host]?.owned;
+  const owned = new Set(ownedList(previous, dotted));
+  // What setup would refuse to merge into (OpenCode's `permission.edit: "allow"`, a list that is not one).
+  const blocked = mergeFor(host, config, null, {
+    deny: expected,
+    skip: {},
+    ...(previous ? { previous } : {}),
+  }).error;
   const stale = [...present].filter(
     (entry) => isNativeDeny(host, dotted, entry) && !wanted.has(entry) && owned.has(entry),
   );
@@ -1216,11 +1318,12 @@ export function nativeDenyHealth(
         : undefined;
   return {
     host,
-    state: stale.length ? "stale" : missing.length ? "missing" : "present",
+    state: stale.length ? "stale" : missing.length ? (blocked ? "blocked" : "missing") : "present",
     file: target.file,
     missing,
     stale,
     recorded,
+    ...(blocked && missing.length ? { reason: blocked } : {}),
     ...(sandbox ? { sandbox } : {}),
   };
 }

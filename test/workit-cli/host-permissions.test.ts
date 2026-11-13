@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  symlinkSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -814,4 +815,54 @@ test("Given OpenCode configs Workit cannot merge into (permission.edit one actio
   const second = await cli(["setup", "--hosts=opencode", "--yes"], commented.env);
   expect(second.stdout).toContain("opencode.jsonc holds the OpenCode config");
   expect(existsSync(path.join(commented.home, ".config", "opencode", "opencode.json"))).toBe(false);
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given a state dir reached through a symlink, When `workit setup --yes` runs, Then it is blocked with the symlinked dir and the WORKIT_STATE_DIR fix, and neither the host file nor the record is written",
+  async () => {
+    const { env, home, settings } = sandbox();
+    const real = path.join(home, "real-state");
+    mkdirSync(real, { recursive: true });
+    symlinkSync(real, path.join(home, "state-link"));
+    env.WORKIT_STATE_DIR = path.join(home, "state-link");
+    const original = JSON.stringify(USER_SETTINGS, null, 2) + "\n";
+    writeFileSync(settings, original);
+
+    const run = await cli(["setup", "--hosts=claude-code", "--yes"], env);
+    expect(run.code).not.toBe(0);
+    const out = run.stdout + run.stderr;
+    expect(out).toContain(`${path.join(home, "state-link")} is a symbolic link`);
+    expect(out).toContain(`export WORKIT_STATE_DIR=${realpathSync(real)}`);
+    expect(out).not.toMatch(/^\s+at /mu);
+    expect(readFileSync(settings, "utf8")).toBe(original);
+    expect(existsSync(path.join(real, "host-permissions.json"))).toBe(false);
+
+    // A plan made before the link appeared is refused at apply, the same way.
+    const plan = planHostPermissions({
+      home,
+      env: { ...env, WORKIT_STATE_DIR: real },
+      hosts: ["claude-code"],
+    });
+    expect(plan.refused).toBeUndefined();
+    const applied = applyHostPermissions(plan, { home, env });
+    expect(applied[0].status).toBe("failed");
+    expect(applied[0].detail).toContain("is a symbolic link");
+    expect(readFileSync(settings, "utf8")).toBe(original);
+  },
+);
+
+test("Given a home whose path holds parentheses, When setup writes Claude Code's rules, Then each parenthesis is spelled [(] or [)] and Cursor's rule keeps it as is", async () => {
+  const { env, home } = sandbox();
+  const odd = path.join(home, "Work (x86)");
+  mkdirSync(path.join(odd, ".claude"), { recursive: true });
+  mkdirSync(path.join(odd, ".cursor"), { recursive: true });
+  const oddEnv = { ...env, HOME: odd, WORKIT_STATE_DIR: path.join(odd, "state") };
+  expect((await cli(["setup", "--hosts=claude-code,cursor", "--yes"], oddEnv)).code).toBe(0);
+  const root = realHome(odd);
+  const claude = JSON.parse(readFileSync(path.join(odd, ".claude", "settings.json"), "utf8"));
+  expect(claude.permissions.deny).toContain(
+    `Edit(//${root.replace(/^\/+/u, "").replace("(x86)", "[(]x86[)]")}/state/issued*)`,
+  );
+  const cursor = JSON.parse(readFileSync(path.join(odd, ".cursor", "cli-config.json"), "utf8"));
+  expect(cursor.permissions.deny).toContain(`Write(${root}/state/issued*)`);
 });

@@ -141,3 +141,32 @@ test("G Codex whose sandbox lets commands write the state dir, and Pi, W doctor 
     "codex: no path deny rule (sandbox_mode not set (Codex picks one per project trust))",
   );
 });
+
+test("G OpenCode configs setup cannot merge into (permission.edit one action, only an opencode.jsonc), W doctor runs, T native_deny says why and what to change by hand, never the setup command that refuses", () => {
+  const single = fixture("opencode-string");
+  const config = path.join(single.home, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  writeFileSync(config, JSON.stringify({ permission: { edit: "allow" } }));
+  const row = single.doctor();
+  expect(row.status).toBe("info");
+  expect(row.detail).toBe(
+    `opencode: missing 5, and setup cannot write them: ${config} permission.edit is one action for every path ("allow"); make it a pattern map to take Workit's deny patterns`,
+  );
+  expect(row.fix).toStartWith(
+    `opencode: in ${config}, make permission.edit a pattern map and set `,
+  );
+  expect(row.fix).toContain('workspaces.json.seal to "deny"');
+  expect(row.fix).not.toContain("workit setup --hosts=opencode,");
+  expect(row.fix).not.toStartWith("workit setup");
+
+  const commented = fixture("opencode-jsonc");
+  const jsonc = path.join(commented.home, ".config", "opencode", "opencode.jsonc");
+  mkdirSync(path.dirname(jsonc), { recursive: true });
+  writeFileSync(jsonc, "{\n  // mine\n}\n");
+  const second = commented.doctor();
+  expect(second.status).toBe("info");
+  expect(second.detail).toStartWith(
+    `opencode: missing 5, and setup cannot write them: ${jsonc} holds the OpenCode config`,
+  );
+  expect(second.fix).toStartWith(`opencode: in ${jsonc}, make permission.edit a pattern map`);
+});

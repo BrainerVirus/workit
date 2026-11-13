@@ -90,8 +90,12 @@ there; these host rules still hold when a hook fails to load. They name the
 directories your setup resolved (each as written and, when a link leads
 elsewhere, also the real path), so a moved state dir gets new rules on the
 next `workit setup` or `workit upgrade`, which drops the old ones Workit wrote.
-`workit uninstall` removes exactly them. `workit doctor` reports them in its
-`native_deny` row per host (present, missing or stale) with the host's sandbox
+`workit uninstall` removes exactly them. When the state dir is reached through
+a symbolic link, setup writes nothing (Workit never writes its record of these
+entries through a link) and tells you to point `WORKIT_STATE_DIR` at the real
+path. `workit doctor` reports them in its `native_deny` row per host (present,
+missing, stale, or a file setup cannot merge into, with the edit to make by
+hand) with the host's sandbox
 setting: Claude Code's `sandbox.enabled` (with it on, the deny rules also stop
 shell commands), Cursor's `sandbox.mode`, Codex's `sandbox_mode` (Codex has no
 path deny rule: the row warns when its sandbox is `danger-full-access` or a
