@@ -50,7 +50,12 @@ const SCRIPT_LOADED: Record<string, string> = {
 // Seams a slice lands ahead of its first runtime consumer (design §5 waves).
 // Each line names the slices that will import it; delete the line when the
 // first of them merges, so the file is then policed like any other.
-const AWAITING_CONSUMER: Record<string, string> = {};
+const AWAITING_CONSUMER: Record<string, string> = {
+  // The threads store (#329 part 1) lands before its first consumer, the process registry (#328, wave 9 procs-registry).
+  "packages/workit-core/src/store/threads/procs.ts": "procs-registry (#328)",
+  "packages/workit-core/src/store/threads/store.ts": "procs-registry (#328)",
+  "packages/workit-core/src/store/threads/sqlite.ts": "procs-registry (#328)",
+};
 
 const reached = new Set<string>([...Object.keys(SCRIPT_LOADED), ...Object.keys(AWAITING_CONSUMER)]);
 const out = mkdtempSync(path.join(os.tmpdir(), "workit-reachability-"));
