@@ -108,15 +108,17 @@ keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 
 The test preload (`test/shared/state-isolation.ts`) also sets the run marker
-`WORKIT_TEST_RUN` to its temp dir, which every child process inherits: there
-grants and the seal resolve to `<marker>/account-home`, never the OS account's
-(D15 holds without the marker), grants stay at or below the D4 defaults, and
-the seal, grant, workspace and host-permission writers refuse any file under
-the OS account's host settings or Workit dirs (`testRunWriteRefusal`). A test
-that strips `WORKIT_*` from a child's env uses `stripsWorkitKey`
-(`test/shared/helpers/env.ts`), which keeps the marker. A marker that is not a
-directory inside the OS temp dir is refused (no account, no grants), so it is
-not a way to move grants. `test/shared/real-state-guard.ts` snapshots the
+`WORKIT_TEST_RUN` to its temp dir, which every child process inherits. The
+marker changes nothing a process reads: grants and the seal still come from
+the OS account record (D15), so an agent that sets it gains nothing. It only
+adds refusals: under it the seal, grant, workspace, host-permission, setup,
+upgrade, install and completion writers (`admin/guarded-fs.ts`, core
+`testRunWriteRefusal`) refuse any file under the account's host settings,
+`~/.config`, `~/.local/share`, `~/.local/bin` or Workit's dirs, naming it, and
+host CLI installs aimed there are not run. Keep grant assertions in-process,
+where the preload swaps the grants home. A test that strips `WORKIT_*` from a
+child's env uses `stripsWorkitKey` (`test/shared/helpers/env.ts`), which keeps
+the marker. `test/shared/real-state-guard.ts` snapshots the
 account's `workspaces.json`, its seal and the host settings Workit writes
 (Claude Code, Cursor, Codex, OpenCode, Pi) at preload and fails the run naming
 any file that changed (#859). Drive a verb that writes host or config state

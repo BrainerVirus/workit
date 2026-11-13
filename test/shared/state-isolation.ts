@@ -45,10 +45,11 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 // Grants are read from the OS account's home, which no env var moves (D15):
 // in-process, every test reads them from a run-scoped temp home instead, so
 // the real account's workspaces.json and its seal are never read here
-// (useConfigHome swaps in its own home). The run marker sends every child
-// process to the same temp home (core/account-home.ts testRunHome), where
-// grants never exceed the D4 defaults and the real seal is never written;
-// keep grant assertions in-process.
+// (useConfigHome swaps in its own home). Child processes still read the
+// account record (D15): the run marker they inherit changes nothing they read
+// and only makes them refuse to write the account's seal, grants or host
+// settings (core/account-home.ts testRunWriteRefusal). Keep grant assertions
+// in-process.
 process.env[TEST_RUN_ENV] = dir;
 const accountHomeForRun = path.join(dir, "account-home");
 grantsHome.resolve = () => accountHomeForRun;

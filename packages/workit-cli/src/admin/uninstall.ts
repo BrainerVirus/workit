@@ -860,7 +860,7 @@ const applyClaudeUninstall = (
     ...(action.cwd === null ? {} : { cwd: action.cwd }),
     purpose: `Uninstall the Workit Claude Code plugin ${id} (${scope} scope)`,
   };
-  const refused = paths.runHostCommand ? null : hostCommandRefusal(home, step.purpose);
+  const refused = paths.runHostCommand ? null : hostCommandRefusal(home, step.purpose, env);
   if (refused) return { status: "failed", detail: refused };
   const result = paths.runHostCommand
     ? paths.runHostCommand(step)

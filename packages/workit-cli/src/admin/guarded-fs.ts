@@ -23,14 +23,36 @@ const refuseWrite = (file: fs.PathLike | number): void => {
   if (reason) throw new Error(reason);
 };
 
+/** The env vars that point a host CLI at its config dir instead of one under HOME. */
+const HOST_DIR_VARS = [
+  "CLAUDE_CONFIG_DIR",
+  "CODEX_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "PI_CODING_AGENT_DIR",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_CONFIG",
+] as const;
+
 /**
  * Why a host CLI must not run against `home` in a test run (it writes the
- * host's plugin and settings dirs there), or null: `home` is the account's.
+ * host's plugin and settings dirs there, or where `env` points them), or null:
+ * neither `home` nor any host dir `env` names is under the account's.
  */
-export const hostCommandRefusal = (home: string, purpose: string): string | null =>
-  testRunWriteRefusal(path.join(home, ".claude"), guardedHome.value) === null
+export const hostCommandRefusal = (
+  home: string,
+  purpose: string,
+  env: NodeJS.ProcessEnv = {},
+): string | null => {
+  const targets = [
+    path.join(home, ".claude"),
+    ...HOST_DIR_VARS.flatMap((name) => (env[name] ? [env[name]] : [])),
+  ];
+  const hit = targets.find((dir) => testRunWriteRefusal(dir, guardedHome.value) !== null);
+  return hit === undefined
     ? null
-    : `refusing to run ${purpose} against ${home}: a test run (WORKIT_TEST_RUN) never writes the OS account's home (#859)`;
+    : `refusing to run ${purpose} against ${hit}: a test run (WORKIT_TEST_RUN) never writes the OS account's home (#859)`;
+};
 
 export const writeFileSync = (
   file: fs.PathOrFileDescriptor,

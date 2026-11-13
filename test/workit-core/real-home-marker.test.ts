@@ -1,7 +1,8 @@
-// #859: the test run marker (WORKIT_TEST_RUN) sends a child process's grants
-// home to the run's temp account home, so a child never reads or writes the
-// OS account's grants or seal; without it D15 holds (the account record).
-// Every child here gets its own temp marker; none writes outside it.
+// #859: the test run marker (WORKIT_TEST_RUN) changes nothing a process
+// reads: grants and the seal come from the OS account record with or without
+// it (D15). It only adds refusals: under it no process writes the account's
+// seal, grants or host settings. Every write below targets a fake account
+// home through the refusedHome seam, in the test's own process or the child's.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -12,12 +13,11 @@ import { SEAL_FILE, writeSeal } from "@/packages/workit-core/src/core/grant-seal
 import {
   TEST_RUN_ENV,
   accountHome,
-  testRunHome,
   testRunWriteRefusal,
 } from "@/packages/workit-core/src/core/account-home";
 import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
-const AUTONOMY = path.resolve(import.meta.dir, "../../packages/workit-core/src/autonomy.ts");
+const CORE = path.resolve(import.meta.dir, "../../packages/workit-core/src");
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -28,90 +28,104 @@ const temp = (prefix: string) => {
   return dir;
 };
 
-/** Run `body` in a child bun with `env`; it may use `autonomy`, `cwd` and `out(value)`. */
-const child = (env: NodeJS.ProcessEnv, body: string, cwd = os.tmpdir()): any => {
-  const code = `const autonomy = await import(${JSON.stringify(AUTONOMY)});
-const cwd = ${JSON.stringify(cwd)};
+/** Run `body` in a child bun with `env`; it may use `autonomy`, `home` (account-home.ts) and `out(value)`. */
+const child = (env: NodeJS.ProcessEnv, body: string): any => {
+  const code = `const autonomy = await import(${JSON.stringify(path.join(CORE, "autonomy.ts"))});
+const home = await import(${JSON.stringify(path.join(CORE, "core/account-home.ts"))});
 const out = (value) => console.log(JSON.stringify(value));
 ${body}`;
-  const run = spawnSync(process.execPath, ["-e", code], { cwd, env, encoding: "utf8" });
+  const run = spawnSync(process.execPath, ["-e", code], {
+    cwd: os.tmpdir(),
+    env,
+    encoding: "utf8",
+  });
   expect(run.status, run.stderr).toBe(0);
   return JSON.parse(run.stdout.trim().split("\n").at(-1)!);
 };
 
-/** A workspace that grants everything, for a file an agent could write into a marker home. */
-const greedy = (work: string) => ({
-  name: "greedy",
-  glob: `${work}/**`,
-  vcs: { provider: "github", account: "me" },
-  autonomy: { push: true, pr: true, merge: true, release: true, rerun: true },
-});
+const withMarker = (marker: string | undefined): NodeJS.ProcessEnv => {
+  const env = { ...process.env };
+  if (marker === undefined) delete env[TEST_RUN_ENV];
+  else env[TEST_RUN_ENV] = marker;
+  return env;
+};
 
-test("Given no marker, a marker in the temp dir, and markers that are not, Then testRunHome is undefined, <marker>/account-home, and refused (null)", () => {
-  const marker = temp("wk-marker-");
-  expect(testRunHome({})).toBeUndefined();
-  expect(testRunHome({ [TEST_RUN_ENV]: marker })).toBe(path.join(marker, "account-home"));
-  // Outside the temp dir (this checkout), relative, missing, or the temp dir itself.
-  expect(testRunHome({ [TEST_RUN_ENV]: import.meta.dir })).toBeNull();
-  expect(testRunHome({ [TEST_RUN_ENV]: "relative/dir" })).toBeNull();
-  expect(testRunHome({ [TEST_RUN_ENV]: path.join(marker, "missing") })).toBeNull();
-  expect(testRunHome({ [TEST_RUN_ENV]: os.tmpdir() })).toBeNull();
-  expect(testRunHome({ [TEST_RUN_ENV]: "/" })).toBeNull();
-});
-
-test("Given a child process with the run marker, When it resolves the grants home and seals, Then both are the marker's temp account home, and the grants there stay at the D4 defaults", () => {
-  const marker = temp("wk-marker-");
-  const work = path.join(marker, "work");
-  mkdirSync(path.join(work, "repo"), { recursive: true });
-  const config = workitConfigDir({ HOME: path.join(marker, "account-home") });
+test("Given an agent-set marker, When grants resolve for an account that lowers them, Then they are identical to a run without the marker", () => {
+  const home = temp("wk-marker-account-");
+  const config = workitConfigDir({ HOME: home });
   mkdirSync(config, { recursive: true });
-  writeFileSync(
-    path.join(config, "workspaces.json"),
-    JSON.stringify({ workspaces: [greedy(work)] }),
-  );
-  // The escalation case: the config dir the child reads is the marker home's own.
-  const env = { ...process.env, [TEST_RUN_ENV]: marker, WORKIT_CONFIG: config };
-  const seen = child(
-    env,
-    `const dir = autonomy.grantsDir();
-if (!dir.startsWith(${JSON.stringify(`${marker}/`)})) { out({ dir }); process.exit(0); }
-const sealed = autonomy.sealAccount();
-out({ dir, sealed, release: autonomy.resolveAutonomy(cwd + "/repo").grants.release, note: autonomy.resolveAutonomy(cwd + "/repo").note });`,
-    work,
-  );
-  expect(seen.dir).toBe(config);
-  expect(seen.sealed).toEqual({ ok: true, path: path.join(config, SEAL_FILE) });
-  expect(seen.release).toBe(false);
-  expect(seen.note).toContain(TEST_RUN_ENV);
-
-  // Control: the same sealed file read in-process as the account's own grants it.
-  const saved = { resolve: grantsHome.resolve, config: process.env.WORKIT_CONFIG };
-  grantsHome.resolve = () => path.join(marker, "account-home");
+  const work = path.join(home, "work");
+  const entries = [
+    {
+      name: "lowered",
+      glob: `${work}/**`,
+      autonomy: { push: false, pr: false, rerun: false },
+      verification: "independent",
+    },
+  ];
+  writeFileSync(path.join(config, "workspaces.json"), JSON.stringify({ workspaces: entries }));
+  writeSeal(config, entries, new Date(), null);
+  const saved = {
+    resolve: grantsHome.resolve,
+    config: process.env.WORKIT_CONFIG,
+    marker: process.env[TEST_RUN_ENV],
+  };
+  grantsHome.resolve = () => home;
   process.env.WORKIT_CONFIG = config;
   try {
-    expect(resolveAutonomy(path.join(work, "repo")).grants.release).toBe(true);
+    delete process.env[TEST_RUN_ENV];
+    const without = resolveAutonomy(path.join(work, "repo"));
+    process.env[TEST_RUN_ENV] = temp("wk-agent-marker-");
+    const marked = resolveAutonomy(path.join(work, "repo"));
+    expect(marked).toEqual(without);
+    expect(without.grants).toMatchObject({ push: false, pr: false, rerun: false });
   } finally {
     grantsHome.resolve = saved.resolve;
     if (saved.config === undefined) delete process.env.WORKIT_CONFIG;
     else process.env.WORKIT_CONFIG = saved.config;
+    process.env[TEST_RUN_ENV] = saved.marker;
   }
 });
 
-test("Given a child process without the marker (a user's shell), When it resolves the grants home, Then it is the OS account record's home (D15)", () => {
-  const env = { ...process.env };
-  delete env[TEST_RUN_ENV];
-  // Read only: the child resolves the path and writes nothing.
-  const seen = child(env, `out({ home: autonomy.grantsHome.resolve() });`);
-  expect(seen.home).toBe(accountHome());
+test("Given a child process with or without the marker, When it resolves the grants home and dir, Then both read the OS account record (D15)", () => {
+  // Read only: the children resolve paths and write nothing.
+  const read = "out({ home: autonomy.grantsHome.resolve(), dir: autonomy.grantsDir() });";
+  const marked = child(withMarker(temp("wk-agent-marker-")), read);
+  const plain = child(withMarker(undefined), read);
+  expect(marked).toEqual(plain);
+  expect(marked.home).toBe(accountHome());
 });
 
-test("Given a child process whose marker is outside the temp dir, When it resolves the grants home, Then it is refused: no account, never the account record's", () => {
-  const seen = child(
-    { ...process.env, [TEST_RUN_ENV]: import.meta.dir },
-    `out({ home: autonomy.grantsHome.resolve(), override: autonomy.grantsOverride() });`,
+test("Given a child process with the marker and a fake account home, When it seals or writes grants there, Then both are refused naming the file and nothing is written; without the marker they are written", () => {
+  const run = (marker: string | undefined) => {
+    const fake = temp("wk-child-account-");
+    const config = workitConfigDir({ HOME: fake });
+    mkdirSync(config, { recursive: true });
+    const entries = [{ name: "w", glob: `${fake}/w/**`, autonomy: { push: false } }];
+    writeFileSync(path.join(config, "workspaces.json"), JSON.stringify({ workspaces: entries }));
+    // The child's own seams: the fake home is both what it reads and what it must not write.
+    const seen = child(
+      withMarker(marker),
+      `home.refusedHome.value = ${JSON.stringify(fake)};
+autonomy.grantsHome.resolve = () => ${JSON.stringify(fake)};
+const sealed = autonomy.sealAccount();
+const granted = autonomy.writeGrants("w", [{ kind: "rerun", value: false }]);
+out({ sealed, granted: granted.ok ? "ok" : granted.error });`,
+    );
+    return { ...seen, config };
+  };
+  const refused = run(temp("wk-agent-marker-"));
+  expect(refused.sealed.ok).toBe(false);
+  expect(refused.sealed.error).toContain(
+    `refusing to write ${path.join(refused.config, SEAL_FILE)}`,
   );
-  expect(seen.home).toBeNull();
-  expect(seen.override).toContain("no OS account record");
+  expect(refused.granted).toContain(
+    `refusing to write ${path.join(refused.config, "workspaces.json")}`,
+  );
+  expect(existsSync(path.join(refused.config, SEAL_FILE))).toBe(false);
+  const written = run(undefined);
+  expect(written.sealed).toEqual({ ok: true, path: path.join(written.config, SEAL_FILE) });
+  expect(written.granted).toBe("ok");
 });
 
 test("Given a test run, When writeSeal targets the account's own config dir, Then it refuses and writes nothing; another dir is sealed", () => {

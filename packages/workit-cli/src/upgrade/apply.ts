@@ -487,7 +487,7 @@ export async function applyUpgrade(
   // A test run never upgrades the OS account's hosts or CLI (#859): refused
   // before any write or host command, naming what it would have touched.
   const refused =
-    hostCommandRefusal(paths.home, "workit upgrade") ??
+    hostCommandRefusal(paths.home, "workit upgrade", paths.env) ??
     [
       backup,
       ...(plan.cli ? [plan.cli.root] : []),

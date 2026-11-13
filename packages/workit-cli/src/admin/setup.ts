@@ -1486,7 +1486,11 @@ export function applySetupPreview(
         options.runHostCommand ??
         ((step: HostInstallCommand) => runHostCommand(step, { home: res.home, env: res.env }));
       // A test run never installs into the OS account's host dirs (#859).
-      const refused = hostCommandRefusal(res.home, `the ${mutation.platform} host install`);
+      const refused = hostCommandRefusal(
+        res.home,
+        `the ${mutation.platform} host install`,
+        res.env,
+      );
       if (refused) {
         entries.push({
           platform: mutation.platform,

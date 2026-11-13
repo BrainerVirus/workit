@@ -45,7 +45,7 @@ export async function runUpgradeCommand(argv: string[], deps: UpgradeDeps = {}):
   // A test run never upgrades the OS account's home (#859): not its hosts, CLI,
   // config, completion or skills. Only the read-only forms run against it.
   if (!argv.includes("--check") && !argv.includes("--preview")) {
-    const refused = hostCommandRefusal(home, "workit upgrade");
+    const refused = hostCommandRefusal(home, "workit upgrade", env);
     if (refused) {
       (deps.out ?? process.stderr).write(`workit upgrade: ${refused}\n`);
       return 3;

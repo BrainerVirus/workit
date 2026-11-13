@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { guardedHome } from "@/packages/workit-cli/src/admin/guarded-fs";
+import { guardedHome, hostCommandRefusal } from "@/packages/workit-cli/src/admin/guarded-fs";
 import {
   applySetupPreview,
   buildSetupPreview,
@@ -151,6 +151,34 @@ test("Given admin/**, upgrade/**, install/**, upgrade.ts, update-settings.ts and
     // A default or namespace node:fs import used for a write.
     for (const call of text.matchAll(/\b(?:fs|nodeFs)\.(\w+)\(/gu))
       if (WRITES.test(call[1])) offenders.push(`${file}: fs.${call[1]}(`);
+    // Other ways to reach a writer: fs/promises, a dynamic import or require of
+    // node:fs, Bun.write.
+    for (const other of text.matchAll(
+      /from\s+"(?:node:)?fs\/promises"|import\(\s*"(?:node:)?fs(?:\/promises)?"\s*\)|require\(\s*"(?:node:)?fs(?:\/promises)?"\s*\)|\bBun\.write\(|\bfs\.promises\b/gu,
+    ))
+      offenders.push(`${file}: ${other[0]}`);
   }
   expect(offenders).toEqual([]);
+});
+
+test("Given a test run, When a host command's home is elsewhere but its env points a host dir into the account home, Then it is refused naming that dir", () => {
+  const account = temp("wk-admin-account-");
+  const home = temp("wk-admin-home-");
+  guardedHome.value = account;
+  for (const name of [
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    "XDG_CONFIG_HOME",
+    "PI_CODING_AGENT_DIR",
+    "OPENCODE_CONFIG_DIR",
+  ]) {
+    const dir = path.join(account, name === "CODEX_HOME" ? ".codex" : ".config");
+    expect(hostCommandRefusal(home, "an install", { [name]: dir })).toContain(
+      `refusing to run an install against ${dir}`,
+    );
+  }
+  expect(
+    hostCommandRefusal(home, "an install", { CODEX_HOME: path.join(home, ".codex") }),
+  ).toBeNull();
+  expect(hostCommandRefusal(account, "an install")).toContain(path.join(account, ".claude"));
 });

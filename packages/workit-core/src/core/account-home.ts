@@ -7,7 +7,7 @@
 // absolute path with a fixed env, a timeout and no shell. With no record
 // there is no home (null), never a fallback path: no grants are read.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { configDir, dataDir, stateDir } from "./workit-paths.mjs";
@@ -98,61 +98,28 @@ export const accountHome = (platform = process.platform, io: AccountIo = hostIo)
 
 /**
  * The test run marker (#859): the test preload sets it to its run-scoped temp
- * dir, and every process the suite spawns inherits it. Not a user setting.
+ * dir, and every process the suite spawns inherits it. It changes nothing a
+ * process reads; it only adds refusals (testRunWriteRefusal), so setting it
+ * can only make a run stricter.
  */
 export const TEST_RUN_ENV = "WORKIT_TEST_RUN";
 
-const realDir = (dir: string): string | null => {
-  try {
-    const real = realpathSync(dir);
-    return statSync(real).isDirectory() ? real : null;
-  } catch {
-    return null;
-  }
-};
-
-/**
- * Under a test run, the run's temp account home: `<marker>/account-home`,
- * so a test's child process never reads or writes the OS account's grants
- * or seal. Undefined without the marker. A marker that is not an existing
- * directory inside the OS temp dir is refused: null, no account (no grants
- * read, nothing sealed), never the account record's home.
- */
-export const testRunHome = (
-  env: NodeJS.ProcessEnv = process.env,
-  tmp: string = os.tmpdir(),
-): string | null | undefined => {
-  const marker = env[TEST_RUN_ENV];
-  if (marker === undefined) return undefined;
-  if (!path.isAbsolute(marker)) return null;
-  const [dir, root] = [realDir(marker), realDir(tmp)];
-  if (dir === null || root === null) return null;
-  const inside = path.relative(root, dir);
-  if (!inside || inside.startsWith("..") || path.isAbsolute(inside)) return null;
-  return path.join(dir, "account-home");
-};
-
-const defaultResolve = (): string | null => {
-  const run = testRunHome();
-  return run === undefined ? accountHome() : run;
-};
-
 /**
  * Where grants are read from: the OS account record's home directory, never
- * `$HOME` (an agent can set that for one command); under the test run marker,
- * the run's temp account home (testRunHome). Tests swap `resolve` in-process
- * (the test preload points it at a run-scoped temp home). Here, with builtins
+ * `$HOME` (an agent can set that for one command). The test run marker never
+ * moves it (it only adds write refusals, testRunWriteRefusal). Tests swap
+ * `resolve` in-process (the test preload points it at a run-scoped temp
+ * home); nothing outside this process can change it. Here, with builtins
  * only, so the preload sets it without loading the config schemas.
  */
-export const grantsHome: { resolve: () => string | null } = { resolve: defaultResolve };
+export const grantsHome: { resolve: () => string | null } = { resolve: () => accountHome() };
 
 /**
- * Whether grants come from the marker's temp home (an unswapped resolve under
- * WORKIT_TEST_RUN): there they never exceed the D4 defaults (autonomy.ts
- * grantsOverride), so setting the marker can only lower authority.
+ * The account home testRunWriteRefusal protects (test seam, set in a test's
+ * own process; undefined: the OS account record's). It only picks what is
+ * refused, never what is read.
  */
-export const grantsFromTestRun = (): boolean =>
-  grantsHome.resolve === defaultResolve && process.env[TEST_RUN_ENV] !== undefined;
+export const refusedHome: { value: string | null | undefined } = { value: undefined };
 
 /** `file` with its deepest existing ancestor resolved (macOS /var is /private/var). */
 const resolvedPath = (file: string): string => {
@@ -188,7 +155,8 @@ export const testRunWriteRefusal = (
   env: NodeJS.ProcessEnv = process.env,
 ): string | null => {
   if (env[TEST_RUN_ENV] === undefined) return null;
-  const account = home === undefined ? accountHome() : home;
+  const account =
+    home !== undefined ? home : refusedHome.value !== undefined ? refusedHome.value : accountHome();
   if (account === null) return null;
   const homeEnv = { HOME: account, USERPROFILE: account };
   const roots = [
