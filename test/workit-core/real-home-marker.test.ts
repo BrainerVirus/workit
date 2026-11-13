@@ -5,7 +5,15 @@
 // home through the refusedHome seam, in the test's own process or the child's.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { grantsHome, resolveAutonomy } from "@/packages/workit-core/src/autonomy";
@@ -13,6 +21,8 @@ import { SEAL_FILE, writeSeal } from "@/packages/workit-core/src/core/grant-seal
 import {
   TEST_RUN_ENV,
   accountHome,
+  accountHomeLookup,
+  resetRefusalHome,
   testRunWriteRefusal,
 } from "@/packages/workit-core/src/core/account-home";
 import {
@@ -171,14 +181,61 @@ test("Given a fake account home, When testRunWriteRefusal judges a path, Then on
   expect(refused(path.join(home, ".claude", "settings.json"), {})).toBeNull();
 });
 
-test("Given a temp dir inside the account's protected dirs (as %LOCALAPPDATA%\\Temp is on Windows), When a fixture home there is written, Then it is not refused; the account's own files still are", () => {
+test("Given a temp dir inside the account's protected dirs (as %LOCALAPPDATA%\\Temp is on Windows, not a protected root), When a fixture home there is written, Then it is not refused; the account's own files still are", () => {
   const account = temp("wk-fake-account-");
   // Under a protected root of this account, the way Windows nests its temp dir.
-  const tmp = path.join(account, ".config", "Temp");
+  const tmp = path.join(account, "AppData", "Local", "Temp");
   mkdirSync(tmp, { recursive: true });
   const marked = { [TEST_RUN_ENV]: tmp };
   const fixture = path.join(tmp, "wk-fixture-home", ".claude", "settings.json");
   expect(testRunWriteRefusal(fixture, account, marked, tmp)).toBeNull();
   const own = path.join(account, ".config", "opencode", "opencode.json");
   expect(testRunWriteRefusal(own, account, marked, tmp)).toContain(`refusing to write ${own}`);
+});
+
+test("Given many refusal checks in one process, When they run without a home argument, Then the account home is resolved once", () => {
+  const home = temp("wk-fake-account-");
+  const real = accountHomeLookup.resolve;
+  let calls = 0;
+  accountHomeLookup.resolve = () => {
+    calls += 1;
+    return home;
+  };
+  resetRefusalHome();
+  try {
+    const marked = { [TEST_RUN_ENV]: home };
+    const own = path.join(home, ".claude", "settings.json");
+    for (let i = 0; i < 5; i += 1)
+      expect(testRunWriteRefusal(own, undefined, marked)).toContain("refusing to write");
+    expect(calls).toBe(1);
+  } finally {
+    accountHomeLookup.resolve = real;
+    resetRefusalHome();
+  }
+});
+
+test("Given TMPDIR inside a fake account's .config, When a write under it is judged in a test run, Then it is refused", () => {
+  const account = temp("wk-fake-account-");
+  const tmp = path.join(account, ".config", "tmp");
+  mkdirSync(tmp, { recursive: true });
+  const marked = { [TEST_RUN_ENV]: tmp };
+  const file = path.join(tmp, "f.json");
+  expect(testRunWriteRefusal(file, account, marked, tmp)).toContain(`refusing to write ${file}`);
+});
+
+test("Given a dangling symlink in temp pointing into a fake account's .config, When a write through it is judged, Then it is refused; a normal temp file is not", () => {
+  const account = temp("wk-fake-account-");
+  const tmp = temp("wk-fake-tmp-");
+  const target = path.join(account, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(target), { recursive: true });
+  const link = path.join(tmp, "link.json");
+  symlinkSync(target, link);
+  const dirLink = path.join(tmp, "dirlink");
+  symlinkSync(path.join(account, ".config", "missing"), dirLink);
+  const marked = { [TEST_RUN_ENV]: tmp };
+  expect(testRunWriteRefusal(link, account, marked, tmp)).toContain("refusing to write");
+  expect(testRunWriteRefusal(path.join(dirLink, "x.json"), account, marked, tmp)).toContain(
+    "refusing to write",
+  );
+  expect(testRunWriteRefusal(path.join(tmp, "plain.json"), account, marked, tmp)).toBeNull();
 });

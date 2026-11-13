@@ -7,7 +7,7 @@
 // absolute path with a fixed env, a timeout and no shell. With no record
 // there is no home (null), never a fallback path: no grants are read.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { configDir, dataDir, stateDir } from "./workit-paths.mjs";
@@ -121,9 +121,56 @@ export const grantsHome: { resolve: () => string | null } = { resolve: () => acc
  */
 export const refusedHome: { value: string | null | undefined } = { value: undefined };
 
+/**
+ * The account home testRunWriteRefusal asks for when no seam gives one: looked
+ * up once per process (a getent spawn each call otherwise). `resolve` is a
+ * test seam to spy on; resetRefusalHome clears the memo.
+ */
+export const accountHomeLookup: { resolve: () => string | null } = {
+  resolve: () => accountHome(),
+};
+let memoHome: { value: string | null } | undefined;
+export const resetRefusalHome = (): void => {
+  memoHome = undefined;
+};
+const memoizedHome = (): string | null => {
+  memoHome ??= { value: accountHomeLookup.resolve() };
+  return memoHome.value;
+};
+
+const MAX_LINKS = 40;
+
+/** `file` with every symlink component (dangling or not) followed, capped. */
+const followLinks = (file: string): string => {
+  let pending = path.resolve(file).split(path.sep);
+  let cur = pending.shift() || path.sep;
+  if (/^[A-Za-z]:$/u.test(cur)) cur += path.sep;
+  let links = 0;
+  while (pending.length > 0) {
+    const part = pending.shift()!;
+    const next = path.join(cur, part);
+    let target: string | undefined;
+    try {
+      target = readlinkSync(next);
+    } catch {
+      // Not a link, or absent: keep the component.
+    }
+    if (target === undefined) {
+      cur = next;
+    } else {
+      links += 1;
+      if (links > MAX_LINKS) return path.resolve(file);
+      const full = path.resolve(cur, target);
+      pending.unshift(...full.split(path.sep).slice(1));
+      cur = path.parse(full).root;
+    }
+  }
+  return cur;
+};
+
 /** `file` with its deepest existing ancestor resolved (macOS /var is /private/var). */
 const resolvedPath = (file: string): string => {
-  let dir = path.resolve(file);
+  let dir = followLinks(file);
   const rest: string[] = [];
   while (!existsSync(dir) && path.dirname(dir) !== dir) {
     rest.unshift(path.basename(dir));
@@ -161,7 +208,11 @@ export const testRunWriteRefusal = (
 ): string | null => {
   if (env[TEST_RUN_ENV] === undefined) return null;
   const account =
-    home !== undefined ? home : refusedHome.value !== undefined ? refusedHome.value : accountHome();
+    home !== undefined
+      ? home
+      : refusedHome.value !== undefined
+        ? refusedHome.value
+        : memoizedHome();
   if (account === null) return null;
   const homeEnv = { HOME: account, USERPROFILE: account };
   const roots = [
@@ -181,10 +232,12 @@ export const testRunWriteRefusal = (
   const target = resolvedPath(file);
   // The OS temp dir holds fixture homes, never the account's own files: on
   // Windows it is under the home (%LOCALAPPDATA%\Temp). A fake account home
-  // inside it (a test of this guard) is still protected.
+  // inside it (a test of this guard) is still protected, and a temp dir inside
+  // a protected root (TMPDIR=~/.config) is no exemption.
   const tmp = resolvedPath(tempDir);
   const base = resolvedPath(account);
-  if (within(tmp, target) && !within(tmp, base)) return null;
+  if (within(tmp, target) && !within(tmp, base) && !roots.some((root) => within(root, tmp)))
+    return null;
   const worktrees = path.join(resolvedPath(stateDir(homeEnv)), "worktrees");
   if (within(worktrees, target) || !roots.some((root) => within(root, target))) return null;
   return `refusing to write ${file}: a test run (${TEST_RUN_ENV}) never writes the OS account's home (#859)`;
