@@ -49,6 +49,7 @@
 //   command passed but the evidence could not be recorded, the recording
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
+import fs from "node:fs";
 import path from "node:path";
 import {
   CHECKS_FILE,
@@ -906,6 +907,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
       `note: "${name}" is configured as \`${shadowed.argv.join(" ")}\`; this ad-hoc run does not satisfy a configured gate (run workit check ${name})\n`,
     );
   const label = name ?? command.join(" ");
+  // The store is resolved once, before the run: re-resolving a checkout the
+  // command removed would recreate it as a new per-directory store (#835).
+  const store = storeRoot(io.cwd);
   announce(
     io,
     `check ${label}: starting (${options.timeoutMs ? `timeout ${Math.ceil(options.timeoutMs / 1000)}s` : "no timeout; --timeout <s> sets one"}); the result prints when it ends, a status line every ${CHECK_STATUS_MS / 1000}s until then; ${BACKGROUND_HINT}`,
@@ -1018,14 +1022,28 @@ export async function run(argv: string[], io: Io): Promise<number> {
     heartbeat?.stop();
     lease?.release();
   }
+  const passed = result.exitCode === 0 && !result.timedOut;
+  const commandExit = passed ? 0 : result.timedOut ? 4 : result.exitCode || 1;
+  // #835: a checkout removed while the command ran gets no record at all, so
+  // no write can recreate its path; the command's exit code still stands.
+  if (!fs.existsSync(top)) {
+    const message = `${top} no longer exists (removed while the check ran); the result was not recorded`;
+    if (io.json)
+      io.stdout(
+        `${JSON.stringify({ ok: false, code: passed ? "unavailable" : "failed", data: { name, argv: command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, recorded: false, removed: top }, error: message })}\n`,
+      );
+    else {
+      if (!options.full) io.stdout(boundedOutput(result.log, OUTPUT_LINES, stderrTail, !passed));
+      io.stderr(`workit check ${label}: ${message}\n`);
+    }
+    return commandExit;
+  }
   // Fail safe: a command that changed the worktree leaves stale evidence.
   const treeAfter = key.tree === null ? null : (worktreeTree(io.cwd)?.key ?? null);
   const modifiedWorktree = key.tree !== null && treeAfter !== key.tree;
-  const store = storeRoot(io.cwd);
   const blob = store.ok ? storeLog(store.value.root, result.log) : null;
   const logPath = store.ok && blob ? path.join(store.value.root, blob.ref) : null;
   const tail = tailLines(result.log, TAIL_LINES);
-  const passed = result.exitCode === 0 && !result.timedOut;
   const bounded = boundedArgv(command);
   const row = {
     type: "check",
@@ -1050,6 +1068,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     JSON.stringify(row).length + 200 > MAX_LINE_BYTES
       ? { ...row, argv: [bounded.argv[0], "…"] }
       : row,
+    store.ok ? { store: store.value } : {},
   );
   const observation = {
     observer: "workit_cli",
@@ -1147,7 +1166,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       for (const gap of task.stillUnsatisfied)
         io.stderr(`  still unsatisfied: ${gap.ruleId}: ${gap.reason}\n`);
   }
-  if (!passed) return result.timedOut ? 4 : result.exitCode || 1;
+  if (!passed) return commandExit;
   if (recordError)
     return recordError.code === "busy" ? 4 : recordError.code === "invalid_input" ? 2 : 5;
   return 0;

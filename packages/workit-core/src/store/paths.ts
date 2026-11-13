@@ -3,7 +3,8 @@
 //
 // - The store directory is `<git common dir>/workit` in a git repository, so
 //   every worktree of the repo shares it and it survives worktree removal and
-//   `git clean`; outside git it is `<root>/.workit`.
+//   `git clean`; outside git it is `<root>/.workit`, and a root that does not
+//   exist has none (an error), so a store never recreates a removed directory.
 // - The implicit task key is the branch name when HEAD is attached,
 //   `detached-<hash of the worktree>` on a detached HEAD, and
 //   `dir-<hash of the root>` outside git.
@@ -187,13 +188,18 @@ function fastGit(root: string): FastGit | null {
  */
 export function resolveStore(root: string): StoreLocation | Error {
   root = path.resolve(root);
-  // A root that is not (yet) a directory has no repository: keep the 2.x
-  // per-directory layout, so reads and writes fail or create as before.
-  let directory = false;
+  // A root that does not exist has no store: a store under it would recreate
+  // a removed checkout (#835). A path that exists but is not a directory
+  // keeps the 2.x per-directory layout, so reads and writes fail as before.
+  let stat: fs.Stats | null = null;
   try {
-    directory = fs.statSync(root).isDirectory();
+    stat = fs.statSync(root);
   } catch {}
-  if (!directory) return { dir: path.join(root, ".workit"), shared: false, top: null };
+  if (!stat)
+    return new Error(
+      `cannot locate the workit store: ${root} does not exist (removed while workit ran?); nothing is recorded under a missing directory`,
+    );
+  if (!stat.isDirectory()) return { dir: path.join(root, ".workit"), shared: false, top: null };
   const fast = fastGit(root);
   if (fast?.kind === "none") return { dir: path.join(root, ".workit"), shared: false, top: null };
   if (fast?.kind === "repo")
