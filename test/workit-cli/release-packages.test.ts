@@ -214,6 +214,23 @@ test("Given a finished 1.0.0, When release package pkg-a 0.1.0 --dry-run runs, T
   expect(rows(repo.cwd, "release.package_tagged")).toHaveLength(before);
 });
 
+test("Given pkg-x with no changelog of its own, When release package --dry-run and release notes draft pkg-x@0.1.0 run, Then each notes that no changelog resolved, without blocking", async () => {
+  const repo = flowRepo();
+  workspace(repo, { ...PACKAGES, releasePackages: { "pkg-a": {}, "pkg-x": {} } });
+  await finished(repo);
+  const dry = await run(["release", "package", "pkg-x", "0.1.0", "--dry-run", "--json"], repo.cwd);
+  expect(dry.code, dry.stdout + dry.stderr).toBe(0);
+  expect(dry.json().data.note).toContain(
+    "no changelog resolved for release package pkg-x (set releasePackages.pkg-x.changelogPath)",
+  );
+  const draft = await run(["release", "notes", "draft", "pkg-x@0.1.0"], repo.cwd);
+  expect(draft.code, draft.stdout + draft.stderr).toBe(0);
+  expect(draft.stdout).toContain("note: no changelog resolved for release package pkg-x");
+  // pkg-a's file resolves, but it has no 0.9.0 section: the note names the file.
+  const other = await run(["release", "notes", "draft", "pkg-a@0.9.0", "--json"], repo.cwd);
+  expect(other.json().data.note).toContain("no ## [0.9.0] section in projects/pkg-a/CHANGELOG.md");
+});
+
 test("Given releaseNotes review and no approved draft for pkg-a@0.1.0, When release package runs, Then it refuses before tagging and names the package tag's draft and approve commands", async () => {
   const repo = flowRepo();
   workspace(repo, PACKAGES);
@@ -283,7 +300,16 @@ test("Given workspace w, When workspace set writes releasePackages.pkg-a.changel
   const shown = await run(["grant", "show", "--json"], repo.cwd);
   expect(shown.code, shown.stdout + shown.stderr).toBe(0);
   expect(shown.json().data.releasePackages.packages).toEqual([
-    { name: "pkg-a", tagShape: "pkg-a@<version>", changelogPath: "projects/pkg-a/CHANGELOG.md" },
+    {
+      name: "pkg-a",
+      tagShape: "pkg-a@<version>",
+      changelogPath: "projects/pkg-a/CHANGELOG.md",
+      // Not in this checkout: grant show also notes it.
+      changelog: null,
+    },
+  ]);
+  expect(shown.json().data.releasePackages.issues).toEqual([
+    'release package "pkg-a" changelogPath projects/pkg-a/CHANGELOG.md: no such file in this checkout',
   ]);
   const text = await run(["grant", "show"], repo.cwd);
   expect(text.stdout).toContain(

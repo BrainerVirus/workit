@@ -28,6 +28,7 @@ import {
   finishLocally,
   planReleaseFinish,
   planReleasePackage,
+  missingSectionNote,
   readReleaseNotesDraft,
   recordPackageStep,
   recordReleaseNotesApproval,
@@ -465,6 +466,9 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
       reset: flags.booleans.has("reset"),
     });
     if (!written.ok) return forgeFail(io, written);
+    const missing = context.data.package
+      ? missingSectionNote(context.data, context.data.package)
+      : null;
     return emit(
       io,
       ok({
@@ -473,12 +477,14 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
         tag: context.data.tag,
         package: context.data.package,
         mode: context.data.mode,
+        ...(missing ? { note: missing } : {}),
       }),
       (data) => [
         `release notes draft for ${version}: ${data.path} (${mode}${data.keptHighlights ? "; kept its Highlights" : ""})`,
         "",
         data.notes.trimEnd(),
         "",
+        ...(missing ? [`note: ${missing}`] : []),
         data.keptHighlights
           ? "next: edit the Highlights in that file if the user asks; re-running draft keeps them (--reset drops them)"
           : "next: add a `## Highlights` section at the top of that file: 1-3 bullets of what users get, from the user's pointers",
@@ -584,13 +590,22 @@ async function releasePackage(argv: string[], io: Io): Promise<number> {
     );
   const target = plan.remote ? () => pushTarget(io.cwd, plan.remote as string) : undefined;
   const release = requireGrant(io.cwd, "release", { target });
+  // Not a blocker: said before the forge release takes the bare body.
+  const missing = decision.publish ? missingSectionNote(plan, plan.package) : null;
   if (dryRun) {
-    const data = { ...plan, latest, steps, grants: { release: release.allowed } };
+    const data = {
+      ...plan,
+      latest,
+      steps,
+      grants: { release: release.allowed },
+      ...(missing ? { note: missing } : {}),
+    };
     if (!release.allowed)
       return emit(io, fail("blocked", release.error, { unblock: release.unblock, data }));
     return emit(io, ok(data), () => [
       `release package ${plan.package} ${plan.version} as ${plan.tag}:`,
       ...steps.map((step) => `  todo  ${step}`),
+      ...(missing ? [`note: ${missing}`] : []),
     ]);
   }
   if (!release.allowed) return blocked(io, release);
@@ -624,7 +639,8 @@ async function releasePackage(argv: string[], io: Io): Promise<number> {
       data: { ...pushed.data, step: "push", untagged: plan.tag },
     });
   }
-  const notes: string[] = [];
+  const notes: string[] = missing ? [missing] : [];
+  if (missing) io.stderr(`note: ${missing}\n`);
   let forgeRelease: { url: string | null; created: boolean } | null = null;
   if (!decision.publish) {
     notes.push(decision.reason);

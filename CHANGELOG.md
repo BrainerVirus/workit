@@ -91,8 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raw-push denial names it, and `workit release notes draft|show|approve` take
   `pkg-a@0.1.0` or `--package <name>`. `workit workspace set` writes
   `releasePackages.<name>.tagNamespace|changelogPath`, `workit grant show`
-  lists the packages, `workit doctor` warns on a bad entry or a missing
-  changelog file, and a refused package push deletes the tag it just made. See
+  lists the packages and the changelog each resolves to, `workit doctor` warns
+  on a bad entry or a package with no changelog file (#861), `release package`
+  and `release notes draft <pkg>@<v>` note a missing changelog section, and a
+  refused package push deletes the tag it just made. See
   [docs/guides/configuration.md](docs/guides/configuration.md#release-packages).
 
 ### Fixed (release packages)

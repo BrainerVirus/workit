@@ -196,9 +196,19 @@ test("Given releasePackages with a missing changelog file and a bad namespace, W
   const report = releasePackagesReport(root);
   expect(report.workspace).toBe("w");
   expect(report.packages).toEqual([
-    { name: "pkg-a", tagShape: "pkg-a@<version>", changelogPath: "projects/pkg-a/CHANGELOG.md" },
-    { name: "pkg-b", tagShape: "pkg-b@<version>", changelogPath: "projects/pkg-b/CHANGELOG.md" },
-    { name: "pkg-c", tagShape: "pkg-c@<version>", changelogPath: null },
+    {
+      name: "pkg-a",
+      tagShape: "pkg-a@<version>",
+      changelogPath: "projects/pkg-a/CHANGELOG.md",
+      changelog: "projects/pkg-a/CHANGELOG.md",
+    },
+    {
+      name: "pkg-b",
+      tagShape: "pkg-b@<version>",
+      changelogPath: "projects/pkg-b/CHANGELOG.md",
+      changelog: null,
+    },
+    { name: "pkg-c", tagShape: "pkg-c@<version>", changelogPath: null, changelog: null },
   ]);
   const found = releasePackagesDoctor(root);
   expect(found?.status).toBe("warn");
@@ -207,7 +217,8 @@ test("Given releasePackages with a missing changelog file and a bad namespace, W
   );
   expect(found?.detail).toContain('release package "bad" tagNamespace "9x"');
   expect(found?.detail).not.toContain('"pkg-a" changelogPath');
-  expect(found?.fix).toContain("workit workspace set w releasePackages.<name>.changelogPath=");
+  expect(found?.detail).toContain('release package "pkg-c": no changelog found');
+  expect(found?.fix).toContain("workit workspace set w releasePackages.pkg-b.changelogPath=");
 
   const fine = repo(
     { releasePackages: { "pkg-a": { changelogPath: "projects/pkg-a/CHANGELOG.md" } } },

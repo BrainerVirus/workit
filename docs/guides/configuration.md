@@ -974,8 +974,12 @@ Set a package from the CLI with `workit workspace set <workspace>
 releasePackages.pkg-a.changelogPath=projects/pkg-a/CHANGELOG.md` (or
 `.tagNamespace=<prefix>`; `releasePackages.pkg-a=null` removes it); a value the
 reader would ignore is refused. `workit grant show` lists each package's tag
-shape and changelog, and `workit doctor` warns (`release_packages`) on a bad
-entry or a `changelogPath` that names no file in the checkout.
+shape and the changelog it resolves to, and `workit doctor` warns
+(`release_packages`) on a bad entry or a package whose changelog (its
+`changelogPath`, or the one found by directory name) is no file in the
+checkout. `workit release package` and `release notes draft <pkg>@<version>`
+print a note, without blocking, when the package's changelog has no section
+for the version.
 
 With a `changelogPath` list or glob, `workit release notes draft 4.6.0` reads
 the `## [4.6.0]` section from every matching changelog and prefers one no

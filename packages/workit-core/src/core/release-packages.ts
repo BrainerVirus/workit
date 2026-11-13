@@ -10,7 +10,8 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { gitDirs } from "../git/facts";
-import { changelogPathOf, resolveRuntimeReleasePackages } from "./workspaces";
+import { resolveChangelogPaths } from "./changelog-gate";
+import { changelogPathOf, resolveRuntimeReleasePackages, workspaceChangelog } from "./workspaces";
 
 export type ReleasePackage = {
   name: string;
@@ -120,15 +121,42 @@ export function packageOfTag(
   return pkg ? { pkg, version: tag.slice(pkg.tagNamespace.length) } : null;
 }
 
+/**
+ * The changelog file of a release package at `ref`: its changelogPath, else
+ * the workspace changelog (changelogPath list or glob, resolved at `ref`) in
+ * a directory named like the package (its last `/` segment: `@scope/pkg-a`
+ * is `pkg-a`). Null when none matches. The one rule the release, the notes
+ * and the doctor share.
+ */
+export function packageChangelogFile(
+  cwd: string,
+  ref: string,
+  pkg: ReleasePackage,
+  files: readonly string[] = resolveChangelogPaths(cwd, workspaceChangelog(cwd).paths, ref),
+): string | null {
+  if (pkg.changelogPath) return pkg.changelogPath;
+  const base = pkg.name.split("/").at(-1);
+  return files.find((file) => path.posix.basename(path.posix.dirname(file)) === base) ?? null;
+}
+
 /** The tag shapes the packages accept (`pkg-a@<version>`). */
 export const packageTagShapes = (packages: readonly ReleasePackage[]): string[] =>
   packages.map((entry) => `${entry.tagNamespace}<version>`);
 
 export type ReleasePackagesReport = {
   workspace: string | null;
-  packages: { name: string; tagShape: string; changelogPath: string | null }[];
-  /** Reader issues and configured changelogPaths with no file in this checkout. */
+  packages: {
+    name: string;
+    tagShape: string;
+    /** As configured; null when the changelog is found by directory name. */
+    changelogPath: string | null;
+    /** The file packageChangelogFile resolves at HEAD, or null for none. */
+    changelog: string | null;
+  }[];
+  /** Reader issues, and packages whose changelog names or resolves to no file. */
   issues: string[];
+  /** A package whose changelog needs a changelogPath, for the fix line. */
+  unresolved: string | null;
 };
 
 /**
@@ -145,27 +173,37 @@ export function releasePackagesReport(cwd: string, dir?: string): ReleasePackage
       workspace: null,
       packages: [],
       issues: [error instanceof Error ? error.message : String(error)],
+      unresolved: null,
     };
   }
   const read = readReleasePackages(raw?.releasePackages);
   const root = gitDirs(cwd)?.top ?? null;
-  const missing = root
-    ? read.packages
-        .filter((pkg) => pkg.changelogPath && !existsSync(path.join(root, pkg.changelogPath)))
-        .map(
-          (pkg) =>
-            `release package ${JSON.stringify(pkg.name)} changelogPath ${pkg.changelogPath}: no such file in this checkout`,
-        )
-    : [];
-  return {
-    workspace: raw?.workspace ?? null,
-    packages: read.packages.map((pkg) => ({
+  const issues = [...read.issues];
+  const files = root ? resolveChangelogPaths(cwd, workspaceChangelog(cwd, dir).paths) : [];
+  let unresolved: string | null = null;
+  const packages = read.packages.map((pkg) => {
+    let changelog: string | null = null;
+    if (root) {
+      changelog = packageChangelogFile(cwd, "HEAD", pkg, files);
+      if (pkg.changelogPath && !existsSync(path.join(root, pkg.changelogPath))) {
+        issues.push(
+          `release package ${JSON.stringify(pkg.name)} changelogPath ${pkg.changelogPath}: no such file in this checkout`,
+        );
+        changelog = null;
+      } else if (!changelog)
+        issues.push(
+          `release package ${JSON.stringify(pkg.name)}: no changelog found (no changelogPath, and no workspace changelogPath file is in a directory named ${pkg.name.split("/").at(-1)})`,
+        );
+      if (!changelog) unresolved ??= pkg.name;
+    }
+    return {
       name: pkg.name,
       tagShape: `${pkg.tagNamespace}<version>`,
       changelogPath: pkg.changelogPath,
-    })),
-    issues: [...read.issues, ...missing],
-  };
+      changelog,
+    };
+  });
+  return { workspace: raw?.workspace ?? null, packages, issues, unresolved };
 }
 
 /** One human line per fact, shared by grant show and doctor; none without packages. */
@@ -177,7 +215,7 @@ export const describeReleasePackages = (report: ReleasePackagesReport): string[]
           report.packages
             .map(
               (pkg) =>
-                `${pkg.name} (${pkg.tagShape}; changelog ${pkg.changelogPath ?? "found among the workspace's"})`,
+                `${pkg.name} (${pkg.tagShape}; changelog ${pkg.changelog ?? pkg.changelogPath ?? "none found"})`,
             )
             .join(", ") || "(none usable)"
         }`,
@@ -201,6 +239,6 @@ export function releasePackagesDoctor(
   return {
     status: "warn",
     detail: lines.join("; "),
-    fix: `Fix the reported releasePackages entries: workit workspace set ${ws} releasePackages.<name>.changelogPath=<repo-relative file> (or tagNamespace=<prefix>; =null unsets)`,
+    fix: `Fix the reported releasePackages entries: workit workspace set ${ws} releasePackages.${report.unresolved ?? "<name>"}.changelogPath=<repo-relative file> (or tagNamespace=<prefix>; =null unsets)`,
   };
 }

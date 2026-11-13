@@ -19,6 +19,7 @@ import { vcsConfig } from "../core/vcs-config";
 import { trackBranchName } from "../core/release-tracks";
 import { resolveChangelogPaths } from "../core/changelog-gate";
 import {
+  packageChangelogFile,
   packageOfTag,
   workspaceReleasePackages,
   type ReleasePackage,
@@ -413,20 +414,18 @@ export function changelogSection(
 }
 
 /**
- * The changelog file of a release package at `ref`: its changelogPath, else
- * the workspace changelog in a directory named like the package (its last
- * `/` segment: `@scope/pkg-a` is `pkg-a`). Null when none matches.
+ * Why a package's notes have no changelog section, or null when they have
+ * one: the file looked at, or that none resolved.
  */
-function packageChangelogFile(
-  cwd: string,
-  ref: string,
-  pkg: ReleasePackage,
-  files: readonly string[] = resolveChangelogPaths(cwd, workspaceChangelog(cwd).paths, ref),
-): string | null {
-  if (pkg.changelogPath) return pkg.changelogPath;
-  const base = pkg.name.split("/").at(-1);
-  return files.find((file) => path.posix.basename(path.posix.dirname(file)) === base) ?? null;
-}
+export const missingSectionNote = (
+  ctx: { tag: string; version: string; changelog: string | null; changelogFile?: string | null },
+  name: string,
+): string | null =>
+  ctx.changelog
+    ? null
+    : ctx.changelogFile
+      ? `no ## [${ctx.version}] section in ${ctx.changelogFile}: the notes of ${ctx.tag} carry no changelog section`
+      : `no changelog resolved for release package ${name} (set releasePackages.${name}.changelogPath): the notes of ${ctx.tag} carry no changelog section`;
 
 /** A release package's changelog section for `version` at `ref`, or null. */
 export function packageChangelogSection(
@@ -840,6 +839,8 @@ export type ReleaseNotesContext = {
   /** Where the mode comes from (`track`, `workspace` or `default`). */
   modeFrom: "track" | "workspace" | "default";
   changelog: string | null;
+  /** A release package's changelog file (packageChangelogFile), null when none resolved. */
+  changelogFile?: string | null;
   /** The compare link from the previous tag, or null. */
   compare: string | null;
   previousTag: string | null;
@@ -904,6 +905,7 @@ function packageNotesContext(
     mode: mode.mode,
     modeFrom: mode.from,
     changelog: packageChangelogSection(cwd, ref, version, pkg),
+    changelogFile: packageChangelogFile(cwd, ref, pkg),
     ...compareLink(cwd, line.production, pkg.tagNamespace, version, tag),
   };
 }
@@ -1191,6 +1193,8 @@ export type PackageReleasePlan = {
   production: string;
   remote: string | null;
   changelog: string | null;
+  /** The package's changelog file (packageChangelogFile), null when none resolved. */
+  changelogFile: string | null;
 };
 
 /**
@@ -1295,6 +1299,7 @@ export function planReleasePackage(
     production,
     remote,
     changelog: packageChangelogSection(cwd, target, version, pkg),
+    changelogFile: packageChangelogFile(cwd, target, pkg),
   });
 }
 
