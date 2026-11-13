@@ -349,9 +349,9 @@ export const VERBS: readonly VerbEntry[] = [
     name: "gc",
     group: "setup",
     usage:
-      "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply]",
+      "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply] | --procs [--apply]",
     summary:
-      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies; --worktrees lists (--apply removes) clean worktrees whose work is on the trunk; --branches lists (--apply deletes) local branches whose work is on the trunk",
+      "Compact long task event logs, drop unreferenced blobs and old check logs; report (or prune) 2.x recovery copies; --worktrees lists (--apply removes) clean worktrees whose work is on the trunk; --branches lists (--apply deletes) local branches whose work is on the trunk; --procs lists (--apply stops) registered background processes whose owner's host process is gone",
     load: () => import("./gc"),
   },
   {
@@ -522,6 +522,54 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     notes: LEASE_NOTES,
     load: () => import("./check"),
+  },
+  {
+    name: "run",
+    group: "delivery",
+    usage:
+      'workit run --bg [--port <n>] [--name <n>] [--restart <id>] [--no-lease --reason "<why>"] -- <cmd…>',
+    summary:
+      "Start a long-running command (a dev server, docker compose up) in the background under Workit's process registry; prints its id, pid, port and log",
+    examples: [
+      "workit run --bg -- npm run dev",
+      "workit run --bg --port 4200 -- ng serve",
+      "workit run --bg --name api -- docker compose up",
+      "workit run --bg --restart p1abc2def3",
+    ],
+    notes: [
+      "One dev server per repo and --name (default `dev`): a second start in the same checkout prints the running one's id and port and starts nothing; from another checkout of the repo it fails naming that server's directory, branch and owner.",
+      'The server\'s memory counts against the heavy-check budget. A start that does not fit, or comes while the machine is under critical pressure, is refused at once naming the holders; stop one (`workit stop <id>`) or pass --no-lease --reason "<why>" (recorded in the ledger).',
+      "The port is --port, else the first localhost:<port> the log shows within 15 s. A command that exits within that bound prints its output and exit code and leaves nothing running.",
+      "Past the RSS ceiling (the heavy scope's memoryMax) the owner session gets one notice naming `workit run --bg --restart <id>`. The session that started a process stops it at the end of its work: `workit stop <id>`.",
+    ],
+    load: () => import("./run"),
+  },
+  {
+    name: "ps",
+    group: "delivery",
+    usage: "workit ps [--all]",
+    summary:
+      "List the registered background processes: id, name, kind, pid, port, RSS, owner session, age, directory and command (--all adds recently ended ones)",
+    examples: ["workit ps", "workit ps --all --json"],
+    load: () => import("./ps"),
+  },
+  {
+    name: "stop",
+    group: "delivery",
+    usage: 'workit stop <id>… | --session <s> | --within <dir> | --orphans [--reason "<why>"]',
+    summary:
+      "Stop registered background processes: SIGTERM to the process group, then SIGKILL after 10 s; docker rows stop only their own containers; each stop is a proc.stopped ledger row",
+    examples: [
+      "workit stop p1abc2def3",
+      'workit stop --within . --reason "work delivered"',
+      "workit stop --orphans",
+    ],
+    notes: [
+      "Naming an id stops that process even when it is kept or was started from a terminal; --session and --within skip those and say why. An agent stops only processes its own session (or its workers) started.",
+      "--orphans stops processes whose owner's host process is gone or was replaced (never judged by age); one whose owner cannot be told is listed, never stopped. `workit gc --procs` shows the same list first.",
+      "Before each signal the process's start time is checked: a pid another process took is never signalled. Processes Workit did not start are never touched.",
+    ],
+    load: () => import("./stop"),
   },
   withSubcommands({
     name: "lock",

@@ -1,7 +1,8 @@
 // `workit __complete <words…>`: the candidates for the last word (the one being
 // typed, "" after a space), one per line and nothing else, ever. Local reads
-// only: the registry, .workit/checks.json, workspaces.json and the fanout
-// store; no network and no fetch. Any failure prints nothing.
+// only: the registry, .workit/checks.json, workspaces.json, the fanout
+// store and the process registry; no network and no fetch. Any failure
+// prints nothing.
 import fs from "node:fs";
 import path from "node:path";
 import { findSubcommand, findVerb, type SubcommandEntry, type VerbEntry } from "../verbs/registry";
@@ -13,6 +14,8 @@ export type CompleteSources = {
   checks: (cwd: string) => Promise<string[]>;
   workspaces: () => Promise<string[]>;
   slices: (cwd: string) => Promise<string[]>;
+  /** Ids of running registered processes (`workit stop <id>`). */
+  procs?: () => Promise<string[]>;
 };
 
 const readJson = (file: string): unknown => {
@@ -34,7 +37,7 @@ const names = (list: unknown, key: "name" | "id"): string[] =>
       )
     : [];
 
-const defaultSources: CompleteSources = {
+const defaultSources: Required<CompleteSources> = {
   // Imported on use so the cold path (help, --version) never loads core.
   checks: async (cwd) => {
     const { loadCheckConfig } = await import("@workit-dev/core/src/check-config");
@@ -60,6 +63,15 @@ const defaultSources: CompleteSources = {
       const plan = readJson(path.join(dir.data, file)) as { slices?: unknown } | null;
       return names(plan?.slices, "id");
     });
+  },
+  procs: async () => {
+    const { liveProcs, openProcs } = await import("@workit-dev/core/src/core/procs");
+    const store = openProcs(process.env);
+    try {
+      return liveProcs(store).map((row) => row.id);
+    } finally {
+      store.close();
+    }
   },
 };
 
@@ -138,6 +150,8 @@ async function candidates(
   if (placeholder === "name" && entry.name === "workspace" && ctx.sub?.name !== "add")
     return sources.workspaces();
   if (placeholder === "verb") return verbNames();
+  if (placeholder === "id" && entry.name === "stop")
+    return (sources.procs ?? defaultSources.procs)();
   return [];
 }
 
