@@ -402,7 +402,7 @@ test("Given ordinary verifier flows, When a judge runs them, Then each is allowe
     `git -C ${wt} diff HEAD --stat`,
     `git -C ${wt} show HEAD`,
     `git -C ${wt} grep -n core`,
-    `git -C ${wt} status --short`,
+    `git --no-optional-locks -C ${wt} status --short`,
     `GIT_PAGER=cat git -C ${wt} log`,
     `PAGER=cat git -C ${wt} log`,
     `LC_ALL=C git -C ${wt} log`,
@@ -417,4 +417,115 @@ test("Given ordinary verifier flows, When a judge runs them, Then each is allowe
     `git clone ${wt} ${path.join(scratch, "cl2")}`,
   ])
     expect(bash(command), command).toBeUndefined();
+});
+
+test("Given a judge's git, When an option is abbreviated, bundled, glued or not in the verb's list, Then it is denied", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "opts");
+  git(wt, "init", "-q", "-b", "main", rt);
+  for (const command of [
+    `git -C ${rt} fetch --upl=/tmp/x ${wt}`,
+    `git -C ${wt} grep --open-files-in-p=vi x`,
+    `git init --templ=/tmp/t ${path.join(scratch, "t2")}`,
+    `git -C ${rt} merge --strat=custom HEAD`,
+    `git -C ${wt} grep -Ovi x`,
+    `git -C ${wt} grep -nO x`,
+    `git clone -u/tmp/x ${wt} ${path.join(scratch, "c4")}`,
+    `git -C ${rt} commit --conf=x -qm x`,
+    `git -C ${rt} apply --unsafe-paths p.diff`,
+    `git -C ${rt} apply --directory=x p.diff`,
+    `git -C ${rt} am --directory=x m.mbox`,
+    `git -C ${rt} fetch --depth 1 ${path.join(root, "elsewhere")}`,
+  ])
+    expect(bash(command), command).toBe("deny");
+  for (const command of [
+    `git clone --depth 1 ${wt} ${path.join(scratch, "c5")}`,
+    `git -C ${rt} apply p.diff`,
+    `git -C ${wt} log --oneline --stat -n 5 -- a.ts`,
+    `git -C ${wt} grep -n -e core -- '*.ts'`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+});
+
+test("Given a judge's git behind an assignment or a wrapper, When only the allowed ones are used, Then it runs; otherwise it is denied", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "wrap");
+  git(wt, "init", "-q", "-b", "main", rt);
+  for (const command of [
+    `FOO=1 timeout 5 git -C ${wt} log`,
+    `env FOO=1 git -C ${wt} log`,
+    `env git -C ${wt} log`,
+    `nohup git -C ${wt} log`,
+    `xargs git -C ${rt} commit -qm x`,
+    `sudo git -C ${wt} log`,
+    `stdbuf -o0 git -C ${wt} log`,
+    `find ${rt} -exec git -C ${rt} commit -qm x \\;`,
+    `timeout FOO=1 git -C ${wt} log`,
+  ])
+    expect(bash(command), command).toBe("deny");
+  for (const command of [
+    `timeout 60 git -C ${wt} log`,
+    `nice -n 5 git -C ${wt} log`,
+    `time git -C ${wt} log`,
+    `command git -C ${wt} log`,
+    `GIT_OPTIONAL_LOCKS=0 git -C ${wt} status`,
+    `grep -rn git ${path.join(wt, "a.ts")}`,
+    `if git -C ${wt} diff --quiet; then echo same; fi`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+});
+
+test("Given more read and scratch-only verbs, When a judge runs them, Then reads pass anywhere and writes only in a scratch repository", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "verbs");
+  git(wt, "init", "-q", "-b", "main", rt);
+  for (const command of [
+    `git -C ${wt} reflog`,
+    `git -C ${wt} reflog show`,
+    `git -C ${wt} diff-tree -r HEAD`,
+    `git -C ${wt} diff-index HEAD`,
+    `git -C ${wt} count-objects -v`,
+    `git -C ${wt} check-ignore x`,
+    `git -C ${wt} var -l`,
+    "git version",
+    "git --version",
+    `git ls-remote ${wt}`,
+    `git -C ${rt} remote show ${wt}`,
+    `git -C ${rt} cherry-pick HEAD`,
+    `git -C ${rt} revert HEAD`,
+    `git -C ${rt} rebase main`,
+    `git -C ${rt} clean -fd`,
+    `git -C ${rt} bisect start`,
+    `git -C ${rt} bisect good`,
+    `git -C ${rt} reflog expire --all`,
+    `git --no-optional-locks -C ${wt} status`,
+    `git -C ${rt} status`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+  for (const command of [
+    `git -C ${wt} reflog expire --all`,
+    `git -C ${wt} cherry-pick HEAD`,
+    `git -C ${wt} clean -fd`,
+    `git -C ${rt} rebase -x true main`,
+    `git -C ${rt} rebase --exec=true main`,
+    `git -C ${rt} rebase -s custom main`,
+    `git -C ${rt} rebase -i main`,
+    `git -C ${rt} bisect run true`,
+    "git ls-remote https://example.invalid/r",
+    `git -C ${rt} remote show origin`,
+    `git -C ${wt} status`,
+  ])
+    expect(bash(command), command).toBe("deny");
+});
+
+test("Given a scratch repository whose config sets init.templateDir, When a judge commits there, Then it is denied; init.defaultBranch is allowed", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const tpl = path.join(scratch, "tpl-cfg");
+  git(wt, "init", "-q", "-b", "main", tpl);
+  git(tpl, "config", "init.templateDir", "/tmp/t");
+  expect(bash(`git -C ${tpl} commit -qm x`)).toBe("deny");
+  const ok = path.join(scratch, "default-branch");
+  git(wt, "init", "-q", "-b", "main", ok);
+  git(ok, "config", "init.defaultBranch", "main");
+  expect(bash(`git -C ${ok} commit -qm x`)).toBeUndefined();
 });

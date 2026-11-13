@@ -531,7 +531,7 @@ const inGitDir = (real: string): boolean => real.split(/[\\/]/).includes(".git")
 
 /** The config keys a scratch repository may hold (lowercased); `remote.*.url` is checked as a path. */
 const SAFE_KEY =
-  /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|user\..*|init\..*|commit\.gpgsign|extensions\.(?:objectformat|refstorage)|branch\..*\.(?:remote|merge)|remote\..*\.fetch)$/;
+  /^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|user\..*|init\.defaultbranch|commit\.gpgsign|extensions\.(?:objectformat|refstorage)|branch\..*\.(?:remote|merge)|remote\..*\.fetch)$/;
 
 /** Whether `value` is a literal absolute path in scratch or, with `checkout`, in a checkout of repository `repo`. */
 const literalIn = (value: string, repo: string | null, checkout = false): boolean => {
@@ -610,90 +610,230 @@ function gitDirsAt(dir: string, repo: string | null, scan = true): string[] | nu
   }
 }
 
-const READ_GIT =
-  "log show diff status rev-parse rev-list ls-files ls-tree cat-file blame describe merge-base for-each-ref shortlog show-ref name-rev grep format-patch";
-const WRITE_GIT =
-  "init add commit checkout switch restore reset rm mv merge stash apply am fetch clone";
+// A judge's git verbs and the options each may take: "shorts|longs". Shorts
+// are getopt-style (`x:` takes a value, `x?` an optional glued one); longs
+// are exact names (`name=` takes a value, `name?` an optional `=value`), so an
+// abbreviation is denied. `+` marks a verb that writes: scratch repositories
+// only. `@d` and `@l` stand for the diff and log options.
+const DIFF_S = "psuRaWwbzU:S:G:l:M?C?B?D";
+const DIFF_L =
+  "stat? numstat shortstat name-only name-status summary patch no-patch raw color? no-color word-diff? color-words? unified= ignore-all-space ignore-space-change ignore-blank-lines ignore-cr-at-eol diff-filter= find-renames? find-copies? no-renames relative? abbrev? full-index binary exit-code quiet minimal patience histogram src-prefix= dst-prefix= no-prefix dirstat? text check function-context no-ext-diff no-textconv output=";
+const LOG_S = "n:iEFPgL:";
+const LOG_L =
+  "oneline format= pretty? graph decorate? no-decorate all branches? tags? remotes? since= until= after= before= author= committer= grep= all-match invert-grep regexp-ignore-case extended-regexp fixed-strings perl-regexp max-count= skip= first-parent no-merges merges reverse follow date= abbrev-commit no-abbrev-commit left-right cherry-pick cherry-mark boundary not topo-order date-order source simplify-by-decoration ancestry-path full-history notes? no-notes walk-reflogs mailmap use-mailmap";
+const GIT_VERBS: Readonly<Record<string, string>> = {
+  log: "@d@l|@d @l",
+  show: "@d@l|@d @l",
+  diff: "@d|@d cached staged merge-base no-index",
+  "diff-tree": "@drtcm|@d root stdin no-commit-id",
+  "diff-index": "@dm|@d cached merge-base",
+  status:
+    "sbu?zv|short branch porcelain? long untracked-files? ignored? ignore-submodules? show-stash ahead-behind no-ahead-behind renames no-renames find-renames? column? no-column null verbose",
+  "rev-parse":
+    "q|verify short? abbrev-ref? symbolic symbolic-full-name show-toplevel show-prefix git-dir git-common-dir absolute-git-dir is-inside-work-tree is-inside-git-dir is-bare-repository show-cdup quiet all branches? tags? remotes? since= until= default= path-format= sq-quote",
+  "rev-list": "@l|@l count objects? left-only right-only",
+  "ls-files":
+    "cdmoiskuvtzfx:X:|cached deleted modified others ignored stage unmerged killed directory no-empty-directory exclude-standard exclude= exclude-from= full-name abbrev? error-unmatch with-tree= eol deduplicate format= recurse-submodules sparse",
+  "ls-tree": "rdtlz|long name-only name-status object-only full-name full-tree abbrev? format=",
+  "cat-file":
+    "tsepz|batch? batch-check? batch-all-objects follow-symlinks unordered buffer allow-unknown-type mailmap use-mailmap",
+  blame:
+    "L:lstfnepwbcM?C?|porcelain line-porcelain incremental root show-stats show-name show-number show-email abbrev= reverse= first-parent date= ignore-rev= ignore-revs-file= minimal",
+  describe:
+    "|tags all long abbrev= contains always dirty? broken? match= exclude= first-parent exact-match candidates= debug",
+  "merge-base": "a|all octopus independent is-ancestor fork-point",
+  "for-each-ref":
+    "|count= sort= format= color? shell perl python tcl points-at= merged? no-merged? contains? no-contains? ignore-case omit-empty exclude=",
+  shortlog: "@lsnec|@l summary numbered email committer group= format=",
+  "show-ref": "dsq|head verify heads tags branches hash? abbrev? quiet dereference exists",
+  "name-rev": "|tags refs= exclude= all annotate-stdin name-only no-undefined always",
+  grep: "aiIvnhHcEGFPlLzoWqwe:A:B:C:m:f:|cached untracked no-index no-exclude-standard exclude-standard recurse-submodules text ignore-case word-regexp invert-match line-number column count full-name extended-regexp basic-regexp fixed-strings perl-regexp files-with-matches name-only files-without-match null only-matching heading break show-function function-context max-depth= threads= and or not all-match quiet after-context= before-context= context= max-count= color? no-color",
+  "format-patch":
+    "@do:nNks|@d stdout output-directory= numbered no-numbered start-number= subject-prefix= root cover-letter thread? signoff attach? inline? suffix= base=",
+  reflog: "@l|@l all expire= expire-unreachable= rewrite updateref stale-fix dry-run verbose",
+  "count-objects": "vH|verbose human-readable",
+  "check-ignore": "qvnz|quiet verbose stdin non-matching no-index",
+  var: "l|",
+  version: "|build-options",
+  "ls-remote": "htbq|heads tags branches refs quiet exit-code get-url symref sort=",
+  remote: "v|verbose",
+  config:
+    "lz|get get-all get-regexp list local name-only show-origin show-scope null type= default=",
+  worktree:
+    "fdqvzb:B:|force detach lock reason= orphan no-checkout checkout quiet track no-track guess-remote porcelain expire= verbose",
+  branch:
+    "dDmMcCfvraliu:|delete move copy force list all remotes verbose contains? merged? no-merged? points-at= show-current set-upstream-to= unset-upstream track? no-track sort= format= color? column? ignore-case create-reflog",
+  tag: "lam:dfF:n?|list annotate message= file= delete force sort= format= contains? merged? no-merged? points-at= column? create-reflog ignore-case",
+  init: "+qb:|quiet bare initial-branch= object-format= ref-format= shared? separate-git-dir=",
+  add: "+AunNvf|all update intent-to-add force dry-run verbose ignore-errors ignore-removal no-all renormalize chmod= sparse",
+  commit:
+    "+m:aqsnF:C:ouv|message= all amend no-edit allow-empty allow-empty-message author= date= signoff no-verify quiet file= reuse-message= fixup= squash= only include dry-run no-gpg-sign untracked-files? cleanup= reset-author verbose",
+  checkout: "+b:B:fqm|detach force orphan= quiet track? no-track merge ours theirs",
+  switch:
+    "+c:C:dfqm|create= force-create= detach discard-changes force orphan= quiet track? no-track merge",
+  restore: "+s:SWq|source= staged worktree ours theirs merge quiet overlay no-overlay",
+  reset: "+qN|soft mixed hard merge keep quiet no-refresh",
+  rm: "+rfnq|cached force dry-run quiet ignore-unmatch",
+  mv: "+fnkv|force dry-run verbose",
+  merge:
+    "+m:qvnX:|no-ff ff ff-only squash no-squash commit no-commit message= no-edit abort continue quit allow-unrelated-histories stat no-stat quiet verbose no-verify signoff strategy-option=",
+  stash: "+m:ukqa|message= include-untracked keep-index quiet all index staged",
+  apply:
+    "+p:C:R3qv|check stat numstat summary index cached 3way reverse reject allow-empty exclude= include= verbose quiet whitespace= recount",
+  am: "+skq3|signoff keep 3way quiet abort continue skip quit whitespace= reject",
+  fetch:
+    "+fqvptn|all depth= deepen= shallow-since= unshallow tags no-tags prune force quiet verbose dry-run update-shallow refmap=",
+  clone:
+    "+nqlsb:o:|bare no-checkout depth= branch= origin= single-branch no-single-branch no-tags quiet shared local no-local filter= separate-git-dir=",
+  "cherry-pick":
+    "+nm:sxX:|no-commit mainline= signoff abort continue skip quit allow-empty keep-redundant-commits ff strategy-option=",
+  revert: "+nm:sX:|no-commit mainline= signoff abort continue skip quit strategy-option= no-edit",
+  rebase:
+    "+qvfnX:|onto= root abort continue skip quit keep-base no-ff force-rebase autosquash no-autosquash autostash no-autostash update-refs signoff quiet verbose stat no-stat committer-date-is-author-date reset-author-date rebase-merges? no-rebase-merges empty= strategy-option= apply merge",
+  clean: "+dfnqxXe:|dry-run force quiet exclude=",
+  bisect: "+|term-old= term-new= no-checkout first-parent",
+};
+
+/** The operands of git `args` (the verb first) when every option is in the verb's list, else null. */
+const gitOperands = (args: readonly string[]): string[] | null => {
+  const [verb = "", ...rest] = args;
+  const spec = Object.hasOwn(GIT_VERBS, verb) ? GIT_VERBS[verb] : null;
+  if (spec === null) return null;
+  const [shorts, longs] = spec.split("|");
+  const short = shorts.replace("@d", DIFF_S).replace("@l", LOG_S);
+  const long = longs.replace("@d", DIFF_L).replace("@l", LOG_L).split(" ");
+  const operands: string[] = [];
+  for (let at = 0; at < rest.length; at++) {
+    const arg = rest[at];
+    if (arg === "--") return [...operands, ...rest.slice(at + 1)];
+    if (!arg.startsWith("-") || arg === "-") operands.push(arg);
+    else if (arg.startsWith("--")) {
+      const [name] = arg.slice(2).split("=");
+      const valued = arg.includes("=");
+      if (long.includes(`${name}=`)) at += valued ? 0 : 1;
+      else if (!long.includes(`${name}?`) && (valued || !long.includes(name))) return null;
+    } else if (!/^-\d+$/.test(arg))
+      for (let index = 1; index < arg.length; index++) {
+        const found = /[:?+]/.test(arg[index]) ? -1 : short.indexOf(arg[index]);
+        if (found < 0) return null;
+        const takes = short[found + 1];
+        if (takes === ":" && index === arg.length - 1) at++;
+        if (takes === ":" || takes === "?") break;
+      }
+  }
+  return operands;
+};
 
 /**
  * What git `args` (the verb first) are for a judge: "read" anywhere, "write"
- * only in a scratch repository, null refused. `branch`/`tag` list or write;
- * `config` reads, or sets only user.name|email, init.defaultBranch or
- * commit.gpgsign=false; `worktree list|add|remove`; `remote [-v]`.
+ * only in a scratch repository, null refused. `local` says whether a source
+ * (fetch, clone, ls-remote, remote show) is a path in scratch or the judged
+ * repository.
  */
-const gitKind = (args: readonly string[]): "read" | "write" | null => {
-  const [verb = "", ...rest] = args;
-  const has = (pattern: RegExp) => rest.some((arg) => pattern.test(arg));
-  const named = rest.filter((arg) => !arg.startsWith("-"));
-  if (READ_GIT.split(" ").includes(verb))
-    return has(/^--(?:ext-diff|textconv|open-files-in-pager|filters)(?:=|$)|^-O/) ? null : "read";
-  if (verb === "branch" || verb === "tag")
-    return leadOwnedGit(args) ||
-      (named.length > 0 && !has(/^(?:-l|--list|--contains|--(?:no-)?merged|--points-at)$/))
-      ? "write"
-      : "read";
-  if (verb === "config") {
-    if (has(/^(?:-l|--list|--get(?:-all|-regexp)?)$/) || /^(?:get|list)$/.test(named[0] ?? ""))
-      return "read";
-    const [key = "", value] = named[0] === "set" ? named.slice(1) : named;
-    return rest.length === named.length &&
-      (/^(?:user\.(?:name|email)|init\.defaultbranch)$/i.test(key) ||
-        (/^commit\.gpgsign$/i.test(key) && value === "false"))
-      ? "write"
-      : null;
+const gitKind = (
+  args: readonly string[],
+  local: (source: string) => boolean = () => true,
+): "read" | "write" | null => {
+  const named = gitOperands(args);
+  if (!named) return null;
+  const [verb] = args;
+  const [first = "", second] = named;
+  const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
+  switch (verb) {
+    case "reflog":
+      return /^(?:expire|delete)$/.test(first) ? "write" : "read";
+    case "branch":
+    case "tag":
+      return leadOwnedGit(args) ||
+        (named.length > 0 && !has(/^(?:-l|--list|--contains|--(?:no-)?merged|--points-at)$/))
+        ? "write"
+        : "read";
+    case "config": {
+      if (has(/^(?:-l|--list|--get(?:-all|-regexp)?)$/) || /^(?:get|list)$/.test(first))
+        return "read";
+      const [key = "", value] = first === "set" ? named.slice(1) : named;
+      return /^(?:user\.(?:name|email)|init\.defaultbranch)$/i.test(key) ||
+        (/^commit\.gpgsign$/i.test(key) && value === "false")
+        ? "write"
+        : null;
+    }
+    case "worktree":
+      return first === "list" ? "read" : /^(?:add|remove)$/.test(first) ? "write" : null;
+    case "remote":
+      return !first || (first === "show" && named.length === 2 && local(second)) ? "read" : null;
+    case "ls-remote":
+      return local(first) ? "read" : null;
+    case "bisect":
+      return /^(?:start|good|bad|new|old|skip|reset|log|terms)$/.test(first) ? "write" : null;
+    case "fetch":
+      return !first || /^[\w.-]+$/.test(first) || local(first) ? "write" : null;
+    case "clone":
+      return local(first) ? "write" : null;
   }
-  if (verb === "worktree")
-    return named[0] === "list" ? "read" : /^(?:add|remove)$/.test(named[0] ?? "") ? "write" : null;
-  if (verb === "remote") return rest.every((arg) => /^(?:-v|--verbose)$/.test(arg)) ? "read" : null;
-  if (!WRITE_GIT.split(" ").includes(verb)) return null;
-  // Built-in merge strategies only: `-s` names a program on PATH.
-  return has(/^(?:--template|--upload-pack|--receive-pack|--config|--exec|-s|--strategy)(?:=|$)/) ||
-    (/^(?:fetch|clone)$/.test(verb) && has(/^-[uc]$/))
-    ? null
-    : "write";
+  return GIT_VERBS[verb].startsWith("+") ? "write" : "read";
 };
 
-const JUDGE_GIT = `a judge runs git ${READ_GIT} anywhere; ${WRITE_GIT}, branch, tag, worktree, config user.* in a scratch repo; no -c, no env but PAGER=cat, LC_*, LANG, TZ`;
+const JUDGE_GIT = `a judge runs git ${Object.keys(GIT_VERBS).join(" ")} with the options each documents (no abbreviations), writing only in a scratch repo; no -c, no wrapper but timeout, nice, time, command, no env but PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0, LC_*, LANG, TZ; status outside scratch needs --no-optional-locks`;
+
+/** Wrappers that can run git; a judge's git may sit behind timeout, nice, time or command only. */
+const RUNNER =
+  /^(?:env|sudo|doas|xargs|nohup|stdbuf|nice|timeout|time|command|exec|busybox|setsid|ionice|chrt|taskset|flock|unbuffer|find|parallel|watch|script|strace|ltrace|builtin)$/;
 
 /**
- * Why a judge may not run the git in `command` (#790): a verb, global option,
- * environment or source outside the allowlist (`gitKind`, `JUDGE_GIT`), or
- * `--git-dir`/`--work-tree` outside scratch. Null when it may.
+ * Why a judge may not run the git in `command` (#790): a verb, option,
+ * wrapper, environment or source outside the allowlist (`GIT_VERBS`,
+ * `JUDGE_GIT`), `--git-dir`/`--work-tree` outside scratch, or a `status`
+ * that would refresh a non-scratch index. Null when it may.
  */
 const judgeGit = (command: string, repo: string | null, depth = 0): string | null => {
   const runsGit = /\bgit\b/.test(command);
   for (const segment of segmentsOf(command)) {
     const words = segment.words;
     let why: string | null = null;
-    // The environment a git in this command sees: prefixes, `export`, `env` (assignments to exported names too).
-    for (let at = runsGit ? 0 : words.length; !why && at < words.length; at++) {
-      const word = words[at];
-      if (/^(?:env|export|declare|local|readonly|typeset|-\w+)$/.test(word)) continue;
-      if (!/^\w+\+?=/.test(word)) break;
-      if (!/^(?:(?:GIT_)?PAGER=cat|(?:LC_\w+|LANG|TZ)=.*)$/s.test(word))
-        why = `\`${word}\` is not allowed`;
-    }
-    const start = words.findIndex((word) => /^git(?:\.exe)?$/.test(path.basename(word)));
+    let at = 0;
+    while (/^(?:if|then|elif|else|do|while|until|!|\{|\()$/.test(words[at] ?? "")) at++;
+    const lead: string[] = [];
+    while (/^\w+\+?=/.test(words[at] ?? "")) lead.push(words[at++]);
+    const name = path.basename(words[at] ?? "");
+    let start = /^git(?:\.exe)?$/.test(name) ? at : -1;
+    if (RUNNER.test(name)) {
+      start = words.findIndex(
+        (word, index) => index > at && /^git(?:\.exe)?$/.test(path.basename(word)),
+      );
+      if (
+        start > 0 &&
+        (!/^(?:timeout|nice|time|command)$/.test(name) ||
+          words.slice(at + 1, start).some((word) => !/^(?:-[\w-]+|\d[\w.]*)$/.test(word)))
+      )
+        why = `\`${name}\` runs git`;
+    } else if (/^(?:export|declare|local|readonly|typeset)$/.test(name))
+      lead.push(...words.slice(at + 1).filter((word) => /^\w+\+?=/.test(word)));
+    // The environment a git in this command sees (assignments to exported names too).
+    for (const word of runsGit ? lead : [])
+      if (!/^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0|(?:LC_\w+|LANG|TZ)=[^$`]*)$/.test(word))
+        why ??= `\`${word}\` is not allowed`;
     let index = start < 0 ? words.length : start + 1;
-    for (; !why && words[index]?.startsWith("-"); index++) {
+    let dir = "";
+    let unlocked = lead.includes("GIT_OPTIONAL_LOCKS=0");
+    for (; !why && words[index]?.startsWith("-") && words[index] !== "--version"; index++) {
       const word = words[index];
       const flag = /^--(git-dir|work-tree)(?:=([\s\S]*))?$/.exec(word);
       const value =
         flag?.[2] ?? (/^(?:-C|--git-dir|--work-tree)$/.test(word) ? words[++index] : "");
+      if (word === "-C") dir = value;
+      unlocked ||= word === "--no-optional-locks";
       if (flag ? !literalIn(value, repo) : !/^(?:-C|-P|--no-pager|--no-optional-locks)$/.test(word))
         why = `\`${word}\` is not allowed`;
     }
-    const args = words.slice(index);
-    const kind = start < 0 || why ? "read" : gitKind(args);
-    if (!kind) why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
-    else if (!why && start >= 0 && (args[0] === "fetch" || args[0] === "clone")) {
-      const source = args.slice(1).find((arg) => !arg.startsWith("-"));
-      if (
-        source &&
-        !(args[0] === "fetch" && /^[\w.-]+$/.test(source)) &&
-        !literalIn(source, repo, true)
-      )
-        why = `\`${source}\` is not local`;
+    const args = words[index] === "--version" ? ["version"] : words.slice(index);
+    if (!why && start >= 0) {
+      if (!gitKind(args, (source) => literalIn(source, repo, true)))
+        why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
+      else if (args[0] === "status" && !unlocked) {
+        const dirs = path.isAbsolute(dir) ? gitDirsAt(canonical(dir), repo) : null;
+        if (!dirs?.length || !dirs.every((gitDir) => inScratch(gitDir, repo)))
+          why = "`git status` refreshes the index outside scratch: add --no-optional-locks";
+      }
     }
     // Scripts it carries: `bash -c "…"`, `$(…)`, a heredoc fed to a shell.
     for (const script of [...words, ...(segment.subs ?? []), ...(segment.stdin ?? [])])

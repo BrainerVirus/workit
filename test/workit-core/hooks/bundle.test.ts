@@ -81,7 +81,11 @@ const HOOK_ENTRIES = [
 // write-gate gaps (#855) took core run to 541,650 B (Claude Code 535,119 B, Cursor 530,705 B, Codex 530,317 B).
 // One ceiling for the rest of wave 9, core run plus 8,000 B: procs-route (dev-server routing, the RSS notice) and
 // session-teardown (the session-end stop) may spend it, each printing its delta in its PR.
-const BUDGET = 549_650;
+// #864 judge-scratch (2026-11-13): confining a judge's git (verifiers and reviewers) to an allowlist
+// of verbs with per-verb option tables, wrappers and environment, plus git-dir and config checks
+// for scratch repositories, took core run to 557,693 B. The ceiling is that plus ~2,000 B, since
+// ap-core's one-click approvals land next on the same bundle.
+const BUDGET = 559_700;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
