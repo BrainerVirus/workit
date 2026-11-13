@@ -191,7 +191,30 @@ test("G the default ask, W raw ytrack writes a workit verb covers, T every host 
       const out = run(command);
       expect(out.kind, `${host}: ${command}`).toBe("deny");
       expect(out.reason, `${host}: ${command}`).toContain(`\`${call}\``);
-      expect(out.reason, `${host}: ${command}`).toContain("workit approve <id>");
+      // #864: no approve id to relay; Claude Code asks on the workit call itself.
+      expect(out.reason, `${host}: ${command}`).not.toContain("workit approve");
+      expect(out.reason, `${host}: ${command}`).toContain(
+        host === "claude"
+          ? "the host shows the user the full text and asks once"
+          : "it asks the user first",
+      );
+    }
+});
+
+test("G a time log inside a command that is not plain (a leading cd, a loop, bash -c), W the hook denies it, T every host names the workit youtrack time call and Claude Code never says own terminal", () => {
+  for (const command of [
+    "cd /tmp && ytrack work-item add X-1 --duration 30m",
+    "for i in 1; do ytrack work-item add X-1 --duration 30m; done",
+    "bash -c 'ytrack work-item add X-1 --duration 30m'",
+  ])
+    for (const [host, run] of Object.entries(HOSTS)) {
+      const out = run(command);
+      expect(out.kind, `${host}: ${command}`).toBe("deny");
+      expect(out.reason, `${host}: ${command}`).toContain(
+        "`workit youtrack time X-1 --minutes 30`",
+      );
+      expect(out.reason, `${host}: ${command}`).toContain("as its own plain call");
+      if (host === "claude") expect(out.reason, command).not.toContain("own terminal");
     }
 });
 

@@ -415,7 +415,7 @@ const judge = (args: readonly string[], words: readonly string[]): Mapped | null
   return /^(?:edit|update|delete|rm)$/.test(verb) ? UNCOVERED : null;
 };
 
-type YtrackWrite = Mapped & { command: string };
+type YtrackWrite = Mapped & { command: string; hint?: string };
 
 const SHELLS = /^(?:sh|bash|zsh|dash|ksh|ash|mksh|yash|fish)$/;
 /** Nested scripts read this deep; deeper ones that name ytrack are refused. */
@@ -426,9 +426,31 @@ const READ = new Map<string, YtrackWrite[]>();
 const NOT_PLAIN: Mapped = gap(
   "a ytrack call that is not a plain command of its own (a wrapper, loop, substitution or script around it can change or repeat it)",
 );
-/** The same write, unmapped: a named call is only for a plain command. */
+/**
+ * A time log only (minutes, maybe text and day): no file or text a wrapper
+ * could change, so its call is named even from a command that is not plain
+ * (#864); the verb shows the user the entry before it posts.
+ */
+const timeOnly = (effect: Effect | undefined): boolean =>
+  effect?.minutes !== undefined &&
+  effect.markdown === undefined &&
+  effect.file === undefined &&
+  !effect.attach?.length &&
+  effect.command === undefined;
+
+/** The same write, unmapped: a named call is only for a plain command. A time log keeps its call as a hint. */
 const ungrant = (write: YtrackWrite): YtrackWrite =>
-  write.workit ? { command: write.command, ...NOT_PLAIN } : write;
+  write.workit
+    ? {
+        command: write.command,
+        ...NOT_PLAIN,
+        ...(timeOnly(write.effect) ? { hint: write.workit } : {}),
+      }
+    : write;
+
+/** A time log found in a command that is not plain: its call, run as its own plain call. */
+const hinted = (write: YtrackWrite): YtrackWrite =>
+  write.hint ? { command: write.command, workit: write.hint } : write;
 
 /**
  * The ytrack writes one command line runs: past a package runner (`npx -y
@@ -635,6 +657,7 @@ const ytrackWrites = (
     found = [];
     for (const line of commandLines(command, dialect))
       ytrackArgs(line, found, depth, aliases(command), false);
+    found = found.map(hinted);
   }
   READ.set(key, found);
   if (READ.size > 64) READ.delete(READ.keys().next().value as string);
@@ -687,11 +710,18 @@ export const ytrackGate = (
       reason: `${bare.join(", ")} writes to YouTrack: the user decides this call (#780).`,
     };
   const why = `A raw ytrack write posts to YouTrack without the user's yes (#780).`;
+  // Claude Code asks on the workit call itself (#864); elsewhere the verb names the terminal step.
   const run = calls.length
-    ? ` Run ${calls.join(", then ")} instead: it asks the user first. When it answers approval_needed, run exactly the \`workit approve <id>\` it names, now, with nothing around it (no 2>&1, pipe or echo), so the host asks the user; then rerun the workit call once.`
+    ? ` Run ${calls.join(", then ")} instead, each as its own plain call: ${
+        ask
+          ? "the host shows the user the full text and asks once, and a yes posts it in that call."
+          : "it asks the user first."
+      }`
     : "";
   const user = bare.length
-    ? ` For ${bare.join(", ")}, the user decides: ask the user, and if they agree they run it in their own terminal.`
+    ? ask
+      ? ` For ${bare.join(", ")}, run it as its own plain call: the host asks the user.`
+      : ` For ${bare.join(", ")}, the user decides: ask the user, and if they agree they run it in their own terminal.`
     : "";
   // Deny-only hosts: the named call comes back once the write is its own plain command.
   const rerun = writes.some((write) => write.gap === NOT_PLAIN.gap)

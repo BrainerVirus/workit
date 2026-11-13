@@ -86,7 +86,7 @@ async function ytrackWrite(
         ok: false,
         error: `${used.code}: nothing was posted`,
         outcome: "not_applied",
-        unblock: approveLine([request.id]),
+        unblock: approveLine(request),
         approval: request.id,
       };
     }

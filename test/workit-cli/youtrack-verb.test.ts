@@ -305,7 +305,8 @@ test("Given the default, When the agent runs workit youtrack time X-1 --minutes 
     reason: "approval_needed",
     posted: false,
   });
-  expect(refusal.error).toContain(`approve: run \`workit approve ${refusal.data.approval}\` now`);
+  // #864: the one pending request needs no id at the terminal.
+  expect(refusal.error).toContain("ask the user to run `workit approve` in a terminal");
   expect(requests()).toEqual([refusal.data.approval]);
   expect(server.posts).toHaveLength(0);
   // Asking again without a yes still posts nothing.
@@ -349,7 +350,7 @@ test("Given a yes used by a run whose write did not land, When the agent re-runs
   const retry = await call(args, ASK);
   expect(retry.code).toBe(3);
   expect(retry.json().data.reason).toBe("approval_consumed");
-  expect(retry.json().error).toContain(`workit approve ${retry.json().data.approval}`);
+  expect(retry.json().error).toContain("`workit approve` in a terminal");
   expect(server.posts).toHaveLength(0);
 });
 

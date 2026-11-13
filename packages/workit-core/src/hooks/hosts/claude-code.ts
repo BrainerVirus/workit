@@ -1,10 +1,14 @@
 // Claude Code: command hooks mapped onto the protocol. The plugin that
 // registers them ships separately; this is the field mapping only.
 import { approveCallDeny, approveCallIn } from "../../approvals/call";
+import { inlineAskFor, inlineCallDeny, inlineCallIn } from "../../approvals/inline";
 import {
+  INLINE_TICKET_ENV,
+  INLINE_UNASKED_ENV,
   liveApprovalRequest,
   recordApprovalAsked,
   recordApprovalGrant,
+  recordInlineAsk,
   renderApprovalRequest,
 } from "../../approvals/store";
 import type { HostDescriptor } from "../descriptor";
@@ -379,15 +383,24 @@ const renderDecision = (decision: HookDecision, native: string | null) => {
 // --- the host-approval channel (docs/workit-next/host-approval.md) ---------
 
 /**
- * Permission modes where an ask reaches a person. Auto mode, bypassPermissions
- * and the SDK's prompt tools may answer an ask without one; until probed, no
- * grant is recorded there (spec: Recording the answer, Claude Code U).
+ * Permission modes where a hook's ask reaches a person. Auto mode is one: its
+ * classifier never answers a hook's ask, the person sees the prompt (#864,
+ * decision mwf752f2). bypassPermissions and dontAsk answer without one, and
+ * so do the SDKs' prompt tools: no yes is recorded there.
  */
-const ASKING_MODES = new Set(["default", "acceptEdits", "plan"]);
+const ASKING_MODES = new Set(["default", "acceptEdits", "plan", "auto"]);
 /** `claude -p`, the SDKs and `--permission-prompt-tool` run under an `sdk-*` entrypoint. */
+const sdkEntry = (env: NodeJS.ProcessEnv): string | null => {
+  const entry = String(env.CLAUDE_CODE_ENTRYPOINT ?? "");
+  return entry.startsWith("sdk") ? entry : null;
+};
 const personAsked = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): boolean =>
-  ASKING_MODES.has(String(raw.permission_mode)) &&
-  !String(env.CLAUDE_CODE_ENTRYPOINT ?? "").startsWith("sdk");
+  ASKING_MODES.has(String(raw.permission_mode)) && sdkEntry(env) === null;
+/** Why no person sees an ask here, as the verb names it. */
+const unaskedMode = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv): string => {
+  const entry = sdkEntry(env);
+  return entry ? `the ${entry} entrypoint` : `${String(raw.permission_mode ?? "an unknown")} mode`;
+};
 
 /**
  * The ask for a plain `workit approve <id>…`: every request rendered from the
@@ -405,11 +418,70 @@ const approveAsk = (ids: readonly string[]): string | null => {
 };
 
 /**
- * What a `workit approve` call does to this dispatch: PreToolUse answers the
- * ask (or denies a call wrapped in anything) and notes the ask in the store;
- * PostToolUse of the same tool call records one grant per id read from argv.
+ * What a `workit approve` call, or a call asked about on the action itself,
+ * does to this dispatch: PreToolUse answers the ask (or denies a call wrapped
+ * in anything) and notes the ask in the store; PostToolUse of a `workit
+ * approve` call records one grant per id read from argv. `input` rides with
+ * an ask as its updatedInput: the one call the person said yes to.
  */
-type ApproveStep = (decision: HookDecision) => HookDecision;
+type Stepped = { decision: HookDecision; input?: Record<string, unknown> };
+type ApproveStep = (decision: HookDecision) => Stepped;
+
+/** A shell value as one word. */
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/**
+ * The ask on the action itself (#864): a plain `workit youtrack note|…` call
+ * gets an ask showing its full text; in a mode where a person answers, the
+ * ask row is recorded and the call runs with its ticket as an env prefix, so
+ * the verb uses the yes in that same call. In any other mode the call runs
+ * with the mode named, and the verb refuses. A wrapped call is denied with
+ * the plain form. Another gate's deny or ask wins.
+ */
+const inlineStepOf = (
+  raw: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+  command: string,
+): ApproveStep | null => {
+  const call = inlineCallIn(command, dialectOf(raw));
+  if (!call) return null;
+  return (decision) => {
+    if (decision.kind === "deny" || decision.kind === "ask") return { decision };
+    // A rewrite (`cd x && workit …` → --cwd) would run the call unasked: the plain form instead.
+    if (!call.plain)
+      return { decision: { kind: "deny", reason: inlineCallDeny(call.fix), unblock: call.fix } };
+    if (decision.kind !== "none" && decision.kind !== "context") return { decision };
+    const cwd = typeof raw.cwd === "string" ? raw.cwd : "";
+    const ask = inlineAskFor(call.words, cwd);
+    if (!ask) return { decision };
+    const toolInput = isRecord(raw.tool_input) ? raw.tool_input : {};
+    if (!personAsked(raw, env))
+      return {
+        decision: {
+          kind: "update-input",
+          input: {
+            ...toolInput,
+            command: `${INLINE_UNASKED_ENV}=${shellWord(unaskedMode(raw, env))} ${command}`,
+          },
+          text: null,
+        },
+      };
+    const { ticket } = recordInlineAsk({
+      kind: ask.kind,
+      argvHash: ask.argvHash,
+      contentHash: ask.contentHash,
+      host: "claude_code",
+      session: optionalText(raw.session_id),
+      toolUseId: optionalText(raw.tool_use_id),
+      state: "asked",
+    });
+    return {
+      decision: { kind: "ask", reason: ask.text },
+      input: { ...toolInput, command: `${INLINE_TICKET_ENV}=${ticket} ${command}` },
+    };
+  };
+};
 
 const approveStepOf = (
   native: ClaudeHookEvent,
@@ -419,6 +491,10 @@ const approveStepOf = (
   if (native !== "PreToolUse" && native !== "PostToolUse") return null;
   if (!SHELL_TOOLS.has(String(raw.tool_name))) return null;
   const command = toolCommand(raw);
+  if (command && native === "PreToolUse") {
+    const inline = inlineStepOf(raw, env, command);
+    if (inline) return inline;
+  }
   const call = command ? approveCallIn(command, dialectOf(raw)) : null;
   if (!call) return null;
   const session = optionalText(raw.session_id);
@@ -427,16 +503,19 @@ const approveStepOf = (
   if (native === "PreToolUse")
     return (decision) => {
       // Another gate's deny wins; nothing is asked or noted.
-      if (decision.kind === "deny") return decision;
+      if (decision.kind === "deny") return { decision };
       if (!call.plain)
         return {
-          kind: "deny",
-          reason: approveCallDeny(call.fix),
-          unblock: call.fix,
+          decision: {
+            kind: "deny",
+            reason: approveCallDeny(call.fix),
+            unblock: call.fix,
+          },
         };
       const reason = approveAsk(call.ids);
       // No live request: drop the shared user-only ask; the CLI answers not_found.
-      if (reason === null) return decision.kind === "ask" ? { kind: "none" } : decision;
+      if (reason === null)
+        return { decision: decision.kind === "ask" ? { kind: "none" } : decision };
       if (asked && session && toolUseId)
         recordApprovalAsked({
           toolUseId,
@@ -444,7 +523,7 @@ const approveStepOf = (
           host: "claude_code",
           ids: call.ids,
         });
-      return { kind: "ask", reason };
+      return { decision: { kind: "ask", reason } };
     };
   // Claude Code fires PostToolUse only for a call that succeeded (a failed
   // one is PostToolUseFailure, not registered); an exit code it does send must be 0.
@@ -461,7 +540,7 @@ const approveStepOf = (
           toolUseId,
           via: "host",
         });
-    return decision;
+    return { decision };
   };
 };
 
@@ -475,13 +554,27 @@ let approveStep: ApproveStep | null = null;
 const render = (decision: HookDecision, native: string | null) => {
   const step = approveStep;
   approveStep = null;
-  let final = decision;
+  let final: Stepped = { decision };
   try {
     if (step) final = step(decision);
   } catch {
     // The store failing never blocks a call: the request stays unapproved.
   }
-  return renderDecision(final, native);
+  const rendered = renderDecision(final.decision, native);
+  // An ask on the action itself: the prompt runs the call with its ticket
+  // (claude 2.1.323 keeps an asking hook's updatedInput with the ask).
+  if (final.input && final.decision.kind === "ask" && native === "PreToolUse")
+    return {
+      ...rendered,
+      json: {
+        hookSpecificOutput: {
+          ...(rendered.json.hookSpecificOutput as Record<string, unknown>),
+          updatedInput: final.input,
+          ...(decision.kind === "context" ? { additionalContext: decision.text } : {}),
+        },
+      },
+    };
+  return rendered;
 };
 
 export const claudeCodeAdapter: HostAdapter = {

@@ -9,12 +9,14 @@
 //   <state>/approvals/grants/<id>.json     the recorded yes, 15 minutes
 //   <state>/approvals/consumed/<id>.json   created once, exclusively
 //   <state>/approvals/rejected/<id>.json   a no (or Edit) where the host reports one (Pi)
+//   <state>/approvals/inline/<ticket>.json an ask on the action itself (#864): the
+//                                          host showed the full text on one call
 //
 // The write gate denies an agent's edit or shell write under approvals/
 // (hooks/write-gate.ts). Like that guard, this stops honest mistakes and
 // accidental self-approval, not a determined agent (D18).
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../core/logger";
 import { writeFileAtomic, writeFileExclusive } from "../core/safe-write";
@@ -125,7 +127,7 @@ export const approvalHash = (fields: ApprovalFields): string =>
     .digest("hex");
 
 export const approvalsDir = (): string => path.join(resolveStateDir(), "approvals");
-type Part = "requests" | "asked" | "grants" | "consumed" | "rejected";
+type Part = "requests" | "asked" | "grants" | "consumed" | "rejected" | "inline";
 const dirOf = (part: Part) => path.join(approvalsDir(), part);
 const fileOf = (part: Exclude<Part, "asked">, id: string) => path.join(dirOf(part), `${id}.json`);
 const askedFile = (session: string, toolUseId: string) =>
@@ -150,14 +152,31 @@ const write = (file: string, value: unknown): void => {
 };
 
 const live = (expires: string, now: Date): boolean => Date.parse(expires) > now.getTime();
+
+const names = (part: Part): string[] => {
+  try {
+    return readdirSync(dirOf(part)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+};
 const later = (now: Date, ms: number) => new Date(now.getTime() + ms).toISOString();
 
-/** Write a new request. Needs no authority: it grants nothing. */
+/**
+ * The live request for these fields: the one already written for their hash
+ * (#864: a refusal never mints a second id for the same text), else a new
+ * one. Needs no authority: it grants nothing.
+ */
 export const createApprovalRequest = (
   fields: ApprovalFields,
   options: { session: string | null; now?: Date; ttlMs?: number },
 ): ApprovalRequest => {
   const now = options.now ?? new Date();
+  const hash = approvalHash(fields);
+  const known = pendingApprovalRequests(now, { granted: true }).find(
+    (request) => request.hash === hash,
+  );
+  if (known) return known;
   const request: ApprovalRequest = {
     id: newApprovalId(),
     kind: fields.kind,
@@ -165,7 +184,7 @@ export const createApprovalRequest = (
     target: fields.target,
     effect: fields.effect,
     subject: fields.subject,
-    hash: approvalHash(fields),
+    hash,
     session: options.session,
     created: now.toISOString(),
     expires: later(now, options.ttlMs ?? REQUEST_TTL_MS),
@@ -212,10 +231,42 @@ export const liveApprovalRequest = (
   return { ok: true, request };
 };
 
-const subjectLine = (subject: Record<string, unknown>): string =>
-  Object.entries(subject)
-    .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
-    .join("; ");
+/**
+ * The live requests, oldest first: not expired, used or rejected. A request
+ * whose live yes is not used yet is left out unless `granted`.
+ */
+export const pendingApprovalRequests = (
+  now: Date = new Date(),
+  options: { granted?: boolean } = {},
+): ApprovalRequest[] =>
+  names("requests")
+    .map((name) => liveApprovalRequest(name.slice(0, -5), now))
+    .flatMap((found) => (found.ok ? [found.request] : []))
+    .filter((request) => {
+      if (options.granted) return true;
+      const grant = readJson(fileOf("grants", request.id)) as ApprovalGrant | null;
+      return !grant || grant.hash !== request.hash || !live(grant.expires, now);
+    })
+    .toSorted((a, b) => a.created.localeCompare(b.created));
+
+/** Lines past this are summed up as "N more lines": the prompt stays readable. */
+export const SHOWN_LINES = 60;
+
+/** `text` indented, cut after SHOWN_LINES lines with how many more there are. */
+export const shownText = (text: string, indent = "    "): string[] => {
+  const lines = text.replace(/\s+$/u, "").split(/\r?\n/u);
+  const shown = lines.slice(0, SHOWN_LINES).map((line) => `${indent}${line}`);
+  const more = lines.length - SHOWN_LINES;
+  return more > 0 ? [...shown, `${indent}… ${more} more line${more === 1 ? "" : "s"}`] : shown;
+};
+
+/** Each subject field; a text of several lines is shown in full, below its name. */
+const subjectLines = (subject: Record<string, unknown>): string[] =>
+  Object.entries(subject).flatMap(([key, value]) =>
+    typeof value === "string" && value.includes("\n")
+      ? [`  ${key}:`, ...shownText(value)]
+      : [`  ${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`],
+  );
 
 /**
  * The text the user approves, rendered by Workit from the stored request,
@@ -228,13 +279,25 @@ export const renderApprovalRequest = (request: ApprovalRequest): string =>
       .map(([key, value]) => `${key} ${value}`)
       .join(", ")}`,
     `  effect: ${request.effect}`,
-    `  subject: ${subjectLine(request.subject)}`,
+    ...subjectLines(request.subject),
     `  hash: ${request.hash.slice(0, 12)}  expires: ${request.expires}`,
   ].join("\n");
 
-/** The line every refusal prints: the fallback that works on every host. */
-export const approveLine = (ids: readonly string[]): string =>
-  `approve: run \`workit approve ${ids.join(" ")}\` now with your shell tool, as its own call with no cd, pipe or redirect; never ask the user to type it: your call makes the host ask them, and only their answer approves`;
+/**
+ * The terminal fallback for `request` (#864), on hosts with no ask on the
+ * action itself: one short command, with the id only when another request
+ * is pending too (`workit approve` alone takes the single pending one).
+ */
+export const approveCommand = (request: ApprovalRequest, now: Date = new Date()): string => {
+  const pending = pendingApprovalRequests(now);
+  return pending.length === 1 && pending[0]?.id === request.id
+    ? "workit approve"
+    : `workit approve ${request.id}`;
+};
+
+/** The line a refusal prints on a host with no ask on the action: the user's terminal step. */
+export const approveLine = (request: ApprovalRequest, now: Date = new Date()): string =>
+  `approve: ask the user to run \`${approveCommand(request, now)}\` in a terminal (it shows the full text and asks y/N), then run this call again`;
 
 /**
  * A host ask on one tool call (Claude Code PreToolUse): one hash per id with a
@@ -346,18 +409,10 @@ const trusted = (grant: ApprovalGrant): boolean => {
   return asked?.host === grant.host && asked.hashes[grant.id] === grant.hash;
 };
 
-const grants = (): ApprovalGrant[] => {
-  let names: string[] = [];
-  try {
-    names = readdirSync(dirOf("grants"));
-  } catch {
-    return [];
-  }
-  return names
-    .filter((name) => name.endsWith(".json"))
+const grants = (): ApprovalGrant[] =>
+  names("grants")
     .map((name) => readJson(path.join(dirOf("grants"), name)) as ApprovalGrant | null)
     .filter((grant): grant is ApprovalGrant => grant !== null && isApprovalId(grant.id));
-};
 
 const sameTarget = (request: ApprovalRequest, fields: ApprovalFields): boolean =>
   request.kind === fields.kind && canonicalJson(request.target) === canonicalJson(fields.target);
@@ -423,13 +478,140 @@ export const consumeApproval = (
     return {
       ok: false,
       code: "approval_stale",
-      message: `approval_stale: the user approved ${stale.hash.slice(0, 12)} but ${fields.action} is now ${hash.slice(0, 12)}; a changed subject needs a new yes. ${approveLine([request.id])}`,
+      message: `approval_stale: the user approved ${stale.hash.slice(0, 12)} but ${fields.action} is now ${hash.slice(0, 12)}; a changed subject needs a new yes. ${approveLine(request, now)}`,
       request,
     };
   return {
     ok: false,
     code: "approval_needed",
-    message: `approval_needed: ${fields.action} needs the user's yes. ${approveLine([request.id])}`,
+    message: `approval_needed: ${fields.action} needs the user's yes. ${approveLine(request, now)}`,
     request,
   };
+};
+
+// --- the ask on the action itself (#864) -----------------------------------
+
+/**
+ * An inline ask lives this long after the host showed it: the person reads
+ * the full text before answering. The ticket, not the clock, binds it.
+ */
+export const INLINE_ASK_TTL_MS = 10 * 60_000;
+/** The env prefix the host adds to the one call it asked about: the ticket. */
+export const INLINE_TICKET_ENV = "WORKIT_APPROVAL_TICKET";
+/** The env prefix naming a host mode where no person sees a prompt: the verb names it. */
+export const INLINE_UNASKED_ENV = "WORKIT_APPROVAL_UNASKED";
+
+/**
+ * A host prompt that showed one call's full text (Claude Code PreToolUse,
+ * Pi's dialog). The ticket itself is never stored: only its sha256, so the
+ * row on disk cannot be replayed (D18: a reader of the host's own transcript
+ * can, until the row is used, expires or a newer ask replaces it).
+ */
+export type InlineAsked = {
+  ticketHash: string;
+  kind: ApprovalKind;
+  /** sha256 of the call's words past its verb. */
+  argvHash: string;
+  /** sha256 of what the call posts: its words and every file it reads. */
+  contentHash: string;
+  host: string;
+  session: string | null;
+  toolUseId: string | null;
+  /** `asked`: the yes comes with the call (Claude Code); `approved`: the host already has it (Pi). */
+  state: "asked" | "approved";
+  at: string;
+  expires: string;
+};
+
+const TICKET = /^[A-Za-z0-9_-]{32}$/u;
+const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+/**
+ * Record an ask on one call and return its ticket, which the host passes to
+ * that call only. Every older unused ask for the same call and content is
+ * closed first: only the call the person was asked about last can use a yes.
+ */
+export const recordInlineAsk = (
+  input: Omit<InlineAsked, "ticketHash" | "at" | "expires">,
+  now: Date = new Date(),
+  ttlMs: number = INLINE_ASK_TTL_MS,
+): { ticket: string; asked: InlineAsked } => {
+  for (const name of names("inline")) {
+    const file = path.join(dirOf("inline"), name);
+    const row = readJson(file) as InlineAsked | null;
+    if (!row || (row.argvHash === input.argvHash && row.contentHash === input.contentHash))
+      rmSync(file, { force: true });
+  }
+  const ticket = randomBytes(24).toString("base64url");
+  const asked: InlineAsked = {
+    ...input,
+    ticketHash: sha(ticket),
+    at: now.toISOString(),
+    expires: later(now, ttlMs),
+  };
+  write(fileOf("inline", asked.ticketHash), asked);
+  return { ticket, asked };
+};
+
+export type InlineConsumed = {
+  ticketHash: string;
+  kind: ApprovalKind;
+  contentHash: string;
+  verb: string;
+  host: string;
+  session: string | null;
+  askSession: string | null;
+  at: string;
+};
+
+/**
+ * Use the yes a host prompt gave this very call, once, right before its side
+ * effect. The ticket must name a live ask for the same kind, words and
+ * content; anything else (no ticket, a ticket from another call, a changed
+ * file, a second use, an expired or replaced ask) is refused.
+ */
+export const consumeInlineAsk = (
+  input: {
+    ticket: string;
+    kind: ApprovalKind;
+    argvHash: string;
+    contentHash: string;
+    verb: string;
+    session: string | null;
+  },
+  now: Date = new Date(),
+): { ok: true; asked: InlineAsked; consumed: InlineConsumed } | { ok: false; reason: string } => {
+  if (!TICKET.test(input.ticket)) return { ok: false, reason: "the ticket is malformed" };
+  const ticketHash = sha(input.ticket);
+  const file = fileOf("inline", ticketHash);
+  const asked = readJson(file) as InlineAsked | null;
+  if (!asked || asked.ticketHash !== ticketHash)
+    return {
+      ok: false,
+      reason: "no host ask matches it (used, expired, replaced by a newer ask, or never asked)",
+    };
+  if (asked.kind !== input.kind || asked.argvHash !== input.argvHash)
+    return { ok: false, reason: "the host asked about another call" };
+  if (asked.contentHash !== input.contentHash)
+    return { ok: false, reason: "the text or a file changed after the host showed it" };
+  if (!live(asked.expires, now))
+    return { ok: false, reason: `the host ask expired at ${asked.expires}` };
+  const consumed: InlineConsumed = {
+    ticketHash,
+    kind: asked.kind,
+    contentHash: asked.contentHash,
+    verb: input.verb,
+    host: asked.host,
+    session: input.session,
+    askSession: asked.session,
+    at: now.toISOString(),
+  };
+  mkdirSync(dirOf("consumed"), { recursive: true });
+  const won =
+    writeFileExclusive(
+      fileOf("consumed", `inline-${ticketHash}`),
+      `${JSON.stringify(consumed, null, 2)}\n`,
+    ) === "created";
+  rmSync(file, { force: true });
+  return won ? { ok: true, asked, consumed } : { ok: false, reason: "its yes was already used" };
 };

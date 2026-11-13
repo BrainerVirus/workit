@@ -3,10 +3,12 @@
 // `ytrack … --json`, the only path to YouTrack (its token stays in the OS
 // keyring); without ytrack every verb fails with the install unblock. Agents use
 // these verbs, or the ytrack skill, instead of calling the API. Writes (note,
-// time, meeting, create) ask the user first by default (#780): the verb writes
-// an approval request and refuses until the user approves it through
-// `workit approve <id>`, then the re-run consumes that yes once. A workspace
-// with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead.
+// time, meeting, update, create) ask the user first by default (#780, #864):
+// on Claude Code and Pi the host asks on this very call, showing its full
+// text (approvals/youtrack-ask.ts), and a yes posts in the same call; on the
+// other hosts the verb records one request per text and refuses with the
+// terminal step (`workit approve`), then the re-run consumes that yes once. A
+// workspace with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead.
 // Every comment or work item carries a deterministic marker and is read back
 // first, so a retry after a lost response never posts twice; an identical
 // entry by the same user is refused as `duplicate_entry`; a write an earlier
@@ -50,9 +52,14 @@ import {
 import {
   approveLine,
   consumeApproval,
+  consumeInlineAsk,
   createApprovalRequest,
+  INLINE_TICKET_ENV,
+  INLINE_UNASKED_ENV,
   type ApprovalFields,
 } from "@workit-dev/core/src/approvals/store";
+import { youTrackAsk } from "@workit-dev/core/src/approvals/youtrack-ask";
+import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import {
   youTrackBackend,
   youTrackWriteGate,
@@ -117,7 +124,7 @@ export async function run(
   const [sub, ...rest] = argv;
   const writesMode = () => (deps.writes ?? youTrackWritesMode)(io.cwd);
   if (sub === "show") return show(rest, io, backend);
-  if (sub === "create") return create(rest, io, backend, writesMode());
+  if (sub === "create") return create(rest, io, backend, writesMode(), argv);
   if (sub !== "note" && sub !== "time" && sub !== "meeting" && sub !== "update")
     return usage(io, `unknown subcommand "${sub ?? ""}"`, USAGE);
   const flags = parseFlags(rest, {
@@ -152,7 +159,7 @@ export async function run(
       ? updatePlan(io, issueId, flags, minutes, when)
       : legacyPlan(io, sub, issueId, flags, minutes, when);
   if (typeof plan === "string") return usage(io, plan, USAGE);
-  return runPlan(io, plan, backend, writesMode());
+  return runPlan(io, plan, backend, writesMode(), argv);
 }
 
 type Flags = Exclude<ReturnType<typeof parseFlags>, string>;
@@ -366,8 +373,8 @@ function updatePlan(
     effects.push(
       `comment "${firstLines(comment)}"${files.length ? ` with ${fileList(files)}` : ""}`,
     );
-    subject.comment = firstLines(comment);
-    subject.commentSha256 = createHash("sha256").update(comment).digest("hex");
+    // The whole text: the yes covers exactly what the user read (#864).
+    subject.comment = comment;
   } else if (files.length) {
     steps.push({
       label: "attach",
@@ -490,6 +497,7 @@ async function runPlan(
   plan: Plan,
   backend: () => YouTrackBackend,
   mode: YouTrackWritesMode,
+  argv: readonly string[],
 ): Promise<number> {
   const { issueId, steps } = plan;
   if (mode === "auto") {
@@ -551,6 +559,7 @@ async function runPlan(
       }),
       `youtrack ${plan.verb}`,
       { issueId, steps: results, earlier },
+      argv,
     );
     if (asked !== null) return asked;
   }
@@ -674,29 +683,91 @@ async function runStep(io: Io, plan: Plan, entry: Step, yt: YouTrackBackend): Pr
   return outcome;
 }
 
+/** The `approval.consumed` ledger row; a checkout without a ledger records none. */
+const recordConsumed = (io: Io, row: Record<string, unknown>): void => {
+  try {
+    appendObserved(io.cwd, { type: "approval.consumed", actor: actorFromEnv(io.env), ...row });
+  } catch {
+    // The yes is used either way; the store keeps the consumed record.
+  }
+};
+
 /**
- * Consume the user's yes for `fields` right before the write, or refuse with
- * the request to approve (`approval_needed`, `approval_stale`) or
- * `approval_consumed`. null when the write may go ahead.
+ * Consume the user's yes right before the write, or refuse. The yes comes
+ * from the host's prompt on this very call (its ticket, Claude Code and Pi),
+ * else from a terminal `workit approve` of the request for `fields`. Refuses
+ * `approval_not_bound` when the ticket does not cover this call, else
+ * `approval_needed`, `approval_stale` or `approval_consumed` with the one
+ * request for this text. null when the write may go ahead.
  */
 function askFirst(
   io: Io,
   fields: ApprovalFields,
   verb: string,
   data: Record<string, unknown>,
+  argv: readonly string[],
 ): number | null {
   const session = io.env.WORKIT_SESSION_ID || null;
+  const ticket = io.env[INLINE_TICKET_ENV];
+  if (ticket) {
+    const ask = youTrackAsk(argv, io.cwd);
+    const used = ask
+      ? consumeInlineAsk({
+          ticket,
+          kind: ask.kind,
+          argvHash: ask.argvHash,
+          contentHash: ask.contentHash,
+          verb,
+          session,
+        })
+      : { ok: false as const, reason: "Workit cannot read this call's text" };
+    if (used.ok) {
+      recordConsumed(io, {
+        kind: used.asked.kind,
+        verb,
+        via: "inline",
+        host: used.asked.host,
+        contentHash: used.asked.contentHash,
+        session,
+        askSession: used.asked.session,
+      });
+      return null;
+    }
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `approval_not_bound: nothing was posted; the yes from the host's prompt does not cover this call: ${used.reason}. Run the call again as its own plain command and the host asks the user again.`,
+        { data: { ...data, reason: "approval_not_bound", posted: false } },
+      ),
+    );
+  }
   const used = consumeApproval(fields, { session, verb });
-  if (used.ok) return null;
+  if (used.ok) {
+    recordConsumed(io, {
+      kind: fields.kind,
+      verb,
+      via: used.grant.via,
+      host: used.grant.host,
+      approval: used.consumed.id,
+      hash: used.consumed.hash,
+      session,
+      grantSession: used.consumed.grantSession,
+    });
+    return null;
+  }
   // approval_consumed: the yes went to a run that did not land, so this run
-  // gets its own request rather than a dead end. The line names only what
-  // happened and the approve line: "needs the user's yes" read to weak models
-  // as "do not run workit approve yourself".
+  // gets its own request rather than a dead end.
   const request = used.request ?? createApprovalRequest(fields, { session });
-  const message = `${used.code}: nothing was posted. ${approveLine([request.id])}`;
+  const unasked = io.env[INLINE_UNASKED_ENV];
+  const why = unasked
+    ? ` The host ran this call in ${unasked}, where no person sees a prompt, so nothing was approved.`
+    : io.env.CLAUDECODE
+      ? " Claude Code asks the user only on a plain `workit youtrack …` call it sees: run it as its own call (no script, bash -c, pipe or redirect) and the host shows the user the text."
+      : "";
   return emit(
     io,
-    fail("blocked", message, {
+    fail("blocked", `${used.code}: nothing was posted.${why} ${approveLine(request)}`, {
       data: { ...data, reason: used.code, posted: false, approval: request.id },
     }),
   );
@@ -759,6 +830,7 @@ async function create(
   io: Io,
   backend: () => YouTrackBackend,
   mode: YouTrackWritesMode,
+  words: readonly string[],
 ): Promise<number> {
   const flags = parseFlags(argv, {
     project: "value",
@@ -828,6 +900,7 @@ async function create(
       }),
       "youtrack create",
       { project },
+      words,
     );
     if (asked !== null) return asked;
   }
