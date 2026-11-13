@@ -784,7 +784,7 @@ A small check whose weight fits what is free runs ahead of a bigger one
 waiting (backfill), until the bigger one has waited 5 minutes: from then on
 nobody behind it takes what it needs. A dev server registered by the process
 registry holds memory only, never a slot or a queue place; a start that does
-not fit is refused at once, naming the holders and `workit stop <id>`.
+not fit is refused at once, naming the holders and how to free the room.
 `workit lock status` shows the budget and the admitted holders.
 
 GitHub and GitLab use your `gh auth login` / `glab auth login`; Workit stores
