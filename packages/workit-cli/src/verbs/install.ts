@@ -91,7 +91,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   for (const plan of plans) {
     const host = style.bold(plan.host);
     for (const reason of plan.preview.blocked)
-      say(`${style.warn("blocked")} ${blockedRow(plan.host, reason)}\n`);
+      say(`${style.warn(blockedRow(plan.host, reason))}\n`);
     for (const file of plan.diff.files) say(`${host} write ${style.path(file)}\n`);
     for (const key of plan.diff.keys) say(`  ${style.ok("+")} ${key}\n`);
     for (const line of plan.diff.commands) say(`${host} run ${line}\n`);
