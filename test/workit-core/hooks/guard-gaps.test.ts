@@ -283,10 +283,10 @@ test("G interpreter code that builds a write target from a guarded dir and a val
   const out = SHELLS["Claude Code"](fromHomeScript);
   expect(out.deny).toBe(true);
   expect(out.reason).toContain("could not resolve");
-  expect(out.reason).not.toContain(CONFIG);
-  // Code that takes the dir itself still names it.
+  expect(sh(out.reason)).not.toContain(sh(CONFIG));
+  // Code that takes the dir itself still names it, as the command spells it (`/` on Windows too).
   const taken = shellGate(root, `python3 -c "import shutil; shutil.rmtree('${sh(CONFIG)}')"`, null);
-  expect(taken.kind === "deny" ? taken.reason : "").toContain(CONFIG);
+  expect(sh(taken.kind === "deny" ? taken.reason : "")).toContain(sh(CONFIG));
 });
 
 test("G a dir link in the repo to a dir at another depth, holding a relative dangling link to a guarded file, W a write, sponge, tee or edit names it through the dir link, T every host denies (#855)", () => {

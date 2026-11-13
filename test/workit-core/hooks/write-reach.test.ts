@@ -212,9 +212,13 @@ test("G a dangling symlink in the repo to a guarded file not made yet, W a shell
     symlinkSync(previous, path.join(base, `c${index}`));
     previous = path.join(base, `c${index}`);
   }
-  expect(mayReach(`echo x > ${path.join(base, "c41")}`, repo)).toBe(true);
-  expect(editReaches(path.join(base, "c41"), repo)).toBe(true);
-  expect(mayReach(`echo x > ${path.join(base, "c40")}`, repo)).toBe(false);
+  // Spelled relative with `/`: an absolute Windows temp path holds an 8.3 short name
+  // (`RUNNER~1`) that mayReach reads as `~user` and answers yes for any file.
+  const chained = (index: number) =>
+    path.relative(repo, path.join(base, `c${index}`)).replaceAll("\\", "/");
+  expect(mayReach(`echo x > ${chained(41)}`, repo)).toBe(true);
+  expect(editReaches(chained(41), repo)).toBe(true);
+  expect(mayReach(`echo x > ${chained(40)}`, repo)).toBe(false);
   symlinkSync(path.join(repo, "not-yet.txt"), path.join(repo, "dangling-plain"));
   expect(mayReach("echo x > dangling-plain", repo)).toBe(false);
   expect(editReaches("dangling-plain", repo)).toBe(false);
