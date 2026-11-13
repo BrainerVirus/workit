@@ -78,12 +78,18 @@ Security binding (ruling mwf7pjfs): an asked row is consumed only by its own cal
 the row on disk cannot be replayed. The hook's output, ticket included, is written to the host's
 transcript, so a rejected prompt's rewritten command could be copied from it: every host's shell
 gate denies a command naming `WORKIT_APPROVAL_TICKET` or `WORKIT_APPROVAL_UNASKED` (quotes and
-backslashes removed; prefix, `export`, `env`, `bash -c`, a heredoc), and a `Write`/`Edit` whose input
-names either is denied, so the only way a ticket reaches a verb is the hook's own rewrite. The row
-lives 2 minutes. Residual risk (D18): a name the agent builds at run time, or a script written by an
-interpreter, is not read; such a replay must also land before the row is used, expires or is
-replaced by a newer ask. On Pi the row is written only after Approve, so a rejected dialog leaves
-nothing. Closing it fully needs a recorder running as another OS principal.
+backslashes removed; prefix, `export`, `env`, `bash -c`, a heredoc), and a file write whose input
+names either is denied in `handle.ts` (`write.pre` carries the tool input as `text` where the host
+passes it: Claude Code and Pi), so the only way a ticket reaches a verb is the hook's own rewrite.
+A yes is also bound to its turn: when the user rejects a Claude Code prompt the turn stops and the
+next event is the user's own message, so `UserPromptSubmit` closes every unused ask of the session
+and the lead's `Stop` closes its own (a subagent's survives the lead's Stop until the next user
+message). On Pi a rejected or dismissed dialog writes no row at all. The row also lives at most 2
+minutes. Residual risk (D18), now narrowed to the turn of the yes: a ticket can be replayed only
+between an ask and the end of that same turn, which on a rejection is never (the turn stops), so the
+remaining case is an agent that, after the user said yes, replays the same call and content again
+before it runs; the consume-once row refuses the second use. A host session with no
+`UserPromptSubmit` (`claude -p`) records no ask in the first place.
 
 ## Request shape
 

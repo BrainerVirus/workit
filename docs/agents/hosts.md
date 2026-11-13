@@ -510,12 +510,16 @@ library passes it, and real unforgeability needs another OS principal.
   `WORKIT_APPROVAL_UNASKED` too. Replay: only the hook's rewrite carries a
   ticket. A shell command naming either (quotes and backslashes removed) is
   denied by the shell gate every host runs (`ytrackGate`, also OpenCode's
-  `permission.evaluate`), and a `Write`/`Edit` (Pi `write`/`edit`) whose input
-  names either is denied, so the rewritten command copied from the
-  transcript cannot be run again. L (D18): a name built at run time (`A=WORKIT_APPROVAL;
-  export ${A}_TICKET=…`) or a file written by an interpreter is not read;
-  Codex's and Cursor's launchers do not route the names (no ticket is ever
-  minted there). For `workit
+  `permission.evaluate`), and a file write whose input names either is denied
+  in `handle.ts` `write.pre` (the event's `text`: Claude Code `Write`/`Edit`,
+  Pi `write`/`edit`). Turn binding: `UserPromptSubmit` closes every unused ask
+  of the session and the lead's `Stop` its own, so a rejected prompt's ticket
+  dies with its turn and a name built at run time or a file an interpreter
+  writes has nothing left to replay. L: Codex's, Cursor's and OpenCode's
+  adapters pass no write `text` (Codex's `apply_patch` input and Cursor's
+  `preToolUse` input could carry it; their adapters are another slice), and
+  their launchers do not route the names; no ticket is ever minted there, so
+  this is no gap for a ticket. For `workit
   approve <id>`: `PreToolUse` asks with the request rendered from the
   store and writes `asked` (one hash per id) in `default`, `acceptEdits`,
   `plan` and `auto` (auto mode's classifier never answers a hook's ask: the
