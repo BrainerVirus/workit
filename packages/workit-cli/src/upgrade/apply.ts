@@ -1,13 +1,14 @@
-import {
-  existsSync,
-  readdirSync,
-  mkdirSync,
-  copyFileSync,
-  chmodSync,
-  cpSync,
-  lstatSync,
-} from "node:fs";
+import { existsSync, readdirSync, lstatSync } from "node:fs";
 import path from "node:path";
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  hostCommandRefusal,
+  mkdirSync,
+  writeFileAtomic,
+  writeRefusal,
+} from "../admin/guarded-fs";
 import { createHash } from "node:crypto";
 import pkg from "../../package.json" with { type: "json" };
 import {
@@ -25,7 +26,7 @@ import {
   type SetupPreview,
   type SetupResult,
 } from "../admin/setup";
-import { writeFileAtomic } from "@workit-dev/core/src/core/safe-write";
+
 import { stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { describeInstall, describeInstallAt, listInstalls } from "../install/discover";
 import { leftLines, migrateCopies, migrationCopies } from "../install/migrate";
@@ -478,13 +479,26 @@ export async function applyUpgrade(
       };
   const paths = upgradePaths(deps);
   const { configDir } = paths;
-  // Hook launchers find a Node >= the floor from this record when the PATH node is older.
-  recordHookNode(deps.env ?? process.env);
   const backup = path.join(
     workitStateDir(paths.env),
     "upgrades",
     new Date().toISOString().replaceAll(":", "-"),
   );
+  // A test run never upgrades the OS account's hosts or CLI (#859): refused
+  // before any write or host command, naming what it would have touched.
+  const refused =
+    hostCommandRefusal(paths.home, "workit upgrade") ??
+    [
+      backup,
+      ...(plan.cli ? [plan.cli.root] : []),
+      ...Object.keys(plan.configDigests),
+      ...plan.migrations.map((migration) => migration.file),
+    ]
+      .map(writeRefusal)
+      .find((reason) => reason !== null);
+  if (refused) return { ok: false, error: refused, hosts };
+  // Hook launchers find a Node >= the floor from this record when the PATH node is older.
+  recordHookNode(deps.env ?? process.env);
   mkdirSync(backup, { recursive: true, mode: 0o700 });
   for (const file of Object.keys(plan.configDigests))
     if (existsSync(file)) {

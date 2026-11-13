@@ -1,6 +1,7 @@
 // `workit upgrade --check` (installed vs latest, nothing changed) and
 // `workit upgrade --set-updates=<mode>` (the launch check's global setting).
 import path from "node:path";
+import { writeRefusal } from "../admin/guarded-fs";
 import { isUpdatesMode, UPDATES_MODES } from "@workit-dev/core/src/core/config";
 import pkg from "../../package.json" with { type: "json" };
 import { createStyle } from "../style";
@@ -175,7 +176,7 @@ export function runSetUpdates(value: string, deps: UpgradeDeps): number {
     return 2;
   }
   const { env, configDir } = upgradePaths(deps);
-  const error = writeUpdatesMode(env, value);
+  const error = writeRefusal(path.join(configDir, "config.json")) ?? writeUpdatesMode(env, value);
   if (error) {
     out.write(`updates not changed: ${error}\n`);
     return 1;

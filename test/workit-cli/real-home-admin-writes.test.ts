@@ -28,7 +28,7 @@ import { isolatedEnv } from "@/test/shared/helpers/packages";
 // Apply runs the offline doctor after each host write.
 setDefaultTimeout(process.platform === "win32" ? 60_000 : 20_000);
 
-const ADMIN = path.resolve(import.meta.dir, "../../packages/workit-cli/src/admin");
+const CLI_SRC = path.resolve(import.meta.dir, "../../packages/workit-cli/src");
 const REPO = path.resolve(import.meta.dir, "../..");
 const dirs: string[] = [];
 afterEach(() => {
@@ -125,13 +125,20 @@ test.each(HOSTS)(
   },
 );
 
-test("Given admin/**, Then no module writes the filesystem except through guarded-fs", () => {
+test("Given admin/**, upgrade/**, upgrade.ts and completion/install.ts, Then no module writes the filesystem except through guarded-fs", () => {
   const WRITES =
-    /\b(writeFileSync|writeFile|appendFileSync|mkdirSync|mkdtempSync|rmSync|rmdirSync|unlinkSync|renameSync|cpSync|copyFileSync|symlinkSync|linkSync|writeFileAtomic|writeFileExclusive)\b/u;
+    /\b(writeFileSync|writeFile|appendFileSync|mkdirSync|mkdtempSync|rmSync|rmdirSync|unlinkSync|renameSync|cpSync|copyFileSync|symlinkSync|linkSync|chmodSync|writeFileAtomic|writeFileExclusive)\b/u;
   const offenders: string[] = [];
-  for (const file of readdirSync(ADMIN).filter((name) => /\.tsx?$/u.test(name))) {
-    if (file === "guarded-fs.ts") continue;
-    const text = readFileSync(path.join(ADMIN, file), "utf8");
+  const modules = ["admin", "upgrade"].flatMap((dir) =>
+    readdirSync(path.join(CLI_SRC, dir))
+      .filter((name) => /\.tsx?$/u.test(name))
+      .map((name) => path.join(dir, name)),
+  );
+  modules.push("upgrade.ts", path.join("completion", "install.ts"));
+  expect(modules.length).toBeGreaterThan(10);
+  for (const file of modules) {
+    if (file === path.join("admin", "guarded-fs.ts")) continue;
+    const text = readFileSync(path.join(CLI_SRC, file), "utf8");
     for (const match of text.matchAll(/import\s+(\*\s+as\s+\w+|\{[^}]*\})\s+from\s+"([^"]+)"/gu)) {
       const [, names, from] = match;
       const raw = from === "node:fs" || from === "fs" || from.startsWith("node:fs/");
@@ -139,6 +146,9 @@ test("Given admin/**, Then no module writes the filesystem except through guarde
       if ((raw || safe) && (names.startsWith("*") || WRITES.test(names)))
         offenders.push(`${file}: ${names.replaceAll(/\s+/gu, " ")} from ${from}`);
     }
+    // A default or namespace node:fs import used for a write.
+    for (const call of text.matchAll(/\b(?:fs|nodeFs)\.(\w+)\(/gu))
+      if (WRITES.test(call[1])) offenders.push(`${file}: fs.${call[1]}(`);
   }
   expect(offenders).toEqual([]);
 });

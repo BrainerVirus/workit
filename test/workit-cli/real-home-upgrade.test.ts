@@ -20,6 +20,9 @@ import os from "node:os";
 import path from "node:path";
 import { accountHome } from "@/packages/workit-core/src/core/account-home";
 import { run as upgradeVerb } from "@/packages/workit-cli/src/verbs/upgrade";
+import { guardedHome } from "@/packages/workit-cli/src/admin/guarded-fs";
+import { createProgress } from "@/packages/workit-cli/src/progress";
+import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 import type { UpgradeDeps } from "@/packages/workit-cli/src/upgrade/shared";
 import { guardRealHome } from "@/test/shared/real-state-guard";
 
@@ -150,4 +153,79 @@ console.log(JSON.stringify({ setup, upgrade, deny, out: out.join("") }));`;
   expect(report).not.toContain(decoy);
   if (home) expect(report).not.toContain(path.join(home, ".claude"));
   expect(realHomeUnchanged).not.toThrow();
+});
+
+/** A Cursor home whose old-form MCP entry makes `upgrade --hosts=cursor` repair it. */
+const cursorHome = (prefix: string): string => {
+  const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  roots.push(home);
+  write(path.join(home, ".config/workit/config.json"), '{"locale":"en"}\n');
+  write(
+    path.join(home, ".cursor/mcp.json"),
+    JSON.stringify({
+      mcpServers: { workit: { command: "npx", args: ["-y", "workit-cursor-mcp"] } },
+    }),
+  );
+  return home;
+};
+
+/** Every file under `dir` with its content, to compare before and after. */
+const snapshot = (dir: string): Record<string, string> =>
+  Object.fromEntries(files(dir).map((file) => [file, readFileSync(path.join(dir, file), "utf8")]));
+
+/** `upgrade --yes --hosts=cursor` in process: npm view answers 2.0.0, every apply command is recorded. */
+const cursorUpgrade = async (home: string) => {
+  const spawned: string[] = [];
+  const out: string[] = [];
+  const code = await runUpgradeCommand(["--yes", "--hosts=cursor"], {
+    home,
+    processes: () => [],
+    out: { write: (text) => void out.push(text) },
+    progress: createProgress({ json: true }),
+    run: (command, args) =>
+      command === "npm" && args[0] === "view"
+        ? { status: 0, stdout: "2.0.0\n" }
+        : { status: 0, stdout: "" },
+    // Probes (npm view, --version, list) read; anything else is a mutating spawn.
+    runAsync: async (command, args) => {
+      if (command === "npm" && args[0] === "view") return { status: 0, stdout: "2.0.0\n" };
+      if (!args.includes("--version") && !args.includes("list"))
+        spawned.push([command, ...args].join(" "));
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  return { code, spawned, out: out.join("") };
+};
+
+test("Given a test run and upgrade --yes into the fake account home, When it applies, Then it is refused before any write or host command, naming the home", async () => {
+  expect(process.env.WORKIT_TEST_RUN).toBeDefined();
+  const home = cursorHome("wk-upgrade-account-");
+  guardedHome.value = home;
+  try {
+    const before = snapshot(home);
+    const { code, spawned, out } = await cursorUpgrade(home);
+    expect(code).not.toBe(0);
+    expect(out).toContain(`refusing to run workit upgrade against ${home}`);
+    expect(spawned).toEqual([]);
+    expect(snapshot(home)).toEqual(before);
+  } finally {
+    guardedHome.value = undefined;
+  }
+});
+
+test("Given a test run and upgrade --yes into a temp home that is not the account's, When it applies, Then it repairs Cursor there with the stubbed npm", async () => {
+  const home = cursorHome("wk-upgrade-home-");
+  guardedHome.value = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-upgrade-elsewhere-")));
+  roots.push(guardedHome.value);
+  try {
+    const { spawned, out } = await cursorUpgrade(home);
+    expect(out).not.toContain("refusing");
+    expect(spawned.some((call) => call.includes("--prefix"))).toBe(true);
+    // The old-form entry was rewritten to the canonical one.
+    expect(readFileSync(path.join(home, ".cursor/mcp.json"), "utf8")).toContain(
+      "--min-release-age=0",
+    );
+  } finally {
+    guardedHome.value = undefined;
+  }
 });

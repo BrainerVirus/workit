@@ -139,6 +139,7 @@ test("Given a fake account home, When testRunWriteRefusal judges a path, Then on
     ".pi/agent/settings.json",
     ".config/opencode/opencode.json",
     ".local/state/workit/host-permissions.json",
+    ".local/share/bash-completion/completions/workit",
   ])
     expect(refused(file)).toContain(`refusing to write ${path.join(home, file)}`);
   expect(refused(".local/state/workit/worktrees/workit/slice/file.ts")).toBeNull();

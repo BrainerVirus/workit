@@ -12,6 +12,10 @@ import * as safe from "@workit-dev/core/src/core/safe-write";
 /** The account home the guard protects (test seam; undefined: the OS account record's). */
 export const guardedHome: { value: string | null | undefined } = { value: undefined };
 
+/** Why a test run must not write `file` under the account home, or null. */
+export const writeRefusal = (file: string): string | null =>
+  testRunWriteRefusal(file, guardedHome.value);
+
 /** Throw when a test run must not write `file` under the account home. */
 const refuseWrite = (file: fs.PathLike | number): void => {
   if (typeof file === "number") return;
@@ -85,6 +89,11 @@ export const symlinkSync = (
 export const linkSync = (existing: fs.PathLike, link: fs.PathLike): void => {
   refuseWrite(link);
   fs.linkSync(existing, link);
+};
+
+export const chmodSync = (target: fs.PathLike, mode: fs.Mode): void => {
+  refuseWrite(target);
+  fs.chmodSync(target, mode);
 };
 
 export const mkdtempSync = (prefix: string): string => {

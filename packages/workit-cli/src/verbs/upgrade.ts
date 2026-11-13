@@ -58,8 +58,9 @@ const upgradeOutput = (argv: readonly string[], io: Io): Pick<UpgradeDeps, "out"
 });
 
 export const run = async (argv: string[], io?: Io, deps: UpgradeVerbDeps = {}): Promise<number> => {
+  const env = io?.env ?? process.env;
   const code = await (deps.upgrade ?? runUpgradeCommand)(argv, {
-    env: io?.env ?? process.env,
+    env,
     ...(io ? upgradeOutput(argv, io) : {}),
   });
   if (io && code === 0 && sealOfferDue(argv, io.env, deps.versionOnDisk))

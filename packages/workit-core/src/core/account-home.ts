@@ -177,7 +177,8 @@ const within = (root: string, file: string): boolean => {
 /**
  * Why a test run must not write `file` (#859), or null: under the test run
  * marker, nothing is written in the OS account home's host settings (Claude
- * Code, Cursor, Codex, Pi, ~/.config) or Workit's own config, state and data
+ * Code, Cursor, Codex, Pi, ~/.config, ~/.local/share: shell completions) or
+ * Workit's own config, state and data
  * dirs (its worktrees aside). `home` is a test seam (default the account
  * record's). Without the marker, null: a user's run writes where it always did.
  */
@@ -191,7 +192,9 @@ export const testRunWriteRefusal = (
   if (account === null) return null;
   const homeEnv = { HOME: account, USERPROFILE: account };
   const roots = [
-    ...[".claude", ".cursor", ".codex", ".pi", ".config"].map((dir) => path.join(account, dir)),
+    ...[".claude", ".cursor", ".codex", ".pi", ".config", path.join(".local", "share")].map((dir) =>
+      path.join(account, dir),
+    ),
     configDir(homeEnv),
     stateDir(homeEnv),
     dataDir(homeEnv),
