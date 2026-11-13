@@ -273,7 +273,7 @@ export const VERBS: readonly VerbEntry[] = [
     summary:
       "Write Workit's host permission block after showing the diff; run it in your own terminal",
     notes: [
-      "--hosts takes claude-code, codex, cursor, opencode, pi (default: all five); --dry-run prints the diff and changes nothing; --yes writes it without asking; --no-shell leaves Claude Code's CLAUDE_CODE_SHELL unset for a zsh user. Only the user runs it, in their own terminal: a host asks about or denies an agent's call, and the CLI refuses one.",
+      "--hosts takes claude-code, codex, cursor, opencode, pi (default: all five); --dry-run prints the diff and changes nothing; --yes writes it without asking; --no-shell leaves Claude Code's CLAUDE_CODE_SHELL unset for a zsh user. Only the user writes it, in their own terminal: from an agent session the CLI prints the diff and refuses to write it, handing over the command, and a host may also ask about or deny the agent's call.",
     ],
     load: () => import("./setup"),
   },
@@ -337,7 +337,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage: "workit install --hosts=<h,…> [--preview | --yes]",
     summary: "Install or repair Workit on the named hosts only",
     notes: [
-      "--hosts takes claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys, host commands and notes and changes nothing; --yes installs them; with neither it asks at a terminal. It never changes the Workit config, a workspace or another host, and a host whose CLI is not on PATH shows a blocked row. Only the user runs it, in their own terminal: a host asks about or denies an agent's call, and the CLI refuses one.",
+      "--hosts takes the lowercase ids claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys, host commands and notes and changes nothing; --yes installs them; with neither it asks at a terminal. It never changes the Workit config, a workspace or another host, and a host whose CLI is not on PATH shows a blocked row. Only the user applies it, in their own terminal: from an agent session the CLI runs --preview and refuses the rest, handing over the command, and a host may also ask about or deny the agent's call.",
     ],
     load: () => import("./install"),
   },
@@ -347,7 +347,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage: "workit uninstall [--hosts=<h,…> [--preview | --yes]]",
     summary: "Remove Workit from the picked or named hosts (keeps the Workit config)",
     notes: [
-      "No flags: the interactive picker (hosts and the owned CLI install). --hosts takes claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys and host commands it would remove and changes nothing; --yes removes them. Only the user runs it, in their own terminal: a host asks about or denies an agent's call, and the CLI refuses one.",
+      "No flags: the interactive picker (hosts and the owned CLI install). --hosts takes the lowercase ids claude-code, codex, cursor, opencode, pi; --preview prints the files, config keys and host commands it would remove and changes nothing; --yes removes them. Only the user applies it, in their own terminal: from an agent session the CLI runs --preview and refuses the rest, handing over the command, and a host may also ask about or deny the agent's call.",
     ],
     load: () => import("./uninstall"),
   },
