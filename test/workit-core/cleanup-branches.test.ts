@@ -255,3 +255,16 @@ test("Given a merged PR whose head is not the local tip, Then the PR proves noth
     { name: "feature/s", reason: "3 commits not on refs/heads/main by patch id" },
   ]);
 });
+
+test("Given no policy or track, Then release/*, hotfix/*, develop, production, staging and master at the trunk tip are never listed for deletion", () => {
+  const env = setup();
+  const names = ["release/1.0", "hotfix/1.0.1", "develop", "production", "staging", "master"];
+  for (const name of names) git(env.main, "branch", name);
+  const applied = sweepBranches(env.main, { apply: true, actor, forge: null, now: later() });
+  expect(applied.deletable).toEqual([]);
+  expect(applied.kept.map((entry) => entry.name).toSorted()).toEqual(names.toSorted());
+  expect(new Set(applied.kept.map((entry) => entry.reason))).toEqual(
+    new Set(["a long-lived branch of the branch policy"]),
+  );
+  expect(branches(env.main)).toEqual([...names, "main"].toSorted());
+});

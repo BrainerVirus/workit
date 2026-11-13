@@ -63,6 +63,8 @@ Some things are always kept, and the merge output says why:
   (see [Regenerable directories](#regenerable-directories)).
 - A worktree in use: a heavy check holds the machine lease from inside it, or
   another session is working in it (see [In use](#in-use)).
+- A worktree with a rebase, bisect, merge, cherry-pick or revert in progress:
+  removing it would lose that operation's state.
   A fanout worker's scratch dir is not in the worktree at all: it lives in
   `<state>/scratch/<repo>/<slice>` and goes with its worktree (removed only
   when it is a real directory you own there, never through a symlink), so
@@ -91,7 +93,8 @@ removal only when all of these hold:
   squash-merged with the whole branch diff equal to one trunk commit.
 - It has no uncommitted changes, no gitignored files that cannot be rebuilt
   (see above), and is not locked.
-- It is not in use (see [In use](#in-use)).
+- It is not in use (see [In use](#in-use)), and no rebase, bisect, merge,
+  cherry-pick or revert is in progress in it (the output says which).
 - It holds finished work: its branch has commits of its own or its remote
   branch is gone, or it is a Workit worktree detached on a trunk commit (what
   is left once its branch merged). A worktree with none of these (a detached
@@ -152,9 +155,11 @@ when its work is provably on the trunk:
 
 A branch is kept, with the reason, when:
 
-- it is the trunk or a long-lived branch of the branch policy: the default
-  target, git-flow `develop` and production, every release track's branches,
-  and any protected name;
+- it is the trunk or a long-lived branch: the policy's default target,
+  git-flow `develop` and production, every release track's branches, any
+  protected name, and, whatever the policy, `main`, `master`, `develop`,
+  `production`, `staging`, `release/*` and `hotfix/*`. Delete one of those by
+  hand when you are done with it;
 - it is checked out in any worktree, including a host's own isolated worktree
   (Claude Code's `.claude/worktrees/agent-*`, branch `worktree-agent-*`). Those
   directories belong to the host: Workit deletes their branch once nothing has

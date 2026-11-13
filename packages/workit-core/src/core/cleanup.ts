@@ -102,6 +102,25 @@ const hostOwned = (worktree: string): boolean =>
 
 const HOST_OWNED = "a host-owned worktree (.claude/worktrees); the host removes it";
 
+/** What each git-dir entry says is under way; removing the worktree would lose its state. */
+const OPERATIONS: readonly [string, string][] = [
+  ["rebase-merge", "rebase"],
+  ["rebase-apply", "rebase"],
+  ["BISECT_LOG", "bisect"],
+  ["MERGE_HEAD", "merge"],
+  ["CHERRY_PICK_HEAD", "cherry-pick"],
+  ["REVERT_HEAD", "revert"],
+];
+
+/** "a <op> is in progress" when the worktree's own git dir holds a rebase, bisect, merge, cherry-pick or revert; else null. */
+const operationInProgress = (worktree: string): string | null => {
+  const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
+  if (!dir.ok) return null;
+  const gitDir = dir.stdout.trim();
+  const found = OPERATIONS.find(([entry]) => fs.existsSync(path.join(gitDir, entry)));
+  return found ? `a ${found[1]} is in progress` : null;
+};
+
 /** `workit fanout worktree create` marked this worktree's admin dir with its token. */
 const isFanoutWorktree = (worktree: string): boolean => {
   const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
@@ -504,6 +523,11 @@ export function cleanupAfterMerge(
       out.notes.push(`local ${branch} is checked out in ${entry.path}, ${HOST_OWNED}; kept both`);
       return out;
     }
+    const busy = operationInProgress(entry.path);
+    if (busy) {
+      out.notes.push(`worktree ${entry.path}: ${busy}; kept it and local ${branch}`);
+      return out;
+    }
     const place = placeOf(entry.path, env);
     if (place !== "managed" && !isFanoutWorktree(entry.path)) {
       out.notes.push(
@@ -696,6 +720,11 @@ export function sweepWorktrees(
       keep(HOST_OWNED);
       continue;
     }
+    const busy = operationInProgress(entry.path);
+    if (busy) {
+      keep(busy);
+      continue;
+    }
     const place = placeOf(entry.path, env);
     if (place === "other" && !isFanoutWorktree(entry.path)) {
       keep("not in a Workit worktree or temp location");
@@ -844,13 +873,18 @@ export type BranchSweep = {
   recorded: { id: string } | { error: string } | null;
 };
 
+/** Long-lived by convention, whatever the policy says: gc never deletes them. */
+const CONVENTIONAL_LONG_LIVED = ["main", "master", "develop", "production", "staging"];
+const CONVENTIONAL_LONG_LIVED_PREFIXES = ["release/", "hotfix/"];
+
 /**
  * The branches the workspace keeps receiving work on: the trunk and default
  * target, git-flow develop and production, every release track's branches,
- * and the policy's protected names. Never swept.
+ * the policy's protected names, and the conventional long-lived names and
+ * `release/*`, `hotfix/*` (a repo with no policy or track configured). Never swept.
  */
 function longLived(cwd: string, trunkName: string): (name: string) => boolean {
-  const names = new Set([trunkName]);
+  const names = new Set([trunkName, ...CONVENTIONAL_LONG_LIVED]);
   try {
     const target = resolveBranchPolicyFor(cwd).defaultTargetBranch;
     if (typeof target === "string" && target) names.add(target);
@@ -860,7 +894,10 @@ function longLived(cwd: string, trunkName: string): (name: string) => boolean {
   const flow = gitFlowOf(cwd);
   if (flow) for (const name of [flow.develop, flow.production]) names.add(name);
   for (const name of trackBranches(workspaceReleaseTracks(cwd).tracks)) names.add(name);
-  return (name) => names.has(name) || isProtectedTarget(cwd, name);
+  return (name) =>
+    names.has(name) ||
+    CONVENTIONAL_LONG_LIVED_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
+    isProtectedTarget(cwd, name);
 }
 
 /** When `branch` last moved (its newest reflog entry, else its tip's commit time), in ms. */

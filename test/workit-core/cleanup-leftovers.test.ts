@@ -291,3 +291,58 @@ test("Given a merged host-isolated worktree (.claude/worktrees/agent-*) in the t
   );
   expect(existsSync(agent)).toBe(true);
 });
+
+/** A clean detached managed worktree on main's tip, as `git worktree add --detach` leaves it. */
+const detachedOnMain = (env: ReturnType<typeof setup>, name: string) => {
+  const dir = path.join(managedWorktreeRoot(env.env), "proj", name);
+  mkdirSync(path.dirname(dir), { recursive: true });
+  git(env.main, "worktree", "add", "-q", "--detach", dir, "main");
+  return dir;
+};
+
+test("Given a clean detached Workit worktree paused mid-rebase on a trunk commit, Then gc --worktrees --apply keeps it: a rebase is in progress", () => {
+  const env = setup();
+  const dir = detachedOnMain(env, "rebasing");
+  // `--exec false` stops after replaying the last trunk commit: HEAD stays on the trunk.
+  try {
+    execFileSync("git", ["rebase", "--exec", "false", "HEAD~1"], { cwd: dir, stdio: "ignore" });
+  } catch {
+    // the failing exec pauses the rebase
+  }
+  expect(existsSync(path.join(git(dir, "rev-parse", "--absolute-git-dir"), "rebase-merge"))).toBe(
+    true,
+  );
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+  expect(applied.kept).toContainEqual(
+    expect.objectContaining({ branch: null, reason: "a rebase is in progress" }),
+  );
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("Given a clean detached Workit worktree with a bisect started on a trunk commit, Then gc --worktrees --apply keeps it: a bisect is in progress", () => {
+  const env = setup();
+  const dir = detachedOnMain(env, "bisecting");
+  git(dir, "bisect", "start");
+  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+  expect(applied.kept).toContainEqual(
+    expect.objectContaining({ branch: null, reason: "a bisect is in progress" }),
+  );
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("after a merge, a worktree with a bisect in progress is kept with its branch", () => {
+  const env = setup();
+  const dir = path.join(managedWorktreeRoot(env.env), "proj", "bisect-slice");
+  mkdirSync(path.dirname(dir), { recursive: true });
+  git(env.main, "worktree", "add", "-q", "-b", "feature/bis", dir, "main");
+  commit(dir, "bis.txt", "bis\n");
+  git(dir, "bisect", "start");
+  const out = cleanupAfterMerge(env.main, "feature/bis", git(dir, "rev-parse", "HEAD"), {
+    actor,
+    trigger: "pr merge",
+    env: env.env,
+  });
+  expect(out).toMatchObject({ branchDeleted: false, worktreeRemoved: null });
+  expect(out.notes).toEqual([expect.stringContaining("a bisect is in progress")]);
+  expect(existsSync(dir)).toBe(true);
+});

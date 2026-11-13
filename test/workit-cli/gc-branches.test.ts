@@ -14,8 +14,8 @@ import { spawnHeavyTimeout } from "@/test/shared/timeouts";
 // #835: `workit gc --branches [--apply]` lists (and deletes) local branches
 // whose work is on the trunk. Every gc form refuses an argument it does not
 // know with exit 2, so no caller falls through to the task-store gc. The verb
-// is called directly: the registry's gc usage line (out of this change's
-// scope) does not list --branches yet, so `main` would refuse it.
+// is called directly, so the test reaches gc's own argument check (`main`'s
+// help parser refuses an option missing from the usage line before it).
 
 setDefaultTimeout(spawnHeavyTimeout());
 
