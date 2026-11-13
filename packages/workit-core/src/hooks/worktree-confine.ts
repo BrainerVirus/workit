@@ -548,10 +548,9 @@ const configEntries = (text: string): Array<[string, string]> => {
   const entries: Array<[string, string]> = [];
   let section = "";
   for (const line of text.split("\n")) {
-    // A subsection's name never changes which keys are safe: `remote "x"` reads as `remote.x`.
-    const header = /^\s*\[\s*([\w.-]+)(\s+")?/.exec(line);
+    const header = /^\s*\[\s*([\w.-]+)(?:\s+"([^"]*))?/.exec(line);
     const entry = /^\s*([\w-]+)\s*(?:=\s*"?(.*?)"?)?\s*$/.exec(line);
-    if (header) section = header[2] ? `${header[1]}.x` : header[1];
+    if (header) section = header[2] === undefined ? header[1] : `${header[1]}.${header[2]}`;
     else if (entry) entries.push([`${section}.${entry[1]}`.toLowerCase(), entry[2] ?? "true"]);
   }
   return entries;
@@ -617,7 +616,7 @@ function gitDirsAt(dir: string, repo: string | null, scan = true): string[] | nu
 // only. `@d` and `@l` stand for the diff and log options.
 const DIFF_S = "psuRaWwbzU:S:G:l:M?C?B?D";
 const DIFF_L =
-  "stat? numstat shortstat name-only name-status summary patch no-patch raw color? no-color word-diff? color-words? unified= ignore-all-space ignore-space-change ignore-blank-lines ignore-cr-at-eol diff-filter= find-renames? find-copies? no-renames relative? abbrev? full-index binary exit-code quiet minimal patience histogram src-prefix= dst-prefix= no-prefix dirstat? text check function-context no-ext-diff no-textconv output=";
+  "stat? numstat shortstat name-only name-status summary patch no-patch raw color? no-color word-diff? color-words? unified= ignore-all-space ignore-space-change ignore-blank-lines ignore-cr-at-eol diff-filter= find-renames? find-copies? no-renames relative? abbrev? diff-algorithm= ignore-space-at-eol word-diff-regex= full-index binary exit-code quiet minimal patience histogram src-prefix= dst-prefix= no-prefix dirstat? text check function-context no-ext-diff no-textconv output=";
 const LOG_S = "n:iEFPgL:";
 const LOG_L =
   "oneline format= pretty? graph decorate? no-decorate all branches? tags? remotes? since= until= after= before= author= committer= grep= all-match invert-grep regexp-ignore-case extended-regexp fixed-strings perl-regexp max-count= skip= first-parent no-merges merges reverse follow date= abbrev-commit no-abbrev-commit left-right cherry-pick cherry-mark boundary not topo-order date-order source simplify-by-decoration ancestry-path full-history notes? no-notes walk-reflogs mailmap use-mailmap";
@@ -638,7 +637,7 @@ const GIT_VERBS: Readonly<Record<string, string>> = {
   "cat-file":
     "tsepz|batch? batch-check? batch-all-objects follow-symlinks unordered buffer allow-unknown-type mailmap use-mailmap",
   blame:
-    "L:lstfnepwbcM?C?|porcelain line-porcelain incremental root show-stats show-name show-number show-email abbrev= reverse= first-parent date= ignore-rev= ignore-revs-file= minimal",
+    "L:lstfnepwbcM?C?|porcelain line-porcelain incremental root show-stats show-name show-number show-email abbrev= reverse= first-parent date= ignore-rev= ignore-revs-file= minimal contents=",
   describe:
     "|tags all long abbrev= contains always dirty? broken? match= exclude= first-parent exact-match candidates= debug",
   "merge-base": "a|all octopus independent is-ancestor fork-point",
@@ -657,8 +656,7 @@ const GIT_VERBS: Readonly<Record<string, string>> = {
   version: "|build-options",
   "ls-remote": "htbq|heads tags branches refs quiet exit-code get-url symref sort=",
   remote: "v|verbose",
-  config:
-    "lz|get get-all get-regexp list local name-only show-origin show-scope null type= default=",
+  config: "lz|get get-all get-regexp list local name-only null type= default=",
   worktree:
     "fdqvzb:B:|force detach lock reason= orphan no-checkout checkout quiet track no-track guess-remote porcelain expire= verbose",
   branch:
@@ -732,7 +730,7 @@ const gitOperands = (args: readonly string[]): string[] | null => {
  */
 const gitKind = (
   args: readonly string[],
-  local: (source: string) => boolean = () => true,
+  local: (source: string, remote?: boolean) => boolean = () => true,
 ): "read" | "write" | null => {
   const named = gitOperands(args);
   if (!named) return null;
@@ -749,8 +747,10 @@ const gitKind = (
         ? "write"
         : "read";
     case "config": {
-      if (has(/^(?:-l|--list|--get(?:-all|-regexp)?)$/) || /^(?:get|list)$/.test(first))
-        return "read";
+      // A full listing prints the user's config: only a scratch repository's own (--local).
+      if (has(/^(?:-l|--list|--get-regexp)$/) || first === "list")
+        return has(/^--local$/) ? "write" : null;
+      if (has(/^--get/) || first === "get" || named.length === 1) return "read";
       const [key = "", value] = first === "set" ? named.slice(1) : named;
       return /^(?:user\.(?:name|email)|init\.defaultbranch)$/i.test(key) ||
         (/^commit\.gpgsign$/i.test(key) && value === "false")
@@ -760,13 +760,24 @@ const gitKind = (
     case "worktree":
       return first === "list" ? "read" : /^(?:add|remove)$/.test(first) ? "write" : null;
     case "remote":
-      return !first || (first === "show" && named.length === 2 && local(second)) ? "read" : null;
+      return !first || (first === "show" && named.length === 2 && local(second, true))
+        ? "read"
+        : null;
     case "ls-remote":
-      return local(first) ? "read" : null;
+      return local(first || "origin", true) ? "read" : null;
     case "bisect":
-      return /^(?:start|good|bad|new|old|skip|reset|log|terms)$/.test(first) ? "write" : null;
+      return /^(?:log|terms)$/.test(first)
+        ? "read"
+        : /^(?:start|good|bad|new|old|skip|reset)$/.test(first)
+          ? "write"
+          : null;
+    case "blame": {
+      const contents = args.findIndex((arg) => arg.startsWith("--contents"));
+      const file = args[contents]?.slice(11) || args[contents + 1];
+      return contents < 0 || local(file) ? "read" : null;
+    }
     case "fetch":
-      return !first || /^[\w.-]+$/.test(first) || local(first) ? "write" : null;
+      return !first || local(first, true) ? "write" : null;
     case "clone":
       return local(first) ? "write" : null;
   }
@@ -775,9 +786,15 @@ const gitKind = (
 
 const JUDGE_GIT = `a judge runs git ${Object.keys(GIT_VERBS).join(" ")} with the options each documents (no abbreviations), writing only in a scratch repo; no -c, no wrapper but timeout, nice, time, command, no env but PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0, LC_*, LANG, TZ; status outside scratch needs --no-optional-locks`;
 
-/** Wrappers that can run git; a judge's git may sit behind timeout, nice, time or command only. */
-const RUNNER =
-  /^(?:env|sudo|doas|xargs|nohup|stdbuf|nice|timeout|time|command|exec|busybox|setsid|ionice|chrt|taskset|flock|unbuffer|find|parallel|watch|script|strace|ltrace|builtin)$/;
+/** Whether remote `name` of the repository at absolute dir `dir` has a url in scratch or the judged repository. */
+const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
+  const shared = path.isAbsolute(dir) ? gitDirsAt(canonical(dir), repo, false)?.[1] : undefined;
+  if (!shared) return false;
+  const url = configEntries(fs.readFileSync(path.join(shared, "config"), "utf8")).find(
+    ([key]) => key === `remote.${name}.url`.toLowerCase(),
+  )?.[1];
+  return url !== undefined && literalIn(url, repo, true);
+};
 
 /**
  * Why a judge may not run the git in `command` (#790): a verb, option,
@@ -795,18 +812,29 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
     const lead: string[] = [];
     while (/^\w+\+?=/.test(words[at] ?? "")) lead.push(words[at++]);
     const name = path.basename(words[at] ?? "");
-    let start = /^git(?:\.exe)?$/.test(name) ? at : -1;
-    if (RUNNER.test(name)) {
-      start = words.findIndex(
-        (word, index) => index > at && /^git(?:\.exe)?$/.test(path.basename(word)),
-      );
-      if (
-        start > 0 &&
-        (!/^(?:timeout|nice|time|command)$/.test(name) ||
-          words.slice(at + 1, start).some((word) => !/^(?:-[\w-]+|\d[\w.]*)$/.test(word)))
+    // git anywhere but the command (or behind timeout, nice, time or command with only
+    // options and numbers) runs behind a wrapper Workit does not judge, or is an alias or
+    // hash entry; readers that only print the word are fine.
+    let start = words.findIndex((word) => /(?:^|[\\/])git(?:\.exe)?(?:=|$)/.test(word));
+    if (start > at) {
+      if (/^(?:grep|egrep|rg|echo|printf|ls|wc|head|tail|cat)$/.test(name)) start = -1;
+      else if (
+        !/^(?:timeout|nice|time|command)$/.test(name) ||
+        words.slice(at + 1, start).some((word) => !/^(?:-[\w-]+|\d[\w.]*)$/.test(word))
       )
         why = `\`${name}\` runs git`;
-    } else if (/^(?:export|declare|local|readonly|typeset)$/.test(name))
+    }
+    if (start >= 0 && words[start].includes("=")) why = "git is redefined";
+    // A command named by an expansion (`g?t`, `{git,x}`, `$X`) may be git with any arguments.
+    if (segment.expands?.includes(at) || /\{[^}]*,/.test(words[at] ?? ""))
+      why = "the command's name is expanded by the shell";
+    // The words git receives are the words Workit reads: nothing the shell expands.
+    if (
+      start >= 0 &&
+      (segment.expands?.length || words.some((word) => /\{[^}]*(?:,|\.\.)[^}]*\}|^~/.test(word)))
+    )
+      why ??= "a word in this git command is expanded by the shell: spell it as a literal";
+    if (/^(?:export|declare|local|readonly|typeset)$/.test(name))
       lead.push(...words.slice(at + 1).filter((word) => /^\w+\+?=/.test(word)));
     // The environment a git in this command sees (assignments to exported names too).
     for (const word of runsGit ? lead : [])
@@ -827,8 +855,11 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
     }
     const args = words[index] === "--version" ? ["version"] : words.slice(index);
     if (!why && start >= 0) {
-      if (!gitKind(args, (source) => literalIn(source, repo, true)))
-        why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
+      const local = (source: string, remote?: boolean) =>
+        remote && /^[\w-][\w.-]*$/.test(source)
+          ? remoteIn(dir, source, repo)
+          : literalIn(source, repo, true);
+      if (!gitKind(args, local)) why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
       else if (args[0] === "status" && !unlocked) {
         const dirs = path.isAbsolute(dir) ? gitDirsAt(canonical(dir), repo) : null;
         if (!dirs?.length || !dirs.every((gitDir) => inScratch(gitDir, repo)))

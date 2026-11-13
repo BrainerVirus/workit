@@ -529,3 +529,83 @@ test("Given a scratch repository whose config sets init.templateDir, When a judg
   git(ok, "config", "init.defaultBranch", "main");
   expect(bash(`git -C ${ok} commit -qm x`)).toBeUndefined();
 });
+
+test("Given a judge's git whose words the shell expands (variables, substitutions, globs, braces, tilde, process substitution), When judged, Then it is denied; single-quoted literals pass", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "expand");
+  git(wt, "init", "-q", "-b", "main", rt);
+  const out = path.join(root, "out.txt");
+  for (const command of [
+    `for o in --output=${out}; do git -C ${wt} log $o; done`,
+    `git -C ${wt} log $(printf -- --output=${out})`,
+    `git -C ${wt} log {--output=x,}`,
+    `git -C ${rt} grep -e foo *`,
+    `git -C ${wt} log -- "$X"`,
+    `git -C ${wt} log \`printf x\``,
+    `git -C ${wt} diff ~/x`,
+    `git -C ${wt} diff <(echo x)`,
+    `git -C ${wt} log a?`,
+    `git -C ${wt} log [ab]`,
+    `LC_ALL=$X git -C ${wt} log`,
+    `f() { git -C ${wt} log "$@"; }; f --output=${out}`,
+    `numactl git -C ${wt} log`,
+    `{git,log} -C ${wt} --output=x`,
+    `g?t -C ${wt} log`,
+    `timeout 60 git -C ${wt} -c core.pager=sh log`,
+    `nice -n 5 git -C ${wt} log $X`,
+    `fakeroot git -C ${wt} log`,
+    `unshare git -C ${wt} log`,
+    `systemd-run git -C ${wt} log`,
+    `chroot / git -C ${wt} log`,
+    `ionice git -C ${wt} log`,
+    `setpriv git -C ${wt} log`,
+    `/usr/bin/numactl /usr/bin/git -C ${wt} log`,
+    `hash -p ${path.join(scratch, "evil")} git; git -C ${wt} log`,
+    `alias git='sh -c x'; git -C ${wt} log`,
+  ])
+    expect(bash(command), command).toBe("deny");
+  for (const command of [
+    `git -C ${wt} log --format='%H %s'`,
+    `git -C ${wt} grep -e 'foo*' -- 'src/*.ts'`,
+    `grep -rn git ${path.join(wt, "a.ts")}`,
+    `echo git`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+});
+
+test("Given git config, remote and bisect reads, When a judge runs them, Then reads pass, a full listing only in a scratch repo, and remotes resolve by their url", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  const rt = path.join(scratch, "cfg-read");
+  git(wt, "init", "-q", "-b", "main", rt);
+  git(rt, "remote", "add", "cand", wt);
+  const away = path.join(scratch, "cfg-away");
+  git(wt, "init", "-q", "-b", "main", away);
+  git(away, "remote", "add", "far", path.join(root, "elsewhere"));
+  for (const command of [
+    `git -C ${wt} config user.name`,
+    `git -C ${rt} config --local --list`,
+    `git -C ${rt} remote show cand`,
+    `git -C ${rt} ls-remote cand`,
+    `git -C ${rt} fetch cand`,
+    `git -C ${wt} bisect log`,
+    `git -C ${wt} bisect terms`,
+    `git -C ${wt} diff --diff-algorithm=histogram --ignore-space-at-eol --word-diff=color --word-diff-regex=. --color-words`,
+    `git -C ${wt} blame --contents=${path.join(scratch, "a.ts")} a.ts`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+  for (const command of [
+    `git -C ${wt} config --list`,
+    `git -C ${wt} config -l`,
+    `git -C ${wt} config --local --list`,
+    `git -C ${rt} config --list --show-origin`,
+    `git -C ${rt} config --global --list`,
+    `git -C ${rt} config --system --list`,
+    `git -C ${away} remote show far`,
+    `git -C ${away} ls-remote far`,
+    `git -C ${away} fetch far`,
+    `git -C ${rt} fetch nosuchremote`,
+    `git -C ${rt} fetch ..`,
+    `git -C ${wt} blame --contents=${path.join(root, "x.ts")} a.ts`,
+  ])
+    expect(bash(command), command).toBe("deny");
+});
