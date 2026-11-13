@@ -452,7 +452,9 @@ export function storeRoot(cwd: string): LedgerResult<StoreRoot> {
     return err(
       "unavailable",
       location.message.replace(/; fix the repository.*$/u, ""),
-      "fix the repository (git status should work here) or run from a non-git directory",
+      / does not exist /u.test(location.message)
+        ? "run workit from a directory that exists"
+        : "fix the repository (git status should work here) or run from a non-git directory",
     );
   return { ok: true, value: { root: location.dir, shared: location.shared } };
 }
@@ -629,7 +631,13 @@ export function withLedgerLock<T>(
 }
 
 /** `heldLock`: the caller holds the file's lock (withLedgerLock), so never take it again. */
-type AppendOptions = { now?: Date; forceLock?: boolean; heldLock?: boolean };
+type AppendOptions = {
+  now?: Date;
+  forceLock?: boolean;
+  heldLock?: boolean;
+  /** A store root resolved earlier (`storeRoot`), used instead of resolving `cwd` again (#835). */
+  store?: StoreRoot;
+};
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 /** The chain hash of a row: over the previous line's hash and the row without `rowHash`. */
@@ -747,7 +755,9 @@ const sealed = (row: object, id: string, at: string, previous: string | null) =>
 };
 
 function appendRaw<T>(cwd: string, row: object, options: AppendOptions): LedgerResult<T> {
-  const file = ledgerPath(cwd);
+  const file: LedgerResult<string> = options.store
+    ? { ok: true, value: path.join(options.store.root, "ledger", "ledger.jsonl") }
+    : ledgerPath(cwd);
   if (!file.ok) return file;
   const id = newId();
   const at = (options.now ?? new Date()).toISOString();
