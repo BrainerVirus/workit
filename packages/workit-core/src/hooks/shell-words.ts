@@ -347,13 +347,15 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
   let expanding = false;
   let afterOperator = false;
   let pending: "redirect" | "input" | "heredoc" | "herestring" | null = null;
+  // `>&word`, `>& word`: an fd number (`2`, `3-`) or `-` duplicates or closes; any other word is a file.
+  let duplicate = false;
   const heredocs: Array<{ delimiter: string; owner: Segment }> = [];
   const escape = posix ? "\\" : "`";
   const flushWord = () => {
     if (!inWord) return;
     const text = MARKERS.test(word) ? literal(word) : word;
     if (pending === "redirect") {
-      if (!text.startsWith("&")) current.redirects.push(text);
+      if (!duplicate || !/^(?:\d+-?|-)$/.test(text)) current.redirects.push(text);
     } else if (pending === "heredoc")
       heredocs.push({ delimiter: text.replace(/^-/, ""), owner: current });
     else if (pending === "herestring") (current.stdin ??= []).push(text);
@@ -365,6 +367,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
         (current.expands ??= []).push(...current.words.slice(at).map((_, i) => at + i));
     }
     pending = null;
+    duplicate = false;
     word = "";
     inWord = false;
     expanding = false;
@@ -504,11 +507,8 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
         inWord = false;
       } else flushWord();
       if (command[index + 1] === ">") index++;
-      if (command[index + 1] === "&") {
-        index++;
-        word = "&";
-        inWord = true;
-      }
+      duplicate = command[index + 1] === "&";
+      if (duplicate) index++;
       pending = "redirect";
     } else if (char === "<" && posix) {
       flushWord();

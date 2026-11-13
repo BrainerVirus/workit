@@ -405,7 +405,11 @@ Issued-registry guard limits (#292):
     or changed after the hook read it is not judged.
   - (L) A path the command computes at run time (`$(…)`, a `read` variable,
     text piped from a program that is not a literal `echo`, `printf` or `cat`)
-    is not resolved.
+    is not resolved. Interpreter code that builds a write target from a
+    guarded dir and such a value is denied as a target Workit could not
+    resolve, without naming the dir (#837); an interpreter reading its script
+    on stdin (`python3 - "$F" <<'EOF'`, `bash -s`) is judged by that script,
+    never by its arguments.
   - (L) A variable whose value in the command shell differs from the hook's own
     environment is not resolved.
   - (L) A hard link made and written inside a program Workit cannot read is not
@@ -417,12 +421,14 @@ Issued-registry guard limits (#292):
   - (L) On Claude Code and Codex the launcher sends a shell command to the
     runtime by its text: git/gh/glab, a script run, a guarded name, a
     user-only Workit call, or, in a checkout with a task store (and always on
-    Windows or PowerShell), a writer verb or a file redirect (an fd
-    duplication such as `2>&1` or `>&2`, and `>/dev/null`, are not writes).
+    Windows or PowerShell), a writer verb (`sponge` included) or a file
+    redirect (an fd duplication such as `2>&1`, `>&2` or `>&-`, and
+    `>/dev/null`, are not writes; `>& file` and `>&file` write the file, #843).
     With no task store a write goes to the registry guard only when
     `hooks/write-reach.ts` `mayReach` says it may reach a guarded path: no verb
     list, every word read as a path from every directory a `cd` reaches,
-    through symlinks, hard links, `~`, the hook's own env for an unset `$NAME`,
+    through symlinks (a dangling one is followed to the file a write through
+    it creates, #837), hard links, `~`, the hook's own env for an unset `$NAME`,
     and any glob, brace or set variable near a guarded dir's ancestry; it says
     yes to every spelling it does not resolve (`~user`, `$'…'`, `${X:-…}`, a
     `cd` with no literal target, `popd`, `CDPATH`, more than 64 words). A

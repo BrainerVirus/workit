@@ -182,6 +182,51 @@ test("G an edit whose file reaches a guarded path, W the gate denies it, T editR
   expect(count).toBeGreaterThan(10);
 });
 
+test("G a dangling symlink in the repo to a guarded file not made yet, W a shell write or an edit names it, T the gate denies and mayReach and editReaches say yes (#837)", () => {
+  const seal = path.join(config, "workspaces.json.seal");
+  const grant = path.join(state, "approvals", "not-yet.json");
+  for (const [name, target] of [
+    ["dangling-seal", seal],
+    ["dangling-grant", grant],
+  ]) {
+    rmSync(target, { force: true });
+    symlinkSync(target, path.join(repo, name));
+    expect(shellGate(repo, `echo x > ${name}`, null).kind, name).toBe("deny");
+    expect(writeGate(repo, [path.join(repo, name)], null).kind, name).toBe("deny");
+    expect(mayReach(`echo x > ${name}`, repo), name).toBe(true);
+    expect(editReaches(name, repo), name).toBe(true);
+    rmSync(path.join(repo, name));
+  }
+  // A relative dangling link inside a dir reached through a link at another depth (#855).
+  const deep = path.join(base, "deep", "x", "y", "z");
+  mkdirSync(deep, { recursive: true });
+  symlinkSync(deep, path.join(repo, "ld"));
+  symlinkSync(path.relative(deep, grant), path.join(deep, "rl"));
+  expect(shellGate(repo, "echo x > ld/rl", null).kind).toBe("deny");
+  expect(mayReach("echo x > ld/rl", repo)).toBe(true);
+  expect(editReaches("ld/rl", repo)).toBe(true);
+  rmSync(path.join(repo, "ld"));
+  // A chain past 40 links: it may reach anything.
+  let previous = path.join(base, "chain-end.txt");
+  for (let index = 1; index <= 41; index++) {
+    symlinkSync(previous, path.join(base, `c${index}`));
+    previous = path.join(base, `c${index}`);
+  }
+  const chained = (index: number) =>
+    path.relative(repo, path.join(base, `c${index}`)).replaceAll("\\", "/");
+  expect(mayReach(`echo x > ${chained(41)}`, repo)).toBe(true);
+  expect(editReaches(chained(41), repo)).toBe(true);
+  symlinkSync(path.join(repo, "not-yet.txt"), path.join(repo, "dangling-plain"));
+  // "No reach" holds on POSIX only: on win32 every write and edit goes to the
+  // runtime by design (ruling hook-reach item 4, mweicn74), so a cautious yes is correct there.
+  if (process.platform !== "win32") {
+    expect(mayReach(`echo x > ${chained(40)}`, repo)).toBe(false);
+    expect(mayReach("echo x > dangling-plain", repo)).toBe(false);
+    expect(editReaches("dangling-plain", repo)).toBe(false);
+  }
+  rmSync(path.join(repo, "dangling-plain"));
+});
+
 test.skipIf(ON_WINDOWS)(
   "G plain writes and reads inside the repo, W mayReach reads them, T none reaches a guarded path",
   () => {

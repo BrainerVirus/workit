@@ -4,7 +4,14 @@
 // unblock. History moves (commit, merge, rebase, stash pop) are not edits.
 // Reads only the task index, one task snapshot and the ledger; never
 // migrates, never captures a candidate, and fails open on any state error.
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskReader } from "../core/task-read";
@@ -39,21 +46,54 @@ const NONE: HookDecision = { kind: "none" };
 const CASE_INSENSITIVE = process.platform === "darwin" || process.platform === "win32";
 
 /**
- * The real path of `file`: the nearest existing ancestor resolved through
- * symlinks (macOS /var → /private/var), then the not-yet-existing rest.
+ * Where the symlink `file` points: a relative target against the real path of
+ * its directory, as the OS reads it (`ld/rl` inside a linked dir); null for no symlink.
  */
-const canonical = (file: string): string => {
+const linkTarget = (file: string): string | null => {
+  try {
+    const to = readlinkSync(file);
+    let from = path.dirname(file);
+    try {
+      from = realpathSync.native(from);
+    } catch {
+      // A directory not made yet: as spelled.
+    }
+    return path.resolve(from, to);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The real path of `file`: the nearest existing ancestor resolved through
+ * symlinks (macOS /var → /private/var), then the not-yet-existing rest. With
+ * `dangling`, a symlink whose target does not exist yet is followed too: a
+ * write through it creates that target (#837). Null past 40 links.
+ */
+const realPath = (file: string, dangling = true): string | null => {
+  let dir = path.resolve(file);
   let rest = "";
-  for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+  for (let hops = 0; ;) {
     try {
       // Native resolution also expands Windows 8.3 short names (RUNNER~1).
       return path.join(realpathSync.native(dir), rest);
     } catch {
-      if (path.dirname(dir) === dir) return path.resolve(file);
-      rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+      const link = dangling ? linkTarget(dir) : null;
+      if (link !== null) {
+        if (++hops > 40) return null;
+        dir = path.join(link, rest);
+        rest = "";
+      } else if (path.dirname(dir) === dir) return path.resolve(file);
+      else {
+        rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+        dir = path.dirname(dir);
+      }
     }
   }
 };
+
+const canonical = (file: string, dangling = true): string =>
+  realPath(file, dangling) ?? path.resolve(file);
 
 /**
  * Writes the gate never blocks: files outside the checkout (e.g. /tmp),
@@ -62,7 +102,11 @@ const canonical = (file: string): string => {
  */
 const exempt = (cwd: string, root: string, file: string, plans: ReadonlySet<string>): boolean => {
   const fold = (value: string) => (CASE_INSENSITIVE ? value.toLowerCase() : value);
-  const relative = path.relative(fold(canonical(root)), fold(canonical(path.resolve(cwd, file))));
+  // As before #837: a dangling symlink names the file in the checkout, not where it points.
+  const relative = path.relative(
+    fold(canonical(root, false)),
+    fold(canonical(path.resolve(cwd, file), false)),
+  );
   if (relative.startsWith("..") || path.isAbsolute(relative)) return true;
   const posix = relative.split(path.sep).join("/");
   const segments = posix.split("/");
@@ -110,6 +154,7 @@ const editsOf = (input: string[]): string[] | null => {
     case "rm":
     case "rmdir":
     case "tee":
+    case "sponge":
     case "mv":
     case "truncate":
       return operands(args);
@@ -214,12 +259,14 @@ const PATH_CALLS =
   /^(?:join|resolve|normalize|abspath|expanduser|expandvars|Path|PurePath|fspath)$/;
 
 /**
- * Code that takes a guarded dir (a config dir, a registry root) only to read
- * or name it, at `at`: the call around it is a known reader, or it only builds
- * a path (or is assigned) in code with no call that may change files. Any
- * other call around it, recognised or not, counts as a write.
+ * How code uses a guarded dir (a config dir, a registry root) at `at`:
+ * "reads" when the call around it is a known reader, or it only builds a path
+ * (or is assigned) in code with no call that may change files; "builds" when
+ * it builds a path (or is assigned) in code that may change files, so the
+ * file written is not known; "takes" when any other call around it,
+ * recognised or not, takes the dir itself.
  */
-const readsRoot = (text: string, at: number): boolean => {
+const rootUse = (text: string, at: number): "reads" | "builds" | "takes" => {
   let call: string | undefined;
   for (let index = at, depth = 0; index > 0 && call === undefined; index--) {
     const char = text[index - 1];
@@ -228,9 +275,11 @@ const readsRoot = (text: string, at: number): boolean => {
       call = /([\w$]+)\s*$/.exec(text.slice(0, index - 1))?.[1] ?? "";
     else if (depth <= 0 && /[;\n]/.test(char)) break;
   }
-  if (call !== undefined && READ_CALLS.test(call)) return true;
-  if (call !== undefined && !PATH_CALLS.test(call)) return false;
-  return ![...text.matchAll(/([\w$]+)\s*\(/g)].some(([, name]) => MUTATING_CALLS.test(name));
+  if (call !== undefined && READ_CALLS.test(call)) return "reads";
+  if (call !== undefined && !PATH_CALLS.test(call)) return "takes";
+  return [...text.matchAll(/([\w$]+)\s*\(/g)].some(([, name]) => MUTATING_CALLS.test(name))
+    ? "builds"
+    : "reads";
 };
 
 /**
@@ -259,18 +308,22 @@ const PRELOAD = /^(?:-r|--(?:require|import|(?:experimental-)?loader|preload|rcf
 
 /**
  * The script operand of a shell or interpreter, past options and their
- * values (none after `-m`, `-c`, `-e`), and the modules its preload options run.
+ * values (none after `-m`, `-c`, `-e`, nor after `-`, or a shell's `-s`, which
+ * read the script on stdin and pass the rest as arguments: #837), and the
+ * modules its preload options run.
  */
 const scriptArgs = (
   verb: string,
   args: readonly string[],
 ): { named?: string; preloads: string[] } => {
   const takes = SCRIPT_OPTIONS.find(([family]) => family.test(verb))?.[1] ?? /^$/;
+  const shell = SCRIPT_OPTIONS[0][0].test(verb);
   const preloads: string[] = [];
   for (let at = 0; at < args.length; at++) {
     const [option, value] = args[at].split(/=(.*)/s);
     if (value !== undefined && PRELOAD.test(option)) preloads.push(value);
-    else if (/^-[mce]$|^--(?:eval|print)$/.test(option)) break;
+    else if (/^-[mce]$|^--(?:eval|print)$|^-$/.test(option)) break;
+    else if (shell && /^-[a-zA-Z]*s[a-zA-Z]*$/.test(option)) break;
     else if (takes.test(option)) {
       if (PRELOAD.test(option)) preloads.push(args[at + 1] ?? "");
       at++;
@@ -637,8 +690,8 @@ const linkSources = (args: readonly string[], at: (file: string) => string | nul
 };
 
 /**
- * Whether a shell command recognizably edits files (redirects, tee, touch,
- * mkdir, cp/mv/rm, `sed -i`/`perl -i`, dd, and working-tree git: apply,
+ * Whether a shell command recognizably edits files (redirects, `>& file`,
+ * tee, sponge, touch, mkdir, cp/mv/rm, `sed -i`/`perl -i`, dd, and working-tree git: apply,
  * restore, checkout --, mv, rm). `targets` lists the files when they are all
  * known, else null. Interpreters and formatters are not detected; Workit's
  * own commands never count.
@@ -758,6 +811,12 @@ const DIR_TARGET = ".workit-live-target";
  * into (an interpreter's inline script, a `-c` shell, `curl -O`) runs in.
  */
 export const OPAQUE_TARGET = ".workit-runs-";
+
+/**
+ * A placeholder file name for a file an interpreter's code writes under a
+ * guarded dir, built from a value Workit cannot resolve (#837).
+ */
+const UNRESOLVED_TARGET = ".workit-unresolved-target";
 
 /** A one-command override: `WORKIT_LIVE_SESSION=override <command>`. */
 const OVERRIDE = "WORKIT_LIVE_SESSION=override";
@@ -1434,7 +1493,8 @@ const segmentTargets = (
           index,
         }));
         // Each path as spelled, and each under the home dir (`home + "/.config/…"`); a
-        // config dir or registry root itself counts unless only read (readsRoot).
+        // config dir or registry root counts unless only read (rootUse), as a file
+        // under it Workit cannot resolve when the code builds a path from it.
         // Only code that reads the home dir itself builds a path under it.
         const homes = /homedir\(|expanduser\(|Path\.home\(|['"]HOME['"]|env\.HOME|\$HOME|~/.test(
           text,
@@ -1447,8 +1507,11 @@ const segmentTargets = (
           ),
           ...joined.flatMap(({ word, index }) => under(word).map((file) => ({ file, index }))),
         ];
-        for (const { file, index } of found)
-          if (!isRoot(file) || !readsRoot(text, index)) targets.push(file);
+        for (const { file, index } of found) {
+          const use = isRoot(file) ? rootUse(text, index) : "takes";
+          if (use !== "reads")
+            targets.push(use === "builds" ? path.join(file, UNRESOLVED_TARGET) : file);
+        }
       }
       // An editor writes only when it runs commands: `-c`, `+cmd`, `-s`, ex mode or stdin.
       if (
@@ -1500,7 +1563,7 @@ const segmentTargets = (
       const here = segment.unanalyzable
         ? DIR_TARGET
         : `${OPAQUE_TARGET}${encodeURIComponent(runner?.split(/[\\/]/).at(-1) ?? "a command")}`;
-      // An interpreter's code is judged with its calls above (readsRoot), not here.
+      // An interpreter's code is judged with its calls above (rootUse), not here.
       const quiet = strict === "registry" && INTERPRETERS.test(runner?.split(/[\\/]/).at(-1) ?? "");
       for (const file of opaque ?? [])
         for (const resolved of atAll(file))
@@ -1669,6 +1732,8 @@ export const liveTargets = (cwd: string, paths: readonly string[] | null): strin
  * own grants.
  */
 type Registry = "issued" | "approvals" | "grants";
+/** A guarded registry, or "link": a symlink chain too long to follow, which may reach one. */
+type Denied = Registry | "link";
 
 /** The config files only the user writes: grants and the seal that vouches for them (#819). */
 const CONFIG_FILES = ["workspaces.json", SEAL_FILE];
@@ -1773,12 +1838,13 @@ const hardLinked = (
 const registryTarget = (
   cwd: string,
   targets: readonly string[],
-): { file: string; registry: Registry } | null => {
+): { file: string; registry: Denied } | null => {
   const state = resolveStateDir();
   const configs = configDirs();
   const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
+    if (realPath(path.resolve(cwd, file)) === null) return { file: target, registry: "link" };
     const glob = globbed(cwd, file, state, configs)[0];
     const viaGlob = glob === undefined ? null : registryTarget(cwd, [glob]);
     if (viaGlob) return { file: target, registry: viaGlob.registry };
@@ -1850,7 +1916,9 @@ export const underConfig = (
 ): boolean => {
   const parts = partsUnder(dir, cwd, target, platform, real);
   // DIR_TARGET: a mutating git or an unknown edit run in the dir itself.
-  return parts?.length === 1 && ["", ...CONFIG_FILES, DIR_TARGET].includes(parts[0]);
+  return (
+    parts?.length === 1 && ["", ...CONFIG_FILES, DIR_TARGET, UNRESOLVED_TARGET].includes(parts[0])
+  );
 };
 
 /**
@@ -1903,7 +1971,12 @@ export const unquotedWindowsRegistry = (
   return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };
 
-const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: string }> = {
+const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: string }> = {
+  link: {
+    label: "registry guard",
+    what: "a symlink chain Workit could not resolve (over 40 links), which may reach a guarded path",
+    unblock: "Write to the file's real path.",
+  },
   issued: {
     label: "issued-registry guard",
     what: "Workit's issued-session state",
@@ -1924,8 +1997,14 @@ const REGISTRY_DENY: Record<Registry, { label: string; what: string; unblock: st
   },
 };
 
-const registryDeny = ({ file, registry }: { file: string; registry: Registry }): HookDecision => {
+const registryDeny = ({ file, registry }: { file: string; registry: Denied }): HookDecision => {
   const { label, what, unblock } = REGISTRY_DENY[registry];
+  if (path.basename(file) === UNRESOLVED_TARGET)
+    return {
+      kind: "deny",
+      reason: `workit ${label}: Workit could not resolve the file this command's script writes, which it builds from a path under ${what}. ${unblock}`,
+      unblock,
+    };
   // A placeholder (`<dir>/.workit-live-target`) names the dir it stands in.
   const named = path.basename(file).startsWith(".workit-") ? path.dirname(file) : file;
   return {

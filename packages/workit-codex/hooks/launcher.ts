@@ -160,7 +160,7 @@ const quietEvent = (): string | null => {
     // A writer verb or a file redirect (the Claude Code launcher's list); an fd
     // duplication (`2>&1`, `>&2`) or a device (`>/dev/null`) writes no file.
     const writes =
-      /\b(?:git|gh|glab)\b|>|\b(?:tee|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i.test(
+      /\b(?:git|gh|glab)\b|>|\b(?:tee|sponge|touch|mkdir|rm|rmdir|mv|cp|truncate|install|ln|patch|dd|sed|perl|set-content|add-content|out-file|new-item|ni|remove-item|del|copy-item|move-item)\b/i.test(
         text.replace(
           /\d*>&(?:\d+|-)(?![^\s;&|()<>])|[\d&]*>>?\s*\/dev\/(?:null|stdout|stderr|tty)(?![^\s;&|()<>])/g,
           " ",

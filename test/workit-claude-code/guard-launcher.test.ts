@@ -155,3 +155,48 @@ test("Given a TypeScript script that writes a guarded file, When tsx or ts-node 
   ])
     expect(decide("Bash", { command })?.permissionDecision, command).toBe("deny");
 }, 60_000);
+
+test("Given a guarded file written by `>& file`, `>&file` or `| sponge file`, or a dangling symlink in the repo to one, When the hook runs, Then the runtime denies it; fd duplications stay quiet (#843, #837)", () => {
+  const config = path.join(base, ".config", "workit");
+  const targets = [
+    path.join(config, "workspaces.json"),
+    path.join(config, "workspaces.json.seal"),
+    path.join(state, "issued", "s9.json"),
+    path.join(state, "approvals", "grants", "d.json"),
+  ];
+  for (const [index, file] of targets.entries()) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    rmSync(file, { force: true });
+    const link = path.join(repo, `dangling-${index}`);
+    symlinkSync(file, link);
+    for (const command of [
+      `echo '{}' >& ${file}`,
+      `echo '{}' >&${file}`,
+      `echo '{}' | sponge ${file}`,
+      `echo '{}' > dangling-${index}`,
+      `echo '{}' | sponge dangling-${index}`,
+    ])
+      expect(decide("Bash", { command })?.permissionDecision, command).toBe("deny");
+    for (const tool of ["Write", "Edit"])
+      expect(
+        decide(tool, { file_path: link, content: "{}" })?.permissionDecision,
+        `${tool} ${link}`,
+      ).toBe("deny");
+  }
+  for (const command of ["echo ok 2>&1", "echo ok >&2", "echo ok >&-"])
+    expect(decide("Bash", { command }), command).toBeUndefined();
+}, 60_000);
+
+test("Given a relative dangling link to a guarded file inside a dir linked at another depth, When a write or an edit names it through the dir link, Then the launcher sends it to the runtime, which denies it (#855)", () => {
+  const deep = path.join(base, "deep", "x", "y", "z");
+  mkdirSync(deep, { recursive: true });
+  symlinkSync(deep, path.join(repo, "ld"));
+  const grant = path.join(state, "approvals", "grants", "depth.json");
+  rmSync(grant, { force: true });
+  symlinkSync(path.relative(deep, grant), path.join(deep, "rl"));
+  for (const command of ["echo '{}' > ld/rl", "echo '{}' | sponge ld/rl"])
+    expect(decide("Bash", { command })?.permissionDecision, command).toBe("deny");
+  expect(
+    decide("Write", { file_path: path.join(repo, "ld", "rl"), content: "{}" })?.permissionDecision,
+  ).toBe("deny");
+}, 60_000);

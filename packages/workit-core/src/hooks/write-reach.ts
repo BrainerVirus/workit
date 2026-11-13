@@ -8,7 +8,7 @@
 // Claude Code launcher (bin/workit-hook.mjs) carries the region between the
 // markers as plain JavaScript, held equal after type erasure by
 // test/workit-core/hooks/write-reach.test.ts.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { configDir, stateDir, userHome } from "../core/workit-paths.mjs";
@@ -59,17 +59,43 @@ const hasTaskStore = (cwd: string): boolean => {
 };
 
 /** The guarded dirs' tests: `at` a guarded path or below it, `above` one (an ancestor). */
+/** canon's answer for a symlink chain too long to follow: it may reach a guarded path. */
+const LOST = "\0lost";
+
 const reachTests = (dirs: ReachDirs) => {
   const fold = (value: string) => (dirs.fold ? value.toLowerCase() : value);
-  // write-gate.ts canonical: the nearest existing ancestor's real path, then the rest.
+  // write-gate.ts canonical: the nearest existing ancestor's real path, then the
+  // rest; a dangling symlink on the way is followed to the file a write creates,
+  // a relative one from its directory's real path; past 40 links, LOST.
   const canon = (file: string): string => {
+    let dir = path.resolve(file);
     let rest = "";
-    for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+    for (let hops = 0; ;) {
       try {
         return fold(path.join(realpathSync.native(dir), rest));
       } catch {
-        if (path.dirname(dir) === dir) return fold(path.resolve(file));
-        rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+        let link: string | null = null;
+        try {
+          const to = readlinkSync(dir);
+          let from = path.dirname(dir);
+          try {
+            from = realpathSync.native(from);
+          } catch {
+            // A directory not made yet: as spelled.
+          }
+          link = path.resolve(from, to);
+        } catch {
+          // Not a symlink: the next ancestor.
+        }
+        if (link !== null) {
+          if (++hops > 40) return LOST;
+          dir = path.join(link, rest);
+          rest = "";
+        } else if (path.dirname(dir) === dir) return fold(path.resolve(file));
+        else {
+          rest = rest ? path.join(path.basename(dir), rest) : path.basename(dir);
+          dir = path.dirname(dir);
+        }
       }
     }
   };
@@ -80,6 +106,7 @@ const reachTests = (dirs: ReachDirs) => {
   const state = canon(dirs.state);
   const configs = dirs.configs.map(canon);
   const at = (file: string) =>
+    file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
       /^(?:issued[^\\/]*|approvals)(?:[\\/]|$)/.test(path.relative(state, file)));
