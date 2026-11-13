@@ -1090,6 +1090,7 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The eval bench no longer stores private data in a result: it replaces what a host read outside the bench world with a marker, refuses to write a run that still holds a string from the real account, confines host reads with Landlock, and copies only the sign-in keys of `~/.claude.json`. The one committed transcript that held a real config is redacted.
 - `workit install` and `workit uninstall --hosts` previews show a missing host command (`claude`, `codex`, `pi` not on PATH) as a blocked row at plan time, the same text apply prints; apply runs nothing for that host.
 - A Cursor repair no longer adds a second `plugin_dirs` entry when the existing one is spelled with `~` (which made `workit doctor` report `duplicate_registration`).
+- `workit uninstall --preview` now shows exactly what `--yes` will do: a ytrack skill folder that no longer holds the skill, a completion script or CLI folder that isn't Workit's, and a `bin/` or `versions/` folder holding your own files are listed as kept with the same reason apply prints, instead of apply reporting them as failed. When every row is kept, the uninstall picker names what it kept instead of printing "Uninstall complete.", and a malformed config file is named once per line.
 
 ### Removed
 
