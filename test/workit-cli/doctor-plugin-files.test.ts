@@ -34,7 +34,7 @@ const doctorFor = (name: string) => {
 
 const row = (report: DoctorReport) => report.checks.find((c) => c.id === "plugin_files")!;
 
-test("G Cursor settings register a plugin dir that is empty, W doctor runs, T plugin_files warns naming the dir and the install command", () => {
+test("G Cursor settings register a plugin dir that is empty, W doctor runs, T plugin_files warns naming the dir and `workit install --hosts=cursor`", () => {
   const doctor = doctorFor("cursor-empty");
   const pluginDir = path.join(doctor.home, ".cursor", "plugins", "local", "workit");
   mkdirSync(pluginDir, { recursive: true });
@@ -46,7 +46,7 @@ test("G Cursor settings register a plugin dir that is empty, W doctor runs, T pl
   expect(result.status).toBe("warn");
   expect(result.detail).toContain(pluginDir);
   expect(result.detail).toContain("empty");
-  expect(result.fix).toContain("workit upgrade --hosts=cursor");
+  expect(result.fix).toContain("workit install --hosts=cursor");
   expect(result.fix).toContain("Cursor");
 });
 
@@ -62,7 +62,7 @@ test("G Cursor settings register a plugin dir that holds the plugin, W doctor ru
   expect(row(doctor.run()).status).toBe("pass");
 });
 
-test("G Codex config enables a workit plugin whose cache is gone, W doctor runs, T plugin_files warns with the codex command; no workit plugin in config is not a warning", () => {
+test("G Codex config enables a workit plugin whose cache is gone, W doctor runs, T plugin_files warns with `workit install --hosts=codex`; no workit plugin in config is not a warning", () => {
   const doctor = doctorFor("codex-missing");
   const codexHome = path.join(doctor.home, ".codex");
   mkdirSync(codexHome, { recursive: true });
@@ -70,7 +70,7 @@ test("G Codex config enables a workit plugin whose cache is gone, W doctor runs,
   const result = row(doctor.run());
   expect(result.status).toBe("warn");
   expect(result.detail).toContain("workit@workit");
-  expect(result.fix).toContain("codex plugin add workit@workit");
+  expect(result.fix).toBe("workit install --hosts=codex");
 
   const bare = doctorFor("codex-none");
   mkdirSync(path.join(bare.home, ".codex"), { recursive: true });
@@ -78,7 +78,7 @@ test("G Codex config enables a workit plugin whose cache is gone, W doctor runs,
   expect(row(bare.run()).status).toBe("pass");
 });
 
-test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it runs the version, asset, agent, permission and grant-seal checks and nothing else", () => {
+test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it runs the version, asset, agent, permission, native-deny and grant-seal checks and nothing else", () => {
   const doctor = doctorFor("upgrade-only");
   const report = runDoctor({
     host: "cli",
@@ -110,6 +110,25 @@ test("G `workit upgrade` ends verified, W doctor runs with only: upgrade, T it r
       "codex_grant_rules",
       "cursor_grant_rules",
       "grant_seal",
+      "native_deny",
     ].toSorted(),
   );
+});
+
+test("G a Cursor host whose launcher entries are missing, W doctor runs for cursor from an installed package, T launcher fails naming `workit install --hosts=cursor`", () => {
+  const doctor = doctorFor("cursor-launcher");
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: doctor.home };
+  delete env.WORKIT_DEV;
+  const report = runDoctor({
+    host: "cursor",
+    home: doctor.home,
+    cwd: doctor.home,
+    workspaceRoot: doctor.home,
+    configDir: path.join(doctor.home, ".config", "workit"),
+    stateDir: path.join(doctor.home, ".local", "state", "workit"),
+    env,
+  });
+  const launcher = report.checks.find((check) => check.id === "launcher")!;
+  expect(launcher.status).toBe("fail");
+  expect(launcher.fix).toStartWith("workit install --hosts=cursor");
 });

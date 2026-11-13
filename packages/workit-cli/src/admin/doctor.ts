@@ -153,6 +153,7 @@ import { ownedPaths, ownedVersion, realpathOr, shellQuote } from "../install/pat
 import { readUpdateCache, readUpdatesMode } from "../update-settings";
 import {
   grantedCommands,
+  nativeDenyHealth,
   permissionCoverage,
   permissionHealth,
   permissionTarget,
@@ -212,7 +213,8 @@ type DoctorCheckId =
   | "updates"
   | "claude_permissions"
   | "codex_permissions"
-  | "cursor_permissions";
+  | "cursor_permissions"
+  | "native_deny";
 
 /** `info` is a true fact that needs no action (a normal install has no dev
  *  checkout, a newer host CLI than qualified); it counts as passed. */
@@ -591,7 +593,11 @@ const installedHookEntries = (res: Resolved, cwd: string): HookEntry[] => {
         host: "codex",
         entry,
         args: [],
-        payload: { hook_event_name: "UserPromptSubmit", turn_id: "workit-doctor", ...prompt },
+        payload: {
+          hook_event_name: "UserPromptSubmit",
+          turn_id: "workit-doctor",
+          ...prompt,
+        },
       });
   }
   const cursor = path.join(res.cursorPluginDir, "hooks", "launch.mjs");
@@ -698,7 +704,10 @@ const checkHookNode = (res: Resolved): DoctorCheck => {
         "Reinstall the hosts' plugins with `workit upgrade`, then re-run `workit doctor` from this directory",
     };
   if (hooks.ran.length === 0) return base;
-  return { ...base, detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}` };
+  return {
+    ...base,
+    detail: `${base.detail}; installed hooks ran: ${hooks.ran.join(", ")}`,
+  };
 };
 
 const hookNodeBase = (res: Resolved): DoctorCheck => {
@@ -789,7 +798,11 @@ const checkLegacyDirs = (res: Resolved): DoctorCheck => {
   });
   const notes = [...markers, ...(worktrees ? [worktrees] : [])];
   if (notes.length > 0) return { id: "legacy_dirs", status: "info", detail: notes.join("; ") };
-  return { id: "legacy_dirs", status: "pass", detail: "no pre-XDG Workit directories" };
+  return {
+    id: "legacy_dirs",
+    status: "pass",
+    detail: "no pre-XDG Workit directories",
+  };
 };
 
 const checkVersions = (res: Resolved): DoctorCheck => {
@@ -1715,7 +1728,7 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
       detail: `missing or invalid launcher entry: ${missing.join("; ")}`,
       fix: dev
         ? `Rebuild and reinstall the workit package (bun run build) — dist entries must be non-empty Node launchers`
-        : "workit upgrade --hosts=cursor — it reinstalls the plugin files and re-registers the MCP launcher",
+        : "workit install --hosts=cursor (or workit upgrade --hosts=cursor) — it reinstalls the plugin files and re-registers the MCP launcher",
     };
   }
   if (!dev && res.host !== "cursor") {
@@ -1755,7 +1768,7 @@ const checkPluginFiles = (res: Resolved): DoctorCheck => {
       problems.push(
         `Cursor registers the Workit plugin at ${entry}, but that directory is ${state}`,
       );
-      fixes.push("Run `workit upgrade --hosts=cursor` to reinstall the Cursor plugin files");
+      fixes.push("Run `workit install --hosts=cursor` to reinstall the Cursor plugin files");
     }
   }
   for (const install of codexWorkitInstalls(res)) {
@@ -1763,7 +1776,7 @@ const checkPluginFiles = (res: Resolved): DoctorCheck => {
     problems.push(
       `Codex enables ${install.id} in ${install.configFile}, but no plugin files are cached for it`,
     );
-    fixes.push(`codex plugin add ${install.id}`);
+    fixes.push("workit install --hosts=codex");
   }
   if (problems.length === 0)
     return {
@@ -2507,7 +2520,11 @@ const checkConfigSchema = (res: Resolved): DoctorCheck => {
     }
   }
   if (problems.length === 0)
-    return { id: "config_schema", status: "pass", detail: "config files match their schemas" };
+    return {
+      id: "config_schema",
+      status: "pass",
+      detail: "config files match their schemas",
+    };
   const rest = problems.length > obsolete.length;
   return {
     id: "config_schema",
@@ -3410,7 +3427,11 @@ const checkGrantEndpoint = (res: Resolved): DoctorCheck => {
 const checkGrantRemotes = (res: Resolved): DoctorCheck => {
   const { warnings, notes } = remoteFindings(res.cwd, res.configDir);
   if (warnings.length === 0 && notes.length === 0)
-    return { id: "grant_remotes", status: "pass", detail: "remote URLs and workspaces agree" };
+    return {
+      id: "grant_remotes",
+      status: "pass",
+      detail: "remote URLs and workspaces agree",
+    };
   // A stricter workspace's remote here is the risk (warn); a workspace with no
   // remotes is every entry's starting point, so it informs only.
   const lines = [...warnings, ...notes];
@@ -3438,9 +3459,17 @@ const checkGrantSeal = (): DoctorCheck => {
       detail: `workspaces.json cannot be sealed: ${status.error}`,
     };
   if (status.state === "valid")
-    return { id: "grant_seal", status: "pass", detail: "ok: workspaces.json matches its seal" };
+    return {
+      id: "grant_seal",
+      status: "pass",
+      detail: "ok: workspaces.json matches its seal",
+    };
   if (status.state === "none" && status.entries.length === 0)
-    return { id: "grant_seal", status: "pass", detail: "no workspace entries: nothing to seal" };
+    return {
+      id: "grant_seal",
+      status: "pass",
+      detail: "no workspace entries: nothing to seal",
+    };
   return {
     id: "grant_seal",
     status: "warn",
@@ -3517,7 +3546,12 @@ const WORKIT_DIR_KEEP = new Set<string>([
 /** The checkout top and its untracked `.workit/` notes (relative to `.workit/`); null outside git. */
 const workitNotes = (cwd: string): { top: string; notes: string[] } | null => {
   const run = (args: string[]) =>
-    spawnSync("git", args, { cwd, encoding: "utf8", timeout: 20_000, windowsHide: true });
+    spawnSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      timeout: 20_000,
+      windowsHide: true,
+    });
   const shown = run(["rev-parse", "--show-toplevel"]);
   if (shown.status !== 0) return null;
   const top = shown.stdout.trim();
@@ -4062,6 +4096,79 @@ const checkHostPermissions =
   };
 
 /**
+ * The native deny rules for the guarded paths (#820) per host, and the
+ * host's OS sandbox where it has one. A stale rule (a path that moved) or a
+ * missing one on a host whose block Workit wrote warns with the setup command;
+ * a host the user never ran setup for is info (the block is optional). Codex
+ * has no path deny: its sandbox mode is reported, and it warns when that
+ * sandbox lets agent commands write a guarded path. Pi has no permission layer.
+ */
+const checkNativeDeny = (res: Resolved): DoctorCheck => {
+  const paths = {
+    home: res.home,
+    env: res.codexHome ? { ...res.env, CODEX_HOME: res.codexHome } : res.env,
+    stateDir: res.stateDir,
+  };
+  const rows = (["claude-code", "cursor", "opencode", "codex", "pi"] as const)
+    .map((host) => nativeDenyHealth(host, paths))
+    .filter((row) => row.state !== "no-host");
+  if (rows.length === 0)
+    return {
+      id: "native_deny",
+      status: "info",
+      detail: "no host found; no native rules to check",
+    };
+  const warned = rows.filter(
+    (row) =>
+      row.state === "stale" ||
+      row.state === "unreadable" ||
+      (row.state === "missing" && row.recorded) ||
+      row.risk !== undefined,
+  );
+  const parts = rows.map((row) => {
+    const state =
+      row.state === "none"
+        ? row.host === "pi"
+          ? "no permission layer"
+          : "no path deny rule"
+        : row.state === "stale"
+          ? `stale (${row.stale[0]}${row.stale.length > 1 ? ", …" : ""} names a path that moved)`
+          : row.state === "missing"
+            ? `missing ${row.missing.length} (${row.missing[0]}${row.missing.length > 1 ? ", …" : ""})`
+            : row.state === "unreadable"
+              ? `${row.file} is not a JSON object`
+              : "present";
+    const extra = [row.sandbox, row.risk].filter(Boolean).join("; ");
+    return `${row.host}: ${state}${extra ? ` (${extra})` : ""}`;
+  });
+  const fixHosts = warned
+    .filter((row) => row.state !== "none" && row.state !== "unreadable")
+    .map((row) => row.host);
+  const status = warned.length
+    ? "warn"
+    : rows.some((row) => row.state === "missing")
+      ? "info"
+      : "pass";
+  return {
+    id: "native_deny",
+    status,
+    detail: parts.join("; "),
+    ...(status === "pass"
+      ? {}
+      : {
+          fix: [
+            ...(fixHosts.length || status === "info"
+              ? [
+                  `workit setup --hosts=${(fixHosts.length ? fixHosts : rows.filter((row) => row.state === "missing").map((row) => row.host)).join(",")}`,
+                ]
+              : []),
+            ...rows.flatMap((row) => (row.risk ? [`${row.host}: ${row.risk}`] : [])),
+          ].join("; "),
+        }),
+  };
+};
+
+/**
  * Do the host's own allow rules (and, on Claude Code, its auto-mode text)
  * cover the Workit verbs this workspace's grants authorize (#419)? A granted
  * `workit git push` or `workit pr merge` with no rule prompts, or is denied in
@@ -4249,7 +4356,11 @@ const checkLegacyScope = (res: Resolved): DoctorCheck => {
     cursorPluginDir: res.cursorPluginDir,
   });
   if (found.length === 0)
-    return { id: "legacy_scope", status: "pass", detail: `no ${LEGACY_SCOPE} install` };
+    return {
+      id: "legacy_scope",
+      status: "pass",
+      detail: `no ${LEGACY_SCOPE} install`,
+    };
   return {
     id: "legacy_scope",
     status: "warn",
@@ -4360,6 +4471,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkChecksConfig,
   checkWorkitNotes,
   checkUpdates,
+  checkNativeDeny,
   checkHostPermissions("claude-code", "claude_permissions"),
   checkHostPermissions("codex", "codex_permissions"),
   checkHostPermissions("cursor", "cursor_permissions"),
@@ -4384,6 +4496,8 @@ const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck | null>([
   checkYtrackSkill,
   // An upgrade may be what starts the seal fallback (#819): say so after it.
   checkGrantSeal,
+  // An upgrade refreshes the native deny rules with the permission block (#820).
+  checkNativeDeny,
   ...RUN_CHECKS.slice(-6),
 ]);
 
