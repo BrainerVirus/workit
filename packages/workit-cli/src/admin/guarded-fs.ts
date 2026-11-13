@@ -13,7 +13,7 @@ import * as safe from "@workit-dev/core/src/core/safe-write";
 export const guardedHome: { value: string | null | undefined } = { value: undefined };
 
 /** Throw when a test run must not write `file` under the account home. */
-export const refuseWrite = (file: fs.PathLike | number): void => {
+const refuseWrite = (file: fs.PathLike | number): void => {
   if (typeof file === "number") return;
   const reason = testRunWriteRefusal(String(file), guardedHome.value);
   if (reason) throw new Error(reason);
