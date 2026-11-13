@@ -206,22 +206,35 @@ export function ownedCompletionFiles(
   return files;
 }
 
+/**
+ * Remove `file` only: one of Workit's completion places, still carrying
+ * Workit's marker. False when it is not one, or it could not be removed.
+ */
+export function removeCompletion(
+  file: string,
+  env: Env = process.env,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const places = (["zsh", "bash", "fish"] as const).map((shell) =>
+    completionFile(shell, env, platform),
+  );
+  if (!places.includes(file) || !owned(file)) return false;
+  try {
+    fs.rmSync(file);
+    return true;
+  } catch {
+    // left for the next run; doctor-free: a stale script only completes old verbs
+    return false;
+  }
+}
+
 export function removeCompletions(
   env: Env = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
-  const removed: string[] = [];
-  for (const shell of ["zsh", "bash", "fish"] as const) {
-    const file = completionFile(shell, env, platform);
-    if (!file || !owned(file)) continue;
-    try {
-      fs.rmSync(file);
-      removed.push(file);
-    } catch {
-      // left for the next run; doctor-free: a stale script only completes old verbs
-    }
-  }
-  return removed;
+  return ownedCompletionFiles(env, platform).filter((file) =>
+    removeCompletion(file, env, platform),
+  );
 }
 
 const VERB: Record<CompletionInstall["status"], string> = {

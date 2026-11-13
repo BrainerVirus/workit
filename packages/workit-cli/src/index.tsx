@@ -17,6 +17,7 @@ import {
   applyUninstall,
   configKeptNote,
   planUninstall,
+  uninstallOutcomeLine,
   type UninstallHost,
   type UninstallPlan,
 } from "./admin/uninstall";
@@ -326,6 +327,6 @@ export async function runUninstall() {
       `${entry.status.padEnd(8)} ${entry.path}${entry.detail ? ` — ${entry.detail}` : ""}`,
     );
   }
-  console.log(result.ok ? "Uninstall complete." : "Uninstall finished with problems.");
+  console.log(uninstallOutcomeLine(result));
   process.exit(result.ok ? 0 : 1);
 }

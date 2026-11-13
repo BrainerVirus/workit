@@ -21,6 +21,7 @@ import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { runUpgradeCommand, type HostProcess } from "@/packages/workit-cli/src/upgrade";
 import { run as setup } from "@/packages/workit-cli/src/verbs/setup";
+import { run as uninstallVerb } from "@/packages/workit-cli/src/verbs/uninstall";
 import { hostSkillsRoot } from "@/packages/workit-cli/src/upgrade/skill-roots";
 import {
   parseSkillMeta,
@@ -147,8 +148,14 @@ describe("syncYtrackSkill", () => {
       expect(skillVersion(pi)).toBe("0.3.0");
       expect(existsSync(path.join(pi, "references", "issues.md"))).toBe(true);
       expect(readYtrackSkillRecord(w.stateDir)).toEqual([
-        { host: "claude-code", path: claude, version: "0.3.0" },
-        { host: "pi", path: pi, version: "0.3.0" },
+        // The files the install wrote: uninstall removes those and only those.
+        {
+          host: "claude-code",
+          path: claude,
+          version: "0.3.0",
+          files: ["SKILL.md", "references/issues.md"],
+        },
+        { host: "pi", path: pi, version: "0.3.0", files: ["SKILL.md", "references/issues.md"] },
       ]);
       const installs = () => w.calls().filter((call) => call.startsWith("skill install"));
       expect(installs()).toEqual([
@@ -221,7 +228,7 @@ test("parseSkillMeta reads name and metadata.version from a CRLF checkout, and n
   expect(parseSkillMeta("# ytrack\n")).toEqual({ name: null, version: null });
 });
 
-test("removeYtrackSkill leaves a recorded path that no longer holds the ytrack skill", () => {
+test("removeYtrackSkill skips a recorded path that no longer holds the ytrack skill and leaves it", () => {
   const w = world();
   const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
   w.skillAt(dir, "1.0.0", "someone-else");
@@ -230,7 +237,10 @@ test("removeYtrackSkill leaves a recorded path that no longer holds the ytrack s
       root: hostSkillsRoot("pi", w.home, w.env()),
       home: w.home,
     }),
-  ).toMatchObject({ status: "failed" });
+  ).toEqual({
+    status: "skipped",
+    detail: "no longer holds the ytrack skill Workit installed; left untouched",
+  });
   expect(existsSync(path.join(dir, "SKILL.md"))).toBe(true);
 });
 
@@ -272,7 +282,7 @@ describe("workit upgrade", () => {
       const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
       expect(skillVersion(dir)).toBe("0.3.0");
       expect(readYtrackSkillRecord(w.stateDir)).toEqual([
-        { host: "pi", path: dir, version: "0.3.0" },
+        { host: "pi", path: dir, version: "0.3.0", files: ["SKILL.md", "references/issues.md"] },
       ]);
     },
   );
@@ -502,4 +512,156 @@ describe("uninstall refuses a recorded path that is not the host's <skills root>
     ).toMatchObject({ status: "skipped" });
     expect(readFileSync(path.join(elsewhere, "ytrack", "keep.txt"), "utf8")).toBe("important");
   });
+
+  /** `workit uninstall --hosts=pi` as --preview then --yes (JSON): the ytrack rows each printed. */
+  const previewThenYes = async (w: ReturnType<typeof world>) => {
+    const runVerb = async (flag: string) => {
+      const out: string[] = [];
+      const io = {
+        json: true,
+        cwd: w.home,
+        env: w.env(),
+        stdout: (text: string) => void out.push(text),
+        stderr: () => {},
+      };
+      const code = await uninstallVerb(["--hosts=pi", flag], io);
+      const envelope = JSON.parse(out.join("").trim().split("\n").at(-1) ?? "{}");
+      return { code, data: envelope.data ?? {} };
+    };
+    const preview = await runVerb("--preview");
+    const apply = await runVerb("--yes");
+    const skill = (row: { path: string }) => row.path.endsWith(`${path.sep}ytrack`);
+    return {
+      rows: (
+        preview.data.actions as {
+          kind: string;
+          path: string;
+          detail: string;
+          keys: string[];
+          host: string;
+        }[]
+      ).filter(skill),
+      code: apply.code,
+      entries: (
+        apply.data.removed as {
+          host: string;
+          path: string;
+          status: string;
+          detail?: string;
+        }[]
+      ).filter(skill),
+    };
+  };
+
+  posix(
+    "Given a recorded skill dir that no longer holds the skill, When preview and then --yes run twice, Then each shows the same kept row and neither run fails",
+    async () => {
+      const w = world();
+      const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
+      w.skillAt(dir, "1.0.0", "my-ytrack-notes");
+      record(w, [{ host: "pi", path: dir }]);
+      for (const _ of [1, 2]) {
+        const run = await previewThenYes(w);
+        expect(run.code).toBe(0);
+        expect(run.rows).toEqual([
+          {
+            kind: "keep-foreign",
+            path: dir,
+            detail: "no longer holds the ytrack skill Workit installed; left untouched",
+            keys: [],
+            host: "pi",
+          },
+        ]);
+        expect(run.entries).toEqual([
+          {
+            host: "pi",
+            path: dir,
+            status: "skipped",
+            detail: run.rows[0].detail,
+          },
+        ]);
+      }
+      expect(parseSkillMeta(readFileSync(path.join(dir, "SKILL.md"), "utf8")).name).toBe(
+        "my-ytrack-notes",
+      );
+    },
+  );
+
+  posix(
+    "Given the recorded skill dir also holds a user's file, When preview and then --yes run, Then only the skill's files go, the dir and the file stay, and both say so in one wording",
+    async () => {
+      const w = world();
+      const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
+      w.skillAt(dir, "0.3.0");
+      mkdirSync(path.join(dir, "references"), { recursive: true });
+      writeFileSync(path.join(dir, "references", "issues.md"), "reference\n");
+      writeFileSync(path.join(dir, "mynotes.md"), "mine\n");
+      mkdirSync(w.stateDir, { recursive: true });
+      writeFileSync(
+        path.join(w.stateDir, "ytrack-skill.json"),
+        JSON.stringify({
+          installs: [
+            {
+              host: "pi",
+              path: dir,
+              version: "0.3.0",
+              files: ["SKILL.md", "references/issues.md"],
+            },
+          ],
+        }),
+      );
+      const run = await previewThenYes(w);
+      expect(run.code).toBe(0);
+      const detail = `remove the ytrack skill's files; ${dir} kept (holds mynotes.md)`;
+      expect(run.rows.map((row) => [row.kind, row.detail])).toEqual([
+        ["remove-ytrack-skill", detail],
+      ]);
+      expect(run.entries).toEqual([{ host: "pi", path: dir, status: "removed", detail }]);
+      expect(readFileSync(path.join(dir, "mynotes.md"), "utf8")).toBe("mine\n");
+      expect(existsSync(path.join(dir, "SKILL.md"))).toBe(false);
+      expect(existsSync(path.join(dir, "references"))).toBe(false);
+      expect(readYtrackSkillRecord(w.stateDir)).toEqual([]);
+    },
+  );
+
+  posix(
+    "Given a record from before Workit listed the files, Then uninstall removes only ytrack's documented layout and keeps a user's file",
+    async () => {
+      const w = world();
+      const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
+      w.skillAt(dir, "0.3.0");
+      mkdirSync(path.join(dir, "references"), { recursive: true });
+      writeFileSync(path.join(dir, "references", "api.md"), "reference\n");
+      writeFileSync(path.join(dir, "mynotes.md"), "mine\n");
+      record(w, [{ host: "pi", path: dir }]);
+      const run = await previewThenYes(w);
+      expect(run.entries[0]).toMatchObject({ status: "removed", detail: run.rows[0].detail });
+      expect(run.rows[0].detail).toEndWith(`${dir} kept (holds mynotes.md)`);
+      expect(readFileSync(path.join(dir, "mynotes.md"), "utf8")).toBe("mine\n");
+      expect(existsSync(path.join(dir, "references"))).toBe(false);
+    },
+  );
+
+  posix(
+    "Given a recorded skill already gone, When preview and then --yes run, Then both use the same wording and the record goes",
+    async () => {
+      const w = world();
+      const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
+      record(w, [{ host: "pi", path: dir }]);
+      const run = await previewThenYes(w);
+      expect(run.code).toBe(0);
+      expect(run.rows.map((row) => [row.kind, row.detail])).toEqual([
+        ["remove-ytrack-skill", "ytrack skill already absent; Workit forgets its record of it"],
+      ]);
+      expect(run.entries).toEqual([
+        {
+          host: "pi",
+          path: dir,
+          status: "skipped",
+          detail: run.rows[0].detail,
+        },
+      ]);
+      expect(readYtrackSkillRecord(w.stateDir)).toEqual([]);
+    },
+  );
 });

@@ -13,11 +13,11 @@ import { configDir, stateDir as workitStateDir } from "@workit-dev/core/src/core
 import {
   readYtrackSkillRecord,
   removeYtrackSkill,
-  ytrackSkillPathRefusal,
+  ytrackSkillRemoval,
   type SkillHost,
 } from "@workit-dev/core/src/core/ytrack-skill";
 import { hostSkillsRoot } from "../upgrade/skill-roots";
-import { ownedCompletionFiles, removeCompletions } from "../completion/install";
+import { completionFile, ownedCompletionFiles, removeCompletion } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
 import {
@@ -176,16 +176,16 @@ const readJsonRecord = (file: string): Existing => {
     // A read-permission error (EACCES) must not look like a missing file (same
     // disambiguation as setup.ts readExisting): classify it malformed so plan
     // keeps the host installed and apply reports Failed with the path untouched.
-    if (existsSync(file)) return { kind: "malformed", error: `${file} is not readable` };
+    if (existsSync(file)) return { kind: "malformed", error: "not readable" };
     return { kind: "missing" };
   }
   try {
     const value = JSON.parse(raw);
     return isRecord(value)
       ? { kind: "record", value }
-      : { kind: "malformed", error: `${file} is not a JSON object` };
+      : { kind: "malformed", error: "not a JSON object" };
   } catch {
-    return { kind: "malformed", error: `${file} is not valid JSON` };
+    return { kind: "malformed", error: "not valid JSON" };
   }
 };
 
@@ -392,6 +392,14 @@ const codexRulesState = (file: string): "unchanged" | "changed" | "unreadable" =
 const codexRulesKept = (file: string): string =>
   `${file} differs from what this Workit version writes, so it is kept. If an older Workit wrote it, \`workit upgrade\` rewrites it and uninstall then removes it; if you added rules, move them out and delete it.`;
 
+const COMPLETION_NOT_OURS = "not Workit's completion script, left untouched";
+
+/** Where Workit writes a completion script for each shell that takes a file. */
+const completionPlaces = (paths: UninstallPaths): string[] =>
+  (["zsh", "bash", "fish"] as const).flatMap(
+    (shell) => completionFile(shell, cliEnvOf(paths), paths.platform ?? process.platform) ?? [],
+  );
+
 /** A kept Codex rules file keeps its entry in the permission record. */
 const CODEX_RECORD_KEPT =
   "kept: codex's entry in Workit's permission record stays while its rules file is kept";
@@ -583,7 +591,7 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
           : {
               kind: "unreadable",
               path: res.codexRules,
-              detail: `${res.codexRules} is not readable; fix or restore it, then run again`,
+              detail: "not readable; fix or restore it, then run again",
             },
     );
   }
@@ -620,18 +628,16 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
   for (const install of readYtrackSkillRecord(stateDirOf(paths))) {
     const plan = Object.hasOwn(byHost, install.host) ? byHost[install.host] : null;
     if (!plan) continue;
-    const refusal = ytrackSkillPathRefusal(install.path, ...skillRootOf(install.host, paths));
+    const [root, skillHome] = skillRootOf(install.host, paths);
+    // The same verdict apply reaches: a kept directory is a kept row, an absent one only forgets the record.
+    const removal = ytrackSkillRemoval(install, { root, home: skillHome });
     plan.actions.push(
-      refusal
-        ? {
-            kind: "keep-foreign",
-            path: install.path,
-            detail: `ytrack skill left untouched: ${refusal}`,
-          }
+      removal.kind === "keep"
+        ? { kind: "keep-foreign", path: install.path, detail: removal.detail }
         : {
             kind: "remove-ytrack-skill",
             path: install.path,
-            detail: "remove the ytrack skill Workit installed",
+            detail: removal.detail,
             host: install.host,
           },
     );
@@ -657,13 +663,24 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
         ? { kind: "remove-owned-cli", path: step.path, detail: step.detail, part: step.part }
         : { kind: "keep-foreign", path: step.path, detail: step.detail },
   );
-  // The shell completion scripts setup/upgrade wrote belong to the CLI.
-  for (const file of ownedCompletionFiles(cliEnvOf(paths), paths.platform ?? process.platform))
-    cliActions.push({
-      kind: "remove-completion",
-      path: file,
-      detail: "remove Workit's shell completion script",
-    });
+  // The shell completion scripts setup/upgrade wrote belong to the CLI; a
+  // file of someone else's at their place stays, and the plan says so.
+  const ownedScripts = new Set(
+    ownedCompletionFiles(cliEnvOf(paths), paths.platform ?? process.platform),
+  );
+  for (const file of completionPlaces(paths))
+    if (ownedScripts.has(file))
+      cliActions.push({
+        kind: "remove-completion",
+        path: file,
+        detail: "remove Workit's shell completion script",
+      });
+    else if (existsSync(file))
+      cliActions.push({
+        kind: "keep-foreign",
+        path: file,
+        detail: COMPLETION_NOT_OURS,
+      });
   const cli: UninstallHostPlan = {
     host: "cli",
     installed: cliActions.some((action) => action.kind === "remove-owned-cli"),
@@ -827,10 +844,21 @@ function applyAction(
     status = kept ? "skipped" : "removed";
     detail = kept ? CODEX_RECORD_KEPT : undefined;
   } else if (action.kind === "remove-completion") {
-    const removed = removeCompletions(cliEnvOf(paths), paths.platform ?? process.platform);
-    status = removed.includes(action.path) || !existsSync(action.path) ? "removed" : "failed";
-    detail =
-      status === "failed" ? `${action.path} is no longer Workit's completion script` : undefined;
+    // This row's file only: another row's file is that row's to report.
+    const platform = paths.platform ?? process.platform;
+    const ours = ownedCompletionFiles(cliEnvOf(paths), platform).includes(action.path);
+    const removed = ours && removeCompletion(action.path, cliEnvOf(paths), platform);
+    if (removed) status = "removed";
+    else if (!existsSync(action.path)) {
+      status = "skipped";
+      detail = "already absent";
+    } else if (ours) {
+      status = "failed";
+      detail = `${action.path} could not be removed`;
+    } else {
+      status = "skipped";
+      detail = COMPLETION_NOT_OURS;
+    }
   } else if (action.kind === "remove-ytrack-skill") {
     const recorded = readYtrackSkillRecord(stateDirOf(paths)).find(
       (install) => install.host === action.host && install.path === action.path,
@@ -958,3 +986,10 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
     skipped,
   };
 }
+
+/** The picker's last line: done, done with problems, or (every row kept) what was kept. */
+export const uninstallOutcomeLine = (result: UninstallResult): string => {
+  if (!result.ok) return "Uninstall finished with problems.";
+  if (result.entries.some((entry) => entry.status === "removed")) return "Uninstall complete.";
+  return `Nothing removed: kept ${result.entries.map((entry) => entry.path).join(", ")} (each row above says why).`;
+};

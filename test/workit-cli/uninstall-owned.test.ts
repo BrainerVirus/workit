@@ -17,7 +17,12 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
+import {
+  applyUninstall,
+  planUninstall,
+  uninstallOutcomeLine,
+} from "@/packages/workit-cli/src/admin/uninstall";
+import { completionFile } from "@/packages/workit-cli/src/completion/install";
 import { writeLaunchers } from "@/packages/workit-cli/src/install/owned";
 import { LAUNCHER_MARKER, ownedPaths } from "@/packages/workit-cli/src/install/paths";
 
@@ -224,11 +229,18 @@ test("Given bin/ holds a user's workit-notes beside the launcher and its temp fi
   const temp = path.join(bin, "workit.cmd.4242.tmp");
   write(notes, "mine\n");
   write(temp, "half a launcher");
+  // The preview already says the directory stays, in the words apply prints.
+  const kept = `${bin} kept (holds workit.cmd-notes)`;
+  expect(cliPlan({ env, platform: "win32" }).actions[0]).toMatchObject({
+    kind: "remove-owned-cli",
+    path: bin,
+  });
+  expect(cliPlan({ env, platform: "win32" }).actions[0]?.detail).toEndWith(`; ${kept}`);
   const result = applyCli({ env, platform: "win32" });
   expect(result.ok, JSON.stringify(result)).toBe(true);
   expect(present(paths.launcher) || present(temp)).toBe(false);
   expect(readFileSync(notes, "utf8")).toBe("mine\n");
-  expect(result.entries[0]?.detail).toContain("kept (holds workit.cmd-notes)");
+  expect(result.entries[0]?.detail).toBe(`launcher removed; ${kept}`);
 });
 
 test.skipIf(process.platform === "win32")(
@@ -332,4 +344,180 @@ test("Given WORKIT_INSTALL_ROOT is the home dir, an ancestor of it or a filesyst
   expect(plan.actions[0]?.detail).toContain("is your home directory; nothing under it is removed");
   expect(readFileSync(doc, "utf8")).toBe("mine\n");
   expect(present(path.join(home, "versions", "9.0.0"))).toBe(true);
+});
+
+const keptRow = (plan: ReturnType<typeof cliPlan>, file: string) =>
+  plan.actions.find((action) => action.path === file);
+
+test("Given bin/ holds only a user's file and no launcher, When previewed then applied, Then the preview keeps it in the words apply prints", () => {
+  const home = tempHome();
+  const env = {
+    HOME: home,
+    USERPROFILE: home,
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
+  const paths = ownedInstall(env, "win32");
+  const bin = path.dirname(paths.launcher);
+  rmSync(paths.launcher);
+  write(path.join(bin, "notes.txt"), "mine\n");
+  const plan = cliPlan({ env, platform: "win32" });
+  const row = {
+    kind: "keep-foreign" as const,
+    path: bin,
+    detail: `no Workit launcher in it; ${bin} kept (holds notes.txt)`,
+  };
+  expect(keptRow(plan, bin)).toEqual(row);
+  const result = applyUninstall({ hosts: [plan] }, { env, platform: "win32" });
+  expect(result.entries.find((entry) => entry.path === bin)).toEqual({
+    host: "cli",
+    path: bin,
+    status: "skipped",
+    detail: row.detail,
+  });
+  expect(readFileSync(path.join(bin, "notes.txt"), "utf8")).toBe("mine\n");
+});
+
+test("Given versions/ holds only a non-Workit entry, When previewed then applied, Then the preview keeps it in the words apply prints", () => {
+  const home = tempHome();
+  const env = {
+    HOME: home,
+    USERPROFILE: home,
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
+  const paths = ownedInstall(env, "win32");
+  rmSync(paths.current);
+  rmSync(path.join(paths.versions, "9.0.0"), { recursive: true });
+  write(path.join(paths.versions, "mine", "doc"), "mine\n");
+  const plan = cliPlan({ env, platform: "win32" });
+  const detail = `no Workit version in it; ${paths.versions} kept (not Workit installs: mine)`;
+  expect(keptRow(plan, paths.versions)).toEqual({
+    kind: "keep-foreign",
+    path: paths.versions,
+    detail,
+  });
+  const result = applyUninstall({ hosts: [plan] }, { env, platform: "win32" });
+  expect(result.entries.find((entry) => entry.path === paths.versions)).toMatchObject({
+    status: "skipped",
+    detail,
+  });
+  expect(readFileSync(path.join(paths.versions, "mine", "doc"), "utf8")).toBe("mine\n");
+});
+
+test("Given versions/ holds a Workit version and a user's entry, Then the preview row already names the entry apply keeps", () => {
+  const home = tempHome();
+  const env = {
+    HOME: home,
+    USERPROFILE: home,
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
+  const paths = ownedInstall(env, "win32");
+  write(path.join(paths.versions, "mine", "doc"), "mine\n");
+  const kept = `${paths.versions} kept (not Workit installs: mine)`;
+  expect(keptRow(cliPlan({ env, platform: "win32" }), paths.versions)?.detail).toEndWith(
+    `; ${kept}`,
+  );
+  const result = applyCli({ env, platform: "win32" });
+  expect(result.entries.find((entry) => entry.path === paths.versions)?.detail).toBe(
+    `Workit versions removed; ${kept}`,
+  );
+});
+
+test("Given a completion file at Workit's place that is not Workit's, When previewed then applied, Then the preview keeps it in the words apply prints", () => {
+  const home = tempHome();
+  const fish = completionFile("fish", { HOME: home }, "linux") as string;
+  write(fish, "# my own fish completions\n");
+  const plan = cliPlan({ home, platform: "linux" });
+  const row = {
+    kind: "keep-foreign" as const,
+    path: fish,
+    detail: "not Workit's completion script, left untouched",
+  };
+  expect(plan.actions).toEqual([row]);
+  const result = applyUninstall({ hosts: [plan] }, { home, platform: "linux" });
+  expect(result.entries).toEqual([
+    { host: "cli", path: fish, status: "skipped", detail: row.detail },
+  ]);
+  expect(readFileSync(fish, "utf8")).toBe("# my own fish completions\n");
+});
+
+test("Given Workit's completion file replaced by the user's after the preview, When applied, Then it is kept in the preview's wording, not failed", () => {
+  const home = tempHome();
+  const zsh = completionFile("zsh", { HOME: home }, "linux") as string;
+  write(zsh, "# workit-owned-completion: generated by `workit completion zsh`\n");
+  const plan = cliPlan({ home, platform: "linux" });
+  expect(plan.actions.map((action) => action.kind)).toEqual(["remove-completion"]);
+  write(zsh, "# my own zsh completion\n");
+  expect(applyUninstall({ hosts: [plan] }, { home, platform: "linux" }).entries).toEqual([
+    {
+      host: "cli",
+      path: zsh,
+      status: "skipped",
+      detail: "not Workit's completion script, left untouched",
+    },
+  ]);
+});
+
+test("Given every row kept, Then the picker's last line names what was kept instead of 'Uninstall complete.'", () => {
+  const kept = {
+    ok: true,
+    skipped: [],
+    entries: [
+      {
+        host: "cli" as const,
+        path: "/h/bin",
+        status: "skipped" as const,
+        detail: "x",
+      },
+      {
+        host: "pi" as const,
+        path: "/h/ytrack",
+        status: "skipped" as const,
+        detail: "y",
+      },
+    ],
+  };
+  expect(uninstallOutcomeLine(kept)).toBe(
+    "Nothing removed: kept /h/bin, /h/ytrack (each row above says why).",
+  );
+  expect(
+    uninstallOutcomeLine({
+      ...kept,
+      entries: [...kept.entries, { host: "cli", path: "/h/v", status: "removed" }],
+    }),
+  ).toBe("Uninstall complete.");
+  expect(uninstallOutcomeLine({ ...kept, ok: false })).toBe("Uninstall finished with problems.");
+});
+
+test("Given a completion script kept as foreign at preview that gains Workit's marker before apply, Then the first remove-completion row removes only its own file", () => {
+  const home = tempHome();
+  const marker = "# workit-owned-completion: generated by `workit completion zsh`\n";
+  const zsh = completionFile("zsh", { HOME: home }, "linux") as string;
+  const bash = completionFile("bash", { HOME: home }, "linux") as string;
+  const fish = completionFile("fish", { HOME: home }, "linux") as string;
+  write(zsh, marker);
+  write(bash, marker);
+  write(fish, "# my own fish completions\n");
+  const plan = cliPlan({ home, platform: "linux" });
+  expect(plan.actions.map((action) => [action.kind, action.path])).toEqual([
+    ["remove-completion", zsh],
+    ["remove-completion", bash],
+    ["keep-foreign", fish],
+  ]);
+  write(fish, marker);
+  // The first row alone: the other rows' files are theirs to report.
+  const first = applyUninstall(
+    { hosts: [{ ...plan, actions: plan.actions.slice(0, 1) }] },
+    { home, platform: "linux" },
+  );
+  expect(first.entries).toEqual([{ host: "cli", path: zsh, status: "removed", detail: undefined }]);
+  expect([existsSync(zsh), existsSync(bash), existsSync(fish)]).toEqual([false, true, true]);
+  const rest = applyUninstall(
+    { hosts: [{ ...plan, actions: plan.actions.slice(1) }] },
+    { home, platform: "linux" },
+  );
+  expect(rest.entries.map((entry) => [entry.path, entry.status])).toEqual([
+    [bash, "removed"],
+    [fish, "skipped"],
+  ]);
+  expect([existsSync(bash), existsSync(fish)]).toEqual([false, true]);
 });
