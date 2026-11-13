@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  admittedHolders,
   cancelMarker,
   leaseQueue,
   leaseSlots,
@@ -13,6 +14,7 @@ import {
   processStart,
   queueDir,
   reclaim,
+  recordPeakRss,
   staleReason,
   stuckReason,
   ticketStale,
@@ -36,7 +38,7 @@ const slotFile = (dir: string, slot: number): string => path.join(dir, `slot-${s
 /** A cancel marker whose ticket is gone is debris after this. */
 const MARKER_TTL_MS = 10 * 60_000;
 
-export type Pruned = LeaseHolder & { reason: string; kind: "slot" | "waiter" };
+export type Pruned = LeaseHolder & { reason: string; kind: "slot" | "waiter" | "admitted" };
 
 /**
  * Free every slot whose holder is gone and drop every queued waiter whose
@@ -61,6 +63,12 @@ export function pruneLease(dir: string, slots: number, probe: LeaseProbe = {}): 
     const stale = entry.stale;
     if (reclaim(entry.file, (current) => !current || ticketStale(current, probe) !== null))
       pruned.push({ ...entry.holder, reason: stale, kind: "waiter" });
+  }
+  for (const entry of admittedHolders(dir, probe)) {
+    if (!entry.stale) continue;
+    const stale = entry.stale;
+    if (reclaim(entry.file, (current) => !current || staleReason(current, probe) !== null))
+      pruned.push({ ...holderFields(entry.record), reason: stale, kind: "admitted" });
   }
   try {
     const queue = queueDir(dir);
@@ -229,14 +237,25 @@ export function groupCpuTicks(pgid: number): number | null {
   if (!(pgid > 0)) return null;
   if (process.platform === "darwin") return psGroupCpu(pgid);
   if (process.platform !== "linux") return null;
+  let total = 0;
+  let seen = false;
+  for (const { fields } of groupMembers(pgid)) {
+    seen = true;
+    // utime, stime, cutime, cstime: fields 14-17 of /proc/<pid>/stat.
+    total += [11, 12, 13, 14].reduce((sum, at) => sum + (Number(fields[at]) || 0), 0);
+  }
+  return seen ? total : null;
+}
+
+/** The /proc entries of process group `pgid` (Linux), with their stat fields after the comm. */
+function groupMembers(pgid: number): Array<{ pid: string; fields: string[] }> {
   let names: string[];
   try {
     names = fs.readdirSync("/proc");
   } catch {
-    return null;
+    return [];
   }
-  let total = 0;
-  let seen = false;
+  const members: Array<{ pid: string; fields: string[] }> = [];
   for (const name of names) {
     if (!/^\d+$/u.test(name)) continue;
     let stat: string;
@@ -246,30 +265,65 @@ export function groupCpuTicks(pgid: number): number | null {
       continue;
     }
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    if (Number(fields[2]) !== pgid) continue;
-    seen = true;
-    // utime, stime, cutime, cstime: fields 14-17 of /proc/<pid>/stat.
-    total += [11, 12, 13, 14].reduce((sum, at) => sum + (Number(fields[at]) || 0), 0);
+    if (Number(fields[2]) === pgid) members.push({ pid: name, fields });
   }
-  return seen ? total : null;
+  return members;
+}
+
+/** Resident memory (bytes) of process group `pgid` now: /proc VmRSS on Linux, `ps` rss on macOS; null elsewhere. */
+export function groupRssBytes(pgid: number, run: typeof spawnSync = spawnSync): number | null {
+  if (!(pgid > 0)) return null;
+  if (process.platform === "darwin") {
+    const result = run("ps", ["-axo", "pgid=,rss="], { encoding: "utf8", timeout: 5000 });
+    if (result.error || result.status !== 0 || typeof result.stdout !== "string") return null;
+    let total = 0;
+    for (const line of result.stdout.split("\n")) {
+      const [group, rss] = line.trim().split(/\s+/u);
+      if (Number(group) === pgid && Number(rss) > 0) total += Number(rss) * 1024;
+    }
+    return total || null;
+  }
+  if (process.platform !== "linux") return null;
+  let total = 0;
+  for (const { pid } of groupMembers(pgid)) {
+    try {
+      const kb = /^VmRSS:\s+(\d+)\s+kB/mu.exec(fs.readFileSync(`/proc/${pid}/status`, "utf8"));
+      if (kb) total += Number(kb[1]) * 1024;
+    } catch {
+      // Gone between the reads.
+    }
+  }
+  return total || null;
 }
 
 /** Heartbeats are written at most this often. */
 export const HEARTBEAT_EVERY_MS = 30_000;
+/** The check group's RSS is sampled this often, for its peak. */
+const RSS_EVERY_MS = 5_000;
 
 export type Heartbeat = { touch: () => void; stop: () => void };
 
 /**
  * Refresh the held lease's `heartbeatAt` every `everyMs` while its check
- * printed since the last beat (`touch`) or its process group used CPU.
+ * printed since the last beat (`touch`) or its process group used CPU, and
+ * sample the group's RSS: its peak is noted on the lease and, on `stop`, kept
+ * as the check's measured charge for its next run (#326).
  */
 export function startHeartbeat(
   lease: HeldLease,
-  options: { everyMs?: number; cpu?: () => number | null; now?: () => number } = {},
+  options: {
+    everyMs?: number;
+    cpu?: () => number | null;
+    rss?: () => number | null;
+    rssEveryMs?: number;
+    now?: () => number;
+  } = {},
 ): Heartbeat {
   let active = false;
   let lastCpu: number | null = null;
+  let peak = 0;
   const cpu = options.cpu ?? (() => (lease.record.pgid ? groupCpuTicks(lease.record.pgid) : null));
+  const rss = options.rss ?? (() => (lease.record.pgid ? groupRssBytes(lease.record.pgid) : null));
   const timer = setInterval(() => {
     const ticks = cpu();
     const moved = ticks !== null && lastCpu !== null && ticks > lastCpu;
@@ -278,13 +332,30 @@ export function startHeartbeat(
     active = false;
     updateLease(lease, {
       heartbeatAt: new Date(options.now?.() ?? Date.now()).toISOString(),
+      ...(peak > 0 ? { peakRssBytes: peak } : {}),
     });
   }, options.everyMs ?? HEARTBEAT_EVERY_MS);
   timer.unref?.();
+  const sampler = setInterval(() => {
+    const bytes = rss();
+    if (bytes !== null && bytes > peak) peak = bytes;
+  }, options.rssEveryMs ?? RSS_EVERY_MS);
+  sampler.unref?.();
   return {
     touch: () => {
       active = true;
     },
-    stop: () => clearInterval(timer),
+    stop: () => {
+      clearInterval(timer);
+      clearInterval(sampler);
+      if (peak > 0)
+        recordPeakRss(
+          path.dirname(lease.file),
+          lease.record.check,
+          lease.record.cwd,
+          peak,
+          options.now?.(),
+        );
+    },
   };
 }

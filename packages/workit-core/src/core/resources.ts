@@ -21,6 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { tailLines, type CheckRun } from "../checks";
 import { stateDir } from "./heavy";
+import { describePressure, readPressure, type PressureReading } from "./pressure";
 import { processStartOf, type ProcessStartDeps } from "./store-lock";
 
 export { stateDir };
@@ -51,6 +52,20 @@ const AUTO_REAP_FACTOR = 3;
 const DEFAULT_MEMORY_SHARE = 0.4;
 const DEFAULT_CPU_SHARE = 0.7;
 const MAX_SLOTS = 64;
+/** The most units a `resources.budget` count may hold. */
+const MAX_UNITS = 1024;
+/**
+ * The automatic machine reserve (#326, decisions mvi7cb4w and mvi7mhmo): a
+ * quarter of RAM, at least 2 GiB and at most 6 GiB, is kept for the desktop
+ * and IDE; heavy checks and dev servers share the rest.
+ */
+const RESERVE_SHARE = 0.25;
+const RESERVE_MIN_BYTES = 2 * 1024 ** 3;
+const RESERVE_MAX_BYTES = 6 * 1024 ** 3;
+/** Cores kept for the desktop: 2 from 8 CPUs, else 1. A heavy check's default CPUQuota leaves them free. */
+const reserveCores = (cpus: number): number => (cpus >= 8 ? 2 : 1);
+/** A waiter queued this long holds its place: nobody behind it backfills the budget it needs. */
+export const DEFAULT_AGING_MS = 5 * 60_000;
 /** A slot file nobody could parse is a writer mid-create; after this it is debris. */
 const UNREADABLE_TTL_MS = 30_000;
 /** A reclaim guard lives for microseconds; one older than this was abandoned. */
@@ -126,6 +141,74 @@ function cpuValue(value: unknown, host: HostShape): number | Error {
  */
 export type ResourceSource = { label: string; trust: "machine" | "repo"; value: unknown };
 
+/** What a holder takes from the budget: count units and memory bytes. */
+export type Charge = { units: number; bytes: number };
+
+/**
+ * The weighted budget (#326). Two dimensions, both must fit: `units` (a count:
+ * `resources.slots`, or a `resources.budget` number; a check weighs 1 unless
+ * `resources.weights` says more) and `memoryBytes` (RAM less the reserve, or a
+ * `resources.budget` size), charged in bytes of measured peak RSS. A dev
+ * server holds memory and no units; with only `resources.slots` configured
+ * (`mode: "slots"`) checks are counted as before, not charged memory.
+ */
+export type Budget = {
+  mode: "slots" | "units" | "memory" | "default";
+  units: number;
+  memoryBytes: number;
+  reserveBytes: number;
+  /** Where the reserve came from. */
+  reserveSource: "automatic" | "configured";
+  /** Per check: a units weight, or a fixed memory charge in bytes. */
+  weights: Record<string, Partial<Charge>>;
+  /** The memory charge of a check with no measured run and no weight (its MemoryMax). */
+  defaultBytes: number;
+  agingMs: number;
+  /** The pressure gate; null turns it off (tests). */
+  pressure: (() => PressureReading) | null;
+};
+
+const autoReserve = (host: HostShape): number =>
+  Math.min(
+    RESERVE_MAX_BYTES,
+    Math.max(RESERVE_MIN_BYTES, Math.floor(host.totalMemBytes * RESERVE_SHARE)),
+  );
+
+/** The budget `slots` alone gives: N units, weight 1 each, no memory charge for checks, no pressure gate. */
+export const slotsBudget = (slots: number, host: HostShape = hostShape()): Budget => {
+  const reserve = autoReserve(host);
+  return {
+    mode: "slots",
+    units: slots,
+    memoryBytes: Math.max(0, host.totalMemBytes - reserve),
+    reserveBytes: reserve,
+    reserveSource: "automatic",
+    weights: {},
+    defaultBytes: Math.floor(host.totalMemBytes * DEFAULT_MEMORY_SHARE),
+    agingMs: DEFAULT_AGING_MS,
+    pressure: null,
+  };
+};
+
+/**
+ * The budget the last `resolveResourceSettings` on the real host gave (the CLI
+ * resolves its settings once per run), so `acquireLease` weighs a check by its
+ * name without its caller passing the budget.
+ */
+let resolvedBudget: Budget | null = null;
+
+/** A units weight (a whole number) or a memory charge (a size or percent of RAM). */
+function weightValue(value: unknown, host: HostShape): Partial<Charge> | Error {
+  if (typeof value === "number")
+    return Number.isInteger(value) && value >= 1 && value <= MAX_SLOTS
+      ? { units: value }
+      : new Error(`a units weight must be a whole number 1-${MAX_SLOTS}`);
+  const bytes = memoryValue(value, host);
+  return bytes instanceof Error
+    ? new Error(`must be a units weight (2) or a memory size ("4G")`)
+    : { bytes };
+}
+
 /**
  * Merge `resources` blocks over the defaults, machine sources before repo
  * ones. Lenient: an invalid or refused field is reported and the earlier
@@ -133,10 +216,30 @@ export type ResourceSource = { label: string; trust: "machine" | "repo"; value: 
  */
 export function resolveResourceSettings(
   sources: ResourceSource[],
-  host: HostShape = hostShape(),
-): { settings: ResourceSettings; warnings: string[] } {
+  host?: HostShape,
+): { settings: ResourceSettings; warnings: string[]; budget: Budget } {
+  const resolved = resolveWith(sources, host ?? hostShape());
+  if (!host) resolvedBudget = { ...resolved.budget, pressure: () => readPressure() };
+  return resolved;
+}
+
+function resolveWith(
+  sources: ResourceSource[],
+  host: HostShape,
+): { settings: ResourceSettings; warnings: string[]; budget: Budget } {
   let memory = Math.floor(host.totalMemBytes * DEFAULT_MEMORY_SHARE);
-  let cpu = Math.max(1, Math.round(host.cpus * DEFAULT_CPU_SHARE * 100));
+  let cpu = Math.max(
+    1,
+    Math.min(
+      Math.round(host.cpus * DEFAULT_CPU_SHARE * 100),
+      (host.cpus - reserveCores(host.cpus)) * 100,
+    ),
+  );
+  let slotsSet = false;
+  let units: number | null = null;
+  let memoryBudget: number | null = null;
+  let reserve: number | null = null;
+  const weights: Record<string, Partial<Charge>> = {};
   const settings: ResourceSettings = {
     slots: DEFAULT_SLOTS,
     heavy: [...DEFAULT_HEAVY_CHECKS],
@@ -170,9 +273,63 @@ export function resolveResourceSettings(
         Number.isInteger(slots) &&
         slots >= 1 &&
         slots <= MAX_SLOTS
-      )
+      ) {
         settings.slots = slots;
-      else warn("slots", `must be an integer 1-${MAX_SLOTS}`);
+        slotsSet = true;
+      } else warn("slots", `must be an integer 1-${MAX_SLOTS}`);
+    }
+    if (value.budget !== undefined) {
+      const raw = value.budget;
+      const count =
+        typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= MAX_UNITS
+          ? raw
+          : null;
+      const bytes = count === null ? memoryValue(raw, host) : null;
+      if (count === null && bytes instanceof Error)
+        warn(
+          "budget",
+          `must be a number of units (1-${MAX_UNITS}) or a memory size ("24G", "60%")`,
+        );
+      else if (repo) {
+        // A repo may only lower the machine's budget, in the same unit.
+        const lower =
+          count !== null
+            ? units !== null && count <= units
+            : memoryBudget !== null && (bytes as number) <= memoryBudget;
+        if (!lower) machineOnly("budget");
+        else if (count !== null) units = count;
+        else memoryBudget = bytes as number;
+      } else if (count !== null) {
+        units = count;
+        memoryBudget = null;
+      } else {
+        memoryBudget = bytes as number;
+        units = null;
+      }
+    }
+    if (value.reserve !== undefined) {
+      const next = memoryValue(value.reserve, host);
+      if (next instanceof Error)
+        warn("reserve", 'must be a percent of RAM ("20%") or a size ("6G")');
+      // A larger reserve tightens; a repo cannot lower the machine's.
+      else if (repo && next < (reserve ?? autoReserve(host))) machineOnly("reserve");
+      else reserve = next;
+    }
+    if (value.weights !== undefined) {
+      if (!isRecord(value.weights)) warn("weights", "must map check names to weights");
+      else
+        for (const [name, raw] of Object.entries(value.weights)) {
+          const weight = weightValue(raw, host);
+          if (weight instanceof Error) warn(`weights.${name}`, weight.message);
+          // A repo may only make its checks weigh more.
+          else if (
+            repo &&
+            ((weight.units !== undefined && weight.units < (weights[name]?.units ?? 1)) ||
+              (weight.bytes !== undefined && weight.bytes < (weights[name]?.bytes ?? memory)))
+          )
+            machineOnly(`weights.${name}`);
+          else weights[name] = { ...weights[name], ...weight };
+        }
     }
     if (value.scope !== undefined) {
       if (repo) machineOnly("scope");
@@ -228,14 +385,48 @@ export function resolveResourceSettings(
   }
   // More slots run more heavy checks at once, each up to memoryMax: say when together they can take all RAM.
   const share = Math.round((memory / host.totalMemBytes) * 100);
-  if (settings.slots > 1 && settings.slots * memory > host.totalMemBytes)
+  if (
+    units === null &&
+    memoryBudget === null &&
+    settings.slots > 1 &&
+    settings.slots * memory > host.totalMemBytes
+  )
     warnings.push(
       `slots: ${settings.slots} heavy checks at ${share}% of RAM each can use ${settings.slots * share}% of it; lower memoryMax to about ${Math.floor(80 / settings.slots)}% or use fewer slots`,
     );
   settings.memoryMax = String(memory);
   settings.cpuQuota = `${cpu}%`;
-  return { settings, warnings };
+  const reserveBytes = reserve ?? autoReserve(host);
+  const mode: Budget["mode"] =
+    units !== null
+      ? "units"
+      : memoryBudget !== null
+        ? "memory"
+        : slotsSet && reserve === null && Object.keys(weights).length === 0
+          ? "slots"
+          : "default";
+  const capacity = units ?? (memoryBudget !== null ? MAX_SLOTS : settings.slots);
+  // The slot files a check may take: as many as can hold at once (every weight is at least 1 unit).
+  settings.slots = Math.min(MAX_SLOTS, capacity);
+  const budget: Budget = {
+    mode,
+    units: capacity,
+    memoryBytes: memoryBudget ?? Math.max(0, host.totalMemBytes - reserveBytes),
+    reserveBytes,
+    reserveSource: reserve === null ? "automatic" : "configured",
+    weights,
+    defaultBytes: memory,
+    agingMs: DEFAULT_AGING_MS,
+    pressure: null,
+  };
+  return { settings, warnings, budget };
 }
+
+/** "6.0 GiB". */
+export const formatBytes = (bytes: number): string =>
+  bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(1)} GiB`
+    : `${Math.max(0, Math.round(bytes / 1024 ** 2))} MiB`;
 
 /** Seconds (a number) or a duration ("30m") as ms; null when it is neither. */
 const durationValue = (value: unknown): number | null =>
@@ -293,6 +484,15 @@ export type LeaseRecord = {
    * back those behind it. Absent on older tickets, which may take any slot.
    */
   slots?: number | null;
+  /** What holds it: a heavy check (absent on older leases) or an admitted holder such as a dev server. */
+  kind?: string;
+  /** Its charge on the budget (absent on older leases: 1 unit, the reader's default memory charge). */
+  units?: number;
+  bytes?: number;
+  /** The highest RSS of its check group seen so far (the heartbeat samples it). */
+  peakRssBytes?: number | null;
+  /** The registry's id for an admitted holder (`workit stop <id>`). */
+  ref?: string | null;
 };
 
 const readText = (file: string): string | null => {
@@ -506,6 +706,12 @@ export function autoReapReason(
 export type LeaseHolder = Pick<LeaseRecord, "pid" | "check" | "cwd" | "session" | "startedAt"> & {
   /** Why the holder looks stuck (stuckReason); absent or null when it does not. */
   stuck?: string | null;
+  /** Not a heavy check: an admitted holder (`server`), or `pressure` standing for the pressure gate. */
+  kind?: string;
+  /** An admitted holder's registry id. */
+  ref?: string | null;
+  /** An admitted holder's memory charge. */
+  bytes?: number;
 };
 
 const holderOf = (lease: LeaseRecord): LeaseHolder => ({
@@ -514,6 +720,9 @@ const holderOf = (lease: LeaseRecord): LeaseHolder => ({
   cwd: lease.cwd,
   session: lease.session,
   startedAt: lease.startedAt,
+  ...(lease.kind && lease.kind !== "check"
+    ? { kind: lease.kind, ref: lease.ref ?? null, bytes: lease.bytes ?? 0 }
+    : {}),
 });
 
 /** Why a queued ticket's owner (the process that started its workit) is gone, or null. */
@@ -604,6 +813,8 @@ export type AcquireOptions = {
    * waiting, in the same place in the queue (0 gives up as `timeout`).
    */
   onLimit?: (status: QueueStatus) => number;
+  /** The weighted budget; default: the one `resolveResourceSettings` gave for these slots, else `slots` alone. */
+  budget?: Budget;
   /** Overrides for tests. */
   probe?: LeaseProbe;
   pid?: number;
@@ -925,7 +1136,7 @@ export function fairOrder<T extends { holder: LeaseHolder }>(
     .map(({ entry }) => entry);
 }
 
-type Waiter = { name: string; holder: LeaseHolder; slots: number | null };
+type Waiter = { name: string; holder: LeaseHolder; slots: number | null; record?: LeaseRecord };
 
 /** The live tickets served before `own` (a ticket name, or "~" before queueing), removing stale ones on the way. */
 function waitersAhead(
@@ -948,6 +1159,7 @@ function waitersAhead(
       name,
       holder: entry.holder,
       slots: typeof slots === "number" && slots > 0 ? slots : null,
+      record: entry.record,
     });
   }
   const order = fairOrder(
@@ -987,11 +1199,24 @@ export function liveHolders(
   probe: LeaseProbe = {},
   maxHoldMs = DEFAULT_MAX_HOLD_MS,
 ): Map<number, LeaseHolder> {
-  const live = new Map<number, LeaseHolder>();
+  return new Map(
+    [...liveSlots(dir, slots, probe, maxHoldMs)].map(([slot, { holder }]) => [slot, holder]),
+  );
+}
+
+/** liveHolders with each holder's record (null when unreadable). */
+function liveSlots(
+  dir: string,
+  slots: number,
+  probe: LeaseProbe,
+  maxHoldMs: number,
+): Map<number, { holder: LeaseHolder; record: LeaseRecord | null }> {
+  const live = new Map<number, { holder: LeaseHolder; record: LeaseRecord | null }>();
   for (const slot of leaseSlots(dir, slots, probe, maxHoldMs)) {
     if (!slot.holder || slot.stale) continue;
     const record = parseLease(readText(path.join(dir, `slot-${slot.slot}.json`)));
-    if (!record || !autoReapReason(record, maxHoldMs, probe.now)) live.set(slot.slot, slot.holder);
+    if (!record || !autoReapReason(record, maxHoldMs, probe.now))
+      live.set(slot.slot, { holder: slot.holder, record });
   }
   return live;
 }
@@ -1015,6 +1240,360 @@ export function slotLeft(
   }
   return free.some((slot) => slot < slots);
 }
+
+// ---------------------------------------------------------------------------
+// the weighted budget (#326)
+//
+// A check's charge is its units weight (default 1) and its memory: a fixed
+// `resources.weights` size, else its last measured peak RSS in this checkout
+// (`rss.json`, which the heartbeat keeps), else its MemoryMax. A waiter whose
+// charge fits what is free runs ahead of bigger waiters (backfill), until one
+// of them has waited `agingMs`: from then on nobody behind it takes what it
+// needs. Admitted holders (dev servers, `admit`) charge memory only, live in
+// `admitted/` and never take a slot file, so an older CLI never counts them.
+
+const RSS_FILE = "rss.json";
+const MAX_RSS_ENTRIES = 512;
+const rssKey = (check: string, cwd: string): string => `${check}\u0000${cwd}`;
+
+function readRss(dir: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(path.join(dir, RSS_FILE), "utf8"));
+    return isRecord(value) && isRecord(value.entries) ? value.entries : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The last measured peak RSS (bytes) of `check` run in `cwd`, or null. */
+export function measuredRss(dir: string, check: string, cwd: string): number | null {
+  const entry = readRss(dir)[rssKey(check, cwd)];
+  return isRecord(entry) && typeof entry.bytes === "number" && entry.bytes > 0 ? entry.bytes : null;
+}
+
+/** Keep a check's measured peak RSS for its next charge. Best effort: a lost race drops one sample. */
+export function recordPeakRss(
+  dir: string,
+  check: string,
+  cwd: string,
+  bytes: number,
+  now = Date.now(),
+): void {
+  if (!(bytes > 0)) return;
+  try {
+    const entries = readRss(dir);
+    const key = rssKey(check, cwd);
+    delete entries[key];
+    entries[key] = { bytes: Math.round(bytes), at: new Date(now).toISOString() };
+    const kept = Object.fromEntries(Object.entries(entries).slice(-MAX_RSS_ENTRIES));
+    const file = path.join(dir, RSS_FILE);
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify({ entries: kept })}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch {
+    // The next run measures again.
+  }
+}
+
+/** What `check` run in `cwd` takes from `budget`. */
+export function checkCharge(budget: Budget, dir: string, check: string, cwd: string): Charge {
+  const weight = budget.weights[check] ?? {};
+  return {
+    units: weight.units ?? 1,
+    bytes: weight.bytes ?? measuredRss(dir, check, cwd) ?? budget.defaultBytes,
+  };
+}
+
+/** What a holder's or waiter's record takes: older records weigh 1 unit and the default memory. */
+function recordCharge(record: LeaseRecord | null | undefined, budget: Budget): Charge {
+  const admitted = Boolean(record?.kind && record.kind !== "check");
+  return {
+    units: admitted ? 0 : typeof record?.units === "number" ? record.units : 1,
+    bytes: Math.max(
+      typeof record?.bytes === "number" ? record.bytes : budget.defaultBytes,
+      record?.peakRssBytes ?? 0,
+    ),
+  };
+}
+
+/**
+ * Does `own` fit once each waiter ahead (serving order) takes its charge? A
+ * waiter ahead that does not fit is passed (backfill) unless it has waited
+ * `agingMs`: then it holds the line. A charge over the whole budget counts
+ * as the whole budget, so it runs alone. `memory` false counts units only.
+ */
+export function fitsBudget(
+  budget: Pick<Budget, "units" | "memoryBytes" | "agingMs">,
+  used: Charge,
+  ahead: ReadonlyArray<{ charge: Charge; waitedMs: number }>,
+  own: Charge,
+  memory = true,
+): boolean {
+  const free = { units: budget.units - used.units, bytes: budget.memoryBytes - used.bytes };
+  const fits = (charge: Charge) =>
+    Math.min(charge.units, budget.units) <= free.units &&
+    (!memory || Math.min(charge.bytes, budget.memoryBytes) <= free.bytes);
+  for (const waiter of ahead) {
+    if (fits(waiter.charge)) {
+      free.units -= Math.min(waiter.charge.units, budget.units);
+      free.bytes -= Math.min(waiter.charge.bytes, budget.memoryBytes);
+    } else if (waiter.waitedMs >= budget.agingMs) return false;
+  }
+  return fits(own);
+}
+
+export const admittedDir = (dir: string): string => path.join(dir, "admitted");
+
+export type AdmittedEntry = { file: string; record: LeaseRecord; stale: string | null };
+
+/** The admitted holders (dev servers) in `dir`. Read-only: nothing is removed. */
+export function admittedHolders(dir: string, probe: LeaseProbe = {}): AdmittedEntry[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(admittedDir(dir));
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => name.endsWith(".json"))
+    .toSorted()
+    .flatMap((name) => {
+      const file = path.join(admittedDir(dir), name);
+      const record = parseLease(readText(file));
+      return record ? [{ file, record, stale: staleReason(record, probe) }] : [];
+    });
+}
+
+/** Live check holders and admitted holders, with what they take from `budget`. */
+function budgetUse(
+  dir: string,
+  slots: number,
+  budget: Budget,
+  probe: LeaseProbe,
+  maxHoldMs: number,
+): { used: Charge; checks: LeaseHolder[]; admitted: LeaseHolder[] } {
+  const used: Charge = { units: 0, bytes: 0 };
+  const checks = liveSlots(dir, slotRange(dir, slots), probe, maxHoldMs);
+  for (const { record } of checks.values()) {
+    const charge = recordCharge(record, budget);
+    used.units += charge.units;
+    used.bytes += charge.bytes;
+  }
+  const admitted: LeaseHolder[] = [];
+  for (const entry of admittedHolders(dir, probe)) {
+    if (entry.stale) continue;
+    used.bytes += recordCharge(entry.record, budget).bytes;
+    admitted.push(holderOf(entry.record));
+  }
+  return { used, checks: [...checks.values()].map((slot) => slot.holder), admitted };
+}
+
+/** Run `fn` under the budget's mkdir guard; null when another process holds it. */
+function underGuard<T>(dir: string, fn: () => T): T | null {
+  const guard = path.join(dir, "budget.guard");
+  try {
+    fs.mkdirSync(guard);
+  } catch {
+    try {
+      if (Date.now() - fs.statSync(guard).mtimeMs > GUARD_TTL_MS)
+        fs.rmSync(guard, { force: true, recursive: true });
+    } catch {
+      // Gone already.
+    }
+    return null;
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(guard, { force: true, recursive: true });
+  }
+}
+
+/** The pressure gate as a holder, so a wait line names it. */
+const pressureHolder = (reading: PressureReading, now: number): LeaseHolder => ({
+  pid: 0,
+  check: describePressure(reading) ?? "pressure",
+  cwd: "",
+  session: null,
+  startedAt: new Date(now).toISOString(),
+  kind: "pressure",
+});
+
+/** The budget a lease acquisition uses: the caller's, else the one the CLI resolved for these slots. */
+function budgetFor(options: AcquireOptions): Budget {
+  if (options.budget) return options.budget;
+  if (resolvedBudget && Math.min(MAX_SLOTS, resolvedBudget.units) === options.slots)
+    return resolvedBudget;
+  return slotsBudget(options.slots);
+}
+
+export type AdmitOptions = {
+  /** The lease dir (leaseDir(env)). */
+  dir: string;
+  /** What holds the weight: `server` for a dev server. */
+  kind: string;
+  /** What runs ("vite", "docker compose up"), for the holder lines. */
+  label: string;
+  /** Its measured RSS in bytes (or its expected RSS before the first sample). */
+  rssBytes: number;
+  cwd: string;
+  session: string | null;
+  /** The holder's process (default: this one); the weight is freed once it is gone. */
+  pid?: number;
+  /** The registry's id, named in a refusal's unblock (`workit stop <id>`). */
+  ref?: string | null;
+  /** Default: the budget the CLI resolved, else the machine's defaults. */
+  budget?: Budget;
+  probe?: LeaseProbe;
+  now?: number;
+};
+
+export type Admission = {
+  record: LeaseRecord;
+  file: string;
+  /** Re-measure: charge `rssBytes` from now on. */
+  update: (rssBytes: number) => void;
+  release: () => void;
+};
+
+export type AdmitResult =
+  | { ok: true; admission: Admission }
+  | {
+      ok: false;
+      reason: "budget" | "pressure" | "unavailable";
+      /** Who holds the memory budget (checks and admitted holders). */
+      holders: LeaseHolder[];
+      pressure: PressureReading | null;
+      /** One line: what was refused and why. */
+      line: string;
+      unblock: string;
+    };
+
+const GUARD_TRIES = 40;
+const pauseSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * The accounting call for a long-lived holder (decider ruling 6): charge
+ * `rssBytes` against the memory budget. It fits, and is recorded until
+ * `release()` or its process ends; or it is refused at once, never queued,
+ * naming the holders or the pressure and the unblock. It never takes a slot
+ * or a queue ticket.
+ */
+export function admit(options: AdmitOptions): AdmitResult {
+  const budget = options.budget ?? resolvedBudget ?? defaultBudget();
+  const unblockFor = (holders: LeaseHolder[]) => {
+    const refs = holders.flatMap((holder) => (holder.ref ? [holder.ref] : []));
+    return `${refs.length ? `workit stop ${refs.join(" ")}, or ` : ""}start it with --no-lease --reason "<why>" (recorded in the ledger)`;
+  };
+  const pressure = budget.pressure?.() ?? null;
+  if (pressure?.critical)
+    return {
+      ok: false,
+      reason: "pressure",
+      holders: [],
+      pressure,
+      line: `${options.label} not started: ${describePressure(pressure)}`,
+      unblock: `wait for the pressure to drop, or ${unblockFor([])}`,
+    };
+  const now = options.now ?? Date.now();
+  const pid = options.pid ?? process.pid;
+  const boot = bootId();
+  const record: LeaseRecord = {
+    id: randomUUID(),
+    pid,
+    processStart: processStart(pid),
+    bootId: boot,
+    bootTime: boot ? null : bootTime(),
+    check: options.label,
+    cwd: options.cwd,
+    session: options.session,
+    startedAt: new Date(now).toISOString(),
+    scope: null,
+    kind: options.kind,
+    units: 0,
+    bytes: Math.max(0, Math.round(options.rssBytes)),
+    ref: options.ref ?? null,
+  };
+  const file = path.join(
+    admittedDir(options.dir),
+    `${String(now).padStart(15, "0")}-${record.id}.json`,
+  );
+  try {
+    fs.mkdirSync(admittedDir(options.dir), { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "unavailable",
+      holders: [],
+      pressure,
+      line: `${options.label}: the lease dir is unavailable: ${(error as Error).message}`,
+      unblock: unblockFor([]),
+    };
+  }
+  for (let attempt = 0; attempt < GUARD_TRIES; attempt += 1) {
+    const outcome = underGuard(options.dir, () => {
+      const probe = options.probe ?? {};
+      for (const entry of admittedHolders(options.dir, probe))
+        if (entry.stale) removeOwn(entry.file, entry.record.id);
+      const use = budgetUse(options.dir, MAX_SLOTS, budget, probe, DEFAULT_MAX_HOLD_MS);
+      const holders = [...use.checks, ...use.admitted];
+      if (use.used.bytes + (record.bytes ?? 0) > budget.memoryBytes)
+        return { ok: false as const, holders, used: use.used.bytes };
+      fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: "wx" });
+      return { ok: true as const };
+    });
+    if (outcome === null) {
+      pauseSync(5);
+      continue;
+    }
+    if (!outcome.ok)
+      return {
+        ok: false,
+        reason: "budget",
+        holders: outcome.holders,
+        pressure,
+        line: `${options.label} not started: it needs ${formatBytes(record.bytes ?? 0)} and the memory budget has ${formatBytes(Math.max(0, budget.memoryBytes - outcome.used))} of ${formatBytes(budget.memoryBytes)} free (${formatBytes(budget.reserveBytes)} reserved for the desktop); held by ${outcome.holders.map((holder) => describeHolder(holder, now)).join("; ") || "nobody"}`,
+        unblock: unblockFor(outcome.holders),
+      };
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      process.off("exit", release);
+      removeOwn(file, record.id);
+    };
+    if (pid === process.pid) process.on("exit", release);
+    return {
+      ok: true,
+      admission: {
+        record,
+        file,
+        update: (rssBytes) => {
+          record.bytes = Math.max(0, Math.round(rssBytes));
+          if (released || parseLease(readText(file))?.id !== record.id) return;
+          const temp = `${file}.${process.pid}.tmp`;
+          fs.writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+          fs.renameSync(temp, file);
+        },
+        release,
+      },
+    };
+  }
+  return {
+    ok: false,
+    reason: "unavailable",
+    holders: [],
+    pressure,
+    line: `${options.label}: the budget guard stayed busy`,
+    unblock: unblockFor([]),
+  };
+}
+
+/** The machine's default budget, with the real pressure gate. */
+const defaultBudget = (): Budget => ({
+  ...resolveWith([], hostShape()).budget,
+  pressure: () => readPressure(),
+});
 
 function writeTicket(file: string, record: LeaseRecord): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -1064,6 +1643,10 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   const clock = options.clock ?? realClock;
   const pid = options.pid ?? process.pid;
   const boot = bootId();
+  const budget = budgetFor(options);
+  // `slots` alone counts checks as before; any other budget weighs them.
+  const weighted = budget.mode !== "slots";
+  const charge = weighted ? checkCharge(budget, options.dir, options.check, options.cwd) : null;
   const record: LeaseRecord = {
     id: randomUUID(),
     pid,
@@ -1080,6 +1663,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     scope: null,
     heartbeatAt: null,
     maxHoldMs: options.holdMs ?? options.maxHoldMs ?? null,
+    ...(charge ? { units: charge.units, bytes: charge.bytes } : {}),
   };
   try {
     fs.mkdirSync(options.dir, { recursive: true, mode: 0o700 });
@@ -1139,11 +1723,38 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
       const waiters = waitersAhead(options, queued ? name : "~", self, [...before.values()]);
       const aheadOf = waiters.map((waiter) => waiter.holder);
       const ahead = aheadOf.length;
-      if (slotLeft(new Set(before.keys()), waiters, options.slots)) {
+      const reading = budget.pressure?.() ?? null;
+      const pressed = reading?.critical ? reading : null;
+      const use = weighted
+        ? budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHold)
+        : null;
+      const fitsNow = (current: { used: Charge } | null, line: readonly Waiter[]) =>
+        current && charge
+          ? fitsBudget(
+              budget,
+              current.used,
+              line.map((waiter) => ({
+                charge: recordCharge(waiter.record, budget),
+                waitedMs: clock.now() - Date.parse(waiter.holder.startedAt),
+              })),
+              charge,
+            )
+          : slotLeft(new Set(before.keys()), line, options.slots);
+      if (!pressed && fitsNow(use, waiters)) {
         const now = new Date(clock.now()).toISOString();
         record.startedAt = now;
         record.heartbeatAt = now;
-        const outcome = tryOnce(options, record, reclaimed);
+        // A weighted take re-checks the budget under its guard, so two waiters never both fit the same room.
+        const outcome = weighted
+          ? (underGuard(options.dir, () =>
+              fitsNow(
+                budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHold),
+                [],
+              )
+                ? tryOnce(options, record, reclaimed)
+                : null,
+            ) ?? { holders: [] })
+          : tryOnce(options, record, reclaimed);
         if ("slot" in outcome) {
           recordGrant(options.dir, self, clock.now());
           const waitedMs = queued ? waited : 0;
@@ -1171,7 +1782,12 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
           };
         }
       }
-      const holders = [...holding().values()];
+      // Name everything that keeps this check waiting: the pressure gate, the checks, the admitted holders.
+      const holders = [
+        ...(pressed ? [pressureHolder(pressed, clock.now())] : []),
+        ...holding().values(),
+        ...(use?.admitted ?? []),
+      ];
       if (!waitedOn.length) {
         waitedOn = holders;
         options.onWait?.(holders);
@@ -1249,7 +1865,10 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
  */
 export function updateLease(
   lease: HeldLease,
-  patch: Pick<Partial<LeaseRecord>, "scope" | "pgid" | "pgidStart" | "heartbeatAt">,
+  patch: Pick<
+    Partial<LeaseRecord>,
+    "scope" | "pgid" | "pgidStart" | "heartbeatAt" | "peakRssBytes"
+  >,
 ) {
   Object.assign(lease.record, patch);
   try {
@@ -1317,7 +1936,10 @@ function inLeaseGroup(
 }
 /** "test, pid 123, 1m 40s, /repo/wt" for a waiting or timeout message; a stuck holder says so. */
 export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
+  if (holder.kind === "pressure") return holder.check;
   const age = formatWait(now - Date.parse(holder.startedAt));
+  if (holder.kind)
+    return `${holder.kind} ${holder.check}${holder.ref ? ` (${holder.ref})` : ""}, pid ${holder.pid}, ${formatBytes(holder.bytes ?? 0)}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}`;
   return `${holder.check}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}${holder.stuck ? `, stuck? (${holder.stuck})` : ""}`;
 }
 
@@ -1422,6 +2044,9 @@ export type SlotState = {
   stale: string | null;
   /** Why its live holder looks stuck (`workit lock reap` frees it), or null. */
   stuck: string | null;
+  /** Its charge on a weighted budget (absent on a counted lease). */
+  units?: number;
+  bytes?: number;
 };
 
 /**
@@ -1444,6 +2069,10 @@ export function leaseSlots(
       holder: lease ? { ...holderOf(lease), ...(stuck ? { stuck } : {}) } : null,
       stale,
       stuck,
+      ...(typeof lease?.units === "number" ? { units: lease.units } : {}),
+      ...(typeof lease?.bytes === "number"
+        ? { bytes: Math.max(lease.bytes, lease.peakRssBytes ?? 0) }
+        : {}),
     });
   }
   return states;
