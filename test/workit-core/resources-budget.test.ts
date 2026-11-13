@@ -321,6 +321,31 @@ test("Given load that never drops, When a check waits on pressure alone, Then it
   if (got.ok) got.lease.release();
 });
 
+test("Given the pressure gate releases on a later clock read than the loop's start, When the lease is granted, Then waitedMs counts the whole wait (never under the pressure maximum)", async () => {
+  // Fake clock: the pressure probe itself takes 20 ms after its first read, so
+  // the gate's clock read lands well after the loop top (a slow probe under load).
+  let now = 0;
+  let reads = 0;
+  const clock = {
+    now: () => now,
+    sleep: async (ms: number) => {
+      now += ms;
+    },
+  };
+  const budget = units({
+    pressureMaxWaitMs: 80,
+    pressure: () => {
+      reads += 1;
+      if (reads > 1) now += 20;
+      return readPressure({ platform: "darwin", loadavg: () => [20, 10, 5], cpus: () => 4 });
+    },
+  });
+  const got = await acquireLease(options(leases(), { budget, clock, waitMs: 10_000 }));
+  expect(got.ok).toBe(true);
+  expect(got.ok && got.lease.waitedMs).toBeGreaterThanOrEqual(80);
+  if (got.ok) got.lease.release();
+});
+
 test("Given a wait held by the pressure gate and a server, When it is estimated, Then only checks count: no 'never measured' for the gate", () => {
   const now = Date.parse("2026-11-13T12:00:00Z");
   const at = new Date(now).toISOString();
