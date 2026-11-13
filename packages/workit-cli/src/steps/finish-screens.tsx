@@ -10,6 +10,7 @@ import {
 import { detectBranchPolicy, repoBranchPreset } from "@workit-dev/core/src/core/branch-policy.ts";
 import { projectTarget, type ProjectTarget } from "@workit-dev/core/src/core/hygiene.ts";
 import { buildSetupPreview, parseList, type SetupMutation } from "../logic";
+import type { SetupPreview } from "../admin/setup";
 import { resolveBasePath } from "../wizard-state";
 import { SelectList } from "./select-list";
 import { SphereSpinner } from "./sphere-spinner";
@@ -287,6 +288,30 @@ function YtrackLine({
   );
 }
 
+/** The summary's ytrack path lines: the `ytrack auth paths` changes Apply will make, or why none. */
+export function YtrackPathsLines({
+  paths,
+}: {
+  paths: SetupPreview["ytrackPaths"];
+}): JSX.Element | null {
+  if (!paths) return null;
+  if ("skipped" in paths)
+    return (
+      <Text color={inkColor("warn")}>
+        ytrack paths: skipped — {paths.skipped} · {paths.unblock}
+      </Text>
+    );
+  return (
+    <>
+      {paths.planned.map((fix) => (
+        <Text key={fix.host}>
+          ytrack paths: <Text color={inkColor("ok")}>{fix.add.join(", ")}</Text> {"->"} {fix.host}
+        </Text>
+      ))}
+    </>
+  );
+}
+
 export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   const policy = effectivePolicy(draft.values);
   // WZ-08: the summary renders the authoritative preview (read-only) — the
@@ -380,6 +405,7 @@ export function SummaryScreen({ draft, dispatch }: ScreenProps): JSX.Element {
         </Text>
       </Text>
       <YtrackLine ytrack={preview.ytrack} />
+      <YtrackPathsLines paths={preview.ytrackPaths} />
       <Text>
         VCS provider: <Text color={inkColor("ok")}>{draft.values.vcsProvider}</Text>
       </Text>
