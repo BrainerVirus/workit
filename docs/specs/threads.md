@@ -18,6 +18,15 @@ through one adapter on both runtimes Workit runs on.
   processes creating it at once both end up on the one file). SQLite gives the
   `-wal` and `-shm` files the main file's mode. Windows has no POSIX mode; the
   file inherits the state dir's ACL.
+- An existing file is checked before SQLite opens it, and so are `-wal` and
+  `-shm` when present: each must be a regular file (never a symbolic link,
+  dangling or not), owned by this user, with no group or other mode bits.
+  Anything else is refused with `ThreadsUnsafeError`, naming the path and the
+  fix (`chmod 600 <path>` for a loose mode; remove a link; move aside a
+  directory, another user's file or a file that is not a SQLite database).
+  Workit never follows, chmods or reuses such a file silently: the store
+  decides which processes the registry signals. Windows skips the owner and
+  mode checks (no POSIX uid or mode; the ACL is inherited).
 - Journal mode WAL: readers never block the writer, and one writer at a time.
 - `busy_timeout` 5000 ms on every connection: a writer that finds the write
   lock held waits and retries for that long, then fails with a clear

@@ -6,12 +6,15 @@ import { Database } from "bun:sqlite";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -21,6 +24,7 @@ import {
   openThreadsStore,
   ThreadsBusyError,
   ThreadsSchemaError,
+  ThreadsUnsafeError,
 } from "@/packages/workit-core/src/store/threads/store";
 import { spawnHeavyTimeout } from "../shared/timeouts";
 
@@ -45,14 +49,16 @@ const waitFor = (name) => {
 };
 const signal = (name) => fs.writeFileSync(path.join(dir, name), "");
 
-if (mode === "open") {
+if (mode === "open" || mode === "open-as") {
+  // open-as: this process claims another uid, as if the file were someone else's.
+  if (mode === "open-as") process.getuid = () => Number(args[0]);
   try {
     const store = openThreadsStore({ env });
     const row = store.db.get("SELECT value FROM meta WHERE key = 'schema_version'");
     console.log(JSON.stringify({ file: store.file, version: row.value }));
     store.close();
   } catch (error) {
-    console.error(error.message);
+    console.error(error.name + ": " + error.message);
     process.exitCode = 3;
   }
 } else if (mode === "race") {
@@ -280,6 +286,8 @@ const newerDb = (state: string): string => {
   db.exec("INSERT INTO meta VALUES ('schema_version', '2')");
   db.exec("CREATE TABLE future (id TEXT PRIMARY KEY)");
   db.close();
+  // A newer Workit makes its file private too.
+  chmodSync(file, 0o600);
   return file;
 };
 
@@ -355,3 +363,184 @@ test.each(HOOK_ENTRIES)(
     expect(code).not.toMatch(/(?:node|bun):sqlite/u);
   },
 );
+
+// Opening an existing threads.db: the store decides which processes the
+// registry signals, so it never follows, repairs or reuses an unsafe file.
+type UnsafeCase = {
+  name: string;
+  /** Builds the unsafe layout; returns what the refusal must say and the uid the opener claims. */
+  setup: (state: string) => { message: (file: string) => string; claimUid?: number };
+  /** What must still hold after the refusal. */
+  after: (state: string) => void;
+};
+
+const fixAside = (file: string) => `move it aside (\`mv ${file} ${file}.unsafe\`)`;
+const refusal = (file: string, detail: string, fix: string) =>
+  `ThreadsUnsafeError: ${file} is not safe to open: ${detail}. Fix: ${fix}. Nothing was opened.`;
+const linkRefusal = (file: string) =>
+  refusal(
+    file,
+    "it is a symbolic link, which Workit never follows",
+    `remove the link (\`rm ${file}\`); Workit then creates its own file`,
+  );
+const modeOf = (file: string) => statSync(file).mode & 0o777;
+const dbIn = (state: string) => path.join(state, "threads.db");
+const elsewhere = () => tempDir("wk-threads-elsewhere-");
+const GARBAGE = "this is not a sqlite file\n".repeat(20);
+
+// Windows has no POSIX mode or uid, and making a symbolic link there needs a
+// privilege CI does not hold: those cases run on Linux and macOS only.
+const POSIX_CASES: UnsafeCase[] = [
+  {
+    name: "a symbolic link to another file",
+    setup: (state) => {
+      const target = path.join(elsewhere(), "target.db");
+      writeFileSync(target, "kept");
+      symlinkSync(target, dbIn(state));
+      writeFileSync(path.join(state, "target-path"), target);
+      return { message: linkRefusal };
+    },
+    after: (state) =>
+      expect(readFileSync(readFileSync(path.join(state, "target-path"), "utf8"), "utf8")).toBe(
+        "kept",
+      ),
+  },
+  {
+    name: "a dangling symbolic link",
+    setup: (state) => {
+      const target = path.join(elsewhere(), "never.db");
+      symlinkSync(target, dbIn(state));
+      writeFileSync(path.join(state, "target-path"), target);
+      return { message: linkRefusal };
+    },
+    after: (state) =>
+      expect(existsSync(readFileSync(path.join(state, "target-path"), "utf8"))).toBe(false),
+  },
+  {
+    name: "a file with mode 0666",
+    setup: (state) => {
+      writeFileSync(dbIn(state), "");
+      chmodSync(dbIn(state), 0o666);
+      return {
+        message: (file) =>
+          refusal(file, "its mode is 0666, open to group or other", `\`chmod 600 ${file}\``),
+      };
+    },
+    after: (state) => expect(modeOf(dbIn(state))).toBe(0o666),
+  },
+  {
+    name: "another user's file",
+    setup: (state) => {
+      writeFileSync(dbIn(state), "", { mode: 0o600 });
+      return {
+        claimUid: 4242,
+        message: (file) =>
+          refusal(
+            file,
+            `it is owned by uid ${os.userInfo().uid}, not by this user (uid 4242)`,
+            fixAside(file),
+          ),
+      };
+    },
+    after: (state) => expect(readFileSync(dbIn(state), "utf8")).toBe(""),
+  },
+  {
+    name: "a -wal file with mode 0666",
+    setup: (state) => {
+      openThreadsStore({ env: { WORKIT_STATE_DIR: state } }).close();
+      writeFileSync(`${dbIn(state)}-wal`, "");
+      chmodSync(`${dbIn(state)}-wal`, 0o666);
+      return {
+        message: (file) =>
+          refusal(
+            `${file}-wal`,
+            "its mode is 0666, open to group or other",
+            `\`chmod 600 ${file}-wal\``,
+          ),
+      };
+    },
+    after: (state) => expect(modeOf(`${dbIn(state)}-wal`)).toBe(0o666),
+  },
+  {
+    name: "a -shm symbolic link",
+    setup: (state) => {
+      openThreadsStore({ env: { WORKIT_STATE_DIR: state } }).close();
+      // Bun keeps the -shm after close: put the link in its place.
+      rmSync(`${dbIn(state)}-shm`, { force: true });
+      const target = path.join(elsewhere(), "never.shm");
+      symlinkSync(target, `${dbIn(state)}-shm`);
+      writeFileSync(path.join(state, "target-path"), target);
+      return { message: (file) => linkRefusal(`${file}-shm`) };
+    },
+    after: (state) =>
+      expect(existsSync(readFileSync(path.join(state, "target-path"), "utf8"))).toBe(false),
+  },
+];
+
+const EVERY_OS_CASES: UnsafeCase[] = [
+  {
+    name: "a directory",
+    setup: (state) => {
+      mkdirSync(dbIn(state));
+      return {
+        message: (file) => refusal(file, "it is not a regular file", fixAside(file)),
+      };
+    },
+    after: (state) => expect(readdirSync(dbIn(state))).toEqual([]),
+  },
+  {
+    name: "a file that is not a database",
+    setup: (state) => {
+      writeFileSync(dbIn(state), GARBAGE, { mode: 0o600 });
+      return {
+        message: (file) =>
+          refusal(
+            file,
+            "it is not a SQLite database, or it is damaged",
+            `${fixAside(file)}; Workit then creates a new one`,
+          ),
+      };
+    },
+    after: (state) => expect(readFileSync(dbIn(state), "utf8")).toBe(GARBAGE),
+  },
+];
+
+const unsafeRuns = (cases: UnsafeCase[]) =>
+  cases.flatMap((unsafe) =>
+    (["bun", "node"] as const).map((runtime) => [unsafe.name, runtime, unsafe] as const),
+  );
+
+const refuses = async (runtime: Runtime, unsafe: UnsafeCase) => {
+  const state = tempDir("wk-threads-unsafe-");
+  const { message, claimUid } = unsafe.setup(state);
+  const opened =
+    claimUid === undefined
+      ? await worker(runtime, "open", state)
+      : await worker(runtime, "open-as", state, String(claimUid));
+  expect(opened.code).toBe(3);
+  expect(opened.stderr.trim()).toBe(message(dbIn(state)));
+  unsafe.after(state);
+};
+
+test.skipIf(process.platform === "win32").each(unsafeRuns(POSIX_CASES))(
+  "Given %s at threads.db, When a %s process opens the store, Then it refuses with ThreadsUnsafeError and changes nothing",
+  async (_name, runtime, unsafe) => refuses(runtime, unsafe),
+);
+
+test.each(unsafeRuns(EVERY_OS_CASES))(
+  "Given %s at threads.db, When a %s process opens the store, Then it refuses with ThreadsUnsafeError and changes nothing",
+  async (_name, runtime, unsafe) => refuses(runtime, unsafe),
+);
+
+test("Given an unsafe threads.db, When opened in process, Then the error is a ThreadsUnsafeError carrying the path and reason", () => {
+  const state = tempDir("wk-threads-unsafe-");
+  mkdirSync(dbIn(state));
+  let failure: unknown;
+  try {
+    openThreadsStore({ env: { WORKIT_STATE_DIR: state } });
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(ThreadsUnsafeError);
+  expect(failure).toMatchObject({ file: dbIn(state), reason: "not-file" });
+});

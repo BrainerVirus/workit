@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stateDir } from "../../core/workit-paths.mjs";
-import { isBusy, openSqlite, type SqlDb } from "./sqlite";
+import { isBusy, isNotDatabase, openSqlite, type SqlDb } from "./sqlite";
 
 export const THREADS_DB = "threads.db";
 
@@ -61,6 +61,27 @@ export class ThreadsSchemaError extends Error {
   }
 }
 
+export type UnsafeReason = "symlink" | "not-file" | "owner" | "mode" | "not-database";
+
+/**
+ * A threads.db (or its -wal or -shm file) Workit will not open: a symbolic
+ * link, not a regular file, another user's, open to group or other, or not a
+ * SQLite database. The store decides which processes the registry signals, so
+ * it never follows, repairs or reuses such a file silently.
+ */
+export class ThreadsUnsafeError extends Error {
+  constructor(
+    readonly file: string,
+    readonly reason: UnsafeReason,
+    detail: string,
+    fix: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`${file} is not safe to open: ${detail}. Fix: ${fix}. Nothing was opened.`, options);
+    this.name = "ThreadsUnsafeError";
+  }
+}
+
 /** Another process held the write lock past the busy timeout. */
 export class ThreadsBusyError extends Error {
   constructor(
@@ -100,10 +121,62 @@ export const threadsDbFile = (env: NodeJS.ProcessEnv = process.env): string =>
 const createPrivate = (file: string): void => {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   try {
+    // O_CREAT | O_EXCL: never follows a link at `file`, dangling or not.
     fs.closeSync(fs.openSync(file, "wx", 0o600));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
+};
+
+const moveAside = (file: string): string => `move it aside (\`mv ${file} ${file}.unsafe\`)`;
+
+/**
+ * Refuses `file` unless it is absent (`required` false) or a regular file,
+ * not a link, owned by this user, with no group or other mode bits. Windows
+ * has no POSIX mode or uid (the file inherits the state dir's ACL), so only
+ * the link and file-type checks apply there.
+ */
+const checkSafe = (file: string, required: boolean): void => {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(file);
+  } catch (error) {
+    if (!required && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (stat.isSymbolicLink())
+    throw new ThreadsUnsafeError(
+      file,
+      "symlink",
+      "it is a symbolic link, which Workit never follows",
+      `remove the link (\`rm ${file}\`); Workit then creates its own file`,
+    );
+  if (!stat.isFile())
+    throw new ThreadsUnsafeError(file, "not-file", "it is not a regular file", moveAside(file));
+  if (process.platform === "win32") return;
+  const uid = process.getuid?.();
+  if (uid !== undefined && stat.uid !== uid)
+    throw new ThreadsUnsafeError(
+      file,
+      "owner",
+      `it is owned by uid ${stat.uid}, not by this user (uid ${uid})`,
+      moveAside(file),
+    );
+  const mode = stat.mode & 0o777;
+  if (mode & 0o077)
+    throw new ThreadsUnsafeError(
+      file,
+      "mode",
+      `its mode is ${mode.toString(8).padStart(4, "0")}, open to group or other`,
+      `\`chmod 600 ${file}\``,
+    );
+};
+
+/** The DB file and the -wal and -shm files SQLite keeps beside it, each checked before SQLite opens them. */
+const checkStoreFiles = (file: string): void => {
+  checkSafe(file, true);
+  checkSafe(`${file}-wal`, false);
+  checkSafe(`${file}-shm`, false);
 };
 
 /** The file's schema version: 0 before the first migration. */
@@ -151,13 +224,16 @@ const migrate = (db: SqlDb, file: string, waitMs: number): void =>
 
 /**
  * Opens (creating and migrating when needed) the threads store. Throws
- * ThreadsSchemaError for a file from a newer Workit, having written nothing,
- * and ThreadsBusyError when another process holds the write lock too long.
+ * ThreadsUnsafeError for a file it will not trust (checked before SQLite
+ * opens it), ThreadsSchemaError for a file from a newer Workit, having
+ * written nothing, and ThreadsBusyError when another process holds the write
+ * lock too long.
  */
 export const openThreadsStore = (options: OpenOptions = {}): ThreadsStore => {
   const file = threadsDbFile(options.env ?? process.env);
   const waitMs = options.busyTimeoutMs ?? BUSY_TIMEOUT_MS;
   createPrivate(file);
+  checkStoreFiles(file);
   const db = openSqlite(file);
   try {
     db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(waitMs))}`);
@@ -173,6 +249,14 @@ export const openThreadsStore = (options: OpenOptions = {}): ThreadsStore => {
     if (found < SCHEMA_VERSION) migrate(db, file, waitMs);
   } catch (error) {
     db.close();
+    if (isNotDatabase(error))
+      throw new ThreadsUnsafeError(
+        file,
+        "not-database",
+        "it is not a SQLite database, or it is damaged",
+        `${moveAside(file)}; Workit then creates a new one`,
+        { cause: error },
+      );
     throw error;
   }
   return {

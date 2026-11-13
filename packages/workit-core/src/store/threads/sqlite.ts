@@ -97,12 +97,27 @@ export const openSqlite = (file: string): SqlDb => {
   };
 };
 
+type SqliteFields = Error & { code?: unknown; errno?: unknown; errcode?: unknown };
+
+/** The primary SQLite result code of a driver error (node: errcode, bun: errno), or NaN. */
+const primaryCode = (error: SqliteFields): number => Number(error.errcode ?? error.errno) & 0xff;
+
 /** True for SQLite's SQLITE_BUSY (5) and SQLITE_LOCKED (6), as either driver reports them. */
 export const isBusy = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
-  const fields = error as Error & { code?: unknown; errno?: unknown; errcode?: unknown };
-  const primary = Number(fields.errcode ?? fields.errno) & 0xff;
+  const fields: SqliteFields = error;
+  const primary = primaryCode(fields);
   if (primary === 5 || primary === 6) return true;
   if (fields.code === "SQLITE_BUSY" || fields.code === "SQLITE_LOCKED") return true;
   return /database is locked|database table is locked/u.test(error.message);
+};
+
+/** True for SQLITE_NOTADB (26) and SQLITE_CORRUPT (11): the file is not a usable database. */
+export const isNotDatabase = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  const fields: SqliteFields = error;
+  const primary = primaryCode(fields);
+  if (primary === 26 || primary === 11) return true;
+  if (fields.code === "SQLITE_NOTADB" || fields.code === "SQLITE_CORRUPT") return true;
+  return /file is not a database|database disk image is malformed/u.test(error.message);
 };
