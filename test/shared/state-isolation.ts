@@ -7,12 +7,14 @@ import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { grantsHome } from "@/packages/workit-core/src/core/account-home";
-import { guardRealState } from "./real-state-guard";
+import { TEST_RUN_ENV, grantsHome } from "@/packages/workit-core/src/core/account-home";
+import { guardRealHome, guardRealState } from "./real-state-guard";
 
 // Fail the run if a test left a worktree in the real state dir (a child given
-// an env without this run's WORKIT_STATE_DIR). Before the env below changes.
+// an env without this run's WORKIT_STATE_DIR), or changed the account's
+// grants, seal or host settings (#859). Before the env below changes.
 guardRealState();
+guardRealHome();
 
 // A host shell running the suite (OpenCode, Pi, Codex, a Claude Code-launched
 // host) exports its own session id, which the CLI treats as the real session:
@@ -43,8 +45,11 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 // Grants are read from the OS account's home, which no env var moves (D15):
 // in-process, every test reads them from a run-scoped temp home instead, so
 // the real account's workspaces.json and its seal are never read here
-// (useConfigHome swaps in its own home). Child processes still read the
-// account record, as bench worlds do; keep grant assertions in-process.
+// (useConfigHome swaps in its own home). The run marker sends every child
+// process to the same temp home (core/account-home.ts testRunHome), where
+// grants never exceed the D4 defaults and the real seal is never written;
+// keep grant assertions in-process.
+process.env[TEST_RUN_ENV] = dir;
 const accountHomeForRun = path.join(dir, "account-home");
 grantsHome.resolve = () => accountHomeForRun;
 

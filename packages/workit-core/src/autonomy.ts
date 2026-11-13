@@ -34,7 +34,7 @@
 //   permission prompt applies in addition: a host deny always wins.
 import { copyFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { grantsHome } from "./core/account-home";
+import { TEST_RUN_ENV, grantsFromTestRun, grantsHome } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
 import { configDir as workitConfigDir } from "./core/workit-paths.mjs";
 import { evalWorld, evalWorldEntry } from "./core/eval-world";
@@ -174,8 +174,12 @@ export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
   }
 };
 
-/** Whether the config dir the rest of the config reads is not the account's own. */
-const redirected = (dir: string): boolean => path.resolve(resolveConfigDir()) !== path.resolve(dir);
+/**
+ * Whether the config dir the rest of the config reads is not the account's
+ * own, or the account dir is a test run's (grantsFromTestRun).
+ */
+const redirected = (dir: string): boolean =>
+  grantsFromTestRun() || path.resolve(resolveConfigDir()) !== path.resolve(dir);
 
 /**
  * Where `grant show --all` lists grants and `grant set` writes them: the
@@ -215,6 +219,8 @@ const benchWorld = (cwd: string): WorkspaceConfig | null => {
 export const grantsOverride = (): string | null => {
   const shown = shownGrantsDir();
   if (shown === null) return NO_ACCOUNT;
+  if (grantsFromTestRun())
+    return `grants are read from a test run's temp account home (${TEST_RUN_ENV}), where they never exceed the D4 defaults`;
   const configured = path.resolve(resolveConfigDir());
   return configured === path.resolve(shown)
     ? null
@@ -588,7 +594,8 @@ function capAt(
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const world = benchWorld(cwd);
-  const override = world ? null : grantsOverride();
+  // A bench world's entry only lowers; a test run's home is capped even there.
+  const override = world && !grantsFromTestRun() ? null : grantsOverride();
   // No account record: no grants are read, the D4 defaults.
   if (override === NO_ACCOUNT) return { ...autonomyOf(null), note: override };
   // Resolved once even when a broken seal resolves twice.

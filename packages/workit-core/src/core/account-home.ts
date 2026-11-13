@@ -7,8 +7,9 @@
 // absolute path with a fixed env, a timeout and no shell. With no record
 // there is no home (null), never a fallback path: no grants are read.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 /** What accountHome reads; tests pass their own with a platform. */
 export type AccountIo = {
@@ -95,10 +96,59 @@ export const accountHome = (platform = process.platform, io: AccountIo = hostIo)
 };
 
 /**
- * Where grants are read from: the OS account record's home directory, never
- * `$HOME` (an agent can set that for one command). Tests swap `resolve`
- * in-process (the test preload points it at a run-scoped temp home); nothing
- * outside this process can change it. Here, with builtins only, so the
- * preload sets it without loading the config schemas.
+ * The test run marker (#859): the test preload sets it to its run-scoped temp
+ * dir, and every process the suite spawns inherits it. Not a user setting.
  */
-export const grantsHome: { resolve: () => string | null } = { resolve: () => accountHome() };
+export const TEST_RUN_ENV = "WORKIT_TEST_RUN";
+
+const realDir = (dir: string): string | null => {
+  try {
+    const real = realpathSync(dir);
+    return statSync(real).isDirectory() ? real : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Under a test run, the run's temp account home: `<marker>/account-home`,
+ * so a test's child process never reads or writes the OS account's grants
+ * or seal. Undefined without the marker. A marker that is not an existing
+ * directory inside the OS temp dir is refused: null, no account (no grants
+ * read, nothing sealed), never the account record's home.
+ */
+export const testRunHome = (
+  env: NodeJS.ProcessEnv = process.env,
+  tmp: string = os.tmpdir(),
+): string | null | undefined => {
+  const marker = env[TEST_RUN_ENV];
+  if (marker === undefined) return undefined;
+  if (!path.isAbsolute(marker)) return null;
+  const [dir, root] = [realDir(marker), realDir(tmp)];
+  if (dir === null || root === null) return null;
+  const inside = path.relative(root, dir);
+  if (!inside || inside.startsWith("..") || path.isAbsolute(inside)) return null;
+  return path.join(dir, "account-home");
+};
+
+const defaultResolve = (): string | null => {
+  const run = testRunHome();
+  return run === undefined ? accountHome() : run;
+};
+
+/**
+ * Where grants are read from: the OS account record's home directory, never
+ * `$HOME` (an agent can set that for one command); under the test run marker,
+ * the run's temp account home (testRunHome). Tests swap `resolve` in-process
+ * (the test preload points it at a run-scoped temp home). Here, with builtins
+ * only, so the preload sets it without loading the config schemas.
+ */
+export const grantsHome: { resolve: () => string | null } = { resolve: defaultResolve };
+
+/**
+ * Whether grants come from the marker's temp home (an unswapped resolve under
+ * WORKIT_TEST_RUN): there they never exceed the D4 defaults (autonomy.ts
+ * grantsOverride), so setting the marker can only lower authority.
+ */
+export const grantsFromTestRun = (): boolean =>
+  grantsHome.resolve === defaultResolve && process.env[TEST_RUN_ENV] !== undefined;

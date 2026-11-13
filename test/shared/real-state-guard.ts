@@ -4,11 +4,20 @@
 // cwd, so a test without its own state dir resolves the real one there, and
 // its `fanout worktree create` leaves `<state>/worktrees/<repo>-<hash>/<slice>`
 // behind for good, pointing at a temp repo deleted after the run.
+//
+// guardRealHome does the same for the OS account's grants, seal and host
+// settings (#859): a probe that ran `upgrade` in process wrote the real host
+// settings, and a seal appeared in the real account dir.
 import { afterAll } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { workitDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
+import { accountHome } from "@/packages/workit-core/src/core/account-home";
+import {
+  configDir as workitConfigDir,
+  workitDir,
+} from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 /** The state dir Workit resolves without WORKIT_STATE_DIR: $XDG_STATE_HOME or ~/.local/state, /workit. */
 const realStateDir = (env: NodeJS.ProcessEnv = process.env): string =>
@@ -82,5 +91,62 @@ export const guardRealState = (env: NodeJS.ProcessEnv = process.env): void => {
   afterAll(() => {
     const leaked = leakedWorktrees(stateDir, before);
     if (leaked.length > 0) throw new Error(leakMessage(stateDir, leaked));
+  });
+};
+
+/**
+ * The files under the account's home a test must never change: its grants
+ * and seal, and the host settings setup and upgrade write (#859).
+ */
+export const realHomeFiles = (home: string): string[] => {
+  const config = workitConfigDir({ HOME: home });
+  return [
+    path.join(config, "workspaces.json"),
+    path.join(config, "workspaces.json.seal"),
+    path.join(home, ".claude", "settings.json"),
+    path.join(home, ".cursor", "cli-config.json"),
+    path.join(home, ".cursor", "mcp.json"),
+    path.join(home, ".codex", "rules", "workit.rules"),
+    path.join(home, ".config", "opencode", "opencode.json"),
+    path.join(home, ".pi", "agent", "settings.json"),
+  ];
+};
+
+/** A file's mtime and content hash (kept in memory only), or "missing". */
+const fingerprint = (file: string): string => {
+  try {
+    const { mtimeMs } = statSync(file);
+    return `${mtimeMs}:${createHash("sha256").update(readFileSync(file)).digest("hex")}`;
+  } catch {
+    return "missing";
+  }
+};
+
+/** The files of `before` whose mtime or content differs now. */
+export const changedFiles = (before: ReadonlyMap<string, string>): string[] =>
+  [...before].filter(([file, print]) => fingerprint(file) !== print).map(([file]) => file);
+
+/**
+ * Snapshot the account's grants, seal and host settings now and fail the run
+ * in afterAll if a test changed one, naming it. `home` defaults to the OS
+ * account record's (never $HOME); tests of the guard pass a fake one and
+ * their own `register`.
+ */
+export const guardRealHome = (
+  home: string | null = accountHome(),
+  register: (check: () => void) => void = afterAll,
+): void => {
+  if (home === null) return;
+  const before = new Map(realHomeFiles(home).map((file) => [file, fingerprint(file)]));
+  register(() => {
+    const changed = changedFiles(before);
+    if (changed.length === 0) return;
+    throw new Error(
+      [
+        `A test changed ${changed.length} file(s) of the real account home during this run:`,
+        ...changed.map((file) => `  ${file}`),
+        "Give the verb a temp HOME through io.env (or its deps) and keep the run marker (WORKIT_TEST_RUN) in a child's env; if a live host session wrote the file, rerun.",
+      ].join("\n"),
+    );
   });
 };
