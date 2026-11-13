@@ -623,7 +623,6 @@ test("Given a judge's git hidden in a nested script, a shell fed from a pipe, or
     `./git -C ${wt} log`,
     `${path.join(scratch, "git")} -C ${wt} log`,
     `${path.join(wt, "git")} -C ${wt} log`,
-    `${path.join(scratch, "tool.sh")}`,
     `timeout 5 ${path.join(scratch, "git")} -C ${wt} log`,
     `BASH_ENV=${path.join(scratch, "x.sh")} bash -c true`,
   ])
@@ -640,6 +639,33 @@ test("Given a judge's git hidden in a nested script, a shell fed from a pipe, or
     `cd ${path.join(scratch, "git")} && ls`,
     "/usr/bin/git --version",
     `bash -c 'git -C ${wt} log --oneline'`,
+  ])
+    expect(bash(command), command).toBeUndefined();
+});
+
+test("Given a shell script behind a wrapper, eval, or a path executable that is not git, When a judge runs it, Then the script is judged and wrappers stay denied around git; other executables run", () => {
+  const scratch = path.join(wt, ".workit-scratch");
+  mkdirSync(scratch, { recursive: true });
+  for (const command of [
+    `timeout 5 bash -c 'git -C ${wt} -c core.pager=sh log'`,
+    `nice -n 5 bash -c 'git -C ${wt} -c core.pager=sh log'`,
+    `command bash -c 'git -C ${wt} -c core.pager=sh log'`,
+    `nohup bash -c 'git -C ${wt} log'`,
+    `env GIT_DIR=x bash -c 'git -C ${wt} log'`,
+    `sudo bash -c 'git -C ${wt} log'`,
+    `echo x | xargs sh -c 'git -C ${wt} -c core.pager=sh log'`,
+    `find ${scratch} -exec sh -c 'git -C ${wt} -c core.pager=sh log' \\;`,
+    `timeout 5 sh <<EOF\ngit -C ${wt} commit -m x\nEOF`,
+    `eval "git -C ${wt} commit -m x"`,
+  ])
+    expect(bash(command), command).toBe("deny");
+  for (const command of [
+    `timeout 5 bash -c 'git -C ${wt} log --oneline'`,
+    "./gradlew test",
+    "./node_modules/.bin/tsc --noEmit",
+    "./scripts/verify.sh",
+    `${path.join(wt, "dist", "cli")} --help`,
+    `${path.join(scratch, "tool.sh")}`,
   ])
     expect(bash(command), command).toBeUndefined();
 });

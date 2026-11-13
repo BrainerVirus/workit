@@ -831,10 +831,10 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
         why = `\`${name}\` runs git`;
     }
     if (start >= 0 && words[start].includes("=")) why = "git is redefined";
-    // An executable by path runs only from outside scratch and the judged repository.
-    for (const run of [words[at], words[start]])
-      if (run?.includes("/") && (!path.isAbsolute(run) || literalIn(run, repo, true)))
-        why ??= `\`${run}\` is an executable Workit does not judge`;
+    // git by path runs only from outside scratch and the judged repository.
+    const run = words[start] ?? "";
+    if (run.includes("/") && (!path.isAbsolute(run) || literalIn(run, repo, true)))
+      why ??= `\`${run}\` is not the system git`;
     // A command named by an expansion (`g?t`, `{git,x}`, `$X`) may be git with any arguments.
     if ((segment.expands?.includes(at) && name !== "[") || /\{[^}]*,/.test(words[at] ?? ""))
       why = "the command's name is expanded by the shell";
@@ -877,17 +877,26 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
           why = "`git status` refreshes the index outside scratch: add --no-optional-locks";
       }
     }
-    // Scripts it runs, whatever their text: `$(…)`, and a shell's `-c` operand or heredoc.
-    const shell = /^(?:sh|bash|zsh|dash|ksh|mksh|ash)$/.test(name);
-    for (const script of [
-      ...(segment.subs ?? []),
-      ...(shell
-        ? [
-            ...words.filter((_, after) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(words[after - 1] ?? "")),
-            ...(segment.stdin ?? []),
-          ]
-        : []),
-    ])
+    // Scripts it runs, whatever their text: `$(…)`, and the `-c` operand or heredoc of a
+    // shell, also behind wrappers (`timeout 5 bash -c`, `xargs sh -c`, `find -exec sh -c`).
+    const shell = /^(?:grep|egrep|rg|echo|printf|cat)$/.test(name)
+      ? -1
+      : words.findIndex((word) => /^(?:sh|bash|zsh|dash|ksh|mksh|ash)$/.test(path.basename(word)));
+    const scripts = [
+      ...words.filter(
+        (_, after) =>
+          shell >= 0 && after > shell && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(words[after - 1]),
+      ),
+      ...(shell < 0 ? [] : (segment.stdin ?? [])),
+    ];
+    if (
+      shell > at &&
+      scripts.some((script) => /git/.test(script)) &&
+      (!/^(?:timeout|nice|time|command)$/.test(name) ||
+        words.slice(at + 1, shell).some((word) => !/^(?:-[\w-]+|\d[\w.]*)$/.test(word)))
+    )
+      why ??= `\`${name}\` runs git`;
+    for (const script of [...(segment.subs ?? []), ...scripts])
       why ??=
         depth < 4 ? judgeGit(script, repo, depth + 1) : "scripts nest too deep for Workit to read";
     if (why) return why;
