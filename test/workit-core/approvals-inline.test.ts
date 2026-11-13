@@ -109,3 +109,15 @@ test("Given an ask the user rejected, When the agent's next call is asked again,
   expect(use(rejected.ticket)).toMatchObject({ ok: false });
   expect(use(next.ticket).ok).toBe(true);
 });
+
+test("Given an ask from one host session, When another session or none consumes it, Then it is refused; its own session can", () => {
+  const { ticket } = ask();
+  expect(consumeInlineAsk({ ticket, ...asked, verb: "v", session: "other" })).toMatchObject({
+    ok: false,
+    reason: expect.stringContaining("another session"),
+  });
+  expect(consumeInlineAsk({ ticket, ...asked, verb: "v", session: null })).toMatchObject({
+    ok: false,
+  });
+  expect(consumeInlineAsk({ ticket, ...asked, verb: "v", session: "s" }).ok).toBe(true);
+});

@@ -503,7 +503,10 @@ library passes it, and real unforgeability needs another OS principal.
   call (claude 2.1.323 keeps an asking hook's `updatedInput`); the store keeps
   only the ticket's sha256 with the call's argv and content hashes (words plus
   the bytes of each file it names) for 2 minutes, a newer ask for the same
-  call closes older ones, and the verb uses it once. A wrapped call (pipe,
+  call closes older ones, and the verb uses it once, only from the asking
+  host session, after reading each named file once and posting exactly those
+  bytes. L: no subagent id reaches a Claude Code shell, so lead and subagent
+  tickets are kept apart by delivery and the replay deny. A wrapped call (pipe,
   chain, redirect, `bash -c`, variable, leading `cd`) is denied with the plain
   form. The launcher sends these calls to the runtime (`bin/workit-hook.mjs`
   `WORKIT_INLINE_ASK`), and any tool input naming `WORKIT_APPROVAL_TICKET` or

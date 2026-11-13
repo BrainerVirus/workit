@@ -74,23 +74,26 @@ const backend = (): YouTrackBackend => {
 const ASK: YouTrackDeps = { writes: () => "ask" };
 
 /** The verb as the shell runs it: `env` holds what the command's prefix set. */
-const verb = async (argv: string[], env: NodeJS.ProcessEnv = {}) => {
+const SESSION = "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11";
+/** What Claude Code's SessionStart exports into every Bash call of the session (CLAUDE_ENV_FILE). */
+const SHELL = { CLAUDECODE: "1", WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: SESSION };
+const verb = async (argv: string[], env: NodeJS.ProcessEnv = {}, deps: YouTrackDeps = ASK) => {
   let stdout = "";
   const io: Io = {
     json: false,
     cwd: dir,
-    env: { CLAUDECODE: "1", ...env },
+    env: { ...SHELL, ...env },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stdout += text),
   };
   const yt = backend();
-  const code = await run(argv, io, () => yt, ASK);
+  const code = await run(argv, io, () => yt, deps);
   return { code, stdout };
 };
 
 /** A recorded Claude Code PreToolUse payload for a Bash call. */
 const payload = (command: string, mode = "auto") => ({
-  session_id: "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11",
+  session_id: SESSION,
   transcript_path: path.join(dir, "transcript.jsonl"),
   cwd: dir,
   permission_mode: mode,
@@ -225,7 +228,7 @@ test("Given an ask past its lifetime, When the call runs with its ticket, Then i
       argvHash: ask.argvHash,
       contentHash: ask.contentHash,
       host: "claude_code",
-      session: "s",
+      session: SESSION,
       agent: null,
       toolUseId: "toolu_1",
     },
@@ -260,4 +263,53 @@ test("Given Claude Code ran the verb with no ticket (a script, bash -c), When it
   writeFileSync(path.join(dir, "note.md"), NOTE);
   const out = await verb(argv);
   expect(out.stdout).toContain("run it as its own call");
+});
+
+test("Given an ask in one host session, When a call in another session (or with none) uses its ticket, Then it does not post", async () => {
+  posts = [];
+  writeFileSync(path.join(dir, "note.md"), NOTE);
+  const ticket = prefixOf(pre(command)).value;
+  for (const env of [
+    { WORKIT_SESSION_ID: "another-session" },
+    { WORKIT_SESSION_ID: "", WORKIT_HOST: "" },
+  ]) {
+    const ran = await verb(argv, { ...env, WORKIT_APPROVAL_TICKET: ticket });
+    expect(ran.code, JSON.stringify(env)).toBe(3);
+    expect(ran.stdout).toContain("another session");
+  }
+  expect(posts).toEqual([]);
+  // The asking session itself still can, once.
+  expect((await verb(argv, { WORKIT_APPROVAL_TICKET: ticket })).code).toBe(0);
+});
+
+test("Given the file changes while the verb runs, When it checks the yes and posts, Then it reads the file once and posts exactly the bytes it hashed", async () => {
+  posts = [];
+  writeFileSync(path.join(dir, "note.md"), NOTE);
+  const ticket = prefixOf(pre(command)).value;
+  const reads: string[] = [];
+  // The first read sees what the user approved; any later read sees a swapped file.
+  const read = (file: string) => {
+    reads.push(file);
+    return Buffer.from(reads.filter((one) => one === file).length === 1 ? NOTE : "SWAPPED TEXT");
+  };
+  const ran = await verb(argv, { WORKIT_APPROVAL_TICKET: ticket }, { ...ASK, read });
+  expect(ran.code).toBe(0);
+  expect(reads).toEqual([path.join(dir, "note.md")]);
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toStartWith(NOTE);
+  expect(posts[0]).not.toContain("SWAPPED");
+});
+
+test("Given a file swapped after the ask, When the verb reads it once, Then the hash differs from the ask and nothing posts", async () => {
+  posts = [];
+  writeFileSync(path.join(dir, "note.md"), NOTE);
+  const ticket = prefixOf(pre(command)).value;
+  const ran = await verb(
+    argv,
+    { WORKIT_APPROVAL_TICKET: ticket },
+    { ...ASK, read: () => Buffer.from("SWAPPED TEXT") },
+  );
+  expect(ran.code).toBe(3);
+  expect(ran.stdout).toContain("changed");
+  expect(posts).toEqual([]);
 });

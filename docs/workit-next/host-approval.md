@@ -67,16 +67,23 @@ command and no id.
    content, and runs the call with `WORKIT_APPROVAL_TICKET=<ticket>` in front (Claude Code:
    `permissionDecision: "ask"` plus `updatedInput`, which claude 2.1.323 keeps on an ask; Pi: the
    mutable `tool_call` input).
-3. The verb, right before the write, recomputes both hashes and consumes the row once (exclusive
-   create), then appends `approval.consumed` to the ledger. A missing, foreign, changed, used,
-   expired or replaced ticket refuses `approval_not_bound` and posts nothing.
+3. The verb reads each file the call names once, hashes those bytes and posts exactly them (an
+   attachment from a private copy), so nothing is re-read between the check and the post. Right
+   before the write it consumes the row once (exclusive create), only from the host session that
+   asked (the shell's `WORKIT_SESSION_ID`, or the host's own session variable), then appends
+   `approval.consumed` to the ledger. A missing, foreign, changed, used, expired or replaced
+   ticket, or one used from another session, refuses `approval_not_bound` and posts nothing.
+   Claude Code puts no subagent id in a shell (subagents share the session id), so a lead's
+   ticket and its subagents' are told apart by delivery: each ticket exists only in the one call
+   the hook rewrote, and any other call naming the variable is denied (below).
 4. In `bypassPermissions`, `dontAsk` or an `sdk-*` entrypoint nobody sees a prompt: nothing is
    recorded, the call runs with `WORKIT_APPROVAL_UNASKED=<mode>`, and the verb refuses naming it.
 
 Security binding (ruling mwf7pjfs): an asked row is consumed only by its own call. A script,
 `bash -c`, an MCP tool or a second call has no ticket; the store holds only the ticket's hash, so
 the row on disk cannot be replayed. The hook's output, ticket included, is written to the host's
-transcript, so a rejected prompt's rewritten command could be copied from it: every host's shell
+transcript (claude 2.1.323 records each hook's stdout as a `hook_success` attachment, and
+`updatedInput` is the only field that reaches the call, so the ticket cannot be kept out of it), so a rejected prompt's rewritten command could be copied from it: every host's shell
 gate denies a command naming `WORKIT_APPROVAL_TICKET` or `WORKIT_APPROVAL_UNASKED` (quotes and
 backslashes removed; prefix, `export`, `env`, `bash -c`, a heredoc), and a file write whose input
 names either is denied in `handle.ts` (`write.pre` carries the tool input as `text` where the host

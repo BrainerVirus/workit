@@ -28,7 +28,8 @@
 // before asking: each file must exist and ytrack must have --attach.
 import { progressFor } from "../progress";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { youTrackBaseUrl, youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
 import { ISSUE_RE } from "@workit-dev/core/src/core/youtrack-tools";
@@ -59,6 +60,7 @@ import {
   type ApprovalFields,
 } from "@workit-dev/core/src/approvals/store";
 import { youTrackAsk } from "@workit-dev/core/src/approvals/youtrack-ask";
+import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import {
   youTrackBackend,
@@ -80,8 +82,31 @@ import { parseFlags, positiveInt, usage } from "./forge-common";
 const USAGE =
   "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …] | youtrack update <ISSUE> [--markdown <t> | --file <p>] [--attach <file>]... [--minutes <n> [--text <t>] [--date …]] [--state <S>] [--command '<command>'] | youtrack show <ISSUE> | youtrack create --project <P> --summary <s> [--description <t> | --file <p>] [--attach <file>]... [--command '<command>']";
 
-/** Test seams: the workspace's `youtrack.writes` mode for a cwd. */
-export type YouTrackDeps = { writes?: (cwd: string) => YouTrackWritesMode };
+/** Test seams: the workspace's `youtrack.writes` mode for a cwd, and how a named file is read. */
+export type YouTrackDeps = {
+  writes?: (cwd: string) => YouTrackWritesMode;
+  read?: (file: string) => Buffer;
+};
+
+/**
+ * Each file a call names is read once per run (#864): the bytes the yes is
+ * checked against (youTrackAsk's content hash) are the bytes that post. An
+ * attachment posts from a private copy of those bytes, never from its path.
+ */
+const loaders = new WeakMap<Io, (file: string) => Buffer>();
+const load = (io: Io, file: string): Buffer =>
+  (loaders.get(io) ?? ((full: string) => readFileSync(full)))(path.resolve(io.cwd, file));
+const copies = new WeakMap<Io, string>();
+const copyOf = (io: Io, name: string, content: Buffer): string => {
+  let dir = copies.get(io);
+  if (!dir) {
+    dir = mkdtempSync(path.join(tmpdir(), "workit-attach-"));
+    copies.set(io, dir);
+  }
+  const file = path.join(dir, name);
+  writeFileSync(file, content, { mode: 0o600 });
+  return file;
+};
 
 type Write = (yt: YouTrackBackend, marked: (text: string) => string) => Promise<WriteResult>;
 
@@ -120,6 +145,29 @@ export async function run(
   io: Io,
   backend: () => YouTrackBackend = () => youTrackBackend(io.env),
   deps: YouTrackDeps = {},
+): Promise<number> {
+  const read = deps.read ?? ((full: string) => readFileSync(full));
+  const seen = new Map<string, Buffer>();
+  loaders.set(io, (full) => {
+    const known = seen.get(full) ?? read(full);
+    seen.set(full, known);
+    return known;
+  });
+  try {
+    return await runVerb(argv, io, backend, deps);
+  } finally {
+    const dir = copies.get(io);
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    loaders.delete(io);
+    copies.delete(io);
+  }
+}
+
+async function runVerb(
+  argv: string[],
+  io: Io,
+  backend: () => YouTrackBackend,
+  deps: YouTrackDeps,
 ): Promise<number> {
   const [sub, ...rest] = argv;
   const writesMode = () => (deps.writes ?? youTrackWritesMode)(io.cwd);
@@ -179,7 +227,7 @@ function commentText(io: Io, flags: Flags, required: boolean): string | null | {
   let text = markdown ?? "";
   if (file !== undefined)
     try {
-      text = readFileSync(path.resolve(io.cwd, file), "utf8");
+      text = load(io, file).toString("utf8");
     } catch (error) {
       return { error: `cannot read ${file}: ${String(error)}` };
     }
@@ -279,7 +327,8 @@ const sizeText = (bytes: number): string =>
       ? `${(bytes / 1024).toFixed(1)} KB`
       : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-type Attachment = { path: string; name: string; bytes: number; sha256: string };
+/** `post`: the private copy of the bytes read, which is what is attached. */
+type Attachment = { path: string; name: string; bytes: number; sha256: string; post: string };
 
 /** Each --attach file read once (name, size, content hash), or the first one that is not a readable file. */
 function attachments(io: Io, files: readonly string[]): Attachment[] | string {
@@ -289,7 +338,7 @@ function attachments(io: Io, files: readonly string[]): Attachment[] | string {
     let content: Buffer;
     try {
       if (!statSync(full).isFile()) return `--attach ${file} is not a file`;
-      content = readFileSync(full);
+      content = load(io, full);
     } catch {
       return `--attach ${file}: no such file`;
     }
@@ -301,6 +350,7 @@ function attachments(io: Io, files: readonly string[]): Attachment[] | string {
       name: path.basename(full),
       bytes: content.length,
       sha256: createHash("sha256").update(content).digest("hex"),
+      post: copyOf(io, path.basename(full), content),
     });
   }
   return out;
@@ -355,7 +405,7 @@ function updatePlan(
   const steps: Step[] = [];
   const effects: string[] = [];
   const subject: Record<string, unknown> = {};
-  const paths = files.map((file) => file.path);
+  const paths = files.map((file) => file.post);
   const hashes = files.map((file) => file.sha256);
   if (comment !== null) {
     steps.push({
@@ -710,7 +760,7 @@ function askFirst(
   const session = io.env.WORKIT_SESSION_ID || null;
   const ticket = io.env[INLINE_TICKET_ENV];
   if (ticket) {
-    const ask = youTrackAsk(argv, io.cwd);
+    const ask = youTrackAsk(argv, io.cwd, (full) => load(io, full));
     const used = ask
       ? consumeInlineAsk({
           ticket,
@@ -718,7 +768,8 @@ function askFirst(
           argvHash: ask.argvHash,
           contentHash: ask.contentHash,
           verb,
-          session,
+          // The host session this shell runs in, as its hooks see it.
+          session: hostSessionFromEnv(io.env).session,
         })
       : { ok: false as const, reason: "Workit cannot read this call's text" };
     if (used.ok) {
@@ -851,7 +902,7 @@ async function create(
   let description = flags.values.description;
   if (file)
     try {
-      description = readFileSync(path.resolve(io.cwd, file), "utf8");
+      description = load(io, file).toString("utf8");
     } catch (error) {
       return usage(io, `cannot read ${file}: ${String(error)}`, USAGE);
     }
@@ -926,7 +977,7 @@ async function create(
             write: () =>
               yt.attachFiles(
                 issueId,
-                files.map((one) => one.path),
+                files.map((one) => one.post),
               ),
           },
         ]

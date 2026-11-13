@@ -44,8 +44,14 @@ export type YouTrackAsk = {
  * The ask for `args` (the words past `youtrack`: the verb, then its
  * arguments), run in `cwd`; null when it is no write or the verb would refuse
  * it before writing (an unknown flag, a missing issue, an unreadable file).
+ * `load` reads a file by its resolved path: the verb passes the bytes it read
+ * once and posts, so what it checks is what it sends.
  */
-export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk | null => {
+export const youTrackAsk = (
+  args: readonly string[],
+  cwd: string,
+  load: (file: string) => Buffer = readFileSync,
+): YouTrackAsk | null => {
   const [verb = "", ...rest] = args;
   if (!isYouTrackWriteVerb(verb)) return null;
   const known = FLAGS[verb]?.split(" ") ?? [];
@@ -73,9 +79,9 @@ export const youTrackAsk = (args: readonly string[], cwd: string): YouTrackAsk |
   const files: [string, string][] = [];
   const read = (file: string): Buffer | null => {
     try {
-      const full = realpathSync(path.resolve(cwd, file));
-      const content = readFileSync(full);
-      files.push([full, sha256(content)]);
+      const named = path.resolve(cwd, file);
+      const content = load(named);
+      files.push([realpathSync(named), sha256(content)]);
       return content;
     } catch {
       return null;

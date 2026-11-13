@@ -214,7 +214,7 @@ const posts = (ticket: string) => {
     argvHash: ask?.argvHash ?? "",
     contentHash: ask?.contentHash ?? "",
     verb: "youtrack note",
-    session: null,
+    session: "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11",
   }).ok;
 };
 
@@ -290,4 +290,31 @@ test("Given Codex apply_patch, Cursor's Write and OpenCode's write, edit and pat
   expect(opencodeWrite("patch", { patchText: TICKETED })).toContain("approval ticket");
   expect(opencodeWrite("write", { filePath: file, content: "echo hello\n" })).toBeNull();
   expect(opencodeWrite("read", { filePath: file, note: TICKETED })).toBeNull();
+});
+
+test("Given a lead's ticket and a subagent's, When either is carried into the other's call, Then the hook denies it", () => {
+  const lead = ticketOf();
+  const worker = ticketOf("a1b2c3");
+  const call = (ticket: string, agent?: string) =>
+    (
+      dispatchHook(
+        claudeCodeAdapter,
+        {
+          session_id: "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11",
+          transcript_path: path.join(base, "t.jsonl"),
+          cwd: base,
+          permission_mode: "auto",
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: `WORKIT_APPROVAL_TICKET=${ticket} workit youtrack note X-1 --file note.md`,
+          },
+          tool_use_id: "toolu_04",
+          ...(agent ? { agent_id: agent, agent_type: "general-purpose" } : {}),
+        },
+        { CLAUDE_CODE_ENTRYPOINT: "cli" },
+      ).json.hookSpecificOutput as Out | undefined
+    )?.permissionDecision;
+  expect(call(lead, "a1b2c3")).toBe("deny");
+  expect(call(worker)).toBe("deny");
 });

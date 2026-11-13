@@ -611,6 +611,8 @@ export const consumeInlineAsk = (
     };
   if (asked.kind !== input.kind || asked.argvHash !== input.argvHash)
     return { ok: false, reason: "the host asked about another call" };
+  if (asked.session !== null && asked.session !== input.session)
+    return { ok: false, reason: "the host asked in another session" };
   if (asked.contentHash !== input.contentHash)
     return { ok: false, reason: "the text or a file changed after the host showed it" };
   if (!live(asked.expires, now))

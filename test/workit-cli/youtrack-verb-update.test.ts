@@ -188,12 +188,10 @@ it("Given that yes, When the same update runs again, Then ytrack gets the commen
     { step: "time", status: "done" },
     { step: "command", status: "done" },
   ]);
-  const sent = writes();
+  const sent = writes().map(copied);
   expect(sent).toHaveLength(3);
   expect(sent[0]).toStartWith("issue comment AB2-142 --body-file - ");
-  expect(sent[0]).toContain(
-    `--attach ${path.join(dir, "a.png")} --attach ${path.join(dir, "b.html")}`,
-  );
+  expect(sent[0]).toContain("--attach <copy>/a.png --attach <copy>/b.html");
   expect(sent[1]).toStartWith("work-item add AB2-142 --duration 165 ");
   expect(sent[2]).toBe("issue command AB2-142 State Done");
 });
@@ -237,12 +235,18 @@ it("Given no effect, When update runs, Then it is refused as invalid input", asy
   expect(out.json().error).toContain("at least one of");
 });
 
+/**
+ * An attachment posts from a private copy of the bytes Workit read and the user
+ * approved (#864), never from its own path, which could change after the yes.
+ */
+const copied = (line: string): string => line.replaceAll(/\S*workit-attach-[^/\s]+\//gu, "<copy>/");
+
 it("Given only files and a command, When the approved update runs, Then the files go through issue attach and the command after them", async () => {
   const args = ["update", "AB2-142", "--attach", "a.png", "--command", "tag Reviewed"];
   userApproves((await call(args)).json().data.approval);
   expect((await call(args)).code).toBe(0);
-  expect(writes()).toEqual([
-    `issue attach AB2-142 ${path.join(dir, "a.png")}`,
+  expect(writes().map(copied)).toEqual([
+    "issue attach AB2-142 <copy>/a.png",
     "issue command AB2-142 tag Reviewed",
   ]);
 });
@@ -266,9 +270,9 @@ it("Given create with a file and a command, When the user's one yes is used, The
   const out = await call(args);
   expect(out.code).toBe(0);
   expect(out.json().data.issueId).toBe("AB2-7");
-  expect(writes()).toEqual([
+  expect(writes().map(copied)).toEqual([
     "issue create --project AB2 --summary Crash --json idReadable,url",
-    `issue attach AB2-7 ${path.join(dir, "a.png")}`,
+    "issue attach AB2-7 <copy>/a.png",
     "issue command AB2-7 State Open",
   ]);
 });
