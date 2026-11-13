@@ -144,11 +144,15 @@ test("G a held lease and a fake clock, W a check waits out a 30 min wait, T it p
   // The real time: staleness ages a ticket against real now, not this clock.
   let now = Date.now();
   const statuses: QueueStatus[] = [];
+  const stray = "000000000000009-0000000000000000-other.json.cancel";
   const got = await acquireLease(
     options(dir, {
       waitMs: 30 * 60_000,
       pollMs: 1_000,
       statusEveryMs: 30_000,
+      // Poll only: a real file event (macOS FSEvents can deliver one late) would
+      // add a real 50 ms settle to this fake clock's waited time (30_050 on CI).
+      watch: false,
       clock: {
         now: () => now,
         sleep: async (ms) => {
@@ -156,6 +160,8 @@ test("G a held lease and a fake clock, W a check waits out a 30 min wait, T it p
           await Promise.resolve();
         },
       },
+      // Such an event, made certain: a queue change lands before the ticket's turn.
+      onWait: () => writeFileSync(path.join(dir, "queue", stray), ""),
       onStatus: (status) => statuses.push(status),
     }),
   );
@@ -173,7 +179,8 @@ test("G a held lease and a fake clock, W a check waits out a 30 min wait, T it p
     holders: [{ check: "suite", cwd: "/repo/suite" }],
   });
   expect(statuses[1]).toMatchObject({ waitedMs: 30_000, first: false });
-  expect(queueFiles(dir)).toEqual([]);
+  // Its own ticket is gone; only the stray marker stays.
+  expect(queueFiles(dir)).toEqual([stray]);
   holder.lease.release();
 });
 
