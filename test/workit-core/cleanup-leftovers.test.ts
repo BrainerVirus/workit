@@ -225,11 +225,43 @@ test("Given another session's marker whose pid is the same running process but w
   expect(existsSync(env.merged)).toBe(true);
 });
 
-test("Given a marker whose pid now belongs to another process (start time differs), Then it is not live and the merged worktree goes", () => {
+// Windows has no process start time (the hosts.md lease limit): a reused pid
+// cannot be told from the recorded process there, so the marker stays live.
+test.skipIf(process.platform === "win32")(
+  "Given a marker whose pid now belongs to another process (start time differs), Then it is not live and the merged worktree goes (POSIX: Windows reads no process start time)",
+  () => {
+    const env = setup();
+    liveMarker(env.env, env.merged, 0, process.pid, "not-the-recorded-start");
+    const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+    expect(applied.removed).toHaveLength(1);
+  },
+);
+
+const LIVE_REASON = `another live session works in it (other-session, pid ${process.pid})`;
+
+test.if(process.platform === "win32")(
+  "Windows: Given a marker whose pid is alive and whose heartbeat is an hour old, Then the worktree is kept, since pid reuse cannot be ruled out without a start time",
+  () => {
+    const env = setup();
+    liveMarker(env.env, env.merged, 60 * 60 * 1000, process.pid, "recorded-elsewhere");
+    const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+    expect(applied.removed).toEqual([]);
+    expect(applied.kept).toEqual([expect.objectContaining({ reason: LIVE_REASON })]);
+  },
+);
+
+test("Given a process table that reads no start time (as on Windows), Then a marker whose pid is alive keeps the worktree whatever start it recorded and however old its heartbeat", () => {
   const env = setup();
-  liveMarker(env.env, env.merged, 0, process.pid, "not-the-recorded-start");
-  const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
-  expect(applied.removed).toHaveLength(1);
+  liveMarker(env.env, env.merged, 60 * 60 * 1000, process.pid, "recorded-elsewhere");
+  const start = liveProbe.start;
+  liveProbe.start = () => null;
+  try {
+    const applied = sweepWorktrees(env.main, { apply: true, actor, env: env.env });
+    expect(applied.removed).toEqual([]);
+    expect(applied.kept).toEqual([expect.objectContaining({ reason: LIVE_REASON })]);
+  } finally {
+    liveProbe.start = start;
+  }
 });
 
 test("Given the sweeping session's own marker, Then it does not hold the worktree", () => {
