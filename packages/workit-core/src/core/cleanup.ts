@@ -891,7 +891,6 @@ type PrProof = { proof: string } | { keep: string } | null;
 
 /** What the forge says of `name` at `tip`: a merged PR into the trunk or a policy branch, an open PR, or nothing. */
 function prProof(
-  cwd: string,
   forge: BranchForge,
   name: string,
   tip: string,
@@ -991,9 +990,7 @@ export function sweepBranches(
       keep("no commits of its own and created or moved in the last 24 hours (fresh)");
       continue;
     }
-    const pr = options.forge
-      ? prProof(cwd, options.forge, name, tip, trunkName, isLongLived)
-      : null;
+    const pr = options.forge ? prProof(options.forge, name, tip, trunkName, isLongLived) : null;
     if (pr && "keep" in pr) {
       keep(pr.keep);
       continue;
