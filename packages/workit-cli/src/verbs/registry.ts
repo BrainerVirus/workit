@@ -413,7 +413,7 @@ export const VERBS: readonly VerbEntry[] = [
       name: "workspace",
       group: "setup",
       summary:
-        "Edit workspace entries without the wizard; a raise (rm included) needs the user at a terminal",
+        "Edit workspace entries without the wizard; a raise (rm too) needs the user at a terminal",
       subcommands: [
         {
           name: "list",
