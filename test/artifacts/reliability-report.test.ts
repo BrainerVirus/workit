@@ -77,10 +77,10 @@ test(
     // workspace entries: nothing to seal, #819).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 45,
+      passed: 46,
       warned: 1,
       failed: 1,
-      total: 47,
+      total: 48,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -128,10 +128,10 @@ test(
       // workspace entries: nothing to seal, #819).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 45,
+        passed: 46,
         warned: 1,
         failed: 1,
-        total: 47,
+        total: 48,
         fixes: 1,
       });
     } finally {
