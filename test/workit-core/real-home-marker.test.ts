@@ -15,7 +15,11 @@ import {
   accountHome,
   testRunWriteRefusal,
 } from "@/packages/workit-core/src/core/account-home";
-import { configDir as workitConfigDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
+import {
+  dataDir,
+  stateDir,
+  configDir as workitConfigDir,
+} from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 const CORE = path.resolve(import.meta.dir, "../../packages/workit-core/src");
 const dirs: string[] = [];
@@ -141,22 +145,40 @@ test("Given a test run, When writeSeal targets the account's own config dir, The
   expect(writeSeal(other, [], new Date(), home)).toBe(path.join(other, SEAL_FILE));
 });
 
-test("Given a fake account home, When testRunWriteRefusal judges a path, Then only its host settings and Workit dirs are refused, its worktrees and other dirs are not, and nothing is refused without the marker", () => {
+test("Given a fake account home, When testRunWriteRefusal judges a path, Then only its host settings and Workit dirs (this platform's) are refused, its worktrees, the temp dir and other dirs are not, and nothing is refused without the marker", () => {
   const home = temp("wk-fake-account-");
   const marked = { [TEST_RUN_ENV]: home };
   const refused = (file: string, env: NodeJS.ProcessEnv = marked) =>
-    testRunWriteRefusal(path.join(home, file), home, env);
+    testRunWriteRefusal(file, home, env);
+  // Workit's own dirs as this platform puts them (~/.local/state on Linux,
+  // %LOCALAPPDATA% under the home on Windows).
+  const homeEnv = { HOME: home, USERPROFILE: home };
   for (const file of [
-    ".claude/settings.json",
-    ".cursor/cli-config.json",
-    ".codex/rules/workit.rules",
-    ".pi/agent/settings.json",
-    ".config/opencode/opencode.json",
-    ".local/state/workit/host-permissions.json",
-    ".local/share/bash-completion/completions/workit",
+    path.join(home, ".claude", "settings.json"),
+    path.join(home, ".cursor", "cli-config.json"),
+    path.join(home, ".codex", "rules", "workit.rules"),
+    path.join(home, ".pi", "agent", "settings.json"),
+    path.join(home, ".config", "opencode", "opencode.json"),
+    path.join(home, ".local", "share", "bash-completion", "completions", "workit"),
+    path.join(home, ".local", "bin", "workit"),
+    path.join(workitConfigDir(homeEnv), "workspaces.json"),
+    path.join(stateDir(homeEnv), "host-permissions.json"),
+    path.join(dataDir(homeEnv), "versions", "1.0.0", "package.json"),
   ])
-    expect(refused(file)).toContain(`refusing to write ${path.join(home, file)}`);
-  expect(refused(".local/state/workit/worktrees/workit/slice/file.ts")).toBeNull();
-  expect(refused("projects/repo/.claude/settings.json")).toBeNull();
-  expect(refused(".claude/settings.json", {})).toBeNull();
+    expect(refused(file), file).toContain(`refusing to write ${file}`);
+  expect(refused(path.join(stateDir(homeEnv), "worktrees", "workit", "slice", "f.ts"))).toBeNull();
+  expect(refused(path.join(home, "projects", "repo", ".claude", "settings.json"))).toBeNull();
+  expect(refused(path.join(home, ".claude", "settings.json"), {})).toBeNull();
+});
+
+test("Given a temp dir inside the account's protected dirs (as %LOCALAPPDATA%\\Temp is on Windows), When a fixture home there is written, Then it is not refused; the account's own files still are", () => {
+  const account = temp("wk-fake-account-");
+  // Under a protected root of this account, the way Windows nests its temp dir.
+  const tmp = path.join(account, ".config", "Temp");
+  mkdirSync(tmp, { recursive: true });
+  const marked = { [TEST_RUN_ENV]: tmp };
+  const fixture = path.join(tmp, "wk-fixture-home", ".claude", "settings.json");
+  expect(testRunWriteRefusal(fixture, account, marked, tmp)).toBeNull();
+  const own = path.join(account, ".config", "opencode", "opencode.json");
+  expect(testRunWriteRefusal(own, account, marked, tmp)).toContain(`refusing to write ${own}`);
 });

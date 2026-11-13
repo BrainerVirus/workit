@@ -308,6 +308,17 @@ export function isolatedEnv(
     env[k] = v;
   }
   env.HOME = home;
+  // Windows keeps Workit's config, state and data under %APPDATA% and
+  // %LOCALAPPDATA% (core/workit-paths.mjs), which a temp HOME does not move:
+  // point them into the temp home too, or a child writes the runner's real
+  // profile (#859). npm keeps its download cache where it was.
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA;
+    if (local && !env.npm_config_cache) env.npm_config_cache = path.join(local, "npm-cache");
+    env.USERPROFILE = home;
+    env.APPDATA = path.join(home, "AppData", "Roaming");
+    env.LOCALAPPDATA = path.join(home, "AppData", "Local");
+  }
   return { ...env, ...extra };
 }
 

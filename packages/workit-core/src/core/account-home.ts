@@ -130,7 +130,8 @@ const resolvedPath = (file: string): string => {
     dir = path.dirname(dir);
   }
   try {
-    return path.join(realpathSync(dir), ...rest);
+    // native: Windows 8.3 short names (C:\Users\RUNNER~1) resolve to the long one.
+    return path.join(realpathSync.native(dir), ...rest);
   } catch {
     return path.resolve(file);
   }
@@ -144,15 +145,19 @@ const within = (root: string, file: string): boolean => {
 /**
  * Why a test run must not write `file` (#859), or null: under the test run
  * marker, nothing is written in the OS account home's host settings (Claude
- * Code, Cursor, Codex, Pi, ~/.config, ~/.local/share: shell completions, ~/.local/bin: launchers) or
- * Workit's own config, state and data
- * dirs (its worktrees aside). `home` is a test seam (default the account
+ * Code, Cursor, Codex, Pi, ~/.config, ~/.local/share: shell completions,
+ * ~/.local/bin: launchers) or Workit's own config, state and data dirs as
+ * this platform puts them (core/workit-paths.mjs; %APPDATA% and
+ * %LOCALAPPDATA% under the home on Windows), its worktrees and the OS temp dir
+ * aside. Paths compare as the platform does (case-insensitive on Windows). `home` is a test seam (default the account
  * record's). Without the marker, null: a user's run writes where it always did.
  */
 export const testRunWriteRefusal = (
   file: string,
   home?: string | null,
   env: NodeJS.ProcessEnv = process.env,
+  /** The OS temp dir (test seam). */
+  tempDir: string = os.tmpdir(),
 ): string | null => {
   if (env[TEST_RUN_ENV] === undefined) return null;
   const account =
@@ -174,6 +179,12 @@ export const testRunWriteRefusal = (
     dataDir(homeEnv),
   ].map(resolvedPath);
   const target = resolvedPath(file);
+  // The OS temp dir holds fixture homes, never the account's own files: on
+  // Windows it is under the home (%LOCALAPPDATA%\Temp). A fake account home
+  // inside it (a test of this guard) is still protected.
+  const tmp = resolvedPath(tempDir);
+  const base = resolvedPath(account);
+  if (within(tmp, target) && !within(tmp, base)) return null;
   const worktrees = path.join(resolvedPath(stateDir(homeEnv)), "worktrees");
   if (within(worktrees, target) || !roots.some((root) => within(root, target))) return null;
   return `refusing to write ${file}: a test run (${TEST_RUN_ENV}) never writes the OS account's home (#859)`;
