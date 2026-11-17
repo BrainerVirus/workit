@@ -254,6 +254,46 @@ const READ_CALLS =
 /** Calls that change files (Python, Node, Ruby, PHP names), for a path value that may reach one. */
 const MUTATING_CALLS =
   /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
+/**
+ * Inline code that runs a command, deletes, loads code by path or reaches a
+ * call by a computed name: a word anywhere in it, string literals included.
+ */
+const SPAWNS =
+  /subprocess|child_process|createWriteStream|tempfile|mkstemp|sqlite|inplace|getattr|Bun\.\$|O_(?:WRONLY|RDWR|CREAT|APPEND|TRUNC)|(?:PYTHON\w*|NODE_\w+)=|--(?:require|import|(?:experimental-)?loader)|(?:^|\s)-r\b|\bos\.replace|\b(?:system|popen|exec(?:Sync|File\w*|[vl]\w*)?|spawn\w*|fork|eval|shutil|unlink\w*|rename\w*|remove\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:[\w@:][^'"]*|[^'"]*\.json)\1)/;
+
+/**
+ * Whether inline Python or Node code may change files: SPAWNS, an `open` with
+ * any argument but a path and a read mode or encoding, or a word (outside
+ * string literals) that names a call in MUTATING_CALLS, bar `open`, a list's
+ * `append` and `copy`, and printing to stdout or stderr.
+ */
+const writesIn = (text: string): boolean =>
+  SPAWNS.test(text) ||
+  [...text.matchAll(/\bopen\w*\s*\(/g)].some(({ index, 0: call }) => {
+    const parts = [""];
+    let quote = "";
+    for (let at = index + call.length, depth = 1; at < text.length; at++) {
+      const char = text[at];
+      if (quote) quote = char === quote ? "" : quote;
+      else if (/['"]/.test(char)) quote = char;
+      else if ((depth += "([".includes(char) ? 1 : ")]".includes(char) ? -1 : 0) === 0) break;
+      if (depth === 1 && !quote && char === ",") parts.push("");
+      else parts[parts.length - 1] += char;
+    }
+    return parts.some((part, at) =>
+      at
+        ? !/^\s*(?:(?:mode\s*=\s*)?(['"])[rbtU]*\1|(?:encoding|errors|newline)\s*=\s*(['"])[\w-]*\2)\s*$/.test(
+            part,
+          )
+        : /^\s*(['"])[rbtU]*[wax+][rbtUwax+]*\1\s*$/.test(part),
+    );
+  }) ||
+  [
+    ...text
+      .replace(/std(?:out|err)\.write|(?<![fF])(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "")
+      .matchAll(/[\w$]+/g),
+  ].some(([word]) => !/^(?:open(?:Sync)?|append|copy)$/.test(word) && MUTATING_CALLS.test(word));
+
 /** Calls that only build a path: the value they return may reach any later call. */
 const PATH_CALLS =
   /^(?:join|resolve|normalize|abspath|expanduser|expandvars|Path|PurePath|fspath)$/;
@@ -378,6 +418,7 @@ const runsWriter = (words: readonly string[]): boolean => {
 const opaqueWrites = (
   input: readonly string[],
   scriptOf: (index: number) => string | undefined = (index) => input[index],
+  fed?: string | null,
 ): string[] | null => {
   let words = input;
   while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) {
@@ -434,18 +475,33 @@ const opaqueWrites = (
   }
   const inline = (flag: RegExp): string[] | null => {
     const at = args.findIndex((arg) => flag.test(arg));
-    if (at < 0) return null;
+    // No inline flag: the script is a file, or the heredoc it reads on stdin (`python3 - <<'EOF'`).
+    if (
+      at < 0 &&
+      (fed === undefined || !/^(?:-|\/dev\/stdin)?$/.test(scriptArgs(name, args).named ?? ""))
+    )
+      return null;
     const runs = input.length - args.length - 1;
     // The script, the interpreter's options and arguments, and the environment
     // it is given (`X=/p node -e …`, `NODE_OPTIONS=--require …`).
-    return [
-      ".",
-      ...input.flatMap((word, index) => {
-        if (index === runs || (index < runs && !/^\w+=/.test(word))) return [];
-        const text = scriptOf(index);
-        return text === undefined ? [unknownVarTarget(word)] : pathsIn(text);
-      }),
-    ];
+    const texts = input.map((word, index) =>
+      index === runs || (index < runs && !/^\w+=/.test(word)) ? "" : scriptOf(index),
+    );
+    // Python or Node code with no call that writes, deletes or runs a command changes nothing.
+    return /^(?:python[\d.]*|node|bun)$/.test(name) &&
+      // The code, the environment and the options before it (`-r`, `--import` load code).
+      [
+        at < 0 ? fed : texts[runs + at + 2],
+        ...texts.slice(0, runs + 1 + (at < 0 ? args.length : at)),
+      ].every((text) => text !== undefined && text !== null && !writesIn(text))
+      ? null
+      : [
+          ".",
+          ...pathsIn(fed ?? ""),
+          ...texts.flatMap((text, index) =>
+            text === undefined ? [unknownVarTarget(input[index])] : pathsIn(text),
+          ),
+        ];
   };
   if (name === "curl") return curlOutputs(args);
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
@@ -587,6 +643,16 @@ export const configWrites = (rest: readonly string[]): boolean => {
   return named > 1;
 };
 
+/** `git fetch [-q|-v] [<remote name> [<branch>]]`'s `rest`: no URL or path, no `:` or `+` refspec, no other option. */
+export const plainFetch = (rest: readonly string[]): boolean => {
+  const names = rest.filter((arg) => arg[0] !== "-");
+  return (
+    rest.every((arg) => /^(?:-q|--quiet|-v|--verbose|[^-+:][^:]*)$/.test(arg)) &&
+    names.length < 3 &&
+    /^[\w-][\w.-]*$/.test(names[0] ?? "x")
+  );
+};
+
 /** git options before the subcommand, and `git clone|init` options, that take the next word. */
 const GIT_VALUE =
   /^(?:-[Ccbouj]|--(?:git-dir|work-tree|namespace|config-env|branch|origin|config|depth|reference(?:-if-able)?|template|separate-git-dir|upload-pack|jobs|filter|initial-branch|object-format))$/;
@@ -663,7 +729,8 @@ const gitOutputs = (args: readonly string[]): string[] | null => {
       !has(
         /^-[a-zA-Z]*[lavr]|^--(?:list|all|remotes|verbose|show|contains|no-contains|merged|no-merged|points-at|format|sort)/,
       ));
-  if (sub === "fetch" || sub === "gc" || (sub === "branch" && branchWrite)) files.push(".");
+  if ((sub === "fetch" && !plainFetch(rest)) || sub === "gc" || (sub === "branch" && branchWrite))
+    files.push(".");
   if (base === undefined) return files.length ? files : null;
   const under = (file: string) =>
     file === "."
@@ -1324,6 +1391,9 @@ const segmentTargets = (
   const assigned = (value: string): string | null => {
     const made = mktempPath(value, dir);
     if (made !== null) return made;
+    // `$(pwd)` prints the directory it runs in, when Workit knows it.
+    if (/^(?:\$\(\s*pwd\s*\)|`pwd`)$/.test(value) && !redefined && dir !== UNKNOWN_DIR)
+      return dir ?? null;
     const all = expansions(value, vars, loops).map(homeExpanded);
     return all.length === 1 && unresolvedRefs(all[0]).length === 0 ? all[0] : null;
   };
@@ -1592,6 +1662,7 @@ const segmentTargets = (
       for (const sub of depth < 4 ? (segment.subs ?? []) : [])
         targets.push(...segmentTargets(runIn, sub, dialect, depth + 1, strict, vars));
       const expanding = new Set(segment.expands ?? []);
+      const stdin = segment.stdin?.join("\n");
       const scriptOf = (index: number): string | undefined => {
         const word = body[index];
         if (word === undefined || !expanding.has(keywords + index)) return word;
@@ -1604,7 +1675,12 @@ const segmentTargets = (
       const opaque = segment.unanalyzable
         ? ["."]
         : inner === null
-          ? opaqueWrites(body, scriptOf)
+          ? opaqueWrites(
+              body,
+              scriptOf,
+              // A heredoc's text, unless an unquoted one may expand a `$` or backtick in it.
+              stdin && (/[$`]/.test(stdin) && /<<-?[ \t]*[^'"\\\s]/.test(command) ? null : stdin),
+            )
           : null;
       // Named by the command it runs, past wrappers such as `env` or `sudo`.
       const ran = words.findIndex((word) => word === "xargs" || !PREFIXES.has(word));
@@ -1641,12 +1717,12 @@ const segmentTargets = (
       )
         targets.push(...linkSources(lnArgs, at));
     }
-    for (const file of segment.redirects)
-      if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
     const edits = editsOf(body);
     if (edits === null) {
       if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
-    } else for (const file of edits) targets.push(...atAll(file));
+    }
+    for (const file of [...segment.redirects, ...(edits ?? [])])
+      if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
     if (dir !== undefined)
       for (const invocation of workitInvocations(body.map(quoteWord).join(" "), "posix")) {
         const { at: runsIn, args } = workitCwd(dir, invocation, atAll);

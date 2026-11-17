@@ -161,7 +161,7 @@ test("Given an implementer, When a for loop runs over literal paths, words built
 test("Given an implementer, When it reads with curl and docker exec, Then neither is judged a write; an inline script it pipes into from the lead's checkout is denied naming that script, and passes from its worktree", () => {
   const id = "impl-shapes-curl";
   allowed(`touch ${wt}/a.ts`, id);
-  const shape = `curl -s localhost:1/x | python3 -c "\nimport json,sys\nprint(json.load(sys.stdin))"\ndocker exec db psql -c "select 1" -c "select 2"`;
+  const shape = `curl -s localhost:1/x | python3 -c "\nimport json,sys\njson.dump(json.load(sys.stdin), open('out.json','w'))"\ndocker exec db psql -c "select 1" -c "select 2"`;
   for (const command of [
     `curl -s localhost:1/x`,
     `curl -sSL -H 'Accept: application/json' localhost:1/x -o /dev/null`,

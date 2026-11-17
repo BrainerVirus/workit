@@ -28,6 +28,7 @@
 // unquoted heredoc whose body runs a command substitution.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveStateDir } from "../core/logger";
 import { appendHookObserved } from "../ledger";
@@ -45,6 +46,7 @@ import {
   configWrites,
   OPAQUE_TARGET,
   placeholdersOf,
+  plainFetch,
   shellMutationTargets,
   UNKNOWN_DIR,
   UNKNOWN_VAR,
@@ -521,7 +523,10 @@ const inScratch = (real: string, repo: string | null): boolean => {
   for (let dir = real; path.dirname(dir) !== dir; dir = path.dirname(dir)) {
     if (path.basename(dir) !== SCRATCH) continue;
     const root = path.dirname(dir);
-    if (checkoutOf(root)?.root === root && (repo === null || commonDir(root) === repo)) return true;
+    const checkout = checkoutOf(root);
+    // Any repository's Workit worktree: a candidate the lead made elsewhere.
+    if (checkout?.root === root && (repo === null || checkout.workit || commonDir(root) === repo))
+      return true;
   }
   return false;
 };
@@ -802,7 +807,12 @@ const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
  * `JUDGE_GIT`), `--git-dir`/`--work-tree` outside scratch, or a `status`
  * that would refresh a non-scratch index. Null when it may.
  */
-const judgeGit = (command: string, repo: string | null, depth = 0): string | null => {
+const judgeGit = (
+  command: string,
+  repo: string | null,
+  cwd: string | null,
+  depth = 0,
+): string | null => {
   const runsGit = /\bgit\b/.test(command);
   for (const segment of segmentsOf(command)) {
     const words = segment.words;
@@ -870,7 +880,18 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
         remote && /^[\w-][\w.-]*$/.test(source)
           ? remoteIn(dir, source, repo)
           : literalIn(source, repo, true);
-      if (!gitKind(args, local)) why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
+      // A plain fetch from a remote the lead configured, in the judged repository or a
+      // Workit worktree (never a scratch repository), updates only remote-tracking refs.
+      const runsIn = path.isAbsolute(dir) ? dir : cwd && path.resolve(cwd, dir);
+      const home = runsIn ? checkoutOf(runsIn) : null;
+      const fetches =
+        args[0] === "fetch" &&
+        plainFetch(args.slice(1)) &&
+        !!home &&
+        (home.workit || commonDir(home.root) === repo) &&
+        !words.some((word) => /^--(?:git-dir|work-tree)/.test(word));
+      if (!fetches && !gitKind(args, local))
+        why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
       else if (args[0] === "status" && !unlocked) {
         const dirs = path.isAbsolute(dir) ? gitDirsAt(canonical(dir), repo) : null;
         if (!dirs?.length || !dirs.every((gitDir) => inScratch(gitDir, repo)))
@@ -898,7 +919,9 @@ const judgeGit = (command: string, repo: string | null, depth = 0): string | nul
       why ??= `\`${name}\` runs git`;
     for (const script of [...(segment.subs ?? []), ...scripts])
       why ??=
-        depth < 4 ? judgeGit(script, repo, depth + 1) : "scripts nest too deep for Workit to read";
+        depth < 4
+          ? judgeGit(script, repo, cwd, depth + 1)
+          : "scripts nest too deep for Workit to read";
     if (why) return why;
   }
   return null;
@@ -910,12 +933,16 @@ const JUDGE_VERBS: Readonly<Record<string, true | readonly string[]>> = {
   dir: true,
   help: true,
   "test-audit": true,
-  ledger: ["verdict", "finding", "list", "check", "ruling"],
+  ledger: ["verdict", "finding", "list", "check", "ruling", "show"],
   pr: ["status"],
   ci: ["wait", "logs"],
   fanout: ["status", "brief"],
   models: ["show"],
   lock: ["status"],
+  lease: ["status"],
+  grant: ["show"],
+  task: ["show", "list"],
+  doctor: ["--json"],
 };
 
 const HELP = /^(?:--help|-h)$/;
@@ -928,11 +955,10 @@ const judgeVerbRefused = (args: readonly string[]): string | null => {
   const [verb, sub = ""] = call;
   if (verb === undefined || verb === "--version" || HELP.test(verb) || HELP.test(sub)) return null;
   const allowed = Object.hasOwn(JUDGE_VERBS, verb) ? JUDGE_VERBS[verb] : [];
-  const ok =
-    allowed === true
-      ? !(verb === "test-audit" && call.some((arg) => /^--mutate(?:=|$)/.test(arg)))
-      : allowed.includes(sub);
-  return ok ? null : `workit ${call.join(" ")}`;
+  return (allowed === true || allowed.includes(sub)) &&
+    !call.some((arg) => /^--(?:mutate|fix)(?:=|$)/.test(arg))
+    ? null
+    : `workit ${call.join(" ")}`;
 };
 
 /** Package runners and interpreters that can start the workit CLI. */
@@ -1044,7 +1070,11 @@ const judgeRefusal = (command: string, fed: string[], depth = 0): string | null 
         (arg, index) =>
           (arg === "-" || !arg.startsWith("-")) && !VALUED.test(args[index - 1] ?? ""),
       );
-      if (FED.test(operand ?? "") || (operand === undefined && !/^(?:bun|deno)$/.test(name)))
+      // A heredoc it reads on stdin is read like an inline script (`python3 - <<'EOF'`).
+      if (
+        (FED.test(operand ?? "") || (operand === undefined && !/^(?:bun|deno)$/.test(name))) &&
+        !(segment.stdin?.length && /^(?:-|\/dev\/stdin)?$/.test(operand ?? ""))
+      )
         return unseen;
     }
     const tail = workitCheckTail(words.slice(at));
@@ -1122,6 +1152,13 @@ export function confineJudge(
     if (!input.session.agentId) return NONE;
     const judged = checkoutOf(input.cwd);
     const repo = judged ? commonDir(judged.root) : null;
+    const { id } = input.session;
+    // Scratch, or a temp dir named for this session (Claude Code's session scratchpad), never all of /tmp.
+    const scratch = (real: string) =>
+      inScratch(real, repo) ||
+      (id.length > 7 &&
+        real.split(path.sep).includes(id) &&
+        [os.tmpdir(), "/tmp"].some((dir) => within(real, canonical(dir))));
     for (const target of targets) {
       const resolved = path.resolve(target);
       if (within(resolved, UNKNOWN_VAR) || within(resolved, UNKNOWN_DIR))
@@ -1143,9 +1180,9 @@ export function confineJudge(
       if (
         runsGit
           ? gitDirs.length > 0
-            ? gitDirs.every((dir) => inScratch(dir, repo))
-            : inScratch(real, repo)
-          : inScratch(real, repo) && !inGitDir(real)
+            ? gitDirs.every(scratch)
+            : scratch(real)
+          : scratch(real) && !inGitDir(real)
       )
         continue;
       const runner = runnerAt(target);
@@ -1186,7 +1223,12 @@ export function confineJudgeShell(
     if (!refused && dialect === "posix") {
       const judged = checkoutOf(input.cwd);
       try {
-        const why = judgeGit(command, judged ? commonDir(judged.root) : null);
+        // git runs in the hook's cwd unless the command changes directory.
+        const why = judgeGit(
+          command,
+          judged ? commonDir(judged.root) : null,
+          /\b(?:cd|chdir|pushd|popd)\b/.test(command) ? null : input.cwd,
+        );
         if (why) refused = `${why}: ${JUDGE_GIT}`;
       } catch {
         refused = "Workit cannot read this command: split it into simpler ones";
@@ -1204,7 +1246,9 @@ export function confineJudgeShell(
         tool === "git" &&
         (args[0] === "push" ||
           leadOwnedGit(args) ||
-          (gitKind(args) === "write" && !/^(?:init|clone)$/.test(args[0])))
+          (gitKind(args) === "write" &&
+            !/^(?:init|clone)$/.test(args[0]) &&
+            !(args[0] === "fetch" && plainFetch(args.slice(1)))))
           ? [
               path.join(
                 dir === undefined ? UNKNOWN_DIR : path.resolve(input.cwd, dir ?? "."),
