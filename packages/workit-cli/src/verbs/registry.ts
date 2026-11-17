@@ -1156,7 +1156,8 @@ export const VERBS: readonly VerbEntry[] = [
         name: "apply",
         usage:
           "workit changelog apply (--entries <JSON|@file|-> | --normalize-only) [--path CHANGELOG.md] [--preview]",
-        summary: "Add entries (or only normalize the file)",
+        summary:
+          'Add entries (or only normalize the file); --entries takes {"Added":["…"],"Fixed":["…"]} or [{"category":"Fixed","text":"…"}]',
       },
       {
         name: "merge",
@@ -1168,6 +1169,9 @@ export const VERBS: readonly VerbEntry[] = [
         usage: "workit changelog driver install",
         summary: "Register the merge driver in .git/config and .gitattributes",
       },
+    ],
+    examples: [
+      `workit changelog apply --entries '{"Fixed":["fanout plan names every valid tier"]}'`,
     ],
     load: () => import("./changelog"),
   }),
