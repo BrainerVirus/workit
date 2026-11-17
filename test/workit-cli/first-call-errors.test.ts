@@ -2,6 +2,7 @@
 // call. Each refusal below carries what the next call needs (the usage line,
 // the real flag, the command with the agent's own arguments, every valid
 // value), so a weak model does not have to ask `workit help` first.
+import "@/test/shared/state-isolation";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
