@@ -4,6 +4,7 @@ import { approveCallDeny, approveCallIn } from "../../approvals/call";
 import {
   inlineAskFor,
   inlineCallDeny,
+  inlineCallCwd,
   inlineCallIn,
   isReleaseNotesCall,
 } from "../../approvals/inline";
@@ -459,8 +460,10 @@ const inlineStepOf = (
     if (!call.plain)
       return { decision: { kind: "deny", reason: inlineCallDeny(call.fix), unblock: call.fix } };
     if (shared.kind !== "none" && shared.kind !== "context") return { decision };
-    const cwd = typeof raw.cwd === "string" ? raw.cwd : "";
-    const ask = inlineAskFor(call.words, cwd);
+    const ask = inlineAskFor(
+      call.words,
+      inlineCallCwd(call, typeof raw.cwd === "string" ? raw.cwd : ""),
+    );
     if (!ask) return { decision };
     const toolInput = isRecord(raw.tool_input) ? raw.tool_input : {};
     if (!personAsked(raw, env))

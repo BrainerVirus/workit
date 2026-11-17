@@ -31,6 +31,7 @@ import { approveCallDeny, approveCallIn } from "@workit-dev/core/src/approvals/c
 import {
   inlineAskFor,
   inlineCallDeny,
+  inlineCallCwd,
   inlineCallIn,
   isReleaseNotesCall,
 } from "@workit-dev/core/src/approvals/inline";
@@ -261,13 +262,13 @@ const approveInDialog = async (
  * same call. Reject or a dismissed dialog blocks it. Never throws.
  */
 const askInline = async (
-  words: readonly string[],
+  call: { words: readonly string[]; cwd: string | null },
   command: string,
   event: ToolCallEvent,
   ctx: ExtensionContext,
 ): Promise<Blocked | undefined> => {
   try {
-    const ask = inlineAskFor(words, ctx.cwd);
+    const ask = inlineAskFor(call.words, inlineCallCwd(call, ctx.cwd));
     if (!ask) return undefined;
     const choice = await ctx.ui.select(ask.text, [APPROVE, REJECT]);
     const nothing = ask.kind === "release-notes" ? "nothing was approved" : "nothing was posted";
@@ -328,14 +329,15 @@ export const enforceToolPolicy = (
       // `release notes approve` is user-only, so the dialog is its gate, as
       // `workit approve`'s is, but only when there is an ask to show.
       const gated =
-        isReleaseNotesCall(inline.words) && inlineAskFor(inline.words, ctx.cwd)
+        isReleaseNotesCall(inline.words) &&
+        inlineAskFor(inline.words, inlineCallCwd(inline, ctx.cwd))
           ? undefined
           : gate({
               kind: "shell.pre",
               command: command as string,
               toolUseId: event.toolCallId ?? null,
             });
-      return gated ?? askInline(inline.words, command as string, event, ctx);
+      return gated ?? askInline(inline, command as string, event, ctx);
     }
     return typeof command === "string"
       ? gate({

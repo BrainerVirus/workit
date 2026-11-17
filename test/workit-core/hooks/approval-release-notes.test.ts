@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { releaseNotesAsk } from "@/packages/workit-core/src/approvals/release-notes-ask";
-import { consumeInlineAsk } from "@/packages/workit-core/src/approvals/store";
+import { consumeInlineAsk, INLINE_TICKET_ENV } from "@/packages/workit-core/src/approvals/store";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 
@@ -80,8 +80,21 @@ const claude = (command: string, mode = "auto", entry = "cli"): Out =>
 const ticketOf = (command: string | undefined): string | undefined =>
   /^WORKIT_APPROVAL_TICKET=(\S+) workit release notes approve 1\.0\.0$/u.exec(command ?? "")?.[1];
 
-const consume = (ticket: string, session: string, notes = readFileSync(DRAFT, "utf8")) => {
-  const ask = releaseNotesAsk(["1.0.0"], { path: DRAFT, notes })!;
+/** The ticket the host put on `call`: the env prefix's value. */
+const ticketOn = (command: string | undefined, call: string): string | undefined => {
+  const prefix = `${INLINE_TICKET_ENV}=`;
+  return command?.startsWith(prefix) && command.endsWith(` ${call}`)
+    ? command.slice(prefix.length, -call.length - 1)
+    : undefined;
+};
+
+const consume = (
+  ticket: string,
+  session: string,
+  notes = readFileSync(DRAFT, "utf8"),
+  args = ["1.0.0"],
+) => {
+  const ask = releaseNotesAsk(args, { path: DRAFT, notes })!;
   return consumeInlineAsk({
     ticket,
     kind: ask.kind,
@@ -126,6 +139,36 @@ test("Given a ticket from one session, When another session uses it, Then it is 
   expect(consume(ticket, "another-session").ok).toBe(false);
 });
 
+test("Given leading global options (--json, --cwd, --session), When the agent runs approve, Then it is asked as the plain form, bound to the args the verb receives", () => {
+  writeDraft();
+  const json = "workit --json release notes approve 1.0.0";
+  const asked = claude(json);
+  expect(asked.permissionDecision).toBe("ask");
+  expect(asked.permissionDecisionReason).toContain("- change 80");
+  // The router hands the verb `1.0.0 --json`: that is what the ticket covers.
+  const ticket = ticketOn(asked.updatedInput?.command, json)!;
+  expect(consume(ticket, SESSION, undefined, ["1.0.0"]).ok).toBe(false);
+  expect(consume(ticket, SESSION, undefined, ["1.0.0", "--json"]).ok).toBe(true);
+  // --cwd: the draft is read where the CLI runs, not in the host's cwd.
+  const elsewhere = `workit --cwd ${repo} --session ${SESSION} release notes approve 1.0.0`;
+  const out = (dispatchHook(
+    claudeCodeAdapter,
+    {
+      session_id: SESSION,
+      transcript_path: path.join(base, "t.jsonl"),
+      cwd: base,
+      permission_mode: "auto",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command: elsewhere },
+      tool_use_id: "toolu_02",
+    },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  ).json.hookSpecificOutput ?? {}) as Out;
+  expect(out.permissionDecision).toBe("ask");
+  expect(consume(ticketOn(out.updatedInput?.command, elsewhere)!, SESSION).ok).toBe(true);
+});
+
 test("Given bypassPermissions, dontAsk or an SDK entrypoint, When the call runs, Then nothing is asked and the call is marked unasked", () => {
   writeDraft();
   for (const [mode, entry, named] of [
@@ -141,7 +184,14 @@ test("Given bypassPermissions, dontAsk or an SDK entrypoint, When the call runs,
 
 test("Given the call inside something else, When the hook runs, Then it is denied with the plain form", () => {
   writeDraft();
-  for (const command of [`cd ${repo} && ${COMMAND}`, `${COMMAND} | cat`, `bash -c '${COMMAND}'`]) {
+  for (const command of [
+    `cd ${repo} && ${COMMAND}`,
+    `${COMMAND} | cat`,
+    `bash -c '${COMMAND}'`,
+    `FOO=1 ${COMMAND}`,
+    `FOO=1 workit --json release notes approve 1.0.0`,
+    `env ${COMMAND}`,
+  ]) {
     const out = claude(command);
     expect(out.permissionDecision, command).toBe("deny");
     expect(out.permissionDecisionReason, command).toContain(`\`${COMMAND}\``);

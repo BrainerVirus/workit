@@ -412,7 +412,11 @@ type HookOut = {
   permissionDecisionReason?: string;
   updatedInput?: { command: string };
 };
-const hookAsk = (cwd: string, mode = "auto"): HookOut =>
+const hookAsk = (
+  cwd: string,
+  mode = "auto",
+  command = "workit release notes approve 1.0.0",
+): HookOut =>
   dispatchHook(
     claudeCodeAdapter,
     {
@@ -422,16 +426,17 @@ const hookAsk = (cwd: string, mode = "auto"): HookOut =>
       permission_mode: mode,
       hook_event_name: "PreToolUse",
       tool_name: "Bash",
-      tool_input: { command: "workit release notes approve 1.0.0", description: "Approve notes" },
+      tool_input: { command, description: "Approve notes" },
       tool_use_id: "toolu_01",
     },
     { CLAUDE_CODE_ENTRYPOINT: "cli" },
   ).json.hookSpecificOutput ?? {};
 /** The env prefix the host put on the call: its name and value. */
 const prefixOf = (out: HookOut): NodeJS.ProcessEnv => {
-  const match = /^(WORKIT_APPROVAL_\w+)=(\S+) workit release notes approve 1\.0\.0$/u.exec(
-    out.updatedInput?.command ?? "",
-  );
+  const match =
+    /^(WORKIT_APPROVAL_\w+)=(\S+) workit (?:--json )?release notes approve 1\.0\.0$/u.exec(
+      out.updatedInput?.command ?? "",
+    );
   expect(match).not.toBeNull();
   return { [match![1]]: match![2] };
 };
@@ -466,6 +471,23 @@ test.skipIf(process.platform === "win32")(
     expect(replay.bodies).toEqual([draft]);
   },
 );
+
+test("Given `workit --json release notes approve 1.0.0` on Claude Code, When the user clicks yes, Then the verb (which the router hands `1.0.0 --json`) records the approval", async () => {
+  const repo = forgeRepo();
+  workspace(repo, { releaseNotes: "review" });
+  await started(repo);
+  await withHome(configHome.home, () => run(["release", "notes", "draft", "1.0.0"], repo.cwd));
+  const out = hookAsk(repo.cwd, "auto", "workit --json release notes approve 1.0.0");
+  expect(out.permissionDecision).toBe("ask");
+  const approved = await approve(
+    repo.cwd,
+    "1.0.0",
+    { interactive: false, env: agentShell(prefixOf(out)) },
+    ["1.0.0", "--json"],
+  );
+  expect(approved.code, JSON.stringify(approved.json())).toBe(0);
+  expect(rows(repo.cwd, "release.notes.approved").at(-1)).toMatchObject({ via: "host" });
+});
 
 test("Given an approval from the host prompt, When the draft changes, Then finish refuses (hash mismatch) and the next prompt shows the new text", async () => {
   const repo = forgeRepo();

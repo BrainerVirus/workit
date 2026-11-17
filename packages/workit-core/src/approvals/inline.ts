@@ -6,7 +6,9 @@
 // A host acts only on one plain call: anything around it (a chain, a pipe, a
 // redirect, a substitution, a variable, a leading cd, a shell's -c script)
 // could change what runs or repeat it, so the hook denies it and names the
-// plain form.
+// plain form. Global options before the verb (`--json`, `--cwd`,
+// `--session`) are the CLI's own and keep a call plain.
+import path from "node:path";
 import { youTrackWritesMode } from "../autonomy";
 import { segmentsOf, type ShellDialect } from "../hooks/shell-words";
 import { isWorkitWord, verbIndex } from "./call";
@@ -15,8 +17,12 @@ import type { ApprovalKind } from "./store";
 import { isYouTrackWriteVerb, youTrackAsk } from "./youtrack-ask";
 
 export type InlineCall =
-  /** Exactly `workit <verb> …`: the words past `workit`. */
-  | { plain: true; words: string[] }
+  /**
+   * Exactly `workit [globals] <verb> …`: the words the verb's router passes
+   * on (a leading `--json` moved after the verb, as the CLI does), and the
+   * leading `--cwd` the CLI runs in.
+   */
+  | { plain: true; words: string[]; cwd: string | null }
   /** The call inside something else: the plain command to run instead. */
   | { plain: false; fix: string };
 
@@ -39,6 +45,29 @@ const asked = (words: readonly string[]): boolean =>
 
 const quote = (word: string): string =>
   /^[\w@%+=:,./-]+$/u.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/** `call` as the CLI's router hands it on: a leading `--json` goes after the verb, before any `--`. */
+const routed = (call: string[], globals: readonly string[]): string[] => {
+  if (!globals.includes("--json") || call.slice(1).includes("--json")) return call;
+  const end = call.indexOf("--");
+  return end < 0 ? [...call, "--json"] : [...call.slice(0, end), "--json", ...call.slice(end)];
+};
+
+/** The last leading `--cwd` value, which the CLI runs in. */
+const cwdOf = (globals: readonly string[]): string | null => {
+  let cwd: string | null = null;
+  for (let index = 0; index < globals.length; index += 1) {
+    const word = globals[index] ?? "";
+    if (word === "--cwd") cwd = globals[++index] ?? null;
+    else if (word.startsWith("--cwd=")) cwd = word.slice("--cwd=".length);
+    else if (word === "--session") index += 1;
+  }
+  return cwd;
+};
+
+/** Where a plain call runs: its `--cwd` against the host's cwd. */
+export const inlineCallCwd = (call: { cwd: string | null }, base: string): string =>
+  call.cwd ? path.resolve(base, call.cwd) : base;
 
 /** The inline-asked Workit call `command` runs, or null when it runs none. */
 export const inlineCallIn = (
@@ -64,13 +93,17 @@ export const inlineCallIn = (
       segments.length === 1 &&
       start === 0 &&
       words[0] === "workit" &&
-      at === 1 &&
       !segment.redirects.length &&
       !segment.subs?.length &&
       !segment.stdin?.length &&
       !segment.expands?.length &&
       !segment.group;
-    if (plain) return { plain: true, words: call };
+    if (plain)
+      return {
+        plain: true,
+        words: routed(call, words.slice(1, at)),
+        cwd: cwdOf(words.slice(1, at)),
+      };
     return {
       plain: false,
       fix: `workit ${call.map(quote).join(" ")}`,
