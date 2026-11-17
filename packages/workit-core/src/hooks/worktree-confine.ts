@@ -22,8 +22,9 @@
 //
 // A verifier or reviewer (a judge, #790) writes only in a scratch dir:
 // `.workit-scratch/` at the root of a checkout of the judged repository, the
-// candidate worktree's included, and a scratch git repository made inside
-// it. Every other write target,
+// candidate worktree's included (any repository's Workit worktree too), a
+// scratch git repository made inside it, and a temp dir named for its host
+// session (Claude Code's session scratchpad). Every other write target,
 // in a repository or not, is denied naming the scratch dir, and so is an
 // unquoted heredoc whose body runs a command substitution.
 import { createHash } from "node:crypto";
