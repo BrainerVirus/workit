@@ -13,7 +13,9 @@
 // finish publishes the draft (`.git/workit/release-notes/<v>.md`), else the
 // notes built from the changelog section; `off` skips the forge release;
 // `review` refuses before any merge until the user approves the current
-// draft at their own terminal (approve refuses agent shells and no TTY).
+// draft: on the host's prompt on the approve call itself (Claude Code, Pi:
+// its ticket binds the yes to the text shown, #864), else at their own
+// terminal (approve refuses an agent shell without a ticket, and no TTY).
 //
 // Release packages (#860, workspace `releasePackages`): `release package`
 // tags `<namespace><version>` on the workspace's release commit, pushes it
@@ -43,7 +45,15 @@ import {
   tagReleasePackage,
   untagReleasePackage,
   type FinishPlan,
+  type ReleaseNotesDraft,
 } from "@workit-dev/core/src/git/release";
+import { inlineAskSession } from "@workit-dev/core/src/approvals/ask-session";
+import { releaseNotesAsk } from "@workit-dev/core/src/approvals/release-notes-ask";
+import {
+  consumeInlineAsk,
+  INLINE_TICKET_ENV,
+  INLINE_UNASKED_ENV,
+} from "@workit-dev/core/src/approvals/store";
 import { parseRemoteUrl, pushUrl } from "@workit-dev/core/src/git/rev";
 import { actorFromEnv, appendObserved } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Envelope, type Io } from "../output";
@@ -437,20 +447,27 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
   const scope = `${flags.values.package ? ` --package ${flags.values.package}` : ""}${flags.values.track ? ` --track ${flags.values.track}` : ""}`;
   const draftCmd = `workit release notes draft ${version}${scope}`;
   const approveCmd = `workit release notes approve ${version}${scope}`;
-  if (action === "approve") {
-    // The user's decision, like raising a grant: never an agent shell, never headless.
+  // A host prompt that showed the draft in full puts its ticket on this one
+  // call (#864: Claude Code, Pi); without one, only the user's own terminal.
+  const ticket = action === "approve" ? io.env[INLINE_TICKET_ENV] : undefined;
+  if (action === "approve" && !ticket) {
     const agent = agentMarker(io.env);
-    if (!deps.interactive() || agent)
+    const unasked = io.env[INLINE_UNASKED_ENV];
+    if (unasked || agent || !deps.interactive()) {
+      const why = unasked
+        ? `the host ran this call in ${unasked.startsWith("sdk") ? `the ${unasked} entrypoint` : `${unasked} mode`}, where no person sees a prompt`
+        : agent
+          ? `this shell belongs to an agent (${agent} is set) and no host prompt asked the user${io.env.CLAUDECODE ? "; Claude Code asks on a plain `workit release notes approve <v>` call with a draft to show" : ""}`
+          : "there is no interactive terminal";
       return emit(
         io,
         fail(
           "blocked",
-          `approval_refused: approving the release notes of ${version} needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}; release notes are never approved headless`,
-          {
-            unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${approveCmd}`,
-          },
+          `approval_refused: nothing was approved for the release notes of ${version}: ${why}`,
+          { unblock: `ask the user to run in a terminal outside the agent host: ${approveCmd}` },
         ),
       );
+    }
   }
   const context = releaseNotesContext(io.cwd, {
     version,
@@ -490,7 +507,7 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
           : "next: add a `## Highlights` section at the top of that file: 1-3 bullets of what users get, from the user's pointers",
         ...(context.data.mode === "review"
           ? [
-              `then show the user the draft and stop: they approve it in a terminal outside the agent host: ${approveCmd}`,
+              `then show the user the full draft in chat and run \`${approveCmd}\` as its own call: Claude Code and Pi ask the user on it with the full text; elsewhere ask the user to run it in a terminal`,
             ]
           : []),
       ],
@@ -512,6 +529,7 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
       "",
       data.notes.trimEnd(),
     ]);
+  if (ticket) return approveFromHost(io, rest, ticket, { ...context.data, draft, approveCmd });
   if (!io.json)
     io.stdout(`${draft.notes.trimEnd()}
 
@@ -538,9 +556,65 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
     version: context.data.version,
     tag: context.data.tag,
     package: context.data.package,
+    via: "terminal",
+    host: null,
   });
   return emit(io, ok({ version, path: draft.path, sha256: draft.sha256 }), () => [
     `approved the release notes of ${version} (sha256 ${draft.sha256.slice(0, 12)}); an edit to the draft needs a new approval`,
+  ]);
+}
+
+/**
+ * Record the yes a host prompt gave this very call (#864): the ticket must
+ * cover these words and the draft as read once above, whose sha256 is what
+ * finish later checks. Refuses `approval_not_bound` otherwise.
+ */
+function approveFromHost(
+  io: Io,
+  args: readonly string[],
+  ticket: string,
+  notes: {
+    version: string;
+    tag: string;
+    package: string | null;
+    draft: ReleaseNotesDraft;
+    approveCmd: string;
+  },
+): number {
+  const { draft, version } = notes;
+  const ask = releaseNotesAsk(args, draft);
+  const used = ask
+    ? consumeInlineAsk({
+        ticket,
+        kind: ask.kind,
+        argvHash: ask.argvHash,
+        contentHash: ask.contentHash,
+        verb: "release notes approve",
+        session: inlineAskSession(io.env),
+      })
+    : { ok: false as const, reason: "it names no one version" };
+  if (!used.ok)
+    return emit(
+      io,
+      fail(
+        "blocked",
+        `approval_not_bound: nothing was approved; the yes from the host's prompt does not cover this call: ${used.reason}`,
+        {
+          unblock: `${notes.approveCmd}  # as its own plain call: the host asks the user again`,
+          data: { reason: "approval_not_bound" },
+        },
+      ),
+    );
+  recordReleaseNotesApproval(io.cwd, actorFromEnv(io.env), {
+    ...draft,
+    version,
+    tag: notes.tag,
+    package: notes.package,
+    via: "host",
+    host: used.asked.host,
+  });
+  return emit(io, ok({ version, path: draft.path, sha256: draft.sha256 }), () => [
+    `approved the release notes of ${version} (sha256 ${draft.sha256.slice(0, 12)}) from the host prompt; an edit to the draft needs a new approval`,
   ]);
 }
 

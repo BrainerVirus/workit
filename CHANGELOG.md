@@ -1158,6 +1158,17 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
   the agent's command was not plain, and no longer says "your own terminal"
   where the host asks.
 
+### Fixed (#864: approve release notes on the action itself)
+
+- Under `releaseNotes: review`, `workit release notes approve <v>` is one
+  click on the host's prompt on that call: Claude Code (auto mode included)
+  and Pi's TUI show the whole draft, and Yes records the approval of exactly
+  that text, so `release finish` proceeds without a terminal. Before, the
+  verb refused every agent shell, so a host yes was refused anyway.
+- A draft edited after the prompt is not approved; where nobody sees a
+  prompt, or on OpenCode, Codex and Cursor, the call refuses with one
+  command for the user's terminal, where the typed-version flow is unchanged.
+
 ## [0.6.0] - 2026-08-10
 
 ### Added

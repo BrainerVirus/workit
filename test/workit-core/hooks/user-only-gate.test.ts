@@ -101,6 +101,18 @@ test("Given a user-only call on Claude Code, When PreToolUse runs, Then it asks"
   expect(out?.permissionDecision).toBe("ask");
 });
 
+test.each([
+  ["FOO=1 workit --json release notes approve 1.0.0"],
+  ["workit --json release notes approve 1.0.0 && true"],
+])(
+  "Given a user-only call wrapped in `%s` on Claude Code, When PreToolUse runs, Then it denies with the plain form",
+  (command) => {
+    const out = claude(repo(), command);
+    expect(out?.permissionDecision).toBe("deny");
+    expect(out?.permissionDecisionReason).toContain("`workit release notes approve 1.0.0`");
+  },
+);
+
 test("Given workit grant raise on Codex and Pi, When the hook runs, Then it denies", () => {
   const root = repo();
   const out = codex(root, "workit grant raise ws");

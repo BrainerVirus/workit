@@ -1,11 +1,13 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { runRelease } from "@/packages/workit-cli/src/verbs/release";
+import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { fixture, replayRunner, replyError, type Reply } from "@/test/shared/helpers/forge-replay";
 import {
@@ -26,11 +28,21 @@ setDefaultTimeout(60_000);
 let configDir = "";
 let configHome: ConfigHome;
 const original = { ...forgeDeps };
+// The approvals store (#864 host asks) lives in a temp state dir, never the real one.
+const savedState = process.env.WORKIT_STATE_DIR;
+let stateDir = "";
 beforeAll(() => {
   configHome = useConfigHome("wk-release-notes-config-");
   configDir = configHome.configDir;
+  stateDir = realpathSync(mkdtempSync(path.join(tmpdir(), "wk-release-notes-state-")));
+  process.env.WORKIT_STATE_DIR = stateDir;
 });
-afterAll(() => configHome.restore());
+afterAll(() => {
+  configHome.restore();
+  if (savedState === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = savedState;
+  rmSync(stateDir, { recursive: true, force: true });
+});
 
 const repos: RemoteRepo[] = [];
 afterEach(() => {
@@ -76,6 +88,7 @@ const approve = async (
   cwd: string,
   version: string,
   options: { interactive: boolean; env: NodeJS.ProcessEnv; answer?: string },
+  args: string[] = [version],
 ) => {
   let stdout = "";
   const io: Io = {
@@ -85,7 +98,7 @@ const approve = async (
     stdout: (text) => void (stdout += text),
     stderr: () => {},
   };
-  const code = await runRelease(["notes", "approve", version], io, {
+  const code = await runRelease(["notes", "approve", ...args], io, {
     interactive: () => options.interactive,
     ask: async () => options.answer ?? version,
   });
@@ -337,10 +350,9 @@ test("Given an agent shell or no terminal, When release notes approve runs, Then
   ]) {
     const refused = await approve(repo.cwd, "1.0.0", options);
     expect(refused.code).toBe(3);
-    expect(refused.json().unblock).toContain(
-      "ask the user to run, in a terminal outside the agent host",
+    expect(refused.json().unblock).toBe(
+      "ask the user to run in a terminal outside the agent host: workit release notes approve 1.0.0",
     );
-    expect(refused.json().unblock).toContain("workit release notes approve 1.0.0");
   }
   expect(rows(repo.cwd, "release.notes.approved")).toHaveLength(0);
 });
@@ -381,4 +393,164 @@ test("Given a GitLab remote, When the draft is written, Then its compare link is
   expect(drafted.json().data.notes).toContain(
     "**Full changelog**: https://gitlab.com/g/sub/p/-/compare/v0.9.0...v1.0.0",
   );
+});
+
+// #864: the one-click path. Claude Code's PreToolUse asks on the plain call
+// with the full draft and runs it with a ticket bound to that text; the verb,
+// in the agent's shell with no terminal, records the approval from it.
+const SESSION = "0b7c2e4a-9f1d-4c58-8a36-2d0f5e7b9c11";
+/** What Claude Code's SessionStart exports into every Bash call of the session. */
+const agentShell = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+  ...userEnv(),
+  CLAUDECODE: "1",
+  WORKIT_HOST: "claude_code",
+  WORKIT_SESSION_ID: SESSION,
+  ...extra,
+});
+type HookOut = {
+  permissionDecision?: string;
+  permissionDecisionReason?: string;
+  updatedInput?: { command: string };
+};
+const hookAsk = (
+  cwd: string,
+  mode = "auto",
+  command = "workit release notes approve 1.0.0",
+): HookOut =>
+  dispatchHook(
+    claudeCodeAdapter,
+    {
+      session_id: SESSION,
+      transcript_path: path.join(cwd, "t.jsonl"),
+      cwd,
+      permission_mode: mode,
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command, description: "Approve notes" },
+      tool_use_id: "toolu_01",
+    },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  ).json.hookSpecificOutput ?? {};
+/** The env prefix the host put on the call: its name and value. */
+const prefixOf = (out: HookOut): NodeJS.ProcessEnv => {
+  const match =
+    /^(WORKIT_APPROVAL_\w+)=(\S+) workit (?:--json )?release notes approve 1\.0\.0$/u.exec(
+      out.updatedInput?.command ?? "",
+    );
+  expect(match).not.toBeNull();
+  return { [match![1]]: match![2] };
+};
+
+test.skipIf(process.platform === "win32")(
+  "Given releaseNotes review and a draft, When the agent runs approve on Claude Code (auto mode) and the user clicks yes, Then the approval is recorded for that draft and finish proceeds without a terminal",
+  async () => {
+    const repo = forgeRepo();
+    workspace(repo, { releaseNotes: "review" });
+    await started(repo);
+    await withHome(configHome.home, () => run(["release", "notes", "draft", "1.0.0"], repo.cwd));
+    addHighlights(repo);
+    const out = hookAsk(repo.cwd);
+    expect(out.permissionDecision).toBe("ask");
+    expect(out.permissionDecisionReason).toContain("- Faster startup for everyone");
+    expect(out.permissionDecisionReason).toContain("- the widget");
+    const approved = await approve(repo.cwd, "1.0.0", {
+      interactive: false,
+      env: agentShell(prefixOf(out)),
+    });
+    expect(approved.code, JSON.stringify(approved.json())).toBe(0);
+    const draft = readFileSync(draftPath(repo), "utf8");
+    expect(rows(repo.cwd, "release.notes.approved").at(-1)).toMatchObject({
+      version: "1.0.0",
+      sha256: createHash("sha256").update(draft).digest("hex"),
+      via: "host",
+      host: "claude_code",
+    });
+    const replay = forge();
+    const finished = await finish(repo);
+    expect(finished.code, finished.stdout + finished.stderr).toBe(0);
+    expect(replay.bodies).toEqual([draft]);
+  },
+);
+
+test("Given `workit --json release notes approve 1.0.0` on Claude Code, When the user clicks yes, Then the verb (which the router hands `1.0.0 --json`) records the approval", async () => {
+  const repo = forgeRepo();
+  workspace(repo, { releaseNotes: "review" });
+  await started(repo);
+  await withHome(configHome.home, () => run(["release", "notes", "draft", "1.0.0"], repo.cwd));
+  const out = hookAsk(repo.cwd, "auto", "workit --json release notes approve 1.0.0");
+  expect(out.permissionDecision).toBe("ask");
+  const approved = await approve(
+    repo.cwd,
+    "1.0.0",
+    { interactive: false, env: agentShell(prefixOf(out)) },
+    ["1.0.0", "--json"],
+  );
+  expect(approved.code, JSON.stringify(approved.json())).toBe(0);
+  expect(rows(repo.cwd, "release.notes.approved").at(-1)).toMatchObject({ via: "host" });
+});
+
+test("Given an approval from the host prompt, When the draft changes, Then finish refuses (hash mismatch) and the next prompt shows the new text", async () => {
+  const repo = forgeRepo();
+  workspace(repo, { releaseNotes: "review" });
+  await started(repo);
+  await withHome(configHome.home, () => run(["release", "notes", "draft", "1.0.0"], repo.cwd));
+  addHighlights(repo);
+  const approved = await approve(repo.cwd, "1.0.0", {
+    interactive: false,
+    env: agentShell(prefixOf(hookAsk(repo.cwd))),
+  });
+  expect(approved.code, JSON.stringify(approved.json())).toBe(0);
+  const draft = readFileSync(draftPath(repo), "utf8");
+  writeFileSync(draftPath(repo), draft.replace("Faster startup", "Slower startup"));
+  const refused = await finish(repo);
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toContain("changed after the user approved it");
+  expect(refused.json().unblock).toContain("workit release notes approve 1.0.0");
+  expect(hookAsk(repo.cwd).permissionDecisionReason).toContain("- Slower startup for everyone");
+});
+
+test("Given a ticket, When the draft changes between the prompt and the call, Then nothing is recorded", async () => {
+  const repo = forgeRepo();
+  workspace(repo, { releaseNotes: "review" });
+  await started(repo);
+  await withHome(configHome.home, () => run(["release", "notes", "draft", "1.0.0"], repo.cwd));
+  const ticket = prefixOf(hookAsk(repo.cwd));
+  addHighlights(repo);
+  const refused = await approve(repo.cwd, "1.0.0", { interactive: false, env: agentShell(ticket) });
+  expect(refused.code).toBe(3);
+  expect(refused.json().error).toContain("approval_not_bound");
+  expect(refused.json().error).toContain("changed");
+  // A ticket from the prompt on another version's call does not cover this one either.
+  expect(
+    (
+      await approve(repo.cwd, "1.0.0", { interactive: false, env: agentShell(ticket) }, [
+        "1.0.0",
+        "--track",
+        "stable",
+      ])
+    ).code,
+  ).not.toBe(0);
+  expect(rows(repo.cwd, "release.notes.approved")).toHaveLength(0);
+});
+
+test("Given no host prompt (bypassPermissions, or a host without a recorder), When approve runs, Then it refuses with one short terminal command and no id", async () => {
+  const repo = forgeRepo();
+  workspace(repo, { releaseNotes: "review" });
+  await started(repo);
+  await run(["release", "notes", "draft", "1.0.0"], repo.cwd);
+  const unasked = prefixOf(hookAsk(repo.cwd, "bypassPermissions"));
+  expect(unasked.WORKIT_APPROVAL_UNASKED).toBe("bypassPermissions");
+  for (const env of [agentShell(unasked), { ...userEnv(), CURSOR_AGENT: "1" }]) {
+    const refused = await approve(repo.cwd, "1.0.0", { interactive: false, env });
+    expect(refused.code).toBe(3);
+    expect(refused.json().unblock).toBe(
+      "ask the user to run in a terminal outside the agent host: workit release notes approve 1.0.0",
+    );
+    expect(JSON.stringify(refused.json())).not.toMatch(/ap_[a-z2-7]{8}/u);
+  }
+  expect(
+    (await approve(repo.cwd, "1.0.0", { interactive: true, env: agentShell(unasked) })).json()
+      .error,
+  ).toContain("bypassPermissions");
+  expect(rows(repo.cwd, "release.notes.approved")).toHaveLength(0);
 });
