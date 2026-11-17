@@ -90,8 +90,8 @@ const HOOK_ENTRIES = [
 // to 564,108 B. The ceiling is that plus ~2,400 B. procs-route and session-teardown, which the
 // wave 9 ceiling above left room for, print their own delta and raise it in their PRs.
 // Wave 11 confine-reads (retro 2026-11-17 C1+C2): read-only inline scripts, a plain fetch, the
-// session scratchpad and the read-only judge verbs take core run from 564,108 B to 565,594 B
-// (+1,486 B); the ceiling is unchanged.
+// session scratchpad and the read-only judge verbs, with review round 1's fail-closed rules (verdict
+// mwla51qs), take core run from 564,108 B to 566,012 B (+1,904 B); the ceiling is unchanged.
 const BUDGET = 566_500;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }

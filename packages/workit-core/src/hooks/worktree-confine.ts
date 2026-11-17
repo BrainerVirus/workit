@@ -934,7 +934,8 @@ const JUDGE_VERBS: Readonly<Record<string, true | readonly string[]>> = {
   dir: true,
   help: true,
   "test-audit": true,
-  ledger: ["verdict", "finding", "list", "check", "ruling", "show"],
+  ledger: ["verdict", "list", "check", "ruling", "show"],
+  finding: ["record", "list"],
   pr: ["status"],
   ci: ["wait", "logs"],
   fanout: ["status", "brief"],
@@ -956,8 +957,10 @@ const judgeVerbRefused = (args: readonly string[]): string | null => {
   const [verb, sub = ""] = call;
   if (verb === undefined || verb === "--version" || HELP.test(verb) || HELP.test(sub)) return null;
   const allowed = Object.hasOwn(JUDGE_VERBS, verb) ? JUDGE_VERBS[verb] : [];
+  // `doctor --json` alone: any other doctor option may repair.
   return (allowed === true || allowed.includes(sub)) &&
-    !call.some((arg) => /^--(?:mutate|fix)(?:=|$)/.test(arg))
+    (verb !== "doctor" || call.length < 3) &&
+    !call.some((arg) => /^--(?:mutate|fix)\b/.test(arg))
     ? null
     : `workit ${call.join(" ")}`;
 };
@@ -1129,7 +1132,7 @@ const judgeDeny = (input: HookInput, what: string, target?: string): HookDecisio
   const scratch = root
     ? `${path.join(root, SCRATCH)}${also}`
     : `${SCRATCH}/ at the root of the checkout you judge`;
-  const unblock = `Write only under ${scratch} (mkdir -p it): put a generated case in a file there with a quoted heredoc (<<'EOF') and never run it in the shell. Reads, \`workit check\` and \`workit ledger verdict|finding\` stay allowed; a change the candidate needs is a finding, not an edit.`;
+  const unblock = `Write only under ${scratch} (mkdir -p it): put a generated case in a file there with a quoted heredoc (<<'EOF') and never run it in the shell. Reads, \`workit check\`, \`workit ledger verdict\` and \`workit finding record\` stay allowed; a change the candidate needs is a finding, not an edit.`;
   return {
     kind: "deny",
     reason: `workit scratch confinement: ${role} ${input.session.agentId} may write only in its scratch dir ${scratch}, and ${what}. ${unblock}`,
@@ -1153,13 +1156,14 @@ export function confineJudge(
     if (!input.session.agentId) return NONE;
     const judged = checkoutOf(input.cwd);
     const repo = judged ? commonDir(judged.root) : null;
-    const { id } = input.session;
-    // Scratch, or a temp dir named for this session (Claude Code's session scratchpad), never all of /tmp.
+    // Scratch, or this session's own temp dir in Claude Code's layout
+    // (`/tmp/claude-<uid>/<project>/<session id>/`), never all of /tmp.
     const scratch = (real: string) =>
       inScratch(real, repo) ||
-      (id.length > 7 &&
-        real.split(path.sep).includes(id) &&
-        [os.tmpdir(), "/tmp"].some((dir) => within(real, canonical(dir))));
+      [os.tmpdir(), "/tmp"].some((dir) => {
+        const [host, , session] = path.relative(canonical(dir), real).split(path.sep);
+        return /^claude-\d+$/.test(host) && session === input.session.id;
+      });
     for (const target of targets) {
       const resolved = path.resolve(target);
       if (within(resolved, UNKNOWN_VAR) || within(resolved, UNKNOWN_DIR))
@@ -1236,7 +1240,8 @@ export function confineJudgeShell(
       }
     }
     if (refused) return judgeDeny(input, refused);
-    if (dialect === "posix" && substitutingHeredoc(command))
+    // bash joins a backslash-newline first (`<<\` then `EOF` is an unquoted `<<EOF`).
+    if (dialect === "posix" && substitutingHeredoc(command.replaceAll("\\\n", "")))
       return judgeDeny(
         input,
         "an unquoted heredoc runs the `$(…)` or backtick command in its body: quote the delimiter (<<'EOF')",

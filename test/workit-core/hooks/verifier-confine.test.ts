@@ -152,7 +152,7 @@ const inside = (agent: Agent) => [
       agent,
     ),
   () => bash("workit ledger verdict verified --kind unit --branch feature/a --how 'ran x'", agent),
-  () => bash("workit ledger finding add 'x > y' --severity minor", agent),
+  () => bash('workit finding record --payload \'{"title":"x > y"}\'', agent),
   () => bash(`workit check --cwd ${wt} test`, agent),
   () =>
     bash(`git -C ${wt} rev-parse HEAD && git --no-optional-locks -C ${wt} status --short`, agent),
@@ -368,7 +368,8 @@ test("Given a judge, When it runs a workit verb outside its own job, Then it is 
     "workit ledger list --branch feature/a",
     "workit ledger check",
     "workit ledger ruling x --why y --cost-if-wrong z",
-    "workit ledger finding add x --severity minor",
+    "workit finding record --payload '{}'",
+    "workit finding list",
     "workit --json pr status",
     "workit pr status 796",
     "workit ci wait",

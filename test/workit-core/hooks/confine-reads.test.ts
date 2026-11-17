@@ -110,7 +110,8 @@ type Specific = {
 const bash = (command: string, type: string, id: string, cwd = lead) => {
   const payload = fixture("claude-code", "pre-tool-use-write", cwd, {
     tool_name: "Bash",
-    tool_input: { command: command.replaceAll("\\", "/") },
+    // Windows paths go with forward slashes; a backslash case runs only on POSIX.
+    tool_input: { command: process.platform === "win32" ? command.replaceAll("\\", "/") : command },
   });
   payload.agent_id = id;
   payload.agent_type = type;
@@ -203,7 +204,9 @@ test("Given a verifier, When it fetches plainly from a remote the lead configure
 });
 
 test("Given a verifier, When it writes into its own session scratchpad, a Workit worktree's scratch of another repository or /dev/null, Then it is allowed; /tmp at large, another session's dir, the candidate and the lead's checkout stay denied", () => {
-  const pad = path.join(root, "claude-1000", "-proj", SESSION, "scratchpad");
+  // Claude Code's layout: <tmp>/claude-<uid>/<project>/<session id>/scratchpad. Nothing is written.
+  const host = path.join(os.tmpdir(), `claude-${process.pid}`);
+  const pad = path.join(host, "-proj", SESSION, "scratchpad");
   allowed(verifier, [
     `mkdir -p ${pad} && git -C ${wt} diff main > ${path.join(pad, "d.patch")}`,
     `echo x > ${path.join(away, ".workit-scratch", "probe.txt")}`,
@@ -213,6 +216,9 @@ test("Given a verifier, When it writes into its own session scratchpad, a Workit
     verifier,
     [
       `echo x > ${path.join(root, "other-session", "scratchpad", "a.txt")}`,
+      `echo x > ${path.join(host, "-proj", "other-session", "a.txt")}`,
+      `echo x > ${path.join(root, "x", SESSION, "a.txt")}`,
+      `echo x > ${path.join(os.tmpdir(), SESSION, "a.txt")}`,
       `echo x > ${path.join(root, `${SESSION}-not`, "a.txt")}`,
       `echo x > ${path.join(wt, "a.ts")}`,
       `echo x > ${path.join(lead, "package.json")}`,
@@ -239,6 +245,9 @@ test("Given a verifier, When it runs read-only workit verbs, Then they pass; a m
     [
       "workit doctor --json --fix",
       "workit doctor --fix",
+      "workit doctor --json --fix-lock --force --yes",
+      "workit doctor --json --repair",
+      "workit test-audit --mutate-all",
       "workit task done x",
       "workit test-audit --mutate",
       `workit git --cwd ${wt} status`,
@@ -266,4 +275,53 @@ test("Given an implementer in its worktree, When it sets W=$(pwd) and loops over
     ],
     "which Workit cannot resolve",
   );
+});
+
+test("Given a judge or an implementer, When review round 1's bypasses run (verdict mwla51qs), Then each is denied", () => {
+  const bypasses = [
+    `printf "require('fs').writeFileSync('package.json','x')" | xargs -0 -I{} node -e {}`,
+    `echo "open('package.json','w')" | xargs -0 python3 -c`,
+    `find . -name x -exec node -e {} \\;`,
+    `node -e "new Function('return process')().exit()"`,
+    `node -e "require('vm').runInThisContext('1')"`,
+    `python3 -c "import os; os.posix_spawn('/bin/true', ['x'], {})"`,
+    `node -e "const fs=require('fs'); const s=fs.readFileSync('package.json','utf8').replace(/'/g,''); fs.writeFileSync('package.json',s)"`,
+    `node -e "console.log(\`\${process.exit()}\`)"`,
+    `node -e "console.log('\\x41')"`,
+    `python3 -c "print(f'{1}')"`,
+    `python3 -c "print(rf'{1}')"`,
+    `python3 -c "import io; io.FileIO('x', 'w')"`,
+    `python3 -c "from pathlib import Path; Path('a').replace('b')"`,
+    `python3 -c "import zipfile; zipfile.ZipFile('x.zip', 'w')"`,
+    `python3 -c "import tarfile; tarfile.open('x.tar', mode)"`,
+    `python3 -c "import shelve; shelve.open('db')"`,
+    `python3 -c "import logging; logging.basicConfig(filename='x.log')"`,
+    `python3 -c "import logging; logging.FileHandler('x.log')"`,
+    `python3 -c "import pandas as pd; pd.DataFrame().to_csv('x.csv')"`,
+    `python3 -c "import matplotlib.pyplot as p; p.savefig('x.png')"`,
+    `bun -e "await Bun.file('x').delete()"`,
+    `node -e "require('fs').utimesSync('x', 1, 1)"`,
+    `node -e "require('fs').lchmodSync('x', 0o777)"`,
+    `python3 -c "import os; os.mkfifo('p')"`,
+    "python3 - <<\\\nEOF\n$X\nEOF",
+  ];
+  const posix = (list: string[]) =>
+    process.platform === "win32" ? list.filter((command) => !command.includes("\\")) : list;
+  denied(verifier, posix(bypasses), "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    posix(bypasses).map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  // A backslash-newline in the delimiter leaves an unquoted heredoc that runs `$(…)`.
+  denied(
+    verifier,
+    posix([`cat > ${path.join(wt, ".workit-scratch", "x")} <<\\\nEOF\n$(touch ~/q)\nEOF`]),
+    "quote the delimiter",
+  );
+  // A judge's refusal names the verbs that exist.
+  const refused = verifier("workit fanout check --offline");
+  expect(refused?.permissionDecision).toBe("deny");
+  expect(refused?.permissionDecisionReason).toContain("workit finding record");
+  expect(refused?.permissionDecisionReason).not.toContain("ledger finding");
 });

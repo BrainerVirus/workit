@@ -260,7 +260,7 @@ const MUTATING_CALLS =
  * mode (FREE_OPEN): a word anywhere in it, string literals included.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|spawn\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:[\w@:][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:[\w@:][^'"]*|[^'"]*\.json)\1)/;
 /** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
 const FREE_OPEN =
   /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
@@ -270,14 +270,21 @@ const FREE_OPEN =
  * outside FREE_OPEN and string literals that names a call in MUTATING_CALLS
  * (bar a list's `append` and `copy`, and printing to stdout or stderr).
  */
-const writesIn = (text: string): boolean =>
-  SPAWNS.test(text) ||
-  [
-    ...text
-      .replace(FREE_OPEN, "")
-      .replace(/std(?:out|err)\.write|(?<![fF])(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "")
-      .matchAll(/[\w$]+/g),
-  ].some(([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word));
+const writesIn = (text: string): boolean => {
+  const bare = text
+    .replace(FREE_OPEN, "")
+    .replace(/std(?:out|err)\.write|(?<![fF][rR]?)(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "");
+  // Fail closed where the strings cannot be told apart: a quote left over (an f-string, a
+  // regex literal), `${…}`, a `\u` or `\x` escape, or a regex literal holding a quote.
+  return (
+    SPAWNS.test(text) ||
+    /['"]/.test(bare) ||
+    /\$\{|\\[ux]|(?:^|[(,=:;!&|?{}[\s])\/(?![/*])[^/\n]*['"]/.test(text) ||
+    [...bare.matchAll(/[\w$]+/g)].some(
+      ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
+    )
+  );
+};
 
 /** Calls that only build a path: the value they return may reach any later call. */
 const PATH_CALLS =
@@ -389,7 +396,13 @@ const XARGS_VALUE = /^-[IinLPdsEa]$/;
 
 /** The command `xargs` (or `find -exec`) runs with `{}` filled in by a path. */
 const runsWriter = (words: readonly string[]): boolean => {
-  const filled = [...words.filter((word) => word !== "{}" && word !== ";" && word !== "+"), "x"];
+  // `{}` and the appended word may be a script: `eval`, which counts as one that writes.
+  const filled = [
+    ...words
+      .filter((word) => word !== ";" && word !== "+")
+      .map((word) => (word.includes("{}") ? "eval" : word)),
+    "eval",
+  ];
   const edits = editsOf(filled);
   return edits === null || edits.length > 0 || opaqueWrites(filled) !== null;
 };
@@ -1660,7 +1673,10 @@ const segmentTargets = (
               body,
               scriptOf,
               // A heredoc's text, unless an unquoted one may expand a `$` or backtick in it.
-              stdin && (/[$`]/.test(stdin) && /<<-?[ \t]*[^'"\\\s]/.test(command) ? null : stdin),
+              stdin &&
+                (/[$`]/.test(stdin) && /<<-?[ \t]*[^'"\\\s]/.test(command.replaceAll("\\\n", ""))
+                  ? null
+                  : stdin),
             )
           : null;
       // Named by the command it runs, past wrappers such as `env` or `sudo`.
