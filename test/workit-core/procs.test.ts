@@ -3,7 +3,7 @@
 // behind the procTree seam, acting as a POSIX host on every platform: no real
 // process is started or signalled, so the filtering, ownership and orphan
 // proofs run on Windows too. Real group signalling is in proc-tree.test.ts.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -50,12 +50,13 @@ const fakeTree = (platform: NodeJS.Platform = "linux") => {
   procTree.table = () => null;
   procTree.sleep = async () => {};
 };
-fakeTree();
+// Installed per test and restored after it: bun runs several files in one
+// process, and proc-tree.test.ts needs the real seam.
+beforeEach(() => fakeTree());
 
 afterEach(() => {
   procsDeps.docker = savedDocker;
   Object.assign(procTree, savedTree);
-  fakeTree();
   table.clear();
   sent.length = 0;
   // Windows: a git child that just exited can hold a handle for a moment (#415).
