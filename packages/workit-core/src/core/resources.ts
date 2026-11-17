@@ -202,13 +202,6 @@ export const slotsBudget = (slots: number, host: HostShape = hostShape()): Budge
   };
 };
 
-/**
- * The budget the last `resolveResourceSettings` on the real host gave (the CLI
- * resolves its settings once per run), so `acquireLease` weighs a check by its
- * name without its caller passing the budget.
- */
-let resolvedBudget: Budget | null = null;
-
 /** A units weight (a whole number) or a memory charge (a size or percent of RAM). */
 function weightValue(value: unknown, host: HostShape): Partial<Charge> | Error {
   if (typeof value === "number")
@@ -225,14 +218,17 @@ function weightValue(value: unknown, host: HostShape): Partial<Charge> | Error {
  * Merge `resources` blocks over the defaults, machine sources before repo
  * ones. Lenient: an invalid or refused field is reported and the earlier
  * value kept, so a typo never turns the lease off.
+ *
+ * Pure: the budget belongs to the checkout whose sources were passed, and
+ * nothing is kept between calls, so two checkouts resolved in one process
+ * never share weights. A caller that acquires or admits passes the budget
+ * (with `withGate` for the real pressure gate).
  */
 export function resolveResourceSettings(
   sources: ResourceSource[],
   host?: HostShape,
 ): { settings: ResourceSettings; warnings: string[]; budget: Budget } {
-  const resolved = resolveWith(sources, host ?? hostShape());
-  if (!host) resolvedBudget = withGate(resolved.budget);
-  return resolved;
+  return resolveWith(sources, host ?? hostShape());
 }
 
 function resolveWith(
@@ -832,7 +828,7 @@ export type AcquireOptions = {
    * waiting, in the same place in the queue (0 gives up as `timeout`).
    */
   onLimit?: (status: QueueStatus) => number;
-  /** The weighted budget; default: the one `resolveResourceSettings` gave for these slots, else `slots` alone. */
+  /** The weighted budget of the caller's checkout; default: `slots` alone. */
   budget?: Budget;
   /** Overrides for tests. */
   probe?: LeaseProbe;
@@ -1438,13 +1434,8 @@ const pressureHolder = (reading: PressureReading, now: number): LeaseHolder => (
   kind: "pressure",
 });
 
-/** The budget a lease acquisition uses: the caller's, else the one the CLI resolved for these slots. */
-function budgetFor(options: AcquireOptions): Budget {
-  if (options.budget) return options.budget;
-  if (resolvedBudget && Math.min(MAX_SLOTS, resolvedBudget.units) === options.slots)
-    return resolvedBudget;
-  return slotsBudget(options.slots);
-}
+/** The budget a lease acquisition uses: the caller's, else `slots` alone (no weights, no gate). */
+const budgetFor = (options: AcquireOptions): Budget => options.budget ?? slotsBudget(options.slots);
 
 export type AdmitOptions = {
   /** The lease dir (leaseDir(env)). */
@@ -1461,7 +1452,7 @@ export type AdmitOptions = {
   pid?: number;
   /** The registry's id, named in a refusal's unblock (`workit stop <id>`). */
   ref?: string | null;
-  /** Default: the budget the CLI resolved, else the machine's defaults. */
+  /** The holder's checkout's budget (resolveResourceSettings, then withGate); default: the machine's defaults. */
   budget?: Budget;
   probe?: LeaseProbe;
   now?: number;
@@ -1499,7 +1490,7 @@ const pauseSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuf
  * or a queue ticket.
  */
 export function admit(options: AdmitOptions): AdmitResult {
-  const budget = options.budget ?? resolvedBudget ?? defaultBudget();
+  const budget = options.budget ?? defaultBudget();
   const unblockFor = (holders: LeaseHolder[]) => {
     const refs = holders.flatMap((holder) => (holder.ref ? [holder.ref] : []));
     return `${refs.length ? `workit stop ${refs.join(" ")}, or ` : ""}start it with --no-lease --reason "<why>" (recorded in the ledger)`;
@@ -1616,7 +1607,7 @@ const defaultBudget = (): Budget => withGate(resolveWith([], hostShape()).budget
  * gate off or WORKIT_NO_PRESSURE_GATE=1 (the test suite's preload sets it, so
  * the runner's own load never decides a test that is not about the gate).
  */
-const withGate = (budget: Budget): Budget => ({
+export const withGate = (budget: Budget): Budget => ({
   ...budget,
   pressure:
     budget.pressureGate && process.env.WORKIT_NO_PRESSURE_GATE !== "1"

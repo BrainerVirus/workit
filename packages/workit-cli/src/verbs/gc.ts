@@ -13,6 +13,10 @@
 // on the trunk (a merged PR at the tip, `git cherry`, a squash proof) and
 // deletes them with --apply; see core/cleanup.ts sweepBranches.
 //
+// `workit gc --procs [--apply]` (#328) lists registered background processes
+// whose owner's host process is gone (core/procs.ts reapOrphans) and stops
+// them with --apply. Processes Workit did not start are never touched.
+//
 // Every form refuses an argument it does not know (exit 2), so a caller built
 // for an older or newer CLI never falls through to the task-store gc.
 import { progressFor } from "../progress";
@@ -30,10 +34,11 @@ import {
 import { resolveForge } from "@workit-dev/core/src/forge/resolve";
 import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { forgeDeps } from "./forge-common";
+import { reapOrphans, type OrphanReport } from "@workit-dev/core/src/core/procs";
 
 /** The usage line (the registry's gc entry carries the same text). */
 const GC_USAGE =
-  "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply]";
+  "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply] | --procs [--apply]";
 
 /** Bound on reaching the forge for the merged-PR check. */
 const FORGE_BUDGET_MS = 15_000;
@@ -51,7 +56,8 @@ export const gcDeps = {
   },
 };
 
-const ALLOWED: Record<"worktrees" | "branches" | "store", ReadonlySet<string>> = {
+const ALLOWED: Record<"worktrees" | "branches" | "procs" | "store", ReadonlySet<string>> = {
+  procs: new Set(["--procs", "--apply", "--dry-run", "--json"]),
   worktrees: new Set(["--worktrees", "--apply", "--dry-run", "--json"]),
   branches: new Set(["--branches", "--apply", "--dry-run", "--json"]),
   store: new Set(["--dry-run", "--prune-recovery", "--yes", "--json"]),
@@ -74,6 +80,19 @@ const branchLines = (data: BranchSweep): string[] => {
       : []),
   ];
 };
+
+const procLines = (data: OrphanReport): string[] => [
+  `workit gc --procs${data.apply ? "" : " (dry run; --apply stops)"}`,
+  ...(data.orphans.length ? [] : ["no orphaned processes"]),
+  ...data.orphans.map((entry) => {
+    const stopped = data.stopped.find((item) => item.id === entry.id);
+    const verb = !data.apply ? "would stop" : stopped ? "stopped" : "not stopped";
+    return `${verb} ${entry.id}: ${entry.reason} -- ${entry.cmd}`;
+  }),
+  ...data.failed.map((entry) => `not stopped ${entry.id}: ${entry.reason}`),
+  ...data.unknown.map((entry) => `listed ${entry.id}: ${entry.reason} -- ${entry.cmd}`),
+  ...data.skipped.map((entry) => `kept ${entry.id}: ${entry.reason} -- ${entry.cmd}`),
+];
 
 const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 
@@ -108,15 +127,31 @@ const sweepLines = (data: WorktreeSweep): string[] => {
 export async function run(argv: string[], io: Io): Promise<number> {
   if (argv.includes("--worktrees") && argv.includes("--branches"))
     return emit(io, fail("invalid_input", `pass --worktrees or --branches, not both: ${GC_USAGE}`));
+  // Any other second form is an unknown argument of the first.
   const form = argv.includes("--worktrees")
     ? "worktrees"
     : argv.includes("--branches")
       ? "branches"
-      : "store";
+      : argv.includes("--procs")
+        ? "procs"
+        : "store";
   const unknown = argv.find((arg) => !ALLOWED[form].has(arg));
   if (unknown) return emit(io, fail("invalid_input", `unknown argument ${unknown}: ${GC_USAGE}`));
   if (form !== "store" && argv.includes("--apply") && argv.includes("--dry-run"))
     return emit(io, fail("invalid_input", "pass --apply or --dry-run, not both"));
+  if (form === "procs") {
+    try {
+      const report = await reapOrphans({
+        env: io.env,
+        actor: actorFromEnv(io.env),
+        caller: null,
+        apply: argv.includes("--apply"),
+      });
+      return emit(io, ok(report), procLines);
+    } catch (error) {
+      return emit(io, fail("unavailable", (error as Error).message));
+    }
+  }
   if (form === "branches") {
     const reached = gcDeps.forge(io);
     const forge = "skipped" in reached ? null : reached;

@@ -154,7 +154,7 @@ test("Given no forge access (no push remote), Then the output says the merged-PR
 });
 
 const REFUSED = [
-  { form: "the task-store gc", argv: ["gc", "--procs", "--apply", "--quiet"], named: "--procs" },
+  { form: "--procs", argv: ["gc", "--procs", "--apply", "--quiet"], named: "--quiet" },
   { form: "the task-store gc", argv: ["gc", "--dry-run", "--force"], named: "--force" },
   { form: "--worktrees", argv: ["gc", "--worktrees", "--apply", "--quiet"], named: "--quiet" },
   { form: "--branches", argv: ["gc", "--branches", "--apply", "--quiet"], named: "--quiet" },

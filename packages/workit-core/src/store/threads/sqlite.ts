@@ -24,6 +24,8 @@ type Statement = {
   run(params?: SqlParams): { changes: number | bigint };
   get(params?: SqlParams): unknown;
   all(params?: SqlParams): unknown[];
+  /** Bun only; node:sqlite finalizes its statements on close. */
+  finalize?(): void;
 };
 type Connection = {
   exec(sql: string): void;
@@ -87,12 +89,23 @@ const loadDriver = (): Driver => (driver ??= process.versions.bun ? bunDriver() 
 /** Opens `file` (created when missing) with the runtime's SQLite. */
 export const openSqlite = (file: string): SqlDb => {
   const connection = loadDriver()(file);
-  const prepare = (sql: string) => connection.prepare(sql);
+  // Finalize each statement after its one use: bun:sqlite's close leaves the
+  // connection, and its file handles, open while a prepared statement is not
+  // finalized, and Windows cannot delete or move a file that is still open.
+  const once = <T>(sql: string, use: (statement: Statement) => T): T => {
+    const statement = connection.prepare(sql);
+    try {
+      return use(statement);
+    } finally {
+      statement.finalize?.();
+    }
+  };
   return {
     exec: (sql) => connection.exec(sql),
-    run: (sql, params = {}) => Number(prepare(sql).run(params).changes),
-    get: (sql, params = {}) => (prepare(sql).get(params) ?? undefined) as SqlRow | undefined,
-    all: (sql, params = {}) => prepare(sql).all(params) as SqlRow[],
+    run: (sql, params = {}) => once(sql, (statement) => Number(statement.run(params).changes)),
+    get: (sql, params = {}) =>
+      once(sql, (statement) => (statement.get(params) ?? undefined) as SqlRow | undefined),
+    all: (sql, params = {}) => once(sql, (statement) => statement.all(params) as SqlRow[]),
     close: () => connection.close(),
   };
 };

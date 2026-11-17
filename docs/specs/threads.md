@@ -111,6 +111,35 @@ Writes to a row are read-modify-write inside one `BEGIN IMMEDIATE`
 transaction: the second writer waits for the first to commit, then reads its
 result, so no update is lost.
 
+#### The per-row sidecar
+
+The process registry (#328, `core/procs.ts`) needs a few facts per row that
+v1 has no column for. It keeps them in one JSON file per row,
+`<state>/procs/rows/<id>.json` (mode 0600, written atomically by rename):
+
+| Field | What |
+| --- | --- |
+| `name` | the `--name` of a `workit run --bg` start (default `dev`): one server per repo and name |
+| `argv` | the command as started, for `workit run --bg --restart <id>` |
+| `state` | `starting`, `refused`, `running`, `exited` or `failed`: how the supervisor tells the starting CLI what happened |
+| `hostPidStart` | the start time of `host_pid`, so a reused host pid never keeps a dead owner alive (ruling B) |
+| `supervisorPid`, `supervisorStart` | the supervisor that holds the child, for the stop channel (ruling C) |
+| `containers` | the container ids a docker start created (a `docker ps -q` diff); null when the diff could not be read, which makes the row report-only (ruling 4) |
+| `exitCode`, `message`, `unblock` | how the command ended, or why the start was refused |
+| `noticed` | whether the RSS ceiling notice was written |
+| `stopSignal` | the signal the supervisor's own stop ended the child with |
+
+Beside it, `<id>.stop` is the stop channel: `workit stop` writes a request
+there and the row's supervisor, which polls for it, ends its child tree. It is
+the only stop on Windows; with the supervisor gone the stop is report-only.
+
+Why not v2 columns yet: a migration changes the file every Workit version
+reads, and the sidecar fields were still moving while the registry landed.
+Part 2 (wave 10) adds them as v2 columns in the same migration that moves the
+other loose files in, reads a row's sidecar once while migrating it, and then
+removes the sidecar reader and the `rows/` files. The stop channel stays a
+file: the supervisor polls it without opening the store.
+
 ## Later parts (not in part 1)
 
 Part 2 (deferred to wave 10, decider ruling 7) moves in the state that lives in
