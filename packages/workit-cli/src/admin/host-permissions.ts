@@ -522,14 +522,16 @@ function mergeOpenCodeConfig(config: Json, input: MergeInput): HostMerge {
   const legacy = LEGACY_DENY_AT.opencode!;
   dropStaleDeny(next, "opencode", deny, ownedList(previous, DENY_AT.opencode));
   // A dropped pattern for a path that moved is stale, not moved.
+  const current = new Set(deny);
   const moved = dropLegacyDeny(
     next,
     ownedList(previous, legacy),
     stringList(isRecord(previous) ? previous.created : undefined),
-  ).filter((entry) => deny.includes(entry));
+  ).filter((entry) => current.has(entry));
+  const movedSet = new Set(moved);
   const skipped = [
     ...(skip[DENY_AT.opencode] ?? []),
-    ...(skip[legacy] ?? []).filter((entry) => !moved.includes(entry)),
+    ...(skip[legacy] ?? []).filter((entry) => !movedSet.has(entry)),
   ];
   const error = appendDenyRules(next, DENY_AT.opencode, deny, owned, {
     ...skip,
