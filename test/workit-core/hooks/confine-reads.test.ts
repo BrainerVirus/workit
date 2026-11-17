@@ -3,6 +3,7 @@
 // the host's session scratchpad, a read-only workit verb, a Workit worktree of
 // another repository. Each now passes, while every write outside a scratch dir
 // stays refused. These tests only dispatch the hook: no command below is run.
+import "@/test/shared/state-isolation";
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
