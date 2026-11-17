@@ -8,8 +8,6 @@ import { run as checkVerb } from "@/packages/workit-cli/src/verbs/check";
 
 // Retro 2026-11-17 C10: agents guessed check names. `workit check --list`
 // and bare `workit check` print the configured names with their commands.
-// `--list` goes through the verb itself: main's flag check reads the
-// registry's usage line, which another change extends.
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -59,7 +57,8 @@ const CONFIG = {
 };
 
 for (const [label, call] of [
-  ["workit check --list", (root: string) => verb(root, ["--list"])],
+  ["workit check --list", (root: string) => run(root, ["check", "--list"])],
+  ["the check verb with --list", (root: string) => verb(root, ["--list"])],
   ["workit check", (root: string) => run(root, ["check"])],
 ] as const)
   test(`G configured checks, W \`${label}\`, T each name prints with its command and the run exits 0`, async () => {
@@ -72,7 +71,7 @@ for (const [label, call] of [
   });
 
 test("G configured checks, W `workit check --list --json`, T the envelope lists names, commands and groups", async () => {
-  const result = await verb(repo(CONFIG), ["--list", "--json"]);
+  const result = await run(repo(CONFIG), ["check", "--list", "--json"]);
 
   expect(result.code).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({

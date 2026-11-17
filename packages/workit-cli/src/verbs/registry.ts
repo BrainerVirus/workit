@@ -507,10 +507,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "check",
     group: "delivery",
     usage:
-      'workit check <name> [--full] [--task <id>] [--base <ref>] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--full] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <dur> | --no-wait]] [--no-lease --reason "<why>"] -- <cmd…>',
-    flagHints: {
-      list: "workit check <name> runs a configured check; a name that is not configured prints the valid ones (workit check test|lint|typecheck|check)",
-    },
+      'workit check [--list] | workit check <name> [--full] [--task <id>] [--base <ref>] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--full] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy [--wait <dur> | --no-wait]] [--no-lease --reason "<why>"] -- <cmd…>',
     summary:
       "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
     examples: [

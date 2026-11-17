@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readLedger } from "@/packages/workit-core/src/ledger";
+import { buildHandoff, readLedger } from "@/packages/workit-core/src/ledger";
 import {
   checkEvidence,
   localCheckRows,
@@ -105,6 +105,33 @@ test.skipIf(process.platform === "win32")(
       result: "interrupted",
       signal: "SIGTERM",
     });
+  },
+);
+
+/** Passes at once while .git/fast exists, else prints "ready" and sleeps. */
+const SWITCHED = [
+  BUN,
+  "-e",
+  "if (require('fs').existsSync('.git/fast')) process.exit(0); console.log('ready'); setTimeout(() => {}, 30000)",
+];
+
+test.skipIf(process.platform === "win32")(
+  "G a passed run then a SIGTERM-interrupted one, W the handoff lists check results, T it shows the passed run marked with the later interruption",
+  async () => {
+    const { root, env } = repo({ switched: SWITCHED });
+    writeFileSync(path.join(root, ".git", "fast"), "");
+    expect((await cli(root, ["check", "switched"], env).done).code).toBe(0);
+    rmSync(path.join(root, ".git", "fast"));
+    const running = cli(root, ["check", "switched", "--full"], env);
+    await until(() => running.stdout().includes("ready"));
+    running.child.kill("SIGTERM");
+    expect((await running.done).code).toBe(143);
+
+    const brief = buildHandoff(root);
+    if (!brief.ok) throw new Error(brief.error);
+    expect(brief.value.checks).toEqual([
+      expect.objectContaining({ name: "switched", result: "passed", interruptedSince: "SIGTERM" }),
+    ]);
   },
 );
 
