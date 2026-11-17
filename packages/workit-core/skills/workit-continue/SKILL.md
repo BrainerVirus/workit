@@ -1,6 +1,6 @@
 ---
 name: workit-continue
-description: Keep work on track across interruptions and sessions - sort new input, checkpoint, hand off with a resume brief, and pick up by verifying inherited claims. Use for resume, pick up, handoff, new session, interruption, change of direction.
+description: Keep work on track across interruptions and sessions - sort new input, checkpoint, hand off with a resume brief, pick up by verifying claims. Use for resume, pick up, handoff, leaving, tomorrow, end of day, pause, interruption, change of direction.
 ---
 
 # Continue without losing the thread
@@ -12,8 +12,7 @@ description: Keep work on track across interruptions and sessions - sort new inp
   keep going.
 - **Separate request:** do not silently resume an old objective, and do not
   drop the current one. Checkpoint it (below) if it must continue later, then
-  start the new work. Held items stay parked with their resume condition until
-  the user resumes them.
+  start the new work. Held items stay parked with their resume condition.
 
 ## Checkpoint and hand off
 
@@ -25,8 +24,9 @@ workit handoff --note "<state in one line>" --next "<next command>" --record
 The brief carries the branch, HEAD, dirty state, check freshness, verdict,
 rulings and the next command. Add only what it cannot know: choices still
 open, approaches that failed and why. Work spanning repos gets one brief per
-checkout, each with its branch and delivery endpoint. Notes too long for
-`--note` go in a file under `workit dir handoffs`; name its path in the note.
+checkout, each with its branch and delivery endpoint. Notes, drafts and logs
+go in `workit dir notes` or `workit dir handoffs`, never the repo tree; name
+the file in `--note`.
 
 ## Pick up
 
@@ -40,8 +40,8 @@ checkout, each with its branch and delivery endpoint. Notes too long for
 
 ## Example
 
-Bad: a new session re-reads the whole codebase, re-asks the user which
-approach to take, and redoes a finished slice.
+Bad: a new session re-reads the codebase, re-asks a settled approach and
+redoes a finished slice.
 
 Good: "`workit handoff`: feature/usage at 4be1, `test` stale, verdict none,
 next `workit check test`. Re-ran it: exit 0. The brief says PR #42 is open:

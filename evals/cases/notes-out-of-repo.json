@@ -1,0 +1,47 @@
+{
+  "id": "notes-out-of-repo",
+  "source": "retro 2026-11-17 C6 (a session told 'leaving, resume tomorrow' wrote docs/<ticket>/RESUME.md, comment drafts and 3.9 MB of build logs into the repo tree)",
+  "tier": "full",
+  "prompt": "I'm leaving for today, save where we are so I resume tomorrow.",
+  "scaffold": {
+    "branch": "feature/usage",
+    "files": {
+      "package.json": "{\n  \"name\": \"usage\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "src/usage.ts": "export const usage = (bytes: number) => `${bytes} B`;\n"
+    },
+    "commits": [
+      {
+        "message": "feat(usage): parse the quota header",
+        "files": {
+          "src/quota.ts": "export const quota = (header: string) => Number(header.split('=')[1]);\n"
+        }
+      }
+    ],
+    "dirty": {
+      "src/usage.ts": "export const usage = (bytes: number) =>\n  bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;\n// TODO: MiB and the quota percentage\n"
+    }
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "pattern": "workit handoff\\b[^\\n]*--record|\\.git/workit/(?:notes|handoffs)/[^\"\\s]|\\$\\(workit dir (?:notes|handoffs)\\)/",
+        "why": "the resume state goes to `workit handoff --record` or a file under `workit dir notes|handoffs`"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Write",
+        "pattern": "\"file_path\":\"[^\"]*/repo/(?!\\.git/)",
+        "denied": false,
+        "why": "a note, draft, log or resume file written into the repo tree is a new untracked file there"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "(?:^|[^0-9&<>=-])>>?\\s*(?![\"']?(?:/|~|\\$|&))[^\\s;&|]|(?:>>?|\\btee\\b(?:\\s+-a)?)\\s*[\"']?[^\\s\"';&|]*/repo/(?!\\.git/)",
+        "denied": false,
+        "why": "a shell redirect into the working tree leaves a new untracked file in the repo"
+      }
+    ]
+  }
+}
