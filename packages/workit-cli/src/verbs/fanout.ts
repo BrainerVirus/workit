@@ -33,6 +33,7 @@ import {
 import { currentBranch } from "@workit-dev/core/src/git/rev";
 import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type Io } from "../output";
+import { explainPlanProblems } from "./fanout-plan";
 import { connect, parseDuration, parseFlags, releaseTrunk, usage } from "./forge-common";
 
 const PLAN_USAGE =
@@ -168,6 +169,15 @@ function plan(argv: string[], io: Io): number {
     takeLead: flags.booleans.has("take-lead"),
   });
   if (!result.ok) {
+    const problems = result.data?.problems;
+    if (result.data && Array.isArray(problems)) {
+      const explained = explainPlanProblems(raw, problems);
+      // The headline quotes the first problem: give it the same wording.
+      const first = problems[0];
+      if (typeof first === "string" && typeof explained[0] === "string")
+        result.error = result.error.replace(first, explained[0]);
+      result.data.problems = explained;
+    }
     const code = failed(io, result);
     renderBlockedPlan(io, result);
     return code;

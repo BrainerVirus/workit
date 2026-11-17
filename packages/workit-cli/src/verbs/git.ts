@@ -35,7 +35,7 @@ import { gitStage, gitUnstage, type StageOutcome } from "@workit-dev/core/src/gi
 import { workspaceTrailers } from "@workit-dev/core/src/core/workspaces";
 import { actorFromEnv, appendObserved, branchHold, readLedger } from "@workit-dev/core/src/ledger";
 import { releaseNotesForTag, type ReleaseNotesDecision } from "@workit-dev/core/src/git/release";
-import { currentBranch, pushRemoteName } from "@workit-dev/core/src/git/rev";
+import { currentBranch, pushRemoteName, resolveRef } from "@workit-dev/core/src/git/rev";
 import { findSubcommand, findVerb } from "./registry";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
@@ -78,6 +78,43 @@ function kindHint(cwd: string, kind: string): string {
     : `this workspace allows any non-protected name: pass one, e.g. workit git branch ${kind}/<slug>`;
 }
 
+/** The trunk a branch can start from when the policy's base is missing (develop absent). */
+const presentTrunk = (cwd: string): string | null =>
+  ["main", "master"].find(
+    (name) =>
+      resolveRef(cwd, `refs/remotes/origin/${name}`) ?? resolveRef(cwd, `refs/heads/${name}`),
+  ) ?? null;
+
+/**
+ * Core's branch refusal with the fix in its first line: dirty_worktree names
+ * --carry, and a policy base that does not exist here (git-flow's develop in a
+ * main-only clone) names the trunk to pass as --base.
+ */
+function branchRefusal(
+  cwd: string,
+  result: Extract<ForgeResult<unknown>, { ok: false }>,
+  argv: readonly string[],
+  base: string | undefined,
+): Extract<ForgeResult<unknown>, { ok: false }> {
+  const again = `workit git branch ${argv.filter((arg) => arg !== "--json").join(" ")}`;
+  const dirty =
+    /^dirty_worktree: tracked changes outside docs\/ would ride along to the new branch: /u;
+  if (dirty.test(result.error))
+    return {
+      ...result,
+      error: `dirty_worktree: pass --carry to take these uncommitted changes to the new branch, or commit them first: ${result.error.replace(dirty, "")}`,
+      unblock: `${again} --carry  # or commit first: workit git commit -m … -- <paths>`,
+    };
+  const missing = /^base (\S+) does not resolve/u.exec(result.error);
+  const trunk = missing && base === undefined ? presentTrunk(cwd) : null;
+  if (missing && trunk && trunk !== missing[1])
+    return {
+      ...result,
+      unblock: `${again} --base ${trunk}  # ${missing[1]} does not exist here; or git fetch origin ${missing[1]}`,
+    };
+  return result;
+}
+
 async function branch(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     base: "value",
@@ -90,14 +127,15 @@ async function branch(argv: string[], io: Io): Promise<number> {
   const { kind, slug } = flags.values;
   if (flags.positionals.length > 1)
     return usage(io, `unexpected argument ${flags.positionals[1]}`, BRANCH_USAGE);
-  if ((kind === undefined) !== (slug === undefined))
-    return usage(io, "--kind and --slug go together", BRANCH_USAGE);
+  // A wrong kind first: fixing --slug alone would only meet this next.
   if (kind !== undefined && !(BRANCH_KINDS as readonly string[]).includes(kind))
     return usage(
       io,
       `--kind must be ${BRANCH_KINDS.join(", ")}; ${kindHint(io.cwd, kind)}`,
       BRANCH_USAGE,
     );
+  if ((kind === undefined) !== (slug === undefined))
+    return usage(io, "--kind and --slug go together", BRANCH_USAGE);
   if (kind !== undefined && flags.positionals.length)
     return usage(io, "pass a name or --kind/--slug, not both", BRANCH_USAGE);
   if (kind === undefined && !flags.positionals[0])
@@ -109,7 +147,7 @@ async function branch(argv: string[], io: Io): Promise<number> {
     track: flags.values.track ?? null,
     carry: flags.booleans.has("carry"),
   });
-  if (!result.ok) return forgeFail(io, result);
+  if (!result.ok) return forgeFail(io, branchRefusal(io.cwd, result, argv, flags.values.base));
   return emit(io, ok(result.data), (data: BranchOutcome) => [
     `switched to new branch ${data.branch} ${data.baseSha ? `from ${data.baseRef} (${short(data.baseSha)})` : "with no commit yet"}${data.carried ? ", carrying uncommitted changes" : ""}`,
     ...(data.releaseTrack?.name

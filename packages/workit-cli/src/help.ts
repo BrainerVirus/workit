@@ -218,14 +218,28 @@ const GLOBAL_FLAGS = new Set(["json", "cwd", "help"]);
 export type FlagCheck = { args: string[] } | { error: string; unblock: string };
 
 /**
- * Before a verb loads: rewrite a flag spelled as a registered alias to the one
- * its parser reads, and refuse a `--flag` the command's usage does not name
- * with the closest valid flag (or the registered fix) as the unblock. A bare
- * `--` ends the options.
+ * Before a verb loads: answer a guessed subcommand whose fix names the words
+ * typed after it (`git switch -c x` -> `workit git branch x`), rewrite a flag
+ * spelled as a registered alias to the one its parser reads, and refuse a
+ * `--flag` the command's usage does not name with the closest valid flag (or
+ * the registered fix) and the usage line as the unblock, so the next call can
+ * be the right one. A bare `--` ends the options.
  */
 export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck {
   const word = firstWord(args);
   const sub = word === undefined ? undefined : findSubcommand(entry, word);
+  const guess =
+    word !== undefined &&
+    !sub &&
+    entry.subcommandGuessFor &&
+    Object.hasOwn(entry.subcommandGuessFor, word)
+      ? entry.subcommandGuessFor[word]
+      : undefined;
+  if (guess)
+    return {
+      error: `unknown ${entry.name} subcommand "${word}"`,
+      unblock: guess(args.slice(args.indexOf(word as string) + 1)),
+    };
   const lines =
     sub && !entry.sharedParser && !/ …/u.test(sub.usage) ? flagLines(entry, sub) : flagLines(entry);
   const takes = valueFlags(lines);
@@ -264,9 +278,10 @@ export function checkFlags(entry: VerbEntry, args: readonly string[]): FlagCheck
       continue;
     }
     const near = closest(match[1], known);
+    const fix = hints[match[1]] ?? (near ? `did you mean --${near}? (${where})` : where);
     return {
       error: `unknown option --${match[1]}`,
-      unblock: hints[match[1]] ?? (near ? `did you mean --${near}? (${where})` : where),
+      unblock: `${fix}; usage: ${sub?.usage ?? entry.usage}`,
     };
   }
   return { args: out };

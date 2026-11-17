@@ -141,10 +141,10 @@ test("Given an unknown flag, When it fails, Then the unblock names the closest v
   expect(result.code).toBe(2);
   expect(result.json()).toMatchObject({
     error: "unknown option --timout",
-    unblock: "did you mean --timeout? (workit help ci wait)",
+    unblock: expect.stringMatching(/^did you mean --timeout\? \(workit help ci wait\); usage: /u),
   });
   const far = await run(cwd, ["ci", "wait", "--zzzzzz", "--json"]);
-  expect(far.json().unblock).toBe("workit help ci wait");
+  expect(far.json().unblock).toStartWith("workit help ci wait; usage: workit ci wait ");
 });
 
 test("Given `fanout brief <s> --fanout <n>` and `ledger standing list --name <n>`, When run, Then both spellings reach the plan", async () => {

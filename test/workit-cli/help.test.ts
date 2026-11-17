@@ -649,3 +649,25 @@ test("Given one task action's help page, Then it names the engine flags that act
   expect(page("inspect")).not.toContain("every action above");
   expect(page("note")).not.toContain("This action also takes");
 });
+
+test("Given every registered flag hint and argument-built guess, Then none shadows a real flag or subcommand, and a hinted flag is refused with the hint and the usage line", () => {
+  for (const entry of VERBS) {
+    for (const word of Object.keys(entry.subcommandGuessFor ?? {}))
+      expect(findSubcommand(entry, word), `${entry.name} ${word}`).toBeUndefined();
+    for (const sub of entry.subcommands ?? []) {
+      const named = new Set(
+        flagLines(entry, sub).flatMap((line) =>
+          [...line.matchAll(/(?<![\w-])--([a-zA-Z][\w-]*)/gu)].map((match) => match[1]),
+        ),
+      );
+      for (const [flag, hint] of Object.entries(sub.flagHints ?? {})) {
+        expect(named.has(flag), `${entry.name} ${sub.name} --${flag}`).toBe(false);
+        const checked = checkFlags(entry, [sub.name, `--${flag}`, "x"]);
+        expect(checked).toEqual({
+          error: `unknown option --${flag}`,
+          unblock: `${hint}; usage: ${sub.usage}`,
+        });
+      }
+    }
+  }
+});

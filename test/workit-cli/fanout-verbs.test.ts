@@ -244,7 +244,7 @@ test("fanout plan: given a brief with a template placeholder goal and no verify 
   expect(envelope.data.problems).toEqual([
     "slice api: goal is empty",
     "slice api: verify is empty",
-    "slice ui: tier must be one of mundane, standard, hard",
+    'slice ui: tier must be one of mundane|standard|hard (got "huge")',
   ]);
   expect(existsSync(fanoutsDir(repo))).toBe(false);
 });
@@ -274,7 +274,7 @@ test("fanout plan: given a reason outside the allowed set, when planned, then it
   ]);
   expect(result.code).toBe(2);
   expect(result.json().data.problems).toEqual([
-    "slice api: reason must be one of explore, parallel, backstop, high-risk-verify",
+    'slice api: reason must be one of explore|parallel|backstop|high-risk-verify (got "because")',
   ]);
 });
 

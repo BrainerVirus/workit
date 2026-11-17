@@ -1,0 +1,33 @@
+{
+  "id": "fanout-worktree-create-flags",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): `workit fanout worktree create x --branch y` answered only `unknown option --branch`, guaranteeing a second call",
+  "tier": "full",
+  "prompt": "Make the worktree for slice notes of the fanout plan named wave1 with the workit CLI. First try exactly this call so we see its answer, then fix it if it fails: workit fanout worktree create notes --branch feature/notes --base main",
+  "scaffold": {
+    "branch": "feature/base"
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? fanout worktree create notes(?![^\\n]*--(branch|base|plan)\\b)[^\\n]*--name[ =]wave1",
+        "why": "the next call picks the plan with --name and drops the branch and base the plan already holds"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? fanout worktree create[^\\n]*--(branch|base|plan)\\b",
+        "max": 1,
+        "why": "only the scripted first call guesses --branch/--base/--plan"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
+        "max": 0,
+        "why": "the refusal carries the usage line and the fix: no help call is needed to recover"
+      }
+    ]
+  }
+}

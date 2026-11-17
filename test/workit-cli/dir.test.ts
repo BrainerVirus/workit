@@ -98,13 +98,13 @@ test("Given `workit dir state --json`, Then it prints the resolver's state dir i
   expect(existsSync(expected)).toBe(false);
 });
 
-test("Given an unknown or missing kind, Then `workit dir` refuses with its usage (exit 2)", async () => {
+test("Given an unknown kind or an extra word, Then `workit dir` refuses with its usage (exit 2); bare, it lists the kinds (exit 0)", async () => {
   const root = repo();
   const unknown = await cli(root, ["dir", "scratch"]);
   expect(unknown.code).toBe(2);
   expect(unknown.stderr).toContain("unknown kind scratch");
   expect(unknown.stderr).toContain("plans|retros|handoffs|notes|config|state|data|cache|runtime");
-  expect((await cli(root, ["dir"])).code).toBe(2);
+  expect((await cli(root, ["dir"])).code).toBe(0);
   expect((await cli(root, ["dir", "plans", "extra"])).code).toBe(2);
 });
 
