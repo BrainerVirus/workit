@@ -4131,7 +4131,9 @@ const checkHostPermissions =
  * The native deny rules for the guarded paths (#820) per host, and the
  * host's OS sandbox where it has one. A stale rule (a path that moved) or a
  * missing one on a host whose block Workit wrote warns with the setup command;
- * a host the user never ran setup for is info (the block is optional). Codex
+ * a host the user never ran setup for is info (the block is optional). Rules
+ * only in OpenCode's deprecated `permission.edit` map still hold: info, with
+ * the setup command that moves them to `permissions` (#869). Codex
  * has no path deny: its sandbox mode is reported, and it warns when that
  * sandbox lets agent commands write a guarded path. Pi has no permission layer.
  */
@@ -4167,31 +4169,35 @@ const checkNativeDeny = (res: Resolved): DoctorCheck => {
         : row.state === "stale"
           ? `stale (${first(row.stale)} names a path that moved)`
           : row.state === "missing"
-            ? `missing ${row.missing.length} (${first(row.missing)})`
-            : row.state === "blocked"
-              ? `missing ${row.missing.length}, and setup cannot write them: ${row.file} ${row.reason}`
-              : row.state === "unreadable"
-                ? `${row.file} is not a JSON object`
-                : "present";
+            ? `missing ${row.missing.length}${row.host === "opencode" ? " in permissions" : ""} (${first(row.missing)})`
+            : row.state === "legacy"
+              ? `present, ${row.legacy!.length} only in the deprecated permission.edit map (setup moves them to permissions)`
+              : row.state === "blocked"
+                ? `missing ${row.missing.length}, and setup cannot write them: ${row.file} ${row.reason}`
+                : row.state === "unreadable"
+                  ? `${row.file} is not a JSON object`
+                  : "present";
     const extra = [row.sandbox, row.risk].filter(Boolean).join("; ");
     return `${row.host}: ${state}${extra ? ` (${extra})` : ""}`;
   });
-  // Setup fixes a stale or missing rule; a blocked file needs the user's own edit.
+  // Setup fixes a stale, missing or legacy rule; a blocked file needs the user's own edit.
   const setupHosts = rows
-    .filter((row) => row.state === "stale" || row.state === "missing")
+    .filter((row) => row.state === "stale" || row.state === "missing" || row.state === "legacy")
     .map((row) => row.host);
   const byHand = rows.flatMap((row) =>
     row.state === "blocked"
       ? [
           row.host === "opencode"
-            ? `opencode: in ${row.file}, make permission.edit a pattern map and set ${row.missing.join(", ")} to "deny" after your own patterns, or move the config to opencode.json and run workit setup --hosts=opencode`
+            ? `opencode: in ${row.file}, append to the permissions list, after your own rules, one {"action": "edit", "resource": <path>, "effect": "deny"} rule for each of ${row.missing.join(", ")}${row.file?.endsWith(".jsonc") ? ", or move the config to opencode.json and run workit setup --hosts=opencode" : ""}`
             : `${row.host}: change ${row.file} by hand so that no longer holds (${row.reason}), then run workit setup --hosts=${row.host}`,
         ]
       : [],
   );
   const status = warned.length
     ? "warn"
-    : rows.some((row) => row.state === "missing" || row.state === "blocked")
+    : rows.some(
+          (row) => row.state === "missing" || row.state === "blocked" || row.state === "legacy",
+        )
       ? "info"
       : "pass";
   const fix = [

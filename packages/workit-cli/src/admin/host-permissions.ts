@@ -14,7 +14,9 @@
 // workspaces.json and its seal) ride the same block, so they hold when a hook
 // fails to load: Claude Code `Edit(//<abs>)` deny rules (its sandbox also
 // denies those paths to Bash), Cursor `Write(<abs>)` deny rules, and OpenCode
-// `permission.edit` patterns set to "deny" in its global opencode.json. The
+// V2 `permissions` rules `{action: "edit", resource: <abs>, effect: "deny"}`
+// appended to its global opencode.json (the last match wins; #869 moves the
+// entries Workit wrote to the deprecated `permission.edit` map there). The
 // paths come from the env at setup time; a refresh drops the ones Workit wrote
 // for paths that moved. Codex has no path deny (its sandbox's writable roots
 // are an allowlist): the doctor reports its sandbox mode instead.
@@ -140,12 +142,23 @@ export const codexRulesText = (): string => {
 // Native deny rules for the guarded paths (#820)
 // ---------------------------------------------------------------------------
 
-/** Where each JSON host keeps its path deny rules: a list, or OpenCode's pattern map. */
+/** Where each JSON host keeps its path deny rules: a list of strings, or OpenCode's list of rules. */
 const DENY_AT: Record<JsonHost, string> = {
   "claude-code": "permissions.deny",
   cursor: "permissions.deny",
-  opencode: "permission.edit",
+  opencode: "permissions",
 };
+
+/**
+ * Where a host kept them before (#869): OpenCode's deprecated V1
+ * `permission.edit` map of pattern → action. Setup moves the entries Workit
+ * wrote there to `DENY_AT`; uninstall still removes them.
+ */
+const LEGACY_DENY_AT: Partial<Record<JsonHost, string>> = { opencode: "permission.edit" };
+
+/** Is `dotted` where `host` keeps, or kept, its native deny entries? */
+const isDenyAt = (host: JsonHost, dotted: string): boolean =>
+  DENY_AT[host] === dotted || LEGACY_DENY_AT[host] === dotted;
 
 /** The dirs whose files only Workit or the user writes, each as written and through its links. */
 type GuardedDirs = { state: string[]; config: string[] };
@@ -224,9 +237,26 @@ const isJsonHost = (host: string): host is JsonHost => Object.hasOwn(DENY_AT, ho
 
 const isNativeDeny = (host: string, dotted: string, entry: unknown): entry is string =>
   isJsonHost(host) &&
-  DENY_AT[host] === dotted &&
+  isDenyAt(host, dotted) &&
   typeof entry === "string" &&
   NATIVE_SHAPE[host].test(entry);
+
+/** The OpenCode V2 rule Workit writes to deny edits of `resource`. */
+const editDenyRule = (resource: string) => ({ action: "edit", resource, effect: "deny" });
+
+/** The resource of an OpenCode V2 rule that denies edits of exactly it, or null. */
+const editDenied = (entry: unknown): string | null =>
+  isRecord(entry) &&
+  Object.keys(entry).length === 3 &&
+  entry.action === "edit" &&
+  entry.effect === "deny" &&
+  typeof entry.resource === "string"
+    ? entry.resource
+    : null;
+
+/** A deny list entry as the string Workit records: the entry itself, or a V2 edit deny rule's resource. */
+const denyKey = (entry: unknown): string | null =>
+  typeof entry === "string" ? entry : editDenied(entry);
 
 // ---------------------------------------------------------------------------
 // Pure merges and removals
@@ -303,7 +333,13 @@ const appendList = (
   return null;
 };
 
-type HostMerge = { config: Json; owned: OwnedEntries; error?: string };
+type HostMerge = {
+  config: Json;
+  owned: OwnedEntries;
+  error?: string;
+  /** The entries moved from the host's legacy deny location (`LEGACY_DENY_AT`). */
+  moved?: string[];
+};
 
 /** Remove the entries a past Workit version offered that this one replaced (#615). */
 const dropPrior = (config: Json, host: JsonHost): void => {
@@ -324,10 +360,11 @@ const dropRetired = (config: Json, ownedAsk: readonly string[]): void => {
     at.parent[at.key] = list.filter((entry) => !retired.has(entry as string));
 };
 
-/** The deny entries at `dotted`: a list's strings, or a pattern map's keys set to "deny". */
+/** The deny entries at `dotted`: a list's strings or edit deny rules, or a pattern map's keys set to "deny". */
 const denyEntriesAt = (root: Json, dotted: string): string[] => {
   const value = valueFrom(root, ...dotted.split("."));
-  if (Array.isArray(value)) return stringList(value);
+  if (Array.isArray(value))
+    return value.map(denyKey).filter((entry): entry is string => entry !== null);
   return isRecord(value) ? Object.keys(value).filter((key) => value[key] === "deny") : [];
 };
 
@@ -347,12 +384,19 @@ const dropStaleDeny = (
   const value = at?.parent[at.key];
   if (!at || stale.size === 0) return;
   if (Array.isArray(value))
-    at.parent[at.key] = value.filter((entry) => !stale.has(entry as string));
+    at.parent[at.key] = value.filter((entry) => {
+      const key = denyKey(entry);
+      return key === null || !stale.has(key);
+    });
   else if (isRecord(value)) for (const key of stale) if (value[key] === "deny") delete value[key];
 };
 
-/** Set each missing pattern of `entries` to "deny" in the pattern map at `dotted` (OpenCode). */
-const appendDenyMap = (
+/**
+ * Append an edit deny rule for each missing pattern of `entries` to the
+ * top-level V2 rule list `dotted` (OpenCode): after the user's rules, since
+ * OpenCode applies the last matching rule.
+ */
+const appendDenyRules = (
   root: Json,
   dotted: string,
   entries: readonly string[],
@@ -362,24 +406,47 @@ const appendDenyMap = (
   const skipped = new Set(skip[dotted] ?? []);
   const wanted = entries.filter((entry) => !skipped.has(entry));
   if (wanted.length === 0) return null;
-  const keys = dotted.split(".");
-  const parent = objectAt(root, keys.slice(0, -1), owned);
-  const leaf = keys.at(-1)!;
-  if (!parent) return `${keys.slice(0, -1).join(".")} is not an object`;
-  if (typeof parent[leaf] === "string")
-    return `${dotted} is one action for every path ("${parent[leaf]}"); make it a pattern map to take Workit's deny patterns`;
-  if (parent[leaf] === undefined) {
-    parent[leaf] = {};
+  if (root[dotted] === undefined) {
+    root[dotted] = [];
     owned.created.push(dotted);
   }
-  const map = parent[leaf];
-  if (!isRecord(map)) return `${dotted} is not an object`;
+  const list = root[dotted];
+  if (!Array.isArray(list))
+    return `${dotted} is not a list of rules; make it one to take Workit's edit deny rules`;
+  const present = new Set(list.map(editDenied));
   for (const entry of wanted)
-    if (map[entry] === undefined) {
-      map[entry] = "deny";
+    if (!present.has(entry)) {
+      list.push(editDenyRule(entry));
+      present.add(entry);
       (owned.lists[dotted] ??= []).push(entry);
     }
   return null;
+};
+
+/**
+ * Drop from OpenCode's deprecated `permission.edit` map the "deny" patterns
+ * Workit wrote there (`ownedLegacy`), then the containers Workit created that
+ * are left empty (`created`); a user's pattern stays. Returns the patterns dropped.
+ */
+const dropLegacyDeny = (
+  config: Json,
+  ownedLegacy: readonly string[],
+  created: readonly string[],
+): string[] => {
+  const dotted = LEGACY_DENY_AT.opencode!;
+  const at = valueAt(config, dotted);
+  const map = at?.parent[at.key];
+  if (!at || !isRecord(map)) return [];
+  const dropped = ownedLegacy.filter(
+    (entry) => isNativeDeny("opencode", dotted, entry) && map[entry] === "deny",
+  );
+  for (const entry of dropped) delete map[entry];
+  if (dropped.length === 0) return [];
+  if (Object.keys(map).length === 0 && created.includes(dotted)) delete at.parent[at.key];
+  const parent = config.permission;
+  if (isRecord(parent) && Object.keys(parent).length === 0 && created.includes("permission"))
+    delete config.permission;
+  return dropped;
 };
 
 /** What a merge needs besides the config: the native deny entries, the refresh skips, the record. */
@@ -442,14 +509,33 @@ function mergeCursorCliConfig(config: Json, input: MergeInput): HostMerge {
   return error ? { config, owned: emptyOwned(), error } : { config: next, owned };
 }
 
-/** OpenCode's global opencode.json with Workit's `permission.edit` deny patterns. */
+/**
+ * OpenCode's global opencode.json with Workit's V2 `permissions` edit deny
+ * rules. The patterns an earlier Workit wrote to the deprecated
+ * `permission.edit` map move there (#869); the refresh's skip for them carries
+ * over, so a pattern the user removed stays removed.
+ */
 function mergeOpenCodeConfig(config: Json, input: MergeInput): HostMerge {
   const { deny, skip, previous } = input;
   const next = clone(config);
   const owned = emptyOwned();
+  const legacy = LEGACY_DENY_AT.opencode!;
   dropStaleDeny(next, "opencode", deny, ownedList(previous, DENY_AT.opencode));
-  const error = appendDenyMap(next, DENY_AT.opencode, deny, owned, skip);
-  return error ? { config, owned: emptyOwned(), error } : { config: next, owned };
+  const moved = dropLegacyDeny(
+    next,
+    ownedList(previous, legacy),
+    stringList(isRecord(previous) ? previous.created : undefined),
+  );
+  const skipped = [
+    ...(skip[DENY_AT.opencode] ?? []),
+    ...(skip[legacy] ?? []).filter((entry) => !moved.includes(entry)),
+  ];
+  const error = appendDenyRules(next, DENY_AT.opencode, deny, owned, {
+    ...skip,
+    [DENY_AT.opencode]: skipped,
+  });
+  if (error) return { config, owned: emptyOwned(), error };
+  return { config: next, owned, ...(moved.length ? { moved } : {}) };
 }
 
 /** The entries per list that need no path, for a host with no ownership record. */
@@ -519,7 +605,7 @@ const CREATED_PATHS: Record<JsonHost, ReadonlySet<string>> = {
     "env",
   ]),
   cursor: new Set(["permissions", "permissions.allow", "permissions.deny"]),
-  opencode: new Set(["permission", "permission.edit"]),
+  opencode: new Set(["permissions", "permission", "permission.edit"]),
 };
 
 /** Where `findBash` looks first, so a Workit-written `CLAUDE_CODE_SHELL` is one of these or the PATH hit. */
@@ -544,7 +630,7 @@ const trustedOwned = (
   const lists: Record<string, string[]> = {};
   for (const [dotted, entries] of Object.entries(isRecord(owned.lists) ? owned.lists : {})) {
     const offered = offeredAt(host, dotted);
-    if (!Array.isArray(entries) || (offered.size === 0 && DENY_AT[host] !== dotted)) continue;
+    if (!Array.isArray(entries) || (offered.size === 0 && !isDenyAt(host, dotted))) continue;
     lists[dotted] = entries.filter(
       (entry) =>
         typeof entry === "string" && (offered.has(entry) || isNativeDeny(host, dotted, entry)),
@@ -560,12 +646,16 @@ const trustedOwned = (
   };
 };
 
-/** The canonical entries (native deny ones for `deny`) plus the prior ones, for removal without a record. */
+/** The canonical entries (native deny ones for `deny`, at the legacy location too) plus the prior ones, for removal without a record. */
 const withPrior = (host: JsonHost, deny: readonly string[]): OwnedEntries => {
   const canonical = canonicalOwned(host, deny);
+  const legacy = LEGACY_DENY_AT[host];
   return {
     ...canonical,
-    lists: unionLists(canonical.lists, PRIOR_ENTRIES[host]),
+    lists: unionLists(canonical.lists, {
+      ...PRIOR_ENTRIES[host],
+      ...(legacy ? { [legacy]: deny } : {}),
+    }),
   };
 };
 
@@ -595,12 +685,16 @@ export function removeOwnedEntries(
     if (!at) continue;
     if (Array.isArray(value)) {
       const drop = new Set<unknown>(entries);
-      const kept = value.filter((entry) => !drop.has(entry));
+      // OpenCode's V2 rules: an edit deny rule goes when its resource is named.
+      const rules = dotted === DENY_AT[host];
+      const kept = value.filter(
+        (entry) => !drop.has(entry) && !(rules && drop.has(editDenied(entry))),
+      );
       if (kept.length !== value.length) {
         at.parent[at.key] = kept;
         changed = true;
       }
-    } else if (isRecord(value) && dotted === DENY_AT[host])
+    } else if (isRecord(value) && isDenyAt(host, dotted))
       for (const entry of entries)
         if (value[entry] === "deny") {
           delete value[entry];
@@ -837,7 +931,7 @@ const onlyJsonc = (file: string): string | null => {
   return !existsSync(file) && existsSync(jsonc) ? jsonc : null;
 };
 const JSONC_BLOCKED =
-  "holds the OpenCode config (comments Workit would drop); add Workit's permission.edit deny patterns by hand";
+  "holds the OpenCode config (comments Workit would drop); add Workit's edit deny rules to its permissions list by hand";
 
 /** One JSON host's merge (`bash`: the Claude Code shell to set, or null). */
 const mergeFor = (
@@ -927,6 +1021,10 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
       }
       after = JSON.stringify(merged.config, null, 2) + "\n";
       owned = merged.owned;
+      if (merged.moved)
+        plan.notes.push(
+          `${host}: moves Workit's ${merged.moved.length} deny pattern${merged.moved.length === 1 ? "" : "s"} from the deprecated "${LEGACY_DENY_AT[jsonHost]}" map to "${DENY_AT[jsonHost]}" rules in ${target.file}`,
+        );
       offered = canonicalOwned(jsonHost, deny).lists;
     }
     if (before === after) {
@@ -1141,15 +1239,25 @@ const forgetDropped = (owned: OwnedEntries, change: PermissionChange): OwnedEntr
       (entry) => !RETIRED_CLAUDE_ASK.includes(entry) || present.has(entry),
     );
   }
-  const dotted = DENY_AT[change.host];
-  const deny = lists[dotted];
-  if (deny) {
+  const host = change.host;
+  for (const dotted of [DENY_AT[host], LEGACY_DENY_AT[host]]) {
+    const deny = dotted ? lists[dotted] : undefined;
+    if (!dotted || !deny) continue;
     const present = new Set(denyEntriesAt(after, dotted));
     lists[dotted] = deny.filter(
-      (entry) => !isNativeDeny(change.host, dotted, entry) || present.has(entry),
+      (entry) => !isNativeDeny(host, dotted, entry) || present.has(entry),
     );
   }
-  return { ...owned, lists };
+  // A legacy container the move emptied and removed is no longer Workit's to remove.
+  const legacy = LEGACY_DENY_AT[host];
+  const created = legacy
+    ? owned.created.filter(
+        (dotted) =>
+          !(legacy === dotted || legacy.startsWith(`${dotted}.`)) ||
+          valueFrom(after, ...dotted.split(".")) !== undefined,
+      )
+    : owned.created;
+  return { ...owned, lists, created };
 };
 
 /** Remove Workit's Codex rules file (exact path only). */
@@ -1212,18 +1320,22 @@ export type NativeDenyHost = PermissionHost | "pi";
  * every entry for the current paths is there and none for an old path,
  * `stale` when one the ownership record says Workit wrote names a path that
  * moved (what the next setup drops; a rule no record names is the user's), `missing` when an
- * entry is absent; `none` where the host has no path deny (Codex, Pi).
+ * entry is absent, `legacy` when some are only in a deprecated location
+ * (OpenCode's `permission.edit`, which it still enforces and setup moves to
+ * `permissions`); `none` where the host has no path deny (Codex, Pi).
  * `sandbox` is the host's OS sandbox setting where it has one; `risk` says
  * when that sandbox lets agents write a guarded path.
  */
 export type NativeDenyHealth = {
   host: NativeDenyHost;
-  state: "no-host" | "present" | "missing" | "stale" | "unreadable" | "blocked" | "none";
+  state: "no-host" | "present" | "missing" | "stale" | "legacy" | "unreadable" | "blocked" | "none";
   file?: string;
   /** `blocked`: why setup cannot write the rules, as its blocked line says. */
   reason?: string;
   missing: string[];
   stale: string[];
+  /** The entries found only at the host's deprecated location (`LEGACY_DENY_AT`). */
+  legacy?: string[];
   /** The ownership record names this host: the user consented to Workit's block before. */
   recorded: boolean;
   sandbox?: string;
@@ -1300,12 +1412,18 @@ export function nativeDenyHealth(
     return { ...base, recorded, state: "unreadable", file: target.file };
   const config = value ?? {};
   const dotted = DENY_AT[host];
+  const legacyAt = LEGACY_DENY_AT[host];
   const expected = nativeDenyEntries(host, guarded);
   const wanted = new Set(expected);
-  const present = new Set(denyEntriesAt(config, dotted));
+  const current = new Set(denyEntriesAt(config, dotted));
+  const legacyPresent = new Set(legacyAt ? denyEntriesAt(config, legacyAt) : []);
+  const present = new Set([...current, ...legacyPresent]);
   const previous = readOwnership(options).hosts[host]?.owned;
-  const owned = new Set(ownedList(previous, dotted));
-  // What setup would refuse to merge into (OpenCode's `permission.edit: "allow"`, a list that is not one).
+  const owned = new Set([
+    ...ownedList(previous, dotted),
+    ...(legacyAt ? ownedList(previous, legacyAt) : []),
+  ]);
+  // What setup would refuse to merge into (OpenCode's `permissions` or a deny list that is not a list).
   const blocked = mergeFor(host, config, null, {
     deny: expected,
     skip: {},
@@ -1315,6 +1433,7 @@ export function nativeDenyHealth(
     (entry) => isNativeDeny(host, dotted, entry) && !wanted.has(entry) && owned.has(entry),
   );
   const missing = expected.filter((entry) => !present.has(entry));
+  const legacy = expected.filter((entry) => !current.has(entry) && legacyPresent.has(entry));
   const sandbox =
     host === "claude-code"
       ? `sandbox ${valueFrom(config, "sandbox", "enabled") === true ? "on" : "off"}`
@@ -1323,10 +1442,19 @@ export function nativeDenyHealth(
         : undefined;
   return {
     host,
-    state: stale.length ? "stale" : missing.length ? (blocked ? "blocked" : "missing") : "present",
+    state: stale.length
+      ? "stale"
+      : missing.length
+        ? blocked
+          ? "blocked"
+          : "missing"
+        : legacy.length
+          ? "legacy"
+          : "present",
     file: target.file,
     missing,
     stale,
+    ...(legacy.length ? { legacy } : {}),
     recorded,
     ...(blocked && missing.length ? { reason: blocked } : {}),
     ...(sandbox ? { sandbox } : {}),

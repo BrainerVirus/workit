@@ -766,26 +766,44 @@ test("Given Cursor CLI config with the user's deny rule, When setup and uninstal
   expect(readFileSync(file, "utf8")).toBe(original);
 });
 
+// OpenCode V2 (#869, measured on opencode 2.3.0): ordered `permissions` rules
+// {action, resource, effect}; the last match wins.
 const OPENCODE_USER = {
   $schema: "https://opencode.ai/config.json",
   plugins: ["acme-plugin"],
-  permission: { bash: "ask", edit: { "*": "allow", "/srv/secret/*": "deny" } },
+  permissions: [
+    { action: "*", resource: "*", effect: "allow" },
+    { action: "edit", resource: "/srv/secret/*", effect: "deny" },
+  ],
 };
-
-test("Given OpenCode's global opencode.json with the user's edit rules, When setup runs twice and uninstall runs, Then the guarded paths' deny patterns come after the user's (the last match wins), nothing changes the second time, and the file is restored byte for byte", async () => {
-  const { env, home } = sandbox();
+const guardedPatterns = (home: string) =>
+  [...guardedTails, "state/approvals/*", ".config/workit/workspaces.json.seal"].map(
+    (tail) => `${realHome(home)}/${tail}`,
+  );
+type Rule = { action: string; resource: string; effect: string };
+const editDeny = (resource: string): Rule => ({ action: "edit", resource, effect: "deny" });
+const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8"));
+const opencodeFile = (home: string) => {
   const file = path.join(home, ".config", "opencode", "opencode.json");
   mkdirSync(path.dirname(file), { recursive: true });
+  return file;
+};
+
+test("Given OpenCode's global opencode.json with the user's V2 rules, When setup runs twice and uninstall runs, Then edit deny rules for the guarded paths come after the user's (the last match wins), no V1 permission key appears, nothing changes the second time, and the file is restored byte for byte", async () => {
+  const { env, home } = sandbox();
+  const file = opencodeFile(home);
   const original = JSON.stringify(OPENCODE_USER, null, 2) + "\n";
   writeFileSync(file, original);
   expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
   const written = readFileSync(file, "utf8");
-  const edit = JSON.parse(written).permission.edit as Record<string, string>;
-  expect(Object.keys(edit).slice(0, 2)).toEqual(["*", "/srv/secret/*"]);
-  expect(edit["*"]).toBe("allow");
-  for (const tail of [...guardedTails, "state/approvals/*", ".config/workit/workspaces.json.seal"])
-    expect(edit[`${realHome(home)}/${tail}`]).toBe("deny");
-  expect(JSON.parse(written).permission.bash).toBe("ask");
+  const rules = JSON.parse(written).permissions as Rule[];
+  expect(rules.slice(0, 2)).toEqual(OPENCODE_USER.permissions);
+  for (const pattern of guardedPatterns(home))
+    expect(rules.slice(2)).toContainEqual(editDeny(pattern));
+  expect(rules.slice(2).every((rule) => rule.action === "edit" && rule.effect === "deny")).toBe(
+    true,
+  );
+  expect(JSON.parse(written)).not.toHaveProperty("permission");
 
   expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe(written);
@@ -798,22 +816,123 @@ test("Given OpenCode's global opencode.json with the user's edit rules, When set
   expect(readFileSync(file, "utf8")).toBe(original);
 });
 
-test("Given OpenCode configs Workit cannot merge into (permission.edit one action for every path, only an opencode.jsonc), When setup runs, Then each is reported blocked and left byte for byte", async () => {
+test("Given a fresh OpenCode install with no opencode.json, When setup runs, Then the file holds only V2 permissions edit deny rules for the guarded paths", async () => {
+  const { env, home } = sandbox();
+  const file = opencodeFile(home);
+  expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+  const config = readJson(file);
+  expect(Object.keys(config)).toEqual(["permissions"]);
+  const rules = config.permissions as Rule[];
+  expect(rules.map((rule) => rule.resource).toSorted()).toEqual(guardedPatterns(home).toSorted());
+  expect(rules).toEqual(rules.map((rule) => editDeny(rule.resource)));
+});
+
+/**
+ * Turn Workit's V2 rules in `file` into the V1 `permission.edit` patterns a
+ * Workit before #869 wrote, with the ownership record it kept for them.
+ */
+const asLegacySetup = (
+  file: string,
+  env: NodeJS.ProcessEnv,
+  base: Record<string, unknown>,
+  created: string[],
+) => {
+  const patterns = (readJson(file).permissions as Rule[]).map((rule) => rule.resource);
+  const permission = structuredClone((base.permission ?? {}) as Record<string, unknown>);
+  const edit = (permission.edit ?? {}) as Record<string, string>;
+  for (const pattern of patterns) edit[pattern] = "deny";
+  writeFileSync(
+    file,
+    JSON.stringify({ ...base, permission: { ...permission, edit } }, null, 2) + "\n",
+  );
+  const recordFile = path.join(env.WORKIT_STATE_DIR!, "host-permissions.json");
+  const record = readJson(recordFile);
+  record.hosts.opencode.owned = { lists: { "permission.edit": patterns }, created, env: {} };
+  record.hosts.opencode.offered = { "permission.edit": patterns };
+  writeFileSync(recordFile, JSON.stringify(record, null, 2) + "\n");
+  return { patterns, recordFile };
+};
+
+test("Given Workit's V1 permission.edit patterns beside the user's own V1 entries, When setup runs, Then Workit's move to V2 permissions rules in one reported line, the user's stay untouched, and uninstall restores the pre-setup file", async () => {
+  const { env, home } = sandbox();
+  const file = opencodeFile(home);
+  const user = {
+    $schema: "https://opencode.ai/config.json",
+    permission: { bash: "ask", edit: { "/srv/mine/*": "deny" } },
+  };
+  const original = JSON.stringify(user, null, 2) + "\n";
+  writeFileSync(file, original);
+  expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+  const { patterns, recordFile } = asLegacySetup(file, env, user, []);
+
+  const run = await cli(["setup", "--hosts=opencode", "--yes"], env);
+  expect(run.code).toBe(0);
+  const moved = run.stdout.split("\n").filter((line) => line.includes("deprecated"));
+  expect(moved).toEqual([
+    `opencode: moves Workit's ${patterns.length} deny patterns from the deprecated "permission.edit" map to "permissions" rules in ${file}`,
+  ]);
+  const config = readJson(file);
+  expect(config.permission).toEqual(user.permission);
+  expect(config.permissions).toEqual(patterns.map(editDeny));
+  const owned = readJson(recordFile).hosts.opencode.owned;
+  expect(owned.lists["permission.edit"]).toEqual([]);
+  expect(owned.lists.permissions).toEqual(patterns);
+
+  expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
+  expect(readFileSync(file, "utf8")).toBe(original);
+});
+
+test("Given Workit's V1 permission.edit patterns in containers Workit created, When setup moves them or uninstall runs without the move, Then the V1 permission key goes and the pre-setup file comes back", async () => {
+  const user = { $schema: "https://opencode.ai/config.json", plugins: ["acme-plugin"] };
+  const original = JSON.stringify(user, null, 2) + "\n";
+  for (const migrate of [true, false]) {
+    const { env, home } = sandbox();
+    const file = opencodeFile(home);
+    writeFileSync(file, original);
+    expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+    const { recordFile } = asLegacySetup(file, env, user, ["permission", "permission.edit"]);
+    if (migrate) {
+      expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+      expect(readJson(file)).not.toHaveProperty("permission");
+      expect(readJson(recordFile).hosts.opencode.owned.created).toEqual(["permissions"]);
+    }
+    expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
+    expect(readFileSync(file, "utf8"), `migrate ${migrate}`).toBe(original);
+  }
+});
+
+test("Given Workit's V1 patterns one of which the user removed, When the upgrade refresh moves them, Then the removed one is not written back as a V2 rule", async () => {
+  const { env, home } = sandbox();
+  const file = opencodeFile(home);
+  writeFileSync(file, "{}\n");
+  expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
+  const { patterns } = asLegacySetup(file, env, {}, ["permission", "permission.edit"]);
+  const [removed, ...kept] = patterns;
+  const config = readJson(file);
+  delete config.permission.edit[removed];
+  writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+  const plan = planHostPermissions({ home, env, hosts: ["opencode"], refreshOnly: true });
+  expect(plan.notes.some((note) => note.includes("moves Workit's 4 deny patterns"))).toBe(true);
+  expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
+  expect(readJson(file)).toEqual({ permissions: kept.map(editDeny) });
+});
+
+test("Given OpenCode configs Workit cannot merge into (permissions not a list, only an opencode.jsonc), When setup runs, Then each is reported blocked and left byte for byte", async () => {
   const single = sandbox();
-  const file = path.join(single.home, ".config", "opencode", "opencode.json");
-  mkdirSync(path.dirname(file), { recursive: true });
-  const text = JSON.stringify({ permission: { edit: "allow" } }, null, 2) + "\n";
+  const file = opencodeFile(single.home);
+  const text = JSON.stringify({ permissions: { edit: "allow" } }, null, 2) + "\n";
   writeFileSync(file, text);
   const run = await cli(["setup", "--hosts=opencode", "--yes"], single.env);
-  expect(run.stdout).toContain("permission.edit is one action for every path");
+  expect(run.stdout).toContain("permissions is not a list of rules");
   expect(readFileSync(file, "utf8")).toBe(text);
 
   const commented = sandbox();
   const jsonc = path.join(commented.home, ".config", "opencode", "opencode.jsonc");
   mkdirSync(path.dirname(jsonc), { recursive: true });
-  writeFileSync(jsonc, '{\n  // mine\n  "permission": {}\n}\n');
+  writeFileSync(jsonc, '{\n  // mine\n  "permissions": []\n}\n');
   const second = await cli(["setup", "--hosts=opencode", "--yes"], commented.env);
   expect(second.stdout).toContain("opencode.jsonc holds the OpenCode config");
+  expect(second.stdout).toContain("edit deny rules to its permissions list");
   expect(existsSync(path.join(commented.home, ".config", "opencode", "opencode.json"))).toBe(false);
 });
 

@@ -350,7 +350,7 @@ const permissionCleaner =
     );
   };
 
-/** opencode.json: the plugin entries, then Workit's `permission.edit` deny patterns (#820). */
+/** opencode.json: the plugin entries, then Workit's `permissions` edit deny rules and its legacy `permission.edit` patterns (#820, #869). */
 const openCodeCleaner =
   (file: string, paths: UninstallPaths): JsonCleaner =>
   (record) => {
