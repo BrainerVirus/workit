@@ -329,10 +329,10 @@ const unknownVarDeny = (
     command === undefined || literal === command
       ? ""
       : ` ${first.length ? `${first.join(" ")} retry` : "Retry"} as: \`${literal}\`.`;
-  const unblock = `Spell the path out instead of ${refs.join(", ")}: Workit follows only a plain \`NAME=<literal>\` set earlier in the same command, \`$(mktemp …)\`, \`$PWD\` after a literal \`cd\` and a \`for\` over literal words.${retry} Write under ${wt} (\`workit git --cwd ${wt} …\`, \`workit check --cwd ${wt} …\`) or a temp dir.`;
+  const unblock = `Spell the path out instead of ${refs.join(", ")}: Workit follows only \`NAME=<literal>\`, \`$(mktemp …)\`, \`$(pwd)\`, \`$PWD\` after a literal \`cd\` and a \`for\` over literal words.${retry} Write under ${wt} or a temp dir.`;
   return {
     kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve (a command substitution, a loop over unknown or split words, a conditional, a binder such as read or eval, or an options file sets it), so it cannot tell whether the write stays in its worktree. ${unblock}`,
+    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve, so it cannot tell whether the write stays in its worktree. ${unblock}`,
     unblock,
   };
 };
@@ -883,13 +883,13 @@ const judgeGit = (
       // A plain fetch from a remote the lead configured, in the judged repository or a
       // Workit worktree (never a scratch repository), updates only remote-tracking refs.
       const runsIn = path.isAbsolute(dir) ? dir : cwd && path.resolve(cwd, dir);
-      const home = runsIn ? checkoutOf(runsIn) : null;
+      const home = runsIn && checkoutOf(runsIn);
       const fetches =
         args[0] === "fetch" &&
         plainFetch(args.slice(1)) &&
-        !!home &&
+        home &&
         (home.workit || commonDir(home.root) === repo) &&
-        !words.some((word) => /^--(?:git-dir|work-tree)/.test(word));
+        !words.some((word) => /^--[gw]/.test(word));
       if (!fetches && !gitKind(args, local))
         why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
       else if (args[0] === "status" && !unlocked) {

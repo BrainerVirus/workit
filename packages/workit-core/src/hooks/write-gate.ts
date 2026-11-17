@@ -255,44 +255,29 @@ const READ_CALLS =
 const MUTATING_CALLS =
   /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
 /**
- * Inline code that runs a command, deletes, loads code by path or reaches a
- * call by a computed name: a word anywhere in it, string literals included.
+ * Inline code that runs a command, deletes, loads code by path, reaches a
+ * call by a computed name or opens a file by other than a plain path and read
+ * mode (FREE_OPEN): a word anywhere in it, string literals included.
  */
 const SPAWNS =
-  /subprocess|child_process|createWriteStream|tempfile|mkstemp|sqlite|inplace|getattr|Bun\.\$|O_(?:WRONLY|RDWR|CREAT|APPEND|TRUNC)|(?:PYTHON\w*|NODE_\w+)=|--(?:require|import|(?:experimental-)?loader)|(?:^|\s)-r\b|\bos\.replace|\b(?:system|popen|exec(?:Sync|File\w*|[vl]\w*)?|spawn\w*|fork|eval|shutil|unlink\w*|rename\w*|remove\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:[\w@:][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|spawn\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:[\w@:][^'"]*|[^'"]*\.json)\1)/;
+/** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
+const FREE_OPEN =
+  /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
 
 /**
- * Whether inline Python or Node code may change files: SPAWNS, an `open` with
- * any argument but a path and a read mode or encoding, or a word (outside
- * string literals) that names a call in MUTATING_CALLS, bar `open`, a list's
- * `append` and `copy`, and printing to stdout or stderr.
+ * Whether inline Python or Node code may change files: SPAWNS, or a word
+ * outside FREE_OPEN and string literals that names a call in MUTATING_CALLS
+ * (bar a list's `append` and `copy`, and printing to stdout or stderr).
  */
 const writesIn = (text: string): boolean =>
   SPAWNS.test(text) ||
-  [...text.matchAll(/\bopen\w*\s*\(/g)].some(({ index, 0: call }) => {
-    const parts = [""];
-    let quote = "";
-    for (let at = index + call.length, depth = 1; at < text.length; at++) {
-      const char = text[at];
-      if (quote) quote = char === quote ? "" : quote;
-      else if (/['"]/.test(char)) quote = char;
-      else if ((depth += "([".includes(char) ? 1 : ")]".includes(char) ? -1 : 0) === 0) break;
-      if (depth === 1 && !quote && char === ",") parts.push("");
-      else parts[parts.length - 1] += char;
-    }
-    return parts.some((part, at) =>
-      at
-        ? !/^\s*(?:(?:mode\s*=\s*)?(['"])[rbtU]*\1|(?:encoding|errors|newline)\s*=\s*(['"])[\w-]*\2)\s*$/.test(
-            part,
-          )
-        : /^\s*(['"])[rbtU]*[wax+][rbtUwax+]*\1\s*$/.test(part),
-    );
-  }) ||
   [
     ...text
+      .replace(FREE_OPEN, "")
       .replace(/std(?:out|err)\.write|(?<![fF])(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "")
       .matchAll(/[\w$]+/g),
-  ].some(([word]) => !/^(?:open(?:Sync)?|append|copy)$/.test(word) && MUTATING_CALLS.test(word));
+  ].some(([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word));
 
 /** Calls that only build a path: the value they return may reach any later call. */
 const PATH_CALLS =
@@ -644,14 +629,10 @@ export const configWrites = (rest: readonly string[]): boolean => {
 };
 
 /** `git fetch [-q|-v] [<remote name> [<branch>]]`'s `rest`: no URL or path, no `:` or `+` refspec, no other option. */
-export const plainFetch = (rest: readonly string[]): boolean => {
-  const names = rest.filter((arg) => arg[0] !== "-");
-  return (
-    rest.every((arg) => /^(?:-q|--quiet|-v|--verbose|[^-+:][^:]*)$/.test(arg)) &&
-    names.length < 3 &&
-    /^[\w-][\w.-]*$/.test(names[0] ?? "x")
+export const plainFetch = (rest: readonly string[]): boolean =>
+  /^(?:\w[\w.-]*(?: [^-+:\s][^:\s]*)?)?$/.test(
+    rest.filter((arg) => !/^-[qv]$|^--(?:quiet|verbose)$/.test(arg)).join(" "),
   );
-};
 
 /** git options before the subcommand, and `git clone|init` options, that take the next word. */
 const GIT_VALUE =
