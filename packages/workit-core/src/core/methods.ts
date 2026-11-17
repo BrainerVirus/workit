@@ -126,13 +126,13 @@ Autonomy contract:
   start <v>\`, commits, \`finish\`; \`publish\` if asked.
 - Ask only for a product or preference choice, or for authority you lack, with
   your recommended answer. Facts are yours: read, run or prototype.
-- Label claims measured (run and seen this session), inferred, or guess.
+- Label claims measured (seen this session), inferred, or guess.
   Prose is a note: only a configured check the CLI ran (\`workit check <name>\`)
   satisfies a gate; an ad-hoc \`workit check -- <cmd>\` never does.
 - Author is not verifier: your own verdict is \`--self\`, shown as
   self-reviewed, never verified. High risk, a focused or full lane and
   merge under \`verification: self|independent\` need a verifier with its
-  own host-derived session (a subagent's \`<lead>:<child>\`); never hand-mint one (\`<lead>-v1\`).
+  own host-derived session (a subagent's \`<lead>:<child>\`); never hand-mint one.
 - A local-commit endpoint does not imply PR readiness, and a local commit alone
   is not evidence of a requested remote push. Before reporting delivery,
   reconcile every requested item and observe it (\`workit verify-delivery\`).
@@ -163,7 +163,7 @@ Skills: load the skill, never act from memory.
 - review, blast radius: workit-review
 - bug, broken, flaky, regression: workit-debug
 - ship, babysit, CI, merge: workit-ship
-- resume, pick up, handoff, interruption, leaving, tomorrow: workit-continue
+- resume, pick up, handoff, interruption, leaving, tomorrow, end of day, pause: workit-continue
 - BDD, TDD, acceptance criteria, Given/When/Then: workit-bdd
 - test audit, tautology, weak tests: workit-test-audit
 - deslop, slop, dead code: workit-deslop

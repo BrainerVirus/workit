@@ -575,7 +575,7 @@ test("Given the continue skill and the contract route, When the user is leaving 
   for (const trigger of ["leaving", "tomorrow", "end of day", "pause"])
     expect(description, trigger).toContain(trigger);
   expect(invariantBootstrap()).toContain(
-    "- resume, pick up, handoff, interruption, leaving, tomorrow: workit-continue",
+    "- resume, pick up, handoff, interruption, leaving, tomorrow, end of day, pause: workit-continue",
   );
 });
 
