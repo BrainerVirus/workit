@@ -357,9 +357,9 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "dir",
     group: "setup",
-    usage: "workit dir [<kind>]",
+    usage: "workit dir [plans|retros|handoffs|notes|config|state|data|cache|runtime]",
     summary:
-      "Print where a kind of file lives: plans, retros, handoffs, notes per clone; config, state, data, cache, runtime per user; bare, list them",
+      "Print where a kind of file lives (the first four per clone, the rest per user); bare, list the kinds",
     examples: ["workit dir", "workit dir plans", "workit dir state --json"],
     load: () => import("./dir"),
   },
