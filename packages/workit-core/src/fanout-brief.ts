@@ -278,6 +278,7 @@ function spawnLines(
   slice: string,
   tier: RoleSelector["tier"],
   scratch: string,
+  candidate: string,
 ): string[] {
   if (familyOf(host) !== "claude_code") return [];
   const line = (label: string, type: string, selector: RoleSelector, prompt: string) => {
@@ -302,7 +303,7 @@ function spawnLines(
       "  verifier SPAWN",
       "workit:verifier",
       { role: "verifier" },
-      `the candidate branch with this slice's ACCEPTANCE and VERIFY; probes go in ${scratch}`,
+      `the candidate branch with this slice's ACCEPTANCE and VERIFY; probes go in ${scratch}; record the verdict as \`workit ledger verdict --cwd ${candidate} …\` from any shell directory`,
     ),
   ];
 }
@@ -451,7 +452,14 @@ export function renderBrief(
           `  verifier: model ${verifier.model}${verifier.effort ? `  effort ${verifier.effort}` : ""}  (${verifier.source})`,
         ]
       : []),
-    ...spawnLines(cwd, host, slice.id, slice.tier, probes),
+    ...spawnLines(
+      cwd,
+      host,
+      slice.id,
+      slice.tier,
+      probes,
+      exists ? planned : "<candidate worktree>",
+    ),
     `TIMEBOX: ${timeboxText(slice.timebox, slice.tier)}; past it without a new commit you will be replaced`,
     scratchLine,
     `FORBIDDEN: ${slice.forbidden.join("; ")}`,
