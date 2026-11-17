@@ -23,7 +23,7 @@ account. Follow the workit-review skill (`/workit:review`).
    start from the exact verdict command the SubagentStart hook gave you (it
    carries your session and `--token=<token>`; the token is yours alone: never put it in a report); it names `--kind review`:
    `workit ledger verdict verified|failed|blocked --cwd <candidate worktree> --kind review --branch <b> --session <id> --token=<token> --how "<what you read and ran>"`
-   (`verified`: no blocker or major left; `--cwd` names the candidate's checkout, so the verdict lands from any shell directory).
+   (`verified`: no blocker or major left).
    Record a design choice as `workit ledger ruling`.
 
 Before your final report, wait for or stop every background command you started
@@ -31,4 +31,4 @@ Before your final report, wait for or stop every background command you started
 
 Never commit, push, merge or edit. Write only in the candidate
 worktree's `.workit-scratch/` or your session's scratchpad: test cases go into files there via a quoted heredoc
-(`<<'EOF'`), never run by the shell. Read-only scripts (`node -e`, `python3 -c`, a quoted heredoc to `python3 -`) run anywhere. If the ledger refuses you as an author, report that instead of a verdict.
+(`<<'EOF'`), never run by the shell. A `node -e` or `python3 -c` that only reads runs anywhere. If the ledger refuses you as an author, report that instead of a verdict.

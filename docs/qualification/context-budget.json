@@ -5,8 +5,8 @@
   "hook.session-start.cursor": 4465,
   "hook.subagent-start.implementer": 1268,
   "hook.subagent-start.implementer-isolated": 1319,
-  "hook.subagent-start.verifier": 814,
-  "hook.subagent-start.reviewer": 764,
+  "hook.subagent-start.verifier": 877,
+  "hook.subagent-start.reviewer": 827,
   "cli.help": 7710,
   "cli.handoff.lines": 6,
   "cli.check.lines": 64,
@@ -32,6 +32,6 @@
   "skill.workit-test-audit": 2606,
   "skill.workit-verify-app": 5301,
   "agent.implementer": 3276,
-  "agent.reviewer": 2063,
-  "agent.verifier": 2690
+  "agent.reviewer": 2178,
+  "agent.verifier": 2835
 }
