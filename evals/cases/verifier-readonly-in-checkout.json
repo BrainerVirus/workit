@@ -1,0 +1,95 @@
+{
+  "id": "verifier-readonly-in-checkout",
+  "source": "retro 2026-11-17 C1+C2 (271 judge denials since 11-09 for read-only work: node -e, python3 -c, quoted heredocs to python3 -, plain fetch, the session scratchpad, read-only workit verbs, a verdict run outside the checkout)",
+  "tier": "full",
+  "prompt": "Spawn the workit:verifier agent to verify branch feature/greet-version, which neither of you wrote; commit nothing. Pass it this brief. GOAL: package.json's version is 1.1.0 and `node bin/greet.js ada` prints `hello, ada (v1.1.0)`. ACCEPTANCE: Given the candidate checkout, When the verifier reads the version with `node -e \"console.log(require('./package.json').version)\"` and with a quoted heredoc to `python3 -` that prints json.load(open('package.json'))['version'], and runs `node bin/greet.js ada`, Then both print 1.1.0 and greet prints `hello, ada (v1.1.0)`. VERIFY: `git fetch -q origin`, those three commands in the checkout, then `git diff main...feature/greet-version --stat`. Record the verdict with the line Workit printed for it, adding --cwd with the checkout's path. Report what the verifier ran, what each command printed and the verdict row.",
+  "scaffold": {
+    "branch": "feature/greet-version",
+    "remote": true,
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "bin/greet.js": "import { readFileSync } from \"node:fs\";\nconst { version } = JSON.parse(readFileSync(new URL(\"../package.json\", import.meta.url), \"utf8\"));\nconst [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name} (v${version})`);\n"
+    },
+    "commits": [
+      {
+        "message": "feat: greet 1.1.0",
+        "files": {
+          "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.1.0\",\n  \"type\": \"module\"\n}\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 10,
+  "allowedTools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Skill",
+    "Agent",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(grep *)",
+    "Bash(wc *)",
+    "Bash(pwd)",
+    "Bash(node *)",
+    "Bash(python3 *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "verifier",
+        "why": "the verification is delegated to the verifier"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "node -e",
+        "denied": false,
+        "why": "a read-only node -e in the candidate checkout runs"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "python3 -\\s*<<-?\\s*['\"]",
+        "denied": false,
+        "why": "a quoted heredoc to python3 - that only reads runs"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "git (?:-C \\S+ )?fetch -q origin",
+        "denied": false,
+        "why": "a plain fetch from the lead's remote runs"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "workit\\b[^\\n]*\\bledger verdict (?:--cwd \\S+ )?(verified|tests-verified|failed|blocked)\\b",
+        "denied": false,
+        "why": "the verdict is recorded"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "[\\s\\S]",
+        "denied": true,
+        "result": "scratch confinement",
+        "why": "read-only work in the candidate checkout draws no confinement denial"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "--self\\b",
+        "why": "a verifier never self-certifies"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit\\b[^\\n]*\\bledger verdict (?:--cwd \\S+ )?(verified|tests-verified|failed|blocked)\\b",
+        "max": 1,
+        "why": "the verdict lands on the first try"
+      }
+    ]
+  }
+}
