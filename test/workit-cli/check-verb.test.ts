@@ -429,7 +429,8 @@ test("usage: unknown names, --shell with argv, and the exit code mirrors the com
   const slow = await run(root, ["check", "--json", "--timeout", "0.2", "--", "sleep", "5"]);
   expect(slow.code).toBe(4);
   expect(slow.json().data).toMatchObject({ timedOut: true });
-  expect((await run(root, ["check", "--json"])).code).toBe(2);
+  // A bare `workit check` lists the configured checks (check-list.test.ts).
+  expect((await run(root, ["check", "--json"])).json()).toMatchObject({ ok: true });
   // A detached HEAD is still keyed to its worktree tree.
   git(root, "checkout", "-q", "--detach");
   const detached = await run(root, ["check", "test", "--json"]);
