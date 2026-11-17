@@ -150,7 +150,8 @@ test("Given leading global options (--json, --cwd, --session), When the agent ru
   expect(consume(ticket, SESSION, undefined, ["1.0.0"]).ok).toBe(false);
   expect(consume(ticket, SESSION, undefined, ["1.0.0", "--json"]).ok).toBe(true);
   // --cwd: the draft is read where the CLI runs, not in the host's cwd.
-  const elsewhere = `workit --cwd ${repo} --session ${SESSION} release notes approve 1.0.0`;
+  // Quoted: a Windows path's backslashes are escapes to a POSIX shell, as to the hook.
+  const elsewhere = `workit --cwd '${repo}' --session ${SESSION} release notes approve 1.0.0`;
   const out = (dispatchHook(
     claudeCodeAdapter,
     {
@@ -166,6 +167,8 @@ test("Given leading global options (--json, --cwd, --session), When the agent ru
     { CLAUDE_CODE_ENTRYPOINT: "cli" },
   ).json.hookSpecificOutput ?? {}) as Out;
   expect(out.permissionDecision).toBe("ask");
+  // The draft's ask, not the user-only one: the hook found the draft under --cwd.
+  expect(out.permissionDecisionReason).toContain("- change 80");
   expect(consume(ticketOn(out.updatedInput?.command, elsewhere)!, SESSION).ok).toBe(true);
 });
 
