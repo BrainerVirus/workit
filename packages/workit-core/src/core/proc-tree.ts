@@ -115,14 +115,15 @@ export async function stopGroup(
   target: StopTarget,
   graceMs: number = STOP_GRACE_MS,
 ): Promise<GroupStop> {
+  // Nothing to signal (a docker row whose containers were stopped) is gone on every platform.
+  const pgid = target.pgid ?? target.pid;
+  if (!pgid) return { outcome: "gone" };
   if (procTree.platform === "win32")
     return {
       outcome: "refused",
       detail:
         "Windows has no process group or start time Workit can check, so the stop is report-only; end it in Task Manager",
     };
-  const pgid = target.pgid ?? target.pid;
-  if (!pgid) return { outcome: "gone" };
   const before = stillOurs(target);
   if (before !== "ours") return { outcome: before };
   try {

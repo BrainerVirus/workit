@@ -1,8 +1,11 @@
 // #328 core: stopProcesses, reapOrphans and processesWithin over registry rows
-// the test writes itself, for processes the test started (rulings 1, 3, 4, B, C).
+// the test writes itself (rulings 1, 3, 4, B, C). The process table is a fake
+// behind the procTree seam, acting as a POSIX host on every platform: no real
+// process is started or signalled, so the filtering, ownership and orphan
+// proofs run on Windows too. Real group signalling is in proc-tree.test.ts.
 import { afterEach, expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -11,6 +14,7 @@ import {
   processesWithin,
   reapOrphans,
   stopProcesses,
+  stopRequestFile,
   updateExtra,
 } from "@/packages/workit-core/src/core/procs";
 import { procTree } from "@/packages/workit-core/src/core/proc-tree";
@@ -18,15 +22,45 @@ import { readProc, upsertProc, type ProcRow } from "@/packages/workit-core/src/s
 import { readLedger } from "@/packages/workit-core/src/ledger";
 
 const dirs: string[] = [];
-const groups: number[] = [];
 const savedDocker = procsDeps.docker;
+const savedTree = { ...procTree };
+
+/** The fake process table: pid -> its group, start time and whether it runs. */
+type FakeProc = { pgid: number; start: string; alive: boolean };
+const table = new Map<number, FakeProc>();
+/** Every non-probe signal sent, as [target, signal]. */
+const sent: Array<[number, string | number]> = [];
+let nextPid = 40_000;
+
+const esrch = () => Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+
+const fakeTree = (platform: NodeJS.Platform = "linux") => {
+  procTree.platform = platform;
+  procTree.start = (pid) => (table.get(pid)?.alive ? table.get(pid)!.start : null);
+  procTree.kill = (target, signal) => {
+    const members =
+      target < 0
+        ? [...table.values()].filter((proc) => proc.pgid === -target && proc.alive)
+        : [table.get(target)].filter((proc): proc is FakeProc => proc?.alive === true);
+    if (members.length === 0) throw esrch();
+    if (signal === 0) return;
+    sent.push([target, signal]);
+    for (const proc of members) proc.alive = false;
+  };
+  procTree.table = () => null;
+  procTree.sleep = async () => {};
+};
+fakeTree();
+
 afterEach(() => {
   procsDeps.docker = savedDocker;
-  for (const pid of groups.splice(0))
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {}
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  Object.assign(procTree, savedTree);
+  fakeTree();
+  table.clear();
+  sent.length = 0;
+  // Windows: a git child that just exited can hold a handle for a moment (#415).
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 const temp = (prefix: string) => {
@@ -42,26 +76,36 @@ const world = () => {
   return { repo, env };
 };
 
+/** A running fake process leading its own group. */
 const sleeper = () => {
-  const child = spawn("sh", ["-c", "while :; do sleep 1; done"], {
-    detached: true,
-    stdio: "ignore",
-  });
-  groups.push(child.pid!);
-  return child.pid!;
+  const pid = (nextPid += 1);
+  table.set(pid, { pgid: pid, start: `start-${pid}`, alive: true });
+  return pid;
+};
+
+/** A fake pid that ran and has exited. */
+const exited = () => {
+  const pid = sleeper();
+  table.get(pid)!.alive = false;
+  return pid;
 };
 
 const alive = (target: number) => {
   try {
-    process.kill(target, 0);
+    procTree.kill(target, 0);
     return true;
   } catch {
     return false;
   }
 };
 
+/** The owner session's host process, alive for the whole file. */
+const HOST = 39_999;
+const hostAlive = () => table.set(HOST, { pgid: HOST, start: "host-start", alive: true });
+
 let counter = 0;
 const register = (env: NodeJS.ProcessEnv, fields: Partial<ProcRow> & { cwd: string }): ProcRow => {
+  hostAlive();
   const store = openProcs(env);
   try {
     const pid = fields.pid === undefined ? sleeper() : fields.pid;
@@ -71,7 +115,7 @@ const register = (env: NodeJS.ProcessEnv, fields: Partial<ProcRow> & { cwd: stri
       session: "s-owner",
       lead: "s-owner",
       host: "claude-code",
-      hostPid: process.pid,
+      hostPid: HOST,
       cmd: "fake server",
       kind: "server",
       startedAt: new Date().toISOString(),
@@ -154,13 +198,11 @@ test("Given rows in and outside a checkout, When processesWithin and stopProcess
 
 test("Given orphans by a gone host pid and by a reused host pid, a live owner and an unknown owner, When reapOrphans runs, Then it stops only the proven orphans and records each", async () => {
   const { repo, env } = world();
-  const gone = spawn("true");
-  await new Promise((resolve) => gone.once("exit", resolve));
-  const deadOwner = register(env, { cwd: repo, hostPid: gone.pid! });
-  const reusedOwner = register(env, { cwd: repo, hostPid: process.pid });
+  const deadOwner = register(env, { cwd: repo, hostPid: exited() });
+  const reusedOwner = register(env, { cwd: repo, hostPid: HOST });
   updateExtra(env, reusedOwner.id, { hostPidStart: "an-older-process" });
-  const liveOwner = register(env, { cwd: repo, hostPid: process.pid });
-  updateExtra(env, liveOwner.id, { hostPidStart: procTree.start(process.pid) });
+  const liveOwner = register(env, { cwd: repo, hostPid: HOST });
+  updateExtra(env, liveOwner.id, { hostPidStart: procTree.start(HOST) });
   const unknown = register(env, { cwd: repo, hostPid: null });
 
   const dry = await reapOrphans({ ...context(env, null), apply: false });
@@ -190,6 +232,7 @@ test("Given a row whose leader pid now belongs to another process, When it is st
   const reused = register(env, { cwd: repo, pid: stranger, pgid: stranger, pidStart: "not-it" });
   const report = await stopProcesses({ session: "s-owner" }, "session-end", context(env));
   expect(report.stopped).toEqual([]);
+  expect(sent).toEqual([]);
   expect(alive(stranger)).toBe(true);
   expect(row(env, reused.id)?.endReason).toBe("found gone (pid reused)");
 });
@@ -215,6 +258,29 @@ test("Given a docker row, When it is stopped, Then exactly its recorded containe
   expect(calls.flat().some((word) => /^(?:down|rm|prune|-v)$/u.test(word))).toBe(false);
 });
 
+test("Given a docker row on Windows, When it is stopped, Then `docker stop` ends it and the row is recorded stopped", async () => {
+  fakeTree("win32");
+  const { repo, env } = world();
+  const calls: string[][] = [];
+  procsDeps.docker = (args) => {
+    calls.push(args);
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const docker = register(env, {
+    cwd: repo,
+    kind: "docker",
+    cmd: "docker compose up -d",
+    pid: null,
+    pgid: null,
+  });
+  updateExtra(env, docker.id, { containers: ["c0ffee03"] });
+  const report = await stopProcesses({ ids: [docker.id] }, "done", context(env));
+  expect(calls).toEqual([["stop", "c0ffee03"]]);
+  expect(report.failed).toEqual([]);
+  expect(report.stopped.map((entry) => entry.id)).toEqual([docker.id]);
+  expect(row(env, docker.id)?.endReason).toBe("done");
+});
+
 test("Given an agent caller, When it stops by session another family's rows, Then they are skipped as owned by another session", async () => {
   const { repo, env } = world();
   const theirs = register(env, { cwd: repo, session: "s-other", lead: "s-other" });
@@ -225,4 +291,46 @@ test("Given an agent caller, When it stops by session another family's rows, The
   const mine = register(env, { cwd: repo });
   const worker = await stopProcesses({ ids: [mine.id] }, "x", context(env, "s-owner:agent1"));
   expect(worker.stopped.map((entry) => entry.id)).toEqual([mine.id]);
+});
+
+// The Windows stop path (ruling C): no group signal; the stop asks the
+// supervisor that holds the child through its stop request file. Here the fake
+// sleep plays that supervisor, so the channel runs on every platform.
+test("Given Windows and a live supervisor, When a row is stopped, Then the stop goes through its stop request and nothing is signalled", async () => {
+  fakeTree("win32");
+  const { repo, env } = world();
+  const supervisor = sleeper();
+  const served = register(env, { cwd: repo });
+  updateExtra(env, served.id, {
+    supervisorPid: supervisor,
+    supervisorStart: procTree.start(supervisor),
+  });
+  const requests: string[] = [];
+  procTree.sleep = async () => {
+    const file = stopRequestFile(env, served.id);
+    if (!existsSync(file)) return;
+    requests.push(file);
+    rmSync(file);
+    table.get(served.pid!)!.alive = false;
+    updateExtra(env, served.id, { state: "exited", stopSignal: "SIGTERM" });
+  };
+  const report = await stopProcesses({ ids: [served.id] }, "done", context(env));
+  expect(requests).toHaveLength(1);
+  expect(sent).toEqual([]);
+  expect(report.stopped.map((entry) => entry.id)).toEqual([served.id]);
+  expect(row(env, served.id)?.endReason).toBe("done");
+});
+
+test("Given Windows and a gone supervisor, When a row is stopped, Then it is report-only: nothing signalled and the row stays", async () => {
+  fakeTree("win32");
+  const { repo, env } = world();
+  const served = register(env, { cwd: repo });
+  updateExtra(env, served.id, { supervisorPid: exited(), supervisorStart: "start-gone" });
+  const report = await stopProcesses({ ids: [served.id] }, "done", context(env));
+  expect(report.stopped).toEqual([]);
+  expect(report.failed[0].reason).toContain("its supervisor is gone");
+  expect(sent).toEqual([]);
+  expect(alive(served.pid!)).toBe(true);
+  expect(existsSync(stopRequestFile(env, served.id))).toBe(false);
+  expect(row(env, served.id)?.endReason ?? null).toBeNull();
 });
