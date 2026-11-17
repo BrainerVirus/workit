@@ -60,10 +60,17 @@ const ciMatch = (ci: CiCheck, name: string): boolean =>
     "iu",
   ).test(ci.name);
 
-/** The observed `workit check` rows of a ledger, as evidence input. */
+/**
+ * The observed `workit check` rows of a ledger, as evidence input. A run its
+ * caller stopped (`interrupted`: a tool timeout's SIGTERM) is absent evidence,
+ * neither passing nor failing, so it never hides the run before it.
+ */
 export function localCheckRows(rows: readonly Record<string, unknown>[]): LocalCheckRow[] {
   return rows
-    .filter((row) => row.type === "check" && row.observer === "workit_cli")
+    .filter(
+      (row) =>
+        row.type === "check" && row.observer === "workit_cli" && row.result !== "interrupted",
+    )
     .map((row) => ({
       name: String(row.name ?? ""),
       head: String(row.head ?? ""),

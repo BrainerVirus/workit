@@ -50,6 +50,7 @@
 //   error's code (busy 4, unavailable 5) so a green run is never mistaken for
 //   recorded evidence.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   CHECKS_FILE,
@@ -80,7 +81,7 @@ import {
   storeRoot,
   type CodeKey,
 } from "@workit-dev/core/src/ledger";
-import { emit, fail, type EnvelopeCode, type Io } from "../output";
+import { emit, fail, ok, type EnvelopeCode, type Io } from "../output";
 import { progressFor, type ProgressStep } from "../progress";
 import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 import {
@@ -117,7 +118,7 @@ import { announce, BACKGROUND_HINT } from "./forge-common";
 import { configDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 
 const USAGE =
-  'workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
+  'workit check [--list] | workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
 /**
  * Output lines a check prints by default: enough for a compiler error or a
  * failing test with its stack, far below a build log (#426). --full streams all.
@@ -135,6 +136,28 @@ const MAX_UNVERIFIED_RUN_MS = 6 * 3_600_000;
 
 /** How often a running check says it is still running, so a host never sees silence (#645). */
 const CHECK_STATUS_MS = 60_000;
+/**
+ * Signals that mean the caller stopped the check (a host's tool timeout,
+ * Ctrl-C, a closed terminal): the run is `interrupted`, absent evidence, not
+ * a failure of the code.
+ */
+const INTERRUPT_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/** Note the first interrupt signal workit receives until the returned stop is called. */
+function watchInterrupts(): { received: () => NodeJS.Signals | null; stop: () => void } {
+  let received: NodeJS.Signals | null = null;
+  const onSignal = (signal: NodeJS.Signals) => {
+    received ??= signal;
+  };
+  for (const signal of INTERRUPT_SIGNALS) process.on(signal, onSignal);
+  return {
+    received: () => received,
+    stop: () => {
+      for (const signal of INTERRUPT_SIGNALS) process.off(signal, onSignal);
+    },
+  };
+}
+
 /** Tail lines kept on the task record (the envelope carries TAIL_LINES). */
 const RECORD_TAIL_LINES = 20;
 const RECORD_TAIL_CHARS = 200;
@@ -145,6 +168,8 @@ type Options = {
   heavy: boolean;
   /** Stream the child's output as it runs instead of printing its tail. */
   full: boolean;
+  /** List the configured checks instead of running one. */
+  list: boolean;
   noLease: boolean;
   /** Why the run skips the lease; required with --no-lease. */
   reason: string | null;
@@ -165,6 +190,7 @@ function parse(argv: readonly string[]): Options | Error {
     shell: false,
     heavy: false,
     full: false,
+    list: false,
     noLease: false,
     reason: null,
     waitMs: null,
@@ -185,6 +211,10 @@ function parse(argv: readonly string[]): Options | Error {
         : next;
     };
     if (flag === "--json") continue;
+    if (flag === "--list") {
+      options.list = true;
+      continue;
+    }
     if (flag === "--shell" || flag === "--full") {
       if (flag === "--shell") options.shell = true;
       else options.full = true;
@@ -805,12 +835,23 @@ async function runGroup(
   // The group name is the only positional; every other token is a flag (or its value) each member takes.
   const passthrough = argv.filter((arg) => arg !== group);
   const failed: string[] = [];
-  for (const member of ordered) {
-    io.stderr(
-      `workit: check ${group}: running ${member} (${ordered.indexOf(member) + 1}/${ordered.length})\n`,
-    );
-    const code = await run([member, ...passthrough], io);
-    if (code !== 0) failed.push(member);
+  // A caller that stopped one member stopped the group: the rest never start.
+  const interrupts = watchInterrupts();
+  try {
+    for (const member of ordered) {
+      io.stderr(
+        `workit: check ${group}: running ${member} (${ordered.indexOf(member) + 1}/${ordered.length})\n`,
+      );
+      const code = await run([member, ...passthrough], io);
+      const signal = interrupts.received();
+      if (signal) {
+        io.stderr(`workit: check ${group}: interrupted by ${signal} during ${member}; stopped\n`);
+        return code;
+      }
+      if (code !== 0) failed.push(member);
+    }
+  } finally {
+    interrupts.stop();
   }
   if (failed.length) {
     io.stderr(
@@ -822,12 +863,47 @@ async function runGroup(
   return 0;
 }
 
+/**
+ * `workit check --list` (and bare `workit check`): the configured check names
+ * with their commands, and the groups, so an agent never guesses a name.
+ */
+function listChecks(io: Io, config: CheckConfig): number {
+  if (config.error)
+    return emit(io, fail("invalid_input", `check config is invalid: ${config.error}`));
+  const checks = config.checks.map((item) => ({ name: item.name, argv: item.argv }));
+  return emit(io, ok({ source: config.source, checks, groups: config.groups }), () => {
+    if (!checks.length)
+      return `no configured checks (source: ${config.source}); add {"checks":{"test":"<command>"}} to ${CHECKS_FILE}`;
+    const width = Math.max(...checks.map((item) => item.name.length));
+    return [
+      `configured checks (${config.source}); run one with workit check <name>:`,
+      ...checks.map((item) => `  ${item.name.padEnd(width)}  ${item.argv.join(" ")}`),
+      ...Object.entries(config.groups).map(
+        ([group, members]) => `  ${group.padEnd(width)}  group: ${members.join(", ")}`,
+      ),
+    ];
+  });
+}
+
+/** The line a caller-stopped check prints, so an agent backgrounds it instead of rerunning it in the foreground. */
+export const interruptedHint = (signal: string): string =>
+  `interrupted by ${signal} (the caller stopped it, likely a tool timeout): run long checks in the background`;
+
 export async function run(argv: string[], io: Io): Promise<number> {
   const options = parse(argv);
   if (options instanceof Error)
     return emit(io, fail("invalid_input", options.message, { unblock: USAGE }));
   const config: CheckConfig = loadCheckConfig(io.cwd);
   if (config.note) io.stderr(`note: ${config.note}\n`);
+  if (
+    options.list ||
+    (options.command === null &&
+      !options.positionals.length &&
+      !options.name &&
+      !options.shell &&
+      !options.task)
+  )
+    return listChecks(io, config);
   const requested = options.command === null ? options.positionals[0] : undefined;
   if (
     requested !== undefined &&
@@ -992,6 +1068,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     CHECK_STATUS_MS,
   );
   statusTimer.unref?.();
+  const interrupts = watchInterrupts();
   try {
     const scoped = await runScoped(
       (wrapper, sinks) =>
@@ -1024,12 +1101,27 @@ export async function run(argv: string[], io: Io): Promise<number> {
       heavy.scope = { unit: null, reason: `systemd-run failed: ${scoped.fallback}` };
     }
   } finally {
+    interrupts.stop();
     clearInterval(statusTimer);
     heartbeat?.stop();
     lease?.release();
   }
   const passed = result.exitCode === 0 && !result.timedOut;
-  const commandExit = passed ? 0 : result.timedOut ? 4 : result.exitCode || 1;
+  // A run the caller stopped (workit got the signal, or the command died of
+  // one) proves nothing about the code: recorded as `interrupted`, never failed.
+  const interruptedBy: NodeJS.Signals | null =
+    passed || result.timedOut
+      ? null
+      : (interrupts.received() ??
+        INTERRUPT_SIGNALS.find((caught) => caught === result.signal) ??
+        null);
+  const commandExit = passed
+    ? 0
+    : interruptedBy
+      ? 128 + (os.constants.signals[interruptedBy] ?? 15)
+      : result.timedOut
+        ? 4
+        : result.exitCode || 1;
   // #835: a checkout removed while the command ran gets no record at all, so
   // no write can recreate its path; the command's exit code still stands.
   if (!fs.existsSync(top)) {
@@ -1060,7 +1152,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     argv: bounded.argv,
     shell: options.shell,
     cwd: relCwd,
-    result: passed ? "passed" : "failed",
+    result: passed ? "passed" : interruptedBy ? "interrupted" : "failed",
+    ...(interruptedBy ? { signal: interruptedBy } : {}),
     exitCode: result.exitCode,
     timedOut: result.timedOut,
     durationMs: result.durationMs,
@@ -1112,7 +1205,17 @@ export async function run(argv: string[], io: Io): Promise<number> {
       : `add ${CHECKS_FILE} (e.g. {"checks":{"test":"<your test command>"}}), then ${checkCommand("test", version)}`;
   };
   const storeDir = io.env.WORKIT_WORKSPACE_ROOT || top;
-  const task: TaskOutcome = await recordInTask(io, storeDir, options.task, observation, unblockFor);
+  // An interrupted run is absent evidence: no task records it, pass or fail.
+  const task: TaskOutcome = interruptedBy
+    ? {
+        task: null,
+        note: "interrupted: not recorded in a task",
+        evidenceId: null,
+        satisfies: [],
+        stillUnsatisfied: [],
+        error: null,
+      }
+    : await recordInTask(io, storeDir, options.task, observation, unblockFor);
 
   const warnings = countWarnings(result.log);
   const data = {
@@ -1123,6 +1226,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     configured,
     exitCode: result.exitCode,
     timedOut: result.timedOut,
+    interrupted: interruptedBy,
     durationMs: result.durationMs,
     head: key.head,
     tree: key.tree,
@@ -1152,11 +1256,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
     : task.error;
   const code: EnvelopeCode = !passed ? "failed" : recordError ? recordError.code : "ok";
   const error = !passed
-    ? result.timedOut
-      ? `timed out after ${options.timeoutMs} ms${queuedMs ? ` (${queuedMs} ms of it queued for the heavy-check lease)` : ""}`
-      : result.spawnError
-        ? `cannot start ${command[0]}: ${result.spawnError}`
-        : `exited ${result.exitCode}`
+    ? interruptedBy
+      ? `interrupted by ${interruptedBy} (exit ${result.exitCode}), recorded as interrupted, not failed`
+      : result.timedOut
+        ? `timed out after ${options.timeoutMs} ms${queuedMs ? ` (${queuedMs} ms of it queued for the heavy-check lease)` : ""}`
+        : result.spawnError
+          ? `cannot start ${command[0]}: ${result.spawnError}`
+          : `exited ${result.exitCode}`
     : recordError?.message;
   const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; log: ${logPath ?? "not stored"}`;
   if (io.json)
@@ -1172,6 +1278,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       for (const gap of task.stillUnsatisfied)
         io.stderr(`  still unsatisfied: ${gap.ruleId}: ${gap.reason}\n`);
   }
+  if (interruptedBy) io.stderr(`${interruptedHint(interruptedBy)}\n`);
   if (!passed) return commandExit;
   if (recordError)
     return recordError.code === "busy" ? 4 : recordError.code === "invalid_input" ? 2 : 5;

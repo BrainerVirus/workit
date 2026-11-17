@@ -4,10 +4,29 @@
 the result as evidence. A repo also declares **groups**: named lists of those
 checks that `workit check <group>` runs one after another.
 
+`workit check --list` (or `workit check` with no name) prints each configured
+check with its command, and each group, and exits 0. A name that is not
+configured fails and lists the configured ones, so a check name is never a
+guess.
+
 If the checked command removes the checkout it ran in (a worktree deleted while
 the check ran), nothing is recorded: Workit prints the path, says the result was
 not recorded, and exits with the command's own exit code. It never recreates the
 removed directory.
+
+A check its caller stops (a host's tool timeout sends SIGTERM, or Ctrl-C) is
+recorded as `interrupted` with the signal, not as `failed`, and exits 128 plus
+the signal number (143 for SIGTERM). It prints:
+
+```text
+interrupted by SIGTERM (the caller stopped it, likely a tool timeout): run long checks in the background
+```
+
+An interrupted run is absent evidence: no gate counts it as passing or failing,
+and the run before it on that head still stands. Run a long check in a
+background shell instead of rerunning it in the foreground. A command that exits
+143 on its own, with no signal sent to Workit, is still a failure. In a group, an
+interrupted member stops the group.
 
 ```json
 {
