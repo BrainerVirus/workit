@@ -1257,7 +1257,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const code: EnvelopeCode = !passed ? "failed" : recordError ? recordError.code : "ok";
   const error = !passed
     ? interruptedBy
-      ? `interrupted by ${interruptedBy} (exit ${result.exitCode}), recorded as interrupted, not failed`
+      ? `interrupted by ${interruptedBy} (exit ${result.exitCode}; recorded as interrupted, not failed)`
       : result.timedOut
         ? `timed out after ${options.timeoutMs} ms${queuedMs ? ` (${queuedMs} ms of it queued for the heavy-check lease)` : ""}`
         : result.spawnError
