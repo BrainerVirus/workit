@@ -257,10 +257,11 @@ const MUTATING_CALLS =
 /**
  * Inline code that runs a command, deletes, loads code by path, reaches a
  * call by a computed name or opens a file by other than a plain path and read
- * mode (FREE_OPEN): a word anywhere in it, string literals included.
+ * mode (FREE_OPEN): a word anywhere in it, string literals included. A
+ * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:[\w@:][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
 /** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
 const FREE_OPEN =
   /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;

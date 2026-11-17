@@ -161,6 +161,8 @@ test("Given a judge or an implementer, When an inline script writes, deletes or 
     `python3 -c "from pathlib import Path; Path('x').open('w')"`,
     `node -e "require('fs')['write' + 'FileSync']('x', 'a')"`,
     `node -e "require('${lead}/tool.js')"`,
+    // A Windows drive-letter path is a path, not a package name (CI windows: the lead lives on C:).
+    `node -e "require('C:/tools/evil.js')"`,
     "python3 - <<'EOF'\nimport shutil\nshutil.rmtree('src')\nEOF",
     "node - <<'EOF'\nrequire('fs').rmSync('src', { recursive: true })\nEOF",
     // An unquoted heredoc expands `$X` into the script: its text is unknown.
