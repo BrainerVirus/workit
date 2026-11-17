@@ -48,6 +48,8 @@ export type VerbEntry = {
   flagHints?: Readonly<Record<string, string>>;
   /** Subcommands agents guess from git that do not exist here: the word to the one-line fix. */
   subcommandGuesses?: Readonly<Record<string, string>>;
+  /** Like `subcommandGuesses`, but the fix is built from the words after the guess (`git switch -c x` -> `workit git branch x`). */
+  subcommandGuessFor?: Readonly<Record<string, (rest: readonly string[]) => string>>;
   /** Paragraphs `workit help <verb>` prints after the summary. */
   notes?: readonly string[];
   /** The slice that implements this verb; set while it is a stub. */
@@ -230,6 +232,47 @@ const family = (name: Family): VerbEntry => {
 };
 
 /** A verb with subcommands lists their names on its one-line usage. */
+/** The rest of a guessed git command, without the flags the router reads itself. */
+const gitRest = (rest: readonly string[]): string[] => {
+  const out: string[] = [];
+  for (let index = 0; index < rest.length; index += 1)
+    if (rest[index] === "--cwd") index += 1;
+    else if (rest[index] !== "--json" && !rest[index].startsWith("--cwd=")) out.push(rest[index]);
+  return out;
+};
+
+/** The branch `git switch -c <b>` / `git checkout -b <b>` would create, else null. */
+const createdBranch = (rest: readonly string[]): string | null => {
+  for (let index = 0; index < rest.length; index += 1) {
+    const inline = /^--(?:force-)?create=(.+)$/u.exec(rest[index]);
+    if (inline) return inline[1];
+    if (/^(?:-[cCbB]|--(?:force-)?create)$/u.test(rest[index])) {
+      const name = rest[index + 1];
+      return name && !name.startsWith("-") ? name : null;
+    }
+  }
+  return null;
+};
+
+const switchGuess = (rest: readonly string[]): string => {
+  const words = gitRest(rest);
+  const created = createdBranch(words);
+  if (created)
+    return `workit git branch ${created} creates it from the trunk and switches to it (add --carry to take uncommitted changes along)`;
+  const target = words.find((word) => !word.startsWith("-"));
+  return target
+    ? `moving to an existing branch runs raw: git switch ${target}; workit git branch <name> creates a new one`
+    : "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one";
+};
+
+/** `git status|diff|log …`: read-only, so it needs no workit verb. */
+const readOnlyGuess =
+  (word: string, plain: string) =>
+  (rest: readonly string[]): string => {
+    const words = gitRest(rest);
+    return `read-only git runs raw, no workit verb: run git ${words.length ? `${word} ${words.join(" ")}` : plain} directly`;
+  };
+
 function withSubcommands(
   entry: Omit<VerbEntry, "usage"> & { subcommands: readonly SubcommandEntry[] },
   options: { optional?: boolean } = {},
@@ -314,13 +357,10 @@ export const VERBS: readonly VerbEntry[] = [
   {
     name: "dir",
     group: "setup",
-    usage: "workit dir <plans|retros|handoffs|config|state|data|cache|runtime>",
+    usage: "workit dir [plans|retros|handoffs|notes|config|state|data|cache|runtime]",
     summary:
-      "Print where a kind of file lives: plans, retros, handoffs per clone; config, state, data, cache, runtime per user",
-    examples: ["workit dir plans", "workit dir state --json"],
-    notes: [
-      "`workit dir notes` prints this clone's notes dir: an agent's notes, kept per clone outside the working tree like plans and handoffs.",
-    ],
+      "Print where a kind of file lives: plans, retros, handoffs, notes per clone; config, state, data, cache, runtime per user. Bare, list the kinds",
+    examples: ["workit dir", "workit dir plans", "workit dir state --json"],
     load: () => import("./dir"),
   },
   {
@@ -560,6 +600,10 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "pr",
     group: "delivery",
+    subcommandGuesses: {
+      comment:
+        "workit pr reply --thread <id> --body-file - answers a review thread (workit pr threads lists them)",
+    },
     summary:
       "PR/MR state with failing log tails and next action; open a SHA-verified PR; mark ready, edit, list and answer review threads; merge only when READY, verified and granted",
     subcommands: [
@@ -603,6 +647,9 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "reply",
+        flagHints: {
+          body: 'the text goes through --body-file; - reads stdin: echo "<text>" | workit pr reply --thread <id> --body-file -',
+        },
         usage: "workit pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve]",
         summary: "Reply to an unresolved review thread and/or resolve it",
       },
@@ -634,6 +681,9 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "comment",
+        flagHints: {
+          body: 'the text goes through --body-file; - reads stdin: echo "<text>" | workit issue comment <n> --body-file -',
+        },
         usage: "workit issue comment <n> --body-file <f|-> [--repo <owner/name>]",
         summary: "Comment on an issue",
       },
@@ -696,14 +746,19 @@ export const VERBS: readonly VerbEntry[] = [
     name: "git",
     group: "delivery",
     subcommandGuesses: {
-      pull: "workit git rebase brings the trunk's new commits into this branch (workit help git rebase)",
       merge:
         "workit git rebase brings the trunk into this branch; workit pr merge lands a PR (workit help git rebase)",
-      checkout:
-        "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
-      switch:
-        "workit git branch <name> creates a branch and switches to it; git switch <branch> moves to an existing one",
-      status: "read-only git needs no workit verb: run git status --short directly",
+      restore:
+        "workit git unstage <paths…> takes paths out of the index (git restore --staged); dropping working-tree edits is raw git restore <paths>",
+    },
+    subcommandGuessFor: {
+      switch: switchGuess,
+      checkout: switchGuess,
+      pull: (rest) =>
+        `workit git rebase brings the trunk's new commits into this branch (workit help git rebase)${gitRest(rest).includes("--ff-only") ? "; a fresh branch from the trunk is workit git branch <name>, which fetches the base first" : ""}`,
+      status: readOnlyGuess("status", "status --short"),
+      diff: readOnlyGuess("diff", "diff"),
+      log: readOnlyGuess("log", "log --oneline -20"),
     },
     summary:
       "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
@@ -917,6 +972,12 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "worktree",
         flagAliases: { fanout: "name" },
+        flagHints: {
+          branch:
+            "the slice's branch and base come from the plan (workit fanout plan); choose the plan with --name: workit fanout worktree create <slice> --name <plan>",
+          base: "the slice's branch and base come from the plan (workit fanout plan); choose the plan with --name: workit fanout worktree create <slice> --name <plan>",
+          plan: "the plan is chosen with --name <plan> (its name, not its file): workit fanout worktree create <slice> --name <plan>",
+        },
         usage: "workit fanout worktree create|release <slice> [--name <n>] [--force]",
         summary: "Make or release a slice's worktree (--force applies to release only)",
       },
@@ -942,6 +1003,9 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "ruling",
+        flagHints: {
+          cost: 'the flag is --cost-if-wrong: workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>"',
+        },
         usage: `workit ledger ruling "<what>" --why "<why>" --cost-if-wrong "<cost>" [--ref <path|url>]… ${LEDGER_ACTOR}`,
         summary: "Record a ruling on an open choice, with the cost of being wrong",
       },
