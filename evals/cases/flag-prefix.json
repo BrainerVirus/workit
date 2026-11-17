@@ -1,0 +1,33 @@
+{
+  "id": "flag-prefix",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): `workit ledger ruling … --cost` for --cost-if-wrong (and --body for --body-file) cost a help call before the fix",
+  "tier": "full",
+  "prompt": "Record a ruling with the workit CLI that we keep JSON output. First try exactly this call so we see its answer, then fix it if it fails: workit ledger ruling \"keep JSON output\" --why \"agents parse it\" --cost \"one migration\"",
+  "scaffold": {
+    "branch": "feature/base"
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? ledger ruling[^\\n]*--cost-if-wrong\\b",
+        "why": "the next call uses --cost-if-wrong"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? ledger ruling\\b",
+        "max": 2,
+        "why": "the refusal names --cost-if-wrong with the usage line: one retry"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
+        "max": 0,
+        "why": "the refusal carries the usage line and the fix: no help call is needed to recover"
+      }
+    ]
+  }
+}

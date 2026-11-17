@@ -1,0 +1,51 @@
+{
+  "id": "branch-with-dirty-tree",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): dirty_worktree on `workit git branch` named --carry only in its unblock, so weak models stashed or committed instead",
+  "tier": "full",
+  "prompt": "Move my uncommitted change to a.txt onto a new branch feature/next made from main with the workit CLI. Keep the change uncommitted.",
+  "scaffold": {
+    "branch": "feature/base",
+    "files": {
+      "a.txt": "one\n"
+    },
+    "dirty": {
+      "a.txt": "two\n"
+    }
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? git branch[^\\n]*feature/next[^\\n]*--carry|workit( --cwd \\S+)? git branch[^\\n]*--carry[^\\n]*feature/next",
+        "why": "the change rides along with --carry"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\bgit stash\\b",
+        "why": "--carry moves the change; no stash"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bcommit\\b",
+        "why": "the change stays uncommitted"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? git branch\\b",
+        "max": 2,
+        "why": "the refusal names --carry in its first line: one retry at most"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
+        "max": 0,
+        "why": "the refusal carries the usage line and the fix: no help call is needed to recover"
+      }
+    ]
+  }
+}

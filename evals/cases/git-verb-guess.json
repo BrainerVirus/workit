@@ -1,0 +1,33 @@
+{
+  "id": "git-verb-guess",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): `workit git switch -c`, `checkout -b`, `pull`, `status` guessed from git",
+  "tier": "full",
+  "prompt": "Start a new branch feature/greet for this work with the workit CLI. First try exactly this call so we see its answer, then do what it says if it fails: workit git switch -c feature/greet",
+  "scaffold": {
+    "branch": "feature/base"
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? git branch feature/greet\\b",
+        "why": "the refusal names workit git branch feature/greet"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? git (switch|checkout|pull|status)\\b",
+        "max": 1,
+        "why": "only the scripted first call guesses a git verb"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
+        "max": 0,
+        "why": "the refusal carries the usage line and the fix: no help call is needed to recover"
+      }
+    ]
+  }
+}

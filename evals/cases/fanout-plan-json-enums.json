@@ -1,0 +1,56 @@
+{
+  "id": "fanout-plan-json-enums",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): plan files with reason or tier values outside the enum (urgent, medium) took several re-plans",
+  "tier": "full",
+  "prompt": "Register the fanout plan in plan.json with `workit fanout plan plan.json`. If it is refused, fix only the fields it names in plan.json and run it again. Do not spawn any agents.",
+  "scaffold": {
+    "branch": "feature/base",
+    "files": {
+      "add.ts": "export const add = (a: number, b: number) => a + b;\n",
+      "plan.json": "{\n  \"name\": \"greet\",\n  \"slices\": [\n    {\n      \"id\": \"mul\",\n      \"branch\": \"feature/mul\",\n      \"goal\": \"add mul.ts exporting mul(a, b)\",\n      \"scope\": [\n        \"mul.ts\"\n      ],\n      \"acceptance\": [\n        \"mul(2, 3) returns 6\"\n      ],\n      \"verify\": [\n        \"node -e \\\"1\\\"\"\n      ],\n      \"forbidden\": [\n        \"editing add.ts\"\n      ],\n      \"tier\": \"medium\",\n      \"reason\": \"urgent\"\n    }\n  ]\n}\n"
+    }
+  },
+  "maxTurns": 8,
+  "allowedTools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "Bash(workit *)",
+    "Bash(git *)",
+    "Bash(cat *)",
+    "Bash(ls *)"
+  ],
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? fanout plan\\b",
+        "result": "planned fanout",
+        "why": "the fixed plan registers"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit( --cwd \\S+)? fanout plan\\b",
+        "max": 2,
+        "why": "one refusal lists every valid reason and tier, so the second run is the last"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
+        "max": 0,
+        "why": "the refusal carries the usage line and the fix: no help call is needed to recover"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Agent",
+        "pattern": ".",
+        "why": "no worker is spawned"
+      }
+    ]
+  }
+}
