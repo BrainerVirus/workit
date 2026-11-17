@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +16,8 @@ import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
 } from "@/packages/workit-core/src/core/skill-manifests";
+import { loadCases } from "@/scripts/eval/cases";
+import { grade } from "@/scripts/eval/grade";
 import { useConfigHome } from "../shared/grant-home";
 
 const skillText = (name: string) =>
@@ -553,4 +555,98 @@ test("Given a SessionStart in a workspace with models.roles, When the contract r
     home.restore();
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("Given the session contract, Then notes, drafts, logs and resume files go to `workit dir notes|handoffs`, never the repo tree (retro 2026-11-17 C6)", () => {
+  expect(invariantBootstrap()).toMatch(
+    phrase(
+      "Notes, drafts, logs, resume files: `workit dir notes|handoffs` (outside the repo), never the repo tree.",
+    ),
+  );
+  expect(skillText("workit-continue")).toMatch(
+    phrase(
+      "Notes, drafts and logs go in `workit dir notes` or `workit dir handoffs`, never the repo tree",
+    ),
+  );
+});
+
+test("Given the continue skill and the contract route, When the user is leaving for the day, Then workit-continue is the skill they name", () => {
+  const description = /^description: (.*)$/m.exec(skillText("workit-continue"))?.[1] ?? "";
+  for (const trigger of ["leaving", "tomorrow", "end of day", "pause"])
+    expect(description, trigger).toContain(trigger);
+  expect(invariantBootstrap()).toContain(
+    "- resume, pick up, handoff, interruption, leaving, tomorrow: workit-continue",
+  );
+});
+
+describe("Given the notes-out-of-repo bench case", () => {
+  const spec = loadCases(path.join(import.meta.dir, "../../evals/cases")).find(
+    (each) => each.id === "notes-out-of-repo",
+  );
+  const repo = "/tmp/workit-eval-x/repo";
+  const run = (calls: { name: string; input: Record<string, unknown> }[]) =>
+    [
+      ...calls.flatMap((call, at) => [
+        JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            content: [{ type: "tool_use", id: `tu${at}`, name: call.name, input: call.input }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: `tu${at}`,
+                content: [{ type: "text", text: "ok" }],
+                is_error: false,
+              },
+            ],
+          },
+        }),
+      ]),
+      JSON.stringify({ type: "result", subtype: "success", result: "saved" }),
+    ].join("\n");
+  const record = {
+    name: "Bash",
+    input: {
+      command: 'workit handoff --note "usage KiB done" --next "workit check test" --record',
+    },
+  };
+
+  test("When the state goes to `workit handoff --record` or the notes dir, Then it passes", () => {
+    if (!spec) throw new Error("evals/cases/notes-out-of-repo.json is missing");
+    expect(grade(run([record]), spec).failures).toEqual([]);
+    const note = {
+      name: "Write",
+      input: {
+        file_path: `${repo}/.git/workit/notes/resume.md`,
+        content: "next: workit check test",
+      },
+    };
+    expect(grade(run([note]), spec).failures).toEqual([]);
+    const shell = {
+      name: "Bash",
+      input: { command: "cat > \"$(workit dir handoffs)/usage.md\" <<'EOF'\nnext -> MiB\nEOF" },
+    };
+    expect(grade(run([shell]), spec).failures).toEqual([]);
+  });
+
+  test("When a new file lands in the repo tree, Then the grader fails it", () => {
+    if (!spec) throw new Error("evals/cases/notes-out-of-repo.json is missing");
+    const intoRepo = [
+      { name: "Write", input: { file_path: `${repo}/docs/usage/RESUME.md`, content: "resume" } },
+      { name: "Bash", input: { command: "bun test > build.log 2>&1" } },
+      { name: "Bash", input: { command: `printf '%s\\n' draft | tee ${repo}/comment-draft.md` } },
+    ];
+    for (const call of intoRepo)
+      expect(
+        grade(run([record, call]), spec).failures.map((failure) => failure.rule),
+        JSON.stringify(call.input),
+      ).toEqual(["forbid"]);
+  });
 });
