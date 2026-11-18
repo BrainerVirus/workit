@@ -36,6 +36,7 @@ import {
   unfinishedTaskOffer,
   workitContext,
 } from "../src/context";
+import { takeProcNotice } from "@workit-dev/core/src/hooks/server-gate";
 import { resolveIdRef } from "@workit-dev/core/src/core/task-contract";
 import { WORKIT_SKILL_ALIASES } from "@workit-dev/core/src/core/skill-manifests";
 import {
@@ -536,6 +537,14 @@ export default function extension(pi: ExtensionAPI): void {
     sessions.delete(ctx.sessionManager.getSessionId());
     reconcileLostWorkers(ctx);
   });
+  // A background process's RSS notice (#328), once: on the next user turn or tool result.
+  // A supervised worker's processes are owned by `<lead>:<worker session>`.
+  const procNotice = (ctx: ExtensionContext): string | null => {
+    if (!ctx.isProjectTrusted()) return null;
+    const worker = process.env.WORKIT_PI_WORKER_SESSION && process.env.WORKIT_SESSION_ID?.trim();
+    const own = takeProcNotice(ctx.sessionManager.getSessionId());
+    return [worker ? takeProcNotice(worker) : null, own].filter(Boolean).join("\n") || null;
+  };
   pi.on("model_select", (event, ctx) => noteModelSelect(event, ctx));
   pi.on("before_agent_start", (event, ctx) => {
     // Pi 1.2+ also fires this for runs a custom message starts (Workit's own
@@ -562,6 +571,8 @@ export default function extension(pi: ExtensionAPI): void {
     // The first turn's context already carries the contract.
     const contract = modelSwitchContract(ctx);
     if (contract && !firstTurn) content = content ? `${contract}\n${content}` : contract;
+    const notice = procNotice(ctx);
+    if (notice) content = content ? `${content}\n\n${notice}` : notice;
     if (content)
       return { message: contextMessage(ctx, nudge ? `${content}\n\n${nudge}` : content) };
     return nudge
@@ -622,7 +633,9 @@ export default function extension(pi: ExtensionAPI): void {
     const observed = observeResult(event, ctx);
     let standing: string | null = null;
     try {
-      standing = [standingNotice(ctx), budgetNotice(ctx)].filter(Boolean).join("\n") || null;
+      standing =
+        [standingNotice(ctx), procNotice(ctx), budgetNotice(ctx)].filter(Boolean).join("\n") ||
+        null;
     } catch {
       // Fail open: the result is unchanged.
     }

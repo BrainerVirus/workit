@@ -14,6 +14,7 @@ description: Launch, drive and observe <app> on its real surface (<cli|web|api>)
 
 ## Launch
 `<command>` - ready when `<log line | port open | exit 0>`, timeout <n> s.
+A server: `workit run --bg -- <command>` (prints its id, port and log).
 
 ## Doctor
 | Precondition | Check | Fix |
@@ -34,7 +35,7 @@ UI: also report a console or network observation. API: quote the real response.
 If the app cannot be run, say so plainly instead of claiming success.
 
 ## Cleanup
-`<command>` (stop servers, remove `<tmp dir>`).
+`workit stop <id>` for each server Launch started; remove `<tmp dir>`.
 
 ## Feature map
 | Feature | Drive | Expect |

@@ -26,7 +26,11 @@ import {
 } from "@/packages/workit-cli/src/admin/host-permissions";
 import { applyUninstall, planUninstall } from "@/packages/workit-cli/src/admin/uninstall";
 import { codexRules } from "@/packages/workit-core/src/core/heavy-rules";
-import { WORKIT_USER_ONLY } from "@/packages/workit-core/src/hooks/delivery-verbs";
+import {
+  isAllowedWorkitCall,
+  WORKIT_USER_ONLY,
+} from "@/packages/workit-core/src/hooks/delivery-verbs";
+import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { runUpgradeCommand } from "@/packages/workit-cli/src/upgrade";
 
@@ -1110,4 +1114,50 @@ test("Given a home whose path holds parentheses, When setup writes Claude Code's
   );
   const cursor = JSON.parse(readFileSync(path.join(odd, ".cursor", "cli-config.json"), "utf8"));
   expect(cursor.permissions.deny).toContain(`Write(${root}/state/issued*)`);
+});
+
+test("Given `workit setup` in a fixture home, Then every host's allow rules cover `workit ps` and `workit stop` but never `workit run --bg -- <cmd>` (decider ruling A)", async () => {
+  const { env, home, settings } = sandbox();
+  writeFileSync(settings, "{}\n");
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  writeFileSync(path.join(home, ".cursor", "cli-config.json"), JSON.stringify({ version: 1 }));
+  expect((await cli(["setup", "--hosts=claude-code,codex,cursor", "--yes"], env)).code).toBe(0);
+  const claudeAllow: string[] = JSON.parse(readFileSync(settings, "utf8")).permissions.allow;
+  const cursorAllow: string[] = JSON.parse(
+    readFileSync(path.join(home, ".cursor", "cli-config.json"), "utf8"),
+  ).permissions.allow;
+  const codexAllow = [
+    ...readFileSync(path.join(home, ".codex", "rules", "workit.rules"), "utf8").matchAll(
+      /pattern = \[([^\]]*)\],\n\s*decision = "allow"/gu,
+    ),
+  ].map((m) => JSON.parse(`[${m[1]}]`) as string[]);
+  const allowed = (command: string) => {
+    const words = command.split(" ");
+    return [
+      claudeAllow.some((rule) => claudeMatches(rule, command)),
+      cursorAllow.some((rule) => cursorMatches(rule, command)),
+      codexAllow.some((p) => p.every((w, i) => words[i] === w)),
+      isAllowedWorkitCall(words),
+    ];
+  };
+  for (const command of ["workit ps", "workit ps --json", "workit stop p1abc2def3"])
+    expect(allowed(command), command).toEqual([true, true, true, true]);
+  for (const command of ["workit run --bg -- x", "workit run --bg --restart p1abc2def3"])
+    expect(allowed(command), command).toEqual([false, false, false, false]);
+  // OpenCode needs no block: its plugin turns an ask into an allow for the same verbs only.
+  const opencode = (command: string) => {
+    const event = {
+      sessionID: "s1",
+      action: "shell",
+      resources: [command],
+      effect: "ask",
+      message: undefined as string | undefined,
+    };
+    evaluateShellPermission(home, event);
+    return event.effect;
+  };
+  expect(opencode("workit ps")).toBe("allow");
+  expect(opencode("workit stop p1abc2def3")).toBe("allow");
+  expect(opencode("workit run --bg -- x")).toBe("ask");
 });

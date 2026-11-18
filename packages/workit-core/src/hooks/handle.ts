@@ -33,6 +33,7 @@ import {
 } from "./skill-nudge";
 import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
+import { takeProcNotice } from "./server-gate";
 import type { BudgetHooks } from "./budget-signal";
 import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
 import { parseUsageLimit, recordUsageLimit } from "./model-limit";
@@ -173,7 +174,8 @@ const subagentStartText = (
 const PRE_TOOL = new Set<HookEventKind>(["shell.pre", "write.pre", "tool.pre"]);
 
 /**
- * A running worker's standing-order delta, and its tool-call budget line once
+ * A running worker's standing-order delta, a background process's RSS notice
+ * (server-gate.ts, once), and its tool-call budget line once
  * the launcher counted it reached (budget-signal.ts), ride any pre-tool answer
  * that lets the call run. In-process hosts deliver them on their own channel
  * (OpenCode's system context, Pi's tool result), so they are never spent here
@@ -189,7 +191,9 @@ export function handleHook(input: HookInput, deps: HookDeps): HookDecision {
   )
     return decision;
   const delta =
-    [standingDelta(input), deps.budget?.line(input) ?? null].filter(Boolean).join("\n") || null;
+    [standingDelta(input), takeProcNotice(input.session.id), deps.budget?.line(input) ?? null]
+      .filter(Boolean)
+      .join("\n") || null;
   if (!delta) return decision;
   return decision.kind === "rewrite" || decision.kind === "update-input"
     ? { ...decision, text: [decision.text, delta].filter(Boolean).join("\n") }

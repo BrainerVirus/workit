@@ -11,6 +11,9 @@
 //     allow for `workit` would let through: left alone, with a note;
 //   - one formatter or file-scoped linter (check-config.ts lightCommand):
 //     left alone, since `workit check` would run it without the lease anyway.
+// A dev server (`ng serve`, `npm run dev`, `docker compose up`; core/heavy.ts
+// serverCommand) is routed the same way to `workit run --bg -- <cmd>` (#328):
+// the process registry starts it detached, owned by this session.
 import {
   claudeRules,
   codexRules,
@@ -19,7 +22,7 @@ import {
   type RuleRead,
 } from "../core/heavy-rules";
 import { lightCommand } from "../check-config";
-import { heavyPlan, workitOnPath, type HeavyPlan } from "../core/heavy";
+import { heavyPlan, serverPlan, workitOnPath, type HeavyPlan } from "../core/heavy";
 import { maybeHeavy } from "../core/heavy-words";
 import { simpleCommand } from "./raw-git";
 import type { HookDecision, HostId } from "./protocol";
@@ -65,13 +68,19 @@ export function heavyGate(cwd: string, command: string, options: GateOptions): H
     const dialect = options.dialect ?? "posix";
     const single = dialect === "posix" ? simpleCommand(command, dialect, 0, true) : null;
     if (single && lightCommand(single, cwd)) return { kind: "none" };
-    return heavyPlan(command, {
+    const plan = {
       cwd,
       env,
       dialect,
       rules: rulesFor(options.host, cwd, env),
       bypass: options.permissionMode === "bypassPermissions",
-    });
+    };
+    // A server wins over a heavy one (`docker compose up --build` never ends);
+    // a chain's heavy part is named first, its server when it has none.
+    const server = serverPlan(command, plan);
+    if (server.kind === "rewrite") return server;
+    const heavy = heavyPlan(command, plan);
+    return heavy.kind === "none" ? server : heavy;
   } catch {
     return { kind: "none" };
   }
@@ -79,7 +88,9 @@ export function heavyGate(cwd: string, command: string, options: GateOptions): H
 
 /** The model-visible line after a rewrite. */
 export const rewriteNote = (plan: Extract<HeavyPlan, { kind: "rewrite" }>): string =>
-  `workit: this heavy command (${plan.reason}) runs under the machine-wide heavy-check lease as \`${plan.command}\`: it waits while another heavy check holds the lease (\`workit lock status\` shows who). Run heavy commands that way yourself; \`workit help lock\` explains the lease.`;
+  plan.server
+    ? `workit: this dev server (${plan.reason}) runs in the background as \`${plan.command}\`, owned by this session; \`workit stop <id>\` stops it when your work is done.`
+    : `workit: this heavy command (${plan.reason}) runs under the machine-wide heavy-check lease as \`${plan.command}\`: it waits while another heavy check holds the lease (\`workit lock status\` shows who). Run heavy commands that way yourself; \`workit help lock\` explains the lease.`;
 
 /** The deny on hosts that cannot rewrite: the exact command to run instead. */
 export const heavyDenial = (
@@ -87,7 +98,9 @@ export const heavyDenial = (
   plan: Extract<HeavyPlan, { kind: "rewrite" }>,
 ): HookDecision => ({
   kind: "deny",
-  reason: `heavy_command: \`${original.trim()}\` is heavy (${plan.reason}) and must run under the machine-wide heavy-check lease, so parallel agents cannot exhaust this machine's memory and CPU. Run exactly: ${plan.command}`,
+  reason: plan.server
+    ? `dev_server: \`${original.trim()}\` starts a dev server (${plan.reason}), which never returns. Start it in the background, owned by this session; run exactly: ${plan.command}`
+    : `heavy_command: \`${original.trim()}\` is heavy (${plan.reason}) and must run under the machine-wide heavy-check lease, so parallel agents cannot exhaust this machine's memory and CPU. Run exactly: ${plan.command}`,
   unblock: plan.command,
 });
 

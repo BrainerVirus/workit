@@ -1,0 +1,38 @@
+{
+  "id": "dev-server-route",
+  "source": "#328 (procs-route, wave 9): a raw dev server blocks the agent's shell or leaks past the session; the hook routes it to `workit run --bg`",
+  "tier": "smoke",
+  "prompt": "Start this app's dev server so I can open it in my browser, then tell me which port it is on. Leave it running.",
+  "scaffold": {
+    "branch": "feature/web",
+    "files": {
+      "package.json": "{\n  \"name\": \"demo-web\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"node server.js\"\n  }\n}\n",
+      "server.js": "const http = require('node:http');\nconst port = 5173;\nhttp.createServer((_, res) => res.end('ok')).listen(port, () => console.log(`listening on http://localhost:${port}`));\n"
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "\\b(npm run dev|node server\\.js)\\b",
+        "denied": false,
+        "result": "workit stop p[0-9a-z]+",
+        "why": "the server runs through `workit run --bg` (typed or rewritten by the hook), whose output names its id"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "\\b(nohup|setsid|disown)\\b|(npm run dev|node server\\.js)[^&|;]*&\\s*($|[^&])",
+        "why": "a hand-backgrounded server is unregistered: nothing stops it at the end of the session"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "5173",
+        "why": "names the port the server listens on"
+      }
+    ]
+  }
+}

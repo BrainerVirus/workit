@@ -20,7 +20,8 @@
 //
 // Long-running servers (`npm run dev`, `vite`, `next dev`, `docker compose
 // up`) are not heavy here: a lease held for a server's lifetime would starve
-// every other heavy check. They belong to the dev-server registry (#328).
+// every other heavy check. `serverCommand` names them instead, and the shell
+// hook routes one through the process registry (`workit run --bg`, #328).
 //
 // Hook-safe: node built-ins and the shell reader only, no spawn.
 import fs from "node:fs";
@@ -323,6 +324,109 @@ function builtIn(words: string[], depth = 0): string | null {
   return command !== undefined && rule.has(command) ? label() : null;
 }
 
+/** Script and target names that start a dev server (#328); a watch-only script is not one. */
+const SERVER_SCRIPT = /(?:^|[:_.-])(?:dev|serve|start|storybook)(?:$|[:_.-])/iu;
+const serverScript = (script = ""): boolean =>
+  SERVER_SCRIPT.test(script) && !HEAVY_SCRIPT.test(script);
+
+/** Tools that serve until stopped, by subcommand (`vite` with no build subcommand is one too). */
+const NUXT = sub("dev", "preview", "start");
+const WEBPACK = sub("serve", "s", "server");
+const SERVER_TOOLS: Record<string, Rule> = {
+  ng: sub("serve", "s"),
+  next: sub("dev", "start"),
+  nuxt: NUXT,
+  nuxi: NUXT,
+  astro: sub("dev", "preview"),
+  "react-scripts": sub("start"),
+  webpack: WEBPACK,
+  "webpack-cli": WEBPACK,
+  storybook: sub("dev", "start"),
+  rails: sub("server", "s"),
+  mix: sub("phx.server"),
+};
+const COMPOSE_VALUES = new Set([
+  "-f",
+  "--file",
+  "-p",
+  "-H",
+  "--host",
+  "--context",
+  "-c",
+  "--config",
+]);
+
+/**
+ * Why `words` (one command line, prefixes stripped) starts a dev server, or
+ * null: the same wrappers as `builtIn`, and only names on the launchers'
+ * pre-check list (core/heavy-words.ts), so a server always reaches the gate.
+ */
+function serverBuiltIn(words: string[], depth = 0): string | null {
+  const name = baseName(words[0]);
+  if (
+    depth > 6 ||
+    WORKIT.test(name) ||
+    words.some((word) => /^(?:-h|--help|--version)$/u.test(word))
+  )
+    return null;
+  const compose = /^(?:docker|podman|nerdctl|docker-compose)$/u.test(name);
+  const at = positional(words, 1, compose ? COMPOSE_VALUES : PM_VALUES);
+  const command = words[at];
+  const yes = words.slice(0, 3).join(" ");
+  const inner = (from: number) => serverBuiltIn(words.slice(from), depth + 1);
+  const up = (from: number) =>
+    words[from] === "up" && !words.some((word) => /^(?:-d|--detach|--wait)$/u.test(word));
+  if (name === "npx" || name === "bunx" || name === "pnpx") return inner(at);
+  if (name === "corepack") return inner(1);
+  if (command === undefined) return name === "vite" ? yes : null;
+  if (name === "npm" || name === "pnpm" || name === "yarn" || name === "bun" || name === "deno") {
+    if (EXEC.has(command)) return inner(positional(words, at + 1));
+    if (command === "start") return yes;
+    if (name === "yarn" && command === "workspace")
+      return serverScript(words[at + 2]) ? yes : inner(at + 2);
+    if (NPM_RUN.has(command) || (name === "deno" && command === "task")) {
+      if (serverScript(words[positional(words, at + 1)])) return yes;
+      return name === "bun" && command !== "task" ? inner(positional(words, at + 1)) : null;
+    }
+    if (name === "npm" || name === "deno") return null;
+    return serverScript(command) ? yes : inner(at);
+  }
+  if (PYTHONS.test(name)) {
+    const m = words.indexOf("-m");
+    if (words[m + 1] === "http.server" || command.endsWith("manage.py")) {
+      return m > 0 || words[at + 1] === "runserver" ? yes : null;
+    }
+    return m > 0 && words[m + 1] ? inner(m + 1) : null;
+  }
+  if (["uv", "poetry", "pdm", "pipenv", "hatch", "rye", "bundle"].includes(name))
+    return command === "run" || command === "exec" ? inner(positional(words, at + 1)) : null;
+  if (name === "make" || name === "gmake")
+    return words.slice(1).some((word) => !/^-|=/u.test(word) && serverScript(word)) ? yes : null;
+  if (name === "nx")
+    return serverScript(command === "run" ? words[at + 1]?.split(":")[1] : command) ? yes : null;
+  if (name === "docker-compose") return up(at) ? yes : null;
+  if (compose)
+    return command === "compose" && up(positional(words, at + 1, COMPOSE_VALUES)) ? yes : null;
+  if (name === "vite") return command === "build" || command === "optimize" ? null : yes;
+  const rule = SERVER_TOOLS[name];
+  return rule && rule !== "any" && rule.has(command) ? yes : null;
+}
+
+/**
+ * Does `command` start a dev server (#328)? The first command line that does,
+ * or null. Fails open: a command the shell reader cannot analyze is none.
+ */
+export function serverCommand(
+  command: string,
+  dialect: ShellDialect = "posix",
+): { line: string[]; reason: string } | null {
+  for (const line of linesOf(command, dialect) ?? []) {
+    const reason = serverBuiltIn(line);
+    if (reason) return { line, reason };
+  }
+  return null;
+}
+
 const globWord = (word: string): RegExp =>
   new RegExp(`^${word.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replaceAll("*", ".*")}$`, "u");
 
@@ -435,8 +539,8 @@ export function heavyCommand(command: string, options: HeavyOptions): HeavyMatch
 
 export type HeavyPlan =
   | { kind: "none" }
-  /** One heavy command: run `command` (the lease wrapper) instead. */
-  | { kind: "rewrite"; command: string; reason: string }
+  /** One heavy command: run `command` (the lease wrapper, or `workit run --bg` for a `server`) instead. */
+  | { kind: "rewrite"; command: string; reason: string; server?: true }
   /** A chain with heavy parts: run each part alone (`unblock` is the first heavy one). */
   | { kind: "split"; reason: string; unblock: string | null }
   /** A host rule names it, or wrapping would raise it: it runs as typed, saying nothing. */
@@ -497,6 +601,46 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
     kind: "split",
     reason: `heavy_command: \`${command.trim()}\` chains heavy work (${heavy.map((match) => match.reason).join("; ")}) with other commands, and a chain cannot run under the machine-wide heavy-check lease. Run the heavy part alone, now: \`${parts[0]}\`; then run the other parts as their own commands${parts.length > 1 ? ", each heavy one the same way" : ""}.`,
     unblock: parts[0] ?? null,
+  };
+}
+
+/**
+ * What the shell hook does with a dev server (#328), after every Workit gate
+ * passed on it: rewrite one to `workit run --bg -- <cmd>`, tell a chain that
+ * starts one to start it alone, or step aside when a host rule names it or
+ * the rewrite would need a prompt the command did not. Outside a git
+ * checkout, and for PowerShell, nothing changes.
+ */
+export function serverPlan(command: string, options: PlanOptions): HeavyPlan {
+  const dialect = options.dialect ?? "posix";
+  if (dialect !== "posix" || !gitTop(options.cwd)) return { kind: "none" };
+  const found = serverCommand(command, dialect);
+  if (!found) return { kind: "none" };
+  const simple = simpleCommand(command, dialect, 0, true);
+  const single = simple && serverBuiltIn(simple);
+  // As for heavy commands (#429): a deny/ask rule naming it, or an allow
+  // covering `workit` but not the command, leaves it as typed.
+  if (
+    options.rules !== null &&
+    !wrapAllowed(
+      options.rules,
+      single ? (linesOf(command, dialect) ?? []).flat() : found.line,
+      single ? command : found.line.join(" "),
+      options,
+    ).ok
+  )
+    return { kind: "passthrough", note: "" };
+  if (single) {
+    const rewrite = leaseRewrite(command)?.replace("workit check --heavy --", "workit run --bg --");
+    return rewrite
+      ? { kind: "rewrite", command: rewrite, reason: single, server: true }
+      : { kind: "none" };
+  }
+  const start = `workit run --bg -- ${found.line.map(quoteWord).join(" ")}`;
+  return {
+    kind: "split",
+    reason: `dev_server: \`${command.trim()}\` chains a dev server (${found.reason}) with other commands. Start it alone, now: \`${start}\`; then run the other parts as their own commands.`,
+    unblock: start,
   };
 }
 

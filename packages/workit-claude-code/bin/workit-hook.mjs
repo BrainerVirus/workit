@@ -589,6 +589,19 @@ const standingPending = (cwd, session, agentId) => {
   return readJson(path.join(store, "standing", "seen", `${key}.json`))?.rev !== rev;
 };
 
+// A background process's RSS notice for this session (`<state>/procs/notices/
+// <session>.json`) rides the next tool call, so that call loads the runtime. A
+// copy of workit-core/src/hooks/server-gate.ts procNoticeFile (a test holds them equal).
+const procNoticeFile = (env, session) =>
+  path.join(
+    workitStateDir(env),
+    "procs",
+    "notices",
+    `${session.replace(/[^A-Za-z0-9_.@+-]/gu, "-").slice(0, 120) || "none"}.json`,
+  );
+const procNoticePending = (session) =>
+  typeof session === "string" && !!session && existsSync(procNoticeFile(process.env, session));
+
 // The worker tool-call budget: a copy of spawnBudget, noteSpawnBudget and
 // tickBudget in workit-core/src/hooks/budget-signal.ts (a test holds them
 // equal). A spawn whose brief names `N tool calls` queues N for the next
@@ -704,6 +717,7 @@ const fastAllow = (() => {
     if (mentionsGuarded(JSON.stringify(value.tool_input ?? {}))) return false;
     if (namesTicket(value.tool_input)) return false;
     if (standingPending(String(value.cwd ?? "."), value.session_id, value.agent_id)) return false;
+    if (procNoticePending(value.session_id)) return false;
     // An implementer's writes are confined to its Workit worktree, a verifier's
     // or reviewer's to its scratch dir (hooks/worktree-confine.ts).
     const confined = /^workit:(?:implementer|verifier|reviewer)$/.test(value.agent_type ?? "");

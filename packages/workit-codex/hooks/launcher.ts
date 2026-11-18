@@ -15,7 +15,7 @@
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
 // an empty stdin when the launcher runs from source (bun 1.3.14).
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -75,6 +75,7 @@ useOwnedWorkitCli();
 const { maybeHeavy, stateDir } = await import("@workit-dev/core/src/core/heavy-words");
 const { configDir } = await import("@workit-dev/core/src/core/workit-paths.mjs");
 const { standingPending } = await import("@workit-dev/core/src/hooks/standing-signal");
+const { procNoticeFile } = await import("@workit-dev/core/src/hooks/server-gate");
 const { recordHookRun } = await import("@workit-dev/core/src/hooks/hook-runs");
 // The worker tool-call budget: every PreToolUse counts, quiet or not.
 const { observeHookBudget } = await import("@workit-dev/core/src/hooks/budget-signal");
@@ -140,6 +141,14 @@ const quietEvent = (): string | null => {
         value.session_id,
         typeof value.agent_id === "string" && value.agent_id.trim() ? value.agent_id : null,
       )
+    )
+      return null;
+    // A background process's RSS notice rides the session's next tool call.
+    if (
+      event === "PreToolUse" &&
+      typeof value.session_id === "string" &&
+      value.session_id &&
+      existsSync(procNoticeFile(process.env, value.session_id))
     )
       return null;
     const tool = value.tool_name.toLowerCase();

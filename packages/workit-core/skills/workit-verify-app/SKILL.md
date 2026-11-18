@@ -22,7 +22,8 @@ way a user would.
    already has a project skills directory, use it:
    - **Launch:** one command, its ready signal (log line, port, exit 0), a timeout.
      Builds, installs and e2e suites run under the heavy-check lease
-     (`workit check --heavy -- <cmd>`); a long-running server does not.
+     (`workit check --heavy -- <cmd>`). A dev server starts in the background
+     through `workit run --bg -- <cmd>`, which prints its id, port and log.
    - **Doctor:** each precondition and its fix (deps, env vars, ports, services).
    - **Drive:** how to exercise it: CLI invocations, `curl` against routes, a
      browser tool for UI, with fixture data.
@@ -31,7 +32,7 @@ way a user would.
      agent-browser, with a screenshot or console/network observation; an API
      with a real call, response quoted. The report carries the observation.
      App not runnable? Say so plainly, never claim success.
-   - **Cleanup:** stop processes, remove temp data.
+   - **Cleanup:** `workit stop <id>` for each server it started, remove temp data.
    - **Feature map:** feature, how to drive it, expected observation.
 3. **Prove it end-to-end once:** launch, drive one feature, capture evidence,
    clean up. Fix the skill until that run is clean. A generated skill that was
@@ -56,10 +57,11 @@ report `clean`, `changed` (what) or `blocked` (why).
 
 Bad: "Verify by running the tests." (that is not the real surface)
 
-Good: "Launch `bun run dev` (ready: `listening on :5173`, 30 s). Drive:
-`curl -s localhost:5173/api/health` returned `{"ok":true}`; screenshot of
-/settings at .workit-scratch/settings.png. Evidence:
-`workit check --name verify-web -- bun scripts/smoke.ts` exit 0."
+Good: "Launch `workit run --bg -- bun run dev` (ready: `listening on :5173`,
+30 s). Drive: `curl -s localhost:5173/api/health` returned `{"ok":true}`;
+screenshot of /settings at .workit-scratch/settings.png. Evidence:
+`workit check --name verify-web -- bun scripts/smoke.ts` exit 0. Cleanup:
+`workit stop p1abc2def3`."
 
 ## Check
 
