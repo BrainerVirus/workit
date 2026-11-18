@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version the registry serves for it (not since the previous tag), ships
   everything on a first release, and takes `PUBLISH_ALL=1` or `--all`.
 
+### Changed (retro 2026-11-17)
+
+- **Claude Code's auto mode stops prompting for granted delivery verbs.** The
+  `autoMode.allow` line `workit setup` writes now also names plain
+  `workit git push` (a branch the session created or the workspace allows),
+  `workit pr create`, `workit pr edit|ready` on the session's own PR and
+  `workit issue create|comment` with no `--repo` or one under the origin's
+  owner. It names only workit calls; the CLI still enforces every grant (the
+  branch, own-PR and owner scopes are guidance for the classifier), and the
+  "Does NOT cover" list gains `workit pr edit|ready --pr` on another author's
+  PR. Setup and `workit upgrade` replace Workit's previous line in the consent
+  diff; a line you edited is left alone with one note, and an upgrade does not
+  re-add a line you deleted.
+
 ### Fixed (retro 2026-11-07)
 
 - **Tests and probes never reach the real home** (#859): `upgrade`, `doctor`

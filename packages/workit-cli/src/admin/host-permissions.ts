@@ -93,6 +93,9 @@ const AUTO_MODE_ENVIRONMENT =
 const AUTO_MODE_ENVIRONMENT_V1 =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
 const AUTO_MODE_ALLOW =
+  "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR (no `--pr`, or the PR whose head is the session's branch), `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment` with no `--repo` or a `--repo` whose owner is the owner in the session repo's origin URL are authorized by the user's standing Workit grants, which the workit CLI enforces itself; the branch, own-PR and owner scopes are for you to judge, the CLI does not check them. These are not Merge Without Review, Git Destructive or External System Writes; a `workit issue` `--repo` under any other owner IS an External System Write and is not covered. Does NOT cover `workit pr edit` or `workit pr ready` with `--pr` on another author's PR, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+/** The auto-mode line from #759 until the granted delivery verbs (retro 2026-11-17 C17); a refresh replaces it and uninstall still removes it. */
+const AUTO_MODE_ALLOW_V3 =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
 /** The auto-mode line from #615 until the whole-verb user-only calls; a refresh replaces it and uninstall still removes it. */
 const AUTO_MODE_ALLOW_V2 =
@@ -339,6 +342,8 @@ type HostMerge = {
   error?: string;
   /** The entries moved from the host's legacy deny location (`LEGACY_DENY_AT`). */
   moved?: string[];
+  /** A Workit auto-mode line the user edited: left as is, and the current one is not added. */
+  editedAllow?: boolean;
 };
 
 /** Remove the entries a past Workit version offered that this one replaced (#615). */
@@ -468,9 +473,17 @@ const ownedList = (previous: OwnedEntries | undefined, dotted: string): string[]
  * entries an earlier write offered (the upgrade refresh).
  */
 function mergeClaudeSettings(settings: Json, shell: string | null, input: MergeInput): HostMerge {
-  const { deny, skip, previous } = input;
+  const { deny, previous } = input;
   const config = clone(settings);
   const owned = emptyOwned();
+  const editedAllow = hasEditedAutoAllow(config);
+  const skip: Skip =
+    editedAllow || removedAutoAllow(config, input.skip)
+      ? {
+          ...input.skip,
+          "autoMode.allow": [...(input.skip["autoMode.allow"] ?? []), AUTO_MODE_ALLOW],
+        }
+      : input.skip;
   dropRetired(config, ownedList(previous, "permissions.ask"));
   dropStaleDeny(config, "claude-code", deny, ownedList(previous, DENY_AT["claude-code"]));
   const error =
@@ -494,8 +507,36 @@ function mergeClaudeSettings(settings: Json, shell: string | null, input: MergeI
       owned.env.CLAUDE_CODE_SHELL = shell;
     }
   }
-  return { config, owned };
+  return { config, owned, ...(editedAllow ? { editedAllow } : {}) };
 }
+
+/**
+ * Did the user delete the auto-mode line an earlier Workit offered? `skip`
+ * (the refresh's record) names an earlier line and no Workit line is left in
+ * the file: the refresh then does not add the current, wider one.
+ */
+const removedAutoAllow = (config: Json, skip: Skip): boolean => {
+  const prior = new Set(PRIOR_ENTRIES["claude-code"]["autoMode.allow"] ?? []);
+  const offered = offeredAt("claude-code", "autoMode.allow");
+  return (
+    (skip["autoMode.allow"] ?? []).some((line) => prior.has(line)) &&
+    !stringList(valueFrom(config, "autoMode", "allow")).some((line) => offered.has(line))
+  );
+};
+
+/** The prefix every auto-mode line Workit wrote starts with. */
+const AUTO_MODE_ALLOW_PREFIX = "Workit-gated delivery:";
+
+/**
+ * Does `autoMode.allow` hold a line that starts like Workit's but is no text a
+ * Workit version wrote? That is the user's edit: a merge leaves it as is.
+ */
+const hasEditedAutoAllow = (config: Json): boolean => {
+  const offered = offeredAt("claude-code", "autoMode.allow");
+  return stringList(valueFrom(config, "autoMode", "allow")).some(
+    (line) => line.startsWith(AUTO_MODE_ALLOW_PREFIX) && !offered.has(line),
+  );
+};
 
 /** Cursor CLI config with Workit's `Shell(workit <verb>)` allows and its `Write(<abs>)` denies. */
 function mergeCursorCliConfig(config: Json, input: MergeInput): HostMerge {
@@ -581,7 +622,7 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
 const PRIOR_ENTRIES: Record<JsonHost, Record<string, readonly string[]>> = {
   "claude-code": {
     "autoMode.environment": [AUTO_MODE_ENVIRONMENT_V1],
-    "autoMode.allow": [AUTO_MODE_ALLOW_V1, AUTO_MODE_ALLOW_V2],
+    "autoMode.allow": [AUTO_MODE_ALLOW_V1, AUTO_MODE_ALLOW_V2, AUTO_MODE_ALLOW_V3],
   },
   cursor: {},
   opencode: {},
@@ -1018,8 +1059,13 @@ export function planHostPermissions(options: PlanOptions): PermissionPlan {
         plan.blocked.push(`${target.file}: ${merged.error}; left untouched`);
         continue;
       }
+      if (merged.editedAllow)
+        plan.notes.push(
+          `${host}: leaves your edited "${AUTO_MODE_ALLOW_PREFIX}" autoMode.allow line in ${target.file} as is; delete it and run \`workit setup --hosts=claude-code\` for the current text`,
+        );
       if (JSON.stringify(merged.config) === JSON.stringify(parsed)) {
-        plan.notes.push(`${host}: Workit's permission block is already in ${target.file}`);
+        if (!merged.editedAllow)
+          plan.notes.push(`${host}: Workit's permission block is already in ${target.file}`);
         continue;
       }
       after = JSON.stringify(merged.config, null, 2) + "\n";
