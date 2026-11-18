@@ -470,10 +470,7 @@ const declared = (call: ToolCall, spec: EvalCase): boolean =>
   ].some((want) => matches(call, want, false));
 
 /** The run's first-try counts, and the calls behind them (see FirstTry). */
-export const firstTryOf = (
-  calls: ToolCall[],
-  spec: EvalCase,
-): FirstTry & { misses: ToolCall[] } => {
+const firstTryOf = (calls: ToolCall[], spec: EvalCase): FirstTry & { misses: ToolCall[] } => {
   const interactions = calls.filter(
     (call) => runsWorkit(call) || isSpawn(call) || (call.refusal !== null && call.byHook),
   );

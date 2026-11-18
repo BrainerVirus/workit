@@ -22,7 +22,7 @@ export type CallPattern = {
 };
 
 /** The bench legs: Claude Code and OpenCode. */
-export const HOSTS = ["claude-code", "opencode"] as const;
+const HOSTS = ["claude-code", "opencode"] as const;
 export type CaseHost = (typeof HOSTS)[number];
 
 export type EvalCase = {
