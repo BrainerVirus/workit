@@ -6,6 +6,12 @@
         "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-session-start"
       }
     ],
+    "sessionEnd": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",
+        "failClosed": false
+      }
+    ],
     "preToolUse": [
       {
         "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/launch.mjs\" workit-cursor-hook",

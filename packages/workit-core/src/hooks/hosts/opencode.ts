@@ -10,6 +10,9 @@ export const OPENCODE_DESCRIPTOR: HostDescriptor = {
   events: {
     // No separate start event: context is injected on every agent-loop call.
     "session.start": { support: "none", native: null },
+    // No exit event either: a deleted session's processes stop, the rest at
+    // the reap on the plugin's first event or any host's session start.
+    "session.end": { support: "partial", native: 'event("session.deleted")' },
     "context.turn": { support: "native", native: 'session.hook("context")' },
     "shell.pre": { support: "native", native: 'permission.hook("evaluate")' },
     "tool.pre": { support: "native", native: 'tool.hook("execute.before")' },

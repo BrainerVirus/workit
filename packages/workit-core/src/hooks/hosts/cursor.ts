@@ -7,6 +7,7 @@ import { existingDirectory, isRecord, isWriteTool, nonEmpty, writeTargets } from
 
 export type CursorHookEvent =
   | "sessionStart"
+  | "sessionEnd"
   | "preToolUse"
   | "beforeShellExecution"
   | "subagentStart"
@@ -30,6 +31,8 @@ export type CursorHookInput = {
   status?: "completed" | "error" | "aborted";
   loop_count?: number;
   transcript_path?: string;
+  /** sessionEnd: why the session ended. */
+  reason?: string;
 };
 
 export type CursorParseResult = { ok: true; data: CursorHookInput } | { ok: false; error: string };
@@ -45,6 +48,9 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
   transport: "hook-process",
   events: {
     "session.start": { support: "native", native: "sessionStart" },
+    // sessionEnd (cursor-agent 2026.09.26): conversation_id, reason,
+    // final_status, duration_ms; its output is not read.
+    "session.end": { support: "native", native: "sessionEnd" },
     "context.turn": none,
     "shell.pre": { support: "native", native: "beforeShellExecution" },
     "tool.pre": { support: "native", native: "preToolUse" },
@@ -159,6 +165,7 @@ export const CURSOR_DESCRIPTOR: HostDescriptor = {
 
 const EVENTS: Record<CursorHookEvent, HookEventKind> = {
   sessionStart: "session.start",
+  sessionEnd: "session.end",
   preToolUse: "tool.pre",
   beforeShellExecution: "shell.pre",
   subagentStart: "subagent.start",
@@ -215,6 +222,7 @@ export const parseCursorHookInput = (value: unknown): CursorParseResult => {
         ? { parent_conversation_id: value.parent_conversation_id }
         : {}),
       ...(event === "subagentStart" && nonEmpty(value.task) ? { task: value.task } : {}),
+      ...(event === "sessionEnd" && nonEmpty(value.reason) ? { reason: value.reason } : {}),
       ...(event === "stop"
         ? {
             ...(nonEmpty(value.status)
@@ -233,6 +241,8 @@ const protocolEvent = (input: CursorHookInput): HookEvent => {
     case "sessionStart":
       // Cursor reports no start source; every sessionStart is a fresh conversation.
       return { kind: "session.start", source: "startup" };
+    case "sessionEnd":
+      return { kind: "session.end", reason: input.reason ?? null };
     case "beforeShellExecution":
       // Branch policy reads the command alone; the shell's cwd does not change
       // which branch name it targets.

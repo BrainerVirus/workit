@@ -1,0 +1,15 @@
+{
+  "conversation_id": "cursor-conv-1",
+  "session_id": "cursor-conv-1",
+  "generation_id": "cursor-conv-1",
+  "model": "auto",
+  "reason": "completed",
+  "final_status": "completed",
+  "duration_ms": 1200,
+  "is_background_agent": false,
+  "cursor_version": "2026.09.26-dd393fe",
+  "workspace_roots": ["__CWD__"],
+  "user_email": null,
+  "transcript_path": null,
+  "hook_event_name": "sessionEnd"
+}

@@ -37,6 +37,7 @@ import {
   workitContext,
 } from "../src/context";
 import { takeProcNotice } from "@workit-dev/core/src/hooks/server-gate";
+import { endSession, reapAtStart } from "@workit-dev/core/src/hooks/teardown";
 import { resolveIdRef } from "@workit-dev/core/src/core/task-contract";
 import { WORKIT_SKILL_ALIASES } from "@workit-dev/core/src/core/skill-manifests";
 import {
@@ -535,6 +536,8 @@ export default function extension(pi: ExtensionAPI): void {
         }) + "\n",
       );
     sessions.delete(ctx.sessionManager.getSessionId());
+    // Orphans of dead sessions go, once per interval per user (#328).
+    reapAtStart(ctx.cwd);
     reconcileLostWorkers(ctx);
   });
   // A background process's RSS notice (#328), once: on the next user turn or tool result.
@@ -671,7 +674,16 @@ export default function extension(pi: ExtensionAPI): void {
     });
     return observeToolResult(event, ctx);
   };
-  pi.on("session_shutdown", (_event, ctx) => {
+  pi.on("session_shutdown", (event, ctx) => {
     sessions.delete(ctx.sessionManager.getSessionId());
+    // On quit the session's registered processes stop, detached (#328); a
+    // supervised worker's end stops nothing (hooks/teardown.ts).
+    endSession({
+      host: "pi",
+      session: ctx.sessionManager.getSessionId(),
+      agentId: null,
+      reason: typeof event?.reason === "string" ? event.reason : null,
+      cwd: ctx.cwd,
+    });
   });
 }

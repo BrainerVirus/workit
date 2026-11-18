@@ -34,6 +34,7 @@ import {
 import { spawnDecision } from "./spawn-gate";
 import { seedStanding, standingDelta } from "./standing";
 import { takeProcNotice } from "./server-gate";
+import { endSession, reapAtStart } from "./teardown";
 import type { BudgetHooks } from "./budget-signal";
 import { modelSwitchedOnDisk, trackJudge } from "./session-marker";
 import { parseUsageLimit, recordUsageLimit } from "./model-limit";
@@ -205,6 +206,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
   const event = input.event;
   switch (event.kind) {
     case "session.start": {
+      // Orphans of dead sessions go, once per interval per user (#328).
+      reapAtStart(input.cwd);
       if (!usable(descriptor.context.sessionStart)) return NONE;
       // A session without an id cannot be told apart from another one, so it
       // is offered on every startup and never recorded.
@@ -219,6 +222,16 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (resendsOnChange(descriptor)) seedTurnContext(input, descriptor);
       return { kind: "context", text };
     }
+    // The ended session's registered processes stop, detached (#328); nothing to answer.
+    case "session.end":
+      endSession({
+        host: input.host,
+        session: input.session.id,
+        agentId: input.session.agentId,
+        reason: event.reason,
+        cwd: input.cwd,
+      });
+      return NONE;
     case "context.turn": {
       if (!usable(descriptor.context.perTurn)) return NONE;
       const current = turnContextText(input, descriptor);
