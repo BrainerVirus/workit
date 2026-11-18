@@ -31,13 +31,19 @@ the project in `<repo>-wt/` or `workit-wt/`, are still swept too (see below).
 
 ## After a merge
 
-When `workit pr merge` lands a PR and deletes its remote branch, Workit also:
+Cleanup is on by default when work finishes. When `workit pr merge` lands a PR
+and deletes its remote branch, Workit also:
 
-1. removes the branch's worktree, if it is clean and Workit made it (under the
+1. stops the processes registered in the branch's worktree (`workit run --bg`
+   dev servers, compose stacks, automation browsers; see
+   [Background processes](processes.md));
+2. removes the branch's worktree, if it is clean and Workit made it (under the
    managed root, or by `workit fanout worktree create`);
-2. deletes the local branch, once nothing has it checked out;
-3. writes a `cleanup.removed` ledger row that lists the removed worktree and
-   branch.
+3. moves the checkout you ran the command in off the merged branch, when it is
+   on it and clean (see [Your own checkout](#your-own-checkout));
+4. deletes the local branch, once nothing has it checked out;
+5. writes one `cleanup.removed` ledger row that lists the stopped processes,
+   the removed worktree, the switched checkout and the deleted branch.
 
 `workit verify-delivery merge` does the same once it confirms the merge and
 the remote no longer has the branch, so a PR merged on the forge's website is
@@ -69,11 +75,67 @@ Some things are always kept, and the merge output says why:
   `<state>/scratch/<repo>/<slice>` and goes with its worktree (removed only
   when it is a real directory you own there, never through a symlink), so
   Workit never asks a repository to ignore anything.
+- A worktree that runs a registered process this session may not stop:
+  another session's, one started from a plain terminal, or one kept by a
+  decision or by workspace `cleanup: keep`. The output names the process and
+  why; nothing in that worktree is stopped. `workit stop <id>` stops it by
+  hand.
 - A local branch with commits that were not part of the merge.
-- The main checkout, the checkout you ran the command in, and any worktree that
+- A branch an open PR targets.
+- The main checkout when you ran the command elsewhere, a checkout that is
+  dirty or not yet on the remote trunk (see below), and any worktree that
   Workit did not make.
 - A branch the merge kept on the remote: a stack parent, a fork's branch, or a
   merge run with `--keep-branch` or workspace `deleteBranch: false`.
+- Anything the workspace or a decision keeps (see
+  [Keeping things](#keeping-things)).
+
+### Your own checkout
+
+When the checkout you ran `pr merge` or `verify-delivery merge` in is on the
+merged branch, Workit moves it to the trunk and deletes the branch, but only
+when all of these hold:
+
+- the local branch tip is the merged head, or behind it;
+- the checkout is clean: no tracked or untracked change that git does not
+  ignore, and no rebase, merge, cherry-pick or bisect in progress;
+- no other live session and no heavy-check lease holder works in it;
+- the change is on the fetched remote trunk, by patch id (a squash merge
+  counts);
+- your local trunk has no commits the remote trunk lacks.
+
+Workit then stops the registered processes in the checkout, runs `git switch
+<trunk>` and fast-forwards it to the remote trunk. It never resets, forces a
+checkout or stashes, and the directory always stays. When the trunk is checked
+out in another worktree, a linked worktree is detached at the remote trunk
+instead, and the output names `workit gc --worktrees --apply` to remove it once
+you are done. Otherwise the checkout stays on the branch and the output says
+why, for example `it has 1 uncommitted change (wip.txt)`.
+
+### Keeping things
+
+Two opt-outs leave finished work in place:
+
+- **Workspace `cleanup: "keep"`** (default `"auto"`, inherited from an
+  enclosing workspace like `trailers`). Nothing is removed or stopped after a
+  merge, and the output says `kept: workspace cleanup keep`. Registered
+  processes in that workspace are also left running by session-end stops and
+  the orphan reap; `workit stop <id>` still stops one by hand. See
+  [Configuration](configuration.md#cleanup-when-work-finishes).
+- **A keep decision**, recorded in the user's words:
+
+  ```bash
+  workit ledger decision "keep the demo" --why "<the user's words>" --keep proc:<id>
+  workit ledger decision "keep the spike" --why "<the user's words>" --keep branch:feature/spike
+  workit ledger decision "keep the review copy" --why "<the user's words>" --keep worktree:../review
+  ```
+
+  `branch:` keeps that local branch, its worktrees and their processes;
+  `worktree:` keeps that worktree and its branch; `proc:` keeps that registered
+  process running, and with it the worktree it runs in. Cleanup names the
+  decision id when it skips an item. A later decision that supersedes it
+  (`--supersedes <id>`) lifts the keep. `--keep` is refused with
+  `--by decider`: only the user keeps their work.
 
 ## Sweeping leftovers: `workit gc --worktrees`
 

@@ -504,7 +504,14 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   forge answer it cannot read. After the remote delete it deletes the local
   branch when it is not checked out anywhere (and holds only merged commits),
   and removes a clean worktree that `workit fanout worktree create` made on
-  it; a dirty one is kept and named. An explicit `--delete-branch` refuses a
+  it; a dirty one is kept and named. Before a worktree goes, the processes
+  registered in it stop; one this session may not stop keeps the worktree. A
+  clean checkout you ran the merge in moves to the trunk at the remote trunk's
+  commit, and the branch goes (`switched <checkout> to main at <sha>`); a dirty
+  one stays on the branch with the reason. Workspace `cleanup: "keep"` or a
+  `workit ledger decision … --keep` leaves things in place, and the output
+  says so (`kept: workspace cleanup keep`, or the decision id); see
+  [Cleanup](cleanup.md#after-a-merge). An explicit `--delete-branch` refuses a
   protected or base branch before merging. `stack land` never deletes.
 - `pr merge` refuses a PR whose short-lived base (a stacked parent or a work
   branch such as `feature/` or `fix/`) already landed in another branch and has
@@ -931,7 +938,7 @@ workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the 
 workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
 workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree, scratch dir and node_modules links
-workit fanout worktree release <slice> [--name <n>] [--force]           # record git status, then remove it
+workit fanout worktree release <slice> [--name <n>] [--force]           # stop its processes, record git status, then remove it
 workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-in gate, landing order
 ```
 
