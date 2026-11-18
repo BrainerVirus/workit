@@ -245,23 +245,41 @@ test("Given both providers are limited, Then the case is recorded skipped (limit
   expect(stored("a-smoke")).toMatchObject({ provider: "free", grade: { pass: true } });
 });
 
-test("Given a provider error that is not a limit, Then the case fails with run-error and is not retried on go", async () => {
+const providerError = (error: Record<string, unknown>): void =>
   writeFileSync(
     process.env.FAKE_OC_OUT ?? "",
-    JSON.stringify({
-      type: "error",
-      timestamp: 1,
-      sessionID: "ses_1",
-      error: { type: "provider.auth", status: 401, message: "This API key has expired." },
-    }),
+    JSON.stringify({ type: "error", timestamp: 1, sessionID: "ses_1", error }),
   );
+
+test("Given a provider error that is neither a limit nor a login, Then the case fails with run-error and is not retried on go", async () => {
+  providerError({ type: "provider.server", status: 500, message: "Internal error." });
   const printed: string[] = [];
   expect(await main(["--cases", "a-smoke", ...argv], quiet(printed))).toBe(1);
   expect(calls()).toHaveLength(1);
   expect(stored("a-smoke")).toMatchObject({ provider: "free", grade: { pass: false } });
   expect(printed.join("\n")).toContain(
-    "run-error: the run stopped on: provider.auth 401 This API key has expired.",
+    "run-error: the run stopped on: provider.server 500 Internal error.",
   );
+});
+
+test("Given a login failure on the free provider, Then the case runs again on go; failing there too, it is void (never a pass or a fail) with a re-login line", async () => {
+  providerError({
+    type: "provider.auth",
+    status: 401,
+    message: "Reconnect OpenCode Console to continue.",
+  });
+  const printed: string[] = [];
+  expect(await main(["--cases", "a-smoke", ...argv], quiet(printed))).toBe(1);
+  expect(calls()).toHaveLength(2);
+  expect(stored("a-smoke")).toMatchObject({ void: "auth", grade: { pass: false } });
+  expect(printed.join("\n")).toContain("void (auth) a-smoke");
+  expect(printed.join("\n")).toContain("re-login: run `opencode auth login`");
+});
+
+test("Given --provider go, Then the free provider is never tried", async () => {
+  expect(await main(["--cases", "a-smoke", "--provider", "go", ...argv], quiet([]))).toBe(0);
+  expect(calls()).toHaveLength(1);
+  expect(stored("a-smoke")).toMatchObject({ provider: "go" });
 });
 
 test("Given stored OpenCode results, When replayed with --check, Then they re-grade with no model and a changed grade is drift", async () => {

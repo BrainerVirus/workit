@@ -1,0 +1,24 @@
+{
+  "id": "fanout-plan-by-path",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (a plan named by its file path)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Make the worktree for slice notes of the fan-out plan in plans/wave.json, with the workit CLI. Do not spawn any agents.",
+  "scaffold": {
+    "branch": "feature/base",
+    "files": {
+      "plans/wave.json": "{\n  \"name\": \"wave\",\n  \"trunk\": \"main\",\n  \"slices\": [\n    {\n      \"id\": \"notes\",\n      \"branch\": \"feature/notes\",\n      \"tier\": \"standard\",\n      \"reason\": \"parallel\",\n      \"goal\": \"add NOTES.md\",\n      \"scope\": [\n        \"NOTES.md\"\n      ],\n      \"acceptance\": [\n        \"Given the repo, When add NOTES.md, Then it is done\"\n      ],\n      \"verify\": [\n        \"node -e \\\"1\\\"\"\n      ],\n      \"forbidden\": [\n        \"edits outside scope\"\n      ]\n    }\n  ]\n}\n"
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*fanout worktree create",
+        "why": "the worktree is made",
+        "denied": false
+      }
+    ]
+  }
+}

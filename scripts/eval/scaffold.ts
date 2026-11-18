@@ -162,6 +162,9 @@ case "$method $endpoint" in
     { [ -n "$head" ] && [ ! -f "$opened" ]; } || refuse
     printf '%s' "$head" > "$opened"
     printf '{"number":1,"html_url":"%s","state":"open","base":{"ref":"main"},"head":{"ref":"%s","sha":"%s"},"user":{"login":"eval"}}\\n' "$url" "$head" "$(sha "$head")" ;;
+  "POST repos/eval/demo/issues/1/labels")
+    [ -f "$opened" ] || refuse
+    echo '[{"name":"bug"}]' ;;
   "GET repos/eval/demo/pulls/1")
     [ -f "$opened" ] || refuse
     head=$(cat "$opened")

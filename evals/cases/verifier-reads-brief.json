@@ -1,0 +1,33 @@
+{
+  "id": "verifier-reads-brief",
+  "source": "retro 2026-11-18 (first-try research, decision D5): judge confinement (the verifier reads its brief and the fan-out check)",
+  "tier": "full",
+  "firstTry": true,
+  "hosts": ["claude-code"],
+  "prompt": "Register the plan plans/greet.json with Workit and make the worktree for its slice greet. Then spawn the workit:verifier agent to verify that slice; tell it to read its brief with `workit fanout brief greet --name greet` and to run `workit fanout check greet --name greet` before anything else. Report what those two printed.",
+  "scaffold": {
+    "branch": "feature/base",
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "bin/greet.js": "import { readFileSync } from \"node:fs\";\nconst { version } = JSON.parse(readFileSync(new URL(\"../package.json\", import.meta.url), \"utf8\"));\nconst [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name} (v${version})`);\n",
+      "plans/greet.json": "{\n  \"name\": \"greet\",\n  \"trunk\": \"main\",\n  \"slices\": [\n    {\n      \"id\": \"greet\",\n      \"branch\": \"feature/greet\",\n      \"tier\": \"standard\",\n      \"reason\": \"parallel\",\n      \"goal\": \"bin/greet.js prints hello\",\n      \"scope\": [\n        \"bin/greet.js\"\n      ],\n      \"acceptance\": [\n        \"Given the repo, When bin/greet.js prints hello, Then it is done\"\n      ],\n      \"verify\": [\n        \"node -e \\\"1\\\"\"\n      ],\n      \"forbidden\": [\n        \"edits outside scope\"\n      ]\n    }\n  ]\n}\n"
+    }
+  },
+  "maxTurns": 12,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "verifier",
+        "denied": false,
+        "why": "verification is delegated"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*fanout brief",
+        "why": "the brief read runs",
+        "denied": false
+      }
+    ]
+  }
+}

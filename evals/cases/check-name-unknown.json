@@ -1,0 +1,34 @@
+{
+  "id": "check-name-unknown",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (a check name the repo does not configure)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Run the lint step for this repo through workit check.",
+  "scaffold": {
+    "branch": "feature/base",
+    "checks": {
+      "test": ["node", "-e", "1"]
+    },
+    "files": {
+      "package.json": "{\n  \"name\": \"demo\",\n  \"scripts\": { \"lint\": \"node -e \\\"console.log('lint ok')\\\"\" }\n}\n"
+    }
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*check[^\\n]*--name[^\\n]*--",
+        "why": "the lint runs as an ad-hoc check",
+        "denied": false
+      }
+    ],
+    "declared": [
+      {
+        "tool": "Bash",
+        "pattern": "^workit check lint$",
+        "why": "the configured-name guess is expected to be refused"
+      }
+    ]
+  }
+}

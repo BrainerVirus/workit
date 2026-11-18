@@ -536,7 +536,7 @@ test("Given a case with scaffold commits and no allowed tools, Then the repo has
   const [call = ""] = calls();
   expect(call).toContain("commits=2 ");
   expect(call).not.toContain("--allowedTools");
-  expect(call).toContain("--permission-mode dontAsk --disallowedTools WebFetch WebSearch");
+  expect(call).toContain("--permission-mode auto --disallowedTools WebFetch WebSearch");
 });
 
 const PUSH = [

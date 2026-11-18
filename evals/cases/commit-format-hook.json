@@ -1,0 +1,40 @@
+{
+  "id": "commit-format-hook",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (a pre-commit hook that asks for the formatter)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Commit my change to src/a.ts on this branch with workit.",
+  "scaffold": {
+    "branch": "feature/fmt",
+    "files": {
+      "src/a.ts": "export const a = 1;\n",
+      "package.json": "{\n  \"name\": \"demo\",\n  \"scripts\": { \"format\": \"sed -i 's/;;/;/g' src/a.ts\" }\n}\n"
+    },
+    "dirty": {
+      "src/a.ts": "export const a = 2;;\n"
+    },
+    "gitHooks": {
+      "pre-commit": "#!/bin/sh\nif grep -q ';;' src/a.ts; then echo 'src/a.ts is not formatted: run bun run format'; exit 1; fi\n"
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*git[^\\n]*commit",
+        "why": "the commit lands",
+        "denied": false,
+        "result": "feature/fmt [0-9a-f]{7}"
+      }
+    ],
+    "declared": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*git[^\\n]*commit",
+        "why": "the first commit is refused by the formatter hook",
+        "result": "not formatted"
+      }
+    ]
+  }
+}

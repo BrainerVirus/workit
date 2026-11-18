@@ -78,6 +78,8 @@ export type EvalCase = {
       defaultEndpoint?: "commit" | "pr" | "green" | "merged";
       autonomy?: Record<string, boolean | "verified">;
       verification?: "proportional" | "self" | "independent";
+      /** The changelog step `workit pr create` enforces. */
+      changelog?: "off" | "update" | "create";
       /** The entry's `models` (role models, enforce mode), as workspaces.json takes them. */
       models?: Record<string, unknown>;
     };

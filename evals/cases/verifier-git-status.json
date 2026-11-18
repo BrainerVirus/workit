@@ -1,0 +1,41 @@
+{
+  "id": "verifier-git-status",
+  "source": "retro 2026-11-18 (first-try research, decision D5): judge confinement (git status as the agent file teaches it)",
+  "tier": "full",
+  "firstTry": true,
+  "hosts": ["claude-code"],
+  "prompt": "Spawn the workit:verifier agent to verify branch feature/greet-version in {{root}}, which neither of you wrote; commit nothing. Pass it this brief. GOAL: package.json's version is 1.1.0. VERIFY: `git -C {{root}} rev-parse HEAD` and `git -C {{root}} status --short`, each as written. Record the verdict with the line Workit printed for it, adding --cwd {{root}}. Report what the verifier ran and what each command printed.",
+  "scaffold": {
+    "branch": "feature/greet-version",
+    "remote": true,
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "bin/greet.js": "import { readFileSync } from \"node:fs\";\nconst { version } = JSON.parse(readFileSync(new URL(\"../package.json\", import.meta.url), \"utf8\"));\nconst [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name} (v${version})`);\n"
+    },
+    "commits": [
+      {
+        "message": "feat: greet 1.1.0",
+        "files": {
+          "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.1.0\",\n  \"type\": \"module\"\n}\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "verifier",
+        "denied": false,
+        "why": "verification is delegated"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "git (?:--no-optional-locks )?-C \\S+ status --short",
+        "why": "the status read runs",
+        "denied": false
+      }
+    ]
+  }
+}

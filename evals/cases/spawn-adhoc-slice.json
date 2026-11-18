@@ -1,0 +1,21 @@
+{
+  "id": "spawn-adhoc-slice",
+  "source": "retro 2026-11-18 (first-try research, decision D5): spawn gate (one unplanned slice)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Delegate one small fix to a Workit implementer in its own worktree: add src/version.ts exporting VERSION = '1.0.0'. There is no fan-out plan and I don't want one for a single slice. Do not write the file yourself.",
+  "scaffold": {
+    "branch": "feature/base"
+  },
+  "maxTurns": 12,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "implementer",
+        "denied": false,
+        "why": "the single-slice spawn runs"
+      }
+    ]
+  }
+}

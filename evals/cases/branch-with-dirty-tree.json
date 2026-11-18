@@ -1,7 +1,8 @@
 {
   "id": "branch-with-dirty-tree",
-  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): dirty_worktree on `workit git branch` named --carry only in its unblock, so weak models stashed or committed instead",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): dirty_worktree on `workit git branch` named --carry only in its unblock, so weak models stashed or committed instead; tagged firstTry 2026-11-18 (--carry discoverability)",
   "tier": "full",
+  "firstTry": true,
   "prompt": "Move my uncommitted change to a.txt onto a new branch feature/next made from main with the workit CLI. Keep the change uncommitted.",
   "scaffold": {
     "branch": "feature/base",
@@ -43,8 +44,8 @@
       {
         "tool": "Bash",
         "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
-        "max": 0,
-        "why": "the refusal carries the usage line and the fix: no help call is needed to recover"
+        "max": 1,
+        "why": "the refusal carries the usage line and the fix: no help call is needed to recover (one help call may find --carry; 2026-11-18: a cap of 0 measured impossibility, not first try)"
       }
     ]
   }
