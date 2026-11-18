@@ -87,6 +87,8 @@ skips over the last day in its `hook_deadline` row. To change the deadline, set
 | `verifier` | Read-only. Runs the brief's checks through `workit check` and records a `workit ledger verdict` under its own session |
 | `reviewer` | Read-only. Reviews intent fidelity, standards, test quality and blast radius; records a review verdict |
 | `implementer` | No `isolation` (Claude Code's refused every wrapped git). Edits and commits only in the worktree the lead made with `workit fanout worktree create <slice>`, running `workit git\|check --cwd <worktree> …` one verb per call; the `PreToolUse` hook denies its edits and mutating git commands outside that worktree |
+| `decider` | Read-only, `fable` with effort `high`. Settles a stuck call (a failed fix round and recheck) with options, a pick by reversibility and the exact change list |
+| `babysitter` | `haiku`. Drives one pushed PR to its endpoint in the worktree its prompt names (workit-ship's babysit loop) |
 
 The SubagentStart hook gives each verifier/reviewer its own session id, so the
 ledger never accepts the author's verdict on its own work.

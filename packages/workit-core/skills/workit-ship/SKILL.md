@@ -15,7 +15,8 @@ merge: Stop at PR-ready (`babysit` `ready`) unless the user, or `merged` on a
 request that named no endpoint, set merge. `release publish` only if asked.
 Release: `workit release start <v>`, commits, `finish` (references/release.md).
 
-**Babysit endpoints.** After opening the PR keep babysitting without asking
+**Babysit endpoints.** After opening the PR keep babysitting without asking (in
+the background: spawn the babysitter agent by name, no model)
 until CI is green, every thread is resolved and the verification gate is met;
 `green` never merges. Act on the effective endpoint (`merged` without the merge
 grant acts as `green`); a lowered one's reason names the unblock. Loop on
@@ -29,7 +30,8 @@ once the verdict is accepted. `merged`: step 7. `null` (closed, not merged):
 stop and report. Stop early only for a new consequential choice, a host
 denial, a review comment that needs a product decision, a required update
 that repeats because the base keeps moving, or after 3 failed fix attempts on
-the same check. Fix round and recheck both failed: a decider (workit-fanout).
+the same check. Fix round and recheck both failed: spawn the decider agent by
+name, no model (workit-fanout).
 
 1. **Open.** Last before the PR, if `workit grant show` has `changelog: update|create`: write the Unreleased entry with `workit changelog apply`, commit it; with `docs: when-user-facing` fix only docs the diff made false (`references/changelog.md`).
    Full local check (`workit check ci` when `.workit/checks.json` has a `ci` group), push once: `workit git push`, then `workit pr template` and fill the template it prints: every heading, each `<!-- -->` replaced (Workit's: `references/pr-body.md`).

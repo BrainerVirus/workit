@@ -5,35 +5,28 @@ and fans in. Workit records and checks; the host's own subagents run the work.
 
 ## TIER to model
 
-TIER is a field of each slice and of its brief. Role models come from the
-workspace (`models.roles`; `fanout.tierModels` still feeds the implementer
-tiers) and, on Claude Code, built-in defaults: the brief has a `model:` line
-(with `effort:` when set) under TIER and a `verifier:` line; `workit fanout
-status` names the model next to each spawnable slice; `workit models show
-[--role r] [--host h] --json` lists every role (decider, implementer tiers,
-verifier, reviewer, explore, babysit). Pass exactly that `model` (and `effort`
-where the host's spawn call takes one) on the spawn call: a subagent that
-passes none inherits your model. Scouting and PR babysitting use the `explore`
-and `babysit` roles. A role with no model (other hosts without config) runs
-on the host's model, and TIER only sizes the timebox and decides whether to
-race. Claude Code's built-in defaults, when nothing is configured:
+TIER is a field of each slice and of its brief. Each Workit role is a host
+agent that carries its own model: spawn it by name and pass no `model` or
+`effort` unless the user named one (a named model always wins).
 
-| Role or TIER | `model` on the Agent call |
+| Host | Spawn by name |
 | --- | --- |
-| decider | `fable`, effort `high` |
-| hard | `opus` |
-| standard | `sonnet` |
-| mundane | `haiku` |
-| verifier | `sonnet` |
-| reviewer | `opus` |
-| explore, babysit | `haiku` |
+| Claude Code | `workit:implementer`, `workit:verifier`, `workit:reviewer`, `workit:decider`, `workit:babysitter`; search: `Explore` |
+| OpenCode | `workit-implementer`, `workit-verifier`, `workit-reviewer`, `workit-decider`, `workit-babysitter` |
+| Codex | the same `workit-*` names |
+| Cursor | `workit-verifier`, `workit-reviewer`, `workit-decider`, `workit-babysitter` |
 
-Claude Code and OpenCode also get the role's model set on the spawn by
-Workit; a configured one beats a `model` you pass unless
-`models.allowLeadOverride` is true. A general spawn takes
-`models.roles.default`, or the role its prompt's `ROLE: <role>` line names.
-`models.lead` (your own model) is advisory. `workit models show` marks each
-role `enforced` or `advisory` per host: on advisory, pass the model.
+Claude Code's agent files: decider `fable` (effort `high`), implementer and
+verifier `sonnet`, reviewer `opus`, babysitter `haiku`. A hard slice's brief
+`SPAWN:` line names `model: "opus"`; pass the line as printed. A role
+configured in `models.roles` to another model is listed in your session
+contract (Claude Code) or set on the host's agent (OpenCode, Codex); `workit
+models show [--role r] [--host h]` prints per host whether it comes from the
+`agent file`, a `spawn fill` or is `advisory` (pass it yourself), and the
+`models.enforce` mode. Under `strict` a configured role model beats a named
+one and Claude Code's auto mode denies a spawn that lacks it. A role with no
+model runs on the host's model, and TIER only sizes the timebox and decides
+whether to race. `models.lead` (your own model) is advisory.
 
 ## Rolling window
 
@@ -66,10 +59,9 @@ reversibility (the option cheapest to undo wins a tie), and the exact change
 list. The fixer applies that list once, then one focused recheck follows.
 
 - Hard call (shared contract, security, migration): two deciders on different
-  models (Claude Code, OpenCode, Cursor: the `decider` role model and a
-  different `model` on the spawn, kept on a configured decider role only with
-  `models.allowLeadOverride`; Codex and Pi: one decider). If they disagree, you take the
-  more reversible option.
+  models (Claude Code, OpenCode, Cursor: one bare decider spawn and one that
+  names another `model`; Codex and Pi: one decider). If they disagree, you
+  take the more reversible option.
 - Record it: `workit ledger decision "<pick>" --by decider --why "<why it is
   the more reversible>" --view "<decider A: view>" --view "<decider B: view>"`.
   The row is listed as a decider call; it is never the user's answer to a

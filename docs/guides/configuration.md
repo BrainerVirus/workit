@@ -564,72 +564,73 @@ are the host's own (Claude Code: `low`, `medium`, `high`, `xhigh`, `max`; Pi
 }
 ```
 
-**Defaults.** With nothing configured, Claude Code gets decider `fable`
-(effort `high`), implementer `hard` `opus`, `standard` `sonnet`, `mundane`
-`haiku`, verifier `sonnet`, reviewer `opus`, explore `haiku` and babysit
-`haiku`. The other hosts have no built-in defaults: a role with no entry runs
-on the host's own model. `workit models show [--role r] [--tier t] [--host h]
-[--json]` prints what each role resolves to and where it came from (default
-host: the lead's, else `claude_code`). `workit doctor` and `workit grant show`
-report an unknown role, tier or host key, or a value that is not a model or
-effort name; those entries are skipped.
+**Defaults.** Each Workit role is a host agent that carries its own model,
+so a lead spawns it by name and passes no model. With nothing configured,
+Claude Code's plugin agents run on: `workit:decider` `fable` (effort `high`),
+`workit:implementer` and `workit:verifier` `sonnet`, `workit:reviewer`
+`opus`, `workit:babysitter` `haiku`. A slice's tier adds `opus` (hard) or
+`haiku` (mundane) through its brief's `SPAWN:` line. `Explore` keeps Claude
+Code's own model. The other hosts have no built-in defaults: a role with no
+entry runs on the host's own model. `workit models show [--role r] [--tier t]
+[--host h] [--json]` prints what each role resolves to, where it came from
+(default host: the lead's, else `claude_code`), how it reaches a spawn per
+host (`agent file`, `spawn fill` or `advisory`) and the `models.enforce`
+mode. `workit doctor` and `workit grant show` report an unknown role, tier or
+host key, or a value that is not a model or effort name; those entries are
+skipped.
 
-**The lead's model and overrides.** `models.lead` (same shape as a role)
-names the model the lead session should run on per host. No host lets Workit
-set a session's own model, so it is advisory: `workit models show` lists it
-for you to pick with the host's model switch. A configured role model wins
-over a `model` the lead passes on a spawn; set `"allowLeadOverride": true`
-under `models` to let the lead's choice win instead. A built-in default never
-overrides a model the lead passes. `workit models show` marks each role
-`enforced` (Workit sets it on the spawn) or `advisory` (the lead passes it)
-per host.
+**The lead's model, a named model and `models.enforce`.** `models.lead` (same
+shape as a role) names the model the lead session should run on per host. No
+host lets Workit set a session's own model, so it is advisory: `workit models
+show` lists it for you to pick with the host's model switch. A model the lead
+(or the user) names on a spawn always wins, and no spawn is denied over its
+model or effort: `models.enforce` is `"advise"` by default. Set it to
+`"strict"` to hold every spawn to a configured role model: a named model then
+loses to it unless `"allowLeadOverride": true`, and Claude Code's auto mode
+denies a spawn that lacks it, with the exact Agent args to retry.
 
 ```json
-{ "models": { "lead": { "claude_code": "opus" }, "allowLeadOverride": false, "roles": { "default": { "claude_code": "sonnet" } } } }
+{ "models": { "lead": { "claude_code": "opus" }, "enforce": "advise", "roles": { "default": { "claude_code": "sonnet" } } } }
 ```
 
 **How each host applies it.**
 
-- Claude Code: the plugin's PreToolUse hook sets the role's model (and
-  `effort`) on every subagent spawn, so `Explore` runs on the explore role,
-  `workit:verifier` on the verifier role and `general-purpose` on `default`.
-  A full Claude id (`claude-sonnet-5-5`) is applied as its family alias,
-  since the Agent tool takes only aliases; a value it cannot take is skipped
-  with a note naming it. Outside auto mode the hook fills a missing model or
-  effort and its note names what to pass next time. Auto mode refuses a call a
-  hook rewrote, so there a spawn missing its role's model or effort (or one
-  that sets `isolation`) is denied once. The denial names the exact Agent args
-  to pass (`subagent_type`, `model`, `effort`, `run_in_background` and any
-  other arg kept), and the retry with them runs as written. A spawn that
-  already names its role's model and effort is never changed. The session
-  contract has one "Agent spawn model/effort" line that lists each agent type's
-  model and effort, so the first spawn can pass them.
-  `workit models show --report [--days n]` lists the models subagents actually
-  ran on (default last 7 days) and flags a role that ran on a non-default one.
-  The fanout brief also names `model:` and `effort:` under TIER and a
-  `verifier:` line. For a Claude Code lead it adds a `SPAWN:` line and a
-  `verifier SPAWN:` line with the exact Agent args (including
-  `run_in_background: true`). `workit fanout status` names the model per
-  spawnable slice, and the skills tell the lead to pass the model (and
-  `effort`) from `workit models show` on each Agent call. A user-level `~/.claude/agents/`
-  file cannot replace the plugin's `workit:verifier`, `workit:reviewer` or
-  `workit:implementer`: plugin agents are namespaced and a user agent is a
-  different name, so the per-call `model` is the mechanism.
-- Codex: when the plugin copies its agents into `$CODEX_HOME/agents/`, a
-  configured role's file gets `model` and `model_reasoning_effort`. A value in
-  the file overrides what a spawn passes, so the implementer file gets one
-  only when all three tiers resolve to the same model. Restart Codex after a
-  change.
+- Claude Code: the plugin agents' `model:` and `effort:` frontmatter carry
+  the defaults above. A role configured to another value (or `Explore` and
+  `general-purpose`, which have no Workit agent file) is filled on a spawn
+  that names no model: outside auto mode the PreToolUse hook sets it through
+  `updatedInput` with a note naming what to pass next time. Auto mode refuses
+  a call a hook rewrote, so there the spawn runs as written and the lead gets
+  one line naming the model that ran and the configured one, with the args to
+  pass. A spawn that names a model is never changed. A full Claude id
+  (`claude-sonnet-5-5`) is applied as its family alias; a value the Agent tool
+  cannot take is skipped with a note. The session contract says to spawn
+  roles by name and lists only the roles configured to differ from their
+  agent file. `workit models show --report [--days n]` lists the models
+  subagents actually ran on (default last 7 days) and flags a role that ran on
+  a non-default one. A user-level `~/.claude/agents/` file cannot replace a
+  plugin agent (plugin agents are namespaced), so a per-workspace value rides
+  the spawn.
+- OpenCode: the plugin registers `workit-implementer`, `workit-verifier`,
+  `workit-reviewer`, `workit-decider` and `workit-babysitter` as subagents,
+  each on its `models.roles` model for the project (`providerID/modelID`,
+  optionally `#variant`; none: the parent's), re-read when `workspaces.json`
+  changes. The judges and the decider cannot edit. A `subagent` call that
+  names a model keeps it; one that names none gets an implementer tier's,
+  `general`'s or explore's role model, or a usage-limit fallback. A continued
+  child keeps its model. Effort is not set.
+- Codex: when the plugin copies its `workit-*` agents (implementer, verifier,
+  reviewer, decider, babysitter) into `$CODEX_HOME/agents/`, a configured
+  role's file gets `model` and `model_reasoning_effort`. A value in the file
+  overrides what a spawn passes, so the implementer file gets one only when
+  all three tiers resolve to the same model. Restart Codex after a change.
+- Cursor: the plugin ships `workit-verifier`, `workit-reviewer`,
+  `workit-decider` and `workit-babysitter` agents with no model, so the
+  parent's model runs unless the spawn names one; a configured role is
+  advisory: pass it as the Task tool's `model`.
 - Pi: a supervised worker gets `--model` and `--thinking` for a configured
   role (reviewer; investigator uses `explore`; implementer only when its tiers
   agree). Without config the worker keeps the ambient model.
-- OpenCode: the plugin sets the role's model on each new `subagent` spawn,
-  as `providerID/modelID` (optionally `#variant`), with the same override rule;
-  a value without a provider is skipped with a note. A continued child keeps
-  its model. Effort is not set.
-- Cursor: no hook can change a spawn, so role models are advisory: the skills
-  and the brief name the model and the lead passes it as the Task tool's
-  `model`.
 
 **Migrating `fanout.tierModels`.** It keeps working: it is read as
 `models.roles.implementer.<tier>` (a model name per tier and host, no
