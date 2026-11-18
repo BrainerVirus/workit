@@ -5,7 +5,7 @@
 // behind the remote one; a linked worktree whose trunk is checked out
 // elsewhere is detached at the remote trunk.
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -224,4 +224,49 @@ test("Given workspace cleanup with a value Workit does not know, Then nothing is
     home.restore();
   }
   expect(existsSync(dir)).toBe(true);
+});
+
+/** feature/x's worktree stopped mid-rebase on a conflict: detached, the branch named by no worktree. */
+const midRebase = (world: ReturnType<typeof setup>) => {
+  const dir = slice(world);
+  git(world.main, "branch", "-q", "other", "main");
+  const other = path.join(world.root, "other");
+  git(world.main, "worktree", "add", "-q", other, "other");
+  commit(other, "x.txt", "other\n", "clash");
+  const rebase = spawnSync("git", ["rebase", "-q", "other"], { cwd: dir, encoding: "utf8" });
+  expect(rebase.status).not.toBe(0);
+  expect(git(dir, "branch", "--show-current")).toBe("");
+  return dir;
+};
+
+test("Given feature/x mid-rebase in its worktree (detached), When cleanup runs, Then the branch is kept with the reason and rebase --continue lands the work on it", async () => {
+  const world = setup();
+  squash(world);
+  const dir = midRebase(world);
+  const out = await cleanup(world);
+  expect(out.branchDeleted).toBe(false);
+  expect(out.notes.join("\n")).toContain(
+    "a rebase is in progress; kept local feature/x until it ends",
+  );
+  expect(branchExists(world.main, "feature/x")).toBe(true);
+  writeFileSync(path.join(dir, "x.txt"), "resolved\n");
+  git(dir, "add", "x.txt");
+  const continued = spawnSync("git", ["-c", "core.editor=true", "rebase", "--continue"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  expect(continued.status, continued.stderr).toBe(0);
+  expect(git(dir, "branch", "--show-current")).toBe("feature/x");
+  expect(git(world.main, "show", "feature/x:x.txt")).toBe("resolved");
+});
+
+test("Given feature/x mid-rebase in its worktree, When cleanup runs and the rebase is aborted, Then feature/x is back at its merged head", async () => {
+  const world = setup();
+  squash(world);
+  const dir = midRebase(world);
+  const out = await cleanup(world);
+  expect(out.branchDeleted).toBe(false);
+  git(dir, "rebase", "--abort");
+  expect(git(dir, "branch", "--show-current")).toBe("feature/x");
+  expect(git(world.main, "rev-parse", "feature/x")).toBe(world.head);
 });

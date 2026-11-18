@@ -114,6 +114,7 @@ const OPERATIONS: readonly [string, string][] = [
   ["rebase-merge", "rebase"],
   ["rebase-apply", "rebase"],
   ["BISECT_LOG", "bisect"],
+  ["BISECT_START", "bisect"],
   ["MERGE_HEAD", "merge"],
   ["CHERRY_PICK_HEAD", "cherry-pick"],
   ["REVERT_HEAD", "revert"],
@@ -826,7 +827,18 @@ export async function cleanupAfterMerge(
     out.scratchRemoved = scratches.filter((dir) => removeWorkerScratch(dir, env));
     tidyParent(entry.path, place, env);
   }
-  if (!listWorktrees(cwd).some((entry) => entry.branch === ref)) {
+  const left = listWorktrees(cwd);
+  // A worktree mid-rebase or mid-bisect shows a detached HEAD, so it never
+  // names the branch it works on; update-ref (unlike branch -D) would not
+  // notice. Any operation under way in any worktree keeps the branch.
+  const busyElsewhere = left
+    .map((entry) => ({ path: entry.path, busy: operationInProgress(entry.path) }))
+    .find((entry) => entry.busy);
+  if (busyElsewhere)
+    out.notes.push(
+      `worktree ${busyElsewhere.path}: ${busyElsewhere.busy}; kept local ${branch} until it ends`,
+    );
+  else if (!left.some((entry) => entry.branch === ref)) {
     // Compare-and-delete: a commit that lands after the last check keeps the branch.
     const deleted = gitRun(cwd, ["update-ref", "-d", ref, head]);
     if (deleted.ok) {
