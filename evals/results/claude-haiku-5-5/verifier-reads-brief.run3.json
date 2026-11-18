@@ -1,0 +1,36 @@
+{
+  "case": "verifier-reads-brief",
+  "run": 3,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "e7e0da918bd590ab",
+  "date": "2026-11-18T17:46:12.018Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 10659,
+    "costUsd": 0.08705059000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 17,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#4 Agent(workit:verifier: Verify greet slice) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). "
+      },
+      {
+        "rule": "first-try",
+        "detail": "3 denied and 0 failed of 12 Workit interaction(s): #4 Agent(workit:verifier: Verify greet slice) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). ; #7 Bash(workit fanout check greet --name greet; echo \"EXIT $?\") in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a8ed594aed4f64cfd may write only in its scratch dir <world>/repo/.workit-scratch, and `workit f; #8 Bash(W=<world>/state/worktrees/repo/greet; git -C $W rev-parse HEAD; git -C $W status --short; git -C $W branch --show-curren) in a subagent denied: PreToolUse:Bash hook error"
+      }
+    ],
+    "firstTry": {
+      "interactions": 12,
+      "failed": 0,
+      "denied": 3
+    }
+  }
+}

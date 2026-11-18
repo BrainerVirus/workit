@@ -1,15 +1,15 @@
 {
   "case": "git-verb-guess",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "7a2bb7052c9d50e6",
-  "date": "2026-11-18T13:18:52.775Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "3218ae87bc7ed59e",
+  "date": "2026-11-18T17:30:14.823Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 4,
-    "durationMs": 8496,
-    "costUsd": 0.0033308100000000005,
+    "durationMs": 8748,
+    "costUsd": 0.00338467,
     "stop": "success"
   },
   "grade": {

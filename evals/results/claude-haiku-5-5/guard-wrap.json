@@ -1,24 +1,24 @@
 {
   "case": "guard-wrap",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "be60985ffa667486",
-  "date": "2026-11-18T13:19:11.659Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "0dbb1704f96c1f05",
+  "date": "2026-11-18T16:23:43.159Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 6652,
-    "costUsd": 0.0030287400000000003,
+    "turns": 2,
+    "durationMs": 5946,
+    "costUsd": 0.00292744,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 2,
+    "calls": 1,
     "failures": [],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 1,
       "failed": 0,
       "denied": 0
     }

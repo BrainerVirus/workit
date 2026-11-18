@@ -2,41 +2,31 @@
   "case": "verdict-from-parent-dir",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "8cc1febd17e9c3b6",
-  "date": "2026-11-18T13:55:00.704Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "5ffa9a8ec05b84f4",
+  "date": "2026-11-18T16:30:37.245Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 45495,
-    "costUsd": 0.04721168,
+    "turns": 0,
+    "durationMs": 9,
+    "costUsd": 0.03624566,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 8,
+    "calls": 5,
     "failures": [
       {
         "rule": "first-try",
-        "detail": "1 denied and 1 failed of 4 Workit interaction(s): #2 Bash(git rev-parse HEAD && git status --short && grep '\"version\"' package.json && node bin/greet.js ada; echo exit=$?) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a67b08710c6fc2ac4 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #5 Bash(workit ledger verdict verified --kind live --cwd <world>/repo/.. --branch feature/greet-version --session b8a90dce-735c-) in a subagent failed: <outside-world file: unresolved, 335 bytes>"
+        "detail": "1 denied and 1 failed of 3 Workit interaction(s): #2 Bash(git rev-parse HEAD && git status --short && node bin/greet.js ada; echo \"exit $?\"; grep -n '\"version\"' package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a84e2e49f3c04a57f may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(workit ledger verdict verified --kind live --cwd <world> --branch feature/greet-version --session f472a3bd-3834-4f04-b59) in a subagent failed: Exit code 2"
       }
     ],
     "firstTry": {
-      "interactions": 4,
+      "interactions": 3,
       "failed": 1,
       "denied": 1
     }
-  },
-  "outsideChanges": [
-    {
-      "path": "~/.local/state/workit/issued/549912da793576113b38c0693e53600b/39d2a6b6cfdcdd54d93177a6c5b7527c",
-      "change": "created"
-    },
-    {
-      "path": "~/.local/state/workit/issued-tokens/549912da793576113b38c0693e53600b/39d2a6b6cfdcdd54d93177a6c5b7527c",
-      "change": "created"
-    }
-  ]
+  }
 }

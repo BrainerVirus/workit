@@ -1,0 +1,36 @@
+{
+  "case": "verifier-log-redirect",
+  "run": 4,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "69dd26393753b169",
+  "date": "2026-11-18T17:09:50.903Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 47338,
+    "costUsd": 0.06465752,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 13,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#1 Agent(workit:verifier: Verify feature/greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: false (descriptio"
+      },
+      {
+        "rule": "first-try",
+        "detail": "5 denied and 0 failed of 9 Workit interaction(s): #1 Agent(workit:verifier: Verify feature/greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: false (descriptio; #4 Bash(workit rev-parse 2>/dev/null; git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short; grep -n '\"version\") in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a16cbb79cab2c72a9 may write only in its scratch dir <world>/repo/.workit-scratch, and `workit r; #5 Bash(git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short; grep -n '\"version\"' <world>/repo/package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a16cbb79cab2c72a9 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #6 Bash(mkdir -p <world>/repo/.git/workit/notes) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a16cbb79cab2c72a9 may write only in its scratch dir <world>/repo/.workit-scratch, and <world>/r; #9 Bash(workit check --cwd <world>/repo test > <world>/repo/.workit-scratch/test.log 2>&1; echo exit=$?) in a subagent denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive or Unwanted Actions]. If you have other tasks that don't dep"
+      }
+    ],
+    "firstTry": {
+      "interactions": 9,
+      "failed": 0,
+      "denied": 5
+    }
+  }
+}

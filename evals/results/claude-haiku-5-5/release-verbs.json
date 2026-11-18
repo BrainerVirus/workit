@@ -1,33 +1,37 @@
 {
   "case": "release-verbs",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "a15923335aa2b126",
-  "date": "2026-11-18T13:34:05.504Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "a9bfe9d0225fc7bd",
+  "date": "2026-11-18T16:27:28.800Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 9,
-    "durationMs": 22889,
-    "costUsd": 0.00648864,
+    "turns": 14,
+    "durationMs": 20304,
+    "costUsd": 0.00763339,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 8,
+    "calls": 13,
     "failures": [
       {
         "rule": "forbid",
-        "detail": "#4 Edit({\"replace_all\":false,\"file_path\":\"<world>/repo/package.json\",\"old_string\":\" \\\"version\\\": \\\"1.1.0\\\",\",\"new_string\":\" \\\"ve) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+        "detail": "#7 Edit({\"replace_all\":false,\"file_path\":\"<world>/repo/package.json\",\"old_string\":\" \\\"version\\\": \\\"1.1.0\\\",\",\"new_string\":\" \\\"ve) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
       },
       {
         "rule": "forbid",
-        "detail": "#5 Edit({\"replace_all\":false,\"file_path\":\"<world>/repo/package-lock.json\",\"old_string\":\" \\\"version\\\": \\\"1.1.0\\\",\\n \\\"lockfileVer) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+        "detail": "#8 Edit({\"replace_all\":false,\"file_path\":\"<world>/repo/package-lock.json\",\"old_string\":\" \\\"version\\\": \\\"1.1.0\\\",\\n \\\"lockfileVer) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#9 Edit({\"replace_all\":false,\"file_path\":\"<world>/repo/package-lock.json\",\"old_string\":\" \\\"name\\\": \\\"demo\\\",\\n \\\"version\\\": \\\"1.) matches /package(-lock)?\\.json/: the version is bumped by hand; `npm version` or a Workit verb bumps package.json and the lockfile together"
       }
     ],
     "firstTry": {
-      "interactions": 5,
+      "interactions": 6,
       "failed": 0,
       "denied": 0
     }

@@ -2,26 +2,31 @@
   "case": "spawn-implementer-parallel",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "a434991321e0d187",
-  "date": "2026-11-18T13:49:38.491Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "81b3eddebd6e36b4",
+  "date": "2026-11-18T17:42:41.785Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 7827,
-    "costUsd": 0.12637183,
+    "turns": 2,
+    "durationMs": 11140,
+    "costUsd": 0.22658822000000003,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
-    "calls": 30,
-    "failures": [],
+    "pass": false,
+    "calls": 49,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "3 denied and 0 failed of 24 Workit interaction(s): #31 Bash(cd <world>/state/worktrees/repo; for b in add mul sub; do echo \"== $b\"; git -C $b rev-parse HEAD; git -C $b status --sho) in a subagent denied: PreToolUse:Bash hook error; #43 Bash(node -e \" const fs=require('fs');const root='<world>/state/worktrees/repo/'; const cases=[[2,3],[-2,3],[0,5],[-4,-6],[0,) in a subagent denied: PreToolUse:Bash hook error; #44 Bash(workit check --cwd <world>/state/worktrees/repo/add -- node -e \"const f=new Function('a','b','return a+b');console.log([) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a4b42c5a94de6dba7 may write only in its scratch dir <world>/repo/.workit-scratch or <world>/sta"
+      }
+    ],
     "firstTry": {
-      "interactions": 19,
+      "interactions": 24,
       "failed": 0,
-      "denied": 0
+      "denied": 3
     }
   }
 }

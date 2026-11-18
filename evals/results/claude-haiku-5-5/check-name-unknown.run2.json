@@ -2,15 +2,15 @@
   "case": "check-name-unknown",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "aedae74b90640144",
-  "date": "2026-11-18T13:10:34.312Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "a17ca5a0198500f5",
+  "date": "2026-11-18T16:49:34.480Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 5,
-    "durationMs": 9466,
-    "costUsd": 0.00411227,
+    "durationMs": 10473,
+    "costUsd": 0.004145159999999999,
     "stop": "success"
   },
   "grade": {

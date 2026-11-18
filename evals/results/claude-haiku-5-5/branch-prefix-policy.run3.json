@@ -2,25 +2,25 @@
   "case": "branch-prefix-policy",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "1e843b6ea5b054ed",
-  "date": "2026-11-18T13:08:06.414Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "4694d2b9c22fc872",
+  "date": "2026-11-18T16:22:51.247Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 6,
-    "durationMs": 14486,
-    "costUsd": 0.0046043,
+    "turns": 5,
+    "durationMs": 12476,
+    "costUsd": 0.005064140000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 5,
+    "calls": 4,
     "failures": [
       {
         "rule": "first-try",
-        "detail": "0 denied and 1 failed of 4 Workit interaction(s): #3 Bash(workit fanout worktree create notes --name wave) failed: Exit code 3"
+        "detail": "0 denied and 1 failed of 4 Workit interaction(s): #3 Bash(workit fanout worktree create notes && printf '%s\\n' --- && git worktree list && workit fanout status --offline) failed: Exit code 3"
       }
     ],
     "firstTry": {
@@ -28,5 +28,15 @@
       "failed": 1,
       "denied": 0
     }
-  }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/issued/549912da793576113b38c0693e53600b/c36e2e717ace0954829350627e719f84",
+      "change": "created"
+    },
+    {
+      "path": "~/.local/state/workit/issued-tokens/549912da793576113b38c0693e53600b/c36e2e717ace0954829350627e719f84",
+      "change": "created"
+    }
+  ]
 }

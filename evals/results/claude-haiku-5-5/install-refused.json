@@ -1,21 +1,21 @@
 {
   "case": "install-refused",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "58a5070bd9797cad",
-  "date": "2026-11-18T13:28:33.152Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "37786c719b349a61",
+  "date": "2026-11-18T16:43:52.775Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 7291,
-    "costUsd": 0.00324853,
+    "turns": 2,
+    "durationMs": 5502,
+    "costUsd": 0.00267958,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 2,
+    "calls": 1,
     "failures": [
       {
         "rule": "answer",
@@ -23,7 +23,7 @@
       }
     ],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 1,
       "failed": 0,
       "denied": 1
     }

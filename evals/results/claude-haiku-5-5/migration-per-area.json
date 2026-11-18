@@ -1,37 +1,24 @@
 {
   "case": "migration-per-area",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "198491498d73cbcb",
-  "date": "2026-11-18T13:29:00.018Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "11879ff7a5cb39c0",
+  "date": "2026-11-18T16:51:21.805Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 12,
-    "durationMs": 23599,
-    "costUsd": 0.007656769999999999,
+    "turns": 8,
+    "durationMs": 18131,
+    "costUsd": 0.00614881,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 10,
-    "failures": [
-      {
-        "rule": "forbid",
-        "detail": "#7 Bash(workit git commit -m \"refactor: migrate src/billing to log\" --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthrop) matches /\\bcommit\\b[^&;|\\n]*src/(billing|orders|users)\\b[^&;|\\n]*src/(billing|orders|users)\\b/: two areas in one commit"
-      },
-      {
-        "rule": "forbid",
-        "detail": "#9 Bash(workit git commit -m \"refactor: migrate src/orders to log\" --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthropi) matches /\\bcommit\\b[^&;|\\n]*src/(billing|orders|users)\\b[^&;|\\n]*src/(billing|orders|users)\\b/: two areas in one commit"
-      },
-      {
-        "rule": "forbid",
-        "detail": "#10 Bash(workit git commit -m \"refactor: migrate src/users to log\" --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic) matches /\\bcommit\\b[^&;|\\n]*src/(billing|orders|users)\\b[^&;|\\n]*src/(billing|orders|users)\\b/: two areas in one commit"
-      }
-    ],
+    "pass": true,
+    "calls": 6,
+    "failures": [],
     "firstTry": {
-      "interactions": 7,
+      "interactions": 2,
       "failed": 0,
       "denied": 0
     }

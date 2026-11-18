@@ -2,31 +2,35 @@
   "case": "spawn-implementer-first-try",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "19d26f3d8ccc2cd2",
-  "date": "2026-11-18T13:43:46.082Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "9027a6b814696ed5",
+  "date": "2026-11-18T17:05:12.133Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 5356,
-    "costUsd": 0.014297545,
+    "durationMs": 5081,
+    "costUsd": 0.01431485,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 22,
+    "calls": 21,
     "failures": [
       {
+        "rule": "spawn-refused",
+        "detail": "#9 Agent(workit:implementer: hello slice implementer) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
+      },
+      {
         "rule": "first-try",
-        "detail": "0 denied and 3 failed of 15 Workit interaction(s): #1 Bash(workit fanout worktree create hello) failed: Exit code 1; #6 Bash(workit fanout plan <world>/repo/.git/workit/notes/hello-plan.json --name hello) failed: Exit code 2; #9 Bash(workit fanout worktree create hello --name hello) failed: Exit code 3"
+        "detail": "1 denied and 1 failed of 12 Workit interaction(s): #1 Bash(workit fanout worktree create hello) failed: Exit code 1; #9 Agent(workit:implementer: hello slice implementer) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
       }
     ],
     "firstTry": {
-      "interactions": 15,
-      "failed": 3,
-      "denied": 0
+      "interactions": 12,
+      "failed": 1,
+      "denied": 1
     }
   }
 }

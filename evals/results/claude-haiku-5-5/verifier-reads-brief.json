@@ -1,0 +1,35 @@
+{
+  "case": "verifier-reads-brief",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "e7e0da918bd590ab",
+  "date": "2026-11-18T17:44:18.170Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 9244,
+    "costUsd": 0.08454088,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 17,
+    "failures": [
+      {
+        "rule": "repeated-failing-call",
+        "detail": "#13 Bash(git -C <world>/state/worktrees/repo/greet status --short --no-optional-locks) in a subagent repeats failed call #10: PreToolUse:Bash hook error: workit scratch confinement: verifier a11d8d09410645413 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat"
+      },
+      {
+        "rule": "first-try",
+        "detail": "4 denied and 1 failed of 11 Workit interaction(s): #6 Bash(workit fanout check greet --name greet) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a11d8d09410645413 may write only in its scratch dir <world>/repo/.workit-scratch, and `workit f; #7 Bash(W=<world>/state/worktrees/repo/greet; git -C $W rev-parse HEAD; git -C $W status --short; ls $W/bin 2>&1; git -C $W log ) in a subagent denied: PreToolUse:Bash hook error; #10 Bash(git -C <world>/state/worktrees/repo/greet status --short --no-optional-locks) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a11d8d09410645413 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #13 Bash(git -C <world>/state/worktrees/repo/greet status --short --no-optional-locks) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a11d8d09410645413 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #17 Bash(workit fanout check greet --name greet) failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 11,
+      "failed": 1,
+      "denied": 4
+    }
+  }
+}

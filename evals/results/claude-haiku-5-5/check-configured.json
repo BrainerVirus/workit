@@ -1,32 +1,35 @@
 {
   "case": "check-configured",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "c3c66c442853a0a4",
-  "date": "2026-11-18T13:09:55.439Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "568e094dc15d7133",
+  "date": "2026-11-18T16:40:01.049Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 6,
-    "durationMs": 11903,
-    "costUsd": 0.00424855,
+    "turns": 5,
+    "durationMs": 11631,
+    "costUsd": 0.0042051200000000006,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
-    "calls": 5,
-    "failures": [],
+    "pass": false,
+    "calls": 4,
+    "failures": [
+      {
+        "rule": "configured-check",
+        "detail": "no `workit check <typecheck|test>` call"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#4 Bash(cat .workit/checks.json; echo; sh scripts/typecheck.sh; echo \"typecheck exit=$?\"; sh scripts/test.sh; echo \"test exit=$?) matches /^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx|sh scripts/)/: a raw check command bypasses the configured checks"
+      }
+    ],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 0,
       "failed": 0,
       "denied": 0
     }
-  },
-  "outsideChanges": [
-    {
-      "path": "~/.local/state/workit/verdicts/2859a8047d64911c9f7bdd2305c85193/ledger.jsonl",
-      "change": "changed"
-    }
-  ]
+  }
 }

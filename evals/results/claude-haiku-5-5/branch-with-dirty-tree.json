@@ -1,15 +1,15 @@
 {
   "case": "branch-with-dirty-tree",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "4563a83ea4e5cf62",
-  "date": "2026-11-18T13:08:51.241Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "0444bd6b2938598c",
+  "date": "2026-11-18T16:39:05.146Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 5,
-    "durationMs": 10323,
-    "costUsd": 0.004058740000000001,
+    "durationMs": 8785,
+    "costUsd": 0.00410549,
     "stop": "success"
   },
   "grade": {
@@ -19,7 +19,7 @@
     "failures": [
       {
         "rule": "forbid",
-        "detail": "#4 Bash(git branch --show-current && git status --short && git diff && git log --oneline -1 && git stash list && git log --oneli) matches /\\bgit stash\\b/: --carry moves the change; no stash"
+        "detail": "#4 Bash(git diff && git stash list && git log --oneline -1 && git branch --show-current) matches /\\bgit stash\\b/: --carry moves the change; no stash"
       },
       {
         "rule": "at-most",
@@ -27,7 +27,7 @@
       }
     ],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 3,
       "failed": 0,
       "denied": 0
     }

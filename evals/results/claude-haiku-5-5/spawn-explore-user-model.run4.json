@@ -2,15 +2,15 @@
   "case": "spawn-explore-user-model",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "c989adb48755ec7e",
-  "date": "2026-11-18T13:41:08.456Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "0ed1ad7af96ef307",
+  "date": "2026-11-18T16:52:09.718Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 7942,
-    "costUsd": 0.0033633100000000004,
+    "durationMs": 7186,
+    "costUsd": 0.00334053,
     "stop": "success"
   },
   "grade": {
@@ -20,7 +20,7 @@
     "failures": [
       {
         "rule": "spawn-refused",
-        "detail": "#1 Agent(Explore: Locate hello() definition) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\", run_in_background: false (description and pro"
+        "detail": "#1 Agent(Explore: Locate hello() definition under src) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\", run_in_background: false (description and pro"
       },
       {
         "rule": "require",
@@ -28,7 +28,7 @@
       },
       {
         "rule": "first-try",
-        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(Explore: Locate hello() definition) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\", run_in_background: false (description and pro"
+        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(Explore: Locate hello() definition under src) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\", run_in_background: false (description and pro"
       }
     ],
     "firstTry": {

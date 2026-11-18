@@ -2,25 +2,29 @@
   "case": "implementer-pwd-path",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "854a23acc36a9425",
-  "date": "2026-11-18T13:27:34.374Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "1689a840527caaf0",
+  "date": "2026-11-18T16:43:44.666Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 9,
-    "durationMs": 80719,
-    "costUsd": 0.10679886999999999,
+    "turns": 3,
+    "durationMs": 6228,
+    "costUsd": 0.05457921,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 19,
+    "calls": 14,
     "failures": [
       {
         "rule": "spawn-refused",
-        "detail": "#5 Agent(workit:implementer: Implement rename slice) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
+        "detail": "#5 Agent(workit:implementer: rename slice implementer) was refused: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Undermining Oversight]. If you have other tasks that don't depend on thi"
+      },
+      {
+        "rule": "spawn-refused",
+        "detail": "#6 Agent(workit:implementer: rename slice implementer) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
       },
       {
         "rule": "require",
@@ -28,12 +32,12 @@
       },
       {
         "rule": "first-try",
-        "detail": "2 denied and 1 failed of 11 Workit interaction(s): #5 Agent(workit:implementer: Implement rename slice) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli; #10 Bash(cd <world>/state/worktrees/repo/rename && sed -i 's/oldName/newName/g' $(pwd)/src/a.ts $(pwd)/src/b.ts $(pwd)/src/c.ts) in a subagent denied: PreToolUse:Bash hook error; #15 Bash(workit git --cwd <world>/state/worktrees/repo/rename commit -m \"rename oldName to newName in src/\" --trailer \"Co-Authore) in a subagent failed: Exit code 3"
+        "detail": "2 denied and 0 failed of 10 Workit interaction(s): #5 Agent(workit:implementer: rename slice implementer) denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Undermining Oversight]. If you have other tasks that don't depend on thi; #6 Agent(workit:implementer: rename slice implementer) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
       }
     ],
     "firstTry": {
-      "interactions": 11,
-      "failed": 1,
+      "interactions": 10,
+      "failed": 0,
       "denied": 2
     }
   }

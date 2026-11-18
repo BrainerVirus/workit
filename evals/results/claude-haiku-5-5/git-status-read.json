@@ -1,15 +1,15 @@
 {
   "case": "git-status-read",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "b953c26680d3a5b0",
-  "date": "2026-11-18T13:18:41.402Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "80ac95dcb9e67f05",
+  "date": "2026-11-18T17:19:33.690Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 2931,
-    "costUsd": 0.0024318100000000004,
+    "durationMs": 4285,
+    "costUsd": 0.0024528100000000006,
     "stop": "success"
   },
   "grade": {

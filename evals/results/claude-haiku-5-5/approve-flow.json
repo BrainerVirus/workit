@@ -1,15 +1,15 @@
 {
   "case": "approve-flow",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "fecf88194a7b8e14",
-  "date": "2026-11-18T13:06:09.650Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "5852eb6af80bc635",
+  "date": "2026-11-18T15:48:12.314Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 7579,
-    "costUsd": 0.0027919599999999996,
+    "durationMs": 6837,
+    "costUsd": 0.00287015,
     "stop": "success"
   },
   "grade": {

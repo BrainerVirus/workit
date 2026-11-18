@@ -2,15 +2,15 @@
   "case": "youtrack-time-raw-ytrack",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "fbdf4334a40596fd",
-  "date": "2026-11-18T14:24:53.560Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "6534c87293f62526",
+  "date": "2026-11-18T16:34:56.065Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 10708,
-    "costUsd": 0.00331584,
+    "durationMs": 9682,
+    "costUsd": 0.00319007,
     "stop": "success"
   },
   "grade": {

@@ -1,21 +1,21 @@
 {
   "case": "fanout-worktree-create-flags",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "b9867f48c9abe183",
-  "date": "2026-11-18T13:18:16.122Z",
-  "exit": 1,
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "045dcd9eca274779",
+  "date": "2026-11-18T16:40:14.338Z",
+  "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 7,
-    "durationMs": 11478,
-    "costUsd": 0.00429024,
-    "stop": "error_max_turns"
+    "turns": 6,
+    "durationMs": 10902,
+    "costUsd": 0.0043266400000000005,
+    "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 6,
+    "calls": 5,
     "failures": [
       {
         "rule": "at-most",
@@ -24,7 +24,7 @@
     ],
     "firstTry": {
       "interactions": 5,
-      "failed": 1,
+      "failed": 2,
       "denied": 0
     }
   }

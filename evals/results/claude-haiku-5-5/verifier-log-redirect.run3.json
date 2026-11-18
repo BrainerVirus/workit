@@ -2,33 +2,29 @@
   "case": "verifier-log-redirect",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "e99b83aff7de0493",
-  "date": "2026-11-18T14:19:34.982Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "69dd26393753b169",
+  "date": "2026-11-18T17:09:00.965Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 7941,
-    "costUsd": 0.06015115000000001,
+    "durationMs": 38570,
+    "costUsd": 0.06378676,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 10,
+    "calls": 13,
     "failures": [
       {
-        "rule": "spawn-refused",
-        "detail": "#1 Agent(workit:verifier: Verify feature/greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). "
-      },
-      {
         "rule": "first-try",
-        "detail": "4 denied and 0 failed of 7 Workit interaction(s): #1 Agent(workit:verifier: Verify feature/greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). ; #3 Bash(git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short; grep -n '\"version\"' <world>/repo/package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a2368c72f83956b25 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(workit check --cwd <world>/repo test > <world>/verify-check.log 2>&1; echo exit=$?; tail -n 60 <world>/verify-check.log) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a2368c72f83956b25 may write only in its scratch dir <world>/repo/.workit-scratch, and <world>/v; #6 Bash(workit check --cwd <world>/repo test > <world>/repo/.workit-scratch/verify-check.log 2>&1; echo exit=$?; tail -n 60 <wor) in a subagent denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive or Unwanted Actions]. If you have other tasks that don't dep"
+        "detail": "4 denied and 0 failed of 6 Workit interaction(s): #2 Bash(cd /tmp && git -C <world>/repo branch --show-current; git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --s) in a subagent denied: PreToolUse:Bash hook error; #3 Bash(R=<world>/repo; mkdir -p $R/.workit-scratch; git --no-optional-locks -C $R branch --show-current; git --no-optional-lock) in a subagent denied: PreToolUse:Bash hook error; #9 Bash(workit check --cwd <world>/repo test > <world>/repo/.workit-scratch/check.log 2>&1; echo exit=$?) in a subagent denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive or Unwanted Actions]. If you have other tasks that don't dep; #11 Bash(workit check --cwd <world>/repo test > <world>/repo/.workit-scratch/check.log 2>&1) in a subagent denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive or Unwanted Actions]. If you have other tasks that don't dep"
       }
     ],
     "firstTry": {
-      "interactions": 7,
+      "interactions": 6,
       "failed": 0,
       "denied": 4
     }

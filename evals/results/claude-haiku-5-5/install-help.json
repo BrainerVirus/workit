@@ -1,15 +1,15 @@
 {
   "case": "install-help",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "7d995cf6881022ec",
-  "date": "2026-11-18T13:27:43.832Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "3e3315a6817dbbd4",
+  "date": "2026-11-18T16:50:28.339Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 6737,
-    "costUsd": 0.00304865,
+    "durationMs": 7372,
+    "costUsd": 0.0037456600000000005,
     "stop": "success"
   },
   "grade": {
@@ -23,11 +23,11 @@
       },
       {
         "rule": "first-try",
-        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Bash(workit install --help) denied: Only the user runs `workit install`: the user decides this call."
+        "detail": "1 denied and 0 failed of 2 Workit interaction(s): #1 Bash(workit install --help) denied: Only the user runs `workit install`: the user decides this call."
       }
     ],
     "firstTry": {
-      "interactions": 1,
+      "interactions": 2,
       "failed": 0,
       "denied": 1
     }

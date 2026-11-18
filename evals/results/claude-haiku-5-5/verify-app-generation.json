@@ -1,25 +1,30 @@
 {
   "case": "verify-app-generation",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "6a335a3301af215f",
-  "date": "2026-11-18T14:21:30.670Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "5dd6bc730ed56f77",
+  "date": "2026-11-18T17:36:53.177Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 16,
-    "durationMs": 43126,
-    "costUsd": 0.011643090000000002,
+    "turns": 15,
+    "durationMs": 37048,
+    "costUsd": 0.011003500000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
-    "calls": 14,
-    "failures": [],
+    "pass": false,
+    "calls": 13,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /node bin/greet\\.js/: the real CLI is driven once"
+      }
+    ],
     "firstTry": {
       "interactions": 4,
-      "failed": 1,
+      "failed": 0,
       "denied": 0
     }
   }

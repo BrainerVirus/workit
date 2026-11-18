@@ -2,15 +2,15 @@
   "case": "spawn-adhoc-slice",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "28330b79c0521b64",
-  "date": "2026-11-18T13:36:16.244Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "9b5ec55997820cb6",
+  "date": "2026-11-18T15:51:41.762Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 4,
-    "durationMs": 15222,
-    "costUsd": 0.00443331,
+    "durationMs": 14294,
+    "costUsd": 0.0043872699999999995,
     "stop": "success"
   },
   "grade": {
@@ -20,7 +20,7 @@
     "failures": [
       {
         "rule": "spawn-refused",
-        "detail": "#2 Agent(workit:implementer: Add src/version.ts export) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
+        "detail": "#3 Agent(workit:implementer: Add src/version.ts constant) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
       },
       {
         "rule": "require",
@@ -28,12 +28,12 @@
       },
       {
         "rule": "first-try",
-        "detail": "1 denied and 2 failed of 3 Workit interaction(s): #1 Bash(workit fanout worktree create version-ts) failed: Exit code 1; #2 Agent(workit:implementer: Add src/version.ts export) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli; #3 Bash(workit fanout brief version-ts) failed: Exit code 1"
+        "detail": "1 denied and 1 failed of 3 Workit interaction(s): #1 Bash(workit fanout worktree create version-const) failed: Exit code 1; #3 Agent(workit:implementer: Add src/version.ts constant) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
       }
     ],
     "firstTry": {
       "interactions": 3,
-      "failed": 2,
+      "failed": 1,
       "denied": 1
     }
   }

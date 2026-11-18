@@ -2,26 +2,32 @@
   "case": "rebase-positional",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "176fe01c7d738a71",
-  "date": "2026-11-18T13:33:15.695Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "b7ec0caf52c4786e",
+  "date": "2026-11-18T17:31:09.881Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 6278,
-    "costUsd": 0.0032023200000000003,
+    "turns": 4,
+    "durationMs": 8253,
+    "costUsd": 0.0037164399999999997,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 2,
+    "calls": 3,
     "failures": [],
     "firstTry": {
       "interactions": 2,
       "failed": 0,
       "denied": 0
     }
-  }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/0a98ea036e40682d30142cbceeae23f4/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
 }

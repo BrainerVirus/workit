@@ -2,15 +2,15 @@
   "case": "spawn-user-model-override",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "e458b091e2760b5c",
-  "date": "2026-11-18T13:51:03.154Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "d93195724bc7c972",
+  "date": "2026-11-18T17:32:22.575Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 11307,
-    "costUsd": 0.0038551699999999998,
+    "durationMs": 13308,
+    "costUsd": 0.004200570000000001,
     "stop": "success"
   },
   "grade": {
@@ -20,7 +20,7 @@
     "failures": [
       {
         "rule": "spawn-refused",
-        "detail": "#1 Agent(workit:verifier: Verify greet CLI on feature branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\" (description and prompt as written). It"
+        "detail": "#1 Agent(workit:verifier: Verify feature/greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\", run_in_background: false (description "
       },
       {
         "rule": "require",
@@ -28,7 +28,7 @@
       },
       {
         "rule": "first-try",
-        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(workit:verifier: Verify greet CLI on feature branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\" (description and prompt as written). It"
+        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(workit:verifier: Verify feature/greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\", run_in_background: false (description "
       }
     ],
     "firstTry": {

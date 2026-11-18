@@ -1,24 +1,24 @@
 {
   "case": "worktree-commit-pwd",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "e806f284fd172a4b",
-  "date": "2026-11-18T14:21:48.698Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "c7dbc6ab4f9b0efe",
+  "date": "2026-11-18T15:53:37.053Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 5,
-    "durationMs": 15276,
-    "costUsd": 0.00452352,
+    "turns": 2,
+    "durationMs": 10016,
+    "costUsd": 0.00354668,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 4,
+    "calls": 1,
     "failures": [],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 1,
       "failed": 0,
       "denied": 0
     }

@@ -1,15 +1,15 @@
 {
   "case": "flag-prefix",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "3073abebce380da6",
-  "date": "2026-11-18T13:18:35.552Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "17413a21886c5b72",
+  "date": "2026-11-18T17:00:30.787Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 5706,
-    "costUsd": 0.0028610200000000006,
+    "durationMs": 4943,
+    "costUsd": 0.0028594300000000005,
     "stop": "success"
   },
   "grade": {

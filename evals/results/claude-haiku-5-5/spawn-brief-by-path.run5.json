@@ -2,15 +2,15 @@
   "case": "spawn-brief-by-path",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "7d89f7dd4f9b5415",
-  "date": "2026-11-18T13:38:36.155Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "d293158ba5b210a0",
+  "date": "2026-11-18T16:29:21.773Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 7,
-    "durationMs": 21754,
-    "costUsd": 0.00675251,
+    "durationMs": 18749,
+    "costUsd": 0.006812199999999999,
     "stop": "success"
   },
   "grade": {

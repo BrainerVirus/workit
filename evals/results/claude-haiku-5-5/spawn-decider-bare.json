@@ -1,15 +1,15 @@
 {
   "case": "spawn-decider-bare",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "8a1ef765e195c8ab",
-  "date": "2026-11-18T13:38:58.682Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "f414b431dfd6fada",
+  "date": "2026-11-18T16:44:26.451Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 0,
-    "durationMs": 7,
-    "costUsd": 0.007045044999999999,
+    "durationMs": 15,
+    "costUsd": 0.006847000000000001,
     "stop": "success"
   },
   "grade": {

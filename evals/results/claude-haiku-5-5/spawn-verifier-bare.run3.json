@@ -2,15 +2,15 @@
   "case": "spawn-verifier-bare",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "a896a7a8b03b3ba1",
-  "date": "2026-11-18T13:52:18.349Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "96a55b4cb3bbc9d8",
+  "date": "2026-11-18T15:52:41.482Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 10400,
-    "costUsd": 0.0036069,
+    "durationMs": 10837,
+    "costUsd": 0.0038135599999999997,
     "stop": "success"
   },
   "grade": {

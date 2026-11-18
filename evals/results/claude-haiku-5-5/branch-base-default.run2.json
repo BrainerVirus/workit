@@ -2,15 +2,15 @@
   "case": "branch-base-default",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "b007fd58174ec9ea",
-  "date": "2026-11-18T13:06:24.914Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "c9f88f49a203c8d4",
+  "date": "2026-11-18T15:48:28.187Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 5527,
-    "costUsd": 0.00286206,
+    "durationMs": 5223,
+    "costUsd": 0.0028832999999999997,
     "stop": "success"
   },
   "grade": {

@@ -2,29 +2,29 @@
   "case": "branch-prefix-policy",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "1e843b6ea5b054ed",
-  "date": "2026-11-18T13:08:36.761Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "4694d2b9c22fc872",
+  "date": "2026-11-18T16:23:24.060Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 5,
-    "durationMs": 12388,
-    "costUsd": 0.00429061,
+    "turns": 6,
+    "durationMs": 16270,
+    "costUsd": 0.004658850000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 4,
+    "calls": 5,
     "failures": [
       {
         "rule": "first-try",
-        "detail": "0 denied and 1 failed of 3 Workit interaction(s): #3 Bash(workit fanout worktree create notes) failed: Exit code 3"
+        "detail": "0 denied and 1 failed of 4 Workit interaction(s): #3 Bash(workit fanout worktree create notes --name wave 2>&1 && printf '%s\\n' --- && git worktree list) failed: Exit code 3"
       }
     ],
     "firstTry": {
-      "interactions": 3,
+      "interactions": 4,
       "failed": 1,
       "denied": 0
     }

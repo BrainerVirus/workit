@@ -1,15 +1,15 @@
 {
   "case": "fanout-plan-json-enums",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "79b61836da7ca475",
-  "date": "2026-11-18T13:18:01.706Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "ff13bf46574feb80",
+  "date": "2026-11-18T16:23:34.188Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 5,
-    "durationMs": 8575,
-    "costUsd": 0.00359624,
+    "durationMs": 7848,
+    "costUsd": 0.0037370000000000007,
     "stop": "success"
   },
   "grade": {

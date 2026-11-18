@@ -2,15 +2,15 @@
   "case": "fanout-plan-by-path",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "4bd14c70d2fcf23c",
-  "date": "2026-11-18T13:17:23.535Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "c52fc3be56ffe9c4",
+  "date": "2026-11-18T15:49:38.704Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 5,
-    "durationMs": 10234,
-    "costUsd": 0.00378083,
+    "durationMs": 9595,
+    "costUsd": 0.0037293599999999997,
     "stop": "success"
   },
   "grade": {
@@ -20,7 +20,7 @@
     "failures": [
       {
         "rule": "first-try",
-        "detail": "0 denied and 1 failed of 4 Workit interaction(s): #2 Bash(workit fanout worktree create notes 2>&1) failed: Exit code 1"
+        "detail": "0 denied and 1 failed of 4 Workit interaction(s): #2 Bash(workit help fanout worktree 2>&1 | head -40; printf '%s\\n' ---; workit fanout worktree create notes 2>&1) failed: Exit code 1"
       }
     ],
     "firstTry": {

@@ -1,21 +1,21 @@
 {
   "case": "commit-stage-file",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "c21f788ef8aa71c6",
-  "date": "2026-11-18T13:13:18.545Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "05ada6e8a1d4d624",
+  "date": "2026-11-18T17:00:22.799Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 4,
-    "durationMs": 7901,
-    "costUsd": 0.0034752200000000002,
+    "turns": 3,
+    "durationMs": 5934,
+    "costUsd": 0.0030702600000000004,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 3,
+    "calls": 2,
     "failures": [],
     "firstTry": {
       "interactions": 1,

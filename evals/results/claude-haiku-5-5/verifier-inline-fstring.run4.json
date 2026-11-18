@@ -2,21 +2,21 @@
   "case": "verifier-inline-fstring",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
-  "key": "bb6a40395b389d4a",
-  "date": "2026-11-18T14:02:50.600Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "1dfdaf2be780b36a",
+  "date": "2026-11-18T16:54:59.496Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 33485,
-    "costUsd": 0.05700929,
+    "durationMs": 36734,
+    "costUsd": 0.06165964,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 9,
+    "calls": 10,
     "failures": [
       {
         "rule": "require",
@@ -24,13 +24,13 @@
       },
       {
         "rule": "first-try",
-        "detail": "4 denied and 0 failed of 6 Workit interaction(s): #2 Bash(git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short; python3 -c \"import json; v=json.load(open('<worl) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aca00d7b856cdeefa may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(workit check --cwd <world>/repo -- python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; p) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aca00d7b856cdeefa may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #5 Bash(python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; print(f'version={v}')\") in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aca00d7b856cdeefa may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #6 Bash(mkdir -p <world>/repo/.workit-scratch && cd <world>/repo/.workit-scratch && python3 -c \"import json; v=json.load(open('<) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aca00d7b856cdeefa may write only in its scratch dir <world>/repo/.workit-scratch, and <world>/r"
+        "detail": "5 denied and 0 failed of 7 Workit interaction(s): #2 Bash(python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; print(f'version={v}')\"; git -C <worl) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a800bc296da40cd57 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #3 Bash(python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; print(f'version={v}')\"; git -C <worl) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a800bc296da40cd57 may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #4 Bash(workit check --cwd <world>/repo -- python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; p) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a800bc296da40cd57 may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #6 Bash(cd /tmp && python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; print(f'version={v}')\") in a subagent denied: PreToolUse:Bash hook error; #7 Bash(mkdir -p <world>/repo/.workit-scratch && cd <world>/repo/.workit-scratch && python3 -c \"import json; v=json.load(open('<) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a800bc296da40cd57 may write only in its scratch dir <world>/repo/.workit-scratch, and <world>/r"
       }
     ],
     "firstTry": {
-      "interactions": 6,
+      "interactions": 7,
       "failed": 0,
-      "denied": 4
+      "denied": 5
     }
   }
 }
