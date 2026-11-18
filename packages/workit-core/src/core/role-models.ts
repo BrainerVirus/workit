@@ -24,8 +24,11 @@
 // The `default` role is a spawn no Workit role claims (Claude Code's
 // general-purpose, OpenCode's general). `models.lead` names the lead's own
 // model, advisory on every host (none lets Workit pick the session model).
-// A model the lead names on a spawn loses to a configured role model unless
-// `models.allowLeadOverride` is true; a built-in default never overrides one.
+// A role's model lives in the host's own agent definition (Claude Code's
+// plugin agents, OpenCode's registered agents, Codex and Cursor agent files),
+// and a model the lead names on a spawn always wins. Only `models.enforce:
+// "strict"` holds a spawn to a configured role model (unless
+// `models.allowLeadOverride` is true).
 import {
   exhaustionFor,
   parseWindow,
@@ -77,15 +80,20 @@ const HOST_KEYS = new Set([
   "default",
 ]);
 
-const BUILT_IN_CLAUDE_CODE: Record<string, { model: string; effort?: string }> = {
+/** The `model:` and `effort:` of each Workit Claude Code agent file (packages/workit-claude-code/agents). */
+export const CLAUDE_AGENT_FILES: Record<string, { model: string; effort?: string }> = {
   decider: { model: "fable", effort: "high" },
+  implementer: { model: "sonnet" },
+  verifier: { model: "sonnet" },
+  reviewer: { model: "opus" },
+  babysit: { model: "haiku" },
+};
+
+const BUILT_IN_CLAUDE_CODE: Record<string, { model: string; effort?: string }> = {
+  ...CLAUDE_AGENT_FILES,
   "implementer.hard": { model: "opus" },
   "implementer.standard": { model: "sonnet" },
   "implementer.mundane": { model: "haiku" },
-  verifier: { model: "sonnet" },
-  reviewer: { model: "opus" },
-  explore: { model: "haiku" },
-  babysit: { model: "haiku" },
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -293,26 +301,35 @@ export const leadSwitchNotice = (
     : `Workit cannot switch this session's model: ${blocked.provider} is exhausted until ${shortTime(blocked.until)}, and models.lead names no model of another provider. Add one to models.lead in workspaces.json, then run \`workit models show\`.`;
 };
 
-/** `models.allowLeadOverride` (nearest source that sets it): true lets a spawn's own model win. */
-export const leadOverrideAllowed = (cwd: string, dir?: string): boolean => {
+/** A `models.<key>` value from the nearest source that sets it. */
+const modelsKey = (cwd: string, key: string, dir?: string): unknown => {
   for (const source of modelSources(cwd, dir))
-    if (isObject(source.models) && Object.hasOwn(source.models, "allowLeadOverride"))
-      return source.models.allowLeadOverride === true;
-  return false;
+    if (isObject(source.models) && Object.hasOwn(source.models, key)) return source.models[key];
+  return undefined;
 };
+
+/** `models.allowLeadOverride`: true lets a spawn's own model win under `strict`. */
+export const leadOverrideAllowed = (cwd: string, dir?: string): boolean =>
+  modelsKey(cwd, "allowLeadOverride", dir) === true;
+
+/** `models.enforce`: `strict` holds a spawn to its configured role model; `advise` (the default) only says so. */
+export const enforceMode = (cwd: string, dir?: string): "advise" | "strict" =>
+  modelsKey(cwd, "enforce", dir) === "strict" ? "strict" : "advise";
 
 /** The hosts `models show` reports enforcement for, in the order it prints them. */
 export const ENFORCEMENT_HOSTS = ["claude_code", "opencode", "codex", "cursor", "pi"] as const;
-export type Enforcement = "enforced" | "advisory";
+export type Enforcement = "agent file" | "spawn fill" | "advisory";
+
+const FILE_ROLES = new Set(["decider", "verifier", "reviewer", "babysit"]);
 
 /**
- * Whether Workit applies a role's model on a host itself (`enforced`) or only
- * names it for the lead to pass (`advisory`). Claude Code (a PreToolUse deny
- * naming the exact args) and OpenCode (the plugin's subagent hook) hold every
- * spawn to it; Codex writes it into its verifier, reviewer and implementer agent
- * files, Pi passes it to its reviewer, investigator and implementer workers
- * (the implementer on both only when the three tiers agree); Cursor has no
- * hook that can change a spawn. The lead's own model is advisory everywhere.
+ * How a role's model reaches a spawn on a host: `agent file` (the host's own
+ * agent definition carries it: Claude Code's plugin agents, OpenCode's
+ * registered agents, Codex's and Cursor's agent files), `spawn fill` (set on a
+ * spawn that names no model: Claude Code's hook outside auto mode, OpenCode's
+ * execute.before, Pi's worker flags) or `advisory` (the lead passes it). A
+ * Codex or Pi implementer counts only when its three tiers agree. The lead's
+ * own model is advisory everywhere.
  */
 export const roleEnforcement = (
   cwd: string,
@@ -322,13 +339,24 @@ export const roleEnforcement = (
 ): Enforcement => {
   if (selector === "lead") return "advisory";
   const family = hostFamily(host);
-  if (family === "claude_code" || family === "opencode") return "enforced";
-  const agents =
-    family === "codex" ? ["verifier", "reviewer"] : family === "pi" ? ["reviewer", "explore"] : [];
-  if (agents.includes(selector.role)) return "enforced";
-  if (selector.role === "implementer" && (family === "codex" || family === "pi"))
-    return uniformImplementerModel(cwd, host, dir) ? "enforced" : "advisory";
-  return "advisory";
+  const { role } = selector;
+  if (family === "claude_code") {
+    const file = CLAUDE_AGENT_FILES[role];
+    const want = resolveRoleModel(cwd, selector, host, dir);
+    if (!file) return want ? "spawn fill" : "advisory";
+    return !want || (want.model === file.model && (want.effort ?? undefined) === file.effort)
+      ? "agent file"
+      : "spawn fill";
+  }
+  const uniform = role === "implementer" && !!uniformImplementerModel(cwd, host, dir);
+  if (family === "pi")
+    return role === "reviewer" || role === "explore" || uniform ? "spawn fill" : "advisory";
+  if (family === "opencode" && !FILE_ROLES.has(role) && !uniform) return "spawn fill";
+  return FILE_ROLES.has(role) || uniform
+    ? family === "opencode" || family === "codex" || family === "cursor"
+      ? "agent file"
+      : "advisory"
+    : "advisory";
 };
 
 export type SpawnModelChoice = {
@@ -365,8 +393,9 @@ const roleLabel = (selector: RoleSelector): string =>
 
 /**
  * The model and effort a spawn for `selector` runs on: a spawn that names no
- * model gets the role's; one that names another model keeps it only when the
- * role model is a built-in default or `models.allowLeadOverride` is true.
+ * model gets the role's; one that names another model keeps it, except under
+ * `models.enforce: "strict"` with a configured role model and no
+ * `models.allowLeadOverride`.
  * `accept` maps a configured value to what the host's spawn takes (null: it
  * cannot take it, and the spawn runs as written with a note naming the fix).
  */
@@ -392,7 +421,11 @@ export const chooseSpawnModel = (
   const givenModel = name(given.model);
   const label = roleLabel(selector);
   const configured = resolved.source !== "built-in";
-  if (givenModel && (!configured || leadOverrideAllowed(cwd, dir))) return none;
+  if (
+    givenModel &&
+    (!configured || enforceMode(cwd, dir) === "advise" || leadOverrideAllowed(cwd, dir))
+  )
+    return none;
   const model = accept(resolved.model);
   const effort = resolved.effort && !name(given.effort) ? resolved.effort : null;
   const fallback = fallbackText(resolved);
@@ -419,7 +452,7 @@ export const chooseSpawnModel = (
     effort,
     basis,
     note: givenModel
-      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}.${why} Next time ${next} on the spawn. To let a spawn's own model win, set "allowLeadOverride": true under models in workspaces.json.`
+      ? `Workit replaced model ${givenModel} with ${model} on this spawn: role ${label} is set in ${resolved.source}.${why} Next time ${next} on the spawn, or set models.enforce "advise" so a named model wins.`
       : `Workit set ${model}${effort ? ` (effort ${effort})` : ""} on this spawn: role ${label}, ${resolved.source}.${why}${configured ? "" : " Name a model to choose another."}`,
   };
 };
@@ -446,34 +479,36 @@ export const claudeSpawnArgs = (
   };
 };
 
-/** Claude Code's spawn for each role: its agent type, or the prompt line that selects it. */
+/** Claude Code's spawn for each role. */
 const CLAUDE_SPAWNS: Array<{ label: string; selector: RoleSelector }> = [
-  ...(["hard", "standard", "mundane"] as const).map((tier) => ({
-    label: tier === "hard" ? "workit:implementer hard" : tier,
+  ...MODEL_TIERS.map((tier) => ({
+    label: `workit:implementer ${tier}`,
     selector: { role: "implementer" as const, tier },
   })),
-  { label: "workit:verifier", selector: { role: "verifier" } },
-  { label: "workit:reviewer", selector: { role: "reviewer" } },
+  ...(["verifier", "reviewer", "decider"] as const).map((role) => ({
+    label: `workit:${role}`,
+    selector: { role },
+  })),
+  { label: "workit:babysitter", selector: { role: "babysit" } },
   { label: "Explore", selector: { role: "explore" } },
-  { label: "ROLE: decider", selector: { role: "decider" } },
-  { label: "ROLE: babysit", selector: { role: "babysit" } },
   { label: "general-purpose", selector: { role: "default" } },
 ];
 
 /**
- * One line naming the `model`/`effort` of every Claude Code agent type
- * Workit assigns a role (a `ROLE:` prompt line on general-purpose), so the
- * lead's first spawn needs no correction (retro 2026-11-07 R1). Null when no
- * role has a model.
+ * The SessionStart spawn line: spawn roles by name and pass no model, plus
+ * every role whose configured model or effort differs from its agent file.
  */
-export const claudeSpawnTable = (cwd: string, dir?: string): string | null => {
+export const claudeSpawnTable = (cwd: string, dir?: string): string => {
   const rows = CLAUDE_SPAWNS.flatMap(({ label, selector }) => {
-    const args = claudeSpawnArgs(cwd, selector, dir);
-    return args ? [`${label} ${args.model}${args.effort ? `/${args.effort}` : ""}`] : [];
+    const want = resolveRoleModel(cwd, selector, "claude_code", dir);
+    const model = want && want.source !== "built-in" ? claudeAgentModel(want.model) : null;
+    const effort = want?.effort?.toLowerCase();
+    const file = label.startsWith("workit:") ? CLAUDE_AGENT_FILES[selector.role] : undefined;
+    return model && (model !== file?.model || effort !== file.effort)
+      ? [`${label} ${model}${effort ? `/${effort}` : ""}`]
+      : [];
   });
-  return rows.length
-    ? `Agent spawn model/effort (pass them, workers with run_in_background: true): ${rows.join(", ")}. Implementer prompt: \`workit fanout brief <slice>\` after \`workit fanout worktree create <slice>\`, even for one slice.`
-    : null;
+  return `Spawn Workit roles by name (workit:implementer, workit:verifier, workit:reviewer, workit:decider, workit:babysitter; search: Explore), workers with run_in_background: true, and pass no model or effort unless the user named one${rows.length ? `; configured here (pass them): ${rows.join(", ")}` : ""}. Implementer prompt: \`workit fanout brief <slice>\` after \`workit fanout worktree create <slice>\`, even for one slice.`;
 };
 
 /**
@@ -554,6 +589,8 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
       typeof source.models.allowLeadOverride !== "boolean"
     )
       issues.push(`${owner}.allowLeadOverride: not true or false; read as false`);
+    if (![undefined, "advise", "strict"].includes(source.models.enforce as string))
+      issues.push(`${owner}.enforce: not "advise" or "strict"; read as advise`);
     for (const [role, value] of Object.entries(rolesOf(source.models) ?? {})) {
       const where = `${base}.${role}`;
       if (!(MODEL_ROLES as readonly string[]).includes(role))
@@ -572,7 +609,8 @@ export const roleModelIssues = (cwd: string, dir?: string): string[] => {
 };
 
 /** A Workit agent by name on any host: `workit:<role>`, `workit-<role>` or the bare role. */
-const AGENT_ROLE = /^(?:workit[:-])?(decider|implementer|verifier|reviewer|explore|babysit)$/iu;
+const AGENT_ROLE =
+  /^(?:workit[:-])?(decider|implementer|verifier|reviewer|explore|babysit)(?:(?<=babysit)ter)?$/iu;
 /** A `ROLE: <role>` line in a spawn prompt, for a host agent Workit does not ship. */
 const ROLE_LINE = /^[ \t]*ROLE:[ \t]*(decider|implementer|verifier|reviewer|explore|babysit)\b/imu;
 const TIER_LINE = /^[ \t]*TIER:[ \t]*(mundane|standard|hard)\b/imu;

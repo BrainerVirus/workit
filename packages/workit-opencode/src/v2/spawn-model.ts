@@ -1,16 +1,20 @@
-// Role models on an OpenCode subagent spawn (#654): the `subagent` tool takes
-// `model` as `providerID/modelID` (or `providerID/modelID#variant`), so the
-// plugin's execute.before sets the role's model on a fresh spawn, the same
-// choice Claude Code's hook makes (core/role-models.ts chooseSpawnModel). A
-// continuation (input `sessionID`) keeps its child's model. The lead learns
-// what changed on its next turn, through the session context hook. A subagent
-// whose result or error is a usage limit marks its provider exhausted (#655):
-// the next spawn of its role falls back, and the lead is told to re-dispatch
-// it once. A lead on an exhausted provider gets a one-line switch notice.
+// Role models on an OpenCode subagent spawn (#654, D1): the `subagent` tool
+// takes `model` as `providerID/modelID` (or `providerID/modelID#variant`).
+// The registered `workit-<role>` agents carry their role's model (agents.ts),
+// so the plugin's execute.before only fills a spawn that names no model: an
+// implementer's tier, a general or explore spawn's role, and a role agent's
+// usage-limit fallback (core/role-models.ts chooseSpawnModel). A model the
+// spawn names wins unless `models.enforce` is `strict`. A continuation (input
+// `sessionID`) keeps its child's model. The lead learns what changed on its
+// next turn, through the session context hook. A subagent whose result or
+// error is a usage limit marks its provider exhausted (#655): the next spawn
+// of its role falls back, and the lead is told to re-dispatch it once. A lead
+// on an exhausted provider gets a one-line switch notice.
 import {
   chooseSpawnModel,
   leadSwitchNotice,
   resolveRoleModel,
+  resolveRoleModels,
   roleForAgentType,
 } from "@workit-dev/core/src/core/role-models";
 import { recordUsageLimit, redispatchNote } from "@workit-dev/core/src/hooks/model-limit";
@@ -42,6 +46,14 @@ export const applySpawnModel = (
     { model: fields.model },
     opencodeSubagentModel,
   );
+  // A role agent already runs on its primary model: nothing to fill or say.
+  const agentModel =
+    typeof fields.agent === "string" &&
+    fields.agent.startsWith("workit-") &&
+    selector.role !== "implementer"
+      ? resolveRoleModels(root, selector, "opencode")[0]?.model
+      : undefined;
+  if (choice.model && choice.model === agentModel) return;
   // In place: the host runs the tool with the object this hook received.
   if (choice.model) fields.model = choice.model;
   if (choice.note) notes.set(event.sessionID, [...(notes.get(event.sessionID) ?? []), choice.note]);

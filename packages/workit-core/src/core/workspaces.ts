@@ -293,7 +293,7 @@ export const workspaceConfigSchema = z
       .passthrough()
       .optional()
       .describe(
-        "Model and effort per role and host (roles), the lead's own advisory model (lead) and whether a model the lead names on a spawn wins (allowLeadOverride, default false); the same key at the top of workspaces.json is the global default.",
+        "Model and effort per role and host (roles), the lead's own advisory model (lead), how a role model applies (enforce: advise, the default, or strict) and, under strict, whether a model the lead names on a spawn wins (allowLeadOverride, default false); the same key at the top of workspaces.json is the global default.",
       ),
     // Read leniently (core/resources.ts): an unknown or malformed field warns.
     resources: z
@@ -425,7 +425,7 @@ export const workspacesFileSchema = z
       .passthrough()
       .optional()
       .describe(
-        "The global default model and effort per role and host (roles), the lead's own advisory model (lead) and whether a model the lead names on a spawn wins (allowLeadOverride, default false).",
+        "The global default model and effort per role and host (roles), the lead's own advisory model (lead), how a role model applies (enforce: advise, the default, or strict) and, under strict, whether a model the lead names on a spawn wins (allowLeadOverride, default false).",
       ),
   })
   .passthrough()

@@ -4,7 +4,9 @@
 // the implementer tiers, then Claude Code's built-in defaults. Skills call it
 // to know what to pass as `model` (and `effort`) when they spawn a role. A
 // role's list falls back past a provider exhausted by a usage limit (#655);
-// `exhausted` lists those providers and their resets.
+// `exhausted` lists those providers and their resets. Per host and role it
+// says how the model reaches a spawn (`agent file`, `spawn fill` or
+// `advisory`) and the `models.enforce` mode (D1).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +15,7 @@ import {
   MODEL_ROLES,
   MODEL_TIERS,
   ROLE_SELECTORS,
+  enforceMode,
   fallbackText,
   leadSwitchNotice,
   resolveAvailableRoleModel,
@@ -49,7 +52,7 @@ type HostEnforcement = Record<string, Enforcement>;
 
 const enforcementText = (hosts: HostEnforcement): string => {
   const of = (kind: Enforcement) => Object.keys(hosts).filter((host) => hosts[host] === kind);
-  return (["enforced", "advisory"] as const)
+  return (["agent file", "spawn fill", "advisory"] as const)
     .filter((kind) => of(kind).length)
     .map((kind) => `${kind} on ${of(kind).join(", ")}`)
     .join("; ");
@@ -229,8 +232,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const issues = roleModelIssues(io.cwd);
   const exhausted = exhaustedProviders();
   const leadSwitch = lead ? leadSwitchNotice(io.cwd, host, null) : null;
+  const enforce = enforceMode(io.cwd);
   const data = {
     host,
+    enforce,
     ...(lead ? { lead } : {}),
     roles,
     enforcement,
@@ -239,7 +244,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     ...(issues.length ? { issues } : {}),
   };
   return emit(io, ok(data), (shown) => [
-    `models for ${shown.host}`,
+    `models for ${shown.host} (models.enforce ${shown.enforce}: ${shown.enforce === "strict" ? "a configured role model beats one the spawn names" : "a model the spawn names wins"})`,
     ...(shown.lead ? [line("lead", shown.lead, shown.enforcement.lead)] : []),
     ...Object.entries(shown.roles).flatMap(([name, entry]) =>
       "source" in entry
