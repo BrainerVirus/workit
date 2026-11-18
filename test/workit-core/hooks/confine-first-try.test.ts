@@ -148,6 +148,8 @@ test("Given a verifier, When a literal assignment's name is single-quoted, escap
     `W=${scratch}; echo a > \\$W`,
     `W=${scratch}; bash <<'EOF'\necho a > $W/x\nEOF`,
     `W=${scratch}; for W in /tmp; do echo a > $W/x; done`,
+    // A quote in the value would unbalance the spelled-in command: never substituted.
+    `W='"'; echo "$W" > ${lead}/x`,
   ]);
   allowed(verifier, [`W=${scratch}; mkdir -p $W && echo a > "$W/x"`]);
 });

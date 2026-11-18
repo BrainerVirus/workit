@@ -492,9 +492,8 @@ export function confineImplementerShell(
 
 // --- judges: verifiers and reviewers write only in a scratch dir (#790) ----
 
-/** `NAME=<literal>` then `;`, `&&` or a newline: the value has no `$`, backtick, glob, `~` or brace. */
-const LITERAL_SET =
-  /^\s*([A-Za-z_]\w*)=(?:'([^'$`*?[~]*)'|"([^"$`\\*?[~]*)"|([^\s;&|<>()$`'"\\*?[\]{}~#]*))[ \t]*(?:;|&&|\n)/;
+/** `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits and `@%+=:,./_-`, maybe quoted. */
+const LITERAL_SET = /^\s*([A-Za-z_]\w*)=(['"]?)([\w@%+=:,./-]*)\2[ \t]*(?:;|&&|\n)/;
 /** Names git, a shell or an interpreter reads from the environment. */
 const ENV_READ = /^(?:GIT_|LD_|DYLD_|NODE_|PYTHON|PERL|RUBY|BASH|ENV$|IFS$|CDPATH$|PS4$|PWD$)/;
 /** A judge's scratch dir, at a checkout root (fanout-worktree.ts SCRATCH_DIR). */
@@ -1281,19 +1280,13 @@ const substituted = (text: string, name: string, value: string): string | null =
 const literalCommand = (command: string): string | null => {
   let rest: string | null = command;
   for (let set; rest && (set = LITERAL_SET.exec(rest));) {
-    const [whole, name, ...values] = set;
+    const [whole, name, , value] = set;
     if (process.env[name] !== undefined || ENV_READ.test(name)) return null;
-    rest = substituted(
-      rest.slice(whole.length),
-      name,
-      values.find((one) => one !== undefined)!,
-    );
+    rest = substituted(rest.slice(whole.length), name, value);
   }
   const loop =
     rest &&
-    /^\s*for\s+(\w+)\s+in\s+([^;&|<>()$`'"\\*?[\]{}~#\n]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(
-      rest,
-    );
+    /^\s*for\s+(\w+)\s+in\s+([\w@%+=:,./ \t-]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(rest);
   const items = loop?.[2].split(/\s+/).filter(Boolean) ?? [];
   if (loop && items.length <= 16) {
     const bodies = items.map((item) => substituted(loop[3], loop[1], item));
