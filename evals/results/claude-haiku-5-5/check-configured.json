@@ -1,0 +1,32 @@
+{
+  "case": "check-configured",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "c3c66c442853a0a4",
+  "date": "2026-11-18T13:09:55.439Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 11903,
+    "costUsd": 0.00424855,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 5,
+    "failures": [],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 0
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/2859a8047d64911c9f7bdd2305c85193/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
+}

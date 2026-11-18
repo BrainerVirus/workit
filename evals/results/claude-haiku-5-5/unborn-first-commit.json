@@ -1,21 +1,26 @@
 {
   "case": "unborn-first-commit",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.2.1+44d1fff088",
-  "key": "f6588c0a604f50a4",
-  "date": "2026-11-11T12:08:34.326Z",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "92e55fc538604f8b",
+  "date": "2026-11-18T13:53:29.859Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 5,
-    "durationMs": 11558,
-    "costUsd": 0.003992230000000001,
+    "turns": 6,
+    "durationMs": 13064,
+    "costUsd": 0.0041281799999999995,
     "stop": "success"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": true,
-    "calls": 4,
-    "failures": []
+    "calls": 5,
+    "failures": [],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 1,
+      "denied": 0
+    }
   }
 }

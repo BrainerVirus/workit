@@ -1,0 +1,26 @@
+{
+  "case": "git-status-read",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "b953c26680d3a5b0",
+  "date": "2026-11-18T13:18:41.402Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 2931,
+    "costUsd": 0.0024318100000000004,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 1,
+    "failures": [],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "case": "verdict-from-parent-dir",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "8cc1febd17e9c3b6",
+  "date": "2026-11-18T13:57:16.895Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 39671,
+    "costUsd": 0.04466918,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 6,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 1 failed of 4 Workit interaction(s): #2 Bash(git rev-parse HEAD && git status --short && node bin/greet.js ada; echo exit=$?; cat package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a1c42b4410ece9b6f may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(workit ledger verdict verified --kind live --cwd <world>/repo/.. --branch feature/greet-version --session 20f38161-ca97-) in a subagent failed: <outside-world file: unresolved, 335 bytes>"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 1,
+      "denied": 1
+    }
+  }
+}

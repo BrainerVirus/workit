@@ -1,0 +1,37 @@
+{
+  "case": "pr-create-changelog-required",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "8cd5eedbd2db2dda",
+  "date": "2026-11-18T13:30:07.753Z",
+  "exit": null,
+  "timedOut": false,
+  "usage": {
+    "turns": null,
+    "durationMs": null,
+    "costUsd": null,
+    "stop": null
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 0,
+    "failures": [
+      {
+        "rule": "isolation",
+        "detail": "the case permits a shell wrapper and the world failed the isolation self-check: workit grant show --json #2: /github.example.invalid/eval/demo.git"
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*pr create/ not denied: the PR is created"
+      }
+    ],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  },
+  "refused": "isolation"
+}

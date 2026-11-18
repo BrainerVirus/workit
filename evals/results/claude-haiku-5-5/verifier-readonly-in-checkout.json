@@ -1,0 +1,31 @@
+{
+  "case": "verifier-readonly-in-checkout",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "736f0e94d9c02de4",
+  "date": "2026-11-18T12:24:46.788Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 41826,
+    "costUsd": 0.06868186000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 8,
+    "failures": [
+      {
+        "rule": "forbid",
+        "detail": "#2 Bash(git rev-parse HEAD && git status --short && echo ---fetch && git fetch -q origin; echo \"fetch=$?\"; node -e \"console.log() in a subagent matches /[\\s\\S]/ denied with a result matching /scratch confinement/ (PreToolUse:Bash hook error: workit scratch confinement: verifier a6df7972772c50e1d may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat): read-only work in the candidate checkout draws no confinement denial"
+      }
+    ],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

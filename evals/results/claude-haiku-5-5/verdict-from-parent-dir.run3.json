@@ -1,0 +1,32 @@
+{
+  "case": "verdict-from-parent-dir",
+  "run": 3,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "8cc1febd17e9c3b6",
+  "date": "2026-11-18T13:55:47.669Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 37443,
+    "costUsd": 0.04128919,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 3 Workit interaction(s): #2 Bash(git rev-parse HEAD && git status --short && node bin/greet.js ada; echo \"exit=$?\"; grep -n '\"version\"' package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier acb15cb46c6163313 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat"
+      }
+    ],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

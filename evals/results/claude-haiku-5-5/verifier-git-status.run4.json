@@ -1,0 +1,36 @@
+{
+  "case": "verifier-git-status",
+  "run": 4,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "d0d65e8ede428461",
+  "date": "2026-11-18T13:59:27.175Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 18,
+    "costUsd": 0.03983609,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 8,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#1 Agent(workit:verifier: Verify feature/greet-version package version) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). "
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 4 Workit interaction(s): #1 Agent(workit:verifier: Verify feature/greet-version package version) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). ; #4 Bash(git -C <world>/repo status --short) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a306385c13009a4e9 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

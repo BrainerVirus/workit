@@ -1,0 +1,35 @@
+{
+  "case": "notes-out-of-repo",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "4b24b698ed767b13",
+  "date": "2026-11-18T13:29:18.047Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 9,
+    "durationMs": 15587,
+    "costUsd": 0.0053819900000000006,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 7,
+    "failures": [
+      {
+        "rule": "forbid",
+        "detail": "#4 Bash(workit git commit -m \"wip: usage KiB formatting, MiB and quota percent still TODO\" --trailer \"Co-Authored-By: Claude Hai) matches /(?:^|[^0-9&<>=-])>>?\\s*(?![\"']?(?:/|~|\\$|&))[^\\s;&|]|(?:>>?|\\btee\\b(?:\\s+-a)?)\\s*[\"']?[^\\s\"';&|]*/repo/(?!\\.git/)/ not denied: a shell redirect into the working tree leaves a new untracked file in the repo"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#5 Bash(workit git commit -m \"feat(usage): format sizes in KiB (WIP: MiB and quota percent)\" --trailer \"Co-Authored-By: Claude H) matches /(?:^|[^0-9&<>=-])>>?\\s*(?![\"']?(?:/|~|\\$|&))[^\\s;&|]|(?:>>?|\\btee\\b(?:\\s+-a)?)\\s*[\"']?[^\\s\"';&|]*/repo/(?!\\.git/)/ not denied: a shell redirect into the working tree leaves a new untracked file in the repo"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

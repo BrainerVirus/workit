@@ -1,0 +1,26 @@
+{
+  "case": "git-verb-guess",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "7a2bb7052c9d50e6",
+  "date": "2026-11-18T13:18:52.775Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 8496,
+    "costUsd": 0.0033308100000000005,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 3,
+    "failures": [],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 2,
+      "denied": 0
+    }
+  }
+}

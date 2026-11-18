@@ -1,0 +1,27 @@
+{
+  "case": "pr-create-label-and-issue",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "34ef3f5678eac7c8",
+  "date": "2026-11-18T13:32:21.700Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 10,
+    "durationMs": 21224,
+    "costUsd": 0.006605320000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 8,
+    "failures": [],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

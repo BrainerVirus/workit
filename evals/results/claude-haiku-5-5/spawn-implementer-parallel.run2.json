@@ -1,0 +1,27 @@
+{
+  "case": "spawn-implementer-parallel",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "a434991321e0d187",
+  "date": "2026-11-18T13:48:06.099Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 7829,
+    "costUsd": 0.12595394999999998,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 31,
+    "failures": [],
+    "firstTry": {
+      "interactions": 20,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

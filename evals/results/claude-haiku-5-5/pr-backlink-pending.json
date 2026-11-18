@@ -1,0 +1,31 @@
+{
+  "case": "pr-backlink-pending",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "949508def4a8f420",
+  "date": "2026-11-18T13:30:03.737Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 10,
+    "durationMs": 25547,
+    "costUsd": 0.007099820000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 8,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) approve ap_[a-z2-7]{8}$/: the pending backlink says to run the plain approve call so the host asks the user"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

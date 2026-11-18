@@ -1,0 +1,31 @@
+{
+  "case": "verifier-git-status",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "d0d65e8ede428461",
+  "date": "2026-11-18T13:57:48.176Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 17,
+    "costUsd": 0.04080194,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 7,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 3 Workit interaction(s): #3 Bash(git -C <world>/repo status --short) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a8492c9ceaeda2a82 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat"
+      }
+    ],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

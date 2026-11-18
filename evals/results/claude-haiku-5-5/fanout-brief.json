@@ -1,0 +1,35 @@
+{
+  "case": "fanout-brief",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "c903e99753b3ef35",
+  "date": "2026-11-18T13:16:34.827Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 1,
+    "durationMs": 10479,
+    "costUsd": 0.0030308800000000006,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 0,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /fanout/: a parallelization request loads the fanout skill"
+      },
+      {
+        "rule": "answer",
+        "detail": "the final answer does not match /GOAL[\\s\\S]*SCOPE[\\s\\S]*ACCEPTANCE[\\s\\S]*VERIFY[\\s\\S]*FORBIDDEN[\\s\\S]*REPORT/: each brief has the template fields"
+      }
+    ],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

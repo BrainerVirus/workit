@@ -1,0 +1,31 @@
+{
+  "case": "spawn-implementer-parallel",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "a434991321e0d187",
+  "date": "2026-11-18T13:47:24.575Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 12630,
+    "costUsd": 0.19811389999999998,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 36,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 25 Workit interaction(s): #28 Bash(workit git --cwd <world>/state/worktrees/repo/mul log -1 --format=%H) in a subagent failed: Exit code 2"
+      }
+    ],
+    "firstTry": {
+      "interactions": 25,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

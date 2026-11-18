@@ -1,0 +1,32 @@
+{
+  "case": "spawn-implementer-first-try",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "19d26f3d8ccc2cd2",
+  "date": "2026-11-18T13:42:49.655Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 10,
+    "durationMs": 58653,
+    "costUsd": 0.014690565,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 18,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 3 failed of 13 Workit interaction(s): #1 Bash(workit fanout worktree create hello) failed: Exit code 1; #4 Bash(mkdir -p <world>/plans && printf '%s\\n' '{\"slices\":[{\"id\":\"hello\",\"goal\":\"Add src/hello.ts exporting hello() that return) failed: Exit code 2; #12 Bash(workit check --cwd <world>/state/worktrees/repo/hello --name tsc -- npx tsc --noEmit) in a subagent failed: Exit code 1"
+      }
+    ],
+    "firstTry": {
+      "interactions": 13,
+      "failed": 3,
+      "denied": 0
+    }
+  }
+}

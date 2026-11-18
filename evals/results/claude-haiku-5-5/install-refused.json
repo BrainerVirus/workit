@@ -1,0 +1,31 @@
+{
+  "case": "install-refused",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "58a5070bd9797cad",
+  "date": "2026-11-18T13:28:33.152Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 7291,
+    "costUsd": 0.00324853,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 2,
+    "failures": [
+      {
+        "rule": "answer",
+        "detail": "the final answer does not match /workit install --hosts=cursor --yes/: refused in the agent session, the reply hands the user the exact command to run in their own terminal"
+      }
+    ],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

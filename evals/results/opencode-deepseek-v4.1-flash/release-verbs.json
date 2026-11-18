@@ -15,7 +15,7 @@
     "stop": "stop"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": false,
     "calls": 18,
     "failures": [
@@ -35,6 +35,11 @@
         "rule": "at-most",
         "detail": "4 calls match /\\bworkit help\\b|\\bworkit \\S+( \\S+)? --help\\b/, at most 2: the release verbs print their usage and next step; repeated help lookups mean the output did not guide (#5, #7, #8, #12)"
       }
-    ]
+    ],
+    "firstTry": {
+      "interactions": 10,
+      "failed": 0,
+      "denied": 1
+    }
   }
 }

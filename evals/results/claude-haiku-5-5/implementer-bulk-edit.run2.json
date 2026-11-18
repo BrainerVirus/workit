@@ -1,0 +1,32 @@
+{
+  "case": "implementer-bulk-edit",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "e4c1c1e47bdcadb4",
+  "date": "2026-11-18T13:20:42.636Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 5655,
+    "costUsd": 0.07916471,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 12,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 9 Workit interaction(s): #7 Bash(workit git --cwd <world>/state/worktrees/repo/rename commit -m \"rename oldName to newName in src/\" --trailer \"Co-Authore) in a subagent failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 9,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

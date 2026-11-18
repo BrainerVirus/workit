@@ -1,0 +1,31 @@
+{
+  "case": "commit-wip-subject",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "6e3d1361be70b35f",
+  "date": "2026-11-18T13:13:33.100Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 11730,
+    "costUsd": 0.00405248,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 4,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 3 Workit interaction(s): #2 Bash(workit git commit --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>\" -m \"wip: update a to 2 (half done) failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

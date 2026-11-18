@@ -286,7 +286,8 @@ export const probe = (): Record<string, string> => {
       paths[label] = `failed: ${run.error?.message ?? text.trim().slice(0, 200)}`;
       continue;
     }
-    const found = text.match(/(?<![\w.~-])\/[\w.@+~-]+(?:\/[\w.@+~*-]+)*/gu) ?? [];
+    // A URL's path (`https://host/x`) is not a file path: `:` or `/` before the slash skips it.
+    const found = text.match(/(?<![\w.~:/-])\/[\w.@+~-]+(?:\/[\w.@+~*-]+)*/gu) ?? [];
     const shown = args.length === 3 && args[1] === "show";
     const wrong = shown ? grantShowProof(run.stdout ?? "", world) : null;
     if (wrong) paths[label] = `failed: ${wrong}`;

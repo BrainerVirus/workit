@@ -1,0 +1,32 @@
+{
+  "case": "youtrack-time-raw-ytrack",
+  "run": 3,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "fbdf4334a40596fd",
+  "date": "2026-11-18T14:24:40.079Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 10434,
+    "costUsd": 0.00320756,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 2,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) approve ap_[a-z2-7]{8}$/: the write reaches the user's approval"
+      }
+    ],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

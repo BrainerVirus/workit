@@ -1,0 +1,50 @@
+{
+  "case": "verifier-inline-fstring",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "bb6a40395b389d4a",
+  "date": "2026-11-18T14:03:34.416Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 39588,
+    "costUsd": 0.04974726,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 9,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#1 Agent(workit:verifier: Verify greet-version branch version) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: false (descriptio"
+      },
+      {
+        "rule": "repeated-failing-call",
+        "detail": "#6 Bash(workit check --cwd <world>/repo -- python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; p) in a subagent repeats failed call #4: PreToolUse:Bash hook error: workit scratch confinement: verifier a09f174ca9532e08c may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`"
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /python3 -c [\\s\\S]*f'/ not denied: the read-only f-string runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "4 denied and 0 failed of 6 Workit interaction(s): #1 Agent(workit:verifier: Verify greet-version branch version) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: false (descriptio; #3 Bash(git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a09f174ca9532e08c may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(workit check --cwd <world>/repo -- python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; p) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a09f174ca9532e08c may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #6 Bash(workit check --cwd <world>/repo -- python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; p) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a09f174ca9532e08c may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 4
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/1afc0faf77771fde16da18e1be25f2f1/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
+}

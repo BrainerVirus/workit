@@ -1,0 +1,36 @@
+{
+  "case": "youtrack-note-piped",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "dd4df364f3da0751",
+  "date": "2026-11-18T14:23:01.698Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 28265,
+    "costUsd": 0.005912110000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 7,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*youtrack[^\\n]*\\|\\s*tail/ not denied: the piped call runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "5 denied and 0 failed of 7 Workit interaction(s): #2 Bash(workit youtrack --help 2>&1 | head -60; printf '%s\\n' ---; workit youtrack note --help 2>&1 | head -40) denied: PreToolUse:Bash hook error: Run `workit youtrack note --help` as its own call so the host can ask the user.; #3 Bash(workit youtrack note --help 2>&1 | head -40) denied: PreToolUse:Bash hook error: Run `workit youtrack note --help` as its own call so the host can ask the user.; #4 Bash(workit youtrack note X-1 \"deployed to staging\" 2>&1 | tail -n 20) denied: PreToolUse:Bash hook error: Run `workit youtrack note X-1 'deployed to staging'` as its own call so the host can ask the user.; #6 Bash(workit youtrack note X-1 --markdown \"deployed to staging\" 2>&1 | tail -n 20) denied: PreToolUse:Bash hook error: Run `workit youtrack note X-1 --markdown 'deployed to staging'` as its own call so the host can ask the user.; #7 Bash(workit youtrack note X-1 --markdown \"deployed to staging\") denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive or Unwanted Actions]. If you have other tasks that don't dep"
+      }
+    ],
+    "firstTry": {
+      "interactions": 7,
+      "failed": 0,
+      "denied": 5
+    }
+  }
+}

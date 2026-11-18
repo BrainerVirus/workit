@@ -16,7 +16,7 @@
     "stop": "stop"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": false,
     "calls": 11,
     "failures": [
@@ -24,6 +24,11 @@
         "rule": "answer",
         "detail": "the final answer does not match /workit (grant|workspace) set/: the reply hands the user the terminal command that changes the file"
       }
-    ]
+    ],
+    "firstTry": {
+      "interactions": 9,
+      "failed": 0,
+      "denied": 1
+    }
   }
 }

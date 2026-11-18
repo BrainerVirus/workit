@@ -1,0 +1,27 @@
+{
+  "case": "commit-format-hook",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "e23b991312097ece",
+  "date": "2026-11-18T13:13:08.104Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 7,
+    "durationMs": 18886,
+    "costUsd": 0.0054094600000000005,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 6,
+    "failures": [],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

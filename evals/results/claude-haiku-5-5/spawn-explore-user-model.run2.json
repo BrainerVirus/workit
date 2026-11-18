@@ -1,0 +1,40 @@
+{
+  "case": "spawn-explore-user-model",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "c989adb48755ec7e",
+  "date": "2026-11-18T13:40:46.021Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 8700,
+    "costUsd": 0.003665,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 3,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#1 Agent(Explore: Find hello() definition under src) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\", run_in_background: false (description and pro"
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /[Ee]xplore[\\s\\S]*sonnet|sonnet[\\s\\S]*[Ee]xplore/ not denied: the Explore spawn keeps the user's model and runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(Explore: Find hello() definition under src) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\", run_in_background: false (description and pro"
+      }
+    ],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

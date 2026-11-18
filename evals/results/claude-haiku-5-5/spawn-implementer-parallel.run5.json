@@ -1,0 +1,32 @@
+{
+  "case": "spawn-implementer-parallel",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+9d0ac7c1ed",
+  "key": "a434991321e0d187",
+  "date": "2026-11-18T13:50:16.961Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 6,
+    "costUsd": 0.12461465000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 25,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 16 Workit interaction(s): #2 Bash(workit fanout worktree create add && workit fanout worktree create mul && workit fanout worktree create sub) failed: Exit code 1"
+      }
+    ],
+    "firstTry": {
+      "interactions": 16,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}
