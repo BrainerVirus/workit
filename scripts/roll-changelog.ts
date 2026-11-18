@@ -31,6 +31,8 @@ interface Entry {
 interface Group {
   heading: string | null;
   entries: Entry[];
+  /** Rendered even with no entries: it had none before the roll touched it. */
+  keep?: boolean;
 }
 
 interface Section {
@@ -170,9 +172,9 @@ export function changelogKeys(text: string): Set<string> {
 const renderGroups = (groups: Group[]): string[] => {
   const out: string[] = [];
   for (const group of groups) {
-    if (group.entries.length === 0) continue;
+    if (group.entries.length === 0 && !(group.keep && group.heading !== null)) continue;
     if (out.length > 0) out.push("");
-    if (group.heading !== null) out.push(group.heading, "");
+    if (group.heading !== null) out.push(group.heading, ...(group.entries.length ? [""] : []));
     for (const entry of group.entries) out.push(...trimBlank(entry.lines));
   }
   return out;
@@ -267,6 +269,35 @@ export interface RollResult {
   changed: boolean;
   /** Entries moved per version, newest version first. */
   moved: Array<{ version: string; entries: number }>;
+  /**
+   * [Unreleased] entries whose version's section already holds the same text
+   * (a merge that put back what a roll moved). The roll still moves them, so
+   * the text would appear twice; the CLI refuses to write it.
+   */
+  duplicates: Array<{ version: string; line: number }>;
+}
+
+const contentLines = (text: string): string[] =>
+  text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !LINK.test(line));
+
+/**
+ * The non-blank lines of `before` that `after` holds fewer times, link
+ * definitions aside (a roll rewrites those). A roll only moves lines and adds
+ * headings, so any line here means it lost text.
+ */
+export function lostLines(before: string, after: string): string[] {
+  const left = new Map<string, number>();
+  for (const line of contentLines(after)) left.set(line, (left.get(line) ?? 0) + 1);
+  const lost: string[] = [];
+  for (const line of contentLines(before)) {
+    const n = left.get(line) ?? 0;
+    if (n === 0) lost.push(line);
+    else left.set(line, n - 1);
+  }
+  return lost;
 }
 
 /** Moves every [Unreleased] entry a release shipped into that release's section. */
@@ -274,7 +305,7 @@ export function rollChangelog(text: string, opts: RollOptions): RollResult {
   const prefix = opts.tagPrefix ?? TAG_PREFIX;
   const doc = parseChangelog(text);
   const unreleased = doc.sections.find((s) => s.name.toLowerCase() === "unreleased");
-  if (!unreleased) return { text, changed: false, moved: [] };
+  if (!unreleased) return { text, changed: false, moved: [], duplicates: [] };
   const groups = sectionGroups(unreleased);
   const shipped = shippedVersion(groups, opts.snapshots);
   const shippedIn = (entry: Entry): string | null =>
@@ -299,15 +330,16 @@ export function rollChangelog(text: string, opts: RollOptions): RollResult {
       }
       same.entries.push(entry);
     }
-    kept.push({ heading: group.heading, entries: stay });
+    kept.push({ heading: group.heading, entries: stay, keep: group.entries.length === 0 });
   }
-  if (targets.size === 0) return { text, changed: false, moved: [] };
+  if (targets.size === 0) return { text, changed: false, moved: [], duplicates: [] };
 
   unreleased.groups = kept;
   const dates = new Map(opts.snapshots.map((s) => [s.version, s.date]));
   if (opts.release) dates.set(opts.release.version, opts.release.date);
   const added: Section[] = [];
   const moved: RollResult["moved"] = [];
+  const duplicates: RollResult["duplicates"] = [];
   for (const [version, into] of targets) {
     let section = doc.sections.find((s) => s.name === version);
     if (!section) {
@@ -325,12 +357,12 @@ export function rollChangelog(text: string, opts: RollOptions): RollResult {
     const seen = new Set(target.flatMap((g) => g.entries.map((e) => entryKeys(e).full)));
     let count = 0;
     for (const group of into) {
-      const fresh = group.entries.filter((e) => !seen.has(entryKeys(e).full));
-      if (fresh.length === 0) continue;
-      count += fresh.length;
+      for (const entry of group.entries)
+        if (seen.has(entryKeys(entry).full)) duplicates.push({ version, line: entry.line });
+      count += group.entries.length;
       const same = target.find((g) => g.heading === group.heading);
-      if (same) same.entries.push(...fresh);
-      else target.push({ heading: group.heading, entries: fresh });
+      if (same) same.entries.push(...group.entries);
+      else target.push({ heading: group.heading, entries: [...group.entries] });
     }
     moved.push({ version, entries: count });
   }
@@ -345,7 +377,7 @@ export function rollChangelog(text: string, opts: RollOptions): RollResult {
   doc.links = rollLinks(doc, opts, prefix);
   moved.sort((a, b) => compareVersions(b.version, a.version));
   const rolled = renderChangelog(doc);
-  return { text: rolled, changed: rolled !== text, moved };
+  return { text: rolled, changed: rolled !== text, moved, duplicates };
 }
 
 /** [Unreleased] compares from the newest tag; each new version links its own diff. */
@@ -506,21 +538,46 @@ export function tagSnapshots(
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-const flag = (args: string[], name: string): string | undefined => {
-  const at = args.indexOf(name);
-  return at >= 0 ? args[at + 1] : undefined;
-};
+const USAGE = [
+  "usage: bun scripts/roll-changelog.ts                     roll released [Unreleased] entries into their sections",
+  "       bun scripts/roll-changelog.ts --release <x.y.z>   also move the rest into <x.y.z> (release prepare)",
+  "       bun scripts/roll-changelog.ts --notes <x.y.z>     print <x.y.z>'s release-notes block; writes nothing",
+  "       --date <YYYY-MM-DD> dates a new --release section (default: today, UTC)",
+].join("\n");
+
+/** `--name value` options; null for anything else (an unknown flag, a stray word, --help). */
+function parseArgs(args: string[]): Record<string, string> | null {
+  const known = new Set(["--notes", "--release", "--date"]);
+  const out: Record<string, string> = {};
+  for (let i = 0; i < args.length; i += 2) {
+    const name = args[i] ?? "";
+    const value = args[i + 1];
+    if (!known.has(name) || value === undefined || value.startsWith("--") || name in out)
+      return null;
+    out[name] = value;
+  }
+  return out;
+}
 
 /** The CLI; returns the exit code. */
 export function main(
   args: string[],
   io: { root: string; exec?: Exec; out: (s: string) => void; err: (s: string) => void },
 ): number {
-  const notes = flag(args, "--notes");
-  const release = flag(args, "--release") ?? notes;
-  const date = flag(args, "--date") ?? today();
+  const opts = parseArgs(args);
+  if (opts === null) {
+    io.err(USAGE);
+    return 2;
+  }
+  const notes = opts["--notes"];
+  const release = opts["--release"] ?? notes;
+  const date = opts["--date"] ?? today();
   if (release !== undefined && !VERSION.test(release)) {
     io.err(`not a release version: ${JSON.stringify(release)}`);
+    return 2;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    io.err(`not a date: ${JSON.stringify(date)}`);
     return 2;
   }
   const exec = io.exec ?? defaultExec(io.root);
@@ -547,6 +604,23 @@ export function main(
   if (!rolled.changed) {
     io.err("CHANGELOG.md: no [Unreleased] entry has shipped; nothing to roll");
     return 0;
+  }
+  // Fail closed: write nothing rather than a file with text lost or doubled.
+  if (rolled.duplicates.length > 0) {
+    io.err(
+      `CHANGELOG.md: not rolled. ${rolled.duplicates.length} [Unreleased] entries are already in their release's section (a merge put back what a roll moved): delete them from [Unreleased], then rerun.`,
+    );
+    for (const { version, line } of rolled.duplicates.slice(0, 20))
+      io.err(`  CHANGELOG.md:${line} is already under [${version}]`);
+    return 1;
+  }
+  const lost = lostLines(text, rolled.text);
+  if (lost.length > 0) {
+    io.err(
+      `CHANGELOG.md: not rolled. The roll would drop ${lost.length} line(s), so nothing was written:`,
+    );
+    for (const line of lost.slice(0, 20)) io.err(`  ${line}`);
+    return 1;
   }
   writeFileSync(file, rolled.text);
   for (const { version, entries } of rolled.moved)

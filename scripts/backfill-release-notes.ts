@@ -254,20 +254,27 @@ export function backfillChangelogNotes(opts: {
   return changes;
 }
 
+const USAGE =
+  "usage: bun scripts/backfill-release-notes.ts <from-tag>..<to-tag> [--dry-run|--apply]\n" +
+  "       bun scripts/backfill-release-notes.ts --changelog [<from-tag>..<to-tag>] [--dry-run|--apply]";
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const range = args.find((a) => a.includes(".."));
   const apply = args.includes("--apply");
-  if (apply && args.includes("--dry-run")) {
+  const unknown = args.filter(
+    (a) => a !== range && !["--changelog", "--dry-run", "--apply"].includes(a),
+  );
+  if (unknown.length > 0 || args.filter((a) => a.includes("..")).length > 1) {
+    console.error(USAGE);
+    process.exitCode = 2;
+  } else if (apply && args.includes("--dry-run")) {
     console.error("--apply and --dry-run are exclusive");
     process.exitCode = 2;
   } else if (args.includes("--changelog")) {
     backfillChangelogNotes({ root: process.cwd(), range, apply });
   } else if (range === undefined) {
-    console.error(
-      "usage: bun scripts/backfill-release-notes.ts <from-tag>..<to-tag> [--dry-run|--apply]\n" +
-        "       bun scripts/backfill-release-notes.ts --changelog [<from-tag>..<to-tag>] [--dry-run|--apply]",
-    );
+    console.error(USAGE);
     process.exitCode = 2;
   } else {
     await backfillReleaseNotes({ root: process.cwd(), range, apply });
