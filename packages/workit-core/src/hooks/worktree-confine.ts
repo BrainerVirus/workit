@@ -494,8 +494,11 @@ export function confineImplementerShell(
 
 // --- judges: verifiers and reviewers write only in a scratch dir (#790) ----
 
-/** `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits and `@%+=:./_-`, maybe quoted. */
-const LITERAL_SET = /^\s*([A-Za-z_]\w*)=(['"]?)([\w@%+=:./-]*)\2[ \t]*(?:;|&&|\n)\s*/;
+/**
+ * `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits
+ * and `@%+=:./_-`, or `\` for a Windows path (`C:\Users\…`), maybe quoted.
+ */
+const LITERAL_SET = /^\s*([A-Za-z_]\w*)=(['"]?)([\w@%+=:./\\-]*)\2[ \t]*(?:;|&&|\n)\s*/;
 /** The names Workit spells in for a judge: one letter, or a short path or ref word in one case. */
 const SPELLED =
   /^(?:[A-Za-z]|wt|wd|dir|repo|root|base|sha|ref|branch|file|out|scratch|worktree|WT|WD|DIR|REPO|ROOT|BASE|SHA|REF|BRANCH|FILE|OUT|SCRATCH|WORKTREE)$/;
@@ -1250,7 +1253,7 @@ export function confineJudge(
 
 /** `text` with `$name` and `${name}` spelled as `value`: the text of a retry, never judged. */
 const spelledIn = (text: string, name: string, value: string): string =>
-  text.replace(new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}\\})`, "g"), value);
+  text.replace(new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}\\})`, "g"), () => value);
 
 /**
  * Why a judge's command that reads a path from a shell variable is refused,

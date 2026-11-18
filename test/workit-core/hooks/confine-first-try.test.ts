@@ -22,6 +22,8 @@ let root: string;
 let lead: string;
 let wt: string;
 const stateBefore = process.env.WORKIT_STATE_DIR;
+const slashed = (text: string): string =>
+  process.platform === "win32" ? text.replaceAll("\\", "/") : text;
 
 const git = (cwd: string, ...args: string[]): string => {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -84,6 +86,9 @@ beforeAll(async () => {
   };
   await cli(["fanout", "plan", plan, "--json"]);
   wt = (await cli(["fanout", "worktree", "create", "a", "--json"])).path;
+  // Commands spell paths with forward slashes, as Git Bash on Windows does (`C:/…`).
+  lead = slashed(lead);
+  wt = slashed(wt);
 });
 
 afterAll(() => {
@@ -99,7 +104,8 @@ type Specific = {
 const bash = (command: string, type: string, id: string, cwd = lead) => {
   const payload = fixture("claude-code", "pre-tool-use-write", cwd, {
     tool_name: "Bash",
-    tool_input: { command },
+    // A backslash in a test command is a shell escape; on Windows paths go with forward slashes.
+    tool_input: { command: slashed(command) },
   });
   if (id) {
     payload.agent_id = id;
@@ -151,6 +157,12 @@ test("Given a verifier, When it reads a path from a literal assignment (W=<check
     ],
     [`W=${lead}\ngit -C $W log --oneline -3`, `git -C ${lead} log --oneline -3`],
   ]);
+  // A Windows path with backslashes is spelled into the retry as written (POSIX: the helper
+  // keeps the backslashes there).
+  if (process.platform !== "win32")
+    retried(verifier, [
+      ["W=C:\\Users\\me\\app; git -C $W log -1", "git -C C:\\Users\\me\\app log -1"],
+    ]);
   allowed(verifier, [`git -C ${lead} status --short`]);
   denied(verifier, [
     "PATH=/x; git status",
@@ -162,7 +174,7 @@ test("Given a verifier, When it reads a path from a literal assignment (W=<check
 });
 
 test("Given a verifier, When a literal assignment's name is single-quoted, escaped or read by a script, Then it is denied", () => {
-  const scratch = path.join(lead, ".workit-scratch");
+  const scratch = `${lead}/.workit-scratch`;
   denied(verifier, [
     `W=${scratch}; echo a > '$W'`,
     `W=${scratch}; echo a > \\$W`,
@@ -180,16 +192,19 @@ test("Given a verifier, When a literal assignment's name is single-quoted, escap
 });
 
 test("Given a verifier, When it redirects outside its scratch dir, Then line 2 is the same command written into the scratch dir", () => {
+  // The scratch dir as the hook names it: its real path, in the platform's separators.
   const scratch = path.join(realpathSync.native(lead), ".workit-scratch");
   const out = verifier(`workit check --cwd ${lead} lint > /tmp/x.log 2>&1`);
   expect(verdict(out)).toBe("deny");
   expect(out?.permissionDecisionReason?.split("\n")[1]).toBe(
-    `Retry as: workit check --cwd ${lead} lint > ${scratch}/x.log 2>&1`,
+    `Retry as: workit check --cwd ${lead} lint > ${path.join(scratch, "x.log")} 2>&1`,
   );
   expect(verifier(`git -C ${lead} log | tee -a /tmp/y.txt`)?.permissionDecisionReason).toContain(
-    `\nRetry as: git -C ${lead} log | tee -a ${scratch}/y.txt`,
+    `\nRetry as: git -C ${lead} log | tee -a ${path.join(scratch, "y.txt")}`,
   );
-  expect(verdict(verifier(`git -C ${lead} log > ${scratch}/x.log 2>&1`))).toBe("allow");
+  expect(verdict(verifier(`git -C ${lead} log > ${lead}/.workit-scratch/x.log 2>&1`))).toBe(
+    "allow",
+  );
 });
 
 test("Given a verifier, When it commits, checks out a file or writes outside scratch, Then each is still denied", () => {
@@ -258,14 +273,15 @@ test("Given an implementer bound to its worktree, When it sets W=$(pwd) and edit
   const command = `cd ${lead} && python3 -c "open('x','w')"`;
   const out = implementer(command);
   expect(verdict(out)).toBe("deny");
-  const retry = `cd ${wt} && python3 -c "open('x','w')"`;
+  // The worktree as the hook names it (its real path, in the platform's separators).
+  const retry = `cd ${realpathSync.native(wt)} && python3 -c "open('x','w')"`;
   expect(out?.permissionDecisionReason?.split("\n")[1]).toBe(`Retry as: ${retry}`);
   expect(verdict(implementer(retry))).toBe("allow");
 });
 
 // Review mwm7hutf (adversarial, round 1): each form below passed on a67cf06c and is denied again.
 test("Given review mwm7hutf's bypasses, When a judge runs a write hidden by a triple-quoted string, a regex literal holding a quote or a pandas writer, Then each is denied", () => {
-  const target = path.join(lead, "package.json");
+  const target = `${lead}/package.json`;
   denied(verifier, [
     `python3 - <<'EOF'\ns = ''' x '\n# '''; open("${target}", "w").write("x")\nEOF`,
     `python3 - <<'EOF'\ns = """ x "\n# """; open("${target}", "w").write("x")\nEOF`,
@@ -339,7 +355,7 @@ test("Given the lead or an implementer, When a script names the Workit config di
 });
 
 test("Given review mwm7hutf, When a judge assigns a name the shell sets itself (read, getopts, mapfile) or reads, Then it is denied", () => {
-  const scratch = path.join(lead, ".workit-scratch");
+  const scratch = `${lead}/.workit-scratch`;
   denied(verifier, [
     `REPLY=${scratch}/x; read < ${scratch}/t; echo pwned > $REPLY`,
     `OPTARG=${scratch}/x; getopts a: o -a ${lead}/package.json; echo pwned > $OPTARG`,
@@ -350,7 +366,7 @@ test("Given review mwm7hutf, When a judge assigns a name the shell sets itself (
 });
 
 test("Given review mwm7hutf, When a retry is printed, Then it is a complete call: the assignments kept in front, no doubled space, a computed value left whole", () => {
-  const scratch = path.join(lead, ".workit-scratch");
+  const scratch = `${lead}/.workit-scratch`;
   const real = path.join(realpathSync.native(lead), ".workit-scratch");
   const judged = verifier(`W=${scratch}/..; echo a > $W/x`)?.permissionDecisionReason ?? "";
   expect(judged.split("\n")[1]).toBe(`Retry as: echo a > ${scratch}/../x`);
@@ -362,7 +378,7 @@ test("Given review mwm7hutf, When a retry is printed, Then it is a complete call
 // Reviews mwmaow76 and mwmcj4in: no name is followed for a judge; a zsh modifier or subscript
 // gets no retry.
 test("Given a judge, When it reads a path from any assigned or loop name, or uses a zsh modifier or subscript, Then it is denied; the retry spells the literal in", () => {
-  const scratch = path.join(lead, ".workit-scratch");
+  const scratch = `${lead}/.workit-scratch`;
   const names = ["DIRSTACK", "FUNCNAME", "GROUPS", "PIPESTATUS", "COLUMNS", "LINES", "IFS"];
   const refused = [
     ...[...names, "NULLCMD", "TMPPREFIX", "HISTFILE", "path", "status"].flatMap((name) => [
@@ -402,8 +418,8 @@ test("Given a judge, When it reads a path from any assigned or loop name, or use
 
 // Review mwmcj4in probe9: a name set again under a spelling Workit does not read.
 test("Given review mwmcj4in's probe9 forms, When a judge runs them, Then each is denied; plain git status and remote get-url run", () => {
-  const P = path.join(lead, "package.json");
-  const S = path.join(lead, ".workit-scratch");
+  const P = `${lead}/package.json`;
+  const S = `${lead}/.workit-scratch`;
   const reviewer = (command: string) => bash(command, "workit:reviewer", "rev-ft");
   const forms = [
     `echo x > ${P}`,
