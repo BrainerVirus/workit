@@ -13,7 +13,7 @@
     "stop": "success"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": false,
     "calls": 4,
     "failures": [
@@ -25,6 +25,11 @@
         "rule": "forbid",
         "detail": "#4 Bash(sh scripts/typecheck.sh; echo \"typecheck exit=$?\"; sh scripts/test.sh; echo \"test exit=$?\") matches /^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx|sh scripts/)/: a raw check command bypasses the configured checks"
       }
-    ]
+    ],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
   }
 }

@@ -13,9 +13,14 @@
     "stop": "success"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": true,
     "calls": 5,
-    "failures": []
+    "failures": [],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
   }
 }

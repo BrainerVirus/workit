@@ -13,9 +13,10 @@ layer 0 in [testing.md](testing.md#agent-behaviour-eval).
 ```bash
 bun scripts/eval/run.ts --model haiku --tier smoke            # the smoke cases, up to 3 model runs
 bun scripts/eval/run.ts --model claude-haiku-4-5 --tier full --budget-runs 12
-bun scripts/eval/run.ts --model haiku --cases spawn-implementer --force
+bun scripts/eval/run.ts --model haiku --cases spawn-implementer-first-try --force
+bun scripts/eval/run.ts --model claude-haiku-5-5 --tier full --gate first-try --budget-runs 400
 bun scripts/eval/run.ts --model claude-haiku-5-5 --tier full --cases stop-hold --repeat 3
-bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash --tier smoke
+bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash --tier smoke [--provider go]
 bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored transcripts, no model
 ```
 
@@ -33,8 +34,15 @@ bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored 
   Workit version (`<last release tag>+<hash of packages/workit-core,
   packages/workit-cli/src and packages/workit-claude-code on disk>`). An edit to
   a skill, hook or CLI text re-runs every case; `--force` re-runs anyway.
-- Exit 1 when a graded case fails, else 0. Commit `evals/results/` with the
-  change it measures.
+- Exit 1 when a graded case fails or a case is void, else 0 (with `--gate`,
+  the gate decides; see [First try](#first-try)). Commit `evals/results/`
+  with the change it measures.
+- A run whose host login failed before any tool call (Claude Code asking for
+  `/login`, OpenCode's `provider.auth` "Reconnect OpenCode Console") is
+  `void: "auth"`: never graded, never a pass or a fail, never a cache hit,
+  left alone by `--replay`, counted under `void` in `summary.json`. The
+  runner prints `void (auth) <case>` and a `re-login:` line naming the
+  command; re-login and rerun.
 
 Tiers: `smoke` (a few cases, Haiku) for each slice that changes what agents
 see (skills, hooks, verb output); `full` (every case) on Haiku 4.5 and Haiku
@@ -48,13 +56,15 @@ subscription-equivalent usage; the printed `$` is Claude Code's
 `--host opencode --model <m>` runs the same cases through `opencode run`
 (OpenCode 2.x) with the same grader. Each case first runs on the free provider
 (`opencode/<m>-free`). When it stops on a rate or quota limit (`provider.free-limit`,
-`provider.quota`, HTTP 429), the case is run again in a fresh world on the
+`provider.quota`, HTTP 429), or on a failed login while another provider is
+left (an expired free console login), the case is run again in a fresh world on the
 paid go provider (`opencode-go/<m>`), and so are the cases after it. The result
 records `provider: free` or `go`, plus the limits seen. When both are limited,
 the case is recorded `skipped: "limit"`, never as a pass: it is not graded, it
 is never a cache hit, `--replay` leaves it alone, `summary.json` counts it under
-`skipped`, and the run exits 1. Any other provider error (an expired key, say)
-fails the case with `run-error`.
+`skipped`, and the run exits 1. A failed login on the last provider makes the run void (see
+above); any other provider error fails the case with `run-error`.
+`--provider free|go` runs on that provider only (`go` skips the free try).
 
 Results go to `evals/results/opencode-<m>/`, apart from the Claude Code
 results. The Workit version hashes `packages/workit-opencode` instead of
@@ -92,7 +102,7 @@ Then, in the repo:
 claude -p --model <m> --output-format stream-json --verbose --max-turns <n> \
   --setting-sources "" --strict-mcp-config --no-session-persistence \
   --plugin-dir <checkout>/packages/workit-claude-code \
-  --permission-mode <dontAsk|case> --allowedTools <case tools> \
+  --permission-mode <auto|case> --allowedTools <case tools> \
   --disallowedTools WebFetch WebSearch          # prompt on stdin
 ```
 
@@ -103,7 +113,11 @@ subscription and never writes to the calling session's ledger. The plugin's
 `packages/workit-claude-code/skills/` is missing the runner builds it
 (`build.ts --skills-only`). Default tools: Read, Edit, Write, Glob, Grep,
 Skill, Agent and Bash limited to `workit`, `git` and read-only `cd`, `ls`, `cat`,
-`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd`. Claude Code asks before
+`head`, `tail`, `grep`, `wc`, `diff`, `echo` and `pwd`. Cases run in auto
+mode unless they name a mode, as a real Claude Code session with Workit
+does: in dontAsk every chain or pipe with one part off the list (`git status
+&& cat -A f`, `| head`) was denied, which no real setup does, and the model
+lost turns to the harness. Claude Code asks before
 any `cd` chain with git, and dontAsk would deny it, so the bench's own
 PreToolUse hook (`--settings`) allows `cd <dir> && <read-only>…` (git `status`,
 `log`, `diff`, `show`, `rev-parse`, `branch --show-current`, or the read-only
@@ -313,7 +327,7 @@ A bench run must never change your real Workit files (#822: a run rewrote
   never written.
 - **Self-check.** Before a case whose prompt names a shell wrapper (`bash`,
   `sh`, `python3`, `node`, `bun`, `eval`, ...), or whose allow list or
-  permission mode lets one run, the runner resolves every guarded path in a
+  permission mode (`auto`, `bypassPermissions`) lets one run, the runner resolves every guarded path in a
   child with the run's env (`run.ts --isolation-probe`: the real resolvers,
   then `workit dir config|state`, `workit grant show --all`, `workit grant
   show`, `workit workspace list`). `grant show --all` prints the file grants
@@ -338,7 +352,7 @@ A bench run must never change your real Workit files (#822: a run rewrote
 - **Drop record.** Every journal drop first appends one line to `~/.cache/workit-bench-tripwire/drops.jsonl` (0600, never through a link; a symlink or another owner's file there stops the bench with exit 4 and keeps the journal) and the runner prints it as `tripwire: journal drop recorded in …/drops.jsonl: {…}`. Each line holds `time` (ISO), `reason`, the runner's `pid`, `head` (the git commit of the checkout `run.ts` ran from, null when git cannot say) and the journal's `digest` (null when its manifest is unreadable). `reason` is `a-discard` (`--tripwire-discard`), `b-leftover-unchanged` (a start found nothing differs) or `c-run-end` (a bench ended without keeping it). A missing journal is not recorded. To learn what removed a journal, match its digest against the `tripwire armed` line the stopped run printed.
 - **Stopping and other runs.** Ctrl-C, SIGTERM or SIGHUP kill the host's process group; the run unwinds (its world removed, the real files checked against memory), prints `STOPPED by <signal>`, writes no result for that run and exits 130, 143 or 129; the journal stays only when something changed that this bench could have made (another process's change under write confinement is reported and leaves none). One bench holds the tripwire at a time (`holders/<pid>.<start>`); a second one exits 4. Every dir the tripwire uses under `~/.cache/workit-bench-tripwire/` (the base, `holders/`, `journal/`, `blobs/`) must be a real directory you own; a symlink, a file or another owner's dir stops the start with exit 4 and nothing is created or removed there. It removes only by unlinking, so a link planted in its dir loses only itself, and in `holders/` it unlinks only regular files named `<pid>.<start>` of dead runners. Each start removes the `workit-eval-*` worlds a dead runner left in the temp dir. The start-time sweep also removes a directory named `workit-eval-*` under the temp dir that has no `.runner` marker and is older than 24 h, even if the runner did not make it. The sweep skips symlinks and dirs you do not own, reads a `.runner` marker only when it is a regular file, never follows a link inside a world, and reports a world it cannot remove without stopping the start.
 - **Write confinement.** On Linux the host runs under Landlock: it and everything it starts can write only in its world, the temp dirs, `/dev` and the host's own credential file. A write, delete, rename, link or create anywhere else in your home fails in the kernel. The runner itself stays unconfined. `scripts/eval/confine.ts` applies the rules through `bun:ffi` (glibc's `syscall`, x86_64 or arm64, Landlock ABI 3+); any failure exits 126 without running the host. A temp dir that holds your home, a guarded root or the tripwire dir is not made writable, since Landlock has no deny rules. Each bench start checks it with a canary write into the tripwire dir and prints `write confinement: on (Landlock ABI n)` or `off (<reason>)`.
-- **Read confinement.** Under the same Landlock ruleset the host can read, list and execute only its world and the temp dirs, `/dev`, the system dirs (`/usr`, `/bin`, `/sbin`, `/lib*`, `/etc`, `/opt`, `/proc`, `/sys`, `/run`, `/snap`, `/nix`, `/var/lib`, `/var/cache`), this Workit checkout, the packages its `node_modules` links to and the `node_modules` store they sit in (a worktree links them into the main checkout's `node_modules`: that store is readable, the main checkout's source and other files are not; the host's environment sets `NODE_PRESERVE_SYMLINKS=1`, so a linked package stays at the path this checkout names it by and its imports resolve through this checkout's `node_modules` instead of the main checkout, whose listing bun would need and may not have, and `NODE_PATH` names the store for a dependency this checkout does not link; a linked package then finds its own dependencies as in a plain checkout, and no path of the main checkout reaches an error message), the install dirs of bun, node, git and the host binary (a `bin` dir's parent: `~/.bun`, the fnm node version, `~/.local/share/claude/versions`, `~/.opencode`), and its own credential file. Your real Workit config and state dirs, the host config dirs (`~/.claude` but the credential file, `~/.claude.json`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, `~/.pi`, `~/.local/share/opencode`) and every other project or file in your home are not readable. A candidate dir that holds the home or a guarded path is dropped. Each bench start lists the real home under the run's rules and prints `read confinement: on`, or `off (<reason>)` when the listing works. Both hosts start signed in under it (one `session-context` run each).
+- **Read confinement.** Under the same Landlock ruleset the host can read, list and execute only its world and the temp dirs, `/dev`, the system dirs (`/usr`, `/bin`, `/sbin`, `/lib*`, `/etc`, `/opt`, `/proc`, `/sys`, `/run`, `/snap`, `/nix`, `/var/lib`, `/var/cache`), this Workit checkout, the packages its `node_modules` links to and the `node_modules` store they sit in (a worktree links them into the main checkout's `node_modules`: that store is readable, the main checkout's source and other files are not; the host's environment sets `NODE_PRESERVE_SYMLINKS=1`, so a linked package stays at the path this checkout names it by and its imports resolve through this checkout's `node_modules` instead of the main checkout, whose listing bun would need and may not have, and `NODE_PATH` names the store for a dependency this checkout does not link; a linked package then finds its own dependencies as in a plain checkout, and no path of the main checkout reaches an error message), the install dirs of bun, node, git and the host binary (a `bin` dir's parent: `~/.bun`, the fnm node version, `~/.local/share/claude/versions`, `~/.opencode`), and its own credential file. Your real Workit config and state dirs, the host config dirs (`~/.claude` but the credential file, `~/.claude.json`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, `~/.pi`, `~/.local/share/opencode`) and every other project or file in your home are not readable. Two files of the config dir are, read-only: the account's `workspaces.json` and its seal, which Workit reads grants from on every runtime (D15; the world cannot move them). Without them every verb that resolves authority (`grant show`, `git push`) failed with `EACCES` in a world, and every case that permits a shell wrapper failed its self-check. Their strings are in the refusal set, and a call that names them is scrubbed as `real config`. A candidate dir that holds the home or a guarded path is dropped. Each bench start lists the real home under the run's rules and prints `read confinement: on`, or `off (<reason>)` when the listing works. Both hosts start signed in under it (one `session-context` run each).
   Without Landlock (another OS, a kernel before 6.2) a case that permits a shell wrapper is refused unless you pass `--unconfined`; it then runs with detection only.
 - **Open and limits.**
   - Landlock does not cover metadata: a bench agent can `chmod`, `chown` or `touch` a real file. A mode change on a guarded file stops the bench as an outside write; nothing else is seen.
@@ -365,14 +379,18 @@ issue or `test/behavior/cases` file).
 | Field | Meaning |
 | --- | --- |
 | `tier` | `smoke` or `full`; `--tier full` runs both |
+| `firstTry` | A first-try case: any Workit interaction a hook denies or that fails, and that `expect.declared` does not name, fails the run ([First try](#first-try)) |
+| `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass |
 | `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths |
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
 | `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `dontAsk`, the list above |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
 | `scaffold.home` | Files written under the world HOME (a host install the case needs, such as `.cursor/mcp.json`); a path that is absolute, has a `..` segment or is not below HOME refuses the world |
-| `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`), so `workit grant show` and the Stop hook see it. Only its endpoint and the grants it lowers below the D4 defaults count, and only where no real workspace matches (`packages/workit-core/src/core/eval-world.ts`). A lowered grant is an explicit grant without a forge account, so it also drops the endpoint to `commit` |
+| `scaffold.gitHooks` | Git hooks written to the repo's `.git/hooks/<name>` after the scaffold's commits (a pre-commit hook that refuses unformatted code) |
+| `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`, `changelog`, `models` for role models), so `workit grant show` and the Stop hook see it. Only its endpoint and the grants it lowers below the D4 defaults count, and only where no real workspace matches (`packages/workit-core/src/core/eval-world.ts`). A lowered grant is an explicit grant without a forge account, so it also drops the endpoint to `commit` |
 | `scaffold.forge` | `github`: a fake forge with no network. The case's branch is pushed to the bare `origin`, whose push URL becomes `https://github.example.invalid/eval/demo.git`. The world's `gh` (`scripts/eval/scaffold.ts`) answers only the reads `workit pr create` makes and opens one canned PR #1 that a re-run finds open; every other call exits 1 having sent nothing. The workspace entry gets `issues: {provider: youtrack, backlink: true}` and `youtrack.json` points at `https://yt.example.invalid` (the fake `ytrack` still refuses writes) |
 | `expect.atMost` | `{tool?, pattern, max, why}`: at most `max` calls match |
+| `expect.declared` | `CallPattern`s of calls the case expects to be refused or to fail (a user-only verb, a scripted bad first call): they count in neither `firstTry.failed` nor `firstTry.denied`. A `require` rule with `denied: true` is declared too |
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
 | `expect.require`, `expect.forbid` | `{tool?, pattern, result?, denied?, why}`: a regex on the Bash command, or on the JSON input for other tools. `result` is a regex the call's result must match too (output, error or deny reason); `denied: true` keeps only calls refused before they ran, `false` only calls that ran ([grading](#grading)) |
 
@@ -413,3 +431,42 @@ Each failure names the
 call (`#4 Agent(workit:implementer: add hello)`). Changing a rule bumps
 `GRADER_VERSION`; `--replay --check` exits 1 when a stored grade would change,
 `--replay` rewrites them.
+
+## First try
+
+Every graded run records `grade.firstTry = {interactions, failed, denied}`
+over its Workit interactions: a shell call with a `workit …` (or `npx
+@workit-dev/cli …`) segment, a spawn (Agent or Task), and any call a hook
+refused. `denied` counts the ones a hook refused (Claude Code: a
+`permission_denied` event of type `hook`, or a blocking hook's error; the
+permission mode's and the auto-mode classifier's refusals do not count;
+OpenCode cannot tell its plugin's deny from a host rule's, so every
+`Permission denied` there counts), `failed` the ones that ran and failed. A
+call the case declares (`expect.declared`) counts in neither. A case tagged
+`firstTry` fails its run on any count (`first-try`, naming each call).
+`summary.json` sums the counts per case and in total, and each bench ends
+with `first try: <clean> of <n> Workit interaction(s) on the first try
+(<rate>%): <d> denied, <f> failed`.
+
+`--gate first-try` is the release gate (decision first-try 2026-11-18, D5):
+each `firstTry` case runs 5 times (or `--repeat`, if more) and needs all of
+them; every other case keeps the two-thirds rule and must not drop against
+the committed `summary.json` (a case that passed there and fails now). The
+bench ends `gate first-try: pass|FAIL` with the short cases and the drops,
+and exits 1 on any of them, a void or limited case, or a case the budget
+left unrun. The first-try cases are written by outcome ("no spawn refused",
+"the call ran"), so a fix changes Workit, not the case.
+
+Three drift tests run in `bun run test` with no model:
+`test/behavior/command-drift.test.ts` parses every `workit …` call in the
+skills, agent files, guides, README and the source's unblock texts against
+the CLI registry (verb, subcommand, flags);
+`test/behavior/role-example-drift.test.ts` dispatches every shell example of
+`verifier.md` and `reviewer.md` through judge confinement and of
+`implementer.md` through implementer confinement, placeholders filled; and
+`test/behavior/deny-shape.test.ts` checks that every deny in the layer-0
+hook corpus has the two-line shape (`workit <gate>: <what>.` then `Retry as:
+<call>`, at most one `Why:`, 400 characters). Each keeps a shrink-only
+baseline beside it: a new hit fails naming file and line, and a fixed one
+must leave the baseline.
+
