@@ -194,8 +194,12 @@ test("Given a verifier, When it runs git remote get-url, range-diff, worktree li
   ]);
 });
 
-test("Given each read-only one-liner #880 lists, When a judge runs it, Then it runs; a write hidden in an interpolation, a joined backslash-newline or a string is denied", () => {
-  allowed(verifier, [
+// #880 stays open (decider, review mwmaow76): the read-only one-liners it lists keep their base
+// verdict, denied, and the inline-script reading is unchanged; only `node --print` and
+// `python -m <module>` are judged now. Two forms are still allowed as on base, tracked by #880:
+// `os.sys\<newline>tem(…)` in an unquoted heredoc and a pandas writer reached through an alias.
+test("Given the one-liners #880 lists and writes hidden in inline code, When a judge runs them, Then each is denied as on base; a heredoc that only reads still runs", () => {
+  denied(verifier, [
     `python3 -c "x=1; print(f'x={x}')"`,
     "python3 - <<'EOF'\n# the candidate's version\nimport json\nprint(json.load(open('package.json'))['version'])\nEOF",
     "node -e 'const p = require(\"./package.json\"); console.log(`${p.name}@${p.version}`)'",
@@ -203,10 +207,6 @@ test("Given each read-only one-liner #880 lists, When a judge runs it, Then it r
     `python3 -c "from pathlib import Path; p = 'package.json'; print(Path(p).read_text().replace('a','b'))"`,
     `python3 -c "print((5).to_bytes(2,'big'))"`,
     `node -e "console.log(new Map().delete(1))"`,
-    "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
-  ]);
-  denied(verifier, [
-    "python3 - <<EOF\nimport os\nos.sys\\\ntem('id')\nEOF",
     `python3 -c "print(f'{open(p, m)}')"`,
     'node -e \'console.log(`${require("fs").rmSync("x")}`)\'',
     `python3 -c "print('\`'); open('x','w'); print('\`')"`,
@@ -216,6 +216,9 @@ test("Given each read-only one-liner #880 lists, When a judge runs it, Then it r
     `node --print "require('fs').writeFileSync('x','y')"`,
     "python3 -m pip install --target /tmp/x foo",
     `export NODE_OPTIONS=--require=/tmp/e.js; node -e "1"`,
+  ]);
+  allowed(verifier, [
+    "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
   ]);
 });
 
@@ -243,7 +246,6 @@ test("Given review mwm7hutf's bypasses, When a judge runs a write hidden by a tr
     `node - <<'EOF'\nconst fs = require("fs")\nfor (;;) { /'/.test("") || fs.writeFileSync("${target}", "x"); break } // '\nEOF`,
     `python3 - <<'EOF'\ns = '''a"""b'''; t = """ x '\n# """; open("${target}","w").write("x") #'\nEOF`,
     `python3 - <<'EOF'\ns = b''' x '\n# '''; open("${target}","w").write("x")\nEOF`,
-    `python3 -c "import pandas as pd; f = pd.DataFrame.to_csv; f(pd.DataFrame([1]), '${target}')"`,
     `python3 -c "import pandas as pd; pd.read_csv('a.csv').to_csv('${target}')"`,
     `python3 -c "import pandas as pd; pd.DataFrame([1]).head(5).to_csv('${target}')"`,
   ]);
@@ -324,4 +326,42 @@ test("Given review mwm7hutf, When a retry is printed, Then it is a complete call
   expect(judged.split("\n")[1]).toBe(`Retry as: W=${scratch}/..; echo a > ${real}/x`);
   const built = implementer(`W=$(pwd)/..; echo x > $W/a`)?.permissionDecisionReason ?? "";
   expect(built.split("\n")[1]).toBe("Retry as: W=$(pwd)/..; echo x > <absolute path of $W>/a");
+});
+
+// Review mwmaow76 (round 3): only a closed list of names is spelled in, and only where the
+// reference ends at whitespace, `/`, `"`, `;`, `&`, `|`, `)` or the end of the command.
+test("Given a judge, When it assigns a name outside the spelled list, loops with one, or uses a zsh modifier or subscript, Then it is denied; a refused name's retry spells the literal in", () => {
+  const scratch = path.join(lead, ".workit-scratch");
+  const names = ["DIRSTACK", "FUNCNAME", "GROUPS", "PIPESTATUS", "COLUMNS", "LINES", "IFS"];
+  const refused = [
+    ...[...names, "NULLCMD", "TMPPREFIX", "HISTFILE", "path", "status"].flatMap((name) => [
+      `${name}=${scratch}; echo x > $${name}/x`,
+      `${name}=${scratch}/r; git -C $${name} commit -qm x --allow-empty`,
+    ]),
+    `for path in ${scratch}; do git status; done`,
+    `for DIRSTACK in ${scratch}; do echo x > $DIRSTACK/package.json; done`,
+    // probe8: zsh modifiers and subscripts reach the checkout from a scratch path.
+    `W=${scratch}/a/b; echo x > $W:h:h:h/package.json`,
+    `W=${scratch}/a/b; echo x > "$W:h:h:h/package.json"`,
+    `W=${scratch}/a/b; echo x > $W[1,${lead.length}]/package.json`,
+    `for f in ${scratch}/a/b; do echo x > $f:h:h:h/package.json; done`,
+    `W=${scratch}/a/b; git -C $W:h:h:h commit -qm x --allow-empty`,
+    `W=${scratch}/a/b; cp ${scratch}/x $W:h:h:h/package.json`,
+    `W=${scratch}; echo x > \${W:-/tmp}/x`,
+    `W=${scratch}; echo x > \${W}x`,
+  ];
+  const reviewer = (command: string) => bash(command, "workit:reviewer", "rev-ft");
+  denied(verifier, refused);
+  denied(reviewer, refused);
+  allowed(verifier, [
+    `W=${lead}; git -C $W status --short`,
+    `wt=${lead}; git -C $wt status --short`,
+    `W=${scratch}; mkdir -p "$W"/x`,
+    `W=${scratch}; echo x > \${W}/x`,
+    `for f in a b; do git -C ${lead} log -1 -- $f; done`,
+  ]);
+  const retry = verifier(`path=${scratch}; echo x > $path/x`)?.permissionDecisionReason ?? "";
+  expect(retry.split("\n")[1]).toBe(`Retry as: echo x > ${scratch}/x`);
+  const zsh = verifier(`W=${scratch}/a/b; echo x > $W:h/x`)?.permissionDecisionReason ?? "";
+  expect(zsh.split("\n")[1]).toMatch(/^Why: /);
 });

@@ -261,52 +261,26 @@ const MUTATING_CALLS =
  * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Reflect|getOwnPropertyDescriptor|attrgetter|methodcaller|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|(?<!\b(?:Map|Set)\([^()]*\))\.delete\s*\(|\.to_(?!bytes\b)\w|(?<!\b(?:read\w*|str|decode|strip|lower|upper)\([^()]*\)|['"])(?<=Path\b.*)\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
 /** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
 const FREE_OPEN =
   /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
 
 /**
- * Whole-line comments and string literals, left to right: an f-string's
- * prefix (1), a triple-quoted body (3), a quoted body (5), or a template
- * literal's body (6).
- */
-const TOKENS =
-  /^[ \t]*(?:(?:#(?![\w$])|\/\/)[^\n]*|\/\*[\s\S]*?\*\/)|(?:\b([rR]?[fF][rR]?))?(?:('''|""")([\s\S]*?)\2|(['"])((?:\\.|(?!\4)[^\\\n])*)\4)|`((?:\\.|[^\\`])*)`/gm;
-
-/**
  * Whether inline Python or Node code may change files: SPAWNS, or a word
- * outside FREE_OPEN, comments and string literals that names a call in
- * MUTATING_CALLS (bar a list's `append` and `copy`, and printing to stdout or
- * stderr). An f-string's `{…}` and a template literal's `${…}` are code. A
- * backslash-newline is judged joined too, as an unquoted heredoc runs it.
+ * outside FREE_OPEN and string literals that names a call in MUTATING_CALLS
+ * (bar a list's `append` and `copy`, and printing to stdout or stderr).
  */
-const writesIn = (raw: string, js = true): boolean => {
-  if (raw.includes("\\\n") && writesIn(raw.replaceAll("\\\n", ""), js)) return true;
-  let parts = false;
-  const bare = raw
+const writesIn = (text: string): boolean => {
+  const bare = text
     .replace(FREE_OPEN, "")
-    .replace(TOKENS, (...[, fstring, , triple, , body, template]: Array<string | undefined>) => {
-      const inner = fstring ? (triple ?? body) : template;
-      const open = fstring ? "{" : "${";
-      if (inner !== undefined)
-        for (const piece of inner.split(open).slice(1)) {
-          const end = piece.indexOf("}");
-          parts ||=
-            end < 0 || /[{}]/.test(piece.slice(0, end)) || writesIn(piece.slice(0, end), js);
-        }
-      return " ";
-    })
-    .replace(/std(?:out|err)\.write/g, "");
-  // Fail closed where the strings cannot be told apart: a quote or `${` left over, a `\u`
-  // or `\x` escape, or in JavaScript (Python has none) a regex literal holding a quote: a `/`
-  // after whitespace, `)`, an operator, a bracket or a brace.
+    .replace(/std(?:out|err)\.write|(?<![fF][rR]?)(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "");
+  // Fail closed where the strings cannot be told apart: a quote left over (an f-string, a
+  // regex literal), `${…}`, a `\u` or `\x` escape, or a regex literal holding a quote.
   return (
-    parts ||
-    SPAWNS.test(raw) ||
-    /['"`]|\$\{/.test(bare) ||
-    /\\[ux]/.test(raw) ||
-    (js && /(?:^|[\s(),=:;!&|?{}[+*%<>^-])\/(?![/*])[^/\n]*['"`]/.test(raw)) ||
+    SPAWNS.test(text) ||
+    /['"]/.test(bare) ||
+    /\$\{|\\[ux]|(?:^|[(,=:;!&|?{}[\s])\/(?![/*])[^/\n]*['"]/.test(text) ||
     [...bare.matchAll(/[\w$]+/g)].some(
       ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
     )
@@ -518,10 +492,7 @@ const opaqueWrites = (
       [
         at < 0 ? fed : texts[runs + at + 2],
         ...texts.slice(0, runs + 1 + (at < 0 ? args.length : at)),
-      ].every(
-        (text) =>
-          text !== undefined && text !== null && !writesIn(text, !name.startsWith("python")),
-      )
+      ].every((text) => text !== undefined && text !== null && !writesIn(text))
       ? null
       : [
           ".",

@@ -494,8 +494,11 @@ export function confineImplementerShell(
 
 // --- judges: verifiers and reviewers write only in a scratch dir (#790) ----
 
-/** `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits and `@%+=:,./_-`, maybe quoted. */
-const LITERAL_SET = /^\s*([A-Za-z_]\w*)=(['"]?)([\w@%+=:,./-]*)\2[ \t]*(?:;|&&|\n)\s*/;
+/** `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits and `@%+=:./_-`, maybe quoted. */
+const LITERAL_SET = /^\s*([A-Za-z_]\w*)=(['"]?)([\w@%+=:./-]*)\2[ \t]*(?:;|&&|\n)\s*/;
+/** The names Workit spells in for a judge: one letter, or a short path or ref word in one case. */
+const SPELLED =
+  /^(?:[A-Za-z]|wt|wd|dir|repo|root|base|sha|ref|branch|file|out|scratch|worktree|WT|WD|DIR|REPO|ROOT|BASE|SHA|REF|BRANCH|FILE|OUT|SCRATCH|WORKTREE)$/;
 /**
  * Names git, a shell or an interpreter reads from the environment, and names
  * the shell sets itself (`read` sets REPLY, `getopts` OPTARG, `mapfile` MAPFILE).
@@ -1275,26 +1278,48 @@ const substituted = (text: string, name: string, value: string): string | null =
 /**
  * `command` with its leading literal assignments (`W=/abs/path; …`) spelled
  * into the rest and a `for` over at most 16 literal words unrolled, for a
- * judge: null when it has neither or Workit cannot be sure. A name the
- * environment holds or git, a shell or an interpreter reads stays as written.
+ * judge: null when it has neither or Workit cannot be sure. A name outside
+ * SPELLED, in the environment or read by git, a shell or an interpreter is
+ * refused with the literal spelled into the retry; a reference with anything
+ * but whitespace, `/`, `"`, `;`, `&`, `|` or `)` after it (zsh's `$W:h`,
+ * `$W[1]`, `${W:-x}`) is refused.
  */
-const literalCommand = (command: string): [prefix: string, rest: string] | null => {
+const literalCommand = (
+  command: string,
+): [prefix: string, rest: string] | { why: string; retry?: string } | null => {
   let rest: string | null = command;
   let prefix = "";
-  for (let set; rest && (set = LITERAL_SET.exec(rest));) {
-    const [whole, name, , value] = set;
-    if (process.env[name] !== undefined || ENV_READ.test(name)) return null;
-    prefix += whole;
-    rest = substituted(rest.slice(whole.length), name, value);
+  let refused = "";
+  const spell = (text: string, name: string, value: string) => {
+    if (
+      new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}(?![\\w}])|\\{${name}\\})(?![\\s/";&|)]|$)`).test(
+        text,
+      )
+    )
+      throw `\`$${name}\` has a modifier, subscript or suffix Workit does not spell in`;
+    if (!SPELLED.test(name) || process.env[name] !== undefined || ENV_READ.test(name))
+      refused ||= `\`${name}=\` is not a name Workit spells in (one letter, or wt, dir, repo, root, base, sha, ref, branch, file, out, scratch, worktree)`;
+    return substituted(text, name, value);
+  };
+  try {
+    for (let set; rest && (set = LITERAL_SET.exec(rest));) {
+      const [whole, name, , value] = set;
+      const before = refused;
+      rest = spell(rest.slice(whole.length), name, value);
+      if (refused === before) prefix += whole;
+    }
+    const loop =
+      rest &&
+      /^\s*for\s+(\w+)\s+in\s+([\w@%+=:./ \t-]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(rest);
+    const items = loop?.[2].split(/\s+/).filter(Boolean) ?? [];
+    if (loop && items.length <= 16) {
+      const bodies = items.map((item) => spell(loop[3].trim(), loop[1], item));
+      rest = bodies.includes(null) ? null : bodies.join("; ");
+    }
+  } catch (why) {
+    return { why: String(why) };
   }
-  const loop =
-    rest &&
-    /^\s*for\s+(\w+)\s+in\s+([\w@%+=:,./ \t-]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(rest);
-  const items = loop?.[2].split(/\s+/).filter(Boolean) ?? [];
-  if (loop && items.length <= 16) {
-    const bodies = items.map((item) => substituted(loop[3].trim(), loop[1], item));
-    rest = bodies.includes(null) ? null : bodies.join("; ");
-  }
+  if (refused) return { why: refused, retry: rest === null ? undefined : prefix + rest };
   return rest === null || rest === command ? null : [prefix, rest];
 };
 
@@ -1313,6 +1338,8 @@ export function confineJudgeShell(
     if (!input.session.agentId) return NONE;
     // Judged with literals spelled in; a retry keeps the assignments in front.
     const literal = dialect === "posix" ? literalCommand(command) : null;
+    if (literal && !Array.isArray(literal))
+      return judgeDeny(input, literal.why, undefined, () => literal.retry);
     const shownAs = literal ? literal.join("") : command;
     command = literal?.[1] ?? command;
     const fed: string[] = [];
