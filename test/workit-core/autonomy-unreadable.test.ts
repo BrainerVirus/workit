@@ -75,7 +75,8 @@ test.skipIf(!denies)(
     const autonomy = resolveAutonomy(cwd());
     expect(autonomy.grants).toEqual({ ...DEFAULT_GRANTS });
     expect(autonomy.note).toContain("cannot be read (permission denied)");
-    expect(autonomy.note).toContain("workspaces.json");
+    expect(autonomy.note).toContain("the account's workspaces.json");
+    expect(autonomy.note).not.toContain(configHome.configDir);
     expect(modelSources(cwd(), configHome.configDir)).toEqual([]);
     const status = sealStatus();
     expect(status.state).toBe("no_account");
@@ -90,7 +91,10 @@ test.skipIf(!denies)(
     deny(SEAL_FILE);
     const autonomy = resolveAutonomy(cwd());
     expect(autonomy.grants).toEqual({ ...DEFAULT_GRANTS });
-    expect(autonomy.note).toContain(`${SEAL_FILE} cannot be read (permission denied)`);
+    expect(autonomy.note).toContain(
+      `the account's ${SEAL_FILE} cannot be read (permission denied)`,
+    );
+    expect(autonomy.note).not.toContain(configHome.configDir);
   },
 );
 

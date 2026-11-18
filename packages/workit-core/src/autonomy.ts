@@ -126,7 +126,8 @@ const NO_ACCOUNT =
 
 /**
  * Why no account grants are read (no account record, or an account file this
- * process may not read), or null when they are.
+ * process may not read), or null when they are. The note names the file, not
+ * its path: a confined host is never shown where the account's config lives.
  */
 const accountUnread = (): string | null => {
   const dir = accountHomeDir();
@@ -134,7 +135,7 @@ const accountUnread = (): string | null => {
   const file = deniedFile(dir);
   return file === null
     ? null
-    : `${file} cannot be read (permission denied), so it reads as no workspace entries: no grants, no models, the D4 defaults apply`;
+    : `the account's ${path.basename(file)} cannot be read (permission denied), so it reads as no workspace entries: no grants, no models, the D4 defaults apply`;
 };
 
 /** The workspace entries of a grants dir; none without one. */
