@@ -96,7 +96,7 @@ import {
   verdictEvidence,
   type CheckEvidenceDoc,
 } from "@workit-dev/core/src/core/policy/check-evidence";
-import { keepProc, openProcs } from "@workit-dev/core/src/core/procs";
+import { keepProc, openProcs, unkeepProc } from "@workit-dev/core/src/core/procs";
 import { readProc } from "@workit-dev/core/src/store/threads/procs";
 import { connect } from "./forge-common";
 import { agentMarker } from "./grant";
@@ -125,6 +125,31 @@ function markKept(io: Io, ids: string[], decision: string): void {
   const store = openProcs(io.env);
   try {
     for (const id of ids) keepProc(store, id, `decision ${decision}`);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Lift the process keeps of the decision `superseded` names, except the ones
+ * the new decision keeps again; returns the lifted process ids.
+ */
+function liftSuperseded(
+  io: Io,
+  rows: readonly ReadRow[],
+  superseded: string | undefined,
+  keptAgain: readonly string[],
+): string[] {
+  const target = superseded ? rows.find((row) => row.id === superseded) : undefined;
+  if (!target || !Array.isArray(target.keep)) return [];
+  const ids = target.keep.flatMap((value) => {
+    const parsed = parseKeepTarget(String(value), io.cwd);
+    return parsed?.kind === "proc" && !keptAgain.includes(parsed.target) ? [parsed.target] : [];
+  });
+  if (!ids.length) return [];
+  const store = openProcs(io.env);
+  try {
+    return ids.filter((id) => unkeepProc(store, id, `decision ${target.id}`));
   } finally {
     store.close();
   }
@@ -580,11 +605,18 @@ export async function run(argv: string[], io: Io): Promise<number> {
         keep: values.keep,
       }),
     );
-    if (decision.ok) markKept(io, procs, decision.value.id);
+    const lifted: string[] = [];
+    if (decision.ok) {
+      markKept(io, procs, decision.value.id);
+      lifted.push(...liftSuperseded(io, rows, decision.value.supersedes, procs));
+    }
     return fromResult(io, decision, (row) =>
       [
         `recorded decision ${row.id}`,
         ...(row.keep ?? []).map((item) => `keep ${item}: cleanup leaves it (decision ${row.id})`),
+        ...lifted.map(
+          (id) => `proc:${id} is no longer kept (decision ${row.supersedes} superseded)`,
+        ),
       ].join("\n"),
     );
   }

@@ -107,3 +107,53 @@ test("Given --keep naming no registered process, Then the decision is refused an
   expect(result.json().error).toBe("--keep proc:nope: no such registered process");
   expect(decisions(repo)).toEqual([]);
 });
+
+test("Given a proc: keep, When a later decision supersedes it, Then the registry no longer keeps the process; one kept again stays kept", async () => {
+  const { repo, env } = world();
+  const store = openProcs(env);
+  try {
+    for (const id of ["pk0101", "pk0102"])
+      upsertProc(store, id, () => ({
+        cwd: repo,
+        cmd: "bun run dev",
+        kind: "server",
+        startedAt: new Date().toISOString(),
+      }));
+  } finally {
+    store.close();
+  }
+  const first = await run(repo, env, [
+    "ledger",
+    "decision",
+    "keep both",
+    "--why",
+    "the user: keep both servers",
+    "--keep",
+    "proc:pk0101",
+    "--keep",
+    "proc:pk0102",
+    "--json",
+  ]);
+  expect(first.code, first.stdout).toBe(0);
+  const keptId = first.json().data.id;
+  const second = await run(repo, env, [
+    "ledger",
+    "decision",
+    "keep only the api",
+    "--why",
+    "the user: the web one can go",
+    "--keep",
+    "proc:pk0102",
+    "--supersedes",
+    keptId,
+  ]);
+  expect(second.code, second.stdout).toBe(0);
+  expect(second.stdout).toContain(`proc:pk0101 is no longer kept (decision ${keptId} superseded)`);
+  const after = openProcs(env);
+  try {
+    expect(readProc(after, "pk0101")).toMatchObject({ keep: false, keepRef: null });
+    expect(readProc(after, "pk0102")?.keep).toBe(true);
+  } finally {
+    after.close();
+  }
+});

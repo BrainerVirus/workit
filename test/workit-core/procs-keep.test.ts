@@ -74,12 +74,13 @@ const world = () => {
       workspaces: [
         { name: "outer", glob: glob(path.join(root, "kept")), cleanup: "keep" },
         { name: "inner", glob: glob(kept) },
-        { name: "other", glob: glob(path.join(root, "auto")), cleanup: "sometimes" },
+        { name: "other", glob: glob(path.join(root, "auto")), cleanup: "auto" },
+        { name: "typo", glob: glob(path.join(root, "typo")), cleanup: "sometimes" },
       ],
     }),
   );
   const env: NodeJS.ProcessEnv = { ...process.env, WORKIT_STATE_DIR: temp("wk-procs-keep-state-") };
-  return { kept, auto, env };
+  return { kept, auto, typo: path.join(root, "typo", "app"), env };
 };
 
 let counter = 0;
@@ -117,10 +118,18 @@ const context = (env: NodeJS.ProcessEnv, caller: string | null = "s-owner") => (
 
 const alive = (row: ProcRow) => table.get(row.pid!)?.alive === true;
 
-test("Given workspace cleanup keep on an enclosing entry, Then the nested workspace inherits it; an unknown value reads as auto", () => {
-  const { kept, auto } = world();
+test("Given workspace cleanup keep on an enclosing entry, Then the nested workspace inherits it; an unknown value reads as keep and is named", async () => {
+  const { kept, auto, typo, env } = world();
   expect(workspaceCleanup(kept)).toEqual({ mode: "keep", from: "outer" });
-  expect(workspaceCleanup(auto)).toEqual({ mode: "auto", from: null });
+  expect(workspaceCleanup(auto)).toEqual({ mode: "auto", from: "other" });
+  expect(workspaceCleanup(typo)).toEqual({ mode: "keep", from: "typo", invalid: "sometimes" });
+  const held = register(env, typo);
+  const report = await stopProcesses({ within: typo }, "delivered", context(env));
+  expect(report.stopped).toEqual([]);
+  expect(report.skipped[0]?.reason).toContain(
+    'kept: workspace cleanup keep (typo), read from the unknown value "sometimes"',
+  );
+  expect(alive(held)).toBe(true);
 });
 
 test("Given a row in a cleanup keep workspace, When a directory stop runs, Then it keeps running with the reason and heldWithin lists it; by id it stops", async () => {

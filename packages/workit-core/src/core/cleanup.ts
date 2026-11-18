@@ -547,6 +547,21 @@ async function stopWithin(
   return left.length ? left.map(procLine).join("; ") : null;
 }
 
+/**
+ * Why `branch` is no longer at `head` (a commit landed while processes
+ * stopped or the trunk was fetched), or null: the worktree's HEAD and the
+ * branch ref must both still be `head`.
+ */
+const movedFrom = (cwd: string, worktree: string, branch: string, head: string): string | null => {
+  const at = gitRun(worktree, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const ref = gitRun(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  const now = [at.ok ? at.stdout.trim() : "(unreadable)", ref.ok ? ref.stdout.trim() : "(gone)"];
+  const moved = now.find((sha) => sha !== head);
+  return moved === undefined
+    ? null
+    : `${branch} moved during cleanup (${head.slice(0, 12)} -> ${moved.slice(0, 12)})`;
+};
+
 /** Tracked or untracked, non-ignored changes in a checkout; null when git cannot say. */
 const checkoutChanges = (checkout: string): string[] | null => {
   const status = gitRun(checkout, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
@@ -607,6 +622,12 @@ async function leaveMergedBranch(
     .map((other) => other.path);
   const procs = await stopWithin(checkout, nested, options, env, out);
   if (procs) return procs;
+  // The fetch and the stop take time: a commit or an edit made meanwhile keeps the checkout.
+  const moved = movedFrom(cwd, checkout, branch, tip);
+  if (moved) return moved;
+  const late = checkoutChanges(checkout);
+  if (late === null || late.length)
+    return late === null ? "git status failed" : "it changed while its processes stopped";
   const trunkElsewhere = worktrees.some(
     (other) => other.path !== checkout && other.branch === `refs/heads/${trunk}`,
   );
@@ -673,7 +694,7 @@ export async function cleanupAfterMerge(
   const setting = workspaceCleanup(cwd);
   if (setting.mode === "keep") {
     out.notes.push(
-      `kept: workspace cleanup keep${setting.from ? ` (${setting.from})` : ""}; local ${branch}, its worktrees and their processes stay`,
+      `kept: workspace cleanup keep${setting.from ? ` (${setting.from})` : ""}${setting.invalid === undefined ? "" : `, read from the unknown value ${JSON.stringify(setting.invalid)} (auto or keep)`}; local ${branch}, its worktrees and their processes stay`,
     );
     return out;
   }
@@ -775,7 +796,21 @@ export async function cleanupAfterMerge(
       out.notes.push(`worktree ${entry.path}: ${procs}; kept it and local ${branch}`);
       return done();
     }
-    if (!dropMarkers(entry.path, state.markers)) {
+    // The stop takes time: a commit or an edit made meanwhile keeps the worktree and branch.
+    const moved = movedFrom(cwd, entry.path, branch, head);
+    if (moved) {
+      out.notes.push(`worktree ${entry.path}: ${moved}; kept it and local ${branch}`);
+      return done();
+    }
+    const after = keepReason(entry.path, repoRegenerable(cwd));
+    if (after.held) {
+      out.dirty = { path: entry.path, paths: after.held.paths.slice(0, DIRTY_SHOWN) };
+      out.notes.push(
+        `worktree ${entry.path} has ${after.held.reason}; kept it and local ${branch}. Commit, move or discard them, then \`${RELEASE_COMMAND}\``,
+      );
+      return done();
+    }
+    if (!dropMarkers(entry.path, after.markers)) {
       out.notes.push(`worktree ${entry.path} changed meanwhile; kept it and local ${branch}`);
       return done();
     }
@@ -792,9 +827,15 @@ export async function cleanupAfterMerge(
     tidyParent(entry.path, place, env);
   }
   if (!listWorktrees(cwd).some((entry) => entry.branch === ref)) {
-    const deleted = gitRun(cwd, ["branch", "-D", "--", branch]);
-    if (deleted.ok) out.branchDeleted = true;
-    else out.notes.push(`could not delete local ${branch}: ${firstLine(deleted.stderr)}`);
+    // Compare-and-delete: a commit that lands after the last check keeps the branch.
+    const deleted = gitRun(cwd, ["update-ref", "-d", ref, head]);
+    if (deleted.ok) {
+      out.branchDeleted = true;
+      gitRun(cwd, ["config", "--remove-section", `branch.${branch}`]);
+    } else
+      out.notes.push(
+        `could not delete local ${branch} at ${head.slice(0, 12)}: ${firstLine(deleted.stderr)}; kept it`,
+      );
   }
   return done();
 }

@@ -434,3 +434,54 @@ test("Given an open PR into the branch, Then the remote and local branch and the
   expect(existsSync(dir)).toBe(true);
   expect(repo.git("branch", "--list", "feature/x")).not.toBe("");
 });
+
+/** The fake kill also commits `file` in `dir` the first time it really signals: a commit landing mid-stop. */
+const commitDuringStop = (dir: string, file: string) => {
+  const kill = procTree.kill;
+  let done = false;
+  procTree.kill = (target, signal) => {
+    kill(target, signal);
+    if (signal === 0 || done) return;
+    done = true;
+    writeFileSync(path.join(dir, file), "late\n");
+    git(dir, "add", file);
+    git(dir, "commit", "-q", "-m", "late work");
+  };
+};
+
+const actor = { host: "claude-code", session: SESSION, agentId: null };
+
+test("Given a commit lands in the slice worktree while its server stops, Then the worktree and branch are kept with the late commit, and nothing is deleted", async () => {
+  const { repo } = setup();
+  const dir = sliceWorktree(repo);
+  const merged = git(dir, "rev-parse", "HEAD");
+  const dev = server(dir);
+  commitDuringStop(dir, "late.txt");
+  const out = await cleanupAfterMerge(repo.cwd, "feature/x", merged, {
+    actor,
+    trigger: "pr merge",
+    env,
+  });
+  expect(running(dev)).toBe(false);
+  expect(out).toMatchObject({ worktreeRemoved: null, branchDeleted: false });
+  expect(out.notes.join("\n")).toContain("feature/x moved during cleanup");
+  expect(existsSync(path.join(dir, "late.txt"))).toBe(true);
+  expect(git(repo.cwd, "log", "-1", "--format=%s", "feature/x")).toBe("late work");
+});
+
+test("Given a commit lands in the checkout this runs in while its server stops, Then it stays on the branch with the late commit", async () => {
+  const { repo } = setup();
+  squashOnRemote(repo);
+  const dev = server(repo.cwd);
+  commitDuringStop(repo.cwd, "late.txt");
+  const out = await cleanupAfterMerge(repo.cwd, "feature/x", repo.head, {
+    actor,
+    trigger: "pr merge",
+    env,
+  });
+  expect(running(dev)).toBe(false);
+  expect(out).toMatchObject({ switched: null, branchDeleted: false });
+  expect(out.notes.join("\n")).toContain("feature/x moved during cleanup");
+  expect(repo.git("branch", "--show-current")).toBe("feature/x");
+  expect(repo.git("log", "-1", "--format=%s")).toBe("late work");
+});

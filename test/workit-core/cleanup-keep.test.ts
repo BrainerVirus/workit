@@ -16,6 +16,7 @@ import {
   managedWorktreeRoot,
 } from "@/packages/workit-core/src/core/cleanup";
 import { readLedger, recordDecision } from "@/packages/workit-core/src/ledger";
+import { useConfigHome } from "../shared/grant-home";
 import { spawnHeavyTimeout } from "../shared/timeouts";
 
 setDefaultTimeout(spawnHeavyTimeout());
@@ -180,4 +181,47 @@ test("Given a linked worktree on the merged branch running the command while mai
   expect(existsSync(dir)).toBe(true);
   expect(git(dir, "rev-parse", "HEAD")).toBe(remoteMain);
   expect(branchExists(world.main, "feature/x")).toBe(false);
+});
+
+test("Given an open PR the forge reports for the branch, Then cleanupAfterMerge keeps the branch and its worktree with the forge's reason", async () => {
+  const world = setup();
+  const dir = slice(world);
+  const asked: string[] = [];
+  const out = await cleanupAfterMerge(world.main, "feature/x", world.head, {
+    actor,
+    trigger: "pr merge",
+    env: world.env,
+    openPr: (branch) => {
+      asked.push(branch);
+      return "open PR #13 targets it";
+    },
+  });
+  expect(asked).toEqual(["feature/x"]);
+  expect(out).toMatchObject({ branchDeleted: false, worktreeRemoved: null, recorded: null });
+  expect(out.notes).toEqual(["local feature/x is kept: open PR #13 targets it"]);
+  expect(existsSync(dir)).toBe(true);
+  expect(branchExists(world.main, "feature/x")).toBe(true);
+});
+
+test("Given workspace cleanup with a value Workit does not know, Then nothing is removed and the note names the value", async () => {
+  const world = setup();
+  const dir = slice(world);
+  const home = useConfigHome("wk-keep-config-");
+  try {
+    writeFileSync(
+      path.join(home.configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "w", glob: `${world.root.replaceAll("\\", "/")}/**`, cleanup: "kepp" },
+        ],
+      }),
+    );
+    const out = await cleanup(world);
+    expect(out.notes).toEqual([
+      'kept: workspace cleanup keep (w), read from the unknown value "kepp" (auto or keep); local feature/x, its worktrees and their processes stay',
+    ]);
+  } finally {
+    home.restore();
+  }
+  expect(existsSync(dir)).toBe(true);
 });

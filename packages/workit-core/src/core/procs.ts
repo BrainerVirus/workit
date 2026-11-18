@@ -574,7 +574,7 @@ const workspaceKeeps = (): ((row: ProcRow) => string | null) => {
       seen.set(
         row.cwd,
         setting.mode === "keep"
-          ? `kept: workspace cleanup keep${setting.from ? ` (${setting.from})` : ""}`
+          ? `kept: workspace cleanup keep${setting.from ? ` (${setting.from})` : ""}${setting.invalid === undefined ? "" : `, read from the unknown value ${JSON.stringify(setting.invalid)}`}`
           : null,
       );
     }
@@ -779,6 +779,17 @@ export async function reapOrphans(
 /** Mark a row kept (cleanup leaves it running); `ref` names the ledger decision. */
 export const keepProc = (store: ThreadsStore, id: string, ref: string | null): ProcRow =>
   upsertProc(store, id, () => ({ keep: true, keepRef: ref }));
+
+/**
+ * Lift a keep that decision `ref` put on a row (its decision was superseded);
+ * a row kept by another decision, or gone, is left as it is. True when lifted.
+ */
+export function unkeepProc(store: ThreadsStore, id: string, ref: string): boolean {
+  const row = readProc(store, id);
+  if (!row?.keep || row.keepRef !== ref) return false;
+  upsertProc(store, id, () => ({ keep: false, keepRef: null }));
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // the RSS ceiling notice

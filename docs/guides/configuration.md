@@ -320,7 +320,8 @@ With `"keep"`, nothing is removed or stopped, the merge output says
 `kept: workspace cleanup keep`, and the registered processes in the workspace
 also outlive session-end stops and the orphan reap (`workit stop <id>` still
 stops one). A workspace nested inside another inherits it the way it inherits
-`trailers`; a value Workit does not know reads as `auto`.
+`trailers`. A value Workit does not know reads as `keep`, so a typo removes
+nothing, and the merge output names the bad value.
 
 ```json
 { "name": "demos", "glob": "/home/you/demos/**", "cleanup": "keep" }

@@ -263,12 +263,12 @@ export const workspaceConfigSchema = z
       .describe(
         "Whether `workit pr merge` deletes the head branch after a merge (default true); `--keep-branch` opts out for one merge.",
       ),
-    // Read leniently (workspaceCleanup): an unknown value reads as auto.
+    // Read leniently (workspaceCleanup): an unknown value reads as keep.
     cleanup: z
       .unknown()
       .optional()
       .describe(
-        "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing.",
+        "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing. A value Workit does not know reads as `keep`.",
       ),
     liveSessionGuard: z
       .boolean()
@@ -1288,20 +1288,19 @@ export type CleanupMode = (typeof CLEANUP_MODES)[number];
 /**
  * The workspace's `cleanup` mode (default `auto`), inherited like `trailers`.
  * `keep` leaves every worktree, branch and process of finished work in place.
- * A value this version does not know, or an unreadable workspaces.json, reads
- * as auto. `from` names the entry the value came from.
+ * A value this version does not know reads as keep (fail closed: nothing is
+ * removed on a typo) and is returned as `invalid`; an unreadable
+ * workspaces.json reads as auto. `from` names the entry the value came from.
  */
 export const workspaceCleanup = (
   cwd: string,
   dir?: string,
-): { mode: CleanupMode; from: string | null } => {
-  const found = inheritedSetting(cwd, dir, (entry) =>
-    (CLEANUP_MODES as readonly unknown[]).includes(entry.cleanup),
-  );
-  return {
-    mode: found?.source?.cleanup === "keep" ? "keep" : "auto",
-    from: found?.source?.name ?? null,
-  };
+): { mode: CleanupMode; from: string | null; invalid?: unknown } => {
+  const found = inheritedSetting(cwd, dir, (entry) => entry.cleanup !== undefined);
+  const value = found?.source?.cleanup;
+  const from = found?.source?.name ?? null;
+  if (value === undefined || value === "auto") return { mode: "auto", from };
+  return value === "keep" ? { mode: "keep", from } : { mode: "keep", from, invalid: value };
 };
 
 /**

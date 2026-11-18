@@ -134,8 +134,9 @@ Two opt-outs leave finished work in place:
   `worktree:` keeps that worktree and its branch; `proc:` keeps that registered
   process running, and with it the worktree it runs in. Cleanup names the
   decision id when it skips an item. A later decision that supersedes it
-  (`--supersedes <id>`) lifts the keep. `--keep` is refused with
-  `--by decider`: only the user keeps their work.
+  (`--supersedes <id>`) lifts the keep, including the registry's keep mark on
+  a `proc:` process, unless the new decision keeps the same item again.
+  `--keep` is refused with `--by decider`: only the user keeps their work.
 
 ## Sweeping leftovers: `workit gc --worktrees`
 
