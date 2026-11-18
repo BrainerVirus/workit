@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `## [x.y.z] - date` section. Every `workit-dev-v*` release since 1.0.0 is
   split out into its own section here.
 
+### Added
+
+- When a session ends (Claude Code SessionEnd, Cursor sessionEnd, Pi quit, OpenCode session deleted), Workit stops the processes and automation browsers that session started, without delaying the host; a continuing session (clear, resume, compact), a subagent's end and kept processes stop nothing. A session start also stops leftovers whose owning session is gone, at most once every 10 minutes. Codex sends no subagent id on SessionEnd, so its processes are stopped by that start-time sweep instead.
+
 ## [2.13.0] - 2026-11-18
 
 ### Fixed
