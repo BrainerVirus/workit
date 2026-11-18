@@ -16,9 +16,18 @@ agent that carries its own model: spawn it by name and pass no `model` or
 | Codex | the same `workit-*` names |
 | Cursor | `workit-verifier`, `workit-reviewer`, `workit-decider`, `workit-babysitter` |
 
-Claude Code's agent files: decider `fable` (effort `high`), implementer and
-verifier `sonnet`, reviewer `opus`, babysitter `haiku`. A hard slice's brief
-`SPAWN:` line names `model: "opus"`; pass the line as printed. A role
+Claude Code, with nothing configured (pass a brief's `SPAWN:` line as printed):
+
+| Role or TIER | Model |
+| --- | --- |
+| decider | `fable`, effort `high` (agent file) |
+| hard | `opus` (the brief's SPAWN line) |
+| standard, verifier | `sonnet` (agent file) |
+| mundane | `haiku` (the brief's SPAWN line) |
+| reviewer | `opus` (agent file) |
+| babysitter | `haiku` (agent file) |
+
+A role
 configured in `models.roles` to another model is listed in your session
 contract (Claude Code) or set on the host's agent (OpenCode, Codex); `workit
 models show [--role r] [--host h]` prints per host whether it comes from the
