@@ -1,0 +1,53 @@
+{
+  "case": "config-guard-plan-mention",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "eaed7d05f3c416ff",
+  "date": "2026-11-18T18:09:14.355Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 42251,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /python3/ not denied: the plan-writing call runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 2 Workit interaction(s): #1 Bash(ls ~/.config 2>/dev/null; ls -d ~/.config/workit* 2>/dev/null; echo \"---\"; npx -y @workit-dev/cli help 2>/dev/null | hea) denied: Permission denied: shell; #3 Bash(printenv HOME; printenv XDG_CONFIG_HOME; ls -a \"$HOME\") denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 2
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/issued/549912da793576113b38c0693e53600b/e32e93e2067c41e8f3d7169a56be6421",
+      "change": "created"
+    },
+    {
+      "path": "~/.local/state/workit/issued-tokens/549912da793576113b38c0693e53600b/e32e93e2067c41e8f3d7169a56be6421",
+      "change": "created"
+    }
+  ]
+}

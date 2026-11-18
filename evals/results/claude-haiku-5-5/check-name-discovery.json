@@ -1,0 +1,26 @@
+{
+  "case": "check-name-discovery",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "9cb4c406b5951d64",
+  "date": "2026-11-18T16:49:08.637Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 11996,
+    "costUsd": 0.00431967,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 4,
+    "failures": [],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

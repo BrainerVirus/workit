@@ -1,0 +1,35 @@
+{
+  "case": "implementer-bulk-edit",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "6464f7a376fe09cc",
+  "date": "2026-11-18T16:24:28.102Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 4965,
+    "costUsd": 0.0771414,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 14,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#5 Agent(workit:implementer: rename) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
+      },
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 1 failed of 9 Workit interaction(s): #5 Agent(workit:implementer: rename) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli; #10 Bash(workit git --cwd <world>/state/worktrees/repo/rename commit -m \"rename oldName to newName in src/\" --trailer \"Co-Authore) in a subagent failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 9,
+      "failed": 1,
+      "denied": 1
+    }
+  }
+}

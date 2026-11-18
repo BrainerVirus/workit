@@ -1,0 +1,34 @@
+{
+  "id": "implementer-pwd-path",
+  "source": "retro 2026-11-18 (first-try research, decision D5): implementer confinement (a $(pwd) path)",
+  "tier": "full",
+  "firstTry": true,
+  "hosts": ["claude-code"],
+  "prompt": "Register the plan plans/rename.json with Workit, make the worktree for its slice rename, and spawn a workit:implementer with the brief Workit prints for it. Tell the implementer to edit with `sed -i 's/oldName/newName/g' $(pwd)/src/a.ts $(pwd)/src/b.ts $(pwd)/src/c.ts` run from its worktree, then commit. Do not edit the files yourself.",
+  "scaffold": {
+    "branch": "feature/base",
+    "files": {
+      "src/a.ts": "export const oldName = 1;\n",
+      "src/b.ts": "import { oldName } from './a';\nexport const b = oldName;\n",
+      "src/c.ts": "import { oldName } from './a';\nexport const c = oldName;\n",
+      "plans/rename.json": "{\n  \"name\": \"rename\",\n  \"trunk\": \"main\",\n  \"slices\": [\n    {\n      \"id\": \"rename\",\n      \"branch\": \"feature/rename\",\n      \"tier\": \"standard\",\n      \"reason\": \"parallel\",\n      \"goal\": \"rename oldName to newName in src/\",\n      \"scope\": [\n        \"src/a.ts\",\n        \"src/b.ts\",\n        \"src/c.ts\"\n      ],\n      \"acceptance\": [\n        \"Given the repo, When rename oldName to newName in src/, Then it is done\"\n      ],\n      \"verify\": [\n        \"node -e \\\"1\\\"\"\n      ],\n      \"forbidden\": [\n        \"edits outside scope\"\n      ]\n    }\n  ]\n}\n"
+    }
+  },
+  "maxTurns": 14,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "implementer",
+        "denied": false,
+        "why": "the implementer runs"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "sed -i[^\\n]*(\\$\\(pwd\\)|\\$PWD)",
+        "why": "the $(pwd) edit runs",
+        "denied": false
+      }
+    ]
+  }
+}

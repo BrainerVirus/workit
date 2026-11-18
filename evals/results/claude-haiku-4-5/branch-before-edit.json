@@ -13,7 +13,7 @@
     "stop": "success"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": false,
     "calls": 4,
     "failures": [
@@ -21,6 +21,11 @@
         "rule": "require",
         "detail": "no call matches /\\bworkit git( --cwd \\S+)? branch\\b|\\bgit (switch -c|checkout -b)\\b/: main is protected: branch first"
       }
-    ]
+    ],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 2
+    }
   }
 }

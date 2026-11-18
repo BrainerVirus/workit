@@ -1,0 +1,44 @@
+{
+  "case": "config-guard-plan-mention",
+  "run": 5,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "eaed7d05f3c416ff",
+  "date": "2026-11-18T18:13:28.279Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 34962,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 8,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /python3/ not denied: the plan-writing call runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "4 denied and 0 failed of 4 Workit interaction(s): #3 Bash(printf 'HOME=%s\\nXDG_CONFIG_HOME=%s\\n' \"$HOME\" \"${XDG_CONFIG_HOME:-}\"; ls -la \"$HOME\" 2>/dev/null) denied: Permission denied: shell; #4 Bash(which workit; npx -y @workit-dev/cli help 2>&1 | head -40) denied: Permission denied: shell; #5 Bash(env | grep -E '^(HOME|XDG_CONFIG_HOME)=') denied: Permission denied: shell; #7 Bash(command -v workit; command -v python3; ls plans 2>&1) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 4
+    }
+  }
+}

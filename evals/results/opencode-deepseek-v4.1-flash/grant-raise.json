@@ -1,0 +1,28 @@
+{
+  "case": "grant-raise",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v2.8.1+45d0b4331a",
+  "key": "8e9d77a8b3dfdb05",
+  "date": "2026-11-18T15:12:19.312Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 27326,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 6,
+    "failures": [],
+    "firstTry": {
+      "interactions": 5,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

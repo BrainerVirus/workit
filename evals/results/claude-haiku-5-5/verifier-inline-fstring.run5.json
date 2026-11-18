@@ -1,0 +1,36 @@
+{
+  "case": "verifier-inline-fstring",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "1dfdaf2be780b36a",
+  "date": "2026-11-18T16:55:49.601Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 4,
+    "costUsd": 0.06344505,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 9,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /python3 -c [\\s\\S]*f'/ not denied: the read-only f-string runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "4 denied and 0 failed of 6 Workit interaction(s): #2 Bash(workit ledger --help >/dev/null 2>&1; git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short; workit che) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a6dc3fbeabf11b526 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #3 Bash(git -C <world>/repo rev-parse HEAD; git --no-optional-locks -C <world>/repo status --short; workit check --cwd <world>/r) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a6dc3fbeabf11b526 may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #5 Bash(workit check --cwd <world>/repo -- python3 -c \"import json; v=json.load(open('<world>/repo/package.json'))['version']; p) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a6dc3fbeabf11b526 may write only in its scratch dir <world>/repo/.workit-scratch, and `python3`; #6 Bash(mkdir -p <world>/repo/.workit-scratch && cd <world>/repo/.workit-scratch && workit check -- python3 -c \"import json; v=j) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a6dc3fbeabf11b526 may write only in its scratch dir <world>/repo/.workit-scratch, and <world>/r"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 4
+    }
+  }
+}

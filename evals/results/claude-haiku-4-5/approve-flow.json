@@ -13,7 +13,7 @@
     "stop": "success"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": false,
     "calls": 0,
     "failures": [
@@ -21,6 +21,11 @@
         "rule": "require",
         "detail": "no call matches /^workit approve ap_k3m7q2xa$/: the plain call is the only one the host asks on and records"
       }
-    ]
+    ],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
   }
 }

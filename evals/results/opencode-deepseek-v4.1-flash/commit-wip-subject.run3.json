@@ -1,0 +1,40 @@
+{
+  "case": "commit-wip-subject",
+  "run": 3,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "535540efdefef5f6",
+  "date": "2026-11-18T18:06:52.326Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 23819,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 8,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 4 Workit interaction(s): #3 Bash(git diff; git config --get-regexp '^(user|commit|core.hooksPath|workit)' ; ls .git/hooks | grep -v sample; find . -maxde) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

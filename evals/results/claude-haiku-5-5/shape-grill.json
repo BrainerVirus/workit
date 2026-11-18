@@ -1,0 +1,26 @@
+{
+  "case": "shape-grill",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "f1b59eb31318e3d1",
+  "date": "2026-11-18T17:22:31.178Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 7,
+    "durationMs": 13439,
+    "costUsd": 0.0043935,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 5,
+    "failures": [],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

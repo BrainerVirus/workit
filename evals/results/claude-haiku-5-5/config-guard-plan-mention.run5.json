@@ -1,0 +1,27 @@
+{
+  "case": "config-guard-plan-mention",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "9646e20f7719382b",
+  "date": "2026-11-18T17:29:51.657Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 12704,
+    "costUsd": 0.0044300400000000005,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 4,
+    "failures": [],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

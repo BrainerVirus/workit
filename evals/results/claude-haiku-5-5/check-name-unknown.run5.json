@@ -1,0 +1,32 @@
+{
+  "case": "check-name-unknown",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "a17ca5a0198500f5",
+  "date": "2026-11-18T16:50:09.015Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 8373,
+    "costUsd": 0.0038006900000000002,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 3,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 3 Workit interaction(s): #2 Bash(workit check --list 2>&1; printf '%s\\n' ---; cat package.json; printf '%s\\n' ---; ls .workit; cat .workit/workspaces.jso) failed: Exit code 1"
+      }
+    ],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

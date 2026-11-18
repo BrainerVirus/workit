@@ -1,0 +1,40 @@
+{
+  "case": "verifier-var-path",
+  "run": 4,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "676fb9e568ec9ec9",
+  "date": "2026-11-18T17:35:33.753Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 23,
+    "costUsd": 0.04114252,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 6,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#1 Agent(workit:verifier: Verify feature/greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). "
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /W=\\S+;\\s*git -C \\$W/ not denied: the variable form runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 4 Workit interaction(s): #1 Agent(workit:verifier: Verify feature/greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). ; #3 Bash(W=<world>/repo; git -C $W rev-parse HEAD; git -C $W log --oneline -1) in a subagent denied: PreToolUse:Bash hook error"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

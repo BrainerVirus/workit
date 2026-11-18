@@ -1,0 +1,36 @@
+{
+  "case": "verifier-reads-brief",
+  "run": 4,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "e7e0da918bd590ab",
+  "date": "2026-11-18T17:47:13.597Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 12190,
+    "costUsd": 0.08959671000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 20,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#4 Agent(workit:verifier: Verify greet fanout slice) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). "
+      },
+      {
+        "rule": "first-try",
+        "detail": "4 denied and 2 failed of 15 Workit interaction(s): #4 Agent(workit:verifier: Verify greet fanout slice) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\" (description and prompt as written). ; #6 Bash(cd /tmp && workit fanout brief greet --name greet) in a subagent failed: <outside-world file: system, 88 bytes>; #8 Bash(workit fanout check greet --name greet --cwd <world>/repo) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier ae269f399379fb497 may write only in its scratch dir <world>/repo/.workit-scratch, and `workit f; #9 Bash(W=<world>/state/worktrees/repo/greet; git -C $W rev-parse HEAD; git -C $W status --short; git -C $W log --oneline main..) in a subagent denied: PreToolUse:Bash hook error; #11 Bash(git -C <world>/state/worktrees/repo/greet status --short) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier ae269f399379fb497 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #20 Bash(workit fanout check greet --name greet) failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 15,
+      "failed": 2,
+      "denied": 4
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "pr-create-label-and-issue",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (pr create with a label and an issue)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Open the PR for this branch with the label bug, linked to YouTrack issue NSI-554.",
+  "scaffold": {
+    "branch": "feature/fix-x",
+    "forge": "github",
+    "workspace": {
+      "defaultEndpoint": "pr"
+    },
+    "commits": [
+      {
+        "message": "fix: x",
+        "files": {
+          "x.ts": "export const x = 2;\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*pr create",
+        "why": "the PR is created",
+        "denied": false
+      }
+    ]
+  }
+}

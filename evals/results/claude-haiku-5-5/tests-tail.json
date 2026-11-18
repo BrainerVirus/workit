@@ -1,0 +1,31 @@
+{
+  "case": "tests-tail",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "9a18355bc2066c3b",
+  "date": "2026-11-18T15:53:23.377Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 12110,
+    "costUsd": 0.003902160000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 4,
+    "failures": [
+      {
+        "rule": "configured-check",
+        "detail": "no `workit check <test>` call"
+      }
+    ],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

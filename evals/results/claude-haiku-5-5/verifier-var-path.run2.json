@@ -1,0 +1,36 @@
+{
+  "case": "verifier-var-path",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "676fb9e568ec9ec9",
+  "date": "2026-11-18T17:34:15.605Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 30227,
+    "costUsd": 0.04451529,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 7,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /W=\\S+;\\s*git -C \\$W/ not denied: the variable form runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 4 Workit interaction(s): #2 Bash(W=<world>/repo; git -C $W rev-parse HEAD; git -C $W log --oneline -1) in a subagent denied: PreToolUse:Bash hook error; #3 Bash(W=<world>/repo; git -C $W status --short) in a subagent denied: PreToolUse:Bash hook error"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

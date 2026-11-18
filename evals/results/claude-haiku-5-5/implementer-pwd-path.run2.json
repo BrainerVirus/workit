@@ -1,0 +1,36 @@
+{
+  "case": "implementer-pwd-path",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "1689a840527caaf0",
+  "date": "2026-11-18T16:41:35.061Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 5,
+    "costUsd": 0.04491326,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 7,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /sed -i[^\\n]*(\\$\\(pwd\\)|\\$PWD)/ not denied: the $(pwd) edit runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 6 Workit interaction(s): #6 Bash(cd <world>/state/worktrees/repo/rename && sed -i 's/oldName/newName/g' $(pwd)/src/a.ts $(pwd)/src/b.ts $(pwd)/src/c.ts) in a subagent denied: PreToolUse:Bash hook error"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

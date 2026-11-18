@@ -1,0 +1,27 @@
+{
+  "case": "implementer-bulk-edit",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "6464f7a376fe09cc",
+  "date": "2026-11-18T16:27:06.017Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 40216,
+    "costUsd": 0.05378218,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 11,
+    "failures": [],
+    "firstTry": {
+      "interactions": 7,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

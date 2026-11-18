@@ -1,0 +1,31 @@
+{
+  "case": "commit-wip-subject",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "14c4d386ae6d7691",
+  "date": "2026-11-18T17:17:49.020Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 7,
+    "durationMs": 19879,
+    "costUsd": 0.0046091,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 3 Workit interaction(s): #3 Bash(workit git commit -m \"wip: half-done change to src/a.ts\" --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.) failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

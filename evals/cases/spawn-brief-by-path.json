@@ -1,0 +1,24 @@
+{
+  "id": "spawn-brief-by-path",
+  "source": "retro 2026-11-18 (first-try research, decision D5): spawn gate (a brief passed by file path)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Register the plan plans/hello.json with Workit, make the worktree for its slice hello, save the brief Workit prints for that slice into notes/brief-hello.md, then spawn a workit:implementer whose whole prompt is: Your brief is the file {{root}}/notes/brief-hello.md. Do not write the code yourself.",
+  "scaffold": {
+    "branch": "feature/base",
+    "files": {
+      "plans/hello.json": "{\n  \"name\": \"hello\",\n  \"trunk\": \"main\",\n  \"slices\": [\n    {\n      \"id\": \"hello\",\n      \"branch\": \"feature/hello\",\n      \"tier\": \"standard\",\n      \"reason\": \"parallel\",\n      \"goal\": \"add src/hello.ts exporting hello()\",\n      \"scope\": [\n        \"src/hello.ts\"\n      ],\n      \"acceptance\": [\n        \"Given the repo, When add src/hello.ts exporting hello(), Then it is done\"\n      ],\n      \"verify\": [\n        \"node -e \\\"1\\\"\"\n      ],\n      \"forbidden\": [\n        \"edits outside scope\"\n      ]\n    }\n  ]\n}\n"
+    }
+  },
+  "maxTurns": 12,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "implementer",
+        "denied": false,
+        "why": "the spawn that names the brief file runs"
+      }
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "case": "pr-create-changelog-required",
+  "run": 3,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "f6c4696842bf7021",
+  "date": "2026-11-18T17:02:08.591Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 11,
+    "durationMs": 27364,
+    "costUsd": 0.007910760000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 8,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*pr create/ not denied: the PR is created"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

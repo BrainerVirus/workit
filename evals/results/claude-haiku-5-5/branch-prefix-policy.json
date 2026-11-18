@@ -1,0 +1,26 @@
+{
+  "case": "branch-prefix-policy",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "4694d2b9c22fc872",
+  "date": "2026-11-18T16:22:21.203Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 13943,
+    "costUsd": 0.00571204,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 6,
+    "failures": [],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

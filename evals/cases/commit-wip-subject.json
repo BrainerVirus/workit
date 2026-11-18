@@ -1,0 +1,27 @@
+{
+  "id": "commit-wip-subject",
+  "source": "retro 2026-11-18 (first-try research, decision D5): bench 2026-11-18: a `wip:` subject refused by commit_style",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Save my half-done change to src/a.ts as a WIP commit on this branch so I can continue tomorrow.",
+  "scaffold": {
+    "branch": "feature/wip",
+    "files": {
+      "src/a.ts": "export const a = 1;\n"
+    },
+    "dirty": {
+      "src/a.ts": "export const a = 2; // half done\n"
+    }
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*git[^\\n]*commit",
+        "why": "the commit lands",
+        "denied": false
+      }
+    ]
+  }
+}

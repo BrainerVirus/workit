@@ -1,0 +1,31 @@
+{
+  "case": "review-skill-trigger",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "7a0d6021d0ed933c",
+  "date": "2026-11-18T16:44:07.068Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 11571,
+    "costUsd": 0.0037356399999999997,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 3,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /review/: a review request loads the review skill"
+      }
+    ],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

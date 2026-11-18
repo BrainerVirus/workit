@@ -1,0 +1,31 @@
+{
+  "case": "branch-base-default",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "c9f88f49a203c8d4",
+  "date": "2026-11-18T15:48:20.394Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 5421,
+    "costUsd": 0.00290899,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 2,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 2 Workit interaction(s): #1 Bash(workit git branch --kind feature --slug hello-readme) failed: Exit code 1"
+      }
+    ],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

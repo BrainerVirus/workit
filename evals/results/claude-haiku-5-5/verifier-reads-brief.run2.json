@@ -1,0 +1,32 @@
+{
+  "case": "verifier-reads-brief",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "e7e0da918bd590ab",
+  "date": "2026-11-18T17:45:14.202Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 53657,
+    "costUsd": 0.09043411,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 18,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "3 denied and 0 failed of 11 Workit interaction(s): #5 Bash(workit fanout check greet --name greet) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aa228c6645a5b5857 may write only in its scratch dir <world>/repo/.workit-scratch, and `workit f; #6 Bash(git -C <world>/state/worktrees/repo/greet rev-parse HEAD; git -C <world>/state/worktrees/repo/greet status --short; git ) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aa228c6645a5b5857 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #7 Bash(git -C <world>/state/worktrees/repo/greet rev-parse HEAD; git -C <world>/state/worktrees/repo/greet status --no-optional) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aa228c6645a5b5857 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat"
+      }
+    ],
+    "firstTry": {
+      "interactions": 11,
+      "failed": 0,
+      "denied": 3
+    }
+  }
+}

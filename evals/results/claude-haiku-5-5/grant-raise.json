@@ -1,0 +1,26 @@
+{
+  "case": "grant-raise",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "e048dcb562c12fbd",
+  "date": "2026-11-18T15:50:14.126Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 6808,
+    "costUsd": 0.00298146,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 1,
+    "failures": [],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

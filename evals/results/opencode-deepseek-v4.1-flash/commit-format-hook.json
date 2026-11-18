@@ -1,0 +1,43 @@
+{
+  "case": "commit-format-hook",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "b694f38e0e14f590",
+  "date": "2026-11-18T18:02:09.631Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 48759,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 10,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*git[^\\n]*commit/ not denied with a result matching /feature/fmt [0-9a-f]{7}/: the commit lands"
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 6 Workit interaction(s): #9 Bash(bun run format 2>&1 | tail -5; git diff src/a.ts) denied: Permission denied: shell; #10 Bash(command -v bun; bun --version) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

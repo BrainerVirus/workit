@@ -1,0 +1,43 @@
+{
+  "case": "pr-create-changelog-required",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "c85eace7d9a42710",
+  "date": "2026-11-18T18:16:46.766Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 10,
+    "durationMs": 42250,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 12,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*pr create/ not denied: the PR is created"
+      },
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 5 Workit interaction(s): #11 Bash(ls -a .workit 2>/dev/null; workit check ci 2>&1 | tail -5; node x.js) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 5,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

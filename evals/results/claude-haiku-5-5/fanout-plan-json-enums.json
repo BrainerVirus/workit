@@ -1,0 +1,26 @@
+{
+  "case": "fanout-plan-json-enums",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "ff13bf46574feb80",
+  "date": "2026-11-18T16:23:34.188Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 5,
+    "durationMs": 7848,
+    "costUsd": 0.0037370000000000007,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 4,
+    "failures": [],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

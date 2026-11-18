@@ -1,0 +1,24 @@
+{
+  "id": "spawn-decider-bare",
+  "source": "retro 2026-11-18 (first-try research, decision D5): spawn model (a bare decider spawn runs)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "I can't decide whether this repo should keep its settings in JSON or TOML. Ask a Workit decider subagent to make the call and tell me its recommendation. Spawn it with only a description and a prompt.",
+  "scaffold": {
+    "branch": "feature/settings",
+    "files": {
+      "settings.json": "{\"port\": 8080}\n"
+    }
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "decider",
+        "denied": false,
+        "why": "the decider spawn runs on the first try"
+      }
+    ]
+  }
+}

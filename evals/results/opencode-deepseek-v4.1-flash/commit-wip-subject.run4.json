@@ -1,0 +1,35 @@
+{
+  "case": "commit-wip-subject",
+  "run": 4,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "535540efdefef5f6",
+  "date": "2026-11-18T18:07:34.135Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 34849,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 9,
+    "failures": [],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "case": "branch-prefix-policy",
+  "run": 2,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "4694d2b9c22fc872",
+  "date": "2026-11-18T16:22:36.547Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 7,
+    "durationMs": 13114,
+    "costUsd": 0.0050037300000000005,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 4 Workit interaction(s): #4 Bash(workit fanout worktree create notes) failed: Exit code 3"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

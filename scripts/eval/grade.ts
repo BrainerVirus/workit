@@ -14,7 +14,7 @@
 // `resultTests`.
 import type { CallPattern, EvalCase } from "./cases";
 
-const GRADER_VERSION = 1;
+const GRADER_VERSION = 2;
 
 type ToolCall = {
   index: number;
@@ -26,6 +26,13 @@ type ToolCall = {
   failed: boolean;
   /** Set when the call was refused before it ran: a hook or permission rule denied it. */
   refusal: Refusal | null;
+  /**
+   * The refusal was a hook's (Claude Code: a `permission_denied` event of
+   * type `hook` or a blocking hook's error), not the permission mode's or the
+   * auto-mode classifier's. OpenCode cannot tell its plugin's deny from a
+   * host rule's: every refusal there counts.
+   */
+  byHook: boolean;
   result: string;
   /** Set when the privacy scrub removed the result: the grader's answers on the real text. */
   facts: Facts | null;
@@ -78,7 +85,22 @@ export type Usage = {
 };
 
 type Failure = { rule: string; detail: string };
-export type Grade = { graderVersion: number; pass: boolean; calls: number; failures: Failure[] };
+
+/**
+ * First-try counts over a run's Workit interactions: a `workit …` shell call
+ * (or `npx @workit-dev/cli …`), a spawn, or any call a hook refused. `failed`
+ * is an interaction that ran and failed, `denied` one a hook refused; a call
+ * the case declares (`expect.declared`, or a `require` rule with `denied:
+ * true`) counts in neither.
+ */
+export type FirstTry = { interactions: number; failed: number; denied: number };
+export type Grade = {
+  graderVersion: number;
+  pass: boolean;
+  calls: number;
+  failures: Failure[];
+  firstTry: FirstTry;
+};
 
 type Block = {
   type?: string;
@@ -101,6 +123,8 @@ type Event = {
   result?: string;
   /** Claude Code's `permission_denied` system event names the refused call. */
   tool_use_id?: string;
+  /** Who refused it: `hook`, `mode`, `classifier`, … */
+  decision_reason_type?: string;
   // OpenCode `run --format json` events.
   sessionID?: string;
   timestamp?: number;
@@ -196,9 +220,11 @@ const opencodeCalls = (list: Event[]): ToolCall[] => {
       parent: event.sessionID === root ? null : (event.sessionID ?? null),
       failed,
       refusal: bareDeny(part.tool, failed, result),
+      byHook: false,
       result,
       facts: factsOf(state.facts),
     };
+    call.byHook = call.refusal !== null;
     const seen = calls.findIndex((each) => each.id === call.id);
     if (seen === -1) calls.push(call);
     else calls[seen] = call;
@@ -222,6 +248,7 @@ const toolCalls = (transcript: string): ToolCall[] => {
           parent: event.parent_tool_use_id ?? null,
           failed: false,
           refusal: null,
+          byHook: false,
           result: "",
           facts: null,
         };
@@ -235,13 +262,16 @@ const toolCalls = (transcript: string): ToolCall[] => {
         call.result = textOf(block.content);
         call.facts = factsOf(block.facts);
         call.refusal = blockedByHook(call.name, call.failed, call.result);
+        call.byHook = call.refusal !== null;
       }
     }
   // A permission decision (a hook's deny or ask, or the permission mode) is a system event.
   for (const event of list)
     if (event.type === "system" && event.subtype === "permission_denied" && event.tool_use_id) {
       const call = byId.get(event.tool_use_id);
-      if (call) call.refusal = { kept: call.result, whole: true };
+      if (!call) continue;
+      call.refusal = { kept: call.result, whole: true };
+      call.byHook = event.decision_reason_type === "hook";
     }
   return calls;
 };
@@ -287,6 +317,49 @@ const opencodeAnswer = (list: Event[]): string => {
 export const runErrorOf = (transcript: string): string | null => {
   const list = events(transcript);
   return isOpencode(list) ? opencodeError(list) : null;
+};
+
+const AUTH =
+  /provider\.auth|reconnect|\/login|log ?in again|unauthori[sz]ed|authenticat|invalid api key|oauth token|\b401\b/iu;
+
+/**
+ * Why the run never reached the model: its login failed (an expired OpenCode
+ * console login, a Claude Code that asks for /login) before any tool call.
+ * Such a run is void: never graded, never a pass or a fail. Null otherwise.
+ */
+export const authFailureOf = (transcript: string): string | null => {
+  const list = events(transcript);
+  if (toolCalls(transcript).length > 0) return null;
+  if (isOpencode(list)) {
+    const error = opencodeError(list);
+    return error && AUTH.test(error) ? error : null;
+  }
+  const result = list.findLast((event) => event.type === "result") as
+    | (Event & { is_error?: boolean })
+    | undefined;
+  const text = result?.result ?? "";
+  return result?.is_error === true && AUTH.test(text) ? text.slice(0, 200) : null;
+};
+
+/**
+ * The usage or rate limit a Claude Code run stopped on before any tool call
+ * ("You've hit your 5-hour limit", an API 429), or null. Such a run never
+ * reached the model: it is skipped like an OpenCode provider's limit, never
+ * graded as a fail.
+ */
+export const claudeLimitOf = (transcript: string): string | null => {
+  const list = events(transcript);
+  if (isOpencode(list) || toolCalls(transcript).length > 0) return null;
+  const result = list.findLast((event) => event.type === "result") as
+    | (Event & { is_error?: boolean; api_error_status?: unknown; api_error?: unknown })
+    | undefined;
+  if (result?.is_error !== true) return null;
+  const text = result.result ?? "";
+  return result.api_error_status === 429 ||
+    /rate.?limit|usage.?limit/iu.test(String(result.api_error ?? "")) ||
+    /hit your .*limit/iu.test(text)
+    ? text.slice(0, 200) || "rate limit"
+    : null;
 };
 
 export const usageOf = (transcript: string): Usage => {
@@ -358,13 +431,14 @@ const resultMatches = (call: ToolCall, test: RegExp, unknown: boolean): boolean 
 
 const isSpawn = (call: ToolCall): boolean => call.name === "Agent" || call.name === "Task";
 
-/** Every regex the grader may test a call's result text with: a spawn's refusal and the case's `result` patterns. */
+/** Every regex the grader may test a call's result text with: a spawn's refusal and the case's `result` patterns, `expect.declared` included. */
 const resultTests = (call: ToolCall, spec: Pick<EvalCase, "expect"> | null): RegExp[] => [
   ...(isSpawn(call) ? [REFUSAL] : []),
   ...[
     ...(spec?.expect?.require ?? []),
     ...(spec?.expect?.forbid ?? []),
     ...(spec?.expect?.atMost ?? []),
+    ...(spec?.expect?.declared ?? []),
   ].flatMap((want) => (want.result === undefined ? [] : [new RegExp(want.result)])),
 ];
 
@@ -402,6 +476,35 @@ const matches = (call: ToolCall, want: CallPattern, unknown: boolean): boolean =
 /** The pattern as a rule names it, with its result side when it has one. */
 const shown = (want: CallPattern): string =>
   `/${want.pattern}/${want.denied === undefined ? "" : want.denied ? " denied" : " not denied"}${want.result === undefined ? "" : ` with a result matching /${want.result}/`}`;
+
+const WORKIT_CALL = /^(?:workit|npx\s+(?:-y\s+|--yes\s+)?@workit-dev\/cli(?:@\S+)?)(?:\s|$)/u;
+
+/** A shell call with a segment that runs the Workit CLI. */
+const runsWorkit = (call: ToolCall): boolean =>
+  call.name === "Bash" && segments(subject(call)).some((part) => WORKIT_CALL.test(part));
+
+/** The case expects this call to be refused or to fail: `expect.declared`, or a `require` rule with `denied: true`. */
+const declared = (call: ToolCall, spec: EvalCase): boolean =>
+  [
+    ...(spec.expect?.declared ?? []),
+    ...(spec.expect?.require ?? []).filter((want) => want.denied === true),
+  ].some((want) => matches(call, want, false));
+
+/** The run's first-try counts, and the calls behind them (see FirstTry). */
+const firstTryOf = (calls: ToolCall[], spec: EvalCase): FirstTry & { misses: ToolCall[] } => {
+  const interactions = calls.filter(
+    (call) => runsWorkit(call) || isSpawn(call) || (call.refusal !== null && call.byHook),
+  );
+  const counted = interactions.filter((call) => !declared(call, spec));
+  const denied = counted.filter((call) => call.refusal !== null);
+  const failed = counted.filter((call) => call.refusal === null && call.failed);
+  return {
+    interactions: interactions.length,
+    failed: failed.length,
+    denied: denied.length,
+    misses: [...denied, ...failed].toSorted((a, b) => a.index - b.index),
+  };
+};
 
 export const grade = (transcript: string, spec: EvalCase): Grade => {
   const list = events(transcript);
@@ -480,10 +583,23 @@ export const grade = (transcript: string, spec: EvalCase): Grade => {
         detail: `the final answer does not match /${want.pattern}/: ${want.why}`,
       });
 
+  const { misses, ...firstTry } = firstTryOf(calls, spec);
+  if (spec.firstTry && misses.length > 0)
+    failures.push({
+      rule: "first-try",
+      detail: `${firstTry.denied} denied and ${firstTry.failed} failed of ${firstTry.interactions} Workit interaction(s): ${misses
+        .map(
+          (call) =>
+            `${label(call)}${call.refusal ? " denied" : " failed"}: ${firstLine(call.result)}`,
+        )
+        .join("; ")}`,
+    });
+
   return {
     graderVersion: GRADER_VERSION,
     pass: failures.length === 0,
     calls: calls.length,
     failures,
+    firstTry,
   };
 };

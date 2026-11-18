@@ -203,7 +203,9 @@ const WRAPPER_RULE = new RegExp(String.raw`^Bash(?:$|\(\s*(?:\*|(?:${WRAPPERS})\
 
 /** The case's prompt names a shell wrapper, or its permissions let one run. */
 export const permitsShellWrappers = (spec: EvalCase, tools: string[]): boolean =>
+  // Auto mode lets any command the host's classifier passes run, wrappers included.
   spec.permissionMode === "bypassPermissions" ||
+  spec.permissionMode === "auto" ||
   WRAPPER_WORD.test(spec.prompt) ||
   tools.some((tool) => WRAPPER_RULE.test(tool.trim()));
 
@@ -270,7 +272,8 @@ export const probe = (): Record<string, string> => {
       paths[label] = `failed: ${run.error?.message ?? text.trim().slice(0, 200)}`;
       continue;
     }
-    const found = text.match(/(?<![\w.~-])\/[\w.@+~-]+(?:\/[\w.@+~*-]+)*/gu) ?? [];
+    // A URL's path (`https://host/x`) is not a file path: `:` or `/` before the slash skips it.
+    const found = text.match(/(?<![\w.~:/-])\/[\w.@+~-]+(?:\/[\w.@+~*-]+)*/gu) ?? [];
     const shown = args.length === 3 && args[1] === "show";
     const wrong = shown ? grantShowProof(run.stdout ?? "", world) : null;
     if (wrong) paths[label] = `failed: ${wrong}`;

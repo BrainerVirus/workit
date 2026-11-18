@@ -1,0 +1,21 @@
+{
+  "id": "spawn-implementer-first-try",
+  "source": "retro 2026-11-18 (first-try research, decision D5): spawn gate (the first implementer spawn runs; replaces spawn-implementer)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Delegate this to a Workit implementer subagent: add src/hello.ts exporting hello() that returns 'hi'. Do not write the file yourself.",
+  "scaffold": {
+    "branch": "feature/hello"
+  },
+  "maxTurns": 12,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "implementer",
+        "denied": false,
+        "why": "the work is delegated and the first implementer spawn runs"
+      }
+    ]
+  }
+}

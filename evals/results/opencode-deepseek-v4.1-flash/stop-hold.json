@@ -2,22 +2,33 @@
   "case": "stop-hold",
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
-  "provider": "free",
-  "workitVersion": "workit-dev-v1.4.1+36e8e8da7d",
-  "key": "486a77ed622ed412",
-  "date": "2026-11-11T14:46:30.300Z",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "43cc376bfe06a567",
+  "date": "2026-11-18T16:07:43.773Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 7,
-    "durationMs": 29208,
+    "turns": 8,
+    "durationMs": 34925,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": true,
-    "calls": 7,
-    "failures": []
+    "calls": 11,
+    "failures": [],
+    "firstTry": {
+      "interactions": 8,
+      "failed": 0,
+      "denied": 0
+    }
   }
 }

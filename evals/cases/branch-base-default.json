@@ -1,0 +1,21 @@
+{
+  "id": "branch-base-default",
+  "source": "retro 2026-11-18 (first-try research, decision D5): bench 2026-11-18: `workit git branch --kind --slug` defaulted its base to a missing develop",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Create the feature branch for slug hello-readme with `workit git branch --kind feature --slug hello-readme`.",
+  "scaffold": {
+    "branch": "main"
+  },
+  "maxTurns": 5,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*git[^\\n]*branch",
+        "why": "the branch is made",
+        "denied": false
+      }
+    ]
+  }
+}

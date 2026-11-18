@@ -1,0 +1,28 @@
+{
+  "case": "git-verb-guess",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "cf1a5e87286bdb7e",
+  "date": "2026-11-18T16:02:14.808Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 8425,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 5,
+    "failures": [],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

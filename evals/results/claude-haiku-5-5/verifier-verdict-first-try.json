@@ -1,0 +1,26 @@
+{
+  "case": "verifier-verdict-first-try",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "52d5442c38d25f5b",
+  "date": "2026-11-18T17:48:29.864Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 13166,
+    "costUsd": 0.0042628100000000006,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 3,
+    "failures": [],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

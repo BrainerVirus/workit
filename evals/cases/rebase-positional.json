@@ -1,0 +1,30 @@
+{
+  "id": "rebase-positional",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (rebase onto a ref given as a positional)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Rebase this branch onto origin/main with workit.",
+  "scaffold": {
+    "branch": "feature/r",
+    "remote": true,
+    "commits": [
+      {
+        "message": "feat: r",
+        "files": {
+          "r.ts": "export const r = 1;\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*git[^\\n]*rebase",
+        "why": "the rebase runs",
+        "denied": false
+      }
+    ]
+  }
+}

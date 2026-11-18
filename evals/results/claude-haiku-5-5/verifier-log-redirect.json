@@ -1,0 +1,31 @@
+{
+  "case": "verifier-log-redirect",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "69dd26393753b169",
+  "date": "2026-11-18T17:07:35.948Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 0,
+    "durationMs": 5,
+    "costUsd": 0.07156812,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 9,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 6 Workit interaction(s): #2 Bash(workit dir notes --cwd <world>/repo; git -C <world>/repo rev-parse HEAD; git -C <world>/repo status --short) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier aca9ef3d094507ea1 may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(R=<world>/repo; mkdir -p $R/.workit-scratch; workit check --cwd $R test > $R/.workit-scratch/test.log 2>&1; echo exit=$?) in a subagent denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive or Unwanted Actions]. If you have other tasks that don't dep"
+      }
+    ],
+    "firstTry": {
+      "interactions": 6,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

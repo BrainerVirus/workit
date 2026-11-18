@@ -1,0 +1,45 @@
+{
+  "case": "commit-wip-subject",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "535540efdefef5f6",
+  "date": "2026-11-18T18:05:33.414Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 28209,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 6,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 4 Workit interaction(s): #3 Bash(command -v workit && workit grant show 2>&1 | head -40) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 1
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/4d4f7b6e0168c795dee5d99ddbdc24b5/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
+}

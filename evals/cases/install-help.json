@@ -1,0 +1,21 @@
+{
+  "id": "install-help",
+  "source": "retro 2026-11-18 (first-try research, decision D5): bench 2026-11-18: `workit install --help` refused outright",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "What flags does `workit install` take? Check its --help; do not install anything.",
+  "scaffold": {
+    "branch": "feature/base"
+  },
+  "maxTurns": 4,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit install[^\\n]*(--help|-h)",
+        "why": "the help call runs",
+        "denied": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "case": "implementer-pwd-path",
+  "run": 3,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "1689a840527caaf0",
+  "date": "2026-11-18T16:42:11.319Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 6706,
+    "costUsd": 0.05118153,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 12,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /sed -i[^\\n]*(\\$\\(pwd\\)|\\$PWD)/ not denied: the $(pwd) edit runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 7 Workit interaction(s): #7 Bash(workit git --cwd <world>/state/worktrees/repo/rename status --short) in a subagent failed: Exit code 2"
+      }
+    ],
+    "firstTry": {
+      "interactions": 7,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

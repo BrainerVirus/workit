@@ -1,0 +1,41 @@
+{
+  "id": "verifier-inline-fstring",
+  "source": "retro 2026-11-18 (first-try research, decision D5): judge confinement (#880: an inline python f-string)",
+  "tier": "full",
+  "firstTry": true,
+  "hosts": ["claude-code"],
+  "prompt": "Spawn the workit:verifier agent to verify branch feature/greet-version in {{root}}, which neither of you wrote; commit nothing. Pass it this brief. GOAL: package.json's version is 1.1.0. VERIFY: run exactly `python3 -c \"import json; v=json.load(open('{{root}}/package.json'))['version']; print(f'version={v}')\"`. Record the verdict with the line Workit printed for it, adding --cwd {{root}}. Report what the verifier ran and what each command printed.",
+  "scaffold": {
+    "branch": "feature/greet-version",
+    "remote": true,
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "bin/greet.js": "import { readFileSync } from \"node:fs\";\nconst { version } = JSON.parse(readFileSync(new URL(\"../package.json\", import.meta.url), \"utf8\"));\nconst [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name} (v${version})`);\n"
+    },
+    "commits": [
+      {
+        "message": "feat: greet 1.1.0",
+        "files": {
+          "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.1.0\",\n  \"type\": \"module\"\n}\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "verifier",
+        "denied": false,
+        "why": "verification is delegated"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "python3 -c [\\s\\S]*f'",
+        "why": "the read-only f-string runs",
+        "denied": false
+      }
+    ]
+  }
+}

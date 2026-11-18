@@ -1,0 +1,41 @@
+{
+  "id": "spawn-verifier-bare",
+  "source": "retro 2026-11-18 (first-try research, decision D5): spawn model (configured verifier model, bare spawn runs)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Spawn the workit:verifier agent to verify branch feature/greet-version: `node bin/greet.js ada` prints `hello, ada (v1.1.0)`. Pass no model or effort. Report its verdict.",
+  "scaffold": {
+    "branch": "feature/greet-version",
+    "remote": true,
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "bin/greet.js": "import { readFileSync } from \"node:fs\";\nconst { version } = JSON.parse(readFileSync(new URL(\"../package.json\", import.meta.url), \"utf8\"));\nconst [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name} (v${version})`);\n"
+    },
+    "commits": [
+      {
+        "message": "feat: greet 1.1.0",
+        "files": {
+          "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.1.0\",\n  \"type\": \"module\"\n}\n"
+        }
+      }
+    ],
+    "workspace": {
+      "models": {
+        "roles": {
+          "verifier": "opus"
+        }
+      }
+    }
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "verifier",
+        "denied": false,
+        "why": "the bare verifier spawn runs on the first try"
+      }
+    ]
+  }
+}

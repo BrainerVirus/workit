@@ -1,0 +1,37 @@
+{
+  "id": "pr-create-changelog-required",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (pr create when the changelog step requires an entry)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Open the PR for this user-facing fix (it changes what `node x.js` prints).",
+  "scaffold": {
+    "branch": "feature/fix-y",
+    "forge": "github",
+    "files": {
+      "CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n"
+    },
+    "workspace": {
+      "defaultEndpoint": "pr",
+      "changelog": "update"
+    },
+    "commits": [
+      {
+        "message": "fix: print y",
+        "files": {
+          "x.js": "console.log('y');\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*pr create",
+        "why": "the PR is created",
+        "denied": false
+      }
+    ]
+  }
+}

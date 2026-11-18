@@ -15,7 +15,7 @@
     "stop": "stop"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": false,
     "calls": 14,
     "failures": [
@@ -23,6 +23,11 @@
         "rule": "require",
         "detail": "no call matches /^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) approve ap_[a-z2-7]{8}$/: the refusal says to run the plain approve call so the host asks the user"
       }
-    ]
+    ],
+    "firstTry": {
+      "interactions": 9,
+      "failed": 0,
+      "denied": 3
+    }
   }
 }

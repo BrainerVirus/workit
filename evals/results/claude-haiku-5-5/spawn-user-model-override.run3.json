@@ -1,0 +1,40 @@
+{
+  "case": "spawn-user-model-override",
+  "run": 3,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "d93195724bc7c972",
+  "date": "2026-11-18T17:32:22.575Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 13308,
+    "costUsd": 0.004200570000000001,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 2,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#1 Agent(workit:verifier: Verify feature/greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\", run_in_background: false (description "
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /verifier[\\s\\S]*sonnet|sonnet[\\s\\S]*verifier/ not denied: the spawn keeps the model the user named and runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(workit:verifier: Verify feature/greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\", run_in_background: false (description "
+      }
+    ],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

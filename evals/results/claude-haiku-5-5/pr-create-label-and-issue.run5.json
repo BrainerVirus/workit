@@ -1,0 +1,32 @@
+{
+  "case": "pr-create-label-and-issue",
+  "run": 5,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "6e425d156f23ac51",
+  "date": "2026-11-18T17:22:15.108Z",
+  "exit": 1,
+  "timedOut": false,
+  "usage": {
+    "turns": 9,
+    "durationMs": 21161,
+    "costUsd": 0.00666565,
+    "stop": "error_max_turns"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 9,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 7 Workit interaction(s): #6 Bash(workit git push) failed: Exit code 5"
+      }
+    ],
+    "firstTry": {
+      "interactions": 7,
+      "failed": 1,
+      "denied": 0
+    }
+  }
+}

@@ -173,6 +173,19 @@ Live release qualification (`docs/qualification/qualification.md`) needs
 explicit authorization: never run `scripts/run-v1-evaluation.ts` or fabricate
 batch results without it.
 
+Before a release, the weak-model bench runs on both legs with the first-try
+gate ([eval.md](eval.md#first-try)):
+
+```bash
+bun scripts/eval/run.ts --model claude-haiku-5-5 --tier full --gate first-try --budget-runs 400
+bun scripts/eval/run.ts --host opencode --model deepseek-v4.1-flash --tier full --gate first-try --budget-runs 400
+```
+
+Every case tagged `firstTry` must pass 5 of 5 runs on each leg it applies to;
+every other case must not drop against the committed `summary.json`. Commit
+`evals/results/` with the release PR. A leg that ends `void (auth)` was not
+measured: re-login and rerun it.
+
 ## Branches and commits
 
 Branch prefixes: `feature/`, `bugfix/`, `chore/`, `docs/`, `ci/`. Commit

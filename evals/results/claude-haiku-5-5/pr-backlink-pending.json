@@ -1,0 +1,39 @@
+{
+  "case": "pr-backlink-pending",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "4f6738dc2aeba2df",
+  "date": "2026-11-18T17:30:38.788Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 7,
+    "durationMs": 21121,
+    "costUsd": 0.00589701,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) pr create\\b[^\\n]*\\s--issue[\\s=]X-1\\b/: the PR opens through Workit's verb with the issue, which links it and asks before the backlink"
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /^(workit|npx (-y |--yes )?@workit-dev/cli(@\\S+)?) approve ap_[a-z2-7]{8}$/: the pending backlink says to run the plain approve call so the host asks the user"
+      },
+      {
+        "rule": "forbid",
+        "detail": "#5 Bash(workit youtrack note X-1 --markdown 'Linked from PR #1: https://github.example.invalid/eval/demo/pull/1'; echo \"exit=$?\") matches /(workit|@workit-dev/cli(@\\S+)?) youtrack (note|comment|update) (?!-h\\b|--help\\b)/: posting the backlink text by hand is a second backlink: pr create posts it once after the yes"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}

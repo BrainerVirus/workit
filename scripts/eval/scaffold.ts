@@ -162,6 +162,9 @@ case "$method $endpoint" in
     { [ -n "$head" ] && [ ! -f "$opened" ]; } || refuse
     printf '%s' "$head" > "$opened"
     printf '{"number":1,"html_url":"%s","state":"open","base":{"ref":"main"},"head":{"ref":"%s","sha":"%s"},"user":{"login":"eval"}}\\n' "$url" "$head" "$(sha "$head")" ;;
+  "POST repos/eval/demo/issues/1/labels")
+    [ -f "$opened" ] || refuse
+    echo '[{"name":"bug"}]' ;;
   "GET repos/eval/demo/pulls/1")
     [ -f "$opened" ] || refuse
     head=$(cat "$opened")
@@ -249,6 +252,12 @@ export const makeWorld = (spec: EvalCase): World => {
     // The branch is already on origin (fetches stay local); the push URL names the fake forge.
     git(repo, "push", "-q", "origin", "HEAD");
     git(repo, "remote", "set-url", "--push", "origin", FAKE_FORGE_URL);
+  }
+  // After the scaffold's own commits, so only the agent's commits run them.
+  for (const [name, body] of Object.entries(scaffold.gitHooks ?? {})) {
+    if (!/^[a-z-]+$/u.test(name)) throw new Error(`scaffold.gitHooks: ${name} is not a hook name`);
+    writeFileSync(path.join(repo, ".git", "hooks", name), body);
+    chmodSync(path.join(repo, ".git", "hooks", name), 0o755);
   }
 
   writeConfig(dir, config, spec);

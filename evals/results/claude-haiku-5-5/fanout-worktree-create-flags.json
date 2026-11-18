@@ -1,0 +1,31 @@
+{
+  "case": "fanout-worktree-create-flags",
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "045dcd9eca274779",
+  "date": "2026-11-18T16:40:14.338Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 10902,
+    "costUsd": 0.0043266400000000005,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "at-most",
+        "detail": "1 calls match /\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b/, at most 0: the refusal carries the usage line and the fix: no help call is needed to recover (#2)"
+      }
+    ],
+    "firstTry": {
+      "interactions": 5,
+      "failed": 2,
+      "denied": 0
+    }
+  }
+}

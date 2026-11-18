@@ -1,0 +1,29 @@
+{
+  "id": "youtrack-note-piped",
+  "source": "retro 2026-11-18 (first-try research, decision D5): YouTrack (a workit youtrack call with a trailing read-only filter)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Add a YouTrack comment to X-1 saying 'deployed to staging' with workit, and show me only the last lines of its output by piping it through tail.",
+  "scaffold": {
+    "branch": "feature/note"
+  },
+  "maxTurns": 8,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*youtrack[^\\n]*\\|\\s*tail",
+        "why": "the piped call runs",
+        "denied": false
+      }
+    ],
+    "declared": [
+      {
+        "tool": "Bash",
+        "pattern": "workit[^\\n]*youtrack (note|comment|update)",
+        "why": "the write asks for approval first",
+        "denied": false
+      }
+    ]
+  }
+}

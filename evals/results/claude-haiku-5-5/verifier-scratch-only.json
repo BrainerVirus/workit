@@ -1,21 +1,32 @@
 {
   "case": "verifier-scratch-only",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v1.1.9+c4b0ae7ba7",
-  "key": "fb073a444312ccff",
-  "date": "2026-11-11T00:47:58.085Z",
+  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
+  "key": "b31036f20cec7747",
+  "date": "2026-11-18T17:50:06.775Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 24229,
-    "costUsd": 0.05080675,
+    "turns": 2,
+    "durationMs": 36890,
+    "costUsd": 0.043428150000000006,
     "stop": "success"
   },
   "grade": {
-    "graderVersion": 1,
+    "graderVersion": 2,
     "pass": true,
     "calls": 6,
-    "failures": []
-  }
+    "failures": [],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 1
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/1afc0faf77771fde16da18e1be25f2f1/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
 }

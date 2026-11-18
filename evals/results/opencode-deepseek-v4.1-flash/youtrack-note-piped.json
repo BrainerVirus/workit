@@ -1,0 +1,43 @@
+{
+  "case": "youtrack-note-piped",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "e9d8a3d1aadc0e74",
+  "date": "2026-11-18T16:11:05.532Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 46048,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 13,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*youtrack[^\\n]*\\|\\s*tail/ not denied: the piped call runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "3 denied and 0 failed of 10 Workit interaction(s): #3 Bash(npx -y @workit-dev/cli help 2>&1 | sed -n '60,200p') denied: Permission denied: shell; #9 Bash(ls -la; cat .workit* 2>/dev/null; find . -maxdepth 2 -iname \"*youtrack*\" -not -path \"./.git/*\" 2>/dev/null) denied: Permission denied: shell; #11 Read({\"path\":\"<world>/config/config.json\"}) denied: Permission denied: external_directory"
+      }
+    ],
+    "firstTry": {
+      "interactions": 10,
+      "failed": 0,
+      "denied": 3
+    }
+  }
+}

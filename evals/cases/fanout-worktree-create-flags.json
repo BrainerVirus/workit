@@ -1,10 +1,13 @@
 {
   "id": "fanout-worktree-create-flags",
-  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): `workit fanout worktree create x --branch y` answered only `unknown option --branch`, guaranteeing a second call",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): `workit fanout worktree create x --branch y` answered only `unknown option --branch`, guaranteeing a second call; 2026-11-18: the world now holds the plan file, so the recovery is reachable",
   "tier": "full",
-  "prompt": "Make the worktree for slice notes of the fanout plan named wave1 with the workit CLI. First try exactly this call so we see its answer, then fix it if it fails: workit fanout worktree create notes --branch feature/notes --base main",
+  "prompt": "Make the worktree for slice notes of the fanout plan named wave1 (its file is plans/wave1.json; register it if Workit does not know it yet) with the workit CLI. First try exactly this call so we see its answer, then fix it if it fails: workit fanout worktree create notes --branch feature/notes --base main",
   "scaffold": {
-    "branch": "feature/base"
+    "branch": "feature/base",
+    "files": {
+      "plans/wave1.json": "{\n  \"name\": \"wave1\",\n  \"trunk\": \"main\",\n  \"slices\": [\n    {\n      \"id\": \"notes\",\n      \"branch\": \"feature/notes\",\n      \"tier\": \"standard\",\n      \"reason\": \"parallel\",\n      \"goal\": \"add NOTES.md\",\n      \"scope\": [\n        \"NOTES.md\"\n      ],\n      \"acceptance\": [\n        \"Given the repo, When NOTES.md is added, Then it exists\"\n      ],\n      \"verify\": [\n        \"node -e \\\"1\\\"\"\n      ],\n      \"forbidden\": [\n        \"edits outside scope\"\n      ]\n    }\n  ]\n}\n"
+    }
   },
   "maxTurns": 6,
   "expect": {

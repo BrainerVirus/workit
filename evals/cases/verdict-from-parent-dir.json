@@ -1,0 +1,40 @@
+{
+  "id": "verdict-from-parent-dir",
+  "source": "retro 2026-11-18 (first-try research, decision D5): CLI sequence (a verdict filed from the checkout's parent dir)",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "Spawn the workit:verifier agent to verify branch feature/greet-version in {{root}}, which neither of you wrote; commit nothing. Pass it this brief. GOAL: package.json's version is 1.1.0. VERIFY: `node bin/greet.js ada`. Tell the verifier to record its verdict from {{root}}/.. (the folder that holds the checkout), passing --cwd {{root}}/.. instead of the checkout. Report the verdict row.",
+  "scaffold": {
+    "branch": "feature/greet-version",
+    "remote": true,
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\"\n}\n",
+      "bin/greet.js": "import { readFileSync } from \"node:fs\";\nconst { version } = JSON.parse(readFileSync(new URL(\"../package.json\", import.meta.url), \"utf8\"));\nconst [name = \"world\"] = process.argv.slice(2);\nconsole.log(`hello, ${name} (v${version})`);\n"
+    },
+    "commits": [
+      {
+        "message": "feat: greet 1.1.0",
+        "files": {
+          "package.json": "{\n  \"name\": \"greet\",\n  \"version\": \"1.1.0\",\n  \"type\": \"module\"\n}\n"
+        }
+      }
+    ]
+  },
+  "maxTurns": 10,
+  "expect": {
+    "require": [
+      {
+        "tool": "Agent",
+        "pattern": "verifier",
+        "denied": false,
+        "why": "verification is delegated"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "workit\\b[^\\n]*ledger verdict",
+        "why": "the verdict is recorded",
+        "denied": false
+      }
+    ]
+  }
+}

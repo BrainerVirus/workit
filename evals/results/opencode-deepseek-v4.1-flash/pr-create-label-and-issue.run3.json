@@ -1,0 +1,40 @@
+{
+  "case": "pr-create-label-and-issue",
+  "run": 3,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "1691126008045c13",
+  "date": "2026-11-18T18:25:38.610Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 44897,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 12,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 7 Workit interaction(s): #11 Bash(gh auth status 2>&1 | head -20; echo; which gh git) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 7,
+      "failed": 0,
+      "denied": 1
+    }
+  }
+}
