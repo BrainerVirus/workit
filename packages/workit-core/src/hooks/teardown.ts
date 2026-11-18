@@ -9,8 +9,10 @@
 //
 // The CLI honours keep decisions and workspace `cleanup: keep` and says why it
 // left a row running; that output goes to `<state>/procs/teardown.log`.
-// A worker's end stops nothing: `--session <lead>:<child>` selects the lead's
-// rows too. Every step fails open and never throws.
+// Only a reason a host's allowlist names ends a session, so a reason a host
+// adds later stops nothing. A worker's end stops nothing: `--session
+// <lead>:<child>` selects the lead's rows too. Every step fails open and never
+// throws.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,10 +23,21 @@ import { stateDir } from "../core/workit-paths.mjs";
 export const REAP_INTERVAL_MS = 10 * 60_000;
 const LOG_MAX_BYTES = 1 << 20;
 
-/** Reasons on which the host session goes on in the same process (ruling 1): its processes stay. */
-const CONTINUES = new Set(["clear", "resume", "new", "fork", "reload"]);
-/** A session id safe as one argv word, even through cmd.exe on Windows. */
-const SAFE_SESSION = /^[\w.@+-][\w.:@/+-]{0,127}$/u;
+/**
+ * Per host, the reasons on which the session really ends (ruling 1); any other
+ * (Claude Code clear/resume, Pi new/resume/fork/reload, a future reason) keeps
+ * its processes. Codex is absent: its SessionEnd cannot tell a subagent from
+ * the lead, so it is not registered and the start reap covers it.
+ */
+const ENDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  claude_code: new Set(["logout", "prompt_input_exit", "other"]),
+  // Cursor's hooks docs: sessionEnd reasons.
+  cursor: new Set(["completed", "aborted", "error", "window_close", "user_close"]),
+  pi: new Set(["quit"]),
+  opencode: new Set(["deleted"]),
+};
+/** A session id safe as one argv word (never an option), even through cmd.exe on Windows. */
+const SAFE_SESSION = /^[\w.@+][\w.:@/+-]{0,127}$/u;
 const HOST_SESSION_VARS = ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID"];
 
 const teardownDir = (env: NodeJS.ProcessEnv): string => path.join(stateDir(env), "procs");
@@ -127,13 +140,12 @@ export type SessionEnd = {
 
 /**
  * Stop the processes an ended session registered (its workers' too). Nothing
- * runs when the session goes on (clear, resume, a new or forked session in the
- * same process) or when the session is a worker's. True when the stop started.
+ * runs unless the host's allowlist names the reason, or when the session is a
+ * worker's. True when the stop started.
  */
 export function endSession(end: SessionEnd, env: NodeJS.ProcessEnv = process.env): boolean {
   const session = end.session?.trim() ?? "";
-  if (!SAFE_SESSION.test(session) || (end.reason !== null && CONTINUES.has(end.reason)))
-    return false;
+  if (!SAFE_SESSION.test(session) || !ENDS[end.host]?.has(end.reason ?? "")) return false;
   const outer = env.WORKIT_SESSION_ID?.trim();
   if (
     end.agentId ||
@@ -148,24 +160,69 @@ export function endSession(end: SessionEnd, env: NodeJS.ProcessEnv = process.env
   return runCli(["stop", "--session", session, "--reason", "session-end"], child, end.cwd);
 }
 
+/** Take the reap claim (an exclusive create); a claim older than the interval is a crashed holder's. */
+const claim = (file: string, now: number): boolean => {
+  for (let attempt = 0; attempt < 2; attempt += 1)
+    try {
+      fs.writeFileSync(file, String(now), { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+      let held = Number.NaN;
+      try {
+        held = Number(fs.readFileSync(file, "utf8"));
+      } catch {
+        // Released meanwhile: try again.
+      }
+      if (now - held < REAP_INTERVAL_MS) return false;
+      fs.rmSync(file, { force: true });
+    }
+  return false;
+};
+
+const fresh = (stamp: string, now: number): boolean => {
+  try {
+    const last = Number(fs.readFileSync(stamp, "utf8"));
+    return now - last < REAP_INTERVAL_MS && last <= now;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Reap processes whose owner is gone, at most once per REAP_INTERVAL_MS per
- * user. The stamp is written only once the reap started. True when it started.
+ * user: one start at a time holds the claim, and the stamp is written only once
+ * the reap started. True when it started.
  */
 export function reapAtStart(cwd: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const stamp = reapStamp(env);
+  const lock = `${stamp}.claim`;
   const now = teardownDeps.now();
   try {
-    const last = Number(fs.readFileSync(stamp, "utf8"));
-    if (now - last < REAP_INTERVAL_MS && last <= now) return false;
+    if (fresh(stamp, now)) return false;
+    fs.mkdirSync(path.dirname(stamp), { recursive: true });
+    if (!claim(lock, now)) return false;
   } catch {
-    // No stamp yet.
+    return false;
   }
-  if (!runCli(["stop", "--orphans", "--reason", "session-start"], env, cwd)) return false;
+  let started = false;
   try {
-    fs.writeFileSync(stamp, String(now), { mode: 0o600 });
+    // Another start may have reaped between the read and the claim.
+    if (fresh(stamp, now)) return false;
+    started = runCli(["stop", "--orphans", "--reason", "session-start"], env, cwd);
+    if (started) {
+      const temp = `${stamp}.${process.pid}`;
+      fs.writeFileSync(temp, String(now), { mode: 0o600 });
+      fs.renameSync(temp, stamp);
+    }
   } catch {
-    // The next start reaps again.
+    // The stamp failed: the next start reaps again.
+  } finally {
+    try {
+      fs.rmSync(lock, { force: true });
+    } catch {
+      // A claim left behind expires after the interval.
+    }
   }
-  return true;
+  return started;
 }

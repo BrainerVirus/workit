@@ -500,8 +500,8 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
         "support": "native",
       },
       "session.end": {
-        "native": "SessionEnd",
-        "support": "native",
+        "native": null,
+        "support": "none",
       },
       "session.start": {
         "native": "SessionStart",
@@ -565,7 +565,7 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
       "worktreeIsolation": "undocumented",
     },
     "transport": "hook-process",
-    "verifiedAgainst": "codex-cli 0.160.1 (hook JSON schemas in the binary; SessionEnd: 0.169.0-alpha.11.1); Codex Desktop 26.901.20858",
+    "verifiedAgainst": "codex-cli 0.160.1 (hook JSON schemas in the binary); Codex Desktop 26.901.20858",
   },
   "unobserved": [
     {

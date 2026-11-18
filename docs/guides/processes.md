@@ -117,8 +117,10 @@ When a session starts, Workit stops the orphans dead sessions left behind:
 `workit stop --orphans --reason session-start`. It does this at most once
 every 10 minutes per user.
 
-Each host has its own end event. OpenCode has neither a start nor an exit
-event. A deleted OpenCode session's processes stop. The reap runs on the first
+Each host has its own end event. Codex has one, but it can't tell a
+subagent's end from the session's, so Workit doesn't use it: a Codex
+session's processes stop at the next session start after Codex exits.
+OpenCode has neither a start nor an exit event. A deleted OpenCode session's processes stop. The reap runs on the first
 event the plugin sees after OpenCode starts. A server that exits leaves its
 processes to the next reap, from any host. The [host parity
 table](../agents/hosts.md#host-parity) has the details per host.

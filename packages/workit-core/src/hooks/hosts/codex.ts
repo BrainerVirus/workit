@@ -14,7 +14,6 @@ import {
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent =
   | "SessionStart"
-  | "SessionEnd"
   | "UserPromptSubmit"
   | "PreToolUse"
   | "PostToolUse"
@@ -33,8 +32,6 @@ export type CodexHookInput = {
   transcript_path: string | null;
   source?: SessionSource;
   turn_id?: string;
-  /** SessionEnd: why the session ended (session-end.command.input: always "other"). */
-  reason?: string | null;
   /** UserPromptSubmit: the prompt about to be sent. */
   prompt?: string | null;
   tool_name?: string;
@@ -70,15 +67,17 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
   // "apply_patch" with the patch in tool_input.command (Edit and Write are
   // matcher aliases only).
   verifiedAgainst:
-    "codex-cli 0.160.1 (hook JSON schemas in the binary; SessionEnd: 0.169.0-alpha.11.1); Codex Desktop 26.901.20858",
+    "codex-cli 0.160.1 (hook JSON schemas in the binary); Codex Desktop 26.901.20858",
   docs: ["https://developers.openai.com/codex/hooks"],
   transport: "hook-process",
   events: {
     "session.start": { support: "native", native: "SessionStart" },
-    // session-end.command.input and run_session_end_hooks in the codex-cli
-    // 0.169.0-alpha.11.1 binary: session_id, cwd, transcript_path and a
-    // reason that is always "other".
-    "session.end": { support: "native", native: "SessionEnd" },
+    // codex-cli 0.169.0-alpha.11.1 runs SessionEnd hooks, but the payload has
+    // no agent id and subagents carry the lead's session_id, so a subagent's
+    // end could not be told from the lead's (L): not registered. The next
+    // session start's orphan reap stops a Codex session's processes once its
+    // host exits.
+    "session.end": { support: "none", native: null },
     "context.turn": { support: "native", native: "UserPromptSubmit" },
     "shell.pre": { support: "native", native: "PreToolUse" },
     "tool.pre": { support: "native", native: "PreToolUse" },
@@ -188,7 +187,6 @@ export const codexDescriptor = (host: CodexHost): HostDescriptor => ({ ...CODEX_
 
 const EVENTS: Record<CodexHookEvent, HookEventKind> = {
   SessionStart: "session.start",
-  SessionEnd: "session.end",
   UserPromptSubmit: "context.turn",
   PreToolUse: "shell.pre",
   PostToolUse: "shell.post",
@@ -235,7 +233,6 @@ export const parseCodexHookInput = (value: unknown): CodexParseResult => {
         : {}),
       ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
       ...(event === "UserPromptSubmit" ? { prompt: optionalText(value.prompt) } : {}),
-      ...(event === "SessionEnd" ? { reason: optionalText(value.reason) } : {}),
       ...(nonEmpty(value.tool_name) ? { tool_name: value.tool_name } : {}),
       ...(toolEvent ? { tool_input: value.tool_input } : {}),
       ...(event === "PostToolUse" && typeof value.tool_response === "string"
@@ -266,8 +263,6 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
   switch (input.hook_event_name) {
     case "SessionStart":
       return { kind: "session.start", source: input.source! };
-    case "SessionEnd":
-      return { kind: "session.end", reason: input.reason ?? null };
     case "UserPromptSubmit":
       return { kind: "context.turn", prompt: input.prompt ?? null };
     case "PreToolUse": {
@@ -331,7 +326,7 @@ const render = (decision: HookDecision, native: string | null) => {
   // stop.command.output takes no hookSpecificOutput: a block with a reason continues.
   if (native === "Stop" && decision.kind === "continue")
     return { json: { decision: "block", reason: decision.reason }, exitCode: 0 };
-  if (native === "SubagentStop" || native === "Stop" || native === "SessionEnd" || native === null)
+  if (native === "SubagentStop" || native === "Stop" || native === null)
     return { json: {}, exitCode: 0 };
   if (decision.kind === "deny")
     return {

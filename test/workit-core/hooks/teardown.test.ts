@@ -23,6 +23,7 @@ import {
 } from "@/packages/workit-core/src/hooks/index";
 import {
   endSession,
+  reapAtStart,
   REAP_INTERVAL_MS,
   reapStamp,
   spawnDetached,
@@ -178,20 +179,59 @@ test("Given Claude Code SessionEnd for S with two servers by S and one by T, The
   expect(out).not.toContain(theirs.id);
 });
 
+test("Given a Cursor session end, Then a detached stop for its session runs and answers {}", () => {
+  const cwd = temp("wk-teardown-repo-");
+  const answer = dispatchHook(cursorAdapter, fixture("cursor", "session-end", cwd), {});
+  expect(answer.error).toBeNull();
+  expect(answer.json).toEqual({});
+  expect(spawned.map(verbArgs)).toEqual([
+    ["stop", "--session", "cursor-conv-1", "--reason", "session-end"],
+  ]);
+  expect(spawned[0].env).toMatchObject({
+    WORKIT_SESSION_ID: "cursor-conv-1",
+    WORKIT_HOST: "cursor",
+  });
+});
+
+test("Given a Codex SessionEnd (no worker id: a subagent's end looks like the lead's), Then it is not mapped and nothing stops", () => {
+  const cwd = temp("wk-teardown-repo-");
+  const payload = {
+    session_id: "codex-session-1",
+    cwd,
+    transcript_path: null,
+    hook_event_name: "SessionEnd",
+    reason: "other",
+  };
+  expect(dispatchHook(codexAdapter, payload, {}).json).toEqual({});
+  const end = { session: "codex-session-1", agentId: null, reason: "other", cwd };
+  expect(endSession({ ...end, host: "codex_cli" })).toBe(false);
+  expect(endSession({ ...end, host: "codex_desktop" })).toBe(false);
+  expect(spawned).toEqual([]);
+});
+
 test.each([
-  ["codex", codexAdapter, "codex-session-1", "codex_cli"],
-  ["cursor", cursorAdapter, "cursor-conv-1", "cursor"],
+  ["claude_code", "logout", true],
+  ["claude_code", "prompt_input_exit", true],
+  ["claude_code", "other", true],
+  ["claude_code", "clear", false],
+  ["claude_code", "resume", false],
+  ["claude_code", "some_future_reason", false],
+  ["claude_code", null, false],
+  ["cursor", "completed", true],
+  ["cursor", "user_close", true],
+  ["cursor", "some_future_reason", false],
+  ["pi", "quit", true],
+  ["pi", "new", false],
+  ["pi", "some_future_reason", false],
+  ["opencode", "deleted", true],
+  ["opencode", null, false],
+  ["some_new_host", "other", false],
 ] as const)(
-  "Given a %s session end, Then a detached stop for its session runs and answers {}",
-  (host, adapter, session, hostId) => {
+  "Given host %s ending with reason %p, Then a stop runs: %p (only an allowlisted reason ends a session)",
+  (host, reason, stops) => {
     const cwd = temp("wk-teardown-repo-");
-    const answer = dispatchHook(adapter, fixture(host, "session-end", cwd), {});
-    expect(answer.error).toBeNull();
-    expect(answer.json).toEqual({});
-    expect(spawned.map(verbArgs)).toEqual([
-      ["stop", "--session", session, "--reason", "session-end"],
-    ]);
-    expect(spawned[0].env).toMatchObject({ WORKIT_SESSION_ID: session, WORKIT_HOST: hostId });
+    expect(endSession({ host, session: "lead-1", agentId: null, reason, cwd })).toBe(stops);
+    expect(spawned).toHaveLength(stops ? 1 : 0);
   },
 );
 
@@ -231,6 +271,9 @@ test("Given a worker's session end, Then nothing is spawned, so the lead's proce
     endSession({ ...end, session: "own-1" }, { ...process.env, WORKIT_SESSION_ID: "lead-1:own-1" }),
   ).toBe(false);
   expect(endSession({ ...end, session: "bad id; rm -rf /" })).toBe(false);
+  // Never an option to the CLI.
+  expect(endSession({ ...end, session: "-rf" })).toBe(false);
+  expect(endSession({ ...end, session: "--orphans" })).toBe(false);
   expect(spawned).toEqual([]);
   expect(endSession({ ...end, session: "lead-1" })).toBe(true);
   expect(spawned.map(verbArgs)).toEqual([
@@ -250,6 +293,32 @@ test("Given SessionStart twice within 10 minutes, Then the orphan reap spawns on
   clock += 1;
   start();
   expect(spawned).toHaveLength(2);
+});
+
+test("Given two session starts at once, Then the claim lets one reap and the other spawns nothing", () => {
+  const cwd = temp("wk-teardown-repo-");
+  const inner: boolean[] = [];
+  teardownDeps.spawn = (request) => {
+    // A second start arrives while the first holds the claim.
+    if (inner.length === 0) inner.push(reapAtStart(cwd));
+    spawned.push(request);
+    return true;
+  };
+  expect(reapAtStart(cwd)).toBe(true);
+  expect(inner).toEqual([false]);
+  expect(spawned).toHaveLength(1);
+  expect(existsSync(`${reapStamp(process.env)}.claim`)).toBe(false);
+});
+
+test("Given a claim a crashed start left an interval ago, Then the next start takes it and reaps", () => {
+  const cwd = temp("wk-teardown-repo-");
+  const claimFile = `${reapStamp(process.env)}.claim`;
+  mkdirSync(path.dirname(claimFile), { recursive: true });
+  writeFileSync(claimFile, String(clock - 1));
+  expect(reapAtStart(cwd)).toBe(false);
+  writeFileSync(claimFile, String(clock - REAP_INTERVAL_MS));
+  expect(reapAtStart(cwd)).toBe(true);
+  expect(spawned).toHaveLength(1);
 });
 
 test("Given a keep decision and workspace cleanup keep, Then session end stops neither and its output says why", async () => {

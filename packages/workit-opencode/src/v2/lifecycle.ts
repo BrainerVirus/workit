@@ -792,7 +792,13 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       const directory = event.location?.directory;
       if (typeof directory === "string" && !sameWorkspace(root, directory)) return;
       // A deleted session's registered processes stop, detached (#328).
-      endSession({ host: "opencode", session: sessionID, agentId: null, reason: null, cwd: root });
+      endSession({
+        host: "opencode",
+        session: sessionID,
+        agentId: null,
+        reason: "deleted",
+        cwd: root,
+      });
       // Sparse deletion carries no session facts; the persisted child binding
       // is the identity proof, and only deletion may skip a live read.
       await observeLifecycle(sessionID, binding?.parentID ?? "", "stopped", binding, true);
