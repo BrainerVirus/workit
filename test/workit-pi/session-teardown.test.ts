@@ -15,7 +15,7 @@ const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
 const savedDeps = { ...teardownDeps };
 const dirs: string[] = [];
 let spawned: SpawnRequest[] = [];
-let clock = Date.parse("2026-11-18T09:00:00Z");
+let clock = Date.now();
 
 beforeEach(() => {
   const state = mkdtempSync(path.join(tmpdir(), "workit-pi-teardown-state-"));

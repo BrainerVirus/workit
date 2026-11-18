@@ -60,7 +60,7 @@ const savedBrowsers = { ...browserDeps };
 
 const table = new Map<number, { pgid: number; start: string; alive: boolean }>();
 let nextPid = 70_000;
-let clock = Date.parse("2026-11-18T09:00:00Z");
+let clock = Date.now();
 let spawned: SpawnRequest[] = [];
 let launcher = "";
 
