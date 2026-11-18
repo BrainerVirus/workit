@@ -13,10 +13,29 @@
 // Dry run is the default: it prints each change it would make and touches
 // nothing. --apply runs `gh release edit` / `gh release create` (the created
 // release is never marked latest).
-import { execFileSync } from "node:child_process";
+//
+// --changelog puts each release's CHANGELOG.md entries (scripts/roll-changelog.ts
+// attributes every entry to the first tag holding it) above the PR-title list
+// of its existing GitHub release, between workit:changelog markers. Re-running
+// replaces the block, so a second run changes nothing:
+//
+//   bun scripts/backfill-release-notes.ts --changelog --dry-run            # every workit-dev-v* release
+//   bun scripts/backfill-release-notes.ts --changelog workit-dev-v1.0.0..workit-dev-v2.11.0 --apply
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { TAG_PREFIX } from "../packages/workit-core/scripts/analyze-release-scope";
+import {
+  GITHUB_BODY_LIMIT,
+  changelogBlock,
+  defaultExec,
+  githubBase,
+  moreLink,
+  rollChangelog,
+  tagSnapshots,
+  versionGroups,
+  withChangelogBlock,
+} from "./roll-changelog";
 
 /** Runs a command and returns its stdout; throws on a non-zero exit. */
 export type Exec = (cmd: string, args: string[], input?: string) => string;
@@ -89,15 +108,7 @@ export async function backfillReleaseNotes(opts: {
 }): Promise<BackfillChange[]> {
   const { root, apply = false } = opts;
   const log = opts.log ?? ((line: string) => console.log(line));
-  const exec: Exec =
-    opts.exec ??
-    ((cmd, args, input) =>
-      execFileSync(cmd, args, {
-        cwd: root,
-        encoding: "utf8",
-        input,
-        stdio: ["pipe", "pipe", "pipe"],
-      }));
+  const exec: Exec = opts.exec ?? defaultExec(root);
   const [from, to] = opts.range.split("..");
   if (!from || !to) throw new Error(`range must be <from-tag>..<to-tag>, got "${opts.range}"`);
   const prefix = STABLE_TAG.exec(from)?.[1] ?? TAG_PREFIX;
@@ -167,12 +178,98 @@ export async function backfillReleaseNotes(opts: {
   return changes;
 }
 
+export interface ChangelogBackfill {
+  tag: string;
+  /** Changelog entries the release body lists after the change. */
+  entries: number;
+  body: string;
+}
+
+const plural = (n: number): string => `${n} changelog ${n === 1 ? "entry" : "entries"}`;
+
+/** Room a release body keeps below GitHub's limit for the edit's own overhead. */
+const BODY_MARGIN = 1000;
+
+/**
+ * Puts each release's CHANGELOG.md entries at the top of its GitHub release
+ * body, replacing the block a previous run or the release itself wrote. A
+ * release whose body already says the same is left alone; a tag with no
+ * GitHub release is skipped (the default mode creates missing ones).
+ */
+export function backfillChangelogNotes(opts: {
+  root: string;
+  /** `<from>..<to>`, both tags included; every release tag when omitted. */
+  range?: string;
+  apply?: boolean;
+  exec?: Exec;
+  log?: (line: string) => void;
+}): ChangelogBackfill[] {
+  const { root, apply = false } = opts;
+  const log = opts.log ?? ((line: string) => console.log(line));
+  const exec: Exec = opts.exec ?? defaultExec(root);
+  const snapshots = tagSnapshots(exec);
+  const tags = snapshots.map((s) => s.tag);
+  let [start, end] = [0, tags.length - 1];
+  if (opts.range !== undefined) {
+    const [from = "", to = ""] = opts.range.split("..");
+    [start, end] = [tags.indexOf(from), tags.indexOf(to)];
+    if (start < 0 || end < start) throw new Error(`no tag range ${opts.range}`);
+  }
+  const text = rollChangelog(readFileSync(resolve(root, "CHANGELOG.md"), "utf8"), {
+    snapshots,
+  }).text;
+  const base = githubBase(exec("git", ["remote", "get-url", "origin"]));
+  const changes: ChangelogBackfill[] = [];
+  let unchanged = 0;
+
+  for (let i = start; i <= end; i++) {
+    const { tag, version } = snapshots[i];
+    const body = releaseBody(exec, tag);
+    if (body === null) {
+      log(`${tag}: skip, no GitHub release`);
+      continue;
+    }
+    const groups = versionGroups(text, version);
+    const entries = groups.reduce((n, g) => n + g.entries.length, 0);
+    const rest = withChangelogBlock(body, "");
+    const block = changelogBlock(groups, {
+      cap: GITHUB_BODY_LIMIT - BODY_MARGIN - rest.length,
+      more: moreLink(base, tags[i - 1], tag),
+    });
+    const next = withChangelogBlock(body, block);
+    if (next === body.replace(/\r\n/g, "\n").trim()) {
+      unchanged += 1;
+      log(`${tag}: unchanged (${plural(entries)})`);
+      continue;
+    }
+    changes.push({ tag, entries, body: next });
+    log(
+      `${tag}: ${apply ? "updated" : "would update"}, ${plural(entries)} (body ${body.trim().length} -> ${next.length} chars)`,
+    );
+    if (apply) exec("gh", ["release", "edit", tag, "--notes-file", "-"], next);
+  }
+  log(
+    `${apply ? "" : "dry run: "}${changes.length} release(s) ${apply ? "updated" : "to update"}, ${unchanged} unchanged${apply || changes.length === 0 ? "" : "; re-run with --apply to write them"}`,
+  );
+  return changes;
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const range = args.find((a) => a.includes(".."));
-  if (range === undefined) {
-    console.error("usage: bun scripts/backfill-release-notes.ts <from-tag>..<to-tag> [--apply]");
-    process.exit(2);
+  const apply = args.includes("--apply");
+  if (apply && args.includes("--dry-run")) {
+    console.error("--apply and --dry-run are exclusive");
+    process.exitCode = 2;
+  } else if (args.includes("--changelog")) {
+    backfillChangelogNotes({ root: process.cwd(), range, apply });
+  } else if (range === undefined) {
+    console.error(
+      "usage: bun scripts/backfill-release-notes.ts <from-tag>..<to-tag> [--dry-run|--apply]\n" +
+        "       bun scripts/backfill-release-notes.ts --changelog [<from-tag>..<to-tag>] [--dry-run|--apply]",
+    );
+    process.exitCode = 2;
+  } else {
+    await backfillReleaseNotes({ root: process.cwd(), range, apply });
   }
-  await backfillReleaseNotes({ root: process.cwd(), range, apply: args.includes("--apply") });
 }

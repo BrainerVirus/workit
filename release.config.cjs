@@ -18,6 +18,22 @@ module.exports = {
         analyzeCommitsCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
       },
     ],
+    // The release's hand-written CHANGELOG.md entries lead its notes: notes
+    // from each generateNotes plugin are joined in list order, so this block
+    // (between workit:changelog markers, at most RELEASE_BLOCK_CAP characters)
+    // comes before the PR-title list below; it prints nothing when the release
+    // has no entries. prepare moves the entries from [Unreleased] into
+    // `## [<version>] - <date>` in this checkout only: a release never writes
+    // back to main, which gets the same split from a PR running
+    // `bun scripts/roll-changelog.ts` (entries belong to the first tag holding
+    // them, so an unrolled main never repeats a shipped entry).
+    [
+      "@semantic-release/exec",
+      {
+        generateNotesCmd: "bun scripts/roll-changelog.ts --notes ${nextRelease.version}",
+        prepareCmd: "bun scripts/roll-changelog.ts --release ${nextRelease.version}",
+      },
+    ],
     // Conventional Commits preset formats notes; analyze-release-scope owns
     // bump selection, including `!` and BREAKING CHANGE on any commit type.
     [
