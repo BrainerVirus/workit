@@ -500,6 +500,8 @@ test("Given more read and scratch-only verbs, When a judge runs them, Then reads
     `git -C ${rt} reflog expire --all`,
     `git --no-optional-locks -C ${wt} status`,
     `git -C ${rt} status`,
+    // An index stat refresh changes no content, ref or config (decision D3, U3).
+    `git -C ${wt} status`,
   ])
     expect(bash(command), command).toBeUndefined();
   for (const command of [
@@ -513,7 +515,6 @@ test("Given more read and scratch-only verbs, When a judge runs them, Then reads
     `git -C ${rt} bisect run true`,
     "git ls-remote https://example.invalid/r",
     `git -C ${rt} remote show origin`,
-    `git -C ${wt} status`,
   ])
     expect(bash(command), command).toBe("deny");
 });

@@ -261,26 +261,48 @@ const MUTATING_CALLS =
  * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Reflect|getOwnPropertyDescriptor|attrgetter|methodcaller|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|(?<!\b(?:read\w*|str|decode|strip|lower|upper|Map|Set)\([^()]*\)|\(\d+\)|['"])(?:\.(?:delete|to_\w+)\s*\(|(?<=Path\b.*)\.replace\()|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
 /** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
 const FREE_OPEN =
   /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
 
 /**
- * Whether inline Python or Node code may change files: SPAWNS, or a word
- * outside FREE_OPEN and string literals that names a call in MUTATING_CALLS
- * (bar a list's `append` and `copy`, and printing to stdout or stderr).
+ * Whole-line comments, then string literals left to right: an f-string's
+ * prefix (1), quote (2) and body (3), or a template literal's body (4).
  */
-const writesIn = (text: string): boolean => {
-  const bare = text
+const TOKENS =
+  /^[ \t]*(?:(?:#(?![\w$])|\/\/)[^\n]*|\/\*[\s\S]*?\*\/)|(?:\b([rR]?[fF][rR]?))?(['"])((?:\\.|(?!\2)[^\\\n])*)\2|`((?:\\.|[^\\`])*)`/gm;
+
+/**
+ * Whether inline Python or Node code may change files: SPAWNS, or a word
+ * outside FREE_OPEN, comments and string literals that names a call in
+ * MUTATING_CALLS (bar a list's `append` and `copy`, and printing to stdout or
+ * stderr). An f-string's `{…}` and a template literal's `${…}` are code. A
+ * backslash-newline is judged joined too, as an unquoted heredoc runs it.
+ */
+const writesIn = (raw: string): boolean => {
+  if (raw.includes("\\\n") && writesIn(raw.replaceAll("\\\n", ""))) return true;
+  let parts = false;
+  const bare = raw
     .replace(FREE_OPEN, "")
-    .replace(/std(?:out|err)\.write|(?<![fF][rR]?)(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "");
-  // Fail closed where the strings cannot be told apart: a quote left over (an f-string, a
-  // regex literal), `${…}`, a `\u` or `\x` escape, or a regex literal holding a quote.
+    .replace(TOKENS, (_, fstring?: string, _quote?: string, body?: string, template?: string) => {
+      const inner = fstring ? body : template;
+      const open = fstring ? "{" : "${";
+      if (inner !== undefined)
+        for (const piece of inner.split(open).slice(1)) {
+          const end = piece.indexOf("}");
+          parts ||= end < 0 || /[{}]/.test(piece.slice(0, end)) || writesIn(piece.slice(0, end));
+        }
+      return " ";
+    })
+    .replace(/std(?:out|err)\.write/g, "");
+  // Fail closed where the strings cannot be told apart: a quote or `${` left over, a `\u`
+  // or `\x` escape, or a regex literal (after `(`, `,`, `=` or `:`) holding a quote.
   return (
-    SPAWNS.test(text) ||
-    /['"]/.test(bare) ||
-    /\$\{|\\[ux]|(?:^|[(,=:;!&|?{}[\s])\/(?![/*])[^/\n]*['"]/.test(text) ||
+    parts ||
+    SPAWNS.test(raw) ||
+    /['"`]|\$\{/.test(bare) ||
+    /\\[ux]|(?:^|[(,=:])\s*\/(?![/*])[^/\n]*['"]/.test(raw) ||
     [...bare.matchAll(/[\w$]+/g)].some(
       ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
     )
@@ -504,8 +526,14 @@ const opaqueWrites = (
   };
   if (name === "curl") return curlOutputs(args);
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
+  // A module (`python3 -m pip install --target …`) runs code Workit does not read.
+  if (
+    name.startsWith("python") &&
+    args.some((arg, at) => arg === "-m" && args[at + 1] !== "json.tool")
+  )
+    return [".", ...args.flatMap(pathsIn)];
   if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
-    return inline(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/);
+    return inline(/^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/);
   return shellScript(words) === null ? null : ["."];
 };
 
@@ -1587,7 +1615,7 @@ const segmentTargets = (
         shells.push(...preloads.flatMap(read));
       } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
-        const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
+        const code = args.findIndex((arg) => /^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/.test(arg));
         // As the shell expands it (`"…$HOME/…"`).
         if (code >= 0) others.push(...expansions(args[code + 1] ?? "", vars, loops));
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
@@ -1629,7 +1657,12 @@ const segmentTargets = (
           ...joined.flatMap(({ word, index }) => under(word).map((file) => ({ file, index }))),
         ];
         for (const { file, index } of found) {
-          const use = isRoot(file) ? rootUse(text, index) : "takes";
+          // A dir named inside a longer string (prose, a JSON value) is data, not a path the code takes.
+          const use = !isRoot(file)
+            ? "takes"
+            : /['"`]/.test(text[index - 1] ?? "'") || /['"]/.test(text[index])
+              ? rootUse(text, index)
+              : "reads";
           if (use !== "reads")
             targets.push(use === "builds" ? path.join(file, UNRESOLVED_TARGET) : file);
         }
