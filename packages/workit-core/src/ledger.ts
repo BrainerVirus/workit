@@ -2635,12 +2635,16 @@ export function recordVerdictVoid(
 const CHECKED_RESULTS: ReadonlySet<string> = new Set(["verified", "tests-verified"]);
 
 /**
- * Whose `workit check` rows a verdict session owns. A host-derived id `S:a`
- * (a Claude Code verifier) owns the rows its agent ran: session S with agent
- * id a. A plain session S owns only its own rows (no agent id), never its
- * subagents'.
+ * Whose `workit check` rows a verdict session is held to. A host-derived id
+ * `S:a` owns the rows stamped session S and agent id a; a plain session S owns
+ * its rows with no agent id. Host limit (hosts.md#host-parity): no host stamps
+ * WORKIT_AGENT_ID yet, so on Claude Code and Codex a subagent's rows carry the
+ * lead's S and no agent id. Until a host stamps one, the `S:a` branch matches
+ * nothing (such a verifier is held only through --evidence and the CLI's
+ * check_missing/check_failing gates) and a lead's plain S owns every run its
+ * subagents made. Never a false refusal: it only narrows who is held.
  */
-function ownsRun(session: string, row: ReadRow): boolean {
+function sessionOwnsRun(session: string, row: ReadRow): boolean {
   const colon = session.indexOf(":");
   const agent = row.actor.agentId ?? null;
   return colon > 0
@@ -2690,7 +2694,7 @@ function evidenceOffHead(
   const cleared = new Set<string>();
   for (const row of runs) {
     const name = str(row.name);
-    if (!name || row.branch !== input.branch || !ownsRun(session, row)) continue;
+    if (!name || row.branch !== input.branch || !sessionOwnsRun(session, row)) continue;
     // An ad-hoc `--name <n> -- <cmd>` never stands in for a configured run of <n>.
     if (latest.get(name)?.configured === true && row.configured !== true) continue;
     latest.set(name, row);
@@ -2698,7 +2702,7 @@ function evidenceOffHead(
   for (const row of runs) {
     const name = str(row.name);
     const last = name ? latest.get(name) : undefined;
-    if (!name || !last || row.branch !== input.branch || !ownsRun(session, row)) continue;
+    if (!name || !last || row.branch !== input.branch || !sessionOwnsRun(session, row)) continue;
     if (onHead(row) && (last.configured !== true || row.configured === true)) cleared.add(name);
   }
   const stale = [...latest.entries()]

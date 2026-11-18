@@ -298,6 +298,26 @@ test("Given a derived verifier session S:a, Then it is held to the runs its agen
   expect(recordedOn(verdict(root, "s-lead:a3"))).toBe(moved);
 });
 
+test("Given today's rows (no host stamps WORKIT_AGENT_ID, so a subagent's runs carry the lead's S and no agent id), When a derived verifier S:a records, Then it is not held by them (it records)", () => {
+  const root = featureRepo();
+  checkRow(root, { session: "s-lead" }, headOf(root));
+  const moved = codeChange(root);
+  expect(recordedOn(verdict(root, "s-lead:a1"))).toBe(moved);
+});
+
+test("Given today's rows, When the lead's plain session S records, Then it is held to the runs shared under S and any clean configured run on the head in S clears them", () => {
+  const root = featureRepo();
+  const tested = headOf(root);
+  // Two subagents' runs: both stamped with the lead's session and no agent id.
+  checkRow(root, { session: "s-lead" }, tested);
+  checkRow(root, { session: "s-lead" }, tested, { name: "lint" });
+  const moved = codeChange(root);
+  checkRow(root, { session: "s-lead" }, moved, { name: "lint" });
+  refusedNaming(verdict(root, "s-lead"), tested, moved);
+  checkRow(root, { session: "s-lead" }, moved);
+  expect(recordedOn(verdict(root, "s-lead"))).toBe(moved);
+});
+
 test("Given a plain session S, Then its subagents' runs (session S with an agent id) are not its own", () => {
   const root = featureRepo();
   checkRow(root, { session: "s-lead", agent: "a1" }, headOf(root));

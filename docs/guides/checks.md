@@ -103,9 +103,14 @@ side:
     configured run, never by an ad-hoc `--name <n> -- <cmd>`, and a check CI
     covered on the head is skipped.
 
-  A Claude Code verifier records as `<lead>:<agent>` and owns the runs its
-  agent made (the lead's session with its agent id); a plain session owns
-  only its own runs, not its subagents'. A follow-up the verdict would carry
+  Whose runs count: a session is held to the runs stamped with it. No host
+  stamps an agent id on a check run yet, so on Claude Code and Codex every
+  subagent's `workit check` runs under the lead's session: a verdict recorded
+  as the lead's session is held to all of them (any clean configured run of a
+  check on the head, by any of its subagents, clears that check), while a
+  verifier recording as a derived `<lead>:<agent>` id is held only through
+  `--evidence` and the `check_missing`/`check_failing` gates until hosts stamp
+  one ([host parity](../agents/hosts.md#host-parity)). A follow-up the verdict would carry
   anyway (what `workit pr status` reads as "carried": docs or changelog only,
   tests only under a `unit` verdict, a rebase with the patch unchanged) does
   not refuse, and `failed` or `blocked` always record. Run the checks on the
