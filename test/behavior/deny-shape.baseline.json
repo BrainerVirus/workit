@@ -1,6 +1,10 @@
 [
+  "cc-dev-server-chain-splits: line 1 is not `workit <gate>: <what>.`",
   "cc-heavy-real-chain-still-splits: line 1 is not `workit <gate>: <what>.`",
-  "cc-isolated-implementer-raw-commit: 572 characters, over 400",
+  "cc-isolated-implementer-raw-commit: line 1 says what in more than 15 words",
+  "cc-judge-literal-assignment: line 1 says what in more than 15 words",
+  "cc-ytrack-retry-call: line 1 is not `workit <gate>: <what>.`",
+  "codex-dev-server-denies-with-run-bg: line 1 is not `workit <gate>: <what>.`",
   "codex-heavy-tail-filter-denies-with-rewrite: line 1 is not `workit <gate>: <what>.`",
   "spawn-auto-mode-args-denied: line 1 says what in more than 15 words",
   "spawn-auto-mode-isolation-denied: line 1 says what in more than 15 words",
