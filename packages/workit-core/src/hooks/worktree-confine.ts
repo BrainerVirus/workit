@@ -496,9 +496,12 @@ export function confineImplementerShell(
 
 /**
  * `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits
- * and `@%+=:./_-`, or `\` for a Windows path (`C:\Users\…`), maybe quoted.
+ * and `@%+=:./_-`, `\` for a Windows path (`C:\Users\…`) and `~` of a short
+ * name (`RUNNER~1`) where bash does not expand it (not first, nor after `:` or
+ * `=`), maybe quoted.
  */
-const LITERAL_SET = /^\s*([A-Za-z_]\w*)=(['"]?)([\w@%+=:./\\-]*)\2[ \t]*(?:;|&&|\n)\s*/;
+const LITERAL_SET =
+  /^\s*([A-Za-z_]\w*)=(['"]?)((?:[\w@%+=:./\\-]|(?<=[^\s:=])~)*)\2[ \t]*(?:;|&&|\n)\s*/;
 /** The names Workit spells in for a judge: one letter, or a short path or ref word in one case. */
 const SPELLED =
   /^(?:[A-Za-z]|wt|wd|dir|repo|root|base|sha|ref|branch|file|out|scratch|worktree|WT|WD|DIR|REPO|ROOT|BASE|SHA|REF|BRANCH|FILE|OUT|SCRATCH|WORKTREE)$/;

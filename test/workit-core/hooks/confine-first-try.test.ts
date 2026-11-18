@@ -48,7 +48,8 @@ const repo = (dir: string): void => {
 
 beforeAll(async () => {
   configHome = useConfigHome("wk-confine-ft-config-");
-  root = mkdtempSync(path.join(os.tmpdir(), "wk-confine-ft-"));
+  // The long name of the temp dir where Windows has one (RUNNER~1 → runneradmin).
+  root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "wk-confine-ft-")));
   process.env.WORKIT_STATE_DIR = path.join(root, "state");
   lead = path.join(root, "app");
   repo(lead);
@@ -163,6 +164,11 @@ test("Given a verifier, When it reads a path from a literal assignment (W=<check
     retried(verifier, [
       ["W=C:\\Users\\me\\app; git -C $W log -1", "git -C C:\\Users\\me\\app log -1"],
     ]);
+  // An 8.3 short name keeps its `~` in the retry; a `~` bash would expand is not spelled in.
+  retried(verifier, [
+    ["W=C:/Users/RUNNER~1/app; git -C $W log -1", "git -C C:/Users/RUNNER~1/app log -1"],
+  ]);
+  denied(verifier, ["W=~/app; git -C $W log -1", "W=/x:~/app; git -C $W log -1"]);
   allowed(verifier, [`git -C ${lead} status --short`]);
   denied(verifier, [
     "PATH=/x; git status",
