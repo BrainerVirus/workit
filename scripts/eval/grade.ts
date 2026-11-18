@@ -341,6 +341,27 @@ export const authFailureOf = (transcript: string): string | null => {
   return result?.is_error === true && AUTH.test(text) ? text.slice(0, 200) : null;
 };
 
+/**
+ * The usage or rate limit a Claude Code run stopped on before any tool call
+ * ("You've hit your 5-hour limit", an API 429), or null. Such a run never
+ * reached the model: it is skipped like an OpenCode provider's limit, never
+ * graded as a fail.
+ */
+export const claudeLimitOf = (transcript: string): string | null => {
+  const list = events(transcript);
+  if (isOpencode(list) || toolCalls(transcript).length > 0) return null;
+  const result = list.findLast((event) => event.type === "result") as
+    | (Event & { is_error?: boolean; api_error_status?: unknown; api_error?: unknown })
+    | undefined;
+  if (result?.is_error !== true) return null;
+  const text = result.result ?? "";
+  return result.api_error_status === 429 ||
+    /rate.?limit|usage.?limit/iu.test(String(result.api_error ?? "")) ||
+    /hit your .*limit/iu.test(text)
+    ? text.slice(0, 200) || "rate limit"
+    : null;
+};
+
 export const usageOf = (transcript: string): Usage => {
   const list = events(transcript);
   if (isOpencode(list)) return opencodeUsage(list);

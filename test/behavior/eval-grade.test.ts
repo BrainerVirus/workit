@@ -2,7 +2,7 @@
 // transcript with no model (scripts/eval/grade.ts, docs/agents/eval.md).
 import { describe, expect, test } from "bun:test";
 import type { EvalCase } from "@/scripts/eval/cases";
-import { authFailureOf, grade, usageOf } from "@/scripts/eval/grade";
+import { authFailureOf, claudeLimitOf, grade, usageOf } from "@/scripts/eval/grade";
 
 type Call = {
   name: string;
@@ -678,5 +678,23 @@ describe("Given a run graded for first try (D5)", () => {
     });
     expect(authFailureOf(opencode)).toContain("provider.auth");
     expect(authFailureOf(run(ran("workit check test", "tu1")))).toBeNull();
+  });
+
+  test("When Claude Code stopped on its usage limit before any tool call, Then the run is limited (claudeLimitOf), never a graded fail", () => {
+    const limited = [
+      JSON.stringify({ type: "system", subtype: "init" }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        num_turns: 1,
+        api_error_status: 429,
+        api_error: "usage_limit_reached",
+        result: "You've hit your 5-hour limit · resets 1:20pm",
+      }),
+    ].join("\n");
+    expect(claudeLimitOf(limited)).toContain("5-hour limit");
+    expect(authFailureOf(limited)).toBeNull();
+    expect(claudeLimitOf(run(ran("workit check test", "tu1")))).toBeNull();
   });
 });

@@ -17,7 +17,15 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
 import { appliesTo, loadCases, selectCases, type EvalCase, type Tier } from "./cases";
-import { authFailureOf, grade, usageOf, type FirstTry, type Grade, type Usage } from "./grade";
+import {
+  authFailureOf,
+  claudeLimitOf,
+  grade,
+  usageOf,
+  type FirstTry,
+  type Grade,
+  type Usage,
+} from "./grade";
 import {
   limitOf,
   opencodeArgs,
@@ -888,9 +896,10 @@ const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
       opts.reachable.set(value, "host credential");
     const refused = prepare(spec, opts, world, env);
     if (refused) return { ...REFUSED, refused };
+    const run = await attempt(spec, opts, claudeArgs(spec, opts.model, opts.pluginDir), env, world);
     return {
-      ...(await attempt(spec, opts, claudeArgs(spec, opts.model, opts.pluginDir), env, world)),
-      limit: null,
+      ...run,
+      limit: claudeLimitOf(run.transcript),
     };
   } finally {
     // A token the host rotated by rename sits in the world until it is carried back.
@@ -967,8 +976,9 @@ const runCase = async (
   const skipped =
     trip === null &&
     !run.refused &&
-    opts.host === "opencode" &&
-    (run.provider === undefined || run.limit !== null);
+    (opts.host === "opencode"
+      ? run.provider === undefined || run.limit !== null
+      : run.limit !== null);
   const graded = grade(run.transcript, spec);
   const auth = trip === null && !run.refused && !skipped ? authFailureOf(run.transcript) : null;
   if (auth) graded.failures.unshift({ rule: "void", detail: `the host's login failed: ${auth}` });
