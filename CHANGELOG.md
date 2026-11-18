@@ -322,6 +322,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit stop --session|--within|--orphans` and `workit gc --procs` find the automation browsers (Chrome, Chromium, Edge with a remote-debugging port or pipe on a temp or automation profile) a session started and stop them once that session ends; your own browser, any default profile reached by any path, and a browser with no owner proof are never signalled. Windows lists them without stopping them.
 - Grant seal, read side (#819): when `workspaces.json.seal` exists beside the account's `workspaces.json` and does not match its authority fields (grants, endpoint, verification, `youtrack.writes`, remotes, VCS account and provider, entry names, globs and order), Workit applies, per kind, the stricter of the current and the last sealed value, and `youtrack.writes` asks; the note names how to re-seal. A missing seal changes nothing yet. Agents' writes to the seal file are denied on every host like writes to `workspaces.json`.
 - `workit uninstall --hosts=<h,…>` removes Workit from the named hosts only: `--preview` prints the files, config keys and host commands it would remove and changes nothing, `--yes` removes them. In an agent session it refuses and names the command to hand to the user.
 - `workit init` installs the ytrack agent skill for the hosts you set up when you pick YouTrack (as setup and upgrade do), and names `ytrack upgrade` when your ytrack is too old.

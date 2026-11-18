@@ -81,7 +81,13 @@ export function groupRss(pgid: number): number | null {
   return seen ? kib * 1024 : null;
 }
 
-export type StopTarget = { pid: number | null; pgid: number | null; pidStart: string | null };
+export type StopTarget = {
+  pid: number | null;
+  pgid: number | null;
+  pidStart: string | null;
+  /** False: signal only `pid`, a process that leads no group of its own (an automation browser). */
+  group?: boolean;
+};
 
 export type GroupStop =
   /** The group ended after SIGTERM. */
@@ -102,22 +108,27 @@ export type GroupStop =
 const stillOurs = (target: StopTarget): "ours" | "gone" | "reused" => {
   const leader = target.pid ? identity(target.pid, target.pidStart) : "gone";
   if (leader === "reused") return "reused";
-  if (leader === "gone") return target.pgid && groupAlive(target.pgid) ? "ours" : "gone";
+  if (leader === "gone")
+    return target.group !== false && target.pgid && groupAlive(target.pgid) ? "ours" : "gone";
   return "ours";
 };
 
 /**
- * Stop a recorded process group: SIGTERM, wait `graceMs` for it to end, then
- * SIGKILL. The leader's start time is checked before each signal, so a pid
- * another process took is never signalled.
+ * Stop a recorded process group (or, with `group: false`, the one process):
+ * SIGTERM, wait `graceMs` for it to end, then SIGKILL. The leader's start time
+ * is checked before each signal, so a pid another process took is never
+ * signalled.
  */
 export async function stopGroup(
   target: StopTarget,
   graceMs: number = STOP_GRACE_MS,
 ): Promise<GroupStop> {
   // Nothing to signal (a docker row whose containers were stopped) is gone on every platform.
-  const pgid = target.pgid ?? target.pid;
+  const single = target.group === false;
+  const pgid = single ? target.pid : (target.pgid ?? target.pid);
   if (!pgid) return { outcome: "gone" };
+  const signalled = single ? pgid : -pgid;
+  const running = (): boolean => (single ? pidAlive(pgid) : groupAlive(pgid));
   if (procTree.platform === "win32")
     return {
       outcome: "refused",
@@ -127,21 +138,21 @@ export async function stopGroup(
   const before = stillOurs(target);
   if (before !== "ours") return { outcome: before };
   try {
-    procTree.kill(-pgid, "SIGTERM");
+    procTree.kill(signalled, "SIGTERM");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return { outcome: "gone" };
     return { outcome: "refused", detail: (error as Error).message };
   }
   const deadline = procTree.now() + graceMs;
   while (procTree.now() < deadline) {
-    if (!groupAlive(pgid)) return { outcome: "stopped", signal: "SIGTERM" };
+    if (!running()) return { outcome: "stopped", signal: "SIGTERM" };
     await procTree.sleep(POLL_MS);
   }
-  if (!groupAlive(pgid)) return { outcome: "stopped", signal: "SIGTERM" };
+  if (!running()) return { outcome: "stopped", signal: "SIGTERM" };
   // Check again: the leader may have exited and its pid been reused during the grace.
   if (stillOurs(target) === "reused") return { outcome: "reused" };
   try {
-    procTree.kill(-pgid, "SIGKILL");
+    procTree.kill(signalled, "SIGKILL");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ESRCH")
       return { outcome: "refused", detail: (error as Error).message };
