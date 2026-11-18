@@ -93,7 +93,11 @@ const HOOK_ENTRIES = [
 // session scratchpad and the read-only judge verbs, with review round 1's fail-closed rules (verdict
 // mwla51qs), add +1,904 B. Rebased on #871 (release-notes one-click ask, 2026-11-17) the core run
 // is 567,733 B, so the ceiling is that plus ~1,500 B; the precision follow-up must be byte-neutral.
-const BUDGET = 569_200;
+// Wave 12 (2026-11-18), measured on Bun 1.4.4 at bc1d174b: core run 568,259 B (Claude Code 561,652 B,
+// Cursor 551,053 B, Codex 550,665 B). One ceiling for the round, core run plus 10,000 B, so no hook
+// slice edits it: procs-route and session-teardown 8,000 B together (wave 9's allowance, still
+// unspent), ft-spawn-models + ft-spawn-gate + ft-confine 2,000 B together. Each prints its delta in its PR.
+const BUDGET = 578_259;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

@@ -12,6 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { installHooks, stripAbsoluteLefthook } from "@/scripts/install-hooks";
+import { MERGE_DRIVER_COMMAND } from "@/scripts/merge-generated-json";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 setDefaultTimeout(60_000);
@@ -112,5 +113,12 @@ test("stripAbsoluteLefthook removes the stale-path branch and nothing else", () 
   ].join("\n");
   expect(stripAbsoluteLefthook(script)).toBe(
     ["  elif lefthook -h >/dev/null 2>&1", "  then", '    lefthook "$@"', "  else", ""].join("\n"),
+  );
+});
+
+test("hooks:install registers the generated-JSON merge driver with its fallback", () => {
+  const { main } = fixture();
+  expect(git(main, ["config", "merge.workit-generated-json.driver"]).out.trim()).toBe(
+    MERGE_DRIVER_COMMAND,
   );
 });

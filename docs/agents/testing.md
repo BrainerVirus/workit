@@ -203,3 +203,10 @@ per clone with `bun run hooks:install`; it also removes the absolute lefthook
 path (for example another worktree's `node_modules`) that `lefthook install`
 bakes into the shared `.git/hooks`. `test/artifacts/install-hooks.test.ts`
 covers both with a temp repo and a linked worktree.
+
+`bun run hooks:install` also registers `merge.workit-generated-json.driver`, which `.gitattributes`
+applies to `docs/qualification/context-budget.json`: a key-wise three-way merge
+(`scripts/merge-generated-json.ts`) where a key both sides changed keeps the larger number, so
+parallel PRs rebase without a conflict; run `bun run write:budget` afterwards (the drift test asks
+for it). If `bun` cannot run, a `git merge-file` fallback leaves normal conflict markers. GitHub runs
+no custom merge drivers, so a PR whose base moved on the same key still needs a local rebase.
