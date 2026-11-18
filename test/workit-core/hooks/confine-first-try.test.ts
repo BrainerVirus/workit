@@ -225,7 +225,9 @@ test("Given an implementer bound to its worktree, When it sets W=$(pwd) and edit
   const command = `cd ${lead} && python3 -c "open('x','w')"`;
   const out = implementer(command);
   expect(verdict(out)).toBe("deny");
-  expect(out?.permissionDecisionReason?.split("\n")[1]).toBe(`Retry as: cd ${wt} && ${command}`);
+  const retry = `cd ${wt} && python3 -c "open('x','w')"`;
+  expect(out?.permissionDecisionReason?.split("\n")[1]).toBe(`Retry as: ${retry}`);
+  expect(verdict(implementer(retry))).toBe("allow");
 });
 
 test("Given the lead, When a python heredoc writes a plan JSON whose string value names the Workit config dir, Then it runs; a script that opens workspaces.json there for writing is refused", () => {

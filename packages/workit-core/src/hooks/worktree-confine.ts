@@ -242,6 +242,10 @@ const shown = (target: string): string => {
   return path.sep === "\\" ? named.replaceAll("/", "\\") : named;
 };
 
+/** `command` run from `dir` instead of the directory its leading `cd` names. */
+const runFrom = (dir: string, command: string): string =>
+  `cd ${dir} && ${command.replace(/^\s*cd\s+\S+\s*(?:&&|;)\s*/, "")}`;
+
 /** A two-line deny: what was refused, then the call to retry with or why there is none. */
 const deny = (what: string, unblock: string): HookDecision => ({
   kind: "deny",
@@ -265,7 +269,7 @@ const outsideDeny = (
   return deny(
     `workit worktree confinement: implementer ${input.session.agentId} is bound to the worktree ${worktree}, and ${runner === null ? `${shown(target)} is` : `\`${runner}\` runs in ${shown(target)},`} outside it`,
     runner !== null && command
-      ? `Retry as: cd ${worktree} && ${command}`
+      ? `Retry as: ${runFrom(worktree, command)}`
       : `Why: edit only under ${worktree}, git one verb per call (\`workit git --cwd ${worktree} commit -m … -- <paths>\`); the rest is a follow-up for your report.`,
   );
 };
@@ -1236,7 +1240,7 @@ export function confineJudge(
             ? null
             : runner === null
               ? movedInto(command, input.cwd, target, dir)
-              : `cd ${dir} && ${command}`,
+              : runFrom(dir, command),
       );
     }
     return NONE;
