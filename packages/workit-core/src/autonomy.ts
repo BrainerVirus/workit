@@ -32,7 +32,7 @@
 // - Protected-branch pushes stay denied by the git verbs (except the git-flow
 //   release push above), and the host
 //   permission prompt applies in addition: a host deny always wins.
-import { copyFileSync, existsSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, openSync } from "node:fs";
 import path from "node:path";
 import { grantsHome, testRunWriteRefusal } from "./core/account-home";
 import { configFilePath, resolveConfigDir } from "./core/config";
@@ -45,6 +45,7 @@ import {
   sealedProjection,
   sealProjection,
   SEAL_COMMAND,
+  SEAL_FILE,
   writeSeal,
   type SealCheck,
 } from "./core/grant-seal";
@@ -82,9 +83,34 @@ export { grantsHome };
  * no override: every grant is read from here. Null when no account record
  * answers (core/account-home.ts): then no grants are read at all.
  */
-const accountDir = (): string | null => {
+const accountHomeDir = (): string | null => {
   const home = grantsHome.resolve();
   return home === null ? null : workitConfigDir({ HOME: home });
+};
+
+/**
+ * The account file under `dir` this process may not read (EACCES or EPERM:
+ * a confined host, such as a bench run's), or null. Such an account reads as
+ * one with no entries: no grants, no models, the lowest authority; any other
+ * read error keeps its own handling.
+ */
+const deniedFile = (dir: string): string | null => {
+  for (const name of ["workspaces.json", SEAL_FILE]) {
+    const file = path.join(dir, name);
+    try {
+      closeSync(openSync(file, "r"));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EPERM") return file;
+    }
+  }
+  return null;
+};
+
+/** The account's config dir when its files can be read; null otherwise. */
+const accountDir = (): string | null => {
+  const dir = accountHomeDir();
+  return dir === null || deniedFile(dir) !== null ? null : dir;
 };
 
 /**
@@ -93,10 +119,23 @@ const accountDir = (): string | null => {
  * it is the config dir, which the guard protects anyway; no grant is read
  * through this name.
  */
-export const grantsDir = (): string => accountDir() ?? resolveConfigDir();
+export const grantsDir = (): string => accountHomeDir() ?? resolveConfigDir();
 
 const NO_ACCOUNT =
   "no OS account record answered (core/account-home.ts), so no grants are read: the D4 defaults apply";
+
+/**
+ * Why no account grants are read (no account record, or an account file this
+ * process may not read), or null when they are.
+ */
+const accountUnread = (): string | null => {
+  const dir = accountHomeDir();
+  if (dir === null) return NO_ACCOUNT;
+  const file = deniedFile(dir);
+  return file === null
+    ? null
+    : `${file} cannot be read (permission denied), so it reads as no workspace entries: no grants, no models, the D4 defaults apply`;
+};
 
 /** The workspace entries of a grants dir; none without one. */
 const entriesIn = (dir: string | null): WorkspaceConfig[] =>
@@ -214,7 +253,7 @@ const benchWorld = (cwd: string): WorkspaceConfig | null => {
 /** Why grants fell back to the defaults, or null when the real file is used. */
 export const grantsOverride = (): string | null => {
   const shown = shownGrantsDir();
-  if (shown === null) return NO_ACCOUNT;
+  if (shown === null) return accountUnread() ?? NO_ACCOUNT;
   const configured = path.resolve(resolveConfigDir());
   return configured === path.resolve(shown)
     ? null
@@ -588,9 +627,10 @@ function capAt(
 /** The grants for the workspace `cwd` belongs to (read-only). */
 export function resolveAutonomy(cwd: string, target?: LazyTarget): Autonomy {
   const world = benchWorld(cwd);
+  // No account record, or its file may not be read: no grants, the D4 defaults.
+  const unread = world ? null : accountUnread();
+  if (unread !== null) return { ...autonomyOf(null), note: unread };
   const override = world ? null : grantsOverride();
-  // No account record: no grants are read, the D4 defaults.
-  if (override === NO_ACCOUNT) return { ...autonomyOf(null), note: override };
   // Resolved once even when a broken seal resolves twice.
   let resolved: GrantTarget | undefined;
   const once: LazyTarget | undefined =
@@ -782,8 +822,8 @@ function capAtRemotes(
  * costs no git call (the shell hook asks first).
  */
 export const grantsMatter = (kind: GrantKind): boolean => {
+  if (accountUnread() !== null) return false;
   const override = grantsOverride();
-  if (override === NO_ACCOUNT) return false;
   const entries = entriesIn(accountDir());
   const matters = entries.some((entry) => {
     const autonomy = autonomyOf(entry);
@@ -1071,7 +1111,7 @@ export function writeGrants(
   /** The user at an interactive terminal outside an agent (see sealAfterWrite). */
   terminal = false,
 ): GrantWrite {
-  if (dir === null) return { ok: false, code: "failed", error: NO_ACCOUNT };
+  if (dir === null) return { ok: false, code: "failed", error: accountUnread() ?? NO_ACCOUNT };
   const before = sealBefore(dir);
   const current = readWorkspacesResult(dir);
   if (current.status === "missing")
@@ -1287,7 +1327,7 @@ export type SealStatus =
 /** The seal of the account's own workspaces.json (never a redirected one). */
 export function sealStatus(): SealStatus {
   const dir = accountDir();
-  if (dir === null) return { state: "no_account", note: NO_ACCOUNT };
+  if (dir === null) return { state: "no_account", note: accountUnread() ?? NO_ACCOUNT };
   const check = checkSeal(dir);
   const read = readWorkspacesResult(dir);
   const error = read.status === "malformed" || read.status === "invalid" ? read.error : undefined;
@@ -1374,7 +1414,7 @@ export function listGrants(dir: string | null = shownGrantsDir()): {
   })[];
   error?: string;
 } {
-  if (dir === null) return { path: "", workspaces: [], error: NO_ACCOUNT };
+  if (dir === null) return { path: "", workspaces: [], error: accountUnread() ?? NO_ACCOUNT };
   const current = readWorkspacesResult(dir);
   if (current.status === "malformed" || current.status === "invalid")
     return { path: current.path, workspaces: [], error: current.error };
