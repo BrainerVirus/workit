@@ -321,11 +321,8 @@ function rollLinks(doc: Doc, opts: RollOptions, prefix: string): string[] {
     const existing = named.get(section.name);
     named.delete(section.name);
     if (section.name.toLowerCase() === "unreleased") {
-      out.push(
-        newest
-          ? `[${section.name}]: ${base}/compare/${prefix}${newest}...HEAD`
-          : (existing ?? `[${section.name}]: ${base}/compare/HEAD`),
-      );
+      if (newest) out.push(`[${section.name}]: ${base}/compare/${prefix}${newest}...HEAD`);
+      else if (existing) out.push(existing);
       continue;
     }
     if (existing) {
@@ -353,7 +350,8 @@ export function versionGroups(text: string, version: string): Group[] {
 /**
  * A release's entries between markers, at most `cap` characters. Past the cap
  * it keeps the entries that fit and ends with a line pointing at `more` (the
- * compare view), so GitHub never rejects the body. Empty when there are none.
+ * compare view), so GitHub never rejects the body. Empty when there are none
+ * or not even that line fits.
  */
 export function changelogBlock(groups: Group[], opts: { cap: number; more: string }): string {
   const entries = groups.reduce((n, g) => n + g.entries.length, 0);
@@ -383,11 +381,13 @@ export function changelogBlock(groups: Group[], opts: { cap: number; more: strin
     if (budget < 0) break;
   }
   const rest = entries - shown;
-  return wrap([
+  const cut = wrap([
     ...renderGroups(kept),
     ...(kept.length > 0 ? [""] : []),
     `_${rest} more ${rest === 1 ? "entry is" : "entries are"} not listed here; see ${opts.more}._`,
   ]);
+  // A body with no room even for the closing line keeps no block at all.
+  return cut.length <= opts.cap ? cut : "";
 }
 
 /** A release body with `block` at the top, replacing any block it already had. */

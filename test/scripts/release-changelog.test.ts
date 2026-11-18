@@ -239,6 +239,8 @@ test("Given entries longer than the cap, Then the block keeps those that fit and
   expect(block).toContain("- Entry 0 ");
   expect(block).not.toContain("- Entry 49 ");
   expect(block.endsWith(`not listed here; see ${more}._\n${MARKER_END}`)).toBe(true);
+  // No room even for the closing line: no block rather than an oversized body.
+  expect(changelogBlock(groups, { cap: 100, more })).toBe("");
 });
 
 // --- backfill of published releases -------------------------------------------------
@@ -321,6 +323,34 @@ test("Given --dry-run, Then the backfill edits nothing and prints a per-release 
   );
   // The CHANGELOG.md in the checkout is only read.
   expect(repo.read()).toBe(HISTORY[2]?.text);
+});
+
+test("Given `--changelog --dry-run` on the command line, Then it prints the summary and never calls gh release edit", () => {
+  const repo = makeRepo(HISTORY);
+  const bin = path.join(repo.cwd, "..", "bin");
+  mkdirSync(bin);
+  const edits = path.join(repo.cwd, "..", "edits.log");
+  writeFileSync(
+    path.join(bin, "gh"),
+    `#!/bin/sh\nif [ "$2" = view ]; then printf '## [x]\\n\\n* a (#1)\\n'; exit 0; fi\necho "$@" >> "${edits}"\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  const run = spawnSync(
+    "bun",
+    [path.join(REPO_ROOT, "scripts/backfill-release-notes.ts"), "--changelog", "--dry-run"],
+    {
+      cwd: repo.cwd,
+      encoding: "utf8",
+      timeout: 60_000,
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+    },
+  );
+  expect(run.status).toBe(0);
+  expect(run.stdout).toContain(
+    "workit-dev-v2.10.0: would update, 1 changelog entry (body 16 -> 150 chars)",
+  );
+  expect(run.stdout).toContain("dry run: 2 release(s) to update, 0 unchanged");
+  expect(() => readFileSync(edits, "utf8")).toThrow();
 });
 
 test("Given a body that would pass 125,000 characters, Then the backfill cuts the block with a compare link instead of being rejected", () => {
