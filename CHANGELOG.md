@@ -1190,6 +1190,19 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
   prompt, or on OpenCode, Codex and Cursor, the call refuses with one
   command for the user's terminal, where the typed-version flow is unchanged.
 
+### Fixed (#864: drafts shown in full)
+
+- A `workit youtrack` write that waits for your yes prints the whole text it
+  would post (comment, new issue description or time-log text) with its
+  sha256, under a marker telling the agent to paste it to you verbatim; JSON
+  output carries it as `draft`. After a revision the print starts with a line
+  diff from the text printed last, then the new full text. `workit release
+  notes draft` and `show` print release notes the same way. Before, an agent
+  could name only the draft's file and never show a revised text.
+- The ship skill says to paste a draft that needs your yes in full before
+  asking and again after every edit; a repo rule (`draft-in-full`) fails a
+  skill step that shows a draft by its path only.
+
 ## [0.6.0] - 2026-08-10
 
 ### Added

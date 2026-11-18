@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fail, ok, type Result } from "../core";
 import { configDir } from "./config";
+import { resolveStateDir } from "./logger";
+import { writeFileAtomic } from "./safe-write";
 import { configDir as workitConfigDir, userHome } from "./workit-paths.mjs";
 import {
   context as legacyContext,
@@ -305,3 +309,100 @@ export function normalizeContext(value: LegacyValue, mode?: string): LegacyValue
     workItemText: meetingWorkItemText(config, selected),
   };
 }
+
+// Drafts shown in full (#864): a draft that needs the user's yes (a YouTrack
+// comment, description or time-log text, release notes) is printed whole,
+// under a marker that tells the agent to paste it to the user verbatim, with
+// its hash. When the draft for the same target changed since it was last
+// printed, the print leads with a line diff from that text. What was printed
+// last is kept per target in the state dir, outside any repo.
+
+/** One draft as printed: its full text, hash and the diff from the last print. */
+export type ShownDraft = {
+  target: string;
+  sha256: string;
+  text: string;
+  /** The line diff from the text printed last for this target; null on the first print or no change. */
+  diff: string | null;
+};
+
+const draftFile = (target: string): string =>
+  path.join(
+    resolveStateDir(),
+    "drafts-shown",
+    `${createHash("sha256").update(target).digest("hex").slice(0, 24)}.json`,
+  );
+
+/** A unified-style line diff (`-` removed, `+` added, ` ` kept) from `before` to `after`. */
+export const draftDiff = (before: string, after: string): string => {
+  const a = before.trimEnd().split(/\r?\n/u);
+  const b = after.trimEnd().split(/\r?\n/u);
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () =>
+    Array.from({ length: b.length + 1 }, () => 0),
+  );
+  for (let i = a.length - 1; i >= 0; i -= 1)
+    for (let j = b.length - 1; j >= 0; j -= 1)
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      out.push(` ${a[i]}`);
+      i += 1;
+      j += 1;
+    } else if (i < a.length && (j >= b.length || lcs[i + 1][j] >= lcs[i][j + 1])) {
+      out.push(`-${a[i]}`);
+      i += 1;
+    } else {
+      out.push(`+${b[j]}`);
+      j += 1;
+    }
+  }
+  return out.join("\n");
+};
+
+/**
+ * Print-ready record of `text` as the draft for `target` (`youtrack:ABC-1:comment`,
+ * `release-notes:v1.2.0`), with the diff from the text printed last for the
+ * same target, and remember it as the last print. A state dir that cannot be
+ * written only loses the next diff.
+ */
+export const showDraft = (target: string, text: string): ShownDraft => {
+  const sha256 = createHash("sha256").update(text).digest("hex");
+  const file = draftFile(target);
+  let previous: string | null = null;
+  try {
+    const saved = JSON.parse(readFileSync(file, "utf8")) as { target?: unknown; text?: unknown };
+    if (saved.target === target && typeof saved.text === "string") previous = saved.text;
+  } catch {
+    // Never printed (or unreadable): this is the first print.
+  }
+  try {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    writeFileAtomic(file, `${JSON.stringify({ target, sha256, text })}\n`, 0o600);
+  } catch {
+    // Only the next diff is lost.
+  }
+  return {
+    target,
+    sha256,
+    text,
+    diff: previous !== null && previous !== text ? draftDiff(previous, text) : null,
+  };
+};
+
+/** Forget the last print for `target`: the draft posted, so the next one starts fresh. */
+export const forgetDraft = (target: string): void => {
+  rmSync(draftFile(target), { force: true });
+};
+
+/** The block an agent pastes to the user verbatim: the diff (after a revision), then the whole text. */
+export const draftLines = (draft: ShownDraft, what: string): string[] => [
+  `--- ${what}: show this to the user verbatim in chat, in full (sha256 ${draft.sha256.slice(0, 12)}) ---`,
+  ...(draft.diff === null
+    ? []
+    : ["changed since last shown (- removed, + added):", draft.diff, "", "the new full text:"]),
+  draft.text.trimEnd(),
+  `--- end of ${what} ---`,
+];
