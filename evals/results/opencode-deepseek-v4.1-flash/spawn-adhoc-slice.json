@@ -1,0 +1,43 @@
+{
+  "case": "spawn-adhoc-slice",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "b6595659784031c1",
+  "date": "2026-11-18T18:31:50.095Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 12,
+    "durationMs": 78853,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 16,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /implementer/ not denied: the single-slice spawn runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 10 Workit interaction(s): #8 Bash(sed -n '1,200p' <workit>/packages/workit-core/skills/workit-fanout/references/orchestration.md) denied: Permission denied: shell; #9 Read({\"path\":\"<workit>/packages/workit-core/skills/workit-fanout/references/orchestration.md\"}) denied: Permission denied: external_directory"
+      }
+    ],
+    "firstTry": {
+      "interactions": 10,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "case": "verify-app-generation",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "a82b94702f3d85e6",
+  "date": "2026-11-18T16:10:01.904Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 20,
+    "durationMs": 131238,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 40,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /\\.claude/skills/verify-[^/\"]+/SKILL\\.md/: a project-local verify skill is written"
+      },
+      {
+        "rule": "require",
+        "detail": "no call matches /node bin/greet\\.js/: the real CLI is driven once"
+      }
+    ],
+    "firstTry": {
+      "interactions": 14,
+      "failed": 0,
+      "denied": 9
+    }
+  }
+}

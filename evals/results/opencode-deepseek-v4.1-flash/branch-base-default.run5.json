@@ -1,0 +1,29 @@
+{
+  "case": "branch-base-default",
+  "run": 5,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "22297b8912cb7201",
+  "date": "2026-11-18T15:59:32.671Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 6241,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 3,
+    "failures": [],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

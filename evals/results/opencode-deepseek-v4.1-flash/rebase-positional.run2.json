@@ -1,0 +1,45 @@
+{
+  "case": "rebase-positional",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "82a4494e24e3030a",
+  "date": "2026-11-18T18:28:21.137Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 30956,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 7,
+    "failures": [],
+    "firstTry": {
+      "interactions": 3,
+      "failed": 0,
+      "denied": 0
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/issued/549912da793576113b38c0693e53600b/a6014aa5a2eaf09e9d093382c6714097",
+      "change": "created"
+    },
+    {
+      "path": "~/.local/state/workit/issued-tokens/549912da793576113b38c0693e53600b/a6014aa5a2eaf09e9d093382c6714097",
+      "change": "created"
+    }
+  ]
+}

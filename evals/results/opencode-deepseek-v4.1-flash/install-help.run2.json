@@ -1,0 +1,35 @@
+{
+  "case": "install-help",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "a57fe591f4dc6a6b",
+  "date": "2026-11-18T18:14:15.765Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 2,
+    "durationMs": 9937,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 1,
+    "failures": [],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

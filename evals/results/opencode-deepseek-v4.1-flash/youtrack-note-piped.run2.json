@@ -1,0 +1,44 @@
+{
+  "case": "youtrack-note-piped",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "e9d8a3d1aadc0e74",
+  "date": "2026-11-18T16:12:07.208Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 8,
+    "durationMs": 52823,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 13,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /workit[^\\n]*youtrack[^\\n]*\\|\\s*tail/ not denied: the piped call runs"
+      },
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 0 failed of 8 Workit interaction(s): #1 Bash(command -v workit npx node; ls -a) denied: Permission denied: shell; #8 Bash(cat .workit/config.json 2>/dev/null; ls -a .workit 2>/dev/null; find . -maxdepth 3 -name '*.json' -not -path './node_mod) denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 8,
+      "failed": 0,
+      "denied": 2
+    }
+  }
+}

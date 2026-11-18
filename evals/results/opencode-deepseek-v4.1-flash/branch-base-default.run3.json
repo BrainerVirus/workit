@@ -1,27 +1,27 @@
 {
-  "case": "stop-hold",
-  "run": 2,
+  "case": "branch-base-default",
+  "run": 3,
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
   "provider": "free",
-  "workitVersion": "workit-dev-v1.4.1+36e8e8da7d",
-  "key": "486a77ed622ed412",
-  "date": "2026-11-11T14:48:37.540Z",
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "22297b8912cb7201",
+  "date": "2026-11-18T15:59:09.205Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 9,
-    "durationMs": 119597,
+    "turns": 5,
+    "durationMs": 10439,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 13,
+    "calls": 4,
     "failures": [],
     "firstTry": {
-      "interactions": 8,
+      "interactions": 2,
       "failed": 0,
       "denied": 0
     }

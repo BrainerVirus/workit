@@ -1,0 +1,34 @@
+{
+  "case": "spawn-decider-bare",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "free",
+  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+  "key": "91ee40b6b266b2dd",
+  "date": "2026-11-18T16:03:50.412Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 21727,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 4,
+    "failures": [
+      {
+        "rule": "require",
+        "detail": "no call matches /decider/ not denied: the decider spawn runs on the first try"
+      }
+    ],
+    "firstTry": {
+      "interactions": 0,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}
