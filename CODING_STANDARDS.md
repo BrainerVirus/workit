@@ -77,8 +77,10 @@ what to fix.
   (`exit-after-flush`); no tracked file names the maintainer's work
   organisation, repositories, accounts or home in its path or bytes, UTF-16
   included (`private-names`, a scan in
-  `scripts/repo-rules/private-names.mts`: use `acme`, `alice`, `work-gh`).
-  Existing hits sit in `scripts/repo-rules/baseline.json`,
+  `scripts/repo-rules/private-names.mts`: use `acme`, `alice`, `work-gh`);
+  `CHANGELOG.md`'s [Unreleased] holds no entry a `workit-dev-v*` tag already
+  shipped (`released-changelog`, skipped in a checkout without those tags: run
+  `bun scripts/roll-changelog.ts`). Existing hits sit in `scripts/repo-rules/baseline.json`,
   which only shrinks (`bun run lint:rules --write`). A new rule cites its
   mistake, fails on it in `test/repo-rules/`, and seeds its hits with
   `--grandfather <rule>`.

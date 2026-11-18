@@ -41,9 +41,13 @@ its `prepareCmd` moves the entries from `[Unreleased]` into
 `## [<version>] - <date>` in the release checkout. A release never writes back
 to `main`, so `main` gets the same split from a PR that runs
 `bun scripts/roll-changelog.ts`, the same way `sync-release-manifests.ts`
-brings the manifests up to date. Nothing requires it: because entries are
-matched against the tags, an unrolled `main` never repeats an entry a release
-already shipped.
+brings the manifests up to date. Because entries are matched against the
+tags, an unrolled `main` never repeats an entry a release already shipped,
+but `bun run lint` fails (repo rule `released-changelog`) while
+`[Unreleased]` holds one, so the first PR after a release rolls `main`. The
+rule reads the local `workit-dev-v*` tags and reports nothing in a checkout
+without them: CI's `fast checks` job clones at depth 1 with no tags, so the
+rule runs locally (lint and `workit check repo-rules`), not in CI.
 
 GitHub rejects a release body over 125000 characters, so
 `scripts/clean-release-notes.cjs` caps it. The first release (no previous

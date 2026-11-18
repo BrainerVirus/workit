@@ -23,6 +23,8 @@ export type Exec = (cmd: string, args: string[], input?: string) => string;
 /** One bullet with its continuation lines (no trailing newline). */
 interface Entry {
   lines: string[];
+  /** 1-based line of the bullet in the file it was parsed from (0 when built). */
+  line: number;
 }
 
 /** A `###` group (or the lines before the first one, heading null). */
@@ -35,6 +37,8 @@ interface Section {
   /** The bracketed name: `Unreleased` or a version. */
   name: string;
   heading: string;
+  /** 0-based index of the heading line in the file. */
+  start: number;
   /** Original lines, heading included; rendered as-is unless `groups` is set. */
   raw: string[];
   groups?: Group[];
@@ -90,22 +94,29 @@ export function parseChangelog(text: string): Doc {
   end = linkStart;
   const preamble: string[] = [];
   const sections: Section[] = [];
-  for (const line of lines.slice(0, end)) {
+  for (const [index, line] of lines.slice(0, end).entries()) {
     const match = SECTION.exec(line);
-    if (match) sections.push({ name: match[1] ?? "", heading: line, raw: [line] });
+    if (match) sections.push({ name: match[1] ?? "", heading: line, start: index, raw: [line] });
     else if (sections.length === 0) preamble.push(line);
     else sections[sections.length - 1]?.raw.push(line);
   }
   return { preamble, sections, links };
 }
 
-/** The groups and entries of a section body (the lines after its heading). */
-export function parseGroups(body: string[]): Group[] {
+/** The groups of a section's body; `start` is the 0-based index of the heading line. */
+const sectionGroups = (section: Section): Group[] =>
+  parseGroups(section.raw.slice(1), section.start + 2);
+
+/**
+ * The groups and entries of a section body (the lines after its heading).
+ * `firstLine` is the 1-based file line of `body[0]`, for entries' `line`.
+ */
+export function parseGroups(body: string[], firstLine = 1): Group[] {
   const groups: Group[] = [];
   let group: Group | null = null;
   let entry: Entry | null = null;
   let blanks: string[] = [];
-  for (const line of body) {
+  for (const [index, line] of body.entries()) {
     if (line.trim() === "") {
       if (entry) blanks.push(line);
       continue;
@@ -119,7 +130,7 @@ export function parseGroups(body: string[]): Group[] {
         group = { heading: null, entries: [] };
         groups.push(group);
       }
-      entry = { lines: [line] };
+      entry = { lines: [line], line: firstLine + index };
       group.entries.push(entry);
     } else {
       entry.lines.push(...blanks, line);
@@ -148,7 +159,7 @@ export function changelogKeys(text: string): Set<string> {
   const doc = parseChangelog(text);
   const keys = new Set<string>();
   for (const section of doc.sections)
-    for (const group of parseGroups(section.raw.slice(1)))
+    for (const group of sectionGroups(section))
       for (const entry of group.entries) {
         const { short, full } = entryKeys(entry);
         keys.add(short).add(full);
@@ -202,6 +213,47 @@ const repoBase = (links: string[]): string | null => {
   return null;
 };
 
+/**
+ * For the entries of `groups`, the version of the first tag holding each one,
+ * or null when no tag does. An entry is matched on its short key, or on its
+ * whole text when another entry in `groups` shares the short key.
+ */
+function shippedVersion(
+  groups: Group[],
+  snapshots: TagSnapshot[],
+): (entry: Entry) => string | null {
+  const shortCount = new Map<string, number>();
+  for (const group of groups)
+    for (const entry of group.entries) {
+      const { short } = entryKeys(entry);
+      shortCount.set(short, (shortCount.get(short) ?? 0) + 1);
+    }
+  return (entry) => {
+    const { short, full } = entryKeys(entry);
+    const key = (shortCount.get(short) ?? 0) > 1 ? full : short;
+    return snapshots.find((s) => s.keys.has(key))?.version ?? null;
+  };
+}
+
+/** Each [Unreleased] entry a release tag already holds: its file line and that release. */
+export function shippedUnreleased(
+  text: string,
+  snapshots: TagSnapshot[],
+): Array<{ line: number; version: string }> {
+  const unreleased = parseChangelog(text).sections.find(
+    (s) => s.name.toLowerCase() === "unreleased",
+  );
+  if (!unreleased || snapshots.length === 0) return [];
+  const groups = sectionGroups(unreleased);
+  const shipped = shippedVersion(groups, snapshots);
+  return groups.flatMap((group) =>
+    group.entries.flatMap((entry) => {
+      const version = shipped(entry);
+      return version === null ? [] : [{ line: entry.line, version }];
+    }),
+  );
+}
+
 export interface RollOptions {
   /** Every release tag, oldest first, with what its CHANGELOG.md held. */
   snapshots: TagSnapshot[];
@@ -223,22 +275,10 @@ export function rollChangelog(text: string, opts: RollOptions): RollResult {
   const doc = parseChangelog(text);
   const unreleased = doc.sections.find((s) => s.name.toLowerCase() === "unreleased");
   if (!unreleased) return { text, changed: false, moved: [] };
-  const groups = parseGroups(unreleased.raw.slice(1));
-
-  const shortCount = new Map<string, number>();
-  for (const group of groups)
-    for (const entry of group.entries) {
-      const { short } = entryKeys(entry);
-      shortCount.set(short, (shortCount.get(short) ?? 0) + 1);
-    }
-  const keyOf = (entry: Entry): string => {
-    const { short, full } = entryKeys(entry);
-    return (shortCount.get(short) ?? 0) > 1 ? full : short;
-  };
-  const shippedIn = (entry: Entry): string | null => {
-    const key = keyOf(entry);
-    return opts.snapshots.find((s) => s.keys.has(key))?.version ?? opts.release?.version ?? null;
-  };
+  const groups = sectionGroups(unreleased);
+  const shipped = shippedVersion(groups, opts.snapshots);
+  const shippedIn = (entry: Entry): string | null =>
+    shipped(entry) ?? opts.release?.version ?? null;
 
   const targets = new Map<string, Group[]>();
   const kept: Group[] = [];
@@ -274,12 +314,13 @@ export function rollChangelog(text: string, opts: RollOptions): RollResult {
       section = {
         name: version,
         heading: `## [${version}] - ${dates.get(version)}`,
+        start: 0,
         raw: [],
         groups: [],
       };
       added.push(section);
     }
-    const target = section.groups ?? parseGroups(section.raw.slice(1));
+    const target = section.groups ?? sectionGroups(section);
     section.groups = target;
     const seen = new Set(target.flatMap((g) => g.entries.map((e) => entryKeys(e).full)));
     let count = 0;
@@ -344,7 +385,7 @@ function rollLinks(doc: Doc, opts: RollOptions, prefix: string): string[] {
 /** The groups of a version's section, or [] when CHANGELOG.md has none. */
 export function versionGroups(text: string, version: string): Group[] {
   const section = parseChangelog(text).sections.find((s) => s.name === version);
-  return section ? parseGroups(section.raw.slice(1)).filter((g) => g.entries.length > 0) : [];
+  return section ? sectionGroups(section).filter((g) => g.entries.length > 0) : [];
 }
 
 /**

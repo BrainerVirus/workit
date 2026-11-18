@@ -80,7 +80,6 @@
     "packages/workit-mcp/scripts/build.ts": 1,
     "packages/workit-opencode/scripts/build.ts": 1,
     "packages/workit-pi/scripts/build.ts": 2,
-    "scripts/backfill-release-notes.ts": 1,
     "scripts/bench-context.ts": 1,
     "scripts/check-budget-growth.ts": 2,
     "scripts/check-reachability.ts": 1,
