@@ -1126,9 +1126,14 @@ resume`). It also makes the worker's scratch dir for its temp files,
   pushes with a refspec, refspec pushes with `:` or `+`, `git replace|filter-branch|gc|prune|repack|sparse-checkout`,
   `git config` and `git remote` writes, `git stash drop|clear`, and `workit
 fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
-  command whose writes Workit cannot read (`python -c`, `node -e`, `xargs rm`,
-  `find -delete`) counts as a change in the directory it runs in, and a link
-  inside the worktree may not point outside it. After a `cd -`, `cd "$VAR"` or
+  command whose writes Workit cannot read (`xargs rm`, `find -delete`,
+  `python -m <module>`, or `python -c` / `node -e` code that writes, deletes or
+  runs a command) counts as a change in the directory it runs in, and a link
+  inside the worktree may not point outside it. Inline Python or Node code that
+  only reads changes nothing: comments, string literals and the `{…}` of an
+  f-string or `${…}` of a template literal are judged as code (#880). A refusal
+  is two lines: what was refused, then the exact `Retry as:` call (an
+  interpreter run elsewhere becomes `cd <worktree> && …`) or why none exists. After a `cd -`, `cd "$VAR"` or
   `popd` Workit cannot follow, a write is denied until it names an absolute
   path, `git -C <worktree>` or `workit <verb> --cwd <worktree>`. This guards against
   hand edits and is not a sandbox: writers such as `tar -C`, `unzip -d`,
