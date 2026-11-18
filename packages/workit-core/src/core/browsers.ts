@@ -23,7 +23,7 @@ import path from "node:path";
 import { hostSessionFromEnv } from "../host-session";
 import { leadOf } from "./live-session";
 import { procTree } from "./proc-tree";
-import { stateDir } from "./workit-paths.mjs";
+import { stateDir, userHome } from "./workit-paths.mjs";
 
 /** One row of the process table. `argv` is exact where the platform gives it (Linux /proc, a test); else it is split from `command`. */
 export type ProcessEntry = {
@@ -83,7 +83,7 @@ const POSIX_TEMP = ["/tmp", "/var/tmp", "/private/tmp", "/var/folders", "/privat
 /** What a scan reads; tests swap these for a fake process table. */
 export const browserDeps = {
   platform: process.platform as string,
-  home: (): string => os.homedir(),
+  home: (): string => userHome(process.env),
   tempDirs: (): string[] => {
     const temp = os.tmpdir();
     let real = temp;
@@ -95,6 +95,27 @@ export const browserDeps = {
     return [...new Set([temp, real, ...(browserDeps.platform === "win32" ? [] : POSIX_TEMP)])];
   },
   hostname: (): string => os.hostname(),
+  /**
+   * `value` with every symbolic link resolved: the nearest existing ancestor's
+   * real path plus the rest. Unchanged when it cannot be read, or when the scan
+   * acts as another platform (a test).
+   */
+  realpath: (value: string): string => {
+    if (browserDeps.platform !== process.platform) return value;
+    let dir = value;
+    const rest: string[] = [];
+    while (!fs.existsSync(dir)) {
+      const parent = path.dirname(dir);
+      if (parent === dir) return value;
+      rest.unshift(path.basename(dir));
+      dir = parent;
+    }
+    try {
+      return path.join(fs.realpathSync.native(dir), ...rest);
+    } catch {
+      return value;
+    }
+  },
   processes: (): ProcessEntry[] | null => readTable(browserDeps.platform),
   /** The exact argv of `pid`; null where it cannot be read (off Linux). */
   argv: (pid: number): string[] | null => {
@@ -299,6 +320,18 @@ const DEFAULT_PROFILES = [
   "AppData/Local/Microsoft/Edge/User Data",
 ];
 
+const pathApi = (platform: string): path.PlatformPath =>
+  platform === "win32" ? path.win32 : path.posix;
+
+/** `value` with `.`, `..`, doubled and trailing separators resolved; null when it is relative. */
+const normalized = (value: string, platform: string): string | null => {
+  const api = pathApi(platform);
+  return api.isAbsolute(value) ? api.resolve(value) : null;
+};
+
+/** The ways one absolute path is spelled: as written (normalized) and with its links resolved. */
+const spellings = (value: string): string[] => [...new Set([value, browserDeps.realpath(value)])];
+
 /** A path in one comparable spelling: forward slashes, no trailing one, case folded where the file system folds it. */
 const comparable = (value: string, platform: string): string => {
   let spelled = value.replaceAll("\\", "/").replace(/\/+$/u, "");
@@ -311,6 +344,12 @@ const under = (child: string, parent: string, platform: string): boolean => {
   const b = comparable(parent, platform);
   return b !== "" && (a === b || a.startsWith(`${b}/`));
 };
+
+/** Is any of `paths` inside any spelling of any of `dirs`? */
+const anyUnder = (paths: string[], dirs: string[], platform: string): boolean =>
+  paths.some((child) =>
+    dirs.some((dir) => spellings(dir).some((parent) => under(child, parent, platform))),
+  );
 
 const flag = (argv: readonly string[], name: string): string | null => {
   for (const arg of argv) {
@@ -334,16 +373,23 @@ export function automationSignature(
   if (flag(argv, "--type") !== null) return null;
   const port = flag(argv, "--remote-debugging-port");
   if (port === null && flag(argv, "--remote-debugging-pipe") === null) return null;
-  const userDataDir = flag(argv, "--user-data-dir")?.trim();
+  const written = flag(argv, "--user-data-dir")?.trim();
+  if (!written) return null;
+  // Compared only once `..`, doubled slashes and links are resolved: a default profile
+  // reached by any path is never an automation browser's.
+  const userDataDir = normalized(written, platform);
   if (!userDataDir) return null;
+  const forms = spellings(userDataDir);
+  const real = forms.at(-1)!;
   const home = browserDeps.home();
-  const inHome = (relative: string) => path.join(home, relative);
-  if (DEFAULT_PROFILES.some((dir) => under(userDataDir, inHome(dir), platform))) return null;
+  const inHome = (relative: string) => pathApi(platform).join(home, relative);
+  if (anyUnder(forms, DEFAULT_PROFILES.map(inHome), platform)) return null;
   const automationDirs = AUTOMATION_DIRS.map(inHome);
+  const executable = normalized(exe, platform);
   const automation =
-    browserDeps.tempDirs().some((dir) => under(userDataDir, dir, platform)) ||
-    automationDirs.some((dir) => under(userDataDir, dir, platform)) ||
-    automationDirs.some((dir) => under(exe, dir, platform));
+    anyUnder([real], browserDeps.tempDirs(), platform) ||
+    anyUnder([real], automationDirs, platform) ||
+    (executable !== null && anyUnder(spellings(executable), automationDirs, platform));
   if (!automation) return null;
   const portNumber = port ? Number(port) : 0;
   return { userDataDir, port: Number.isInteger(portNumber) && portNumber > 0 ? portNumber : null };

@@ -26,7 +26,6 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { appendObserved, type LedgerActor } from "../ledger";
 import { openThreadsStore, type ThreadsStore } from "../store/threads/store";
@@ -42,7 +41,7 @@ import {
   stopGroup,
   type GroupStop,
 } from "./proc-tree";
-import { stateDir } from "./workit-paths.mjs";
+import { stateDir, userHome } from "./workit-paths.mjs";
 
 export type { ProcRow, ProcKind };
 
@@ -286,10 +285,10 @@ export const BROWSER_PROC_NAME = "browser";
  * else the owner's checkout (so the stop's ledger row lands in that repo),
  * else its own cwd or the home dir.
  */
-const browserCwd = (browser: FoundBrowser): string => {
+const browserCwd = (browser: FoundBrowser, env: NodeJS.ProcessEnv): string => {
   const checkout = browser.owner?.checkout ?? null;
   if (browser.cwd && checkout && inside(browser.cwd, checkout)) return browser.cwd;
-  return checkout ?? browser.cwd ?? os.homedir();
+  return checkout ?? browser.cwd ?? userHome(env);
 };
 
 /**
@@ -333,7 +332,7 @@ export function adoptBrowsers(
       lead: owner.session ? leadOf(owner.session) : null,
       host: owner.host,
       hostPid: owner.hostPid,
-      cwd: browserCwd(browser),
+      cwd: browserCwd(browser, env),
       pgid: browser.pgid,
       pid: browser.pid,
       pidStart,

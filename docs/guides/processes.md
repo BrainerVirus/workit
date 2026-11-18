@@ -124,7 +124,9 @@ is never counted. Neither is one on its default profile
 (`~/.config/google-chrome`, `~/Library/Application Support/Google/Chrome`,
 `%LOCALAPPDATA%\Google\Chrome\User Data` and their Chromium and Edge
 equivalents), even with the flags. The same goes for one on a profile dir you
-picked yourself.
+picked yourself. Before comparing, Workit resolves `..`, extra slashes and symbolic
+links in the profile path. A temp-dir path that leads into a default profile
+is therefore still your default profile.
 
 A browser is registered only when Workit can prove which session owns it:
 

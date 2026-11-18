@@ -161,6 +161,11 @@ const ALLOW: Allow[] = [
     match: "env.XDG_CONFIG_HOME",
     why: "gh and glab config identity in a cache key",
   },
+  {
+    file: "packages/workit-core/src/core/browsers.ts",
+    match: '"Library/Application Support/',
+    why: "the browsers' own default profiles, which the automation-browser scan must never count",
+  },
   { file: "packages/workit-core/src/git/rev.ts", match: "os.homedir()", why: "~/.ssh/config" },
   {
     file: [

@@ -232,6 +232,78 @@ describe("the signature", () => {
       expect(automationSignature(argv)).toBeNull();
   });
 
+  test("Given a default profile reached through `..`, doubled or trailing slashes, Then it is never an automation browser", () => {
+    fake();
+    for (const debugging of ["--remote-debugging-port=0", "--remote-debugging-pipe"])
+      for (const dir of [
+        `/tmp/../home/u/.config/google-chrome`,
+        `/tmp/./../home/u/.config/chromium`,
+        `${HOME}//.config//google-chrome/`,
+        `/tmp/x/../../home/u/.config/google-chrome/Default/..`,
+        `/tmp/../home/u/dbg`,
+        "relative/profile",
+      ])
+        expect(
+          automationSignature(["/usr/bin/chromium", debugging, `--user-data-dir=${dir}`]),
+        ).toBeNull();
+    expect(
+      automationSignature([
+        "/usr/bin/chromium",
+        "--remote-debugging-pipe",
+        "--user-data-dir=//tmp//agent-browser-chrome-x/",
+      ])?.userDataDir,
+    ).toBe("/tmp/agent-browser-chrome-x");
+    expect(
+      automationSignature(
+        [
+          "C:\\chrome.exe",
+          "--remote-debugging-pipe",
+          "--user-data-dir=C:\\Users\\u\\AppData\\Local\\Temp\\..\\Google\\Chrome\\User Data",
+        ],
+        "win32",
+      ),
+    ).toBeNull();
+  });
+
+  // Real links on this machine's file system; Windows needs a privilege for them.
+  test.skipIf(process.platform === "win32")(
+    "Given a temp-dir link into a default profile, or a temp-dir parent linked there, Then it is never an automation browser",
+    () => {
+      const home = temp("wk-browsers-home-");
+      const profile = path.join(home, ".config", "google-chrome");
+      mkdirSync(profile, { recursive: true });
+      const links = temp("wk-browsers-links-");
+      symlinkSync(profile, path.join(links, "profile"));
+      symlinkSync(path.join(home, ".config"), path.join(links, "config"));
+      browserDeps.platform = process.platform;
+      browserDeps.home = () => home;
+      for (const dir of [
+        path.join(links, "profile"),
+        `${path.join(links, "profile")}/`,
+        path.join(links, "config", "google-chrome"),
+        // A leaf that does not exist yet still resolves through its linked parent.
+        path.join(links, "config", "google-chrome", "Profile 9"),
+      ])
+        expect(
+          automationSignature(
+            ["/usr/bin/chromium", "--remote-debugging-port=0", `--user-data-dir=${dir}`],
+            process.platform,
+          ),
+        ).toBeNull();
+      // The same temp dir, not linked anywhere, still counts.
+      expect(
+        automationSignature(
+          [
+            "/usr/bin/chromium",
+            "--remote-debugging-port=0",
+            `--user-data-dir=${path.join(links, "agent-browser-chrome-x")}`,
+          ],
+          process.platform,
+        ),
+      ).not.toBeNull();
+    },
+  );
+
   test("Given a macOS ps line and a Windows command line, Then the executable and flags are split right", () => {
     expect(
       splitPosixCommand(
