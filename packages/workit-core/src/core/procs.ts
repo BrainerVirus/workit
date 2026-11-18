@@ -15,16 +15,23 @@
 //   - an agent acts only on rows its own session family owns;
 //   - unregistered processes are never touched.
 //
+// Automation browsers (ruling 5, core/browsers.ts) join as `browser` rows: a
+// stop or orphan reap first scans the process table and registers each one
+// whose owner is proved, so the same rules then stop it. One no session owns
+// is reported, never registered or stopped.
+//
 // The v1 `procs` table has no column for a few facts (the host pid's start
 // time, container ids, the name, the start state): each row keeps them in a
 // small JSON file beside the logs, `<state>/procs/rows/<id>.json`.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { appendObserved, type LedgerActor } from "../ledger";
 import { openThreadsStore, type ThreadsStore } from "../store/threads/store";
 import { readProc, upsertProc, type ProcKind, type ProcRow } from "../store/threads/procs";
+import { scanBrowsers, type FoundBrowser } from "./browsers";
 import { leadOf } from "./live-session";
 import {
   groupAlive,
@@ -269,6 +276,78 @@ export const ownsRow = (caller: string, row: ProcRow): boolean =>
   (row.lead ?? (row.session ? leadOf(row.session) : null)) === leadOf(caller);
 
 // ---------------------------------------------------------------------------
+// automation browsers
+
+/** The name a browser row gets. */
+export const BROWSER_PROC_NAME = "browser";
+
+/**
+ * Where a browser row lives: its own cwd when that is in its owner's checkout,
+ * else the owner's checkout (so the stop's ledger row lands in that repo),
+ * else its own cwd or the home dir.
+ */
+const browserCwd = (browser: FoundBrowser): string => {
+  const checkout = browser.owner?.checkout ?? null;
+  if (browser.cwd && checkout && inside(browser.cwd, checkout)) return browser.cwd;
+  return checkout ?? browser.cwd ?? os.homedir();
+};
+
+/**
+ * Register every automation browser whose owner is proved (a row of kind
+ * `browser`, once per process) and return the ones no session owns: those
+ * are reported, never stopped.
+ */
+export function adoptBrowsers(
+  store: ThreadsStore,
+  env: NodeJS.ProcessEnv,
+  now = Date.now(),
+): SkippedProc[] {
+  const scan = scanBrowsers(env);
+  const known = new Set(
+    liveProcs(store)
+      .filter((row) => row.kind === "browser")
+      .map((row) => `${row.pid}\0${row.pidStart}`),
+  );
+  const unowned: SkippedProc[] = [];
+  for (const browser of scan.browsers) {
+    const { owner } = browser;
+    if (!owner) {
+      unowned.push({
+        id: `pid:${browser.pid}`,
+        cmd: browser.cmd,
+        reason:
+          "an automation browser no session is proved to own (by its environment or its host process): reported, never stopped",
+      });
+      continue;
+    }
+    const pidStart = procTree.start(browser.pid);
+    if (known.has(`${browser.pid}\0${pidStart}`)) continue;
+    const id = newProcId(now);
+    updateExtra(env, id, {
+      name: BROWSER_PROC_NAME,
+      state: "running",
+      hostPidStart: owner.hostPidStart,
+    });
+    upsertProc(store, id, () => ({
+      session: owner.session,
+      lead: owner.session ? leadOf(owner.session) : null,
+      host: owner.host,
+      hostPid: owner.hostPid,
+      cwd: browserCwd(browser),
+      pgid: browser.pgid,
+      pid: browser.pid,
+      pidStart,
+      cmd: browser.cmd,
+      kind: "browser",
+      port: browser.port,
+      startedAt: new Date(now).toISOString(),
+    }));
+    known.add(`${browser.pid}\0${pidStart}`);
+  }
+  return unowned;
+}
+
+// ---------------------------------------------------------------------------
 // stopping
 
 export type StopContext = {
@@ -428,12 +507,22 @@ export async function stopProc(
       };
   }
   const graceMs = context.graceMs ?? procsDeps.graceMs;
+  // A browser has no supervisor: it is signalled itself (its group only when it leads one).
   const viaSupervisor =
     (procsDeps.stopVia === "supervisor" || procTree.platform === "win32") &&
+    row.kind !== "browser" &&
     (row.pid !== null || row.pgid !== null);
   const result = viaSupervisor
     ? await stopViaSupervisor(context.env, row, reason, graceMs)
-    : await stopGroup({ pid: row.pid, pgid: row.pgid, pidStart: row.pidStart }, graceMs);
+    : await stopGroup(
+        {
+          pid: row.pid,
+          pgid: row.pgid,
+          pidStart: row.pidStart,
+          group: row.kind !== "browser" || row.pgid !== null,
+        },
+        graceMs,
+      );
   if (result.outcome === "refused") return { id: row.id, cmd: row.cmd, reason: result.detail };
   const signal = result.outcome === "stopped" ? result.signal : null;
   const endReason =
@@ -487,6 +576,7 @@ export async function stopProcesses(
 ): Promise<StopReport> {
   const report: StopReport = { stopped: [], skipped: [], failed: [] };
   return withStore(context, async (store) => {
+    if (!filter.ids?.length) adoptBrowsers(store, context.env, context.now?.());
     const live = settleProcs(store, context.env);
     let rows: ProcRow[];
     if (filter.ids?.length) {
@@ -553,7 +643,7 @@ export async function stopProcesses(
 export type OrphanReport = StopReport & {
   /** Rows whose owner is gone (stopped too when applied). */
   orphans: Array<{ id: string; cmd: string; reason: string }>;
-  /** Rows with no host pid to prove anything: listed, never stopped. */
+  /** Rows with no host pid to prove anything, and automation browsers no session owns (`pid:<pid>`): listed, never stopped. */
   unknown: SkippedProc[];
   apply: boolean;
 };
@@ -576,6 +666,7 @@ export async function reapOrphans(
     apply,
   };
   return withStore(context, async (store) => {
+    report.unknown.push(...adoptBrowsers(store, context.env, context.now?.()));
     for (const row of settleProcs(store, context.env)) {
       if (isTerminalRow(row)) {
         report.skipped.push({

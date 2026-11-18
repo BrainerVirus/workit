@@ -3,8 +3,11 @@
 Dev servers and containers an agent starts tend to outlive the work. Workit
 runs them through a process registry instead, so it knows who started each
 one, how much memory it holds, and who may stop it. The session that started
-a process stops it when its work ends, unless you say to keep it. Processes
-Workit did not start are never touched.
+a process stops it when its work ends, unless you say to keep it. The one
+kind of process Workit stops without having started it is an automation
+browser that a session's browser tool launched
+([automation browsers](#automation-browsers)). It never touches any other
+process, including your own browser.
 
 ## Start one
 
@@ -97,8 +100,69 @@ workit gc --procs          # list the orphans
 workit gc --procs --apply  # stop them, with a proc.stopped ledger row each
 ```
 
+## Automation browsers
+
+Browser tools start their own Chrome: agent-browser, the chrome-devtools MCP
+server, Playwright and Puppeteer. These browsers often outlive the session
+that started them. Workit finds them in the process table and handles them
+like any other registered process (kind `browser`). The session that started
+one stops it when it ends. Once that session's host process is gone, the
+browser is an orphan.
+
+A process counts as an automation browser only if all of these are true:
+
+- It is a Chrome, Chromium, Chrome for Testing, headless shell or Edge main
+  process. Its renderer and GPU child processes (`--type=…`) are not counted.
+- Its command line has `--remote-debugging-port` or `--remote-debugging-pipe`.
+- Its `--user-data-dir` is in a temp dir (`/tmp`, `/var/folders`, `%TEMP%`)
+  or in a profile dir an automation tool uses: `~/.cache/chrome-devtools-mcp`,
+  `~/.cache/ms-playwright`, `~/.cache/puppeteer` or `~/.agent-browser`. A
+  browser binary one of those tools downloaded also counts.
+
+Workit never touches your own browser. A Chrome without the debugging flags
+is never counted. Neither is one on its default profile
+(`~/.config/google-chrome`, `~/Library/Application Support/Google/Chrome`,
+`%LOCALAPPDATA%\Google\Chrome\User Data` and their Chromium and Edge
+equivalents), even with the flags. The same goes for one on a profile dir you
+picked yourself.
+
+A browser is registered only when Workit can prove which session owns it:
+
+- Its own environment names the session (`WORKIT_SESSION_ID` or the host's
+  session variable). This proof still holds after the tool that launched it
+  has exited. Workit can only read another process's environment on Linux.
+- One of its parent processes is a session's host process: the pid and start
+  time that session's live-session marker records. This can only be read
+  while that host process runs. Workit records the owner at that scan, so the
+  browser stays owned after its host dies. If one host process runs several
+  sessions, the browser gets no session. It is then stopped only as an
+  orphan, once that host process is gone.
+
+Workit scans the process table each time `workit stop --session`,
+`workit stop --within`, `workit stop --orphans` or `workit gc --procs` runs.
+A browser it finds but cannot link to a session is listed as `pid:<pid>` and
+is never stopped. To end one of these, close it yourself.
+
+A browser stop signals the browser's process group if it leads one (Puppeteer
+and Playwright start it that way). Otherwise only the browser process gets the
+signal, never the group of the tool that launched it. As with any stop, the
+start time is checked before each signal.
+
+The scan reads `/proc` on Linux, makes one `ps` call on macOS and one bounded
+PowerShell `Win32_Process` query on Windows. On Linux with about 700
+processes it takes about 16 ms.
+
 ## Limits
 
+- Automation browsers on Windows are found and classified the same way, but
+  they are never stopped. Workit can't prove who owns one: Windows records no
+  host process for a session, and Workit can't read another process's
+  environment there. Each one is listed as `pid:<pid>`; close it yourself.
+- On macOS, Workit can't read a browser's environment, so only its parent
+  processes can link it to a session. A browser whose launcher detached from
+  the host (agent-browser's daemon) loses that link: it is listed, not
+  stopped. A browser an MCP server or a test runner starts under the host
+  stays linked.
 - Windows: there is no process group or start time Workit can check, so
   `workit stop` asks the supervisor that holds the process instead (a stop
   request it polls for). The supervisor ends the child's tree (`taskkill /T`,

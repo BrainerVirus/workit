@@ -18,12 +18,14 @@ import {
   updateExtra,
 } from "@/packages/workit-core/src/core/procs";
 import { procTree } from "@/packages/workit-core/src/core/proc-tree";
+import { browserDeps } from "@/packages/workit-core/src/core/browsers";
 import { readProc, upsertProc, type ProcRow } from "@/packages/workit-core/src/store/threads/procs";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 
 const dirs: string[] = [];
 const savedDocker = procsDeps.docker;
 const savedTree = { ...procTree };
+const savedBrowsers = { ...browserDeps };
 
 /** The fake process table: pid -> its group, start time and whether it runs. */
 type FakeProc = { pgid: number; start: string; alive: boolean };
@@ -49,6 +51,8 @@ const fakeTree = (platform: NodeJS.Platform = "linux") => {
   };
   procTree.table = () => null;
   procTree.sleep = async () => {};
+  // No real browser is scanned here: browsers.test.ts drives that seam.
+  browserDeps.processes = () => [];
 };
 // Installed per test and restored after it: bun runs several files in one
 // process, and proc-tree.test.ts needs the real seam.
@@ -57,6 +61,7 @@ beforeEach(() => fakeTree());
 afterEach(() => {
   procsDeps.docker = savedDocker;
   Object.assign(procTree, savedTree);
+  Object.assign(browserDeps, savedBrowsers);
   table.clear();
   sent.length = 0;
   // Windows: a git child that just exited can hold a handle for a moment (#415).
