@@ -25,6 +25,9 @@ import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { observeShellBefore, observeShellResult } from "@/packages/workit-opencode/src/v2/shell";
 import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { noticeFile } from "@/packages/workit-core/src/core/procs";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { rawInvocations, workitCheckTail } from "@/packages/workit-core/src/hooks/raw-git";
+import { heavyGate } from "@/packages/workit-core/src/hooks/heavy-gate";
 import { procNoticeFile, takeProcNotice } from "@/packages/workit-core/src/hooks/server-gate";
 
 const KEYS = [
@@ -352,4 +355,61 @@ test("Given a notice file for an OpenCode session, When its next shell result co
   };
   expect(result("a.txt")).toContain("workit run --bg --restart p1abc");
   expect(result("a.txt")).toBe("a.txt");
+});
+
+// --- the gates see through `workit run --bg -- <cmd>` (procs-registry verifier) ---
+
+test("Given `workit run --bg [flags] -- <cmd>`, When the shell reader unwraps Workit wrappers, Then it yields the inner command and its --cwd", () => {
+  expect(workitCheckTail(["workit", "run", "--bg", "--port", "4200", "--", "git", "push"])).toEqual(
+    { argv: ["git", "push"], cwd: null },
+  );
+  expect(workitCheckTail(["workit", "--cwd", "/w", "run", "--bg", "--", "ng", "serve"])).toEqual({
+    argv: ["ng", "serve"],
+    cwd: "/w",
+  });
+  expect(workitCheckTail(["workit", "run", "--bg", "--restart", "p1"])).toBeNull();
+  expect(rawInvocations("workit run --bg --name x -- git push origin main")).toMatchObject([
+    { tool: "git", args: ["push", "origin", "main"] },
+  ]);
+});
+
+test("Given a gate bypass after `workit run --bg --`, When each host's hook runs, Then raw-git denies it like the raw form", () => {
+  const root = repo();
+  const command = "workit run --bg -- gh pr merge 1";
+  expect(claude(root, command)?.permissionDecision).toBe("deny");
+  expect(codex(root, command).permissionDecision).toBe("deny");
+  expect(cursor(root, command).permission).toBe("deny");
+  expect(pi(root, command).result?.block).toBe(true);
+  expect(opencode(root, command).effect).toBe("deny");
+  const branch = claude(root, "workit run --bg -- git checkout -b x");
+  expect(branch?.permissionDecisionReason).toContain("branch_policy_denied");
+});
+
+test("Given an open product choice, When a write runs after `workit run --bg --`, Then the before-write gate denies it like raw touch", () => {
+  const root = repo();
+  mkdirSync(path.join(root, "src"));
+  const core = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: { host: "workit_cli", actor: "cli" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(core.policy({ action: "assess", productChoiceOpen: "yes" }).ok).toBe(true);
+  for (const command of [
+    "workit run --bg -- touch src/a.ts",
+    "workit run --bg -- bash -c 'echo x > src/a.ts'",
+  ]) {
+    expect(claude(root, command)?.permissionDecisionReason, command).toContain("before-write gate");
+    expect(cursor(root, command).permission, command).toBe("deny");
+    expect(pi(root, command).result?.block, command).toBe(true);
+    expect(opencode(root, command).effect, command).toBe("deny");
+  }
+});
+
+test("Given `workit run --bg -- <heavy or server cmd>`, When the heavy gate plans it, Then it is left alone (the registry runs it, never a second wrap)", () => {
+  const root = repo();
+  for (const command of ["workit run --bg -- npm test", "workit run --bg -- npm run dev"])
+    for (const host of ["claude_code", "codex_cli", "cursor", "opencode", "pi"] as const)
+      expect(heavyGate(root, command, { host }).kind, `${host}: ${command}`).toBe("none");
 });
