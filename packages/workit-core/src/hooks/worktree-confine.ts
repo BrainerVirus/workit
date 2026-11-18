@@ -1129,7 +1129,7 @@ const judgeDeny = (
   input: HookInput,
   what: string,
   target?: string,
-  retry?: (scratch: string) => string | null,
+  retry?: (scratch: string) => string | null | undefined,
 ): HookDecision => {
   const role = input.session.agentType?.endsWith("reviewer") ? "reviewer" : "verifier";
   const root = checkoutOf(input.cwd)?.root;
