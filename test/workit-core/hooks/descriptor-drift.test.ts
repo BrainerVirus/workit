@@ -66,7 +66,7 @@ const HOSTS: Array<{
     exhaustive: true,
   },
   // In-process plugins also subscribe to bookkeeping events (Pi's
-  // session_compact, session_shutdown) that carry no protocol event.
+  // session_compact) that carry no protocol event.
   {
     descriptor: OPENCODE_DESCRIPTOR,
     registered: opencodeHooks(

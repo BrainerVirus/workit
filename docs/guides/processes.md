@@ -100,6 +100,29 @@ workit gc --procs          # list the orphans
 workit gc --procs --apply  # stop them, with a proc.stopped ledger row each
 ```
 
+## When a session ends
+
+When the host session ends, Workit stops the processes it registered, and its
+workers' processes too. It runs `workit stop --session <id> --reason
+session-end` in the background, so the host never waits on it. Kept rows and
+rows in a workspace with `cleanup: keep` keep running. So does anything
+started from a plain terminal. The log says why each one was kept.
+
+A session that goes on stops nothing: Claude Code `/clear` and `/resume`, or
+Pi's `/new`, `/resume`, `/fork` and `/reload`. The processes stay with the
+live host process. A worker's own end stops nothing either, because its
+processes belong to its lead.
+
+When a session starts, Workit stops the orphans dead sessions left behind:
+`workit stop --orphans --reason session-start`. It does this at most once
+every 10 minutes per user.
+
+Each host has its own end event. OpenCode has neither a start nor an exit
+event. A deleted OpenCode session's processes stop. The reap runs on the first
+event the plugin sees after OpenCode starts. A server that exits leaves its
+processes to the next reap, from any host. The [host parity
+table](../agents/hosts.md#host-parity) has the details per host.
+
 ## Automation browsers
 
 Browser tools start their own Chrome: agent-browser, the chrome-devtools MCP
@@ -184,5 +207,7 @@ processes it takes about 16 ms.
 | `<state>/procs/notices/<session>.json` | RSS ceiling notices for one owner session |
 | `<state>/procs/rows/<id>.json` | per-row facts the table has no column for (name, command, host pid start, containers, start state; [sidecar](../specs/threads.md#the-per-row-sidecar)) |
 | `<state>/procs/rows/<id>.stop` | a pending stop request for the row's supervisor (the Windows stop path) |
+| `<state>/procs/teardown.log` | what each session-end stop and session-start reap did, including why a row was kept (restarted past 1 MB) |
+| `<state>/procs/reap-at-start.stamp` | when the last session-start reap ran |
 
 `<state>` is Workit's state dir (`workit dir state`).
