@@ -2776,7 +2776,7 @@ export function recordVerdict(
       : null;
     return err(
       "blocked",
-      `head_moved: the check run ${moved.row.id} (${str(moved.row.name) ?? "check"}) ran on ${from}, but ${branch} is now at ${key.head.slice(0, 12)} and a code change landed since (${changed ? `changed: ${changed}` : (moved.drift?.reason ?? "the change since cannot be read")}); a verdict is keyed to the head, so it would claim ${key.head.slice(0, 12)} was judged`,
+      `head_moved: the check run ${moved.row.id} (${str(moved.row.name) ?? "check"}) ran on ${from}, but ${branch} is now at ${key.head.slice(0, 12)} and a code change landed since (${changed ? `changed: ${changed}` : moved.drift && !moved.drift.carries ? moved.drift.reason : "the change since cannot be read"}); a verdict is keyed to the head, so it would claim ${key.head.slice(0, 12)} was judged`,
       `judge ${key.head.slice(0, 12)}: run the checks on it (workit check <name> in a checkout of it), then record again; to judge ${from}, record on a branch whose head it is`,
     );
   }
