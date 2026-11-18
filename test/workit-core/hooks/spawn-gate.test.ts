@@ -55,14 +55,15 @@ test("G an implementer spawn with a brief and isolation, W PreToolUse runs, T is
   expect(out.hookSpecificOutput?.additionalContext).toContain("removed isolation");
 });
 
-test("G an implementer spawn with isolation and no model, W PreToolUse runs, T isolation is dropped and the role model filled", () => {
+test("G an implementer spawn with isolation and no model, W PreToolUse runs, T isolation is dropped and no model is added (the agent file carries it)", () => {
   const updated = spawn({
     subagent_type: "workit:implementer",
     prompt: BRIEF,
     isolation: "worktree",
   }).hookSpecificOutput?.updatedInput;
+  expect(updated).toBeDefined();
   expect(updated?.isolation).toBeUndefined();
-  expect(typeof updated?.model).toBe("string");
+  expect(updated?.model).toBeUndefined();
 });
 
 test("G an implementer spawn without a brief, W PreToolUse runs, T it is denied with the worktree command", () => {
@@ -196,7 +197,7 @@ test("G auto mode and a spawn with isolation, W PreToolUse runs, T it is denied 
   expect(out?.updatedInput).toBeUndefined();
   expect(out?.permissionDecision).toBe("deny");
   expect(out?.permissionDecisionReason).toContain(
-    'spawn again with exactly subagent_type: "workit:implementer", model: "opus", run_in_background: true (description and prompt as written and no isolation)',
+    'Retry as: Agent subagent_type: "workit:implementer", model: "opus", run_in_background: true (description and prompt as written and no isolation).',
   );
   expect(
     spawn(
@@ -211,11 +212,12 @@ test("G auto mode and a spawn with isolation, W PreToolUse runs, T it is denied 
   ).toBeUndefined();
 });
 
-test("G auto mode and a spawn with isolation and no model, W PreToolUse runs, T one deny drops isolation and names the role model", () => {
+test("G auto mode and a spawn with isolation and no model, W PreToolUse runs, T one deny drops isolation and adds no model (the agent file carries it)", () => {
   const reason = spawn(
     { subagent_type: "workit:implementer", prompt: BRIEF, isolation: "worktree" },
     "auto",
   ).hookSpecificOutput?.permissionDecisionReason;
-  expect(reason).toContain('model: "sonnet"');
-  expect(reason).toContain("no isolation");
+  expect(reason).toContain(
+    'Retry as: Agent subagent_type: "workit:implementer" (description and prompt as written and no isolation).',
+  );
 });

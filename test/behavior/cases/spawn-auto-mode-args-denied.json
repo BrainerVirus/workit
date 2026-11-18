@@ -1,6 +1,21 @@
 {
   "id": "spawn-auto-mode-args-denied",
-  "source": "retro 2026-11-07 R1: 15 auto-mode refusals of hook-rewritten Agent spawns (9cc82662:main:2127,5975,7049,10110; 7c5eb874:main:3615,24174-24183); a re-issue dropped run_in_background (7c5eb874:main:3626)",
+  "source": "retro 2026-11-07 R1: 15 auto-mode refusals of hook-rewritten Agent spawns (9cc82662:main:2127,5975,7049,10110; 7c5eb874:main:3615,24174-24183); a re-issue dropped run_in_background (7c5eb874:main:3626); D1 (decision first-try 2026-11-18): the deny is opt-in, under models.enforce strict",
+  "repo": {
+    "branch": "feature/x",
+    "workspaces": [
+      {
+        "name": "app",
+        "glob": "__CWD__",
+        "models": {
+          "enforce": "strict",
+          "roles": {
+            "verifier": "opus"
+          }
+        }
+      }
+    ]
+  },
   "hook": {
     "host": "claude-code",
     "fixture": "pre-tool-use-bash",
@@ -18,7 +33,8 @@
   "expect": {
     "kind": ["deny"],
     "require": [
-      "spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: true"
+      "Retry as: Agent subagent_type: \"workit:verifier\", model: \"opus\", run_in_background: true",
+      "models.enforce strict"
     ]
   }
 }

@@ -6,7 +6,5 @@
   "cc-ytrack-retry-call: line 1 is not `workit <gate>: <what>.`",
   "codex-dev-server-denies-with-run-bg: line 1 is not `workit <gate>: <what>.`",
   "codex-heavy-tail-filter-denies-with-rewrite: line 1 is not `workit <gate>: <what>.`",
-  "spawn-auto-mode-args-denied: line 1 says what in more than 15 words",
-  "spawn-auto-mode-isolation-denied: line 1 says what in more than 15 words",
   "spawn-implementer-no-brief: line 1 says what in more than 15 words"
 ]

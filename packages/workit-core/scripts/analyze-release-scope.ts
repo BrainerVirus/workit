@@ -39,7 +39,8 @@ const CLI = ["packages/workit-cli/src/", "packages/workit-cli/package.json"];
 export const BUNDLED_SOURCES: Partial<Record<ReleasePackage, readonly string[]>> = {
   "workit-mcp": [CORE],
   "workit-cli": [CORE],
-  "workit-opencode": [CORE],
+  // The plugin inlines the canonical Claude Code agent bodies (src/v2/agents.ts).
+  "workit-opencode": [CORE, "packages/workit-claude-code/agents/"],
   "workit-cursor": [CORE, ...MCP],
   "workit-codex": [CORE, ...MCP],
   "workit-pi": [CORE],
