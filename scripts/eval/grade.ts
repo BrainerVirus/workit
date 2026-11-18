@@ -410,13 +410,14 @@ const resultMatches = (call: ToolCall, test: RegExp, unknown: boolean): boolean 
 
 const isSpawn = (call: ToolCall): boolean => call.name === "Agent" || call.name === "Task";
 
-/** Every regex the grader may test a call's result text with: a spawn's refusal and the case's `result` patterns. */
+/** Every regex the grader may test a call's result text with: a spawn's refusal and the case's `result` patterns, `expect.declared` included. */
 const resultTests = (call: ToolCall, spec: Pick<EvalCase, "expect"> | null): RegExp[] => [
   ...(isSpawn(call) ? [REFUSAL] : []),
   ...[
     ...(spec?.expect?.require ?? []),
     ...(spec?.expect?.forbid ?? []),
     ...(spec?.expect?.atMost ?? []),
+    ...(spec?.expect?.declared ?? []),
   ].flatMap((want) => (want.result === undefined ? [] : [new RegExp(want.result)])),
 ];
 
