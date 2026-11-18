@@ -198,15 +198,15 @@ test("Given a verifier, When a literal assignment's name is single-quoted, escap
 });
 
 test("Given a verifier, When it redirects outside its scratch dir, Then line 2 is the same command written into the scratch dir", () => {
-  // The scratch dir as the hook names it: its real path, in the platform's separators.
-  const scratch = path.join(realpathSync.native(lead), ".workit-scratch");
+  // The scratch dir as a retry spells it: its real path, with forward slashes (Git Bash on Windows).
+  const scratch = path.join(realpathSync.native(lead), ".workit-scratch").replaceAll("\\", "/");
   const out = verifier(`workit check --cwd ${lead} lint > /tmp/x.log 2>&1`);
   expect(verdict(out)).toBe("deny");
   expect(out?.permissionDecisionReason?.split("\n")[1]).toBe(
-    `Retry as: workit check --cwd ${lead} lint > ${path.join(scratch, "x.log")} 2>&1`,
+    `Retry as: workit check --cwd ${lead} lint > ${scratch}/x.log 2>&1`,
   );
   expect(verifier(`git -C ${lead} log | tee -a /tmp/y.txt`)?.permissionDecisionReason).toContain(
-    `\nRetry as: git -C ${lead} log | tee -a ${path.join(scratch, "y.txt")}`,
+    `\nRetry as: git -C ${lead} log | tee -a ${scratch}/y.txt`,
   );
   expect(verdict(verifier(`git -C ${lead} log > ${lead}/.workit-scratch/x.log 2>&1`))).toBe(
     "allow",

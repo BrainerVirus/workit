@@ -1155,7 +1155,8 @@ const judgeDeny = (
   const scratch = root
     ? `${path.join(root, SCRATCH)}${other ? ` or ${other}` : ""}`
     : `${SCRATCH}/ at the root of the checkout you judge`;
-  const call = root ? retry?.(other ?? path.join(root, SCRATCH)) : null;
+  // A retry runs in a POSIX shell, Git Bash on Windows too: the scratch dir with forward slashes.
+  const call = root ? retry?.((other ?? path.join(root, SCRATCH)).replaceAll("\\", "/")) : null;
   const unblock = call
     ? `Retry as: ${call}`
     : "Why: write only there (mkdir -p it); a fix the candidate needs is a finding (`workit finding record`).";
@@ -1170,12 +1171,12 @@ const judgeDeny = (
 const movedInto = (command: string, cwd: string, target: string, dir: string): string | null => {
   for (const { words, redirects } of segmentsOf(command))
     for (const word of [...redirects, ...(path.basename(words[0] ?? "") === "tee" ? words : [])])
-      if (path.resolve(cwd, word) === path.resolve(target)) {
+      if (path.resolve(cwd, word) === path.resolve(cwd, target)) {
         const moved = command.replace(
           new RegExp(
             `((?:>>?\\|?|\\btee(?:\\s+-a)?)\\s*)(['"]?)${word.replace(/[$()*+.?[\\\]^{|}]/g, "\\$&")}\\2(?![^\\s;&|)])`,
           ),
-          (_, lead: string) => lead + path.join(dir, path.basename(word)),
+          (_, lead: string) => `${lead}${dir}/${path.basename(word)}`,
         );
         return moved === command ? null : moved;
       }
