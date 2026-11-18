@@ -21,6 +21,7 @@ import { TaskStore } from "@workit-dev/core/src/core/task-store";
 import { closeDeliveredTasks } from "@workit-dev/core/src/core/task-delivery";
 import {
   cleanupAfterMerge,
+  cleanupLines,
   remoteBranchGone,
   type MergeCleanup,
 } from "@workit-dev/core/src/core/cleanup";
@@ -49,15 +50,6 @@ const render = (report: DeliveryReport, notes = true): string[] => [
     (entry) =>
       `  ${entry.ok ? "ok" : "x "} ${entry.kind}: expected ${entry.expected ?? "-"}, observed ${entry.observed ?? "(none)"}${notes && entry.note ? ` — ${entry.note}` : ""}`,
   ),
-];
-
-const cleanupLines = (cleanup: MergeCleanup, branch: string | null): string[] => [
-  ...(cleanup.worktreeRemoved ? [`removed worktree ${cleanup.worktreeRemoved}`] : []),
-  ...(cleanup.branchDeleted ? [`deleted local ${branch}`] : []),
-  ...cleanup.notes,
-  ...(cleanup.recorded && "error" in cleanup.recorded
-    ? [`ledger: cleanup not recorded (${cleanup.recorded.error})`]
-    : []),
 ];
 
 /** The PR this session's last `pr merge` landed on `base`, from the ledger; null without one. */
@@ -193,14 +185,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
       // The next task read repairs it from the ledger.
     }
   }
-  // #653: a delivered merge whose remote branch is gone leaves the branch's clean Workit worktree and local branch behind no longer.
+  // #653, #835: a delivered merge whose remote branch is gone leaves the branch's clean Workit worktree, local branch and their processes behind no longer.
   const localCleanup: MergeCleanup | null =
     report.delivered &&
     expect === "merged" &&
     report.branch &&
     report.sha &&
     remoteBranchGone(io.cwd, report.branch)
-      ? cleanupAfterMerge(io.cwd, report.branch, report.sha, {
+      ? await cleanupAfterMerge(io.cwd, report.branch, report.sha, {
           actor,
           trigger: "verify-delivery merge",
           env: io.env,

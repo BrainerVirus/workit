@@ -263,6 +263,13 @@ export const workspaceConfigSchema = z
       .describe(
         "Whether `workit pr merge` deletes the head branch after a merge (default true); `--keep-branch` opts out for one merge.",
       ),
+    // Read leniently (workspaceCleanup): an unknown value reads as auto.
+    cleanup: z
+      .unknown()
+      .optional()
+      .describe(
+        "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing.",
+      ),
     liveSessionGuard: z
       .boolean()
       .optional()
@@ -1271,6 +1278,28 @@ export const workspaceTrailers = (
   return {
     enabled: found?.source?.trailers !== false,
     workspace: found?.workspace ?? null,
+    from: found?.source?.name ?? null,
+  };
+};
+
+export const CLEANUP_MODES = ["auto", "keep"] as const;
+export type CleanupMode = (typeof CLEANUP_MODES)[number];
+
+/**
+ * The workspace's `cleanup` mode (default `auto`), inherited like `trailers`.
+ * `keep` leaves every worktree, branch and process of finished work in place.
+ * A value this version does not know, or an unreadable workspaces.json, reads
+ * as auto. `from` names the entry the value came from.
+ */
+export const workspaceCleanup = (
+  cwd: string,
+  dir?: string,
+): { mode: CleanupMode; from: string | null } => {
+  const found = inheritedSetting(cwd, dir, (entry) =>
+    (CLEANUP_MODES as readonly unknown[]).includes(entry.cleanup),
+  );
+  return {
+    mode: found?.source?.cleanup === "keep" ? "keep" : "auto",
     from: found?.source?.name ?? null,
   };
 };

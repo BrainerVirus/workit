@@ -180,7 +180,28 @@ export type DecisionRow = RowCommon & {
   by?: "decider";
   /** Each decider's view when the call was recorded after weighing more than one. */
   views?: string[];
+  /** What the user said to keep when work finishes (`branch:`, `worktree:`, `proc:`): cleanup leaves it. */
+  keep?: string[];
 };
+
+export const KEEP_KINDS = ["branch", "worktree", "proc"] as const;
+export type KeepKind = (typeof KEEP_KINDS)[number];
+export type KeepTarget = { kind: KeepKind; target: string };
+
+/**
+ * A `--keep` value: `branch:<name>`, `worktree:<path>` or `proc:<id>`; null
+ * when the kind is unknown or the target empty. A worktree path is resolved
+ * against `cwd`.
+ */
+export function parseKeepTarget(value: string, cwd: string): KeepTarget | null {
+  const colon = value.indexOf(":");
+  if (colon < 0) return null;
+  const kind = value.slice(0, colon) as KeepKind;
+  const target = value.slice(colon + 1).trim();
+  if (!KEEP_KINDS.includes(kind) || !target || target.startsWith("-")) return null;
+  return { kind, target: kind === "worktree" ? path.resolve(cwd, target) : target };
+}
+
 export type RulingRow = RowCommon & {
   type: "ruling";
   what: string;
@@ -2266,10 +2287,24 @@ export function recordDecision(
     refs?: string[];
     by?: string;
     views?: string[];
+    keep?: string[];
   },
 ): LedgerResult<DecisionRow> {
   if (input.by !== undefined && input.by !== "decider")
     return err("invalid_input", `--by takes "decider", got "${input.by}"`);
+  // A keep is the user's word for their own work; a decider's call is never the user's answer.
+  if (input.by !== undefined && input.keep?.length)
+    return err("invalid_input", "--keep records the user's keep; it does not take --by decider");
+  const keep: string[] = [];
+  for (const value of input.keep ?? []) {
+    const parsed = parseKeepTarget(value, context.cwd);
+    if (!parsed)
+      return err(
+        "invalid_input",
+        `--keep takes branch:<name>, worktree:<path> or proc:<id>, got "${value}"`,
+      );
+    keep.push(`${parsed.kind}:${parsed.target}`);
+  }
   if (input.by === undefined && input.views?.length)
     return err("invalid_input", "--view needs --by decider");
   const what = required(input.what, "<what>");
@@ -2288,6 +2323,7 @@ export function recordDecision(
       refs: input.refs ?? [],
       ...(input.by === "decider" ? { by: "decider" as const } : {}),
       ...(input.views?.length ? { views: input.views } : {}),
+      ...(keep.length ? { keep } : {}),
     },
     { now: context.now },
   );
@@ -2962,7 +2998,8 @@ export function summarizeRow(row: ReadRow): RowSummary {
   switch (row.type) {
     case "decision": {
       const views = Array.isArray(row.views) ? row.views.map(String) : [];
-      summary = `${row.by === "decider" ? "[decider] " : ""}${text("what")} (why: ${text("why")}${views.length ? `; views: ${views.join(" | ")}` : ""})`;
+      const keep = Array.isArray(row.keep) ? row.keep.map(String) : [];
+      summary = `${row.by === "decider" ? "[decider] " : ""}${text("what")} (why: ${text("why")}${views.length ? `; views: ${views.join(" | ")}` : ""}${keep.length ? `; keep: ${keep.join(", ")}` : ""})`;
       break;
     }
     case "ruling":

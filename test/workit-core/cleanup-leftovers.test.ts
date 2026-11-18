@@ -132,14 +132,14 @@ for (const item of LEFTOVERS)
     }
   });
 
-test("after a merge, a worktree whose only leftover is an untracked old .workit/ marker goes with its branch", () => {
+test("after a merge, a worktree whose only leftover is an untracked old .workit/ marker goes with its branch", async () => {
   const env = setup();
   const dir = path.join(managedWorktreeRoot(env.env), "proj", "slice");
   mkdirSync(path.dirname(dir), { recursive: true });
   git(env.main, "worktree", "add", "-q", "-b", "feature/x", dir, "main");
   commit(dir, "x.txt", "x\n");
   put(dir, { ".workit/workspace.json": WORKSPACE_MARKER, "bin/out": "built\n" });
-  const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+  const out = await cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -275,14 +275,14 @@ test("Given the sweeping session's own marker, Then it does not hold the worktre
   expect(applied.removed).toHaveLength(1);
 });
 
-test("after a merge, a worktree another live session is in is kept with its branch", () => {
+test("after a merge, a worktree another live session is in is kept with its branch", async () => {
   const env = setup();
   const dir = path.join(managedWorktreeRoot(env.env), "proj", "busy");
   mkdirSync(path.dirname(dir), { recursive: true });
   git(env.main, "worktree", "add", "-q", "-b", "feature/busy", dir, "main");
   commit(dir, "b.txt", "b\n");
   liveMarker(env.env, dir, 60 * 60 * 1000);
-  const out = cleanupAfterMerge(env.main, "feature/busy", git(dir, "rev-parse", "HEAD"), {
+  const out = await cleanupAfterMerge(env.main, "feature/busy", git(dir, "rev-parse", "HEAD"), {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -362,14 +362,14 @@ test("Given a clean detached Workit worktree with a bisect started on a trunk co
   expect(existsSync(dir)).toBe(true);
 });
 
-test("after a merge, a worktree with a bisect in progress is kept with its branch", () => {
+test("after a merge, a worktree with a bisect in progress is kept with its branch", async () => {
   const env = setup();
   const dir = path.join(managedWorktreeRoot(env.env), "proj", "bisect-slice");
   mkdirSync(path.dirname(dir), { recursive: true });
   git(env.main, "worktree", "add", "-q", "-b", "feature/bis", dir, "main");
   commit(dir, "bis.txt", "bis\n");
   git(dir, "bisect", "start");
-  const out = cleanupAfterMerge(env.main, "feature/bis", git(dir, "rev-parse", "HEAD"), {
+  const out = await cleanupAfterMerge(env.main, "feature/bis", git(dir, "rev-parse", "HEAD"), {
     actor,
     trigger: "pr merge",
     env: env.env,

@@ -143,6 +143,9 @@
             "description": "Whether `workit pr merge` deletes the head branch after a merge (default true); `--keep-branch` opts out for one merge.",
             "type": "boolean"
           },
+          "cleanup": {
+            "description": "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing."
+          },
           "liveSessionGuard": {
             "description": "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
             "type": "boolean"

@@ -365,7 +365,7 @@ function status(argv: string[], io: Io): number {
   return emit(io, ok(result.data), renderStatus);
 }
 
-function worktree(argv: string[], io: Io): number {
+async function worktree(argv: string[], io: Io): Promise<number> {
   const [action, ...rest] = argv;
   const flags = parseFlags(rest, { name: "value", force: "boolean" });
   if (typeof flags === "string") return usage(io, flags, WORKTREE_USAGE);
@@ -401,10 +401,11 @@ function worktree(argv: string[], io: Io): number {
       ...data.notes.map((note) => `note: ${note}`),
     ]);
   }
-  const result = releaseSliceWorktree(io.cwd, selected.data, {
+  const result = await releaseSliceWorktree(io.cwd, selected.data, {
     slice: flags.positionals[0],
     force: flags.booleans.has("force"),
     actor,
+    env: io.env,
   });
   if (!result.ok) {
     const code = failed(io, result);
