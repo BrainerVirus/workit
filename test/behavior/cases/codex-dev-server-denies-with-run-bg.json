@@ -1,0 +1,15 @@
+{
+  "id": "codex-dev-server-denies-with-run-bg",
+  "source": "#328 procs-route: Codex cannot rewrite, so a raw dev server is denied naming the exact `workit run --bg` call",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "codex",
+    "fixture": "pre-tool-use-bash",
+    "overrides": { "tool_input": { "command": "ng serve --port 4200" } }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["dev_server", "run exactly: workit run --bg -- ng serve --port 4200"],
+    "forbid": ["heavy-check lease"]
+  }
+}

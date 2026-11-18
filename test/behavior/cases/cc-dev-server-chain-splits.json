@@ -1,0 +1,14 @@
+{
+  "id": "cc-dev-server-chain-splits",
+  "source": "#328 procs-route: a chain that starts a dev server is denied with the split, as heavy chains are",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": { "tool_input": { "command": "npm run dev && echo x" } }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["chains a dev server", "Start it alone, now: `workit run --bg -- npm run dev`"]
+  }
+}
