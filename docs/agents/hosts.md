@@ -274,9 +274,10 @@ runtime, so the `PATH` Node does not apply to them. The Codex MCP entry
 `dist/launch-mcp.js` with stdio inherited (stdout stays pure JSON-RPC); with no
 Node 24 it writes one stderr line and exits 1.
 
-Owned CLI (#648): no host launcher spawns `workit` itself (each runs bundled
-code), but the agent's shell runs whichever `workit` is first on `PATH`, and a
-stale global copy can sit ahead of the owned launcher. `core/cli-locate.ts`
+Owned CLI (#648): host launchers run bundled code and spawn `workit` only for
+session teardown (`hooks/teardown.ts`, the CLI located the same way), but the
+agent's shell runs whichever `workit` is first on `PATH`, and a stale global
+copy can sit ahead of the owned launcher. `core/cli-locate.ts`
 picks the CLI in one order: the owned launcher `<install root>/bin/workit`
 (only when it carries the launcher marker), else the owned `current` entry run
 by node, else a bundled CLI the caller names, else plain `workit` from `PATH`
