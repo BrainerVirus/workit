@@ -1,0 +1,15 @@
+{
+  "id": "cc-judge-literal-assignment",
+  "source": "first-try research 2026-11-18 class 1: 20 verifier denials on W=<path>; git -C $W …",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "agent_id": "a0b1c2d3e4f5a6b7c",
+      "agent_type": "workit:verifier",
+      "tool_input": { "command": "W=.; git -C $W rev-parse HEAD; git -C $W status --short" }
+    }
+  },
+  "expect": { "kind": ["none"] }
+}

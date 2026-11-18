@@ -1,0 +1,20 @@
+{
+  "id": "cc-judge-scratch-redirect-retry",
+  "source": "first-try research 2026-11-18 class 1: 17 verifier redirects to /tmp, retried by guessing",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "agent_id": "a0b1c2d3e4f5a6b7c",
+      "agent_type": "workit:verifier",
+      "tool_input": { "command": "git log --oneline > /tmp/x.log 2>&1" }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["\nRetry as: git log --oneline > ", "/.workit-scratch/x.log 2>&1"],
+    "forbid": ["a judge runs git log show diff"],
+    "maxLines": 3
+  }
+}
