@@ -82,6 +82,22 @@ version to a block it already wrote, never one you removed, and prints the
 diff in the preview and again when it applies. `workit doctor` has a
 `claude_permissions`, `codex_permissions` and `cursor_permissions` row.
 
+Claude Code's auto mode also gets one `autoMode.allow` line for its
+classifier. It says the user's standing grants authorize `workit git push` (of
+a branch the session created or the workspace allows; `--force-with-lease`
+only on the session's own branch), `workit pr create|edit|ready|merge|reply|resolve`,
+`workit release`, and `workit issue create|comment` on repos of the
+workspace's own forge owner, so an unattended session is not stopped for what
+you already granted. It names only workit calls, never raw `git` or `gh`, and
+the CLI still checks every grant itself. It does not cover
+`workit release notes approve`, `workit grant set|raise`, `workit ledger void`,
+`workit approve`, `workit setup`, `workit uninstall`, `workit install`,
+`workit workspace seal`, `--unverified`, `--admin` or any bypass flag. Setup
+and `workit upgrade` replace a line an older Workit wrote (the diff shows it);
+if you edited Workit's line, setup leaves it as is and prints one note: delete
+it and run `workit setup --hosts=claude-code` for the current text. The other
+hosts have no auto-mode classifier, so their allow rules alone decide.
+
 The same block carries deny rules for the files only Workit or you may write:
 `<state dir>/issued*` and `<state dir>/approvals/` (the sessions Workit issued
 and your approvals) and `workspaces.json` with its `workspaces.json.seal` in
