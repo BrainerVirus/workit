@@ -106,7 +106,8 @@ When the host session ends, Workit stops the processes it registered, and its
 workers' processes too. It runs `workit stop --session <id> --reason
 session-end` in the background, so the host never waits on it. Kept rows and
 rows in a workspace with `cleanup: keep` keep running. So does anything
-started from a plain terminal. The log says why each one was kept.
+started from a plain terminal. The log says why each one was kept (on
+Windows it records only the stop that started; see Limits).
 
 A session that goes on stops nothing: Claude Code `/clear` and `/resume`, or
 Pi's `/new`, `/resume`, `/fork` and `/reload`. The processes stay with the

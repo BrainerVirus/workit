@@ -120,7 +120,9 @@ afterEach(() => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  // Windows holds a dir a just-exited child ran in for a moment (EBUSY).
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 let counter = 0;
@@ -424,7 +426,9 @@ test("Given a real owned launcher, When a session ends, Then it runs detached as
   writeFileSync(
     script,
     `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID }));\n` +
-      `console.log("fake stop ran");\n`,
+      `console.log("fake stop ran");\n` +
+      // Its last act, so the test never returns while the child still runs in its temp dirs.
+      `require("node:fs").writeFileSync(${JSON.stringify(`${out}.done`)}, "");\n`,
   );
   writeLauncher(script);
   teardownDeps.spawn = spawnDetached;
@@ -434,7 +438,7 @@ test("Given a real owned launcher, When a session ends, Then it runs detached as
     {},
   );
   const deadline = Date.now() + 10_000;
-  while (!existsSync(out) && Date.now() < deadline) await Bun.sleep(25);
+  while (!existsSync(`${out}.done`) && Date.now() < deadline) await Bun.sleep(25);
   expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({
     argv: ["stop", "--session", "sess-real", "--reason", "session-end"],
     session: "sess-real",
@@ -445,8 +449,5 @@ test("Given a real owned launcher, When a session ends, Then it runs detached as
   );
   // L: on Windows the teardown log records each stop it starts, not the CLI's
   // output (a detached cmd.exe child's writes to the append-mode handle are lost).
-  if (process.platform === "win32") return;
-  while (!readFileSync(log, "utf8").includes("fake stop ran") && Date.now() < deadline)
-    await Bun.sleep(25);
-  expect(readFileSync(log, "utf8")).toContain("fake stop ran");
+  if (process.platform !== "win32") expect(readFileSync(log, "utf8")).toContain("fake stop ran");
 });
