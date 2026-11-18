@@ -238,8 +238,8 @@ test(
         string,
         { command: string; loop_limit?: number; failClosed?: boolean }[]
       >;
-      // sessionStart plus the six enforcement events, stop control included.
-      expect(Object.keys(hooks)).toHaveLength(7);
+      // sessionStart, sessionEnd (#328) and the six enforcement events, stop control included.
+      expect(Object.keys(hooks)).toHaveLength(8);
       expect(hooks.stop).toEqual([
         { command: `${launcher} workit-cursor-hook`, loop_limit: 1, failClosed: false },
       ]);
