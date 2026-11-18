@@ -21,7 +21,7 @@
             "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
