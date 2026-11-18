@@ -93,7 +93,7 @@ const AUTO_MODE_ENVIRONMENT =
 const AUTO_MODE_ENVIRONMENT_V1 =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
 const AUTO_MODE_ALLOW =
-  "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create|edit|ready|merge|reply|resolve` and `workit release`, and `workit issue create|comment` on repos of the workspace's own forge owner, are authorized by the user's standing Workit grants, which the workit CLI enforces itself; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+  "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR (no `--pr`, or the PR whose head is the session's branch), `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment` with no `--repo` or a `--repo` whose owner is the owner in the session repo's origin URL are authorized by the user's standing Workit grants, which the workit CLI enforces itself; the branch, own-PR and owner scopes are for you to judge, the CLI does not check them. These are not Merge Without Review, Git Destructive or External System Writes; a `workit issue` `--repo` under any other owner IS an External System Write and is not covered. Does NOT cover `workit pr edit` or `workit pr ready` with `--pr` on another author's PR, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
 /** The auto-mode line from #759 until the granted delivery verbs (retro 2026-11-17 C17); a refresh replaces it and uninstall still removes it. */
 const AUTO_MODE_ALLOW_V3 =
   "Workit-gated delivery: `workit pr merge`, `workit git push --force-with-lease` on the session's own branch, `workit release` and `workit pr reply/resolve` on the session's repo are authorized by the user's standing Workit grants; not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
@@ -477,12 +477,13 @@ function mergeClaudeSettings(settings: Json, shell: string | null, input: MergeI
   const config = clone(settings);
   const owned = emptyOwned();
   const editedAllow = hasEditedAutoAllow(config);
-  const skip: Skip = editedAllow
-    ? {
-        ...input.skip,
-        "autoMode.allow": [...(input.skip["autoMode.allow"] ?? []), AUTO_MODE_ALLOW],
-      }
-    : input.skip;
+  const skip: Skip =
+    editedAllow || removedAutoAllow(config, input.skip)
+      ? {
+          ...input.skip,
+          "autoMode.allow": [...(input.skip["autoMode.allow"] ?? []), AUTO_MODE_ALLOW],
+        }
+      : input.skip;
   dropRetired(config, ownedList(previous, "permissions.ask"));
   dropStaleDeny(config, "claude-code", deny, ownedList(previous, DENY_AT["claude-code"]));
   const error =
@@ -508,6 +509,20 @@ function mergeClaudeSettings(settings: Json, shell: string | null, input: MergeI
   }
   return { config, owned, ...(editedAllow ? { editedAllow } : {}) };
 }
+
+/**
+ * Did the user delete the auto-mode line an earlier Workit offered? `skip`
+ * (the refresh's record) names an earlier line and no Workit line is left in
+ * the file: the refresh then does not add the current, wider one.
+ */
+const removedAutoAllow = (config: Json, skip: Skip): boolean => {
+  const prior = PRIOR_ENTRIES["claude-code"]["autoMode.allow"] ?? [];
+  const offered = offeredAt("claude-code", "autoMode.allow");
+  return (
+    (skip["autoMode.allow"] ?? []).some((line) => prior.includes(line)) &&
+    !stringList(valueFrom(config, "autoMode", "allow")).some((line) => offered.has(line))
+  );
+};
 
 /** The prefix every auto-mode line Workit wrote starts with. */
 const AUTO_MODE_ALLOW_PREFIX = "Workit-gated delivery:";

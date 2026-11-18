@@ -85,11 +85,15 @@ diff in the preview and again when it applies. `workit doctor` has a
 Claude Code's auto mode also gets one `autoMode.allow` line for its
 classifier. It says the user's standing grants authorize `workit git push` (of
 a branch the session created or the workspace allows; `--force-with-lease`
-only on the session's own branch), `workit pr create|edit|ready|merge|reply|resolve`,
-`workit release`, and `workit issue create|comment` on repos of the
-workspace's own forge owner, so an unattended session is not stopped for what
-you already granted. It names only workit calls, never raw `git` or `gh`, and
-the CLI still checks every grant itself. It does not cover
+only on the session's own branch), `workit pr create`, `workit pr edit|ready`
+on the session's own PR, `workit pr merge|reply|resolve`, `workit release`,
+and `workit issue create|comment` with no `--repo` or a `--repo` under the
+owner in the session repo's origin URL, so an unattended session is not
+stopped for what you already granted. It names only workit calls, never raw
+`git` or `gh`. The CLI still checks every grant itself, but the branch, own-PR
+and owner scopes are guidance for the classifier, not CLI checks: an issue
+`--repo` under another owner is named as an External System Write. It does not
+cover `workit pr edit` or `workit pr ready` with `--pr` on another author's PR,
 `workit release notes approve`, `workit grant set|raise`, `workit ledger void`,
 `workit approve`, `workit setup`, `workit uninstall`, `workit install`,
 `workit workspace seal`, `--unverified`, `--admin` or any bypass flag. Setup

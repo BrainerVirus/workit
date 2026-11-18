@@ -121,7 +121,9 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
   expect(value.autoMode.allow).toHaveLength(2);
   expect(value.autoMode.allow[0]).toBe("$defaults");
   expect(value.autoMode.allow[1]).toStartWith("Workit-gated delivery:");
-  expect(value.autoMode.allow[1]).toContain("Does NOT cover `workit release notes approve`");
+  expect(value.autoMode.allow[1].split("Does NOT cover ")[1]).toContain(
+    "`workit release notes approve`",
+  );
   expect(value.env.FOO).toBe("1");
   expect(value.env.CLAUDE_CODE_SHELL).toMatch(/[\\/]bash$/);
 
@@ -625,13 +627,21 @@ test("Given a fresh settings.json, When setup writes the auto-mode line, Then it
   for (const covered of [
     "`workit git push`",
     "`--force-with-lease` only on the session's own branch",
-    "`workit pr create|edit|ready|merge|reply|resolve`",
+    "`workit pr create`",
+    "`workit pr edit|ready` on the session's own PR (no `--pr`, or the PR whose head is the session's branch)",
+    "`workit pr merge|reply|resolve`",
     "`workit release`",
-    "`workit issue create|comment` on repos of the workspace's own forge owner",
+    "`workit issue create|comment` with no `--repo` or a `--repo` whose owner is the owner in the session repo's origin URL",
+    "a `workit issue` `--repo` under any other owner IS an External System Write and is not covered",
+    "the branch, own-PR and owner scopes are for you to judge, the CLI does not check them",
   ])
     expect(line).toContain(covered);
   const [, excluded] = line.split("Does NOT cover ");
-  for (const call of NOT_COVERED) expect(excluded).toContain(call);
+  for (const call of [
+    "`workit pr edit` or `workit pr ready` with `--pr` on another author's PR",
+    ...NOT_COVERED,
+  ])
+    expect(excluded).toContain(call);
   // Every command the text names is a workit call or a flag, never raw gh or git.
   const spans = [...line.matchAll(/`([^`]+)`/gu)].map((m) => m[1]);
   expect(spans.length).toBeGreaterThan(NOT_COVERED.length);
@@ -660,6 +670,29 @@ test("Given settings.json with Workit's #759 auto-mode line beside the user's ow
   expect(after.autoMode.allow).toEqual(["$defaults", "Deploys to staging are fine", current]);
   expect(after.permissions).toEqual(value.permissions);
   expect(after.autoMode.environment).toEqual(value.autoMode.environment);
+});
+
+test("Given the user deleted Workit's #759 auto-mode line, When `workit upgrade` refreshes, Then the wider current line is not added; When setup runs, Then it is", async () => {
+  const { env, home, settings } = sandbox();
+  writeFileSync(settings, JSON.stringify(USER_SETTINGS, null, 2) + "\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  const current = value.autoMode.allow.at(-1) as string;
+  value.autoMode.allow = ["$defaults"];
+  writeFileSync(settings, JSON.stringify(value, null, 2) + "\n");
+  editRecord(env, (record) => {
+    const host = record.hosts["claude-code"];
+    host.owned.lists["autoMode.allow"] = [V3_AUTO_ALLOW];
+    host.offered["autoMode.allow"] = [V3_AUTO_ALLOW];
+  });
+
+  const refresh = planHostPermissions({ home, env, hosts: ["claude-code"], refreshOnly: true });
+  expect(refresh.changes).toEqual([]);
+  expect(JSON.parse(readFileSync(settings, "utf8")).autoMode.allow).toEqual(["$defaults"]);
+
+  const setup = planHostPermissions({ home, env, hosts: ["claude-code"] });
+  expect(applyHostPermissions(setup, { home, env })[0].status).toBe("written");
+  expect(JSON.parse(readFileSync(settings, "utf8")).autoMode.allow).toEqual(["$defaults", current]);
 });
 
 test("Given a Workit auto-mode line the user edited, When setup runs, Then it is left as is, the current line is not added, and setup prints one note", async () => {
