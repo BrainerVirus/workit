@@ -230,23 +230,6 @@ test("Given an implementer bound to its worktree, When it sets W=$(pwd) and edit
   expect(verdict(implementer(retry))).toBe("allow");
 });
 
-test("Given the lead, When a python heredoc writes a plan JSON whose string value names the Workit config dir, Then it runs; a script that opens workspaces.json there for writing is refused", () => {
-  const asLead = (command: string) => bash(command, "", "");
-  const config = resolveConfigDir();
-  expect(
-    verdict(
-      asLead(
-        `python3 - <<'EOF'\nimport json\nplan = {"name": "x", "notes": "grants live in ${config} and stay"}\nwith open('.git/workit/plans/x.json', 'w') as f:\n    json.dump(plan, f)\nEOF`,
-      ),
-    ),
-  ).toBe("allow");
-  for (const command of [
-    `python3 - <<'EOF'\nwith open('${config}/workspaces.json', 'w') as f:\n    f.write('{}')\nEOF`,
-    `python3 - <<'EOF'\nimport os\nd = "${config}"\nopen(os.path.join(d, "workspaces.json"), "w").write("{}")\nEOF`,
-  ])
-    expect(verdict(asLead(command)), command).toBe("deny");
-});
-
 // Review mwm7hutf (adversarial, round 1): each form below passed on a67cf06c and is denied again.
 test("Given review mwm7hutf's bypasses, When a judge runs a write hidden by a triple-quoted string, a regex literal holding a quote or a pandas writer, Then each is denied", () => {
   const target = path.join(lead, "package.json");
@@ -256,6 +239,11 @@ test("Given review mwm7hutf's bypasses, When a judge runs a write hidden by a tr
     `python3 - <<'EOF'\nfrom pathlib import Path\ns = ''' x '\n# '''; Path("${target}").write_text("x")\nEOF`,
     `python3 - <<'EOF'\ns = f''' x '\n{open("${target}", "w")} '''\nEOF`,
     `node - <<'EOF'\n0 || /'/.test("") || require("fs").writeFileSync("${target}", "x") // '\nEOF`,
+    `node - <<'EOF'\nconst fs = require("fs")\nif (1) /'/.test("") || fs.writeFileSync("${target}", "x") // '\nEOF`,
+    `node - <<'EOF'\nconst fs = require("fs")\nfor (;;) { /'/.test("") || fs.writeFileSync("${target}", "x"); break } // '\nEOF`,
+    `python3 - <<'EOF'\ns = '''a"""b'''; t = """ x '\n# """; open("${target}","w").write("x") #'\nEOF`,
+    `python3 - <<'EOF'\ns = b''' x '\n# '''; open("${target}","w").write("x")\nEOF`,
+    `python3 -c "import pandas as pd; f = pd.DataFrame.to_csv; f(pd.DataFrame([1]), '${target}')"`,
     `python3 -c "import pandas as pd; pd.read_csv('a.csv').to_csv('${target}')"`,
     `python3 -c "import pandas as pd; pd.DataFrame([1]).head(5).to_csv('${target}')"`,
   ]);
@@ -265,16 +253,57 @@ test("Given review mwm7hutf's bypasses, When a judge runs a write hidden by a tr
   ]);
 });
 
-test("Given review mwm7hutf's config bypasses, When the lead's script builds a config path from a string it strips, splits, slices or interpolates, Then each is refused", () => {
+test("Given the lead or an implementer, When a script names the Workit config dir anywhere and may write, Then it is refused as before this slice (lead ruling: no config-as-data relaxation)", () => {
   const asLead = (command: string) => bash(command, "", "");
-  const config = resolveConfigDir();
+  const C = resolveConfigDir();
+  const py = (body: string) => `python3 - <<'EOF'\n${body}\nEOF`;
+  const node = (body: string) => `node - <<'EOF'\n${body}\nEOF`;
+  expect(verdict(implementer(`touch ${wt}/a.ts`))).toBe("allow");
   for (const command of [
-    `python3 - <<'EOF'\nopen(" ${config}".strip() + "/grants.json", "w").write("{}")\nEOF`,
-    `python3 - <<'EOF'\nd = " ${config} ".split()[0]\nopen(d + "/workspaces.json", "w").write("{}")\nEOF`,
-    `node - <<'EOF'\nconst d = \`\${""}${config}\`\nrequire("fs").writeFileSync(d + "/workspaces.json", "{}")\nEOF`,
-    `python3 - <<'EOF'\nnote = {"cfg": "x ${config}"}\nopen(note["cfg"].split()[1] + "/workspaces.json", "w").write("{}")\nEOF`,
-  ])
+    // A plan JSON whose string value only mentions the dir: still refused (base behavior).
+    py(
+      `import json\nplan = {"name": "x", "notes": "grants live in ${C} and stay"}\nwith open('.git/workit/plans/x.json', 'w') as f:\n    json.dump(plan, f)`,
+    ),
+    py(`with open('${C}/workspaces.json', 'w') as f:\n    f.write('{}')`),
+    py(`import os\nd = "${C}"\nopen(os.path.join(d, "workspaces.json"), "w").write("{}")`),
+    py(`open(" ${C}".strip() + "/grants.json", "w").write("{}")`),
+    py(`d = " ${C} ".split()[0]\nopen(d + "/workspaces.json", "w").write("{}")`),
+    node(`const d = \`\${""}${C}\`\nrequire("fs").writeFileSync(d + "/workspaces.json", "{}")`),
+    py(
+      `note = {"cfg": "x ${C}"}\nopen(note["cfg"].split()[1] + "/workspaces.json", "w").write("{}")`,
+    ),
+    // Review mwm8naps probe4: list or dict + strip, split concatenation, glob, implicit
+    // concatenation, bytes.fromhex, rmtree or rename of the dir, .split()[1], .lower(), Node.
+    py(`x = [" ${C} "]\nopen(x[0].strip() + "/works" + "paces.json", "w").write("{}")`),
+    py(`x = {"k": " ${C}"}["k"].strip()\nopen(x + "/" + "workspace" + "s.json", "w").write("{}")`),
+    py(
+      `import glob\nd = [" ${C} "][0].strip()\nfor f in glob.glob(d + "/w*.json"):\n    open(f, "w").write("{}")`,
+    ),
+    py(
+      `import os\nx = [" ${C} "]\nopen(os.path.join(x[0].strip(), "works" "paces.json"), "w").write("{}")`,
+    ),
+    py(
+      `x = [" ${C} "]\nn = bytes.fromhex("776f726b7370616365732e6a736f6e").decode()\nopen(x[0].strip() + "/" + n, "w").write("{}")`,
+    ),
+    py(`import shutil\nshutil.rmtree([" ${C} "][0].strip())`),
+    node(
+      `const d = [" ${C} "][0].trim()\nrequire("fs").writeFileSync(d + "/works" + "paces.json", "{}")`,
+    ),
+    node(
+      `const d = {k: " ${C}"}.k.trim()\nrequire("fs").writeFileSync(\`\${d}/works\${"paces"}.json\`, "{}")`,
+    ),
+    py(
+      `x = ["see ${C} here"]\nd = x[0].split()[1]\nopen(d + "/works" + "paces.json", "w").write("{}")`,
+    ),
+    py(
+      `import os\nd = [" ${C} "][0].strip()\nfor f in os.listdir(d):\n    open(os.path.join(d, f), "w").write("{}")`,
+    ),
+    py(`import os\nos.rename([" ${C} "][0].strip(), "/tmp/wk-moved")`),
+    py(`x = [" ${C} "]\nopen(x[0].strip() + "/WORKSPACES.json".lower(), "w").write("{}")`),
+  ]) {
     expect(verdict(asLead(command)), command).toBe("deny");
+    expect(verdict(implementer(command)), command).toBe("deny");
+  }
 });
 
 test("Given review mwm7hutf, When a judge assigns a name the shell sets itself (read, getopts, mapfile) or reads, Then it is denied", () => {

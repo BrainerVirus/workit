@@ -261,7 +261,7 @@ const MUTATING_CALLS =
  * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Reflect|getOwnPropertyDescriptor|attrgetter|methodcaller|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|(?<!\b(?:Map|Set)\([^()]*\))\.delete\s*\(|\.to_(?!bytes\b)\w+\s*\(|(?<!\b(?:read\w*|str|decode|strip|lower|upper)\([^()]*\)|['"])(?<=Path\b.*)\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Reflect|getOwnPropertyDescriptor|attrgetter|methodcaller|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|(?<!\b(?:Map|Set)\([^()]*\))\.delete\s*\(|\.to_(?!bytes\b)\w|(?<!\b(?:read\w*|str|decode|strip|lower|upper)\([^()]*\)|['"])(?<=Path\b.*)\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
 /** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
 const FREE_OPEN =
   /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
@@ -281,8 +281,8 @@ const TOKENS =
  * stderr). An f-string's `{…}` and a template literal's `${…}` are code. A
  * backslash-newline is judged joined too, as an unquoted heredoc runs it.
  */
-const writesIn = (raw: string): boolean => {
-  if (raw.includes("\\\n") && writesIn(raw.replaceAll("\\\n", ""))) return true;
+const writesIn = (raw: string, js = true): boolean => {
+  if (raw.includes("\\\n") && writesIn(raw.replaceAll("\\\n", ""), js)) return true;
   let parts = false;
   const bare = raw
     .replace(FREE_OPEN, "")
@@ -292,21 +292,21 @@ const writesIn = (raw: string): boolean => {
       if (inner !== undefined)
         for (const piece of inner.split(open).slice(1)) {
           const end = piece.indexOf("}");
-          parts ||= end < 0 || /[{}]/.test(piece.slice(0, end)) || writesIn(piece.slice(0, end));
+          parts ||=
+            end < 0 || /[{}]/.test(piece.slice(0, end)) || writesIn(piece.slice(0, end), js);
         }
       return " ";
     })
     .replace(/std(?:out|err)\.write/g, "");
   // Fail closed where the strings cannot be told apart: a quote or `${` left over, a `\u`
-  // or `\x` escape, or a regex literal holding a quote: a `/` after an operator, `(`, `,`, `:`,
-  // a bracket or brace, or a keyword such as `return` or `typeof` (not after an operand).
+  // or `\x` escape, or in JavaScript (Python has none) a regex literal holding a quote: a `/`
+  // after whitespace, `)`, an operator, a bracket or a brace.
   return (
     parts ||
     SPAWNS.test(raw) ||
     /['"`]|\$\{/.test(bare) ||
-    /\\[ux]|(?:(?:^|[(,=:;!&|?{}[+*%<>^-])\s*|\b(?:return|typeof|void|in|of|case|yield|await|delete|throw|else|do|new)\s+)\/(?![/*])[^/\n]*['"`]/.test(
-      raw,
-    ) ||
+    /\\[ux]/.test(raw) ||
+    (js && /(?:^|[\s(),=:;!&|?{}[+*%<>^-])\/(?![/*])[^/\n]*['"`]/.test(raw)) ||
     [...bare.matchAll(/[\w$]+/g)].some(
       ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
     )
@@ -518,7 +518,10 @@ const opaqueWrites = (
       [
         at < 0 ? fed : texts[runs + at + 2],
         ...texts.slice(0, runs + 1 + (at < 0 ? args.length : at)),
-      ].every((text) => text !== undefined && text !== null && !writesIn(text))
+      ].every(
+        (text) =>
+          text !== undefined && text !== null && !writesIn(text, !name.startsWith("python")),
+      )
       ? null
       : [
           ".",
@@ -1661,16 +1664,7 @@ const segmentTargets = (
           ...joined.flatMap(({ word, index }) => under(word).map((file) => ({ file, index }))),
         ];
         for (const { file, index } of found) {
-          // A dir named inside a longer string that is a value (`{"note": "… <dir> …"}`), in
-          // code that names no guarded file, is data rather than a path the code takes.
-          const use = !isRoot(file)
-            ? "takes"
-            : /['"`]/.test(text[index - 1] ?? "'") ||
-                /['"]/.test(text[index]) ||
-                /workspaces|\.seal\b/.test(text) ||
-                !/^[^'"`\n]*['"]\s*[,}\]]/.test(text.slice(index))
-              ? rootUse(text, index)
-              : "reads";
+          const use = isRoot(file) ? rootUse(text, index) : "takes";
           if (use !== "reads")
             targets.push(use === "builds" ? path.join(file, UNRESOLVED_TARGET) : file);
         }
