@@ -516,10 +516,10 @@ function mergeClaudeSettings(settings: Json, shell: string | null, input: MergeI
  * the file: the refresh then does not add the current, wider one.
  */
 const removedAutoAllow = (config: Json, skip: Skip): boolean => {
-  const prior = PRIOR_ENTRIES["claude-code"]["autoMode.allow"] ?? [];
+  const prior = new Set(PRIOR_ENTRIES["claude-code"]["autoMode.allow"] ?? []);
   const offered = offeredAt("claude-code", "autoMode.allow");
   return (
-    (skip["autoMode.allow"] ?? []).some((line) => prior.includes(line)) &&
+    (skip["autoMode.allow"] ?? []).some((line) => prior.has(line)) &&
     !stringList(valueFrom(config, "autoMode", "allow")).some((line) => offered.has(line))
   );
 };
