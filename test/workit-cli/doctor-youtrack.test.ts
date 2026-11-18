@@ -136,16 +136,16 @@ describe.skipIf(process.platform === "win32")("ytrack on PATH (POSIX stub)", () 
       status: "pass",
       detail: "ytrack 0.2.0 logged in to acme.youtrack.cloud as jdoe",
     });
-    // The ytrack_skill row probes `ytrack skill print`: this 0.2.0 prints no skill.
+    // The ytrack_skill row reads `ytrack skill list --json`: this 0.2.0 lists nothing.
     expect(report.checks.find((check) => check.id === "ytrack_skill")).toMatchObject({
       status: "warn",
-      fix: "ytrack upgrade",
+      fix: "ytrack upgrade (to 0.6.0 or newer)",
     });
     expect(calls()).toEqual([
       "version",
       "auth status --json host,active,login,state,tokenSource,error",
+      "skill list --json",
       "version",
-      "skill print",
     ]);
   });
 

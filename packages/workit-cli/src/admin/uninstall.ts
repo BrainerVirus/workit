@@ -18,6 +18,7 @@ import {
   type SkillHost,
 } from "@workit-dev/core/src/core/ytrack-skill";
 import { hostSkillsRoot } from "../upgrade/skill-roots";
+import { ytrackOwnsCopy } from "../upgrade/ytrack-skill";
 import { completionFile, ownedCompletionFiles, removeCompletion } from "../completion/install";
 import { applyOwnedRemoval, planOwnedRemoval, type OwnedPart } from "../install/remove";
 import { isWorkitPlugin } from "./registration";
@@ -328,6 +329,9 @@ const stateDirOf = (paths: UninstallPaths): string => {
   const { home, env } = permissionPathsOf(paths);
   return paths.stateDir ?? workitStateDir({ ...env, HOME: home }, paths.platform);
 };
+
+const YTRACK_KEEPS_COPY =
+  "ytrack keeps this copy of its skill (~/.agents/skills/ytrack is there); left untouched";
 
 /** A host's skills root and the home it hangs off, as setup and upgrade resolve them. */
 const skillRootOf = (host: SkillHost, paths: UninstallPaths): [root: string, home: string] => {
@@ -666,6 +670,10 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     const plan = Object.hasOwn(byHost, install.host) ? byHost[install.host] : null;
     if (!plan) continue;
     const [root, skillHome] = skillRootOf(install.host, paths);
+    if (ytrackOwnsCopy(install.host, skillHome)) {
+      plan.actions.push({ kind: "keep-foreign", path: install.path, detail: YTRACK_KEEPS_COPY });
+      continue;
+    }
     // The same verdict apply reaches: a kept directory is a kept row, an absent one only forgets the record.
     const removal = ytrackSkillRemoval(install, { root, home: skillHome });
     plan.actions.push(

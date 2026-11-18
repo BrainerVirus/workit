@@ -1,14 +1,16 @@
-// The ytrack agent skill (youtrack-cli #16): setup and upgrade run
-// `ytrack skill install` for each Workit host, doctor compares the installed
-// SKILL.md version with `ytrack version`, uninstall removes only what Workit
-// recorded. ytrack is a stub on a temp PATH and HOME is a temp dir: never the
-// real ytrack or a real host skills directory.
+// The ytrack agent skill (youtrack-cli #16) is ytrack's own: ytrack 0.6.0 and
+// newer installs and refreshes it. setup and upgrade write no skill, upgrade
+// removes the per-host copies an older Workit recorded once
+// ~/.agents/skills/ytrack exists, doctor reads `ytrack skill list --json`,
+// uninstall removes only what Workit recorded. ytrack is a stub on a temp PATH
+// and HOME is a temp dir: never the real ytrack or a real host skills directory.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -27,36 +29,25 @@ import {
   parseSkillMeta,
   readYtrackSkillRecord,
   removeYtrackSkill,
-  syncYtrackSkill,
 } from "@/packages/workit-core/src/core/ytrack-skill";
-import { ytrackRunner } from "@/packages/workit-core/src/core/youtrack-ytrack";
 
 setDefaultTimeout(process.platform === "win32" ? 60_000 : 30_000);
 
 const scratch = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wk-ytrack-skill-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-// A ytrack with `ytrack skill`: STUB_VERSION is the version it reports and
-// stamps; STUB_OLD=1 is a ytrack without `skill` (0.2.x).
+// A ytrack 0.6 with `ytrack skill list --json`: it prints $STUB_LIST (a JSON
+// array, default empty). STUB_OLD=1 is a ytrack before 0.6.0, without
+// `skill list`. Any `skill install` or `skill sync` is a write Workit must not make.
 const STUB = `#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
-v="\${STUB_VERSION:-0.3.0}"
-if [ "$1" = version ]; then printf 'ytrack version %s (2026-11-01)\\n' "$v"; exit 0; fi
-if [ "$1" = skill ] && [ "$STUB_OLD" = 1 ]; then
-  echo 'Error: unknown command "skill" for "ytrack"' >&2; exit 1
+v="\${STUB_VERSION:-0.6.1}"
+if [ "$1" = version ]; then printf 'ytrack version %s (2026-11-18)\\n' "$v"; exit 0; fi
+if [ "$1" = skill ] && [ "$2" = list ] && [ "$STUB_OLD" = 1 ]; then
+  echo 'ytrack: unknown command "list" for "ytrack skill"' >&2; exit 1
 fi
-if [ "$1" = skill ] && [ "$2" = print ]; then
-  printf -- '---\\nname: ytrack\\nmetadata:\\n  version: "%s"\\n---\\n\\n# ytrack\\n' "$v"; exit 0
-fi
-if [ "$1" = skill ] && [ "$2" = install ] && [ "$3" = --dir ]; then
-  t="$4/ytrack"
-  if [ -e "$t" ] && ! grep -q '^name: ytrack' "$t/SKILL.md" 2>/dev/null; then
-    echo "$t exists and is not the ytrack skill; left it untouched" >&2; exit 1
-  fi
-  mkdir -p "$t/references"
-  printf -- '---\\nname: ytrack\\nmetadata:\\n  version: "%s"\\n---\\n' "$v" > "$t/SKILL.md"
-  echo reference > "$t/references/issues.md"
-  printf '{"path":"%s","version":"%s"}\\n' "$t" "$v"; exit 0
+if [ "$1" = skill ] && [ "$2" = list ] && [ "$3" = --json ]; then
+  printf '%s\\n' "\${STUB_LIST:-[]}"; exit 0
 fi
 exit 1
 `;
@@ -118,102 +109,17 @@ const world = (options: { youtrack?: boolean; pi?: boolean } = {}) => {
   };
 };
 
-const skillVersion = (dir: string): string | null =>
-  existsSync(path.join(dir, "SKILL.md"))
-    ? parseSkillMeta(readFileSync(path.join(dir, "SKILL.md"), "utf8")).version
-    : null;
-
-const posix = test.skipIf(process.platform === "win32");
-
-describe("syncYtrackSkill", () => {
-  posix(
-    "Given a ytrack with `skill`, When it syncs two hosts, Then each skills dir has ytrack/ at that version and both are recorded; a rerun installs nothing",
-    () => {
-      const w = world();
-      const env = w.env();
-      const sync = () =>
-        syncYtrackSkill({
-          roots: (["claude-code", "pi"] as const).map((host) => ({
-            host,
-            root: hostSkillsRoot(host, w.home, env),
-          })),
-          stateDir: w.stateDir,
-          run: ytrackRunner(env),
-        });
-      const first = sync();
-      const claude = path.join(w.home, ".claude", "skills", "ytrack");
-      const pi = path.join(w.home, ".pi", "agent", "skills", "ytrack");
-      expect(first).toMatchObject({ state: "synced", version: "0.3.0" });
-      expect(skillVersion(claude)).toBe("0.3.0");
-      expect(skillVersion(pi)).toBe("0.3.0");
-      expect(existsSync(path.join(pi, "references", "issues.md"))).toBe(true);
-      expect(readYtrackSkillRecord(w.stateDir)).toEqual([
-        // The files the install wrote: uninstall removes those and only those.
-        {
-          host: "claude-code",
-          path: claude,
-          version: "0.3.0",
-          files: ["SKILL.md", "references/issues.md"],
-        },
-        { host: "pi", path: pi, version: "0.3.0", files: ["SKILL.md", "references/issues.md"] },
-      ]);
-      const installs = () => w.calls().filter((call) => call.startsWith("skill install"));
-      expect(installs()).toEqual([
-        `skill install --dir ${path.dirname(claude)} --json`,
-        `skill install --dir ${path.dirname(pi)} --json`,
-      ]);
-      const again = sync();
-      expect(again.state === "synced" && again.results.map((r) => r.status)).toEqual([
-        "current",
-        "current",
-      ]);
-      expect(installs()).toHaveLength(2);
-    },
-  );
-
-  posix("Given an older ytrack without `skill`, Then nothing is installed or recorded", () => {
-    const w = world();
-    const env = w.env({ STUB_OLD: "1" });
-    expect(
-      syncYtrackSkill({
-        roots: (["pi"] as const).map((host) => ({ host, root: hostSkillsRoot(host, w.home, env) })),
-        stateDir: w.stateDir,
-        run: ytrackRunner(env),
-      }),
-    ).toEqual({ state: "unsupported", version: "0.3.0" });
-    expect(existsSync(path.join(w.home, ".pi", "agent", "skills"))).toBe(false);
-    expect(readYtrackSkillRecord(w.stateDir)).toEqual([]);
+/** Every path under `dir`, relative: what a run wrote shows up as a difference. */
+const tree = (dir: string, prefix = ""): string[] =>
+  readdirSync(path.join(dir, prefix), { withFileTypes: true }).flatMap((entry) => {
+    const rel = path.join(prefix, entry.name);
+    return entry.isDirectory() ? [rel, ...tree(dir, rel)] : [rel];
   });
 
-  posix(
-    "Given a ytrack skill someone else installed and another skill named ytrack, Then the first is refreshed but not recorded and the second is left untouched",
-    () => {
-      const w = world();
-      const env = w.env();
-      const theirs = path.join(hostSkillsRoot("codex", w.home, env), "ytrack");
-      const foreign = path.join(hostSkillsRoot("cursor", w.home, env), "ytrack");
-      w.skillAt(theirs, "0.2.9");
-      w.skillAt(foreign, "1.0.0", "my-ytrack-notes");
-      const sync = syncYtrackSkill({
-        roots: (["codex", "cursor"] as const).map((host) => ({
-          host,
-          root: hostSkillsRoot(host, w.home, env),
-        })),
-        stateDir: w.stateDir,
-        run: ytrackRunner(env),
-      });
-      expect(sync.state === "synced" && sync.results.map((r) => [r.host, r.status])).toEqual([
-        ["codex", "installed"],
-        ["cursor", "failed"],
-      ]);
-      expect(skillVersion(theirs)).toBe("0.3.0");
-      expect(parseSkillMeta(readFileSync(path.join(foreign, "SKILL.md"), "utf8")).name).toBe(
-        "my-ytrack-notes",
-      );
-      expect(readYtrackSkillRecord(w.stateDir)).toEqual([]);
-    },
-  );
-});
+const skillWrites = (w: ReturnType<typeof world>): string[] =>
+  w.calls().filter((call) => /^skill (install|sync|uninstall)/u.test(call));
+
+const posix = test.skipIf(process.platform === "win32");
 
 test("parseSkillMeta reads name and metadata.version from a CRLF checkout, and nothing without frontmatter", () => {
   expect(
@@ -245,7 +151,7 @@ test("removeYtrackSkill skips a recorded path that no longer holds the ytrack sk
 });
 
 const upgrade = async (w: ReturnType<typeof world>, extra: Record<string, string> = {}) => {
-  // Pi at the published version: the upgrade has no host work, only the skill.
+  // Pi at the published version: the upgrade has no host work.
   const piRoot = path.join(w.home, "pi-resolved");
   mkdirSync(piRoot, { recursive: true });
   writeFileSync(
@@ -267,95 +173,160 @@ const upgrade = async (w: ReturnType<typeof world>, extra: Record<string, string
     doctor: () => ({ checks: [] }),
     out: { write: (text: string) => void out.push(text) },
   });
-  const report = JSON.parse(out.join("")) as { hosts: { host: string; status: string }[] };
+  const report = JSON.parse(out.join("")) as {
+    hosts: { host: string; status: string; reason: string; details?: string[] }[];
+  };
   return { code, report, row: report.hosts.find((row) => row.host === "ytrack") };
 };
 
-describe("workit upgrade", () => {
+/** A skill copy an older Workit installed for `host`, with its record row. */
+const workitCopy = (w: ReturnType<typeof world>, host: "claude-code" | "codex" | "pi") => {
+  const dir = path.join(hostSkillsRoot(host, w.home, w.env()), "ytrack");
+  w.skillAt(dir, "0.5.4");
+  mkdirSync(path.join(dir, "references"), { recursive: true });
+  writeFileSync(path.join(dir, "references", "issues.md"), "reference\n");
+  const rows = readYtrackSkillRecord(w.stateDir);
+  mkdirSync(w.stateDir, { recursive: true });
+  writeFileSync(
+    path.join(w.stateDir, "ytrack-skill.json"),
+    JSON.stringify({
+      installs: [
+        ...rows,
+        { host, path: dir, version: "0.5.4", files: ["SKILL.md", "references/issues.md"] },
+      ],
+    }),
+  );
+  return dir;
+};
+
+const sharedCopy = (w: ReturnType<typeof world>) =>
+  path.join(w.home, ".agents", "skills", "ytrack");
+const recordFile = (w: ReturnType<typeof world>) => path.join(w.stateDir, "ytrack-skill.json");
+
+describe("Workit writes no ytrack skill", () => {
   posix(
-    "Given YouTrack in use and Pi installed, When upgrade runs, Then Pi's skills dir has the ytrack skill and the install is recorded",
+    "Given ytrack 0.6 and YouTrack in use, When workit setup runs for Pi and Claude Code, Then no skill dir is written and ytrack is never asked to install one",
+    async () => {
+      const w = world({ pi: true });
+      const before = tree(w.home);
+      const io = {
+        json: false,
+        cwd: w.home,
+        env: w.env(),
+        stdout: () => {},
+        stderr: () => {},
+      };
+      expect(await setup(["--hosts=pi,claude-code", "--no-shell", "--yes"], io)).toBe(0);
+      const added = tree(w.home).filter((entry) => !before.includes(entry));
+      expect(added.filter((entry) => entry.split(path.sep).includes("skills"))).toEqual([]);
+      expect(skillWrites(w)).toEqual([]);
+      expect(existsSync(recordFile(w))).toBe(false);
+    },
+  );
+
+  posix(
+    "Given ytrack 0.6 and YouTrack in use, When workit upgrade runs, Then no skill file is written and there is no ytrack row",
     async () => {
       const w = world({ pi: true });
       const { code, row } = await upgrade(w);
       expect(code).toBe(0);
-      expect(row).toMatchObject({ status: "updated", reason: "skill 0.3.0 installed for pi" });
-      const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
-      expect(skillVersion(dir)).toBe("0.3.0");
-      expect(readYtrackSkillRecord(w.stateDir)).toEqual([
-        { host: "pi", path: dir, version: "0.3.0", files: ["SKILL.md", "references/issues.md"] },
-      ]);
+      expect(row).toBeUndefined();
+      expect(existsSync(path.join(w.home, ".pi", "agent", "skills"))).toBe(false);
+      expect(existsSync(path.join(w.home, ".agents"))).toBe(false);
+      expect(skillWrites(w)).toEqual([]);
     },
   );
 
+  test("Given Workit's sources, Then none runs `ytrack skill install|sync|uninstall` or `ytrack upgrade`", () => {
+    const root = path.resolve(import.meta.dir, "..", "..", "packages");
+    const writes = /\[\s*"(?:skill",\s*"(?:install|sync|uninstall)|upgrade)"/u;
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "node_modules" && entry.name !== "dist") walk(file);
+        } else if (
+          /\.(?:ts|tsx|mts|mjs)$/u.test(entry.name) &&
+          file.includes(`${path.sep}src${path.sep}`) &&
+          /ytrack/u.test(readFileSync(file, "utf8")) &&
+          writes.test(readFileSync(file, "utf8"))
+        )
+          hits.push(path.relative(root, file));
+      }
+    };
+    walk(root);
+    expect(hits).toEqual([]);
+  });
+});
+
+describe("workit upgrade retires Workit's per-host copies", () => {
   posix(
-    "Given an older ytrack without `skill`, Then nothing is installed and the row says `ytrack upgrade`",
+    "Given ~/.agents/skills/ytrack, a Workit-made Pi copy and a user-made Codex copy, When upgrade runs, Then the Pi copy goes, the Codex and Claude Code copies stay and the record is gone",
     async () => {
       const w = world({ pi: true });
-      const { code, row } = await upgrade(w, { STUB_OLD: "1" });
+      w.skillAt(sharedCopy(w), "0.6.1");
+      const pi = workitCopy(w, "pi");
+      const claude = workitCopy(w, "claude-code");
+      // Made by hand: no row in Workit's record.
+      const codex = path.join(hostSkillsRoot("codex", w.home, w.env()), "ytrack");
+      w.skillAt(codex, "0.5.4");
+      const { code, row } = await upgrade(w);
       expect(code).toBe(0);
-      expect(row).toMatchObject({ status: "skipped", fix: "ytrack upgrade" });
-      expect(existsSync(path.join(w.home, ".pi", "agent", "skills"))).toBe(false);
+      expect(row).toEqual({
+        host: "ytrack",
+        status: "updated",
+        reason: `Workit's copies of the ytrack skill removed: ytrack keeps ${sharedCopy(w)}`,
+        details: [pi],
+      });
+      expect(existsSync(pi)).toBe(false);
+      expect(existsSync(path.join(codex, "SKILL.md"))).toBe(true);
+      expect(existsSync(path.join(claude, "SKILL.md"))).toBe(true);
+      expect(existsSync(path.join(sharedCopy(w), "SKILL.md"))).toBe(true);
+      expect(existsSync(recordFile(w))).toBe(false);
+      expect(skillWrites(w)).toEqual([]);
     },
   );
 
   posix(
-    "Given YouTrack unused, Then upgrade never runs ytrack and shows no ytrack row",
+    "Given a Workit-made Pi copy but no ~/.agents/skills/ytrack, When upgrade runs, Then the copy and its record stay",
     async () => {
-      const w = world({ pi: true, youtrack: false });
+      const w = world({ pi: true });
+      const pi = workitCopy(w, "pi");
       const { row } = await upgrade(w);
       expect(row).toBeUndefined();
-      expect(w.calls()).toEqual([]);
+      expect(existsSync(path.join(pi, "SKILL.md"))).toBe(true);
+      expect(readYtrackSkillRecord(w.stateDir).map((install) => install.path)).toEqual([pi]);
+    },
+  );
+
+  posix(
+    "Given ~/.agents/skills/ytrack and Workit's record of Claude Code's copy, When uninstall runs, Then that copy is ytrack's and stays",
+    () => {
+      const w = world();
+      w.skillAt(sharedCopy(w), "0.6.1");
+      const claude = workitCopy(w, "claude-code");
+      const paths = { home: w.home, env: w.env(), stateDir: w.stateDir };
+      const plan = planUninstall(paths);
+      const ours = (action: { path: string }) => action.path === claude;
+      expect(plan.hosts.flatMap((host) => host.actions.filter(ours))).toEqual([
+        {
+          kind: "keep-foreign",
+          path: claude,
+          detail:
+            "ytrack keeps this copy of its skill (~/.agents/skills/ytrack is there); left untouched",
+        },
+      ]);
+      applyUninstall(
+        { hosts: plan.hosts.map((host) => ({ ...host, actions: host.actions.filter(ours) })) },
+        paths,
+      );
+      expect(existsSync(path.join(claude, "SKILL.md"))).toBe(true);
     },
   );
 });
 
-posix(
-  "Given workit setup with YouTrack in use, When it runs, Then each selected Workit host gets the skill; uninstall then removes only the recorded dir",
-  async () => {
-    const w = world({ pi: true });
-    const out: string[] = [];
-    const io = {
-      json: false,
-      cwd: w.home,
-      env: w.env(),
-      stdout: (text: string) => void out.push(text),
-      stderr: (text: string) => void out.push(text),
-    };
-    expect(await setup(["--hosts=pi,claude-code", "--no-shell", "--yes"], io)).toBe(0);
-    const pi = path.join(w.home, ".pi", "agent", "skills", "ytrack");
-    // Claude Code has no Workit install here: it gets no skill.
-    expect(existsSync(path.join(w.home, ".claude", "skills"))).toBe(false);
-    expect(skillVersion(pi)).toBe("0.3.0");
-    expect(out.join("")).toContain("ytrack skill 0.3.0 installed for pi");
-
-    // A ytrack skill Workit did not install stays through uninstall.
-    const theirs = path.join(w.home, ".claude", "skills", "ytrack");
-    w.skillAt(theirs, "0.3.0");
-    const paths = { home: w.home, env: w.env(), stateDir: w.stateDir };
-    const plan = planUninstall(paths);
-    const skillActions = plan.hosts.flatMap((host) =>
-      host.actions.filter((action) => action.kind === "remove-ytrack-skill"),
-    );
-    expect(skillActions.map((action) => action.path)).toEqual([pi]);
-    const result = applyUninstall(
-      {
-        hosts: plan.hosts.map((host) => ({
-          ...host,
-          actions: host.actions.filter((action) => action.kind === "remove-ytrack-skill"),
-        })),
-      },
-      paths,
-    );
-    expect(result.entries).toEqual([
-      { host: "pi", path: pi, status: "removed", detail: undefined },
-    ]);
-    expect(existsSync(pi)).toBe(false);
-    expect(existsSync(path.join(theirs, "SKILL.md"))).toBe(true);
-    expect(readYtrackSkillRecord(w.stateDir)).toEqual([]);
-  },
-);
-
-describe("doctor ytrack_skill", () => {
+describe("doctor ytrack_skill reads `ytrack skill list --json`", () => {
   const doctorRow = (w: ReturnType<typeof world>, extra: Record<string, string> = {}) =>
     runDoctor({
       host: "cli",
@@ -365,54 +336,93 @@ describe("doctor ytrack_skill", () => {
       cwd: w.home,
       env: w.env(extra),
     }).checks.find((check) => check.id === "ytrack_skill");
-  const recordPi = (w: ReturnType<typeof world>, version: string) => {
-    const dir = path.join(w.home, ".pi", "agent", "skills", "ytrack");
-    w.skillAt(dir, version);
-    mkdirSync(w.stateDir, { recursive: true });
-    writeFileSync(
-      path.join(w.stateDir, "ytrack-skill.json"),
-      JSON.stringify({ installs: [{ host: "pi", path: dir, version }] }),
-    );
-  };
+  const copy = (
+    dir: string,
+    state: "current" | "stale" | "missing",
+    options: { managed?: boolean } = {},
+  ) => ({
+    dir,
+    path: path.join(dir, "ytrack"),
+    version: state === "missing" ? "" : state === "current" ? "0.6.1" : "0.5.4",
+    state,
+    managed: options.managed ?? true,
+  });
+  const list = (...rows: ReturnType<typeof copy>[]) => ({ STUB_LIST: JSON.stringify(rows) });
 
-  posix("Given the installed skill matches `ytrack version`, Then the row passes", () => {
+  posix("Given every copy current, Then the row passes and names the dirs", () => {
     const w = world();
-    recordPi(w, "0.3.0");
-    expect(doctorRow(w)).toMatchObject({ status: "pass", detail: "ytrack skill 0.3.0 in pi" });
+    expect(
+      doctorRow(
+        w,
+        list(copy("/h/.agents/skills", "current"), copy("/h/.claude/skills", "current")),
+      ),
+    ).toEqual({
+      id: "ytrack_skill",
+      status: "pass",
+      detail: "ytrack skill 0.6.1 in /h/.agents/skills, /h/.claude/skills",
+    });
+  });
+
+  posix("Given a stale managed copy, Then the row names `ytrack skill sync`", () => {
+    const w = world();
+    expect(
+      doctorRow(w, list(copy("/h/.agents/skills", "current"), copy("/h/.claude/skills", "stale"))),
+    ).toMatchObject({
+      status: "warn",
+      detail: `${path.join("/h/.claude/skills", "ytrack")} holds skill 0.5.4`,
+      fix: "ytrack skill sync",
+    });
+  });
+
+  posix("Given a missing copy and a stale one in a repository, Then each gets its fix", () => {
+    const w = world();
+    expect(
+      doctorRow(
+        w,
+        list(
+          copy("/h/.agents/skills", "current"),
+          copy("/h/.codex/skills", "missing"),
+          copy("/repo/.agents/skills", "stale", { managed: false }),
+        ),
+      ),
+    ).toMatchObject({
+      status: "warn",
+      fix: "ytrack skill sync; ytrack skill install --dir /repo/.agents/skills",
+    });
+  });
+
+  posix("Given no copy of the skill, Then the row names `ytrack skill install`", () => {
+    const w = world();
+    expect(doctorRow(w)).toMatchObject({ status: "warn", fix: "ytrack skill install" });
   });
 
   posix(
-    "Given a host's skill older than `ytrack version`, Then the row warns with the upgrade fix",
+    "Given an older ytrack without `skill list`, Then the row names `ytrack upgrade` to 0.6.0 and nothing changes",
     () => {
-      const w = world();
-      recordPi(w, "0.3.0");
-      expect(doctorRow(w, { STUB_VERSION: "0.4.0" })).toMatchObject({
+      const w = world({ pi: true });
+      const pi = workitCopy(w, "pi");
+      // Other doctor rows may write logs; the skill dirs and Workit's record stay as they were.
+      const unchanged = () => [
+        ...tree(w.home).filter((entry) => entry.split(path.sep).includes("skills")),
+        readFileSync(recordFile(w), "utf8"),
+      ];
+      const before = unchanged();
+      expect(doctorRow(w, { STUB_OLD: "1", STUB_VERSION: "0.5.4" })).toEqual({
+        id: "ytrack_skill",
         status: "warn",
-        detail: "ytrack 0.4.0: pi has skill 0.3.0",
-        fix: "workit upgrade --hosts=pi",
+        detail:
+          "ytrack 0.5.4 has no `ytrack skill list`: ytrack 0.6.0 or newer installs and keeps its agent skill current",
+        fix: "ytrack upgrade (to 0.6.0 or newer)",
       });
+      expect(unchanged()).toEqual(before);
+      expect(existsSync(path.join(pi, "SKILL.md"))).toBe(true);
+      expect(skillWrites(w)).toEqual([]);
+      expect(w.calls().filter((call) => call.startsWith("upgrade"))).toEqual([]);
     },
   );
 
-  posix("Given a Workit host without the skill, Then the row warns that it is missing", () => {
-    const w = world({ pi: true });
-    expect(doctorRow(w)).toMatchObject({
-      status: "warn",
-      detail: "ytrack 0.3.0: no ytrack skill for pi",
-      fix: "workit upgrade --hosts=pi",
-    });
-  });
-
-  posix("Given an older ytrack without `skill`, Then the row hints `ytrack upgrade`", () => {
-    const w = world({ pi: true });
-    expect(doctorRow(w, { STUB_OLD: "1" })).toMatchObject({
-      status: "warn",
-      fix: "ytrack upgrade",
-    });
-  });
-
   posix("Given YouTrack unused, Then there is no row", () => {
-    const w = world({ pi: true, youtrack: false });
+    const w = world({ youtrack: false });
     expect(doctorRow(w)).toBeUndefined();
   });
 });
