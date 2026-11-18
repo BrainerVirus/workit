@@ -163,7 +163,9 @@ export function operationsUnderway(
     try {
       // A linked worktree's admin dir names its `.git` file in `gitdir`.
       if (admin !== root)
-        where = path.dirname(fs.readFileSync(path.join(admin, "gitdir"), "utf8").trim());
+        where = path.resolve(
+          path.dirname(fs.readFileSync(path.join(admin, "gitdir"), "utf8").trim()),
+        );
     } catch {
       // keep the admin dir as the place
     }
@@ -539,6 +541,15 @@ export type CleanupOptions = {
   openPr?: (branch: string) => string | null;
 };
 
+/**
+ * The repo's worktrees with native paths: git prints `C:/Users/...` on
+ * Windows, so notes, `switched.path` and the ledger row name the path the way
+ * the filesystem and the caller spell it (`C:\Users\...`). Comparisons go
+ * through `canonical` either way.
+ */
+const nativeWorktrees = (cwd: string): WorktreeEntry[] =>
+  listWorktrees(cwd).map((entry) => ({ ...entry, path: path.resolve(entry.path) }));
+
 /** The user's keep for one branch, worktree or process: the decision that recorded it. */
 export type KeepDecision = KeepTarget & { decision: string };
 
@@ -759,7 +770,7 @@ export async function cleanupAfterMerge(
     out.notes.push(`local ${branch} is kept: ${openPr}`);
     return out;
   }
-  const worktrees = listWorktrees(cwd);
+  const worktrees = nativeWorktrees(cwd);
   const done = async (): Promise<MergeCleanup> => {
     if (out.worktreeRemoved || out.branchDeleted || out.procsStopped.length || out.switched) {
       const row = appendObserved(cwd, {
@@ -870,7 +881,7 @@ export async function cleanupAfterMerge(
     out.scratchRemoved = scratches.filter((dir) => removeWorkerScratch(dir, env));
     tidyParent(entry.path, place, env);
   }
-  const left = listWorktrees(cwd);
+  const left = nativeWorktrees(cwd);
   // A worktree mid-rebase or mid-bisect shows a detached HEAD, so it never
   // names the branch it works on; update-ref (unlike branch -D) would not
   // notice. Any operation under way in any worktree, read from the admin
