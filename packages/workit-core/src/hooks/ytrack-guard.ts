@@ -723,9 +723,13 @@ export const ytrackGate = (
   const rerun = writes.some((write) => write.gap === NOT_PLAIN.gap)
     ? " To get the named workit youtrack call instead, rerun the ytrack call as one plain command, with no wrapper, loop, substitution or script around it."
     : "";
+  // Last line: the one call to retry with, a named workit call first, else the bare ytrack call.
+  const retry =
+    writes.find((write) => write.workit)?.workit ??
+    (rerun ? writes.find((write) => write.gap === NOT_PLAIN.gap)?.command : undefined);
   return {
     kind: "deny",
-    reason: `${why}${run}${user}${rerun}`,
+    reason: `${why}${run}${user}${rerun}${retry ? `\nRetry as: ${retry}` : ""}`,
     unblock: writes[0]?.workit ?? null,
   };
 };

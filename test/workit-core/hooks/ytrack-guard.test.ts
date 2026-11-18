@@ -216,6 +216,21 @@ test("G a time log inside a command that is not plain (a leading cd, a loop, bas
     }
 });
 
+test("G a raw ytrack write a workit verb covers, plain or behind a trailing filter, W the hook denies it, T the last line is Retry as: that exact call", () => {
+  for (const command of [
+    "ytrack work-item add X-1 --duration 30m",
+    "ytrack work-item add X-1 --duration 30m 2>&1 | tail -5",
+    "cd /tmp && ytrack work-item add X-1 --duration 30m",
+  ])
+    for (const [host, run] of Object.entries(HOSTS)) {
+      const out = run(command);
+      expect(out.kind, `${host}: ${command}`).toBe("deny");
+      expect(out.reason.split("\n").at(-1), `${host}: ${command}`).toBe(
+        "Retry as: workit youtrack time X-1 --minutes 30",
+      );
+    }
+});
+
 test("G the default ask, W raw ytrack writes no workit verb covers, T Claude Code asks and the other hosts deny handing it to the user", () => {
   for (const command of UNCOVERED) {
     expect(claude(command).kind, command).toBe("ask");
