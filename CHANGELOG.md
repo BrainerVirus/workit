@@ -574,7 +574,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Verifiers and reviewers may run plain `git status`, `git remote get-url` / `remote -v`, `git range-diff` and `git worktree list`. A judge command that reads a path from a shell variable (`W=<path>; git -C $W …`) is refused with an exact `Retry as:` that spells the path in, and every judge, implementer and YouTrack-guard refusal now ends in one `Retry as:` or `Why:` line.
 - GitHub release notes start with the release's CHANGELOG.md entries, above
   the list of PR titles, and the release moves them from [Unreleased] into a
   `## [x.y.z] - date` section. Every `workit-dev-v*` release since 1.0.0 is
@@ -1098,6 +1097,22 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - The ship skill says to paste a draft that needs your yes in full before
   asking and again after every edit; a repo rule (`draft-in-full`) fails a
   skill step that shows a draft by its path only.
+
+## [2.12.0] - 2026-11-18
+
+### Added
+
+- After `workit pr merge` or `workit verify-delivery merge`, cleanup stops the processes a merged worktree registered, removes the worktree and the local branch, and moves your own checkout off the merged branch onto the updated trunk when it is clean, idle and the change is provably on the remote trunk. It never resets, stashes or deletes your work: a branch that moved during cleanup, a dirty checkout, an operation in progress in any worktree (including a locked one whose directory is gone) or another session's process keeps everything, with a note. Turn it off per workspace with `cleanup: keep` (an unknown value reads as keep) or for one branch, worktree or process with `workit ledger decision … --keep branch:<name>|worktree:<path>|proc:<id>`.
+
+## [2.11.1] - 2026-11-18
+
+### Changed
+
+- Verifiers and reviewers may run plain `git status`, `git remote get-url` / `remote -v`, `git range-diff` and `git worktree list`. A judge command that reads a path from a shell variable (`W=<path>; git -C $W …`) is refused with an exact `Retry as:` that spells the path in, and every judge, implementer and YouTrack-guard refusal now ends in one `Retry as:` or `Why:` line.
+
+### Fixed
+
+- Judges can no longer redirect a write through shell-set or zsh-special variables (REPLY, OPTARG, MAPFILE, DIRSTACK, FUNCNAME, zsh `path`, NULLCMD and others), `${W:-…}` defaults, or zsh path modifiers; `python -m` and `node -p/--print` count as code that can write.
 
 ## [2.11.0] - 2026-11-18
 
@@ -2775,7 +2790,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.0...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.12.0...HEAD
+[2.12.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.1...workit-dev-v2.12.0
+[2.11.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.0...workit-dev-v2.11.1
 [2.11.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.10.0...workit-dev-v2.11.0
 [2.10.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.9.0...workit-dev-v2.10.0
 [2.9.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.8.1...workit-dev-v2.9.0
