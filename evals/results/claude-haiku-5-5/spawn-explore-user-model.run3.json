@@ -2,39 +2,26 @@
   "case": "spawn-explore-user-model",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "0ed1ad7af96ef307",
-  "date": "2026-11-18T16:51:59.999Z",
+  "workitVersion": "workit-dev-v2.13.0+bcbf4e5c87",
+  "key": "fc43453eca8ad7ac",
+  "date": "2026-11-18T22:16:57.056Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 7656,
-    "costUsd": 0.00332109,
+    "turns": 2,
+    "durationMs": 12011,
+    "costUsd": 0.023043330000000004,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 2,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#1 Agent(Explore: Locate hello() definition under src) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\" (description and prompt as written). It needs "
-      },
-      {
-        "rule": "require",
-        "detail": "no call matches /[Ee]xplore[\\s\\S]*sonnet|sonnet[\\s\\S]*[Ee]xplore/ not denied: the Explore spawn keeps the user's model and runs"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(Explore: Locate hello() definition under src) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"Explore\", model: \"haiku\" (description and prompt as written). It needs "
-      }
-    ],
+    "pass": true,
+    "calls": 4,
+    "failures": [],
     "firstTry": {
       "interactions": 1,
       "failed": 0,
-      "denied": 1
+      "denied": 0
     }
   }
 }

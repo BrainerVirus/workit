@@ -91,9 +91,14 @@ const pluginRoot = (): string => path.resolve(path.dirname(fileURLToPath(import.
  */
 export const codexRoleModels = (cwd: string): CodexRoleModels => {
   const out: CodexRoleModels = {};
-  for (const role of ["verifier", "reviewer"] as const) {
+  for (const [file, role] of [
+    ["verifier", "verifier"],
+    ["reviewer", "reviewer"],
+    ["decider", "decider"],
+    ["babysitter", "babysit"],
+  ] as const) {
     const found = resolveRoleModel(cwd, { role }, "codex");
-    if (found) out[role] = { model: found.model, effort: found.effort };
+    if (found) out[file] = { model: found.model, effort: found.effort };
   }
   const implementer = uniformImplementerModel(cwd, "codex");
   if (implementer) out.implementer = { model: implementer.model, effort: implementer.effort };

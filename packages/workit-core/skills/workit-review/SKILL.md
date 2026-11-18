@@ -45,7 +45,7 @@ those files since the judged head and reuse green CI there (no fresh install, no
    under your own session (the one the lead or the hook gave you).
 8. **Bound the loop.** A failed verdict gets one fix round and one recheck of
    the changed hunks. Still failing, or stuck: no third round; the lead spawns
-   a decider (workit-fanout). A product choice goes to the user.
+   the decider agent by name, no model (workit-fanout). A product choice: the user.
 9. **Harness note** (optional): friction caused by the repo or harness, not
    the change (a flaky fixture, a missing check, a misleading doc or skill
    line), goes on its own `Harness note:` line in the report and any PR

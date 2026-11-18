@@ -130,9 +130,31 @@ test("hooks.json registers the designed events through the exec-form launcher, n
   ]);
 });
 
-test("agents: verifier and reviewer are read-only, implementer runs in the lead's Workit worktree without host isolation", () => {
+test("agents: each carries its model, verifier, reviewer and decider are read-only, implementer runs in the lead's Workit worktree without host isolation", () => {
   const agents = path.join(PLUGIN_DIR, "agents");
-  expect(readdirSync(agents).toSorted()).toEqual(["implementer.md", "reviewer.md", "verifier.md"]);
+  expect(readdirSync(agents).toSorted()).toEqual([
+    "babysitter.md",
+    "decider.md",
+    "implementer.md",
+    "reviewer.md",
+    "verifier.md",
+  ]);
+  // D1: each agent file carries its role's model (and the decider its effort).
+  expect(
+    Object.fromEntries(
+      readdirSync(agents).map((file) => {
+        const meta = frontmatter(path.join(agents, file));
+        return [meta.name, [meta.model, meta.effort ?? null] as [string, string | null]];
+      }),
+    ),
+  ).toEqual({
+    babysitter: ["haiku", null],
+    decider: ["fable", "high"],
+    implementer: ["sonnet", null],
+    reviewer: ["opus", null],
+    verifier: ["sonnet", null],
+  });
+  expect(frontmatter(path.join(agents, "decider.md")).disallowedTools).toContain("Edit");
   for (const name of ["verifier", "reviewer"]) {
     const meta = frontmatter(path.join(agents, `${name}.md`));
     expect(meta.name).toBe(name);

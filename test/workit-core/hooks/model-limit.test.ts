@@ -101,7 +101,7 @@ test("G a Claude Code worker whose transcript ends on the weekly-limit API error
   expect(context).toContain("died on a usage limit");
   expect(context).toContain("Re-dispatch it once with the same prompt");
   expect(
-    spawn({ subagent_type: "workit:verifier" }).hookSpecificOutput?.additionalContext,
+    spawn({ subagent_type: "workit:verifier" }).hookSpecificOutput?.additionalContext ?? "",
   ).not.toContain("died on a usage limit");
 });
 
@@ -126,7 +126,8 @@ test("G an OpenCode verifier whose subagent call errors on a usage limit, W the 
   const notes: SpawnNotes = new Map();
   const first = { agent: "workit-verifier", prompt: "verify x" } as Record<string, unknown>;
   applySpawnModel(cwd, { sessionID: "lead", input: first }, notes);
-  expect(first.model).toBe("anthropic/claude-sonnet-5");
+  // The registered workit-verifier agent already runs on the primary model.
+  expect(first.model).toBeUndefined();
   notes.clear();
   observeSubagentLimit(
     cwd,

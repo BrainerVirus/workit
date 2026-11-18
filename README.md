@@ -109,8 +109,8 @@ bun packages/workit-claude-code/scripts/build.ts --skills-only
 claude --plugin-dir "$PWD/packages/workit-claude-code"
 ```
 
-Skills appear as `/workit:<name>`, plus `verifier`, `reviewer` and
-`implementer` agents. See [the Claude Code guide](docs/guides/claude-code.md).
+Skills appear as `/workit:<name>`, plus `verifier`, `reviewer`,
+`implementer`, `decider` and `babysitter` agents, each on its own model. See [the Claude Code guide](docs/guides/claude-code.md).
 
 </details>
 
@@ -387,7 +387,7 @@ text.
 | `workit uninstall [--hosts=<h,…> [--preview\|--yes]]` | Pick hosts (and the owned CLI install), or name them, and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
 | `workit workspace list\|add\|set\|rm\|seal` | List, add, edit or remove workspace entries without the wizard (never raises a grant); `seal` accepts the authority fields at your terminal |
-| `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer) runs on for a host |
+| `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer, babysit) runs on for a host, how it reaches a spawn there (`agent file`, `spawn fill` or `advisory`) and the `models.enforce` mode |
 | `workit task status\|start\|note\|close\|adopt` | The current branch's task |
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
 | `workit check <name>` | Run a configured check and record observed evidence |

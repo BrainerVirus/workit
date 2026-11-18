@@ -56,13 +56,33 @@ test("G no models config, W models show --host claude_code, T the built-in Claud
     },
     verifier: { model: "sonnet", effort: null, source: "built-in" },
     reviewer: { model: "opus", effort: null, source: "built-in" },
-    explore: { model: "haiku", effort: null, source: "built-in" },
+    explore: { model: null, effort: null, source: "none" },
     babysit: { model: "haiku", effort: null, source: "built-in" },
     default: { model: null, effort: null, source: "none" },
   });
+  expect(result.json().data.enforce).toBe("advise");
+  expect(result.json().data.enforcement.decider.claude_code).toBe("agent file");
 });
 
-test("G models.lead and a default role, W models show runs, T the lead is listed advisory on every host and each role says per host whether it is enforced", async () => {
+test("G models.enforce strict, W models show prints, T the header names the mode", async () => {
+  const cwd = project();
+  config({ models: { enforce: "strict" } });
+  let text = "";
+  await main(["models", "show", "--host", "claude_code"], {
+    cwd,
+    env: { ...process.env, WORKIT_HOST: "", WORKIT_SESSION_ID: "" },
+    stdout: (chunk) => void (text += chunk),
+    stderr: () => {},
+  });
+  expect(text).toContain(
+    "models for claude_code (models.enforce strict: a configured role model beats one the spawn names)",
+  );
+  expect(text).toContain(
+    "verifier: sonnet  [built-in]; agent file on claude_code, opencode, codex, cursor; advisory on pi",
+  );
+});
+
+test("G models.lead and a default role, W models show runs, T the lead is listed advisory on every host and each role says per host how its model applies", async () => {
   const cwd = project();
   config({
     models: {
@@ -85,10 +105,10 @@ test("G models.lead and a default role, W models show runs, T the lead is listed
     pi: "advisory",
   });
   expect(data.enforcement.verifier).toEqual({
-    claude_code: "enforced",
-    opencode: "enforced",
-    codex: "enforced",
-    cursor: "advisory",
+    claude_code: "agent file",
+    opencode: "agent file",
+    codex: "agent file",
+    cursor: "agent file",
     pi: "advisory",
   });
   expect(data.enforcement["implementer hard"]).toMatchObject({ codex: "advisory", pi: "advisory" });
@@ -103,7 +123,7 @@ test("G models.lead and a default role, W models show runs, T the lead is listed
     "lead: opus  [models.lead in the global default]; advisory on claude_code, opencode, codex, cursor, pi",
   );
   expect(text).toContain(
-    "default: haiku  [models.roles in the global default]; enforced on claude_code, opencode; advisory on codex, cursor, pi",
+    "default: haiku  [models.roles in the global default]; spawn fill on claude_code, opencode; advisory on codex, cursor, pi",
   );
 });
 

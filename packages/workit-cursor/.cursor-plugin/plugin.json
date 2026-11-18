@@ -30,6 +30,7 @@
   ],
   "skills": "skills/",
   "commands": "commands/",
+  "agents": "agents/",
   "rules": [
     "rules/workit-contract.mdc"
   ],

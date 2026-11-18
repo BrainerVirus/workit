@@ -47,6 +47,8 @@ const parse = (text: string) => Bun.TOML.parse(text) as AgentToml;
 test("Given the canonical Claude agents, When the Codex build renders them, Then the committed agents/ files match", () => {
   const rendered = renderCodexAgents(claudeAgents);
   expect([...rendered.keys()].toSorted()).toEqual([
+    "workit-babysitter.toml",
+    "workit-decider.toml",
     "workit-implementer.toml",
     "workit-reviewer.toml",
     "workit-verifier.toml",
@@ -85,6 +87,10 @@ test("Given the judges, Then they run read-only and record verdicts as their own
     expect(agent.developer_instructions, judge).not.toContain("--token=<token>");
     expect(agent.developer_instructions, judge).toContain("SubagentStart hook");
   }
+  expect(read("decider").sandbox_mode).toBe("read-only");
+  expect(read("decider").developer_instructions).not.toContain("workit ledger verdict");
+  expect(read("babysitter").sandbox_mode).toBeUndefined();
+  expect(read("babysitter").developer_instructions).toContain("$workit-ship");
   const implementer = read("implementer");
   expect(implementer.sandbox_mode).toBeUndefined();
   expect(implementer.developer_instructions).not.toContain("workit ledger verdict");
@@ -105,12 +111,10 @@ test("Given a plugin install path, Then the owning Codex home comes from it, els
 test("Given a Codex home, When the agents install, Then missing files are written, Workit files refreshed and a user's same-named file kept", () => {
   const codexHome = path.join(scratch, "install", ".codex");
   const first = installCodexAgents(packageRoot, codexHome);
-  expect(first.map((r) => r.action)).toEqual(["installed", "installed", "installed"]);
-  expect(installCodexAgents(packageRoot, codexHome).map((r) => r.action)).toEqual([
-    "current",
-    "current",
-    "current",
-  ]);
+  expect(first.map((r) => r.action)).toEqual(Array(5).fill("installed"));
+  expect(installCodexAgents(packageRoot, codexHome).map((r) => r.action)).toEqual(
+    Array(5).fill("current"),
+  );
   const verifier = path.join(codexHome, "agents", "workit-verifier.toml");
   writeFileSync(verifier, `${CODEX_AGENT_MARKER} from an older plugin\nname = "workit-verifier"\n`);
   const reviewer = path.join(codexHome, "agents", "workit-reviewer.toml");
@@ -119,6 +123,8 @@ test("Given a Codex home, When the agents install, Then missing files are writte
     installCodexAgents(packageRoot, codexHome).map((r) => [path.basename(r.file), r.action]),
   );
   expect(actions).toEqual({
+    "workit-babysitter.toml": "current",
+    "workit-decider.toml": "current",
     "workit-implementer.toml": "current",
     "workit-reviewer.toml": "kept-user-file",
     "workit-verifier.toml": "updated",
@@ -171,11 +177,9 @@ test("Given two plugin versions, When each installs the agents, Then the older n
   installCodexAgents(newer.root, newer.codexHome);
   const verifier = path.join(newer.agents, "workit-verifier.toml");
   expect(agentMarkerVersion(readFileSync(verifier, "utf8"))).toBe("9.1.0");
-  expect(installCodexAgents(older, newer.codexHome).map((r) => r.action)).toEqual([
-    "kept-newer-version",
-    "kept-newer-version",
-    "kept-newer-version",
-  ]);
+  expect(installCodexAgents(older, newer.codexHome).map((r) => r.action)).toEqual(
+    Array(5).fill("kept-newer-version"),
+  );
   expect(agentMarkerVersion(readFileSync(verifier, "utf8"))).toBe("9.1.0");
   // An unversioned marker is refreshed and stamped; a newer plugin then takes it back.
   writeFileSync(verifier, `${CODEX_AGENT_MARKER} from an older plugin\nname = "workit-verifier"\n`);
@@ -223,6 +227,8 @@ test("Given the MCP launcher sync, When the Codex agents dir is unwritable, Then
   }
   syncCodexAgents(root);
   expect(readdirSync(path.join(codexHome, "agents")).toSorted()).toEqual([
+    "workit-babysitter.toml",
+    "workit-decider.toml",
     "workit-implementer.toml",
     "workit-reviewer.toml",
     "workit-verifier.toml",
@@ -246,7 +252,13 @@ test("G role models for Codex, W the agents install, T only a configured role's 
   expect(read("implementer").model).toBeUndefined();
   expect(read("verifier").developer_instructions).toContain("workit ledger verdict");
   const second = installCodexAgents(packageRoot, codexHome);
-  expect(second.map((r) => r.action)).toEqual(["current", "updated", "updated"]);
+  expect(second.map((r) => r.action)).toEqual([
+    "current",
+    "current",
+    "current",
+    "updated",
+    "updated",
+  ]);
   expect(read("verifier").model).toBeUndefined();
 });
 
@@ -272,6 +284,8 @@ test("G a Codex role model in the workspace config, W the launcher syncs the age
         models: {
           roles: {
             verifier: { codex: { model: "gpt-5.1-codex-mini", effort: "low" } },
+            decider: { codex: { model: "gpt-5.5", effort: "high" } },
+            babysit: { codex: "gpt-5.1-codex-mini" },
             implementer: {
               mundane: { codex: "gpt-5.1-codex-mini" },
               standard: { codex: "gpt-5.1-codex-mini" },
@@ -288,6 +302,8 @@ test("G a Codex role model in the workspace config, W the launcher syncs the age
   }
   expect(read("verifier").model).toBe("gpt-5.1-codex-mini");
   expect(read("verifier").model_reasoning_effort).toBe("low");
+  expect(read("decider")).toMatchObject({ model: "gpt-5.5", model_reasoning_effort: "high" });
+  expect(read("babysitter").model).toBe("gpt-5.1-codex-mini");
   // The implementer agent serves every tier: tiers that differ leave it unset.
   expect(read("implementer").model).toBeUndefined();
 });

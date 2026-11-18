@@ -309,7 +309,7 @@ test(
     const target = path.join(fixture, "output");
     try {
       mkdirSync(path.join(fixture, "packages"));
-      for (const pkg of ["workit-core", "workit-cursor"]) {
+      for (const pkg of ["workit-core", "workit-cursor", "workit-claude-code"]) {
         cpSync(path.join(REPO_ROOT, "packages", pkg), path.join(fixture, "packages", pkg), {
           recursive: true,
           filter: (src) => !src.includes(`${path.sep}node_modules`),

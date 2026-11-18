@@ -39,7 +39,7 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
 6. **Retry once, then escalate.** A stuck or failed slice gets one retry with
    a fresh brief (`workit fanout brief <slice> --mode resume`, same branch);
    if that fails too, re-slice it, take it over, or report the gap. Never
-   chain resumes. A fix round and recheck that both fail: a decider, not a
+   chain resumes. A fix round and recheck that both fail: the decider agent, not a
    third round; product choices go to the user (`references/orchestration.md`).
 7. **Verify by the workspace `verification` setting** (`workit grant show`).
    A report is a pointer, never evidence. `proportional` (default): each slice's lane (`workit pr status`) decides; none needs no verdict, self the author's `--self`, focused and full a verifier (Claude Code: the `model` and `effort` of `workit models show --role verifier`) after the last push; one verdict at a stack's top covers its unchanged lower PRs, and a stale one with `reverify: focused` re-checks only the new diff, reusing green CI. `self`: a verifier that wrote none

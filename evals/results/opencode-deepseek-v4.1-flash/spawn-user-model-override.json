@@ -1,0 +1,39 @@
+{
+  "case": "spawn-user-model-override",
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "23094732a0ba3080",
+  "date": "2026-11-18T22:38:47.935Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 10,
+    "durationMs": 55348,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 14,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "5 denied and 3 failed of 8 Workit interaction(s): #3 Bash(ls -la ~ ~/.config 2>/dev/null | head -60; find / -maxdepth 4 -name \"opencode.json*\" 2>/dev/null | head) denied: Permission denied: shell; #4 Bash(opencode models 2>&1 | head -50) denied: Permission denied: shell; #5 Glob({\"pattern\":\"**/opencode.json*\",\"path\":\"<world>\"}) denied: Permission denied: external_directory; #6 Read({\"path\":\"<world>\"}) denied: Permission denied: external_directory; #10 Agent(workit-verifier: Verify greet-version branch) failed: Model \"anthropic/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #11 Agent(workit-verifier: Verify greet-version branch) failed: Model \"opencode/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #12 Agent(workit-verifier: Verify greet-version branch) failed: Model \"opencode-go/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #13 Bash(env | sort | grep -iE 'opencode|anthropic|model|provider') denied: Permission denied: shell"
+      }
+    ],
+    "firstTry": {
+      "interactions": 8,
+      "failed": 3,
+      "denied": 5
+    }
+  }
+}

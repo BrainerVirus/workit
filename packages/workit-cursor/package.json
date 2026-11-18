@@ -35,6 +35,7 @@
     "rules/workit-contract.mdc",
     "skills/",
     "commands/",
+    "agents/",
     "hooks/hooks-cursor.json",
     "hooks/launch.mjs",
     "hooks/launch-runtime.mjs",

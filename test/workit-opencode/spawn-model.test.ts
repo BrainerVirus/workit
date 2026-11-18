@@ -1,7 +1,7 @@
-// #654: OpenCode's `subagent` tool takes `model` (providerID/modelID), so the
-// plugin's execute.before sets the configured role model on each fresh spawn;
-// before, OpenCode ran every subagent on the lead's model whatever
-// models.roles said.
+// #654, D1: OpenCode's `subagent` tool takes `model` (providerID/modelID), so
+// the plugin's execute.before sets the configured role model on a fresh spawn
+// that names none; a registered `workit-<role>` agent already carries its
+// model, and a model the spawn names wins unless models.enforce is strict.
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -108,19 +108,30 @@ test("G models.roles.verifier set to an OpenCode provider/model, W the lead spaw
         prompt: "ROLE: verifier\nCheck.",
       }),
     ).toMatchObject({ model: "anthropic/claude-sonnet-5-5" });
+    expect(await host.nextTurn()).toContain("Workit set anthropic/claude-sonnet-5-5");
+    // The registered workit-verifier agent carries the model: nothing to fill or say.
     expect(
       await host.spawn({ agent: "workit-verifier", description: "verify", prompt: "Check." }),
-    ).toMatchObject({ model: "anthropic/claude-sonnet-5-5" });
-    expect(await host.nextTurn()).toContain("Workit set anthropic/claude-sonnet-5-5");
+    ).not.toHaveProperty("model");
+    expect(await host.nextTurn()).not.toContain("Workit set");
   } finally {
     host.close();
   }
 });
 
-test("G a configured verifier model, W the lead passes another model, T the configured one wins and a note says so; allowLeadOverride true keeps the lead's", async () => {
+test("G a configured verifier model, W the lead passes another model, T the lead's model wins; under enforce strict the configured one wins with a note unless allowLeadOverride", async () => {
   config({ roles: { verifier: { opencode: "openai/gpt-5.5" } } });
   const host = await plugin();
   try {
+    expect(
+      await host.spawn({
+        agent: "workit-verifier",
+        prompt: "Check.",
+        model: "openai/gpt-5-mini",
+      }),
+    ).toMatchObject({ model: "openai/gpt-5-mini" });
+    expect(await host.nextTurn()).not.toContain("<workit-note>");
+    config({ enforce: "strict", roles: { verifier: { opencode: "openai/gpt-5.5" } } });
     const input = await host.spawn({
       agent: "general",
       prompt: "ROLE: verifier\nCheck.",
@@ -129,10 +140,14 @@ test("G a configured verifier model, W the lead passes another model, T the conf
     expect(input).toMatchObject({ model: "openai/gpt-5.5" });
     const note = await host.nextTurn();
     expect(note).toContain("replaced model openai/gpt-5-mini with openai/gpt-5.5");
-    expect(note).toContain('"allowLeadOverride": true');
+    expect(note).toContain('set models.enforce "advise"');
     // Delivered once.
     expect(await host.nextTurn()).not.toContain("replaced model");
-    config({ roles: { verifier: { opencode: "openai/gpt-5.5" } }, allowLeadOverride: true });
+    config({
+      enforce: "strict",
+      roles: { verifier: { opencode: "openai/gpt-5.5" } },
+      allowLeadOverride: true,
+    });
     expect(
       await host.spawn({ agent: "general", prompt: "ROLE: verifier", model: "openai/gpt-5-mini" }),
     ).toMatchObject({ model: "openai/gpt-5-mini" });

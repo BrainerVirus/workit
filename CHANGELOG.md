@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Workit roles spawn by name with the right model on the first try: each host carries the role's model and effort in its own agent definition (Claude Code `workit:verifier|reviewer|implementer`, new `workit:decider` on Fable at high effort and `workit:babysitter`; OpenCode registers `workit-<role>` agents from your `models.roles`; Codex and Cursor agent files). A model you name on a spawn always wins, so `Explore` on another model just runs. A configured model that differs from the agent file is filled outside auto mode or noted under auto mode; a spawn is denied over model or effort only with `models.enforce: "strict"`. `workit models show` prints how each host applies each role.
 - GitHub release notes start with the release's CHANGELOG.md entries, above
   the list of PR titles, and the release moves them from [Unreleased] into a
   `## [x.y.z] - date` section. Every `workit-dev-v*` release since 1.0.0 is

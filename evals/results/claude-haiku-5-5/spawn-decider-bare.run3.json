@@ -2,35 +2,26 @@
   "case": "spawn-decider-bare",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "f414b431dfd6fada",
-  "date": "2026-11-18T16:45:22.671Z",
+  "workitVersion": "workit-dev-v2.13.0+bcbf4e5c87",
+  "key": "4e59a352700ba989",
+  "date": "2026-11-18T22:14:38.409Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 32548,
-    "costUsd": 0.26107332,
+    "turns": 0,
+    "durationMs": 7,
+    "costUsd": 0.22176595,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 5,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#1 Agent(general-purpose: Decide JSON vs TOML for settings) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly model: \"fable\", effort: \"high\", run_in_background: false (description and prompt as wri"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 0 failed of 2 Workit interaction(s): #1 Agent(general-purpose: Decide JSON vs TOML for settings) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly model: \"fable\", effort: \"high\", run_in_background: false (description and prompt as wri"
-      }
-    ],
+    "pass": true,
+    "calls": 7,
+    "failures": [],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 3,
       "failed": 0,
-      "denied": 1
+      "denied": 0
     }
   }
 }

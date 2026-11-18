@@ -1,19 +1,22 @@
-// Role models on a Claude Code subagent spawn (#420, #654): a spawn runs on
-// its role's model (and effort) from the role config. A model the spawn names
-// wins over a built-in default, and over a configured one only with
-// `models.allowLeadOverride`. A spawn that lacks its role's values is filled
-// through PreToolUse `updatedInput` with a note naming them for next time,
-// except under auto mode, which refuses a hook-rewritten call (retro
-// 2026-11-07 R1): there it is denied once with the exact Agent args to pass.
-// A type with no role, or a value the Agent tool cannot take, runs as written.
-// Before choosing, the hook reads this project's recent transcripts for a
-// usage limit (model-limit.ts, #655): a role whose list names a model of
-// another provider then runs on it, and the lead learns which worker to
-// re-dispatch.
+// Role models on a Claude Code subagent spawn (#420, #654, D1): a Workit
+// agent's own file carries its model and effort, and a model the spawn names
+// wins. A spawn whose role is configured to another model or effort than its
+// agent file (or a general spawn's role) is filled through PreToolUse
+// `updatedInput` with a note; under auto mode, which refuses a hook-rewritten
+// call, it runs as written and the lead gets one line naming what ran and
+// what is configured. Only `models.enforce: "strict"` holds a spawn to its
+// configured model (a named one too, unless `models.allowLeadOverride`):
+// under auto mode it is denied once with the exact Agent args. A type with no
+// role, or a value the Agent tool cannot take, runs as written. Before
+// choosing, the hook reads this project's recent transcripts for a usage
+// limit (model-limit.ts, #655): a role whose list names a model of another
+// provider then runs on it, and the lead learns which worker to re-dispatch.
 import {
+  CLAUDE_AGENT_FILES,
   CLAUDE_EFFORTS,
   chooseSpawnModel,
   claudeAgentModel,
+  enforceMode,
   roleForAgentType,
 } from "../core/role-models";
 import { scanClaudeTranscripts } from "./model-limit";
@@ -57,13 +60,13 @@ const respawn = (
   return {
     kind: "deny",
     reason: [
-      `workit spawn args: spawn again with exactly ${args} (description and prompt as written${without}).`,
-      ...reasons,
-      "Workit denies instead of rewriting the spawn: Claude Code's auto mode refuses a hook-rewritten spawn.",
+      `workit spawn args: ${reasons.join(" ")}`,
+      `Retry as: Agent ${args} (description and prompt as written${without}).`,
+      "Why: auto mode refuses a hook-rewritten spawn.",
       limits,
     ]
       .filter(Boolean)
-      .join(" "),
+      .join("\n"),
     unblock: args,
   };
 };
@@ -89,9 +92,11 @@ export type SpawnOptions = {
 };
 
 /**
- * A spawn missing its role's model or effort: under auto mode a deny naming
- * the exact args (retro 2026-11-07 R1: auto mode refuses an `updatedInput`
- * rewrite), in any other mode an `updatedInput` fill with a note naming them.
+ * A spawn missing its role's model or effort (one its agent file does not
+ * carry): outside auto mode an `updatedInput` fill with a note naming them;
+ * under auto mode, which refuses an `updatedInput` rewrite (retro 2026-11-07
+ * R1), one context line, or under `models.enforce: "strict"` a deny naming the
+ * exact args.
  */
 export const agentModelDecision = (
   cwd: string,
@@ -114,15 +119,20 @@ export const agentModelDecision = (
   const selector = roleForAgentType(tool.subagent_type, tool.prompt);
   if (!selector) return asWritten(null);
   const choice = chooseSpawnModel(cwd, selector, "claude_code", tool, claudeAgentModel);
+  const file = String(tool.subagent_type).startsWith("workit:")
+    ? CLAUDE_AGENT_FILES[selector.role]
+    : undefined;
   const effort = choice.effort?.toLowerCase() ?? null;
   const input: Record<string, unknown> = { ...tool };
-  if (choice.model) input.model = choice.model;
-  if (effort && CLAUDE_EFFORTS.has(effort) && !given(tool.effort)) input.effort = effort;
+  if (choice.model && (given(tool.model) || choice.model !== file?.model))
+    input.model = choice.model;
+  if (effort && CLAUDE_EFFORTS.has(effort) && !given(tool.effort) && effort !== file?.effort)
+    input.effort = effort;
   const needs = [
     input.model === tool.model ? null : `model ${String(input.model)}`,
     input.effort === tool.effort ? null : `effort ${String(input.effort)}`,
   ].filter(Boolean);
-  if (!needs.length) return asWritten(choice.note);
+  if (!needs.length) return asWritten(choice.model ? null : choice.note);
   if (!auto) {
     const note =
       choice.note ??
@@ -133,16 +143,21 @@ export const agentModelDecision = (
       text: [...change.notes, withNextSpawn(note, input), limits].filter(Boolean).join("\n"),
     };
   }
+  if (enforceMode(cwd) === "advise") {
+    if (changed) return respawn(tool, change.reasons, change.dropped, limits);
+    const ran = file ? `${file.model}${file.effort ? `/${file.effort}` : ""}` : "its default model";
+    const pass = spawnArgsText({ model: input.model, effort: input.effort });
+    return asWritten(
+      `Workit: this ${String(tool.subagent_type || "general-purpose")} spawn runs on ${ran}; ${choice.basis} sets ${needs.join(" and ")}. To use it, pass ${pass} on the spawn.`,
+    );
+  }
   const replaced = given(tool.model) && input.model !== tool.model;
   return respawn(
     input,
     [
       ...change.reasons,
-      `It needs ${needs.join(" and ")}: ${choice.basis ?? "its role"}.`,
-      replaced
-        ? `That replaces model ${String(tool.model)}: a configured role model wins unless "allowLeadOverride": true is set under models in workspaces.json.`
-        : "",
-    ].filter(Boolean),
+      `It needs ${needs.join(" and ")} (${choice.basis}, models.enforce strict)${replaced ? `, not ${String(tool.model)}` : ""}.`,
+    ],
     change.dropped,
     limits,
   );

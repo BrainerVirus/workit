@@ -1,0 +1,40 @@
+{
+  "case": "spawn-explore-user-model",
+  "run": 3,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "3fa66cd7f4ee2e9a",
+  "date": "2026-11-18T22:36:04.300Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 31679,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 7,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 3 failed of 5 Workit interaction(s): #1 Bash(opencode models 2>/dev/null | grep -i sonnet) denied: Permission denied: shell; #3 Agent(explore: Locate hello() definition) failed: Model \"anthropic/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #4 Glob({\"pattern\":\"**/*.json*\",\"path\":\"/root/.config/opencode\"}) denied: Permission denied: external_directory; #6 Agent(explore: Locate hello() definition) failed: Model \"opencode-go/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #7 Agent(explore: Locate hello() definition) failed: Model \"anthropic/claude-sonnet-4\" is not available. Use the models tool to see what is available."
+      }
+    ],
+    "firstTry": {
+      "interactions": 5,
+      "failed": 3,
+      "denied": 2
+    }
+  }
+}

@@ -150,10 +150,15 @@ const MODELS_EDITOR = closed({
     description:
       "The lead's own model per host, or a list in fallback order; advisory (Workit cannot set a session's model, it prints a switch notice when the lead's provider hits its usage limit).",
   },
+  enforce: {
+    enum: ["advise", "strict"],
+    description:
+      "advise (default): a role's model lives in each host's agent definition, a model named on a spawn wins and no spawn is denied over its model; strict: a configured role model beats a named one (unless allowLeadOverride) and Claude Code's auto mode denies a spawn that lacks it.",
+  },
   allowLeadOverride: {
     type: "boolean",
     description:
-      "True lets a model the lead names on a spawn win over the configured role model (default false).",
+      "Under enforce strict, true lets a model the lead names on a spawn win over the configured role model (default false).",
   },
   limitWindow: {
     anyOf: [

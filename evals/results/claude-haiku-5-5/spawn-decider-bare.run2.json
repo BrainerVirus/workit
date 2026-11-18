@@ -2,26 +2,32 @@
   "case": "spawn-decider-bare",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "f414b431dfd6fada",
-  "date": "2026-11-18T16:44:47.704Z",
+  "workitVersion": "workit-dev-v2.13.0+bcbf4e5c87",
+  "key": "4e59a352700ba989",
+  "date": "2026-11-18T22:13:57.300Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 0,
-    "durationMs": 6,
-    "costUsd": 0.005826919999999999,
+    "turns": 2,
+    "durationMs": 41501,
+    "costUsd": 0.25118848,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 7,
+    "calls": 6,
     "failures": [],
     "firstTry": {
       "interactions": 1,
       "failed": 0,
       "denied": 0
     }
-  }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/9082cba2802aac05ae9726dbf70ab9c5/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
 }

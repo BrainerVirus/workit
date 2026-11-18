@@ -35,6 +35,7 @@ import {
   type PendingShells,
 } from "./shell-session";
 import { injectSkillNudge, observeSkillLoad } from "./skills";
+import { installRoleAgents } from "./agents";
 import {
   applySpawnModel,
   injectLeadSwitch,
@@ -224,6 +225,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
       });
     }
   });
+  const stopRoleAgents = await installRoleAgents(root, (ctx as Partial<Context>).agent as never);
   const shellWorkdirs: ShellWorkdirs = new Map();
   const pendingShells: PendingShells = new Map();
   const spawnNotes: SpawnNotes = new Map();
@@ -353,6 +355,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   })();
   return () => {
     subscription.abort();
+    stopRoleAgents();
   };
 };
 

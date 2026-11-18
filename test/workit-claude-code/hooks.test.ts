@@ -423,12 +423,14 @@ test("Given a verifier or general-purpose spawn with isolation, When the launche
   }
 });
 
-test("Given role models in workspaces.json, When a spawn names its own model, Then the launcher loads the runtime and the configured role model wins (#654)", () => {
+test("Given role models and models.enforce strict in workspaces.json, When a spawn names its own model, Then the launcher loads the runtime and the configured role model wins (#654, D1)", () => {
   const cwd = root();
   const dir = mkdtempSync(path.join(tmpdir(), "wk-cfg-"));
   writeFileSync(
     path.join(dir, "workspaces.json"),
-    JSON.stringify({ models: { roles: { verifier: { claude_code: "claude-opus-5-5" } } } }),
+    JSON.stringify({
+      models: { enforce: "strict", roles: { verifier: { claude_code: "claude-opus-5-5" } } },
+    }),
   );
   const run = runHook(
     PLUGIN_DIR,

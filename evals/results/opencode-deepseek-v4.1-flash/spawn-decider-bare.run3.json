@@ -3,36 +3,48 @@
   "run": 3,
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
-  "provider": "free",
-  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
-  "key": "91ee40b6b266b2dd",
-  "date": "2026-11-18T16:05:02.019Z",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "b51866a9428c7d01",
+  "date": "2026-11-18T22:33:19.843Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 10,
-    "durationMs": 67448,
+    "turns": 3,
+    "durationMs": 15813,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 17,
+    "calls": 4,
     "failures": [
       {
         "rule": "require",
         "detail": "no call matches /decider/ not denied: the decider spawn runs on the first try"
-      },
-      {
-        "rule": "first-try",
-        "detail": "7 denied and 0 failed of 11 Workit interaction(s): #3 Bash(cd <world>/repo && npx -y @workit-dev/cli help 2>&1 | sed -n '60,200p') denied: Permission denied: shell; #4 Bash(cd <world>/repo && cat README.md; echo ---; cat settings.json; echo ---; ls config home 2>/dev/null; find <world>/config) denied: Permission denied: shell; #8 Bash(find <world>/xdg <world>/config <world>/home -maxdepth 4 -type f 2>/dev/null) denied: Permission denied: shell; #10 Glob({\"pattern\":\"**/*\",\"path\":\"<world>/xdg\",\"hidden\":true}) denied: Permission denied: external_directory; #11 Read({\"path\":\"<world>/config/config.json\"}) denied: Permission denied: external_directory; #12 Bash(npx -y @workit-dev/cli models --help 2>&1; npx -y @workit-dev/cli worker --help 2>&1 | head -40) denied: Permission denied: shell; #14 Bash(npx -y @workit-dev/cli help 2>&1 | sed -n '58,90p') denied: Permission denied: shell"
       }
     ],
     "firstTry": {
-      "interactions": 11,
+      "interactions": 0,
       "failed": 0,
-      "denied": 7
+      "denied": 0
     }
-  }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/issued/3d12f7c8b5b435c151a2e2a65b4421e9/9f15acb7ff9372ea8d97f9413c12cf70",
+      "change": "created"
+    },
+    {
+      "path": "~/.local/state/workit/issued-tokens/3d12f7c8b5b435c151a2e2a65b4421e9/9f15acb7ff9372ea8d97f9413c12cf70",
+      "change": "created"
+    }
+  ]
 }

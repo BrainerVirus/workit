@@ -3,32 +3,38 @@
   "run": 4,
   "host": "opencode",
   "model": "deepseek-v4.1-flash",
-  "provider": "free",
-  "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
-  "key": "91ee40b6b266b2dd",
-  "date": "2026-11-18T16:05:52.563Z",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "b51866a9428c7d01",
+  "date": "2026-11-18T22:33:42.661Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 45237,
+    "durationMs": 16147,
     "costUsd": 0,
     "stop": "stop"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 2,
+    "calls": 4,
     "failures": [
       {
-        "rule": "first-try",
-        "detail": "1 denied and 0 failed of 2 Workit interaction(s): #1 Bash(ls -a && printf '%s\\n' '---' && git log --oneline -5) denied: Permission denied: shell"
+        "rule": "require",
+        "detail": "no call matches /decider/ not denied: the decider spawn runs on the first try"
       }
     ],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 0,
       "failed": 0,
-      "denied": 1
+      "denied": 0
     }
   }
 }

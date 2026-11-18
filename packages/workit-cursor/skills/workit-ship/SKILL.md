@@ -29,7 +29,7 @@ once the verdict is accepted. `merged`: step 7. `null` (closed, not merged):
 stop and report. Stop early only for a new consequential choice, a host
 denial, a review comment that needs a product decision, a required update
 that repeats because the base keeps moving, or after 3 failed fix attempts on
-the same check. Fix round and recheck both failed: a decider (read the `workit-fanout` skill's SKILL.md and follow it).
+the same check. Fix round and recheck both failed: the decider agent (read the `workit-fanout` skill's SKILL.md and follow it).
 
 1. **Open.** Last before the PR, if `workit grant show` has `changelog: update|create`: write the Unreleased entry with `workit changelog apply`, commit it; with `docs: when-user-facing` fix only docs the diff made false (`references/changelog.md`).
    Full local check (`workit check ci` when `.workit/checks.json` has a `ci` group), push once: `workit git push`, then `workit pr template` and fill the template it prints: every heading, each `<!-- -->` replaced (Workit's: `references/pr-body.md`).

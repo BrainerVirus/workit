@@ -1,12 +1,12 @@
 {
-  "passed": 24,
-  "total": 38,
+  "passed": 25,
+  "total": 41,
   "firstTry": {
-    "interactions": 476,
-    "failed": 0,
-    "denied": 96
+    "interactions": 543,
+    "failed": 17,
+    "denied": 124
   },
-  "outsideChanges": 8,
+  "outsideChanges": 12,
   "cases": [
     {
       "case": "approve-flow",
@@ -1553,75 +1553,46 @@
       "case": "spawn-decider-bare",
       "pass": false,
       "firstTry": {
-        "interactions": 14,
+        "interactions": 2,
         "failed": 0,
-        "denied": 8
+        "denied": 1
       },
-      "passes": 0,
+      "passes": 1,
       "failures": ["require", "first-try"],
-      "turns": 24,
+      "turns": 16,
       "costUsd": 0,
-      "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+      "workitVersion": "workit-dev-v2.13.0+0594686564",
       "graderVersion": 2,
+      "outsideChanges": 2,
       "runs": [
         {
           "case": "spawn-decider-bare",
-          "pass": false,
+          "pass": true,
           "firstTry": {
             "interactions": 1,
             "failed": 0,
             "denied": 0
           },
           "provider": "free",
-          "failures": ["require"],
-          "turns": 4,
-          "costUsd": 0,
-          "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
-          "graderVersion": 2
-        },
-        {
-          "case": "spawn-decider-bare",
-          "pass": false,
-          "firstTry": {
-            "interactions": 0,
-            "failed": 0,
-            "denied": 0
-          },
-          "provider": "free",
-          "failures": ["require"],
+          "failures": [],
           "turns": 3,
           "costUsd": 0,
-          "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
           "graderVersion": 2
         },
         {
           "case": "spawn-decider-bare",
           "pass": false,
           "firstTry": {
-            "interactions": 11,
-            "failed": 0,
-            "denied": 7
-          },
-          "provider": "free",
-          "failures": ["require", "first-try"],
-          "turns": 10,
-          "costUsd": 0,
-          "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
-          "graderVersion": 2
-        },
-        {
-          "case": "spawn-decider-bare",
-          "pass": false,
-          "firstTry": {
-            "interactions": 2,
+            "interactions": 1,
             "failed": 0,
             "denied": 1
           },
           "provider": "free",
-          "failures": ["first-try"],
-          "turns": 3,
+          "failures": ["require", "first-try"],
+          "turns": 4,
           "costUsd": 0,
-          "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
           "graderVersion": 2
         },
         {
@@ -1634,9 +1605,132 @@
           },
           "provider": "go",
           "failures": ["require"],
+          "turns": 3,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2,
+          "outsideChanges": 2
+        },
+        {
+          "case": "spawn-decider-bare",
+          "pass": false,
+          "firstTry": {
+            "interactions": 0,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": ["require"],
+          "turns": 3,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-decider-bare",
+          "pass": false,
+          "firstTry": {
+            "interactions": 0,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": ["require"],
+          "turns": 3,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        }
+      ]
+    },
+    {
+      "case": "spawn-explore-user-model",
+      "pass": false,
+      "firstTry": {
+        "interactions": 21,
+        "failed": 11,
+        "denied": 8
+      },
+      "passes": 0,
+      "failures": ["require", "first-try"],
+      "turns": 34,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v2.13.0+0594686564",
+      "graderVersion": 2,
+      "runs": [
+        {
+          "case": "spawn-explore-user-model",
+          "pass": false,
+          "firstTry": {
+            "interactions": 1,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": ["require"],
           "turns": 4,
           "costUsd": 0,
-          "workitVersion": "workit-dev-v2.8.1+a8367ae4c5",
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-explore-user-model",
+          "pass": false,
+          "firstTry": {
+            "interactions": 4,
+            "failed": 2,
+            "denied": 2
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 6,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-explore-user-model",
+          "pass": false,
+          "firstTry": {
+            "interactions": 5,
+            "failed": 3,
+            "denied": 2
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 6,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-explore-user-model",
+          "pass": false,
+          "firstTry": {
+            "interactions": 6,
+            "failed": 4,
+            "denied": 1
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 8,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-explore-user-model",
+          "pass": false,
+          "firstTry": {
+            "interactions": 5,
+            "failed": 2,
+            "denied": 3
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 10,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
           "graderVersion": 2
         }
       ]
@@ -1650,6 +1744,193 @@
       "costUsd": 0,
       "workitVersion": "workit-dev-v1.1.1+1769f18bec",
       "graderVersion": 1
+    },
+    {
+      "case": "spawn-user-model-override",
+      "pass": false,
+      "firstTry": {
+        "interactions": 39,
+        "failed": 6,
+        "denied": 25
+      },
+      "passes": 0,
+      "failures": ["first-try", "require"],
+      "turns": 50,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v2.13.0+0594686564",
+      "graderVersion": 2,
+      "outsideChanges": 2,
+      "runs": [
+        {
+          "case": "spawn-user-model-override",
+          "pass": false,
+          "firstTry": {
+            "interactions": 8,
+            "failed": 3,
+            "denied": 5
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 10,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-user-model-override",
+          "pass": false,
+          "firstTry": {
+            "interactions": 7,
+            "failed": 0,
+            "denied": 7
+          },
+          "provider": "go",
+          "failures": ["require", "first-try"],
+          "turns": 10,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-user-model-override",
+          "pass": false,
+          "firstTry": {
+            "interactions": 10,
+            "failed": 3,
+            "denied": 5
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 10,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2,
+          "outsideChanges": 1
+        },
+        {
+          "case": "spawn-user-model-override",
+          "pass": false,
+          "firstTry": {
+            "interactions": 9,
+            "failed": 0,
+            "denied": 4
+          },
+          "provider": "go",
+          "failures": ["require", "first-try"],
+          "turns": 10,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-user-model-override",
+          "pass": false,
+          "firstTry": {
+            "interactions": 5,
+            "failed": 0,
+            "denied": 4
+          },
+          "provider": "go",
+          "failures": ["require", "first-try"],
+          "turns": 10,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2,
+          "outsideChanges": 1
+        }
+      ]
+    },
+    {
+      "case": "spawn-verifier-bare",
+      "pass": true,
+      "firstTry": {
+        "interactions": 19,
+        "failed": 0,
+        "denied": 2
+      },
+      "passes": 4,
+      "failures": ["first-try"],
+      "turns": 32,
+      "costUsd": 0,
+      "workitVersion": "workit-dev-v2.13.0+0594686564",
+      "graderVersion": 2,
+      "runs": [
+        {
+          "case": "spawn-verifier-bare",
+          "pass": true,
+          "firstTry": {
+            "interactions": 1,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-verifier-bare",
+          "pass": false,
+          "firstTry": {
+            "interactions": 3,
+            "failed": 0,
+            "denied": 2
+          },
+          "provider": "go",
+          "failures": ["first-try"],
+          "turns": 7,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-verifier-bare",
+          "pass": true,
+          "firstTry": {
+            "interactions": 1,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": [],
+          "turns": 4,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-verifier-bare",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": [],
+          "turns": 4,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-verifier-bare",
+          "pass": true,
+          "firstTry": {
+            "interactions": 12,
+            "failed": 0,
+            "denied": 0
+          },
+          "provider": "go",
+          "failures": [],
+          "turns": 14,
+          "costUsd": 0,
+          "workitVersion": "workit-dev-v2.13.0+0594686564",
+          "graderVersion": 2
+        }
+      ]
     },
     {
       "case": "stop-hold",

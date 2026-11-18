@@ -361,9 +361,14 @@ test("agent-critical delivery rules stay stated", () => {
       skillText("workit-fanout"),
       "except the integration-tip rebase (integration mode)",
     ],
-    ["fanout orchestration", fanoutOrchestration(), "| mundane | `haiku` |"],
-    ["fanout orchestration", fanoutOrchestration(), "| explore, babysit | `haiku` |"],
-    ["fanout orchestration", fanoutOrchestration(), "| hard | `opus` |"],
+    [
+      "fanout orchestration",
+      fanoutOrchestration(),
+      "| mundane | `haiku` (the brief's SPAWN line) |",
+    ],
+    ["fanout orchestration", fanoutOrchestration(), "| babysitter | `haiku` (agent file) |"],
+    ["fanout orchestration", fanoutOrchestration(), "| hard | `opus` (the brief's SPAWN line) |"],
+    ["fanout orchestration", fanoutOrchestration(), "spawn it by name and pass no `model`"],
     ["fanout orchestration", fanoutOrchestration(), "workit models show"],
     ["fanout orchestration", fanoutOrchestration(), "escalate instead of a third worker"],
     ["fanout orchestration", fanoutOrchestration(), "keep the one with the best verdict"],
@@ -518,7 +523,7 @@ test("Given the session contract, When it is read, Then it names --cwd, one verb
   expect(bootstrap).toContain("no variable named `status` or `path`");
 });
 
-test("Given a SessionStart in a workspace with models.roles, When the contract renders for Claude Code, Then one line names every Workit agent type's model and effort; other hosts and no session get the static contract (retro 2026-11-07 R1)", () => {
+test("Given a SessionStart in a workspace with models.roles, When the contract renders for Claude Code, Then one line says to spawn roles by name and lists only the roles whose configured model differs from the agent file; other hosts and no session get the static contract (D1)", () => {
   const home = useConfigHome("wk-methods-roles-");
   const cwd = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-methods-roles-cwd-")));
   try {
@@ -541,12 +546,10 @@ test("Given a SessionStart in a workspace with models.roles, When the contract r
       }),
     );
     const contract = invariantBootstrap({ cwd, host: "claude_code" });
-    const lines = contract
-      .split("\n")
-      .filter((line) => line.startsWith("Agent spawn model/effort"));
+    const lines = contract.split("\n").filter((line) => line.startsWith("Spawn Workit roles"));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toBe(
-      "Agent spawn model/effort (pass them, workers with run_in_background: true): workit:implementer hard opus/high, standard sonnet, mundane haiku, workit:verifier sonnet/medium, workit:reviewer opus, Explore haiku, ROLE: decider fable/high, ROLE: babysit haiku. Implementer prompt: `workit fanout brief <slice>` after `workit fanout worktree create <slice>`, even for one slice.",
+      "Spawn Workit roles by name (workit:implementer, workit:verifier, workit:reviewer, workit:decider, workit:babysitter; search: Explore), workers with run_in_background: true, and pass no model or effort unless the user named one; configured here (pass them): workit:implementer hard opus/high, workit:verifier sonnet/medium. Implementer prompt: `workit fanout brief <slice>` after `workit fanout worktree create <slice>`, even for one slice.",
     );
     expect(contract.startsWith(invariantBootstrap())).toBe(true);
     for (const host of ["codex_cli", "opencode", "cursor", "pi"])
