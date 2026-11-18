@@ -78,6 +78,7 @@ const SECTION = /^##\s+\[([^\]]+)\]/;
 const GROUP = /^###\s+/;
 const BULLET = /^[-*]\s+/;
 const LINK = /^\[[^\]]+\]:\s+\S/;
+const HEADING = /^#{2,3}\s/;
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const KEY_LENGTH = 100;
 
@@ -281,12 +282,14 @@ const contentLines = (text: string): string[] =>
   text
     .replace(/\r\n/g, "\n")
     .split("\n")
-    .filter((line) => line.trim() !== "" && !LINK.test(line));
+    .filter((line) => line.trim() !== "" && !LINK.test(line) && !HEADING.test(line));
 
 /**
- * The non-blank lines of `before` that `after` holds fewer times, link
- * definitions aside (a roll rewrites those). A roll only moves lines and adds
- * headings, so any line here means it lost text.
+ * The non-blank lines of `before` that `after` holds fewer times. Link
+ * definitions and `##`/`###` headings are left out: a roll rewrites links, and
+ * merges an emptied [Unreleased] group into the same-named group of a version
+ * section, so a heading can legitimately appear fewer times. Every entry and
+ * continuation line counts, so any line here means the roll lost text.
  */
 export function lostLines(before: string, after: string): string[] {
   const left = new Map<string, number>();

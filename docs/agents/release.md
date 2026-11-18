@@ -52,8 +52,9 @@ a checkout without them, such as CI's `fast checks` job (depth 1, no tags).
 
 The roll writes nothing and exits 1 when `[Unreleased]` holds an entry that
 its release's section already has (a merge put back what a roll moved), or
-when the result would hold any non-blank line fewer times than before (link
-definitions aside). Unknown flags and `--help` print the usage and exit 2.
+when the result would hold any entry or continuation line fewer times than
+before (`##`/`###` headings and link definitions aside: a roll merges an
+emptied group into the same-named group of a version and rewrites links). Unknown flags and `--help` print the usage and exit 2.
 If `roll-changelog.ts` fails in a release, semantic-release stops at
 generateNotes or prepare, before it creates the tag, the GitHub release or
 any npm publish.

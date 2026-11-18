@@ -127,15 +127,14 @@ test("Given --help, an unknown flag or a flag without its value, Then the roll p
   }
 });
 
-test("A roll that would drop a continuation line or a group heading is caught by the line guard", () => {
+test("The line guard catches a dropped continuation line and ignores headings a roll merges", () => {
   const before =
     "## [Unreleased]\n\n### Changed (retro 2026-11-17)\n\n- **Bold.** First\n  second line.\n";
   expect(
     lostLines(before, "## [Unreleased]\n\n### Changed (retro 2026-11-17)\n\n- **Bold.** First\n"),
   ).toEqual(["  second line."]);
-  expect(lostLines(before, "## [Unreleased]\n\n- **Bold.** First\n  second line.\n")).toEqual([
-    "### Changed (retro 2026-11-17)",
-  ]);
+  // A group heading that merges into a version's same-named group is structure, not text.
+  expect(lostLines(before, "## [Unreleased]\n\n- **Bold.** First\n  second line.\n")).toEqual([]);
   // Moving lines into a new section and rewriting link definitions loses nothing.
   const rolled = rollChangelog(
     `${before}\n[Unreleased]: https://github.com/acme/w/compare/a...HEAD\n`,
@@ -148,4 +147,42 @@ test("A roll that would drop a continuation line or a group heading is caught by
   expect(rolled.text).toContain(
     "## [1.0.1] - 2026-01-02\n\n### Changed (retro 2026-11-17)\n\n- **Bold.** First\n  second line.",
   );
+});
+
+/** The real file with [1.14.0]'s second `### Fixed` entry moved under a new [Unreleased] `### Fixed`. */
+function fixedEntryBackInUnreleased(): { text: string; entry: string } {
+  const fixed = versionGroups(REAL, "1.14.0").find((g) => g.heading === "### Fixed");
+  const entry = fixed?.entries[1]?.lines.join("\n") ?? "";
+  expect(entry).toStartWith("- ");
+  expect(REAL.split(`${entry}\n`)).toHaveLength(2);
+  const text = REAL.replace(`${entry}\n`, "").replace(
+    "## [Unreleased]\n",
+    `## [Unreleased]\n\n### Fixed\n\n${entry}\n`,
+  );
+  return { text, entry };
+}
+
+test("Given an [Unreleased] entry whose release already has its group, When rolled, Then it joins that group and the roll succeeds", () => {
+  const { text, entry } = fixedEntryBackInUnreleased();
+  const dir = checkoutWith(text);
+  const { code, err, text: rolled } = run(dir, []);
+  expect(err).not.toContain("not rolled");
+  expect(code).toBe(0);
+  expect(lostLines(text, rolled)).toEqual([]);
+  const fixed = versionGroups(rolled, "1.14.0").find((g) => g.heading === "### Fixed");
+  expect(fixed?.entries.map((e) => e.lines.join("\n"))).toContain(entry);
+  expect(rolled).not.toContain("## [Unreleased]\n\n### Fixed\n");
+});
+
+test("Given that same file, When the release prepare runs, Then it succeeds and files the entry under its release, not the new one", () => {
+  const { text, entry } = fixedEntryBackInUnreleased();
+  const dir = checkoutWith(text);
+  const { code, text: rolled } = run(dir, ["--release", "9.9.9", "--date", "2026-11-19"]);
+  expect(code).toBe(0);
+  expect(
+    versionGroups(rolled, "1.14.0").flatMap((g) => g.entries.map((e) => e.lines.join("\n"))),
+  ).toContain(entry);
+  expect(
+    versionGroups(rolled, "9.9.9").flatMap((g) => g.entries.map((e) => e.lines.join("\n"))),
+  ).not.toContain(entry);
 });
