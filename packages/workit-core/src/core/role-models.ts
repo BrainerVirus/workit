@@ -352,17 +352,22 @@ export const roleEnforcement = (
   const uniform = role === "implementer" && !!uniformImplementerModel(cwd, host, dir);
   if (family === "pi")
     return role === "reviewer" || role === "explore" || uniform ? "spawn fill" : "advisory";
-  if (family === "opencode" && !FILE_ROLES.has(role) && !uniform) return "spawn fill";
+  if (family === "opencode") {
+    if (!FILE_ROLES.has(role) && !uniform) return "spawn fill";
+    // The registered agent takes only `provider/model[#variant]`; any other value is left to the lead.
+    const want =
+      role === "implementer"
+        ? uniformImplementerModel(cwd, host, dir)
+        : resolveRoleModel(cwd, selector, host, dir);
+    return !want || /^[^\s/#]+\/[^\s#]+(?:#\S+)?$/u.test(want.model) ? "agent file" : "advisory";
+  }
   // Cursor's plugin agents name no model: a configured one is the lead's to pass.
   if (family === "cursor")
     return FILE_ROLES.has(role) && !resolveRoleModel(cwd, selector, host, dir)
       ? "agent file"
       : "advisory";
-  return FILE_ROLES.has(role) || uniform
-    ? family === "opencode" || family === "codex"
-      ? "agent file"
-      : "advisory"
-    : "advisory";
+  if (family === "codex") return FILE_ROLES.has(role) || uniform ? "agent file" : "advisory";
+  return "advisory";
 };
 
 export type SpawnModelChoice = {

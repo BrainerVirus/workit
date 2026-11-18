@@ -146,6 +146,12 @@ test("G each host, W roleEnforcement reads a role, T it names agent file, spawn 
   withConfig({ roles: { verifier: "opus", explore: "haiku" } }, () => {
     expect(of("verifier", "claude_code")).toBe("spawn fill");
     expect(of("explore", "claude_code")).toBe("spawn fill");
+    // OpenCode's registered agent takes only provider/model: "opus" is the lead's to pass.
+    expect(of("verifier", "opencode")).toBe("advisory");
+    expect(of("verifier", "cursor")).toBe("advisory");
+  });
+  withConfig({ roles: { verifier: { opencode: "opencode/deepseek-v4.1-flash" } } }, () => {
+    expect(of("verifier", "opencode")).toBe("agent file");
   });
 });
 

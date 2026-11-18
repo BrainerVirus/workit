@@ -144,7 +144,7 @@ test("agents: each carries its model, verifier, reviewer and decider are read-on
     Object.fromEntries(
       readdirSync(agents).map((file) => {
         const meta = frontmatter(path.join(agents, file));
-        return [meta.name, [meta.model, meta.effort ?? null]];
+        return [meta.name, [meta.model, meta.effort ?? null] as [string, string | null]];
       }),
     ),
   ).toEqual({
