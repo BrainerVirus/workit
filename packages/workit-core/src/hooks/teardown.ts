@@ -95,13 +95,15 @@ function runCli(args: string[], env: NodeJS.ProcessEnv, cwd: string): boolean {
   try {
     const cli = locateWorkitCli({ env });
     log = openLog(env, args);
-    return teardownDeps.spawn({
+    const started = teardownDeps.spawn({
       command: cli.command,
       args: [...cli.args, ...args],
       env,
       cwd: fs.existsSync(cwd) ? cwd : teardownDir(env),
       log,
     });
+    if (!started && log !== null) fs.writeSync(log, "  not started\n");
+    return started;
   } catch {
     return false;
   } finally {

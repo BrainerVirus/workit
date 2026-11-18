@@ -305,6 +305,10 @@ test("Given the hook cannot spawn the CLI, Then session end and start answer fai
   );
   expect(started.error).toBeNull();
   expect(existsSync(reapStamp(process.env))).toBe(false);
+  // The log says the stop and the reap never started.
+  expect(readFileSync(teardownLog(process.env), "utf8").match(/ {2}not started\n/gu)).toHaveLength(
+    2,
+  );
 
   teardownDeps.spawn = () => {
     throw new Error("spawn exploded");
