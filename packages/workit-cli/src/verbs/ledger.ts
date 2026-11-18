@@ -143,9 +143,10 @@ function liftSuperseded(
 ): string[] {
   const target = superseded ? rows.find((row) => row.id === superseded) : undefined;
   if (!target || !Array.isArray(target.keep)) return [];
+  const again = new Set(keptAgain);
   const ids = target.keep.flatMap((value) => {
     const parsed = parseKeepTarget(String(value), io.cwd);
-    return parsed?.kind === "proc" && !keptAgain.includes(parsed.target) ? [parsed.target] : [];
+    return parsed?.kind === "proc" && !again.has(parsed.target) ? [parsed.target] : [];
   });
   if (!ids.length) return [];
   // Another live decision that still keeps a process takes over its keep.
