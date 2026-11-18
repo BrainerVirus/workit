@@ -67,10 +67,12 @@ let launcher = "";
 
 /**
  * Write the platform's owned launcher (`bin/workit`, `bin\\workit.cmd` on
- * Windows), marked as Workit's, running `script` with this runtime, or nothing.
+ * Windows), marked as Workit's, running `script` with `node` as a real owned
+ * launcher runs the CLI, or nothing. Not this runtime: on the Windows runner a
+ * Bun child ran but its stdout never reached the append-only log handle.
  */
 const writeLauncher = (script: string | null) => {
-  const run = script ? `"${process.execPath}" "${script}"` : null;
+  const run = script ? `node "${script}"` : null;
   writeFileSync(
     launcher,
     process.platform === "win32"
