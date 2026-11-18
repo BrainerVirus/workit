@@ -32,7 +32,13 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { youTrackBaseUrl, youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
-import { ISSUE_RE } from "@workit-dev/core/src/core/youtrack-tools";
+import {
+  draftLines,
+  forgetDraft,
+  ISSUE_RE,
+  showDraft,
+  type ShownDraft,
+} from "@workit-dev/core/src/core/youtrack-tools";
 import {
   findDuplicate,
   forgetPending,
@@ -76,7 +82,7 @@ import {
   ytrackUpgradeUnblock,
   type YtrackFeature,
 } from "@workit-dev/core/src/core/youtrack-ytrack";
-import { emit, fail, ok, type Io } from "../output";
+import { emit as emitEnvelope, fail, ok, type Envelope, type Io } from "../output";
 import { parseFlags, positiveInt, usage } from "./forge-common";
 
 const USAGE =
@@ -108,6 +114,34 @@ const copyOf = (io: Io, name: string, content: Buffer): string => {
   return file;
 };
 
+/**
+ * The draft a call posts (#864 drafts): printed in full before any outcome,
+ * and carried as `draft` in every JSON envelope of the run, so the agent
+ * pastes the exact text the user approves.
+ */
+type Draft = { target: string; text: string; what: string };
+const drafts = new WeakMap<Io, ShownDraft>();
+
+/** Print `draft` whole (with the diff from its last print) and keep it for the envelope. */
+const presentDraft = (io: Io, draft: Draft): void => {
+  const shown = showDraft(draft.target, draft.text);
+  drafts.set(io, shown);
+  if (!io.json) for (const line of draftLines(shown, draft.what)) io.stdout(`${line}\n`);
+};
+
+/** emit, with the run's draft in a JSON envelope's data. */
+function emit<T>(
+  io: Io,
+  envelope: Envelope<T>,
+  human?: (data: T) => string | readonly string[],
+): number {
+  const shown = drafts.get(io);
+  if (!shown || !io.json) return emitEnvelope(io, envelope, human);
+  const { target, sha256, text, diff } = shown;
+  const data = { ...(envelope.data as object), draft: { target, sha256, text, diff } } as T;
+  return emitEnvelope(io, { ...envelope, data }, human);
+}
+
 type Write = (yt: YouTrackBackend, marked: (text: string) => string) => Promise<WriteResult>;
 
 /** One write of a call, in the order the call makes them. */
@@ -130,6 +164,8 @@ type Plan = {
   action: string;
   effect: string;
   subject: Record<string, unknown>;
+  /** The text the user reads before saying yes, when the call posts one. */
+  draft?: Draft;
   /** A ytrack feature the writes need, checked before asking. */
   needs?: { feature: YtrackFeature; what: string };
 };
@@ -160,6 +196,7 @@ export async function run(
     if (dir) rmSync(dir, { recursive: true, force: true });
     loaders.delete(io);
     copies.delete(io);
+    drafts.delete(io);
   }
 }
 
@@ -292,6 +329,11 @@ function legacyPlan(
         comment: markdown,
         ...(minutes ? { minutes, date: localDate } : {}),
       },
+      draft: {
+        target: `youtrack:${issueId}:comment`,
+        text: markdown,
+        what: `comment on ${issueId}`,
+      },
     };
   }
   if (!minutes) return `${sub} needs --minutes <n>`;
@@ -313,6 +355,9 @@ function legacyPlan(
     action,
     effect: `logs ${minutes} minutes on ${issueId} on ${localDate}`,
     subject: { minutes, text, date: localDate },
+    ...(text.trim()
+      ? { draft: { target: `youtrack:${issueId}:time`, text, what: `time-log text on ${issueId}` } }
+      : {}),
   };
 }
 
@@ -485,6 +530,23 @@ function updatePlan(
     action: `workit youtrack update ${issueId}`,
     effect: `on ${issueId} at ${trackerName()}, in order: ${effects.map((effect, index) => `${index + 1}. ${effect}`).join("; ")}`,
     subject,
+    ...(comment !== null
+      ? {
+          draft: {
+            target: `youtrack:${issueId}:comment`,
+            text: comment,
+            what: `comment on ${issueId}`,
+          },
+        }
+      : flags.values.text?.trim()
+        ? {
+            draft: {
+              target: `youtrack:${issueId}:time`,
+              text: flags.values.text,
+              what: `time-log text on ${issueId}`,
+            },
+          }
+        : {}),
     ...(files.length
       ? {
           needs:
@@ -550,6 +612,7 @@ async function runPlan(
   argv: readonly string[],
 ): Promise<number> {
   const { issueId, steps } = plan;
+  if (mode === "ask" && plan.draft) presentDraft(io, plan.draft);
   if (mode === "auto") {
     const gate = youTrackWriteGate(io.env, `workit youtrack ${plan.verb}`);
     if (gate) return emit(io, fail(gate.code, gate.error, { unblock: gate.unblock }));
@@ -669,6 +732,7 @@ async function runPlan(
       );
     }
   }
+  if (plan.draft) forgetDraft(plan.draft.target);
   return emit(
     io,
     ok({
@@ -909,6 +973,12 @@ async function create(
   if (typeof files === "string") return usage(io, files, USAGE);
   const commands = commandsOf(flags);
   if (typeof commands === "string") return usage(io, commands, USAGE);
+  if (mode === "ask" && description?.trim())
+    presentDraft(io, {
+      target: `youtrack:${project}:new:${summary.trim()}`,
+      text: description,
+      what: `description of the new ${project} issue`,
+    });
   if (mode === "auto") {
     const gate = youTrackWriteGate(io.env, "creating a YouTrack issue");
     if (gate)
@@ -1016,6 +1086,7 @@ async function create(
       ),
     );
   }
+  forgetDraft(`youtrack:${project}:new:${summary.trim()}`);
   return emit(io, ok({ ...result.data, ...(after.length ? { steps } : {}) }), (data) => [
     `created ${data.issueId}${data.url ? ` ${data.url}` : ""}`,
     ...(after.length

@@ -49,6 +49,7 @@ import {
 } from "@workit-dev/core/src/git/release";
 import { inlineAskSession } from "@workit-dev/core/src/approvals/ask-session";
 import { releaseNotesAsk } from "@workit-dev/core/src/approvals/release-notes-ask";
+import { draftLines, showDraft } from "@workit-dev/core/src/core/youtrack-tools";
 import {
   consumeInlineAsk,
   INLINE_TICKET_ENV,
@@ -477,12 +478,15 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
   if (!context.ok) return forgeFail(io, context);
   // A release package's draft and approval are keyed by its tag.
   const packageTag = context.data.package ? context.data.tag : null;
+  // The last print of this draft, for the diff a revision shows (#864 drafts).
+  const notesTarget = `release-notes:${context.data.tag}`;
   const mode = `releaseNotes: ${context.data.mode}${context.data.modeFrom === "default" ? " (default)" : ` (${context.data.modeFrom})`}`;
   if (action === "draft") {
     const written = writeReleaseNotesDraft(io.cwd, context.data, {
       reset: flags.booleans.has("reset"),
     });
     if (!written.ok) return forgeFail(io, written);
+    const shown = showDraft(notesTarget, written.data.notes);
     const missing = context.data.package
       ? missingSectionNote(context.data, context.data.package)
       : null;
@@ -495,11 +499,12 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
         package: context.data.package,
         mode: context.data.mode,
         ...(missing ? { note: missing } : {}),
+        diff: shown.diff,
       }),
       (data) => [
         `release notes draft for ${version}: ${data.path} (${mode}${data.keptHighlights ? "; kept its Highlights" : ""})`,
         "",
-        data.notes.trimEnd(),
+        ...draftLines(shown, `release notes of ${version}`),
         "",
         ...(missing ? [`note: ${missing}`] : []),
         data.keptHighlights
@@ -523,12 +528,18 @@ async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<numbe
     );
   const approval = latestReleaseNotesApproval(io.cwd, context.data.version, packageTag);
   const approved = approval?.sha256 === draft.sha256;
-  if (action === "show")
-    return emit(io, ok({ ...draft, version, mode: context.data.mode, approved }), (data) => [
-      `release notes draft for ${version}: ${data.path} (${mode}; ${approved ? "approved" : approval ? "changed since approved" : "not approved"})`,
-      "",
-      data.notes.trimEnd(),
-    ]);
+  if (action === "show") {
+    const shown = showDraft(notesTarget, draft.notes);
+    return emit(
+      io,
+      ok({ ...draft, version, mode: context.data.mode, approved, diff: shown.diff }),
+      (data) => [
+        `release notes draft for ${version}: ${data.path} (${mode}; ${approved ? "approved" : approval ? "changed since approved" : "not approved"})`,
+        "",
+        ...draftLines(shown, `release notes of ${version}`),
+      ],
+    );
+  }
   if (ticket) return approveFromHost(io, rest, ticket, { ...context.data, draft, approveCmd });
   if (!io.json)
     io.stdout(`${draft.notes.trimEnd()}

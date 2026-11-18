@@ -382,6 +382,34 @@ test("Given release notes draft run twice, Then the second keeps the Highlights 
   expect(repo.git("status", "--porcelain")).toBe("");
 });
 
+test("Given a release notes draft, When it is printed and then edited, Then each print holds the full text and its hash, and the one after the edit leads with the diff", async () => {
+  const repo = forgeRepo();
+  workspace(repo, {});
+  await started(repo);
+  const first = await withHome(configHome.home, () =>
+    run(["release", "notes", "draft", "1.0.0"], repo.cwd),
+  );
+  expect(first.code, first.stderr).toBe(0);
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 12);
+  expect(first.stdout).toContain(
+    `--- release notes of 1.0.0: show this to the user verbatim in chat, in full (sha256 ${sha(EXPECTED_BODY)}) ---`,
+  );
+  expect(first.stdout).toContain(EXPECTED_BODY.trimEnd());
+  expect(first.stdout).not.toContain("changed since last shown");
+  addHighlights(repo, "- One");
+  const shown = await run(["release", "notes", "show", "1.0.0"], repo.cwd);
+  const notes = `## Highlights\n\n- One\n\n${EXPECTED_BODY}`;
+  expect(shown.stdout).toContain(`(sha256 ${sha(notes)})`);
+  expect(shown.stdout).toContain(
+    "changed since last shown (- removed, + added):\n+## Highlights\n+\n+- One\n+\n",
+  );
+  expect(shown.stdout).toContain(
+    `the new full text:\n${notes.trimEnd()}\n--- end of release notes of 1.0.0 ---`,
+  );
+  const again = await run(["release", "notes", "show", "1.0.0", "--json"], repo.cwd);
+  expect(again.json().data).toMatchObject({ notes, diff: null });
+});
+
 test("Given a GitLab remote, When the draft is written, Then its compare link is the GitLab one", async () => {
   const repo = forgeRepo("git@gitlab.com:g/sub/p.git");
   workspace(repo, { vcs: { provider: "gitlab" } });
