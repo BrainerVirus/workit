@@ -2631,9 +2631,121 @@ export function recordVerdictVoid(
   return recorded;
 }
 
+/** Verdicts that claim the checks passed: only these are held to the head their checks ran on. */
+const CHECKED_RESULTS: ReadonlySet<string> = new Set(["verified", "tests-verified"]);
+
+/**
+ * Whose `workit check` rows a verdict session is held to. A host-derived id
+ * `S:a` owns the rows stamped session S and agent id a; a plain session S owns
+ * its rows with no agent id. Host limit (hosts.md#host-parity): no host stamps
+ * WORKIT_AGENT_ID yet, so on Claude Code and Codex a subagent's rows carry the
+ * lead's S and no agent id. Until a host stamps one, the `S:a` branch matches
+ * nothing (such a verifier is held only through --evidence and the CLI's
+ * check_missing/check_failing gates) and a lead's plain S owns every run its
+ * subagents made. Never a false refusal: it only narrows who is held.
+ */
+function sessionOwnsRun(session: string, row: ReadRow): boolean {
+  const colon = session.indexOf(":");
+  const agent = row.actor.agentId ?? null;
+  return colon > 0
+    ? row.actor.session === session.slice(0, colon) && agent === session.slice(colon + 1)
+    : row.actor.session === session && agent === null;
+}
+
+/**
+ * The check runs a verdict on `head` would outlive (retro C20): the check rows
+ * named in `refs` that ran on another head or on a dirty worktree (unless a
+ * cited clean run of the same check is on `head`); and, per
+ * check name, the session's latest run on the branch when it ran on another
+ * head (or dirty) and no clean run of that name by the session is on `head`
+ * (a run of a configured check is cleared only by a configured run). Names
+ * in `ciCovered` are skipped: CI on the head covered them. A run its caller
+ * stopped (`interrupted`) is no evidence either way.
+ */
+function evidenceOffHead(
+  rows: readonly ReadRow[],
+  input: {
+    branch: string;
+    head: string;
+    session: string | null;
+    refs: readonly string[];
+    ciCovered: ReadonlySet<string>;
+  },
+): ReadRow[] {
+  const runs = rows.filter(
+    (row) =>
+      row.type === "check" &&
+      row.observer === "workit_cli" &&
+      row.result !== "interrupted" &&
+      typeof row.head === "string" &&
+      row.head !== "",
+  );
+  const onHead = (row: ReadRow) => row.head === input.head && row.dirty !== true;
+  const cited = runs.filter((row) => input.refs.includes(row.id));
+  // A cited run on an older head is cleared by a cited clean run of the same check on this one.
+  const named = cited.filter(
+    (row) =>
+      !onHead(row) &&
+      !cited.some((other) => onHead(other) && str(other.name) !== null && other.name === row.name),
+  );
+  if (!input.session) return named;
+  const session = input.session;
+  const latest = new Map<string, ReadRow>();
+  const cleared = new Set<string>();
+  for (const row of runs) {
+    const name = str(row.name);
+    if (!name || row.branch !== input.branch || !sessionOwnsRun(session, row)) continue;
+    // An ad-hoc `--name <n> -- <cmd>` never stands in for a configured run of <n>.
+    if (latest.get(name)?.configured === true && row.configured !== true) continue;
+    latest.set(name, row);
+  }
+  for (const row of runs) {
+    const name = str(row.name);
+    const last = name ? latest.get(name) : undefined;
+    if (!name || !last || row.branch !== input.branch || !sessionOwnsRun(session, row)) continue;
+    if (onHead(row) && (last.configured !== true || row.configured === true)) cleared.add(name);
+  }
+  const stale = [...latest.entries()]
+    .filter(([name, row]) => !cleared.has(name) && !input.ciCovered.has(name) && !onHead(row))
+    .map(([, row]) => row);
+  return [...named, ...stale.filter((row) => !named.includes(row))];
+}
+
+/**
+ * The first of `runs` whose head the verdict cannot carry to `to`: a run on a
+ * dirty worktree, or a code change landed since it (core/policy/carry.ts, the
+ * rules `pr status` reads as "carried"). A docs, changelog or bookkeeping
+ * follow-up, tests only under a `unit` verdict, or a rebase with the patch
+ * unchanged carries. A run keyed to another base is compared on the verdict's.
+ */
+function uncarriedRun(
+  cwd: string,
+  runs: readonly ReadRow[],
+  to: { head: string; base: string | null; baseSha: string | null; kind: string },
+): { row: ReadRow; why: string } | null {
+  for (const row of runs) {
+    if (row.dirty === true)
+      return { row, why: "it ran on uncommitted changes, which no commit holds" };
+    const from = String(row.head);
+    const fromBase = (row.base === to.base ? str(row.baseSha) : null) ?? to.baseSha;
+    const drift =
+      to.baseSha && fromBase
+        ? verdictDrift(cwd, { from, to: to.head, fromBase, toBase: to.baseSha, kind: to.kind })
+        : null;
+    if (drift?.carries) continue;
+    const files = drift?.files;
+    const why = files?.length
+      ? `a code change landed since: ${files.slice(0, 8).join(", ")}${files.length > 8 ? ` and ${files.length - 8} more` : ""}`
+      : `a change landed since (${drift ? drift.reason : "no base to read it against"})`;
+    return { row, why };
+  }
+  return null;
+}
+
 /**
  * Record an agent-asserted verdict on a branch's committed head. Refused on a
- * dirty worktree (the head would not be what was judged) and, for an author
+ * dirty worktree (the head would not be what was judged), when its evidence
+ * ran on another head (the branch moved after the checks), and, for an author
  * session, unless `--self`. Without a session the verdict is recorded as
  * self: an unknown actor cannot be told apart from the author.
  */
@@ -2705,6 +2817,37 @@ export function recordVerdict(
       "commit or stash the changes, re-check, then record the verdict",
     );
   const session = context.actor.session;
+  // Only an independent verdict that claims the checks passed is held to
+  // their head; failed and blocked always record, and a --self verdict (never
+  // accepted) keeps its no-passing-test warning instead.
+  const offHead =
+    CHECKED_RESULTS.has(input.result) && input.self !== true
+      ? evidenceOffHead(ledger.value.rows, {
+          branch,
+          head: key.head,
+          session,
+          refs: input.evidenceRefs ?? [],
+          ciCovered: new Set(
+            (input.checkEvidence ?? [])
+              .filter((item) => item.via === "ci")
+              .map((item) => item.name),
+          ),
+        })
+      : [];
+  const moved = uncarriedRun(context.cwd, offHead, {
+    head: key.head,
+    base: key.base,
+    baseSha: key.baseSha,
+    kind,
+  });
+  if (moved) {
+    const from = String(moved.row.head).slice(0, 12);
+    return err(
+      "blocked",
+      `head_moved: the check run ${moved.row.id} (${str(moved.row.name) ?? "check"}) ran on ${from}${moved.row.dirty === true ? " (dirty)" : ""}${moved.row.head === key.head ? `, ${branch}'s head,` : `, but ${branch} is now at ${key.head.slice(0, 12)}`} and ${moved.why}; a verdict is keyed to the head, so it would claim ${key.head.slice(0, 12)} was judged`,
+      `judge ${key.head.slice(0, 12)}: run the checks on it (workit check <name> in a clean checkout of it), then record again; to judge ${from}, record on a branch whose head it is`,
+    );
+  }
   const selfReason: SelfReason | null =
     input.self === true ? "flag" : session && input.derivedFrom !== null ? null : "no_session";
   const self = selfReason !== null;

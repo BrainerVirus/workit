@@ -583,6 +583,24 @@ export function queuedBehind(holders: LeaseHolder[], position: number): string {
   return `queued behind ${holders.map((holder) => describeHolder(holder)).join("; ")}${waiters ? `, then ${waiters}` : ""}`;
 }
 
+/**
+ * "; test, pid 12 is another checkout's run (/wt/b), not this check's: …" for
+ * each heavy check holding the lease in another checkout (another git top
+ * level, nested or not). Subagents share one
+ * session id, so a holder's session can be this caller's own; its checkout
+ * tells the runs apart (retro C20).
+ */
+function otherCheckoutNote(holders: readonly LeaseHolder[], top: string): string {
+  // By git top level, not path containment: a worktree nested in this one
+  // (`.claude/worktrees/x`) is another checkout.
+  const others = holders.filter((holder) => !holder.kind && checkRoot(holder.cwd) !== top);
+  if (!others.length) return "";
+  const named = others
+    .map((holder) => `${holder.check}, pid ${holder.pid} is another checkout's run (${holder.cwd})`)
+    .join("; ");
+  return `; ${named}, not this check's: this check runs its own command in ${top}`;
+}
+
 /** A ledger row naming a holder whose slot was freed while it still ran (#608). */
 export function recordReaped(
   io: Io,
@@ -622,6 +640,8 @@ async function prepareHeavy(
   budget: Budget,
   label: string,
   runCwd: string,
+  /** The checkout this check runs in: a holder elsewhere is named as another checkout's run. */
+  top: string,
   timeoutMs: number,
   retry: (waitMs: number) => string,
 ): Promise<HeavyRun | number> {
@@ -686,14 +706,14 @@ async function prepareHeavy(
       const holders = status.holders.map((holder) => describeHolder(holder)).join("; ");
       const estimate = describeEstimate(estimateFor(status));
       if (progress.mode === "spinner") {
-        const text = `Waiting for the heavy-check lease: held by ${holders || "nobody; waiters ahead"}, queue position ${status.position}, ${estimate}`;
+        const text = `Waiting for the heavy-check lease: held by ${holders || "nobody; waiters ahead"}${otherCheckoutNote(status.holders, top)}, queue position ${status.position}, ${estimate}`;
         if (waiting) waiting.label(text);
         else waiting = progress.start(text);
         return;
       }
       io.stderr(
         status.first
-          ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (${waitSource})${settings.waitMs > 0 && !waitByTimeout ? ", then once more in the same place" : ""}; ${estimate}\n`
+          ? `workit: waiting for the heavy-check lease (${slots}): held by ${holders || "nobody; waiters ahead"}${otherCheckoutNote(status.holders, top)}; queued at position ${status.position}, waiting up to ${formatWait(settings.waitMs)} (${waitSource})${settings.waitMs > 0 && !waitByTimeout ? ", then once more in the same place" : ""}; ${estimate}\n`
           : `workit: still queued for the heavy-check lease: position ${status.position}, ${formatWait(status.waitedMs)} waited, ${estimate}; held by ${holders || "nobody; waiters ahead"}\n`,
       );
     },
@@ -716,7 +736,7 @@ async function prepareHeavy(
   if (!acquired.ok && acquired.reason === "timeout") {
     const holders = acquired.holders.map((holder) => describeHolder(holder)).join("; ");
     const waited = formatWait(acquired.waitedMs);
-    const behind = queuedBehind(acquired.holders, acquired.position);
+    const behind = `${queuedBehind(acquired.holders, acquired.position)}${otherCheckoutNote(acquired.holders, top)}`;
     const stuck = acquired.holders.some((holder) => holder.stuck);
     const requeued = acquired.requeuedAfterMs;
     const estimate = lastEstimate ?? estimateFor({ holders: acquired.holders, aheadOf: [] });
@@ -736,7 +756,7 @@ async function prepareHeavy(
               waitedMs: acquired.waitedMs,
               holders: acquired.holders,
               position: acquired.position,
-              queuedBehind: behind,
+              queuedBehind: queuedBehind(acquired.holders, acquired.position),
               requeuedAfterMs: requeued,
               estimatedWaitMs: estimate.ms,
               retry: command,
@@ -1034,6 +1054,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         withGate(budget),
         name ?? command.join(" "),
         runCwd,
+        top,
         options.timeoutMs,
         (waitMs) => retryCommand(argv, io.cwd, waitMs),
       );
@@ -1152,6 +1173,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     argv: bounded.argv,
     shell: options.shell,
     cwd: relCwd,
+    // The checkout it ran in: one ledger serves every worktree of the repo (C20).
+    checkout: top,
     result: passed ? "passed" : interruptedBy ? "interrupted" : "failed",
     ...(interruptedBy ? { signal: interruptedBy } : {}),
     exitCode: result.exitCode,
@@ -1221,6 +1244,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const data = {
     evidenceId: task.evidenceId,
     ledgerRowId: observation.ledgerRowId,
+    // This run's own checkout and workit pid, never a lease holder's (C20).
+    checkout: top,
+    pid: process.pid,
     name,
     argv: command,
     configured,
@@ -1264,7 +1290,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
           ? `cannot start ${command[0]}: ${result.spawnError}`
           : `exited ${result.exitCode}`
     : recordError?.message;
-  const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; log: ${logPath ?? "not stored"}`;
+  const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; ran in ${top}${key.head ? ` @ ${key.head.slice(0, 12)}` : ""}; log: ${logPath ?? "not stored"}`;
   if (io.json)
     io.stdout(
       `${JSON.stringify({ ok: code === "ok", code, data, ...(error ? { error } : {}), ...(task.stillUnsatisfied[0] ? { unblock: task.stillUnsatisfied[0].unblock } : {}) })}\n`,

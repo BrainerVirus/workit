@@ -82,6 +82,39 @@ side:
   The estimate uses each check's last measured run in the ledger of the repo it
   runs in: the holder's time left, then the runs of the waiters ahead. A check
   never measured gives `no wait estimate yet (no measured run of <check>)`.
+- **A holder in another checkout is not your run.** Subagents share the lead's
+  session id, so a holder can show your own session. A check never joins or
+  reports another run: when a holder runs in another worktree (one nested
+  inside yours included: checkouts are compared by git top level), the wait
+  line says so (`test, pid 4121 is another checkout's run (/wt/b), not this
+  check's: this check runs its own command in /wt/a`), and the check then
+  runs its own command in its own checkout. Its summary line says
+  `ran in <checkout> @ <head>`, its `--json` carries `checkout` and its own
+  `pid` (`lease.holder` is the run it waited behind), and its ledger row
+  records `checkout`, since every worktree of a repo shares one ledger.
+- **A verdict follows its checks' head.** An independent `verified` or
+  `tests-verified` verdict (not `--self`) is refused (`head_moved`, naming both SHAs and the changed files)
+  when its checks ran on an older head and a code change landed since:
+  - a run named by `--evidence` that ran on another head or on a dirty
+    worktree, unless a cited clean run of the same check is on the head;
+  - for each check name, the recording session's latest run on the branch,
+    when it ran on another head (or dirty) and no clean run of that name by
+    the session is on the head. A configured check is cleared only by a
+    configured run, never by an ad-hoc `--name <n> -- <cmd>`, and a check CI
+    covered on the head is skipped.
+
+  Whose runs count: a session is held to the runs stamped with it. No host
+  stamps an agent id on a check run yet, so on Claude Code and Codex every
+  subagent's `workit check` runs under the lead's session: a verdict recorded
+  as the lead's session is held to all of them (any clean configured run of a
+  check on the head, by any of its subagents, clears that check), while a
+  verifier recording as a derived `<lead>:<agent>` id is held only through
+  `--evidence` and the `check_missing`/`check_failing` gates until hosts stamp
+  one ([host parity](../agents/hosts.md#host-parity)). A follow-up the verdict would carry
+  anyway (what `workit pr status` reads as "carried": docs or changelog only,
+  tests only under a `unit` verdict, a rebase with the patch unchanged) does
+  not refuse, and `failed` or `blocked` always record. Run the checks on the
+  new head, then record.
 - **`workit lock status`** shows each holder's time left (`~9m left`, or
   `past its last 14m run`) and each waiter's estimated wait; `--json` adds them
   under `estimates`.
