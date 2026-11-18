@@ -75,7 +75,7 @@ for (const [runtime, plugin] of RUNTIMES) {
   });
 }
 
-test("Given the shipped hooks.json, When Claude reads it, Then prompt, tool and subagent hooks allow 15 s and SessionStart and Stop 20 s", () => {
+test("Given the shipped hooks.json, When Claude reads it, Then prompt, tool and subagent hooks allow 15 s, SessionStart and Stop 20 s and SessionEnd 10 s", () => {
   const hooks = JSON.parse(readFileSync(path.join(PLUGIN_DIR, "hooks", "hooks.json"), "utf8"))
     .hooks as Record<string, Array<{ hooks: Array<{ timeout: number }> }>>;
   const timeouts = Object.fromEntries(
@@ -86,6 +86,8 @@ test("Given the shipped hooks.json, When Claude reads it, Then prompt, tool and 
   );
   expect(timeouts).toEqual({
     SessionStart: [20],
+    // Above the 8 s default deadline; Claude waits max(1.5 s, this) at exit (2.1.327).
+    SessionEnd: [10],
     UserPromptSubmit: [15],
     PreToolUse: [15, 15, 15, 15, 15, 15],
     PostToolUse: [15],

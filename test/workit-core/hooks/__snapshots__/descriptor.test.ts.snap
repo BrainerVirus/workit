@@ -162,6 +162,10 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
         "native": "UserPromptSubmit",
         "support": "native",
       },
+      "session.end": {
+        "native": "SessionEnd",
+        "support": "native",
+      },
       "session.start": {
         "native": "SessionStart",
         "support": "native",
@@ -224,7 +228,7 @@ exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
       "worktreeIsolation": "native",
     },
     "transport": "hook-process",
-    "verifiedAgainst": "claude 2.1.288 (hook zod schemas in the binary)",
+    "verifiedAgainst": "claude 2.1.288 (hook zod schemas in the binary; SessionEnd: 2.1.327)",
   },
   "unobserved": [
     {
@@ -494,6 +498,10 @@ exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
       "prompt.submit": {
         "native": "UserPromptSubmit",
         "support": "native",
+      },
+      "session.end": {
+        "native": null,
+        "support": "none",
       },
       "session.start": {
         "native": "SessionStart",
@@ -853,6 +861,10 @@ exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
         "native": null,
         "support": "undocumented",
       },
+      "session.end": {
+        "native": "sessionEnd",
+        "support": "native",
+      },
       "session.start": {
         "native": "sessionStart",
         "support": "native",
@@ -1114,6 +1126,10 @@ exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
         "native": null,
         "support": "undocumented",
       },
+      "session.end": {
+        "native": "event("session.deleted")",
+        "support": "partial",
+      },
       "session.start": {
         "native": null,
         "support": "none",
@@ -1324,6 +1340,10 @@ exports[`host descriptors match their reviewed snapshots: pi 1`] = `
       "prompt.submit": {
         "native": null,
         "support": "undocumented",
+      },
+      "session.end": {
+        "native": "session_shutdown",
+        "support": "native",
       },
       "session.start": {
         "native": "session_start",

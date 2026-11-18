@@ -72,6 +72,12 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
   transport: "hook-process",
   events: {
     "session.start": { support: "native", native: "SessionStart" },
+    // codex-cli 0.169.0-alpha.11.1 runs SessionEnd hooks, but the payload has
+    // no agent id and subagents carry the lead's session_id, so a subagent's
+    // end could not be told from the lead's (L): not registered. The next
+    // session start's orphan reap stops a Codex session's processes once its
+    // host exits.
+    "session.end": { support: "none", native: null },
     "context.turn": { support: "native", native: "UserPromptSubmit" },
     "shell.pre": { support: "native", native: "PreToolUse" },
     "tool.pre": { support: "native", native: "PreToolUse" },

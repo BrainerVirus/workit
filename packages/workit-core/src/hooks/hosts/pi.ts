@@ -9,6 +9,9 @@ export const PI_DESCRIPTOR: HostDescriptor = {
   transport: "in-process-plugin",
   events: {
     "session.start": { support: "native", native: "session_start" },
+    // reason quit, reload, new, resume or fork (pi-coding-agent 1.4.0
+    // SessionShutdownEvent); only quit ends the process.
+    "session.end": { support: "native", native: "session_shutdown" },
     "context.turn": { support: "native", native: "before_agent_start" },
     "shell.pre": { support: "native", native: "tool_call" },
     "tool.pre": { support: "native", native: "tool_call" },

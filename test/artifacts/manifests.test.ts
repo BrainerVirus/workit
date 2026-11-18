@@ -100,6 +100,7 @@ test(
       ]);
       expect(Object.keys(hooks.hooks), source).toEqual([
         "sessionStart",
+        "sessionEnd",
         "preToolUse",
         "beforeShellExecution",
         "subagentStart",

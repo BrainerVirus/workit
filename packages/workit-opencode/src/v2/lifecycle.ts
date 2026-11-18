@@ -9,6 +9,7 @@ import { selectFanout } from "@workit-dev/core/src/fanout";
 import { currentBranch, worktreeTree } from "@workit-dev/core/src/git/rev";
 import { nativeWorkerFor, workerCoordinatorFor, type DirectChildren } from "../tools/workit";
 import { sameWorkspace } from "../shared/session";
+import { endSession, reapAtStart } from "@workit-dev/core/src/hooks/teardown";
 import { ambiguousLaunch, matchLaunch } from "./launch-match";
 
 /** V2 session facts the lifecycle binds to. `directory` is
@@ -759,9 +760,16 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     }
   };
 
+  // OpenCode has no start or exit event: the first event this plugin sees
+  // reaps orphans of dead sessions, once per interval per user (#328).
+  let reaped = false;
   const handleEvent = async (event: V2Event): Promise<void> => {
     const type = event.type;
     if (typeof type !== "string") return;
+    if (!reaped) {
+      reaped = true;
+      reapAtStart(root);
+    }
     if (type === "session.created") {
       const data = record(event.data);
       const sessionID = sessionIDOf(data.sessionID);
@@ -783,6 +791,14 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     if (type === "session.deleted") {
       const directory = event.location?.directory;
       if (typeof directory === "string" && !sameWorkspace(root, directory)) return;
+      // A deleted session's registered processes stop, detached (#328).
+      endSession({
+        host: "opencode",
+        session: sessionID,
+        agentId: null,
+        reason: "deleted",
+        cwd: root,
+      });
       // Sparse deletion carries no session facts; the persisted child binding
       // is the identity proof, and only deletion may skip a live read.
       await observeLifecycle(sessionID, binding?.parentID ?? "", "stopped", binding, true);

@@ -267,6 +267,7 @@ export const CURSOR_PRETOOLUSE_MATCHER =
 
 /** Workit-owned Cursor events besides sessionStart, in manifest order. */
 const CURSOR_HOOK_EVENTS = [
+  "sessionEnd",
   "preToolUse",
   "beforeShellExecution",
   "subagentStart",

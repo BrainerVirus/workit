@@ -15,6 +15,8 @@ export type SessionSource = "startup" | "resume" | "clear" | "compact" | "fork";
 
 export type HookEvent =
   | { kind: "session.start"; source: SessionSource }
+  /** The host session ends; `reason` is the host's own word (clear, resume, logout, quit…), null when it sends none. */
+  | { kind: "session.end"; reason: string | null }
   /** Per-turn injection (OpenCode session context, Pi before_agent_start, Claude UserPromptSubmit). */
   | {
       kind: "context.turn";
@@ -74,6 +76,7 @@ export type HookEventKind = HookEvent["kind"];
 
 export const HOOK_EVENT_KINDS = [
   "session.start",
+  "session.end",
   "context.turn",
   "shell.pre",
   "tool.pre",

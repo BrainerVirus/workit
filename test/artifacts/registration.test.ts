@@ -396,6 +396,7 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
   expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
   expect(changed).toEqual([
     "hooks.sessionStart",
+    "hooks.sessionEnd",
     "hooks.preToolUse",
     "hooks.beforeShellExecution",
     "hooks.subagentStart",
@@ -418,6 +419,7 @@ test("mergeCursorHooks is idempotent on canonical input", () => {
           command: SESSION_COMMAND,
         },
       ],
+      sessionEnd: [{ command: HOOK_COMMAND, failClosed: false }],
       preToolUse: [
         { command: HOOK_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: false },
       ],
@@ -506,11 +508,18 @@ test("a local install's hook entries carry the absolute launcher path, which dri
   const launcher = `node "${path.join(dir, "hooks", "launch.mjs")}"`;
   const { config } = mergeCursorHooks({ version: 1, hooks: {} }, { command: "s" }, dir);
   const hooks = config.hooks as Record<string, { command: string }[]>;
-  for (const event of ["preToolUse", "beforeShellExecution", "subagentStart", "subagentStop"])
+  for (const event of [
+    "sessionEnd",
+    "preToolUse",
+    "beforeShellExecution",
+    "subagentStart",
+    "subagentStop",
+  ])
     expect(hooks[event][0].command, event).toBe(`${launcher} workit-cursor-hook`);
   expect(cursorHookDrift(config, dir)).toEqual([]);
   // Without the plugin dir only the portable form is canonical.
   expect(cursorHookDrift(config)).toEqual([
+    "sessionEnd",
     "preToolUse",
     "beforeShellExecution",
     "subagentStart",

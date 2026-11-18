@@ -23,8 +23,9 @@ const hooksConfig = (file: string): Set<string> =>
   new Set(Object.keys((JSON.parse(read(file)) as { hooks: Record<string, unknown> }).hooks));
 
 /** `ctx.<area>.hook("<name>", …)` registrations and `event.type === "<name>"`
- * subscriptions, named as the descriptor names them. */
-const opencodeHooks = (file: string): Set<string> =>
+ * subscriptions, named as the descriptor names them, plus the event types the
+ * lifecycle the plugin hands every event to (`lifecycle.handleEvent`) reads. */
+const opencodeHooks = (file: string, lifecycle: string): Set<string> =>
   new Set([
     ...[...read(file).matchAll(/\bctx\.(\w+)\.hook\("([\w.]+)"/g)].map(
       ([, area, name]) => `${area}.hook("${name}")`,
@@ -32,6 +33,11 @@ const opencodeHooks = (file: string): Set<string> =>
     ...[...read(file).matchAll(/\bevent\.type === "([\w.]+)"/g)].map(
       ([, name]) => `event("${name}")`,
     ),
+    ...(read(file).includes("lifecycle.handleEvent(event)")
+      ? [...read(lifecycle).matchAll(/\btype === "([\w.]+)"/g)].map(
+          ([, name]) => `event("${name}")`,
+        )
+      : []),
   ]);
 
 /** `pi.on("<event>", …)` registrations. */
@@ -60,10 +66,13 @@ const HOSTS: Array<{
     exhaustive: true,
   },
   // In-process plugins also subscribe to bookkeeping events (Pi's
-  // session_compact, session_shutdown) that carry no protocol event.
+  // session_compact) that carry no protocol event.
   {
     descriptor: OPENCODE_DESCRIPTOR,
-    registered: opencodeHooks("workit-opencode/src/v2/plugin.ts"),
+    registered: opencodeHooks(
+      "workit-opencode/src/v2/plugin.ts",
+      "workit-opencode/src/v2/lifecycle.ts",
+    ),
     exhaustive: false,
   },
   {

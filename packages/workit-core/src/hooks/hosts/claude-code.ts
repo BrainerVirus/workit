@@ -38,6 +38,7 @@ import {
 
 type ClaudeHookEvent =
   | "SessionStart"
+  | "SessionEnd"
   | "UserPromptSubmit"
   | "PreToolUse"
   | "PostToolUse"
@@ -49,11 +50,15 @@ type ClaudeHookEvent =
 export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
   host: "claude_code",
   label: "Claude Code",
-  verifiedAgainst: "claude 2.1.288 (hook zod schemas in the binary)",
+  verifiedAgainst: "claude 2.1.288 (hook zod schemas in the binary; SessionEnd: 2.1.327)",
   docs: ["https://code.claude.com/docs/en/hooks"],
   transport: "hook-process",
   events: {
     "session.start": { support: "native", native: "SessionStart" },
+    // SessionEnd cannot block; its reason is clear, resume, logout,
+    // prompt_input_exit or other, and its hooks get max(1.5 s, the
+    // registered timeout) (claude 2.1.327).
+    "session.end": { support: "native", native: "SessionEnd" },
     "context.turn": { support: "native", native: "UserPromptSubmit" },
     "shell.pre": { support: "native", native: "PreToolUse" },
     "tool.pre": { support: "native", native: "PreToolUse" },
@@ -159,6 +164,7 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
 
 const EVENTS: Record<ClaudeHookEvent, HookEventKind> = {
   SessionStart: "session.start",
+  SessionEnd: "session.end",
   UserPromptSubmit: "context.turn",
   PreToolUse: "shell.pre",
   PostToolUse: "shell.post",
@@ -191,6 +197,8 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
             },
           }
         : { ok: false, error: "SessionStart source is required" };
+    case "SessionEnd":
+      return { ok: true, event: { kind: "session.end", reason: optionalText(value.reason) } };
     case "UserPromptSubmit":
       return {
         ok: true,

@@ -97,7 +97,10 @@ const HOOK_ENTRIES = [
 // Cursor 551,053 B, Codex 550,665 B). One ceiling for the round, core run plus 10,000 B, so no hook
 // slice edits it: procs-route and session-teardown 8,000 B together (wave 9's allowance, still
 // unspent), ft-spawn-models + ft-spawn-gate + ft-confine 2,000 B together. Each prints its delta in its PR.
-const BUDGET = 578_259;
+// Wave 12's spenders (2026-11-18, Bun 1.4.4, rebased on #899): ft-spawn-models (+694 B) and
+// session-teardown (+4,460 B: the session-end stop and session-start reap, hooks/teardown.ts)
+// took core run to 578,817 B. The ceiling is that plus 2,000 B.
+const BUDGET = 580_817;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
