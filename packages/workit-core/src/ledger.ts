@@ -2632,8 +2632,38 @@ export function recordVerdictVoid(
 }
 
 /**
+ * The check run a verdict on `head` would misattribute (retro C20): a check
+ * row named in `refs` that ran on another head, or else the session's latest
+ * check run on the branch when it ran on another head and none of the
+ * session's runs is on `head` (the branch moved after its checks). A run its
+ * caller stopped (`interrupted`) is no evidence either way.
+ */
+function evidenceOffHead(
+  rows: readonly ReadRow[],
+  input: { branch: string; head: string; session: string | null; refs: readonly string[] },
+): ReadRow | null {
+  const runs = rows.filter(
+    (row) =>
+      row.type === "check" &&
+      row.observer === "workit_cli" &&
+      row.result !== "interrupted" &&
+      typeof row.head === "string" &&
+      row.head !== "",
+  );
+  const named = runs.find((row) => input.refs.includes(row.id) && row.head !== input.head);
+  if (named) return named;
+  if (!input.session) return null;
+  const own = runs.filter(
+    (row) => row.branch === input.branch && row.actor.session === input.session,
+  );
+  if (own.some((row) => row.head === input.head)) return null;
+  return own.at(-1) ?? null;
+}
+
+/**
  * Record an agent-asserted verdict on a branch's committed head. Refused on a
- * dirty worktree (the head would not be what was judged) and, for an author
+ * dirty worktree (the head would not be what was judged), when its evidence
+ * ran on another head (the branch moved after the checks), and, for an author
  * session, unless `--self`. Without a session the verdict is recorded as
  * self: an unknown actor cannot be told apart from the author.
  */
@@ -2705,6 +2735,18 @@ export function recordVerdict(
       "commit or stash the changes, re-check, then record the verdict",
     );
   const session = context.actor.session;
+  const offHead = evidenceOffHead(ledger.value.rows, {
+    branch,
+    head: key.head,
+    session,
+    refs: input.evidenceRefs ?? [],
+  });
+  if (offHead)
+    return err(
+      "blocked",
+      `head_moved: the check run ${offHead.id} (${str(offHead.name) ?? "check"}) ran on ${String(offHead.head).slice(0, 12)}, but ${branch} is now at ${key.head.slice(0, 12)}; a verdict is keyed to the head, so it would claim ${key.head.slice(0, 12)} was judged`,
+      `judge ${key.head.slice(0, 12)}: run the checks on it (workit check <name> in a checkout of it), then record again; to judge ${String(offHead.head).slice(0, 12)}, record on a branch whose head it is`,
+    );
   const selfReason: SelfReason | null =
     input.self === true ? "flag" : session && input.derivedFrom !== null ? null : "no_session";
   const self = selfReason !== null;

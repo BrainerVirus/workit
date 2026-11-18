@@ -82,6 +82,19 @@ side:
   The estimate uses each check's last measured run in the ledger of the repo it
   runs in: the holder's time left, then the runs of the waiters ahead. A check
   never measured gives `no wait estimate yet (no measured run of <check>)`.
+- **A holder in another checkout is not your run.** Subagents share the lead's
+  session id, so a holder can show your own session. A check never joins or
+  reports another run: when a holder runs in another worktree, the wait line
+  says so (`test, pid 4121 is another checkout's run (/wt/b), not this
+  check's: this check runs its own command in /wt/a`), and the check then runs
+  its own command in its own checkout. Its summary line says
+  `ran in <checkout> @ <head>`, its `--json` carries `checkout` and its own
+  `pid` (`lease.holder` is the run it waited behind), and its ledger row
+  records `checkout`, since every worktree of a repo shares one ledger.
+- **A verdict follows its checks' head.** `workit ledger verdict` refuses
+  (`head_moved`, naming both SHAs) when the run named by `--evidence`, or the
+  recording session's last check run on the branch, ran on a head the branch
+  has since moved past: run the checks on the new head, then record.
 - **`workit lock status`** shows each holder's time left (`~9m left`, or
   `past its last 14m run`) and each waiter's estimated wait; `--json` adds them
   under `estimates`.
