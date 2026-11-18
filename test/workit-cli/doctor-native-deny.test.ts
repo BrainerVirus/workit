@@ -95,19 +95,20 @@ test("G a host the user never ran setup for, W doctor runs, T native_deny is inf
   expect(row.fix).toBe("workit setup --hosts=cursor");
 });
 
-test("G an OpenCode deny pattern Workit recorded writing for a path that moved, W doctor runs, T native_deny warns stale naming it", () => {
+const editDeny = (resource: string) => ({ action: "edit", resource, effect: "deny" });
+
+test("G an OpenCode deny rule Workit recorded writing for a path that moved, W doctor runs, T native_deny warns stale naming it", () => {
   const f = fixture("opencode-stale");
   const config = path.join(f.home, ".config", "opencode", "opencode.json");
   mkdirSync(path.dirname(config), { recursive: true });
   f.setup(["opencode"]);
   const old = "/old/home/.local/state/workit/issued*";
   const value = JSON.parse(readFileSync(config, "utf8"));
-  value.permission.edit[old] = "deny";
-  value.permission.edit["/srv/mine/approvals/*"] = "deny";
+  value.permissions.push(editDeny(old), editDeny("/srv/mine/approvals/*"));
   writeFileSync(config, JSON.stringify(value));
   const record = path.join(f.stateDir, "host-permissions.json");
   const owned = JSON.parse(readFileSync(record, "utf8"));
-  owned.hosts.opencode.owned.lists["permission.edit"].push(old);
+  owned.hosts.opencode.owned.lists.permissions.push(old);
   writeFileSync(record, JSON.stringify(owned));
   const row = f.doctor();
   expect(row.status).toBe("warn");
@@ -142,22 +143,22 @@ test("G Codex whose sandbox lets commands write the state dir, and Pi, W doctor 
   );
 });
 
-test("G OpenCode configs setup cannot merge into (permission.edit one action, only an opencode.jsonc), W doctor runs, T native_deny says why and what to change by hand, never the setup command that refuses", () => {
+test("G OpenCode configs setup cannot merge into (permissions not a list, only an opencode.jsonc), W doctor runs, T native_deny says why and what to change by hand in permissions, never the setup command that refuses", () => {
   const single = fixture("opencode-string");
   const config = path.join(single.home, ".config", "opencode", "opencode.json");
   mkdirSync(path.dirname(config), { recursive: true });
-  writeFileSync(config, JSON.stringify({ permission: { edit: "allow" } }));
+  writeFileSync(config, JSON.stringify({ permissions: { edit: "allow" } }));
   const row = single.doctor();
   expect(row.status).toBe("info");
   expect(row.detail).toBe(
-    `opencode: missing 5, and setup cannot write them: ${config} permission.edit is one action for every path ("allow"); make it a pattern map to take Workit's deny patterns`,
+    `opencode: missing 5, and setup cannot write them: ${config} permissions is not a list of rules; make it one to take Workit's edit deny rules`,
   );
   expect(row.fix).toStartWith(
-    `opencode: in ${config}, make permission.edit a pattern map and set `,
+    `opencode: in ${config}, append to the permissions list, after your own rules, one {"action": "edit", "resource": <path>, "effect": "deny"} rule for each of `,
   );
-  expect(row.fix).toContain('workspaces.json.seal to "deny"');
-  expect(row.fix).not.toContain("workit setup --hosts=opencode,");
-  expect(row.fix).not.toStartWith("workit setup");
+  expect(row.fix).toEndWith("workspaces.json.seal");
+  expect(row.fix).not.toContain("workit setup --hosts=opencode");
+  expect(row.fix).not.toContain("permission.edit");
 
   const commented = fixture("opencode-jsonc");
   const jsonc = path.join(commented.home, ".config", "opencode", "opencode.jsonc");
@@ -168,5 +169,58 @@ test("G OpenCode configs setup cannot merge into (permission.edit one action, on
   expect(second.detail).toStartWith(
     `opencode: missing 5, and setup cannot write them: ${jsonc} holds the OpenCode config`,
   );
-  expect(second.fix).toStartWith(`opencode: in ${jsonc}, make permission.edit a pattern map`);
+  expect(second.detail).toContain("add Workit's edit deny rules to its permissions list by hand");
+  expect(second.fix).toStartWith(`opencode: in ${jsonc}, append to the permissions list`);
+  expect(second.fix).toEndWith(
+    "or move the config to opencode.json and run workit setup --hosts=opencode",
+  );
+});
+
+test("G the user's own V2 permissions edit deny rules for every guarded path (no Workit setup), W doctor runs, T native_deny reports opencode present (#869)", () => {
+  const f = fixture("opencode-v2-own");
+  const config = path.join(f.home, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  // What setup writes, read back as the user's own file.
+  f.setup(["opencode"]);
+  const rules = JSON.parse(readFileSync(config, "utf8")).permissions;
+  rmSync(path.join(f.stateDir, "host-permissions.json"));
+  writeFileSync(
+    config,
+    JSON.stringify({ permissions: [{ action: "*", resource: "*", effect: "allow" }, ...rules] }),
+  );
+  const row = f.doctor();
+  expect(row.status).toBe("pass");
+  expect(row.detail).toBe("opencode: present");
+  expect(row.fix).toBeUndefined();
+});
+
+test("G neither OpenCode shape holds the guarded paths, W doctor runs, T native_deny names permissions and gives the setup command", () => {
+  const f = fixture("opencode-none");
+  const config = path.join(f.home, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  writeFileSync(config, JSON.stringify({ permission: { edit: "allow" } }));
+  const row = f.doctor();
+  expect(row.status).toBe("info");
+  expect(row.detail).toMatch(/^opencode: missing 5 in permissions \(.+\/issued\*, …\)$/u);
+  expect(row.fix).toBe("workit setup --hosts=opencode");
+});
+
+test("G Workit's patterns only in OpenCode's deprecated permission.edit map, W doctor runs, T native_deny counts them present and says setup moves them to permissions", () => {
+  const f = fixture("opencode-legacy");
+  const config = path.join(f.home, ".config", "opencode", "opencode.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  f.setup(["opencode"]);
+  const patterns: string[] = JSON.parse(readFileSync(config, "utf8")).permissions.map(
+    (rule: { resource: string }) => rule.resource,
+  );
+  writeFileSync(
+    config,
+    JSON.stringify({ permission: { edit: Object.fromEntries(patterns.map((p) => [p, "deny"])) } }),
+  );
+  const row = f.doctor();
+  expect(row.status).toBe("info");
+  expect(row.detail).toBe(
+    `opencode: present, ${patterns.length} only in the deprecated permission.edit map (setup moves them to permissions)`,
+  );
+  expect(row.fix).toBe("workit setup --hosts=opencode");
 });

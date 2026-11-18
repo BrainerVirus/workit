@@ -11,8 +11,9 @@
 //     settings.local.json: permissions.deny/ask/allow `Bash(...)` and `Bash`;
 //   - OpenCode: ~/.config/opencode/opencode.json(c), opencode.json(c) and
 //     .opencode/opencode.json(c) up to the git top, OPENCODE_CONFIG,
-//     OPENCODE_CONFIG_CONTENT: permission.bash / permission.shell and every
-//     agent.*.permission;
+//     OPENCODE_CONFIG_CONTENT: the V2 `permissions` rules whose action matches
+//     `shell` and every agents.*.permissions, and the deprecated V1
+//     permission.bash / permission.shell and every agent.*.permission;
 //   - Codex: ~/.codex/rules/*.rules and <project>/.codex/rules/*.rules
 //     (`prefix_rule(pattern=[…], decision=…)`);
 //   - Cursor: ~/.cursor/cli-config.json and <project>/.cursor/cli.json,
@@ -177,15 +178,54 @@ const opencodePermission = (permission: unknown, rules: Rules): boolean => {
   return true;
 };
 
-const opencodeConfig = (value: unknown, rules: Rules): boolean => {
-  if (!isRecord(value)) return false;
-  if (!opencodePermission(value.permission, rules)) return false;
-  if (value.agent === undefined) return true;
-  if (!isRecord(value.agent)) return false;
-  return Object.values(value.agent).every(
-    (agent) => isRecord(agent) && opencodePermission(agent.permission, rules),
-  );
+const EFFECTS = new Set(["allow", "ask", "deny"]);
+
+/** Does an OpenCode V2 action pattern (`*` any run, `?` one character) match `action`? */
+const actionMatches = (pattern: string, action: string): boolean =>
+  new RegExp(
+    `^${pattern
+      .split("")
+      .map((char) =>
+        char === "*" ? ".*" : char === "?" ? "." : char.replace(/[.+^${}()|[\]\\]/u, "\\$&"),
+      )
+      .join("")}$`,
+    "su",
+  ).test(action);
+
+/**
+ * A V2 `permissions` rule list's shell rules into `rules` (an action pattern
+ * that matches `shell` counts, so `*` does); false when it cannot be read.
+ */
+const opencodeRuleset = (ruleset: unknown, rules: Rules): boolean => {
+  if (ruleset === undefined) return true;
+  if (!Array.isArray(ruleset)) return false;
+  for (const rule of ruleset) {
+    if (!isRecord(rule)) return false;
+    const { action, resource, effect } = rule;
+    if (typeof action !== "string" || typeof resource !== "string") return false;
+    if (typeof effect !== "string" || !EFFECTS.has(effect)) return false;
+    if (actionMatches(action, "shell"))
+      (effect === "allow" ? rules.allow : rules.deny).push(resource);
+  }
+  return true;
 };
+
+/** The agents of a V2 `agents` or V1 `agent` map, each read with `read`. */
+const opencodeAgents = (
+  agents: unknown,
+  read: (agent: Record<string, unknown>) => boolean,
+): boolean => {
+  if (agents === undefined) return true;
+  if (!isRecord(agents)) return false;
+  return Object.values(agents).every((agent) => isRecord(agent) && read(agent));
+};
+
+const opencodeConfig = (value: unknown, rules: Rules): boolean =>
+  isRecord(value) &&
+  opencodeRuleset(value.permissions, rules) &&
+  opencodePermission(value.permission, rules) &&
+  opencodeAgents(value.agents, (agent) => opencodeRuleset(agent.permissions, rules)) &&
+  opencodeAgents(value.agent, (agent) => opencodePermission(agent.permission, rules));
 
 export function opencodeRules(cwd: string, env: NodeJS.ProcessEnv = process.env): RuleRead {
   const rules = EMPTY();

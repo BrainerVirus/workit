@@ -133,6 +133,58 @@ test("Given OpenCode configs (global jsonc, project, agent permissions, env cont
   expect(opencodeRules(repo, env)).toBe("unreadable");
 });
 
+test("Given OpenCode V2 `permissions` and `agents.<id>.permissions` rules (#869), When read, Then their shell rules count as the V1 equivalents do, beside V1 ones", () => {
+  const { repo, home, env } = setup();
+  // V2: ordered {action, resource, effect} rules; `shell` replaces V1 `bash`.
+  write(
+    path.join(home, ".config", "opencode", "opencode.jsonc"),
+    `{ // comment
+      "permissions": [
+        { "action": "shell", "resource": "npx *", "effect": "deny" },
+        { "action": "shell", "resource": "git status", "effect": "allow" },
+        { "action": "edit", "resource": "/srv/*", "effect": "deny" },
+        { "action": "*", "resource": "make *", "effect": "ask" },
+      ],
+      "permission": { "bash": { "rm *": "deny" } },
+    }`,
+  );
+  write(
+    path.join(repo, "opencode.json"),
+    JSON.stringify({
+      agents: {
+        reviewer: { permissions: [{ action: "shell", resource: "*", effect: "ask" }] },
+      },
+    }),
+  );
+  expect(opencodeRules(repo, env)).toEqual({
+    deny: ["npx *", "make *", "rm *", "*"],
+    allow: ["git status"],
+  });
+  // The same rules in V1 read the same.
+  const v1 = setup();
+  write(
+    path.join(v1.home, ".config", "opencode", "opencode.json"),
+    JSON.stringify({ permission: { bash: { "npx *": "deny", "git status": "allow" } } }),
+  );
+  write(
+    path.join(v1.repo, "opencode.json"),
+    JSON.stringify({ agent: { reviewer: { permission: { bash: { "*": "ask" } } } } }),
+  );
+  expect(opencodeRules(v1.repo, v1.env)).toEqual({
+    deny: ["npx *", "*"],
+    allow: ["git status"],
+  });
+  for (const odd of [
+    { permissions: { shell: "deny" } },
+    { permissions: [{ action: "shell", resource: "x", effect: "maybe" }] },
+    { permissions: [{ action: "shell", effect: "deny" }] },
+    { agents: { reviewer: { permissions: "deny" } } },
+  ]) {
+    write(path.join(repo, ".opencode", "opencode.json"), JSON.stringify(odd));
+    expect(opencodeRules(repo, env), JSON.stringify(odd)).toBe("unreadable");
+  }
+});
+
 test("Given Codex .rules files, When read, Then forbidden and prompt rules deny, allow rules allow, and a doubtful rule means unreadable", () => {
   const { repo, home, env } = setup();
   write(
