@@ -572,6 +572,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Verifiers and reviewers may run plain `git status`, `git remote get-url` / `remote -v`, `git range-diff` and `git worktree list`. A judge command that reads a path from a shell variable (`W=<path>; git -C $W …`) is refused with an exact `Retry as:` that spells the path in, and every judge, implementer and YouTrack-guard refusal now ends in one `Retry as:` or `Why:` line.
 - The `workit setup` summary lists the `ytrack auth paths` changes it will make before you apply (`ytrack paths: <globs> -> <host>`), or why they were skipped.
 - Raw ytrack writes on one issue chained in one command (a comment with `--attach`, `ytrack issue attach`, `ytrack work-item add`, `ytrack issue command`, a hand-built `ytrack api` POST to the issue's comments or attachments) are denied naming one `workit youtrack update` call, so the user answers one ask instead of one per write.
 - `workit pr create --issue` accepts a YouTrack issue URL (`/issue/AB2-142[/slug]`, `/projects/AB2/issues/AB2-142`) on the workspace's YouTrack, and YouTrack issue ids whose project has digits (`AB2-142`); a URL on another YouTrack is refused naming the configured host.
@@ -690,6 +691,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Judges can no longer redirect a write through shell-set or zsh-special variables (REPLY, OPTARG, MAPFILE, DIRSTACK, FUNCNAME, zsh `path`, NULLCMD and others), `${W:-…}` defaults, or zsh path modifiers; `python -m` and `node -p/--print` count as code that can write.
 - A check stopped by its caller (SIGTERM/SIGINT/SIGHUP, usually a tool timeout) is recorded as `interrupted`, not `failed`, prints a hint to run long checks in the background, and counts as missing evidence: the previous run on that head still stands, and the handoff shows the latest real result. `workit check --list` and a bare `workit check` print the configured checks.
 - A `workit check` whose worktree was removed while the check ran no longer recreates the removed folder with a stray `.workit` store: the result is not recorded, the command's exit code is kept, and the message names the missing path. Workit never creates a store under a folder that does not exist.
 - The eval bench says where a `private_content` refusal hit and what kind of value it was, never the value; it no longer refuses a run over the path of a checkout it links to itself; a linked package resolves its own dependencies in a linked worktree; and with write confinement on, another process changing a guarded file is reported instead of stopping the bench.

@@ -242,40 +242,62 @@ const shown = (target: string): string => {
   return path.sep === "\\" ? named.replaceAll("/", "\\") : named;
 };
 
-const unboundDeny = (input: HookInput, target: string): HookDecision => {
-  const unblock =
-    "Work only in the worktree your brief names, which the lead made with `workit fanout worktree create <slice>`: edit files under it and run one verb per call against it (`workit git --cwd <worktree> commit -m … -- <paths>`, `workit check --cwd <worktree> <name>`). If your brief names no worktree, stop and report that to the lead.";
-  return {
-    kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} is not working in a Workit worktree yet, and ${shown(target)} is outside every worktree \`workit fanout worktree create\` made, so it would change the lead's checkout. ${unblock}`,
-    unblock,
-  };
-};
+/** `command` run from `dir` instead of the directory its leading `cd` names. */
+const runFrom = (dir: string, command: string): string =>
+  `cd ${dir} && ${command.replace(/^\s*cd\s+\S+\s*(?:&&|;)\s*/, "")}`;
 
-const outsideDeny = (input: HookInput, worktree: string, target: string): HookDecision => {
+/** A two-line deny: what was refused, then the call to retry with or why there is none. */
+const deny = (what: string, unblock: string): HookDecision => ({
+  kind: "deny",
+  reason: `${what}.\n${unblock}`,
+  unblock,
+});
+
+const unboundDeny = (input: HookInput, target: string): HookDecision =>
+  deny(
+    `workit worktree confinement: implementer ${input.session.agentId} is not working in a Workit worktree yet, and ${shown(target)} is outside every one`,
+    "Why: work only in your brief's worktree (`workit fanout worktree create <slice>`); with none, tell the lead.",
+  );
+
+const outsideDeny = (
+  input: HookInput,
+  worktree: string,
+  target: string,
+  command?: string,
+): HookDecision => {
   const runner = runnerAt(target);
-  const unblock = `${runner === null ? "" : `Run \`${runner}\` from your worktree: \`cd ${worktree} && …\`. `}Edit only under ${worktree} and run git there, one verb per call: \`workit git --cwd ${worktree} commit -m … -- <paths>\`, \`workit check --cwd ${worktree} <name>\` (or \`git -C ${worktree} …\`); a command whose writes Workit cannot see is judged by the directory it runs in. Anything outside it is a follow-up for your report.`;
-  return {
-    kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} is bound to the worktree ${worktree}, and ${runner === null ? `${shown(target)} is` : `\`${runner}\` runs in ${shown(target)},`} outside it. ${unblock}`,
-    unblock,
-  };
+  return deny(
+    `workit worktree confinement: implementer ${input.session.agentId} is bound to the worktree ${worktree}, and ${runner === null ? `${shown(target)} is` : `\`${runner}\` runs in ${shown(target)},`} outside it`,
+    runner !== null && command
+      ? `Retry as: ${runFrom(worktree, command)}`
+      : `Why: edit only under ${worktree}, git one verb per call (\`workit git --cwd ${worktree} commit -m … -- <paths>\`); the rest is a follow-up.`,
+  );
 };
 
-const unknownDirDeny = (input: HookInput, worktree: string | null): HookDecision => {
-  const wt = worktree ?? "<worktree>";
-  const unblock = `Workit cannot resolve \`cd -\`, \`cd "$X"\` or \`popd\`: write by absolute path, \`git -C ${wt}\` or \`workit <verb> --cwd ${wt}\`.`;
-  return {
-    kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} writes after an unknown directory change. ${unblock}`,
-    unblock,
-  };
-};
+const unknownDirDeny = (input: HookInput, worktree: string | null): HookDecision =>
+  deny(
+    `workit worktree confinement: implementer ${input.session.agentId} writes after a directory change Workit cannot resolve (\`cd -\`, \`cd "$X"\`, \`popd\`)`,
+    `Why: write by absolute path, \`git -C ${worktree ?? "<worktree>"}\` or \`workit <verb> --cwd\`.`,
+  );
+
+/** The references (`$X`, `$(…)`) unresolved `targets` were built from. */
+const refsOf = (targets: readonly string[]): string[] => [
+  ...new Set(
+    targets.flatMap((target) =>
+      path
+        .relative(UNKNOWN_VAR, path.resolve(target))
+        .split(path.sep)[0]
+        .split("+")
+        .filter(Boolean)
+        .map(decodeURIComponent),
+    ),
+  ),
+];
 
 /** `command` with each unresolved reference in `refs` spelled as the absolute path it stands for. */
 const literalForm = (command: string, refs: readonly string[]): string => {
   let text = command;
-  for (const ref of refs) {
+  for (const ref of refs.filter((one) => /^[$`]/.test(one))) {
     const placeholder = `<absolute path of ${ref}>`;
     const name = /^\$(\w+)$/.exec(ref)?.[1];
     text = name
@@ -287,22 +309,10 @@ const literalForm = (command: string, refs: readonly string[]): string => {
 
 const unknownVarDeny = (
   input: HookInput,
-  worktree: string | null,
   targets: readonly string[],
   command: string | undefined,
 ): HookDecision => {
-  const refs = [
-    ...new Set(
-      targets.flatMap((target) =>
-        path
-          .relative(UNKNOWN_VAR, path.resolve(target))
-          .split(path.sep)[0]
-          .split("+")
-          .filter(Boolean)
-          .map(decodeURIComponent),
-      ),
-    ),
-  ];
+  const refs = refsOf(targets);
   let text = command ?? "";
   const first: string[] = [];
   // A command substitution, used as is or through `F=$(…)` (whose assignment
@@ -311,7 +321,7 @@ const unknownVarDeny = (
     const name = /^\$(\w+)$/.exec(ref)?.[1];
     const set = name
       ? new RegExp(
-          `(^|[\\s;&|(])${name}=("?)(\\$\\([^()]*\\)|\`[^\`]*\`)\\2[ \\t]*(?:&&|;|\\n)?[ \\t]*`,
+          `(^|[\\s;&|(])${name}=("?)(\\$\\([^()]*\\)|\`[^\`]*\`)\\2[ \\t]*(?:&&|;|\\n|$)[ \\t]*`,
         ).exec(text)
       : null;
     const sub = set?.[3] ?? (/^(?:\$\(|`)/.test(ref) ? ref : null);
@@ -320,22 +330,16 @@ const unknownVarDeny = (
     first.push(`Run \`${sub.slice(sub.startsWith("`") ? 1 : 2, -1).trim()}\` first, then`);
     return sub === ref ? ref : `${ref} (set by \`${sub}\`)`;
   });
-  const wt = worktree ?? "<worktree>";
   // `curl -K <config>` names no reference to spell out.
-  const literal = literalForm(
-    text,
-    refs.filter((ref) => /^[$`]/.test(ref)),
-  );
-  const retry =
+  const literal = literalForm(text, refs);
+  return deny(
+    `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve`,
     command === undefined || literal === command
-      ? ""
-      : ` ${first.length ? `${first.join(" ")} retry` : "Retry"} as: \`${literal}\`.`;
-  const unblock = `Spell the path out instead of ${refs.join(", ")}: Workit follows only \`NAME=<literal>\`, \`$(mktemp …)\`, \`$(pwd)\`, \`$PWD\` after a literal \`cd\` and a \`for\` over literal words.${retry} Write under ${wt} or a temp dir.`;
-  return {
-    kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} writes to a path built from ${named.join(", ")}, which Workit cannot resolve, so it cannot tell whether the write stays in its worktree. ${unblock}`,
-    unblock,
-  };
+      ? `Why: spell the path out; Workit follows only \`NAME=<literal>\`, \`$(pwd)\` and literal \`for\` words.`
+      : first.length
+        ? `${first.join(" ")} retry as: \`${literal}\``
+        : `Retry as: ${literal}`,
+  );
 };
 
 /**
@@ -356,8 +360,7 @@ export function confineImplementer(
   try {
     if (!input.session.agentId || hostIsolated(input.cwd, input.session.agentId)) return NONE;
     const unresolved = targets.filter((target) => within(path.resolve(target), UNKNOWN_VAR));
-    if (unresolved.length > 0)
-      return unknownVarDeny(input, boundWorktree(input), unresolved, command);
+    if (unresolved.length > 0) return unknownVarDeny(input, unresolved, command);
     if (targets.some((target) => within(path.resolve(target), UNKNOWN_DIR)))
       return unknownDirDeny(input, boundWorktree(input));
     const bindings = canonical(bindingDir());
@@ -376,7 +379,7 @@ export function confineImplementer(
     }
     const root = canonical(worktree);
     const outside = judged.find(({ real }) => !within(real, root) || within(real, bindings));
-    return outside ? outsideDeny(input, worktree, outside.named) : NONE;
+    return outside ? outsideDeny(input, worktree, outside.named, command) : NONE;
   } catch {
     return NONE;
   }
@@ -455,15 +458,11 @@ const leadOwnedWorkit = (args: readonly string[]): boolean =>
     return verb === "fanout" && /^(?:plan|worktree)$/.test(sub ?? "");
   });
 
-const leadOwnedDeny = (input: HookInput, command: string): HookDecision => {
-  const unblock =
-    "Worktrees, branches other than your own, refs, tags, remotes, git config, the shared stash and the fan-out plan belong to the lead: report what you need changed as a follow-up instead.";
-  return {
-    kind: "deny",
-    reason: `workit worktree confinement: implementer ${input.session.agentId} may not run \`${command.slice(0, 160)}\`. ${unblock}`,
-    unblock,
-  };
-};
+const leadOwnedDeny = (input: HookInput, command: string): HookDecision =>
+  deny(
+    `workit worktree confinement: implementer ${input.session.agentId} may not run \`${command.slice(0, 160)}\``,
+    "Why: worktrees, other branches, refs, remotes, git config, the stash and the fan-out plan belong to the lead: a follow-up.",
+  );
 
 /**
  * Judge an implementer's shell command: deny what the lead owns, then confine
@@ -495,6 +494,23 @@ export function confineImplementerShell(
 
 // --- judges: verifiers and reviewers write only in a scratch dir (#790) ----
 
+/**
+ * `NAME=<literal>` then `;`, `&&` or a newline: the value only letters, digits
+ * and `@%+=:./_-`, `\` for a Windows path (`C:\Users\…`) and `~` of a short
+ * name (`RUNNER~1`) where bash does not expand it (not first, nor after `:` or
+ * `=`), maybe quoted.
+ */
+const LITERAL_SET =
+  /^\s*([A-Za-z_]\w*)=(['"]?)((?:[\w@%+=:./\\-]|(?<=[^\s:=])~)*)\2[ \t]*(?:;|&&|\n)\s*/;
+/** The names Workit spells in for a judge: one letter, or a short path or ref word in one case. */
+const SPELLED =
+  /^(?:[A-Za-z]|wt|wd|dir|repo|root|base|sha|ref|branch|file|out|scratch|worktree|WT|WD|DIR|REPO|ROOT|BASE|SHA|REF|BRANCH|FILE|OUT|SCRATCH|WORKTREE)$/;
+/**
+ * Names git, a shell or an interpreter reads from the environment, and names
+ * the shell sets itself (`read` sets REPLY, `getopts` OPTARG, `mapfile` MAPFILE).
+ */
+const ENV_READ =
+  /^(?:GIT_|LD_|DYLD_|NODE_|PYTHON|PERL|RUBY|BASH|EPOCH|(?:ENV|IFS|CDPATH|PS\d|PWD|OLDPWD|REPLY|OPTARG|OPTIND|MAPFILE|S?RANDOM|SECONDS|LINENO|E?UID|PPID|_|HOSTNAME|HISTCMD)$)/;
 /** A judge's scratch dir, at a checkout root (fanout-worktree.ts SCRATCH_DIR). */
 const SCRATCH = ".workit-scratch";
 const SHELL_NAMES = /^(?:sh|bash|zsh|dash|ksh|mksh|ash)$/;
@@ -661,7 +677,8 @@ const GIT_VERBS: Readonly<Record<string, string>> = {
   var: "l|",
   version: "|build-options",
   "ls-remote": "htbq|heads tags branches refs quiet exit-code get-url symref sort=",
-  remote: "v|verbose",
+  remote: "v|verbose push all",
+  "range-diff": "@d|@d creation-factor= no-dual-color left-only right-only",
   config: "lz|get get-all get-regexp list local name-only null type= default=",
   worktree:
     "fdqvzb:B:|force detach lock reason= orphan no-checkout checkout quiet track no-track guess-remote porcelain expire= verbose",
@@ -766,7 +783,9 @@ const gitKind = (
     case "worktree":
       return first === "list" ? "read" : /^(?:add|remove)$/.test(first) ? "write" : null;
     case "remote":
-      return !first || (first === "show" && named.length === 2 && local(second, true))
+      return !first ||
+        first === "get-url" ||
+        (first === "show" && named.length === 2 && local(second, true))
         ? "read"
         : null;
     case "ls-remote":
@@ -790,8 +809,6 @@ const gitKind = (
   return GIT_VERBS[verb].startsWith("+") ? "write" : "read";
 };
 
-const JUDGE_GIT = `a judge runs git ${Object.keys(GIT_VERBS).join(" ")} with the options each documents (no abbreviations), writing only in a scratch repo; no -c, no wrapper but timeout, nice, time, command, no env but PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0, LC_*, LANG, TZ; status outside scratch needs --no-optional-locks`;
-
 /** Whether remote `name` of the repository at absolute dir `dir` has a url in scratch or the judged repository. */
 const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
   const shared = path.isAbsolute(dir) ? gitDirsAt(canonical(dir), repo, false)?.[1] : undefined;
@@ -803,10 +820,12 @@ const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
 };
 
 /**
- * Why a judge may not run the git in `command` (#790): a verb, option,
- * wrapper, environment or source outside the allowlist (`GIT_VERBS`,
- * `JUDGE_GIT`), `--git-dir`/`--work-tree` outside scratch, or a `status`
- * that would refresh a non-scratch index. Null when it may.
+ * Why a judge may not run the git in `command` (#790): a verb or option
+ * outside `GIT_VERBS`, a wrapper but timeout, nice, time or command, an
+ * environment but PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0, LC_*, LANG,
+ * TZ, `-c`, a source outside scratch and the judged repository, or
+ * `--git-dir`/`--work-tree` outside scratch. A `status` only refreshes the
+ * index's stat cache, never content, refs or config. Null when it may.
  */
 const judgeGit = (
   command: string,
@@ -864,14 +883,12 @@ const judgeGit = (
         why ??= `\`${word}\` is not allowed`;
     let index = start < 0 ? words.length : start + 1;
     let dir = "";
-    let unlocked = lead.includes("GIT_OPTIONAL_LOCKS=0");
     for (; !why && words[index]?.startsWith("-") && words[index] !== "--version"; index++) {
       const word = words[index];
       const flag = /^--(git-dir|work-tree)(?:=([\s\S]*))?$/.exec(word);
       const value =
         flag?.[2] ?? (/^(?:-C|--git-dir|--work-tree)$/.test(word) ? words[++index] : "");
       if (word === "-C") dir = value;
-      unlocked ||= word === "--no-optional-locks";
       if (flag ? !literalIn(value, repo) : !/^(?:-C|-P|--no-pager|--no-optional-locks)$/.test(word))
         why = `\`${word}\` is not allowed`;
     }
@@ -893,11 +910,6 @@ const judgeGit = (
         !words.some((word) => /^--[gw]/.test(word));
       if (!fetches && !gitKind(args, local))
         why = `\`git ${args.slice(0, 2).join(" ")}\` is not allowed`;
-      else if (args[0] === "status" && !unlocked) {
-        const dirs = path.isAbsolute(dir) ? gitDirsAt(canonical(dir), repo) : null;
-        if (!dirs?.length || !dirs.every((gitDir) => inScratch(gitDir, repo)))
-          why = "`git status` refreshes the index outside scratch: add --no-optional-locks";
-      }
     }
     // Scripts it runs, whatever their text: `$(…)`, and the `-c` operand or heredoc of a
     // shell, also behind wrappers (`timeout 5 bash -c`, `xargs sh -c`, `find -exec sh -c`).
@@ -1010,10 +1022,6 @@ const workitCalls = (
         return [words.slice(at + 1)];
       });
 
-const JUDGE_JOB = Object.entries(JUDGE_VERBS)
-  .map(([verb, subs]) => `workit ${verb}${subs === true ? "" : ` ${subs.join("|")}`}`)
-  .join(", ");
-
 /**
  * Why a judge may not run `command` (#790), or null: a shell or interpreter
  * reading a script Workit cannot see (piped, on stdin, a process
@@ -1044,6 +1052,14 @@ const judgeRefusal = (command: string, fed: string[], depth = 0): string | null 
     if (/^(?:cd|chdir|pushd|popd)$/.test(name)) moved = true;
     if (name === "eval" || ((name === "source" || name === ".") && FED.test(args[0] ?? "")))
       return unseen;
+    // An environment that makes a later interpreter load code (`export NODE_OPTIONS=-r x`), or a
+    // name the shell sets itself, so its value is not the one written (`REPLY=x; read; … $REPLY`).
+    const set = words.find((word) =>
+      /^(?:NODE_OPTIONS|PYTHON(?:STARTUP|PATH|HOME)|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|LD_\w+|DYLD_\w+|REPLY|OPTARG|OPTIND|MAPFILE|READLINE_\w+|S?RANDOM|SECONDS|LINENO|E?UID|PPID|OLDPWD|_|HOSTNAME|HISTCMD|EPOCH\w*)=/.test(
+        word,
+      ),
+    );
+    if (set) return `\`${set.slice(0, 80)}\` sets a loader or shell-set name`;
     if (SHELL_NAMES.test(name)) {
       let operand: string | undefined;
       let stdin = false;
@@ -1093,7 +1109,7 @@ const judgeRefusal = (command: string, fed: string[], depth = 0): string | null 
   }
   for (const args of workitCalls(command)) {
     const call = judgeVerbRefused(args);
-    if (call) return `\`${call}\` is not a judge's job: a judge runs only ${JUDGE_JOB}`;
+    if (call) return `\`${call}\` is not a judge's job: a judge runs only read-only workit verbs`;
   }
   return null;
 };
@@ -1120,24 +1136,51 @@ const substitutingHeredoc = (command: string): boolean => {
  * A judge writes in the scratch dir of any checkout of the judged repository:
  * the hook cwd's, and the candidate worktree's when `target` is in another
  * checkout of the same repository (#792 item 32), so the deny names both.
+ * Line 2 is the call to retry with (`retry` given the scratch dir it writes
+ * to), else why there is none.
  */
-const judgeDeny = (input: HookInput, what: string, target?: string): HookDecision => {
+const judgeDeny = (
+  input: HookInput,
+  what: string,
+  target?: string,
+  retry?: (scratch: string) => string | null | undefined,
+): HookDecision => {
   const role = input.session.agentType?.endsWith("reviewer") ? "reviewer" : "verifier";
   const root = checkoutOf(input.cwd)?.root;
   const candidate = target ? checkoutOf(target)?.root : undefined;
-  const also =
+  const other =
     root && candidate && candidate !== root && commonDir(candidate) === commonDir(root)
-      ? ` or ${path.join(candidate, SCRATCH)}`
-      : "";
+      ? path.join(candidate, SCRATCH)
+      : undefined;
   const scratch = root
-    ? `${path.join(root, SCRATCH)}${also}`
+    ? `${path.join(root, SCRATCH)}${other ? ` or ${other}` : ""}`
     : `${SCRATCH}/ at the root of the checkout you judge`;
-  const unblock = `Write only under ${scratch} (mkdir -p it): put a generated case in a file there with a quoted heredoc (<<'EOF') and never run it in the shell. Reads, \`workit check\`, \`workit ledger verdict\` and \`workit finding record\` stay allowed; a change the candidate needs is a finding, not an edit.`;
+  // A retry runs in a POSIX shell, Git Bash on Windows too: the scratch dir with forward slashes.
+  const call = root ? retry?.((other ?? path.join(root, SCRATCH)).replaceAll("\\", "/")) : null;
+  const unblock = call
+    ? `Retry as: ${call}`
+    : "Why: write only there (mkdir -p it); a fix the candidate needs is a finding (`workit finding record`).";
   return {
     kind: "deny",
-    reason: `workit scratch confinement: ${role} ${input.session.agentId} may write only in its scratch dir ${scratch}, and ${what}. ${unblock}`,
+    reason: `workit scratch confinement: ${role} ${input.session.agentId} may write only in its scratch dir ${scratch}, and ${what}.\n${unblock}`,
     unblock,
   };
+};
+
+/** `command` with its redirect or `tee` to `target` (run in `cwd`) moved into `dir`, else null. */
+const movedInto = (command: string, cwd: string, target: string, dir: string): string | null => {
+  for (const { words, redirects } of segmentsOf(command))
+    for (const word of [...redirects, ...(path.basename(words[0] ?? "") === "tee" ? words : [])])
+      if (path.resolve(cwd, word) === path.resolve(cwd, target)) {
+        const moved = command.replace(
+          new RegExp(
+            `((?:>>?\\|?|\\btee(?:\\s+-a)?)\\s*)(['"]?)${word.replace(/[$()*+.?[\\\]^{|}]/g, "\\$&")}\\2(?![^\\s;&|)])`,
+          ),
+          (_, lead: string) => `${lead}${dir}/${path.basename(word)}`,
+        );
+        return moved === command ? null : moved;
+      }
+  return null;
 };
 
 /**
@@ -1151,6 +1194,7 @@ export function confineJudge(
   input: HookInput,
   targets: readonly string[],
   placeholders: ReadonlySet<string> = placeholdersOf(targets),
+  command?: string,
 ): HookDecision {
   try {
     if (!input.session.agentId) return NONE;
@@ -1167,10 +1211,10 @@ export function confineJudge(
     for (const target of targets) {
       const resolved = path.resolve(target);
       if (within(resolved, UNKNOWN_VAR) || within(resolved, UNKNOWN_DIR))
-        return judgeDeny(
-          input,
-          "it writes to a path Workit cannot resolve (a variable, a command substitution or `cd -`): spell the path out",
-        );
+        return judgeDeny(input, "it writes to a path Workit cannot resolve", undefined, () => {
+          const literal = command && literalForm(command, refsOf([target]));
+          return literal === command ? null : literal;
+        });
       const real = canonical(target);
       // git writes the git dir it finds from where it runs, not that directory.
       const runsGit =
@@ -1197,6 +1241,12 @@ export function confineJudge(
           ? `${shown(target)} is outside it`
           : `\`${runner}\` runs in ${shown(target)}, outside it`,
         target,
+        (dir) =>
+          !command || runsGit
+            ? null
+            : runner === null
+              ? movedInto(command, input.cwd, target, dir)
+              : runFrom(dir, command),
       );
     }
     return NONE;
@@ -1204,6 +1254,59 @@ export function confineJudge(
     return NONE;
   }
 }
+
+/** `text` with `$name` and `${name}` spelled as `value`: the text of a retry, never judged. */
+const spelledIn = (text: string, name: string, value: string): string =>
+  text.replace(new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}\\})`, "g"), () => value);
+
+/**
+ * Why a judge's command that reads a path from a shell variable is refused,
+ * with the command to retry: literal assignments before it
+ * (`W=/abs/path; … $W …`) or a `for` over literal words, whose value Workit
+ * does not follow (a later command can set the name again under a spelling
+ * Workit does not see); a modifier or subscript (zsh's `$W:h`, `$W[1]`,
+ * `${W:-x}`) gets no retry. The retry spells each literal in; null when
+ * neither applies.
+ */
+const variableRefusal = (command: string): { why: string; retry?: string } | null => {
+  let rest = command;
+  const sets: Array<[name: string, value: string]> = [];
+  for (let set; (set = LITERAL_SET.exec(rest)); rest = rest.slice(set[0].length))
+    sets.push([set[1], set[3]]);
+  const loop =
+    /^\s*for\s+(\w+)\s+in\s+([\w@%+=:./ \t-]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(rest);
+  for (const name of [...sets.map(([one]) => one), ...(loop ? [loop[1]] : [])])
+    if (
+      new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}(?![\\w}])|\\{${name}\\})(?![\\s/";&|)]|$)`).test(
+        rest,
+      )
+    )
+      return { why: `\`$${name}\` has a modifier, subscript or suffix Workit does not spell in` };
+  // A name the shell, zsh or git reads itself is refused even when the command never uses it.
+  const odd = [...sets.map(([one]) => one), ...(loop ? [loop[1]] : [])].find(
+    (name) => !SPELLED.test(name) || process.env[name] !== undefined || ENV_READ.test(name),
+  );
+  const used = sets.filter(
+    ([name]) => name === odd || new RegExp(`\\$\\{?${name}(?!\\w)`).test(rest),
+  );
+  if (used.length)
+    return {
+      why: odd
+        ? `\`${odd}=\` sets a name the shell, zsh or git reads itself`
+        : `\`$${used[0][0]}\` is a path from a variable, which Workit does not follow for a judge`,
+      retry: used.reduce((text, [name, value]) => spelledIn(text, name, value), rest),
+    };
+  const items = loop?.[2].split(/\s+/).filter(Boolean) ?? [];
+  return loop && (loop[1] === odd || new RegExp(`\\$\\{?${loop[1]}(?!\\w)`).test(loop[3]))
+    ? {
+        why: `\`$${loop[1]}\` is a loop variable, which Workit does not follow for a judge`,
+        retry:
+          items.length > 16
+            ? undefined
+            : items.map((item) => spelledIn(loop[3].trim(), loop[1], item)).join("; "),
+      }
+    : null;
+};
 
 /**
  * Judge a verifier's or reviewer's shell command: a script it cannot read or
@@ -1218,6 +1321,8 @@ export function confineJudgeShell(
 ): HookDecision {
   try {
     if (!input.session.agentId) return NONE;
+    const variable = dialect === "posix" ? variableRefusal(command) : null;
+    if (variable) return judgeDeny(input, variable.why, undefined, () => variable.retry);
     const fed: string[] = [];
     let refused: string | null;
     try {
@@ -1234,7 +1339,7 @@ export function confineJudgeShell(
           judged ? commonDir(judged.root) : null,
           /\b(?:cd|chdir|pushd|popd)\b/.test(command) ? null : input.cwd,
         );
-        if (why) refused = `${why}: ${JUDGE_GIT}`;
+        refused = why;
       } catch {
         refused = "Workit cannot read this command: split it into simpler ones";
       }
@@ -1245,6 +1350,8 @@ export function confineJudgeShell(
       return judgeDeny(
         input,
         "an unquoted heredoc runs the `$(…)` or backtick command in its body: quote the delimiter (<<'EOF')",
+        undefined,
+        () => command.replace(/<<(-?)[ \t]*(\w+)/g, "<<$1'$2'"),
       );
     let git: string[] = [];
     try {
@@ -1274,6 +1381,7 @@ export function confineJudgeShell(
       input,
       [...lists.flat(), ...git],
       new Set([...git, ...lists.flatMap((list) => [...placeholdersOf(list)])]),
+      command,
     );
   } catch {
     return NONE;

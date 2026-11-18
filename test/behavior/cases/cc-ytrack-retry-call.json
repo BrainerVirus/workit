@@ -1,0 +1,13 @@
+{
+  "id": "cc-ytrack-retry-call",
+  "source": "first-try research 2026-11-18 class 11: a raw ytrack time log was retried identically",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_input": { "command": "ytrack work-item add X-1 --duration 30m 2>&1 | tail -5" }
+    }
+  },
+  "expect": { "kind": ["deny"], "require": ["\nRetry as: workit youtrack time X-1 --minutes 30"] }
+}

@@ -504,8 +504,14 @@ const opaqueWrites = (
   };
   if (name === "curl") return curlOutputs(args);
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
+  // A module (`python3 -m pip install --target …`) runs code Workit does not read.
+  if (
+    name.startsWith("python") &&
+    args.some((arg, at) => arg === "-m" && args[at + 1] !== "json.tool")
+  )
+    return [".", ...args.flatMap(pathsIn)];
   if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
-    return inline(/^-[a-zA-Z]*[ce]$|^--eval$|^-p$/);
+    return inline(/^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/);
   return shellScript(words) === null ? null : ["."];
 };
 
@@ -1587,7 +1593,7 @@ const segmentTargets = (
         shells.push(...preloads.flatMap(read));
       } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
-        const code = args.findIndex((arg) => /^-[a-zA-Z]*[ce]$|^--eval$/.test(arg));
+        const code = args.findIndex((arg) => /^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/.test(arg));
         // As the shell expands it (`"…$HOME/…"`).
         if (code >= 0) others.push(...expansions(args[code + 1] ?? "", vars, loops));
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).

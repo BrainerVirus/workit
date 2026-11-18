@@ -172,7 +172,7 @@ test("Given an implementer, When it reads with curl and docker exec, Then neithe
   const reason = denied(shape, id);
   // The host's cwd is read through its real path (macOS /var → /private/var).
   expect(reason).toContain(`\`python3\` runs in ${realpathSync(lead)}, outside it`);
-  expect(reason).toContain(`Run \`python3\` from your worktree: \`cd ${wt} && …\``);
+  expect(reason).toContain(`\nRetry as: cd ${wt} && ${shape}`);
   for (const command of [
     `curl -s -o ${lead}/src/core.ts localhost:1/x`,
     `curl -sSLo ${lead}/src/core.ts localhost:1/x`,
@@ -302,6 +302,6 @@ test("Given an implementer, When curl writes through --output-dir, a log or stat
   );
   expect(unresolvable(`c=curl; $c -o ${core} localhost:1/x`, id)).toContain(
     // The retry reprints the command as sent, in its shell's spelling (`C:/…` in Git Bash).
-    posix(`Retry as: \`c=curl; <absolute path of $c> -o ${core} localhost:1/x\``),
+    posix(`Retry as: c=curl; <absolute path of $c> -o ${core} localhost:1/x`),
   );
 });
