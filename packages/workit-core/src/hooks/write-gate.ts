@@ -261,17 +261,18 @@ const MUTATING_CALLS =
  * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Reflect|getOwnPropertyDescriptor|attrgetter|methodcaller|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|(?<!\b(?:read\w*|str|decode|strip|lower|upper|Map|Set)\([^()]*\)|\(\d+\)|['"])(?:\.(?:delete|to_\w+)\s*\(|(?<=Path\b.*)\.replace\()|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|Reflect|getOwnPropertyDescriptor|attrgetter|methodcaller|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|(?<!\b(?:Map|Set)\([^()]*\))\.delete\s*\(|\.to_(?!bytes\b)\w+\s*\(|(?<!\b(?:read\w*|str|decode|strip|lower|upper)\([^()]*\)|['"])(?<=Path\b.*)\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
 /** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
 const FREE_OPEN =
   /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
 
 /**
- * Whole-line comments, then string literals left to right: an f-string's
- * prefix (1), quote (2) and body (3), or a template literal's body (4).
+ * Whole-line comments and string literals, left to right: an f-string's
+ * prefix (1), a triple-quoted body (3), a quoted body (5), or a template
+ * literal's body (6).
  */
 const TOKENS =
-  /^[ \t]*(?:(?:#(?![\w$])|\/\/)[^\n]*|\/\*[\s\S]*?\*\/)|(?:\b([rR]?[fF][rR]?))?(['"])((?:\\.|(?!\2)[^\\\n])*)\2|`((?:\\.|[^\\`])*)`/gm;
+  /^[ \t]*(?:(?:#(?![\w$])|\/\/)[^\n]*|\/\*[\s\S]*?\*\/)|(?:\b([rR]?[fF][rR]?))?(?:('''|""")([\s\S]*?)\2|(['"])((?:\\.|(?!\4)[^\\\n])*)\4)|`((?:\\.|[^\\`])*)`/gm;
 
 /**
  * Whether inline Python or Node code may change files: SPAWNS, or a word
@@ -285,8 +286,8 @@ const writesIn = (raw: string): boolean => {
   let parts = false;
   const bare = raw
     .replace(FREE_OPEN, "")
-    .replace(TOKENS, (_, fstring?: string, _quote?: string, body?: string, template?: string) => {
-      const inner = fstring ? body : template;
+    .replace(TOKENS, (...[, fstring, , triple, , body, template]: Array<string | undefined>) => {
+      const inner = fstring ? (triple ?? body) : template;
       const open = fstring ? "{" : "${";
       if (inner !== undefined)
         for (const piece of inner.split(open).slice(1)) {
@@ -297,12 +298,15 @@ const writesIn = (raw: string): boolean => {
     })
     .replace(/std(?:out|err)\.write/g, "");
   // Fail closed where the strings cannot be told apart: a quote or `${` left over, a `\u`
-  // or `\x` escape, or a regex literal (after `(`, `,`, `=` or `:`) holding a quote.
+  // or `\x` escape, or a regex literal holding a quote: a `/` after an operator, `(`, `,`, `:`,
+  // a bracket or brace, or a keyword such as `return` or `typeof` (not after an operand).
   return (
     parts ||
     SPAWNS.test(raw) ||
     /['"`]|\$\{/.test(bare) ||
-    /\\[ux]|(?:^|[(,=:])\s*\/(?![/*])[^/\n]*['"]/.test(raw) ||
+    /\\[ux]|(?:(?:^|[(,=:;!&|?{}[+*%<>^-])\s*|\b(?:return|typeof|void|in|of|case|yield|await|delete|throw|else|do|new)\s+)\/(?![/*])[^/\n]*['"`]/.test(
+      raw,
+    ) ||
     [...bare.matchAll(/[\w$]+/g)].some(
       ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
     )
@@ -1657,10 +1661,14 @@ const segmentTargets = (
           ...joined.flatMap(({ word, index }) => under(word).map((file) => ({ file, index }))),
         ];
         for (const { file, index } of found) {
-          // A dir named inside a longer string (prose, a JSON value) is data, not a path the code takes.
+          // A dir named inside a longer string that is a value (`{"note": "… <dir> …"}`), in
+          // code that names no guarded file, is data rather than a path the code takes.
           const use = !isRoot(file)
             ? "takes"
-            : /['"`]/.test(text[index - 1] ?? "'") || /['"]/.test(text[index])
+            : /['"`]/.test(text[index - 1] ?? "'") ||
+                /['"]/.test(text[index]) ||
+                /workspaces|\.seal\b/.test(text) ||
+                !/^[^'"`\n]*['"]\s*[,}\]]/.test(text.slice(index))
               ? rootUse(text, index)
               : "reads";
           if (use !== "reads")

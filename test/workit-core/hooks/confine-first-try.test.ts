@@ -246,3 +246,53 @@ test("Given the lead, When a python heredoc writes a plan JSON whose string valu
   ])
     expect(verdict(asLead(command)), command).toBe("deny");
 });
+
+// Review mwm7hutf (adversarial, round 1): each form below passed on a67cf06c and is denied again.
+test("Given review mwm7hutf's bypasses, When a judge runs a write hidden by a triple-quoted string, a regex literal holding a quote or a pandas writer, Then each is denied", () => {
+  const target = path.join(lead, "package.json");
+  denied(verifier, [
+    `python3 - <<'EOF'\ns = ''' x '\n# '''; open("${target}", "w").write("x")\nEOF`,
+    `python3 - <<'EOF'\ns = """ x "\n# """; open("${target}", "w").write("x")\nEOF`,
+    `python3 - <<'EOF'\nfrom pathlib import Path\ns = ''' x '\n# '''; Path("${target}").write_text("x")\nEOF`,
+    `python3 - <<'EOF'\ns = f''' x '\n{open("${target}", "w")} '''\nEOF`,
+    `node - <<'EOF'\n0 || /'/.test("") || require("fs").writeFileSync("${target}", "x") // '\nEOF`,
+    `python3 -c "import pandas as pd; pd.read_csv('a.csv').to_csv('${target}')"`,
+    `python3 -c "import pandas as pd; pd.DataFrame([1]).head(5).to_csv('${target}')"`,
+  ]);
+  // A docstring that only reads still runs.
+  allowed(verifier, [
+    `python3 - <<'EOF'\n"""Print the version."""\nimport json\nprint(json.load(open('package.json'))['version'])\nEOF`,
+  ]);
+});
+
+test("Given review mwm7hutf's config bypasses, When the lead's script builds a config path from a string it strips, splits, slices or interpolates, Then each is refused", () => {
+  const asLead = (command: string) => bash(command, "", "");
+  const config = resolveConfigDir();
+  for (const command of [
+    `python3 - <<'EOF'\nopen(" ${config}".strip() + "/grants.json", "w").write("{}")\nEOF`,
+    `python3 - <<'EOF'\nd = " ${config} ".split()[0]\nopen(d + "/workspaces.json", "w").write("{}")\nEOF`,
+    `node - <<'EOF'\nconst d = \`\${""}${config}\`\nrequire("fs").writeFileSync(d + "/workspaces.json", "{}")\nEOF`,
+    `python3 - <<'EOF'\nnote = {"cfg": "x ${config}"}\nopen(note["cfg"].split()[1] + "/workspaces.json", "w").write("{}")\nEOF`,
+  ])
+    expect(verdict(asLead(command)), command).toBe("deny");
+});
+
+test("Given review mwm7hutf, When a judge assigns a name the shell sets itself (read, getopts, mapfile) or reads, Then it is denied", () => {
+  const scratch = path.join(lead, ".workit-scratch");
+  denied(verifier, [
+    `REPLY=${scratch}/x; read < ${scratch}/t; echo pwned > $REPLY`,
+    `OPTARG=${scratch}/x; getopts a: o -a ${lead}/package.json; echo pwned > $OPTARG`,
+    `MAPFILE=${scratch}/x; mapfile < ${scratch}/t; echo pwned > $MAPFILE`,
+    `_=${scratch}/x; echo pwned > $_`,
+    `W=HEAD,--output=/tmp/pwn-wk; IFS=,; git -C ${lead} show $W`,
+  ]);
+});
+
+test("Given review mwm7hutf, When a retry is printed, Then it is a complete call: the assignments kept in front, no doubled space, a computed value left whole", () => {
+  const scratch = path.join(lead, ".workit-scratch");
+  const real = path.join(realpathSync.native(lead), ".workit-scratch");
+  const judged = verifier(`W=${scratch}/..; echo a > $W/x`)?.permissionDecisionReason ?? "";
+  expect(judged.split("\n")[1]).toBe(`Retry as: W=${scratch}/..; echo a > ${real}/x`);
+  const built = implementer(`W=$(pwd)/..; echo x > $W/a`)?.permissionDecisionReason ?? "";
+  expect(built.split("\n")[1]).toBe("Retry as: W=$(pwd)/..; echo x > <absolute path of $W>/a");
+});
