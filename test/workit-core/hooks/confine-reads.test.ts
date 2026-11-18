@@ -1,0 +1,329 @@
+// Retro 2026-11-17 C1+C2: judges (verifiers, reviewers) and implementers were
+// refused read-only work: an inline script that only reads, a plain fetch,
+// the host's session scratchpad, a read-only workit verb, a Workit worktree of
+// another repository. Each now passes, while every write outside a scratch dir
+// stays refused. These tests only dispatch the hook: no command below is run.
+import "@/test/shared/state-isolation";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { main } from "@/packages/workit-cli/src/main";
+import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+import { FANOUT_TOKEN_FILE } from "@/packages/workit-core/src/hooks/worktree-confine";
+import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
+import { fixture } from "./hook-fixtures";
+
+setDefaultTimeout(60_000);
+
+let configHome: ConfigHome;
+let root: string;
+let lead: string;
+let wt: string;
+let away: string;
+const stateBefore = process.env.WORKIT_STATE_DIR;
+/** The fixture's host session id: a temp dir named for it is that session's scratchpad. */
+const SESSION = "claude-session-1";
+
+const git = (cwd: string, ...args: string[]): string => {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout.trim();
+};
+
+const repo = (dir: string): void => {
+  mkdirSync(dir, { recursive: true });
+  git(dir, "init", "-q", "-b", "main");
+  for (const [key, value] of [
+    ["user.name", "t"],
+    ["user.email", "t@t"],
+    ["commit.gpgsign", "false"],
+    ["core.hooksPath", path.join(root, "no-hooks")],
+  ])
+    git(dir, "config", key, value);
+  writeFileSync(path.join(dir, "package.json"), '{ "name": "app", "version": "1.0.0" }\n');
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "chore: base");
+};
+
+beforeAll(async () => {
+  configHome = useConfigHome("wk-confine-reads-config-");
+  root = mkdtempSync(path.join(os.tmpdir(), "wk-confine-reads-"));
+  process.env.WORKIT_STATE_DIR = path.join(root, "state");
+  lead = path.join(root, "app");
+  repo(lead);
+  const plan = path.join(root, "plan.json");
+  writeFileSync(
+    plan,
+    JSON.stringify({
+      name: "wave",
+      trunk: "main",
+      slices: [
+        {
+          id: "a",
+          branch: "feature/a",
+          tier: "standard",
+          reason: "parallel",
+          scope: ["a.ts"],
+          goal: "ship a",
+          acceptance: ["Given the app, When a runs, Then it works"],
+          verify: ["workit check test"],
+          forbidden: ["no edits outside SCOPE"],
+        },
+      ],
+    }),
+  );
+  const cli = async (argv: string[]) => {
+    let stdout = "";
+    const code = await main(argv, {
+      cwd: lead,
+      env: { ...process.env, WORKIT_SESSION_ID: "lead-reads" },
+      stdout: (text) => void (stdout += text),
+      stderr: () => undefined,
+    });
+    if (code !== 0) throw new Error(`workit ${argv.join(" ")}: ${stdout}`);
+    return JSON.parse(stdout).data;
+  };
+  await cli(["fanout", "plan", plan, "--json"]);
+  wt = (await cli(["fanout", "worktree", "create", "a", "--json"])).path;
+  // A Workit worktree of another repository: its admin dir holds the fanout token.
+  const otherRepo = path.join(root, "other");
+  repo(otherRepo);
+  away = path.join(root, "other-wt");
+  git(otherRepo, "worktree", "add", "-q", "-b", "feature/b", away);
+  writeFileSync(path.join(git(away, "rev-parse", "--absolute-git-dir"), FANOUT_TOKEN_FILE), "t");
+});
+
+afterAll(() => {
+  if (stateBefore === undefined) delete process.env.WORKIT_STATE_DIR;
+  else process.env.WORKIT_STATE_DIR = stateBefore;
+  configHome.restore();
+  rmSync(root, { recursive: true, force: true });
+});
+
+type Specific = {
+  hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+};
+
+/** A Claude Code PreToolUse Bash call from a subagent of `type` in `cwd`. */
+const bash = (command: string, type: string, id: string, cwd = lead) => {
+  const payload = fixture("claude-code", "pre-tool-use-write", cwd, {
+    tool_name: "Bash",
+    // Windows paths go with forward slashes; a backslash case runs only on POSIX.
+    tool_input: { command: process.platform === "win32" ? command.replaceAll("\\", "/") : command },
+  });
+  payload.agent_id = id;
+  payload.agent_type = type;
+  return (dispatchHook(claudeCodeAdapter, payload, {}).json as Specific).hookSpecificOutput;
+};
+const verifier = (command: string) => bash(command, "workit:verifier", "ver-reads");
+const implementer = (command: string) => bash(command, "workit:implementer", "impl-reads", wt);
+
+const allowed = (run: (command: string) => Specific["hookSpecificOutput"], commands: string[]) => {
+  for (const command of commands) expect(run(command)?.permissionDecision, command).toBeUndefined();
+};
+const denied = (
+  run: (command: string) => Specific["hookSpecificOutput"],
+  commands: string[],
+  reason: string,
+) => {
+  for (const command of commands) {
+    const out = run(command);
+    expect(out?.permissionDecision, command).toBe("deny");
+    expect(out?.permissionDecisionReason, command).toContain(reason);
+  }
+};
+
+test("Given a verifier, When it runs node -e, python3 -c or a quoted heredoc to python3 - or node - that only reads the candidate, Then the hook allows it", () => {
+  allowed(verifier, [
+    `node -e "console.log(require('./package.json').version)"`,
+    `cd ${wt} && node -e "console.log(require('./package.json').version)"`,
+    `node -p "require('${wt}/package.json').name"`,
+    `python3 -c "import json; print(json.load(open('${wt}/package.json'))['name'])"`,
+    `git -C ${wt} show HEAD:package.json | python3 -c "import sys, json; print(json.load(sys.stdin)['name'])"`,
+    "python3 - <<'EOF'\nimport json\nwith open('package.json', encoding='utf-8') as f:\n    print(json.load(f)['version'])\nEOF",
+    "node - <<'EOF'\nconst fs = require('node:fs');\nprocess.stdout.write(fs.readFileSync('package.json', 'utf8'));\nEOF",
+    `node -e "console.log(JSON.stringify(require('node:path').parse('${wt}/a.ts')))"`,
+  ]);
+});
+
+test("Given a judge or an implementer, When an inline script writes, deletes or runs a command, Then it is denied outside the dirs it may write", () => {
+  const writers = [
+    `node -e "require('fs').writeFileSync('x.txt', 'a')"`,
+    `node -e "const { writeFileSync: w } = require('fs'); w('x.txt', 'a')"`,
+    `python3 -c "open('x.txt', 'w').write('a')"`,
+    `python3 -c "open('x.txt', mode='a')"`,
+    `python3 -c "import os; os.remove('package.json')"`,
+    `python3 -c "import subprocess; subprocess.run(['ls'])"`,
+    `node -e "require('child_process').execSync('ls')"`,
+    `python3 -c "from pathlib import Path; Path('x').write_text('a')"`,
+    `python3 -c "from pathlib import Path; Path('x').open('w')"`,
+    `node -e "require('fs')['write' + 'FileSync']('x', 'a')"`,
+    `node -e "require('${lead}/tool.js')"`,
+    // A Windows drive-letter path is a path, not a package name (CI windows: the lead lives on C:).
+    `node -e "require('C:/tools/evil.js')"`,
+    "python3 - <<'EOF'\nimport shutil\nshutil.rmtree('src')\nEOF",
+    "node - <<'EOF'\nrequire('fs').rmSync('src', { recursive: true })\nEOF",
+    // An unquoted heredoc expands `$X` into the script: its text is unknown.
+    "python3 - <<EOF\n$X\nEOF",
+    `X='import os; os.system("id")'; python3 - <<<"$X"`,
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  // In its own worktree the implementer's writes are its own.
+  allowed(implementer, [`node -e "require('fs').writeFileSync('x.txt', 'a')"`]);
+});
+
+test("Given a verifier, When it fetches plainly from a remote the lead configured, Then it is allowed; a refspec, a prune, a force, a path or a fetch inside a scratch repo is denied naming the scratch dir", () => {
+  allowed(verifier, [
+    `git -C ${wt} fetch -q origin`,
+    `git -C ${wt} fetch origin main`,
+    "git fetch -q origin && git log --oneline -1",
+    `git -C ${away} fetch --quiet origin`,
+  ]);
+  const scratchRepo = path.join(wt, ".workit-scratch", "r");
+  git(wt, "init", "-q", "-b", "main", scratchRepo);
+  denied(
+    verifier,
+    [
+      `git -C ${wt} fetch origin main:main`,
+      `git -C ${wt} fetch origin +refs/heads/main:refs/remotes/origin/main`,
+      `git -C ${wt} fetch --prune origin`,
+      `git -C ${wt} fetch -f origin main`,
+      `git -C ${wt} fetch --upload-pack=/tmp/x origin`,
+      `git -C ${wt} -c core.sshCommand=x fetch origin`,
+      `git -C ${wt} fetch /tmp/elsewhere`,
+      `git -C ${scratchRepo} fetch far`,
+      `git -C ${wt} push origin feature/a`,
+    ],
+    `may write only in its scratch dir ${path.join(git(lead, "rev-parse", "--show-toplevel"), ".workit-scratch")}`,
+  );
+});
+
+test("Given a verifier, When it writes into its own session scratchpad, a Workit worktree's scratch of another repository or /dev/null, Then it is allowed; /tmp at large, another session's dir, the candidate and the lead's checkout stay denied", () => {
+  // Claude Code's layout: <tmp>/claude-<uid>/<project>/<session id>/scratchpad. Nothing is written.
+  const host = path.join(os.tmpdir(), `claude-${process.pid}`);
+  const pad = path.join(host, "-proj", SESSION, "scratchpad");
+  allowed(verifier, [
+    `mkdir -p ${pad} && git -C ${wt} diff main > ${path.join(pad, "d.patch")}`,
+    `echo x > ${path.join(away, ".workit-scratch", "probe.txt")}`,
+    `git -C ${wt} log | tee /dev/null`,
+  ]);
+  denied(
+    verifier,
+    [
+      `echo x > ${path.join(root, "other-session", "scratchpad", "a.txt")}`,
+      `echo x > ${path.join(host, "-proj", "other-session", "a.txt")}`,
+      `echo x > ${path.join(root, "x", SESSION, "a.txt")}`,
+      `echo x > ${path.join(os.tmpdir(), SESSION, "a.txt")}`,
+      `echo x > ${path.join(root, `${SESSION}-not`, "a.txt")}`,
+      `echo x > ${path.join(wt, "a.ts")}`,
+      `echo x > ${path.join(lead, "package.json")}`,
+      `echo x > ${path.join(os.homedir(), "notes.txt")}`,
+      `echo x > ${path.join(away, "a.ts")}`,
+      "echo x > $TMPDIR/a.txt",
+    ],
+    "may write only in its scratch dir",
+  );
+});
+
+test("Given a verifier, When it runs read-only workit verbs, Then they pass; a mutating verb or option is still denied", () => {
+  allowed(verifier, [
+    "workit grant show",
+    "workit ledger show",
+    "workit lease status",
+    "workit task show",
+    "workit task list",
+    "workit doctor --json",
+    `workit ledger verdict verified --cwd ${wt} --kind unit --branch feature/a --how x`,
+  ]);
+  denied(
+    verifier,
+    [
+      "workit doctor --json --fix",
+      "workit doctor --fix",
+      "workit doctor --json --fix-lock --force --yes",
+      "workit doctor --json --repair",
+      "workit test-audit --mutate-all",
+      "workit task done x",
+      "workit test-audit --mutate",
+      `workit git --cwd ${wt} status`,
+    ],
+    "is not a judge's job",
+  );
+  // A user-only verb is asked of the user before confinement judges it: never allowed outright.
+  for (const command of ["workit grant set x", "workit approve x", "workit ledger void x"])
+    expect(verifier(command)?.permissionDecision, command).toBeDefined();
+});
+
+test("Given an implementer in its worktree, When it sets W=$(pwd) and loops over a glob to read, Then it is allowed; a write through $(pwd) lands in its worktree, and a variable Workit cannot resolve is still denied", () => {
+  allowed(implementer, [
+    `W=$(pwd); for f in *.ts; do grep x "$f"; done`,
+    `W=$(pwd); echo a > $W/notes.txt`,
+    `find . -name '*.ts' | while read f; do grep -c x "$f"; done`,
+  ]);
+  denied(implementer, [`cd ${lead}; W=$(pwd); echo a > $W/x`], "is bound to the worktree");
+  denied(
+    implementer,
+    [
+      "echo a > $X/x",
+      `for f in *.ts; do sed -i s/a/b/ "$f"; done`,
+      `find . -name '*.ts' | while read f; do sed -i s/a/b/ "$f"; done`,
+    ],
+    "which Workit cannot resolve",
+  );
+});
+
+test("Given a judge or an implementer, When review round 1's bypasses run (verdict mwla51qs), Then each is denied", () => {
+  const bypasses = [
+    `printf "require('fs').writeFileSync('package.json','x')" | xargs -0 -I{} node -e {}`,
+    `echo "open('package.json','w')" | xargs -0 python3 -c`,
+    `find . -name x -exec node -e {} \\;`,
+    `node -e "new Function('return process')().exit()"`,
+    `node -e "require('vm').runInThisContext('1')"`,
+    `python3 -c "import os; os.posix_spawn('/bin/true', ['x'], {})"`,
+    `node -e "const fs=require('fs'); const s=fs.readFileSync('package.json','utf8').replace(/'/g,''); fs.writeFileSync('package.json',s)"`,
+    `node -e "console.log(\`\${process.exit()}\`)"`,
+    `node -e "console.log('\\x41')"`,
+    `python3 -c "print(f'{1}')"`,
+    `python3 -c "print(rf'{1}')"`,
+    `python3 -c "import io; io.FileIO('x', 'w')"`,
+    `python3 -c "from pathlib import Path; Path('a').replace('b')"`,
+    `python3 -c "import zipfile; zipfile.ZipFile('x.zip', 'w')"`,
+    `python3 -c "import tarfile; tarfile.open('x.tar', mode)"`,
+    `python3 -c "import shelve; shelve.open('db')"`,
+    `python3 -c "import logging; logging.basicConfig(filename='x.log')"`,
+    `python3 -c "import logging; logging.FileHandler('x.log')"`,
+    `python3 -c "import pandas as pd; pd.DataFrame().to_csv('x.csv')"`,
+    `python3 -c "import matplotlib.pyplot as p; p.savefig('x.png')"`,
+    `bun -e "await Bun.file('x').delete()"`,
+    `node -e "require('fs').utimesSync('x', 1, 1)"`,
+    `node -e "require('fs').lchmodSync('x', 0o777)"`,
+    `python3 -c "import os; os.mkfifo('p')"`,
+    "python3 - <<\\\nEOF\n$X\nEOF",
+  ];
+  const posix = (list: string[]) =>
+    process.platform === "win32" ? list.filter((command) => !command.includes("\\")) : list;
+  denied(verifier, posix(bypasses), "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    posix(bypasses).map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  // A backslash-newline in the delimiter leaves an unquoted heredoc that runs `$(…)`.
+  denied(
+    verifier,
+    posix([`cat > ${path.join(wt, ".workit-scratch", "x")} <<\\\nEOF\n$(touch ~/q)\nEOF`]),
+    "quote the delimiter",
+  );
+  // A judge's refusal names the verbs that exist.
+  const refused = verifier("workit fanout check --offline");
+  expect(refused?.permissionDecision).toBe("deny");
+  expect(refused?.permissionDecisionReason).toContain("workit finding record");
+  expect(refused?.permissionDecisionReason).not.toContain("ledger finding");
+});

@@ -89,7 +89,11 @@ const HOOK_ENTRIES = [
 // request rendering, ticket binding, replay and write-content checks on every host) took core run
 // to 564,108 B. The ceiling is that plus ~2,400 B. procs-route and session-teardown, which the
 // wave 9 ceiling above left room for, print their own delta and raise it in their PRs.
-const BUDGET = 566_500;
+// Wave 11 confine-reads (retro 2026-11-17 C1+C2): read-only inline scripts, a plain fetch, the
+// session scratchpad and the read-only judge verbs, with review round 1's fail-closed rules (verdict
+// mwla51qs), add +1,904 B. Rebased on #871 (release-notes one-click ask, 2026-11-17) the core run
+// is 567,733 B, so the ceiling is that plus ~1,500 B; the precision follow-up must be byte-neutral.
+const BUDGET = 569_200;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

@@ -26,7 +26,7 @@ the goal is unmet until you observe it.
    start from the exact verdict command the SubagentStart hook put in your context (it
    carries your session and `--token=<token>`; you share the lead's
    `WORKIT_SESSION_ID`, which authored the work) and pick its `--kind <live|unit>`:
-   `workit ledger verdict verified|tests-verified|type-check-only|failed|blocked --kind <live|unit> --branch <b> --session <id> --token=<token> --how "<what you ran and saw>"`.
+   `workit ledger verdict verified|tests-verified|type-check-only|failed|blocked --cwd <candidate worktree> --kind <live|unit> --branch <b> --session <id> --token=<token> --how "<what you ran and saw>"`.
    `verified` means the change was seen working on its real surface
    (verify-<app>, `--kind live`); `tests-verified` means only tests ran. If the ledger refuses you as an author, report that;
    never pass `--self`.
@@ -34,8 +34,10 @@ the goal is unmet until you observe it.
 Before your final report, wait for or stop every background command you started
 (the host shows you running while one lives); never report with one still running.
 
-Write only in the candidate worktree's `.workit-scratch/`: a test case goes in a
-file there via a quoted heredoc (`<<'EOF'`), never run by the shell.
+Write only in the candidate worktree's `.workit-scratch/` or your session's
+scratchpad: a test case goes in a file there via a quoted heredoc (`<<'EOF'`),
+never run by the shell. Reads (`git fetch -q origin`, a `node -e` or `python3 -c`
+that only reads) run anywhere.
 
 Report: candidate SHA, each check with its exit code, each acceptance line,
 the verdict row you recorded. Fix nothing: a failing check is a verdict.

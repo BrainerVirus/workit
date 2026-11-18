@@ -152,7 +152,7 @@ const inside = (agent: Agent) => [
       agent,
     ),
   () => bash("workit ledger verdict verified --kind unit --branch feature/a --how 'ran x'", agent),
-  () => bash("workit ledger finding add 'x > y' --severity minor", agent),
+  () => bash('workit finding record --payload \'{"title":"x > y"}\'', agent),
   () => bash(`workit check --cwd ${wt} test`, agent),
   () =>
     bash(`git -C ${wt} rev-parse HEAD && git --no-optional-locks -C ${wt} status --short`, agent),
@@ -298,8 +298,7 @@ test("Given a judge, When a shell or interpreter runs a script fed by a pipe, st
     "echo 'touch ~/x' | env bash",
     "(echo 'touch ~/x') | sudo -u me bash",
     `echo "open('/tmp/f','w')" | python3 -`,
-    "python3 <<'EOF'\nopen('/tmp/f','w')\nEOF",
-    "node <<'EOF'\nrequire('fs').writeFileSync('/tmp/f','x')\nEOF",
+    "python3 /dev/fd/0 <<'EOF'\nprint(1)\nEOF",
     "bash /dev/stdin <<'EOF'\ntouch ~/x\nEOF",
     ". /dev/stdin <<'EOF'\ntouch ~/x\nEOF",
     "source <(echo 'touch ~/x')",
@@ -317,7 +316,18 @@ test("Given a judge, When a shell or interpreter runs a script fed by a pipe, st
     id: "rev-x",
     type: "workit:reviewer",
   });
+  // A heredoc an interpreter reads is judged like an inline script: by the calls in it.
+  denies(
+    [
+      "python3 <<'EOF'\nopen('/tmp/f','w')\nEOF",
+      "node <<'EOF'\nrequire('fs').writeFileSync('/tmp/f','x')\nEOF",
+      "python3 - <<EOF\n$CODE\nEOF",
+    ],
+    "outside it",
+  );
   allows([
+    "python3 - <<'EOF'\nimport json\nprint(json.load(open('package.json'))['name'])\nEOF",
+    "node - <<'EOF'\nconsole.log(require('./package.json').version)\nEOF",
     `bash <<'EOF'\ncat ${path.join(lead, "src", "core.ts")}\nEOF`,
     `bun test ${path.join(scratch, "case.test.ts")}`,
     `python3 ${path.join(scratch, "case.py")}`,
@@ -358,7 +368,8 @@ test("Given a judge, When it runs a workit verb outside its own job, Then it is 
     "workit ledger list --branch feature/a",
     "workit ledger check",
     "workit ledger ruling x --why y --cost-if-wrong z",
-    "workit ledger finding add x --severity minor",
+    "workit finding record --payload '{}'",
+    "workit finding list",
     "workit --json pr status",
     "workit pr status 796",
     "workit ci wait",
@@ -389,7 +400,10 @@ test("Given a judge, When it runs writers that name their output elsewhere (mkfi
       "git config --global user.name x",
       "git branch -D x",
       "git branch topic",
-      "git fetch",
+      "git fetch origin main:main",
+      "git fetch origin +refs/heads/main",
+      "git fetch --prune origin",
+      "git fetch /tmp/elsewhere",
       "git gc",
       `git clone ${lead} /tmp/c`,
       "git format-patch -o /tmp/d HEAD~1",
@@ -410,6 +424,9 @@ test("Given a judge, When it runs writers that name their output elsewhere (mkfi
     `git init ${path.join(scratch, "r")}`,
     `git clone ${lead} ${path.join(scratch, "c")}`,
     "git config --get user.name",
+    "git fetch",
+    "git fetch -q origin",
+    "git fetch origin main",
     "git branch --show-current",
     "git branch -a --contains HEAD",
     "git format-patch --stdout HEAD~1",
@@ -421,7 +438,7 @@ test("Given a bound implementer, When it runs those writers against the lead's c
   const agent = { id: "impl-writers", type: "workit:implementer" };
   expect(write(path.join(wt, "a.ts"), agent)?.permissionDecision).toBeUndefined();
   for (const command of [
-    `git -C ${lead} fetch`,
+    `git -C ${lead} fetch origin main:main`,
     `wget -O ${path.join(lead, "x")} http://x`,
     `tar xf a.tar -C ${path.join(lead, "src")}`,
     `mkfifo ${path.join(lead, "p")}`,

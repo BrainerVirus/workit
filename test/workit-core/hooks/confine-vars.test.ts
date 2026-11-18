@@ -177,7 +177,7 @@ test("Given an implementer, When an inline python3 -c or node -e runs in its wor
     allowed(command, id);
   // An escaped `\$` is literal text, not a variable (the hook helper above turns `\` into `/`).
   expect(
-    shellMutationTargets(wt, `python3 -c "import json;print(m['\\$schema'])"`, "posix", true),
+    shellMutationTargets(wt, `python3 -c "open('o','w').write(m['\\$schema'])"`, "posix", true),
   ).toEqual([path.join(wt, ".workit-runs-python3")]);
 });
 
@@ -186,11 +186,17 @@ test("Given an implementer, When an inline script runs in the lead's checkout or
   allowed(`touch ${wt}/a.ts`, id);
   const C = path.join(lead, "src", "core.ts");
   const L = lead;
-  const fromLead = [
+  // Code that only reads runs anywhere; code Workit cannot read runs only in the worktree.
+  for (const command of [
     `python3 -c 'print(1)'`,
     `node -e '1'`,
     `node -p "require('./package.json').version"`,
+  ])
+    allowed(command, id);
+  const fromLead = [
     `S=$(cat f); node -e "$S"`,
+    `python3 -c "print(1)" -X x; python3 -c "open('o','w')"`,
+    `node -e "require('fs').rmSync('x')"`,
   ];
   const inWorktree = [
     `python3 -c "import os; os.replace('${C}','/tmp/q')"`,
