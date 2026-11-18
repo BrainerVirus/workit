@@ -1,5 +1,6 @@
-// The released-changelog repo rule: [Unreleased] must not hold an entry a
-// workit-dev-v* tag already shipped, and a checkout without tags skips it.
+// The released-changelog repo rule, a warning: an [Unreleased] entry a
+// workit-dev-v* tag already shipped is printed with the roll command, the run
+// still passes, and a checkout without tags skips it.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -54,27 +55,31 @@ function checkout(now: string, tagged?: string): string {
 }
 
 const run = (root: string) => {
+  const out: string[] = [];
   const err: string[] = [];
-  const code = main(["--root", root], { out: () => {}, err: (line) => err.push(line) });
-  return { code, err: err.join("\n") };
+  const code = main(["--root", root], {
+    out: (line) => out.push(line),
+    err: (line) => err.push(line),
+  });
+  return { code, out: out.join("\n"), err: err.join("\n") };
 };
 
-test("Given an [Unreleased] entry a workit-dev-v tag already holds, When the repo rules run, Then they fail at its line naming the release and the roll command", () => {
+test("Given an [Unreleased] entry a workit-dev-v tag already holds, When the repo rules run, Then they warn at its line naming the release and the roll command, and still pass", () => {
   const root = checkout(changelog([FRESH, SHIPPED]), changelog([SHIPPED]));
-  const { code, err } = run(root);
-  expect(code).toBe(1);
-  expect(err).toContain(
-    "CHANGELOG.md:8:1 workit/released-changelog: this [Unreleased] entry already shipped in 1.0.0. Fix: run `bun scripts/roll-changelog.ts`",
+  const { code, out, err } = run(root);
+  expect(code).toBe(0);
+  expect(err).toBe("");
+  expect(out).toBe(
+    "warning: CHANGELOG.md:8:1 workit/released-changelog: this [Unreleased] entry already shipped in 1.0.0. Fix: run `bun scripts/roll-changelog.ts`, which moves every released entry into its version's section. (release notes: no release writes back to main, so 1,200 lines of shipped entries piled up under [Unreleased])",
   );
-  expect(err).not.toContain("CHANGELOG.md:7:");
 });
 
 test("Given only entries no tag holds, When the repo rules run, Then they pass", () => {
   const root = checkout(changelog([FRESH]), changelog([SHIPPED]));
-  expect(run(root)).toEqual({ code: 0, err: "" });
+  expect(run(root)).toEqual({ code: 0, out: "", err: "" });
 });
 
 test("Given a checkout with no workit-dev-v tags (CI's shallow clone), When the repo rules run, Then the rule reports nothing", () => {
   const root = checkout(changelog([SHIPPED]));
-  expect(run(root)).toEqual({ code: 0, err: "" });
+  expect(run(root)).toEqual({ code: 0, out: "", err: "" });
 });

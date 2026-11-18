@@ -42,12 +42,17 @@ its `prepareCmd` moves the entries from `[Unreleased]` into
 to `main`, so `main` gets the same split from a PR that runs
 `bun scripts/roll-changelog.ts`, the same way `sync-release-manifests.ts`
 brings the manifests up to date. Because entries are matched against the
-tags, an unrolled `main` never repeats an entry a release already shipped,
-but `bun run lint` fails (repo rule `released-changelog`) while
-`[Unreleased]` holds one, so the first PR after a release rolls `main`. The
-rule reads the local `workit-dev-v*` tags and reports nothing in a checkout
-without them: CI's `fast checks` job clones at depth 1 with no tags, so the
-rule runs locally (lint and `workit check repo-rules`), not in CI.
+tags, an unrolled `main` never repeats an entry a release already shipped.
+`bun run lint` warns (repo rule `released-changelog`) at each such entry still
+under `[Unreleased]` and names the roll command. It
+is a warning, never a failure: release notes do not need a rolled `main`, and
+a failure would make every open branch carry a conflicting roll after each
+release. The rule reads the local `workit-dev-v*` tags and reports nothing in
+a checkout without them, such as CI's `fast checks` job (depth 1, no tags).
+
+If `roll-changelog.ts` fails in a release, semantic-release stops at
+generateNotes or prepare, before it creates the tag, the GitHub release or
+any npm publish.
 
 GitHub rejects a release body over 125000 characters, so
 `scripts/clean-release-notes.cjs` caps it. The first release (no previous

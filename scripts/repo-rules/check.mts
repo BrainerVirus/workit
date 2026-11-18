@@ -12,14 +12,11 @@ import path from "node:path";
 import { RULES } from "./plugin.mts";
 import { RULE as DRAFT_IN_FULL, scanDraftSteps } from "./draft-steps.mts";
 import { RULE as PRIVATE_NAMES, scanPrivateNames } from "./private-names.mts";
-import { RULE as RELEASED_CHANGELOG, scanReleasedChangelog } from "./released-changelog.mts";
+import { scanReleasedChangelog } from "./released-changelog.mts";
 
 /** The oxlint rules plus the text scans oxlint cannot run on Markdown or JSON. */
 const known = (rule: string): boolean =>
-  RULES[rule] !== undefined ||
-  rule === PRIVATE_NAMES ||
-  rule === DRAFT_IN_FULL ||
-  rule === RELEASED_CHANGELOG;
+  RULES[rule] !== undefined || rule === PRIVATE_NAMES || rule === DRAFT_IN_FULL;
 
 const HERE = import.meta.dir;
 const REPO = path.resolve(HERE, "../..");
@@ -84,12 +81,9 @@ function lint(root: string): Hit[] {
       },
     ];
   });
-  return [
-    ...hits,
-    ...scanPrivateNames(root),
-    ...scanDraftSteps(root),
-    ...scanReleasedChangelog(root),
-  ].toSorted((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column);
+  return [...hits, ...scanPrivateNames(root), ...scanDraftSteps(root)].toSorted(
+    (a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column,
+  );
 }
 
 const count = (hits: readonly Hit[]): Baseline => {
@@ -181,7 +175,7 @@ export function main(args: readonly string[], io: Io): number {
   const seed = option(args, "--grandfather");
   if (seed !== undefined && !known(seed)) {
     io.err(
-      `repo rules: unknown rule ${seed}; rules: ${[...Object.keys(RULES), PRIVATE_NAMES, DRAFT_IN_FULL, RELEASED_CHANGELOG].join(", ")}`,
+      `repo rules: unknown rule ${seed}; rules: ${[...Object.keys(RULES), PRIVATE_NAMES, DRAFT_IN_FULL].join(", ")}`,
     );
     return 2;
   }
@@ -206,6 +200,9 @@ export function main(args: readonly string[], io: Io): number {
     writeBaseline(baselineFile, baseline);
     io.out(`repo rules: baseline ${before} -> ${total(baseline)} hits`);
   }
+  // Warnings only: they print the fix but never change the exit code or the baseline.
+  for (const hit of scanReleasedChangelog(root))
+    io.out(`warning: ${where(hit)} workit/${hit.rule}: ${hit.message}`);
   const { over, stale } = compare(hits, baseline);
   for (const entry of over) {
     for (const hit of entry.hits) io.err(`${where(hit)} workit/${hit.rule}: ${hit.message}`);
