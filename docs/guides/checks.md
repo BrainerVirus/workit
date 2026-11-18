@@ -92,8 +92,8 @@ side:
   `ran in <checkout> @ <head>`, its `--json` carries `checkout` and its own
   `pid` (`lease.holder` is the run it waited behind), and its ledger row
   records `checkout`, since every worktree of a repo shares one ledger.
-- **A verdict follows its checks' head.** A `verified` or `tests-verified`
-  verdict is refused (`head_moved`, naming both SHAs and the changed files)
+- **A verdict follows its checks' head.** An independent `verified` or
+  `tests-verified` verdict (not `--self`) is refused (`head_moved`, naming both SHAs and the changed files)
   when its checks ran on an older head and a code change landed since:
   - a run named by `--evidence` that ran on another head or on a dirty
     worktree, unless a cited clean run of the same check is on the head;

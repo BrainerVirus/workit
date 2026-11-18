@@ -2813,19 +2813,23 @@ export function recordVerdict(
       "commit or stash the changes, re-check, then record the verdict",
     );
   const session = context.actor.session;
-  // Only a verdict that claims the checks passed is held to their head;
-  // failed and blocked always record.
-  const offHead = CHECKED_RESULTS.has(input.result)
-    ? evidenceOffHead(ledger.value.rows, {
-        branch,
-        head: key.head,
-        session,
-        refs: input.evidenceRefs ?? [],
-        ciCovered: new Set(
-          (input.checkEvidence ?? []).filter((item) => item.via === "ci").map((item) => item.name),
-        ),
-      })
-    : [];
+  // Only an independent verdict that claims the checks passed is held to
+  // their head; failed and blocked always record, and a --self verdict (never
+  // accepted) keeps its no-passing-test warning instead.
+  const offHead =
+    CHECKED_RESULTS.has(input.result) && input.self !== true
+      ? evidenceOffHead(ledger.value.rows, {
+          branch,
+          head: key.head,
+          session,
+          refs: input.evidenceRefs ?? [],
+          ciCovered: new Set(
+            (input.checkEvidence ?? [])
+              .filter((item) => item.via === "ci")
+              .map((item) => item.name),
+          ),
+        })
+      : [];
   const moved = uncarriedRun(context.cwd, offHead, {
     head: key.head,
     base: key.base,

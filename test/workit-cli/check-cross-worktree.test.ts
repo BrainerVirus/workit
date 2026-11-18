@@ -231,6 +231,7 @@ const verdict = (
   session: string,
   options: {
     result?: string;
+    self?: boolean;
     refs?: string[];
     checkEvidence?: { name: string; status: string; via: string | null }[];
   } = {},
@@ -240,6 +241,7 @@ const verdict = (
     {
       result: options.result ?? "verified",
       how: "ran the checks",
+      ...(options.self ? { self: true } : {}),
       ...(options.refs ? { evidenceRefs: options.refs } : {}),
       ...(options.checkEvidence ? { checkEvidence: options.checkEvidence } : {}),
     },
@@ -266,12 +268,14 @@ test("Given a session's checks ran on one head, When a code change lands and it 
   }
 });
 
-test("Given the head moved past a session's checks, When it records failed or blocked, Then they record: only a passing claim is held to its checks' head", () => {
+test("Given the head moved past a session's checks, When it records failed or blocked, Then they record (and so does --self): only an independent passing claim is held to its checks' head", () => {
   const root = featureRepo();
   checkRow(root, { session: "s-verifier" }, headOf(root));
   const moved = codeChange(root);
   expect(recordedOn(verdict(root, "s-verifier", { result: "failed" }))).toBe(moved);
   expect(recordedOn(verdict(root, "s-verifier", { result: "blocked" }))).toBe(moved);
+  // A --self verdict is never accepted; it keeps its no-passing-test warning instead.
+  expect(recordedOn(verdict(root, "s-verifier", { self: true }))).toBe(moved);
 });
 
 test("Given a session's checks ran on one head, When only a CHANGELOG commit lands after them, Then the verdict records on the new head (it carries)", () => {
