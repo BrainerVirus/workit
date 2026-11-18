@@ -325,7 +325,8 @@ const FILE_ROLES = new Set(["decider", "verifier", "reviewer", "babysit"]);
 /**
  * How a role's model reaches a spawn on a host: `agent file` (the host's own
  * agent definition carries it: Claude Code's plugin agents, OpenCode's
- * registered agents, Codex's and Cursor's agent files), `spawn fill` (set on a
+ * registered agents, Codex's and Cursor's agent files; Cursor's only while no
+ * model is configured, since its plugin agents name none), `spawn fill` (set on a
  * spawn that names no model: Claude Code's hook outside auto mode, OpenCode's
  * execute.before, Pi's worker flags) or `advisory` (the lead passes it). A
  * Codex or Pi implementer counts only when its three tiers agree. The lead's
@@ -352,8 +353,13 @@ export const roleEnforcement = (
   if (family === "pi")
     return role === "reviewer" || role === "explore" || uniform ? "spawn fill" : "advisory";
   if (family === "opencode" && !FILE_ROLES.has(role) && !uniform) return "spawn fill";
+  // Cursor's plugin agents name no model: a configured one is the lead's to pass.
+  if (family === "cursor")
+    return FILE_ROLES.has(role) && !resolveRoleModel(cwd, selector, host, dir)
+      ? "agent file"
+      : "advisory";
   return FILE_ROLES.has(role) || uniform
-    ? family === "opencode" || family === "codex" || family === "cursor"
+    ? family === "opencode" || family === "codex"
       ? "agent file"
       : "advisory"
     : "advisory";

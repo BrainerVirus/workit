@@ -15,6 +15,7 @@ import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
 } from "../../workit-core/src/core/skill-manifests";
+import { renderCursorAgents } from "./agents";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
@@ -114,6 +115,14 @@ for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES)) {
   }
   writeFileSync(path.join(commands, `${alias}.md`), cursorCommandText(alias, skill, description));
 }
+// Role agents (committed like skills/, read through the manifest's `agents` path).
+const agents = path.join(target, "agents");
+rmSync(agents, { recursive: true, force: true });
+mkdirSync(agents, { recursive: true });
+for (const [file, text] of renderCursorAgents(
+  path.resolve(pkgDir, "..", "workit-claude-code", "agents"),
+))
+  writeFileSync(path.join(agents, file), text);
 console.log(
   `cursor: built ${skillsOnly ? "" : "shared MCP, native hook, assets, "}${WORKIT_METHOD_SKILLS.length} method skills and ${Object.keys(WORKIT_SKILL_ALIASES).length} commands (${target})`,
 );
