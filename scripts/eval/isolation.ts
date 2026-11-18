@@ -27,7 +27,6 @@ import { shownGrantsDir } from "../../packages/workit-core/src/autonomy";
 import { resolveConfigDir } from "../../packages/workit-core/src/core/config";
 import { resolveStateDir } from "../../packages/workit-core/src/core/logger";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
-import { workitDir } from "../../packages/workit-core/src/core/workit-paths.mjs";
 import type { EvalCase } from "./cases";
 
 export type Host = "claude-code" | "opencode";
@@ -197,19 +196,6 @@ export const isolateHome = (env: Record<string, string>, home: string): void => 
   env.XDG_CACHE_HOME = path.join(home, ".cache");
   delete env.USERPROFILE;
 };
-
-/**
- * The account files Workit reads grants from on every runtime (D15: the OS
- * record's home, never `$HOME`), which no world can move: the account's
- * `workspaces.json` and its seal. Read confinement keeps the rest of the
- * config dir out of reach; without these two every verb that resolves
- * authority (`grant show`, `git push`) fails with EACCES in a world. Only the
- * ones that exist as regular files (a Landlock rule needs one to open).
- */
-export const grantFiles = (home: string): string[] =>
-  ["workspaces.json", "workspaces.json.seal"]
-    .map((name) => path.join(path.resolve(workitDir("config", { HOME: home })), name))
-    .filter((file) => lstatSync(file, { throwIfNoEntry: false })?.isFile() === true);
 
 const WRAPPERS = String.raw`(?:ba|z|da)?sh|python[\d.]*|node|bun|deno|perl|ruby|eval|env|xargs`;
 const WRAPPER_WORD = new RegExp(String.raw`\b(?:${WRAPPERS})\b`, "iu");

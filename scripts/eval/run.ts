@@ -41,7 +41,6 @@ import {
 } from "./confine";
 import {
   carryBack,
-  grantFiles,
   loginFiles,
   isolateHome,
   linkLogin,
@@ -482,9 +481,7 @@ const guardedPaths = (opts: Options): string[] => [
  * dirs, this Workit checkout, the packages its `node_modules` link to with
  * the store they sit in (a linked worktree's main checkout `node_modules`,
  * never that checkout's source) and the toolchains it runs (bun, node, git,
- * the host binary), never the real home, its Workit dirs or host config dirs,
- * but for the two account files Workit reads grants from (isolation.ts
- * `grantFiles`), read-only.
+ * the host binary), never the real home, its Workit dirs or host config dirs.
  */
 const readRules = (opts: Options): string[] => {
   const pathEnv = process.env.PATH ?? "";
@@ -499,7 +496,7 @@ const readRules = (opts: Options): string[] => {
       ...[binaryOf(opts.bin, pathEnv)].filter((file): file is string => file !== null),
     ],
     guardedPaths(opts),
-  ).concat(grantFiles(opts.realHome));
+  );
 };
 
 /**

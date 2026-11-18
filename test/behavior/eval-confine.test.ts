@@ -263,9 +263,7 @@ test.skipIf(!landlock)(
 /** Each line prints `<read> ok` or `<read> denied`. */
 const READS = (r: string): string => {
   const reads: [string, string][] = [
-    // Any config file but the two Workit reads grants from (run.ts readRules, isolation.ts grantFiles).
-    ["real-config", `cat ${r}/.config/workit/vcs.json`],
-    ["grant-file", `cat ${r}/.config/workit/workspaces.json`],
+    ["real-config", `cat ${r}/.config/workit/workspaces.json`],
     ["real-home", `ls ${r}`],
     ["host-config", `cat ${r}/.claude.json`],
     ["host-dir", `ls ${r}/.claude`],
@@ -283,7 +281,7 @@ const READS = (r: string): string => {
 };
 
 test.skipIf(!landlock)(
-  "Given Landlock, When the host reads the real Workit config, home, state or host config, Then each read is denied; the world, its credential, system files and the account's grant file stay readable",
+  "Given Landlock, When the host reads the real Workit config, home, state or host config, Then each read is denied; the world, its credential and system files stay readable",
   async () => {
     const lines: string[] = [];
     expect(await main(argv(fakeClaude(READS(home))), (text) => lines.push(text))).toBe(0);
@@ -293,8 +291,7 @@ test.skipIf(!landlock)(
     );
     for (const read of ["real-config", "real-home", "host-config", "host-dir", "real-state"])
       expect(transcript).toContain(`${read} denied`);
-    // Read-only: Workit resolves grants from it in every world (D15).
-    for (const read of ["world", "credential", "system", "grant-file"])
+    for (const read of ["world", "credential", "system"])
       expect(transcript).toContain(`${read} ok`);
     expect(lines.join("\n")).toMatch(/^read confinement: on$/mu);
   },
@@ -347,15 +344,15 @@ const argv = (bin: string): string[] => {
 const SPELLINGS = (r: string): string => {
   const dir = `${r}/.config/workit`;
   const spellings: [string, string][] = [
-    ["glob", `cat ${r}/.config/work?t/vcs.json`],
-    ["class", `cat ${r}/.[c]onfig/workit/vcs.json`],
-    ["backslash", `cat ${r}/\\.config/workit/vcs\\.json`],
-    ["ansi-c", `bash -c "cat \\$'${dir}/vcs.json'"`],
-    ["brace", `bash -c 'cat ${r}/.config/{workit,workit}/vcs.json'`],
-    ["dotdot", `cat ${dir}/../workit/vcs.json`],
-    ["python3", `python3 -c "print(open('${r}'+'/.config/'+'workit/vcs.json').read())"`],
-    ["script", `printf 'cat ${dir}/vcs.json\\n' > "$W/probe.sh" && sh "$W/probe.sh"`],
-    ["symlink", `ln -s ${dir} "$W/link" && cat "$W/link/vcs.json"`],
+    ["glob", `cat ${r}/.config/work?t/workspaces.json`],
+    ["class", `cat ${r}/.[c]onfig/workit/workspaces.json`],
+    ["backslash", `cat ${r}/\\.config/workit/workspaces\\.json`],
+    ["ansi-c", `bash -c "cat \\$'${dir}/workspaces.json'"`],
+    ["brace", `bash -c 'cat ${r}/.config/{workit,workit}/workspaces.json'`],
+    ["dotdot", `cat ${dir}/../workit/workspaces.json`],
+    ["python3", `python3 -c "print(open('${r}'+'/.config/'+'workit/workspaces.json').read())"`],
+    ["script", `printf 'cat ${dir}/workspaces.json\\n' > "$W/probe.sh" && sh "$W/probe.sh"`],
+    ["symlink", `ln -s ${dir} "$W/link" && cat "$W/link/workspaces.json"`],
     // The same spellings on a world file: they work where the kernel allows the read.
     ["world-glob", `printf w > "$W/note.txt" && cat "$W"/not?.txt`],
     ["world-brace", `bash -c 'cat "$0"/{note,note}.txt' "$W"`],
