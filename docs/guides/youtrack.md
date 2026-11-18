@@ -162,6 +162,15 @@ command (no pipe, chain, redirect, `bash -c` or variable around it), or the
 host cannot show it to you; a wrapped call is denied with the plain form. See
 [Approvals](approvals.md) for the other approvals.
 
+The agent also shows you the draft in chat, in full, before asking. Each call
+prints the text it would post (a comment, a new issue's description or a
+time-log text) under a `show this to the user verbatim` marker with its
+sha256. When the draft changed since that call last printed it, the print
+starts with a line diff from the earlier text (`-` removed, `+` added), then
+the new full text. Once the write posts, the next draft for that issue starts
+fresh. `workit release notes draft` and `show` print release notes the same
+way.
+
 Before asking, Workit reads the issue back:
 
 - A comment or work item carries a marker, so a retry of a write that landed

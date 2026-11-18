@@ -18,14 +18,16 @@
    `release` and `push` grants; when blocked, report the grant it names.
    Before it, the release notes (workspace `releaseNotes`, `workit grant
    show` prints it; `off` skips the forge release):
-   `workit release notes draft <version>` writes the draft and prints its
-   path. Add a `## Highlights` section at its top: 1-3 bullets of what users
+   `workit release notes draft <version>` writes the draft and prints it
+   in full with its hash. Add a `## Highlights` section at its top: 1-3 bullets of what users
    get, from the user's pointers, in their words, not commit subjects.
    Rerunning draft keeps them. Under `review`, finish refuses
-   (`release_notes_unapproved`) until the user approves: show the user the
-   full draft in chat, then run `workit release notes approve <version>`
-   as its own call: Claude Code and Pi ask the user on it. If refused, ask
-   the user to run the command it names in their terminal. Edit the draft
+   (`release_notes_unapproved`) until the user approves: paste the whole
+   draft in chat (never only its path), then run `workit release notes
+   approve <version>` as its own call: Claude Code and Pi ask the user on
+   it. If refused, ask the user to run the command it names in their
+   terminal. After every edit, run `workit release notes show <version>`
+   and paste the diff and the new full text it prints. Edit the draft
    after approval only when they ask, then they approve again.
 4. Interrupted (a conflict, a failed push, no forge release yet): fix the
    cause and rerun the `resume` command it printed. Steps already done are
