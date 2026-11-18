@@ -93,8 +93,11 @@ side:
   records `checkout`, since every worktree of a repo shares one ledger.
 - **A verdict follows its checks' head.** `workit ledger verdict` refuses
   (`head_moved`, naming both SHAs) when the run named by `--evidence`, or the
-  recording session's last check run on the branch, ran on a head the branch
-  has since moved past: run the checks on the new head, then record.
+  recording session's last check run on the branch, ran on an older head and a
+  code change landed since, and names the changed files: run the checks on the
+  new head, then record. A follow-up the verdict would carry anyway (the rules
+  `workit pr status` reads as "carried": docs or changelog only, tests only
+  under a `unit` verdict, a rebase with the patch unchanged) does not refuse.
 - **`workit lock status`** shows each holder's time left (`~9m left`, or
   `past its last 14m run`) and each waiter's estimated wait; `--json` adds them
   under `estimates`.

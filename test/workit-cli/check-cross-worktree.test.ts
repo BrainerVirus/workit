@@ -169,23 +169,28 @@ const featureRepo = () => {
   git(root, "add", "a.txt");
   git(root, "commit", "-qm", "base");
   git(root, "checkout", "-qb", "feature/x");
-  writeFileSync(path.join(root, "feature.txt"), "one\n");
-  git(root, "add", "feature.txt");
+  mkdirSync(path.join(root, "src"));
+  writeFileSync(path.join(root, "src", "app.ts"), "export const answer = 1;\n");
+  git(root, "add", "src/app.ts");
   git(root, "commit", "-qm", "feature work");
   return root;
 };
-const commit = (root: string, text: string) => {
-  writeFileSync(path.join(root, "feature.txt"), text);
-  git(root, "add", "feature.txt");
-  git(root, "commit", "-qm", text.trim());
+/** Commit `text` to `file` on the branch; returns the new head. */
+const commit = (root: string, file: string, text: string) => {
+  writeFileSync(path.join(root, file), text);
+  git(root, "add", file);
+  git(root, "commit", "-qm", `edit ${file}`);
   return git(root, "rev-parse", "HEAD");
 };
+const codeChange = (root: string) => commit(root, "src/app.ts", "export const answer = 2;\n");
 const checkRow = (root: string, session: string, head: string) => {
   const appended = appendObserved(root, {
     type: "check",
     actor: actor(session),
     branch: "feature/x",
     head,
+    base: "main",
+    baseSha: git(root, "rev-parse", "main"),
     tree: null,
     dirty: false,
     checkout: root,
@@ -206,7 +211,7 @@ test("Given a session's checks ran on one head, When the branch moves and that s
   const root = featureRepo();
   const tested = git(root, "rev-parse", "HEAD");
   checkRow(root, "s-verifier", tested);
-  const moved = commit(root, "two\n");
+  const moved = codeChange(root);
   const result = verdict(root, "s-verifier");
   expect(result.ok).toBe(false);
   if (result.ok) return;
@@ -214,13 +219,22 @@ test("Given a session's checks ran on one head, When the branch moves and that s
   expect(result.error).toContain(tested.slice(0, 12));
   expect(result.error).toContain(moved.slice(0, 12));
   expect(result.error).toContain("head_moved");
+  expect(result.error).toContain("changed: src/app.ts");
+});
+
+test("Given a session's checks ran on one head, When only a CHANGELOG commit lands after them, Then the verdict records on the new head (it carries)", () => {
+  const root = featureRepo();
+  checkRow(root, "s-verifier", git(root, "rev-parse", "HEAD"));
+  const moved = commit(root, "CHANGELOG.md", "# Changelog\n\n- fixed a thing\n");
+  const recorded = verdict(root, "s-verifier");
+  expect(recorded.ok ? recorded.value.head : recorded.error).toBe(moved);
 });
 
 test("Given a verdict naming a check row on an older head as --evidence, Then it is refused naming both SHAs", () => {
   const root = featureRepo();
   const tested = git(root, "rev-parse", "HEAD");
   const row = checkRow(root, "s-other", tested);
-  const moved = commit(root, "two\n");
+  const moved = codeChange(root);
   const result = verdict(root, "s-verifier", [row]);
   expect(result.ok).toBe(false);
   if (result.ok) return;
@@ -231,7 +245,7 @@ test("Given a verdict naming a check row on an older head as --evidence, Then it
 test("Given the session checked the current head too, or no check of its own at all, Then the verdict records on that head", () => {
   const root = featureRepo();
   checkRow(root, "s-verifier", git(root, "rev-parse", "HEAD"));
-  const moved = commit(root, "two\n");
+  const moved = codeChange(root);
   checkRow(root, "s-verifier", moved);
   const recorded = verdict(root, "s-verifier");
   expect(recorded.ok && recorded.value.head).toBe(moved);

@@ -2632,16 +2632,16 @@ export function recordVerdictVoid(
 }
 
 /**
- * The check run a verdict on `head` would misattribute (retro C20): a check
- * row named in `refs` that ran on another head, or else the session's latest
- * check run on the branch when it ran on another head and none of the
- * session's runs is on `head` (the branch moved after its checks). A run its
- * caller stopped (`interrupted`) is no evidence either way.
+ * The check runs a verdict on `head` would outlive (retro C20): the check rows
+ * named in `refs` that ran on another head, else the session's latest check
+ * run on the branch when it ran on another head and none of the session's
+ * runs is on `head` (the branch moved after its checks). A run its caller
+ * stopped (`interrupted`) is no evidence either way.
  */
 function evidenceOffHead(
   rows: readonly ReadRow[],
   input: { branch: string; head: string; session: string | null; refs: readonly string[] },
-): ReadRow | null {
+): ReadRow[] {
   const runs = rows.filter(
     (row) =>
       row.type === "check" &&
@@ -2650,14 +2650,36 @@ function evidenceOffHead(
       typeof row.head === "string" &&
       row.head !== "",
   );
-  const named = runs.find((row) => input.refs.includes(row.id) && row.head !== input.head);
-  if (named) return named;
-  if (!input.session) return null;
+  const named = runs.filter((row) => input.refs.includes(row.id) && row.head !== input.head);
+  if (named.length || !input.session) return named;
   const own = runs.filter(
     (row) => row.branch === input.branch && row.actor.session === input.session,
   );
-  if (own.some((row) => row.head === input.head)) return null;
-  return own.at(-1) ?? null;
+  const last = own.at(-1);
+  return last && !own.some((row) => row.head === input.head) ? [last] : [];
+}
+
+/**
+ * The first of `runs` whose head the verdict cannot carry to `to`: a code
+ * change landed since it (core/policy/carry.ts, the rules `pr status` reads
+ * as "carried"). A docs, changelog or bookkeeping follow-up, tests only under
+ * a `unit` verdict, or a rebase with the patch unchanged carries.
+ */
+function uncarriedRun(
+  cwd: string,
+  runs: readonly ReadRow[],
+  to: { head: string; baseSha: string | null; kind: string },
+): { row: ReadRow; drift: Drift | null } | null {
+  for (const row of runs) {
+    const from = String(row.head);
+    const fromBase = str(row.baseSha) ?? to.baseSha;
+    const drift =
+      to.baseSha && fromBase
+        ? verdictDrift(cwd, { from, to: to.head, fromBase, toBase: to.baseSha, kind: to.kind })
+        : null;
+    if (!drift?.carries) return { row, drift };
+  }
+  return null;
 }
 
 /**
@@ -2741,12 +2763,23 @@ export function recordVerdict(
     session,
     refs: input.evidenceRefs ?? [],
   });
-  if (offHead)
+  const moved = uncarriedRun(context.cwd, offHead, {
+    head: key.head,
+    baseSha: key.baseSha,
+    kind,
+  });
+  if (moved) {
+    const from = String(moved.row.head).slice(0, 12);
+    const files = moved.drift?.files;
+    const changed = files?.length
+      ? `${files.slice(0, 8).join(", ")}${files.length > 8 ? ` and ${files.length - 8} more` : ""}`
+      : null;
     return err(
       "blocked",
-      `head_moved: the check run ${offHead.id} (${str(offHead.name) ?? "check"}) ran on ${String(offHead.head).slice(0, 12)}, but ${branch} is now at ${key.head.slice(0, 12)}; a verdict is keyed to the head, so it would claim ${key.head.slice(0, 12)} was judged`,
-      `judge ${key.head.slice(0, 12)}: run the checks on it (workit check <name> in a checkout of it), then record again; to judge ${String(offHead.head).slice(0, 12)}, record on a branch whose head it is`,
+      `head_moved: the check run ${moved.row.id} (${str(moved.row.name) ?? "check"}) ran on ${from}, but ${branch} is now at ${key.head.slice(0, 12)} and a code change landed since (${changed ? `changed: ${changed}` : (moved.drift?.reason ?? "the change since cannot be read")}); a verdict is keyed to the head, so it would claim ${key.head.slice(0, 12)} was judged`,
+      `judge ${key.head.slice(0, 12)}: run the checks on it (workit check <name> in a checkout of it), then record again; to judge ${from}, record on a branch whose head it is`,
     );
+  }
   const selfReason: SelfReason | null =
     input.self === true ? "flag" : session && input.derivedFrom !== null ? null : "no_session";
   const self = selfReason !== null;
