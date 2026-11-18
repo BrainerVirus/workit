@@ -9,6 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { MERGE_DRIVER, MERGE_DRIVER_COMMAND } from "./merge-generated-json.ts";
 
 const repoRoot = path.resolve(import.meta.dir, "..");
 
@@ -52,6 +53,17 @@ export function installHooks(root: string = repoRoot): void {
     const stripped = stripAbsoluteLefthook(text);
     if (stripped !== text) writeFileSync(file, stripped);
   }
+  registerMergeDriver(root);
+}
+
+/** Register the generated-JSON merge driver that .gitattributes names (clone-wide git config). */
+export function registerMergeDriver(root: string): void {
+  git(root, [
+    "config",
+    `merge.${MERGE_DRIVER}.name`,
+    "Workit generated JSON: merge keys, keep the larger number",
+  ]);
+  git(root, ["config", `merge.${MERGE_DRIVER}.driver`, MERGE_DRIVER_COMMAND]);
 }
 
 if (import.meta.main) installHooks();
