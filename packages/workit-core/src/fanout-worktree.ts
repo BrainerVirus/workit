@@ -37,6 +37,7 @@ import { detectLanding, forgeBreaker, sliceStart } from "./fanout-landed";
 import { recordSliceStack } from "./fanout-stack";
 import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
 import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
+import { heldWithin, stopProcesses } from "./core/procs";
 import { stateDir } from "./core/workit-paths.mjs";
 import {
   branchRef,
@@ -909,14 +910,26 @@ export type ReleaseOutcome = {
   scratch: string[];
   /** Local commits not on the remote branch; null when it cannot tell. */
   unpushed: number | null;
+  /** The registered processes running in the worktree, stopped before it went (#835). */
+  procsStopped: string[];
   notes: string[];
 };
 
-export function releaseSliceWorktree(
+/** One line per registered process a release leaves running, with why. */
+const heldLines = (held: ReadonlyArray<{ id: string; cmd: string; reason: string }>): string =>
+  held.map((proc) => `process ${proc.id} (${proc.cmd}) ${proc.reason}`).join("; ");
+
+/**
+ * Remove a slice's worktree: its registered processes are stopped first
+ * (one this caller may not stop keeps the worktree), and uncommitted changes
+ * refuse the release unless `force`.
+ */
+export async function releaseSliceWorktree(
   cwd: string,
   plan: FanoutFile,
-  input: { slice: string; force: boolean; actor: LedgerActor },
-): FanoutResult<ReleaseOutcome> {
+  input: { slice: string; force: boolean; actor: LedgerActor; env?: NodeJS.ProcessEnv },
+): Promise<FanoutResult<ReleaseOutcome>> {
+  const env = input.env ?? process.env;
   const found = findSlice(plan, input.slice);
   if (!found.ok) return found;
   const slice = found.data;
@@ -934,6 +947,7 @@ export function releaseSliceWorktree(
     removed: false,
     scratch: [],
     unpushed: null,
+    procsStopped: [],
     notes: [],
   };
   if (index < 0) {
@@ -975,6 +989,15 @@ export function releaseSliceWorktree(
     );
   const made = owned.row;
   out.head = entry.head;
+  const caller = input.actor.session ?? null;
+  const held = heldWithin(entry.path, { env, caller });
+  if (held.length)
+    return fanoutFail(
+      "blocked",
+      `${entry.path} has a registered process this session may not stop: ${heldLines(held)}; nothing was removed`,
+      `stop it (workit stop ${held[0].id}) or let its owner stop it, then release again`,
+      { ...out },
+    );
   const status = gitRun(entry.path, [
     "status",
     "--porcelain=v1",
@@ -1017,6 +1040,21 @@ export function releaseSliceWorktree(
       "blocked",
       `${entry.path} has ${out.dirty.length} uncommitted change${out.dirty.length === 1 ? "" : "s"} (${out.dirty.slice(0, 3).join(", ")}${out.dirty.length > 3 ? ", …" : ""}); recorded in the ledger, nothing removed`,
       `commit them on ${slice.branch} (workit git commit), or pass --force to drop them`,
+      { ...out },
+    );
+  const stopped = await stopProcesses({ within: entry.path }, `released slice ${slice.id}`, {
+    env,
+    actor: input.actor,
+    caller,
+  });
+  out.procsStopped = stopped.stopped.map((proc) => proc.id);
+  out.notes.push(...stopped.stopped.map((proc) => `stopped process ${proc.id} (${proc.cmd})`));
+  const left = [...stopped.skipped, ...stopped.failed];
+  if (left.length)
+    return fanoutFail(
+      "blocked",
+      `${entry.path} still runs a registered process: ${heldLines(left)}; nothing was removed`,
+      `stop it (workit stop ${left[0].id}), then release again`,
       { ...out },
     );
   const scratches = workerScratchesOf(cwd, entry.path);

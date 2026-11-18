@@ -13,6 +13,7 @@ import { COMMIT_PRESETS, LOCALE_RE, PRESETS, UPDATES_MODES } from "./config";
 import { MODEL_ROLES, MODEL_TIERS } from "./role-models";
 import {
   CHANGELOG_MODES,
+  CLEANUP_MODES,
   DELEGATION_MODES,
   DOCS_MODES,
   MODEL_HOST_KEYS,
@@ -168,6 +169,7 @@ const MODELS_EDITOR = closed({
 const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
   [entry.defaultEndpoint, enumOf(DEFAULT_ENDPOINTS)],
   [entry.delegation, enumOf(DELEGATION_MODES)],
+  [entry.cleanup, enumOf(CLEANUP_MODES)],
   [entry.changelog, enumOf(CHANGELOG_MODES)],
   [entry.docs, enumOf(DOCS_MODES)],
   [

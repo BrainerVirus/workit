@@ -1,0 +1,202 @@
+// #835: `workit ledger decision … --keep <branch:|worktree:|proc:>` records
+// the user's keep. A proc: keep marks the registry row with the decision id
+// (core/procs.ts keepProc); one naming no registered process is refused
+// before anything is recorded.
+import { afterEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { main } from "@/packages/workit-cli/src/main";
+import { openProcs } from "@/packages/workit-core/src/core/procs";
+import { readLedger } from "@/packages/workit-core/src/ledger";
+import { readProc, upsertProc } from "@/packages/workit-core/src/store/threads/procs";
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+const world = () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-ledger-keep-"));
+  dirs.push(root);
+  const repo = path.join(root, "repo");
+  spawnSync("git", ["init", "-q", "-b", "main", repo]);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    WORKIT_STATE_DIR: path.join(root, "state"),
+    WORKIT_SESSION_ID: "lead-1",
+  };
+  return { repo, env };
+};
+
+const run = async (cwd: string, env: NodeJS.ProcessEnv, argv: string[]) => {
+  let stdout = "";
+  const code = await main(argv, {
+    cwd,
+    env,
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+  });
+  return { code, stdout, json: () => JSON.parse(stdout) };
+};
+
+const decisions = (cwd: string) => {
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) throw new Error(ledger.error);
+  return ledger.value.rows.filter((row) => row.type === "decision");
+};
+
+test("Given --keep for a branch, a worktree and a registered process, Then the decision lists them and the process row is kept by that decision", async () => {
+  const { repo, env } = world();
+  const store = openProcs(env);
+  try {
+    upsertProc(store, "pk0001", () => ({
+      cwd: repo,
+      cmd: "bun run dev",
+      kind: "server",
+      startedAt: new Date().toISOString(),
+    }));
+  } finally {
+    store.close();
+  }
+  const result = await run(repo, env, [
+    "ledger",
+    "decision",
+    "keep the demo",
+    "--why",
+    "the user: keep the demo up until Friday",
+    "--keep",
+    "branch:feature/demo",
+    "--keep",
+    "worktree:../demo-wt",
+    "--keep",
+    "proc:pk0001",
+  ]);
+  expect(result.code, result.stdout).toBe(0);
+  const [row] = decisions(repo);
+  expect(row.keep).toEqual([
+    "branch:feature/demo",
+    `worktree:${path.resolve(repo, "../demo-wt")}`,
+    "proc:pk0001",
+  ]);
+  expect(result.stdout).toContain(`keep proc:pk0001: cleanup leaves it (decision ${row.id})`);
+  const after = openProcs(env);
+  try {
+    expect(readProc(after, "pk0001")).toMatchObject({ keep: true, keepRef: `decision ${row.id}` });
+  } finally {
+    after.close();
+  }
+  const listed = await run(repo, env, ["ledger", "list", "--type", "decision"]);
+  expect(listed.stdout).toContain("keep: branch:feature/demo");
+});
+
+test("Given --keep naming no registered process, Then the decision is refused and nothing is recorded", async () => {
+  const { repo, env } = world();
+  const result = await run(repo, env, [
+    "ledger",
+    "decision",
+    "keep it",
+    "--why",
+    "the user said so",
+    "--keep",
+    "proc:nope",
+    "--json",
+  ]);
+  expect(result.code).not.toBe(0);
+  expect(result.json().error).toBe("--keep proc:nope: no such registered process");
+  expect(decisions(repo)).toEqual([]);
+});
+
+test("Given a proc: keep, When a later decision supersedes it, Then the registry no longer keeps the process; one kept again stays kept", async () => {
+  const { repo, env } = world();
+  const store = openProcs(env);
+  try {
+    for (const id of ["pk0101", "pk0102"])
+      upsertProc(store, id, () => ({
+        cwd: repo,
+        cmd: "bun run dev",
+        kind: "server",
+        startedAt: new Date().toISOString(),
+      }));
+  } finally {
+    store.close();
+  }
+  const first = await run(repo, env, [
+    "ledger",
+    "decision",
+    "keep both",
+    "--why",
+    "the user: keep both servers",
+    "--keep",
+    "proc:pk0101",
+    "--keep",
+    "proc:pk0102",
+    "--json",
+  ]);
+  expect(first.code, first.stdout).toBe(0);
+  const keptId = first.json().data.id;
+  const second = await run(repo, env, [
+    "ledger",
+    "decision",
+    "keep only the api",
+    "--why",
+    "the user: the web one can go",
+    "--keep",
+    "proc:pk0102",
+    "--supersedes",
+    keptId,
+  ]);
+  expect(second.code, second.stdout).toBe(0);
+  expect(second.stdout).toContain(`proc:pk0101 is no longer kept (decision ${keptId} superseded)`);
+  const after = openProcs(env);
+  try {
+    expect(readProc(after, "pk0101")).toMatchObject({ keep: false, keepRef: null });
+    expect(readProc(after, "pk0102")?.keep).toBe(true);
+  } finally {
+    after.close();
+  }
+});
+
+test("Given two decisions keeping one process, When the later one is superseded, Then the keep moves back to the earlier decision instead of being lifted", async () => {
+  const { repo, env } = world();
+  const store = openProcs(env);
+  try {
+    upsertProc(store, "pk0201", () => ({
+      cwd: repo,
+      cmd: "bun run dev",
+      kind: "server",
+      startedAt: new Date().toISOString(),
+    }));
+  } finally {
+    store.close();
+  }
+  const decide = async (what: string, ...extra: string[]) => {
+    const result = await run(repo, env, [
+      "ledger",
+      "decision",
+      what,
+      "--why",
+      "the user said so",
+      ...extra,
+      "--json",
+    ]);
+    expect(result.code, result.stdout).toBe(0);
+    return String(result.json().data.id);
+  };
+  const first = await decide("keep the server for the demo", "--keep", "proc:pk0201");
+  const second = await decide("keep it for the review too", "--keep", "proc:pk0201");
+  const keepRef = () => {
+    const read = openProcs(env);
+    try {
+      return readProc(read, "pk0201");
+    } finally {
+      read.close();
+    }
+  };
+  expect(keepRef()).toMatchObject({ keep: true, keepRef: `decision ${second}` });
+  await decide("the review is done", "--supersedes", second);
+  expect(keepRef()).toMatchObject({ keep: true, keepRef: `decision ${first}` });
+  await decide("the demo is done", "--supersedes", first);
+  expect(keepRef()).toMatchObject({ keep: false, keepRef: null });
+});

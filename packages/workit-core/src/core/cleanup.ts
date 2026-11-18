@@ -27,14 +27,21 @@ import {
 import type { Forge } from "../forge/types";
 import { GIT_TIMEOUTS, pushRemoteName } from "../git/rev";
 import { FANOUT_TOKEN_FILE } from "../hooks/worktree-confine";
-import { appendObserved, type LedgerActor } from "../ledger";
+import {
+  appendObserved,
+  parseKeepTarget,
+  readLedger,
+  type KeepTarget,
+  type LedgerActor,
+} from "../ledger";
 import { gitFlowOf, isProtectedTarget, resolveBranchPolicyFor } from "./branch";
 import { LIVE_SESSION_TTL_MS, checkoutKey, liveProbe } from "./live-session";
 import { workspaceReleaseTracks, trackBranches } from "./release-tracks";
+import { heldWithin, stopProcesses } from "./procs";
 import { leaseDir, parseLease, staleReason } from "./resources";
 import { isWorkitMarkerPath } from "./task-store";
 import { legacyWorktreesDir, stateDir, worktreesDir } from "./workit-paths.mjs";
-import { matchWorkspace } from "./workspaces";
+import { matchWorkspace, workspaceCleanup } from "./workspaces";
 
 const SLOW = GIT_TIMEOUTS.worktree;
 /** Dirty paths named in output and ledger rows. */
@@ -107,6 +114,7 @@ const OPERATIONS: readonly [string, string][] = [
   ["rebase-merge", "rebase"],
   ["rebase-apply", "rebase"],
   ["BISECT_LOG", "bisect"],
+  ["BISECT_START", "bisect"],
   ["MERGE_HEAD", "merge"],
   ["CHERRY_PICK_HEAD", "cherry-pick"],
   ["REVERT_HEAD", "revert"],
@@ -120,6 +128,51 @@ const operationInProgress = (worktree: string): string | null => {
   const found = OPERATIONS.find(([entry]) => fs.existsSync(path.join(gitDir, entry)));
   return found ? `a ${found[1]} is in progress` : null;
 };
+
+/**
+ * An operation under way anywhere in the repository, read from the admin
+ * dirs (the common git dir and each `<common>/worktrees/<id>/`), never
+ * through a worktree's path: a locked worktree whose directory is away, or a
+ * prunable one, still has its rebase state there. `unreadable` when an admin
+ * dir cannot be listed (the caller keeps the branch: fail closed).
+ */
+export function operationsUnderway(
+  cwd: string,
+): { where: string; busy: string } | { unreadable: string } | null {
+  const common = gitRun(cwd, ["rev-parse", "--git-common-dir"]);
+  if (!common.ok) return { unreadable: `git rev-parse --git-common-dir failed in ${cwd}` };
+  const root = path.resolve(cwd, common.stdout.trim());
+  const admins = [root];
+  try {
+    const nested = path.join(root, "worktrees");
+    if (fs.existsSync(nested))
+      for (const name of fs.readdirSync(nested)) admins.push(path.join(nested, name));
+  } catch {
+    return { unreadable: `${path.join(root, "worktrees")} cannot be read` };
+  }
+  for (const admin of admins) {
+    let names: Set<string>;
+    try {
+      names = new Set(fs.readdirSync(admin));
+    } catch {
+      return { unreadable: `${admin} cannot be read` };
+    }
+    const found = OPERATIONS.find(([entry]) => names.has(entry));
+    if (!found) continue;
+    let where = admin;
+    try {
+      // A linked worktree's admin dir names its `.git` file in `gitdir`.
+      if (admin !== root)
+        where = path.resolve(
+          path.dirname(fs.readFileSync(path.join(admin, "gitdir"), "utf8").trim()),
+        );
+    } catch {
+      // keep the admin dir as the place
+    }
+    return { where, busy: `a ${found[1]} is in progress` };
+  }
+  return null;
+}
 
 /** `workit fanout worktree create` marked this worktree's admin dir with its token. */
 const isFanoutWorktree = (worktree: string): boolean => {
@@ -467,8 +520,12 @@ export type MergeCleanup = {
   worktreeRemoved: string | null;
   /** Its out-of-tree worker scratch dirs, removed with it. */
   scratchRemoved: string[];
-  /** A worktree kept for uncommitted changes, with the paths. */
+  /** A worktree or checkout kept for uncommitted changes, with the paths. */
   dirty: { path: string; paths: string[] } | null;
+  /** The registered processes stopped before their worktree went or their checkout switched. */
+  procsStopped: Array<{ id: string; cmd: string }>;
+  /** The checkout this ran in, moved off the merged branch: onto the trunk, or detached at the remote trunk. */
+  switched: { path: string; to: string; head: string } | null;
   /** Why anything was kept: one line each. */
   notes: string[];
   /** The ledger row that lists what was removed, when anything was. */
@@ -480,27 +537,207 @@ export type CleanupOptions = {
   /** What ran the cleanup: `pr merge`, `verify-delivery merge`. */
   trigger: string;
   env?: NodeJS.ProcessEnv;
+  /** Why the branch must stay because an open PR/MR uses it, or null; the forge is asked only when given. */
+  openPr?: (branch: string) => string | null;
 };
 
 /**
- * After a merge of `branch` at `mergedHead`: remove its clean worktree when
- * Workit made it (fanout-marked or under the managed root), then delete the
- * local branch once nothing has it checked out. The main checkout, the one
- * this runs in, someone else's worktree, a dirty one, and a local branch
- * with commits beyond the merged head are kept and named.
+ * The repo's worktrees with native paths: git prints `C:/Users/...` on
+ * Windows, so notes, `switched.path` and the ledger row name the path the way
+ * the filesystem and the caller spell it (`C:\Users\...`). Comparisons go
+ * through `canonical` either way.
  */
-export function cleanupAfterMerge(
+const nativeWorktrees = (cwd: string): WorktreeEntry[] =>
+  listWorktrees(cwd).map((entry) => ({ ...entry, path: path.resolve(entry.path) }));
+
+/** The user's keep for one branch, worktree or process: the decision that recorded it. */
+export type KeepDecision = KeepTarget & { decision: string };
+
+/** Every keep the user recorded (`workit ledger decision … --keep`), superseded ones left out. */
+export function keepDecisions(cwd: string): KeepDecision[] {
+  const ledger = readLedger(cwd);
+  if (!ledger.ok) return [];
+  return ledger.value.rows.flatMap((row) =>
+    row.type !== "decision" || row.superseded || !Array.isArray(row.keep)
+      ? []
+      : row.keep.flatMap((value) => {
+          const parsed = parseKeepTarget(String(value), cwd);
+          return parsed ? [{ ...parsed, decision: row.id }] : [];
+        }),
+  );
+}
+
+const keptBy = (
+  keeps: readonly KeepDecision[],
+  kind: KeepTarget["kind"],
+  match: (target: string) => boolean,
+): KeepDecision | undefined => keeps.findLast((keep) => keep.kind === kind && match(keep.target));
+
+const procLine = (proc: { id: string; cmd: string; reason: string }): string =>
+  `process ${proc.id} (${proc.cmd}) ${proc.reason}`;
+
+/**
+ * Stop the registered processes in `dir` (rows under `except` left out)
+ * before it goes or switches branch; null when all stopped, else why the
+ * place is kept. A row this caller may not stop (kept, another owner, a
+ * terminal start, workspace keep) keeps it and nothing is stopped (ruling 1).
+ */
+async function stopWithin(
+  dir: string,
+  except: readonly string[],
+  options: CleanupOptions,
+  env: NodeJS.ProcessEnv,
+  out: MergeCleanup,
+): Promise<string | null> {
+  const caller = options.actor.session ?? null;
+  const held = heldWithin(dir, { env, caller, except });
+  if (held.length) return held.map(procLine).join("; ");
+  const report = await stopProcesses({ within: dir, except }, `delivered (${options.trigger})`, {
+    env,
+    actor: options.actor,
+    caller,
+  });
+  out.procsStopped.push(...report.stopped.map((proc) => ({ id: proc.id, cmd: proc.cmd })));
+  const left = [...report.skipped, ...report.failed];
+  return left.length ? left.map(procLine).join("; ") : null;
+}
+
+/**
+ * Why `branch` is no longer at `head` (a commit landed while processes
+ * stopped or the trunk was fetched), or null: the worktree's HEAD and the
+ * branch ref must both still be `head`.
+ */
+const movedFrom = (cwd: string, worktree: string, branch: string, head: string): string | null => {
+  const at = gitRun(worktree, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const ref = gitRun(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  const now = [at.ok ? at.stdout.trim() : "(unreadable)", ref.ok ? ref.stdout.trim() : "(gone)"];
+  const moved = now.find((sha) => sha !== head);
+  return moved === undefined
+    ? null
+    : `${branch} moved during cleanup (${head.slice(0, 12)} -> ${moved.slice(0, 12)})`;
+};
+
+/** Tracked or untracked, non-ignored changes in a checkout; null when git cannot say. */
+const checkoutChanges = (checkout: string): string[] | null => {
+  const status = gitRun(checkout, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  return status.ok ? nulList(status.stdout).filter((entry) => /^.. /u.test(entry)) : null;
+};
+
+/**
+ * Move the checkout this command runs in off the merged `branch` (ruling 2):
+ * clean, nothing under way, no other live session or lease holder, the
+ * change on the remote trunk by patch id, the local trunk behind the remote
+ * one. Then its processes stop, it switches to the trunk and fast-forwards
+ * (or, with the trunk checked out elsewhere, detaches at the remote trunk).
+ * Never a reset, a forced checkout or a stash; the directory always stays.
+ * Returns why it was kept, or null once it moved.
+ */
+async function leaveMergedBranch(
+  cwd: string,
+  entry: WorktreeEntry,
+  worktrees: readonly WorktreeEntry[],
+  branch: string,
+  tip: string,
+  options: CleanupOptions,
+  env: NodeJS.ProcessEnv,
+  out: MergeCleanup,
+): Promise<string | null> {
+  const checkout = entry.path;
+  const busy = operationInProgress(checkout);
+  if (busy) return busy;
+  const changes = checkoutChanges(checkout);
+  if (changes === null) return "git status failed";
+  if (changes.length) {
+    const paths = changes.map((line) => line.slice(3));
+    out.dirty = { path: checkout, paths: paths.slice(0, DIRTY_SHOWN) };
+    return `it has ${paths.length} uncommitted change${paths.length === 1 ? "" : "s"} (${listed(paths)}); commit, move or discard them, then switch to the trunk yourself`;
+  }
+  const live = liveHold(checkout, { env, session: options.actor.session });
+  if (live) return live;
+  const trunk = defaultTrunk(cwd);
+  if (trunk === branch) return `${branch} is the trunk`;
+  const remote = pushRemoteName(cwd, trunk) ?? "origin";
+  const remoteRef = `refs/remotes/${remote}/${trunk}`;
+  const fetched = gitRun(
+    cwd,
+    ["fetch", "--quiet", "--no-tags", remote, `+refs/heads/${trunk}:${remoteRef}`],
+    GIT_TIMEOUTS.network,
+  );
+  if (!fetched.ok) return `could not fetch ${remote}/${trunk} (${firstLine(fetched.stderr)})`;
+  if (!mergeProof(cwd, tip, remoteRef))
+    return `its change is not on ${remote}/${trunk} by patch id yet`;
+  const localTrunk = gitRun(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${trunk}`]);
+  if (
+    localTrunk.ok &&
+    !gitRun(cwd, ["merge-base", "--is-ancestor", localTrunk.stdout.trim(), remoteRef]).ok
+  )
+    return `local ${trunk} has commits that are not on ${remote}/${trunk}`;
+  const nested = worktrees
+    .filter((other) => other.path !== checkout && inside(other.path, checkout))
+    .map((other) => other.path);
+  const procs = await stopWithin(checkout, nested, options, env, out);
+  if (procs) return procs;
+  // The fetch and the stop take time: a commit or an edit made meanwhile keeps the checkout.
+  const moved = movedFrom(cwd, checkout, branch, tip);
+  if (moved) return moved;
+  const late = checkoutChanges(checkout);
+  if (late === null || late.length)
+    return late === null ? "git status failed" : "it changed while its processes stopped";
+  const trunkElsewhere = worktrees.some(
+    (other) => other.path !== checkout && other.branch === `refs/heads/${trunk}`,
+  );
+  if (trunkElsewhere) {
+    const detached = gitRun(checkout, ["switch", "--quiet", "--detach", remoteRef], SLOW);
+    if (!detached.ok) return `git switch --detach failed (${firstLine(detached.stderr)})`;
+    out.switched = { path: checkout, to: `${remote}/${trunk} (detached)`, head: "" };
+    out.notes.push(
+      `${checkout} is detached at ${remote}/${trunk}: ${trunk} is checked out in another worktree; \`${RELEASE_COMMAND}\` removes this one once you are done`,
+    );
+  } else {
+    const switched = gitRun(
+      checkout,
+      localTrunk.ok
+        ? ["switch", "--quiet", trunk]
+        : ["switch", "--quiet", "--create", trunk, "--track", `${remote}/${trunk}`],
+      SLOW,
+    );
+    if (!switched.ok) return `git switch ${trunk} failed (${firstLine(switched.stderr)})`;
+    out.switched = { path: checkout, to: trunk, head: "" };
+    const forwarded = gitRun(checkout, ["merge", "--quiet", "--ff-only", remoteRef], SLOW);
+    if (!forwarded.ok)
+      out.notes.push(
+        `switched ${checkout} to ${trunk}, but it did not fast-forward to ${remote}/${trunk} (${firstLine(forwarded.stderr)})`,
+      );
+  }
+  out.switched.head = gitRun(checkout, ["rev-parse", "HEAD"]).stdout.trim();
+  return null;
+}
+
+/**
+ * After a merge of `branch` at `mergedHead`, unless workspace `cleanup:
+ * keep` or a keep decision says otherwise: stop the registered processes in
+ * its clean worktree and remove it when Workit made it (fanout-marked or
+ * under the managed root); move the checkout this runs in off the branch
+ * when it is clean (leaveMergedBranch); then delete the local branch once
+ * nothing has it checked out. The main checkout when this runs elsewhere,
+ * someone else's worktree, a dirty one, one with a process this caller may
+ * not stop, a local branch with commits beyond the merged head, and one an
+ * open PR uses are kept and named.
+ */
+export async function cleanupAfterMerge(
   cwd: string,
   branch: string,
   mergedHead: string,
   options: CleanupOptions,
-): MergeCleanup {
+): Promise<MergeCleanup> {
   const env = options.env ?? process.env;
   const out: MergeCleanup = {
     branchDeleted: false,
     worktreeRemoved: null,
     scratchRemoved: [],
     dirty: null,
+    procsStopped: [],
+    switched: null,
     notes: [],
     recorded: null,
   };
@@ -509,36 +746,97 @@ export function cleanupAfterMerge(
   const tip = gitRun(cwd, ["rev-parse", "--verify", "--quiet", ref]);
   if (!tip.ok) return out;
   const head = tip.stdout.trim();
+  const setting = workspaceCleanup(cwd);
+  if (setting.mode === "keep") {
+    out.notes.push(
+      `kept: workspace cleanup keep${setting.from ? ` (${setting.from})` : ""}${setting.invalid === undefined ? "" : `, read from the unknown value ${JSON.stringify(setting.invalid)} (auto or keep)`}; local ${branch}, its worktrees and their processes stay`,
+    );
+    return out;
+  }
   if (head !== mergedHead && !gitRun(cwd, ["merge-base", "--is-ancestor", head, mergedHead]).ok) {
     out.notes.push(`local ${branch} has commits that were not merged; kept it`);
     return out;
   }
-  for (const [index, entry] of listWorktrees(cwd).entries()) {
+  const keeps = keepDecisions(cwd);
+  const branchKept = keptBy(keeps, "branch", (target) => target === branch);
+  if (branchKept) {
+    out.notes.push(
+      `kept: local ${branch}, its worktrees and their processes (decision ${branchKept.decision})`,
+    );
+    return out;
+  }
+  const openPr = options.openPr?.(branch) ?? null;
+  if (openPr) {
+    out.notes.push(`local ${branch} is kept: ${openPr}`);
+    return out;
+  }
+  const worktrees = nativeWorktrees(cwd);
+  const done = async (): Promise<MergeCleanup> => {
+    if (out.worktreeRemoved || out.branchDeleted || out.procsStopped.length || out.switched) {
+      const row = appendObserved(cwd, {
+        type: "cleanup.removed",
+        actor: options.actor,
+        trigger: options.trigger,
+        branch,
+        head,
+        worktrees: out.worktreeRemoved ? [out.worktreeRemoved] : [],
+        branches: out.branchDeleted ? [branch] : [],
+        procs: out.procsStopped.map((proc) => proc.id),
+        ...(out.switched ? { switched: out.switched } : {}),
+      });
+      out.recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
+    }
+    return out;
+  };
+  // The checkout this runs in: the deepest worktree holding cwd (one nested in the main checkout wins).
+  const own = worktrees
+    .filter((entry) => inside(cwd, entry.path))
+    .toSorted((a, b) => canonical(b.path).length - canonical(a.path).length)[0];
+  for (const [index, entry] of worktrees.entries()) {
     if (entry.branch !== ref) continue;
-    if (index === 0 || inside(cwd, entry.path)) {
-      out.notes.push(`local ${branch} is checked out in ${entry.path}; kept it`);
-      return out;
+    const worktreeKept = keptBy(
+      keeps,
+      "worktree",
+      (target) => canonical(target) === canonical(entry.path),
+    );
+    if (worktreeKept) {
+      out.notes.push(
+        `kept: worktree ${entry.path} and local ${branch} (decision ${worktreeKept.decision})`,
+      );
+      return done();
     }
     if (hostOwned(entry.path)) {
       out.notes.push(`local ${branch} is checked out in ${entry.path}, ${HOST_OWNED}; kept both`);
-      return out;
+      return done();
+    }
+    if (entry === own) {
+      const kept = await leaveMergedBranch(cwd, entry, worktrees, branch, head, options, env, out);
+      if (kept) {
+        out.notes.push(`local ${branch} is checked out in ${entry.path}: ${kept}; kept both`);
+        return done();
+      }
+      continue;
+    }
+    if (index === 0) {
+      out.notes.push(`local ${branch} is checked out in ${entry.path}; kept it`);
+      return done();
     }
     const busy = operationInProgress(entry.path);
     if (busy) {
       out.notes.push(`worktree ${entry.path}: ${busy}; kept it and local ${branch}`);
-      return out;
+      return done();
     }
     const place = placeOf(entry.path, env);
     if (place !== "managed" && !isFanoutWorktree(entry.path)) {
       out.notes.push(
         `local ${branch} is checked out in ${entry.path}, not a Workit worktree; kept both`,
       );
-      return out;
+      return done();
     }
     const live = liveHold(entry.path, { env, session: options.actor.session });
     if (live) {
       out.notes.push(`worktree ${entry.path}: ${live}; kept it and local ${branch}`);
-      return out;
+      return done();
     }
     const state = keepReason(entry.path, repoRegenerable(cwd));
     if (state.held) {
@@ -546,11 +844,30 @@ export function cleanupAfterMerge(
       out.notes.push(
         `worktree ${entry.path} has ${state.held.reason}; kept it and local ${branch}. Commit, move or discard them, then \`${RELEASE_COMMAND}\``,
       );
-      return out;
+      return done();
     }
-    if (!dropMarkers(entry.path, state.markers)) {
+    const procs = await stopWithin(entry.path, [], options, env, out);
+    if (procs) {
+      out.notes.push(`worktree ${entry.path}: ${procs}; kept it and local ${branch}`);
+      return done();
+    }
+    // The stop takes time: a commit or an edit made meanwhile keeps the worktree and branch.
+    const moved = movedFrom(cwd, entry.path, branch, head);
+    if (moved) {
+      out.notes.push(`worktree ${entry.path}: ${moved}; kept it and local ${branch}`);
+      return done();
+    }
+    const after = keepReason(entry.path, repoRegenerable(cwd));
+    if (after.held) {
+      out.dirty = { path: entry.path, paths: after.held.paths.slice(0, DIRTY_SHOWN) };
+      out.notes.push(
+        `worktree ${entry.path} has ${after.held.reason}; kept it and local ${branch}. Commit, move or discard them, then \`${RELEASE_COMMAND}\``,
+      );
+      return done();
+    }
+    if (!dropMarkers(entry.path, after.markers)) {
       out.notes.push(`worktree ${entry.path} changed meanwhile; kept it and local ${branch}`);
-      return out;
+      return done();
     }
     const scratches = workerScratchesOf(cwd, entry.path, env);
     const removed = gitRun(cwd, ["worktree", "remove", entry.path], SLOW);
@@ -558,30 +875,57 @@ export function cleanupAfterMerge(
       out.notes.push(
         `could not remove worktree ${entry.path} (${firstLine(removed.stderr)}); kept local ${branch}`,
       );
-      return out;
+      return done();
     }
     out.worktreeRemoved = entry.path;
     out.scratchRemoved = scratches.filter((dir) => removeWorkerScratch(dir, env));
     tidyParent(entry.path, place, env);
   }
-  if (!listWorktrees(cwd).some((entry) => entry.branch === ref)) {
-    const deleted = gitRun(cwd, ["branch", "-D", "--", branch]);
-    if (deleted.ok) out.branchDeleted = true;
-    else out.notes.push(`could not delete local ${branch}: ${firstLine(deleted.stderr)}`);
+  const left = nativeWorktrees(cwd);
+  // A worktree mid-rebase or mid-bisect shows a detached HEAD, so it never
+  // names the branch it works on; update-ref (unlike branch -D) would not
+  // notice. Any operation under way in any worktree, read from the admin
+  // dirs (a locked or prunable worktree's directory may be gone), keeps the
+  // branch; an admin dir that cannot be read keeps it too.
+  const underway = operationsUnderway(cwd);
+  if (underway && "unreadable" in underway)
+    out.notes.push(
+      `cannot tell whether an operation is under way (${underway.unreadable}); kept local ${branch}`,
+    );
+  else if (underway)
+    out.notes.push(
+      `worktree ${underway.where}: ${underway.busy}; kept local ${branch} until it ends`,
+    );
+  else if (!left.some((entry) => entry.branch === ref)) {
+    // Compare-and-delete: a commit that lands after the last check keeps the branch.
+    const deleted = gitRun(cwd, ["update-ref", "-d", ref, head]);
+    if (deleted.ok) {
+      out.branchDeleted = true;
+      gitRun(cwd, ["config", "--remove-section", `branch.${branch}`]);
+    } else
+      out.notes.push(
+        `could not delete local ${branch} at ${head.slice(0, 12)}: ${firstLine(deleted.stderr)}; kept it`,
+      );
   }
-  if (out.worktreeRemoved || out.branchDeleted) {
-    const row = appendObserved(cwd, {
-      type: "cleanup.removed",
-      actor: options.actor,
-      trigger: options.trigger,
-      branch,
-      head,
-      worktrees: out.worktreeRemoved ? [out.worktreeRemoved] : [],
-      branches: out.branchDeleted ? [branch] : [],
-    });
-    out.recorded = row.ok ? { id: String(row.value.id) } : { error: row.error };
-  }
-  return out;
+  return done();
+}
+
+/** What a merge cleanup did and kept, one line each, for `pr merge` and `verify-delivery merge`. */
+export function cleanupLines(cleanup: MergeCleanup, branch: string | null): string[] {
+  return [
+    ...cleanup.procsStopped.map((proc) => `stopped process ${proc.id} (${proc.cmd})`),
+    ...(cleanup.worktreeRemoved ? [`removed worktree ${cleanup.worktreeRemoved}`] : []),
+    ...(cleanup.switched
+      ? [
+          `switched ${cleanup.switched.path} to ${cleanup.switched.to} at ${cleanup.switched.head.slice(0, 12)}`,
+        ]
+      : []),
+    ...(cleanup.branchDeleted ? [`deleted local ${branch}`] : []),
+    ...cleanup.notes,
+    ...(cleanup.recorded && "error" in cleanup.recorded
+      ? [`ledger: cleanup not recorded (${cleanup.recorded.error})`]
+      : []),
+  ];
 }
 
 /** A worktree with no commits of its own is left alone this long after its last use. */

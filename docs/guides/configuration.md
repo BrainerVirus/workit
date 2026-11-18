@@ -308,6 +308,30 @@ merge ([when it keeps one](delivery.md)). Turn it off with
 it for one merge. A workspace nested inside another inherits it the way it
 inherits `trailers`.
 
+### Cleanup when work finishes
+
+A workspace's `cleanup` (default `"auto"`) says what happens when work
+finishes. With `auto`, after `workit pr merge` or `workit verify-delivery merge`
+sees the merge land and the remote branch go, Workit stops the processes
+registered in the branch's worktree, removes that worktree when it is clean
+and Workit made it, moves a clean checkout you ran the command in to the
+trunk, and deletes the local branch ([what it keeps](cleanup.md#after-a-merge)).
+With `"keep"`, nothing is removed or stopped, the merge output says
+`kept: workspace cleanup keep`, and the registered processes in the workspace
+also outlive session-end stops and the orphan reap (`workit stop <id>` still
+stops one). A workspace nested inside another inherits it the way it inherits
+`trailers`. A value Workit does not know reads as `keep`, so a typo removes
+nothing, and the merge output names the bad value.
+
+```json
+{ "name": "demos", "glob": "/home/you/demos/**", "cleanup": "keep" }
+```
+
+To keep one branch, worktree or process instead of a whole workspace, record
+the user's keep: `workit ledger decision "<what>" --why "<the user's words>"
+--keep branch:<name>|worktree:<path>|proc:<id>`
+([Keeping things](cleanup.md#keeping-things)).
+
 ### Issue tracker
 
 A workspace's `issues` block names the tracker its PRs and MRs link to. Any

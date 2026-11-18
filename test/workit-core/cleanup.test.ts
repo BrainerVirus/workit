@@ -179,14 +179,14 @@ test("gc --worktrees --apply removes the pre-move root once its last worktree is
   expect(existsSync(old)).toBe(false);
 });
 
-test("after a merge, a clean worktree under the managed root and its branch go, and the ledger lists them", () => {
+test("after a merge, a clean worktree under the managed root and its branch go, and the ledger lists them", async () => {
   const env = setup();
   const repoDir = path.join(managedWorktreeRoot(env.env), "proj");
   const dir = worktree(env.main, path.join(repoDir, "slice"), "feature/x", "x\n");
   const head = git(dir, "rev-parse", "HEAD");
   expect(placeOf(dir, env.env)).toBe("managed");
 
-  const out = cleanupAfterMerge(env.main, "feature/x", head, {
+  const out = await cleanupAfterMerge(env.main, "feature/x", head, {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -208,7 +208,7 @@ test("after a merge, a clean worktree under the managed root and its branch go, 
   expect(out.recorded).toEqual({ id: String(rows[0]?.id) });
 });
 
-test("after a merge, a managed slice worktree's out-of-tree worker scratch (<state>/scratch/<repo>/<slice>) goes with it; another slice's scratch stays", () => {
+test("after a merge, a managed slice worktree's out-of-tree worker scratch (<state>/scratch/<repo>/<slice>) goes with it; another slice's scratch stays", async () => {
   const env = setup();
   const repoDir = path.join(managedWorktreeRoot(env.env), "proj");
   const dir = worktree(env.main, path.join(repoDir, "slice"), "feature/x", "x\n");
@@ -218,7 +218,7 @@ test("after a merge, a managed slice worktree's out-of-tree worker scratch (<sta
     mkdirSync(kept, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(kept, "draft.md"), "draft\n");
   }
-  const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+  const out = await cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -229,7 +229,7 @@ test("after a merge, a managed slice worktree's out-of-tree worker scratch (<sta
   expect(existsSync(path.join(neighbour, "draft.md"))).toBe(true);
 });
 
-test("after a merge, a dirty managed worktree is kept with its branch; the note names the paths and the release command", () => {
+test("after a merge, a dirty managed worktree is kept with its branch; the note names the paths and the release command", async () => {
   const env = setup();
   const dir = worktree(
     env.main,
@@ -240,7 +240,7 @@ test("after a merge, a dirty managed worktree is kept with its branch; the note 
   const head = git(dir, "rev-parse", "HEAD");
   writeFileSync(path.join(dir, "wip.txt"), "unsaved\n");
 
-  const out = cleanupAfterMerge(env.main, "feature/x", head, {
+  const out = await cleanupAfterMerge(env.main, "feature/x", head, {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -258,10 +258,10 @@ test("after a merge, a dirty managed worktree is kept with its branch; the note 
   expect(norm(cleanupRows(env.main))).toHaveLength(0);
 });
 
-test("after a merge, a worktree outside the managed root that Workit did not make is kept", () => {
+test("after a merge, a worktree outside the managed root that Workit did not make is kept", async () => {
   const env = setup();
   const dir = worktree(env.main, path.join(env.root, "mine"), "feature/x", "x\n");
-  const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+  const out = await cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -271,7 +271,7 @@ test("after a merge, a worktree outside the managed root that Workit did not mak
   expect(existsSync(dir)).toBe(true);
 });
 
-test("after a merge, a local branch with commits beyond the merged head is kept with its worktree", () => {
+test("after a merge, a local branch with commits beyond the merged head is kept with its worktree", async () => {
   const env = setup();
   const dir = worktree(
     env.main,
@@ -281,7 +281,7 @@ test("after a merge, a local branch with commits beyond the merged head is kept 
   );
   const merged = git(dir, "rev-parse", "HEAD");
   commit(dir, "later.txt", "later\n", "after the merge");
-  const out = cleanupAfterMerge(env.main, "feature/x", merged, {
+  const out = await cleanupAfterMerge(env.main, "feature/x", merged, {
     actor,
     trigger: "pr merge",
     env: env.env,
@@ -501,7 +501,7 @@ const IGNORED_CASES = [
 ] as const;
 
 for (const item of IGNORED_CASES)
-  test(`after a merge, a managed worktree holding ${item.name} (gitignored) is ${item.kept ? "kept and named" : "removed"}`, () => {
+  test(`after a merge, a managed worktree holding ${item.name} (gitignored) is ${item.kept ? "kept and named" : "removed"}`, async () => {
     const env = setup();
     const dir = worktree(
       env.main,
@@ -511,7 +511,7 @@ for (const item of IGNORED_CASES)
     );
     put(dir, [...item.files]);
 
-    const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+    const out = await cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
       actor,
       trigger: "pr merge",
       env: env.env,
@@ -574,7 +574,7 @@ const declareRegenerable = (main: string, cleanup: unknown) => {
 };
 
 for (const declared of [true, false])
-  test(`Given a merged worktree whose only untracked files are under packages/x/skills, When cleanup runs ${declared ? "with" : "without"} cleanup.regenerable, Then the worktree is ${declared ? "removed" : "kept"}`, () => {
+  test(`Given a merged worktree whose only untracked files are under packages/x/skills, When cleanup runs ${declared ? "with" : "without"} cleanup.regenerable, Then the worktree is ${declared ? "removed" : "kept"}`, async () => {
     const env = setup();
     declareRegenerable(env.main, declared ? { regenerable: ["packages/*/skills"] } : undefined);
     const dir = worktree(
@@ -585,7 +585,7 @@ for (const declared of [true, false])
     );
     put(dir, ["packages/x/skills/a/SKILL.md", "packages/x/skills/b/SKILL.md"]);
 
-    const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+    const out = await cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
       actor,
       trigger: "pr merge",
       env: env.env,
@@ -616,7 +616,7 @@ test("gc --worktrees honours cleanup.regenerable, and a .env nested under a rege
   expect(existsSync(dir)).toBe(false);
 });
 
-test("Given cleanup.regenerable that is not a list of glob strings, Then the checks config is invalid and names the key; cleanup keeps the worktree", () => {
+test("Given cleanup.regenerable that is not a list of glob strings, Then the checks config is invalid and names the key; cleanup keeps the worktree", async () => {
   for (const cleanup of [
     { regenerable: [7] },
     { regenerable: "packages/*/skills" },
@@ -642,7 +642,7 @@ test("Given cleanup.regenerable that is not a list of glob strings, Then the che
     "x\n",
   );
   put(dir, ["packages/x/skills/a/SKILL.md"]);
-  const out = cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
+  const out = await cleanupAfterMerge(env.main, "feature/x", git(dir, "rev-parse", "HEAD"), {
     actor,
     trigger: "pr merge",
     env: env.env,

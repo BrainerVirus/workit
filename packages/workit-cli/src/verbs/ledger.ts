@@ -4,6 +4,9 @@
 //   workit ledger decision "<what>" --by decider --why "<why>" [--view "<a decider's view>"]…
 //                          # a tie-breaker agent's call: listed as (decider), never the
 //                          # user's product-choice answer and never a verdict
+//   workit ledger decision "<what>" --why "<the user's words>" --keep branch:<name>|worktree:<path>|proc:<id>…
+//                          # the user's keep: cleanup at the end of work leaves
+//                          # that branch, worktree or registered process (#835)
 //   workit ledger ruling   "<what>" --why "<why>" --cost-if-wrong "<…>" [--ref …]
 //   workit ledger verdict  <result> --how "<method/evidence>" [--kind unit|live|perf|review]
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
@@ -62,6 +65,7 @@ import {
   filterRows,
   liftStop,
   readLedger,
+  parseKeepTarget,
   recordDecision,
   recordRuling,
   recordStanding,
@@ -92,10 +96,74 @@ import {
   verdictEvidence,
   type CheckEvidenceDoc,
 } from "@workit-dev/core/src/core/policy/check-evidence";
+import { keepDecisions } from "@workit-dev/core/src/core/cleanup";
+import { keepProc, openProcs, unkeepProc } from "@workit-dev/core/src/core/procs";
+import { readProc } from "@workit-dev/core/src/store/threads/procs";
 import { connect } from "./forge-common";
 import { agentMarker } from "./grant";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
+
+/** The registered process ids a decision's `--keep proc:<id>` names; an Error naming one the registry lacks. */
+function keptProcs(io: Io, keep: string[]): string[] | Error {
+  const ids = keep.flatMap((value) => {
+    const parsed = parseKeepTarget(value, io.cwd);
+    return parsed?.kind === "proc" ? [parsed.target] : [];
+  });
+  if (!ids.length) return [];
+  const store = openProcs(io.env);
+  try {
+    const missing = ids.find((id) => !readProc(store, id));
+    return missing ? new Error(`--keep proc:${missing}: no such registered process`) : ids;
+  } finally {
+    store.close();
+  }
+}
+
+/** Mark each kept process in the registry with the decision that keeps it. */
+function markKept(io: Io, ids: string[], decision: string): void {
+  if (!ids.length) return;
+  const store = openProcs(io.env);
+  try {
+    for (const id of ids) keepProc(store, id, `decision ${decision}`);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Lift the process keeps of the decision `superseded` names, except the ones
+ * the new decision keeps again; returns the lifted process ids.
+ */
+function liftSuperseded(
+  io: Io,
+  rows: readonly ReadRow[],
+  superseded: string | undefined,
+  keptAgain: readonly string[],
+): string[] {
+  const target = superseded ? rows.find((row) => row.id === superseded) : undefined;
+  if (!target || !Array.isArray(target.keep)) return [];
+  const again = new Set(keptAgain);
+  const ids = target.keep.flatMap((value) => {
+    const parsed = parseKeepTarget(String(value), io.cwd);
+    return parsed?.kind === "proc" && !again.has(parsed.target) ? [parsed.target] : [];
+  });
+  if (!ids.length) return [];
+  // Another live decision that still keeps a process takes over its keep.
+  const live = keepDecisions(io.cwd);
+  const store = openProcs(io.env);
+  try {
+    return ids.filter((id) => {
+      const other = live.findLast((keep) => keep.kind === "proc" && keep.target === id);
+      const ref = `decision ${target.id}`;
+      if (!other) return unkeepProc(store, id, ref);
+      if (readProc(store, id)?.keepRef === ref) keepProc(store, id, `decision ${other.decision}`);
+      return false;
+    });
+  } finally {
+    store.close();
+  }
+}
 
 const USAGE =
   "workit ledger decision|ruling|verdict|void|standing|list|check ... (workit help ledger for the grammar)";
@@ -110,6 +178,7 @@ const OPTIONS = {
   ref: { type: "string", multiple: true },
   by: { type: "string" },
   view: { type: "string", multiple: true },
+  keep: { type: "string", multiple: true },
   how: { type: "string" },
   kind: { type: "string" },
   surface: { type: "string" },
@@ -138,6 +207,7 @@ type Values = {
   ref?: string[];
   by?: string;
   view?: string[];
+  keep?: string[];
   how?: string;
   kind?: string;
   surface?: string;
@@ -528,20 +598,38 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (result.ok) await ensureImplicitTask(io, target.value ?? null);
     return result;
   };
-  if (sub === "decision")
-    return fromResult(
-      io,
-      await recorded(
-        recordDecision(context, {
-          what: text,
-          why: values.why,
-          refs: values.ref,
-          by: values.by,
-          views: values.view,
-        }),
-      ),
-      (row) => `recorded decision ${row.id}`,
+  if (sub === "decision") {
+    const procs = keptProcs(io, values.keep ?? []);
+    if (procs instanceof Error)
+      return emit(
+        io,
+        fail("not_found", procs.message, { unblock: "workit ps lists the registered processes" }),
+      );
+    const decision = await recorded(
+      recordDecision(context, {
+        what: text,
+        why: values.why,
+        refs: values.ref,
+        by: values.by,
+        views: values.view,
+        keep: values.keep,
+      }),
     );
+    const lifted: string[] = [];
+    if (decision.ok) {
+      markKept(io, procs, decision.value.id);
+      lifted.push(...liftSuperseded(io, rows, decision.value.supersedes, procs));
+    }
+    return fromResult(io, decision, (row) =>
+      [
+        `recorded decision ${row.id}`,
+        ...(row.keep ?? []).map((item) => `keep ${item}: cleanup leaves it (decision ${row.id})`),
+        ...lifted.map(
+          (id) => `proc:${id} is no longer kept (decision ${row.supersedes} superseded)`,
+        ),
+      ].join("\n"),
+    );
+  }
   if (sub === "ruling")
     return fromResult(
       io,

@@ -71,7 +71,11 @@ import {
   type DocsGate,
   type PrCheckOutcome,
 } from "@workit-dev/core/src/core/docs-gate";
-import { cleanupAfterMerge, type MergeCleanup } from "@workit-dev/core/src/core/cleanup";
+import {
+  cleanupAfterMerge,
+  cleanupLines,
+  type MergeCleanup,
+} from "@workit-dev/core/src/core/cleanup";
 import {
   branchKindOf,
   flowMismatch,
@@ -1200,15 +1204,23 @@ async function merge(argv: string[], io: Io): Promise<number> {
       }),
     );
   }
-  // #653: once its remote branch is gone, a merged branch leaves nothing on disk.
-  // A branch kept on the remote (stack parent, fork, --keep-branch) stays local too.
+  // #653, #835: once its remote branch is gone, a merged branch leaves nothing
+  // on disk and no process running. A branch kept on the remote (stack parent,
+  // fork, --keep-branch) stays local too.
   const cleanup: MergeCleanup | null =
     result.data.deletedBranch !== true
       ? null
-      : cleanupAfterMerge(io.cwd, result.data.branch, result.data.head, {
+      : await cleanupAfterMerge(io.cwd, result.data.branch, result.data.head, {
           actor: actorFromEnv(io.env),
           trigger: "pr merge",
           env: io.env,
+          openPr: (branch) => {
+            const open = gated.forge.openPrsInto(branch);
+            if (!open.ok) return `could not list the open PRs into it (${open.error})`;
+            return open.data.length
+              ? `open PR ${open.data.map((n) => `#${n}`).join(", ")} targets it`
+              : null;
+          },
         });
   return emit(
     io,
@@ -1237,18 +1249,7 @@ async function merge(argv: string[], io: Io): Promise<number> {
                 : `branch not deleted: ${data.deletedBranch.error}`,
             ]
           : []),
-      ...(data.localCleanup
-        ? [
-            ...(data.localCleanup.worktreeRemoved
-              ? [`removed worktree ${data.localCleanup.worktreeRemoved}`]
-              : []),
-            ...(data.localCleanup.branchDeleted ? [`deleted local ${data.branch}`] : []),
-            ...data.localCleanup.notes,
-            ...(data.localCleanup.recorded && "error" in data.localCleanup.recorded
-              ? [`ledger: cleanup not recorded (${data.localCleanup.recorded.error})`]
-              : []),
-          ]
-        : []),
+      ...(data.localCleanup ? cleanupLines(data.localCleanup, data.branch) : []),
       ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
       ...("error" in data.confirmed && !("error" in data.recorded)
         ? [`ledger: merge not confirmed in the ledger (${data.confirmed.error})`]

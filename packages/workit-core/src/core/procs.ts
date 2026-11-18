@@ -42,6 +42,7 @@ import {
   type GroupStop,
 } from "./proc-tree";
 import { stateDir, userHome } from "./workit-paths.mjs";
+import { workspaceCleanup } from "./workspaces";
 
 export type { ProcRow, ProcKind };
 
@@ -558,15 +559,103 @@ export type StopFilter = {
   session?: string;
   /** Rows started in this directory or below it. */
   within?: string;
+  /** Rows started in these directories (nested worktrees) are left out. */
+  except?: readonly string[];
 };
 
 const isStopped = (value: StoppedProc | SkippedProc): value is StoppedProc => "outcome" in value;
 
+/** Why the workspace keeps `row` running (`cleanup: keep`), or null; one read per cwd. */
+const workspaceKeeps = (): ((row: ProcRow) => string | null) => {
+  const seen = new Map<string, string | null>();
+  return (row) => {
+    if (!seen.has(row.cwd)) {
+      const setting = workspaceCleanup(row.cwd);
+      seen.set(
+        row.cwd,
+        setting.mode === "keep"
+          ? `kept: workspace cleanup keep${setting.from ? ` (${setting.from})` : ""}${setting.invalid === undefined ? "" : `, read from the unknown value ${JSON.stringify(setting.invalid)}`}`
+          : null,
+      );
+    }
+    return seen.get(row.cwd) ?? null;
+  };
+};
+
+/**
+ * Split the live rows a filter by session or directory selects into the ones
+ * `caller` may stop and the ones it leaves running, saying why: kept by a
+ * decision or by workspace `cleanup: keep`, started outside an agent session,
+ * or owned by another session family.
+ */
+function selectForStop(
+  live: ProcRow[],
+  filter: Omit<StopFilter, "ids">,
+  caller: string | null,
+): { rows: ProcRow[]; skipped: SkippedProc[] } {
+  const skipped: SkippedProc[] = [];
+  const kept = workspaceKeeps();
+  const rows = live
+    .filter(
+      (row) =>
+        (filter.session === undefined ||
+          row.session === filter.session ||
+          row.lead === leadOf(filter.session)) &&
+        (filter.within === undefined || inside(row.cwd, filter.within)) &&
+        !filter.except?.some((dir) => inside(row.cwd, dir)),
+    )
+    .filter((row) => {
+      const skip = (reason: string): false => {
+        skipped.push({ id: row.id, cmd: row.cmd, reason });
+        return false;
+      };
+      if (row.keep)
+        return skip(
+          `kept${row.keepRef ? ` (${row.keepRef})` : ""}: only \`workit stop ${row.id}\` stops it`,
+        );
+      if (isTerminalRow(row))
+        return skip(`started outside an agent session: only \`workit stop ${row.id}\` stops it`);
+      const workspace = kept(row);
+      if (workspace) return skip(`${workspace}: only \`workit stop ${row.id}\` stops it`);
+      if (caller !== null && !ownsRow(caller, row))
+        return skip(
+          `owned by session ${row.session ?? "(none)"}, not this one: its owner or a person stops it`,
+        );
+      return true;
+    });
+  return { rows, skipped };
+}
+
+/**
+ * The registered processes running in `dir` or below it that a stop by the
+ * context's caller would leave running, with why. Nothing is stopped; the
+ * delivery end keeps a worktree any of these runs in (ruling 1).
+ */
+export function heldWithin(
+  dir: string,
+  context: Pick<StopContext, "env" | "caller" | "store"> & { except?: readonly string[] },
+): SkippedProc[] {
+  const read = (store: ThreadsStore) =>
+    selectForStop(
+      settleProcs(store, context.env),
+      { within: dir, except: context.except },
+      context.caller,
+    ).skipped;
+  if (context.store) return read(context.store);
+  const store = openProcs(context.env);
+  try {
+    return read(store);
+  } finally {
+    store.close();
+  }
+}
+
 /**
  * Stop the registered processes `filter` selects, recording each stop.
- * A filter by session or directory skips kept rows and rows started outside
- * an agent session, saying why; ids name rows to stop regardless. An agent
- * caller never stops another session family's row.
+ * A filter by session or directory skips kept rows (by a decision or by
+ * workspace `cleanup: keep`) and rows started outside an agent session,
+ * saying why; ids name rows to stop regardless. An agent caller never stops
+ * another session family's row.
  */
 export async function stopProcesses(
   filter: StopFilter,
@@ -582,8 +671,7 @@ export async function stopProcesses(
       rows = [];
       for (const id of filter.ids) {
         const row = live.find((candidate) => candidate.id === id);
-        if (row) rows.push(row);
-        else {
+        if (!row) {
           const ended = readProc(store, id);
           report.skipped.push({
             id,
@@ -592,45 +680,20 @@ export async function stopProcesses(
               ? `already ended ${ended.endedAt} (${ended.endReason ?? "no reason"})`
               : "no such registered process",
           });
-        }
+        } else if (context.caller !== null && !ownsRow(context.caller, row))
+          report.skipped.push({
+            id: row.id,
+            cmd: row.cmd,
+            reason: `owned by session ${row.session ?? "(none)"}, not this one: its owner or a person stops it`,
+          });
+        else rows.push(row);
       }
     } else {
-      rows = live.filter(
-        (row) =>
-          (filter.session === undefined ||
-            row.session === filter.session ||
-            row.lead === leadOf(filter.session)) &&
-          (filter.within === undefined || inside(row.cwd, filter.within)),
-      );
-      rows = rows.filter((row) => {
-        if (row.keep) {
-          report.skipped.push({
-            id: row.id,
-            cmd: row.cmd,
-            reason: `kept${row.keepRef ? ` (${row.keepRef})` : ""}: only \`workit stop ${row.id}\` stops it`,
-          });
-          return false;
-        }
-        if (isTerminalRow(row)) {
-          report.skipped.push({
-            id: row.id,
-            cmd: row.cmd,
-            reason: `started outside an agent session: only \`workit stop ${row.id}\` stops it`,
-          });
-          return false;
-        }
-        return true;
-      });
+      const selected = selectForStop(live, filter, context.caller);
+      rows = selected.rows;
+      report.skipped.push(...selected.skipped);
     }
     for (const row of rows) {
-      if (context.caller !== null && !ownsRow(context.caller, row)) {
-        report.skipped.push({
-          id: row.id,
-          cmd: row.cmd,
-          reason: `owned by session ${row.session ?? "(none)"}, not this one: its owner or a person stops it`,
-        });
-        continue;
-      }
       const outcome = await stopProc(store, row, reason, context);
       if (isStopped(outcome)) report.stopped.push(outcome);
       else report.failed.push(outcome);
@@ -649,8 +712,9 @@ export type OrphanReport = StopReport & {
 
 /**
  * Find registered processes whose owner is gone (ruling B) and, with
- * `apply`, stop them with reason `orphan`. Kept rows and rows started
- * outside an agent session are reported and left running.
+ * `apply`, stop them with reason `orphan`. Kept rows (by a decision or by
+ * workspace `cleanup: keep`) and rows started outside an agent session are
+ * reported and left running.
  */
 export async function reapOrphans(
   context: StopContext & { apply?: boolean; reason?: string },
@@ -666,6 +730,7 @@ export async function reapOrphans(
   };
   return withStore(context, async (store) => {
     report.unknown.push(...adoptBrowsers(store, context.env, context.now?.()));
+    const kept = workspaceKeeps();
     for (const row of settleProcs(store, context.env)) {
       if (isTerminalRow(row)) {
         report.skipped.push({
@@ -693,6 +758,11 @@ export async function reapOrphans(
         });
         continue;
       }
+      const workspace = kept(row);
+      if (workspace) {
+        report.skipped.push({ id: row.id, cmd: row.cmd, reason: `orphan, but ${workspace}` });
+        continue;
+      }
       report.orphans.push({ id: row.id, cmd: row.cmd, reason: why });
       if (!apply) continue;
       const outcome = await stopProc(store, row, `${context.reason ?? "orphan"}: ${why}`, {
@@ -709,6 +779,17 @@ export async function reapOrphans(
 /** Mark a row kept (cleanup leaves it running); `ref` names the ledger decision. */
 export const keepProc = (store: ThreadsStore, id: string, ref: string | null): ProcRow =>
   upsertProc(store, id, () => ({ keep: true, keepRef: ref }));
+
+/**
+ * Lift a keep that decision `ref` put on a row (its decision was superseded);
+ * a row kept by another decision, or gone, is left as it is. True when lifted.
+ */
+export function unkeepProc(store: ThreadsStore, id: string, ref: string): boolean {
+  const row = readProc(store, id);
+  if (!row?.keep || row.keepRef !== ref) return false;
+  upsertProc(store, id, () => ({ keep: false, keepRef: null }));
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // the RSS ceiling notice
