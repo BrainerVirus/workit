@@ -30,7 +30,7 @@ import { stateDir as workitStateDir } from "./workit-paths.mjs";
 import { commandLines, simpleCommand } from "../hooks/raw-git";
 import type { ShellDialect } from "../hooks/shell-words";
 import { repoHeavyCommands } from "../check-config";
-import { gitTop, names as namesWord, wrapAllowed, type RuleRead } from "./heavy-rules";
+import { gitTop, wrapAllowed, type RuleRead } from "./heavy-rules";
 
 /** Workit's state dir for `env` (core/workit-paths.mjs). */
 export const stateDir = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform) =>
@@ -330,23 +330,31 @@ const serverScript = (script = ""): boolean =>
   SERVER_SCRIPT.test(script) && !HEAVY_SCRIPT.test(script);
 
 /** Tools that serve until stopped, by subcommand (`vite` with no build subcommand is one too). */
-const SERVER_TOOLS: Record<string, ReadonlySet<string>> = {
+const NUXT = sub("dev", "preview", "start");
+const WEBPACK = sub("serve", "s", "server");
+const SERVER_TOOLS: Record<string, Rule> = {
   ng: sub("serve", "s"),
   next: sub("dev", "start"),
-  nuxt: sub("dev", "preview", "start"),
-  nuxi: sub("dev", "preview", "start"),
+  nuxt: NUXT,
+  nuxi: NUXT,
   astro: sub("dev", "preview"),
   "react-scripts": sub("start"),
-  webpack: sub("serve", "s", "server"),
-  "webpack-cli": sub("serve", "s", "server"),
+  webpack: WEBPACK,
+  "webpack-cli": WEBPACK,
   storybook: sub("dev", "start"),
   rails: sub("server", "s"),
   mix: sub("phx.server"),
 };
-
-/** `up` without `-d`/`--detach`/`--wait`: the compose run stays in the foreground. */
-const composeUp = (words: string[]): boolean =>
-  words[0] === "up" && !words.some((word) => /^(?:-d|--detach|--wait)$/u.test(word));
+const COMPOSE_VALUES = new Set([
+  "-f",
+  "--file",
+  "-p",
+  "-H",
+  "--host",
+  "--context",
+  "-c",
+  "--config",
+]);
 
 /**
  * Why `words` (one command line, prefixes stripped) starts a dev server, or
@@ -354,71 +362,54 @@ const composeUp = (words: string[]): boolean =>
  * pre-check list (core/heavy-words.ts), so a server always reaches the gate.
  */
 function serverBuiltIn(words: string[], depth = 0): string | null {
-  if (depth > 6 || !words.length) return null;
   const name = baseName(words[0]);
-  const label = () => words.slice(0, 3).join(" ");
-  const inner = (from: number) => serverBuiltIn(words.slice(from), depth + 1);
-  if (WORKIT.test(name) || words.some((word) => INFO_FLAGS.has(word) && word.startsWith("-")))
+  if (
+    depth > 6 ||
+    WORKIT.test(name) ||
+    words.some((word) => /^(?:-h|--help|--version)$/u.test(word))
+  )
     return null;
-  if (name === "npx" || name === "bunx" || name === "pnpx") return inner(positional(words, 1));
+  const compose = /^(?:docker|podman|nerdctl|docker-compose)$/u.test(name);
+  const at = positional(words, 1, compose ? COMPOSE_VALUES : PM_VALUES);
+  const command = words[at];
+  const yes = words.slice(0, 3).join(" ");
+  const inner = (from: number) => serverBuiltIn(words.slice(from), depth + 1);
+  const up = (from: number) =>
+    words[from] === "up" && !words.some((word) => /^(?:-d|--detach|--wait)$/u.test(word));
+  if (name === "npx" || name === "bunx" || name === "pnpx") return inner(at);
   if (name === "corepack") return inner(1);
+  if (command === undefined) return name === "vite" ? yes : null;
   if (name === "npm" || name === "pnpm" || name === "yarn" || name === "bun" || name === "deno") {
-    const at = positional(words, 1);
-    const command = words[at];
-    if (command === undefined) return null;
     if (EXEC.has(command)) return inner(positional(words, at + 1));
-    if (command === "start") return label();
+    if (command === "start") return yes;
     if (name === "yarn" && command === "workspace")
-      return serverScript(words[at + 2]) ? label() : inner(at + 2);
+      return serverScript(words[at + 2]) ? yes : inner(at + 2);
     if (NPM_RUN.has(command) || (name === "deno" && command === "task")) {
-      const script = words[positional(words, at + 1)];
-      if (serverScript(script)) return label();
+      if (serverScript(words[positional(words, at + 1)])) return yes;
       return name === "bun" && command !== "task" ? inner(positional(words, at + 1)) : null;
     }
     if (name === "npm" || name === "deno") return null;
-    return serverScript(command) ? label() : inner(at);
+    return serverScript(command) ? yes : inner(at);
   }
   if (PYTHONS.test(name)) {
-    const at = words.indexOf("-m");
-    if (at > 0 && words[at + 1] === "http.server") return label();
-    return words.some(
-      (word, index) => word.endsWith("manage.py") && words[index + 1] === "runserver",
-    )
-      ? label()
-      : at > 0 && words[at + 1]
-        ? inner(at + 1)
-        : null;
+    const m = words.indexOf("-m");
+    if (words[m + 1] === "http.server" || command.endsWith("manage.py")) {
+      return m > 0 || words[at + 1] === "runserver" ? yes : null;
+    }
+    return m > 0 && words[m + 1] ? inner(m + 1) : null;
   }
-  if (["uv", "poetry", "pdm", "pipenv", "hatch", "rye"].includes(name)) {
-    const at = positional(words, 1);
-    return words[at] === "run" ? inner(positional(words, at + 1)) : null;
-  }
-  if (name === "bundle")
-    return words[positional(words, 1)] === "exec" ? inner(positional(words, 2)) : null;
-  if (name === "make" || name === "gmake") {
-    const targets = words.slice(1).filter((word) => !word.startsWith("-") && !word.includes("="));
-    return targets.some((target) => serverScript(target)) ? label() : null;
-  }
-  if (name === "nx") {
-    const at = positional(words, 1);
-    const command = words[at] ?? "";
-    const target = command === "run" ? ((words[at + 1] ?? "").split(":")[1] ?? "") : command;
-    return serverScript(target) ? label() : null;
-  }
-  if (name === "docker" || name === "podman" || name === "nerdctl") {
-    const at = positional(words, 1, new Set(["-H", "--host", "--context", "-c", "--config"]));
-    if (words[at] !== "compose") return null;
-    return composeUp(words.slice(positional(words, at + 1, new Set(["-f", "--file", "-p"]))))
-      ? label()
-      : null;
-  }
-  if (name === "docker-compose")
-    return composeUp(words.slice(positional(words, 1, new Set(["-f", "--file", "-p"]))))
-      ? label()
-      : null;
-  const command = words.slice(1).find((word) => !word.startsWith("-"));
-  if (name === "vite") return command === "build" || command === "optimize" ? null : label();
-  return command !== undefined && SERVER_TOOLS[name]?.has(command) ? label() : null;
+  if (["uv", "poetry", "pdm", "pipenv", "hatch", "rye", "bundle"].includes(name))
+    return command === "run" || command === "exec" ? inner(positional(words, at + 1)) : null;
+  if (name === "make" || name === "gmake")
+    return words.slice(1).some((word) => !/^-|=/u.test(word) && serverScript(word)) ? yes : null;
+  if (name === "nx")
+    return serverScript(command === "run" ? words[at + 1]?.split(":")[1] : command) ? yes : null;
+  if (name === "docker-compose") return up(at) ? yes : null;
+  if (compose)
+    return command === "compose" && up(positional(words, at + 1, COMPOSE_VALUES)) ? yes : null;
+  if (name === "vite") return command === "build" || command === "optimize" ? null : yes;
+  const rule = SERVER_TOOLS[name];
+  return rule && rule !== "any" && rule.has(command) ? yes : null;
 }
 
 /**
@@ -613,17 +604,6 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
   };
 }
 
-/** Could an allow cover `workit run --bg …` (a bare rule, a glob first word, a prefix of it)? */
-const literalPrefix = (pattern: string): string => pattern.trim().replace(/(?::\*| \*|\*)$/u, "");
-const coversRunBg = (pattern: string): boolean => {
-  const words = literalPrefix(pattern).split(/[:\s]/u);
-  if (!words[0] || words[0].includes("*")) return true;
-  return (
-    baseName(words[0]) === "workit" &&
-    ["run", "--bg"].slice(0, words.length - 1).every((word, at) => word.startsWith(words[at + 1]))
-  );
-};
-
 /**
  * What the shell hook does with a dev server (#328), after every Workit gate
  * passed on it: rewrite one to `workit run --bg -- <cmd>`, tell a chain that
@@ -638,24 +618,18 @@ export function serverPlan(command: string, options: PlanOptions): HeavyPlan {
   if (!found) return { kind: "none" };
   const simple = simpleCommand(command, dialect, 0, true);
   const single = simple && serverBuiltIn(simple);
-  const rules = options.rules;
-  if (rules !== null) {
-    const words = single ? (linesOf(command, dialect) ?? []).flat() : found.line;
-    const text = single ? command : found.line.join(" ");
-    // As for heavy commands (#429): a deny/ask rule naming it, or an allow
-    // covering the wrapper but not the command (wrapping would raise it).
-    if (
-      rules === "unreadable" ||
-      rules.deny.some((pattern) => namesWord(pattern, words)) ||
-      (!options.bypass &&
-        rules.allow.some(coversRunBg) &&
-        !rules.allow.some((pattern) => {
-          const prefix = literalPrefix(pattern);
-          return !prefix || (!prefix.includes("*") && text.trim().startsWith(prefix));
-        }))
-    )
-      return { kind: "passthrough", note: "" };
-  }
+  // As for heavy commands (#429): a deny/ask rule naming it, or an allow
+  // covering `workit` but not the command, leaves it as typed.
+  if (
+    options.rules !== null &&
+    !wrapAllowed(
+      options.rules,
+      single ? (linesOf(command, dialect) ?? []).flat() : found.line,
+      single ? command : found.line.join(" "),
+      options,
+    ).ok
+  )
+    return { kind: "passthrough", note: "" };
   if (single) {
     const rewrite = leaseRewrite(command)?.replace("workit check --heavy --", "workit run --bg --");
     return rewrite
@@ -665,7 +639,7 @@ export function serverPlan(command: string, options: PlanOptions): HeavyPlan {
   const start = `workit run --bg -- ${found.line.map(quoteWord).join(" ")}`;
   return {
     kind: "split",
-    reason: `dev_server: \`${command.trim()}\` chains a dev server (${found.reason}) with other commands, and a server would never let the chain finish. Start it alone, now: \`${start}\` (it returns once the server is up and prints its port and log); then run the other parts as their own commands.`,
+    reason: `dev_server: \`${command.trim()}\` chains a dev server (${found.reason}) with other commands. Start it alone, now: \`${start}\`; then run the other parts as their own commands.`,
     unblock: start,
   };
 }

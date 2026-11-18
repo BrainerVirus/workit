@@ -46,14 +46,13 @@ export function takeProcNotice(
       const { id, cmd, cwd, rssBytes, ceilingBytes } = notice as Record<string, unknown>;
       if (typeof id !== "string") return [];
       return [
-        `  - ${id} \`${String(cmd)}\` in ${String(cwd)}: ${mb(rssBytes)}, past the ${mb(ceilingBytes)} ceiling. Restart it: \`workit run --bg --restart ${id}\`; or stop it: \`workit stop ${id}\`.`,
+        `- ${id} \`${String(cmd)}\` in ${String(cwd)}: ${mb(rssBytes)} (ceiling ${mb(ceilingBytes)}). Restart it: \`workit run --bg --restart ${id}\`, or \`workit stop ${id}\`.`,
       ];
     });
     return lines.length
-      ? [
-          "Workit: a background process you started uses more memory than this machine's heavy-check budget allows:",
-          ...lines,
-        ].join("\n")
+      ? ["Workit: a background process you started is past the memory ceiling:", ...lines].join(
+          "\n",
+        )
       : null;
   } catch {
     return null;

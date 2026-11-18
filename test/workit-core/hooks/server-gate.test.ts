@@ -189,10 +189,10 @@ test("Given the same on Codex and Cursor, When the hook runs, Then it is denied 
   const root = repo();
   const codexOutput = codex(root, "ng serve --port 4200");
   expect(codexOutput.permissionDecision).toBe("deny");
-  expect(codexOutput.permissionDecisionReason).toContain(`owned by this session: ${ROUTED} (`);
+  expect(codexOutput.permissionDecisionReason).toContain(`run exactly: ${ROUTED}`);
   const cursorOutput = cursor(root, "ng serve --port 4200");
   expect(cursorOutput.permission).toBe("deny");
-  expect(cursorOutput.agent_message).toContain(`owned by this session: ${ROUTED} (`);
+  expect(cursorOutput.agent_message).toContain(`run exactly: ${ROUTED}`);
 });
 
 test("Given the same on OpenCode and Pi, When the shell hook runs, Then the command is rewritten in place and nothing is denied", () => {
@@ -301,7 +301,7 @@ const readdirNames = (dir: string): string[] => (existsSync(dir) ? readdirSync(d
 test("Given a notice file for the session, When it is taken twice, Then the first take names the process, its use and the restart, and the second gets nothing", () => {
   const file = writeNotice("session-1");
   const text = takeProcNotice("session-1");
-  expect(text).toContain("p1abc `ng serve` in /w/app: 3072 MB, past the 2048 MB ceiling");
+  expect(text).toContain("p1abc `ng serve` in /w/app: 3072 MB (ceiling 2048 MB)");
   expect(text).toContain("`workit run --bg --restart p1abc`");
   expect(text).toContain("`workit stop p1abc`");
   expect(existsSync(file)).toBe(false);

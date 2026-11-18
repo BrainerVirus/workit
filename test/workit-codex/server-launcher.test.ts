@@ -97,7 +97,7 @@ for (const entry of ["source", "dist"] as const)
       const output = run(entry, command).hookSpecificOutput;
       expect(output.permissionDecision, command).toBe("deny");
       expect(output.permissionDecisionReason).toContain(
-        `owned by this session: workit run --bg -- ${command} (`,
+        `run exactly: workit run --bg -- ${command}`,
       );
     }
   }, 60_000);

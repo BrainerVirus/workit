@@ -339,22 +339,17 @@ test("given a chain that starts a dev server, when planned, then it is split nam
   }
 });
 
-test("given host rules, when a dev server is planned, then a rule naming it or an allow covering only the wrapper leaves it as typed", () => {
+test("given host rules, when a dev server is planned, then a rule naming it or an allow covering only workit leaves it as typed (#429)", () => {
   const rules = (allow: string[], deny: string[] = []) => ({ allow, deny });
   expect(route("npm run dev", rules([], ["npm run dev:*"])).kind).toBe("passthrough");
   expect(route("npm run dev", "unreadable").kind).toBe("passthrough");
-  // `workit run *` would let the rewrite run a command the user is asked about.
-  expect(route("npm run dev", rules(["workit run:*"])).kind).toBe("passthrough");
+  // `workit:*` would let the rewrite run a command the user is asked about.
+  expect(route("npm run dev", rules(["workit:*"])).kind).toBe("passthrough");
   expect(route("npm run dev", rules(["workit:*", "npm run dev:*"])).kind).toBe("rewrite");
   // Workit's own allows (enumerated verbs) never cover the wrapper.
-  expect(route("npm run dev", rules(["workit git *", "workit check test *"])).kind).toBe("rewrite");
+  expect(route("npm run dev", rules(["workit git *", "workit ps *"])).kind).toBe("rewrite");
   expect(
-    serverPlan("npm run dev", {
-      cwd: root,
-      env,
-      rules: rules(["workit run:*"]),
-      bypass: true,
-    }).kind,
+    serverPlan("npm run dev", { cwd: root, env, rules: rules(["workit:*"]), bypass: true }).kind,
   ).toBe("rewrite");
 });
 

@@ -89,7 +89,7 @@ export function heavyGate(cwd: string, command: string, options: GateOptions): H
 /** The model-visible line after a rewrite. */
 export const rewriteNote = (plan: Extract<HeavyPlan, { kind: "rewrite" }>): string =>
   plan.server
-    ? `workit: this dev server (${plan.reason}) runs in the background as \`${plan.command}\`, owned by this session: the output names its id, port and log. Start servers that way yourself; \`workit ps\` lists them and \`workit stop <id>\` stops one when your work is done.`
+    ? `workit: this dev server (${plan.reason}) runs in the background as \`${plan.command}\`, owned by this session; \`workit stop <id>\` stops it when your work is done.`
     : `workit: this heavy command (${plan.reason}) runs under the machine-wide heavy-check lease as \`${plan.command}\`: it waits while another heavy check holds the lease (\`workit lock status\` shows who). Run heavy commands that way yourself; \`workit help lock\` explains the lease.`;
 
 /** The deny on hosts that cannot rewrite: the exact command to run instead. */
@@ -99,7 +99,7 @@ export const heavyDenial = (
 ): HookDecision => ({
   kind: "deny",
   reason: plan.server
-    ? `dev_server: \`${original.trim()}\` starts a dev server (${plan.reason}), which would never return in your shell. Start it in the background, owned by this session: ${plan.command} (it prints the id, port and log; \`workit stop <id>\` stops it when your work is done)`
+    ? `dev_server: \`${original.trim()}\` starts a dev server (${plan.reason}), which never returns. Start it in the background, owned by this session; run exactly: ${plan.command}`
     : `heavy_command: \`${original.trim()}\` is heavy (${plan.reason}) and must run under the machine-wide heavy-check lease, so parallel agents cannot exhaust this machine's memory and CPU. Run exactly: ${plan.command}`,
   unblock: plan.command,
 });
