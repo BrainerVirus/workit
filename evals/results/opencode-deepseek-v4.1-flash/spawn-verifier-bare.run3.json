@@ -1,0 +1,35 @@
+{
+  "case": "spawn-verifier-bare",
+  "run": 3,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "8721eee02db00bde",
+  "date": "2026-11-18T22:48:21.086Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 4,
+    "durationMs": 89371,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 3,
+    "failures": [],
+    "firstTry": {
+      "interactions": 1,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

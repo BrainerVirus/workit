@@ -1,0 +1,46 @@
+{
+  "case": "spawn-user-model-override",
+  "run": 3,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "23094732a0ba3080",
+  "date": "2026-11-18T22:40:42.031Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 10,
+    "durationMs": 57163,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 13,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "5 denied and 3 failed of 10 Workit interaction(s): #1 Bash(opencode models 2>&1 | head -50) denied: Permission denied: shell; #5 Bash(env | grep -iE 'opencode|anthropic|model' | sed 's/=.*/=<set>/'; ls -a ~ ; ls ~/.config 2>/dev/null) denied: Permission denied: shell; #6 Bash(find / -maxdepth 4 -name 'opencode.json*' -not -path '*/node_modules/*' 2>/dev/null | head -20) denied: Permission denied: shell; #7 Glob({\"pattern\":\"**/opencode.json*\",\"path\":\"/root/.config\"}) denied: Permission denied: external_directory; #8 Glob({\"pattern\":\".config/opencode/*\",\"path\":\"/root\"}) denied: Permission denied: external_directory; #9 Agent(workit-verifier: Verify greet version branch) failed: Model \"anthropic/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #10 Agent(workit-verifier: Verify greet version branch) failed: Model \"opencode-go/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #11 Agent(workit-verifier: Verify greet version branch) failed: Model \"opencode/claude-sonnet-4-5\" is not available. Use the models tool to see what is available."
+      }
+    ],
+    "firstTry": {
+      "interactions": 10,
+      "failed": 3,
+      "denied": 5
+    }
+  },
+  "outsideChanges": [
+    {
+      "path": "~/.local/state/workit/verdicts/9082cba2802aac05ae9726dbf70ab9c5/ledger.jsonl",
+      "change": "changed"
+    }
+  ]
+}

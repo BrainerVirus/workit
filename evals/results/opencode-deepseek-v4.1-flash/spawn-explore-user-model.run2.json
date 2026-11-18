@@ -1,0 +1,40 @@
+{
+  "case": "spawn-explore-user-model",
+  "run": 2,
+  "host": "opencode",
+  "model": "deepseek-v4.1-flash",
+  "provider": "go",
+  "limits": [
+    {
+      "provider": "free",
+      "error": "provider.free-limit 429 Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+    }
+  ],
+  "workitVersion": "workit-dev-v2.13.0+0594686564",
+  "key": "3fa66cd7f4ee2e9a",
+  "date": "2026-11-18T22:35:27.333Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 6,
+    "durationMs": 29326,
+    "costUsd": 0,
+    "stop": "stop"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": false,
+    "calls": 5,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "2 denied and 2 failed of 4 Workit interaction(s): #1 Agent(explore: Find hello() definition) failed: Model \"opencode-go/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #2 Bash(opencode models 2>&1 | head -50) denied: Permission denied: shell; #3 Agent(explore: Find hello() definition) failed: Model \"anthropic/claude-sonnet-4-5\" is not available. Use the models tool to see what is available.; #5 Glob({\"pattern\":\"**/opencode.json*\",\"path\":\"/tmp\",\"limit\":10}) denied: Permission denied: external_directory"
+      }
+    ],
+    "firstTry": {
+      "interactions": 4,
+      "failed": 2,
+      "denied": 2
+    }
+  }
+}

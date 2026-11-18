@@ -2,39 +2,26 @@
   "case": "spawn-user-model-override",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "d93195724bc7c972",
-  "date": "2026-11-18T17:32:47.912Z",
+  "workitVersion": "workit-dev-v2.13.0+bcbf4e5c87",
+  "key": "b128029b8c560475",
+  "date": "2026-11-18T22:19:20.620Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 10655,
-    "costUsd": 0.0037557700000000003,
+    "turns": 2,
+    "durationMs": 20515,
+    "costUsd": 0.029976660000000002,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 2,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#1 Agent(workit:verifier: Verify greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\" (description and prompt as written). It"
-      },
-      {
-        "rule": "require",
-        "detail": "no call matches /verifier[\\s\\S]*sonnet|sonnet[\\s\\S]*verifier/ not denied: the spawn keeps the model the user named and runs"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Agent(workit:verifier: Verify greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"opus\" (description and prompt as written). It"
-      }
-    ],
+    "pass": true,
+    "calls": 4,
+    "failures": [],
     "firstTry": {
-      "interactions": 1,
+      "interactions": 2,
       "failed": 0,
-      "denied": 1
+      "denied": 0
     }
   }
 }
