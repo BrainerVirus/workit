@@ -196,6 +196,9 @@ processes it takes about 16 ms.
   then `/T /F` after 10 s); it holds the child's handle, so the pid is still
   that process. When the supervisor is gone, the stop only reports the process
   and signals nothing; end it in Task Manager.
+- On Windows the teardown log records each stop it starts, not the CLI's
+  output, so it doesn't say why a row was kept. Run `workit ps` to see what
+  still runs.
 - Marking a process kept comes with the end-of-work cleanup in a later
   release (a ledger decision naming `proc:<id>`); the registry already honors
   the keep flag.

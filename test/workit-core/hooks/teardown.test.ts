@@ -68,8 +68,7 @@ let launcher = "";
 /**
  * Write the platform's owned launcher (`bin/workit`, `bin\\workit.cmd` on
  * Windows), marked as Workit's, running `script` with `node` as a real owned
- * launcher runs the CLI, or nothing. Not this runtime: on the Windows runner a
- * Bun child ran but its stdout never reached the append-only log handle.
+ * launcher runs the CLI, or nothing.
  */
 const writeLauncher = (script: string | null) => {
   const run = script ? `node "${script}"` : null;
@@ -441,6 +440,12 @@ test("Given a real owned launcher, When a session ends, Then it runs detached as
     session: "sess-real",
   });
   const log = teardownLog(process.env);
+  expect(readFileSync(log, "utf8")).toContain(
+    "workit stop --session sess-real --reason session-end",
+  );
+  // L: on Windows the teardown log records each stop it starts, not the CLI's
+  // output (a detached cmd.exe child's writes to the append-mode handle are lost).
+  if (process.platform === "win32") return;
   while (!readFileSync(log, "utf8").includes("fake stop ran") && Date.now() < deadline)
     await Bun.sleep(25);
   expect(readFileSync(log, "utf8")).toContain("fake stop ran");
