@@ -277,6 +277,17 @@ checks config invalid, as a bad `gates` entry does: `workit check` names
 `cleanup.regenerable` and the problem, and cleanup uses only the built-in list
 until it is fixed.
 
+## Limits
+
+- Merge cleanup reads the branch tip, stops processes, and checks every
+  worktree's admin dir for a rebase, merge, cherry-pick, revert or bisect
+  before it deletes the branch. The delete is compare-and-delete
+  (`git update-ref -d <ref> <old head>`), so a commit that lands at any point
+  keeps the branch. An operation that starts in the milliseconds between that
+  check and the delete is not seen; its worktree still holds the commits it
+  started from, and `git reflog` in it finds them.
+- An admin dir Workit cannot read keeps the branch, with a note.
+
 ## Not covered yet
 
 Dev servers and compose stacks that a change started are not tracked or

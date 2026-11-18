@@ -129,6 +129,49 @@ const operationInProgress = (worktree: string): string | null => {
   return found ? `a ${found[1]} is in progress` : null;
 };
 
+/**
+ * An operation under way anywhere in the repository, read from the admin
+ * dirs (the common git dir and each `<common>/worktrees/<id>/`), never
+ * through a worktree's path: a locked worktree whose directory is away, or a
+ * prunable one, still has its rebase state there. `unreadable` when an admin
+ * dir cannot be listed (the caller keeps the branch: fail closed).
+ */
+export function operationsUnderway(
+  cwd: string,
+): { where: string; busy: string } | { unreadable: string } | null {
+  const common = gitRun(cwd, ["rev-parse", "--git-common-dir"]);
+  if (!common.ok) return { unreadable: `git rev-parse --git-common-dir failed in ${cwd}` };
+  const root = path.resolve(cwd, common.stdout.trim());
+  const admins = [root];
+  try {
+    const nested = path.join(root, "worktrees");
+    if (fs.existsSync(nested))
+      for (const name of fs.readdirSync(nested)) admins.push(path.join(nested, name));
+  } catch {
+    return { unreadable: `${path.join(root, "worktrees")} cannot be read` };
+  }
+  for (const admin of admins) {
+    let names: Set<string>;
+    try {
+      names = new Set(fs.readdirSync(admin));
+    } catch {
+      return { unreadable: `${admin} cannot be read` };
+    }
+    const found = OPERATIONS.find(([entry]) => names.has(entry));
+    if (!found) continue;
+    let where = admin;
+    try {
+      // A linked worktree's admin dir names its `.git` file in `gitdir`.
+      if (admin !== root)
+        where = path.dirname(fs.readFileSync(path.join(admin, "gitdir"), "utf8").trim());
+    } catch {
+      // keep the admin dir as the place
+    }
+    return { where, busy: `a ${found[1]} is in progress` };
+  }
+  return null;
+}
+
 /** `workit fanout worktree create` marked this worktree's admin dir with its token. */
 const isFanoutWorktree = (worktree: string): boolean => {
   const dir = gitRun(worktree, ["rev-parse", "--absolute-git-dir"]);
@@ -830,13 +873,17 @@ export async function cleanupAfterMerge(
   const left = listWorktrees(cwd);
   // A worktree mid-rebase or mid-bisect shows a detached HEAD, so it never
   // names the branch it works on; update-ref (unlike branch -D) would not
-  // notice. Any operation under way in any worktree keeps the branch.
-  const busyElsewhere = left
-    .map((entry) => ({ path: entry.path, busy: operationInProgress(entry.path) }))
-    .find((entry) => entry.busy);
-  if (busyElsewhere)
+  // notice. Any operation under way in any worktree, read from the admin
+  // dirs (a locked or prunable worktree's directory may be gone), keeps the
+  // branch; an admin dir that cannot be read keeps it too.
+  const underway = operationsUnderway(cwd);
+  if (underway && "unreadable" in underway)
     out.notes.push(
-      `worktree ${busyElsewhere.path}: ${busyElsewhere.busy}; kept local ${branch} until it ends`,
+      `cannot tell whether an operation is under way (${underway.unreadable}); kept local ${branch}`,
+    );
+  else if (underway)
+    out.notes.push(
+      `worktree ${underway.where}: ${underway.busy}; kept local ${branch} until it ends`,
     );
   else if (!left.some((entry) => entry.branch === ref)) {
     // Compare-and-delete: a commit that lands after the last check keeps the branch.

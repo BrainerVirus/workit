@@ -6,7 +6,15 @@
 // elsewhere is detached at the remote trunk.
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -268,5 +276,39 @@ test("Given feature/x mid-rebase in its worktree, When cleanup runs and the reba
   expect(out.branchDeleted).toBe(false);
   git(dir, "rebase", "--abort");
   expect(git(dir, "branch", "--show-current")).toBe("feature/x");
+  expect(git(world.main, "rev-parse", "feature/x")).toBe(world.head);
+});
+
+test("Given feature/x mid-rebase in a locked worktree whose directory is moved away, When cleanup runs, Then the branch is kept and the rebase continues once the directory is back", async () => {
+  const world = setup();
+  squash(world);
+  const dir = midRebase(world);
+  git(world.main, "worktree", "lock", "--reason", "on a removable drive", dir);
+  renameSync(dir, `${dir}.away`);
+  const out = await cleanup(world);
+  expect(out.branchDeleted).toBe(false);
+  expect(out.notes.join("\n")).toContain(
+    "a rebase is in progress; kept local feature/x until it ends",
+  );
+  expect(branchExists(world.main, "feature/x")).toBe(true);
+  renameSync(`${dir}.away`, dir);
+  writeFileSync(path.join(dir, "x.txt"), "resolved\n");
+  git(dir, "add", "x.txt");
+  const continued = spawnSync("git", ["-c", "core.editor=true", "rebase", "--continue"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  expect(continued.status, continued.stderr).toBe(0);
+  expect(git(world.main, "show", "feature/x:x.txt")).toBe("resolved");
+});
+
+test("Given feature/x mid-rebase in a prunable worktree (directory gone, not locked), When cleanup runs, Then the branch is kept", async () => {
+  const world = setup();
+  squash(world);
+  const dir = midRebase(world);
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  const out = await cleanup(world);
+  expect(out.branchDeleted).toBe(false);
+  expect(out.notes.join("\n")).toContain("a rebase is in progress");
   expect(git(world.main, "rev-parse", "feature/x")).toBe(world.head);
 });

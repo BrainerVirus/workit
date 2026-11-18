@@ -96,6 +96,7 @@ import {
   verdictEvidence,
   type CheckEvidenceDoc,
 } from "@workit-dev/core/src/core/policy/check-evidence";
+import { keepDecisions } from "@workit-dev/core/src/core/cleanup";
 import { keepProc, openProcs, unkeepProc } from "@workit-dev/core/src/core/procs";
 import { readProc } from "@workit-dev/core/src/store/threads/procs";
 import { connect } from "./forge-common";
@@ -147,9 +148,17 @@ function liftSuperseded(
     return parsed?.kind === "proc" && !keptAgain.includes(parsed.target) ? [parsed.target] : [];
   });
   if (!ids.length) return [];
+  // Another live decision that still keeps a process takes over its keep.
+  const live = keepDecisions(io.cwd);
   const store = openProcs(io.env);
   try {
-    return ids.filter((id) => unkeepProc(store, id, `decision ${target.id}`));
+    return ids.filter((id) => {
+      const other = live.findLast((keep) => keep.kind === "proc" && keep.target === id);
+      const ref = `decision ${target.id}`;
+      if (!other) return unkeepProc(store, id, ref);
+      if (readProc(store, id)?.keepRef === ref) keepProc(store, id, `decision ${other.decision}`);
+      return false;
+    });
   } finally {
     store.close();
   }

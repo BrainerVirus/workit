@@ -157,3 +157,46 @@ test("Given a proc: keep, When a later decision supersedes it, Then the registry
     after.close();
   }
 });
+
+test("Given two decisions keeping one process, When the later one is superseded, Then the keep moves back to the earlier decision instead of being lifted", async () => {
+  const { repo, env } = world();
+  const store = openProcs(env);
+  try {
+    upsertProc(store, "pk0201", () => ({
+      cwd: repo,
+      cmd: "bun run dev",
+      kind: "server",
+      startedAt: new Date().toISOString(),
+    }));
+  } finally {
+    store.close();
+  }
+  const decide = async (what: string, ...extra: string[]) => {
+    const result = await run(repo, env, [
+      "ledger",
+      "decision",
+      what,
+      "--why",
+      "the user said so",
+      ...extra,
+      "--json",
+    ]);
+    expect(result.code, result.stdout).toBe(0);
+    return String(result.json().data.id);
+  };
+  const first = await decide("keep the server for the demo", "--keep", "proc:pk0201");
+  const second = await decide("keep it for the review too", "--keep", "proc:pk0201");
+  const keepRef = () => {
+    const read = openProcs(env);
+    try {
+      return readProc(read, "pk0201");
+    } finally {
+      read.close();
+    }
+  };
+  expect(keepRef()).toMatchObject({ keep: true, keepRef: `decision ${second}` });
+  await decide("the review is done", "--supersedes", second);
+  expect(keepRef()).toMatchObject({ keep: true, keepRef: `decision ${first}` });
+  await decide("the demo is done", "--supersedes", first);
+  expect(keepRef()).toMatchObject({ keep: false, keepRef: null });
+});
