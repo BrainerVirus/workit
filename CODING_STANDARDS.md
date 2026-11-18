@@ -78,7 +78,10 @@ what to fix.
   organisation, repositories, accounts or home in its path or bytes, UTF-16
   included (`private-names`, a scan in
   `scripts/repo-rules/private-names.mts`: use `acme`, `alice`, `work-gh`).
-  Existing hits sit in `scripts/repo-rules/baseline.json`,
+  One rule only warns: `released-changelog` prints each `CHANGELOG.md`
+  [Unreleased] entry a `workit-dev-v*` tag already shipped (fix: run
+  `bun scripts/roll-changelog.ts`) and never fails the run; a checkout
+  without those tags skips it. Existing hits sit in `scripts/repo-rules/baseline.json`,
   which only shrinks (`bun run lint:rules --write`). A new rule cites its
   mistake, fails on it in `test/repo-rules/`, and seeds its hits with
   `--grandfather <rule>`.

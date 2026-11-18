@@ -209,7 +209,10 @@ test(
     const npmFirst = config.indexOf("@semantic-release/npm");
     const npmLast = config.lastIndexOf("@semantic-release/npm");
     const verify = config.indexOf("verifyConditionsCmd");
-    const prepare = config.indexOf("prepareCmd");
+    // The rewrite's own prepareCmd (roll-changelog has one too, earlier).
+    const prepare = config.search(
+      /prepareCmd:\s*"bun packages\/workit-core\/scripts\/rewrite-workspace-deps\.ts/,
+    );
     expect(verify).toBeGreaterThanOrEqual(0);
     expect(prepare).toBeGreaterThanOrEqual(0);
     // verify-time rewrite is listed BEFORE the first npm plugin, so package
@@ -294,6 +297,13 @@ test(
     );
     expect(notesIdx).toBeGreaterThan(-1);
     expect(notesIdx).toBeLessThan(githubIdx);
+    // semantic-release joins generateNotes outputs in plugin order: the
+    // CHANGELOG.md block must come before the PR-title list.
+    const changelogIdx = cfg.plugins.findIndex((p) =>
+      String(opts(p).generateNotesCmd ?? "").includes("scripts/roll-changelog.ts --notes"),
+    );
+    expect(changelogIdx).toBeGreaterThan(-1);
+    expect(changelogIdx).toBeLessThan(notesIdx);
     const writerOpts = opts(cfg.plugins[notesIdx]).writerOpts as Record<string, unknown>;
     expect(writerOpts.finalizeContext).toBe(
       require(path.resolve(REPO_ROOT, "scripts/clean-release-notes.cjs")),

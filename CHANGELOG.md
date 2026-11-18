@@ -6,12 +6,580 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 > **Version model.** Semantic-release computes published versions from
-> Conventional Commits. The release workflow rewrites internal dependencies
-> for publishing, then synchronizes source manifests through its manifest PR.
-> GitHub Releases contain the generated release notes; this file records
-> manually maintained changes, including unreleased work.
+> Conventional Commits. Each PR adds its entries under [Unreleased]; an entry
+> belongs to the first `workit-dev-v*` release whose tag holds it, and
+> `bun scripts/roll-changelog.ts` moves released entries into that version's
+> section. A GitHub release lists its version's entries first, then the
+> generated list of PR titles.
 
 ## [Unreleased]
+
+### Changed
+
+- GitHub release notes start with the release's CHANGELOG.md entries, above
+  the list of PR titles, and the release moves them from [Unreleased] into a
+  `## [x.y.z] - date` section. Every `workit-dev-v*` release since 1.0.0 is
+  split out into its own section here.
+
+## [2.13.0] - 2026-11-18
+
+### Fixed
+
+- When the host withholds the account's Workit config (permission denied), Workit reads it as having no grants and no role models instead of failing, which can only lower what an agent may do; the note names the file, never its path.
+
+## [2.12.0] - 2026-11-18
+
+### Added
+
+- After `workit pr merge` or `workit verify-delivery merge`, cleanup stops the processes a merged worktree registered, removes the worktree and the local branch, and moves your own checkout off the merged branch onto the updated trunk when it is clean, idle and the change is provably on the remote trunk. It never resets, stashes or deletes your work: a branch that moved during cleanup, a dirty checkout, an operation in progress in any worktree (including a locked one whose directory is gone) or another session's process keeps everything, with a note. Turn it off per workspace with `cleanup: keep` (an unknown value reads as keep) or for one branch, worktree or process with `workit ledger decision … --keep branch:<name>|worktree:<path>|proc:<id>`.
+
+## [2.11.1] - 2026-11-18
+
+### Changed
+
+- Verifiers and reviewers may run plain `git status`, `git remote get-url` / `remote -v`, `git range-diff` and `git worktree list`. A judge command that reads a path from a shell variable (`W=<path>; git -C $W …`) is refused with an exact `Retry as:` that spells the path in, and every judge, implementer and YouTrack-guard refusal now ends in one `Retry as:` or `Why:` line.
+
+### Fixed
+
+- Judges can no longer redirect a write through shell-set or zsh-special variables (REPLY, OPTARG, MAPFILE, DIRSTACK, FUNCNAME, zsh `path`, NULLCMD and others), `${W:-…}` defaults, or zsh path modifiers; `python -m` and `node -p/--print` count as code that can write.
+
+## [2.11.0] - 2026-11-18
+
+### Added
+
+- A dev server an agent starts directly (`ng serve`, `vite`, `next dev`, `npm start`, `npm run dev`, `docker compose up`) runs as a tracked background process (`workit run --bg`) on every host: Claude Code, OpenCode and Pi rewrite the command, Codex and Cursor deny it naming the exact call, and a chain that starts a server is split. The owner session is told once when a background server uses a lot of memory. `workit ps` and `workit stop` are allowed by setup; `workit run --bg` is not, so the host asks unless your own rules cover it.
+
+## [2.10.0] - 2026-11-18
+
+### Added
+
+- `workit stop --session|--within|--orphans` and `workit gc --procs` find the automation browsers (Chrome, Chromium, Edge with a remote-debugging port or pipe on a temp or automation profile) a session started and stop them once that session ends; your own browser, any default profile reached by any path, and a browser with no owner proof are never signalled. Windows lists them without stopping them.
+
+## [2.9.0] - 2026-11-18
+
+### Fixed (#864: drafts shown in full)
+
+- A `workit youtrack` write that waits for your yes prints the whole text it
+  would post (comment, new issue description or time-log text) with its
+  sha256, under a marker telling the agent to paste it to you verbatim; JSON
+  output carries it as `draft`. After a revision the print starts with a line
+  diff from the text printed last, then the new full text. `workit release
+  notes draft` and `show` print release notes the same way. Before, an agent
+  could name only the draft's file and never show a revised text.
+- The ship skill says to paste a draft that needs your yes in full before
+  asking and again after every edit; a repo rule (`draft-in-full`) fails a
+  skill step that shows a draft by its path only.
+
+## [2.8.1] - 2026-11-17
+
+### Fixed
+
+- A check waiting behind another checkout's run says so (`pid N is another checkout's run (<dir>), not this check's`), its ledger row and `--json` name the checkout it ran in, and the summary ends `ran in <dir> @ <head>`, so a worktree's result can no longer be read as another's. `workit ledger verdict verified|tests-verified` (not `failed`, `blocked` or `--self`) refuses (`head_moved`) when a code change landed after the head its checks ran on, naming both SHAs and the changed files; a follow-up the verdict would carry (docs, CHANGELOG, tests under a unit verdict, an unchanged rebase) still records.
+
+## [2.8.0] - 2026-11-17
+
+### Changed (retro 2026-11-17)
+
+- **Claude Code's auto mode stops prompting for granted delivery verbs.** The
+  `autoMode.allow` line `workit setup` writes now also names plain
+  `workit git push` (a branch the session created or the workspace allows),
+  `workit pr create`, `workit pr edit|ready` on the session's own PR and
+  `workit issue create|comment` with no `--repo` or one under the origin's
+  owner. It names only workit calls; the CLI still enforces every grant (the
+  branch, own-PR and owner scopes are guidance for the classifier), and the
+  "Does NOT cover" list gains `workit pr edit|ready --pr` on another author's
+  PR. Setup and `workit upgrade` replace Workit's previous line in the consent
+  diff; a line you edited is left alone with one note, and an upgrade does not
+  re-add a line you deleted.
+
+## [2.7.3] - 2026-11-17
+
+### Fixed
+
+- OpenCode: `workit setup` writes its native deny rules for the guarded paths as V2 `permissions` rules (`{action: "edit", resource, effect: "deny"}`) instead of the deprecated `permission.edit` map, moves the entries it wrote there before, and leaves your own rules alone; `workit doctor` counts V2 rules as present, the heavy-command gate reads V2 `permissions` and `agents.<id>.permissions`, and uninstall removes exactly Workit's rules in either shape (#869).
+
+## [2.7.2] - 2026-11-17
+
+### Fixed
+
+- A check stopped by its caller (SIGTERM/SIGINT/SIGHUP, usually a tool timeout) is recorded as `interrupted`, not `failed`, prints a hint to run long checks in the background, and counts as missing evidence: the previous run on that head still stands, and the handoff shows the latest real result. `workit check --list` and a bare `workit check` print the configured checks.
+
+## [2.7.1] - 2026-11-17
+
+### Fixed
+
+- Verifiers, reviewers and implementers are no longer refused for read-only work: read-only `node -e`/`python3 -c` and quoted-heredoc scripts, a plain `git fetch`, the host session scratchpad, any Workit worktree's `.workit-scratch/` and the read-only judge verbs (`grant show`, `ledger show`, `lease status`, `task show|list`, `doctor --json`) pass; a script that writes, spawns or hides its calls is still refused, and the verdict line carries `--cwd <candidate>`.
+
+## [2.7.0] - 2026-11-17
+
+### Added
+
+- `workit run --bg [--port N] [--name n] [--restart] -- <cmd>`, `workit ps`, `workit stop <id>|--session <s>|--within <dir>` and `workit gc --procs [--apply]`: background processes (dev servers, watchers) live in a registry with their owner, port, log and RSS; one dev server per repo is reused, a dead owner's processes are found and stopped, and the heavy-check budget sees them (#328).
+
+### Fixed
+
+- Agents keep notes, drafts, logs and resume files out of the repo tree: the session contract names `workit dir notes|handoffs`, and "leaving", "tomorrow", "end of day" and "pause" route to the continue skill, so saving state before a break no longer writes RESUME.md or comment drafts into the working tree.
+
+## [2.6.1] - 2026-11-17
+
+### Fixed
+
+- A wrong flag, verb or plan field now recovers in one call: unknown-option errors print the verb's usage line with a hint for the measured guesses (`fanout worktree create --branch|--base|--plan`, `ledger ruling --cost`, `issue comment --body`), `fanout plan` lists every valid `tier`/`reason` and the nearest one, `workit git switch -c|checkout -b|pull|status|diff|log` name the right verb or say read-only git runs raw, `dirty_worktree` names `--carry` first, `git branch --kind` lists the kinds, and bare `workit dir` lists the kinds with what each holds.
+
+## [2.6.0] - 2026-11-17
+
+### Fixed (#864: approve release notes on the action itself)
+
+- Under `releaseNotes: review`, `workit release notes approve <v>` is one
+  click on the host's prompt on that call: Claude Code (auto mode included)
+  and Pi's TUI show the whole draft, and Yes records the approval of exactly
+  that text, so `release finish` proceeds without a terminal. Before, the
+  verb refused every agent shell, so a host yes was refused anyway.
+- A draft edited after the prompt is not approved; where nobody sees a
+  prompt, or on OpenCode, Codex and Cursor, the call refuses with one
+  command for the user's terminal, where the typed-version flow is unchanged.
+
+## [2.5.0] - 2026-11-13
+
+### Fixed (#864: approve a YouTrack write on the action itself)
+
+- A `workit youtrack note|time|meeting|update|create` call is approved by one
+  click on the host's own prompt on that call. Claude Code (auto mode
+  included) and Pi's TUI show the full text, and Yes posts it in the same
+  call: no `workit approve`, no id. Before, auto mode recorded nothing, every
+  refusal minted a new id and the user was sent to a terminal.
+- In `bypassPermissions`, `dontAsk` or `claude -p` nobody sees a prompt, so
+  nothing is approved and the call names the mode.
+- Refusing the same text again reuses its one request. On OpenCode, Codex,
+  Cursor and Pi print/RPC the refusal is one short command: `workit approve`
+  in a terminal shows the full text and asks y/N, with an id only when several
+  requests wait.
+- The raw-ytrack guard names `workit youtrack time` for a time log even when
+  the agent's command was not plain, and no longer says "your own terminal"
+  where the host asks.
+
+## [2.4.2] - 2026-11-13
+
+### Fixed (retro 2026-11-07)
+
+- **Tests and probes never reach the real home** (#859): `upgrade`, `doctor`
+  and `workspace` take their paths from the injected env, every process of a
+  test run (`WORKIT_TEST_RUN`) refuses to write the account's seal, grants,
+  host settings and Workit dirs, and the run fails when the account's grants,
+  seal or host settings change.
+
+## [2.4.0] - 2026-11-13
+
+### Added (release packages)
+
+- **Release several packages from one repository** (#860). A workspace's
+  `releasePackages` names packages tagged under their own namespace
+  (`pkg-a@0.1.0` beside the bare `4.6.0`) on the workspace's own release line.
+  `workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]`
+  tags the release commit, pushes the tag under the `release` grant, creates
+  its forge release from the package's changelog without taking GitHub's
+  Latest mark (`--latest` takes it) and verifies it. `workit git push --release`
+  accepts a package tag with the same rules as a workspace release tag, the
+  raw-push denial names it, and `workit release notes draft|show|approve` take
+  `pkg-a@0.1.0` or `--package <name>`. `workit workspace set` writes
+  `releasePackages.<name>.tagNamespace|changelogPath`, `workit grant show`
+  lists the packages and the changelog each resolves to, `workit doctor` warns
+  on a bad entry or a package with no changelog file (#861), `release package`
+  and `release notes draft <pkg>@<v>` note a missing changelog section, and a
+  refused package push deletes the tag it just made. See
+  [docs/guides/configuration.md](docs/guides/configuration.md#release-packages).
+
+### Fixed (release packages)
+
+- `workit release notes draft <version>` with a `changelogPath` list or glob
+  reads the version's section from whichever changelog has it, not only the
+  first file (#860).
+
+## [2.3.0] - 2026-11-13
+
+### Added
+
+- Heavy checks share a memory budget by default: with nothing configured, one heavy check runs at a time and Workit keeps an automatic reserve of 25% of RAM (at least 2 GiB, at most 6 GiB) free. Machine-only `resources.budget`, `reserve` and `weights` set a unit or memory budget instead, a small check can run ahead of a big one that is still waiting (up to 5 minutes), and a repo's checks.json can only tighten them. `resources.slots` alone works as before.
+- A pressure gate holds new heavy checks while the machine is under memory or CPU pressure (Linux PSI, else load or CPU sampling); the wait line names the pressure, `workit doctor` has a `pressure_gate` row, and `resources.pressure: false` turns it off. `workit lock status` shows the budget and the admitted long-running servers.
+
+## [2.2.0] - 2026-11-13
+
+### Added
+
+- `workit setup` and `workit upgrade` write native deny rules for Workit's guarded files (the approval and issued-session stores under the state folder, and the account's workspaces file and its seal) through each host's own permission settings: Claude Code `Edit(...)` rules, Cursor CLI `Write(...)` rules and OpenCode `permission.edit` patterns; `workit uninstall` removes exactly those. `workit doctor` has a `native_deny` row (present, missing or stale per host, plus each host's sandbox state). Codex has no path deny that holds across your permission choice, and Pi has no permission layer: there Workit's hook remains the guard.
+
+### Changed
+
+- The doctor's fix for a missing Cursor or Codex plugin is now `workit install --hosts=<host>`.
+
+## [2.1.1] - 2026-11-13
+
+### Fixed
+
+- The hooks' write gate now catches, on every host: a write with `>& file` or `>&file`; `cmd | sponge <file>`; and a write through a symlink whose target does not exist yet (which would create a guarded file such as the grant seal). An inline script read from stdin (`python3 - "$F" <<EOF`) is judged by its heredoc, not by the file named in its arguments, which also removes a false denial; when Workit cannot resolve a file a script writes, the message says so instead of naming the config folder.
+
+## [2.0.2] - 2026-11-13
+
+### Fixed
+
+- When a Workit release reaches npm after `workit upgrade` read the registry, the OpenCode row now says the newer version appeared and asks you to run `workit upgrade` again, instead of reporting OpenCode as current. The `workit doctor` fix for a stale OpenCode plugin names `workit upgrade` first, and for a manual update says to run `opencode plugin update @workit-dev/opencode` from your home directory, twice if the first run says the plugin is not configured.
+- Releases publish the Workit CLI only after npm serves every package published before it (up to 15 minutes, then with a warning), and never when one of them failed to publish, so `workit upgrade` no longer finds a CLI whose host packages are missing.
+
+## [2.0.1] - 2026-11-13
+
+### Fixed
+
+- `workit uninstall --preview` now shows exactly what `--yes` will do. A ytrack skill folder that no longer holds the skill is listed as kept with the reason apply prints, instead of apply reporting it as failed. A completion script or CLI file that isn't Workit's is listed as kept. A `bin/` or `versions/` folder holding your own files keeps its remove row with a "kept (holds …)" suffix, and becomes a kept row only when nothing of Workit's is left in it. Uninstall removes only the files the ytrack skill install wrote: a skill folder holding your own files stays, and preview and apply both say so. Each completion row removes only its own script. When every row is kept, the uninstall picker names what it kept instead of printing "Uninstall complete.", and a malformed config file is named once per line.
+
+## [2.0.0] - 2026-11-13
+
+### Added
+
+- `workit workspace seal` (in your own terminal) shows the authority fields of `workspaces.json` — grants, endpoint, verification, `youtrack.writes`, remotes, the VCS identity (provider, account, token file, host), entry names, globs and order — and seals them on your yes. `workit grant set` and `workit workspace set|add|rm` at a terminal keep a matching seal current; an agent's change can only reseal when it lowers authority. `workit setup` and `workit upgrade` at a terminal offer the first seal (the upgrade that installs this release asks as soon as the new CLI takes over, `--yes` or not, when it runs at your terminal; later `--yes`, `--json`, `--preview` and `--dry-run` runs do not), and `workit doctor` has a `grant_seal` row, also listed under "Left after upgrade" while unsealed.
+
+### Changed
+
+- A config redirect (`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`) can never raise authority: grants are read from the account's own `workspaces.json` and capped at the defaults while a redirect is set, and `youtrack.writes: auto` in a redirected file now asks. `WORKIT_WORKSPACE_NAME` no longer turns YouTrack writes to auto.
+- Hand-editing the VCS identity (`vcs.account`, `provider`, `tokenFile`, `host`) under a seal blocks forge verbs for that checkout until `workit workspace seal`.
+- Grants now need a seal: with no seal or a broken one, each grant falls back to the stricter of the current value and the last sealed one (the defaults when nothing was sealed), so raised grants (merge, release, a `merged` endpoint) apply only after `workit workspace seal`. The upgrade offers it at your terminal; if you decline or upgraded from a script, run it once yourself.
+
+## [1.16.0] - 2026-11-13
+
+### Added
+
+- `workit gc --branches [--apply]` lists (and with `--apply` deletes) local branches whose work is proven on the trunk: a merged PR at the tip into the trunk or a long-lived branch, every commit on the trunk by patch id, or a squash merge of it. It keeps a branch that is checked out anywhere, has an open PR, was merged into a stack parent, holds commits not on the trunk, or has no commits of its own and is under 24 hours old; long-lived branches (the policy's, and `main`, `master`, `develop`, `production`, `staging`, `release/*`, `hotfix/*` by convention) are never listed.
+
+### Changed
+
+- `workit gc --worktrees` and the cleanup after a merge keep a worktree that a live session or a heavy-check holder is using (a live process counts at any heartbeat age), sweep a clean detached Workit worktree on a trunk commit, treat `bin/`, `target/` and old Workit marker files as regenerable, and never remove a host-owned `.claude/worktrees/*` folder or a worktree with a rebase, bisect, merge, cherry-pick or revert in progress. Every `workit gc` form refuses an unknown argument (exit 2) instead of running a default cleanup.
+
+## [1.15.0] - 2026-11-13
+
+### Changed
+
+- The `workit setup` summary lists the `ytrack auth paths` changes it will make before you apply (`ytrack paths: <globs> -> <host>`), or why they were skipped.
+
+## [1.14.3] - 2026-11-13
+
+### Changed
+
+- `workit setup`, `workit uninstall`, `workit install` and `workit workspace seal` are user-only on every host as whole verbs: Claude Code asks, Codex, Cursor and Pi deny naming the user's terminal, and OpenCode asks even when its config allows bash. Clearing the agent markers, a wrapper (`env -u`, `command`, `cd x &&`), a global option or a respelling (`$'…'`, a backslash-newline) no longer gets past it.
+- On Claude Code and Codex, a shell write or an edit whose text may reach a guarded path (Workit's config, `<state>/issued*`, `<state>/approvals`) now always reaches the hook runtime, also in a repo with no task store; a plain write inside the working directory stays on the launcher's fast path. In a repo with a task store, a Codex shell write now meets the before-write gate, as on Claude Code.
+
+## [1.14.2] - 2026-11-13
+
+### Fixed
+
+- A `workit check` whose worktree was removed while the check ran no longer recreates the removed folder with a stray `.workit` store: the result is not recorded, the command's exit code is kept, and the message names the missing path. Workit never creates a store under a folder that does not exist.
+
+## [1.14.0] - 2026-11-13
+
+### Added
+
+- `workit install --hosts=<h,...> [--preview | --yes]` installs or repairs Workit on only the named hosts (claude-code, codex, cursor, opencode, pi) and is idempotent: a healthy host plans nothing. It changes no Workit config or workspace. Only the user runs it, in their own terminal; a host asks about or denies an agent's call.
+
+### Fixed
+
+- `workit install` and `workit uninstall --hosts` previews show a missing host command (`claude`, `codex`, `pi` not on PATH) as a blocked row at plan time, the same text apply prints; apply runs nothing for that host.
+- A Cursor repair no longer adds a second `plugin_dirs` entry when the existing one is spelled with `~` (which made `workit doctor` report `duplicate_registration`).
+
+## [1.13.0] - 2026-11-13
+
+### Added
+
+- `workit dir notes` prints (and creates) the per-clone notes dir, `<git-common-dir>/workit/notes`, the same from every worktree. `workit doctor` has a `workit_notes` row that counts untracked files left in a checkout's `.workit/` (other than team config such as `checks.json`, and the old store files the task store backs up itself), and `workit doctor --fix` moves each into `workit dir notes` keeping its path, never overwriting and never touching tracked files.
+
+### Changed
+
+- A fanout worker's scratch dir is now `<state>/scratch/<repo dir>/<slice>` (mode 0700) instead of `.workit-scratch/` inside its worktree, so a shared repo never has to ignore a Workit file. `workit fanout worktree release`, `workit gc --worktrees --apply` and the cleanup after a merge remove it with the worktree, race attempts' `<slice>+try<n>` dirs included. Verifier and reviewer probes still go in the candidate worktree's `.workit-scratch/`.
+
+## [1.12.0] - 2026-11-13
+
+### Added
+
+- Grant seal, read side (#819): when `workspaces.json.seal` exists beside the account's `workspaces.json` and does not match its authority fields (grants, endpoint, verification, `youtrack.writes`, remotes, VCS account and provider, entry names, globs and order), Workit applies, per kind, the stricter of the current and the last sealed value, and `youtrack.writes` asks; the note names how to re-seal. A missing seal changes nothing yet. Agents' writes to the seal file are denied on every host like writes to `workspaces.json`.
+
+## [1.11.0] - 2026-11-12
+
+### Added
+
+- `workit youtrack update <ISSUE>` makes a whole issue update under one yes: a comment with `--attach` files (`![](name)` in the text shows one inline), time (`--minutes`, `--text`, `--date`) and `--state`/`--command`, in that order, stopping at the first failure and naming what landed. The request lists every part; missing files and a ytrack without `--attach` are refused before asking (fix: `ytrack upgrade`). `workit youtrack create` takes `--attach` and `--command` under its one yes.
+- `workit doctor` has a `ytrack_paths` row: each workspace with a `youtrack.baseUrl` should have its glob mapped to that host in ytrack (`ytrack auth paths`), so an agent's own ytrack there reaches it; drift (missing, on another host, ytrack too old) comes with the exact fix. `workit setup` plans and runs the `ytrack auth paths --add` calls.
+
+### Changed
+
+- Raw ytrack writes on one issue chained in one command (a comment with `--attach`, `ytrack issue attach`, `ytrack work-item add`, `ytrack issue command`, a hand-built `ytrack api` POST to the issue's comments or attachments) are denied naming one `workit youtrack update` call, so the user answers one ask instead of one per write.
+- `workit pr create --issue` accepts a YouTrack issue URL (`/issue/AB2-142[/slug]`, `/projects/AB2/issues/AB2-142`) on the workspace's YouTrack, and YouTrack issue ids whose project has digits (`AB2-142`); a URL on another YouTrack is refused naming the configured host.
+
+### Fixed
+
+- The eval bench says where a `private_content` refusal hit and what kind of value it was, never the value; it no longer refuses a run over the path of a checkout it links to itself; a linked package resolves its own dependencies in a linked worktree; and with write confinement on, another process changing a guarded file is reported instead of stopping the bench.
+
+## [1.10.0] - 2026-11-12
+
+### Added
+
+- `workit uninstall --hosts=<h,…>` removes Workit from the named hosts only: `--preview` prints the files, config keys and host commands it would remove and changes nothing, `--yes` removes them. In an agent session it refuses and names the command to hand to the user.
+
+### Fixed
+
+- The eval bench no longer stores private data in a result: it replaces what a host read outside the bench world with a marker, refuses to write a run that still holds a string from the real account, confines host reads with Landlock, and copies only the sign-in keys of `~/.claude.json`. The one committed transcript that held a real config is redacted.
+
+## [1.9.2] - 2026-11-12
+
+### Fixed
+
+- `workit upgrade --hosts=<h>` repairs a registered-but-missing Workit plugin on Claude Code, OpenCode and Pi too (Cursor and Codex already were): it plans the reinstall for that host only, applies it, and checks the host plans clean afterwards
+
+## [1.9.1] - 2026-11-12
+
+### Fixed
+
+- `workit pr merge --pr N` works from a checkout that does not have the PR branch: it takes the head from the forge, checks the verdict for it (one recorded in another clone counts) and leaves no ref behind; a head it cannot fetch is refused as `head_unfetched` with the fetch command
+
+## [1.9.0] - 2026-11-12
+
+### Changed
+
+- A raw `ytrack` write an agent runs (`ytrack issue comment`, `ytrack work-item add`, `ytrack issue create|update|delete`, `ytrack api` with a write method) now asks first by default on every host: it is denied with the exact `workit youtrack …` call to run, or asked natively on Claude Code when no Workit verb covers it. Wrapped and respelled forms get the same answer; reads are untouched; `youtrack.writes: auto` turns it off
+
+## [1.8.2] - 2026-11-12
+
+### Fixed
+
+- On Windows, copying the config `workspaces.json` or an issued file out to another path is no longer denied
+
+### Security
+
+- The guard on the approvals dir now works on Claude Code and Codex for the common spellings (`~/.local/state/workit/approvals/…`, `$HOME/…`, `cd <state> && … > approvals/…`): the launchers used to skip the check
+- The guard on the issued registry, the approvals dir and the config `workspaces.json` also denies writes it used to miss: `bash -c` and script files (shell, Python, Node, tsx), scripts fed by a pipe or heredoc, `rsync` and other writers, `git -C <dir> checkout`, editor write commands, paths spelled through env vars, globs or built from the home dir, hardlinks, and wrappers such as `sudo -u`, `env -i` and `timeout`. It is steering, not a sandbox: docs/agents/hosts.md lists what a hook cannot see
+
+## [1.8.1] - 2026-11-12
+
+### Security
+
+- Grants are read from the account home in the OS record on every runtime. When Workit ran from source under Bun, an agent that set `HOME` could move where grants were read and written; the installed Node build was not affected
+
+## [1.8.0] - 2026-11-12
+
+### Changed
+
+- Every YouTrack write Workit makes now asks first by default: the YouTrack tool calls (`ytrackWrite`) and the PR backlink go through the same approval as `workit youtrack note|time`, so one yes covers either path; `youtrack.writes: auto` keeps the old behaviour
+- A YouTrack backlink that was pending when `workit pr create` ran is posted once after the yes, on the next `workit pr create` or `workit pr edit`, and never twice
+
+## [1.7.5] - 2026-11-12
+
+### Fixed
+
+- `workit --session=<v> approve <id>` and `workit --token <v> approve <id>` reach the approve step in the Claude Code hook launcher
+
+### Security
+
+- An agent session can no longer raise its own grants or set `youtrack.writes: auto` by writing the Workit config dir: an edit or shell write to `workspaces.json` (or to the config dir itself) is denied on every host whose hooks deny, and names `workit grant set` or `workit workspace set` for the user to run in a terminal
+
+## [1.7.4] - 2026-11-12
+
+### Fixed
+
+- An agent that runs `npx -y @workit-dev/cli <verb> …` where `workit` is on PATH now gets the same `workit <verb> …` call: rewritten on Claude Code, OpenCode and Pi, and denied with that exact call on Codex and Cursor, so the allow rules match and a weak model is not stopped by a prompt
+
+## [1.7.3] - 2026-11-11
+
+### Security
+
+- An approval is accepted only from a path that records one: a terminal grant, or a Claude Code or Pi grant with a matching ask row from the same host. A grant that names OpenCode, Codex, Cursor or an unknown host is refused; the ask row catches hand edits, not forgery (docs/agents/hosts.md)
+
+## [1.7.2] - 2026-11-11
+
+### Changed
+
+- Hooks start from a bundle about 25 KB smaller on every host: they read tasks through a read-only store and no longer load the task write path
+
+## [1.7.1] - 2026-11-11
+
+### Fixed
+
+- A changelog with CRLF line endings keeps them when `workit git rebase` or the merge driver merges two Unreleased blocks
+- Claude Code no longer asks about `workit approve <id>` when no id is a live request: the CLI answers `not_found`
+- A verifier or reviewer is pointed at the candidate worktree's `.workit-scratch/` for its probe files, in the brief and in every confinement denial, instead of the lead checkout's
+- `workit release notes approve` and a commit message that mentions approve no longer take the slower approve path in the Claude Code hook launcher
+- On Windows, a `cd <worktree> && git commit` chain is matched to its Workit worktree whatever the path separators or drive-letter case
+
+## [1.7.0] - 2026-11-11
+
+### Added
+
+- YouTrack writes (`workit youtrack note|time|meeting|create`) ask the user first by default through `workit approve`; set `youtrack.writes: auto` on a workspace to keep the old `WORKIT_YT_WRITE=1` gate. An identical comment or work item by the same user is refused with `duplicate_entry`, and after an interrupted write the next call reports whether it landed.
+
+## [1.6.1] - 2026-11-11
+
+### Fixed
+
+- A raw `git commit` onto a protected branch is denied and names `workit git branch --kind feature --slug <slug>`; a raw `cd <worktree> && git add … && git commit …` is denied with the exact `workit git --cwd <worktree> commit -m … -- <paths>` call to run instead.
+
+## [1.6.0] - 2026-11-11
+
+### Added
+
+- `workit approve <id>`: the first piece of the host-approval channel. Requests are stored under the Workit state dir (agents cannot write there), Claude Code asks the user natively and records their yes once, Pi records it from its TUI dialog, other hosts and agent-free terminals use a confirmed terminal fallback; a grant expires and is consumed once. No verb uses it yet.
+
+## [1.5.1] - 2026-11-11
+
+### Fixed
+
+- Voiding a verdict that superseded a failed one brings the failed verdict back instead of an older accepted one.
+- The prompt-routing hook no longer nudges toward a skill when the user only quotes a trigger phrase or complains about the agent.
+- Retrying `workit git commit -- <paths>` after a pre-commit hook rewrote and refused the paths commits the rewritten files instead of failing.
+- A redundant `cd` before `workit --cwd <dir>` is dropped only for an absolute dir, so the rewrite never changes where a relative command runs.
+
+## [1.5.0] - 2026-11-11
+
+### Added
+
+- The local eval bench can give a test world a workspace (endpoint, lower grants, capped at the defaults) and run each case `--repeat N` times, passing only when at least two thirds of the runs pass.
+
+## [1.4.2] - 2026-11-11
+
+### Fixed
+
+- `workit git rebase` settles a conflict that is only both sides adding Unreleased changelog entries by keeping both, with no merge driver installed; `workit fanout check` no longer reports the configured changelog file as out of scope.
+
+## [1.4.1] - 2026-11-11
+
+### Fixed
+
+- OpenCode and Pi give the model the same closed `<workit-contract>` block Claude Code does.
+- A `cd <dir> && workit …` chain with a raw-git fallback is denied with the exact single `workit <verb> --cwd <dir> …` call to run instead, so a weak model retries correctly instead of giving up.
+- A `cd <dir> && workit …` call is rewritten to `workit <verb> --cwd <dir> …` even when a quoted argument holds `<` or `>` (such as a `Co-Authored-By: … <email>` trailer) or the call already passes the same `--cwd`, so these commits no longer prompt or get denied.
+
+## [1.4.0] - 2026-11-11
+
+### Added
+
+- In a repo with no commit yet, `workit git branch` starts the first work branch and `workit git commit` makes the first commit there; a commit refused on the protected unborn branch names `workit git branch --kind feature --slug <slug>`.
+
+## [1.3.0] - 2026-11-11
+
+### Added
+
+- `workit git hold --why "<words>"` records a user's "not yet" on a branch: the Stop hook stops asking to push or open a PR until the next push, which clears the hold (or `workit git hold --clear`).
+
+## [1.2.2] - 2026-11-11
+
+### Fixed
+
+- Tests that make Workit worktrees load their own state dir even when `bun test` runs outside the repo root, and the test preload fails any run that leaves a worktree in the real `~/.local/state/workit`
+- A verdict is refused for a branch its repo does not have (`branch_not_in_repo`) or for a `--pr` from another branch's checkout, and the user can void a stray verdict with `workit ledger void <id> --reason` (user-only on every host: Claude Code asks, Codex, Cursor and Pi deny; `workit setup`/`upgrade` add the rule); `pr merge`/`stack land --unverified` name that path (#759)
+- Claude Code ask rules are anchored at their verb, so a command that only mentions a user-only verb in its text (a verdict note, a changelog entry, a PR body) no longer prompts; setup and upgrade remove the older Workit-written globs and keep the user's own.
+
+## [1.2.1] - 2026-11-10
+
+### Fixed
+
+- A verifier or reviewer subagent writes only in `.workit-scratch/` at a checkout root; writes elsewhere, and unquoted heredocs that run `$(…)`, are denied naming the scratch dir (#790)
+
+## [1.2.0] - 2026-11-10
+
+### Changed
+
+- `workit-implement` runs a codemod or schematic one area at a time (run, `workit check`, commit, then the next area), never as one repo-wide commit (#779)
+
+## [1.1.9] - 2026-11-10
+
+### Fixed
+
+- `workit ledger standing add` with several active fanout plans refuses with the exact `--fanout` retry, and `workit fanout plan` prints that command when another plan is active (#775)
+
+## [1.1.8] - 2026-11-10
+
+### Fixed
+
+- Implementer confinement follows `$PWD` after a literal `cd` and `for` lists built from resolved words; plain `curl` and `docker exec` are not writes; a denial names the command Workit cannot see into or the command substitution, with a retry (#772)
+
+## [1.1.7] - 2026-11-10
+
+### Added
+
+- The local weak-model bench runs its cases on OpenCode (`--host opencode`, DeepSeek 4.1 Flash on the free provider, then go when the free limit hits), records the provider per case, and records a case skipped (limit) when both are limited (#488)
+
+### Fixed
+
+- A lease waiter ignores the watch event for its own queue ticket, so a late macOS file event no longer pushes a timed-out wait 50 ms past its limit
+
+## [1.1.6] - 2026-11-10
+
+### Fixed
+
+- A helper closes the finding it recorded with its own evidence in one call; a refused resolve, wrong payload keys and an out-of-scope worker assignment now name the fix (#317, #647)
+
+## [1.1.5] - 2026-11-10
+
+### Fixed
+
+- A configured check that is red on the merge base as well as the head no longer refuses `tests-verified`; the verdict row records `pre-existing red: <check> (base <sha>)` and `workit pr status` shows it (#771)
+
+## [1.1.4] - 2026-11-10
+
+### Fixed
+
+- `workit git pull|merge|checkout|status`, `ci wait --ref`, `task list --limit` and `help review` now name the exact command that does the job
+
+## [1.1.3] - 2026-11-10
+
+### Fixed
+
+- A fanout plan whose slices have all landed or been released no longer counts as a candidate, so `workit ledger standing add` needs no `--fanout` while only one plan is active (#775)
+
+## [1.1.2] - 2026-11-10
+
+### Fixed
+
+- An integration-mode fanout brief's fan-in step runs `workit git rebase --onto <trunk>` instead of a raw `git merge`, and a test checks every workit command a brief prints against the verb table (#770)
+
+## [1.1.1] - 2026-11-07
+
+### Fixed
+
+- The launch update check and `workit doctor` no longer offer or show a latest CLI version cached for another package (such as 14.7.0 after moving to `@workit-dev/cli`): the cache records its package and is refetched when it does not match.
+
+## [1.1.0] - 2026-11-07
+
+### Added
+
+- `workit git rebase [--onto <base>]` updates the current branch onto its freshly fetched base, aborts cleanly on a conflict and names the paths, records the rewrite and prints the `workit git push --force-with-lease` next step; the ship skill uses it instead of a raw rebase.
+
+### Fixed
+
+- `workit fanout worktree create` refuses a slice branch that already landed (merged PR, squash or on trunk) and names a free `<branch>-<n>` to put in the plan; a branch with newer commits is still resumed.
+- A lead running two fanouts no longer hands one fanout's standing orders to the other fanout's workers.
+
+## [1.0.4] - 2026-11-07
+
+### Fixed
+
+- `workit pr create` no longer adds `Closes #<n>` for digits inside a branch slug (only a segment-leading number such as `feature/42-x` links), and unticks template verification checkboxes that no fresh `workit check` on the head backs.
+- Review lane reasons name the whole diff when docs, comments or generated lines are left out of the count.
+
+## [1.0.3] - 2026-11-07
+
+### Fixed
+
+- `workit stack status` reads a parent whose PR squash-merged as landed (not `no_pr`), and `stack sync` retargets the child PR onto the trunk even when the stack was recorded without PR numbers.
+- `workit pr merge` refuses a PR whose short-lived base (a stacked parent or a work branch) already landed and has not moved since (`base_landed`, with the retarget command), and `workit verify-delivery merge` reports delivered only when the change reached the trunk its base landed on (the #752 merge into a stale parent).
+
+## [1.0.2] - 2026-11-07
+
+### Fixed
+
+- A queued heavy check takes a freed lease slot at once: a release wakes waiters instead of waiting out the poll, and a waiter whose workspace allows fewer slots no longer holds back waiters that can use the free one (the "slot 1: free while 3 waiters queue" stall). `workit lock wait` wakes the same way and, like a heavy check, re-queues once at `resources.wait` before giving up.
+
+## [1.0.1] - 2026-11-07
+
+### Fixed
+
+- A closed output reader (`workit … | head -1`) no longer logs `uncaught_failure: write EPIPE` or prints a stack trace: the verb finishes quietly with its own exit code.
+
+## [1.0.0] - 2026-11-07
 
 ### Changed (1.0.0: @workit-dev)
 
@@ -29,27 +597,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version the registry serves for it (not since the previous tag), ships
   everything on a first release, and takes `PUBLISH_ALL=1` or `--all`.
 
-### Changed (retro 2026-11-17)
-
-- **Claude Code's auto mode stops prompting for granted delivery verbs.** The
-  `autoMode.allow` line `workit setup` writes now also names plain
-  `workit git push` (a branch the session created or the workspace allows),
-  `workit pr create`, `workit pr edit|ready` on the session's own PR and
-  `workit issue create|comment` with no `--repo` or one under the origin's
-  owner. It names only workit calls; the CLI still enforces every grant (the
-  branch, own-PR and owner scopes are guidance for the classifier), and the
-  "Does NOT cover" list gains `workit pr edit|ready --pr` on another author's
-  PR. Setup and `workit upgrade` replace Workit's previous line in the consent
-  diff; a line you edited is left alone with one note, and an upgrade does not
-  re-add a line you deleted.
-
 ### Fixed (retro 2026-11-07)
 
-- **Tests and probes never reach the real home** (#859): `upgrade`, `doctor`
-  and `workspace` take their paths from the injected env, every process of a
-  test run (`WORKIT_TEST_RUN`) refuses to write the account's seal, grants,
-  host settings and Workit dirs, and the run fails when the account's grants,
-  seal or host settings change.
 - **Implementer confinement follows shell variables, loops and inline
   interpreter scripts** (#744). `W=<worktree>; workit git --cwd $W commit` and
   `workit check --cwd $W …` are judged against the worktree, not the lead's
@@ -96,31 +645,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the head's PR CI is not green, naming the `workit check <name>` to run or
   `workit ci wait --pr <n>`. A verifier's or reviewer's SubagentStart text
   lists the checks on Claude Code and Codex.
-
-### Added (release packages)
-
-- **Release several packages from one repository** (#860). A workspace's
-  `releasePackages` names packages tagged under their own namespace
-  (`pkg-a@0.1.0` beside the bare `4.6.0`) on the workspace's own release line.
-  `workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]`
-  tags the release commit, pushes the tag under the `release` grant, creates
-  its forge release from the package's changelog without taking GitHub's
-  Latest mark (`--latest` takes it) and verifies it. `workit git push --release`
-  accepts a package tag with the same rules as a workspace release tag, the
-  raw-push denial names it, and `workit release notes draft|show|approve` take
-  `pkg-a@0.1.0` or `--package <name>`. `workit workspace set` writes
-  `releasePackages.<name>.tagNamespace|changelogPath`, `workit grant show`
-  lists the packages and the changelog each resolves to, `workit doctor` warns
-  on a bad entry or a package with no changelog file (#861), `release package`
-  and `release notes draft <pkg>@<v>` note a missing changelog section, and a
-  refused package push deletes the tag it just made. See
-  [docs/guides/configuration.md](docs/guides/configuration.md#release-packages).
-
-### Fixed (release packages)
-
-- `workit release notes draft <version>` with a `changelogPath` list or glob
-  reads the version's section from whichever changelog has it, not only the
-  first file (#860).
 
 ### Added (retro 2026-11-07)
 
@@ -322,11 +846,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- After `workit pr merge` or `workit verify-delivery merge`, cleanup stops the processes a merged worktree registered, removes the worktree and the local branch, and moves your own checkout off the merged branch onto the updated trunk when it is clean, idle and the change is provably on the remote trunk. It never resets, stashes or deletes your work: a branch that moved during cleanup, a dirty checkout, an operation in progress in any worktree (including a locked one whose directory is gone) or another session's process keeps everything, with a note. Turn it off per workspace with `cleanup: keep` (an unknown value reads as keep) or for one branch, worktree or process with `workit ledger decision … --keep branch:<name>|worktree:<path>|proc:<id>`.
-- A dev server an agent starts directly (`ng serve`, `vite`, `next dev`, `npm start`, `npm run dev`, `docker compose up`) runs as a tracked background process (`workit run --bg`) on every host: Claude Code, OpenCode and Pi rewrite the command, Codex and Cursor deny it naming the exact call, and a chain that starts a server is split. The owner session is told once when a background server uses a lot of memory. `workit ps` and `workit stop` are allowed by setup; `workit run --bg` is not, so the host asks unless your own rules cover it.
-- `workit stop --session|--within|--orphans` and `workit gc --procs` find the automation browsers (Chrome, Chromium, Edge with a remote-debugging port or pipe on a temp or automation profile) a session started and stop them once that session ends; your own browser, any default profile reached by any path, and a browser with no owner proof are never signalled. Windows lists them without stopping them.
-- Grant seal, read side (#819): when `workspaces.json.seal` exists beside the account's `workspaces.json` and does not match its authority fields (grants, endpoint, verification, `youtrack.writes`, remotes, VCS account and provider, entry names, globs and order), Workit applies, per kind, the stricter of the current and the last sealed value, and `youtrack.writes` asks; the note names how to re-seal. A missing seal changes nothing yet. Agents' writes to the seal file are denied on every host like writes to `workspaces.json`.
-- `workit uninstall --hosts=<h,…>` removes Workit from the named hosts only: `--preview` prints the files, config keys and host commands it would remove and changes nothing, `--yes` removes them. In an agent session it refuses and names the command to hand to the user.
 - `workit init` installs the ytrack agent skill for the hosts you set up when you pick YouTrack (as setup and upgrade do), and names `ytrack upgrade` when your ytrack is too old.
 - Agents get a ytrack skill that matches your installed ytrack: when a workspace uses YouTrack, `workit setup` and `workit upgrade` run `ytrack skill install` into each host's skills dir (Claude Code, OpenCode, Codex, Cursor, Pi), `workit doctor` warns when a host's copy is older than ytrack (fix: `workit upgrade --hosts=<host>`) or when ytrack predates `ytrack skill` (fix: `ytrack upgrade`), and `workit uninstall` removes the copies Workit installed. Workit's ship skill points agents at `workit youtrack` verbs first and the ytrack skill for the rest.
 - Heavy-check waiters and `workit lock status` show an estimated wait from each check's last measured run, and `resources.slots` above what RAM allows prints a warning.
@@ -553,33 +1072,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit fanout brief <slice> --host <host>` renders the brief for the worker's host (model lines, attribution); with WORKIT_HOST unset, `cli` or misspelled, a warning names the valid hosts (#292).
 - `workit pr merge --allow-failing <check> --reason <why>` merges past a failing optional check (never a required one), recording a `merge.waived` row (#269).
 - `workit stack land --allow-failing <check> --reason <why>` lets a failing optional check through on each PR it lands (one waiver row per PR), and stack land re-reads a PR whose mergeability is still being computed, through the same gate as `workit pr merge`.
-- `workit git rebase [--onto <base>]` updates the current branch onto its freshly fetched base, aborts cleanly on a conflict and names the paths, records the rewrite and prints the `workit git push --force-with-lease` next step; the ship skill uses it instead of a raw rebase.
-- The local weak-model bench runs its cases on OpenCode (`--host opencode`, DeepSeek 4.1 Flash on the free provider, then go when the free limit hits), records the provider per case, and records a case skipped (limit) when both are limited (#488)
-- `workit git hold --why "<words>"` records a user's "not yet" on a branch: the Stop hook stops asking to push or open a PR until the next push, which clears the hold (or `workit git hold --clear`).
-- In a repo with no commit yet, `workit git branch` starts the first work branch and `workit git commit` makes the first commit there; a commit refused on the protected unborn branch names `workit git branch --kind feature --slug <slug>`.
-- The local eval bench can give a test world a workspace (endpoint, lower grants, capped at the defaults) and run each case `--repeat N` times, passing only when at least two thirds of the runs pass.
-- `workit approve <id>`: the first piece of the host-approval channel. Requests are stored under the Workit state dir (agents cannot write there), Claude Code asks the user natively and records their yes once, Pi records it from its TUI dialog, other hosts and agent-free terminals use a confirmed terminal fallback; a grant expires and is consumed once. No verb uses it yet.
-- YouTrack writes (`workit youtrack note|time|meeting|create`) ask the user first by default through `workit approve`; set `youtrack.writes: auto` on a workspace to keep the old `WORKIT_YT_WRITE=1` gate. An identical comment or work item by the same user is refused with `duplicate_entry`, and after an interrupted write the next call reports whether it landed.
-- `workit youtrack update <ISSUE>` makes a whole issue update under one yes: a comment with `--attach` files (`![](name)` in the text shows one inline), time (`--minutes`, `--text`, `--date`) and `--state`/`--command`, in that order, stopping at the first failure and naming what landed. The request lists every part; missing files and a ytrack without `--attach` are refused before asking (fix: `ytrack upgrade`). `workit youtrack create` takes `--attach` and `--command` under its one yes.
-- `workit doctor` has a `ytrack_paths` row: each workspace with a `youtrack.baseUrl` should have its glob mapped to that host in ytrack (`ytrack auth paths`), so an agent's own ytrack there reaches it; drift (missing, on another host, ytrack too old) comes with the exact fix. `workit setup` plans and runs the `ytrack auth paths --add` calls.
-- `workit dir notes` prints (and creates) the per-clone notes dir, `<git-common-dir>/workit/notes`, the same from every worktree. `workit doctor` has a `workit_notes` row that counts untracked files left in a checkout's `.workit/` (other than team config such as `checks.json`, and the old store files the task store backs up itself), and `workit doctor --fix` moves each into `workit dir notes` keeping its path, never overwriting and never touching tracked files.
-- `workit install --hosts=<h,...> [--preview | --yes]` installs or repairs Workit on only the named hosts (claude-code, codex, cursor, opencode, pi) and is idempotent: a healthy host plans nothing. It changes no Workit config or workspace. Only the user runs it, in their own terminal; a host asks about or denies an agent's call.
-- `workit gc --branches [--apply]` lists (and with `--apply` deletes) local branches whose work is proven on the trunk: a merged PR at the tip into the trunk or a long-lived branch, every commit on the trunk by patch id, or a squash merge of it. It keeps a branch that is checked out anywhere, has an open PR, was merged into a stack parent, holds commits not on the trunk, or has no commits of its own and is under 24 hours old; long-lived branches (the policy's, and `main`, `master`, `develop`, `production`, `staging`, `release/*`, `hotfix/*` by convention) are never listed.
-- `workit workspace seal` (in your own terminal) shows the authority fields of `workspaces.json` — grants, endpoint, verification, `youtrack.writes`, remotes, the VCS identity (provider, account, token file, host), entry names, globs and order — and seals them on your yes. `workit grant set` and `workit workspace set|add|rm` at a terminal keep a matching seal current; an agent's change can only reseal when it lowers authority. `workit setup` and `workit upgrade` at a terminal offer the first seal (the upgrade that installs this release asks as soon as the new CLI takes over, `--yes` or not, when it runs at your terminal; later `--yes`, `--json`, `--preview` and `--dry-run` runs do not), and `workit doctor` has a `grant_seal` row, also listed under "Left after upgrade" while unsealed.
-- `workit setup` and `workit upgrade` write native deny rules for Workit's guarded files (the approval and issued-session stores under the state folder, and the account's workspaces file and its seal) through each host's own permission settings: Claude Code `Edit(...)` rules, Cursor CLI `Write(...)` rules and OpenCode `permission.edit` patterns; `workit uninstall` removes exactly those. `workit doctor` has a `native_deny` row (present, missing or stale per host, plus each host's sandbox state). Codex has no path deny that holds across your permission choice, and Pi has no permission layer: there Workit's hook remains the guard.
-- Heavy checks share a memory budget by default: with nothing configured, one heavy check runs at a time and Workit keeps an automatic reserve of 25% of RAM (at least 2 GiB, at most 6 GiB) free. Machine-only `resources.budget`, `reserve` and `weights` set a unit or memory budget instead, a small check can run ahead of a big one that is still waiting (up to 5 minutes), and a repo's checks.json can only tighten them. `resources.slots` alone works as before.
-- A pressure gate holds new heavy checks while the machine is under memory or CPU pressure (Linux PSI, else load or CPU sampling); the wait line names the pressure, `workit doctor` has a `pressure_gate` row, and `resources.pressure: false` turns it off. `workit lock status` shows the budget and the admitted long-running servers.
-- `workit run --bg [--port N] [--name n] [--restart] -- <cmd>`, `workit ps`, `workit stop <id>|--session <s>|--within <dir>` and `workit gc --procs [--apply]`: background processes (dev servers, watchers) live in a registry with their owner, port, log and RSS; one dev server per repo is reused, a dead owner's processes are found and stopped, and the heavy-check budget sees them (#328).
 
 ### Changed
 
-- Verifiers and reviewers may run plain `git status`, `git remote get-url` / `remote -v`, `git range-diff` and `git worktree list`. A judge command that reads a path from a shell variable (`W=<path>; git -C $W …`) is refused with an exact `Retry as:` that spells the path in, and every judge, implementer and YouTrack-guard refusal now ends in one `Retry as:` or `Why:` line.
-- The `workit setup` summary lists the `ytrack auth paths` changes it will make before you apply (`ytrack paths: <globs> -> <host>`), or why they were skipped.
-- Raw ytrack writes on one issue chained in one command (a comment with `--attach`, `ytrack issue attach`, `ytrack work-item add`, `ytrack issue command`, a hand-built `ytrack api` POST to the issue's comments or attachments) are denied naming one `workit youtrack update` call, so the user answers one ask instead of one per write.
-- `workit pr create --issue` accepts a YouTrack issue URL (`/issue/AB2-142[/slug]`, `/projects/AB2/issues/AB2-142`) on the workspace's YouTrack, and YouTrack issue ids whose project has digits (`AB2-142`); a URL on another YouTrack is refused naming the configured host.
-- A raw `ytrack` write an agent runs (`ytrack issue comment`, `ytrack work-item add`, `ytrack issue create|update|delete`, `ytrack api` with a write method) now asks first by default on every host: it is denied with the exact `workit youtrack …` call to run, or asked natively on Claude Code when no Workit verb covers it. Wrapped and respelled forms get the same answer; reads are untouched; `youtrack.writes: auto` turns it off
-- Every YouTrack write Workit makes now asks first by default: the YouTrack tool calls (`ytrackWrite`) and the PR backlink go through the same approval as `workit youtrack note|time`, so one yes covers either path; `youtrack.writes: auto` keeps the old behaviour
-- A YouTrack backlink that was pending when `workit pr create` ran is posted once after the yes, on the next `workit pr create` or `workit pr edit`, and never twice
 - `workit stack land` checks every PR before merging any: when one would be refused (verdict, required check, another author, base, mergeability), nothing merges and every refused PR is named; `--max N` lands just the first N. `--allow-failing` applies only to the PRs whose head runs that check.
 - Verdict gates and stack carry checks compute a range's patch-id and diff hash from one git diff instead of two.
 - Workit runs fewer git processes per command: a checkout's top level, git dir and common dir are read once per process, and the default base is found with one git call instead of one per candidate branch (faster on Windows especially).
@@ -679,36 +1174,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: Windows tests run in 12 shards balanced from fresh timings; spawn- and git-heavy tests share one Windows-scaled timeout helper; fixtures and goldens are pinned to LF by .gitattributes and a test fails on any fixture without an eol rule; docs-only PRs still run the tests that read the docs (#415).
 - Implementer instructions agree with the hooks on git: in a Workit worktree use `workit git --cwd <worktree> …`; only a Claude Code host-isolated worktree uses plain git. Implementer definitions and briefs show `workit git commit --trailer "Co-Authored-By: …"`, and Claude Code and Cursor briefs carry the concrete trailer (no invented addresses for other hosts) (#292).
 - Verdict gates read HEAD and branch tips from the repository files (fresh on every read, git as the fallback whenever a read is uncertain) and the origin URL once per gate, so a gate check spawns 8 git processes instead of 10.
-- `workit-implement` runs a codemod or schematic one area at a time (run, `workit check`, commit, then the next area), never as one repo-wide commit (#779)
-- Hooks start from a bundle about 25 KB smaller on every host: they read tasks through a read-only store and no longer load the task write path
-- A fanout worker's scratch dir is now `<state>/scratch/<repo dir>/<slice>` (mode 0700) instead of `.workit-scratch/` inside its worktree, so a shared repo never has to ignore a Workit file. `workit fanout worktree release`, `workit gc --worktrees --apply` and the cleanup after a merge remove it with the worktree, race attempts' `<slice>+try<n>` dirs included. Verifier and reviewer probes still go in the candidate worktree's `.workit-scratch/`.
-- `workit setup`, `workit uninstall`, `workit install` and `workit workspace seal` are user-only on every host as whole verbs: Claude Code asks, Codex, Cursor and Pi deny naming the user's terminal, and OpenCode asks even when its config allows bash. Clearing the agent markers, a wrapper (`env -u`, `command`, `cd x &&`), a global option or a respelling (`$'…'`, a backslash-newline) no longer gets past it.
-- On Claude Code and Codex, a shell write or an edit whose text may reach a guarded path (Workit's config, `<state>/issued*`, `<state>/approvals`) now always reaches the hook runtime, also in a repo with no task store; a plain write inside the working directory stays on the launcher's fast path. In a repo with a task store, a Codex shell write now meets the before-write gate, as on Claude Code.
-- `workit gc --worktrees` and the cleanup after a merge keep a worktree that a live session or a heavy-check holder is using (a live process counts at any heartbeat age), sweep a clean detached Workit worktree on a trunk commit, treat `bin/`, `target/` and old Workit marker files as regenerable, and never remove a host-owned `.claude/worktrees/*` folder or a worktree with a rebase, bisect, merge, cherry-pick or revert in progress. Every `workit gc` form refuses an unknown argument (exit 2) instead of running a default cleanup.
-- A config redirect (`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`) can never raise authority: grants are read from the account's own `workspaces.json` and capped at the defaults while a redirect is set, and `youtrack.writes: auto` in a redirected file now asks. `WORKIT_WORKSPACE_NAME` no longer turns YouTrack writes to auto.
-- Hand-editing the VCS identity (`vcs.account`, `provider`, `tokenFile`, `host`) under a seal blocks forge verbs for that checkout until `workit workspace seal`.
-- Grants now need a seal: with no seal or a broken one, each grant falls back to the stricter of the current value and the last sealed one (the defaults when nothing was sealed), so raised grants (merge, release, a `merged` endpoint) apply only after `workit workspace seal`. The upgrade offers it at your terminal; if you decline or upgraded from a script, run it once yourself.
-- The doctor's fix for a missing Cursor or Codex plugin is now `workit install --hosts=<host>`.
 
 ### Fixed
 
-- Judges can no longer redirect a write through shell-set or zsh-special variables (REPLY, OPTARG, MAPFILE, DIRSTACK, FUNCNAME, zsh `path`, NULLCMD and others), `${W:-…}` defaults, or zsh path modifiers; `python -m` and `node -p/--print` count as code that can write.
-- A check stopped by its caller (SIGTERM/SIGINT/SIGHUP, usually a tool timeout) is recorded as `interrupted`, not `failed`, prints a hint to run long checks in the background, and counts as missing evidence: the previous run on that head still stands, and the handoff shows the latest real result. `workit check --list` and a bare `workit check` print the configured checks.
-- A `workit check` whose worktree was removed while the check ran no longer recreates the removed folder with a stray `.workit` store: the result is not recorded, the command's exit code is kept, and the message names the missing path. Workit never creates a store under a folder that does not exist.
-- The eval bench says where a `private_content` refusal hit and what kind of value it was, never the value; it no longer refuses a run over the path of a checkout it links to itself; a linked package resolves its own dependencies in a linked worktree; and with write confinement on, another process changing a guarded file is reported instead of stopping the bench.
-- `workit pr merge --pr N` works from a checkout that does not have the PR branch: it takes the head from the forge, checks the verdict for it (one recorded in another clone counts) and leaves no ref behind; a head it cannot fetch is refused as `head_unfetched` with the fetch command
-- A changelog with CRLF line endings keeps them when `workit git rebase` or the merge driver merges two Unreleased blocks
-- Claude Code no longer asks about `workit approve <id>` when no id is a live request: the CLI answers `not_found`
-- A verifier or reviewer is pointed at the candidate worktree's `.workit-scratch/` for its probe files, in the brief and in every confinement denial, instead of the lead checkout's
-- `workit release notes approve` and a commit message that mentions approve no longer take the slower approve path in the Claude Code hook launcher
-- On Windows, a `cd <worktree> && git commit` chain is matched to its Workit worktree whatever the path separators or drive-letter case
-- `workit git rebase` settles a conflict that is only both sides adding Unreleased changelog entries by keeping both, with no merge driver installed; `workit fanout check` no longer reports the configured changelog file as out of scope.
-- Tests that make Workit worktrees load their own state dir even when `bun test` runs outside the repo root, and the test preload fails any run that leaves a worktree in the real `~/.local/state/workit`
-- `workit ledger standing add` with several active fanout plans refuses with the exact `--fanout` retry, and `workit fanout plan` prints that command when another plan is active (#775)
-- An integration-mode fanout brief's fan-in step runs `workit git rebase --onto <trunk>` instead of a raw `git merge`, and a test checks every workit command a brief prints against the verb table (#770)
-- `workit stack status` reads a parent whose PR squash-merged as landed (not `no_pr`), and `stack sync` retargets the child PR onto the trunk even when the stack was recorded without PR numbers.
-- `workit pr merge` refuses a PR whose short-lived base (a stacked parent or a work branch) already landed and has not moved since (`base_landed`, with the retarget command), and `workit verify-delivery merge` reports delivered only when the change reached the trunk its base landed on (the #752 merge into a stale parent).
-- A closed output reader (`workit … | head -1`) no longer logs `uncaught_failure: write EPIPE` or prints a stack trace: the verb finishes quietly with its own exit code.
 - A heavy check whose workit process died keeps its machine lease while its command still runs, a recycled process group no longer holds a lease, and a nested check under an orphaned parent reuses the outer lease instead of queueing behind it.
 - Tests no longer fail by shard order on Windows: every test file runs isolated (its own env, cwd and globals), tracker reads in tests use an empty config instead of the machine's, and test repos skip git auto-maintenance.
 - `workit check` no longer hangs when the runtime loses a command's exit event: once the command's output closes, its own exit status settles the run.
@@ -1115,99 +1583,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - `pr merge` re-reads a transient UNKNOWN mergeability a few times before stopping with wait-forge; PR lookup by branch pages through results on GitHub and GitLab so an existing PR is never missed and duplicated; forge rate limits (429, secondary 403) wait once and then fail as `rate_limited:` with the wait, never as a plain failure; GitLab reads "Pipelines must succeed" for required checks; `--body-file` with CRLF line endings posts LF (#269, #284).
 - `workit upgrade` and `workit setup` no longer say zsh's $fpath lacks the completion directory when ~/.zshrc adds it; the hint is styled and says when zsh could not be asked.
 - `workit pr merge --allow-failing` no longer records a `merge.waived` row when the merge is refused or fails; the waiver is written once the forge accepts the merge.
-- A queued heavy check takes a freed lease slot at once: a release wakes waiters instead of waiting out the poll, and a waiter whose workspace allows fewer slots no longer holds back waiters that can use the free one (the "slot 1: free while 3 waiters queue" stall). `workit lock wait` wakes the same way and, like a heavy check, re-queues once at `resources.wait` before giving up.
-- `workit pr create` no longer adds `Closes #<n>` for digits inside a branch slug (only a segment-leading number such as `feature/42-x` links), and unticks template verification checkboxes that no fresh `workit check` on the head backs.
-- Review lane reasons name the whole diff when docs, comments or generated lines are left out of the count.
-- `workit fanout worktree create` refuses a slice branch that already landed (merged PR, squash or on trunk) and names a free `<branch>-<n>` to put in the plan; a branch with newer commits is still resumed.
-- A lead running two fanouts no longer hands one fanout's standing orders to the other fanout's workers.
-- The launch update check and `workit doctor` no longer offer or show a latest CLI version cached for another package (such as 14.7.0 after moving to `@workit-dev/cli`): the cache records its package and is refetched when it does not match.
-- A fanout plan whose slices have all landed or been released no longer counts as a candidate, so `workit ledger standing add` needs no `--fanout` while only one plan is active (#775)
-- `workit git pull|merge|checkout|status`, `ci wait --ref`, `task list --limit` and `help review` now name the exact command that does the job
-- A configured check that is red on the merge base as well as the head no longer refuses `tests-verified`; the verdict row records `pre-existing red: <check> (base <sha>)` and `workit pr status` shows it (#771)
-- A helper closes the finding it recorded with its own evidence in one call; a refused resolve, wrong payload keys and an out-of-scope worker assignment now name the fix (#317, #647)
-- A lease waiter ignores the watch event for its own queue ticket, so a late macOS file event no longer pushes a timed-out wait 50 ms past its limit
-- Implementer confinement follows `$PWD` after a literal `cd` and `for` lists built from resolved words; plain `curl` and `docker exec` are not writes; a denial names the command Workit cannot see into or the command substitution, with a retry (#772)
-- A verifier or reviewer subagent writes only in `.workit-scratch/` at a checkout root; writes elsewhere, and unquoted heredocs that run `$(…)`, are denied naming the scratch dir (#790)
-- A verdict is refused for a branch its repo does not have (`branch_not_in_repo`) or for a `--pr` from another branch's checkout, and the user can void a stray verdict with `workit ledger void <id> --reason` (user-only on every host: Claude Code asks, Codex, Cursor and Pi deny; `workit setup`/`upgrade` add the rule); `pr merge`/`stack land --unverified` name that path (#759)
-- Claude Code ask rules are anchored at their verb, so a command that only mentions a user-only verb in its text (a verdict note, a changelog entry, a PR body) no longer prompts; setup and upgrade remove the older Workit-written globs and keep the user's own.
-- OpenCode and Pi give the model the same closed `<workit-contract>` block Claude Code does.
-- A `cd <dir> && workit …` chain with a raw-git fallback is denied with the exact single `workit <verb> --cwd <dir> …` call to run instead, so a weak model retries correctly instead of giving up.
-- A `cd <dir> && workit …` call is rewritten to `workit <verb> --cwd <dir> …` even when a quoted argument holds `<` or `>` (such as a `Co-Authored-By: … <email>` trailer) or the call already passes the same `--cwd`, so these commits no longer prompt or get denied.
-- Voiding a verdict that superseded a failed one brings the failed verdict back instead of an older accepted one.
-- The prompt-routing hook no longer nudges toward a skill when the user only quotes a trigger phrase or complains about the agent.
-- Retrying `workit git commit -- <paths>` after a pre-commit hook rewrote and refused the paths commits the rewritten files instead of failing.
-- A redundant `cd` before `workit --cwd <dir>` is dropped only for an absolute dir, so the rewrite never changes where a relative command runs.
-- A raw `git commit` onto a protected branch is denied and names `workit git branch --kind feature --slug <slug>`; a raw `cd <worktree> && git add … && git commit …` is denied with the exact `workit git --cwd <worktree> commit -m … -- <paths>` call to run instead.
-- An agent that runs `npx -y @workit-dev/cli <verb> …` where `workit` is on PATH now gets the same `workit <verb> …` call: rewritten on Claude Code, OpenCode and Pi, and denied with that exact call on Codex and Cursor, so the allow rules match and a weak model is not stopped by a prompt
-- `workit --session=<v> approve <id>` and `workit --token <v> approve <id>` reach the approve step in the Claude Code hook launcher
-- On Windows, copying the config `workspaces.json` or an issued file out to another path is no longer denied
-- `workit upgrade --hosts=<h>` repairs a registered-but-missing Workit plugin on Claude Code, OpenCode and Pi too (Cursor and Codex already were): it plans the reinstall for that host only, applies it, and checks the host plans clean afterwards
-- The eval bench no longer stores private data in a result: it replaces what a host read outside the bench world with a marker, refuses to write a run that still holds a string from the real account, confines host reads with Landlock, and copies only the sign-in keys of `~/.claude.json`. The one committed transcript that held a real config is redacted.
-- `workit install` and `workit uninstall --hosts` previews show a missing host command (`claude`, `codex`, `pi` not on PATH) as a blocked row at plan time, the same text apply prints; apply runs nothing for that host.
-- A Cursor repair no longer adds a second `plugin_dirs` entry when the existing one is spelled with `~` (which made `workit doctor` report `duplicate_registration`).
-- `workit uninstall --preview` now shows exactly what `--yes` will do. A ytrack skill folder that no longer holds the skill is listed as kept with the reason apply prints, instead of apply reporting it as failed. A completion script or CLI file that isn't Workit's is listed as kept. A `bin/` or `versions/` folder holding your own files keeps its remove row with a "kept (holds …)" suffix, and becomes a kept row only when nothing of Workit's is left in it. Uninstall removes only the files the ytrack skill install wrote: a skill folder holding your own files stays, and preview and apply both say so. Each completion row removes only its own script. When every row is kept, the uninstall picker names what it kept instead of printing "Uninstall complete.", and a malformed config file is named once per line.
-- When a Workit release reaches npm after `workit upgrade` read the registry, the OpenCode row now says the newer version appeared and asks you to run `workit upgrade` again, instead of reporting OpenCode as current. The `workit doctor` fix for a stale OpenCode plugin names `workit upgrade` first, and for a manual update says to run `opencode plugin update @workit-dev/opencode` from your home directory, twice if the first run says the plugin is not configured.
-- Releases publish the Workit CLI only after npm serves every package published before it (up to 15 minutes, then with a warning), and never when one of them failed to publish, so `workit upgrade` no longer finds a CLI whose host packages are missing.
-- The hooks' write gate now catches, on every host: a write with `>& file` or `>&file`; `cmd | sponge <file>`; and a write through a symlink whose target does not exist yet (which would create a guarded file such as the grant seal). An inline script read from stdin (`python3 - "$F" <<EOF`) is judged by its heredoc, not by the file named in its arguments, which also removes a false denial; when Workit cannot resolve a file a script writes, the message says so instead of naming the config folder.
-- A wrong flag, verb or plan field now recovers in one call: unknown-option errors print the verb's usage line with a hint for the measured guesses (`fanout worktree create --branch|--base|--plan`, `ledger ruling --cost`, `issue comment --body`), `fanout plan` lists every valid `tier`/`reason` and the nearest one, `workit git switch -c|checkout -b|pull|status|diff|log` name the right verb or say read-only git runs raw, `dirty_worktree` names `--carry` first, `git branch --kind` lists the kinds, and bare `workit dir` lists the kinds with what each holds.
-- Agents keep notes, drafts, logs and resume files out of the repo tree: the session contract names `workit dir notes|handoffs`, and "leaving", "tomorrow", "end of day" and "pause" route to the continue skill, so saving state before a break no longer writes RESUME.md or comment drafts into the working tree.
-- Verifiers, reviewers and implementers are no longer refused for read-only work: read-only `node -e`/`python3 -c` and quoted-heredoc scripts, a plain `git fetch`, the host session scratchpad, any Workit worktree's `.workit-scratch/` and the read-only judge verbs (`grant show`, `ledger show`, `lease status`, `task show|list`, `doctor --json`) pass; a script that writes, spawns or hides its calls is still refused, and the verdict line carries `--cwd <candidate>`.
-- OpenCode: `workit setup` writes its native deny rules for the guarded paths as V2 `permissions` rules (`{action: "edit", resource, effect: "deny"}`) instead of the deprecated `permission.edit` map, moves the entries it wrote there before, and leaves your own rules alone; `workit doctor` counts V2 rules as present, the heavy-command gate reads V2 `permissions` and `agents.<id>.permissions`, and uninstall removes exactly Workit's rules in either shape (#869).
-- A check waiting behind another checkout's run says so (`pid N is another checkout's run (<dir>), not this check's`), its ledger row and `--json` name the checkout it ran in, and the summary ends `ran in <dir> @ <head>`, so a worktree's result can no longer be read as another's. `workit ledger verdict verified|tests-verified` (not `failed`, `blocked` or `--self`) refuses (`head_moved`) when a code change landed after the head its checks ran on, naming both SHAs and the changed files; a follow-up the verdict would carry (docs, CHANGELOG, tests under a unit verdict, an unchanged rebase) still records.
-- When the host withholds the account's Workit config (permission denied), Workit reads it as having no grants and no role models instead of failing, which can only lower what an agent may do; the note names the file, never its path.
 
 ### Removed
 
 - **Breaking:** Workit's built-in YouTrack token-file client. YouTrack now requires [ytrack](https://github.com/BrainerVirus/youtrack-cli) installed and logged in to the configured host (`ytrack auth login --host <host>`); every YouTrack call goes through it, whose token stays in the OS keyring. Setup no longer asks for or writes a token; it checks ytrack and names `ytrack auth login --host <host>` when needed. Doctor warns if a leftover `youtrack.token` exists (Workit never reads it; delete it). The `tokenFile` and `tokenDefaults` keys in youtrack.json are ignored.
-
-### Security
-
-- Grants are read from the account home in the OS record on every runtime. When Workit ran from source under Bun, an agent that set `HOME` could move where grants were read and written; the installed Node build was not affected
-- An approval is accepted only from a path that records one: a terminal grant, or a Claude Code or Pi grant with a matching ask row from the same host. A grant that names OpenCode, Codex, Cursor or an unknown host is refused; the ask row catches hand edits, not forgery (docs/agents/hosts.md)
-- An agent session can no longer raise its own grants or set `youtrack.writes: auto` by writing the Workit config dir: an edit or shell write to `workspaces.json` (or to the config dir itself) is denied on every host whose hooks deny, and names `workit grant set` or `workit workspace set` for the user to run in a terminal
-- The guard on the approvals dir now works on Claude Code and Codex for the common spellings (`~/.local/state/workit/approvals/…`, `$HOME/…`, `cd <state> && … > approvals/…`): the launchers used to skip the check
-- The guard on the issued registry, the approvals dir and the config `workspaces.json` also denies writes it used to miss: `bash -c` and script files (shell, Python, Node, tsx), scripts fed by a pipe or heredoc, `rsync` and other writers, `git -C <dir> checkout`, editor write commands, paths spelled through env vars, globs or built from the home dir, hardlinks, and wrappers such as `sudo -u`, `env -i` and `timeout`. It is steering, not a sandbox: docs/agents/hosts.md lists what a hook cannot see
-
-### Fixed (#864: approve a YouTrack write on the action itself)
-
-- A `workit youtrack note|time|meeting|update|create` call is approved by one
-  click on the host's own prompt on that call. Claude Code (auto mode
-  included) and Pi's TUI show the full text, and Yes posts it in the same
-  call: no `workit approve`, no id. Before, auto mode recorded nothing, every
-  refusal minted a new id and the user was sent to a terminal.
-- In `bypassPermissions`, `dontAsk` or `claude -p` nobody sees a prompt, so
-  nothing is approved and the call names the mode.
-- Refusing the same text again reuses its one request. On OpenCode, Codex,
-  Cursor and Pi print/RPC the refusal is one short command: `workit approve`
-  in a terminal shows the full text and asks y/N, with an id only when several
-  requests wait.
-- The raw-ytrack guard names `workit youtrack time` for a time log even when
-  the agent's command was not plain, and no longer says "your own terminal"
-  where the host asks.
-
-### Fixed (#864: approve release notes on the action itself)
-
-- Under `releaseNotes: review`, `workit release notes approve <v>` is one
-  click on the host's prompt on that call: Claude Code (auto mode included)
-  and Pi's TUI show the whole draft, and Yes records the approval of exactly
-  that text, so `release finish` proceeds without a terminal. Before, the
-  verb refused every agent shell, so a host yes was refused anyway.
-- A draft edited after the prompt is not approved; where nobody sees a
-  prompt, or on OpenCode, Codex and Cursor, the call refuses with one
-  command for the user's terminal, where the typed-version flow is unchanged.
-
-### Fixed (#864: drafts shown in full)
-
-- A `workit youtrack` write that waits for your yes prints the whole text it
-  would post (comment, new issue description or time-log text) with its
-  sha256, under a marker telling the agent to paste it to you verbatim; JSON
-  output carries it as `draft`. After a revision the print starts with a line
-  diff from the text printed last, then the new full text. `workit release
-  notes draft` and `show` print release notes the same way. Before, an agent
-  could name only the draft's file and never show a revised text.
-- The ship skill says to paste a draft that needs your yes in full before
-  asking and again after every edit; a repo rule (`draft-in-full`) fails a
-  skill step that shows a draft by its path only.
 
 ## [0.6.0] - 2026-08-10
 
@@ -1340,7 +1719,77 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.13.0...HEAD
+[2.13.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.12.0...workit-dev-v2.13.0
+[2.12.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.1...workit-dev-v2.12.0
+[2.11.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.0...workit-dev-v2.11.1
+[2.11.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.10.0...workit-dev-v2.11.0
+[2.10.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.9.0...workit-dev-v2.10.0
+[2.9.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.8.1...workit-dev-v2.9.0
+[2.8.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.8.0...workit-dev-v2.8.1
+[2.8.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.7.3...workit-dev-v2.8.0
+[2.7.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.7.2...workit-dev-v2.7.3
+[2.7.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.7.1...workit-dev-v2.7.2
+[2.7.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.7.0...workit-dev-v2.7.1
+[2.7.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.6.1...workit-dev-v2.7.0
+[2.6.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.6.0...workit-dev-v2.6.1
+[2.6.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.5.0...workit-dev-v2.6.0
+[2.5.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.4.4...workit-dev-v2.5.0
+[2.4.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.4.1...workit-dev-v2.4.2
+[2.4.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.3.0...workit-dev-v2.4.0
+[2.3.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.2.0...workit-dev-v2.3.0
+[2.2.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.1.1...workit-dev-v2.2.0
+[2.1.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.1.0...workit-dev-v2.1.1
+[2.0.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.0.1...workit-dev-v2.0.2
+[2.0.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.0.0...workit-dev-v2.0.1
+[2.0.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.16.0...workit-dev-v2.0.0
+[1.16.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.15.0...workit-dev-v1.16.0
+[1.15.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.14.3...workit-dev-v1.15.0
+[1.14.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.14.2...workit-dev-v1.14.3
+[1.14.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.14.1...workit-dev-v1.14.2
+[1.14.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.13.0...workit-dev-v1.14.0
+[1.13.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.12.0...workit-dev-v1.13.0
+[1.12.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.11.1...workit-dev-v1.12.0
+[1.11.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.10.0...workit-dev-v1.11.0
+[1.10.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.9.3...workit-dev-v1.10.0
+[1.9.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.9.1...workit-dev-v1.9.2
+[1.9.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.9.0...workit-dev-v1.9.1
+[1.9.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.8.2...workit-dev-v1.9.0
+[1.8.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.8.1...workit-dev-v1.8.2
+[1.8.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.8.0...workit-dev-v1.8.1
+[1.8.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.7.5...workit-dev-v1.8.0
+[1.7.5]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.7.4...workit-dev-v1.7.5
+[1.7.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.7.3...workit-dev-v1.7.4
+[1.7.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.7.2...workit-dev-v1.7.3
+[1.7.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.7.1...workit-dev-v1.7.2
+[1.7.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.7.0...workit-dev-v1.7.1
+[1.7.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.6.1...workit-dev-v1.7.0
+[1.6.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.6.0...workit-dev-v1.6.1
+[1.6.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.5.1...workit-dev-v1.6.0
+[1.5.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.5.0...workit-dev-v1.5.1
+[1.5.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.4.2...workit-dev-v1.5.0
+[1.4.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.4.1...workit-dev-v1.4.2
+[1.4.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.4.0...workit-dev-v1.4.1
+[1.4.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.3.0...workit-dev-v1.4.0
+[1.3.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.2.2...workit-dev-v1.3.0
+[1.2.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.2.1...workit-dev-v1.2.2
+[1.2.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.2.0...workit-dev-v1.2.1
+[1.2.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.9...workit-dev-v1.2.0
+[1.1.9]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.8...workit-dev-v1.1.9
+[1.1.8]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.7...workit-dev-v1.1.8
+[1.1.7]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.6...workit-dev-v1.1.7
+[1.1.6]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.5...workit-dev-v1.1.6
+[1.1.5]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.4...workit-dev-v1.1.5
+[1.1.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.3...workit-dev-v1.1.4
+[1.1.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.2...workit-dev-v1.1.3
+[1.1.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.1...workit-dev-v1.1.2
+[1.1.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.1.0...workit-dev-v1.1.1
+[1.1.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.0.4...workit-dev-v1.1.0
+[1.0.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.0.3...workit-dev-v1.0.4
+[1.0.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.0.2...workit-dev-v1.0.3
+[1.0.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.0.1...workit-dev-v1.0.2
+[1.0.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v1.0.0...workit-dev-v1.0.1
+[1.0.0]: https://github.com/BrainerVirus/workit/releases/tag/workit-dev-v1.0.0
 [0.6.0]: https://github.com/BrainerVirus/workit/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/BrainerVirus/workit/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/BrainerVirus/workit/compare/v0.5.4...v0.5.5

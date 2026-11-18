@@ -12,6 +12,7 @@ import path from "node:path";
 import { RULES } from "./plugin.mts";
 import { RULE as DRAFT_IN_FULL, scanDraftSteps } from "./draft-steps.mts";
 import { RULE as PRIVATE_NAMES, scanPrivateNames } from "./private-names.mts";
+import { scanReleasedChangelog } from "./released-changelog.mts";
 
 /** The oxlint rules plus the text scans oxlint cannot run on Markdown or JSON. */
 const known = (rule: string): boolean =>
@@ -199,6 +200,9 @@ export function main(args: readonly string[], io: Io): number {
     writeBaseline(baselineFile, baseline);
     io.out(`repo rules: baseline ${before} -> ${total(baseline)} hits`);
   }
+  // Warnings only: they print the fix but never change the exit code or the baseline.
+  for (const hit of scanReleasedChangelog(root))
+    io.out(`warning: ${where(hit)} workit/${hit.rule}: ${hit.message}`);
   const { over, stale } = compare(hits, baseline);
   for (const entry of over) {
     for (const hit of entry.hits) io.err(`${where(hit)} workit/${hit.rule}: ${hit.message}`);

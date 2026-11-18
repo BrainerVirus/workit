@@ -30,12 +30,42 @@ fix, perf, revert, refactor, docs, test, build, ci, chore), so a refactor-only
 release still lists its commit. `style` and the old `chore(release)`
 manifest-sync commits stay out (`presetConfig.types` in `release.config.cjs`).
 
+A release body starts with the release's hand-written `CHANGELOG.md`
+entries, between `<!-- workit:changelog:start -->` and
+`<!-- workit:changelog:end -->`, then the PR-title list. A release with no
+new entries gets the PR-title list only. `scripts/roll-changelog.ts` decides
+which entries are new. An entry belongs to the first `workit-dev-v*` tag whose
+`CHANGELOG.md` already holds it, matched on its first 100 characters with
+whitespace collapsed. The release's `generateNotesCmd` prints that block, and
+its `prepareCmd` moves the entries from `[Unreleased]` into
+`## [<version>] - <date>` in the release checkout. A release never writes back
+to `main`, so `main` gets the same split from a PR that runs
+`bun scripts/roll-changelog.ts`, the same way `sync-release-manifests.ts`
+brings the manifests up to date. Because entries are matched against the
+tags, an unrolled `main` never repeats an entry a release already shipped.
+`bun run lint` warns (repo rule `released-changelog`) at each such entry still
+under `[Unreleased]` and names the roll command. It
+is a warning, never a failure: release notes do not need a rolled `main`, and
+a failure would make every open branch carry a conflicting roll after each
+release. The rule reads the local `workit-dev-v*` tags and reports nothing in
+a checkout without them, such as CI's `fast checks` job (depth 1, no tags).
+
+The roll writes nothing and exits 1 when `[Unreleased]` holds an entry that
+its release's section already has (a merge put back what a roll moved), or
+when the result would hold any entry or continuation line fewer times than
+before (`##`/`###` headings and link definitions aside: a roll merges an
+emptied group into the same-named group of a version and rewrites links). Unknown flags and `--help` print the usage and exit 2.
+If `roll-changelog.ts` fails in a release, semantic-release stops at
+generateNotes or prepare, before it creates the tag, the GitHub release or
+any npm publish.
+
 GitHub rejects a release body over 125000 characters, so
 `scripts/clean-release-notes.cjs` caps it. The first release (no previous
 `workit-dev-v*` tag) would list every commit in the repository, so its body
 only says it continues `@brainervirus/workit` 14.6.1 and links `CHANGELOG.md`
 and the migration guide. Any other body estimated over 100000 characters keeps
-the entries that fit and ends with a link to the full compare view.
+the entries that fit and ends with a link to the full compare view. The
+changelog block gets at most 24000 more characters and is cut the same way.
 
 The GitHub release (tag, notes) is created before npm publishing, so a
 publish failure can no longer leave a tag without a release. Packages are
@@ -67,6 +97,13 @@ with `bun scripts/backfill-release-notes.ts <from-tag>..<to-tag>`. It
 regenerates the notes with the release config and prints what it would change.
 Add `--apply` to edit header-only releases and create missing ones (never
 marked latest). It needs `gh` authenticated with write access to the repo.
+
+`bun scripts/backfill-release-notes.ts --changelog --dry-run` prints, for
+each published `workit-dev-v*` release (or a `<from-tag>..<to-tag>` range),
+whether its body would get its `CHANGELOG.md` entries and how its length
+changes. With `--apply` it writes the block above the existing PR-title list
+with `gh release edit`. It replaces a block that is already there, so a
+second run changes nothing. A release with no GitHub release is skipped.
 
 `bun run verify:release-candidate` checks the release candidate (CI runs it);
 `bun run validate:cursor-marketplace` checks the Cursor marketplace manifest.

@@ -17,7 +17,10 @@ permissions: {}
 # ^<version> internal ranges, and publish-changed-packages.ts refuses to
 # publish unless all of them equal the tag at HEAD. The committed manifests on
 # main keep their last-synced version, which nothing compares to the tag, so a
-# release adds no commit to main and leaves open PRs up to date.
+# release adds no commit to main and leaves open PRs up to date. The same goes
+# for CHANGELOG.md: the release moves its entries out of [Unreleased] in this
+# checkout only, and main gets that split from a PR running
+# `bun scripts/roll-changelog.ts`.
 jobs:
   release:
     runs-on: ubuntu-latest
