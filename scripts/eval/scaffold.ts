@@ -250,6 +250,12 @@ export const makeWorld = (spec: EvalCase): World => {
     git(repo, "push", "-q", "origin", "HEAD");
     git(repo, "remote", "set-url", "--push", "origin", FAKE_FORGE_URL);
   }
+  // After the scaffold's own commits, so only the agent's commits run them.
+  for (const [name, body] of Object.entries(scaffold.gitHooks ?? {})) {
+    if (!/^[a-z-]+$/u.test(name)) throw new Error(`scaffold.gitHooks: ${name} is not a hook name`);
+    writeFileSync(path.join(repo, ".git", "hooks", name), body);
+    chmodSync(path.join(repo, ".git", "hooks", name), 0o755);
+  }
 
   writeConfig(dir, config, spec);
   return {

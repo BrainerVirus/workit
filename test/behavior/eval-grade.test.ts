@@ -2,7 +2,7 @@
 // transcript with no model (scripts/eval/grade.ts, docs/agents/eval.md).
 import { describe, expect, test } from "bun:test";
 import type { EvalCase } from "@/scripts/eval/cases";
-import { grade, usageOf } from "@/scripts/eval/grade";
+import { authFailureOf, grade, usageOf } from "@/scripts/eval/grade";
 
 type Call = {
   name: string;
@@ -91,7 +91,13 @@ describe("Given a saved transcript", () => {
       transcript([{ name: "Agent", input: spawn, result: "done: src/hello.ts added" }]),
       spec(),
     );
-    expect(graded).toEqual({ graderVersion: 1, pass: true, calls: 1, failures: [] });
+    expect(graded).toEqual({
+      graderVersion: 2,
+      pass: true,
+      calls: 1,
+      failures: [],
+      firstTry: { interactions: 1, failed: 0, denied: 0 },
+    });
   });
 
   test("When a raw `git push` ran, even after a cd chain, Then it fails; `workit git push` passes", () => {
@@ -564,5 +570,113 @@ describe("a call counts as refused on the host's evidence, never on words the ca
     expect(failures(call("Permission denied: external_directory"))).toEqual([]);
     expect(failures(call("Permission denied: somethingprinted"))).toEqual(["forbid"]);
     expect(failures(call("Permission denied: shell\nand more"))).toEqual(["forbid"]);
+  });
+});
+
+describe("Given a run graded for first try (D5)", () => {
+  const hookDeny = (command: string, reason: string, id = "tu0"): string[] => [
+    JSON.stringify({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+    }),
+    JSON.stringify({
+      type: "user",
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: "tool_result", tool_use_id: id, content: reason, is_error: true }],
+      },
+    }),
+    JSON.stringify({
+      type: "system",
+      subtype: "permission_denied",
+      tool_name: "Bash",
+      tool_use_id: id,
+      decision_reason_type: "hook",
+      message: reason,
+    }),
+  ];
+  const ran = (command: string, id: string, failed = false): string[] => [
+    JSON.stringify({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
+    }),
+    JSON.stringify({
+      type: "user",
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: "tool_result", tool_use_id: id, content: "out", is_error: failed }],
+      },
+    }),
+  ];
+  const run = (...lines: string[][]): string =>
+    [...lines.flat(), JSON.stringify({ type: "result", subtype: "success", num_turns: 3 })].join(
+      "\n",
+    );
+
+  test("When one hook-denied call the case does not declare, Then firstTry.denied is 1 and a firstTry case fails", () => {
+    const text = run(
+      hookDeny("git -C /w status --short", "workit judge: add --no-optional-locks."),
+      ran("workit check test", "tu1"),
+    );
+    const graded = grade(text, spec({ firstTry: true }));
+    expect(graded.firstTry).toEqual({ interactions: 2, failed: 0, denied: 1 });
+    expect(graded.pass).toBe(false);
+    expect(graded.failures.map((failure) => failure.rule)).toEqual(["first-try"]);
+    expect(graded.failures[0]?.detail).toContain("#1 Bash(git -C /w status --short) denied");
+    // The same run on a case without the tag still counts, and does not fail.
+    const untagged = grade(text, spec());
+    expect(untagged.firstTry.denied).toBe(1);
+    expect(untagged.pass).toBe(true);
+  });
+
+  test("When the case declares that refusal, Then it does not count", () => {
+    const graded = grade(
+      run(hookDeny("workit install --hosts=cursor", "Only the user runs `workit install`.")),
+      spec({
+        firstTry: true,
+        expect: { declared: [{ tool: "Bash", pattern: "workit install", why: "user-only" }] },
+      }),
+    );
+    expect(graded.firstTry).toEqual({ interactions: 1, failed: 0, denied: 0 });
+    expect(graded.pass).toBe(true);
+  });
+
+  test("When a workit call fails, Then it counts as failed; a non-Workit failure and a mode denial do not count", () => {
+    const modeDeny = hookDeny("rm -rf x", "Permission to use Bash has been denied", "tu9").map(
+      (line) => line.replace('"decision_reason_type":"hook"', '"decision_reason_type":"mode"'),
+    );
+    const graded = grade(
+      run(
+        ran("workit fanout worktree create x --plan y", "tu1", true),
+        ran("ls nope", "tu2", true),
+        modeDeny,
+      ),
+      spec({ firstTry: true }),
+    );
+    expect(graded.firstTry).toEqual({ interactions: 1, failed: 1, denied: 0 });
+    expect(graded.pass).toBe(false);
+  });
+
+  test("When the login failed before any tool call, Then the run is void (authFailureOf); a run with calls is not", () => {
+    const expired = [
+      JSON.stringify({ type: "system", subtype: "init" }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        num_turns: 0,
+        result: "Invalid API key · Please run /login",
+      }),
+    ].join("\n");
+    expect(authFailureOf(expired)).toContain("/login");
+    const opencode = JSON.stringify({
+      type: "error",
+      sessionID: "s1",
+      error: { type: "provider.auth", message: "Reconnect OpenCode Console to continue." },
+    });
+    expect(authFailureOf(opencode)).toContain("provider.auth");
+    expect(authFailureOf(run(ran("workit check test", "tu1")))).toBeNull();
   });
 });

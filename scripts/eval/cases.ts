@@ -21,11 +21,23 @@ export type CallPattern = {
   why: string;
 };
 
+/** The bench legs: Claude Code and OpenCode. */
+export const HOSTS = ["claude-code", "opencode"] as const;
+export type CaseHost = (typeof HOSTS)[number];
+
 export type EvalCase = {
   id: string;
   /** The real failure this case replays: a retro item, issue or behaviour case. */
   source: string;
   tier: Tier;
+  /**
+   * A first-try case: any Workit interaction that a hook denies or that
+   * fails, and that `expect.declared` does not name, fails the run
+   * (grade.ts firstTryOf); `--gate first-try` needs 5 of 5 runs.
+   */
+  firstTry?: boolean;
+  /** The legs the case applies to (default both); another leg reports it not applicable, never a pass. */
+  hosts?: CaseHost[];
   /** `{{root}}` and `{{worktree}}` are replaced with the scaffold paths. */
   prompt: string;
   scaffold?: {
@@ -66,7 +78,11 @@ export type EvalCase = {
       defaultEndpoint?: "commit" | "pr" | "green" | "merged";
       autonomy?: Record<string, boolean | "verified">;
       verification?: "proportional" | "self" | "independent";
+      /** The entry's `models` (role models, enforce mode), as workspaces.json takes them. */
+      models?: Record<string, unknown>;
     };
+    /** Git hooks written into the repo's `.git/hooks/<name>` (made executable). */
+    gitHooks?: Record<string, string>;
   };
   maxTurns?: number;
   permissionMode?: string;
@@ -76,6 +92,8 @@ export type EvalCase = {
     configuredCheck?: boolean;
     require?: CallPattern[];
     forbid?: CallPattern[];
+    /** Calls the case expects to be refused or to fail: they do not count against first try. */
+    declared?: CallPattern[];
     /** At most `max` calls match the pattern. */
     atMost?: (CallPattern & { max: number })[];
     /** Regexes the final answer must match. */
@@ -93,6 +111,8 @@ export const loadCases = (dir: string): EvalCase[] =>
       if (spec.tier !== "smoke" && spec.tier !== "full")
         throw new Error(`${name}: tier must be smoke or full`);
       if (!spec.prompt || !spec.source) throw new Error(`${name}: prompt and source are required`);
+      if (spec.hosts?.some((host) => !(HOSTS as readonly string[]).includes(host)))
+        throw new Error(`${name}: hosts must name ${HOSTS.join(" or ")}`);
       const forge = spec.scaffold?.forge;
       if (forge !== undefined && forge !== "github")
         throw new Error(`${name}: scaffold.forge must be github`);
@@ -110,3 +130,7 @@ export const selectCases = (cases: EvalCase[], tier: Tier, ids: string[] = []): 
       (tier === "full" || spec.tier === "smoke") && (ids.length === 0 || ids.includes(spec.id)),
   );
 };
+
+/** Whether the case runs on this leg (`hosts`, default both). */
+export const appliesTo = (spec: EvalCase, host: CaseHost): boolean =>
+  spec.hosts === undefined || spec.hosts.includes(host);

@@ -16,8 +16,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
-import { loadCases, selectCases, type EvalCase, type Tier } from "./cases";
-import { grade, usageOf, type Grade, type Usage } from "./grade";
+import { appliesTo, loadCases, selectCases, type EvalCase, type Tier } from "./cases";
+import { authFailureOf, grade, usageOf, type FirstTry, type Grade, type Usage } from "./grade";
 import {
   limitOf,
   opencodeArgs,
@@ -41,6 +41,7 @@ import {
 } from "./confine";
 import {
   carryBack,
+  grantFiles,
   loginFiles,
   isolateHome,
   linkLogin,
@@ -135,6 +136,14 @@ const DEFAULT_TOOLS = [
   "Bash(pwd)",
 ];
 
+/**
+ * The permission mode a case runs in unless it names one: auto mode, as a
+ * real Claude Code session with Workit runs (the allow list above stands in
+ * for the user's own rules). dontAsk denied every chain or pipe with one part
+ * off the list (`git status && cat -A f`, `| head`), which no real setup does.
+ */
+const DEFAULT_MODE = "auto";
+
 type RunResult = {
   case: string;
   /** Which of a case's `--repeat` runs this is, from 2 (run 1 leaves it out). */
@@ -145,6 +154,8 @@ type RunResult = {
   provider?: Provider["name"];
   /** Every provider reported its rate or quota limit: not graded, never a pass. */
   skipped?: "limit";
+  /** The host's login failed before any tool call (grade.ts authFailureOf): void, never a pass or a fail. */
+  void?: "auth";
   limits?: { provider: Provider["name"]; error: string }[];
   workitVersion: string;
   key: string;
@@ -471,7 +482,9 @@ const guardedPaths = (opts: Options): string[] => [
  * dirs, this Workit checkout, the packages its `node_modules` link to with
  * the store they sit in (a linked worktree's main checkout `node_modules`,
  * never that checkout's source) and the toolchains it runs (bun, node, git,
- * the host binary), never the real home, its Workit dirs or host config dirs.
+ * the host binary), never the real home, its Workit dirs or host config dirs,
+ * but for the two account files Workit reads grants from (isolation.ts
+ * `grantFiles`), read-only.
  */
 const readRules = (opts: Options): string[] => {
   const pathEnv = process.env.PATH ?? "";
@@ -486,7 +499,7 @@ const readRules = (opts: Options): string[] => {
       ...[binaryOf(opts.bin, pathEnv)].filter((file): file is string => file !== null),
     ],
     guardedPaths(opts),
-  );
+  ).concat(grantFiles(opts.realHome));
 };
 
 /**
@@ -630,7 +643,7 @@ const claudeArgs = (spec: EvalCase, model: string, pluginDir: string): string[] 
   "--plugin-dir",
   pluginDir,
   "--permission-mode",
-  spec.permissionMode ?? "dontAsk",
+  spec.permissionMode ?? DEFAULT_MODE,
   ...allowed(spec.allowedTools ?? DEFAULT_TOOLS),
   "--disallowedTools",
   "WebFetch",
@@ -953,6 +966,8 @@ const runCase = async (
     opts.host === "opencode" &&
     (run.provider === undefined || run.limit !== null);
   const graded = grade(run.transcript, spec);
+  const auth = trip === null && !run.refused && !skipped ? authFailureOf(run.transcript) : null;
+  if (auth) graded.failures.unshift({ rule: "void", detail: `the host's login failed: ${auth}` });
   if (run.refused) graded.failures.unshift({ rule: "isolation", detail: run.refused });
   if (trip)
     graded.failures.unshift({
@@ -965,6 +980,7 @@ const runCase = async (
     ...(opts.host === "opencode" ? { host: opts.host } : {}),
     model: opts.model,
     ...(skipped ? { skipped: "limit" as const } : {}),
+    ...(auth ? { void: "auth" as const } : {}),
     ...(run.provider && !skipped ? { provider: run.provider.name } : {}),
     ...(opts.limits.length > 0 ? { limits: [...opts.limits] } : {}),
     workitVersion: version,
@@ -973,7 +989,7 @@ const runCase = async (
     exit: run.exit,
     timedOut: run.timedOut,
     usage: usageOf(run.transcript),
-    grade: skipped || trip || run.refused ? { ...graded, pass: false } : graded,
+    grade: skipped || auth || trip || run.refused ? { ...graded, pass: false } : graded,
     ...(run.refused ? { refused: "isolation" as const } : {}),
     ...(trip ? { outsideWrite: trip } : {}),
     ...(other ? { outsideChanges: changesOf(other) } : {}),
@@ -1021,6 +1037,9 @@ type Row = {
   case: string;
   pass: boolean;
   skipped?: "limit";
+  void?: "auth";
+  /** The run's first-try counts (grade.ts FirstTry); summed over a case's runs. */
+  firstTry?: FirstTry;
   provider?: Provider["name"];
   failures: string[];
   turns: number | null;
@@ -1035,6 +1054,8 @@ const rowOf = (result: RunResult): Row => ({
   case: result.case,
   pass: result.grade.pass,
   ...(result.skipped ? { skipped: result.skipped } : {}),
+  ...(result.void ? { void: result.void } : {}),
+  ...(result.grade.firstTry ? { firstTry: result.grade.firstTry } : {}),
   ...(result.provider ? { provider: result.provider } : {}),
   failures: result.grade.failures.map((failure) => failure.rule),
   turns: result.usage.turns,
@@ -1044,12 +1065,30 @@ const rowOf = (result: RunResult): Row => ({
   ...(result.outsideChanges ? { outsideChanges: result.outsideChanges.length } : {}),
 });
 
+/** First-try counts summed over rows (a row without them adds nothing). */
+const sumFirstTry = (rows: { firstTry?: FirstTry }[]): FirstTry =>
+  rows.reduce(
+    (total, row) => ({
+      interactions: total.interactions + (row.firstTry?.interactions ?? 0),
+      failed: total.failed + (row.firstTry?.failed ?? 0),
+      denied: total.denied + (row.firstTry?.denied ?? 0),
+    }),
+    { interactions: 0, failed: 0, denied: 0 },
+  );
+
+/** `clean of total (rate%)`: the Workit interactions that neither failed nor were denied. */
+const firstTryRate = (counts: FirstTry): string => {
+  const clean = counts.interactions - counts.failed - counts.denied;
+  const rate = counts.interactions === 0 ? 100 : (100 * clean) / counts.interactions;
+  return `${clean} of ${counts.interactions} Workit interaction(s) on the first try (${rate.toFixed(1)}%): ${counts.denied} denied, ${counts.failed} failed`;
+};
+
 /** One case's row: a single run as is; repeated runs pass on two thirds, each run listed. */
 const caseRow = (runs: RunResult[]): Row & { passes?: number; runs?: Row[] } => {
   const [first] = runs as [RunResult, ...RunResult[]];
   if (runs.length === 1) return rowOf(first);
   const rows = runs.map(rowOf);
-  const passes = rows.filter((row) => row.pass && !row.skipped).length;
+  const passes = rows.filter((row) => row.pass && !row.skipped && !row.void).length;
   const sum = (key: "turns" | "costUsd") =>
     rows.some((row) => row[key] === null)
       ? null
@@ -1058,6 +1097,8 @@ const caseRow = (runs: RunResult[]): Row & { passes?: number; runs?: Row[] } => 
     case: first.case,
     pass: passes >= passesNeeded(rows.length),
     ...(rows.every((row) => row.skipped) ? { skipped: "limit" as const } : {}),
+    ...(rows.every((row) => row.void) ? { void: "auth" as const } : {}),
+    ...(rows.some((row) => row.firstTry) ? { firstTry: sumFirstTry(rows) } : {}),
     passes,
     failures: [...new Set(rows.flatMap((row) => row.failures))],
     turns: sum("turns"),
@@ -1085,10 +1126,13 @@ const writeSummary = (dir: string): void => {
     caseRow(runs.toSorted((a, b) => (a.run ?? 1) - (b.run ?? 1))),
   );
   const skipped = rows.filter((row) => row.skipped).length;
+  const voided = rows.filter((row) => row.void).length;
   writeJson(path.join(dir, "summary.json"), {
     passed: rows.filter((row) => row.pass).length,
     total: rows.length,
     ...(skipped > 0 ? { skipped } : {}),
+    ...(voided > 0 ? { void: voided } : {}),
+    firstTry: sumFirstTry(rows),
     ...(rows.some((row) => row.outsideChanges)
       ? { outsideChanges: rows.reduce((total, row) => total + (row.outsideChanges ?? 0), 0) }
       : {}),
@@ -1100,7 +1144,14 @@ const writeSummary = (dir: string): void => {
     spawnSync(oxfmt, [dir], { cwd: REPO, stdio: "ignore", timeout: 60_000, killSignal: "SIGKILL" });
 };
 
+const RELOGIN: Record<Host, string> = {
+  "claude-code": "run `claude`, then /login",
+  opencode: "run `opencode auth login` (or reconnect the OpenCode console)",
+};
+
 const line = (status: string, result: RunResult): string => {
+  if (result.void)
+    return `void (auth) ${result.case}: ${result.grade.failures[0]?.detail ?? "the host's login failed"}\n    re-login: ${RELOGIN[result.host ?? "claude-code"]}, then rerun; a void run is never a pass or a fail`;
   if (result.skipped)
     return `skipped (limit) ${result.case}${(result.limits ?? [])
       .map((limit) => `\n    ${limit.provider}: ${limit.error}`)
@@ -1141,7 +1192,7 @@ const replay = (
       }
       // A limited run was never graded; re-grading its stub could turn it into a pass.
       // An outside write fails the run whatever its transcript says.
-      if (stored.skipped || stored.outsideWrite || stored.refused) continue;
+      if (stored.skipped || stored.void || stored.outsideWrite || stored.refused) continue;
       const fresh = grade(readFileSync(path.join(dir, file), "utf8"), spec);
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
@@ -1157,7 +1208,7 @@ const replay = (
 };
 
 const USAGE =
-  "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--force]\n" +
+  "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--gate first-try] [--force]\n" +
   "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]\n" +
   "       bun scripts/eval/run.ts --tripwire-discard\n" +
   "       --unconfined: run shell-wrapper cases with detection only when write confinement (Landlock) is off";
@@ -1188,6 +1239,7 @@ export const main = async (
         cases: { type: "string" },
         "budget-runs": { type: "string", default: "3" },
         repeat: { type: "string", default: "1" },
+        gate: { type: "string" },
         force: { type: "boolean", default: false },
         replay: { type: "boolean", default: false },
         check: { type: "boolean", default: false },
@@ -1239,6 +1291,7 @@ export const main = async (
   const settling = values["tripwire-discard"];
   if (
     (!values.model && !settling) ||
+    (values.gate !== undefined && values.gate !== "first-try") ||
     !Number.isInteger(repeat) ||
     repeat < 1 ||
     (tier !== "smoke" && tier !== "full") ||
@@ -1312,6 +1365,7 @@ export const main = async (
         repeat,
         budget,
         force: values.force,
+        gate: values.gate === "first-try",
       }),
     { discard: values["tripwire-discard"] },
   );
@@ -1471,11 +1525,14 @@ const bench = async (
     repeat,
     budget,
     force,
+    gate = false,
   }: {
     selected: EvalCase[];
     repeat: number;
     budget: number;
     force: boolean;
+    /** `--gate first-try`: a firstTry case runs 5 times and needs all 5; any other case must not drop against the committed summary. */
+    gate?: boolean;
   },
 ): Promise<number> => {
   const { host } = opts;
@@ -1494,8 +1551,22 @@ const bench = async (
   let runs = 0;
   let failed = 0;
   const limited: string[] = [];
+  const voided: string[] = [];
   const skipped: string[] = [];
+  const notApplicable: string[] = [];
+  const drops: string[] = [];
+  const gateFailed: string[] = [];
+  const counts: { firstTry?: FirstTry }[] = [];
+  const baseline = gate ? committedSummary(dir) : new Map<string, boolean>();
   for (const spec of selected) {
+    if (!appliesTo(spec, host === "opencode" ? "opencode" : "claude-code")) {
+      notApplicable.push(spec.id);
+      print(`n/a ${spec.id}: the case applies to ${spec.hosts?.join(", ")} only`);
+      continue;
+    }
+    const strict = gate && spec.firstTry === true;
+    const times = strict ? Math.max(repeat, FIRST_TRY_RUNS) : repeat;
+    const needed = strict ? times : passesNeeded(times);
     const key = cacheKey(
       spec,
       host === "opencode" ? `opencode/${opts.model}` : opts.model,
@@ -1504,12 +1575,12 @@ const bench = async (
     // Runs past this --repeat belong to an older invocation: they would skew the two-thirds rule.
     for (const name of existsSync(dir) ? readdirSync(dir) : []) {
       const match = /^(.+)\.run(\d+)\.(json|transcript\.jsonl)$/u.exec(name);
-      if (match?.[1] === spec.id && Number(match[2]) > repeat) rmSync(path.join(dir, name));
+      if (match?.[1] === spec.id && Number(match[2]) > times) rmSync(path.join(dir, name));
     }
     const outcomes: RunResult[] = [];
-    for (let run = 1; run <= repeat; run += 1) {
+    for (let run = 1; run <= times; run += 1) {
       const cached = readResult(path.join(dir, `${runBase(spec.id, run)}.json`));
-      if (!force && cached?.key === key && !cached.skipped) {
+      if (!force && cached?.key === key && !cached.skipped && !cached.void) {
         outcomes.push(cached);
         print(line(cached.grade.pass ? "cached pass" : "cached FAIL", cached));
         continue;
@@ -1564,30 +1635,44 @@ const bench = async (
         return 3;
       }
     }
-    if (outcomes.length < repeat) {
+    if (outcomes.length < times) {
       skipped.push(spec.id);
       continue;
     }
-    const graded = outcomes.filter((result) => !result.skipped);
+    const graded = outcomes.filter((result) => !result.skipped && !result.void);
     if (graded.length === 0) {
-      limited.push(spec.id);
+      (outcomes.some((result) => result.void) ? voided : limited).push(spec.id);
       continue;
     }
+    counts.push(...graded.map((result) => ({ firstTry: result.grade.firstTry })));
     const passes = graded.filter((result) => result.grade.pass).length;
-    const pass = passes >= passesNeeded(repeat);
+    const pass = passes >= needed;
     if (!pass) failed += 1;
-    if (repeat > 1)
+    if (strict && !pass) gateFailed.push(spec.id);
+    if (gate && !strict && !pass && baseline.get(spec.id) === true) drops.push(spec.id);
+    if (times > 1)
       print(
-        `${pass ? "pass" : "FAIL"} ${spec.id}: ${passes} of ${repeat} run(s) passed (needs ${passesNeeded(repeat)})`,
+        `${pass ? "pass" : "FAIL"} ${spec.id}: ${passes} of ${times} run(s) passed (needs ${needed})${strict ? ", first-try gate" : ""}`,
       );
   }
   writeSummary(dir);
   print(
     `${label} @ ${version}: ${runs} model run(s), ${failed} failed of ${selected.length - skipped.length - limited.length} graded${opts.confinement.on ? "" : `; write confinement off (${opts.confinement.reason}): detection only`}${opts.otherChanges > 0 ? `; ${opts.otherChanges} outside change(s) by another process, reported above` : ""}`,
   );
+  print(`first try: ${firstTryRate(sumFirstTry(counts))}`);
+  if (notApplicable.length > 0)
+    print(`n/a: ${notApplicable.length} case(s) apply to another leg: ${notApplicable.join(", ")}`);
   if (limited.length > 0)
     print(
       `skipped (limit): ${limited.length} case(s) not graded, every provider reported its limit: ${limited.join(", ")}`,
+    );
+  if (voided.length > 0)
+    print(
+      `void (auth): ${voided.length} case(s) never reached the model, the host's login failed: ${voided.join(", ")}\n    re-login: ${RELOGIN[host]}, then rerun`,
+    );
+  if (gate)
+    print(
+      `gate first-try: ${gateFailed.length === 0 && drops.length === 0 && voided.length === 0 && limited.length === 0 && skipped.length === 0 ? "pass" : "FAIL"}; firstTry cases short of ${FIRST_TRY_RUNS} of ${FIRST_TRY_RUNS}: ${gateFailed.join(", ") || "none"}; drops against the committed summary: ${drops.join(", ") || "none"}`,
     );
   if (skipped.length > 0)
     print(
@@ -1595,7 +1680,31 @@ const bench = async (
     );
   if (runs > 0)
     print(`results: ${path.relative(REPO, dir) || dir}; commit them with the change they measure`);
-  return failed > 0 || limited.length > 0 ? 1 : 0;
+  if (gate)
+    return gateFailed.length > 0 ||
+      drops.length > 0 ||
+      voided.length > 0 ||
+      limited.length > 0 ||
+      skipped.length > 0
+      ? 1
+      : 0;
+  return failed > 0 || limited.length > 0 || voided.length > 0 ? 1 : 0;
+};
+
+/** The runs a firstTry case needs under `--gate first-try`, every one passing. */
+const FIRST_TRY_RUNS = 5;
+
+/** Each case's pass in the committed `summary.json` of this result dir (HEAD), the baseline a gate compares with. */
+const committedSummary = (dir: string): Map<string, boolean> => {
+  const rel = path.relative(REPO, path.join(dir, "summary.json"));
+  try {
+    const summary = JSON.parse(out(REPO, "show", `HEAD:${rel}`)) as {
+      cases?: { case: string; pass: boolean }[];
+    };
+    return new Map((summary.cases ?? []).map((row) => [row.case, row.pass]));
+  } catch {
+    return new Map();
+  }
 };
 
 const OTHER_WHEN = {
