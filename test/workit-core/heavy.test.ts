@@ -2,7 +2,12 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { heavyCommand, heavyPlan } from "@/packages/workit-core/src/core/heavy";
+import {
+  heavyCommand,
+  heavyPlan,
+  serverCommand,
+  serverPlan,
+} from "@/packages/workit-core/src/core/heavy";
 import { maybeHeavy } from "@/packages/workit-core/src/core/heavy-words";
 import { checksPath } from "@/test/workit-core/task-fixtures";
 
@@ -221,4 +226,146 @@ test("given a deny rule naming the heavy command, when planned, then it passes t
   const result = heavyPlan("npx jest", { cwd: root, env, rules: { deny: ["npx:*"], allow: [] } });
   expect(result).toMatchObject({ kind: "passthrough" });
   if (result.kind === "passthrough") expect(result.note).toBe("");
+});
+
+// Dev servers (#328): never heavy, routed to `workit run --bg` instead.
+const server = (command: string) => serverCommand(command) !== null;
+
+test("given dev servers across frameworks and wrappers, when classified, then each is a server and none is heavy", () => {
+  for (const command of [
+    "ng serve --port 4200",
+    "npx ng serve",
+    "vite",
+    "vite --port 3000",
+    "npx vite preview",
+    "next dev",
+    "pnpm exec next start",
+    "nuxt dev",
+    "astro dev",
+    "react-scripts start",
+    "webpack serve --mode development",
+    "npm start",
+    "npm run dev",
+    "npm run start:prod",
+    "yarn start",
+    "pnpm dev",
+    "bun dev",
+    "bun run dev",
+    "deno task dev",
+    "yarn workspace web dev",
+    "npx storybook dev -p 6006",
+    "npm run storybook",
+    "docker compose up",
+    "docker compose -f dev.yml up web",
+    "docker-compose up",
+    "podman compose up",
+    "make dev",
+    "nx serve app",
+    "nx run app:serve",
+    "python3 -m http.server 8000",
+    "python manage.py runserver",
+    "bundle exec rails server",
+    "mix phx.server",
+    "PORT=3000 npm run dev",
+    "cd web && npm run dev",
+  ]) {
+    expect(server(command), command).toBe(true);
+    // The launchers' pre-check sends every server to the gate.
+    expect(maybeHeavy(command, root, env), command).toBe(true);
+  }
+  for (const command of ["ng serve", "npm run dev", "docker compose up", "vite"])
+    expect(heavy(command), command).toBe(false);
+});
+
+test("given builds, tests, detached compose, watch-only scripts and help, when classified, then none is a server", () => {
+  for (const command of [
+    "ng build",
+    "ng test",
+    "vite build",
+    "next build",
+    "npm run build",
+    "npm run build:dev",
+    "npm test",
+    "npm run test:watch",
+    "tsc --watch",
+    "docker compose up -d",
+    "docker compose up --detach web",
+    "docker compose build",
+    "ng serve --help",
+    "npm run",
+    "make test",
+    "workit run --bg -- npm run dev",
+    "npx -y @workit-dev/cli run --bg -- ng serve",
+    "git status",
+  ])
+    expect(server(command), command).toBe(false);
+  // No regression: the builds stay heavy.
+  for (const command of ["ng build", "vite build", "next build", "npm run build"])
+    expect(heavy(command), command).toBe(true);
+});
+
+const route = (command: string, rules: Parameters<typeof serverPlan>[1]["rules"] = null) =>
+  serverPlan(command, { cwd: root, env, rules });
+
+test("given one dev server, when planned, then it is rewritten to workit run --bg verbatim after --, env prefixes and output shaping kept", () => {
+  expect(route("ng serve --port 4200")).toEqual({
+    kind: "rewrite",
+    command: "workit run --bg -- ng serve --port 4200",
+    reason: "ng serve --port",
+    server: true,
+  });
+  expect(route("PORT=3000 npm run dev")).toMatchObject({
+    command: "PORT=3000 workit run --bg -- npm run dev",
+  });
+  expect(route("npm run dev 2>&1 | tail -20")).toMatchObject({
+    kind: "rewrite",
+    command: "workit run --bg -- npm run dev 2>&1 | tail -20",
+  });
+  expect(route("ng build").kind).toBe("none");
+});
+
+test("given a chain that starts a dev server, when planned, then it is split naming the exact workit run --bg call", () => {
+  for (const [command, start] of [
+    ["npm run dev && echo x", "workit run --bg -- npm run dev"],
+    ["npm run dev; npm test", "workit run --bg -- npm run dev"],
+    ["cd web && ng serve --port 4200", "workit run --bg -- ng serve --port 4200"],
+  ] as const) {
+    const result = route(command);
+    expect(result.kind, command).toBe("split");
+    if (result.kind !== "split") continue;
+    expect(result.unblock).toBe(start);
+    expect(result.reason).toContain(`Start it alone, now: \`${start}\``);
+    expect(result.reason).not.toContain("bash -c");
+  }
+});
+
+test("given host rules, when a dev server is planned, then a rule naming it or an allow covering only the wrapper leaves it as typed", () => {
+  const rules = (allow: string[], deny: string[] = []) => ({ allow, deny });
+  expect(route("npm run dev", rules([], ["npm run dev:*"])).kind).toBe("passthrough");
+  expect(route("npm run dev", "unreadable").kind).toBe("passthrough");
+  // `workit run *` would let the rewrite run a command the user is asked about.
+  expect(route("npm run dev", rules(["workit run:*"])).kind).toBe("passthrough");
+  expect(route("npm run dev", rules(["workit:*", "npm run dev:*"])).kind).toBe("rewrite");
+  // Workit's own allows (enumerated verbs) never cover the wrapper.
+  expect(route("npm run dev", rules(["workit git *", "workit check test *"])).kind).toBe("rewrite");
+  expect(
+    serverPlan("npm run dev", {
+      cwd: root,
+      env,
+      rules: rules(["workit run:*"]),
+      bypass: true,
+    }).kind,
+  ).toBe("rewrite");
+});
+
+test("given a dev server outside a git checkout or in PowerShell, when planned, then nothing changes", () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "workit-server-nogit-"));
+  try {
+    expect(serverPlan("npm run dev", { cwd: outside, env, rules: null }).kind).toBe("none");
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+  expect(
+    serverPlan("npm run dev", { cwd: root, env, rules: null, dialect: "powershell" }).kind,
+  ).toBe("none");
 });

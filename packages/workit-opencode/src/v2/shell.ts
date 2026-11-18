@@ -4,7 +4,9 @@
 // gate passed on the original and no OpenCode permission rule names it, note
 // HEAD (and the workdir for the permission hook); after it, record a raw `git commit` for the session
 // and append the raw-git nudge to the tool output (OpenCode's permission
-// hook can only deny, so a nudge rides on the result the model reads).
+// hook can only deny, so a nudge rides on the result the model reads). A dev
+// server is rewritten the same way to `workit run --bg -- <cmd>` (#328), and a
+// background process's RSS notice for the session rides the next result, once.
 import path from "node:path";
 import {
   callKey,
@@ -19,6 +21,7 @@ import {
   type HookInput,
 } from "@workit-dev/core/hooks";
 import { repeatedCliFailure, type FailureMemo } from "@workit-dev/core/src/hooks/repeat-failure";
+import { takeProcNotice } from "@workit-dev/core/src/hooks/server-gate";
 import { npxWorkit } from "@workit-dev/core/src/hooks/cwd-normalize";
 import { workitOnPath } from "@workit-dev/core/src/core/heavy";
 
@@ -158,9 +161,11 @@ export const observeShellResult = (
       shell.command,
       outputText(result.content),
     );
-    const extra = [nudge.kind === "context" ? nudge.text : null, repeated].filter(
-      (text): text is string => text !== null,
-    );
+    const extra = [
+      nudge.kind === "context" ? nudge.text : null,
+      repeated,
+      takeProcNotice(String(event.sessionID)),
+    ].filter((text): text is string => text !== null);
     if (extra.length > 0) event.result = appendText(result, extra.join("\n\n"));
   } catch {
     // Fail open: observation never breaks the tool result.

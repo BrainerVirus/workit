@@ -4,8 +4,10 @@
 // block: Claude Code `Bash(workit <verb> *)`, Codex `prefix_rule`, Cursor
 // `Shell(workit <verb>)`, and the OpenCode plugin's ask-to-allow.
 //
-// Never listed: verbs that run an arbitrary command (`check -- <cmd>`,
-// `lock run -- <cmd>`, `test-audit`, `fanout check`), change authority
+// `ps` and `stop` (the process registry, #328) list and stop only the
+// processes this session's family owns. Never listed: verbs that run an
+// arbitrary command (`check -- <cmd>`, `lock run -- <cmd>`, `run --bg -- <cmd>`,
+// `test-audit`, `fanout check`), change authority
 // (`grant`), install or remove host config (`init`, `upgrade`, `setup`,
 // `uninstall`, `launch`), delete data (`gc`), import state (`state`) or write
 // outside the forge flow (`youtrack`, `changelog`, `knowledge`, `handoff`).
@@ -28,6 +30,8 @@ export const WORKIT_ALLOWED_VERBS = [
   "policy",
   "doctor",
   "help",
+  "ps",
+  "stop",
 ] as const;
 
 /**

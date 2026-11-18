@@ -736,7 +736,7 @@ const PACKAGE_RUNNERS = new Set(["npx", "bunx", "pnpx"]);
 
 /**
  * What a `workit check [flags] -- <cmd…>` (or `workit lock run -- <cmd…>`,
- * also through `npx @workit-dev/cli`) runs: the script of `--shell`,
+ * `workit run --bg [flags] -- <cmd…>`, also through `npx @workit-dev/cli`) runs: the script of `--shell`,
  * else the argv, and the `--cwd` it runs in (null: the shell's). Null for any
  * other command.
  */
@@ -749,7 +749,8 @@ export function workitCheckTail(
     if (at < 0 || !WORKIT_PACKAGE.test(words[at])) return null;
   } else if (!/^workit(?:\.exe|\.cmd)?$/.test(commandName(words[0]))) return null;
   const { rest: args, cwd } = skipWorkitGlobals(words.slice(at + 1));
-  if (args[0] !== "check" && !(args[0] === "lock" && args[1] === "run")) return null;
+  if (args[0] !== "check" && args[0] !== "run" && !(args[0] === "lock" && args[1] === "run"))
+    return null;
   const split = args.indexOf("--");
   const tail = split < 0 ? [] : args.slice(split + 1);
   if (!tail.length) return null;

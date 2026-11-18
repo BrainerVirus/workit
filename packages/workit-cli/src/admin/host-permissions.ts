@@ -24,8 +24,11 @@
 // (#429): `workit check <name>` for the standard check names (a prefix rule
 // cannot exclude `workit check -- <cmd>`, so the names are listed and the CLI
 // refuses `workit check <name> -- <cmd>`) and `workit lock status|wait`.
-// Never: `workit check -- …`, `workit lock run -- …`, `workit grant …`, or any
-// verb outside WORKIT_ALLOWED_VERBS. The user-only calls (WORKIT_USER_ONLY,
+// The process registry's `workit ps` and `workit stop` (#328) are allowed
+// verbs; `workit run --bg -- <cmd>` is not (decider ruling A, wave 9): the
+// shell hook's dev-server route rewrites to it, and the host's own permission
+// flow judges the rewrite. Never: `workit check -- …`, `workit lock run -- …`,
+// `workit run …`, `workit grant …`, or any verb outside WORKIT_ALLOWED_VERBS. The user-only calls (WORKIT_USER_ONLY,
 // #615) are asked (Claude Code, Codex) or denied (Cursor) on top of that.
 //
 // The merges are pure (input record in, record and added entries out), the
