@@ -862,7 +862,14 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
       const refused = prepare(spec, opts, world, env);
       if (refused) return { ...REFUSED, refused };
       const run = await attempt(spec, opts, opencodeArgs(provider), env, world);
-      last = { ...run, provider, limit: limitOf(run.transcript, run.stderr) };
+      // A provider whose login failed (the free console's "Reconnect OpenCode
+      // Console") is passed over like a limited one while another remains.
+      const auth = opts.providers.length > 1 ? authFailureOf(run.transcript) : null;
+      last = {
+        ...run,
+        provider,
+        limit: limitOf(run.transcript, run.stderr) ?? (auth === null ? null : `login: ${auth}`),
+      };
     } finally {
       // What the host wrote into its world's login never reaches the real home.
       noteCredentials(opts, world.home);
@@ -1208,7 +1215,7 @@ const replay = (
 };
 
 const USAGE =
-  "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--gate first-try] [--force]\n" +
+  "usage: bun scripts/eval/run.ts [--host claude-code|opencode] --model <model> [--tier smoke|full] [--cases a,b] [--budget-runs n] [--repeat n] [--gate first-try] [--provider free|go] [--force]\n" +
   "       bun scripts/eval/run.ts --replay [--host claude-code|opencode] [--model <model>] [--check]\n" +
   "       bun scripts/eval/run.ts --tripwire-discard\n" +
   "       --unconfined: run shell-wrapper cases with detection only when write confinement (Landlock) is off";
@@ -1240,6 +1247,7 @@ export const main = async (
         "budget-runs": { type: "string", default: "3" },
         repeat: { type: "string", default: "1" },
         gate: { type: "string" },
+        provider: { type: "string" },
         force: { type: "boolean", default: false },
         replay: { type: "boolean", default: false },
         check: { type: "boolean", default: false },
@@ -1292,6 +1300,7 @@ export const main = async (
   if (
     (!values.model && !settling) ||
     (values.gate !== undefined && values.gate !== "first-try") ||
+    (values.provider !== undefined && values.provider !== "free" && values.provider !== "go") ||
     !Number.isInteger(repeat) ||
     repeat < 1 ||
     (tier !== "smoke" && tier !== "full") ||
@@ -1330,7 +1339,13 @@ export const main = async (
     pluginDir: path.resolve(values["plugin-dir"] ?? PLUGINS[host]),
     timeoutMs: Number(values["timeout-s"]) * 1000,
     results,
-    providers: host === "opencode" && values.model ? providersFor(values.model) : [],
+    // --provider go skips the free try (a free console that is out or signed out).
+    providers:
+      host === "opencode" && values.model
+        ? providersFor(values.model).filter(
+            (provider) => values.provider === undefined || provider.name === values.provider,
+          )
+        : [],
     limits: [],
     guard: values["real-home"]
       ? guardFor(path.resolve(values["real-home"]))

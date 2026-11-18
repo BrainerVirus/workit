@@ -1,0 +1,8 @@
+[
+  "cc-heavy-real-chain-still-splits: line 1 is not `workit <gate>: <what>.`",
+  "cc-isolated-implementer-raw-commit: 572 characters, over 400",
+  "codex-heavy-tail-filter-denies-with-rewrite: line 1 is not `workit <gate>: <what>.`",
+  "spawn-auto-mode-args-denied: line 1 says what in more than 15 words",
+  "spawn-auto-mode-isolation-denied: line 1 says what in more than 15 words",
+  "spawn-implementer-no-brief: line 1 says what in more than 15 words"
+]
