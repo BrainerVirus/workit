@@ -31,7 +31,7 @@ import {
   teardownLog,
   type SpawnRequest,
 } from "@/packages/workit-core/src/hooks/teardown";
-import { LAUNCHER_MARKER } from "@/packages/workit-core/src/core/cli-locate";
+import { LAUNCHER_MARKER, ownedLauncherPath } from "@/packages/workit-core/src/core/cli-locate";
 import { browserDeps } from "@/packages/workit-core/src/core/browsers";
 import { procTree } from "@/packages/workit-core/src/core/proc-tree";
 import { keepProc, openProcs, updateExtra } from "@/packages/workit-core/src/core/procs";
@@ -65,15 +65,29 @@ let clock = Date.now();
 let spawned: SpawnRequest[] = [];
 let launcher = "";
 
+/**
+ * Write the platform's owned launcher (`bin/workit`, `bin\\workit.cmd` on
+ * Windows), marked as Workit's, running `script` with this runtime, or nothing.
+ */
+const writeLauncher = (script: string | null) => {
+  const run = script ? `"${process.execPath}" "${script}"` : null;
+  writeFileSync(
+    launcher,
+    process.platform === "win32"
+      ? `@echo off\r\nrem ${LAUNCHER_MARKER}\r\n${run ? `${run} %*` : "exit /b 0"}\r\n`
+      : `#!/bin/sh\n# ${LAUNCHER_MARKER}\n${run ? `exec ${run} "$@"` : "exit 0"}\n`,
+  );
+  chmodSync(launcher, 0o755);
+};
+
 beforeEach(() => {
   process.env.WORKIT_STATE_DIR = temp("wk-teardown-state-");
   // A fake owned launcher, so the located CLI is never the developer's own.
   const install = temp("wk-teardown-install-");
   mkdirSync(path.join(install, "bin"));
-  launcher = path.join(install, "bin", "workit");
-  writeFileSync(launcher, `#!/bin/sh\n# ${LAUNCHER_MARKER}\nexit 0\n`);
-  chmodSync(launcher, 0o755);
   process.env.WORKIT_INSTALL_ROOT = install;
+  launcher = ownedLauncherPath(process.env);
+  writeLauncher(null);
   delete process.env.WORKIT_SESSION_ID;
   spawned = [];
   teardownDeps.spawn = (request) => {
@@ -362,9 +376,9 @@ test("Given a keep decision and workspace cleanup keep, Then session end stops n
 
 test("Given the hook cannot spawn the CLI, Then session end and start answer fail-open and no reap stamp is written", () => {
   const cwd = temp("wk-teardown-repo-");
-  // Not executable: the spawn fails.
-  chmodSync(launcher, 0o644);
-  teardownDeps.spawn = spawnDetached;
+  // The child's directory is gone, so the real spawn fails on every platform.
+  const gone = path.join(temp("wk-teardown-gone-"), "missing");
+  teardownDeps.spawn = (request) => spawnDetached({ ...request, cwd: gone });
   const ended = dispatchHook(claudeCodeAdapter, fixture("claude-code", "session-end", cwd), {});
   expect(ended).toMatchObject({ json: {}, exitCode: 0, error: null });
   const started = dispatchHook(
@@ -405,13 +419,13 @@ test("Given a test run, Then the default spawner never starts a CLI", () => {
 test("Given a real owned launcher, When a session ends, Then it runs detached as that session and its output lands in the teardown log", async () => {
   const cwd = temp("wk-teardown-repo-");
   const out = path.join(temp("wk-teardown-out-"), "argv.json");
+  const script = path.join(path.dirname(out), "fake-cli.js");
   writeFileSync(
-    launcher,
-    `#!${process.execPath}\n// ${LAUNCHER_MARKER}\n` +
-      `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID }));\n` +
+    script,
+    `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID }));\n` +
       `console.log("fake stop ran");\n`,
   );
-  chmodSync(launcher, 0o755);
+  writeLauncher(script);
   teardownDeps.spawn = spawnDetached;
   dispatchHook(
     claudeCodeAdapter,

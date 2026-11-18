@@ -58,9 +58,12 @@ export type SpawnRequest = {
 /** Start `request` in its own process group, not waited for: true when it started. */
 export function spawnDetached(request: SpawnRequest): boolean {
   try {
-    // A .cmd launcher (Windows) runs only through cmd.exe; the args are fixed words and a checked id.
+    // A .cmd launcher (Windows) runs only through cmd.exe, given one command
+    // line (args beside `shell` are deprecated, DEP0190); the args are fixed
+    // words and a checked id, so they need no quoting.
     const shell = process.platform === "win32" && !/\.exe$/iu.test(request.command);
-    const child = spawn(shell ? `"${request.command}"` : request.command, request.args, {
+    const line = [`"${request.command}"`, ...request.args].join(" ");
+    const child = spawn(shell ? line : request.command, shell ? [] : request.args, {
       cwd: request.cwd,
       env: request.env,
       detached: true,
