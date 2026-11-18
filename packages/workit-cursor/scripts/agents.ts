@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-export const CURSOR_AGENT_ROLES = ["verifier", "reviewer", "decider", "babysitter"] as const;
+const CURSOR_AGENT_ROLES = ["verifier", "reviewer", "decider", "babysitter"] as const;
 
 // The judges keep `default`: they run `workit check` and record a verdict,
 // which write Workit state outside the repo.
@@ -29,7 +29,7 @@ const toCursorText = (body: string): string =>
     .replaceAll(" --session <id> --token=<token>", "");
 
 /** One Cursor agent file rendered from the canonical Claude agent. */
-export const renderCursorAgent = (role: string, canonical: string): string => {
+const renderCursorAgent = (role: string, canonical: string): string => {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/u.exec(canonical);
   if (!match) throw new Error(`agent ${role} has no frontmatter`);
   const description = /^description:\s*(.+)$/mu.exec(match[1])?.[1].trim() ?? "";

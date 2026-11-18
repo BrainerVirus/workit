@@ -92,9 +92,11 @@ export type SpawnOptions = {
 };
 
 /**
- * A spawn missing its role's model or effort: under auto mode a deny naming
- * the exact args (retro 2026-11-07 R1: auto mode refuses an `updatedInput`
- * rewrite), in any other mode an `updatedInput` fill with a note naming them.
+ * A spawn missing its role's model or effort (one its agent file does not
+ * carry): outside auto mode an `updatedInput` fill with a note naming them;
+ * under auto mode, which refuses an `updatedInput` rewrite (retro 2026-11-07
+ * R1), one context line, or under `models.enforce: "strict"` a deny naming the
+ * exact args.
  */
 export const agentModelDecision = (
   cwd: string,
