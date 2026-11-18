@@ -2951,9 +2951,12 @@ export function stackPosition(root: string, branch: string): StackPosition | nul
 
 export type CheckFreshness = {
   name: string;
+  /** The latest result that is evidence; `interrupted` only when no other run exists. */
   result: string | null;
   fresh: boolean;
   at: string;
+  /** A later run of this check was interrupted by this signal (it is no evidence). */
+  interruptedSince?: string;
 };
 
 type VerdictSummary = Omit<VerdictEntry, "verdict"> & { summary: string };
@@ -3064,15 +3067,27 @@ export function buildHandoff(
   const checkRows = mine.filter(
     (row) => row.type === "check" && row.observer === "workit_cli" && str(row.name),
   );
-  const latestChecks = new Map<string, ReadRow>();
-  for (const row of checkRows) latestChecks.set(str(row.name) as string, row);
+  // An interrupted run (its caller stopped it) is no result: the run before
+  // it stands, marked with the signal of the later interruption.
+  const latestChecks = new Map<string, { row: ReadRow; interrupted: string | null }>();
+  for (const row of checkRows) {
+    const name = str(row.name) as string;
+    const prior = latestChecks.get(name);
+    if (row.result !== "interrupted") latestChecks.set(name, { row, interrupted: null });
+    else if (prior && prior.row.result !== "interrupted")
+      latestChecks.set(name, { ...prior, interrupted: str(row.signal) ?? "a signal" });
+    else latestChecks.set(name, { row, interrupted: null });
+  }
   const tree = latestChecks.size ? (worktreeTree(cwd)?.key ?? null) : null;
-  const checks: CheckFreshness[] = [...latestChecks.entries()].map(([name, row]) => ({
-    name,
-    result: str(row.result),
-    fresh: tree !== null && row.tree === tree,
-    at: row.at,
-  }));
+  const checks: CheckFreshness[] = [...latestChecks.entries()].map(
+    ([name, { row, interrupted }]) => ({
+      name,
+      result: str(row.result),
+      fresh: tree !== null && row.tree === tree,
+      at: row.at,
+      ...(interrupted ? { interruptedSince: interrupted } : {}),
+    }),
+  );
   const lastHandoffRow = mine.findLast((row) => row.type === "handoff");
   const partial: Omit<HandoffBrief, "nextCommand" | "next"> = {
     store: {

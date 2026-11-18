@@ -62,7 +62,8 @@ function render(brief: Brief): { body: string[]; tail: string[] } {
     lines.push(
       "checks:",
       ...brief.checks.map(
-        (check) => `  ${check.name}: ${check.result ?? "?"} (${check.fresh ? "fresh" : "stale"})`,
+        (check) =>
+          `  ${check.name}: ${check.result ?? "?"} (${check.fresh ? "fresh" : "stale"})${check.interruptedSince ? `; a later run was interrupted by ${check.interruptedSince}` : ""}`,
       ),
     );
   if (brief.rulings.length)

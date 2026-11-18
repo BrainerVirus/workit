@@ -1,0 +1,37 @@
+{
+  "id": "check-name-discovery",
+  "source": "retro 2026-11-17 C10 (agents guessed check names: `no configured check named X`, then reran)",
+  "tier": "smoke",
+  "prompt": "I changed src/sum.ts. Run this repo's unit tests and its type check through Workit before I commit, and tell me whether they pass.",
+  "scaffold": {
+    "branch": "feature/sum",
+    "files": {
+      "src/sum.ts": "export const sum = (a: number, b: number) => a + b;\n",
+      "scripts/spec.sh": "#!/bin/sh\ngrep -q 'sum' src/sum.ts && echo 'sum: 4 pass, 0 fail'\n",
+      "scripts/types.sh": "#!/bin/sh\ngrep -q 'export const' src/*.ts && echo 'types: 1 file, 0 errors'\n"
+    },
+    "dirty": {
+      "src/sum.ts": "export const sum = (a: number, b: number): number => a + b;\n"
+    },
+    "checks": {
+      "spec": ["sh", "scripts/spec.sh"],
+      "types-strict": ["sh", "scripts/types.sh"]
+    }
+  },
+  "maxTurns": 8,
+  "expect": {
+    "configuredCheck": true,
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "workit check (test|typecheck|tsc|unit)\\b",
+        "why": "the configured names are spec and types-strict: list them (workit check --list, or bare workit check) instead of guessing"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "^(?![\\s\\S]*workit check)[\\s\\S]*\\b(tsc|bun (test|run)|npm (test|run)|npx|sh scripts/)",
+        "why": "a raw check command bypasses the configured checks"
+      }
+    ]
+  }
+}

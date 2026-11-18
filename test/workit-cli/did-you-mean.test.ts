@@ -109,12 +109,11 @@ test("Given `ledger verdict --sha <head>`, When run, Then it is recorded as --he
   expect(stale.json().unblock).toContain("keyed to the branch head");
 });
 
-test("Given `ledger verdict --repo`, `pr create --head` and `check --list`, When run, Then each names its corrective form", async () => {
+test("Given `ledger verdict --repo` and `pr create --head`, When run, Then each names its corrective form", async () => {
   const cwd = repo();
   const cases: Array<[string[], string, string]> = [
     [["ledger", "verdict", "verified", "--how", "x", "--repo", "r"], "--repo", "--cwd <dir>"],
     [["pr", "create", "--title", "t", "--head", "feature/x"], "--head", "git switch <branch>"],
-    [["check", "--list"], "--list", "workit check test|lint|typecheck|check"],
   ];
   for (const [argv, flag, fix] of cases) {
     const result = await run(cwd, [...argv, "--json"]);
