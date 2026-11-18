@@ -125,13 +125,33 @@ const denied = (run: (command: string) => Specific["hookSpecificOutput"], comman
   }
 };
 
-test("Given a verifier, When it sets literal paths in a statement before git (W=<checkout>; git -C $W …), Then it runs; an exported, git-read or computed name is denied", () => {
-  allowed(verifier, [
-    `W=${lead}; git -C $W rev-parse HEAD; git -C $W status --short`,
-    `W=${lead} && B='${wt}'; git -C $W log -1; git -C "\${B}" diff --stat`,
-    `W=${lead}\ngit -C $W log --oneline -3`,
-    `git -C ${lead} status --short`,
+/** `command` is denied with exactly `Retry as: <retry>` as its second line. */
+const retried = (
+  run: (command: string) => Specific["hookSpecificOutput"],
+  pairs: Array<[command: string, retry: string]>,
+) => {
+  for (const [command, retry] of pairs) {
+    const out = run(command);
+    expect(verdict(out), command).toBe("deny");
+    expect(out?.permissionDecisionReason?.split("\n")[1], command).toBe(`Retry as: ${retry}`);
+  }
+};
+
+// Review mwmcj4in: a judge's path from a shell variable is never followed (a later command
+// can set the name again under a spelling Workit does not see); the retry spells it in.
+test("Given a verifier, When it reads a path from a literal assignment (W=<checkout>; git -C $W …), Then it is denied with the literal spelled into the retry; plain git status runs", () => {
+  retried(verifier, [
+    [
+      `W=${lead}; git -C $W rev-parse HEAD; git -C $W status --short`,
+      `git -C ${lead} rev-parse HEAD; git -C ${lead} status --short`,
+    ],
+    [
+      `W=${lead} && B='${wt}'; git -C $W log -1; git -C "\${B}" diff --stat`,
+      `git -C ${lead} log -1; git -C "${wt}" diff --stat`,
+    ],
+    [`W=${lead}\ngit -C $W log --oneline -3`, `git -C ${lead} log --oneline -3`],
   ]);
+  allowed(verifier, [`git -C ${lead} status --short`]);
   denied(verifier, [
     "PATH=/x; git status",
     "W=$(cat f); git -C $W log",
@@ -141,7 +161,7 @@ test("Given a verifier, When it sets literal paths in a statement before git (W=
   ]);
 });
 
-test("Given a verifier, When a literal assignment's name is single-quoted, escaped or read by a script, Then Workit does not spell it in and the write is judged as the shell runs it", () => {
+test("Given a verifier, When a literal assignment's name is single-quoted, escaped or read by a script, Then it is denied", () => {
   const scratch = path.join(lead, ".workit-scratch");
   denied(verifier, [
     `W=${scratch}; echo a > '$W'`,
@@ -151,7 +171,12 @@ test("Given a verifier, When a literal assignment's name is single-quoted, escap
     // A quote in the value would unbalance the spelled-in command: never substituted.
     `W='"'; echo "$W" > ${lead}/x`,
   ]);
-  allowed(verifier, [`W=${scratch}; mkdir -p $W && echo a > "$W/x"`]);
+  retried(verifier, [
+    [
+      `W=${scratch}; mkdir -p $W && echo a > "$W/x"`,
+      `mkdir -p ${scratch} && echo a > "${scratch}/x"`,
+    ],
+  ]);
 });
 
 test("Given a verifier, When it redirects outside its scratch dir, Then line 2 is the same command written into the scratch dir", () => {
@@ -178,13 +203,18 @@ test("Given a verifier, When it commits, checks out a file or writes outside scr
   ]);
 });
 
-test("Given a verifier, When it runs git remote get-url, range-diff, worktree list or a for over literal words, Then each runs; a loop past 16 words or with a computed list is denied", () => {
+test("Given a verifier, When it runs git remote get-url, range-diff or worktree list, Then each runs; a for over literal words is denied with the loop unrolled in the retry", () => {
   allowed(verifier, [
     `git -C ${lead} remote get-url origin`,
     `git -C ${lead} remote -v`,
     `git -C ${lead} range-diff main...HEAD`,
     `git -C ${lead} worktree list`,
-    `for f in package.json a.ts; do git -C ${lead} log -1 -- $f; done`,
+  ]);
+  retried(verifier, [
+    [
+      `for f in package.json a.ts; do git -C ${lead} log -1 -- $f; done`,
+      `git -C ${lead} log -1 -- package.json; git -C ${lead} log -1 -- a.ts`,
+    ],
   ]);
   const many = Array.from({ length: 17 }, (_, index) => `f${index}`).join(" ");
   denied(verifier, [
@@ -323,14 +353,15 @@ test("Given review mwm7hutf, When a retry is printed, Then it is a complete call
   const scratch = path.join(lead, ".workit-scratch");
   const real = path.join(realpathSync.native(lead), ".workit-scratch");
   const judged = verifier(`W=${scratch}/..; echo a > $W/x`)?.permissionDecisionReason ?? "";
-  expect(judged.split("\n")[1]).toBe(`Retry as: W=${scratch}/..; echo a > ${real}/x`);
+  expect(judged.split("\n")[1]).toBe(`Retry as: echo a > ${scratch}/../x`);
+  expect(real).toContain(".workit-scratch");
   const built = implementer(`W=$(pwd)/..; echo x > $W/a`)?.permissionDecisionReason ?? "";
   expect(built.split("\n")[1]).toBe("Retry as: W=$(pwd)/..; echo x > <absolute path of $W>/a");
 });
 
-// Review mwmaow76 (round 3): only a closed list of names is spelled in, and only where the
-// reference ends at whitespace, `/`, `"`, `;`, `&`, `|`, `)` or the end of the command.
-test("Given a judge, When it assigns a name outside the spelled list, loops with one, or uses a zsh modifier or subscript, Then it is denied; a refused name's retry spells the literal in", () => {
+// Reviews mwmaow76 and mwmcj4in: no name is followed for a judge; a zsh modifier or subscript
+// gets no retry.
+test("Given a judge, When it reads a path from any assigned or loop name, or uses a zsh modifier or subscript, Then it is denied; the retry spells the literal in", () => {
   const scratch = path.join(lead, ".workit-scratch");
   const names = ["DIRSTACK", "FUNCNAME", "GROUPS", "PIPESTATUS", "COLUMNS", "LINES", "IFS"];
   const refused = [
@@ -353,15 +384,63 @@ test("Given a judge, When it assigns a name outside the spelled list, loops with
   const reviewer = (command: string) => bash(command, "workit:reviewer", "rev-ft");
   denied(verifier, refused);
   denied(reviewer, refused);
-  allowed(verifier, [
-    `W=${lead}; git -C $W status --short`,
-    `wt=${lead}; git -C $wt status --short`,
-    `W=${scratch}; mkdir -p "$W"/x`,
-    `W=${scratch}; echo x > \${W}/x`,
-    `for f in a b; do git -C ${lead} log -1 -- $f; done`,
+  retried(verifier, [
+    [`W=${lead}; git -C $W status --short`, `git -C ${lead} status --short`],
+    [`wt=${lead}; git -C $wt status --short`, `git -C ${lead} status --short`],
+    [`W=${scratch}; mkdir -p "$W"/x`, `mkdir -p "${scratch}"/x`],
+    [`W=${scratch}; echo x > \${W}/x`, `echo x > ${scratch}/x`],
+    [
+      `for f in a b; do git -C ${lead} log -1 -- $f; done`,
+      `git -C ${lead} log -1 -- a; git -C ${lead} log -1 -- b`,
+    ],
   ]);
   const retry = verifier(`path=${scratch}; echo x > $path/x`)?.permissionDecisionReason ?? "";
   expect(retry.split("\n")[1]).toBe(`Retry as: echo x > ${scratch}/x`);
   const zsh = verifier(`W=${scratch}/a/b; echo x > $W:h/x`)?.permissionDecisionReason ?? "";
   expect(zsh.split("\n")[1]).toMatch(/^Why: /);
+});
+
+// Review mwmcj4in probe9: a name set again under a spelling Workit does not read.
+test("Given review mwmcj4in's probe9 forms, When a judge runs them, Then each is denied; plain git status and remote get-url run", () => {
+  const P = path.join(lead, "package.json");
+  const S = path.join(lead, ".workit-scratch");
+  const reviewer = (command: string) => bash(command, "workit:reviewer", "rev-ft");
+  const forms = [
+    `echo x > ${P}`,
+    `W=${S}/a; echo x > $W/out.txt`,
+    `WT=${S}/x; printf -v W"T" %s ${P}; echo x > $WT`,
+    `W=${S}/x; printf -v "$(printf '\\x57')" %s ${P}; echo x > $W`,
+    `WT=${S}/x; declare W\\T=${P}; echo x > $WT`,
+    `W=${S}/x; declare "$(printf '\\x57')=${P}"; echo x > $W`,
+    `WT=${S}/x; read -r W""T < ${S}/f; echo x > $WT`,
+    `WT=${S}/x; printf -v W"T" %s ${lead}; git -C $WT commit -qm x --allow-empty`,
+    `WT=${S}/x; printf -v W"T" %s ${P}; cp ${S}/y $WT`,
+    `q=W; WT=${S}/x; printf -v $q"T" %s ${P}; echo x > $WT`,
+    `W=${S}/x; echo x > $$W`,
+    `W=${S}/x; echo x > "$(echo '$W')"`,
+    `W=${S}/..; echo x > $W/package.json`,
+    `W=${S}; echo x > "$W"/../package.json`,
+    `A=${S}; echo x > $A/../package.json`,
+    `_=${S}; echo x > $_/o`,
+    `W=${S}/x; cat <<< hi > $W`,
+    `W=${S}; echo x > $(echo $W)/o`,
+    `W=${lead}; git -C $W -c core.hooksPath=${S} commit -qm x --allow-empty`,
+    `git range-diff --output=${P} HEAD~1...HEAD`,
+    `git range-diff --output ${P} HEAD~1...HEAD`,
+    `git -c core.hooksPath=/x remote get-url origin`,
+    `git remote set-url origin /x`,
+    `for W in ${S}; do echo x > $W/o; done; echo y > $W/../package.json`,
+    `W=${S}/a/package.json; declare "$(printf 'I\\x46S')=/"; cp ${S}/y $W`,
+    `WT=${S}/x; export W"T"=${P}; echo x > $WT`,
+    `WT=${S}/x; f() { typeset -g W"T"=${P}; }; f; echo x > $WT`,
+  ];
+  for (const command of forms) {
+    expect(verdict(verifier(command)), command).toBe("deny");
+    expect(verdict(reviewer(command)), command).toBe("deny");
+  }
+  allowed(reviewer, [
+    `git remote get-url --push --all origin`,
+    "git status",
+    `git -C ${lead} status`,
+  ]);
 });

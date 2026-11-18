@@ -1248,79 +1248,57 @@ export function confineJudge(
   }
 }
 
-/**
- * `text` with `$name` and `${name}` spelled as `value` where the shell expands
- * them (not in single quotes nor escaped); null when Workit cannot be sure: a
- * heredoc, a comment, `$'…'`, or `name` used otherwise (set again, a loop's).
- */
-const substituted = (text: string, name: string, value: string): string | null => {
-  if (/<<|\$'|#|\bIFS\b/.test(text) || new RegExp(`(?<![\\w\${])${name}(?!\\w)`).test(text))
-    return null;
-  const ref = new RegExp(`^\\$(?:${name}(?!\\w)|\\{${name}\\})`);
-  let out = "";
-  let quote = "";
-  for (let at = 0; at < text.length; at++) {
-    const char = text[at];
-    const found = quote === "'" ? null : ref.exec(text.slice(at));
-    if (found) {
-      out += value;
-      at += found[0].length - 1;
-      continue;
-    }
-    if (char === "\\" && quote !== "'") out += text[at++];
-    else if (char === quote) quote = "";
-    else if (!quote && /['"]/.test(char)) quote = char;
-    out += text[at] ?? "";
-  }
-  return out;
-};
+/** `text` with `$name` and `${name}` spelled as `value`: the text of a retry, never judged. */
+const spelledIn = (text: string, name: string, value: string): string =>
+  text.replace(new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}\\})`, "g"), value);
 
 /**
- * `command` with its leading literal assignments (`W=/abs/path; …`) spelled
- * into the rest and a `for` over at most 16 literal words unrolled, for a
- * judge: null when it has neither or Workit cannot be sure. A name outside
- * SPELLED, in the environment or read by git, a shell or an interpreter is
- * refused with the literal spelled into the retry; a reference with anything
- * but whitespace, `/`, `"`, `;`, `&`, `|` or `)` after it (zsh's `$W:h`,
- * `$W[1]`, `${W:-x}`) is refused.
+ * Why a judge's command that reads a path from a shell variable is refused,
+ * with the command to retry: literal assignments before it
+ * (`W=/abs/path; … $W …`) or a `for` over literal words, whose value Workit
+ * does not follow (a later command can set the name again under a spelling
+ * Workit does not see); a modifier or subscript (zsh's `$W:h`, `$W[1]`,
+ * `${W:-x}`) gets no retry. The retry spells each literal in; null when
+ * neither applies.
  */
-const literalCommand = (
-  command: string,
-): [prefix: string, rest: string] | { why: string; retry?: string } | null => {
-  let rest: string | null = command;
-  let prefix = "";
-  let refused = "";
-  const spell = (text: string, name: string, value: string) => {
+const variableRefusal = (command: string): { why: string; retry?: string } | null => {
+  let rest = command;
+  const sets: Array<[name: string, value: string]> = [];
+  for (let set; (set = LITERAL_SET.exec(rest)); rest = rest.slice(set[0].length))
+    sets.push([set[1], set[3]]);
+  const loop =
+    /^\s*for\s+(\w+)\s+in\s+([\w@%+=:./ \t-]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(rest);
+  for (const name of [...sets.map(([one]) => one), ...(loop ? [loop[1]] : [])])
     if (
       new RegExp(`\\$(?:${name}(?!\\w)|\\{${name}(?![\\w}])|\\{${name}\\})(?![\\s/";&|)]|$)`).test(
-        text,
+        rest,
       )
     )
-      throw `\`$${name}\` has a modifier, subscript or suffix Workit does not spell in`;
-    if (!SPELLED.test(name) || process.env[name] !== undefined || ENV_READ.test(name))
-      refused ||= `\`${name}=\` is not a name Workit spells in (one letter, or wt, dir, repo, root, base, sha, ref, branch, file, out, scratch, worktree)`;
-    return substituted(text, name, value);
-  };
-  try {
-    for (let set; rest && (set = LITERAL_SET.exec(rest));) {
-      const [whole, name, , value] = set;
-      const before = refused;
-      rest = spell(rest.slice(whole.length), name, value);
-      if (refused === before) prefix += whole;
-    }
-    const loop =
-      rest &&
-      /^\s*for\s+(\w+)\s+in\s+([\w@%+=:./ \t-]*?)\s*[;\n]\s*do\s([\s\S]*?);?\s*done\s*$/.exec(rest);
-    const items = loop?.[2].split(/\s+/).filter(Boolean) ?? [];
-    if (loop && items.length <= 16) {
-      const bodies = items.map((item) => spell(loop[3].trim(), loop[1], item));
-      rest = bodies.includes(null) ? null : bodies.join("; ");
-    }
-  } catch (why) {
-    return { why: String(why) };
-  }
-  if (refused) return { why: refused, retry: rest === null ? undefined : prefix + rest };
-  return rest === null || rest === command ? null : [prefix, rest];
+      return { why: `\`$${name}\` has a modifier, subscript or suffix Workit does not spell in` };
+  // A name the shell, zsh or git reads itself is refused even when the command never uses it.
+  const odd = [...sets.map(([one]) => one), ...(loop ? [loop[1]] : [])].find(
+    (name) => !SPELLED.test(name) || process.env[name] !== undefined || ENV_READ.test(name),
+  );
+  const used = sets.filter(
+    ([name]) => name === odd || new RegExp(`\\$\\{?${name}(?!\\w)`).test(rest),
+  );
+  if (used.length)
+    return {
+      why: odd
+        ? `\`${odd}=\` sets a name the shell, zsh or git reads itself`
+        : `\`$${used[0][0]}\` is a path from a variable, which Workit does not follow for a judge`,
+      retry: used.reduce((text, [name, value]) => spelledIn(text, name, value), rest),
+    };
+  const items = loop?.[2].split(/\s+/).filter(Boolean) ?? [];
+  return loop && (loop[1] === odd || new RegExp(`\\$\\{?${loop[1]}(?!\\w)`).test(loop[3]))
+    ? {
+        why: `\`$${loop[1]}\` is a loop variable, which Workit does not follow for a judge`,
+        retry:
+          items.length > 16
+            ? undefined
+            : items.map((item) => spelledIn(loop[3].trim(), loop[1], item)).join("; "),
+      }
+    : null;
 };
 
 /**
@@ -1336,12 +1314,8 @@ export function confineJudgeShell(
 ): HookDecision {
   try {
     if (!input.session.agentId) return NONE;
-    // Judged with literals spelled in; a retry keeps the assignments in front.
-    const literal = dialect === "posix" ? literalCommand(command) : null;
-    if (literal && !Array.isArray(literal))
-      return judgeDeny(input, literal.why, undefined, () => literal.retry);
-    const shownAs = literal ? literal.join("") : command;
-    command = literal?.[1] ?? command;
+    const variable = dialect === "posix" ? variableRefusal(command) : null;
+    if (variable) return judgeDeny(input, variable.why, undefined, () => variable.retry);
     const fed: string[] = [];
     let refused: string | null;
     try {
@@ -1400,7 +1374,7 @@ export function confineJudgeShell(
       input,
       [...lists.flat(), ...git],
       new Set([...git, ...lists.flatMap((list) => [...placeholdersOf(list)])]),
-      shownAs,
+      command,
     );
   } catch {
     return NONE;
