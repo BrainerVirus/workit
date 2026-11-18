@@ -84,20 +84,32 @@ side:
   never measured gives `no wait estimate yet (no measured run of <check>)`.
 - **A holder in another checkout is not your run.** Subagents share the lead's
   session id, so a holder can show your own session. A check never joins or
-  reports another run: when a holder runs in another worktree, the wait line
-  says so (`test, pid 4121 is another checkout's run (/wt/b), not this
-  check's: this check runs its own command in /wt/a`), and the check then runs
-  its own command in its own checkout. Its summary line says
+  reports another run: when a holder runs in another worktree (one nested
+  inside yours included: checkouts are compared by git top level), the wait
+  line says so (`test, pid 4121 is another checkout's run (/wt/b), not this
+  check's: this check runs its own command in /wt/a`), and the check then
+  runs its own command in its own checkout. Its summary line says
   `ran in <checkout> @ <head>`, its `--json` carries `checkout` and its own
   `pid` (`lease.holder` is the run it waited behind), and its ledger row
   records `checkout`, since every worktree of a repo shares one ledger.
-- **A verdict follows its checks' head.** `workit ledger verdict` refuses
-  (`head_moved`, naming both SHAs) when the run named by `--evidence`, or the
-  recording session's last check run on the branch, ran on an older head and a
-  code change landed since, and names the changed files: run the checks on the
-  new head, then record. A follow-up the verdict would carry anyway (the rules
-  `workit pr status` reads as "carried": docs or changelog only, tests only
-  under a `unit` verdict, a rebase with the patch unchanged) does not refuse.
+- **A verdict follows its checks' head.** A `verified` or `tests-verified`
+  verdict is refused (`head_moved`, naming both SHAs and the changed files)
+  when its checks ran on an older head and a code change landed since:
+  - a run named by `--evidence` that ran on another head or on a dirty
+    worktree, unless a cited clean run of the same check is on the head;
+  - for each check name, the recording session's latest run on the branch,
+    when it ran on another head (or dirty) and no clean run of that name by
+    the session is on the head. A configured check is cleared only by a
+    configured run, never by an ad-hoc `--name <n> -- <cmd>`, and a check CI
+    covered on the head is skipped.
+
+  A Claude Code verifier records as `<lead>:<agent>` and owns the runs its
+  agent made (the lead's session with its agent id); a plain session owns
+  only its own runs, not its subagents'. A follow-up the verdict would carry
+  anyway (what `workit pr status` reads as "carried": docs or changelog only,
+  tests only under a `unit` verdict, a rebase with the patch unchanged) does
+  not refuse, and `failed` or `blocked` always record. Run the checks on the
+  new head, then record.
 - **`workit lock status`** shows each holder's time left (`~9m left`, or
   `past its last 14m run`) and each waiter's estimated wait; `--json` adds them
   under `estimates`.

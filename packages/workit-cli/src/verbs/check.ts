@@ -585,16 +585,15 @@ export function queuedBehind(holders: LeaseHolder[], position: number): string {
 
 /**
  * "; test, pid 12 is another checkout's run (/wt/b), not this check's: …" for
- * each heavy check holding the lease in another checkout. Subagents share one
+ * each heavy check holding the lease in another checkout (another git top
+ * level, nested or not). Subagents share one
  * session id, so a holder's session can be this caller's own; its checkout
  * tells the runs apart (retro C20).
  */
 function otherCheckoutNote(holders: readonly LeaseHolder[], top: string): string {
-  const others = holders.filter((holder) => {
-    if (holder.kind) return false;
-    const relative = path.relative(top, holder.cwd);
-    return relative.startsWith("..") || path.isAbsolute(relative);
-  });
+  // By git top level, not path containment: a worktree nested in this one
+  // (`.claude/worktrees/x`) is another checkout.
+  const others = holders.filter((holder) => !holder.kind && checkRoot(holder.cwd) !== top);
   if (!others.length) return "";
   const named = others
     .map((holder) => `${holder.check}, pid ${holder.pid} is another checkout's run (${holder.cwd})`)

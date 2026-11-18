@@ -154,10 +154,27 @@ test("Given a check run, Then its summary line names the checkout and head it ra
   expect(child.stderr).toContain(`ran in ${a} @ ${head.slice(0, 12)}`);
 }, 30_000);
 
+test("Given a worktree nested inside this checkout holds the lease, Then the wait line names it as another checkout's run", async () => {
+  const { repo, env, leases } = twoWorktrees();
+  const nested = path.join(repo, ".claude", "worktrees", "x");
+  git(repo, "worktree", "add", "-q", "-b", "feature/nested", nested);
+  const inNested = start(nested, env);
+  await until(() => existsSync(path.join(leases, "slot-0.json")));
+  const inRepo = start(repo, env);
+  const [, runRepo] = await Promise.all([inNested.done, inRepo.done]);
+  expect(runRepo.code, runRepo.stderr).toBe(0);
+  expect(runRepo.stderr).toContain(`another checkout's run (${nested}), not this check's`);
+  expect(JSON.parse(runRepo.stdout).data.checkout).toBe(repo);
+}, 60_000);
+
 // ---------------------------------------------------------------------------
 // a verdict after the head moved past its session's checks
 
-const actor = (session: string): LedgerActor => ({ host: "cli", session, agentId: null });
+const actor = (session: string, agentId: string | null = null): LedgerActor => ({
+  host: "cli",
+  session,
+  agentId,
+});
 
 const featureRepo = () => {
   const root = temp("wk-xwt-verdict-");
@@ -175,18 +192,25 @@ const featureRepo = () => {
   git(root, "commit", "-qm", "feature work");
   return root;
 };
+const headOf = (root: string) => git(root, "rev-parse", "HEAD");
 /** Commit `text` to `file` on the branch; returns the new head. */
 const commit = (root: string, file: string, text: string) => {
   writeFileSync(path.join(root, file), text);
   git(root, "add", file);
   git(root, "commit", "-qm", `edit ${file}`);
-  return git(root, "rev-parse", "HEAD");
+  return headOf(root);
 };
 const codeChange = (root: string) => commit(root, "src/app.ts", "export const answer = 2;\n");
-const checkRow = (root: string, session: string, head: string) => {
+/** A `workit check` row as the CLI writes it: env session S, agent id from WORKIT_AGENT_ID. */
+const checkRow = (
+  root: string,
+  who: { session: string; agent?: string | null },
+  head: string,
+  extra: Record<string, unknown> = {},
+) => {
   const appended = appendObserved(root, {
     type: "check",
-    actor: actor(session),
+    actor: actor(who.session, who.agent ?? null),
     branch: "feature/x",
     head,
     base: "main",
@@ -197,58 +221,134 @@ const checkRow = (root: string, session: string, head: string) => {
     name: "test",
     configured: true,
     result: "passed",
+    ...extra,
   });
   if (!appended.ok) throw new Error(appended.error);
   return String(appended.value.id);
 };
-const verdict = (root: string, session: string, evidenceRefs?: string[]) =>
+const verdict = (
+  root: string,
+  session: string,
+  options: {
+    result?: string;
+    refs?: string[];
+    checkEvidence?: { name: string; status: string; via: string | null }[];
+  } = {},
+) =>
   recordVerdict(
     { cwd: root, actor: actor(session) },
-    { result: "failed", how: "ran the checks", ...(evidenceRefs ? { evidenceRefs } : {}) },
+    {
+      result: options.result ?? "verified",
+      how: "ran the checks",
+      ...(options.refs ? { evidenceRefs: options.refs } : {}),
+      ...(options.checkEvidence ? { checkEvidence: options.checkEvidence } : {}),
+    },
   );
-
-test("Given a session's checks ran on one head, When the branch moves and that session records a verdict, Then it is refused naming both SHAs", () => {
-  const root = featureRepo();
-  const tested = git(root, "rev-parse", "HEAD");
-  checkRow(root, "s-verifier", tested);
-  const moved = codeChange(root);
-  const result = verdict(root, "s-verifier");
+const refusedNaming = (result: ReturnType<typeof verdict>, ...shas: string[]) => {
   expect(result.ok).toBe(false);
-  if (result.ok) return;
+  if (result.ok) return "";
   expect(result.code).toBe("blocked");
-  expect(result.error).toContain(tested.slice(0, 12));
-  expect(result.error).toContain(moved.slice(0, 12));
   expect(result.error).toContain("head_moved");
-  expect(result.error).toContain("changed: src/app.ts");
+  for (const sha of shas) expect(result.error).toContain(sha.slice(0, 12));
+  return result.error;
+};
+const recordedOn = (result: ReturnType<typeof verdict>) =>
+  result.ok ? result.value.head : `refused: ${result.error}`;
+
+test("Given a session's checks ran on one head, When a code change lands and it records verified or tests-verified, Then each is refused naming both SHAs and the changed file", () => {
+  const root = featureRepo();
+  const tested = headOf(root);
+  checkRow(root, { session: "s-verifier" }, tested);
+  const moved = codeChange(root);
+  for (const result of ["verified", "tests-verified"]) {
+    const error = refusedNaming(verdict(root, "s-verifier", { result }), tested, moved);
+    expect(error).toContain("src/app.ts");
+  }
+});
+
+test("Given the head moved past a session's checks, When it records failed or blocked, Then they record: only a passing claim is held to its checks' head", () => {
+  const root = featureRepo();
+  checkRow(root, { session: "s-verifier" }, headOf(root));
+  const moved = codeChange(root);
+  expect(recordedOn(verdict(root, "s-verifier", { result: "failed" }))).toBe(moved);
+  expect(recordedOn(verdict(root, "s-verifier", { result: "blocked" }))).toBe(moved);
 });
 
 test("Given a session's checks ran on one head, When only a CHANGELOG commit lands after them, Then the verdict records on the new head (it carries)", () => {
   const root = featureRepo();
-  checkRow(root, "s-verifier", git(root, "rev-parse", "HEAD"));
+  checkRow(root, { session: "s-verifier" }, headOf(root));
   const moved = commit(root, "CHANGELOG.md", "# Changelog\n\n- fixed a thing\n");
-  const recorded = verdict(root, "s-verifier");
-  expect(recorded.ok ? recorded.value.head : recorded.error).toBe(moved);
+  expect(recordedOn(verdict(root, "s-verifier"))).toBe(moved);
 });
 
-test("Given a verdict naming a check row on an older head as --evidence, Then it is refused naming both SHAs", () => {
+test("Given a derived verifier session S:a, Then it is held to the runs its agent made (session S, agent a), never to the lead's or another agent's", () => {
   const root = featureRepo();
-  const tested = git(root, "rev-parse", "HEAD");
-  const row = checkRow(root, "s-other", tested);
+  const tested = headOf(root);
+  checkRow(root, { session: "s-lead", agent: "a1" }, tested);
   const moved = codeChange(root);
-  const result = verdict(root, "s-verifier", [row]);
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(result.error).toContain(tested.slice(0, 12));
-  expect(result.error).toContain(moved.slice(0, 12));
+  // The lead's own run and another agent's run on the new head clear nothing for a1.
+  checkRow(root, { session: "s-lead" }, moved);
+  checkRow(root, { session: "s-lead", agent: "a2" }, moved);
+  refusedNaming(verdict(root, "s-lead:a1"), tested, moved);
+  // Another agent of the same lead, with no run of its own, is not held to a1's runs.
+  expect(recordedOn(verdict(root, "s-lead:a3"))).toBe(moved);
+});
+
+test("Given a plain session S, Then its subagents' runs (session S with an agent id) are not its own", () => {
+  const root = featureRepo();
+  checkRow(root, { session: "s-lead", agent: "a1" }, headOf(root));
+  const moved = codeChange(root);
+  expect(recordedOn(verdict(root, "s-lead"))).toBe(moved);
+});
+
+test("Given CI on the new head covered the check, Then the session's older run does not refuse the verdict", () => {
+  const root = featureRepo();
+  checkRow(root, { session: "s-verifier" }, headOf(root));
+  const moved = codeChange(root);
+  const covered = verdict(root, "s-verifier", {
+    checkEvidence: [{ name: "test", status: "fresh", via: "ci" }],
+  });
+  expect(recordedOn(covered)).toBe(moved);
+});
+
+test("Given the session ran each check on an older head, When only a trivial or ad-hoc run lands on the new head, Then it does not clear the configured check", () => {
+  const root = featureRepo();
+  const tested = headOf(root);
+  checkRow(root, { session: "s-verifier" }, tested);
+  checkRow(root, { session: "s-verifier" }, tested, { name: "lint" });
+  const moved = codeChange(root);
+  checkRow(root, { session: "s-verifier" }, moved, { name: null, configured: false });
+  checkRow(root, { session: "s-verifier" }, moved, { configured: false });
+  checkRow(root, { session: "s-verifier" }, moved, { name: "lint" });
+  refusedNaming(verdict(root, "s-verifier"), tested, moved);
+  // The configured run of `test` on the new head clears it.
+  checkRow(root, { session: "s-verifier" }, moved);
+  expect(recordedOn(verdict(root, "s-verifier"))).toBe(moved);
+});
+
+test("Given the session's run on the current head was on a dirty worktree, Then it is no evidence for the head", () => {
+  const root = featureRepo();
+  const head = headOf(root);
+  checkRow(root, { session: "s-verifier" }, head, { dirty: true });
+  const error = refusedNaming(verdict(root, "s-verifier"), head);
+  expect(error).toContain("(dirty)");
+});
+
+test("Given --evidence names a check row on an older head, Then the verdict is refused naming both SHAs, unless a cited clean run of that check is on the head", () => {
+  const root = featureRepo();
+  const tested = headOf(root);
+  const old = checkRow(root, { session: "s-other" }, tested);
+  const moved = codeChange(root);
+  refusedNaming(verdict(root, "s-verifier", { refs: [old] }), tested, moved);
+  const fresh = checkRow(root, { session: "s-other" }, moved);
+  expect(recordedOn(verdict(root, "s-verifier", { refs: [old, fresh] }))).toBe(moved);
 });
 
 test("Given the session checked the current head too, or no check of its own at all, Then the verdict records on that head", () => {
   const root = featureRepo();
-  checkRow(root, "s-verifier", git(root, "rev-parse", "HEAD"));
+  checkRow(root, { session: "s-verifier" }, headOf(root));
   const moved = codeChange(root);
-  checkRow(root, "s-verifier", moved);
-  const recorded = verdict(root, "s-verifier");
-  expect(recorded.ok && recorded.value.head).toBe(moved);
-  const fresh = verdict(root, "s-reviewer");
-  expect(fresh.ok && fresh.value.head).toBe(moved);
+  checkRow(root, { session: "s-verifier" }, moved);
+  expect(recordedOn(verdict(root, "s-verifier"))).toBe(moved);
+  expect(recordedOn(verdict(root, "s-reviewer"))).toBe(moved);
 });
