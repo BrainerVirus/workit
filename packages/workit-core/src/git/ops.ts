@@ -189,7 +189,8 @@ export const hookFixCommand = (output: string): string | null => {
       output,
     )?.[1];
   const command = (quoted ?? bare)?.trim().replace(/[.:]+$/u, "");
-  return command || null;
+  // A hook that already names the Workit route (`run \`workit check --name fix -- bun run format\``).
+  return /^workit check\b.*?\s--\s(.+)$/u.exec(command ?? "")?.[1] ?? (command || null);
 };
 
 /** The route a commit refused by a fixable hook ends with. */

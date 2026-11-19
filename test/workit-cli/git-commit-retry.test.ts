@@ -3,6 +3,7 @@ import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
+import { hookFixCommand } from "@/packages/workit-core/src/git/ops";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { makeRemoteRepo, type RemoteRepo } from "@/test/shared/helpers/git-remote";
 
@@ -109,4 +110,15 @@ test("Given a pre-commit check that names `run bun run format`, When `workit git
   expect(retried.code).toBe(0);
   expect(repo.git("show", "HEAD:a.txt")).toBe("formatted");
   expect(repo.git("status", "--porcelain")).toBe("");
+});
+
+test.each([
+  ["staged files are not formatted; run bun run format, git add them", "bun run format"],
+  [
+    "staged files are not formatted; run `workit check --name fix -- bun run format`, then `workit git add -- <paths>`",
+    "bun run format",
+  ],
+  ["lint failed", null],
+])("Given hook output %p, When its fix is read, Then the command is %p", (output, command) => {
+  expect(hookFixCommand(output)).toBe(command);
 });
