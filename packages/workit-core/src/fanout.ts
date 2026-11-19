@@ -1131,10 +1131,15 @@ function planFinished(
   });
 }
 
+/** A one-slice plan named after its slice, as `adhocPlan` (fanout-adhoc.ts) records one. */
+export const isAdhocPlan = (plan: FanoutFile): boolean =>
+  plan.slices.length === 1 && plan.slices[0].id === plan.name;
+
 /**
  * The plan `name`, else the one with the current branch as a slice, else the
  * one `session` leads, else the only one. Where several match, a finished plan
- * (`planFinished`) drops out (#775). Several left: the error names
+ * (`planFinished`) drops out (#775), and of the plans `session` leads a real
+ * plan wins over one-slice unplanned ones. Several left: the error names
  * `--fanout <name>` and the candidates (#641).
  */
 export function selectFanout(
@@ -1186,9 +1191,14 @@ export function selectFanout(
     all.data.filter((plan) => plan.slices.some((slice) => slice.branch === current)),
   );
   if (holding.length === 1) return { ok: true, data: holding[0] };
+  // A real plan wins over one-slice unplanned ones (fanout-adhoc.ts) the session also leads.
+  const real = (plans: FanoutFile[]): FanoutFile[] => {
+    const planned = plans.filter((plan) => !isAdhocPlan(plan));
+    return planned.length ? planned : plans;
+  };
   const led =
     holding.length === 0 && session
-      ? active(all.data.filter((plan) => plan.leadSession === session))
+      ? real(active(all.data.filter((plan) => plan.leadSession === session)))
       : [];
   if (led.length === 1) return { ok: true, data: led[0] };
   const pool = holding.length > 1 ? holding : led.length > 1 ? led : active(all.data);

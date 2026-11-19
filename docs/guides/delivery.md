@@ -1112,11 +1112,18 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   revert, so a merged slice is not called reverted on a stale trunk; if the
   fetch fails the slice stays landed and a note says to run `git fetch`.
 - `--name` on `brief`, `check`, `status` and `worktree` takes the plan's name
-  or its file (`--plan` is the same flag): a file is registered first, as
-  `fanout plan <file>` would (idempotent), and a name no plan has registers
+  or its file (`--plan` is the same flag): a file no plan holds yet is
+  registered first, as `fanout plan <file>` would. A file already registered
+  (a plan with its name, or holding the same slices, under any `--name`) is
+  used as stored, keeping the `--trunk` given at plan time; a file that grew
+  slices re-registers under that name and trunk. A name no plan has registers
   the one file in `workit dir plans` whose name starts with it. "No fanout
   plan named X" lists the registered names. `fanout plan` refuses a slice
   branch the workspace branch policy refuses and names the allowed one.
+  With no plan recorded, `fanout status` says so and exits 0; a bare
+  `worktree create` of a slice no plan holds is refused when several plans
+  could be meant (a typo never makes an unplanned slice), and `status` prefers
+  the lead's real plan over its unplanned one-slice plans.
 - `worktree create` takes several slices and prints, per slice, its
   `WORKTREE: <path>` line and the spawn that carries it: Claude Code's
   `SPAWN: Agent subagent_type: "workit:implementer", run_in_background: true,

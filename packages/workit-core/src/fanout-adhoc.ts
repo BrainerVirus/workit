@@ -67,6 +67,29 @@ export function locatePlanFile(cwd: string, value: string): string {
   return hits.length === 1 && top.status === 0 ? path.join(top.stdout.trim(), hits[0]) : given;
 }
 
+/**
+ * The registered plan a plan file already is: the one named like the file
+ * (its `name`, else its basename) or holding the same slice ids, so `--name
+ * <file>` registers a plan once and keeps what `fanout plan` stored.
+ */
+export function registeredPlanFor(cwd: string, raw: unknown, file: string): FanoutFile | null {
+  const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const name = typeof record.name === "string" ? record.name : path.basename(file, ".json");
+  const ids = (Array.isArray(record.slices) ? record.slices : [])
+    .map((slice) => (slice as { id?: unknown } | null)?.id)
+    .filter((id): id is string => typeof id === "string")
+    .toSorted();
+  const same = (plan: FanoutFile): boolean =>
+    ids.length > 0 &&
+    plan.slices
+      .map((slice) => slice.id)
+      .toSorted()
+      .join("\n") === ids.join("\n");
+  const all = listFanouts(cwd);
+  if (!all.ok) return null;
+  return all.data.find((plan) => plan.name === name) ?? all.data.find(same) ?? null;
+}
+
 /** `<plans dir>/<name>*.json` (`workit dir plans`), sorted; none outside a store. */
 export function planFileMatches(cwd: string, name: string): string[] {
   try {
@@ -99,10 +122,6 @@ export function defaultSliceBranch(cwd: string, slice: string): string {
     if (!branchRef(cwd, candidate) || n > 50) return candidate;
   }
 }
-
-/** A one-slice plan named after its slice, as `adhocPlan` records one. */
-export const isAdhocPlan = (plan: FanoutFile): boolean =>
-  plan.slices.length === 1 && plan.slices[0].id === plan.name;
 
 /** Every registered plan that holds slice `id`. */
 export function plansHolding(cwd: string, id: string): FanoutFile[] {

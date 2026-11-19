@@ -24,12 +24,12 @@ import {
 } from "@workit-dev/core/src/fanout-brief";
 import {
   adhocPlan,
-  isAdhocPlan,
   isPlanPath,
   planFileMatches,
   locatePlanFile,
   planHolding,
   plansHolding,
+  registeredPlanFor,
 } from "@workit-dev/core/src/fanout-adhoc";
 import { checkFanout, type CheckOutcome } from "@workit-dev/core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-status";
@@ -40,6 +40,8 @@ import {
   type ReleaseOutcome,
 } from "@workit-dev/core/src/fanout-worktree";
 import {
+  isAdhocPlan,
+  listFanouts,
   planFanout,
   selectFanout,
   TIERS,
@@ -154,9 +156,24 @@ function pickFanout(io: Io, values: { name?: string }, slice?: string): FanoutFi
     const holders = slice === undefined ? [] : plansHolding(io.cwd, slice);
     return holders.length === 1 ? holders[0] : select(null);
   }
+  // A plan this file already registered is used as stored: re-registering
+  // would reset a `--trunk` given at plan time or add a twin plan.
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    // registerPlan names the read error.
+  }
+  const stored = raw === null ? null : registeredPlanFor(io.cwd, raw, file);
+  const fields = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const ids = Array.isArray(fields.slices)
+    ? fields.slices.map((entry) => (entry as { id?: unknown } | null)?.id)
+    : [];
+  if (stored && ids.every((id) => stored.slices.some((one) => one.id === id))) return stored;
+  // A file that grew slices re-registers under the stored name and trunk.
   const registered = registerPlan(io, file, {
-    name: null,
-    trunk: null,
+    name: stored?.name ?? null,
+    trunk: stored && typeof fields.trunk !== "string" ? stored.trunk : null,
     track: null,
     takeLead: false,
   });
@@ -422,6 +439,12 @@ function status(argv: string[], io: Io): number {
   const stuckAfterMs = raw === undefined ? null : parseDuration(raw);
   if (stuckAfterMs === 0 || (raw !== undefined && stuckAfterMs === null))
     return usage(io, "--stuck-after takes a duration such as 30m, 45m or 2h", STATUS_USAGE);
+  // A read-only query: no plan recorded is an answer, not an error.
+  const all = flags.values.name === undefined ? listFanouts(io.cwd) : null;
+  if (all?.ok && all.data.length === 0)
+    return emit(io, ok({ plans: [] }), () => [
+      "no fanout plan is recorded here (plan one: workit fanout plan <plan.json>)",
+    ]);
   const selected = pickFanout(io, flags.values);
   if (typeof selected === "number") return selected;
   const forge = forgeFor(io, flags.booleans.has("offline"));
@@ -476,7 +499,8 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
   const unplanned =
     picked !== null &&
     planHolding(io.cwd, slices[0]) === null &&
-    (!picked.ok || isAdhocPlan(picked.data));
+    // Only "no plan here" makes an unplanned slice; an ambiguous pick stays an error.
+    (picked.ok ? isAdhocPlan(picked.data) : picked.code === "not_found");
   if (branch === null && !unplanned && (flags.base !== undefined || flags.tier !== undefined))
     return usage(io, "--base and --tier go with an unplanned slice (--branch <b>)", WORKTREE_USAGE);
   if (branch !== null && slices.length !== 1)

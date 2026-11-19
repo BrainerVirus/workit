@@ -281,6 +281,70 @@ test("Given a plan whose slice branch breaks branch policy, When `fanout plan` r
     expect(body.error).toContain('slice a: allowed_pattern: branch "feat/a"');
     expect(body.unblock).toContain('use "feature/a"');
     const status = await run(cwd, ["fanout", "status", "--offline", "--json"]);
-    expect(JSON.parse(status.stdout).error).toContain("no fanout plan is recorded here");
+    expect(status.code, status.stdout).toBe(0);
+    expect(JSON.parse(status.stdout).data.plans).toEqual([]);
   });
+});
+
+test("Given no plan, When `fanout status` runs, Then it exits 0 saying none is recorded; a verb that acts on a plan still fails", async () => {
+  const { cwd } = makeRepo();
+  const status = await run(cwd, ["fanout", "status", "--offline"]);
+  expect(status.code, status.stderr).toBe(0);
+  expect(status.stdout).toContain("no fanout plan is recorded here");
+  const check = await run(cwd, ["fanout", "check", "--offline", "--json"]);
+  expect(check.code).not.toBe(0);
+  expect(JSON.parse(check.stdout).code).toBe("not_found");
+});
+
+test("Given a plan registered with --trunk dev, When `worktree create a --name <file>` runs, Then the stored plan is used as is: trunk dev, no re-registration", async () => {
+  const { root, cwd } = makeRepo();
+  git(cwd, "branch", "dev");
+  const file = path.join(root, "q.json");
+  writeFileSync(file, JSON.stringify({ name: "q", slices: [slice("a"), slice("b")] }));
+  expect((await run(cwd, ["fanout", "plan", file, "--trunk", "dev"])).code).toBe(0);
+  const out = await run(cwd, ["fanout", "worktree", "create", "a", "--name", file, "--json"]);
+  expect(out.code, out.stdout + out.stderr).toBe(0);
+  expect(out.stderr).not.toContain("registered fanout");
+  expect(JSON.parse(out.stdout).data.base).toBe("dev");
+  const status = await run(cwd, ["fanout", "status", "q", "--offline", "--json"]);
+  expect(JSON.parse(status.stdout).data.trunk).toBe("dev");
+  // A file that grew a slice re-registers under the stored name, keeping trunk dev.
+  writeFileSync(file, JSON.stringify({ name: "q", slices: [slice("a"), slice("b"), slice("c")] }));
+  const grown = await run(cwd, ["fanout", "worktree", "create", "c", "--name", file, "--json"]);
+  expect(grown.code, grown.stdout + grown.stderr).toBe(0);
+  expect(JSON.parse(grown.stdout).data.base).toBe("dev");
+});
+
+test("Given a plan file registered under another --name, When `worktree create a --name <file>` runs, Then that plan is used and no twin is registered", async () => {
+  const { root, cwd } = makeRepo();
+  const file = writePlan(path.join(root, "r.json"), "r", ["a"]);
+  expect((await run(cwd, ["fanout", "plan", file, "--name", "custom"])).code).toBe(0);
+  const out = await run(cwd, ["fanout", "worktree", "create", "a", "--name", file]);
+  expect(out.code, out.stdout + out.stderr).toBe(0);
+  const twin = await run(cwd, ["fanout", "status", "r", "--offline", "--json"]);
+  expect(JSON.parse(twin.stdout).code).toBe("not_found");
+  const brief = await run(cwd, ["fanout", "brief", "a", "--json"]);
+  expect(brief.code, brief.stdout + brief.stderr).toBe(0);
+  expect(JSON.parse(brief.stdout).data.fanout).toBe("custom");
+});
+
+test("Given two real plans, When a bare `worktree create` names a slice neither holds, Then it is refused as ambiguous and no unplanned plan is made", async () => {
+  const { root, cwd } = makeRepo();
+  await run(cwd, ["fanout", "plan", writePlan(path.join(root, "p1.json"), "p1", ["a"])]);
+  await run(cwd, ["fanout", "plan", writePlan(path.join(root, "p2.json"), "p2", ["b"])]);
+  const out = await run(cwd, ["fanout", "worktree", "create", "aa", "--json"]);
+  expect(out.code).not.toBe(0);
+  expect(JSON.parse(out.stdout).code).toBe("invalid_input");
+  const made = await run(cwd, ["fanout", "status", "aa", "--offline", "--json"]);
+  expect(JSON.parse(made.stdout).code).toBe("not_found");
+});
+
+test("Given a real plan and an unplanned slice the same lead made, When a bare `fanout status` runs, Then it reads the real plan", async () => {
+  const { root, cwd } = makeRepo();
+  await run(cwd, ["fanout", "plan", writePlan(path.join(root, "real.json"), "real", ["a", "b"])]);
+  const adhoc = await run(cwd, ["fanout", "worktree", "create", "fix-x", "--branch", "fix/fix-x"]);
+  expect(adhoc.code, adhoc.stdout + adhoc.stderr).toBe(0);
+  const status = await run(cwd, ["fanout", "status", "--offline", "--json"]);
+  expect(status.code, status.stdout).toBe(0);
+  expect(JSON.parse(status.stdout).data.name).toBe("real");
 });
