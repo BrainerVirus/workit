@@ -44,28 +44,56 @@ const parseBody = (body: string): { preamble: string[]; sections: Section[] } =>
   return { preamble: preamble.map(withNewline), sections };
 };
 
-/** Ours, then theirs; a bullet one side dropped from base stays dropped. */
+/**
+ * Ours, then theirs; a bullet one side dropped from base stays dropped, also
+ * when that side dropped its whole `###` group (a roll empties Unreleased).
+ */
 const mergeBlocks = (
   base: Map<string, string[]> | undefined,
   ours: Map<string, string[]> | undefined,
   theirs: Map<string, string[]> | undefined,
-): string[][] => {
+): Map<string, string[]> => {
   const out = new Map<string, string[]>();
   for (const [key, lines] of ours ?? []) {
-    if (base?.has(key) && theirs && !theirs.has(key)) continue;
+    if (base?.has(key) && !theirs?.has(key)) continue;
     out.set(key, lines);
   }
   for (const [key, lines] of theirs ?? []) {
     if (out.has(key) || base?.has(key)) continue;
     out.set(key, lines);
   }
-  return [...out.values()];
+  return out;
 };
 
-/** The merged `## [Unreleased]` body (everything after that heading line). */
-export const mergeUnreleasedBody = (base: string, ours: string, theirs: string): string => {
+const VERSION_HEADING = /^##\s+\[([^\]]+)\]/u;
+
+/** Each bullet key in `text` mapped to the `## [X.Y.Z]` heading it sits under. */
+const releasedKeys = (text: string): Map<string, string> => {
+  const keys = new Map<string, string>();
+  let version = "";
+  for (const [key, lines] of bulletBlocks(text.split(/(?<=\n)/u))) {
+    if (key !== null && !keys.has(key)) keys.set(key, version);
+    for (const line of lines) version = VERSION_HEADING.exec(line)?.[1] ?? version;
+  }
+  return keys;
+};
+
+/**
+ * The merged `## [Unreleased]` body (everything after that heading line).
+ * `released` maps the keys of bullets released since the merge base to their
+ * version: a roll moved them there, so the merge never puts them back. Each
+ * entry left out for that pushes its version onto `dropped`.
+ */
+export const mergeUnreleasedBody = (
+  base: string,
+  ours: string,
+  theirs: string,
+  released: ReadonlyMap<string, string> = new Map(),
+  dropped: string[] = [],
+): string => {
   if (ours === theirs || theirs === base) return ours;
-  if (ours === base) return theirs;
+  if (ours === base && ![...releasedKeys(theirs).keys()].some((key) => released.has(key)))
+    return theirs;
   const b = parseBody(base);
   const o = parseBody(ours);
   const t = parseBody(theirs);
@@ -77,9 +105,16 @@ export const mergeUnreleasedBody = (base: string, ours: string, theirs: string):
     const mine = sectionOf(o, id);
     const theirsOne = sectionOf(t, id);
     const baseOne = sectionOf(b, id);
-    const blocks = mergeBlocks(baseOne?.blocks, mine?.blocks, theirsOne?.blocks);
-    // A section both sides emptied (or one emptied that the other left alone) is dropped.
-    if (!blocks.length && baseOne && (!mine || !theirsOne)) continue;
+    const merged = mergeBlocks(baseOne?.blocks, mine?.blocks, theirsOne?.blocks);
+    const blocks: string[][] = [];
+    for (const [key, lines] of merged) {
+      const version = released.get(key);
+      if (version === undefined) blocks.push(lines);
+      else dropped.push(version);
+    }
+    // A section both sides emptied (or one emptied that the other left alone),
+    // or one holding only released bullets, is dropped.
+    if (!blocks.length && ((baseOne && (!mine || !theirsOne)) || merged.size)) continue;
     const prose = (mine ?? theirsOne)?.preamble.join("") ?? "";
     const heading = (mine ?? theirsOne)!.heading;
     out += `${withNewline(heading)}\n${prose}${blocks.flat().join("")}\n`;
@@ -97,13 +132,21 @@ export const withMergedUnreleased = (
   base: string,
   ours: string,
   theirs: string,
-): { base: string; ours: string; theirs: string } | null => {
+): { base: string; ours: string; theirs: string; dropped: string[] } | null => {
   if (![base, ours, theirs].every(hasUnreleasedHeading)) return null;
   const [bBefore, bBody, bAfter] = splitUnreleased(base);
   const [oBefore, oBody, oAfter] = splitUnreleased(ours);
   const [tBefore, tBody, tAfter] = splitUnreleased(theirs);
-  const merged = mergeUnreleasedBody(bBody, oBody, tBody);
+  // Only entries released since the merge base: an old release can share a
+  // first line ("Dependencies bumped.") with a genuinely new entry.
+  const old = releasedKeys(bAfter);
+  const released = new Map(
+    [...releasedKeys(tAfter), ...releasedKeys(oAfter)].filter(([key]) => !old.has(key)),
+  );
+  const dropped: string[] = [];
+  const merged = mergeUnreleasedBody(bBody, oBody, tBody, released, dropped);
   return {
+    dropped,
     base: bBefore + merged + bAfter,
     ours: oBefore + merged + oAfter,
     theirs: tBefore + merged + tAfter,
@@ -133,8 +176,8 @@ export const mergeChangelogText = (
   base: string,
   ours: string,
   theirs: string,
-): { clean: boolean; text: string } | { error: string } => {
-  const merged = withMergedUnreleased(base, ours, theirs) ?? { base, ours, theirs };
+): { clean: boolean; text: string; dropped: string[] } | { error: string } => {
+  const merged = withMergedUnreleased(base, ours, theirs) ?? { base, ours, theirs, dropped: [] };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workit-changelog-merge-"));
   try {
     const one = (name: string, text: string) => {
@@ -160,7 +203,11 @@ export const mergeChangelogText = (
       { timeoutMs: 30_000 },
     );
     if (run.status === null || run.status > 127) return { error: gitError(run) };
-    return { clean: run.status === 0, text: fs.readFileSync(o, "utf8") };
+    return {
+      clean: run.status === 0,
+      text: fs.readFileSync(o, "utf8"),
+      dropped: merged.dropped,
+    };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -174,12 +221,12 @@ export const mergeChangelogFiles = (files: {
   base: string;
   ours: string;
   theirs: string;
-}): { code: 0 | 1; error?: string } => {
+}): { code: 0 | 1; error?: string; dropped?: string[] } => {
   const read = (file: string) => fs.readFileSync(file, "utf8");
   const result = mergeChangelogText(read(files.base), read(files.ours), read(files.theirs));
   if ("error" in result) return { code: 1, error: result.error };
   fs.writeFileSync(files.ours, result.text, "utf8");
-  return { code: result.clean ? 0 : 1 };
+  return { code: result.clean ? 0 : 1, dropped: result.dropped };
 };
 
 /**
