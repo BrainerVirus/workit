@@ -306,7 +306,7 @@ test("Given `workit issue create --add-label bug`, When it runs, Then the label 
     ],
     repo.cwd,
   );
-  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(result.code, result.stdout).toBe(0);
   expect(writes(runner.calls)).toEqual([
     ["POST", "repos/o/r/issues", { title: "fix: x", body: "it broke", "labels[]": "bug" }],
   ]);
