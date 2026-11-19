@@ -52,6 +52,7 @@ import { stopDecision } from "./stop";
 import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
 import { ytrackGate } from "./ytrack-guard";
+import { exitPipeGate } from "./exit-pipe";
 import {
   confineImplementer,
   confineImplementerShell,
@@ -304,6 +305,9 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
           )
         : null;
       if (ytrack) return ytrack;
+      // A Workit verb's exit code piped into tail/head is lost (#912): the unpiped call.
+      const piped = canDeny ? exitPipeGate(event.command, event.dialect) : null;
+      if (piped) return piped;
       // `cd <dir> && workit … || git …` (#793): no single --cwd rewrite, so name it.
       const split = canDeny ? cdWorkitSplit(event.command) : null;
       if (split)

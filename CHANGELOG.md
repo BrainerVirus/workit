@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `workit release tag <v> --wait` waits for CI still running on the trunk tip (as right after a merge), then tags on green, within one `--timeout` for the CI and release waits; red CI is still refused, and a `ci_pending` refusal without `--wait` ends in `Retry as: workit release tag <v> --wait`
+- `workit ci wait --branch <b>` on a branch with no PR (the trunk after a merge) waits on its push runs, exit 0 green and 1 red; `--ref <b>` is accepted as the same flag, and `workit issue create` takes `--add-label` as `pr create` does
+- A Workit verb whose exit code is its answer (`ci wait`, `check`, `pr merge`, `release …`, `verify-delivery`) piped into `tail` or `head` is denied by the shell hook on every host, naming the unpiped call
 - `workit fanout status` with no plan recorded says so and exits 0; a bare `workit fanout worktree create` of an unknown slice is refused when several plans could be meant, and `status` prefers the lead's real plan over its one-slice unplanned plans
 - `--name` on `workit fanout brief|check|status|worktree` takes a plan file as well as a plan name and registers it in the same call, once: a file already registered is used as stored, keeping its `--trunk` and name (`--plan` is the same flag); an unknown name lists the registered plans and registers the single matching file in `workit dir plans`; `workit fanout plan` refuses a slice branch the workspace branch policy refuses and names the allowed one
 - Claude Code spawn gate: a `workit:implementer` prompt that names a Workit-made worktree by its path, or a brief file holding a `WORKTREE:` line, now runs; a prompt naming none is denied in two lines whose `Retry as:` is the exact ad-hoc `workit fanout worktree create` call

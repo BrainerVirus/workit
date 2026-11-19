@@ -6,7 +6,8 @@
 // `pr status` document. On Claude, run it with `run_in_background: true`
 // instead of a sleep loop. A second wait on the same PR and head while one
 // is live (often moved to the background) reports that one and exits busy
-// instead of polling again (ci-waiter.ts).
+// instead of polling again (ci-waiter.ts). `--branch <b>` (or `--ref <b>`)
+// with no PR waits on the branch's push runs instead (ci-wait.ts, #912).
 //
 // rerun: reruns failed jobs (or named checks) once per (head, check), on the
 // PR head (`--pr`, `--branch`'s PR, or this branch's PR) or on the latest CI
@@ -50,9 +51,10 @@ import {
   renderStatus,
   usage,
 } from "./forge-common";
+import { waitOnBranch } from "./ci-wait";
 
 const WAIT_USAGE =
-  "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s] [--json]";
+  "workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s] [--json]";
 const RERUN_USAGE =
   "workit ci rerun [--pr <n> | --branch <b> | --ref <branch>] [--check <name>… | --failed] --reason flake|infra [--force] [--json]";
 
@@ -147,11 +149,28 @@ async function wait(argv: string[], io: Io): Promise<number> {
   const flags = parseFlags(argv, {
     pr: "value",
     branch: "value",
+    ref: "value",
     head: "value",
     timeout: "value",
     interval: "value",
   });
   if (typeof flags === "string") return usage(io, flags, WAIT_USAGE);
+  if (flags.values.ref !== undefined) {
+    if (flags.values.branch !== undefined)
+      return usage(io, "pass --branch or --ref, not both: --ref is --branch here", WAIT_USAGE);
+    // Branch-only: a hex-looking name is a commit unless such a branch is known here.
+    const ref = flags.values.ref;
+    const known = [`refs/heads/${ref}`, `refs/remotes/origin/${ref}`].some(
+      (name) => resolveRef(io.cwd, name) !== null,
+    );
+    if (/^[0-9a-f]{7,64}$/u.test(ref) && !known)
+      return usage(
+        io,
+        `--ref names a branch here; for a commit pass --branch <b> --head ${flags.values.ref}`,
+        WAIT_USAGE,
+      );
+    flags.values.branch = flags.values.ref;
+  }
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, WAIT_USAGE);
   const pr = positiveInt(flags.values.pr, "--pr");
@@ -187,6 +206,17 @@ async function wait(argv: string[], io: Io): Promise<number> {
   if (!connected.ok) return forgeFail(io, connected);
   const resolved = connected.data;
   const number = selectPr(io.cwd, resolved, { pr, branch: flags.values.branch ?? null });
+  // A named branch with no PR (a trunk after a merge): its push runs.
+  if (!number.ok && number.code === "not_found" && flags.values.branch)
+    return waitOnBranch(io, {
+      resolved,
+      branch: flags.values.branch,
+      head,
+      started,
+      deadline,
+      intervalMs,
+      timeoutMs,
+    });
   if (!number.ok) return forgeFail(io, number);
 
   const expected =
@@ -373,7 +403,7 @@ async function pollChecks(
     io,
     fail("pending", `CI still ${verdict.reason.replaceAll("_", " ")} after ${seconds(elapsedMs)}`, {
       data,
-      unblock: `workit ci wait --pr ${doc.number}${head ? ` --head ${head}` : ""}`,
+      unblock: `Retry as: workit ci wait --pr ${doc.number}${head ? ` --head ${head}` : ""}`,
     }),
   );
 }

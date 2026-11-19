@@ -1,0 +1,17 @@
+{
+  "id": "cc-auto-exit-pipe-denied-retry",
+  "source": "#912: `workit ci wait | tail` reported tail's exit 0 for a refused wait and the agent read it as CI finished; under auto mode a deny naming the unpiped call, never a rewrite (#908)",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "permission_mode": "auto",
+      "tool_input": { "command": "workit ci wait 2>&1 | tail -5" }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["^workit exit-pipe: ", "\nRetry as: workit ci wait\n"]
+  }
+}

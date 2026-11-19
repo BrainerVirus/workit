@@ -230,6 +230,61 @@ test.skipIf(process.platform === "win32")(
     const refused = await run(["release", "tag", "v1.2.3", "--json"], repo.cwd);
     expect(refused.code, refused.stdout).toBe(3);
     expect(refused.json().error).toContain("ci_pending");
+    // #912: the refusal names the call that waits for CI itself.
+    expect(refused.json().unblock).toStartWith("Retry as: workit release tag v1.2.3 --wait");
+    expect(repo.git("tag", "-l")).toBe("");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given trunk CI running on the tip right after a merge, When workit release tag v1.2.3 --wait runs, Then it waits, tags on green and verifies the release",
+  async () => {
+    const { repo, head } = tagRepo({ release: true });
+    let polls = 0;
+    forge({
+      "graphql branch-checks": () =>
+        trunkChecks(head, [polls++ < 2 ? checkRun(null, "IN_PROGRESS") : checkRun("SUCCESS")]),
+      [RUNS]: JSON.stringify({
+        workflow_runs: [
+          {
+            id: 9,
+            name: "release",
+            head_branch: "v1.2.3",
+            status: "completed",
+            conclusion: "success",
+            html_url: "https://github.com/o/r/actions/runs/9",
+          },
+        ],
+      }),
+      [RELEASE]: JSON.stringify({
+        id: 5,
+        tag_name: "v1.2.3",
+        html_url: "https://github.com/o/r/releases/tag/v1.2.3",
+      }),
+    });
+    const done = await run(["release", "tag", "v1.2.3", "--wait", "--json"], repo.cwd);
+    expect(done.code, done.stdout + done.stderr).toBe(0);
+    expect(polls).toBe(3);
+    expect(bareTag(repo, "v1.2.3")).toEqual({ type: "tag", commit: head });
+    expect(done.json().data.forgeRelease.url).toBe("https://github.com/o/r/releases/tag/v1.2.3");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given trunk CI running and then red, When workit release tag v1.2.3 --wait runs, Then it waits and refuses ci_red with nothing tagged",
+  async () => {
+    const { repo, head } = tagRepo({ release: true });
+    let polls = 0;
+    forge({
+      "graphql branch-checks": () =>
+        trunkChecks(head, [polls++ < 1 ? checkRun(null, "IN_PROGRESS") : checkRun("FAILURE")]),
+    });
+    const refused = await run(["release", "tag", "v1.2.3", "--wait", "--json"], repo.cwd);
+    expect(refused.code, refused.stdout).toBe(3);
+    expect(refused.json().error).toContain("ci_red");
+    expect(polls).toBe(2);
+    expect(repo.git("tag", "-l")).toBe("");
+    expect(remoteHasTag(repo, "v1.2.3")).toBe(false);
   },
 );
 

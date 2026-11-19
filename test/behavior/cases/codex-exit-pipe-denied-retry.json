@@ -1,0 +1,14 @@
+{
+  "id": "codex-exit-pipe-denied-retry",
+  "source": "#912: on Codex the piped `workit pr merge` is denied with the unpiped call",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "codex",
+    "fixture": "pre-tool-use-bash",
+    "overrides": { "tool_input": { "command": "workit pr merge --pr 7 2>&1 | tail -3" } }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["^workit exit-pipe: ", "\nRetry as: workit pr merge --pr 7\n"]
+  }
+}

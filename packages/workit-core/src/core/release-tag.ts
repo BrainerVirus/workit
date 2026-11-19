@@ -162,14 +162,17 @@ export type CiVerdict =
  * Whether `checks` (the forge's checks on the trunk tip) clear `target` for a
  * release: they must describe that very commit, report at least one check,
  * and none may fail or still run (a required check, when the forge says which,
- * must pass).
+ * must pass). `rerun` is the call that retries (its `--at`, when given); a
+ * pending or not yet reported CI retries it with `--wait`, which waits for CI
+ * itself (#912).
  */
 export function releaseCiVerdict(
   checks: RefChecks,
   plan: Pick<ReleaseTagPlan, "tag" | "target" | "remote" | "production" | "at">,
+  rerun = `workit release tag ${plan.tag}`,
 ): CiVerdict {
   const where = `${plan.at} (${plan.target.slice(0, 12)})`;
-  const rerun = `workit release tag ${plan.tag}`;
+  const waits = `Retry as: ${rerun} --wait  # waits for CI on ${plan.production}, then tags`;
   if (checks.sha && checks.sha !== plan.target)
     return {
       green: false,
@@ -193,7 +196,7 @@ export function releaseCiVerdict(
       green: false,
       reason: "ci_pending",
       error: `ci_pending: CI on ${where} is still running (${pending.map((check) => check.name).join(", ")})`,
-      unblock: `wait for CI on ${plan.production}, then: ${rerun}`,
+      unblock: waits,
     };
   const passing = checks.checks.filter((check) => check.state === "passing").length;
   if (!passing)
@@ -201,7 +204,7 @@ export function releaseCiVerdict(
       green: false,
       reason: "ci_unknown",
       error: `ci_unknown: no CI has reported on ${where}; a release tag goes only on a green commit`,
-      unblock: `wait for CI on ${plan.production}, then: ${rerun}`,
+      unblock: waits,
     };
   return { green: true, passing };
 }

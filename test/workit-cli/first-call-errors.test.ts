@@ -86,7 +86,7 @@ test("Given any unknown option with no registered fix, When run, Then the unbloc
   const result = await run(["ci", "wait", "--zzzzzz", "--json"]);
   expect(result.code).toBe(2);
   expect(result.json().unblock).toBe(
-    "workit help ci wait; usage: workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
+    "workit help ci wait; usage: workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
   );
 });
 

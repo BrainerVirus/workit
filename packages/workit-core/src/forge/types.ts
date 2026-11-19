@@ -118,6 +118,8 @@ export type RefChecks = {
   checks: ForgeCheck[];
   /** True when the branch's required checks could be read (GitLab gates on the whole pipeline). */
   requiredKnown: boolean;
+  /** Required checks (branch protection) not reported on `sha` yet; absent when unknown. */
+  missingRequired?: string[];
 };
 
 export type JobRef = { jobId: number; scope: string | null };

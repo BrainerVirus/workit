@@ -422,6 +422,7 @@ workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-
 workit pr threads                      # unresolved review threads, one line each with its id
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
+workit ci wait --branch main           # a branch with no PR (the trunk after a merge): its push runs; --ref main is the same
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
@@ -566,6 +567,17 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   head` (exit 0: nothing registered within the grace window, so nothing can
   fail). Before it reports a fresh head ready it expects the checks the base
   branch ran; any that never registered are listed on the `pass` line.
+- `ci wait --branch <b>` (or `--ref <b>`) on a branch with no PR waits on the
+  push runs of the branch's remote tip, as `release tag` reads them: exit 0
+  green, 1 red (with the `ci rerun --ref` fix), 4 still pending, with a
+  `Retry as:` call. `--head <sha>` waits until CI reports that commit. A
+  required check not reported yet is waited for within the 2-minute grace;
+  one that never reports on a push (a pull-request-only check) is listed on
+  the `pass` line.
+- Piping `ci wait`, `check`, `pr merge`, `release …` or `verify-delivery` into
+  `tail` or `head` hides the exit code (the pipeline's status is the filter's),
+  so the shell hook on every host denies it with the unpiped call. Their
+  output is already bounded.
 - `ci wait --timeout` bounds the whole command, from resolving the forge and
   checking the account to the last poll. A conflicting PR stops the wait at
   once (`blocked: conflicts`): CI does not run on it.
@@ -747,7 +759,7 @@ needs a raw `gh issue close` that the host's permission mode blocks:
 workit issue view <n>
 workit issue comment <n> --body-file <f|->
 workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->]
-workit issue create --title <t> --body-file <f|-> [--label <l>]…
+workit issue create --title <t> --body-file <f|-> [--label|--add-label <l>]…
 ```
 
 Issues live on the workspace tracker (`issues.provider` github or gitlab,

@@ -181,7 +181,7 @@ test("given one simple heavy command, when planned, then it is rewritten verbati
 test("given one heavy command followed only by redirects or one tail/head/grep filter, when planned, then it is one rewritten command", () => {
   expect(plan("bun test 2>&1 | tail -50")).toMatchObject({
     kind: "rewrite",
-    command: "workit check --heavy -- bun test 2>&1 | tail -50",
+    command: "workit check --heavy -- bun test",
   });
   expect(plan("npm run lint >/dev/null 2>&1")).toMatchObject({
     command: "workit check --heavy -- npm run lint >/dev/null 2>&1",

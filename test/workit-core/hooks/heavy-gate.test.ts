@@ -489,11 +489,12 @@ test("Given a plugin newer than the CLI, When each rewrite host wraps a heavy co
 
 // Issue #388: `cd <dir> && workit …` is rewritten to `workit --cwd <dir> …` on
 // Claude Code (updatedInput, no permission decision); every other shape is left alone.
-test("Given `cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3` on Claude Code, When PreToolUse runs, Then updatedInput.command is the --cwd form with the filter kept", () => {
-  const output = claude(repo(), "cd /tmp/wt && workit pr merge --pr 7 2>&1 | tail -3");
+// A verb whose exit code is its answer (`pr merge`) piped into tail is denied instead (exit-pipe.test.ts).
+test("Given `cd /tmp/wt && workit pr status --pr 7 2>&1 | tail -3` on Claude Code, When PreToolUse runs, Then updatedInput.command is the --cwd form with the filter kept", () => {
+  const output = claude(repo(), "cd /tmp/wt && workit pr status --pr 7 2>&1 | tail -3");
   expect(output?.permissionDecision).toBeUndefined();
   expect(output?.updatedInput).toEqual({
-    command: "workit pr --cwd /tmp/wt merge --pr 7 2>&1 | tail -3",
+    command: "workit pr --cwd /tmp/wt status --pr 7 2>&1 | tail -3",
     description: "run it",
   });
 });
