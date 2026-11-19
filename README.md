@@ -324,7 +324,9 @@ and report), `workit fanout status` flags
 stuck workers and suggests a landing
 order, `workit fanout worktree create|release` gives each worker its own
 worktree on every host (with `node_modules` linked so its tests import its own
-code; Workit's hooks keep an implementer inside it), and `workit fanout check`
+code; Workit's hooks keep an implementer inside it) and prints each slice's
+`WORKTREE:` line and exact spawn (a plan file in `--name` is registered in the
+same call; `--branch` makes one unplanned slice), and `workit fanout check`
 gates fan-in. See
 [parallel slices](docs/guides/delivery.md#parallel-slices-fanout).
 

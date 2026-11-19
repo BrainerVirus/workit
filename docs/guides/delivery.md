@@ -951,7 +951,8 @@ workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the 
 workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the stop line for running workers, and lifting it
 workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
-workit fanout worktree create <slice> [--name <n>]                      # the slice's worktree, scratch dir and node_modules links
+workit fanout worktree create <slice>… [--name <plan|plan.json>]       # each slice's worktree, scratch dir, links, WORKTREE line and spawn
+workit fanout worktree create <slice> --branch <b> [--base <b>] [--tier <t>]  # one unplanned slice (a one-slice plan named after it)
 workit fanout worktree release <slice> [--name <n>] [--force]           # stop its processes, record git status, then remove it
 workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-in gate, landing order
 ```
@@ -1110,6 +1111,27 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   `status` and `check` fetch that one ref once per run before judging a
   revert, so a merged slice is not called reverted on a stale trunk; if the
   fetch fails the slice stays landed and a note says to run `git fetch`.
+- `--name` on `brief`, `check`, `status` and `worktree` takes the plan's name
+  or its file (`--plan` is the same flag): a file is registered first, as
+  `fanout plan <file>` would (idempotent), and a name no plan has registers
+  the one file in `workit dir plans` whose name starts with it. "No fanout
+  plan named X" lists the registered names. `fanout plan` refuses a slice
+  branch the workspace branch policy refuses and names the allowed one.
+- `worktree create` takes several slices and prints, per slice, its
+  `WORKTREE: <path>` line and the spawn that carries it: Claude Code's
+  `SPAWN: Agent subagent_type: "workit:implementer", run_in_background: true,
+  description: "<slice>", prompt: "…"` (with `model` only when the slice's
+  tier differs from the `implementer` agent file), elsewhere the prompt for the
+  host's implementer subagent. The prompt is the WORKTREE line first, then
+  `WORKER`, `TIER`, `TIMEBOX` and "Run `workit fanout brief <slice> --name
+  <plan>` and follow it exactly.", so the brief never passes through the lead's
+  context. It stops at the first slice that fails, after printing the ones
+  made; `--json` is the slice's data with `prompt` and `spawn`, or
+  `{ "worktrees": [...] }` for several. With `--branch <type>/<slug>` (and
+  optional `--base`, `--tier`) and no plan, one unplanned slice gets a
+  one-slice plan named after it, whose brief says the lead's prompt states the
+  task; a slice a registered plan holds is made from that plan, and two or
+  more slices need a plan file.
 - `worktree create` (on every host; Claude Code's implementer no longer uses
   its native isolation) adds the slice's worktree at its planned path. A new
   slice starts at its base and gets its branch through `workit git branch`
