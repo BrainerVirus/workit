@@ -2,21 +2,21 @@
   "case": "verdict-from-parent-dir",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
-  "key": "32f3be843b3c7ddb",
-  "date": "2026-11-19T01:12:04.029Z",
+  "workitVersion": "workit-dev-v2.15.0+998be989db",
+  "key": "797439cd4f24250a",
+  "date": "2026-11-19T02:08:53.350Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 20207,
-    "costUsd": 0.03275087,
+    "durationMs": 24304,
+    "costUsd": 0.03330615,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 4,
+    "calls": 5,
     "failures": [],
     "firstTry": {
       "interactions": 2,

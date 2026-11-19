@@ -1,22 +1,27 @@
 {
   "case": "branch-with-dirty-tree",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+fe576667bc",
-  "key": "588c68f9701b42bd",
-  "date": "2026-11-19T01:22:54.017Z",
+  "workitVersion": "workit-dev-v2.15.0+998be989db",
+  "key": "81f58c1a8cf73265",
+  "date": "2026-11-19T02:06:46.306Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 4,
-    "durationMs": 7070,
-    "costUsd": 0.0036327900000000003,
+    "durationMs": 7931,
+    "costUsd": 0.0041235,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
+    "pass": false,
     "calls": 3,
-    "failures": [],
+    "failures": [
+      {
+        "rule": "at-most",
+        "detail": "2 calls match /\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b/, at most 1: the refusal carries the usage line and the fix: no help call is needed to recover (one help call may find --carry; 2026-11-18: a cap of 0 measured impossibility, not first try) (#1, #2)"
+      }
+    ],
     "firstTry": {
       "interactions": 2,
       "failed": 0,

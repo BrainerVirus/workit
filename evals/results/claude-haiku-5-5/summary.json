@@ -2,9 +2,9 @@
   "passed": 38,
   "total": 68,
   "firstTry": {
-    "interactions": 780,
+    "interactions": 779,
     "failed": 52,
-    "denied": 111
+    "denied": 110
   },
   "outsideChanges": 12,
   "cases": [
@@ -221,12 +221,26 @@
         "denied": 0
       },
       "passes": 1,
-      "failures": ["at-most"],
-      "turns": 24,
-      "costUsd": 0.02154063,
-      "workitVersion": "workit-dev-v2.15.0+fe576667bc",
+      "failures": ["at-most", "forbid"],
+      "turns": 22,
+      "costUsd": 0.020284820000000002,
+      "workitVersion": "workit-dev-v2.15.0+998be989db",
       "graderVersion": 2,
       "runs": [
+        {
+          "case": "branch-with-dirty-tree",
+          "pass": false,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": ["at-most"],
+          "turns": 4,
+          "costUsd": 0.0041235,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
+          "graderVersion": 2
+        },
         {
           "case": "branch-with-dirty-tree",
           "pass": true,
@@ -237,8 +251,22 @@
           },
           "failures": [],
           "turns": 4,
-          "costUsd": 0.0036327900000000003,
-          "workitVersion": "workit-dev-v2.15.0+fe576667bc",
+          "costUsd": 0.0033931900000000004,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
+          "graderVersion": 2
+        },
+        {
+          "case": "branch-with-dirty-tree",
+          "pass": false,
+          "firstTry": {
+            "interactions": 3,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": ["forbid", "at-most"],
+          "turns": 5,
+          "costUsd": 0.0041644099999999995,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         },
         {
@@ -250,23 +278,9 @@
             "denied": 0
           },
           "failures": ["at-most"],
-          "turns": 5,
-          "costUsd": 0.00435413,
-          "workitVersion": "workit-dev-v2.15.0+fe576667bc",
-          "graderVersion": 2
-        },
-        {
-          "case": "branch-with-dirty-tree",
-          "pass": false,
-          "firstTry": {
-            "interactions": 2,
-            "failed": 0,
-            "denied": 0
-          },
-          "failures": ["at-most"],
-          "turns": 5,
-          "costUsd": 0.00437728,
-          "workitVersion": "workit-dev-v2.15.0+fe576667bc",
+          "turns": 4,
+          "costUsd": 0.00413795,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         },
         {
@@ -277,24 +291,10 @@
             "failed": 0,
             "denied": 0
           },
-          "failures": ["at-most"],
+          "failures": ["forbid", "at-most"],
           "turns": 5,
-          "costUsd": 0.00453801,
-          "workitVersion": "workit-dev-v2.15.0+fe576667bc",
-          "graderVersion": 2
-        },
-        {
-          "case": "branch-with-dirty-tree",
-          "pass": false,
-          "firstTry": {
-            "interactions": 3,
-            "failed": 0,
-            "denied": 0
-          },
-          "failures": ["at-most"],
-          "turns": 5,
-          "costUsd": 0.004638420000000001,
-          "workitVersion": "workit-dev-v2.15.0+fe576667bc",
+          "costUsd": 0.00446577,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         }
       ]
@@ -2367,29 +2367,29 @@
       "case": "verdict-from-parent-dir",
       "pass": true,
       "firstTry": {
-        "interactions": 11,
+        "interactions": 10,
         "failed": 0,
-        "denied": 1
+        "denied": 0
       },
-      "passes": 4,
-      "failures": ["first-try"],
+      "passes": 5,
+      "failures": [],
       "turns": 6,
-      "costUsd": 0.18274731,
-      "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+      "costUsd": 0.1690085,
+      "workitVersion": "workit-dev-v2.15.0+998be989db",
       "graderVersion": 2,
       "runs": [
         {
           "case": "verdict-from-parent-dir",
-          "pass": false,
+          "pass": true,
           "firstTry": {
-            "interactions": 3,
+            "interactions": 2,
             "failed": 0,
-            "denied": 1
+            "denied": 0
           },
-          "failures": ["first-try"],
-          "turns": 2,
-          "costUsd": 0.05160608,
-          "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+          "failures": [],
+          "turns": 0,
+          "costUsd": 0.04444042,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         },
         {
@@ -2402,8 +2402,8 @@
           },
           "failures": [],
           "turns": 0,
-          "costUsd": 0.03166735,
-          "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+          "costUsd": 0.03172955,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         },
         {
@@ -2416,22 +2416,8 @@
           },
           "failures": [],
           "turns": 2,
-          "costUsd": 0.03275087,
-          "workitVersion": "workit-dev-v2.15.0+cff039f50b",
-          "graderVersion": 2
-        },
-        {
-          "case": "verdict-from-parent-dir",
-          "pass": true,
-          "firstTry": {
-            "interactions": 2,
-            "failed": 0,
-            "denied": 0
-          },
-          "failures": [],
-          "turns": 0,
-          "costUsd": 0.03488190000000001,
-          "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+          "costUsd": 0.03330615,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         },
         {
@@ -2444,8 +2430,22 @@
           },
           "failures": [],
           "turns": 2,
-          "costUsd": 0.03184111,
-          "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+          "costUsd": 0.02990601,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
+          "graderVersion": 2
+        },
+        {
+          "case": "verdict-from-parent-dir",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 2,
+          "costUsd": 0.02962637,
+          "workitVersion": "workit-dev-v2.15.0+998be989db",
           "graderVersion": 2
         }
       ]
