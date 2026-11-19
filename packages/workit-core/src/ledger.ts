@@ -2607,6 +2607,40 @@ function siblingsWithBranch(cwd: string, branch: string): string[] {
     );
 }
 
+/** Checkouts directly under `dir` (not itself a checkout) that have a local branch `branch`. */
+function childrenWithBranch(dir: string, branch: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .slice(0, MAX_SIBLINGS)
+    .map((entry) => path.join(dir, entry.name))
+    .filter(
+      (child) =>
+        fs.existsSync(path.join(child, ".git")) &&
+        resolveCommit(child, `refs/heads/${branch}`) !== null,
+    );
+}
+
+/**
+ * Where a verdict for `branch` filed from `cwd` belongs (#759): `cwd` itself
+ * when its repo has the branch (`here`), else the checkouts next to it, or
+ * under it when `cwd` is not a checkout (the parent of the workspace's repos),
+ * that have it. One candidate is where the CLI records it.
+ */
+export function verdictCheckouts(
+  cwd: string,
+  branch: string,
+): { here: true } | { here: false; candidates: string[] } {
+  if (gitDirs(cwd) === null) return { here: false, candidates: childrenWithBranch(cwd, branch) };
+  if (branchNotInRepo(cwd, branch) === null) return { here: true };
+  return { here: false, candidates: siblingsWithBranch(cwd, branch) };
+}
+
 /**
  * Refuse a verdict for `branch` when this repository has no such branch
  * (#759): a verdict about another repo's branch must never land here. Null

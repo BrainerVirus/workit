@@ -72,6 +72,7 @@ import {
   recordVerdict,
   recordVerdictVoid,
   branchNotInRepo,
+  verdictCheckouts,
   summarizeRow,
   supersedeAllowed,
   unboundRecovery,
@@ -423,7 +424,8 @@ function targetBranch(
   return { ok: true, value: branch ?? null };
 }
 
-export async function run(argv: string[], io: Io): Promise<number> {
+export async function run(argv: string[], ioIn: Io): Promise<number> {
+  let io = ioIn;
   let parsed: { values: Values; positionals: string[] };
   try {
     parsed = parseArgs({
@@ -464,6 +466,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
   )
     return usage(io, `unknown ledger subcommand "${sub}"`);
   if (sub === "standing") return standing(io, values, rest);
+  if (
+    sub === "verdict" &&
+    values.branch !== undefined &&
+    (values.how !== undefined || (VERDICT_RESULTS as readonly string[]).includes(rest[0] ?? ""))
+  ) {
+    const routed = verdictCheckout(io, values.branch);
+    if (typeof routed === "number") return routed;
+    io = routed;
+  }
 
   // The hash chain is verified only where it is reported.
   const ledger = readLedger(io.cwd, {
@@ -821,6 +832,34 @@ function misfiledVerdict(
     error: `branch_mismatch: PR ${pr} is branch ${target}, but this checkout is on ${here}; a --pr verdict names its branch when recorded from another branch's checkout, so nothing was recorded`,
     unblock: `if you judged ${target} of this repo, add --branch ${target}; if PR ${pr} belongs to another repo, record it there: workit --cwd <that repo's checkout> ledger verdict <result> --how "<what you ran>" --pr ${pr}`,
   };
+}
+
+/**
+ * The Io a `--branch` verdict is recorded with: this checkout when its repo
+ * has the branch, else the one checkout next to it (or under it, from the
+ * parent of the workspace's repos) that has it, said on stderr. Two or more
+ * are refused naming each; none falls through to the branch_not_in_repo refusal.
+ */
+function verdictCheckout(io: Io, branch: string): Io | number {
+  const found = verdictCheckouts(io.cwd, branch);
+  if (found.here || found.candidates.length === 0) return io;
+  if (found.candidates.length > 1)
+    return emit(
+      io,
+      fail(
+        "invalid_input",
+        `branch_ambiguous: ${found.candidates.length} checkouts near ${io.cwd} have a branch ${branch} (${found.candidates.join(", ")}), so nothing was recorded`,
+        {
+          unblock: `Retry as: workit --cwd ${found.candidates[0]} ledger verdict …  # the checkout whose ${branch} you judged`,
+        },
+      ),
+    );
+  const [there] = found.candidates;
+  if (!io.json)
+    io.stderr(
+      `workit: ${io.cwd} has no branch ${branch}; recording in ${there}, the one checkout next to it that has it\n`,
+    );
+  return { ...io, cwd: there };
 }
 
 /**
