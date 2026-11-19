@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -52,6 +53,16 @@ const temp = (prefix: string) => {
   dirs.push(dir);
   return dir;
 };
+/** State dirs a real detached child ran in: its cmd.exe can outlive the suite on Windows, so removal is best effort. */
+const pinned: string[] = [];
+afterAll(() => {
+  for (const dir of pinned)
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      // Still held by the child's cmd.exe (Windows); the OS temp cleanup takes it.
+    }
+});
 
 const ENV_KEYS = ["WORKIT_STATE_DIR", "WORKIT_INSTALL_ROOT", "WORKIT_SESSION_ID"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -151,6 +162,8 @@ const register = (session: string, cwd: string): ProcRow => {
   }
 };
 const alive = (row: ProcRow) => table.get(row.pid!)?.alive === true;
+/** Where the teardown child runs: Workit's procs state dir, beside its log. */
+const stateCwd = () => path.dirname(teardownLog(process.env));
 
 /** The `workit …` argv a spawn request runs (after the located launcher's own args). */
 const verbArgs = (request: SpawnRequest): string[] =>
@@ -185,6 +198,9 @@ test("Given Claude Code SessionEnd for S with two servers by S and one by T, The
   expect(request.command).toBe(launcher);
   expect(verbArgs(request)).toEqual(["stop", "--session", "sess-s", "--reason", "session-end"]);
   expect(request.env).toMatchObject({ WORKIT_SESSION_ID: "sess-s", WORKIT_HOST: "claude_code" });
+  // #904: the child never runs in the session's checkout, so it cannot pin it.
+  expect(request.cwd).toBe(stateCwd());
+  expect(request.cwd).not.toBe(cwd);
   expect(readFileSync(teardownLog(process.env), "utf8")).toContain(
     "workit stop --session sess-s --reason session-end",
   );
@@ -306,6 +322,7 @@ test("Given SessionStart twice within 10 minutes, Then the orphan reap spawns on
   clock += REAP_INTERVAL_MS - 1;
   start();
   expect(spawned.map(verbArgs)).toEqual([["stop", "--orphans", "--reason", "session-start"]]);
+  expect(spawned[0].cwd).toBe(stateCwd());
   expect(Number(readFileSync(reapStamp(process.env), "utf8"))).toBe(clock - REAP_INTERVAL_MS + 1);
   clock += 1;
   start();
@@ -419,13 +436,18 @@ test("Given a test run, Then the default spawner never starts a CLI", () => {
   expect(savedDeps.spawn(request)).toBe(false);
 });
 
-test("Given a real owned launcher, When a session ends, Then it runs detached as that session and its output lands in the teardown log", async () => {
+test("Given a real owned launcher, When a session ends, Then it runs detached as that session in the state dir and its output lands in the teardown log", async () => {
   const cwd = temp("wk-teardown-repo-");
+  // The child runs in the state dir, not the repo (#904); on Windows its
+  // cmd.exe may still hold the state dir, which afterAll removes best effort.
+  const state = mkdtempSync(path.join(os.tmpdir(), "wk-teardown-pinned-"));
+  pinned.push(state);
+  process.env.WORKIT_STATE_DIR = state;
   const out = path.join(temp("wk-teardown-out-"), "argv.json");
   const script = path.join(path.dirname(out), "fake-cli.js");
   writeFileSync(
     script,
-    `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID }));\n` +
+    `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID, cwd: process.cwd() }));\n` +
       `console.log("fake stop ran");\n` +
       // Its last act, so the test never returns while the child still runs in its temp dirs.
       `require("node:fs").writeFileSync(${JSON.stringify(`${out}.done`)}, "");\n`,
@@ -439,10 +461,12 @@ test("Given a real owned launcher, When a session ends, Then it runs detached as
   );
   const deadline = Date.now() + 10_000;
   while (!existsSync(`${out}.done`) && Date.now() < deadline) await Bun.sleep(25);
-  expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({
+  const ran = JSON.parse(readFileSync(out, "utf8"));
+  expect(ran).toMatchObject({
     argv: ["stop", "--session", "sess-real", "--reason", "session-end"],
     session: "sess-real",
   });
+  expect(realpathSync(ran.cwd)).toBe(realpathSync(stateCwd()));
   const log = teardownLog(process.env);
   expect(readFileSync(log, "utf8")).toContain(
     "workit stop --session sess-real --reason session-end",

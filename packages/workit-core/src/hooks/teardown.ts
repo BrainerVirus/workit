@@ -8,7 +8,10 @@
 // CLI would fall through to the task-store gc (decider ruling 8).
 //
 // The CLI honours keep decisions and workspace `cleanup: keep` and says why it
-// left a row running; that output goes to `<state>/procs/teardown.log`.
+// left a row running; that output goes to `<state>/procs/teardown.log`. The
+// child runs in `<state>/procs`, never the session's checkout: on Windows its
+// cmd.exe outlives the CLI and would pin the checkout (#904); the stop selects
+// rows by session id or owner, never by its cwd.
 // Only a reason a host's allowlist names ends a session, so a reason a host
 // adds later stops nothing. A worker's end stops nothing: `--session
 // <lead>:<child>` selects the lead's rows too. Every step fails open and never
@@ -105,17 +108,19 @@ const openLog = (env: NodeJS.ProcessEnv, args: string[]): number | null => {
   }
 };
 
-/** Run `workit <args>` detached from `cwd`: true when the CLI started. */
-function runCli(args: string[], env: NodeJS.ProcessEnv, cwd: string): boolean {
+/** Run `workit <args>` detached from Workit's procs state dir: true when the CLI started. */
+function runCli(args: string[], env: NodeJS.ProcessEnv): boolean {
   let log: number | null = null;
   try {
     const cli = locateWorkitCli({ env });
+    const cwd = teardownDir(env);
+    fs.mkdirSync(cwd, { recursive: true });
     log = openLog(env, args);
     const started = teardownDeps.spawn({
       command: cli.command,
       args: [...cli.args, ...args],
       env,
-      cwd: fs.existsSync(cwd) ? cwd : teardownDir(env),
+      cwd,
       log,
     });
     if (!started && log !== null) fs.writeSync(log, "  not started\n");
@@ -138,6 +143,7 @@ export type SessionEnd = {
   /** Set when a subagent's own end reaches the hook. */
   agentId: string | null;
   reason: string | null;
+  /** The session's checkout; the stop never runs in it (#904). */
   cwd: string;
 };
 
@@ -160,7 +166,7 @@ export function endSession(end: SessionEnd, env: NodeJS.ProcessEnv = process.env
   // The CLI acts as the ended session, whatever host session its env names.
   const child: NodeJS.ProcessEnv = { ...env, WORKIT_SESSION_ID: session, WORKIT_HOST: end.host };
   for (const key of HOST_SESSION_VARS) delete child[key];
-  return runCli(["stop", "--session", session, "--reason", "session-end"], child, end.cwd);
+  return runCli(["stop", "--session", session, "--reason", "session-end"], child);
 }
 
 /** Take the reap claim (an exclusive create); a claim older than the interval is a crashed holder's. */
@@ -195,9 +201,10 @@ const fresh = (stamp: string, now: number): boolean => {
 /**
  * Reap processes whose owner is gone, at most once per REAP_INTERVAL_MS per
  * user: one start at a time holds the claim, and the stamp is written only once
- * the reap started. True when it started.
+ * the reap started. True when it started. The session's checkout (`_cwd`) is
+ * never the child's cwd (#904).
  */
-export function reapAtStart(cwd: string, env: NodeJS.ProcessEnv = process.env): boolean {
+export function reapAtStart(_cwd: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const stamp = reapStamp(env);
   const lock = `${stamp}.claim`;
   const now = teardownDeps.now();
@@ -212,7 +219,7 @@ export function reapAtStart(cwd: string, env: NodeJS.ProcessEnv = process.env): 
   try {
     // Another start may have reaped between the read and the claim.
     if (fresh(stamp, now)) return false;
-    started = runCli(["stop", "--orphans", "--reason", "session-start"], env, cwd);
+    started = runCli(["stop", "--orphans", "--reason", "session-start"], env);
     if (started) {
       const temp = `${stamp}.${process.pid}`;
       fs.writeFileSync(temp, String(now), { mode: 0o600 });

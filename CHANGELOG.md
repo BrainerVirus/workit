@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - When a session ends (Claude Code SessionEnd, Cursor sessionEnd, Pi quit, OpenCode session deleted), Workit stops the processes and automation browsers that session started, without delaying the host; a continuing session (clear, resume, compact), a subagent's end and kept processes stop nothing. A session start also stops leftovers whose owning session is gone, at most once every 10 minutes. Codex sends no subagent id on SessionEnd, so its processes are stopped by that start-time sweep instead.
 
+### Fixed
+
+- Session teardown runs its detached `workit stop` in Workit's state directory instead of the session's checkout, so on Windows the stop no longer keeps the checkout busy after a session ends (#904).
+
 ## [2.13.0] - 2026-11-18
 
 ### Fixed
