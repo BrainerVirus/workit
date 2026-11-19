@@ -628,18 +628,18 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   entry in its own changelog, and the refusal names the ones that lack it.
   Without one,
   `pr create` exits 3 with `changelog_required` (`data.reason` in `--json`),
-  opens nothing, and its `unblock:` line names the
-  `workit changelog apply --entries '{"Added": ["…"]}'` command to run (the
-  category follows the title: feat is Added, fix is Fixed, else Changed; a
-  file other than the root CHANGELOG.md adds `--path <file>`). When the root
+  opens nothing, and its `unblock:` line is a `Retry as:` of the same call
+  plus `--changelog "<Section>: <what users can now do>"` (the section
+  follows the title: feat is Added, fix is Fixed, else Changed), naming the
+  `workit changelog apply` command as the by-hand route. When the root
   has no changelog but the repo keeps one elsewhere, the refusal names it and
   the `workit workspace set <ws> changelogPath=<file>` that points the gate
   there.
-  Commit and push the entry, then run `pr create` again, or let `pr create`
-  do it in the same call with `--changelog "<Section>: <entry>"` (for example
-  `--changelog "Fixed: the retry loop keeps the timeout"`): it adds the entry,
-  commits it as `docs(<scope>): add the changelog entry`, pushes and opens the PR. The
-  refusal's `Retry as:` line is the original call plus that flag.
+  Fill in the entry and run it (for example
+  `--changelog "Fixed: the retry loop keeps the timeout"`): `pr create` adds
+  the entry, commits it as `docs(<scope>): add the changelog entry`, pushes
+  and opens the PR. When the commit or push is refused, it says what it left
+  behind (the edited changelog, or the local commit) and opens nothing.
 - Under `update`, a repo without its changelog file passes with one line saying
   there is nothing to update; under `create` the entry is still required. A
   glob such as `projects/*/CHANGELOG.md` that matches no file in a repo falls
@@ -667,7 +667,8 @@ docs check never blocks: it reports the doc files the diff changed, a `Docs`
 line in the PR body, or neither.
 
 The gate only reads the changelog; entries are written by
-`workit changelog apply`, which merges into Unreleased and never rewrites or
+`pr create --changelog` or `workit changelog apply` (with no PR yet), which
+merge into Unreleased and never rewrites or
 reorders existing entries.
 
 ### PR description template
