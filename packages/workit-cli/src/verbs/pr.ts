@@ -85,7 +85,10 @@ import {
 } from "@workit-dev/core/src/core/branch";
 import { actorFromEnv, carryLabel, readLedger, type CarryNote } from "@workit-dev/core/src/ledger";
 import { checkVerdictsCovered, type StackCover } from "@workit-dev/core/src/verdict-cover";
-import { untrackedRiskPathsWarning } from "@workit-dev/core/src/core/policy/lane";
+import {
+  DEPENDENCY_BUMP_EVIDENCE,
+  untrackedRiskPathsWarning,
+} from "@workit-dev/core/src/core/policy/lane";
 import { prLaneGate } from "@workit-dev/core/src/core/policy/pr-lane";
 import { vcsConfig, type ResolvedReleaseTrack } from "@workit-dev/core/src/core/vcs-config";
 import { checkRoot } from "@workit-dev/core/src/check-config";
@@ -504,7 +507,7 @@ async function status(argv: string[], io: Io): Promise<number> {
         lines.splice(
           lines.length - 1,
           0,
-          `lane: ${data.verdict.lane.lane} (${data.verdict.lane.reasons.join("; ")}); merge needs ${NEED_TEXT[data.verdict.lane.need]}${data.verdict.lane.verification === "proportional" ? "" : ` (verification: ${data.verdict.lane.verification})`}`,
+          `lane: ${data.verdict.lane.lane} (${data.verdict.lane.reasons.join("; ")}); merge needs ${NEED_TEXT[data.verdict.lane.need]}${data.verdict.lane.classification === "dependency-bump" && data.verdict.lane.need === "self" ? ` with ${DEPENDENCY_BUMP_EVIDENCE}` : ""}${data.verdict.lane.verification === "proportional" ? "" : ` (verification: ${data.verdict.lane.verification})`}${data.verdict.lane.missing ? `; missing: ${data.verdict.lane.missing}` : ""}`,
         );
       for (const warning of data.verdict?.lane?.warnings ?? [])
         lines.splice(lines.length - 1, 0, `warning: ${warning}`);
@@ -558,7 +561,13 @@ const mergedVerdictLine = (landed: MergeRecord | "untracked"): string =>
 function verdictBlock(
   cwd: string,
   branch: string,
-  doc: { state: string; number: number; base: string; head: { sha: string } },
+  doc: {
+    state: string;
+    number: number;
+    base: string;
+    head: { sha: string };
+    checks?: { state: string };
+  },
 ) {
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
@@ -596,7 +605,12 @@ function verdictBlock(
   const gate =
     doc.state === "merged" || !doc.head.sha
       ? null
-      : prLaneGate(cwd, check, { branch, base: doc.base, head: doc.head.sha });
+      : prLaneGate(cwd, check, {
+          branch,
+          base: doc.base,
+          head: doc.head.sha,
+          ci: doc.checks?.state ?? null,
+        });
   return {
     merge: landed,
     lane: gate
@@ -606,6 +620,8 @@ function verdictBlock(
           lines: gate.lane.lines,
           files: gate.lane.files,
           riskFiles: gate.lane.riskFiles,
+          classification: gate.lane.classification ?? null,
+          missing: gate.missing ?? null,
           base: gate.lane.base,
           verification: gate.verification,
           warnings: [untrackedRiskPathsWarning(cwd)].filter((line) => line !== null),
