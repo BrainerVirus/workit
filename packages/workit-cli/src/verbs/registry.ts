@@ -806,7 +806,7 @@ export const VERBS: readonly VerbEntry[] = [
       log: readOnlyGuess("log", "log --oneline -20"),
     },
     summary:
-      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
+      "Policy-checked branch (--carry moves uncommitted changes onto it), hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
     subcommands: [
       {
         name: "branch",
