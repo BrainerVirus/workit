@@ -754,8 +754,9 @@ Issues live on the workspace tracker (`issues.provider` github or gitlab,
 its `issues.repo`), else on the checkout's forge. `--repo <owner/name>` picks
 another repository on the same host. Outside a git checkout `--repo` names
 the forge too: the repository on the workspace provider's host (github.com by
-default), so `workit issue create --repo owner/name …` works from any
-directory. YouTrack and other hosts are refused,
+default), so `workit issue create --repo owner/name …` works from any folder a
+workspace covers; from a folder no workspace covers it is refused, naming a
+checkout of the repo or a covered folder to run it from. YouTrack and other hosts are refused,
 because no account is verified there. Comment, close and create need the
 `pr` grant, the same one as `pr edit` and `pr reply`, and each writes an
 `issue.commented`, `issue.closed` or `issue.created` ledger row. `close`

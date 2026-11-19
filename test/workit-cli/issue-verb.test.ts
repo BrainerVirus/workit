@@ -314,10 +314,14 @@ test("issue create --repo outside a git checkout: the named repo is the forge, n
   const outside = path.join(repo.root, "not-a-checkout");
   mkdirSync(outside);
   forgeDeps.readStdin = () => "filed from outside";
-  const created = await run(
-    ["issue", "create", "--repo", "o/r", "--title", "t", "--body-file", "-", "--json"],
-    outside,
-  );
+  const args = ["issue", "create", "--repo", "o/r", "--title", "t", "--body-file", "-", "--json"];
+  const uncovered = await run(args, outside);
+  expect(uncovered.code, uncovered.stdout).not.toBe(0);
+  expect(uncovered.json().error).toContain("needs a workspace covering");
+  expect(uncovered.json().unblock).toContain("from a checkout of o/r");
+  expect(writes(runner.calls)).toEqual([]);
+  workspace(repo, { vcs: { provider: "github" } });
+  const created = await run(args, outside);
   expect(created.code, created.stdout).toBe(0);
   expect(writes(runner.calls)).toEqual([
     ["POST", "repos/o/r/issues", { title: "t", body: "filed from outside" }],

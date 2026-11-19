@@ -333,10 +333,18 @@ export function resolveForge(
   const unsealed = identityDenial(cwd, workspace);
   if (unsealed) return failure("blocked", unsealed, SEAL_UNBLOCK);
   const hosts = configuredHosts();
-  const pushed =
-    options.repo && gitDirs(cwd) === null
-      ? namedRepoForge(options.repo, workspace?.vcs?.provider, hosts)
-      : pushForge(cwd, { branch: options.branch, hosts, sshConfig: options.sshConfig });
+  const outside = options.repo && gitDirs(cwd) === null ? options.repo : null;
+  // Outside a checkout only a workspace says which forge and account --repo
+  // means: without one, guessing github.com could file on the wrong forge.
+  if (outside && workspace === null)
+    return failure(
+      "blocked",
+      `--repo ${outside} outside a git checkout needs a workspace covering ${cwd} to name its forge, and none does`,
+      `run it from a checkout of ${outside}, or from a folder a workspace covers (workit workspace list --cwd <folder>)`,
+    );
+  const pushed = outside
+    ? namedRepoForge(outside, workspace?.vcs?.provider, hosts)
+    : pushForge(cwd, { branch: options.branch, hosts, sshConfig: options.sshConfig });
   if (!pushed.ok) return failure(pushed.code, pushed.error, pushed.unblock);
   const conflict = forgeConflict(pushed.forge, workspace?.vcs?.provider);
   if (conflict) return failure("blocked", conflict.error, conflict.unblock);
