@@ -3007,9 +3007,10 @@ const checkYtrackSkill = (res: Resolved): DoctorCheck | null => {
   const retired = homeCurrent
     ? list.copies.filter((copy) => copy.state === "missing" && copy.managed)
     : [];
+  const retiredSet = new Set(retired);
   const synced = list.copies.filter(
     (copy) =>
-      !retired.includes(copy) &&
+      !retiredSet.has(copy) &&
       (copy.state === "missing" || (copy.state === "stale" && copy.managed)),
   );
   // A copy in a repository changes only by hand, in that directory.
