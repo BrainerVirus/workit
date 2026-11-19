@@ -998,38 +998,36 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "brief",
-        flagAliases: { fanout: "name" },
+        flagAliases: { fanout: "name", plan: "name" },
         usage:
           "workit fanout brief <slice> [--mode new|resume] [--attempt <n>] [--host <h>] [--name <n>]",
         summary: "Render one worker's brief with the standing orders",
       },
       {
         name: "check",
-        flagAliases: { fanout: "name" },
+        flagAliases: { fanout: "name", plan: "name" },
         usage: "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]",
         summary: "Gate fan-in: out-of-scope edits, trunk and sibling merge conflicts",
       },
       {
         name: "status",
-        flagAliases: { fanout: "name" },
+        flagAliases: { fanout: "name", plan: "name" },
         usage: "workit fanout status [--name <n>] [--stuck-after 30m] [--offline]",
         summary: "Each slice's state: STUCK, PR, CI, verdict, landed, landing order",
       },
       {
         name: "worktree",
-        flagAliases: { fanout: "name" },
-        flagHints: {
-          branch:
-            "the slice's branch and base come from the plan (workit fanout plan); choose the plan with --name: workit fanout worktree create <slice> --name <plan>",
-          base: "the slice's branch and base come from the plan (workit fanout plan); choose the plan with --name: workit fanout worktree create <slice> --name <plan>",
-          plan: "the plan is chosen with --name <plan> (its name, not its file): workit fanout worktree create <slice> --name <plan>",
-        },
-        usage: "workit fanout worktree create|release <slice> [--name <n>] [--force]",
-        summary: "Make or release a slice's worktree (--force applies to release only)",
+        flagAliases: { fanout: "name", plan: "name" },
+        usage:
+          "workit fanout worktree create|release <slice>… [--name <plan|plan.json>] [--branch <b>] [--base <b>] [--tier <t>] [--force]",
+        summary:
+          "Make slice worktrees and print each WORKTREE line and spawn (a plan file in --name is registered; --branch, --base and --tier make one unplanned slice), or release one (--force applies to release only)",
       },
     ],
     examples: [
       "workit fanout plan plan.json --take-lead",
+      "workit fanout worktree create api ui --name plan.json",
+      "workit fanout worktree create fix-login --branch fix/login",
       "workit fanout status --stuck-after 20m",
     ],
     load: () => import("./fanout"),

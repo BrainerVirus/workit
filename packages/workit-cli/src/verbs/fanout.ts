@@ -5,7 +5,12 @@
 //   workit fanout brief    <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--host <h>]
 //   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
 //   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
-//   workit fanout worktree create|release <slice> [--name <n>] [--force]
+//   workit fanout worktree create <slice>… [--name <plan|plan.json>] [--branch <b> [--base <b>] [--tier <t>]]
+//   workit fanout worktree release <slice> [--name <n>] [--force]
+//
+// `--name` (alias `--plan`) takes a plan's name or its file: a file is
+// registered first (as `fanout plan` would), and a name no plan has that
+// matches one file in `workit dir plans` registers that file.
 import { progressFor } from "../progress";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,8 +19,10 @@ import {
   BRIEF_HOSTS,
   briefHost,
   renderBrief,
+  slicePointer,
   type BriefOutcome,
 } from "@workit-dev/core/src/fanout-brief";
+import { adhocPlan, isPlanPath, planFileMatches } from "@workit-dev/core/src/fanout-adhoc";
 import { checkFanout, type CheckOutcome } from "@workit-dev/core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-status";
 import {
@@ -27,7 +34,9 @@ import {
 import {
   planFanout,
   selectFanout,
+  TIERS,
   type FanoutError,
+  type FanoutFile,
   type PlanOutcome,
 } from "@workit-dev/core/src/fanout";
 import { currentBranch } from "@workit-dev/core/src/git/rev";
@@ -44,7 +53,7 @@ const CHECK_USAGE =
   "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] [--json]";
 const STATUS_USAGE = "workit fanout status [--name <n>] [--stuck-after 30m] [--offline] [--json]";
 const WORKTREE_USAGE =
-  "workit fanout worktree create <slice> [--name <n>] | worktree release <slice> [--name <n>] [--force] [--json]";
+  "workit fanout worktree create <slice>… [--name <plan|plan.json>] [--branch <b>] [--base <b>] [--tier <t>] | worktree release <slice> [--name <n>] [--force] [--json]";
 const USAGE = "workit fanout plan|brief|check|status|worktree ... (workit help fanout)";
 
 /** The forge for PR lookups, or why there is none (offline is never an error). */
@@ -56,20 +65,93 @@ function forgeFor(io: Io, offline: boolean): { forge: ResolvedForge | null; erro
     : { forge: null, error: connected.error };
 }
 
-/**
- * The plan a verb acts on: `--name` (the registry maps `--fanout` onto it),
- * else the one this branch or this lead session belongs to (#641).
- */
-const pickFanout = (io: Io, values: { name?: string }): ReturnType<typeof selectFanout> =>
-  selectFanout(
-    io.cwd,
-    values.name ?? null,
-    currentBranch(io.cwd),
-    io.env.WORKIT_SESSION_ID?.trim() || null,
-  );
-
 const failed = (io: Io, result: FanoutError): number =>
   emit(io, fail(result.code, result.error, { unblock: result.unblock, data: result.data ?? {} }));
+
+/**
+ * Register the plan file at `file` as `workit fanout plan <file> [--name]`
+ * does; a failure is already emitted and returns its exit code.
+ */
+function registerPlan(
+  io: Io,
+  file: string,
+  opts: { name: string | null; trunk: string | null; track: string | null; takeLead: boolean },
+): { data: PlanOutcome } | { code: number } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    return {
+      code: usage(io, `cannot read ${file} as JSON: ${(error as Error).message}`, PLAN_USAGE),
+    };
+  }
+  const trunk = resolveTrunk(io, raw, opts.trunk, opts.track);
+  if ("code" in trunk) return trunk;
+  const result = planFanout(io.cwd, {
+    raw,
+    // A plan file without a name is named after the file.
+    name:
+      opts.name ??
+      (typeof raw === "object" &&
+      raw !== null &&
+      typeof (raw as { name?: unknown }).name === "string"
+        ? null
+        : path.basename(file, ".json")),
+    trunk: trunk.trunk,
+    actor: actorFromEnv(io.env),
+    takeLead: opts.takeLead,
+  });
+  if (result.ok) return { data: result.data };
+  const problems = result.data?.problems;
+  if (result.data && Array.isArray(problems)) {
+    const explained = explainPlanProblems(raw, problems);
+    // The headline quotes the first problem: give it the same wording.
+    const first = problems[0];
+    if (typeof first === "string" && typeof explained[0] === "string")
+      result.error = result.error.replace(first, explained[0]);
+    result.data.problems = explained;
+  }
+  const code = failed(io, result);
+  renderBlockedPlan(io, result);
+  return { code };
+}
+
+/**
+ * The plan a verb acts on: `--name` (the registry maps `--fanout` and
+ * `--plan` onto it), else the one this branch or this lead session belongs
+ * to (#641). A `--name` that is a plan file registers it first; a name no
+ * plan has registers the one `workit dir plans` file that starts with it.
+ * A failure is emitted here and returns its exit code.
+ */
+function pickFanout(io: Io, values: { name?: string }): FanoutFile | number {
+  const select = (name: string | null): FanoutFile | number => {
+    const selected = selectFanout(
+      io.cwd,
+      name,
+      currentBranch(io.cwd),
+      io.env.WORKIT_SESSION_ID?.trim() || null,
+    );
+    return selected.ok ? selected.data : failed(io, selected);
+  };
+  const name = values.name?.trim() || null;
+  let file = name && isPlanPath(io.cwd, name) ? path.resolve(io.cwd, name) : null;
+  if (name && !file) {
+    const known = selectFanout(io.cwd, name, null, null);
+    const matches = known.ok || known.code !== "not_found" ? [] : planFileMatches(io.cwd, name);
+    if (matches.length !== 1) return select(name);
+    file = matches[0];
+  }
+  if (!file) return select(null);
+  const registered = registerPlan(io, file, {
+    name: null,
+    trunk: null,
+    track: null,
+    takeLead: false,
+  });
+  if ("code" in registered) return registered.code;
+  if (!io.json) io.stderr(`workit: registered fanout ${registered.data.name} from ${file}\n`);
+  return select(registered.data.name);
+}
 
 function renderBlockedPlan(io: Io, result: FanoutError): void {
   if (io.json || (result.code !== "blocked" && result.code !== "invalid_input")) return;
@@ -152,36 +234,14 @@ function plan(argv: string[], io: Io): number {
         : "missing <plan.json>",
       PLAN_USAGE,
     );
-  const file = path.resolve(io.cwd, flags.positionals[0]);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (error) {
-    return usage(io, `cannot read ${file} as JSON: ${(error as Error).message}`, PLAN_USAGE);
-  }
-  const trunk = resolveTrunk(io, raw, flags.values.trunk ?? null, track);
-  if ("code" in trunk) return trunk.code;
-  const result = planFanout(io.cwd, {
-    raw,
+  const registered = registerPlan(io, path.resolve(io.cwd, flags.positionals[0]), {
     name: flags.values.name ?? null,
-    trunk: trunk.trunk,
-    actor: actorFromEnv(io.env),
+    trunk: flags.values.trunk ?? null,
+    track,
     takeLead: flags.booleans.has("take-lead"),
   });
-  if (!result.ok) {
-    const problems = result.data?.problems;
-    if (result.data && Array.isArray(problems)) {
-      const explained = explainPlanProblems(raw, problems);
-      // The headline quotes the first problem: give it the same wording.
-      const first = problems[0];
-      if (typeof first === "string" && typeof explained[0] === "string")
-        result.error = result.error.replace(first, explained[0]);
-      result.data.problems = explained;
-    }
-    const code = failed(io, result);
-    renderBlockedPlan(io, result);
-    return code;
-  }
+  if ("code" in registered) return registered.code;
+  const result = { data: registered.data };
   // Another active plan makes a bare `ledger standing add` ambiguous (#775).
   const rivals = selectFanout(io.cwd, null, null, null);
   const others =
@@ -250,8 +310,8 @@ function brief(argv: string[], io: Io): number {
       `workit: warning: no known host for this brief (WORKIT_HOST is ${io.env.WORKIT_HOST?.trim() || "unset"}): it renders a plain-terminal worker; pass --host <${hosts}> for the worker's host\n`,
     );
   const selected = pickFanout(io, flags.values);
-  if (!selected.ok) return failed(io, selected);
-  const result = renderBrief(io.cwd, selected.data, {
+  if (typeof selected === "number") return selected;
+  const result = renderBrief(io.cwd, selected, {
     slice: flags.positionals[0],
     mode,
     attempt,
@@ -282,11 +342,11 @@ function check(argv: string[], io: Io): number {
   const flags = parseFlags(argv, { name: "value", base: "value", offline: "boolean" });
   if (typeof flags === "string") return usage(io, flags, CHECK_USAGE);
   const selected = pickFanout(io, flags.values);
-  if (!selected.ok) return failed(io, selected);
+  if (typeof selected === "number") return selected;
   const result = progressFor(io).runSync(
     "Checking the fan-out slices",
     () =>
-      checkFanout(io.cwd, selected.data, {
+      checkFanout(io.cwd, selected, {
         only: flags.positionals,
         trunkRef: flags.values.base ?? null,
         forge: forgeFor(io, flags.booleans.has("offline")).forge,
@@ -349,12 +409,12 @@ function status(argv: string[], io: Io): number {
   if (stuckAfterMs === 0 || (raw !== undefined && stuckAfterMs === null))
     return usage(io, "--stuck-after takes a duration such as 30m, 45m or 2h", STATUS_USAGE);
   const selected = pickFanout(io, flags.values);
-  if (!selected.ok) return failed(io, selected);
+  if (typeof selected === "number") return selected;
   const forge = forgeFor(io, flags.booleans.has("offline"));
   const result = progressFor(io).runSync(
     "Reading the fan-out status",
     () =>
-      fanoutStatus(io.cwd, selected.data, {
+      fanoutStatus(io.cwd, selected, {
         forge: forge.forge,
         forgeError: forge.error,
         stuckAfterMs,
@@ -365,9 +425,93 @@ function status(argv: string[], io: Io): number {
   return emit(io, ok(result.data), renderStatus);
 }
 
+type MadeSlice = CreateOutcome & { prompt: string; spawn: string };
+
+/** One made slice: what `create` did, then its WORKTREE line and the spawn that carries it. */
+const renderMade = (data: MadeSlice): string[] => [
+  `${data.created ? "created" : "kept"} worktree for slice ${data.slice} (${data.mode}): ${data.path}`,
+  `  branch ${data.branch} <- ${data.base} at ${short(data.head)}`,
+  ...(data.stack ? [`  stack ${data.stack.name}: ${data.stack.slices.join(" -> ")}`] : []),
+  `  scratch ${data.scratch}  (put it in the worker brief: temp files go here)`,
+  ...data.notes.map((note) => `note: ${note}`),
+  `WORKTREE: ${data.path}`,
+  data.spawn,
+];
+
+const findSliceMissing = (fanout: string, slice: string): FanoutError => ({
+  ok: false,
+  code: "invalid_input",
+  error: `${slice}: not a slice of fanout ${fanout}`,
+});
+
+/**
+ * `worktree create <slice>…`: each slice's worktree from the plan (`--name`
+ * names it or its file), or with `--branch` one unplanned slice through a
+ * one-slice plan (fanout-adhoc.ts). Stops at the first slice that fails,
+ * after printing the ones made.
+ */
+function createWorktrees(io: Io, slices: string[], flags: Record<string, string>): number {
+  const branch = flags.branch?.trim() || null;
+  if (branch === null && (flags.base !== undefined || flags.tier !== undefined))
+    return usage(io, "--base and --tier go with --branch (an unplanned slice)", WORKTREE_USAGE);
+  if (branch !== null && slices.length !== 1)
+    return usage(
+      io,
+      "--branch makes one unplanned slice; plan two or more in a plan file",
+      WORKTREE_USAGE,
+    );
+  if (branch !== null && flags.name !== undefined)
+    return usage(io, "pass --name <plan> or --branch <b>, not both", WORKTREE_USAGE);
+  if (flags.tier !== undefined && !(TIERS as readonly string[]).includes(flags.tier))
+    return usage(io, `--tier takes one of ${TIERS.join(", ")} (got ${flags.tier})`, WORKTREE_USAGE);
+  const actor = actorFromEnv(io.env);
+  let chosen: FanoutFile | number;
+  if (branch === null) chosen = pickFanout(io, flags);
+  else {
+    const adhoc = adhocPlan(io.cwd, {
+      slice: slices[0],
+      branch,
+      base: flags.base?.trim() || null,
+      tier: flags.tier ?? null,
+      actor,
+    });
+    chosen = adhoc.ok ? adhoc.data : failed(io, adhoc);
+  }
+  if (typeof chosen === "number") return chosen;
+  const made: MadeSlice[] = [];
+  for (const slice of slices) {
+    const result = createSliceWorktree(io.cwd, chosen, {
+      slice,
+      actor,
+      forge: () => forgeFor(io, false).forge,
+    });
+    if (!result.ok) {
+      if (!io.json) for (const line of made.flatMap(renderMade)) io.stdout(`${line}\n`);
+      return failed(io, result);
+    }
+    const found = chosen.slices.find((one) => one.id === slice);
+    if (!found) return failed(io, findSliceMissing(chosen.name, slice));
+    made.push({
+      ...result.data,
+      ...slicePointer(io.cwd, chosen, found, result.data.path, actor.host),
+    });
+  }
+  return made.length === 1
+    ? emit(io, ok(made[0]), renderMade)
+    : emit(io, ok({ worktrees: made }), (data: { worktrees: MadeSlice[] }) =>
+        data.worktrees.flatMap(renderMade),
+      );
+}
+
 async function worktree(argv: string[], io: Io): Promise<number> {
   const [action, ...rest] = argv;
-  const flags = parseFlags(rest, { name: "value", force: "boolean" });
+  const flags = parseFlags(rest, {
+    name: "value",
+    force: "boolean",
+    branch: "value",
+    base: "value",
+    tier: "value",
+  });
   if (typeof flags === "string") return usage(io, flags, WORKTREE_USAGE);
   if (action !== "create" && action !== "release")
     return usage(
@@ -375,33 +519,21 @@ async function worktree(argv: string[], io: Io): Promise<number> {
       action ? `unknown worktree action "${action}"` : "missing create or release",
       WORKTREE_USAGE,
     );
-  if (flags.positionals.length !== 1)
-    return usage(
-      io,
-      flags.positionals.length ? `unexpected argument ${flags.positionals[1]}` : "missing <slice>",
-      WORKTREE_USAGE,
-    );
-  if (action === "create" && flags.booleans.has("force"))
-    return usage(io, "--force applies to release only", WORKTREE_USAGE);
-  const selected = pickFanout(io, flags.values);
-  if (!selected.ok) return failed(io, selected);
-  const actor = actorFromEnv(io.env);
+  if (flags.positionals.length === 0) return usage(io, "missing <slice>", WORKTREE_USAGE);
   if (action === "create") {
-    const result = createSliceWorktree(io.cwd, selected.data, {
-      slice: flags.positionals[0],
-      actor,
-      forge: () => forgeFor(io, false).forge,
-    });
-    if (!result.ok) return failed(io, result);
-    return emit(io, ok(result.data), (data: CreateOutcome) => [
-      `${data.created ? "created" : "kept"} worktree for slice ${data.slice} (${data.mode}): ${data.path}`,
-      `  branch ${data.branch} <- ${data.base} at ${short(data.head)}`,
-      ...(data.stack ? [`  stack ${data.stack.name}: ${data.stack.slices.join(" -> ")}`] : []),
-      `  scratch ${data.scratch}  (put it in the worker brief: temp files go here)`,
-      ...data.notes.map((note) => `note: ${note}`),
-    ]);
+    if (flags.booleans.has("force"))
+      return usage(io, "--force applies to release only", WORKTREE_USAGE);
+    return createWorktrees(io, [...new Set(flags.positionals)], flags.values);
   }
-  const result = await releaseSliceWorktree(io.cwd, selected.data, {
+  if (flags.positionals.length !== 1)
+    return usage(io, `unexpected argument ${flags.positionals[1]}`, WORKTREE_USAGE);
+  for (const only of ["branch", "base", "tier"])
+    if (flags.values[only] !== undefined)
+      return usage(io, `--${only} applies to create only`, WORKTREE_USAGE);
+  const selected = pickFanout(io, flags.values);
+  if (typeof selected === "number") return selected;
+  const actor = actorFromEnv(io.env);
+  const result = await releaseSliceWorktree(io.cwd, selected, {
     slice: flags.positionals[0],
     force: flags.booleans.has("force"),
     actor,

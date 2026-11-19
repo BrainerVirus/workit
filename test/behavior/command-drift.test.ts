@@ -117,12 +117,13 @@ export const scan = (file: string, text: string): { key: string; shown: string }
       : [{ key: `${file}: ${call}`, shown: `${file}:${line}: ${call}: ${why}` }];
   });
 
-test("Given a skill text naming `workit fanout worktree create x --plan y`, When command-drift scans it, Then it fails naming the file and line", () => {
-  const text = "# Fan out\n\nMake the worktree:\n\n`workit fanout worktree create x --plan y`\n";
+test("Given a skill text naming `workit fanout worktree create x --plan-file y`, When command-drift scans it, Then it fails naming the file and line", () => {
+  const text =
+    "# Fan out\n\nMake the worktree:\n\n`workit fanout worktree create x --plan-file y`\n";
   expect(
     scan("packages/workit-core/skills/workit-fanout/SKILL.md", text).map((hit) => hit.shown),
   ).toEqual([
-    "packages/workit-core/skills/workit-fanout/SKILL.md:5: workit fanout worktree create x --plan y: unknown option --plan",
+    "packages/workit-core/skills/workit-fanout/SKILL.md:5: workit fanout worktree create x --plan-file y: unknown option --plan-file",
   ]);
 });
 

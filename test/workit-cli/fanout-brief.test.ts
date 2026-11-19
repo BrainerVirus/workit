@@ -1129,7 +1129,7 @@ test("fanout brief: given a Claude Code lead and a made worktree, when rendered,
     const { text } = await briefOn(cwd, "claude_code", "a");
     const lines = text.split("\n");
     expect(lines.filter((line) => line.startsWith("SPAWN: "))).toEqual([
-      'SPAWN: Agent subagent_type: "workit:implementer", model: "opus", effort: "high", run_in_background: true, description: "a", prompt: this brief, or its WORKER, TIER, TIMEBOX and WORKTREE lines plus "Run `workit fanout brief a` and follow it exactly."',
+      'SPAWN: Agent subagent_type: "workit:implementer", model: "opus", effort: "high", run_in_background: true, description: "a", prompt: this brief, or its WORKTREE, WORKER, TIER and TIMEBOX lines plus "Run `workit fanout brief a --name spawn` and follow it exactly."',
     ]);
     expect(text).toContain(
       '  verifier SPAWN: Agent subagent_type: "workit:verifier", model: "sonnet", effort: "medium", run_in_background: true',

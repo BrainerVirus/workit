@@ -8,7 +8,8 @@
 // plan appends an observed `fanout.planned` ledger row.
 //
 // Planning refuses (`invalid_input`) a brief with an empty or placeholder
-// field, unknown or cyclic dependencies and malformed scopes, and refuses
+// field, unknown or cyclic dependencies, malformed scopes and a slice branch
+// the workspace branch policy refuses (naming the allowed name), and refuses
 // (`blocked`) two slices that may write the same file unless that is
 // resolved: exactly one slice lists the file under `owns`, or the slices are
 // serialized by a dependency. Overlap is evaluated on the trunk's tracked
@@ -47,6 +48,7 @@ import {
   type LedgerActor,
 } from "./ledger";
 import { detectLanding, inSliceRun, sliceStart } from "./fanout-landed";
+import { validateBranchNameFor } from "./core/branch";
 import { CHECKS_FILE, lightCommand, loadCheckConfig, splitCommand } from "./check-config";
 import { heavyCommand } from "./core/heavy";
 import { resolveResourceSettings } from "./core/resources";
@@ -1053,7 +1055,7 @@ export function readFanout(cwd: string, name: string): FanoutResult<FanoutFile |
       );
 }
 
-function listFanouts(cwd: string): FanoutResult<FanoutFile[]> {
+export function listFanouts(cwd: string): FanoutResult<FanoutFile[]> {
   const dir = fanoutsDir(cwd);
   if (!dir.ok) return dir;
   let names: string[] = [];
@@ -1144,9 +1146,15 @@ export function selectFanout(
   if (name) {
     const read = readFanout(cwd, name);
     if (!read.ok) return read;
-    return read.data
-      ? { ok: true, data: read.data }
-      : fanoutFail("not_found", `no fanout plan named ${name}`, "workit fanout plan <plan.json>");
+    if (read.data) return { ok: true, data: read.data };
+    const names = listFanouts(cwd);
+    const known = names.ok ? names.data.map((plan) => plan.name) : [];
+    return fanoutFail(
+      "not_found",
+      `no fanout plan named ${name}${known.length ? ` (registered: ${known.join(", ")})` : " (none is registered)"}`,
+      `workit fanout plan <plan.json>, or pass the plan file as --name <path>/plan.json`,
+      { registered: known },
+    );
   }
   const all = listFanouts(cwd);
   if (!all.ok) return all;
@@ -1405,6 +1413,18 @@ export function planFanout(
     return fanoutFail("invalid_input", badBranches[0], "rename the branch in the plan", {
       problems: badBranches,
     });
+  // The branch policy `workit git branch` applies, before any worktree is made.
+  const refused = plan.slices.flatMap((slice) => {
+    const policy = validateBranchNameFor(cwd, slice.branch);
+    return policy.ok ? [] : [{ slice: slice.id, error: policy.error, fix: policy.correction }];
+  });
+  if (refused.length)
+    return fanoutFail(
+      "invalid_input",
+      `slice ${refused[0].slice}: ${refused[0].error}`,
+      `rename slice ${refused[0].slice}'s branch in the plan (${refused[0].fix}), then workit fanout plan again`,
+      { problems: refused.map((one) => `slice ${one.slice}: ${one.error}`) },
+    );
 
   const ref = trunkRef(cwd, plan.trunk);
   const tracked = ref

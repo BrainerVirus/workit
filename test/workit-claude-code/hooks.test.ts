@@ -383,7 +383,9 @@ test("Given implementer spawns with isolation or without a brief, When the launc
   });
   const denied = (bare.json as Specific).hookSpecificOutput;
   expect(denied?.permissionDecision, bare.stderr).toBe("deny");
-  expect(denied?.permissionDecisionReason).toContain("`workit fanout worktree create <slice>`");
+  expect(denied?.permissionDecisionReason).toContain(
+    "Retry as: workit fanout worktree create d --branch feat/d",
+  );
   // A runtime that cannot start fails open loudly: an empty stderr proves the fast path answered.
   const noRuntime = {
     WORKIT_CLAUDE_RUNTIME: "source",

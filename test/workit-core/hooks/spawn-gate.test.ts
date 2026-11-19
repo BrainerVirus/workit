@@ -1,19 +1,50 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
+import { FANOUT_TOKEN_FILE } from "@/packages/workit-core/src/hooks/worktree-confine";
 
 // #432: a workit:implementer spawn carries a Workit brief; #654: no spawn
 // type keeps host isolation.
 
 let configHome: ConfigHome;
 let cwd: string;
+/** A linked worktree whose git admin dir holds the fanout token, as `fanout worktree create` leaves it. */
+let made: string;
+/** A linked worktree made by hand (no token). */
+let plain: string;
+const git = (dir: string, ...args: string[]): string => {
+  const result = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout.trim();
+};
 beforeAll(() => {
   configHome = useConfigHome("wk-spawn-gate-");
   cwd = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wk-spawn-gate-cwd-")));
+  const repo = path.join(cwd, "repo");
+  mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  git(
+    repo,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "base",
+  );
+  made = path.join(cwd, "wt-made");
+  plain = path.join(cwd, "wt-plain");
+  git(repo, "worktree", "add", "-q", "--detach", made);
+  git(repo, "worktree", "add", "-q", "--detach", plain);
+  writeFileSync(path.resolve(made, git(made, "rev-parse", "--git-dir"), FANOUT_TOKEN_FILE), "t\n");
 });
 afterAll(() => {
   configHome.restore();
@@ -66,20 +97,60 @@ test("G an implementer spawn with isolation and no model, W PreToolUse runs, T i
   expect(updated?.model).toBeUndefined();
 });
 
-test("G an implementer spawn without a brief, W PreToolUse runs, T it is denied with the worktree command", () => {
-  const out = spawn({
+test("G an implementer spawn that names no worktree, W PreToolUse runs, T the deny is two lines whose Retry as is the ad-hoc worktree command for the slice word it names", () => {
+  for (const [input, slice] of [
+    [{ description: "Fix login", prompt: "fix the tests" }, "fix-login"],
+    [{ description: "d", prompt: "WORKER: api-v2\nGOAL: g\n" }, "api-v2"],
+    [{ description: "d", prompt: "Run `workit fanout brief ui` first" }, "ui"],
+  ] as const) {
+    const out = spawn({ subagent_type: "workit:implementer", model: "opus", ...input });
+    expect(out.hookSpecificOutput?.permissionDecision, slice).toBe("deny");
+    const reason = out.hookSpecificOutput?.permissionDecisionReason ?? "";
+    const lines = reason.split("\n");
+    expect(lines, reason).toHaveLength(2);
+    expect(lines[0]).toStartWith("workit spawn gate: ");
+    expect(lines[1]).toStartWith(
+      `Retry as: workit fanout worktree create ${slice} --branch feat/${slice} `,
+    );
+    expect(lines[1]).toContain("with the WORKTREE line it prints as the prompt's first line");
+    expect(reason.length).toBeLessThanOrEqual(400);
+  }
+});
+
+test("G a prompt that is only 'Your brief is the file <path>', W the file holds a made WORKTREE line, T the spawn runs; a file without one is denied", () => {
+  const brief = path.join(cwd, "brief.txt");
+  writeFileSync(
+    brief,
+    `MODE: new\nGOAL: g\nWORKTREE: ${made}  (made by \`workit fanout worktree create a\`; yours alone)\n`,
+  );
+  const runs = spawn({
     subagent_type: "workit:implementer",
-    prompt: "fix the tests",
-    model: "opus",
+    prompt: `Your brief is the file ${brief}.`,
   });
-  expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
-  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain(
-    "`workit fanout worktree create <slice>`",
-  );
-  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain(
-    "`workit fanout brief <slice>`",
-  );
-  expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("Even for one slice");
+  expect(runs.hookSpecificOutput?.permissionDecision).toBeUndefined();
+  const empty = path.join(cwd, "notes.txt");
+  writeFileSync(empty, "GOAL: g\n");
+  const denied = spawn({
+    subagent_type: "workit:implementer",
+    prompt: `Your brief is the file ${empty}`,
+  });
+  expect(denied.hookSpecificOutput?.permissionDecision).toBe("deny");
+});
+
+test("G a prompt naming a worktree's path with no WORKTREE line, W PreToolUse runs, T it runs for a worktree Workit made and is denied for one made by hand", () => {
+  const prompt = (dir: string) => `Work in ${dir}: fix the flaky test, then report.`;
+  expect(
+    spawn({ subagent_type: "workit:implementer", prompt: prompt(made) }).hookSpecificOutput
+      ?.permissionDecision,
+  ).toBeUndefined();
+  expect(
+    spawn({ subagent_type: "workit:implementer", prompt: prompt(plain) }).hookSpecificOutput
+      ?.permissionDecision,
+  ).toBe("deny");
+  expect(
+    spawn({ subagent_type: "workit:implementer", prompt: "Read /dev/zero and /etc then stop" })
+      .hookSpecificOutput?.permissionDecision,
+  ).toBe("deny");
 });
 
 test("G an implementer prompt that points at its brief (WORKER, TIER, TIMEBOX and WORKTREE lines, render the rest), W PreToolUse runs, T it is accepted as a brief", () => {
