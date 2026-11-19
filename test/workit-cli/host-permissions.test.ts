@@ -349,6 +349,49 @@ test("Given the lease verbs, Then Claude Code, Cursor and Codex allow `workit ch
   }
 });
 
+const TAG_RELEASE = [
+  "workit release tag v1.2.3",
+  "workit release tag v1.2.3 --wait --timeout 30m",
+  "workit release notes edit v1.2.3 --from-changelog",
+];
+
+test("Given `workit setup`, When an agent cuts a tag-driven release (#895), Then the Claude Code, Cursor and Codex allow rules and the auto-mode line cover release tag and notes edit, and no ask rule stops them", async () => {
+  const codexAllows = [
+    ...codexRulesText().matchAll(/pattern = \[([^\]]*)\],\n\s*decision = "allow"/gu),
+  ].map((m) => JSON.parse(`[${m[1]}]`) as string[]);
+  for (const command of TAG_RELEASE) {
+    expect(
+      CLAUDE_ALLOW.some((rule) => claudeMatches(rule, command)),
+      command,
+    ).toBe(true);
+    expect(
+      CLAUDE_ASK.filter((rule) => claudeMatches(rule, command)),
+      command,
+    ).toEqual([]);
+    expect(
+      CURSOR_ALLOW.some((rule) => cursorMatches(rule, command)),
+      command,
+    ).toBe(true);
+    const words = command.split(" ");
+    expect(
+      codexAllows.some((p) => p.every((w, i) => words[i] === w)),
+      command,
+    ).toBe(true);
+  }
+  const { env, settings } = sandbox();
+  writeFileSync(settings, "{}\n");
+  expect((await cli(["setup", "--hosts=claude-code", "--yes"], env)).code).toBe(0);
+  const value = JSON.parse(readFileSync(settings, "utf8"));
+  for (const command of TAG_RELEASE)
+    expect(
+      (value.permissions.allow as string[]).some((rule) => claudeMatches(rule, command)),
+      command,
+    ).toBe(true);
+  const [covered, excluded] = (value.autoMode.allow.at(-1) as string).split("Does NOT cover ");
+  expect(covered).toContain("`workit release`");
+  expect(excluded).not.toMatch(/release tag|notes edit/u);
+});
+
 test("Given a delivery call, Then the Claude Code allow rules match it and a bypass flag meets an ask rule", () => {
   for (const command of [
     "workit pr merge --pr 7",

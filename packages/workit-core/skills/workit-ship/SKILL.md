@@ -13,7 +13,7 @@ and report the grant it names. PR creation does not start babysitting (a
 `green` or `merged` endpoint does), and a babysit request does not authorize
 merge: Stop at PR-ready (`babysit` `ready`) unless the user, or `merged` on a
 request that named no endpoint, set merge. `release publish` only if asked.
-Release: `workit release start <v>`, commits, `finish` (references/release.md).
+Release: `workit release start <v>`, commits, `finish`; a repo that releases by pushing a tag: `workit release tag v<v>` (references/release.md).
 
 **Babysit endpoints.** After opening the PR keep babysitting without asking
 until CI is green, every thread is resolved and the verification gate is met;
