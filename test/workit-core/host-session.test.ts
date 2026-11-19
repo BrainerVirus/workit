@@ -21,6 +21,7 @@ import {
   realHostSession,
   recordIssuedSession,
   sessionClaimRefusal,
+  verdictCommand,
 } from "@/packages/workit-core/src/host-session";
 import { actorFromEnv } from "@/packages/workit-core/src/ledger";
 
@@ -417,4 +418,11 @@ test("Given a token-bound id, When a legacy in-repo record for the same id is mi
     restoreState();
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("verdictCommand names --cwd bare when safe and single-quoted otherwise, so $ and quotes stay literal", () => {
+  const line = (cwd: string) => verdictCommand({ branch: "b", judge: "verifier", cwd });
+  expect(line("/home/u/wt/x")).toContain("--cwd /home/u/wt/x --kind");
+  expect(line('/home/u/my $HOME `x` "q"')).toContain("--cwd '/home/u/my $HOME `x` \"q\"' --kind");
+  expect(line("/home/u/it's")).toContain(`--cwd '/home/u/it'\\''s' --kind`);
 });

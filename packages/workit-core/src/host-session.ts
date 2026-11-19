@@ -229,6 +229,10 @@ export function judgeBranch(cwd: string): string | null {
   return branch && !isProtectedTarget(cwd, branch) ? branch : null;
 }
 
+/** Single-quote for a POSIX shell, as the CLI's shellQuote does: `$`, backticks and `"` stay literal. */
+const shellQuote = (value: string): string =>
+  /^[\w@%+=:,./-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+
 /**
  * The exact verdict command a verifier or reviewer runs, filled in (#271
  * S2a). `--token=` keeps a token from ever parsing as a flag. Hosts whose
@@ -251,9 +255,7 @@ export function verdictCommand(options: {
         : "<live|unit|review>";
   return [
     "workit ledger verdict <verified|failed|blocked>",
-    options.cwd
-      ? `--cwd ${/^[\w@%+=:,./-]+$/u.test(options.cwd) ? options.cwd : JSON.stringify(options.cwd)}`
-      : null,
+    options.cwd ? `--cwd ${shellQuote(options.cwd)}` : null,
     `--kind ${kind}`,
     `--branch ${options.branch ?? "<branch>"}`,
     options.session ? `--session ${options.session}` : null,
