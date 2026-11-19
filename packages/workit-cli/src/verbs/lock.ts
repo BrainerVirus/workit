@@ -1,8 +1,9 @@
 // `workit lock` (issue #325): the machine-wide heavy-check lease under its
-// own name. `status` shows who holds it and who is queued (#508), with each
-// holder's time left and each waiter's estimated wait from the ledger's last
-// measured runs (#326), first dropping what no longer holds or waits and
-// marking stuck holders (#608);
+// own name. `status` shows who holds it and who is queued (#508) in serving
+// order (shortest measured run first, with aging; #884), with each holder's
+// time left, each waiter's own last measured run and its estimated wait from
+// the ledger's last measured runs (#326), first dropping what no longer holds
+// or waits and marking stuck holders (#608);
 // `reap` frees a stuck holder's slot, `cancel` drops queued waiters, `wait`
 // waits for a free slot without taking it, `run` is `workit check --heavy`,
 // and `heavy` lists, tests and extends which commands the shell hook gates
@@ -29,7 +30,7 @@ import {
 import {
   DEFAULT_MAX_HOLD_MS,
   describeHolder,
-  fairOrder,
+  expectedRun,
   formatWait,
   leaseDir,
   leaseQueue,
@@ -39,6 +40,7 @@ import {
   parseWait,
   readGrants,
   resolveResourceSettings,
+  servingOrder,
   SILENT_MS,
   admittedHolders,
   formatBytes,
@@ -59,6 +61,7 @@ import {
   ledgerDurations,
   remainingNote,
   type DurationOf,
+  type WaitEstimate,
 } from "@workit-dev/core/src/core/heavy-eta";
 import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
 import { emit, fail, ok, type Io } from "../output";
@@ -99,30 +102,60 @@ function budgetLine(budget: Budget, slots: SlotState[], admitted: AdmittedEntry[
 
 const held = (slots: SlotState[]) => slots.filter((slot) => slot.holder && !slot.stale);
 
-/** The live waiters in serving order (round-robin per session). */
-const servingOrder = (dir: string, slots: SlotState[], queue: QueueEntry[]): QueueEntry[] =>
-  fairOrder(
+/** The live waiters in serving order (shortest measured run first, aged waiters ahead; #884). */
+const waitingOrder = (
+  dir: string,
+  slots: SlotState[],
+  queue: QueueEntry[],
+  agingMs: number,
+  now = Date.now(),
+): QueueEntry[] =>
+  servingOrder(
     queue.filter((entry) => !entry.stale),
     held(slots).flatMap((slot) => (slot.holder ? [slot.holder] : [])),
-    readGrants(dir),
+    readGrants(dir, now),
+    now,
+    agingMs,
   );
 
 type Estimates = {
   /** Each live holder's time left from its check's last measured run (null: never measured). */
   slots: Array<{ slot: number; remainingMs: number | null; note: string | null }>;
-  /** Each waiter's estimated wait, in serving order. */
-  queue: Array<{ position: number; waitMs: number | null; unmeasured: string[]; note: string }>;
+  /** Each waiter's own last measured run and estimated wait, in serving order. */
+  queue: Array<{
+    position: number;
+    /** Its own check's last measured run in its repo; null: never measured. */
+    runMs: number | null;
+    waitMs: number | null;
+    unmeasured: string[];
+    note: string;
+  }>;
 };
+
+/**
+ * "its last run took 8s, estimated wait ~3m" from the waiter's own check's
+ * history, or "no measured run" for it alone; a wait that cannot be
+ * estimated (a holder or a waiter ahead never measured) is left out (#884).
+ */
+function waiterNote(runMs: number | null, estimate: WaitEstimate): string {
+  const own = runMs === null ? "no measured run" : `its last run took ${formatWait(runMs)}`;
+  return estimate.ms === null ? own : `${own}, ${describeEstimate(estimate)}`;
+}
 
 /** Time left per holder and the estimated wait per waiter (#326). */
 function estimates(
   slots: SlotState[],
   waiting: QueueEntry[],
   count: number,
-  durationOf: DurationOf,
+  ledger: DurationOf,
   now = Date.now(),
 ): Estimates {
   const holders = held(slots).flatMap((slot) => (slot.holder ? [slot.holder] : []));
+  // A waiter's own ticket carries its measured run from when it queued; the ledger fills the rest.
+  const ticketed = new Map<object, number | null>(
+    waiting.map((entry) => [entry.holder, expectedRun(entry.record)]),
+  );
+  const durationOf: DurationOf = (holder) => ticketed.get(holder) ?? ledger(holder);
   return {
     slots: held(slots).flatMap((slot) => {
       if (!slot.holder) return [];
@@ -136,19 +169,21 @@ function estimates(
         },
       ];
     }),
-    queue: waiting.map((_, index) => {
+    queue: waiting.map((entry, index) => {
       const estimate = estimateWait({
         slots: count,
         holders,
-        ahead: waiting.slice(0, index).map((entry) => entry.holder),
+        ahead: waiting.slice(0, index).map((ahead) => ahead.holder),
         durationOf,
         now,
       });
+      const runMs = durationOf(entry.holder);
       return {
         position: index + 1,
+        runMs,
         waitMs: estimate.ms,
         unmeasured: estimate.ms === null ? estimate.unmeasured : [],
-        note: describeEstimate(estimate),
+        note: waiterNote(runMs, estimate),
       };
     }),
   };
@@ -167,7 +202,7 @@ function slotLines(slots: SlotState[], waiting: QueueEntry[], eta: Estimates): s
         : `  slot ${slot.slot}: free`,
     ),
     ...(stuck ? ["  a stuck? holder's slot is freed by: workit lock reap [<pid>]"] : []),
-    `queue: ${waiting.length ? `${waiting.length} waiting, round-robin per session` : "empty"}`,
+    `queue: ${waiting.length ? `${waiting.length} waiting, shortest measured run first (aged waiters ahead; round-robin per session on ties)` : "empty"}`,
     ...waiting.map(
       (entry, index) => `  ${index + 1}. ${describeHolder(entry.holder)}; ${eta.queue[index].note}`,
     ),
@@ -180,7 +215,7 @@ async function status(io: Io): Promise<number> {
   const dir = leaseDir(io.env);
   const pruned = pruneLease(dir, settings.slots);
   const slots = leaseSlots(dir, settings.slots, {}, maxHold);
-  const waiting = servingOrder(dir, slots, leaseQueue(dir));
+  const waiting = waitingOrder(dir, slots, leaseQueue(dir), settings.budget.agingMs);
   const eta = estimates(slots, waiting, settings.slots, ledgerDurations());
   const admitted = admittedHolders(dir);
   const budget = settings.budget;
