@@ -708,7 +708,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
   if (skipChangelog === "")
     return usage(io, "--no-changelog needs the reason this PR has no entry", CREATE_USAGE);
   const entry =
-    flags.values.changelog === undefined ? null : changelogEntry(flags.values.changelog, "");
+    flags.values.changelog === undefined ? null : changelogEntry(flags.values.changelog);
   if (entry && skipChangelog !== null)
     return usage(io, "pass --changelog or --no-changelog, not both", CREATE_USAGE);
   if (entry && "error" in entry) return usage(io, entry.error, CREATE_USAGE);
@@ -983,16 +983,12 @@ const ISSUE_WORD = /^(?:#?\d+|[A-Za-z][A-Za-z0-9_]*-\d+|[\w.-]+\/[\w.-]+#\d+|htt
 const CHANGELOG_SECTIONS = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
 
 /** `--changelog "<Section>: <entry>"`: a Keep a Changelog section and its bullet. */
-function changelogEntry(
-  raw: string,
-  fallback: string,
-): { section: string; text: string } | { error: string } {
+function changelogEntry(raw: string): { section: string; text: string } | { error: string } {
   const match = /^\s*([A-Za-z]+)\s*:\s*(.+?)\s*$/su.exec(raw);
   const section = CHANGELOG_SECTIONS.find(
     (name) => name.toLowerCase() === match?.[1]?.toLowerCase(),
   );
   if (section && match) return { section, text: match[2] };
-  if (fallback && raw.trim()) return { section: fallback, text: raw.trim() };
   return {
     error: `--changelog takes "<Section>: <entry>" with a section of ${CHANGELOG_SECTIONS.join(", ")} (got ${JSON.stringify(raw)})`,
   };
@@ -1000,8 +996,9 @@ function changelogEntry(
 
 /**
  * Write the missing Unreleased entry, commit it alone and push it: the steps
- * the changelog_required refusal used to hand back. 0, or the exit code of
- * the step that failed (its own refusal already printed).
+ * the changelog_required refusal used to hand back. 0, or a refusal that
+ * says what the failed step left behind: the edited changelog when the
+ * commit is refused, the local commit when the push is.
  */
 async function addChangelogEntry(
   io: Io,
@@ -1024,9 +1021,30 @@ async function addChangelogEntry(
   const subject = `docs(${scope ? `${scope}` : "changelog"}): add the changelog entry`;
   const quiet: Io = { ...io, cwd: top, json: false, stdout: () => {} };
   const committed = await prCreateDeps.git(["commit", "-m", subject, "--", gate.file], quiet);
-  if (committed !== 0) return committed;
+  if (committed !== 0)
+    return emit(
+      io,
+      fail(
+        "failed",
+        `changelog: the commit of the entry was refused (above), so ${gate.file} is left edited and uncommitted with "${entry.section}: ${entry.text}"; nothing was pushed and no PR was opened`,
+        {
+          unblock: `fix what the commit refusal names, then workit git commit -m ${shellQuote(subject)} -- ${shellQuote(gate.file)}, workit git push, and workit pr create without --changelog`,
+        },
+      ),
+    );
   const pushed = await prCreateDeps.git(["push"], quiet);
-  if (pushed !== 0) return pushed;
+  if (pushed !== 0)
+    return emit(
+      io,
+      fail(
+        "failed",
+        `changelog: the push was refused (above), so the entry is committed locally only (${subject}, at HEAD of ${top}); no PR was opened`,
+        {
+          unblock:
+            "fix what the push refusal names, then workit git push and workit pr create without --changelog",
+        },
+      ),
+    );
   if (!io.json)
     io.stdout(
       `changelog: added "${entry.section}: ${entry.text}" to ${gate.file}, committed (${subject}) and pushed\n`,

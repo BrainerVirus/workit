@@ -364,6 +364,33 @@ test("Given changelog create and no entry, When pr create --changelog 'Fixed: x'
   expect(opened(routes.calls)).toHaveLength(1);
 });
 
+test("Given --changelog and a refused commit, When pr create runs, Then it says the changelog is left edited and uncommitted and opens nothing", async () => {
+  const { repo, runner } = setup({ changelog: "create" });
+  const before = repo.git("rev-parse", "HEAD");
+  prCreateDeps.git = async (argv, io) => (argv[0] === "commit" ? 1 : originalGit(argv, io));
+  const result = await create(repo, "--changelog", "Fixed: x no longer crashes", "--json");
+  expect(result.code).not.toBe(0);
+  const body = result.json();
+  expect(body.error).toContain("CHANGELOG.md is left edited and uncommitted");
+  expect(body.unblock).toContain("workit git commit -m 'docs(changelog): add the changelog entry'");
+  expect(repo.git("rev-parse", "HEAD")).toBe(before);
+  expect(repo.git("status", "--porcelain")).toContain("CHANGELOG.md");
+  expect(opened((runner as unknown as { calls: Call[] }).calls)).toHaveLength(0);
+});
+
+test("Given --changelog and a refused push, When pr create runs, Then it says the entry is committed locally only and opens nothing", async () => {
+  const { repo, runner } = setup({ changelog: "create" });
+  repo.git("config", "user.name", "t");
+  repo.git("config", "user.email", "t@t");
+  repo.git("config", "commit.gpgsign", "false");
+  prCreateDeps.git = async (argv, io) => (argv[0] === "push" ? 1 : originalGit(argv, io));
+  const result = await create(repo, "--changelog", "Fixed: x no longer crashes", "--json");
+  expect(result.code).not.toBe(0);
+  expect(result.json().error).toContain("the entry is committed locally only");
+  expect(repo.git("log", "-1", "--format=%s")).toBe("docs(changelog): add the changelog entry");
+  expect(opened((runner as unknown as { calls: Call[] }).calls)).toHaveLength(0);
+});
+
 test("Given changelog create and no entry, When pr create runs without --changelog, Then the refusal's Retry as is the same call plus --changelog", async () => {
   const { repo } = setup({ changelog: "create" });
   const result = await create(repo);
