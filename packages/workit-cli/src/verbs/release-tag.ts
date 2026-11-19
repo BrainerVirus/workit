@@ -4,7 +4,8 @@
 // the push reuses `workit git push --release` in process, so its grant,
 // identity and remote-tip checks apply unchanged. No forge release is
 // created here: the release workflow the tag starts publishes it, and
-// `--wait` watches that workflow and verifies the release.
+// `--wait` first waits for pending CI on the trunk tip (#912), then watches
+// that workflow and verifies the release.
 import { requireGrant } from "@workit-dev/core/src/autonomy";
 import { pushTarget } from "@workit-dev/core/src/core/remotes";
 import {
@@ -36,6 +37,7 @@ import {
   parseFlags,
   usage,
 } from "./forge-common";
+import { pollBranchChecks } from "./ci-wait";
 
 const TAG_USAGE =
   "workit release tag <vX.Y.Z> [--at <ref>] [--wait [--timeout 30m] [--interval 30s]] [--dry-run] [--json]";
@@ -157,7 +159,7 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
   if (wait)
     announce(
       io,
-      `release tag ${tag} --wait can take up to ${Math.round(timeoutMs / 60_000)}m; ${BACKGROUND_HINT}`,
+      `release tag ${tag} --wait waits for pending CI on the trunk, then for the release workflow, up to ${Math.round(timeoutMs / 60_000)}m each; ${BACKGROUND_HINT}`,
     );
   const planned = progressFor(io).runSync(
     "Fetching the trunk and checking the tag",
@@ -178,13 +180,33 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
     if (!connected.ok) return forgeFail(io, connected, { tag, step: "ci" });
     resolved = connected.data;
     const forge = connected.data.forge;
-    const checks = progressFor(io).runSync(
-      `Reading CI on ${plan.remote}/${plan.production}`,
-      () => forge.branchChecks(plan.production),
-      (r) => (r.ok ? "done" : "failed"),
-    );
-    if (!checks.ok) return forgeFail(io, checks, { tag, step: "ci" });
-    const verdict = releaseCiVerdict(checks.data, plan);
+    const trunk = `${plan.remote}/${plan.production}`;
+    // --wait: pending (or not yet reported) CI on the target is waited out first.
+    const started = forgeDeps.now();
+    const read =
+      wait && !dryRun
+        ? await progressFor(io).run(
+            `Waiting for CI on ${trunk}`,
+            async () => {
+              const polled = await pollBranchChecks(connected.data, plan.production, {
+                sha: plan.target,
+                started,
+                deadline: started + timeoutMs,
+                intervalMs,
+              });
+              return polled.ok ? { ok: true as const, data: polled.data.checks } : polled;
+            },
+            (r) => (r.ok ? "done" : "failed"),
+          )
+        : progressFor(io).runSync(
+            `Reading CI on ${trunk}`,
+            () => forge.branchChecks(plan.production),
+            (r) => (r.ok ? "done" : "failed"),
+          );
+    if (!read.ok) return forgeFail(io, read, { tag, step: "ci" });
+    const checks = read;
+    const rerun = `workit release tag ${tag}${flags.values.at ? ` --at ${flags.values.at}` : ""}`;
+    const verdict = releaseCiVerdict(checks.data, plan, rerun);
     if (!verdict.green)
       return emit(
         io,

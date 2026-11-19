@@ -27,7 +27,7 @@ const COMMENT_USAGE = "workit issue comment <n> --body-file <f|-> [--repo <owner
 const CLOSE_USAGE =
   "workit issue close <n> --reason completed|not-planned [--comment <text> | --comment-file <f|->] [--repo <owner/name>] [--json]";
 const CREATE_USAGE =
-  "workit issue create --title <t> --body-file <f|-> [--label <l>]… [--repo <owner/name>] [--json]";
+  "workit issue create --title <t> --body-file <f|-> [--label <l> | --add-label <l>]… [--repo <owner/name>] [--json]";
 const USAGE = [VIEW_USAGE, COMMENT_USAGE, CLOSE_USAGE, CREATE_USAGE].join("\n");
 
 /** `--x-file <path>` (relative to the shell's directory, then --cwd) or `-` for stdin. */
@@ -170,6 +170,7 @@ async function create(argv: string[], io: Io): Promise<number> {
     title: "value",
     "body-file": "value",
     label: "list",
+    "add-label": "list",
     repo: "value",
   });
   if (typeof flags === "string") return usage(io, flags, CREATE_USAGE);
@@ -186,7 +187,8 @@ async function create(argv: string[], io: Io): Promise<number> {
   const result = createIssue(io.cwd, api.data, {
     title,
     body: read.text,
-    labels: flags.lists.label ?? [],
+    // `--add-label` as `pr create` takes it (#912).
+    labels: [...(flags.lists.label ?? []), ...(flags.lists["add-label"] ?? [])],
     actor: actorFromEnv(io.env),
   });
   if (!result.ok) return forgeFail(io, result);

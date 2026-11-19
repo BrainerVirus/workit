@@ -85,7 +85,6 @@ test.each([
     'unknown git subcommand "status"',
     "run git status --short directly",
   ],
-  [["ci", "wait", "--ref", "main"], "unknown option --ref", "workit ci wait --branch <branch>"],
   [
     ["task", "list", "--limit", "5"],
     "unknown option --limit",

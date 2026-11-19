@@ -201,7 +201,7 @@ test("ci wait: checks still pending at the timeout exit 4 (pending) with determi
     ok: false,
     code: "pending",
     data: { state: "in_progress", reason: "checks_pending", polls: 4, elapsedMs: 120_000 },
-    unblock: "workit ci wait --pr 12",
+    unblock: "Retry as: workit ci wait --pr 12",
   });
   expect(delays).toEqual([30_000, 45_000, 45_000]);
   const usage = await run(["ci", "wait", "--interval", "0s"], repo.cwd);

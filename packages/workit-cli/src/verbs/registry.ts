@@ -741,7 +741,7 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "create",
         usage:
-          "workit issue create --title <t> --body-file <f|-> [--label <l>]… [--repo <owner/name>]",
+          "workit issue create --title <t> --body-file <f|-> [--label|--add-label <l>]… [--repo <owner/name>]",
         summary: "Open an issue (a behavioural rule or follow-up goes here, not to host memory)",
       },
     ],
@@ -760,11 +760,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "wait",
         usage:
-          "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
-        summary: "Wait for CI on the PR head; exit 0 green, 1 red, 3 blocked, 4 still pending",
-        flagHints: {
-          ref: "workit ci wait --branch <branch> waits for a branch's CI (--ref belongs to ci rerun)",
-        },
+          "workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
+        summary:
+          "Wait for CI on the PR head, or on a branch's push runs when it has no PR (a trunk after a merge); exit 0 green, 1 red, 3 blocked, 4 still pending",
       },
       {
         name: "rerun",
@@ -781,6 +779,7 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     examples: [
       "workit ci wait --timeout 30m",
+      "workit ci wait --branch main",
       "workit ci logs --failed",
       "workit ci rerun --failed --reason flake",
       "workit ci rerun --ref main --failed --reason flake",
@@ -915,7 +914,7 @@ export const VERBS: readonly VerbEntry[] = [
         usage:
           "workit release tag <vX.Y.Z> [--at <ref>] [--wait [--timeout 30m] [--interval 30s]] [--dry-run]",
         summary:
-          "Tag-driven release (goreleaser and similar): under the release grant, tag the fetched remote trunk (or --at a commit on it) once its CI is green, the tag is new and the changelog has the version's section; push it (remote tip verified) without moving a local branch; --wait watches the release workflow and verifies the forge release",
+          "Tag-driven release (goreleaser and similar): under the release grant, tag the fetched remote trunk (or --at a commit on it) once its CI is green, the tag is new and the changelog has the version's section; push it (remote tip verified) without moving a local branch; --wait first waits for pending CI on the trunk, then watches the release workflow and verifies the forge release",
       },
     ],
     examples: [

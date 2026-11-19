@@ -283,6 +283,36 @@ test("issue create (GitHub): title, body and labels reach the forge; issue.creat
   expect(rows(repo.cwd, "issue.created")[0]).toMatchObject({ issue: 44, labels: ["agent"] });
 });
 
+test("Given `workit issue create --add-label bug`, When it runs, Then the label is applied as --label would (#912)", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "POST repos/o/r/issues": JSON.stringify({
+      number: 45,
+      html_url: "https://github.com/o/r/issues/45",
+    }),
+  });
+  writeFileSync(path.join(repo.cwd, "body.md"), "it broke");
+  const result = await run(
+    [
+      "issue",
+      "create",
+      "--title",
+      "fix: x",
+      "--body-file",
+      "body.md",
+      "--add-label",
+      "bug",
+      "--json",
+    ],
+    repo.cwd,
+  );
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(writes(runner.calls)).toEqual([
+    ["POST", "repos/o/r/issues", { title: "fix: x", body: "it broke", "labels[]": "bug" }],
+  ]);
+  expect(rows(repo.cwd, "issue.created")[0]).toMatchObject({ issue: 45, labels: ["bug"] });
+});
+
 test("issue create --repo: another repository on the same host is used, and a malformed one is refused", async () => {
   const { repo, runner } = setup("github", {
     ...githubBase(),
