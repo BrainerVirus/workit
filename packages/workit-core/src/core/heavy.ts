@@ -593,7 +593,16 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
   if (single) {
     // A trailing `[2>&1] | tail|head …` is dropped (#912): piped, `workit check`'s
     // exit code would be the filter's (the exit-pipe gate denies it), and its output is bounded.
-    const rewrite = leaseRewrite(command.trim().replace(TAIL_FILTER, ""));
+    // A file the filter wrote to stays on the unpiped call (#913): `bun test > out.txt`.
+    const rewrite = leaseRewrite(
+      command.trim().replace(TAIL_FILTER, (_, merged = "", redirects = "") => {
+        // Only the filter's standard output (no fd, or fd 1) went to the file.
+        const out = [...redirects.matchAll(/(\d*)(>>?)\s*(\S+)/gu)].findLast(
+          ([, fd]) => fd === "" || fd === "1",
+        );
+        return out ? ` ${out[2]} ${out[3]}${merged}` : "";
+      }),
+    );
     return rewrite
       ? { kind: "rewrite", command: rewrite, reason: single.reason }
       : { kind: "none" };
@@ -662,8 +671,12 @@ export function workitOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
   return false;
 }
 
-/** A trailing `| tail …` or `| head …` with plain arguments, and a `2>&1` before it. */
-const TAIL_FILTER = /(?:\s+2>&1)?\s*\|\s*(?:tail|head)(?:\s+[\w=.+-]+)*\s*$/u;
+/**
+ * A trailing `| tail …` or `| head …` with plain arguments, a `2>&1` before
+ * it and `[n]>`/`[n]>>` files after it: groups are that `2>&1` and the redirects.
+ */
+const TAIL_FILTER =
+  /(\s+2>&1)?\s*\|\s*(?:tail|head)(?:\s+(?!\d*>)[\w=.+-]+)*((?:\s*\d*>>?\s*[\w./~-]+)*)\s*$/u;
 
 /** Leading `VAR=value` words, kept in front of `workit` so the command still sees them. */
 const ASSIGNMENTS = /^\s*((?:[A-Za-z_]\w*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"])*\s+)*)/u;

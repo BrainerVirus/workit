@@ -142,17 +142,27 @@ function runsByGlob(command: string, name: string): boolean {
       .replace(/^(?:npm|pnpm|yarn|bun):/u, ""),
   );
   if (/\bpnpm\b/u.test(command) && tokens.some((token) => /^\/.+\/$/u.test(token))) return true;
-  return tokens
-    .filter((token) => token.includes("*"))
-    .some((glob) =>
-      new RegExp(
-        `^${glob
-          .split(/\*+/u)
-          .map((part) => part.replaceAll(/[.+?^${}()|[\]\\]/gu, "\\$&"))
-          .join(".*")}$`,
-        "u",
-      ).test(name),
-    );
+  return tokens.filter((token) => token.includes("*")).some((glob) => globMatches(glob, name));
+}
+
+/**
+ * Whether `name` matches `glob`, where only `*` is special. Each literal part
+ * between stars takes its leftmost place after the one before (#918): no
+ * backtracking, so a many-star glob stays cheap.
+ */
+function globMatches(glob: string, name: string): boolean {
+  const parts = glob.split("*");
+  const first = parts[0];
+  const last = parts.at(-1) ?? "";
+  const end = name.length - last.length;
+  if (end < first.length || !name.startsWith(first) || !name.endsWith(last)) return false;
+  let at = first.length;
+  for (const part of parts.slice(1, -1)) {
+    const found = name.indexOf(part, at);
+    if (found < 0 || found + part.length > end) return false;
+    at = found + part.length;
+  }
+  return true;
 }
 
 type GoDirective = { verb: string; args: string; indirect: boolean };

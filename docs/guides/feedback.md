@@ -21,9 +21,16 @@ host, the platform, the failing verb (`--verb`) and its exit text
   `app-123`) and the workspace's org, repository and workspace names are
   replaced with `<url>`, `<email>`, `<host>`, `<path>`, `<branch>`,
   `<ticket>` and `<name>`. The tracker's own URLs stay. Tokens and passwords
-  are always masked. `--include-workspace`
+  are always masked, inside a kept tracker URL too. Workit's own paths
+  (`packages/workit-cli/…`, `@workit-dev/cli/…`) and public names such as
+  `npmjs.com` and `socket.io` stay. `--include-workspace`
   keeps the workspace details; use it only when you want them in a public
   issue.
+
+  Redaction matches patterns, so it can miss a single-label host
+  (`build-server:8080`), an unknown domain (`foo.acme`), a single-label
+  email (`ops@acme`) or a bare user name. Read the whole draft before
+  `--post`; the printed draft says so too.
 - **Searches for a duplicate.** It lists up to three open issues that match
   the title, each with the `--comment <n>` that adds the report to it
   instead of opening a new one.
@@ -46,8 +53,10 @@ from `gh auth token --user <login>` and is never printed, so the login must
 be signed in to gh (`gh auth login`) on github.com.
 
 The hosts ask you before the verb runs. Claude Code asks on every spelling
-(its hook also reads `workit --cwd <dir> feedback` and `env X=1 workit
-feedback`); Codex asks on `workit feedback …` and refuses any other spelling
+(its hook also reads `workit --cwd <dir> feedback`, `workit --session=<id>
+feedback`, `env X=1 workit feedback`, `npx @workit-dev/cli feedback`,
+`bunx @workit-dev/cli feedback`, `bash -c "workit feedback …"` (behind `env`,
+`sudo`, `timeout`, `nohup` or `command` too) and `eval 'workit feedback …'`); Codex asks on `workit feedback …` and refuses any other spelling
 with the plain one; OpenCode gets shell ask rules from `workit setup`; Cursor
 never allows it, so its own approval asks. Pi has no permission layer: there
 the agent must have your yes before it passes `--post`.

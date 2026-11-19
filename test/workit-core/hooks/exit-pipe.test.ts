@@ -104,6 +104,15 @@ test.each([
   ["workit ci wait 2>&1 | grep -v ok | tail -3", "tail", "workit ci wait"],
   ["(workit ci wait) | tail -3", "tail", "workit ci wait"],
   ["{ workit ci wait; } 2>&1 | head -3", "head", "workit ci wait"],
+  ["(workit ci wait) | tail", "tail", "workit ci wait"],
+  ["(workit ci wait) 2>&1 | tail -3", "tail", "workit ci wait"],
+  ["(workit ci wait) > /dev/stderr | tail -3", "tail", "workit ci wait"],
+  ["ls | (workit check test) | tee log | head", "head", "workit check test"],
+  ["(ls) | wc -l; (workit ci wait) | tail -1", "tail", "workit ci wait"],
+  ["( (workit check test) ) | tail", "tail", "workit check test"],
+  ["(cd x && (workit check test)) | tail -5", "tail", "workit check --cwd x test"],
+  ["{ (workit check test); } | tail", "tail", "workit check test"],
+  ["( { workit check test; } ) | tail", "tail", "workit check test"],
 ])(
   "Given `%s`, When the gate reads it, Then it denies with the unpiped call",
   (command, filter, retry) => {
@@ -129,6 +138,12 @@ test.each([
   ["set -euo pipefail; workit check test 2>&1 | tail -20"],
   ["(workit ci wait) && tail -3 log.txt"],
   ["(workit ci wait); tail -3 log.txt"],
+  // #913: a `) |` elsewhere in the text, or a `$( … )` close, is not this group's pipe.
+  ["(ls) | wc -l; (workit ci wait); echo x | tail -1"],
+  ["(cd pkg && workit check test); echo $(git rev-parse HEAD) | head -c 7"],
+  ['echo "(x) | y"; (workit ci wait); ls | tail'],
+  ["(workit ci wait) || tail -3 log.txt"],
+  ["(workit ci wait) && ls | tail -3"],
 ])("Given `%s`, When the gate reads it, Then it leaves it alone", (command) => {
   expect(exitPipeGate(command)).toBeNull();
 });
@@ -195,11 +210,23 @@ test("Given `workit ci wait | tail -5` on OpenCode, When permission.evaluate run
 
 test("Given a heavy command shaped with `| tail`, When the heavy gate routes it, Then its call passes the pipe gate (no second deny)", () => {
   const root = repo();
-  for (const command of ["bun test 2>&1 | tail -50", "npx jest | head -20"]) {
+  for (const command of [
+    "bun test 2>&1 | tail -50",
+    "npx jest | head -20",
+    "bun test | tail -50 > out.txt",
+  ]) {
     const plan = heavyGate(root, command, { host: "claude_code" });
     expect(plan.kind, command).toBe("rewrite");
     const routed = plan.kind === "rewrite" ? plan.command : "";
     expect(routed, command).not.toMatch(/\|\s*(?:tail|head)/u);
     expect(exitPipeGate(routed), command).toBeNull();
   }
+});
+
+test("Given `bun test | tail -50 > out.txt` in Claude Code auto mode, When PreToolUse runs, Then the one deny's Retry as passes the pipe gate", () => {
+  const out = claude(repo(), "bun test | tail -50 > out.txt", "auto");
+  expect(out.permissionDecision).toBe("deny");
+  const retry = retryOf(out.permissionDecisionReason).replace(/^Retry as: /u, "");
+  expect(retry).toBe("workit check --heavy -- bun test > out.txt");
+  expect(exitPipeGate(retry)).toBeNull();
 });

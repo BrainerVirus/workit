@@ -101,8 +101,55 @@ const hasWordsInOrder = (words: readonly string[], needle: readonly string[]): b
 const isBypass = (word: string): boolean =>
   WORKIT_BYPASS_FLAGS.some((flag) => word === flag || word.startsWith(`${flag}=`));
 
-/** `workit`, `workit-cli`, or either by path. */
-const isWorkitWord = (word: string): boolean => /^(?:.*[\\/])?workit(?:-cli)?$/u.test(word);
+/** `workit`, `workit-cli`, either by path, or the CLI package `npx`/`bunx` runs (`@workit-dev/cli[@v]`). */
+const isWorkitWord = (word: string): boolean =>
+  /^(?:(?:.*[\\/])?workit(?:-cli)?|@workit-dev\/cli(?:@[\w.-]+)?)$/u.test(word);
+
+/** Where the verb starts in the words after `workit`: global `--json`, `--cwd`, `--session` skipped. */
+const verbAt = (words: readonly string[]): number => {
+  let at = 0;
+  for (;;) {
+    const word = words[at];
+    if (word === "--json") at += 1;
+    else if (word === "--cwd" || word === "--session") at += 2;
+    else if (word?.startsWith("--cwd=") || word?.startsWith("--session=")) at += 1;
+    else return at;
+  }
+};
+
+/** Commands that run the rest of their words as a command. */
+const WRAPPERS = new Set(["env", "sudo", "nohup", "command", "timeout", "nice", "exec"]);
+/** Wrapper options that take a value (`env -u X`, `sudo -u root`, `timeout -s KILL`, `nice -n 5`). */
+const VALUED = /^-(?:[ugnskCpD]|-user|-group|-signal|-kill-after|-unset|-chdir)$/u;
+
+/** `words` past env assignments and wrappers (`env X=1`, `sudo -u u`, `timeout 9`, `nohup`). */
+const unwrapped = (words: readonly string[]): readonly string[] => {
+  let at = 0;
+  for (;;) {
+    const word = words[at] ?? "";
+    const name = word.split("/").at(-1) ?? "";
+    if (/^[A-Za-z_]\w*=/u.test(word)) at += 1;
+    else if (WRAPPERS.has(name)) {
+      at += 1;
+      while (words[at]?.startsWith("-")) at += VALUED.test(words[at] ?? "") ? 2 : 1;
+      if (name === "timeout" && words[at] !== undefined) at += 1;
+    } else return words.slice(at);
+  }
+};
+
+/** The script a shell runs with `-c` (`bash -c "…"`, `sudo sh -lc -- '…'`) or `eval` runs, or null. */
+const shellScript = (all: readonly string[]): string | null => {
+  const words = unwrapped(all);
+  const name = words[0]?.split("/").at(-1) ?? "";
+  if (name === "eval") return words.slice(1).join(" ") || null;
+  if (!/^(?:ba|z|da|k)?sh$/u.test(name)) return null;
+  const flag = words.findIndex((word, at) => at > 0 && /^-[a-z]*c[a-z]*$/u.test(word));
+  if (flag < 0) return null;
+  return words[words[flag + 1] === "--" ? flag + 2 : flag + 1] ?? null;
+};
+
+/** Shell scripts nest at most this deep before the reading stops. */
+const SCRIPT_DEPTH = 4;
 
 /**
  * Is `words` one Workit call of an allowed verb? Global `--json` and
@@ -194,15 +241,7 @@ export const userOnlyWorkitCall = (
     const words = segment.words.slice(start + 1);
     const end = words.indexOf("--");
     const args = end < 0 ? words : words.slice(0, end);
-    let at = 0;
-    for (;;) {
-      const word = args[at];
-      if (word === "--json") at += 1;
-      else if (word === "--cwd" || word === "--session") at += 2;
-      else if (word?.startsWith("--cwd=")) at += 1;
-      else break;
-    }
-    const call = args.slice(at);
+    const call = args.slice(verbAt(args));
     const found = WORKIT_USER_ONLY.find(
       (needle) => call[0] === needle[0] && hasWordsInOrder(call, needle),
     );
@@ -219,21 +258,23 @@ export const userOnlyWorkitCall = (
 export const askedWorkitCall = (
   command: string,
   dialect: ShellDialect = "posix",
+  depth = 0,
 ): { verb: string; plain: boolean } | null => {
   if (!mayRunUserOnly(command)) return null;
   for (const segment of segmentsOf(command, dialect)) {
     if (segment.unanalyzable) continue;
+    // A shell's `-c` script, an `eval` and a command substitution run their own calls (#916).
+    const script = shellScript(segment.words);
+    for (const inner of depth < SCRIPT_DEPTH
+      ? [...(script ? [script] : []), ...(segment.subs ?? [])]
+      : []) {
+      const found = askedWorkitCall(inner, "posix", depth + 1);
+      if (found) return { ...found, plain: false };
+    }
     const start = segment.words.findIndex(isWorkitWord);
     if (start < 0) continue;
     const words = segment.words.slice(start + 1);
-    let at = 0;
-    for (;;) {
-      const word = words[at];
-      if (word === "--json") at += 1;
-      else if (word === "--cwd" || word === "--session") at += 2;
-      else if (word?.startsWith("--cwd=")) at += 1;
-      else break;
-    }
+    const at = verbAt(words);
     const verb = WORKIT_ASKED_VERBS.find((name) => words[at] === name);
     if (verb && !helpOnly(words.slice(at), [verb]))
       return {

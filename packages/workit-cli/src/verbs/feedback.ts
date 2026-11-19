@@ -111,8 +111,40 @@ const HOST_TLDS = new Set(
     " ",
   ),
 );
-/** Public hosts a Workit report may name. */
-const PUBLIC_HOSTS = new Set(["github.com", "www.github.com"]);
+/**
+ * Public hosts a Workit report may name, and well-known library names spelled
+ * like hosts (#916).
+ */
+const PUBLIC_HOSTS = new Set([
+  "github.com",
+  "www.github.com",
+  "npmjs.com",
+  "www.npmjs.com",
+  "registry.npmjs.org",
+  "nodejs.org",
+  "bun.sh",
+  "socket.io",
+  "engine.io",
+]);
+
+/** Workit's published packages, by the name after `@workit-dev/` and `packages/workit-`. */
+const WORKIT_PACKAGES = "cli|core|claude-code|codex|cursor|opencode|pi|mcp";
+const WORKIT_PREFIX = new RegExp(
+  String.raw`^(?:\.{1,2}/)*(?:packages/workit-|(?:node_modules/)?@workit-dev/)(?:${WORKIT_PACKAGES})/`,
+  "u",
+);
+
+/**
+ * A path inside one of Workit's own packages (#916): kept, though the host,
+ * ticket and name passes still run over it. A `..` after the package leaves it.
+ */
+const isWorkitPath = (value: string): boolean => {
+  const prefix = WORKIT_PREFIX.exec(value)?.[0];
+  return prefix !== undefined && !value.slice(prefix.length).split("/").includes("..");
+};
+
+/** The private-use mark around a held value's index; never left in the input. */
+const MARK = "\uE000";
 
 /** A dotted name that is a host (not a file, a version or the public forge). */
 const isHost = (name: string): boolean => {
@@ -153,7 +185,7 @@ export function redactDraft(
   const kept: string[] = [];
   const hold = (value: string): string => {
     kept.push(value);
-    return `${kept.length - 1}`;
+    return `${MARK}${kept.length - 1}${MARK}`;
   };
   const isTracker = new RegExp(
     String.raw`^(?:https?://)?(?:www\.)?github\.com/${escape(tracker)}(?=$|[/#?])`,
@@ -163,9 +195,10 @@ export function redactDraft(
   const url = (match: string): string => {
     const value = match.replace(/[.,;:!?)\]]+$/u, "");
     const rest = match.slice(value.length);
-    return (isTracker.test(value) ? hold(value) : "<url>") + rest;
+    // A secret in its query or fragment is masked all the same (#916).
+    return (isTracker.test(value) ? hold(redactText(value)) : "<url>") + rest;
   };
-  let out = text;
+  let out = text.replaceAll(MARK, "");
   if (facts.branch) out = out.replaceAll(facts.branch, "<branch>");
   out = out
     .replaceAll(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]+/giu, url)
@@ -186,7 +219,7 @@ export function redactDraft(
     )
     .replaceAll(/(?<![\w/])~\/[\w.@+/-]*/gu, "<path>")
     .replaceAll(/(?<![\w.~<>/-])(?:\.{1,2}\/)?(?:[\w.@+-]+\/)+[\w.@+-]+/gu, (value) =>
-      isRelativePath(value) ? "<path>" : value,
+      isWorkitPath(value) || !isRelativePath(value) ? value : "<path>",
     )
     .replaceAll(
       /(?<![\w:])\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?::\d+)?(?![\w:])/giu,
@@ -201,7 +234,10 @@ export function redactDraft(
     );
   for (const name of facts.names.toSorted((a, b) => b.length - a.length))
     out = out.replaceAll(new RegExp(`(?<![\\w-])${escape(name)}(?![\\w-])`, "giu"), "<name>");
-  return out.replaceAll(/(\d+)/gu, (_, index: string) => kept[Number(index)]);
+  return out.replaceAll(
+    new RegExp(`${MARK}(\\d+)${MARK}`, "gu"),
+    (_, index: string) => kept[Number(index)],
+  );
 }
 
 export type DraftInput = {
@@ -383,8 +419,13 @@ type Draft = {
   posted: { kind: "issue" | "comment"; number: number; url: string | null } | null;
 };
 
+/** Redaction is pattern-based (#916): the header says who reads the draft before it goes. */
+const REVIEW =
+  "The user reads this whole draft before --post: redaction is pattern-based and can miss single-label hosts, unknown domains and bare user names.";
+
 const human = (data: Draft): string[] => [
   `Draft for ${data.repo}: ${data.title}`,
+  ...(data.posted ? [] : [REVIEW]),
   "",
   ...data.body.trimEnd().split("\n"),
   "",
