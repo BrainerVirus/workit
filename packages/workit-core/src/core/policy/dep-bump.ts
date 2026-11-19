@@ -128,20 +128,26 @@ function packageJson(before: string, after: string): ManifestEdit {
 }
 
 /**
- * Whether `command` runs scripts by a glob (`run-s "lint:*"`, `npm-run-all
- * test:*`, `--filter <glob>`) that `name` matches: a new script it matches
- * joins what an existing script runs.
+ * Whether `command` may run a new script `name` by pattern: any `*` token
+ * that matches it (`run-s "lint:*"`, `concurrently npm:lint:*`, `yarn run
+ * lint:*`; a leading `npm:`, `pnpm:`, `yarn:` or `bun:` is dropped), or a
+ * pnpm `/regex/` (not evaluated here, so any new script counts). A token that
+ * is no script pattern (`'src/**\/*.ts'`) matches no script name.
  */
 function runsByGlob(command: string, name: string): boolean {
-  if (!/\b(?:run-s|run-p|npm-run-all)\b|--filter/u.test(command)) return false;
-  return command
-    .split(/\s+/u)
-    .map((token) => token.replace(/^--filter=/u, "").replaceAll(/^["']|["']$/gu, ""))
+  const tokens = command.split(/\s+/u).map((token) =>
+    token
+      .replace(/^--filter=/u, "")
+      .replaceAll(/^["']|["']$/gu, "")
+      .replace(/^(?:npm|pnpm|yarn|bun):/u, ""),
+  );
+  if (/\bpnpm\b/u.test(command) && tokens.some((token) => /^\/.+\/$/u.test(token))) return true;
+  return tokens
     .filter((token) => token.includes("*"))
     .some((glob) =>
       new RegExp(
         `^${glob
-          .split("*")
+          .split(/\*+/u)
           .map((part) => part.replaceAll(/[.+?^${}()|[\]\\]/gu, "\\$&"))
           .join(".*")}$`,
         "u",

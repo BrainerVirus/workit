@@ -264,6 +264,30 @@ test("manifests: given package.json pins moved and a new script, then only pins 
       ),
     ).why,
   ).toBe("adds the script lint:extra, which the script lint runs by glob");
+  // Any pattern token an existing script holds counts, whatever runs it; a file glob matches no script.
+  const adding = (command: string) => {
+    const before = PKG.replace('"eslint ."', JSON.stringify(command));
+    return manifestEdit(
+      "package.json",
+      before,
+      before
+
+        .replace(
+          `"lint": ${JSON.stringify(command)}`,
+          `"lint": ${JSON.stringify(command)},\n    "lint:zz": "x"`,
+        ),
+    ).why;
+  };
+  for (const command of [
+    "concurrently npm:lint:*",
+    'concurrently "npm:lint:*"',
+    "pnpm run /^lint:/",
+  ])
+    expect([command, adding(command)]).toEqual([
+      command,
+      "adds the script lint:zz, which the script lint runs by glob",
+    ]);
+  expect(adding("eslint 'src/**/*.ts'")).toBe("");
   expect(
     why(
       PKG.replace('"lint": "eslint ."', '"lint": "eslint .",\n    "pnpm:devPreinstall": "node x"'),
