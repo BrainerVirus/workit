@@ -441,8 +441,16 @@ export type MergeOutcome = {
   /** Set when `--others-pr` merged another author's PR: who, and the recorded reason. */
   othersPr: { author: string; login: string; reason: string } | null;
   /** The base branch's CI at its head: a one-line note when it was not green, and the override used. */
-  /** `fixes`: the red base checks this PR's head passes, so it merged without `--base-red-ok`. */
-  baseCi: { note: string | null; override: { reason: string } | null; fixes?: string[] };
+  /**
+   * `fixes`: the red base checks this PR's head passes, so it merged without
+   * `--base-red-ok`; `unneeded`: the `--base-red-ok` reason given anyway.
+   */
+  baseCi: {
+    note: string | null;
+    override: { reason: string } | null;
+    fixes?: string[];
+    unneeded?: { reason: string };
+  };
   grant: { source: AutonomySource };
   /** `skipped`: the implicit default found a reason to keep the branch; the merge is unaffected. */
   deletedBranch: boolean | { error: string } | { skipped: string };
@@ -1190,6 +1198,7 @@ export async function mergePullRequest(
     ...(unverified ? { unverified: unverified.recorded } : {}),
     ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
     ...(baseRedFixed ? { baseRedFixed } : {}),
+    ...(baseRedFixed && baseRed ? { baseRedOkUnneeded: baseRed.reason } : {}),
     ...(othersPr ? { othersPr } : {}),
     grant: grant.source,
   });
@@ -1228,6 +1237,7 @@ export async function mergePullRequest(
     ...(unverified ? { unverified: unverified.recorded } : {}),
     ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
     ...(baseRedFixed ? { baseRedFixed } : {}),
+    ...(baseRedFixed && baseRed ? { baseRedOkUnneeded: baseRed.reason } : {}),
     ...(othersPr ? { othersPr } : {}),
     grant: grant.source,
     intent: intentId,
@@ -1304,7 +1314,7 @@ export async function mergePullRequest(
       othersPr,
       baseCi: {
         note: baseRedFixed
-          ? `base ${doc.base} CI is red (${baseRedFixed.join(", ")}); ${label}'s head passes it, so this merge fixes the red base check`
+          ? `base ${doc.base} CI is red (${baseRedFixed.join(", ")}); ${label}'s head passes it, so this merge fixes the red base check${baseRed ? `; --base-red-ok was not needed (reason recorded: ${baseRed.reason})` : ""}`
           : baseRedOverride
             ? `base ${doc.base} CI is red; merged anyway (--base-red-ok: ${baseRedOverride.reason})`
             : baseCi.ok
@@ -1312,6 +1322,7 @@ export async function mergePullRequest(
               : null,
         override: baseRedOverride,
         ...(baseRedFixed ? { fixes: baseRedFixed } : {}),
+        ...(baseRedFixed && baseRed ? { unneeded: { reason: baseRed.reason } } : {}),
       },
       grant: { source: grant.source },
       deletedBranch,

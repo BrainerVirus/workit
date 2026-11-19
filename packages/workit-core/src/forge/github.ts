@@ -33,13 +33,13 @@ const PR_FIELDS = `number url state isDraft isInMergeQueue mergeable mergeStateS
 const THREADS = `reviewThreads(first: 100, after: $threads) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 1) { nodes { author { login __typename } body url } } } }`;
 
 // isRequired: only checks branch protection requires gate the merge.
-const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: $number) checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) } } }`;
+const CONTEXTS = `contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: $number) checkSuite { workflowRun { databaseId workflow { databaseId name } } } } ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) } } }`;
 
 export const PR_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $threads: String, $contexts: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} ${THREADS} commits(last: 1) { nodes { commit { oid statusCheckRollup { state ${CONTEXTS} } } } } } } }`;
 
 export const FIND_PR_QUERY = `query($owner: String!, $name: String!, $head: String!, $after: String) { repository(owner: $owner, name: $name) { pullRequests(headRefName: $head, first: 20, after: $after, orderBy: { field: CREATED_AT, direction: DESC }) { pageInfo { hasNextPage endCursor } nodes { number url state baseRefName headRefName headRefOid headRepositoryOwner { login } } } } }`;
 
-export const BRANCH_CHECKS_QUERY = `query($owner: String!, $name: String!, $ref: String!, $contexts: String) { repository(owner: $owner, name: $name) { object(expression: $ref) { ... on Commit { oid statusCheckRollup { contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId checkSuite { workflowRun { databaseId workflow { name } } } } ... on StatusContext { context state targetUrl } } } } } } } }`;
+export const BRANCH_CHECKS_QUERY = `query($owner: String!, $name: String!, $ref: String!, $contexts: String) { repository(owner: $owner, name: $name) { object(expression: $ref) { ... on Commit { oid statusCheckRollup { contexts(first: 100, after: $contexts) { pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion detailsUrl databaseId checkSuite { workflowRun { databaseId workflow { databaseId name } } } } ... on StatusContext { context state targetUrl } } } } } } } }`;
 
 const READY_MUTATION = `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
 const DRAFT_MUTATION = `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`;
@@ -88,7 +88,10 @@ type GqlContext =
       databaseId: number | null;
       isRequired?: boolean | null;
       checkSuite: {
-        workflowRun: { databaseId: number; workflow: { name: string } | null } | null;
+        workflowRun: {
+          databaseId: number;
+          workflow: { databaseId?: number | null; name: string } | null;
+        } | null;
       } | null;
     }
   | {
@@ -191,15 +194,21 @@ export function checkFromContext(node: GqlContext): ForgeCheck | null {
     jobId: run ? (node.databaseId ?? null) : null,
     scope: null,
     required,
+    ...(run ? { workflow: run.workflow?.databaseId ?? null } : {}),
   };
 }
 
-/** One check per name: a re-run check replaces its earlier attempt. */
+/**
+ * One check per workflow and name: a re-run check replaces its earlier
+ * attempt, but a second workflow with the same display name never hides the
+ * first one's run (#920).
+ */
 export function latestPerName(checks: readonly ForgeCheck[]): ForgeCheck[] {
   const byName = new Map<string, ForgeCheck>();
   for (const check of checks) {
-    const seen = byName.get(check.name);
-    if (!seen || (check.jobId ?? 0) >= (seen.jobId ?? 0)) byName.set(check.name, check);
+    const key = `${check.workflow ?? ""}\0${check.name}`;
+    const seen = byName.get(key);
+    if (!seen || (check.jobId ?? 0) >= (seen.jobId ?? 0)) byName.set(key, check);
   }
   return [...byName.values()];
 }

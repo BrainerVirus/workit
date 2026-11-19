@@ -55,26 +55,36 @@ const run = async (argv: string[], cwd: string) => {
   return { code, stdout, stderr, json: () => JSON.parse(stdout) };
 };
 
-const RUN_URL = "https://github.com/o/r/actions/runs/777";
 const WINDOWS = "test (windows-latest)";
 
 type Node = Record<string, unknown>;
-const checkRun = (name: string, conclusion: string, isRequired?: boolean): Node => ({
+const CI_WORKFLOW = 41;
+const checkRun = (
+  name: string,
+  conclusion: string,
+  isRequired?: boolean,
+  { workflowId = CI_WORKFLOW, runId = 777, jobId = 1 } = {},
+): Node => ({
   __typename: "CheckRun",
   name,
   status: "COMPLETED",
   conclusion,
-  detailsUrl: RUN_URL,
-  databaseId: 1,
-  checkSuite: { workflowRun: { databaseId: 777, workflow: { name: "CI" } } },
+  detailsUrl: `https://github.com/o/r/actions/runs/${runId}`,
+  databaseId: jobId,
+  checkSuite: {
+    workflowRun: { databaseId: runId, workflow: { databaseId: workflowId, name: "CI" } },
+  },
   ...(isRequired === undefined ? {} : { isRequired }),
 });
-const baseChecks = (nodes: Node[]) =>
+/** A job of a second workflow also named `CI` (#920). */
+const decoyRun = (name: string, conclusion: string, isRequired?: boolean): Node =>
+  checkRun(name, conclusion, isRequired, { workflowId: 666, runId: 888, jobId: 9 });
+const baseChecks = (nodes: Node[], oid = "{{BASE}}") =>
   JSON.stringify({
     data: {
       repository: {
         object: {
-          oid: "{{BASE}}",
+          oid,
           statusCheckRollup: {
             contexts: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
           },
@@ -110,7 +120,7 @@ const setup = (
   base: Node[],
   head: Node[],
   extra: Record<string, Reply> = {},
-  { behind = false } = {},
+  { behind = false, baseOid = "{{BASE}}" } = {},
 ) => {
   writeFileSync(
     path.join(configDir, "config.json"),
@@ -137,7 +147,7 @@ const setup = (
     "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
     "graphql find": fixture("github/find-pr.json"),
     "graphql status": () => (merged ? fixture("github/pr-merged.json") : prHead(head)),
-    "graphql branch-checks": baseChecks(base),
+    "graphql branch-checks": baseChecks(base, baseOid),
     "GET repos/o/r/branches/main~1": replyError("HTTP 404 Branch not found"),
     "GET repos/o/r/rules/branches/main~1": "[]",
     ...extra,
@@ -265,4 +275,85 @@ test("Given main red on two checks and the PR's head passes only one, When pr me
     'fix main first; or, if the user accepts it: workit pr merge --base-red-ok --reason "<why>"',
   );
   expect(merges(runner.calls)).toEqual([]);
+});
+
+// #920: a second workflow with the same display name is a decoy, never a fix.
+test("Given main red on CI / test (windows-latest) and a PR head whose real CI workflow fails that job while a second workflow also named CI passes it, When pr merge runs, Then the PR CI gate reports the failing run and nothing merges", async () => {
+  const { repo, runner } = setup(
+    [checkRun("fast checks", "SUCCESS"), checkRun(WINDOWS, "FAILURE")],
+    [
+      checkRun(WINDOWS, "FAILURE", true, { runId: 801, jobId: 5 }),
+      decoyRun(WINDOWS, "SUCCESS", true),
+    ],
+    { "GET repos/o/r/actions/jobs/5/logs": "Error: the windows job failed\n" },
+  );
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  expect(result.json()).toMatchObject({
+    error: "not_ready: PR #12 is FIX_CI (required_checks_failing)",
+    data: { reason: "not_ready", blockers: ["required_checks_failing"] },
+  });
+  expect(merges(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "pr.merge.intent")).toEqual([]);
+  const status = await run(["pr", "status", "--json"], repo.cwd);
+  expect(status.stdout).toContain("https://github.com/o/r/actions/runs/801");
+  expect(status.stdout).toContain("the windows job failed");
+});
+
+test("Given main red on CI / test (windows-latest) and a PR head where only a second workflow also named CI passes that job, When pr merge runs, Then base_red still refuses naming the check", async () => {
+  const { repo, runner } = setup(
+    [checkRun("fast checks", "SUCCESS"), checkRun(WINDOWS, "FAILURE")],
+    [decoyRun(WINDOWS, "SUCCESS", true)],
+    previousRun([checkRun(WINDOWS, "FAILURE")]),
+  );
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  const out = result.json();
+  expect(out.error).toStartWith("base_red: main");
+  expect(out.error).toContain(`PR #12's head does not pass CI / ${WINDOWS}`);
+  expect(out.data).toMatchObject({ reason: "base_red", blockers: [`CI / ${WINDOWS}`] });
+  expect(merges(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "pr.merge.intent")).toEqual([]);
+});
+
+test("Given a covered red base and --base-red-ok --reason x, When pr merge merges, Then the ledger records the reason next to baseRedFixed and the output says the override was not needed", async () => {
+  const { repo, runner } = setup(
+    [checkRun("fast checks", "SUCCESS"), checkRun(WINDOWS, "FAILURE")],
+    [checkRun(WINDOWS, "SUCCESS", true)],
+  );
+  const result = await run(
+    ["pr", "merge", "--keep-branch", "--json", "--base-red-ok", "--reason", "x"],
+    repo.cwd,
+  );
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(result.json().data.baseCi).toEqual({
+    note: `base main CI is red (CI / ${WINDOWS}); PR #12's head passes it, so this merge fixes the red base check; --base-red-ok was not needed (reason recorded: x)`,
+    override: null,
+    fixes: [`CI / ${WINDOWS}`],
+    unneeded: { reason: "x" },
+  });
+  expect(merges(runner.calls)).toHaveLength(1);
+  for (const type of ["pr.merge.intent", "pr.merged"]) {
+    const [row] = rows(repo.cwd, type);
+    expect(row).toMatchObject({ baseRedFixed: [`CI / ${WINDOWS}`], baseRedOkUnneeded: "x" });
+    expect(row).not.toHaveProperty("baseRedOk");
+  }
+});
+
+test("Given main red on a check the PR's head passes but main's red tip cannot be fetched, When pr merge runs, Then every red check keeps gating", async () => {
+  const unknownTip = "0123456789abcdef0123456789abcdef01234567";
+  const { repo, runner } = setup(
+    [checkRun("fast checks", "SUCCESS"), checkRun(WINDOWS, "FAILURE")],
+    [checkRun(WINDOWS, "SUCCESS", true)],
+    {},
+    { baseOid: unknownTip },
+  );
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  const out = result.json();
+  expect(out.error).toStartWith("base_red: main");
+  expect(out.error).toContain(`PR #12 is not up to date with main (${unknownTip.slice(0, 12)})`);
+  expect(out.data).toMatchObject({ reason: "base_red", blockers: [`CI / ${WINDOWS}`] });
+  expect(merges(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "pr.merge.intent")).toEqual([]);
 });
