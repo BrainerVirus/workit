@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Session teardown runs its detached `workit stop` in Workit's state directory instead of the session's checkout, so on Windows the stop no longer keeps the checkout busy after a session ends (#904).
+- The natural CLI call works on the first try, and each remaining refusal ends in an exact `Retry as:`: `pr create` takes `--add-label`/`--add-reviewer`, a positional issue, `--changelog "<Section>: <entry>"` (adds, commits and pushes the missing entry in the same call) and says the 100-character title limit with a shortened retry, and warns when `--issue` names an umbrella issue with open sub-issues (use `--refs`); `--body-file -` reads a pipe whose writer starts late; `workit git rebase origin/main` rebases onto it; `workit git branch` without `--base` starts from the real trunk; a `wip:` commit subject is accepted; a pre-commit hook naming `bun run format` ends with the `workit check --name fix -- …` route; an unknown `workit check <name>` lists the configured checks; `ledger verdict --branch b` from the parent of the repos records in the one repo that has `b`; `ledger list --limit n` works and `ledger finding` runs `workit finding`; `workit issue create|comment --repo owner/name` works outside a git checkout; `workit install|uninstall --help` prints help; a `workit youtrack` write piped into `tail` or `head` is still asked on itself.
 
 ## [2.13.0] - 2026-11-18
 
