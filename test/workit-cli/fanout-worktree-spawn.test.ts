@@ -158,7 +158,8 @@ test("Given an unregistered plan file, When `worktree create a --name <path>/pla
   expect(byName.stdout).toContain(`WORKTREE: `);
   const byPlan = await run(cwd, ["fanout", "worktree", "create", "b", "--plan", plan]);
   expect(byPlan.code, byPlan.stdout + byPlan.stderr).toBe(0);
-  const status = await run(cwd, ["fanout", "status", "--name", "wave", "--offline", "--json"]);
+  // `fanout status <plan>` reads the positional as the plan's name.
+  const status = await run(cwd, ["fanout", "status", "wave", "--offline", "--json"]);
   expect(status.code, status.stdout).toBe(0);
   expect(JSON.parse(status.stdout).data.slices.map((one: { id: string }) => one.id)).toEqual([
     "a",

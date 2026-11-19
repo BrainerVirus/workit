@@ -408,8 +408,10 @@ const renderStatus = (data: StatusOutcome): string[] => {
 function status(argv: string[], io: Io): number {
   const flags = parseFlags(argv, { name: "value", "stuck-after": "value", offline: "boolean" });
   if (typeof flags === "string") return usage(io, flags, STATUS_USAGE);
-  if (flags.positionals.length)
-    return usage(io, `unexpected argument ${flags.positionals[0]}`, STATUS_USAGE);
+  // `fanout status <plan>`: one positional is the plan's name (or file).
+  if (flags.positionals.length > (flags.values.name === undefined ? 1 : 0))
+    return usage(io, `unexpected argument ${flags.positionals.at(-1)}`, STATUS_USAGE);
+  if (flags.positionals.length === 1) flags.values.name = flags.positionals[0];
   const raw = flags.values["stuck-after"];
   const stuckAfterMs = raw === undefined ? null : parseDuration(raw);
   if (stuckAfterMs === 0 || (raw !== undefined && stuckAfterMs === null))

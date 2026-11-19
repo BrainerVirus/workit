@@ -2,39 +2,26 @@
   "case": "spawn-adhoc-slice",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "9b5ec55997820cb6",
-  "date": "2026-11-18T15:51:41.762Z",
+  "workitVersion": "workit-dev-v2.15.0+b7e57484a7",
+  "key": "c4ce7b63da6235ab",
+  "date": "2026-11-19T04:17:09.890Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 4,
-    "durationMs": 14294,
-    "costUsd": 0.0043872699999999995,
+    "turns": 2,
+    "durationMs": 4617,
+    "costUsd": 0.04088562,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 3,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#3 Agent(workit:implementer: Add src/version.ts constant) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      },
-      {
-        "rule": "require",
-        "detail": "no call matches /implementer/ not denied: the single-slice spawn runs"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 1 failed of 3 Workit interaction(s): #1 Bash(workit fanout worktree create version-const) failed: Exit code 1; #3 Agent(workit:implementer: Add src/version.ts constant) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      }
-    ],
+    "pass": true,
+    "calls": 10,
+    "failures": [],
     "firstTry": {
-      "interactions": 3,
-      "failed": 1,
-      "denied": 1
+      "interactions": 5,
+      "failed": 0,
+      "denied": 0
     }
   }
 }

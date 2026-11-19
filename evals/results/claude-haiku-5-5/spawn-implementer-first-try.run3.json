@@ -2,35 +2,26 @@
   "case": "spawn-implementer-first-try",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "9027a6b814696ed5",
-  "date": "2026-11-18T17:05:12.133Z",
+  "workitVersion": "workit-dev-v2.15.0+b7e57484a7",
+  "key": "7544986e64e1b875",
+  "date": "2026-11-19T04:18:56.075Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 2,
-    "durationMs": 5081,
-    "costUsd": 0.01431485,
+    "turns": 5,
+    "durationMs": 23948,
+    "costUsd": 0.07350396000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 21,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#9 Agent(workit:implementer: hello slice implementer) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 1 failed of 12 Workit interaction(s): #1 Bash(workit fanout worktree create hello) failed: Exit code 1; #9 Agent(workit:implementer: hello slice implementer) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      }
-    ],
+    "pass": true,
+    "calls": 10,
+    "failures": [],
     "firstTry": {
-      "interactions": 12,
-      "failed": 1,
-      "denied": 1
+      "interactions": 6,
+      "failed": 0,
+      "denied": 0
     }
   }
 }
