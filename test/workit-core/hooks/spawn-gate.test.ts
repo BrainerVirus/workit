@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
@@ -155,7 +163,9 @@ test("G a prompt naming a worktree's path with no WORKTREE line, W PreToolUse ru
 test("G a prompt naming a directory whose .git is a FIFO or a device, W PreToolUse runs, T it is denied without reading it (no hang)", () => {
   const fifo = path.join(cwd, "fifo-dir");
   mkdirSync(fifo);
-  spawnSync("mkfifo", [path.join(fifo, ".git")]);
+  // Through sh: mkfifo is a system tool, not a package binary.
+  spawnSync("sh", ["-c", `mkfifo "$0"`, path.join(fifo, ".git")]);
+  expect(lstatSync(path.join(fifo, ".git")).isFIFO()).toBe(true);
   const zero = path.join(cwd, "zero-dir");
   mkdirSync(zero);
   symlinkSync("/dev/zero", path.join(zero, ".git"));
