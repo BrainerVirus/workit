@@ -121,12 +121,19 @@ test("Given a YouTrack write inside a pipe to a writer, a chain or bash -c, When
     "cd /tmp && workit youtrack note X-1 --markdown hi",
     "bash -c 'workit youtrack note X-1 --markdown hi'",
   ]) {
-    const out = hook("PreToolUse", command);
+    // Auto mode denies the `cd` compound with its --cwd call first (#908): default mode here.
+    const out = hook("PreToolUse", command, "default");
     expect(out.permissionDecision, command).toBe("deny");
     expect(out.permissionDecisionReason, command).toContain(
       "Run `workit youtrack note X-1 --markdown hi` as its own call",
     );
   }
+  // Under auto mode the retry keeps the `cd` as --cwd, a plain call the ask then covers.
+  const auto = hook("PreToolUse", "cd /tmp && workit youtrack note X-1 --markdown hi");
+  expect(auto.permissionDecision).toBe("deny");
+  expect(auto.permissionDecisionReason).toContain(
+    "\nRetry as: workit --cwd /tmp youtrack note X-1 --markdown hi\n",
+  );
   expect(inlineRows()).toEqual([]);
 });
 
