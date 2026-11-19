@@ -70,7 +70,7 @@ export const noteModelSelect = (
  */
 export const modelSwitchContract = (ctx: ExtensionContext): string | null =>
   switchedSessions.delete(ctx.sessionManager.getSessionId()) && ctx.isProjectTrusted()
-    ? contractBlock(null)
+    ? contractBlock(ctx.cwd, null)
     : null;
 
 /** The session's current task context as the per-turn message carries it, or null. */
@@ -116,8 +116,8 @@ export const budgetNotice = (ctx: ExtensionContext): string | null => {
 };
 
 /** The closed `<workit-contract>` block every host renders (#793), with Pi's addendum. */
-const contractBlock = (addendum: string | null): string =>
-  `<workit-contract>\n${invariantBootstrap()}${addendum ? `\n${addendum}` : ""}\n</workit-contract>`;
+const contractBlock = (cwd: string, addendum: string | null): string =>
+  `<workit-contract>\n${invariantBootstrap({ cwd, host: "pi" })}${addendum ? `\n${addendum}` : ""}\n</workit-contract>`;
 
 /** The session contract: bootstrap plus `taskContext` (see turnContext). */
 export const workitContext = (
@@ -127,9 +127,13 @@ export const workitContext = (
   const session = ctx.sessionManager.getSessionId();
   if (!ctx.isProjectTrusted())
     return contractBlock(
+      ctx.cwd,
       `Native Pi session: ${session}. Project-local Workit state is unavailable until Pi trusts this project.`,
     );
-  return contractBlock(`Native Pi session: ${session}.${taskContext ? `\n${taskContext}` : ""}`);
+  return contractBlock(
+    ctx.cwd,
+    `Native Pi session: ${session}.${taskContext ? `\n${taskContext}` : ""}`,
+  );
 };
 
 export const unfinishedTaskOffer = (ctx: ExtensionContext): string | null => {

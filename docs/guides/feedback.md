@@ -61,6 +61,6 @@ In workspaces.json (see [configuration](configuration.md#feedback)):
 ```
 
 A workspace with `"feedback": "off"` (nested workspaces inherit it) drops
-the contract line on Claude Code, Codex and Cursor and makes the verb
-refuse. OpenCode and Pi show the contract line without a session directory,
-so the line stays there, but the verb still refuses.
+the contract line on every host and makes the verb refuse. OpenCode reads
+the setting once per session directory, so a change shows in its next
+session.

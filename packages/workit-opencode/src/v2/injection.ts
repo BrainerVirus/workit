@@ -33,7 +33,8 @@ export const injectAgentContext = (
   system: SystemPart[],
 ): void => {
   if (!session || !sameWorkspace(root, session.directory)) return;
-  const bootstrap = session.parentID === undefined ? getWorkitBootstrap() : null;
+  const bootstrap =
+    session.parentID === undefined ? getWorkitBootstrap(session.directory ?? root) : null;
   const taskContext = compactContextFor(root, session.id);
   const workerContext = session.parentID
     ? workerContextFor(root, session.id, session.parentID, directChildren)
@@ -116,7 +117,7 @@ export const injectModelSwitch = (
   if (!session || !sameWorkspace(root, session.directory)) return;
   const contract = session.parentID
     ? workerContextFor(root, session.id, session.parentID, directChildren)
-    : getWorkitBootstrap();
+    : getWorkitBootstrap(session.directory ?? root);
   const taskContext = compactContextFor(root, session.id);
   const parts = [
     contract,

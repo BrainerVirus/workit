@@ -102,11 +102,7 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
   });
 }
 
-/**
- * The upstream-report rule (#777); a workspace with `feedback: off` drops it.
- * A host that renders the contract without a session (OpenCode, Pi) always
- * shows it, and the verb itself still refuses there.
- */
+/** The upstream-report rule (#777); a session in a workspace with `feedback: off` drops it. */
 export const FEEDBACK_LINE =
   "Workit friction: offer `workit feedback` once per problem; keep working.";
 
