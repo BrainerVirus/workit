@@ -341,6 +341,16 @@ test("lane: a dependency bump is self; a new dependency, a stray file or a large
     computeLane({ files: [file("package.json", 1, pins), file("README.md", 2)] }).classification,
   ).toBeUndefined();
   expect(computeLane({ files: [file("package-lock.json", 60)] }).lane).toBe("focused");
+  // A binary beside the bump is no bump; a binary lockfile is a lockfile.
+  expect(
+    computeLane({
+      files: [file("package.json", 1, pins), file("logo.png", 0, { binary: true })],
+    }).classification,
+  ).toBeUndefined();
+  expect(
+    computeLane({ files: [file("package.json", 1, pins), file("bun.lockb", 0, { binary: true })] })
+      .classification,
+  ).toBe("dependency-bump");
   expect(computeLane({ files: [file("package.json", 300, pins), file("bun.lock", 9)] }).lane).toBe(
     "full",
   );

@@ -288,9 +288,9 @@ function dependencyBump(
   if (!manifests.some((file) => (file.manifest?.bumped ?? 0) > 0)) return null;
   const locks: string[] = [];
   for (const file of files) {
-    if (file.binary || additive.has(file.path) || manifests.includes(file)) continue;
+    if (additive.has(file.path) || manifests.includes(file)) continue;
     if (LOCKFILES.has(basename(file.path))) locks.push(file.path);
-    else if (!(isDoc(file.path) && CHANGELOG.test(basename(file.path)))) return null;
+    else if (file.binary || !(isDoc(file.path) && CHANGELOG.test(basename(file.path)))) return null;
   }
   const bumped = manifests.reduce((sum, file) => sum + (file.manifest?.bumped ?? 0), 0);
   const scripts = manifests.flatMap((file) => file.manifest?.scripts ?? []);
