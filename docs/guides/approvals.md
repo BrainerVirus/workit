@@ -22,7 +22,9 @@ call says which mode it ran in.
 
 The agent must run the call as its own plain command, with no pipe, chain,
 redirect, `cd`, variable or `bash -c` around it; otherwise the host cannot
-show it to you, and Workit denies the call and names the plain form. Only the
+show it to you, and Workit denies the call and names the plain form. A
+trailing read-only filter (`2>&1 | tail -5`, `| head -n 20`) is fine: it only
+shortens the output, and the prompt still shows the call. Only the
 host's prompt can approve a call: a command or file of the agent's that names
 Workit's approval ticket is refused.
 
