@@ -663,9 +663,9 @@ export const VERBS: readonly VerbEntry[] = [
           head: "pr create opens the PR for the current branch: git switch <branch>, then workit pr create (--base sets the target)",
         },
         usage:
-          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]",
+          'workit pr create [--base <b> | --track <t>] (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]',
         summary:
-          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues; refuses a body that leaves the PR template unfilled",
+          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues (Closes; --refs links one slice of an umbrella issue without closing it); --changelog writes, commits and pushes the missing Unreleased entry first; refuses a body that leaves the PR template unfilled",
       },
       {
         name: "template",

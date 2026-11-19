@@ -89,6 +89,10 @@ import { untrackedRiskPathsWarning } from "@workit-dev/core/src/core/policy/lane
 import { prLaneGate } from "@workit-dev/core/src/core/policy/pr-lane";
 import { vcsConfig, type ResolvedReleaseTrack } from "@workit-dev/core/src/core/vcs-config";
 import { checkRoot } from "@workit-dev/core/src/check-config";
+import { changelogApply } from "@workit-dev/core/src/core/changelog";
+import { issueTarget } from "@workit-dev/core/src/forge/issue-ops";
+import { shellQuote } from "../install/paths";
+import { run as runGit } from "./git";
 import { emit, fail, ok, type Io } from "../output";
 import {
   announce,
@@ -253,7 +257,7 @@ function titleRules(cwd: string): TitleRead {
 export function checkPrTitle(
   cwd: string,
   title: string,
-): { error: string | null; notes: string[] } {
+): { error: string | null; notes: string[]; maxHeader?: number } {
   const { rules, note } = titleRules(cwd);
   if (!rules) return { error: null, notes: note ? [note] : [] };
   const header = title.split("\n", 1)[0] ?? "";
@@ -277,25 +281,64 @@ export function checkPrTitle(
       message: `PR title is ${header.length} characters, over the ${rules.maxHeader.value} allowed (commitlint header-max-length); shorten it by ${header.length - rules.maxHeader.value}`,
     });
   const refused = problems.filter((problem) => problem.level >= 2);
+  const tooLong =
+    rules.maxHeader && rules.maxHeader.level >= 2 && header.length > rules.maxHeader.value;
   return {
     error: refused.length ? refused.map((problem) => problem.message).join("; ") : null,
     notes: problems.filter((problem) => problem.level < 2).map((p) => `warning: ${p.message}`),
+    ...(tooLong && rules.maxHeader ? { maxHeader: rules.maxHeader.value } : {}),
   };
 }
 
 /** A usage refusal (exit code) when the title breaks a commitlint rule; notes and warnings go to stderr. */
-function refuseTitle(io: Io, title: string, line: string): number | null {
+function refuseTitle(
+  io: Io,
+  title: string,
+  line: string,
+  retry?: (title: string) => string,
+): number | null {
   const checked = checkPrTitle(io.cwd, title);
   for (const note of checked.notes) io.stderr(`${note}\n`);
-  return checked.error ? usage(io, checked.error, line) : null;
+  if (!checked.error) return null;
+  const shorter = checked.maxHeader ? shortenTitle(title, checked.maxHeader) : null;
+  return usage(
+    io,
+    checked.error,
+    shorter && retry
+      ? `Retry as: ${retry(shorter)}  # or your own title of at most ${checked.maxHeader} characters`
+      : line,
+  );
 }
+
+/** `title`'s first line cut at a word to at most `max` characters. */
+export function shortenTitle(title: string, max: number): string {
+  const header = title.split("\n", 1)[0] ?? "";
+  if (header.length <= max) return header;
+  const cut = header.slice(0, max + 1);
+  const space = cut.lastIndexOf(" ");
+  return (space > max / 2 ? cut.slice(0, space) : header.slice(0, max)).replace(/[\s,;:.-]+$/u, "");
+}
+
+/** `workit pr <sub> <argv>` with `--title` set to `title`, quoted for a POSIX shell. */
+const withTitle = (sub: string, argv: readonly string[], title: string): string => {
+  const out: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--title") {
+      out.push("--title", title);
+      index += 1;
+    } else if (arg.startsWith("--title=")) out.push("--title", title);
+    else out.push(arg);
+  }
+  return `workit pr ${sub} ${out.map(shellQuote).join(" ")}`;
+};
 
 const STATUS_USAGE = "workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]";
 /** Every forge call of one `pr create` together, under a typical 120 s host shell timeout (#644). */
 const PR_CREATE_BUDGET_MS = 90_000;
 
 const CREATE_USAGE =
-  "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>] [--json]";
+  'workit pr create [--base <b> | --track <t>] (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>… [--refs]] [--label <l>]… [--reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>] [--json]';
 const MERGE_USAGE =
   "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--json]";
 const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
@@ -642,16 +685,33 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     draft: "boolean",
     label: "list",
     reviewer: "list",
+    "add-label": "list",
+    "add-reviewer": "list",
     issue: "list",
     refs: "boolean",
+    changelog: "value",
     "no-changelog": "value",
   });
   if (typeof flags === "string") return usage(io, flags, CREATE_USAGE);
-  if (flags.positionals.length)
-    return usage(io, `unexpected argument ${flags.positionals[0]}`, CREATE_USAGE);
+  // `pr edit`'s spellings and a bare issue id or URL mean the same on create.
+  const labels = [...(flags.lists.label ?? []), ...(flags.lists["add-label"] ?? [])];
+  const reviewers = [...(flags.lists.reviewer ?? []), ...(flags.lists["add-reviewer"] ?? [])];
+  const stray = flags.positionals.find((word) => !ISSUE_WORD.test(word));
+  if (stray !== undefined)
+    return usage(
+      io,
+      `unexpected argument ${stray} (a bare word is read only as an issue: #12, ABC-123 or its URL)`,
+      CREATE_USAGE,
+    );
+  const issues = [...(flags.lists.issue ?? []), ...flags.positionals];
   const skipChangelog = flags.values["no-changelog"]?.trim() ?? null;
   if (skipChangelog === "")
     return usage(io, "--no-changelog needs the reason this PR has no entry", CREATE_USAGE);
+  const entry =
+    flags.values.changelog === undefined ? null : changelogEntry(flags.values.changelog, "");
+  if (entry && skipChangelog !== null)
+    return usage(io, "pass --changelog or --no-changelog, not both", CREATE_USAGE);
+  if (entry && "error" in entry) return usage(io, entry.error, CREATE_USAGE);
   const fill = flags.booleans.has("fill");
   if (!fill && !flags.values.title) return usage(io, "pass --title <t> or --fill", CREATE_USAGE);
   if (flags.values.body !== undefined && flags.values["body-file"] !== undefined)
@@ -722,7 +782,9 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
   if (typeof prTemplate === "number") return prTemplate;
 
   // A given title is checked before any forge call; a --fill title once it is derived.
-  const given = flags.values.title ? refuseTitle(io, flags.values.title, CREATE_USAGE) : null;
+  const given = flags.values.title
+    ? refuseTitle(io, flags.values.title, CREATE_USAGE, (short) => withTitle("create", argv, short))
+    : null;
   if (given !== null) return given;
   const connected = connect(io, branch, { deadline });
   if (!connected.ok) return forgeFail(io, connected);
@@ -740,17 +802,26 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
   const steps = workspaceChangelog(io.cwd);
   let point: ForkPoint | null = null;
   const forkPoint = () => (point ??= resolveForkPoint(io.cwd, base, connected.data.baseRemote));
-  const changelog = changelogGate({
-    cwd: io.cwd,
-    mode: steps.changelog,
-    title,
-    base,
-    baseRemote: connected.data.baseRemote,
-    paths: steps.paths,
-    pathConfigured: steps.pathConfigured,
-    skipReason: skipChangelog,
-    forkPoint,
-  });
+  const gate = () =>
+    changelogGate({
+      cwd: io.cwd,
+      mode: steps.changelog,
+      title,
+      base,
+      baseRemote: connected.data.baseRemote,
+      paths: steps.paths,
+      pathConfigured: steps.pathConfigured,
+      skipReason: skipChangelog,
+      forkPoint,
+    });
+  let changelog = gate();
+  // `--changelog "<Section>: <entry>"`: write, commit and push the missing
+  // entry, then judge again, so the one call opens the PR.
+  if (changelog.status === "missing" && entry && !("error" in entry)) {
+    const added = await addChangelogEntry(io, changelog, entry, title);
+    if (added !== 0) return added;
+    changelog = gate();
+  }
   const docs = docsGate({
     cwd: io.cwd,
     mode: steps.docs,
@@ -790,7 +861,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
         }`,
         {
           data: { reason: "changelog_required", ...checkData },
-          unblock: `${changelog.command}, commit and push ${changelog.file}, then rerun workit pr create; or pass --no-changelog "<why this PR needs no entry>"`,
+          unblock: `Retry as: workit pr create ${argv.map(shellQuote).join(" ")} --changelog ${shellQuote(`${changelog.category}: <what users can now do>`)}  # writes, commits and pushes the entry to ${changelog.file} (by hand: ${changelog.command}); or --no-changelog "<why this PR needs no entry>"`,
         },
       ),
     );
@@ -815,13 +886,14 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     body = `${body ?? ""}${body ? "\n\n" : ""}Changelog: no entry (--no-changelog): ${changelog.reason}`;
   const forge = connected.data.forge;
   const planned = planIssueLinks(io.cwd, {
-    issues: flags.lists.issue ?? [],
+    issues,
     refs: flags.booleans.has("refs"),
     branch,
     forge: { kind: forge.kind, repo: forge.repo, host: forge.apiHost },
   });
   if (!planned.ok) return usage(io, planned.error, CREATE_USAGE);
   const links = planned.data.links;
+  planned.data.warnings.push(...umbrellaWarnings(io.cwd, connected.data, links));
   const honest = honestPrBody(io.cwd, body ?? "", prTemplate?.template);
   for (const item of honest.unchecked)
     io.stderr(`note: unticked "${item}": no fresh workit check on the head backs it\n`);
@@ -838,8 +910,8 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
           body: withIssueLines(honest.body, links),
           draft: flags.booleans.has("draft"),
           actor,
-          labels: flags.lists.label ?? [],
-          reviewers: flags.lists.reviewer ?? [],
+          labels,
+          reviewers,
         },
         forgeDeps.sleep,
       ),
@@ -900,6 +972,93 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
+}
+
+/** Test seam: the `workit git` verb that commits and pushes a `--changelog` entry. */
+export const prCreateDeps: { git: (argv: string[], io: Io) => Promise<number> } = { git: runGit };
+
+/** A bare `pr create` word read as an issue: `#12`, `12`, `ABC-123`, `owner/name#12` or a URL. */
+const ISSUE_WORD = /^(?:#?\d+|[A-Za-z][A-Za-z0-9_]*-\d+|[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+)$/u;
+
+const CHANGELOG_SECTIONS = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
+
+/** `--changelog "<Section>: <entry>"`: a Keep a Changelog section and its bullet. */
+function changelogEntry(
+  raw: string,
+  fallback: string,
+): { section: string; text: string } | { error: string } {
+  const match = /^\s*([A-Za-z]+)\s*:\s*(.+?)\s*$/su.exec(raw);
+  const section = CHANGELOG_SECTIONS.find(
+    (name) => name.toLowerCase() === match?.[1]?.toLowerCase(),
+  );
+  if (section && match) return { section, text: match[2] };
+  if (fallback && raw.trim()) return { section: fallback, text: raw.trim() };
+  return {
+    error: `--changelog takes "<Section>: <entry>" with a section of ${CHANGELOG_SECTIONS.join(", ")} (got ${JSON.stringify(raw)})`,
+  };
+}
+
+/**
+ * Write the missing Unreleased entry, commit it alone and push it: the steps
+ * the changelog_required refusal used to hand back. 0, or the exit code of
+ * the step that failed (its own refusal already printed).
+ */
+async function addChangelogEntry(
+  io: Io,
+  gate: Extract<ChangelogGate, { status: "missing" }>,
+  entry: { section: string; text: string },
+  title: string,
+): Promise<number> {
+  const top = checkRoot(io.cwd);
+  const applied = changelogApply({
+    entries: { [entry.section]: [entry.text] },
+    path: gate.file,
+    workspace_root: top,
+  });
+  if (applied.error)
+    return emit(
+      io,
+      fail("failed", `changelog entry not written to ${gate.file}: ${String(applied.error)}`),
+    );
+  const scope = /^\w+\(([^)]*)\)/u.exec(title)?.[1];
+  const subject = `docs(${scope ? `${scope}` : "changelog"}): add the changelog entry`;
+  const quiet: Io = { ...io, cwd: top, json: false, stdout: () => {} };
+  const committed = await prCreateDeps.git(["commit", "-m", subject, "--", gate.file], quiet);
+  if (committed !== 0) return committed;
+  const pushed = await prCreateDeps.git(["push"], quiet);
+  if (pushed !== 0) return pushed;
+  if (!io.json)
+    io.stdout(
+      `changelog: added "${entry.section}: ${entry.text}" to ${gate.file}, committed (${subject}) and pushed\n`,
+    );
+  return 0;
+}
+
+/**
+ * Closing links to an issue with open sub-issues: an umbrella that
+ * "Closes #n" would close when this PR merges. Best effort; never blocks.
+ */
+function umbrellaWarnings(
+  cwd: string,
+  connected: Parameters<typeof issueTarget>[1],
+  links: readonly IssueLink[],
+): string[] {
+  const warnings: string[] = [];
+  for (const link of links) {
+    if (link.relation !== "closes" || link.source !== "flag" || !/^\d+$/u.test(link.id)) continue;
+    try {
+      const api = issueTarget(cwd, connected, { repo: link.repo });
+      const viewed = api.ok ? api.data.view(Number(link.id)) : null;
+      const open = viewed?.ok ? viewed.data.openSubIssues : undefined;
+      if (open)
+        warnings.push(
+          `${issueLabel(link)} has ${open} open sub-issue(s), and "${link.line}" closes it when this PR merges; for one slice of it, edit the body to "Refs ${issueLabel(link)}" now (workit pr edit --body-file -), and pass --refs next time`,
+        );
+    } catch {
+      // A forge that cannot say leaves the link as asked.
+    }
+  }
+  return warnings;
 }
 
 /** The refusal for a body that leaves the template's headings out or keeps its placeholder comments. */

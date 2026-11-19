@@ -704,7 +704,12 @@ test("pr create: given backlink false (the default), then no issue comment is re
   );
   expect(result.code).toBe(0);
   expect(result.json().data.backlinks).toBeUndefined();
-  expect(runner.calls.some((call) => call.endpoint.includes("/issues/"))).toBe(false);
+  // The only issue call is the umbrella check's read of #42 itself.
+  expect(
+    runner.calls
+      .filter((call) => call.endpoint.includes("/issues/"))
+      .map((call) => `${call.method} ${call.endpoint}`),
+  ).toEqual(["GET repos/o/r/issues/42"]);
 });
 
 test("pr create: an open PR for the branch is reused, its body is left alone and no link is recorded", async () => {
@@ -790,4 +795,68 @@ test("pr create: given a fanout slice with issue #324 on the branch, then the PR
   expect(linkedRows(repo.cwd)).toEqual([
     expect.objectContaining({ issue: "324", source: "fanout" }),
   ]);
+});
+
+test("Given a pushed branch, When `workit pr create --title t --add-label bug NSI-554` runs, Then the PR is created with the label and the issue link", async () => {
+  const { repo, runner } = setup(
+    "github",
+    githubRoutes({ "POST repos/o/r/issues/12/labels": "[]" }),
+  );
+  writeFileSync(
+    path.join(configHome.configDir, "youtrack.json"),
+    JSON.stringify({ baseUrl: "https://yt.example.invalid" }),
+  );
+  onBranch(repo, "feature/nsi");
+  const result = await run(
+    ["pr", "create", "--title", "fix: t", "--add-label", "bug", "NSI-554", "--json"],
+    repo.cwd,
+  );
+  expect(result.code, result.stdout).toBe(0);
+  expect(postedBody(runner.calls)).toContain(
+    "Related to: https://yt.example.invalid/issue/NSI-554",
+  );
+  const labels = runner.calls.find((call) => call.endpoint === "repos/o/r/issues/12/labels");
+  expect(labels?.pairs).toEqual([["labels[]", "bug"]]);
+  expect(result.json().data.issues).toMatchObject([{ issue: "NSI-554", relation: "related" }]);
+});
+
+test("Given --issue on an umbrella issue with open sub-issues, When pr create runs, Then it warns that Closes would close it and names --refs", async () => {
+  const { repo } = setup(
+    "github",
+    githubRoutes({
+      "GET repos/o/r/issues/328": JSON.stringify({
+        number: 328,
+        title: "umbrella",
+        state: "open",
+        body: "",
+        labels: [],
+        sub_issues_summary: { total: 5, completed: 2, percent_completed: 40 },
+      }),
+    }),
+  );
+  onBranch(repo, "feature/slice");
+  const result = await run(
+    ["pr", "create", "--base", "main", "--title", "fix: a slice", "--issue", "#328"],
+    repo.cwd,
+  );
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toContain('#328 has 3 open sub-issue(s), and "Closes #328" closes it');
+  expect(result.stdout).toContain("--refs");
+});
+
+test("Given a title over commitlint's 100 characters, When pr create runs, Then it is refused before any forge call with a Retry as carrying a shortened title", async () => {
+  const { repo, runner } = setup("github", githubRoutes());
+  writeFileSync(
+    path.join(repo.cwd, ".commitlintrc.json"),
+    JSON.stringify({ extends: ["@commitlint/config-conventional"] }),
+  );
+  onBranch(repo, "feature/long");
+  const title = `fix(cli): ${"a very long subject ".repeat(6).trim()}`;
+  const result = await run(["pr", "create", "--base", "main", "--title", title], repo.cwd);
+  expect(result.code).toBe(2);
+  expect(result.stderr).toContain("over the 100 allowed");
+  const retry = /Retry as: workit pr create --base main --title '([^']+)'/u.exec(result.stderr);
+  expect(retry?.[1].length).toBeLessThanOrEqual(100);
+  expect(title.startsWith(retry?.[1] ?? "x")).toBe(true);
+  expect(runner.calls).toEqual([]);
 });

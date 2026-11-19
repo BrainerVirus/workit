@@ -17,6 +17,16 @@ export type ForgeIssue = {
   stateReason: string | null;
   body: string;
   labels: string[];
+  /** GitHub's open sub-issues (an umbrella issue has some); absent when the forge does not say. */
+  openSubIssues?: number;
+};
+
+/** Open sub-issues from GitHub's `sub_issues_summary`, when it has any. */
+const openSubIssues = (summary: unknown): { openSubIssues?: number } => {
+  const { total, completed } = (summary ?? {}) as { total?: unknown; completed?: unknown };
+  return typeof total === "number" && typeof completed === "number" && total > completed
+    ? { openSubIssues: total - completed }
+    : {};
 };
 
 export type CreateIssueInput = {
@@ -82,6 +92,7 @@ export function githubIssues({ apiHost, repo, runner }: Options): IssueApi {
               typeof label?.name === "string" ? [label.name] : [],
             )
           : [],
+        ...openSubIssues(data.sub_issues_summary),
       });
     },
     comment(n, body) {
