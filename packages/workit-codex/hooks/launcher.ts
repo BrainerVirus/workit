@@ -87,7 +87,8 @@ const namesYtrack = (text: string): boolean => {
   return YTRACK_WORD.test(bare) || YTRACK_WORD.test(bare.replace(/`/g, ""));
 };
 /** A user-only Workit call's words: a copy of core hooks/delivery-verbs.ts mayRunUserOnly. */
-const USER_ONLY_WORD = /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace)\b/;
+const USER_ONLY_WORD =
+  /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace|feedback)\b/;
 const mayRunUserOnly = (text: string): boolean => {
   const joined = text.replace(/\\\r?\n/g, "");
   const bare = joined.replace(/['"\\]/g, "");

@@ -14,7 +14,7 @@ import { cdWorkitSplit, cwdRewrite, npxWorkit, verbFirst } from "./cwd-normalize
 import { workitOnPath } from "../core/heavy";
 import { approveCallDeny, approveCallIn } from "../approvals/call";
 import { namesTicket, TICKET_DENY } from "../approvals/store";
-import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
+import { askedWorkitCall, userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
 import {
   autoRouteDenial,
   heavyDenial,
@@ -335,6 +335,20 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
             unblock: null,
           };
       }
+      // `workit feedback` (#777) is always the user's yes: host rules ask on
+      // its plain spelling; an option or env prefix before it is read here.
+      const asked = askedWorkitCall(event.command, event.dialect);
+      if (asked && input.host === "claude_code")
+        return {
+          kind: "ask",
+          reason: `\`workit ${asked.verb}\` reports to the Workit tracker: the user decides this call.`,
+        };
+      if (asked && !asked.plain && canDeny && ["codex_cli", "codex_desktop"].includes(input.host))
+        return {
+          kind: "deny",
+          reason: `Run \`workit ${asked.verb} …\` with nothing before the verb (no env, wrapper or global option), so Codex asks the user.`,
+          unblock: null,
+        };
       // An implementer stays in its Workit worktree (#310), a judge in its scratch dir (#790).
       const role = canDeny ? agentRole(input, descriptor) : null;
       if (role) {

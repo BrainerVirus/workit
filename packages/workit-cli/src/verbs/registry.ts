@@ -751,6 +751,26 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     load: () => import("./issue"),
   }),
+  {
+    name: "feedback",
+    group: "delivery",
+    usage:
+      'workit feedback "<title>" --body-file <f|-> [--verb "<workit …>"] [--exit-file <f|->] [--include-workspace] [--post [--account <login>] [--comment <n>]]',
+    summary:
+      "Draft a report of Workit friction for the Workit tracker (redacted, with version, host, verb and exit text), suggest a duplicate, and post only with --post after the user's yes",
+    notes: [
+      "Redacted by default: remote URLs, absolute paths, the branch, ticket IDs and the workspace's org, repo and workspace names; --include-workspace keeps them. Without --post the draft is saved under `workit dir retros` and its path printed. --post uses --account or feedback.account in workspaces.json, never the workspace's own account by default; the hosts ask the user before it runs. A workspace with feedback: \"off\" refuses.",
+    ],
+    flagHints: {
+      body: 'the text goes through --body-file; - reads stdin: echo "<repro>" | workit feedback "<title>" --body-file -',
+      title: 'the title is the first argument: workit feedback "<title>" --body-file <f|->',
+    },
+    examples: [
+      'workit feedback "pr status fails outside a checkout" --body-file - --verb "workit pr status" --exit-file err.txt < repro.md',
+      'workit feedback "pr status fails outside a checkout" --body-file <saved draft> --post --account <login>',
+    ],
+    load: () => import("./feedback"),
+  },
   withSubcommands({
     name: "ci",
     group: "delivery",

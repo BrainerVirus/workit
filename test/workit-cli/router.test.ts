@@ -317,6 +317,7 @@ const JSON_ERROR_PATHS: Record<string, string[][]> = {
   stop: [[], ["pnosuchproc0"], ["--within"]],
   pr: [["status"]],
   issue: [["view"], ["close", "1"]],
+  feedback: [[], ["t"]],
   ci: [["wait"]],
   git: [["push"]],
   release: [["finish"], ["start"]],

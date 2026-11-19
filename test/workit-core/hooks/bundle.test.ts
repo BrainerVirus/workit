@@ -218,7 +218,8 @@ test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab
     // a hard link or a symlink, a quoted marker, and script runs (after a wrapper
     // too); 5,186 B measured, plus 256 B. 2026-11-12 (#780): it also sends a ytrack command
     // word, past wrappers and runners, and keeps a mere mention quiet; 5,508 B, plus 256 B.
-    expect(statSync(entry).size).toBeLessThanOrEqual(5_764);
+    // 2026-11-19 (#777): `feedback` joins the user-only words; 5,770 B, plus 256 B.
+    expect(statSync(entry).size).toBeLessThanOrEqual(6_026);
     const repo = path.join(out, "repo");
     spawnSync("git", ["init", "-q", "-b", "feature/x", repo]);
     mkdirSync(path.join(repo, ".git", "workit"));

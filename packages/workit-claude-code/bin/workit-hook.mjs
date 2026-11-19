@@ -203,7 +203,8 @@ const maybeGated = (command) => MAYBE_GATED.test(command.replace(NO_FILE_REDIREC
 // A user-only Workit call (`workit setup`, `workit grant set`, …) goes to the
 // runtime, which asks: a copy of workit-core hooks/delivery-verbs.ts
 // mayRunUserOnly, the gate's own first test (a test holds them equal).
-const USER_ONLY_WORD = /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace)\b/;
+const USER_ONLY_WORD =
+  /\b(?:release|grant|ledger|approve|setup|uninstall|install|workspace|feedback)\b/;
 const mayRunUserOnly = (text) => {
   const joined = text.replace(/\\\r?\n/g, "");
   const bare = joined.replace(/['"\\]/g, "");

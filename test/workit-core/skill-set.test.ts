@@ -28,7 +28,8 @@ const hasWord = (text: string, word: string) =>
 // guard against the 3.0 skill set (16 skills), measured by the same proxy.
 const BASELINE_3_0_TOKENS = 2_036; // bootstrap ~1,547 + descriptions ~490
 // 1,700 plus the --cwd / zsh-safe shell line the contract gained in #388.
-const RESIDENT_TOKEN_BUDGET = Math.max(1_770, Math.floor(BASELINE_3_0_TOKENS * 0.85));
+// +15 for the `workit feedback` contract line (#777).
+const RESIDENT_TOKEN_BUDGET = Math.max(1_785, Math.floor(BASELINE_3_0_TOKENS * 0.85));
 const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
 test("Given every skill, Then its description says what and when within 250 characters and carries all of its trigger words", () => {

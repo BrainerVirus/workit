@@ -175,6 +175,15 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
   [entry.defaultEndpoint, enumOf(DEFAULT_ENDPOINTS)],
   [entry.delegation, enumOf(DELEGATION_MODES)],
   [entry.cleanup, enumOf(CLEANUP_MODES)],
+  [
+    entry.feedback,
+    {
+      anyOf: [
+        enumOf(["on", "off"]),
+        closed({ account: string("The GitHub login `workit feedback --post` uses.") }),
+      ],
+    },
+  ],
   [entry.changelog, enumOf(CHANGELOG_MODES)],
   [entry.docs, enumOf(DOCS_MODES)],
   [

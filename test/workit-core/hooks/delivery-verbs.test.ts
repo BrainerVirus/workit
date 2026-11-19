@@ -88,7 +88,11 @@ test("G both launchers, W their sources are read, T each holds the gate's first 
     "packages/workit-codex/hooks/launcher.ts",
   ]) {
     const { source, body } = fn(launcher);
-    expect(source, launcher).toContain(`const USER_ONLY_WORD = ${String(USER_ONLY_WORD)};`);
+    // The formatter may wrap the declaration after its `=`.
+    expect(
+      source.replace(/const USER_ONLY_WORD =\s+/u, "const USER_ONLY_WORD = "),
+      launcher,
+    ).toContain(`const USER_ONLY_WORD = ${String(USER_ONLY_WORD)};`);
     expect(body, launcher).toBe(core);
   }
 });
