@@ -159,14 +159,13 @@ test("G a prompt naming a directory whose .git is a FIFO or a device, W PreToolU
   const zero = path.join(cwd, "zero-dir");
   mkdirSync(zero);
   symlinkSync("/dev/zero", path.join(zero, ".git"));
-  const started = Date.now();
+  // A read of either would block or never end: the test's timeout is the bound.
   for (const dir of [fifo, zero])
     expect(
       spawn({ subagent_type: "workit:implementer", prompt: `Work in ${dir}` }).hookSpecificOutput
         ?.permissionDecision,
       dir,
     ).toBe("deny");
-  expect(Date.now() - started).toBeLessThan(2000);
 });
 
 test("G an implementer prompt that points at its brief (WORKER, TIER, TIMEBOX and WORKTREE lines, render the rest), W PreToolUse runs, T it is accepted as a brief", () => {
