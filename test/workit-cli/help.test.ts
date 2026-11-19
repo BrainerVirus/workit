@@ -69,7 +69,7 @@ const PARSERS: Record<string, string[]> = {
   issue: ["verbs/issue.ts"],
   ci: ["verbs/ci.ts"],
   git: ["verbs/git.ts"],
-  release: ["verbs/release.ts"],
+  release: ["verbs/release.ts", "verbs/release-tag.ts"],
   "verify-delivery": ["verbs/verify-delivery.ts"],
   stack: ["verbs/stack.ts"],
   fanout: ["verbs/fanout.ts"],
