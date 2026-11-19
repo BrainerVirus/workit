@@ -73,3 +73,40 @@ test("Given a pre-commit refusal that reformats the path, When the same commit i
   expect(repo.git("status", "--porcelain")).toBe("");
   expect(readFileSync(path.join(repo.cwd, "a.txt"), "utf8")).toBe("formatted\n");
 });
+
+/** A pre-commit check that refuses until a.txt reads "formatted", naming the fix command. */
+const checkOnly = (repo: RemoteRepo) => {
+  const file = path.join(repo.root, "hooks", "pre-commit");
+  writeFileSync(
+    file,
+    `#!/bin/sh\nif [ "$(git show :a.txt)" != formatted ]; then echo 'staged files are not formatted; run bun run format, git add them, commit again' >&2; exit 1; fi\nexit 0\n`,
+  );
+  chmodSync(file, 0o755);
+};
+
+test("Given a pre-commit check that names `run bun run format`, When `workit git commit` fails, Then the output ends with the Workit fix route, and the retry after the fix commits the fixed file", async () => {
+  writeFileSync(
+    path.join(configHome.configDir, "config.json"),
+    JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+  );
+  const repo = makeRemoteRepo();
+  repos.push(repo);
+  repo.git("switch", "-q", "-c", "feature/b");
+  checkOnly(repo);
+  repo.write("a.txt", "raw\n");
+  const argv = ["git", "commit", "-m", "feat: b", "--", "a.txt"];
+
+  const refused = await run(argv, repo.cwd);
+  expect(refused.code).toBe(1);
+  expect(refused.stderr.trimEnd()).toEndWith(
+    "workit check --name fix -- bun run format, then rerun the same workit git commit",
+  );
+
+  // The fix the route names rewrites the file after the refusal staged it.
+  repo.write("a.txt", "formatted\n");
+  const retried = await run(argv, repo.cwd);
+  expect(retried.stderr).toBe("");
+  expect(retried.code).toBe(0);
+  expect(repo.git("show", "HEAD:a.txt")).toBe("formatted");
+  expect(repo.git("status", "--porcelain")).toBe("");
+});

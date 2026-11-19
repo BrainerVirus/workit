@@ -191,14 +191,53 @@ test("Given tracked dirt, When `workit git branch` refuses, Then the first line 
   expect(result.json().unblock).toStartWith("workit git branch feature/next --base main --carry");
 });
 
-test("Given a git-flow policy in a main-only clone, When `workit git branch` cannot resolve develop, Then the unblock names --base main", async () => {
+test("Given a git-flow policy in a main-only clone, When `workit git branch feature/x` runs without --base, Then it branches from main and says develop is missing", async () => {
   const cwd = repo();
   policy("gitflow");
   try {
     const result = await run(["git", "branch", "feature/one", "--json"], cwd);
-    expect(result.code).toBe(1);
-    expect(result.json().error).toContain("base develop does not resolve");
-    expect(result.json().unblock).toStartWith("workit git branch feature/one --base main");
+    expect(result.code).toBe(0);
+    const data = result.json().data;
+    expect(data.baseRef).toBe("refs/heads/main");
+    expect(data.notes.join("\n")).toContain("develop does not exist here");
+    const head = spawnSync("git", ["rev-parse", "HEAD", "main"], { cwd, encoding: "utf8" });
+    const [tip, trunk] = head.stdout.trim().split("\n");
+    expect(tip).toBe(trunk);
+  } finally {
+    policy("github-flow");
+  }
+});
+
+test("Given a git-flow policy in a main-only clone, When `workit git branch` names --base develop, Then it is still refused naming --base main", async () => {
+  const cwd = repo();
+  policy("gitflow");
+  try {
+    const result = await run(["git", "branch", "feature/two", "--base", "develop", "--json"], cwd);
+    expect(result.code).not.toBe(0);
+    expect(result.json().error).toContain("develop");
+  } finally {
+    policy("github-flow");
+  }
+});
+
+test("Given a repo whose subject style is Conventional, When `workit git commit -m 'wip: half done'` runs, Then it commits as `chore: wip half done` and says so", async () => {
+  const cwd = repo();
+  writeFileSync(
+    path.join(configHome.configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "github-flow" },
+      commitPolicy: { preset: "conventional" },
+    }),
+  );
+  try {
+    writeFileSync(path.join(cwd, "a.txt"), "half\n");
+    const result = await run(
+      ["git", "commit", "-m", "wip: half done", "--json", "--", "a.txt"],
+      cwd,
+    );
+    expect(result.code).toBe(0);
+    expect(result.json().data.message).toStartWith("chore: wip half done");
+    expect(result.json().data.notes.join("\n")).toContain("rewrote the wip subject");
   } finally {
     policy("github-flow");
   }

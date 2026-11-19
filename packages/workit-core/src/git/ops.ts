@@ -23,7 +23,15 @@
 //   the tip workit last recorded, and success only when the remote tip
 //   observed afterwards equals the local SHA (`push.verified` row).
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import {
   branchKindOf,
@@ -169,6 +177,25 @@ export const hookRefusal = (output: string): string | null => {
   return `commit refused by commit-msg hook: ${rule}${limit ? ` ${limit}` : ""}${got ? ` (got ${got})` : ""}${limit || got ? "" : ` (${text})`}`;
 };
 
+/**
+ * The fix command a refusing hook names (`run \`bun run format\``, `run npm
+ * run lint:fix`), or null. The Workit route for it is a light ad-hoc check,
+ * then the same commit.
+ */
+export const hookFixCommand = (output: string): string | null => {
+  const quoted = /\brun:?\s+[`'"]([^`'"\n]{2,120})[`'"]/iu.exec(output)?.[1];
+  const bare =
+    /\brun:?\s+((?:bun|bunx|npm|npx|pnpm|yarn|make|just|cargo|go|ruff|black|prettier|oxfmt|oxlint|eslint|biome|dprint|gofmt|rustfmt)\b[^,;\n`'"]{0,100})/iu.exec(
+      output,
+    )?.[1];
+  const command = (quoted ?? bare)?.trim().replace(/[.:]+$/u, "");
+  return command || null;
+};
+
+/** The route a commit refused by a fixable hook ends with. */
+const hookFixRoute = (command: string): string =>
+  `workit check --name fix -- ${command}, then rerun the same workit git commit`;
+
 /** Past this many lines, hook output keeps its head and tail. */
 const OUTPUT_LINES = 200;
 /** A longer output line (a minified bundle, a JSON blob) is cut here. */
@@ -311,6 +338,18 @@ export type BranchInput = {
   track?: string | null;
 };
 
+/** The repo's trunk: origin's HEAD branch, else main or master, remote-tracking first. */
+function presentTrunk(cwd: string, remote: string | null): { name: string; ref: string } | null {
+  const head = remote ? git(cwd, ["symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`]) : null;
+  const headName = head?.ok ? head.stdout.trim().replace(`refs/remotes/${remote}/`, "") : null;
+  for (const name of [headName, "main", "master"]) {
+    if (!name) continue;
+    for (const ref of [...(remote ? [`refs/remotes/${remote}/${name}`] : []), `refs/heads/${name}`])
+      if (resolveRef(cwd, ref)) return { name, ref };
+  }
+  return null;
+}
+
 export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOutcome> {
   if (!headSha(cwd) && currentBranch(cwd) === null)
     return failure("invalid_input", "not inside a git repository with a commit");
@@ -416,6 +455,16 @@ export function gitBranch(cwd: string, input: BranchInput): ForgeResult<BranchOu
     }
   } else if (localTip) baseRef = `refs/heads/${base}`;
   if (!baseRef && git(cwd, ["rev-parse", "--verify", "-q", `${base}^{commit}`]).ok) baseRef = base;
+  // A configured base this clone does not have (git-flow's develop in a
+  // main-only repo) gives way to the repo's real trunk when none was asked for.
+  const trunk = !baseRef && !explicitBase ? presentTrunk(cwd, remote) : null;
+  if (trunk && trunk.name !== base) {
+    notes.push(
+      `${base} does not exist here (no ${remote ?? "remote"}/${base}, no local ${base}); branched from the trunk ${trunk.name} (pass --base <b> for another)`,
+    );
+    base = trunk.name;
+    baseRef = trunk.ref;
+  }
   const baseSha = baseRef
     ? git(cwd, ["rev-parse", "--verify", "-q", `${baseRef}^{commit}`]).stdout.trim()
     : "";
@@ -524,6 +573,17 @@ export type CommitOutcome = {
   /** The ledger row id, or why it could not be written (the commit stands). */
   recorded: { id: string } | { error: string };
 };
+
+/**
+ * A handoff `wip: <state>` subject (the continue skill's checkpoint) in the
+ * Conventional form `chore: wip <state>`, or null for any other message.
+ */
+export function wipMessage(message: string): string | null {
+  const [subject = "", ...rest] = message.split("\n");
+  const match = /^\s*wip\b(?:\([^)]*\))?!?:?\s*(.*)$/iu.exec(subject);
+  if (!match) return null;
+  return [`chore: wip${match[1] ? ` ${match[1]}` : ""}`, ...rest].join("\n");
+}
 
 /** The commit convention check: the configured preset, or the history's flavor for `auto`. */
 export function lintCommitMessage(
@@ -760,6 +820,56 @@ function partiallyStaged(cwd: string, paths: readonly string[]): string[] {
   return names("--cached").filter((file) => unstaged.has(file));
 }
 
+/**
+ * A refused path-form commit leaves its paths staged whole (#792). When the
+ * caller then runs the fix the hook named (a formatter), the working tree
+ * moves on and the path would read as staged in part, so the retry would
+ * commit the stale staged copy. The staged blobs are kept in the git dir; a
+ * path still staged at exactly that blob is taken whole on the retry.
+ */
+const refusedStageFile = (cwd: string): string | null => {
+  const run = git(cwd, ["rev-parse", "--git-path", "workit/refused-commit-stage.json"]);
+  return run.ok && run.stdout.trim() ? path.resolve(cwd, run.stdout.trim()) : null;
+};
+
+/** `path -> staged blob` for `paths` (top-relative). */
+const stagedBlobs = (cwd: string, paths: readonly string[]): Record<string, string> => {
+  const blobs: Record<string, string> = {};
+  for (const entry of nulList(git(cwd, ["ls-files", "-s", "-z", "--", ...paths]).stdout)) {
+    const match = /^\d+ ([0-9a-f]+) 0\t(.+)$/u.exec(entry);
+    if (match) blobs[match[2]] = match[1];
+  }
+  return blobs;
+};
+
+function rememberRefusedStage(cwd: string, paths: readonly string[]): void {
+  const file = refusedStageFile(cwd);
+  if (!file) return;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(stagedBlobs(cwd, paths)));
+  } catch {
+    // Best effort: without the record the retry names the partial path as before.
+  }
+}
+
+function stagedByRefusal(cwd: string, file: string): boolean {
+  const record = refusedStageFile(cwd);
+  if (!record || !existsSync(record)) return false;
+  try {
+    const blobs = JSON.parse(readFileSync(record, "utf8")) as Record<string, string>;
+    const now = stagedBlobs(cwd, [literalTop(file)])[file];
+    return now !== undefined && blobs[file] === now;
+  } catch {
+    return false;
+  }
+}
+
+function forgetRefusedStage(cwd: string): void {
+  const file = refusedStageFile(cwd);
+  if (file) rmSync(file, { force: true });
+}
+
 const literalTop = (file: string) => `:(top,literal)${file}`;
 
 /**
@@ -918,9 +1028,14 @@ export function gitCommit(
   let message = given;
   let carried: string[] = [];
   let previousTrailers: string[] = [];
+  let rewrote: string | null = null;
   if (given) {
     const lint = lintCommitMessage(cwd, given);
-    if (!lint.ok) return failure("blocked", lint.error, lint.correction);
+    const wip = lint.ok ? null : wipMessage(given);
+    if (wip && lintCommitMessage(cwd, wip).ok) {
+      rewrote = `${given.split("\n", 1)[0]} -> ${wip.split("\n", 1)[0]}`;
+      message = wip;
+    } else if (!lint.ok) return failure("blocked", lint.error, lint.correction);
   }
   if (previous) {
     const kept = git(cwd, ["log", "-1", "--format=%B", previous]);
@@ -1005,7 +1120,9 @@ export function gitCommit(
       return failure("invalid_input", "paths must not be empty or start with -");
     // A file staged in part keeps its index entry: its staged hunks are the
     // commit, its unstaged rest stays in the working tree (--whole adds it).
-    keptPartial = input.whole ? [] : partiallyStaged(cwd, paths);
+    keptPartial = input.whole
+      ? []
+      : partiallyStaged(cwd, paths).filter((file) => !stagedByRefusal(cwd, file));
     const partial = new Set(keptPartial);
     const top = git(cwd, ["rev-parse", "--show-prefix"]).stdout.trim();
     // A path already removed from disk and index (`git rm`) has nothing to
@@ -1080,16 +1197,22 @@ export function gitCommit(
     // A path staged whole stays staged whole: a refusing hook's formatter
     // rewrite is staged too, so the retry does not read it as staged in part
     // and commit the stale copy through a private index (#792).
-    if (addArgs.length) git(cwd, addArgs);
+    if (addArgs.length) {
+      git(cwd, addArgs);
+      rememberRefusedStage(cwd, paths);
+    }
     const output = gitOutput(committed);
     const refusal = hookRefusal(output);
+    const fix = hookFixCommand(output);
     return failure(
       "failed",
       `git commit failed (a hook or git refused it):\n${output}${refusal ? `\n${refusal}` : ""}`,
+      fix ? hookFixRoute(fix) : undefined,
     );
   }
   const sha = headSha(cwd);
   if (!sha) return failure("failed", "the commit did not resolve");
+  forgetRefusedStage(cwd);
   if (paths.length) resyncCommittedPaths(cwd, paths);
   // A merge commit lists what it brought in relative to its first parent.
   const merge = git(cwd, ["rev-parse", "-q", "--verify", `${sha}^2`]).ok;
@@ -1103,6 +1226,10 @@ export function gitCommit(
   );
   const leftDirty = dirtEntries(cwd).length;
   const notes: string[] = [];
+  if (rewrote)
+    notes.push(
+      `rewrote the wip subject to this repository's commit style: ${rewrote} (squash or reword it before the PR)`,
+    );
   // Only a commit on the branch's own upstream needs a forced push.
   const upstream = `refs/remotes/${pushRemoteName(cwd, branch) ?? "origin"}/${branch}`;
   if (previous && git(cwd, ["merge-base", "--is-ancestor", previous, upstream]).ok)

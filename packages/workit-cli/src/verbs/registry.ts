@@ -844,7 +844,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "rebase",
-        usage: "workit git rebase [--onto <base>]",
+        usage: "workit git rebase [<base> | --onto <base>]",
         summary:
           "Replay the current branch onto its freshly fetched base (the default base, or --onto); a conflict aborts and names the paths, a rewrite is recorded and prints the leased push",
       },

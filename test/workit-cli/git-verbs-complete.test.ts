@@ -715,11 +715,14 @@ test("Given no workit config and a remote develop branch, When creating a branch
   expect((await run(["git", "branch", "wip-x"], repo.cwd)).code).toBe(3);
 });
 
-test("Given a configured gitflow policy in a main-only repository, When creating a branch, Then the configuration still wins", async () => {
+test("Given a configured gitflow policy in a main-only repository, When creating a branch without --base, Then it starts from the trunk and names the missing develop", async () => {
   const repo = setup({ branchPolicy: { preset: "gitflow" } });
   const result = await run(["git", "branch", "feature/one", "--json"], repo.cwd);
-  expect(result.code).toBe(1);
-  expect(result.json().error).toContain("base develop does not resolve");
+  expect(result.code, result.stdout).toBe(0);
+  expect(result.json().data.base).toBe("main");
+  expect(result.json().data.notes.join("\n")).toContain(
+    "develop does not exist here (no origin/develop, no local develop); branched from the trunk main",
+  );
 });
 
 test("Given no workit config and develop only on a non-origin remote, When creating a branch, Then the fork's develop does not make it gitflow", async () => {

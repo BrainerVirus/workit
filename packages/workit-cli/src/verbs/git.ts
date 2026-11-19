@@ -8,7 +8,7 @@
 //   workit git trailers  (prints on|off: whether this workspace writes Workit-Session trailers)
 //   workit git push [--set-upstream] [--force-with-lease [--expect <sha>]]
 //   workit git push --release <main|develop|v-tag>…  (repeatable)
-//   workit git rebase [--onto <base>]  (git-rebase.ts)
+//   workit git rebase [<base> | --onto <base>]  (git-rebase.ts)
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { requireGrant } from "@workit-dev/core/src/autonomy";
@@ -52,7 +52,7 @@ const STAGE_USAGE = "workit git stage --patch <file|-> | [--] <paths…> [--json
 const UNSTAGE_USAGE = "workit git unstage [--] <paths…> [--json]";
 const PUSH_USAGE =
   "workit git push [--set-upstream] [--force-with-lease [--expect <sha>] [--overwrite-unintegrated]] [--release <main|develop|v-tag>[,…]] [--json]";
-const REBASE_USAGE = "workit git rebase [--onto <base>] [--json]";
+const REBASE_USAGE = "workit git rebase [<base> | --onto <base>] [--json]";
 const HOLD_USAGE = 'workit git hold --why "<the user\'s words>" | --clear [--json]';
 const USAGE =
   "workit git branch|commit|stage|unstage|push|rebase|hold|trailers ... (workit help git)";
@@ -643,13 +643,19 @@ function publishTagReleases(
 function rebaseCommand(argv: string[], io: Io): number {
   const flags = parseFlags(argv, { onto: "value" });
   if (typeof flags === "string") return usage(io, flags, REBASE_USAGE);
-  if (flags.positionals.length)
+  // git's own shape: `rebase <upstream>` is `--onto <upstream>` here.
+  const [positional, ...extra] = flags.positionals;
+  if (
+    extra.length ||
+    positional?.startsWith("-") ||
+    (positional !== undefined && flags.values.onto !== undefined)
+  )
     return usage(
       io,
-      `unexpected argument ${flags.positionals[0]} (workit rebases the current branch: --onto <base> picks another base)`,
+      `unexpected argument ${extra[0] ?? positional} (workit rebases the current branch onto one base: workit git rebase <base>, or --onto <base>)`,
       REBASE_USAGE,
     );
-  return rebase(flags.values.onto ?? null, io);
+  return rebase(flags.values.onto ?? positional ?? null, io);
 }
 
 function holdCommand(argv: string[], io: Io): number {
