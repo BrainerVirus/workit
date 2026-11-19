@@ -223,6 +223,11 @@ test("Given no plan and no --branch, When `worktree create hello --base main` ru
     const data = JSON.parse(out.stdout).data;
     // The policy allows only feature/*.
     expect(data.branch).toBe("feature/hello");
+    // A branch that exists already (the lead's own) is never reused.
+    git(cwd, "branch", "feature/again");
+    const again = await run(cwd, ["fanout", "worktree", "create", "again", "--json"]);
+    expect(again.code, again.stdout).toBe(0);
+    expect(JSON.parse(again.stdout).data.branch).toBe("feature/again-2");
     expect(tokened(data.path)).toBe(true);
     expect(gate(cwd, data.prompt)).toBeNull();
   });

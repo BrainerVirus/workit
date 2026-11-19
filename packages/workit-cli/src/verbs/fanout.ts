@@ -24,6 +24,7 @@ import {
 } from "@workit-dev/core/src/fanout-brief";
 import {
   adhocPlan,
+  isAdhocPlan,
   isPlanPath,
   planFileMatches,
   planHolding,
@@ -457,15 +458,17 @@ const findSliceMissing = (fanout: string, slice: string): FanoutError => ({
  */
 function createWorktrees(io: Io, slices: string[], flags: Record<string, string>): number {
   const branch = flags.branch?.trim() || null;
-  // One slice, no plan named, none holding it and none this checkout would
-  // pick (so a typo in a planned slice stays an error): an unplanned slice on
-  // its default branch, as with --branch (the call agents make first).
+  // One slice, no plan named, none holding it and no real plan this checkout
+  // would pick (so a typo in a planned slice stays an error): an unplanned
+  // slice on its default branch, as with --branch (the call agents make first).
+  const picked =
+    branch === null && flags.name === undefined && slices.length === 1
+      ? selectFanout(io.cwd, null, currentBranch(io.cwd), io.env.WORKIT_SESSION_ID?.trim() || null)
+      : null;
   const unplanned =
-    branch === null &&
-    flags.name === undefined &&
-    slices.length === 1 &&
+    picked !== null &&
     planHolding(io.cwd, slices[0]) === null &&
-    !selectFanout(io.cwd, null, currentBranch(io.cwd), io.env.WORKIT_SESSION_ID?.trim() || null).ok;
+    (!picked.ok || isAdhocPlan(picked.data));
   if (branch === null && !unplanned && (flags.base !== undefined || flags.tier !== undefined))
     return usage(io, "--base and --tier go with an unplanned slice (--branch <b>)", WORKTREE_USAGE);
   if (branch !== null && slices.length !== 1)

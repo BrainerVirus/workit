@@ -15,6 +15,7 @@ import path from "node:path";
 import { validateBranchNameFor } from "./core/branch";
 import { repoDir } from "./core/repo-paths";
 import {
+  branchRef,
   fanoutFail,
   listFanouts,
   planFanout,
@@ -50,13 +51,27 @@ export function planFileMatches(cwd: string, name: string): string[] {
   }
 }
 
-/** The branch an unplanned slice gets: the first of feature/, feat/, fix/ the branch policy allows, else its suggestion. */
+/**
+ * The branch an unplanned slice gets: the first of feature/, feat/, fix/
+ * <slice> the branch policy allows (else its suggestion), with `-2`, `-3`…
+ * while that branch already exists (the lead's own branch may be the name).
+ */
 export function defaultSliceBranch(cwd: string, slice: string): string {
-  for (const kind of ["feature", "feat", "fix"])
-    if (validateBranchNameFor(cwd, `${kind}/${slice}`).ok) return `${kind}/${slice}`;
   const check = validateBranchNameFor(cwd, `feature/${slice}`);
-  return (!check.ok && /use "([^"]+)"/u.exec(check.correction)?.[1]) || `feature/${slice}`;
+  const name =
+    ["feature", "feat", "fix"]
+      .map((kind) => `${kind}/${slice}`)
+      .find((candidate) => validateBranchNameFor(cwd, candidate).ok) ??
+    ((!check.ok && /use "([^"]+)"/u.exec(check.correction)?.[1]) || `feature/${slice}`);
+  for (let n = 2; ; n += 1) {
+    const candidate = n === 2 ? name : `${name}-${n - 1}`;
+    if (!branchRef(cwd, candidate) || n > 50) return candidate;
+  }
 }
+
+/** A one-slice plan named after its slice, as `adhocPlan` records one. */
+export const isAdhocPlan = (plan: FanoutFile): boolean =>
+  plan.slices.length === 1 && plan.slices[0].id === plan.name;
 
 /** The registered plan that holds slice `id`, if any. */
 export function planHolding(cwd: string, id: string): FanoutFile | null {
@@ -113,7 +128,9 @@ export function adhocPlan(
           scope: ["**"],
           goal: "the task in the lead's spawn prompt (an unplanned slice: no plan file)",
           acceptance: ["the outcomes the lead's spawn prompt names"],
-          verify: ["the checks the lead's spawn prompt names, else workit check test"],
+          verify: [
+            "the checks the lead's spawn prompt names, else those `workit check --list` prints (none configured: say so in the report)",
+          ],
           forbidden: ["changes outside this worktree; push, merge or rebase unless the lead asks"],
         },
       ],

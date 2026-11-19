@@ -26,6 +26,8 @@ prompt states the task, and its acceptance and verify count as the brief's.
    it, one verb per call:
    `workit git --cwd <worktree> commit …`, `workit check --cwd <worktree> <name>`
    (verb first, so the host's allow rules match).
+   Read-only git (`status`, `log`, `diff`, `show`) is plain
+   `git -C <worktree> …`; `workit git` takes branch, commit, stage and push.
    Never `cd <worktree> && …` chains, `$VAR` paths or compound commands. Edit
    files by their path under the worktree. Workit's hooks deny an edit or a
    mutating git command outside it.
