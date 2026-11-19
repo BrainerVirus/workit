@@ -156,6 +156,11 @@ test("Given an unregistered plan file, When `worktree create a --name <path>/pla
   expect(byName.code, byName.stdout + byName.stderr).toBe(0);
   expect(byName.stderr).toContain(`registered fanout wave from ${plan}`);
   expect(byName.stdout).toContain(`WORKTREE: `);
+  // A bare file name that is not in the cwd: the one file of that name in the checkout.
+  mkdirSync(path.join(cwd, "plans"));
+  writePlan(path.join(cwd, "plans", "other.json"), "other", ["o"]);
+  const bare = await run(cwd, ["fanout", "worktree", "create", "o", "--name", "other.json"]);
+  expect(bare.code, bare.stdout + bare.stderr).toBe(0);
   const byPlan = await run(cwd, ["fanout", "worktree", "create", "b", "--plan", plan]);
   expect(byPlan.code, byPlan.stdout + byPlan.stderr).toBe(0);
   // `fanout status <plan>` reads the positional as the plan's name.

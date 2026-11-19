@@ -10,6 +10,7 @@
 // - `--name <x>` that names no registered plan: the plan files in
 //   `workit dir plans` whose names start with x (`planFileMatches`), which
 //   the CLI registers when exactly one matches.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { validateBranchNameFor } from "./core/branch";
@@ -35,6 +36,36 @@ export const isPlanPath = (cwd: string, value: string): boolean => {
     return false;
   }
 };
+
+/**
+ * A `--name` plan file as given; one that does not exist there is the single
+ * file of that name in `workit dir plans` or in the checkout (tracked or not,
+ * ignored files aside), else the path as given (its read error names it).
+ */
+export function locatePlanFile(cwd: string, value: string): string {
+  const given = path.resolve(cwd, value);
+  if (fs.existsSync(given)) return given;
+  const base = path.basename(value);
+  const inPlans = planFileMatches(cwd, base.replace(/\.json$/u, "")).filter(
+    (file) => path.basename(file) === base,
+  );
+  if (inPlans.length === 1) return inPlans[0];
+  const listed = spawnSync(
+    "git",
+    ["ls-files", "--full-name", "--cached", "--others", "--exclude-standard", "--", `*${base}`],
+    { cwd, encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" },
+  );
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+  const hits = [
+    ...new Set(listed.stdout?.split("\n").filter((line) => path.basename(line) === base)),
+  ];
+  return hits.length === 1 && top.status === 0 ? path.join(top.stdout.trim(), hits[0]) : given;
+}
 
 /** `<plans dir>/<name>*.json` (`workit dir plans`), sorted; none outside a store. */
 export function planFileMatches(cwd: string, name: string): string[] {

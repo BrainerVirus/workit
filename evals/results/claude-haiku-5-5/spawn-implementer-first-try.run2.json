@@ -2,15 +2,15 @@
   "case": "spawn-implementer-first-try",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+b7e57484a7",
-  "key": "7544986e64e1b875",
-  "date": "2026-11-19T04:18:29.671Z",
+  "workitVersion": "workit-dev-v2.15.0+6cb0e71cc7",
+  "key": "2ab6db5f40ff7116",
+  "date": "2026-11-19T04:47:10.527Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 4445,
-    "costUsd": 0.045271179999999994,
+    "durationMs": 4853,
+    "costUsd": 0.044745339999999995,
     "stop": "success"
   },
   "grade": {

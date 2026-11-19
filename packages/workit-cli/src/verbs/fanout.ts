@@ -27,6 +27,7 @@ import {
   isAdhocPlan,
   isPlanPath,
   planFileMatches,
+  locatePlanFile,
   planHolding,
   plansHolding,
 } from "@workit-dev/core/src/fanout-adhoc";
@@ -141,7 +142,7 @@ function pickFanout(io: Io, values: { name?: string }, slice?: string): FanoutFi
     return selected.ok ? selected.data : failed(io, selected);
   };
   const name = values.name?.trim() || null;
-  let file = name && isPlanPath(io.cwd, name) ? path.resolve(io.cwd, name) : null;
+  let file = name && isPlanPath(io.cwd, name) ? locatePlanFile(io.cwd, name) : null;
   if (name && !file) {
     const known = selectFanout(io.cwd, name, null, null);
     const matches = known.ok || known.code !== "not_found" ? [] : planFileMatches(io.cwd, name);

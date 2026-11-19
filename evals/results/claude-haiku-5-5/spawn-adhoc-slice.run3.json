@@ -2,26 +2,35 @@
   "case": "spawn-adhoc-slice",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+b7e57484a7",
-  "key": "c4ce7b63da6235ab",
-  "date": "2026-11-19T04:16:40.804Z",
+  "workitVersion": "workit-dev-v2.15.0+6cb0e71cc7",
+  "key": "cc973a9a83441774",
+  "date": "2026-11-19T04:45:26.553Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 4361,
-    "costUsd": 0.04477310999999999,
+    "durationMs": 5219,
+    "costUsd": 0.08481047,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
-    "calls": 10,
-    "failures": [],
+    "pass": false,
+    "calls": 17,
+    "failures": [
+      {
+        "rule": "spawn-refused",
+        "detail": "#3 Agent(workit:implementer: version-ts) was refused: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Undermining Oversight]. If you have other tasks that don't depend on thi"
+      },
+      {
+        "rule": "first-try",
+        "detail": "1 denied and 0 failed of 7 Workit interaction(s): #3 Agent(workit:implementer: version-ts) denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Undermining Oversight]. If you have other tasks that don't depend on thi"
+      }
+    ],
     "firstTry": {
-      "interactions": 6,
+      "interactions": 7,
       "failed": 0,
-      "denied": 0
+      "denied": 1
     }
   }
 }
