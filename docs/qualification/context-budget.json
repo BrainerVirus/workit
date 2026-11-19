@@ -23,7 +23,7 @@
   "skill.workit-continue": 2185,
   "skill.workit-debug": 2070,
   "skill.workit-deslop": 3132,
-  "skill.workit-fanout": 22496,
+  "skill.workit-fanout": 23756,
   "skill.workit-implement": 5003,
   "skill.workit-retro": 7926,
   "skill.workit-review": 5292,
@@ -33,7 +33,7 @@
   "skill.workit-verify-app": 5563,
   "agent.babysitter": 1437,
   "agent.decider": 1482,
-  "agent.implementer": 3290,
+  "agent.implementer": 3848,
   "agent.reviewer": 2190,
   "agent.verifier": 2849
 }

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `workit fanout status` with no plan recorded says so and exits 0; a bare `workit fanout worktree create` of an unknown slice is refused when several plans could be meant, and `status` prefers the lead's real plan over its one-slice unplanned plans
+- `--name` on `workit fanout brief|check|status|worktree` takes a plan file as well as a plan name and registers it in the same call, once: a file already registered is used as stored, keeping its `--trunk` and name (`--plan` is the same flag); an unknown name lists the registered plans and registers the single matching file in `workit dir plans`; `workit fanout plan` refuses a slice branch the workspace branch policy refuses and names the allowed one
+- Claude Code spawn gate: a `workit:implementer` prompt that names a Workit-made worktree by its path, or a brief file holding a `WORKTREE:` line, now runs; a prompt naming none is denied in two lines whose `Retry as:` is the exact ad-hoc `workit fanout worktree create` call
 - ytrack (0.6.0 and newer) owns its agent skill: `workit init`, `workit setup` and `workit upgrade` no longer install or refresh it, `workit doctor` reads `ytrack skill list --json` and names `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade`, and once `~/.agents/skills/ytrack` exists `workit upgrade` removes the Codex, Cursor, OpenCode and Pi copies an older Workit installed
 - Workit roles spawn by name with the right model on the first try: each host carries the role's model and effort in its own agent definition (Claude Code `workit:verifier|reviewer|implementer`, new `workit:decider` on Fable at high effort and `workit:babysitter`; OpenCode registers `workit-<role>` agents from your `models.roles`; Codex and Cursor agent files). A model you name on a spawn always wins, so `Explore` on another model just runs. A configured model that differs from the agent file is filled outside auto mode or noted under auto mode; a spawn is denied over model or effort only with `models.enforce: "strict"`. `workit models show` prints how each host applies each role.
 - GitHub release notes start with the release's CHANGELOG.md entries, above
@@ -25,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `workit fanout worktree create a b c` makes several slices at once and prints, per slice, its `WORKTREE:` line and the exact spawn (Claude Code: `subagent_type: "workit:implementer"`, `run_in_background`, a model only when the tier differs from the agent file, and a pointer prompt that runs `workit fanout brief <slice> --name <plan>`), so the slice name is enough to spawn an implementer on the first try
+- `workit fanout worktree create <slice> [--branch <type>/<slug>] [--base <b>] [--tier <t>]` makes one slice no plan holds without a plan file (a one-slice plan named after it on the first `feature/`, `feat/` or `fix/` branch the policy allows, listed by `workit fanout status`)
 - When a session ends (Claude Code SessionEnd, Cursor sessionEnd, Pi quit, OpenCode session deleted), Workit stops the processes and automation browsers that session started, without delaying the host; a continuing session (clear, resume, compact), a subagent's end and kept processes stop nothing. A session start also stops leftovers whose owning session is gone, at most once every 10 minutes. Codex sends no subagent id on SessionEnd, so its processes are stopped by that start-time sweep instead.
 
 ### Fixed

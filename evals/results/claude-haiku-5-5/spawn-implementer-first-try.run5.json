@@ -2,35 +2,26 @@
   "case": "spawn-implementer-first-try",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "9027a6b814696ed5",
-  "date": "2026-11-18T17:06:54.310Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "3948bcf0e38220da",
+  "date": "2026-11-19T05:00:31.740Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 4587,
-    "costUsd": 0.014511675000000002,
+    "durationMs": 4425,
+    "costUsd": 0.043108419999999995,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 23,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#11 Agent(workit:implementer: hello) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 4 failed of 14 Workit interaction(s): #1 Bash(workit fanout worktree create hello) failed: Exit code 1; #2 Bash(workit fanout brief hello) failed: Exit code 1; #6 Bash(d=$(workit dir notes 2>/dev/null); printf 'dir=%s\\n' \"$d\"; mkdir -p \"$d\" && printf '%s\\n' '{\"slices\":[{\"id\":\"hello\",\"goa) failed: <outside-world file: unresolved, 565 bytes>; #7 Bash(d=<world>/repo/.git/workit/notes; printf '%s\\n' '{\"name\":\"hello-slice\",\"slices\":[{\"id\":\"hello\",\"branch\":\"feature/hello-s) failed: <outside-world file: unresolved, 183 bytes>; #11 Agent(workit:implementer: hello) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      }
-    ],
+    "pass": true,
+    "calls": 10,
+    "failures": [],
     "firstTry": {
-      "interactions": 14,
-      "failed": 4,
-      "denied": 1
+      "interactions": 6,
+      "failed": 0,
+      "denied": 0
     }
   }
 }

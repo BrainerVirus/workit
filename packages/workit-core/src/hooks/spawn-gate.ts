@@ -3,22 +3,60 @@
 // every command that wraps git and cannot be turned off, so `isolation` is
 // stripped from every agent type (an implementer works in its brief's
 // WORKTREE); under auto mode, which refuses a rewritten spawn, the spawn is
-// denied with the same args without it (agent-model.ts). A `workit:implementer` spawn also carries a Workit brief: a
-// prompt with no WORKTREE line (no brief, or a brief rendered before the
-// worktree existed) is denied with the commands that make one. A pointer
-// prompt (its WORKER, TIER, TIMEBOX and WORKTREE lines plus "render
-// `workit fanout brief <slice>`") passes: it spares the lead's context, and
-// the launcher fast path (workit-hook.mjs) keeps this same WORKTREE test.
+// denied with the same args without it (agent-model.ts). A `workit:implementer`
+// spawn names a made Workit worktree in its prompt, in any form: a WORKTREE
+// line (a brief, or the pointer `fanout worktree create` prints), the
+// worktree's path, POSIX or a drive letter with either separator (its git
+// admin dir holds the fanout token), or the path of
+// a brief file holding a WORKTREE line. Else it is denied in two lines whose
+// Retry as is `worktree create` for the slice word the prompt names (an
+// unplanned slice needs no plan). The launcher fast path (workit-hook.mjs) passes only the WORKTREE
+// line and leaves the rest to this gate. The implementer is still bound to
+// the first worktree it writes in (worktree-confine.ts).
+import fs from "node:fs";
+import path from "node:path";
 import { agentModelDecision, type SpawnChange } from "./agent-model";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision } from "./protocol";
 import { workitRole } from "./steering";
+import { FANOUT_TOKEN_FILE } from "./worktree-confine";
 
 /** A brief's WORKTREE line naming a made worktree (`fanout brief` says "not made yet" otherwise). */
 const MADE_WORKTREE = /^WORKTREE:[ \t]*(?!not made yet)\S(?![^\n]*not made yet)/mu;
 
-const UNBLOCK = "workit fanout worktree create <slice>";
-const BRIEF = "workit fanout brief <slice>";
+/** A path a prompt names: a directory `fanout worktree create` made, or a brief file with a WORKTREE line. */
+const namesMade = (word: string): boolean => {
+  try {
+    const stat = fs.statSync(word);
+    if (stat.isFile()) return stat.size < 1e6 && MADE_WORKTREE.test(fs.readFileSync(word, "utf8"));
+    // Only a small regular .git file is read: a FIFO or device must not hang the hook.
+    const dotGit = path.join(word, ".git");
+    const link = fs.statSync(dotGit);
+    const admin =
+      link.isFile() && link.size <= 4096 && /^gitdir: *(.+)/u.exec(fs.readFileSync(dotGit, "utf8"));
+    return !!admin && fs.existsSync(path.resolve(word, admin[1].trim(), FANOUT_TOKEN_FILE));
+  } catch {
+    return false;
+  }
+};
+
+const namesWorktree = (prompt: string): boolean =>
+  MADE_WORKTREE.test(prompt) ||
+  (prompt.match(/(?<![\w.~])(?:[a-z]:[\\/]|\/)[^\s'"`<>|;,()]+/giu) ?? []).some((word) =>
+    namesMade(word.replace(/[.:]+$/u, "")),
+  );
+
+/** The slice a prompt names (`fanout brief <x>`, `worktree create <x>`, `WORKER: <x>`), else the description, as a slice id. */
+const sliceWord = (tool: Record<string, unknown>): string =>
+  (
+    /(?:\bfanout brief|\bworktree create|\bWORKER:) +([a-z0-9][\w.-]*)/iu.exec(
+      String(tool.prompt),
+    )?.[1] ?? String(tool.description ?? "")
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/gu, "-")
+    .replace(/^[-._]+|-+$/gu, "")
+    .slice(0, 40) || "slice";
 
 /** The gate on a Claude Code spawn: a deny, or the input it lets run and what it changed. */
 type Gate =
@@ -28,15 +66,18 @@ type Gate =
 const gate = (descriptor: HostDescriptor, tool: Record<string, unknown>): Gate => {
   const type = typeof tool.subagent_type === "string" ? tool.subagent_type : "";
   const implementer = workitRole(descriptor, type) === "implementer";
-  if (implementer && (typeof tool.prompt !== "string" || !MADE_WORKTREE.test(tool.prompt)))
+  if (implementer && (typeof tool.prompt !== "string" || !namesWorktree(tool.prompt))) {
+    const slice = sliceWord(tool);
+    const unblock = `workit fanout worktree create ${slice}`;
     return {
       kind: "deny",
       decision: {
         kind: "deny",
-        reason: `workit spawn gate: a ${type} spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one slice: run \`${UNBLOCK}\`, then \`${BRIEF}\`, and spawn again with its text as the prompt and the Agent args its SPAWN line names (a slice no plan registers needs \`workit fanout plan <plan.json>\` first).`,
-        unblock: UNBLOCK,
+        reason: `workit spawn gate: this ${type} prompt names no worktree Workit made.\nRetry as: ${unblock} (or --name <plan> for a planned slice), then spawn again with the WORKTREE line it prints as the prompt's first line.`,
+        unblock,
       },
     };
+  }
   if (tool.isolation === undefined)
     return { kind: "run", input: tool, change: { dropped: [], reasons: [], notes: [] } };
   const { isolation: _dropped, ...input } = tool;

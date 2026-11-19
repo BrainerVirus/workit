@@ -20,16 +20,15 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
    PR (`references/orchestration.md`).
 2. **Record standing orders** (`workit ledger standing add "<order>"`): every
    user directive all workers share. Directives decay across resumes.
-3. **Brief each worker verbatim**: `workit fanout worktree create <slice>`
-   (every host), then `workit fanout brief <slice>` (WORKTREE, SCRATCH, rules).
-   Never hand-edit it; change the plan or the standing orders and render again.
+3. **Make the worktrees**: `workit fanout worktree create <slice>…` (every host; `--name <plan.json>`
+   registers the file) prints per slice its `WORKTREE:` line and the exact spawn, whose prompt points
+   the worker at `workit fanout brief <slice> --name <plan>`. Never hand-edit it; change the plan or
+   the standing orders. One unplanned slice needs no plan (`--branch <b>` optional).
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
-   keep 4-6 in flight and refill from `spawnable` in `workit fanout status` as
-   each one finishes. Assign before spawn (OpenCode: `workit worker assign`); each prompt carries
-   the brief, or a pointer: its `WORKER`, `TIER`, `TIMEBOX` and `WORKTREE` lines plus "run `workit fanout brief <slice>` and follow it"
-   (budget and model hooks read those lines), so batched OpenCode launches each bind their worker.
-   Model: the brief's `model:` and `effort:` lines (`workit models show`), else TIER (`references/orchestration.md`).
-   Claude Code: the `implementer` agent; its spawn hook drops `isolation` and refuses a prompt without a WORKTREE line.
+   keep 4-6 in flight and refill from `spawnable` in `workit fanout status`.
+   Assign before spawn (OpenCode: `workit worker assign`); each prompt is the printed one
+   (budget and model hooks read its WORKTREE, WORKER, TIER and TIMEBOX lines), so batched OpenCode launches each bind their worker.
+   Claude Code: copy the printed `SPAWN:` args (a model only when the TIER differs from the agent file); the hook drops `isolation` and refuses a prompt naming no Workit worktree with a `Retry as:`.
 5. **Judge liveness by side effects only:** `workit fanout status` (head age,
    PR, CI, verdict, landed; STUCK past the TIMEBOX). Stop a stuck worker and
    observe that it exited (a timeout is not proof); stop a finished one when its

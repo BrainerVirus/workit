@@ -2,39 +2,26 @@
   "case": "spawn-brief-by-path",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "d293158ba5b210a0",
-  "date": "2026-11-18T16:29:00.574Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "3c7af16d27f15573",
+  "date": "2026-11-19T04:52:35.123Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 7,
-    "durationMs": 17686,
-    "costUsd": 0.00640216,
+    "turns": 2,
+    "durationMs": 5317,
+    "costUsd": 0.09400193000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 6,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#6 Agent(workit:implementer: Implement hello slice) was refused: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      },
-      {
-        "rule": "require",
-        "detail": "no call matches /implementer/ not denied: the spawn that names the brief file runs"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 0 failed of 6 Workit interaction(s): #6 Agent(workit:implementer: Implement hello slice) denied: PreToolUse:Agent hook error: workit spawn gate: a workit:implementer spawn needs a Workit brief with a WORKTREE line, and this prompt has none. Even for one sli"
-      }
-    ],
+    "pass": true,
+    "calls": 10,
+    "failures": [],
     "firstTry": {
       "interactions": 6,
       "failed": 0,
-      "denied": 1
+      "denied": 0
     }
   }
 }

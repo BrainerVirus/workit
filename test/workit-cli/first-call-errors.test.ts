@@ -65,20 +65,13 @@ const run = async (argv: string[], cwd = scratch) => {
   return { code, stdout, stderr, json: () => JSON.parse(stdout) };
 };
 
-test("Given `workit fanout worktree create x --branch y`, When run, Then stderr holds the usage line, says the branch comes from the plan and the plan is chosen with --name, exit non-zero", async () => {
-  const result = await run(["fanout", "worktree", "create", "x", "--branch", "y"]);
-  expect(result.code).not.toBe(0);
-  expect(result.stderr).toContain("unknown option --branch");
-  expect(result.stderr).toContain("branch and base come from the plan");
-  expect(result.stderr).toContain("--name <plan>");
-  expect(result.stderr).toContain(
-    "usage: workit fanout worktree create|release <slice> [--name <n>] [--force]",
-  );
-  for (const flag of ["--base", "--plan"]) {
-    const other = await run(["fanout", "worktree", "create", "x", flag, "y", "--json"]);
-    expect(other.code, flag).toBe(2);
-    expect(other.json().unblock, flag).toContain("--name <plan>");
-  }
+test("Given `workit fanout worktree create x y --base z` (two slices, no plan), When run, Then it is a usage error naming --branch; --plan is read as --name (D2)", async () => {
+  const result = await run(["fanout", "worktree", "create", "x", "y", "--base", "z", "--json"]);
+  expect(result.code).toBe(2);
+  expect(result.json().error).toContain("--base and --tier go with an unplanned slice");
+  const plan = await run(["fanout", "worktree", "create", "x", "--plan", "nope", "--json"]);
+  expect(plan.json().error).not.toContain("unknown option");
+  expect(plan.json().error).toContain("no fanout plan named nope");
 });
 
 test("Given `workit ledger ruling … --cost x`, When run, Then the unblock names --cost-if-wrong and the ruling's usage line", async () => {

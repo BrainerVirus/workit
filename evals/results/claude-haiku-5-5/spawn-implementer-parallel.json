@@ -1,31 +1,26 @@
 {
   "case": "spawn-implementer-parallel",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "81b3eddebd6e36b4",
-  "date": "2026-11-18T17:23:41.550Z",
+  "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
+  "key": "753f1ec66140e539",
+  "date": "2026-11-19T05:39:21.357Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 0,
-    "durationMs": 4,
-    "costUsd": 0.38047809999999993,
+    "turns": 3,
+    "durationMs": 7927,
+    "costUsd": 0.18866147000000003,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 50,
-    "failures": [
-      {
-        "rule": "first-try",
-        "detail": "3 denied and 1 failed of 28 Workit interaction(s): #2 Bash(workit fanout worktree create add 2>&1; workit fanout worktree create mul 2>&1; workit fanout worktree create sub 2>&1) failed: Exit code 1; #29 Bash(W=<world>/state/worktrees/repo/mul; git -C $W rev-parse HEAD; git -C $W status --short; git -C $W diff --stat main...HEA) in a subagent denied: PreToolUse:Bash hook error; #30 Bash(W=<world>/state/worktrees/repo/add; git -C $W rev-parse HEAD; git -C $W status --short; cat $W/src/add.ts; git -C $W dif) in a subagent denied: PreToolUse:Bash hook error; #31 Bash(W=<world>/state/worktrees/repo/sub; git -C $W rev-parse HEAD; git -C $W status --short; git -C $W branch --show-current;) in a subagent denied: PreToolUse:Bash hook error"
-      }
-    ],
+    "pass": true,
+    "calls": 27,
+    "failures": [],
     "firstTry": {
-      "interactions": 28,
-      "failed": 1,
-      "denied": 3
+      "interactions": 18,
+      "failed": 0,
+      "denied": 0
     }
   }
 }

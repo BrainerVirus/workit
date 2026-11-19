@@ -17,6 +17,10 @@
   },
   "expect": {
     "kind": ["deny"],
-    "require": ["`workit fanout worktree create <slice>`", "workit fanout brief <slice>"]
+    "require": [
+      "workit spawn gate: ",
+      "\\nRetry as: workit fanout worktree create fix \\(",
+      "with the WORKTREE line it prints as the prompt's first line"
+    ]
   }
 }

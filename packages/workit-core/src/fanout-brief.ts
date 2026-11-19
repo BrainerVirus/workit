@@ -27,9 +27,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { gateCheckNames, loadCheckConfig } from "./check-config";
 import { neededChecks } from "./core/policy/check-evidence";
-import { claudeSpawnArgs, resolveRoleModel, type RoleSelector } from "./core/role-models";
+import {
+  CLAUDE_AGENT_FILES,
+  claudeSpawnArgs,
+  resolveRoleModel,
+  type RoleSelector,
+} from "./core/role-models";
 import { activeStanding, readLedger, type LedgerActor } from "./ledger";
-import { branchRef, fanoutFail, planLeads, type FanoutFile, type FanoutResult } from "./fanout";
+import {
+  branchRef,
+  fanoutFail,
+  planLeads,
+  type FanoutFile,
+  type FanoutResult,
+  type Slice,
+} from "./fanout";
 import {
   SCRATCH_DIR,
   excludeScratch,
@@ -272,32 +284,74 @@ function configuredVerify(root: string, lines: readonly string[]): string[] {
  * args its spawn hook passes as written (retro 2026-11-07 R1: a spawn the hook
  * rewrote is refused in auto mode, and a re-issue dropped run_in_background).
  */
+/**
+ * A Claude Code spawn's Agent args up to the prompt: `model` and `effort`
+ * only where the role's configured value differs from its agent file's
+ * (the agent file carries the rest, #899).
+ */
+const agentCall = (cwd: string, type: string, selector: RoleSelector, slice: string): string => {
+  const args = claudeSpawnArgs(cwd, selector);
+  const file = CLAUDE_AGENT_FILES[selector.role];
+  const same = args && file?.model === args.model && (file.effort ?? null) === args.effort;
+  const fields = [
+    `subagent_type: "${type}"`,
+    ...(args && !same ? [`model: "${args.model}"`] : []),
+    ...(args?.effort && !same ? [`effort: "${args.effort}"`] : []),
+    "run_in_background: true",
+    `description: "${slice}"`,
+  ];
+  return `Agent ${fields.join(", ")}`;
+};
+
+/** `workit fanout brief <slice> --name <plan>`, the plan name quoted when a shell needs it. */
+const briefCommand = (slice: string, plan: string): string =>
+  `workit fanout brief ${slice} --name ${/^[\w.@%+=:,/-]+$/u.test(plan) ? plan : `'${plan.replaceAll("'", `'\\''`)}'`}`;
+
+/**
+ * What `workit fanout worktree create` prints for a made slice: the pointer
+ * prompt (WORKTREE first, so the spawn gate reads it however the prompt is
+ * spelled, then WORKER, TIER, TIMEBOX and the brief to render) and the spawn
+ * that carries it: Claude Code's Agent args, or the host's own implementer.
+ */
+export function slicePointer(
+  cwd: string,
+  plan: FanoutFile,
+  slice: Slice,
+  worktree: string,
+  host: string | null,
+): { prompt: string; spawn: string } {
+  const prompt = [
+    `WORKTREE: ${worktree}`,
+    `WORKER: ${slice.id}`,
+    `TIER: ${slice.tier}`,
+    `TIMEBOX: ${timeboxText(slice.timebox, slice.tier)}`,
+    `Run \`${briefCommand(slice.id, plan.name)}\` and follow it exactly.`,
+  ].join("\n");
+  const call =
+    familyOf(host) === "claude_code"
+      ? agentCall(cwd, "workit:implementer", { role: "implementer", tier: slice.tier }, slice.id)
+      : "your host's Workit implementer subagent";
+  return { prompt, spawn: `SPAWN: ${call}, prompt: ${JSON.stringify(prompt)}` };
+}
+
 function spawnLines(
   cwd: string,
   host: string | null,
   slice: string,
+  plan: string,
   tier: RoleSelector["tier"],
   scratch: string,
   candidate: string,
 ): string[] {
   if (familyOf(host) !== "claude_code") return [];
-  const line = (label: string, type: string, selector: RoleSelector, prompt: string) => {
-    const args = claudeSpawnArgs(cwd, selector);
-    const fields = [
-      `subagent_type: "${type}"`,
-      ...(args ? [`model: "${args.model}"`] : []),
-      ...(args?.effort ? [`effort: "${args.effort}"`] : []),
-      "run_in_background: true",
-      `description: "${slice}"`,
-    ];
-    return `${label}: Agent ${fields.join(", ")}, prompt: ${prompt}`;
-  };
+  const line = (label: string, type: string, selector: RoleSelector, prompt: string) =>
+    `${label}: ${agentCall(cwd, type, selector, slice)}, prompt: ${prompt}`;
   return [
     line(
       "SPAWN",
       "workit:implementer",
       { role: "implementer", tier },
-      `this brief, or its WORKER, TIER, TIMEBOX and WORKTREE lines plus "Run \`workit fanout brief ${slice}\` and follow it exactly."`,
+      `this brief, or its WORKTREE, WORKER, TIER and TIMEBOX lines plus "Run \`${briefCommand(slice, plan)}\` and follow it exactly."`,
     ),
     line(
       "  verifier SPAWN",
@@ -456,6 +510,7 @@ export function renderBrief(
       cwd,
       host,
       slice.id,
+      plan.name,
       slice.tier,
       probes,
       exists ? planned : "<candidate worktree>",

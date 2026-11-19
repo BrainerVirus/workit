@@ -1,31 +1,26 @@
 {
   "case": "spawn-implementer-first-try",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "9027a6b814696ed5",
-  "date": "2026-11-18T17:03:52.495Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "3948bcf0e38220da",
+  "date": "2026-11-19T04:58:52.695Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 6763,
-    "costUsd": 0.015187664999999998,
+    "durationMs": 5285,
+    "costUsd": 0.04806123,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 23,
-    "failures": [
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 2 failed of 12 Workit interaction(s): #1 Bash(workit fanout worktree create hello) failed: Exit code 1; #6 Bash(workit fanout plan <world>/repo/.git/workit/notes/hello-plan.json --name hello 2>&1) failed: Exit code 2; #18 Bash(node --input-type=module -e \"import { hello } from '<world>/state/worktrees/repo/hello/src/hello.ts'; if (hello() !== 'h) in a subagent denied: PreToolUse:Bash hook error: workit worktree confinement: implementer a5372f76c91e85094 is bound to the worktree <world>/state/worktrees/repo/hello, and `node` r"
-      }
-    ],
+    "pass": true,
+    "calls": 10,
+    "failures": [],
     "firstTry": {
-      "interactions": 12,
-      "failed": 2,
-      "denied": 1
+      "interactions": 6,
+      "failed": 0,
+      "denied": 0
     }
   }
 }

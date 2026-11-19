@@ -5,6 +5,5 @@
   "cc-judge-literal-assignment: line 1 says what in more than 15 words",
   "cc-ytrack-retry-call: line 1 is not `workit <gate>: <what>.`",
   "codex-dev-server-denies-with-run-bg: line 1 is not `workit <gate>: <what>.`",
-  "codex-heavy-tail-filter-denies-with-rewrite: line 1 is not `workit <gate>: <what>.`",
-  "spawn-implementer-no-brief: line 1 says what in more than 15 words"
+  "codex-heavy-tail-filter-denies-with-rewrite: line 1 is not `workit <gate>: <what>.`"
 ]
