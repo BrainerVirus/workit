@@ -195,11 +195,12 @@ const CONNECT_BUDGET_MS = 15_000;
 export function connect(
   io: Io,
   branch?: string | null,
-  options: { deadline?: number | null } = {},
+  options: { deadline?: number | null; repo?: string | null } = {},
 ): ForgeResult<ResolvedForge & { identity: NonNullable<PrStatusDoc["identity"]> }> {
   const verbDeadline = options.deadline ?? null;
   const resolved = resolveForge(io.cwd, {
     branch,
+    repo: options.repo ?? null,
     env: io.env,
     runner: forgeDeps.runner,
     now: forgeDeps.now,

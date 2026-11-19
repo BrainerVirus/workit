@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -301,6 +301,27 @@ test("issue create --repo: another repository on the same host is used, and a ma
   expect(created.code, created.stdout).toBe(0);
   expect(writes(runner.calls).map((call) => call[1])).toEqual(["repos/BrainerVirus/workit/issues"]);
   expect(rows(repo.cwd, "issue.created")[0]).toMatchObject({ repo: "BrainerVirus/workit" });
+});
+
+test("issue create --repo outside a git checkout: the named repo is the forge, no push remote needed", async () => {
+  const { repo, runner } = setup("github", {
+    ...githubBase(),
+    "POST repos/o/r/issues": JSON.stringify({
+      number: 45,
+      html_url: "https://github.com/o/r/issues/45",
+    }),
+  });
+  const outside = path.join(repo.root, "not-a-checkout");
+  mkdirSync(outside);
+  forgeDeps.readStdin = () => "filed from outside";
+  const created = await run(
+    ["issue", "create", "--repo", "o/r", "--title", "t", "--body-file", "-", "--json"],
+    outside,
+  );
+  expect(created.code, created.stdout).toBe(0);
+  expect(writes(runner.calls)).toEqual([
+    ["POST", "repos/o/r/issues", { title: "t", body: "filed from outside" }],
+  ]);
 });
 
 test("issue comment (GitLab): the note is posted and its URL is the issue's anchor", async () => {
