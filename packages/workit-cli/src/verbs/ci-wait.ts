@@ -12,10 +12,10 @@ import { forgeDeps, forgeFail } from "./forge-common";
 /** Consecutive failed polls tolerated before a branch wait gives up. */
 const MAX_POLL_ERRORS = 3;
 
-export type BranchCiState = "passed" | "failed" | "pending" | "no_checks" | "moved";
+type BranchCiState = "passed" | "failed" | "pending" | "no_checks" | "moved";
 
 /** The failing checks: failed ones, and required ones the forge skipped. */
-export const failingChecks = (checks: RefChecks): ForgeCheck[] =>
+const failingChecks = (checks: RefChecks): ForgeCheck[] =>
   checks.checks.filter(
     (check) => check.state === "failing" || (check.required === true && check.state === "skipped"),
   );
@@ -24,7 +24,7 @@ export const failingChecks = (checks: RefChecks): ForgeCheck[] =>
  * CI on a branch tip: `moved` when `sha` is set and the forge reports another
  * commit, then failed, pending, passed, or no checks at all.
  */
-export function branchCiState(checks: RefChecks, sha: string | null): BranchCiState {
+function branchCiState(checks: RefChecks, sha: string | null): BranchCiState {
   if (sha && checks.sha && !checks.sha.startsWith(sha)) return "moved";
   if (failingChecks(checks).length) return "failed";
   if (checks.checks.some((check) => check.state === "pending")) return "pending";
