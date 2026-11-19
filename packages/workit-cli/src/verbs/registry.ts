@@ -1067,8 +1067,28 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "list",
         aliases: ["show"],
-        usage: "workit ledger list|show [--branch <b>] [--pr <n>] [--type <t>] [--last <n>]",
+        usage:
+          "workit ledger list|show [--branch <b>] [--pr <n>] [--type <t>] [--last|--limit <n>]",
         summary: "List ledger rows, newest last (findings live in the task: workit finding list)",
+      },
+      {
+        name: "finding",
+        usage:
+          "workit ledger finding [record|list|resolve] [--payload <JSON|@file|->] [<workit finding flags>]",
+        summary:
+          "Runs workit finding <action> (record by default): findings live in the task store",
+        // workit finding's own flags, checked by that verb.
+        deferredFlags: [
+          "task",
+          "revision",
+          "workspace-revision",
+          "view",
+          "actor",
+          "confirm",
+          "queue",
+          "status",
+          "branch",
+        ],
       },
       {
         name: "check",
