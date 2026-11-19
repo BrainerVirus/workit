@@ -488,7 +488,7 @@ test("given --json, then help is an envelope carrying the usage and the text", (
   const verb = JSON.parse(cli(["help", "ci", "--json"]).stdout).data;
   expect(verb.group).toBe("delivery");
   expect(verb.usage).toBe(
-    "workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
+    "workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s]",
   );
   expect(verb.usages).toHaveLength(3);
   expect(verb.usages[1]).toStartWith("workit ci rerun ");
