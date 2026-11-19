@@ -309,12 +309,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         if (input.host === "claude_code")
           return {
             kind: "ask",
-            reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: the user decides this call.`,
+            reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: the user decides this call (its help: \`workit help ${userOnly.join(" ")}\`).`,
           };
         if (canDeny && ["cursor", "codex_cli", "codex_desktop", "pi"].includes(input.host))
           return {
             kind: "deny",
-            reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: run it in your own terminal.`,
+            reason: `Only the user runs \`workit ${userOnly.join(" ")}\`: run it in your own terminal (its help: \`workit help ${userOnly.join(" ")}\`).`,
             unblock: null,
           };
       }

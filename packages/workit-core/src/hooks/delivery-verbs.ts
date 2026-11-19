@@ -162,6 +162,15 @@ export const workitBypassFlag = (
 };
 
 /**
+ * `workit install --help`: the user-only words, then only help flags. The CLI
+ * prints help and exits before the verb runs, so it reads like `workit help install`.
+ */
+const helpOnly = (call: readonly string[], needle: readonly string[]): boolean =>
+  call.length > needle.length &&
+  needle.every((word, index) => call[index] === word) &&
+  call.slice(needle.length).every((word) => word === "--help" || word === "-h");
+
+/**
  * The user-only words (`WORKIT_USER_ONLY`) a Workit call in `command` runs,
  * or null. Each shell segment is read like `workitBypassFlag` does, so global
  * `--json`, `--cwd <dir>`, `--cwd=<dir>` and `--session <id>` may come before
@@ -191,7 +200,7 @@ export const userOnlyWorkitCall = (
     const found = WORKIT_USER_ONLY.find(
       (needle) => call[0] === needle[0] && hasWordsInOrder(call, needle),
     );
-    if (found) return [...found];
+    if (found && !helpOnly(call, found)) return [...found];
   }
   return null;
 };
