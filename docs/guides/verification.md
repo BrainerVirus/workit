@@ -223,33 +223,39 @@ Two rules read a file's content on both sides and lower the lane. Each fails
 closed: anything they cannot read, or any change outside what they allow,
 keeps the lane above.
 
-- **Additive workflow edit.** A `.github/workflows/*.yml` (or `.yaml`) or
-  `.gitlab-ci.yml` change whose only differences are text appended to the
-  end of a step's `run:` string or a `with:` input, or a new plain `with:`
-  input, leaves the risk path and follows the rest of the diff (it still
-  counts as a behavior file, so on its own it is `self`). Both sides are
-  parsed as YAML, never matched by line. A change to `permissions`,
-  `secrets`, `on:`, a `uses:` ref, `environment:` or `if:`, a removed or
-  added step or job, an appended `${{ }}` expression, a comment-only edit,
-  YAML this reader does not take (anchors, aliases, tags, several documents,
-  a scalar across lines), a workflow named for a risk token
-  (`release.yml`) or one listed in `.workit/risk-paths` stays `full`, and the
-  reason names the change (`changes permissions: (permissions.contents)`).
-  The reason line reads `additive workflow edit: <file> (<what grew>)`.
+- **Additive workflow edit.** A `.github/workflows/*.yml` (or `.yaml`) change
+  whose only differences append ` && <command>` to the end of a step's `run:`
+  string or of an existing `with:` input leaves the risk path. Without a
+  dependency bump the lane is then at least `focused` (never `self` or
+  `none`); inside one it stays `self`. Both sides are parsed as YAML, never
+  matched by line. The appended text must start with `&&`, stay on one line,
+  and hold no `||`, `;`, `&` or `|` outside one parenthesised group
+  (`&& (npm run x:check || echo "::warning::…")` is fine: the `&&` already
+  stopped on a failure), and no `exit`, `set +e`, `trap`, backtick, `$(` or
+  `${{ }}` anywhere: `npm test || true` or `; curl … | sh` stays `full`. A
+  new line in a `run: |` block, a new `with:` input, a change to
+  `permissions`, `secrets`, `on:`, a `uses:` ref, `environment:` or `if:`, a
+  removed or added step or job, a comment-only edit, YAML this reader does
+  not take (anchors, aliases, tags, several documents, a scalar across
+  lines), a workflow named for a risk token (`release.yml`) or one listed in
+  `.workit/risk-paths` stays `full`, and the reason names the change
+  (`changes permissions: (permissions.contents)`). GitLab CI
+  (`.gitlab-ci.yml`) edits never soften. The reason line reads
+  `additive workflow edit: <file> (<what grew>)`.
 - **Dependency bump.** A diff limited to manifest version pins, lockfiles, a
   `CHANGELOG` and additive workflow edits is classified `dependency-bump`
   and lands on `self` (a 500+ line one stays `full`). Pins are read per
   manifest: `package.json` (an existing dependency's version range in
   `dependencies`, `devDependencies`, `peerDependencies` or
   `optionalDependencies`, plus new `scripts` entries that are not npm
-  lifecycle or `pre`/`post` scripts), `go.mod` (an existing `require`),
+  lifecycle, `pre`/`post` or `pnpm:` scripts and that no existing script
+  runs by glob, such as `run-s "lint:*"`), `go.mod` (an existing `require`),
   `Cargo.toml` and `pyproject.toml` (a version in a dependency table or
   list, line for line). A new or removed dependency, a git, path, URL or
   `npm:` alias source, or any other field is no pin bump. Its evidence is
   green CI on the head: the author's `--self` verdict meets the gate only
-  while the head's CI is passing (`pr status` reads it from the forge,
-  `pr merge` and `stack land` from the newest `pr status` or `ci wait`
-  reading Workit recorded for that head), and `pr status` prints
+  while the head's CI is passing (`pr status`, `pr merge` and `stack
+  status`/`land` read it from the forge), and `pr status` prints
   `missing: green CI on the head (CI is pending)` until then. An accepted
   independent verdict meets it as always. `verdict.lane.classification` is
   `dependency-bump` in `--json`, and `reasons` names it. A pin bump with any

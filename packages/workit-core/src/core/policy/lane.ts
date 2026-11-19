@@ -17,11 +17,12 @@
 // change can neither mark its own code generated nor drop a risk path.
 //
 // Two content rules soften a risk path or an opaque lockfile (#891), each
-// read from both sides of the file and failing closed: a CI workflow whose
-// edit is purely additive inside `run:` or `with:` strings follows the rest
-// of the diff (workflow-edit.ts), and a dependency bump (manifest version
-// pins, lockfiles, a changelog, new package.json scripts) is self with green
-// CI on the head as its evidence (dep-bump.ts).
+// read from both sides of the file and failing closed: a GitHub workflow
+// whose edit only appends a guarded `&& <command>` to a `run:` or `with:`
+// string leaves the risk path but keeps the lane at least focused
+// (workflow-edit.ts), and a dependency bump (manifest version pins,
+// lockfiles, a changelog, new package.json scripts, such workflow appends) is
+// self with green CI on the head as its evidence (dep-bump.ts).
 //
 // The diff sets the floor; a recorded high-risk judgment raises it to full.
 // A behavior-change judgment does not move it: the diff already tells docs
@@ -267,11 +268,12 @@ export const parseRiskPaths = (text: string): string[] =>
 function additiveWorkflow(file: ChangedFile, extra: readonly string[]): boolean {
   if (file.workflow?.additive !== true || file.binary || !isWorkflowFile(file.path)) return false;
   if (extra.some((pattern) => globMatch(pattern, file.path))) return false;
-  return (
-    file.path === ".gitlab-ci.yml" ||
-    !isRiskPath(file.path.replace(/^\.github\/workflows\//u, ".github/"), extra)
-  );
+  return !isRiskPath(file.path.replace(/^\.github\/workflows\//u, ".github/"), extra);
 }
+
+/** Without a dependency bump, an additive workflow edit still changes what CI runs. */
+const WORKFLOW_FLOOR =
+  "an additive workflow edit needs a non-author verdict unless it rides a dependency bump";
 
 const CHANGELOG = /^(?:changelog|changes)(?:\.[^.]+)?$/iu;
 
@@ -337,14 +339,17 @@ export function computeLane(input: LaneInput): LaneAssessment {
     lane: ReviewLane,
     reasons: string[],
     classification?: "dependency-bump",
-  ): LaneAssessment => ({
-    lane,
-    reasons: [...reasons, ...workflowNote],
-    lines,
-    files: behavior.length,
-    riskFiles,
-    ...(classification ? { classification } : {}),
-  });
+  ): LaneAssessment => {
+    const floor = additive.length > 0 && !classification && (lane === "none" || lane === "self");
+    return {
+      lane: floor ? "focused" : lane,
+      reasons: [...(floor ? [WORKFLOW_FLOOR] : []), ...reasons, ...workflowNote],
+      lines,
+      files: behavior.length,
+      riskFiles,
+      ...(classification ? { classification } : {}),
+    };
+  };
   const { selfMaxLines, selfMaxFiles, fullMinLines } = LANE_THRESHOLDS;
   if (input.riskTier === "high") return result("full", ["the task judgment records high risk"]);
   if (riskFiles.length)

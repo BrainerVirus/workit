@@ -34,12 +34,13 @@ export function prLaneGate(
 
 /** The checks state of the newest `pr.status` row the CLI recorded for `head`, or null. */
 function recordedCi(cwd: string, head: string): string | null {
-  const ledger = readLedger(cwd);
+  const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
   const row = ledger.value.rows.findLast(
     (candidate) =>
       candidate.type === "pr.status" &&
       candidate.observer === "workit_cli" &&
+      candidate.integrity !== "unverified" &&
       candidate.head === head,
   );
   return typeof row?.checks === "string" ? row.checks : null;

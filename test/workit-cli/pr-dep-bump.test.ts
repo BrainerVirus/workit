@@ -196,6 +196,18 @@ test("given green CI on the head and the author's self verdict, then the gate is
   expect(merges(runner.calls)).toHaveLength(1);
 });
 
+test("given green CI on the head and no earlier pr status, then pr merge reads the head's CI itself and lands the dependency bump", async () => {
+  const { repo, runner, head } = setup("github/pr-passing.json");
+  await selfVerdict(repo);
+  const merged = await run(["pr", "merge", "--json"], repo.cwd);
+  expect(merged.code).toBe(0);
+  expect(merged.json().data).toMatchObject({
+    head,
+    verdict: { lane: "self", need: "self", review: "self-reviewed" },
+  });
+  expect(merges(runner.calls)).toHaveLength(1);
+});
+
 test("given green CI absent on the head, then the dependency bump's self verdict does not meet the gate", async () => {
   const { repo } = setup("github/pr-pending.json");
   await selfVerdict(repo);

@@ -1274,7 +1274,14 @@ const verdictOf = (
   // A lower branch may be covered by the verdict at the top of the stack (#334).
   const check = checkVerdictsCovered(cwd, branch, rows);
   // Without a PR there is no base to diff against: the gate stays independent.
-  const gate = doc ? prLaneGate(cwd, check, { branch, base: doc.base, head: doc.head.sha }) : null;
+  const gate = doc
+    ? prLaneGate(cwd, check, {
+        branch,
+        base: doc.base,
+        head: doc.head.sha,
+        ci: doc.checks.state,
+      })
+    : null;
   const failed = check.accepted.reasons.includes("failing_verdict")
     ? check.accepted.verdict?.id
     : undefined;

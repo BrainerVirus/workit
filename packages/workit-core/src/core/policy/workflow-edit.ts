@@ -1,13 +1,16 @@
-// The CI workflow risk-path sub-rule (#891). A workflow file is a risk path,
-// but an edit that only appends to a step's `run:` string or to a `with:`
-// input, or adds a `with:` input, follows the rest of the diff's lane.
-// Additive is decided on the parsed YAML of both sides, never on lines: both
-// sides parse, every key and sequence item is still there, and every changed
-// value is one of those strings grown at its end. Anything else stays full:
-// `permissions`, `secrets`, `on:`, a `uses:` ref, `environment:`, `if:`, a
-// removed or added step or job, an appended `${{ }}` expression, a change to
-// comments or layout alone (read as code, as before), or a file this reader
-// cannot parse.
+// The CI workflow risk-path sub-rule (#891). A GitHub Actions workflow is a
+// risk path, but an edit that only appends a guarded `&& <command>` to a
+// step's `run:` string or to an existing `with:` input leaves it (lane.ts
+// decides how far the lane then drops). Additive is decided on the parsed
+// YAML of both sides, never on lines: both sides parse, every key and
+// sequence item is still there, and every changed value is one of those
+// strings grown at its end by text that cannot hide a failure of what ran
+// before (see masking). Anything else stays full: `permissions`, `secrets`,
+// `on:`, a `uses:` ref, `environment:`, `if:`, a removed or added step, job
+// or input, an appended `${{ }}` expression, a change to comments or layout
+// alone (read as code, as before), or a file this reader cannot parse.
+// GitLab CI is never softened: its scripts are lists and its secrets are
+// environment variables every appended command can read.
 //
 // The reader takes the block YAML workflows are written in (mappings,
 // sequences, plain, quoted and block scalars, one-line flow collections) and
@@ -319,9 +322,9 @@ export function parseWorkflowYaml(text: string): YamlNode | null {
   }
 }
 
-/** A CI workflow file: GitHub Actions workflows and the GitLab CI definition. */
+/** A GitHub Actions workflow file (the only CI definition the sub-rule softens). */
 export const isWorkflowFile = (file: string): boolean =>
-  /^\.github\/workflows\/[^/]+\.ya?ml$/u.test(file) || file === ".gitlab-ci.yml";
+  /^\.github\/workflows\/[^/]+\.ya?ml$/u.test(file);
 
 export type WorkflowEdit = {
   additive: boolean;
@@ -339,6 +342,46 @@ const pathText = (keys: readonly string[]): string => keys.join(".").replaceAll(
 /** Where a child of `node` may grow: a step's `run`, or the inputs of a `uses:` step or job. */
 type Room = "run" | "with" | null;
 
+const SHELL_ESCAPE = /`|\$\(|\bexit\b|\bset\s+\+e\b|\btrap\b/u;
+
+/**
+ * Why text appended to a command could hide a failure of what ran before it,
+ * or null when it cannot. It must start with `&&` (it runs only after
+ * success), stay on one line, and hold no `||`, `;`, `&` or `|` outside one
+ * parenthesised group (`&& (npm run x || echo warn)` cannot mask the left
+ * side: `&&` already stopped on its failure); no `exit`, `set +e`, `trap`,
+ * backtick, `$(` or `${{` anywhere. Quotes and groups must close.
+ */
+function masking(appended: string): string | null {
+  if (appended.includes("${{")) return "an expression";
+  if (/[\n\r]/u.test(appended)) return "a new line";
+  if (SHELL_ESCAPE.test(appended)) return "exit, set +e, trap or a command substitution";
+  const body = appended.trimStart();
+  if (!body.startsWith("&&")) return "a command not chained with a leading &&";
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = 2; index < body.length; index += 1) {
+    const char = body[index];
+    if (quote) {
+      if (char === "\\" && quote === '"') index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') quote = char;
+    else if (char === "\\") index += 1;
+    else if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth < 0) return "an unbalanced group";
+    } else if ((char === "&" || char === "|") && body[index + 1] === char) {
+      if (char === "|" && depth === 0) return "a || outside a group, which can hide a failure";
+      index += 1;
+    } else if (char === ";" || char === "&" || char === "|")
+      return `a ${char} that can run past a failure`;
+  }
+  return quote || depth ? "an unclosed quote or group" : null;
+}
+
 function compare(
   before: YamlNode,
   after: YamlNode,
@@ -355,8 +398,8 @@ function compare(
       before.folded === after.folded &&
       after.text.length > before.text.length &&
       after.text.startsWith(before.text);
-    if (grown && after.text.slice(before.text.length).includes("${{"))
-      out.refused.push({ path: at, what: `appends an expression to ${pathText(at)}` });
+    const masks = grown ? masking(after.text.slice(before.text.length)) : null;
+    if (masks) out.refused.push({ path: at, what: `appends ${masks} to ${pathText(at)}` });
     else if (grown) out.allowed.push(`${pathText(at)} appended`);
     else out.refused.push({ path: at, what: `changes ${pathText(at)}` });
     return;
@@ -403,7 +446,7 @@ function compare(
   out.refused.push({ path: at, what: `changes the shape of ${pathText(at) || "the file"}` });
 }
 
-/** A `with:` mapping: each input may grow at its end, and a plain input may be added. */
+/** A `with:` mapping: each existing input may grow at its end; a new input is a change. */
 function compareInputs(
   before: Extract<YamlNode, { kind: "map" }>,
   after: Extract<YamlNode, { kind: "map" }>,
@@ -415,16 +458,9 @@ function compareInputs(
     if (next) compare(value, next, [...at, key], "with", out);
     else out.refused.push({ path: [...at, key], what: `removes ${pathText([...at, key])}` });
   }
-  for (const [key, value] of after.entries) {
-    if (before.entries.has(key)) continue;
-    if (value.kind === "scalar" && !value.text.includes("${{"))
-      out.allowed.push(`${pathText([...at, key])} added`);
-    else
-      out.refused.push({
-        path: [...at, key],
-        what: `adds ${pathText([...at, key])} with an expression or structure`,
-      });
-  }
+  for (const [key] of after.entries)
+    if (!before.entries.has(key))
+      out.refused.push({ path: [...at, key], what: `adds the input ${pathText([...at, key])}` });
 }
 
 /** The reason a refused change names: a guarded key first, then a removal, then the first change. */

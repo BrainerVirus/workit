@@ -957,7 +957,7 @@ export async function mergePullRequest(
   try {
     // A lower PR of a stack may be covered by the verdict at its top (#334).
     check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
-    gate = prLaneGate(cwd, check, { branch, base: doc.base, head });
+    gate = prLaneGate(cwd, check, { branch, base: doc.base, head, ci: doc.checks.state });
   } finally {
     borrowed.release();
   }

@@ -46,9 +46,28 @@ const DEP_FIELDS = new Set([
   "peerDependencies",
   "optionalDependencies",
 ]);
-/** An npm version or range of versions: no tag, alias, path, git or URL source. */
-const NPM_VERSION =
-  /^(?:(?:[~^]|[<>]=?|=)?\s*v?\d+(?:\.(?:\d+|x|\*)){0,2}(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?(?:\s+|\s*\|\|\s*|\s+-\s+)?)+$/iu;
+/** One comparator of an npm range (`^1.2.3`, `>=1.0.0`, `1.x`): no repetition to backtrack. */
+const NPM_COMPARATOR =
+  /^(?:[~^]|[<>]=?|=)?v?\d+(?:\.(?:\d+|x|\*)){0,2}(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?$/iu;
+
+/**
+ * An npm version or range: `||`-separated sets of whitespace-separated
+ * comparators (an operator may stand apart from its version), or a hyphen
+ * range. No tag, alias, path, git or URL source. Each piece is matched alone,
+ * so a long or hostile string is read in linear time.
+ */
+function npmVersion(spec: string): boolean {
+  if (spec.length > 256) return false;
+  return spec.split("||").every((set) => {
+    const tokens = set
+      .trim()
+      .replace(/([<>]=?|=|[~^])\s+/gu, "$1")
+      .split(/\s+/u);
+    if (tokens.length === 3 && tokens[1] === "-")
+      return NPM_COMPARATOR.test(tokens[0] ?? "") && NPM_COMPARATOR.test(tokens[2] ?? "");
+    return tokens.every((token) => NPM_COMPARATOR.test(token));
+  });
+}
 /** Scripts npm runs on its own (lifecycle) or around another script (pre/post). */
 const HOOK_SCRIPT =
   /^(?:pre|post)|^(?:install|uninstall|prepare|publish|pack|version|dependencies|start|stop|restart|test)$/u;
@@ -84,7 +103,7 @@ function packageJson(before: string, after: string): ManifestEdit {
         const to = b[name];
         if (typeof from !== "string" || typeof to !== "string")
           return refused(`changes ${field}.${name}`);
-        if (!NPM_VERSION.test(from.trim()) || !NPM_VERSION.test(to.trim()))
+        if (!npmVersion(from.trim()) || !npmVersion(to.trim()))
           return refused(`changes the source of ${name}`);
         bumped += 1;
       }
@@ -95,11 +114,39 @@ function packageJson(before: string, after: string): ManifestEdit {
       for (const name of Object.keys(b)) {
         if (name in a) continue;
         if (HOOK_SCRIPT.test(name)) return refused(`adds the lifecycle script ${name}`);
+        if (name.startsWith("pnpm:")) return refused(`adds the pnpm: script ${name}`);
+        const runner = Object.entries(a).find(
+          ([, command]) => typeof command === "string" && runsByGlob(command, name),
+        );
+        if (runner)
+          return refused(`adds the script ${name}, which the script ${runner[0]} runs by glob`);
         scripts.push(name);
       }
     } else return refused(`changes ${field}`);
   }
   return pinned(bumped, scripts);
+}
+
+/**
+ * Whether `command` runs scripts by a glob (`run-s "lint:*"`, `npm-run-all
+ * test:*`, `--filter <glob>`) that `name` matches: a new script it matches
+ * joins what an existing script runs.
+ */
+function runsByGlob(command: string, name: string): boolean {
+  if (!/\b(?:run-s|run-p|npm-run-all)\b|--filter/u.test(command)) return false;
+  return command
+    .split(/\s+/u)
+    .map((token) => token.replace(/^--filter=/u, "").replaceAll(/^["']|["']$/gu, ""))
+    .filter((token) => token.includes("*"))
+    .some((glob) =>
+      new RegExp(
+        `^${glob
+          .split("*")
+          .map((part) => part.replaceAll(/[.+?^${}()|[\]\\]/gu, "\\$&"))
+          .join(".*")}$`,
+        "u",
+      ).test(name),
+    );
 }
 
 type GoDirective = { verb: string; args: string; indirect: boolean };
@@ -191,7 +238,10 @@ function tomlPins(before: string, after: string, cargo: boolean): ManifestEdit {
       return refused(`changes a dependency source on line ${index + 1}`);
     const key = (line: string) => /^\s*("?[\w.[\],-]+"?)/u.exec(line)?.[1] ?? "";
     const versionless = (line: string) => line.replace(VERSION_TOKEN, "V");
-    if (key(a) !== key(b) || versionless(a) !== versionless(b))
+    // pyproject: the requirement names in a line's strings (`"rich==13.7"` reads `rich`).
+    const names = (line: string) =>
+      cargo ? "" : [...line.matchAll(/"([A-Za-z_][\w.-]*)/gu)].map((match) => match[1]).join(",");
+    if (key(a) !== key(b) || names(a) !== names(b) || versionless(a) !== versionless(b))
       return refused(`changes more than a version on line ${index + 1}`);
     bumped += 1;
   }
