@@ -70,8 +70,9 @@ test("Given workit check list in a repo with configured checks, When it runs, Th
   expect(result.code).not.toBe(0);
   expect(result.json()).toMatchObject({
     code: "not_found",
-    error: 'no configured check named "list"',
-    unblock: "workit check lint|test",
+    error: 'no configured check named "list"; configured: lint, test',
+    unblock:
+      "workit check lint|test runs a configured one; for another command, Retry as: workit check --name list -- <command>",
   });
 });
 

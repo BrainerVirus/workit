@@ -93,3 +93,11 @@ test("G a guessed name, W `workit check test`, T it still fails naming the confi
   expect(result.stderr).toContain('no configured check named "test"');
   expect(result.stderr).toContain("workit check unit|types");
 });
+
+test("Given a repo that configures only test, When `workit check lint` runs, Then the error lists test and ends with the ad-hoc Retry as", async () => {
+  const result = await run(repo({ checks: { test: "true" } }), ["check", "lint"]);
+
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain('no configured check named "lint"; configured: test');
+  expect(result.stderr.trimEnd()).toEndWith("Retry as: workit check --name lint -- <command>");
+});
