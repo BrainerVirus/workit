@@ -952,7 +952,7 @@ workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the 
 workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
 workit fanout worktree create <slice>… [--name <plan|plan.json>]       # each slice's worktree, scratch dir, links, WORKTREE line and spawn
-workit fanout worktree create <slice> --branch <b> [--base <b>] [--tier <t>]  # one unplanned slice (a one-slice plan named after it)
+workit fanout worktree create <slice> [--branch <b>] [--base <b>] [--tier <t>]  # one unplanned slice (a one-slice plan named after it)
 workit fanout worktree release <slice> [--name <n>] [--force]           # stop its processes, record git status, then remove it
 workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-in gate, landing order
 ```
@@ -1127,9 +1127,12 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
   <plan>` and follow it exactly.", so the brief never passes through the lead's
   context. It stops at the first slice that fails, after printing the ones
   made; `--json` is the slice's data with `prompt` and `spawn`, or
-  `{ "worktrees": [...] }` for several. With `--branch <type>/<slug>` (and
-  optional `--base`, `--tier`) and no plan, one unplanned slice gets a
-  one-slice plan named after it, whose brief says the lead's prompt states the
+  `{ "worktrees": [...] }` for several. One slice with `--branch <type>/<slug>`, or
+  with no `--name` where no registered plan holds it and none would be picked
+  for this checkout (a typo in a planned slice stays an error), is unplanned: it gets a
+  one-slice plan named after it on that branch, else the first of
+  `feature/`, `feat/`, `fix/<slice>` the branch policy allows (optional
+  `--base`, `--tier`), whose brief says the lead's prompt states the
   task; a slice a registered plan holds is made from that plan, and two or
   more slices need a plan file.
 - `worktree create` (on every host; Claude Code's implementer no longer uses

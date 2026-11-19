@@ -109,9 +109,7 @@ test("G an implementer spawn that names no worktree, W PreToolUse runs, T the de
     const lines = reason.split("\n");
     expect(lines, reason).toHaveLength(2);
     expect(lines[0]).toStartWith("workit spawn gate: ");
-    expect(lines[1]).toStartWith(
-      `Retry as: workit fanout worktree create ${slice} --branch feat/${slice} `,
-    );
+    expect(lines[1]).toStartWith(`Retry as: workit fanout worktree create ${slice} `);
     expect(lines[1]).toContain("with the WORKTREE line it prints as the prompt's first line");
     expect(reason.length).toBeLessThanOrEqual(400);
   }

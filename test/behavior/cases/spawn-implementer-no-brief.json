@@ -19,7 +19,7 @@
     "kind": ["deny"],
     "require": [
       "workit spawn gate: ",
-      "\nRetry as: workit fanout worktree create fix --branch feat/fix",
+      "\\nRetry as: workit fanout worktree create fix \\(",
       "with the WORKTREE line it prints as the prompt's first line"
     ]
   }

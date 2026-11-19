@@ -8,8 +8,8 @@
 // line (a brief, or the pointer `fanout worktree create` prints), the
 // worktree's path (its git admin dir holds the fanout token), or the path of
 // a brief file holding a WORKTREE line. Else it is denied in two lines whose
-// Retry as is the ad-hoc `worktree create` for the slice word the prompt
-// names. The launcher fast path (workit-hook.mjs) passes only the WORKTREE
+// Retry as is `worktree create` for the slice word the prompt names (an
+// unplanned slice needs no plan). The launcher fast path (workit-hook.mjs) passes only the WORKTREE
 // line and leaves the rest to this gate. The implementer is still bound to
 // the first worktree it writes in (worktree-confine.ts).
 import fs from "node:fs";
@@ -62,7 +62,7 @@ const gate = (descriptor: HostDescriptor, tool: Record<string, unknown>): Gate =
   const implementer = workitRole(descriptor, type) === "implementer";
   if (implementer && (typeof tool.prompt !== "string" || !namesWorktree(tool.prompt))) {
     const slice = sliceWord(tool);
-    const unblock = `workit fanout worktree create ${slice} --branch feat/${slice}`;
+    const unblock = `workit fanout worktree create ${slice}`;
     return {
       kind: "deny",
       decision: {

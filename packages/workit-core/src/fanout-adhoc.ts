@@ -1,7 +1,9 @@
 // The natural fan-out calls a lead guesses, accepted (decision D2/D4):
 //
-// - `workit fanout worktree create <slice> --branch <type>/<slug>` with no
-//   plan: one unplanned slice gets a one-slice plan named after it (a short
+// - `workit fanout worktree create <slice> [--branch <type>/<slug>]` with no
+//   plan holding the slice: one unplanned slice gets a one-slice plan named
+//   after it, on the branch given or the first of feature/, feat/, fix/
+//   <slice> that branch policy allows (`defaultSliceBranch`) (a short
 //   brief whose task is the lead's spawn prompt), through `planFanout`, so
 //   branch policy, the ledger row and `fanout status` all apply. A slice a
 //   registered plan already holds is made from that plan instead.
@@ -10,6 +12,7 @@
 //   the CLI registers when exactly one matches.
 import fs from "node:fs";
 import path from "node:path";
+import { validateBranchNameFor } from "./core/branch";
 import { repoDir } from "./core/repo-paths";
 import {
   fanoutFail,
@@ -47,6 +50,22 @@ export function planFileMatches(cwd: string, name: string): string[] {
   }
 }
 
+/** The branch an unplanned slice gets: the first of feature/, feat/, fix/ the branch policy allows, else its suggestion. */
+export function defaultSliceBranch(cwd: string, slice: string): string {
+  for (const kind of ["feature", "feat", "fix"])
+    if (validateBranchNameFor(cwd, `${kind}/${slice}`).ok) return `${kind}/${slice}`;
+  const check = validateBranchNameFor(cwd, `feature/${slice}`);
+  return (!check.ok && /use "([^"]+)"/u.exec(check.correction)?.[1]) || `feature/${slice}`;
+}
+
+/** The registered plan that holds slice `id`, if any. */
+export function planHolding(cwd: string, id: string): FanoutFile | null {
+  const all = listFanouts(cwd);
+  return all.ok
+    ? (all.data.find((plan) => plan.slices.some((slice) => slice.id === id)) ?? null)
+    : null;
+}
+
 /**
  * The plan for one unplanned slice on `branch`: the registered plan that
  * already holds the slice (same branch), else a one-slice plan named after
@@ -56,7 +75,8 @@ export function adhocPlan(
   cwd: string,
   input: {
     slice: string;
-    branch: string;
+    /** Null: `defaultSliceBranch`. */
+    branch: string | null;
     base: string | null;
     tier: string | null;
     actor: LedgerActor;
@@ -64,13 +84,14 @@ export function adhocPlan(
 ): FanoutResult<FanoutFile> {
   const all = listFanouts(cwd);
   if (!all.ok) return all;
+  const branch = input.branch ?? defaultSliceBranch(cwd, input.slice);
   for (const plan of all.data) {
     const planned = plan.slices.find((slice) => slice.id === input.slice);
     if (!planned) continue;
-    if (planned.branch === input.branch) return { ok: true, data: plan };
+    if (input.branch === null || planned.branch === branch) return { ok: true, data: plan };
     return fanoutFail(
       "invalid_input",
-      `slice ${input.slice} is planned in fanout ${plan.name} on ${planned.branch}, not ${input.branch}`,
+      `slice ${input.slice} is planned in fanout ${plan.name} on ${planned.branch}, not ${branch}`,
       `workit fanout worktree create ${input.slice} --name ${plan.name}`,
     );
   }
@@ -78,7 +99,7 @@ export function adhocPlan(
     return fanoutFail(
       "invalid_input",
       `fanout plan ${input.slice} exists and does not hold slice ${input.slice}`,
-      `name the slice another way: workit fanout worktree create ${input.slice}-1 --branch ${input.branch}`,
+      `name the slice another way: workit fanout worktree create ${input.slice}-1 --branch ${branch}`,
     );
   const planned = planFanout(cwd, {
     raw: {
@@ -86,7 +107,7 @@ export function adhocPlan(
       slices: [
         {
           id: input.slice,
-          branch: input.branch,
+          branch,
           tier: input.tier ?? "standard",
           reason: "parallel",
           scope: ["**"],

@@ -65,10 +65,10 @@ const run = async (argv: string[], cwd = scratch) => {
   return { code, stdout, stderr, json: () => JSON.parse(stdout) };
 };
 
-test("Given `workit fanout worktree create x --base y` without --branch, When run, Then it is a usage error naming --branch; --plan is read as --name (D2)", async () => {
-  const result = await run(["fanout", "worktree", "create", "x", "--base", "y", "--json"]);
+test("Given `workit fanout worktree create x y --base z` (two slices, no plan), When run, Then it is a usage error naming --branch; --plan is read as --name (D2)", async () => {
+  const result = await run(["fanout", "worktree", "create", "x", "y", "--base", "z", "--json"]);
   expect(result.code).toBe(2);
-  expect(result.json().error).toContain("--base and --tier go with --branch");
+  expect(result.json().error).toContain("--base and --tier go with an unplanned slice");
   const plan = await run(["fanout", "worktree", "create", "x", "--plan", "nope", "--json"]);
   expect(plan.json().error).not.toContain("unknown option");
   expect(plan.json().error).toContain("no fanout plan named nope");

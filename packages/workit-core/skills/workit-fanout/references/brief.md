@@ -116,8 +116,8 @@ registers the one file in `workit dir plans` that starts with it. The plan
 check refuses a slice branch the workspace branch policy refuses and names the
 allowed one.
 
-One unplanned slice: `workit fanout worktree create fix-login --branch
-fix/login [--base <b>] [--tier <t>]` records a one-slice plan named after it
+One unplanned slice: `workit fanout worktree create fix-login [--branch
+fix/login] [--base <b>] [--tier <t>]` (no plan holds it) records a one-slice plan named after it
 (the lead's prompt states the task) and prints the same lines; two or more
 slices need a plan file. Claude Code's spawn gate passes a
 `workit:implementer` prompt that names a Workit-made worktree as a WORKTREE

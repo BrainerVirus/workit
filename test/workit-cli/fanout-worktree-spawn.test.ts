@@ -207,6 +207,30 @@ test("Given no plan, When `worktree create fix-x --branch fix/fix-x` runs, Then 
   expect(again.stdout).toContain("kept worktree for slice fix-x");
 });
 
+test("Given no plan and no --branch, When `worktree create hello --base main` runs (the call agents make first), Then the unplanned slice gets the first branch policy allows and its spawn passes the gate", async () => {
+  const { cwd } = makeRepo();
+  await withProtectedMain(async () => {
+    const out = await run(cwd, [
+      "fanout",
+      "worktree",
+      "create",
+      "hello",
+      "--base",
+      "main",
+      "--json",
+    ]);
+    expect(out.code, out.stdout).toBe(0);
+    const data = JSON.parse(out.stdout).data;
+    // The policy allows only feature/*.
+    expect(data.branch).toBe("feature/hello");
+    expect(tokened(data.path)).toBe(true);
+    expect(gate(cwd, data.prompt)).toBeNull();
+  });
+  // Two slices with no plan still need one.
+  const two = await run(cwd, ["fanout", "worktree", "create", "x", "y", "--json"]);
+  expect(two.code).not.toBe(0);
+});
+
 test("Given a slice a registered plan holds on another branch, When `--branch` names a different one, Then it is refused naming the plan's call", async () => {
   const { root, cwd } = makeRepo();
   const plan = writePlan(path.join(root, "plan.json"), "wave", ["a"]);

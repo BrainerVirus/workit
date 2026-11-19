@@ -19,7 +19,7 @@ or areas you may touch), acceptance (observable outcomes), verify (exact
 commands), timebox, forbidden (what you must not touch or do), report (what to
 hand back), standing orders, mode (`new` or `resume`) and the worktree path.
 If a field is missing, report which and stop. An unplanned slice
-(`fanout worktree create <slice> --branch …`) has a short brief: the lead's
+(`fanout worktree create <slice>` with no plan) has a short brief: the lead's
 prompt states the task, and its acceptance and verify count as the brief's.
 
 1. In a Workit worktree (the default), run each git and check command against

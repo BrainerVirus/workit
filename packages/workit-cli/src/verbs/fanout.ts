@@ -22,7 +22,12 @@ import {
   slicePointer,
   type BriefOutcome,
 } from "@workit-dev/core/src/fanout-brief";
-import { adhocPlan, isPlanPath, planFileMatches } from "@workit-dev/core/src/fanout-adhoc";
+import {
+  adhocPlan,
+  isPlanPath,
+  planFileMatches,
+  planHolding,
+} from "@workit-dev/core/src/fanout-adhoc";
 import { checkFanout, type CheckOutcome } from "@workit-dev/core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-status";
 import {
@@ -446,14 +451,23 @@ const findSliceMissing = (fanout: string, slice: string): FanoutError => ({
 
 /**
  * `worktree create <slice>…`: each slice's worktree from the plan (`--name`
- * names it or its file), or with `--branch` one unplanned slice through a
- * one-slice plan (fanout-adhoc.ts). Stops at the first slice that fails,
+ * names it or its file), or one unplanned slice (`--branch`, or a slice no
+ * registered plan holds) through a one-slice plan (fanout-adhoc.ts). Stops at the first slice that fails,
  * after printing the ones made.
  */
 function createWorktrees(io: Io, slices: string[], flags: Record<string, string>): number {
   const branch = flags.branch?.trim() || null;
-  if (branch === null && (flags.base !== undefined || flags.tier !== undefined))
-    return usage(io, "--base and --tier go with --branch (an unplanned slice)", WORKTREE_USAGE);
+  // One slice, no plan named, none holding it and none this checkout would
+  // pick (so a typo in a planned slice stays an error): an unplanned slice on
+  // its default branch, as with --branch (the call agents make first).
+  const unplanned =
+    branch === null &&
+    flags.name === undefined &&
+    slices.length === 1 &&
+    planHolding(io.cwd, slices[0]) === null &&
+    !selectFanout(io.cwd, null, currentBranch(io.cwd), io.env.WORKIT_SESSION_ID?.trim() || null).ok;
+  if (branch === null && !unplanned && (flags.base !== undefined || flags.tier !== undefined))
+    return usage(io, "--base and --tier go with an unplanned slice (--branch <b>)", WORKTREE_USAGE);
   if (branch !== null && slices.length !== 1)
     return usage(
       io,
@@ -466,7 +480,7 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
     return usage(io, `--tier takes one of ${TIERS.join(", ")} (got ${flags.tier})`, WORKTREE_USAGE);
   const actor = actorFromEnv(io.env);
   let chosen: FanoutFile | number;
-  if (branch === null) chosen = pickFanout(io, flags);
+  if (branch === null && !unplanned) chosen = pickFanout(io, flags);
   else {
     const adhoc = adhocPlan(io.cwd, {
       slice: slices[0],
