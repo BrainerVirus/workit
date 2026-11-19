@@ -191,6 +191,15 @@ test("given one heavy command followed only by redirects or one tail/head/grep f
   expect(plan("bun test 2>&1 | head -n 20 >> log/run.txt")).toMatchObject({
     command: "workit check --heavy -- bun test >> log/run.txt 2>&1",
   });
+  // The filter's stderr file is not where the output went: it is dropped with the filter.
+  for (const command of ["bun test | tail -5 2>err.txt", "bun test | tail -n 5 2>/dev/null"])
+    expect([command, plan(command)]).toMatchObject([
+      command,
+      { command: "workit check --heavy -- bun test" },
+    ]);
+  expect(plan("bun test | tail -5 2>/dev/null 1> out.txt")).toMatchObject({
+    command: "workit check --heavy -- bun test > out.txt",
+  });
   expect(plan("npm run lint >/dev/null 2>&1")).toMatchObject({
     command: "workit check --heavy -- npm run lint >/dev/null 2>&1",
   });

@@ -69,6 +69,11 @@ const SPELLINGS = [
   'bash -c "workit feedback t --body-file d.md --post"',
   "sh -lc 'cd /tmp && workit feedback t --body-file d.md --post'",
   'echo "$(workit feedback t --body-file d.md --post)"',
+  'env bash -c "workit feedback t --body-file d.md --post"',
+  'sudo -u dev bash -c "workit feedback t --body-file d.md --post"',
+  'timeout 9 bash -c "workit feedback t --body-file d.md --post"',
+  'bash -c -- "workit feedback t --body-file d.md --post"',
+  "eval 'workit feedback t --body-file d.md --post'",
 ];
 
 test.each(SPELLINGS)("Given `%s`, Then Claude Code asks and Codex denies it", (command) => {

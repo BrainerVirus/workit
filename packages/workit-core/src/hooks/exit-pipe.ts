@@ -90,6 +90,8 @@ export function exitPipeGate(
     }
     if (closes) {
       const inner = groups.pop() ?? null;
+      // A call in a nested group is the enclosing group's call too: `( (workit …) ) | tail`.
+      if (inner && groups.length) groups[groups.length - 1] = inner;
       carry = segment.pipe ? (inner ?? carry) : null;
       continue;
     }

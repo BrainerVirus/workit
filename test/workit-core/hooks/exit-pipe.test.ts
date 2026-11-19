@@ -109,6 +109,10 @@ test.each([
   ["(workit ci wait) > /dev/stderr | tail -3", "tail", "workit ci wait"],
   ["ls | (workit check test) | tee log | head", "head", "workit check test"],
   ["(ls) | wc -l; (workit ci wait) | tail -1", "tail", "workit ci wait"],
+  ["( (workit check test) ) | tail", "tail", "workit check test"],
+  ["(cd x && (workit check test)) | tail -5", "tail", "workit check --cwd x test"],
+  ["{ (workit check test); } | tail", "tail", "workit check test"],
+  ["( { workit check test; } ) | tail", "tail", "workit check test"],
 ])(
   "Given `%s`, When the gate reads it, Then it denies with the unpiped call",
   (command, filter, retry) => {

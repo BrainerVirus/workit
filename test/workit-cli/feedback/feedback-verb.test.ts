@@ -360,6 +360,23 @@ test("Given Workit's own paths and well-known dotted names, Then they stay while
   expect(redact("at packages/billing/src/x.ts now")).toBe("at <path> now");
 });
 
+test("Given a path that only looks like Workit's, Then the path or the workspace details in it still go", () => {
+  for (const text of [
+    "node_modules/@workit-dev/cli/../../../acme-billing/APP-123/db.acme.internal/x.ts",
+    "packages/workit-secret-internal/a.ts",
+    "@workit-dev/acme/src/x.ts",
+  ])
+    expect(redact(`at ${text} now`)).toBe("at <path> now");
+  const kept = redact("at packages/workit-cli/git.acmecorp.internal/APP-77/x.ts now");
+  for (const leak of ["git.acmecorp.internal", "APP-77"]) expect(kept).not.toContain(leak);
+  const named = redactDraft(
+    "at packages/workit-core/acme-billing/x.ts now",
+    { names: ["acme-billing"], branch: null, home: "/home/dev" },
+    "BrainerVirus/workit",
+  );
+  expect(named).not.toContain("acme-billing");
+});
+
 test("Given input holding the private-use placeholder, Then it never comes back as undefined", () => {
   const out = redact(
     "a \uE0000\uE000 b \uE0007\uE000 c https://github.com/BrainerVirus/workit/issues/9",

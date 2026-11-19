@@ -55,7 +55,8 @@ be signed in to gh (`gh auth login`) on github.com.
 The hosts ask you before the verb runs. Claude Code asks on every spelling
 (its hook also reads `workit --cwd <dir> feedback`, `workit --session=<id>
 feedback`, `env X=1 workit feedback`, `npx @workit-dev/cli feedback`,
-`bunx @workit-dev/cli feedback` and `bash -c "workit feedback …"`); Codex asks on `workit feedback …` and refuses any other spelling
+`bunx @workit-dev/cli feedback`, `bash -c "workit feedback …"` (behind `env`,
+`sudo`, `timeout`, `nohup` or `command` too) and `eval 'workit feedback …'`); Codex asks on `workit feedback …` and refuses any other spelling
 with the plain one; OpenCode gets shell ask rules from `workit setup`; Cursor
 never allows it, so its own approval asks. Pi has no permission layer: there
 the agent must have your yes before it passes `--post`.

@@ -127,9 +127,21 @@ const PUBLIC_HOSTS = new Set([
   "engine.io",
 ]);
 
-/** Workit's own source and package paths, never the workspace's (#916). */
-const WORKIT_PATH =
-  /^(?:\.{1,2}\/)*(?:packages\/workit-[\w-]+|(?:node_modules\/)?@workit-dev\/[\w-]+)\//u;
+/** Workit's published packages, by the name after `@workit-dev/` and `packages/workit-`. */
+const WORKIT_PACKAGES = "cli|core|claude-code|codex|cursor|opencode|pi|mcp";
+const WORKIT_PREFIX = new RegExp(
+  String.raw`^(?:\.{1,2}/)*(?:packages/workit-|(?:node_modules/)?@workit-dev/)(?:${WORKIT_PACKAGES})/`,
+  "u",
+);
+
+/**
+ * A path inside one of Workit's own packages (#916): kept, though the host,
+ * ticket and name passes still run over it. A `..` after the package leaves it.
+ */
+const isWorkitPath = (value: string): boolean => {
+  const prefix = WORKIT_PREFIX.exec(value)?.[0];
+  return prefix !== undefined && !value.slice(prefix.length).split("/").includes("..");
+};
 
 /** The private-use mark around a held value's index; never left in the input. */
 const MARK = "\uE000";
@@ -207,7 +219,7 @@ export function redactDraft(
     )
     .replaceAll(/(?<![\w/])~\/[\w.@+/-]*/gu, "<path>")
     .replaceAll(/(?<![\w.~<>/-])(?:\.{1,2}\/)?(?:[\w.@+-]+\/)+[\w.@+-]+/gu, (value) =>
-      WORKIT_PATH.test(value) ? hold(value) : isRelativePath(value) ? "<path>" : value,
+      isWorkitPath(value) || !isRelativePath(value) ? value : "<path>",
     )
     .replaceAll(
       /(?<![\w:])\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?::\d+)?(?![\w:])/giu,
