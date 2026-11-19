@@ -16,6 +16,14 @@
 // copies and repo risk paths are read from the base revision only, so a
 // change can neither mark its own code generated nor drop a risk path.
 //
+// Two content rules soften a risk path or an opaque lockfile (#891), each
+// read from both sides of the file and failing closed: a GitHub workflow
+// whose edit only appends a guarded `&& <command>` to a `run:` or `with:`
+// string leaves the risk path but keeps the lane at least focused
+// (workflow-edit.ts), and a dependency bump (manifest version pins,
+// lockfiles, a changelog, new package.json scripts, such workflow appends) is
+// self with green CI on the head as its evidence (dep-bump.ts).
+//
 // The diff sets the floor; a recorded high-risk judgment raises it to full.
 // A behavior-change judgment does not move it: the diff already tells docs
 // from behavior (Markdown that steers agents counts as behavior).
@@ -38,7 +46,9 @@ import type { VerificationMode } from "../../autonomy";
 import { defaultBase } from "../../git/default-base";
 import type { VerdictCheck } from "../../ledger";
 import { generatedByAttributes } from "./attributes";
+import { isManifest, manifestEdit, type ManifestEdit } from "./dep-bump";
 import { cosmeticChange, hasOpaqueLineBreak } from "./substance";
+import { isWorkflowFile, workflowEdit, type WorkflowEdit } from "./workflow-edit";
 
 export const REVIEW_LANES = ["none", "self", "focused", "full"] as const;
 export type ReviewLane = (typeof REVIEW_LANES)[number];
@@ -145,6 +155,10 @@ export type ChangedFile = {
   cosmetic?: boolean;
   /** Marked `linguist-generated` by the base revision's `.gitattributes`. */
   generated?: boolean;
+  /** A CI workflow changed on both sides: whether the edit is purely additive (workflow-edit.ts). */
+  workflow?: WorkflowEdit;
+  /** A dependency manifest changed on both sides: whether only version pins moved (dep-bump.ts). */
+  manifest?: ManifestEdit;
 };
 
 export type LaneInput = {
@@ -164,7 +178,16 @@ export type LaneAssessment = {
   /** Files that change behavior. */
   files: number;
   riskFiles: string[];
+  /**
+   * `dependency-bump`: only manifest version pins, lockfiles, a changelog,
+   * new package.json scripts and additive workflow edits changed. Its self
+   * lane takes green CI on the head as evidence (see laneGate).
+   */
+  classification?: "dependency-bump";
 };
+
+/** Why a dependency bump is self: CI ran what the bump touches. */
+export const DEPENDENCY_BUMP_EVIDENCE = "green CI on the head";
 
 export type FileKind = "doc" | "cosmetic" | "generated" | "lockfile" | "test" | "behavior";
 
@@ -237,11 +260,63 @@ export const parseRiskPaths = (text: string): string[] =>
     .filter((line) => line && !line.startsWith("#"))
     .map((line) => line.replace(/^\//u, ""));
 
+/**
+ * A built-in workflow risk path whose edit is purely additive. A configured
+ * risk path never softens, nor a workflow whose own name is risky
+ * (`release.yml`, `deploy-secrets.yml`).
+ */
+function additiveWorkflow(file: ChangedFile, extra: readonly string[]): boolean {
+  if (file.workflow?.additive !== true || file.binary || !isWorkflowFile(file.path)) return false;
+  if (extra.some((pattern) => globMatch(pattern, file.path))) return false;
+  return !isRiskPath(file.path.replace(/^\.github\/workflows\//u, ".github/"), extra);
+}
+
+/** Without a dependency bump, an additive workflow edit still changes what CI runs. */
+const ADDITIVE_CI_FLOOR =
+  "an additive workflow edit needs a non-author verdict unless it rides a dependency bump";
+
+const CHANGELOG = /^(?:changelog|changes)(?:\.[^.]+)?$/iu;
+
+/**
+ * The reason a diff is a dependency bump, or null: every file is a manifest
+ * whose pins alone moved (at least one did), a lockfile, a changelog or an
+ * additive workflow edit. Risk paths are ruled out before.
+ */
+function dependencyBump(
+  files: readonly ChangedFile[],
+  additive: ReadonlySet<string>,
+): string | null {
+  const manifests = files.filter((file) => file.manifest?.pins && !file.binary);
+  if (!manifests.some((file) => (file.manifest?.bumped ?? 0) > 0)) return null;
+  const locks: string[] = [];
+  for (const file of files) {
+    if (additive.has(file.path) || manifests.includes(file)) continue;
+    if (LOCKFILES.has(basename(file.path))) locks.push(file.path);
+    else if (file.binary || !(isDoc(file.path) && CHANGELOG.test(basename(file.path)))) return null;
+  }
+  const bumped = manifests.reduce((sum, file) => sum + (file.manifest?.bumped ?? 0), 0);
+  const scripts = manifests.flatMap((file) => file.manifest?.scripts ?? []);
+  const list = (paths: readonly string[]) =>
+    `${paths.slice(0, 3).join(", ")}${paths.length > 3 ? ", …" : ""}`;
+  return `dependency-bump: ${plural(bumped, "version pin")} in ${list(manifests.map((file) => file.path))}${scripts.length ? `, ${plural(scripts.length, "new script")} (${list(scripts)})` : ""}${locks.length ? `, lockfile ${list(locks)}` : ""}; ${DEPENDENCY_BUMP_EVIDENCE} is its evidence`;
+}
+
 /** The review lane for a set of changed files (pure; thresholds in LANE_THRESHOLDS). */
 export function computeLane(input: LaneInput): LaneAssessment {
+  const extra = input.riskPaths ?? [];
+  const additive = input.files.filter((file) => additiveWorkflow(file, extra));
+  const relaxed = new Set(additive.map((file) => file.path));
+  const workflowNote = additive.length
+    ? [
+        `additive workflow edit: ${additive
+          .slice(0, 3)
+          .map((file) => `${file.path} (${file.workflow?.detail ?? ""})`)
+          .join(", ")}${additive.length > 3 ? ", …" : ""}`,
+      ]
+    : [];
   // A risk path is decided first and overrides every other kind.
   const riskFiles = input.files
-    .filter((file) => isRiskPath(file.path, input.riskPaths))
+    .filter((file) => isRiskPath(file.path, extra) && !relaxed.has(file.path))
     .map((file) => file.path);
   const risky = new Set(riskFiles);
   const kinds = input.files.map((file) => ({
@@ -260,19 +335,36 @@ export function computeLane(input: LaneInput): LaneAssessment {
     diffLines === lines && input.files.length === behavior.length
       ? ""
       : ` counted (the whole diff is ${plural(diffLines, "line")} in ${plural(input.files.length, "file")}; docs, comments, formatting, generated copies and lockfile lines are not counted)`;
-  const result = (lane: ReviewLane, reasons: string[]): LaneAssessment => ({
-    lane,
-    reasons,
-    lines,
-    files: behavior.length,
-    riskFiles,
-  });
+  const result = (
+    lane: ReviewLane,
+    reasons: string[],
+    classification?: "dependency-bump",
+  ): LaneAssessment => {
+    const floor = additive.length > 0 && !classification && (lane === "none" || lane === "self");
+    return {
+      lane: floor ? "focused" : lane,
+      reasons: [...(floor ? [ADDITIVE_CI_FLOOR] : []), ...reasons, ...workflowNote],
+      lines,
+      files: behavior.length,
+      riskFiles,
+      ...(classification ? { classification } : {}),
+    };
+  };
   const { selfMaxLines, selfMaxFiles, fullMinLines } = LANE_THRESHOLDS;
   if (input.riskTier === "high") return result("full", ["the task judgment records high risk"]);
   if (riskFiles.length)
     return result("full", [
-      `touches a risk path: ${riskFiles.slice(0, 3).join(", ")}${riskFiles.length > 3 ? ", …" : ""}`,
+      `touches a risk path: ${riskFiles
+        .slice(0, 3)
+        .map((file) => {
+          // A workflow the sub-rule refused says why (workflow-edit.ts).
+          const refused = input.files.find((entry) => entry.path === file)?.workflow;
+          return refused && !refused.additive ? `${file} (${refused.detail})` : file;
+        })
+        .join(", ")}${riskFiles.length > 3 ? ", …" : ""}`,
     ]);
+  const bump = dependencyBump(input.files, relaxed);
+  if (bump && lines < fullMinLines) return result("self", [bump], "dependency-bump");
   if (!behavior.length)
     return result("none", [
       input.files.length
@@ -319,13 +411,18 @@ const ABSENT = /^0+$/u;
  * The files of `fork..head` (or the working tree) whose change is cosmetic:
  * a regular file on both sides, same mode, and equal substance (comments
  * and insignificant whitespace aside; see substance.ts). A file git lists
- * but this cannot read is not cosmetic.
+ * but this cannot read is not cosmetic. Workflows and manifests changed on
+ * both sides also get their content reading (`facts`).
  */
 function cosmeticFiles(
   cwd: string,
   fork: string,
   head: string | null,
-): { cosmetic: Set<string>; opaque: Set<string> } | null {
+): {
+  cosmetic: Set<string>;
+  opaque: Set<string>;
+  facts: Map<string, Pick<ChangedFile, "workflow" | "manifest">>;
+} | null {
   const raw = diffRaw(cwd, fork, head);
   if (!raw) return null;
   const candidates = raw.filter(
@@ -342,6 +439,7 @@ function cosmeticFiles(
   if (!blobs) return null;
   const out = new Set<string>();
   const opaque = new Set<string>();
+  const facts = new Map<string, Pick<ChangedFile, "workflow" | "manifest">>();
   for (const entry of candidates) {
     const before = blobs.get(entry.oldBlob);
     let after = blobs.get(entry.newBlob);
@@ -351,13 +449,21 @@ function cosmeticFiles(
       } catch {
         after = undefined;
       }
+    if (before && after && isWorkflowFile(entry.path))
+      facts.set(entry.path, {
+        workflow: workflowEdit(before.toString("utf8"), after.toString("utf8")),
+      });
+    else if (before && after && isManifest(entry.path))
+      facts.set(entry.path, {
+        manifest: manifestEdit(entry.path, before.toString("utf8"), after.toString("utf8")),
+      });
     if (before && after && cosmeticChange(entry.path, before, after)) out.add(entry.path);
     // A lone CR, U+2028 or U+2029 ends a line for some readers and not for
     // others: such a file is read as opaque, like a binary.
     else if ([before, after].some((bytes) => bytes && hasOpaqueLineBreak(bytes.toString("utf8"))))
       opaque.add(entry.path);
   }
-  return { cosmetic: out, opaque };
+  return { cosmetic: out, opaque, facts };
 }
 
 /** Of `paths`, those the `.gitattributes` files at `fork` mark generated (none when unreadable). */
@@ -392,6 +498,7 @@ export function laneFiles(
       ...entry,
       ...(cosmetic.opaque.has(entry.path) ? { binary: true } : {}),
       cosmetic: !entry.binary && cosmetic.cosmetic.has(entry.path),
+      ...cosmetic.facts.get(entry.path),
     })),
     ...(head === null ? untrackedFiles(cwd).map((file) => untrackedStat(cwd, file)) : []),
   ];
@@ -532,6 +639,8 @@ export type LaneGate = {
   /** The verdict that satisfies it (null under lane none, or when unmet). */
   verdictId: string | null;
   review: "verified" | "self-reviewed" | "none";
+  /** Evidence the lane still asks for beside the verdict (a dependency bump's green CI). */
+  missing?: string;
 };
 
 /**
@@ -540,11 +649,16 @@ export type LaneGate = {
  * or `independent` (or without a lane) an accepted non-author verdict is
  * needed, as before lanes. A current independent failure or a tampered
  * ledger always blocks. The caller still checks the verdict's head.
+ *
+ * A dependency bump's self lane takes the author's verdict only with green
+ * CI on the head (`headCi` "passing", the forge's reading of the head's
+ * checks): the lockfile has no lines to read, so CI is its evidence.
  */
 export function laneGate(
   check: Pick<VerdictCheck, "accepted" | "selfVerdict">,
   verification: VerificationMode,
-  lane: Pick<LaneAssessment, "lane"> | null,
+  lane: Pick<LaneAssessment, "lane" | "classification"> | null,
+  headCi: string | null = null,
 ): LaneGate {
   const need: LaneNeed =
     verification === "proportional" && lane ? laneNeed(lane.lane) : "non-author";
@@ -558,6 +672,12 @@ export function laneGate(
       verdictId: String(check.accepted.verdict.id),
       review: "verified",
     };
+  const ciMissing =
+    need === "self" && lane?.classification === "dependency-bump" && headCi !== "passing"
+      ? `${DEPENDENCY_BUMP_EVIDENCE} (CI is ${headCi ?? "unread"})`
+      : null;
+  if (ciMissing)
+    return { need, satisfied: false, verdictId: null, review: "none", missing: ciMissing };
   if (need === "self" && check.selfVerdict && !blocked)
     return {
       need,

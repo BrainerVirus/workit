@@ -179,7 +179,7 @@ Workit computes a review lane from the diff of the branch against its base
 | Lane | When | Needs |
 | --- | --- | --- |
 | `none` | only docs (`.md`, `.mdx`, `.rst`, `.adoc` outside agent instructions, or a bare `LICENSE`/`CHANGELOG`; a `.txt` such as `requirements.txt` or `CMakeLists.txt` is behavior), comment, whitespace or formatting edits, or generated copies (`linguist-generated` in the base revision's `.gitattributes`) | no verdict |
-| `self` | at most 100 changed lines in at most 5 behavior files, no risk path, no lockfile or binary | the author's own `--self` verdict (or an independent one) |
+| `self` | at most 100 changed lines in at most 5 behavior files, no risk path, no lockfile or binary; or a [dependency bump](#additive-workflow-edits-and-dependency-bumps) | the author's own `--self` verdict (or an independent one); a dependency bump also needs green CI on the head |
 | `focused` | more than 100 lines, more than 5 behavior files, or a lockfile or binary change | an accepted non-author verdict |
 | `full` | 500+ lines, any file on a risk path, or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
 
@@ -216,6 +216,72 @@ formatting, it counts as a behavior change.
   `full`. Built in: a path part such as `auth`, `security`, `secret`, `gate`,
   `policy`, `hooks`, `release`, `migrations` or `.github/workflows` (never a
   test or a doc), CI files, every `.gitattributes`, and `.workit/risk-paths`.
+
+#### Additive workflow edits and dependency bumps
+
+Two rules read a file's content on both sides and lower the lane. Each fails
+closed: anything they cannot read, or any change outside what they allow,
+keeps the lane above.
+
+- **Additive workflow edit.** A `.github/workflows/*.yml` (or `.yaml`) change
+  whose only differences append text to the end of a step's `run:` string,
+  or of a command-named input (`lint_command`, `test-cmd`, `script`: a name
+  ending in `command`, `commands`, `cmd` or `script`) of a job-level
+  reusable workflow call (`jobs.<id>.uses` with `with:`), leaves the risk
+  path. An action's inputs (`steps[].with`) and other inputs never grow:
+  they are not known to be shell. Without a dependency bump the lane is then
+  at least `focused` (never `self` or `none`); inside one it stays `self`.
+  Both sides are parsed as YAML, never matched by line.
+
+  The appended text must be one line of one or more `&& <command>`,
+  `&& (<command>)` or `&& (<command> || echo "<text>")` (`|| true` too). A
+  command is a name and its arguments, each a plain word (letters, digits,
+  `_ . / : @ = + , -`) or a double-quoted text without `$`, a backtick or a
+  backslash; the name is no shell word that changes what runs after it
+  (`exit`, `set`, `trap`, `eval`, `exec`, `source`, `.`, `command`, `time`,
+  `cd`, …, in any case). Every other character (`;`, `|`, `&`, `'`, `$`,
+  `#`, `>`, `<`, `\`, `*`, `{`, a backtick) is refused wherever it stands,
+  so `npm test || true`, `&& echo $'\'' || true #'`, `; curl … | sh` or
+  `&& PATH=/tmp/x npm run x` stays `full`, as does a new line in a `run: |`
+  block or text after a line ending in a backslash.
+
+  A new `with:` input, a change to `permissions`, `secrets`, `on:`, a
+  `uses:` ref, `environment:` or `if:`, a removed or added step or job, a
+  comment-only edit, YAML this reader does not take (anchors, aliases, tags,
+  several documents, a scalar across lines), a workflow named for a risk
+  token (`release.yml`) or one listed in `.workit/risk-paths` stays `full`,
+  and the full lane's reason names why:
+  `touches a risk path: .github/workflows/ci.yml (changes permissions:
+  (permissions.contents))`. GitLab CI (`.gitlab-ci.yml`) edits never soften.
+  A softened edit's reason line reads
+  `additive workflow edit: <file> (<what grew>)`.
+
+  Documented limit: Workit reads the caller's file only. A called reusable
+  workflow that pastes a command input into the middle of its own script
+  (rather than running it as one step) may run later commands after the
+  appended one fails; the `&&` grammar guarantees a failure of what ran
+  before stops the appended command, not that the called workflow stops.
+- **Dependency bump.** A diff limited to manifest version pins, lockfiles, a
+  `CHANGELOG` and additive workflow edits is classified `dependency-bump`
+  and lands on `self` (a 500+ line one stays `full`). Pins are read per
+  manifest: `package.json` (an existing dependency's version range in
+  `dependencies`, `devDependencies`, `peerDependencies` or
+  `optionalDependencies`, plus new `scripts` entries that are not npm
+  lifecycle, `pre`/`post` or `pnpm:` scripts and that no existing script
+  runs by pattern: any `*` token in an existing script that matches the new
+  name, whatever runs it (`run-s "lint:*"`, `concurrently npm:lint:*`;
+  a leading `npm:`, `pnpm:`, `yarn:` or `bun:` is dropped), or a pnpm
+  `/regex/` argument), `go.mod` (an existing `require`),
+  `Cargo.toml` and `pyproject.toml` (a version in a dependency table or
+  list, line for line). A new or removed dependency, a git, path, URL or
+  `npm:` alias source, or any other field is no pin bump. Its evidence is
+  green CI on the head: the author's `--self` verdict meets the gate only
+  while the head's CI is passing (`pr status`, `pr merge` and `stack
+  status`/`land` read it from the forge), and `pr status` prints
+  `missing: green CI on the head (CI is pending)` until then. An accepted
+  independent verdict meets it as always. `verdict.lane.classification` is
+  `dependency-bump` in `--json`, and `reasons` names it. A pin bump with any
+  other change (a source file, a README) is laned as before.
 
 #### Repo risk paths: `.workit/risk-paths`
 
