@@ -189,3 +189,27 @@ test("from the parent of two repos that both have the branch, the verdict is ref
   expect(await verdictRows(repoA)).toEqual([]);
   expect(await verdictRows(repoB)).toEqual([]);
 });
+
+test("from a parent with more folders than the scan reads, one match is refused as branch_ambiguous, not routed", async () => {
+  const root = workspace();
+  const repoA = repoOn(path.join(root, "a-repo"), "feature/x");
+  for (let i = 0; i < 200; i++) mkdirSync(path.join(root, `z-${String(i).padStart(3, "0")}`));
+
+  const refused = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "live run",
+    "--branch",
+    "feature/x",
+    "--json",
+  ]);
+
+  expect(refused.code).not.toBe(0);
+  const body = refused.json();
+  expect(body.error).toContain("branch_ambiguous");
+  expect(body.error).toContain("too many folders");
+  expect(body.unblock).toContain(`workit --cwd ${repoA} `);
+  expect(await verdictRows(repoA)).toEqual([]);
+});

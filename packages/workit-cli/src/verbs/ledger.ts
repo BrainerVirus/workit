@@ -881,18 +881,21 @@ async function ledgerFinding(argv: string[], io: Io): Promise<number> {
 /**
  * The Io a `--branch` verdict is recorded with: this checkout when cwd is
  * one, else (cwd is the parent of the workspace's repos) the one checkout
- * under it that has the branch, said on stderr. Two or more are refused
- * naming each; none falls through to the usual refusal.
+ * under it that has the branch, said on stderr. Two or more, or one from a
+ * scan cut short, are refused naming each; none falls through to the usual
+ * refusal.
  */
 function verdictCheckout(io: Io, branch: string): Io | number {
   const found = verdictCheckouts(io.cwd, branch);
   if (found.here || found.candidates.length === 0) return io;
-  if (found.candidates.length > 1)
+  if (found.candidates.length > 1 || found.truncated)
     return emit(
       io,
       fail(
         "invalid_input",
-        `branch_ambiguous: ${found.candidates.length} checkouts under ${io.cwd} have a branch ${branch} (${found.candidates.join(", ")}), so nothing was recorded`,
+        found.truncated
+          ? `branch_ambiguous: ${io.cwd} has too many folders to scan them all for a branch ${branch} (found in ${found.candidates.join(", ")}), so nothing was recorded`
+          : `branch_ambiguous: ${found.candidates.length} checkouts under ${io.cwd} have a branch ${branch} (${found.candidates.join(", ")}), so nothing was recorded`,
         {
           unblock: `Retry as: workit --cwd ${found.candidates[0]} ledger verdict …  # the checkout whose ${branch} you judged`,
         },
