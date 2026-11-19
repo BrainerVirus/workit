@@ -325,3 +325,99 @@ test.skipIf(process.platform === "win32")(
     expect(replay.inputs).toEqual([]);
   },
 );
+
+test.skipIf(process.platform === "win32")(
+  "Given the current branch tracks a second remote, When workit release tag runs, Then the tag lands on the trunk's remote, whose CI was read, and never on the branch's",
+  async () => {
+    const { repo, head } = tagRepo({ release: true });
+    const fork = path.join(repo.root, "fork.git");
+    repo.git("init", "-q", "--bare", fork);
+    repo.git("remote", "add", "fork", fork);
+    repo.git("push", "-q", "fork", "main");
+    repo.git("switch", "-q", "-c", "feature");
+    repo.git("config", "branch.feature.remote", "fork");
+    forge({ "graphql branch-checks": () => trunkChecks(head, [checkRun("SUCCESS")]) });
+    const done = await run(["release", "tag", "v1.2.3", "--json"], repo.cwd);
+    expect(done.code, done.stdout + done.stderr).toBe(0);
+    expect(done.json().data.remote).toBe("origin");
+    expect(bareTag(repo, "v1.2.3")).toEqual({ type: "tag", commit: head });
+    expect(repo.git("ls-remote", fork, "refs/tags/v1.2.3")).toBe("");
+    expect(repo.git("branch", "--show-current")).toBe("feature");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given --at on a trunk commit behind the tip of a forge remote, When workit release tag runs, Then it is refused at_not_tip before CI is read, since CI is known only for the tip",
+  async () => {
+    const { repo, local } = tagRepo({ release: true });
+    const replay = forge({});
+    const refused = await run(["release", "tag", "v1.2.3", "--at", local, "--json"], repo.cwd);
+    expect(refused.code, refused.stdout).toBe(3);
+    expect(refused.json().error).toContain("at_not_tip");
+    expect(refused.json().unblock).toContain("workit release tag v1.2.3");
+    expect(replay.calls).toEqual([]);
+    expect(repo.git("tag", "-l")).toBe("");
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a local tag on another commit than the remote's, When workit release notes edit runs, Then it is refused tag_differs, the local tag stays and the forge is never written",
+  async () => {
+    const { repo, head, local } = tagRepo({ release: true });
+    repo.git("--git-dir", repo.bare, "tag", "v1.2.3", head);
+    repo.git("tag", "v1.2.3", local);
+    const replay = forge({});
+    const refused = await run(
+      ["release", "notes", "edit", "v1.2.3", "--from-changelog", "--json"],
+      repo.cwd,
+    );
+    expect(refused.code, refused.stdout).toBe(3);
+    expect(refused.json().error).toContain("tag_differs");
+    expect(refused.json().unblock).toContain("git tag -d v1.2.3");
+    expect(repo.git("rev-parse", "v1.2.3^{commit}")).toBe(local);
+    expect(repo.git("for-each-ref", "refs/workit")).toBe("");
+    expect(replay.inputs).toEqual([]);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given the remote lacks the tag, When workit release notes edit runs, Then the failed fetch is refused naming the check, not read from a stale local tag",
+  async () => {
+    const { repo, local } = tagRepo({ release: true });
+    repo.git("tag", "v1.2.3", local);
+    const replay = forge({});
+    const refused = await run(
+      ["release", "notes", "edit", "v1.2.3", "--from-changelog", "--json"],
+      repo.cwd,
+    );
+    expect(refused.code, refused.stdout).not.toBe(0);
+    expect(refused.json().error).toContain("could not fetch v1.2.3");
+    expect(refused.json().unblock).toContain("git ls-remote origin refs/tags/v1.2.3");
+    expect(replay.inputs).toEqual([]);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a release body with Workit's start marker but no end marker, When workit release notes edit runs, Then it is refused naming the fix and nothing is prepended",
+  async () => {
+    const { repo, head } = tagRepo({ release: true });
+    repo.git("--git-dir", repo.bare, "tag", "v1.2.3", head);
+    const replay = forge({
+      [RELEASE]: () =>
+        JSON.stringify({
+          id: 5,
+          tag_name: "v1.2.3",
+          body: "<!-- workit:changelog v1.2.3 -->\nold notes, end marker lost",
+          html_url: "https://github.com/o/r/releases/tag/v1.2.3",
+        }),
+    });
+    const refused = await run(
+      ["release", "notes", "edit", "v1.2.3", "--from-changelog", "--json"],
+      repo.cwd,
+    );
+    expect(refused.code, refused.stdout).toBe(3);
+    expect(refused.json().error).toContain("release_body_unterminated");
+    expect(refused.json().unblock).toContain("<!-- /workit:changelog -->");
+    expect(replay.inputs).toEqual([]);
+  },
+);

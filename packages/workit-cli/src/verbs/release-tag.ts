@@ -59,8 +59,11 @@ const blocked = (
     }),
   );
 
-/** `workit git push --release <tag>` run in process, without its forge release. */
-export type TagPush = (tag: string) => Promise<Envelope>;
+/**
+ * `workit git push --release <tag>` run in process, without its forge
+ * release, to `remote.name` (the trunk `remote.branch`'s push remote).
+ */
+export type TagPush = (tag: string, remote: { name: string; branch: string }) => Promise<Envelope>;
 
 type Waited =
   | { ok: true; runs: WorkflowRun[]; release: { url: string | null } }
@@ -170,7 +173,8 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
   let ci: { passing: number } | null = null;
   if (plan.local) notes.push(`${plan.remote} is a local path: no forge, so CI was not read`);
   else {
-    const connected = connect(io);
+    // The forge of the trunk's push remote: the one fetched and pushed to.
+    const connected = connect(io, plan.production);
     if (!connected.ok) return forgeFail(io, connected, { tag, step: "ci" });
     resolved = connected.data;
     const forge = connected.data.forge;
@@ -209,7 +213,7 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
   if (!tagged.ok) return forgeFail(io, tagged, { tag, step: "tag" });
   const pushed = await progressFor(io).run(
     `Pushing ${tag}`,
-    () => pushTag(tag),
+    () => pushTag(tag, { name: plan.remote, branch: plan.production }),
     (r) => (r.ok ? "done" : "failed"),
   );
   if (!pushed.ok) {
@@ -225,7 +229,11 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
       data: { ...pushed.data, step: "push", ...(dropped ? { untagged: tag } : {}) },
     });
   }
-  const verified = verifyReleased(io.cwd, { tag, sha: plan.target, actor }, forgeDeps.npm);
+  const verified = verifyReleased(
+    io.cwd,
+    { tag, sha: plan.target, remote: plan.remote, actor },
+    forgeDeps.npm,
+  );
   if (!verified.ok) return forgeFail(io, verified, { tag, step: "verify" });
   if (!verified.data.delivered)
     return emit(
@@ -287,7 +295,9 @@ export async function notesEdit(argv: string[], io: Io): Promise<number> {
   if (!parsed.ok) return forgeFail(io, parsed);
   const release = requireGrant(io.cwd, "release");
   if (!release.allowed) return blocked(io, release, { tag });
-  const found = tagChangelogSection(io.cwd, tag, parsed.data.version);
+  const lookup = tagChangelogSection(io.cwd, tag, parsed.data.version);
+  if (!lookup.ok) return forgeFail(io, lookup, { tag });
+  const found = lookup.data;
   if (!found)
     return emit(
       io,
@@ -300,7 +310,8 @@ export async function notesEdit(argv: string[], io: Io): Promise<number> {
         },
       ),
     );
-  const connected = connect(io);
+  // The forge of the trunk's push remote: the one the tag was read from.
+  const connected = connect(io, parsed.data.production);
   if (!connected.ok) return forgeFail(io, connected, { tag });
   const resolved = connected.data;
   const scoped = requireGrant(io.cwd, "release", {
@@ -317,7 +328,9 @@ export async function notesEdit(argv: string[], io: Io): Promise<number> {
         data: { tag },
       }),
     );
-  const body = mergeReleaseBody(current.data.body, tag, changelogBlock(tag, found.section));
+  const merged = mergeReleaseBody(current.data.body, tag, changelogBlock(tag, found.section));
+  if (!merged.ok) return forgeFail(io, merged, { tag });
+  const body = merged.data;
   const changed = body !== current.data.body;
   if (changed) {
     const written = writeReleaseBody(resolved, tag, current.data, body);

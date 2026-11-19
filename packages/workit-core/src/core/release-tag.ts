@@ -97,6 +97,15 @@ export function planReleaseTag(
   if (at.startsWith("-")) return failure("invalid_input", `--at ${at} is not a ref`);
   const target = resolveRef(cwd, at);
   if (!target) return failure("not_found", `${at} is not a commit here`);
+  const local = parseRemoteUrl(raw)?.protocol === "file";
+  // The forge reports CI on a branch tip only, so on a forge remote the tag
+  // goes on the trunk tip, whose CI is the one read.
+  if (target !== trunkTip && !local)
+    return failure(
+      "blocked",
+      `at_not_tip: ${at} (${target.slice(0, 12)}) is not the tip of ${remote}/${production} (${trunkTip.slice(0, 12)}); CI is read on the trunk tip, so a release tag goes there`,
+      `workit release tag ${tag}  # tags the trunk tip once its CI is green; to release an older commit, revert what follows it on ${production} through a PR first`,
+    );
   if (target !== trunkTip && !git(cwd, ["merge-base", "--is-ancestor", target, trunkTip]).ok)
     return failure(
       "blocked",
@@ -136,7 +145,7 @@ export function planReleaseTag(
     trunkTip,
     changelog,
     changelogFiles,
-    local: parseRemoteUrl(raw)?.protocol === "file",
+    local,
   });
 }
 
@@ -165,8 +174,8 @@ export function releaseCiVerdict(
     return {
       green: false,
       reason: "ci_unknown",
-      error: `ci_unknown: the forge reports CI for ${plan.remote}/${plan.production} at ${checks.sha.slice(0, 12)}, not ${where}; CI is read on the trunk tip`,
-      unblock: `${rerun}  # without --at: tag the trunk tip`,
+      error: `ci_unknown: the forge reports CI for ${plan.remote}/${plan.production} at ${checks.sha.slice(0, 12)}, not ${where}; the trunk moved while it was read`,
+      unblock: `${rerun}  # again: it fetches the new trunk tip`,
     };
   const failing = checks.checks.filter(
     (check) => check.state === "failing" || (check.required === true && check.state === "skipped"),
@@ -415,41 +424,74 @@ export const changelogBlock = (tag: string, section: string): string =>
 /**
  * The release body with `block` in place of the one between the markers, or
  * prepended when there is none. Running it again on its own output changes
- * nothing.
+ * nothing. A start marker without its end marker is refused: where the old
+ * block ends is unknown, and prepending would leave two.
  */
-export function mergeReleaseBody(existing: string, tag: string, block: string): string {
+export function mergeReleaseBody(
+  existing: string,
+  tag: string,
+  block: string,
+): ForgeResult<string> {
   const start = existing.indexOf(START(tag));
-  const end = start < 0 ? -1 : existing.indexOf(END, start);
-  if (start >= 0 && end >= 0)
-    return `${existing.slice(0, start)}${block}${existing.slice(end + END.length)}`;
-  const rest = existing.trim();
-  return rest ? `${block}\n\n${rest}` : block;
+  if (start < 0) {
+    const rest = existing.trim();
+    return success(rest ? `${block}\n\n${rest}` : block);
+  }
+  const end = existing.indexOf(END, start);
+  if (end < 0)
+    return failure(
+      "blocked",
+      `release_body_unterminated: the body of release ${tag} has ${START(tag)} but no ${END} after it; nothing was edited`,
+      `add ${END} where the old changelog block ends (or delete the start marker) in the release on the forge, then rerun: workit release notes edit ${tag} --from-changelog`,
+    );
+  return success(`${existing.slice(0, start)}${block}${existing.slice(end + END.length)}`);
 }
 
 /**
  * The version's changelog section for an existing tag: at the tag's own
  * commit, else on the fetched remote trunk (a later changelog that gained the
- * section, a backfill). Null without one.
+ * section, a backfill). The remote's tag is fetched into a scratch ref, never
+ * over a local tag: a local tag on another commit is refused, as is a fetch
+ * that fails. Null without a section.
  */
 export function tagChangelogSection(
   cwd: string,
   tag: string,
   version: string,
-): { section: string; ref: string } | null {
-  const refs = [`refs/tags/${tag}`];
+): ForgeResult<{ section: string; ref: string } | null> {
   const line = releaseLinesOf(cwd)[0];
   const remote = pushRemoteName(cwd, line.production);
+  const own = `refs/tags/${tag}`;
+  // Where to look, in order: the tag's commit, then the remote trunk.
+  const refs: Array<{ rev: string; ref: string }> = [{ rev: own, ref: own }];
   if (remote) {
-    fetchRefs(cwd, remote, [
-      `+refs/heads/${line.production}:refs/remotes/${remote}/${line.production}`,
-      `+refs/tags/${tag}:refs/tags/${tag}`,
+    const scratch = `refs/workit/release-tag/${tag}`;
+    const trunk = `refs/remotes/${remote}/${line.production}`;
+    const fetched = fetchRefs(cwd, remote, [
+      `+refs/heads/${line.production}:${trunk}`,
+      `+refs/tags/${tag}:${scratch}`,
     ]);
-    refs.push(`refs/remotes/${remote}/${line.production}`);
+    const theirs = fetched.ok ? resolveRef(cwd, scratch) : null;
+    git(cwd, ["update-ref", "-d", scratch]);
+    if (!fetched.ok || !theirs)
+      return failure(
+        fetched.ok ? "not_found" : fetched.code,
+        `could not fetch ${tag} and ${line.production} from ${remote}${fetched.ok ? "" : `: ${fetched.error}`}; nothing was edited`,
+        `git ls-remote ${remote} refs/tags/${tag}  # the release's tag must be on ${remote}; then rerun: workit release notes edit ${tag} --from-changelog`,
+      );
+    const mine = resolveRef(cwd, own);
+    if (mine && mine !== theirs)
+      return failure(
+        "blocked",
+        `tag_differs: the local tag ${tag} is on ${mine.slice(0, 12)} but ${remote} has it on ${theirs.slice(0, 12)}; nothing was edited`,
+        `git tag -d ${tag}  # the remote's tag is the published one; then rerun: workit release notes edit ${tag} --from-changelog`,
+      );
+    refs.splice(0, 1, { rev: theirs, ref: own }, { rev: trunk, ref: trunk });
   }
-  for (const ref of refs) {
-    if (!resolveRef(cwd, ref)) continue;
-    const section = changelogSection(cwd, ref, version);
-    if (section) return { section, ref };
+  for (const { rev, ref } of refs) {
+    if (!resolveRef(cwd, rev)) continue;
+    const section = changelogSection(cwd, rev, version);
+    if (section) return success({ section, ref });
   }
-  return null;
+  return success(null);
 }

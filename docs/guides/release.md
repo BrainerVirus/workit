@@ -20,8 +20,12 @@ workit release notes edit v1.3.0 --from-changelog   # backfill a published relea
 In order, it:
 
 1. Refuses without the `release` grant and names it. Nothing is fetched first.
-2. Fetches the remote trunk. The tag goes on `origin/main`'s tip, or with
-   `--at <ref>` on a commit the trunk has.
+2. Fetches the remote trunk from the trunk's push remote (`origin` unless
+   `main` pushes elsewhere); the checks, the push and the verification all use
+   that remote, whatever the current branch tracks. The tag goes on the trunk
+   tip. The forge reports CI on a branch tip only, so `--at <ref>` must name
+   that tip (`at_not_tip` otherwise); only a push remote that is a local path
+   takes an older commit the trunk has.
 3. Reads CI on the trunk tip. Red CI (`ci_red`, with the `workit ci rerun`
    fix), CI still running (`ci_pending`) and no CI report on that commit
    (`ci_unknown`) are refused. A push remote that is a local path has no
