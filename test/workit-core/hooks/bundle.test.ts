@@ -101,7 +101,9 @@ const HOOK_ENTRIES = [
 // session-teardown (+4,460 B: the session-end stop and session-start reap, hooks/teardown.ts)
 // took core run to 578,817 B. The ceiling is that plus 2,000 B.
 // trunk-ci-wait (#912, the exit-pipe deny) took core run to 582,564 B (after its fix round); the ceiling is that plus 2 KiB.
-const BUDGET = 584_612;
+// dep-bump-lane (#891: the workflow YAML reader and the manifest pin reader the lane loads)
+// took core run to 595,869 B; the ceiling is that plus 2 KiB.
+const BUDGET = 597_917;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
