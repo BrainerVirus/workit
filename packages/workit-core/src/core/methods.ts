@@ -108,7 +108,7 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
  * shows it, and the verb itself still refuses there.
  */
 export const FEEDBACK_LINE =
-  "Friction Workit caused (a verb failing wrongly, a hook blocking wrongly): offer the user\n`workit feedback`, once per distinct problem, without stopping the task.";
+  "Workit friction: offer `workit feedback` once per problem; keep working.";
 
 const BOOTSTRAP = `
 Workit is optional coordination and proof tooling: you decide what and
