@@ -6,7 +6,8 @@
 // denied with the same args without it (agent-model.ts). A `workit:implementer`
 // spawn names a made Workit worktree in its prompt, in any form: a WORKTREE
 // line (a brief, or the pointer `fanout worktree create` prints), the
-// worktree's path (its git admin dir holds the fanout token), or the path of
+// worktree's path, POSIX or a drive letter with either separator (its git
+// admin dir holds the fanout token), or the path of
 // a brief file holding a WORKTREE line. Else it is denied in two lines whose
 // Retry as is `worktree create` for the slice word the prompt names (an
 // unplanned slice needs no plan). The launcher fast path (workit-hook.mjs) passes only the WORKTREE
@@ -41,7 +42,7 @@ const namesMade = (word: string): boolean => {
 
 const namesWorktree = (prompt: string): boolean =>
   MADE_WORKTREE.test(prompt) ||
-  (prompt.match(/(?<![\w.~])\/[^\s'"`<>|;,()]+/gu) ?? []).some((word) =>
+  (prompt.match(/(?<![\w.~])(?:[a-z]:[\\/]|\/)[^\s'"`<>|;,()]+/giu) ?? []).some((word) =>
     namesMade(word.replace(/[.:]+$/u, "")),
   );
 

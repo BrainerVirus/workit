@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -150,6 +151,11 @@ test("G a prompt naming a worktree's path with no WORKTREE line, W PreToolUse ru
     spawn({ subagent_type: "workit:implementer", prompt: prompt(made) }).hookSpecificOutput
       ?.permissionDecision,
   ).toBeUndefined();
+  // A Windows path (the platform's temp dir) also counts with forward slashes.
+  expect(
+    spawn({ subagent_type: "workit:implementer", prompt: prompt(made.replaceAll("\\", "/")) })
+      .hookSpecificOutput?.permissionDecision,
+  ).toBeUndefined();
   expect(
     spawn({ subagent_type: "workit:implementer", prompt: prompt(plain) }).hookSpecificOutput
       ?.permissionDecision,
@@ -161,16 +167,25 @@ test("G a prompt naming a worktree's path with no WORKTREE line, W PreToolUse ru
 });
 
 test("G a prompt naming a directory whose .git is a FIFO or a device, W PreToolUse runs, T it is denied without reading it (no hang)", () => {
-  const fifo = path.join(cwd, "fifo-dir");
-  mkdirSync(fifo);
-  // Through sh: mkfifo is a system tool, not a package binary.
-  spawnSync("sh", ["-c", `mkfifo "$0"`, path.join(fifo, ".git")]);
-  expect(lstatSync(path.join(fifo, ".git")).isFIFO()).toBe(true);
-  const zero = path.join(cwd, "zero-dir");
-  mkdirSync(zero);
-  symlinkSync("/dev/zero", path.join(zero, ".git"));
+  const dirs: string[] = [];
+  // Windows has neither mkfifo nor /dev/zero: there the gate's stat-first
+  // read has nothing of either kind to meet.
+  if (process.platform !== "win32") {
+    const fifo = path.join(cwd, "fifo-dir");
+    mkdirSync(fifo);
+    // Through sh: mkfifo is a system tool, not a package binary.
+    spawnSync("sh", ["-c", `mkfifo "$0"`, path.join(fifo, ".git")]);
+    expect(lstatSync(path.join(fifo, ".git")).isFIFO()).toBe(true);
+    dirs.push(fifo);
+  }
+  if (existsSync("/dev/zero")) {
+    const zero = path.join(cwd, "zero-dir");
+    mkdirSync(zero);
+    symlinkSync("/dev/zero", path.join(zero, ".git"));
+    dirs.push(zero);
+  }
   // A read of either would block or never end: the test's timeout is the bound.
-  for (const dir of [fifo, zero])
+  for (const dir of dirs)
     expect(
       spawn({ subagent_type: "workit:implementer", prompt: `Work in ${dir}` }).hookSpecificOutput
         ?.permissionDecision,
