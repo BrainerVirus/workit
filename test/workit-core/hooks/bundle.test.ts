@@ -102,9 +102,9 @@ const HOOK_ENTRIES = [
 // took core run to 578,817 B. The ceiling is that plus 2,000 B.
 // trunk-ci-wait (#912, the exit-pipe deny) took core run to 582,564 B (after its fix round); the ceiling is that plus 2 KiB.
 // dep-bump-lane (#891: the workflow YAML reader and the manifest pin reader the lane loads)
-// took core run to 595,869 B, and its review fix round (the append guard) to 597,461 B;
-// the ceiling is that plus 2 KiB.
-const BUDGET = 599_509;
+// took core run to 595,869 B, its first fix round to 597,461 B, and the allow-list append
+// grammar (on top of #915) to 600,499 B; the ceiling is that plus 2 KiB.
+const BUDGET = 602_547;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
