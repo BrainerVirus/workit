@@ -152,6 +152,8 @@ test("Given the user declines (no --post), Then the draft is saved under `workit
   const saved = path.join(retros, file);
   expect(result.stdout).toContain(`draft saved: ${saved}`);
   expect(result.stdout).toContain("nothing posted");
+  // #916: redaction is pattern-based, so the header says the user reads the draft first.
+  expect(result.stdout.split("\n")[1]).toStartWith("The user reads this whole draft before --post");
   expect(readFileSync(saved, "utf8")).toContain("<!-- workit feedback -->");
   expect(readFileSync(saved, "utf8")).not.toContain("billing-api");
 });
@@ -334,3 +336,34 @@ test.skipIf(process.platform === "win32")(
     expect(readFileSync(posted, "utf8")).toBe("personal-token");
   },
 );
+
+// #916: what the first review of `workit feedback` left open.
+test("Given a secret in a kept tracker URL's query or fragment, Then the draft masks it and keeps the URL", () => {
+  const out = redact(
+    "see https://github.com/BrainerVirus/workit/issues/1?access_token=SECRET1234567890abcdef and github.com/BrainerVirus/workit#ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+  );
+  expect(out).not.toContain("SECRET1234567890abcdef");
+  expect(out).not.toContain("ghp_0123456789abcdefghijklmnopqrstuvwxyz");
+  expect(out).toContain("https://github.com/BrainerVirus/workit/issues/1?");
+  expect(out).toContain("github.com/BrainerVirus/workit#");
+});
+
+test("Given Workit's own paths and well-known dotted names, Then they stay while workspace paths go", () => {
+  for (const text of [
+    "packages/workit-cli/src/verbs/feedback.ts",
+    "@workit-dev/cli/src/verbs/feedback.ts",
+    "node_modules/@workit-dev/core/src/forge/redact.ts",
+    "socket.io",
+    "registry.npmjs.org",
+  ])
+    expect(redact(`at ${text} now`)).toBe(`at ${text} now`);
+  expect(redact("at packages/billing/src/x.ts now")).toBe("at <path> now");
+});
+
+test("Given input holding the private-use placeholder, Then it never comes back as undefined", () => {
+  const out = redact(
+    "a \uE0000\uE000 b \uE0007\uE000 c https://github.com/BrainerVirus/workit/issues/9",
+  );
+  expect(out).not.toContain("undefined");
+  expect(out).toBe("a 0 b 7 c https://github.com/BrainerVirus/workit/issues/9");
+});

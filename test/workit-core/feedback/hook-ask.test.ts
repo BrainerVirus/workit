@@ -61,6 +61,14 @@ const SPELLINGS = [
   'env GH_HOST=x workit feedback "t" --body-file d.md --post',
   'X=1 workit feedback "t" --body-file d.md --post',
   'echo ok && workit --cwd=/tmp/x feedback "t" --body-file d.md --post',
+  // #916: the session option, the package spelling and a shell's `-c` script.
+  'workit --session=s1 feedback "t" --body-file d.md --post',
+  'workit --session s1 feedback "t" --body-file d.md --post',
+  'npx @workit-dev/cli feedback "t" --body-file d.md --post',
+  'bunx @workit-dev/cli@latest feedback "t" --body-file d.md --post',
+  'bash -c "workit feedback t --body-file d.md --post"',
+  "sh -lc 'cd /tmp && workit feedback t --body-file d.md --post'",
+  'echo "$(workit feedback t --body-file d.md --post)"',
 ];
 
 test.each(SPELLINGS)("Given `%s`, Then Claude Code asks and Codex denies it", (command) => {
@@ -68,7 +76,10 @@ test.each(SPELLINGS)("Given `%s`, Then Claude Code asks and Codex denies it", (c
   expect(claude(command).permissionDecision).toBe("ask");
   const out = codex(command);
   expect(out.permissionDecision).toBe("deny");
-  expect(out.permissionDecisionReason).toContain("nothing before the verb");
+  // Codex's npx gate denies `npx <workit>` first, naming the plain call all the same.
+  expect(out.permissionDecisionReason).toMatch(
+    /nothing before the verb|^Run `workit feedback .+`: workit is on PATH\.$/u,
+  );
 });
 
 test("Given the plain spelling, Then Claude Code still asks and Codex leaves it to its prompt rule", () => {
@@ -85,4 +96,13 @@ test("Given a call that only mentions feedback, or only asks for its help, Then 
     "workit help feedback",
   ])
     expect(askedWorkitCall(command), command).toBeNull();
+});
+
+test.each([
+  "npx @workit-dev/cli pr status",
+  'bash -c "workit pr status"',
+  'echo "workit feedback is a verb"',
+  'npx @other/cli feedback "t"',
+])("Given `%s`, Then it is no asked call", (command) => {
+  expect(askedWorkitCall(command)).toBeNull();
 });
