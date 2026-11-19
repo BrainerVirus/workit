@@ -16,6 +16,7 @@ import {
   applyHostPermissions,
   CLAUDE_ALLOW,
   CLAUDE_ASK,
+  OPENCODE_ASK,
   codexRulesText,
   CURSOR_ALLOW,
   CURSOR_DENY,
@@ -974,6 +975,12 @@ const guardedPatterns = (home: string) =>
   );
 type Rule = { action: string; resource: string; effect: string };
 const editDeny = (resource: string): Rule => ({ action: "edit", resource, effect: "deny" });
+/** The V2 shell ask rules for `workit feedback` (#777), after the edit deny rules. */
+const feedbackAsks: Rule[] = OPENCODE_ASK.map((key) => ({
+  action: "shell",
+  resource: key.slice("ask shell ".length),
+  effect: "ask",
+}));
 const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8"));
 const opencodeFile = (home: string) => {
   const file = path.join(home, ".config", "opencode", "opencode.json");
@@ -992,9 +999,12 @@ test("Given OpenCode's global opencode.json with the user's V2 rules, When setup
   expect(rules.slice(0, 2)).toEqual(OPENCODE_USER.permissions);
   for (const pattern of guardedPatterns(home))
     expect(rules.slice(2)).toContainEqual(editDeny(pattern));
-  expect(rules.slice(2).every((rule) => rule.action === "edit" && rule.effect === "deny")).toBe(
-    true,
-  );
+  expect(rules.slice(-feedbackAsks.length)).toEqual(feedbackAsks);
+  expect(
+    rules
+      .slice(2, -feedbackAsks.length)
+      .every((rule) => rule.action === "edit" && rule.effect === "deny"),
+  ).toBe(true);
   expect(JSON.parse(written)).not.toHaveProperty("permission");
 
   expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
@@ -1008,15 +1018,16 @@ test("Given OpenCode's global opencode.json with the user's V2 rules, When setup
   expect(readFileSync(file, "utf8")).toBe(original);
 });
 
-test("Given a fresh OpenCode install with no opencode.json, When setup runs, Then the file holds only V2 permissions edit deny rules for the guarded paths", async () => {
+test("Given a fresh OpenCode install with no opencode.json, When setup runs, Then the file holds only V2 permissions edit deny rules for the guarded paths and the feedback shell asks", async () => {
   const { env, home } = sandbox();
   const file = opencodeFile(home);
   expect((await cli(["setup", "--hosts=opencode", "--yes"], env)).code).toBe(0);
   const config = readJson(file);
   expect(Object.keys(config)).toEqual(["permissions"]);
-  const rules = config.permissions as Rule[];
+  const rules = (config.permissions as Rule[]).slice(0, -feedbackAsks.length);
   expect(rules.map((rule) => rule.resource).toSorted()).toEqual(guardedPatterns(home).toSorted());
   expect(rules).toEqual(rules.map((rule) => editDeny(rule.resource)));
+  expect((config.permissions as Rule[]).slice(-feedbackAsks.length)).toEqual(feedbackAsks);
 });
 
 /**
@@ -1029,7 +1040,9 @@ const asLegacySetup = (
   base: Record<string, unknown>,
   created: string[],
 ) => {
-  const patterns = (readJson(file).permissions as Rule[]).map((rule) => rule.resource);
+  const patterns = (readJson(file).permissions as Rule[])
+    .filter((rule) => rule.action === "edit")
+    .map((rule) => rule.resource);
   const permission = structuredClone((base.permission ?? {}) as Record<string, unknown>);
   const edit = (permission.edit ?? {}) as Record<string, string>;
   for (const pattern of patterns) edit[pattern] = "deny";
@@ -1065,10 +1078,10 @@ test("Given Workit's V1 permission.edit patterns beside the user's own V1 entrie
   ]);
   const config = readJson(file);
   expect(config.permission).toEqual(user.permission);
-  expect(config.permissions).toEqual(patterns.map(editDeny));
+  expect(config.permissions).toEqual([...patterns.map(editDeny), ...feedbackAsks]);
   const owned = readJson(recordFile).hosts.opencode.owned;
   expect(owned.lists["permission.edit"]).toEqual([]);
-  expect(owned.lists.permissions).toEqual(patterns);
+  expect(owned.lists.permissions).toEqual([...patterns, ...OPENCODE_ASK]);
 
   expect(applyUninstall(planUninstall({ home, env }), { home, env }).ok).toBe(true);
   expect(readFileSync(file, "utf8")).toBe(original);
@@ -1106,7 +1119,7 @@ test("Given Workit's V1 patterns one of which the user removed, When the upgrade
   const plan = planHostPermissions({ home, env, hosts: ["opencode"], refreshOnly: true });
   expect(plan.notes.some((note) => note.includes("moves Workit's 4 deny patterns"))).toBe(true);
   expect(applyHostPermissions(plan, { home, env })[0].status).toBe("written");
-  expect(readJson(file)).toEqual({ permissions: kept.map(editDeny) });
+  expect(readJson(file)).toEqual({ permissions: [...kept.map(editDeny), ...feedbackAsks] });
 });
 
 test("Given OpenCode configs Workit cannot merge into (permissions not a list, only an opencode.jsonc), When setup runs, Then each is reported blocked and left byte for byte", async () => {

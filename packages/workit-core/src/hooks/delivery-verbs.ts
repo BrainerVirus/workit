@@ -62,9 +62,15 @@ export const WORKIT_USER_ONLY: readonly (readonly string[])[] = [
   ["workspace", "seal"],
 ];
 
-/** A user-only call's first word, as a word anywhere in a text. */
+/**
+ * `workit feedback` (#777): a report to the Workit tracker the host always
+ * asks about. Host rules match its plain spelling; the hook reads the others.
+ */
+export const WORKIT_ASKED_VERBS = ["feedback"] as const;
+
+/** A user-only call's or an asked verb's first word, as a word anywhere in a text. */
 export const USER_ONLY_WORD = new RegExp(
-  `\\b(?:${[...new Set(WORKIT_USER_ONLY.map((words) => words[0]))].join("|")})\\b`,
+  `\\b(?:${[...new Set([...WORKIT_USER_ONLY.map((words) => words[0]), ...WORKIT_ASKED_VERBS])].join("|")})\\b`,
 );
 
 /**
@@ -201,6 +207,39 @@ export const userOnlyWorkitCall = (
       (needle) => call[0] === needle[0] && hasWordsInOrder(call, needle),
     );
     if (found && !helpOnly(call, found)) return [...found];
+  }
+  return null;
+};
+
+/**
+ * The asked verb (`WORKIT_ASKED_VERBS`) a Workit call in `command` runs, with
+ * `plain` true when nothing but the verb follows `workit` (the spelling host
+ * rules match: no env assignment, wrapper or global option before it), or null.
+ */
+export const askedWorkitCall = (
+  command: string,
+  dialect: ShellDialect = "posix",
+): { verb: string; plain: boolean } | null => {
+  if (!mayRunUserOnly(command)) return null;
+  for (const segment of segmentsOf(command, dialect)) {
+    if (segment.unanalyzable) continue;
+    const start = segment.words.findIndex(isWorkitWord);
+    if (start < 0) continue;
+    const words = segment.words.slice(start + 1);
+    let at = 0;
+    for (;;) {
+      const word = words[at];
+      if (word === "--json") at += 1;
+      else if (word === "--cwd" || word === "--session") at += 2;
+      else if (word?.startsWith("--cwd=")) at += 1;
+      else break;
+    }
+    const verb = WORKIT_ASKED_VERBS.find((name) => words[at] === name);
+    if (verb && !helpOnly(words.slice(at), [verb]))
+      return {
+        verb,
+        plain: at === 0 && start === 0 && segment.words[0] === "workit",
+      };
   }
   return null;
 };

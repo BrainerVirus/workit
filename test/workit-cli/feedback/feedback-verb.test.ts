@@ -1,6 +1,14 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
@@ -233,3 +241,96 @@ test("Given workspace text, When --include-workspace is not passed, Then secrets
   expect(kept).not.toContain("ghp_");
   expect(kept).toContain("/home/dev/src/billing-api");
 });
+
+// Review mwnr0zos: every spelling that names the workspace goes by default.
+const FACTS = { names: [], branch: null, home: "/home/dev" };
+const redact = (text: string, include = false) =>
+  redactDraft(text, FACTS, "BrainerVirus/workit", include);
+
+test.each([
+  ["https://oauth2:SECRET@gitlab.corp.local/team/proj.git", "<url>"],
+  ["ssh://git@gitlab.corp.local:2222/team/proj.git", "<url>"],
+  ["postgres://u:p@db.internal:5432/x", "<url>"],
+  ["git@gitlab.corp.local:team/proj.git", "<url>"],
+  ["github.com/acme-corp/billing-api", "<url>"],
+  ["https://github.com/BrainerVirus/workit-private/issues/2", "<url>"],
+  ["acme.youtrack.cloud", "<host>"],
+  ["gitlab.corp.local", "<host>"],
+  ["db.internal.corp:5432", "<host>"],
+  ["10.0.12.7", "<host>"],
+  ["10.0.12.7:8080", "<host>"],
+  ["[fe80::1ff:fe23:4567:890a]:443", "<host>"],
+  ["2001:db8:85a3:0:0:8a2e:370:7334", "<host>"],
+  ["dev@acme-corp.com", "<email>"],
+  ["app-123", "<ticket>"],
+  ["BILL-482", "<ticket>"],
+  ["src/billing/invoice.ts", "<path>"],
+  ["./scripts/run", "<path>"],
+  [String.raw`\\fileserver\share\team\notes.txt`, "<path>"],
+  [String.raw`C:\Users\dev\My Projects\app\x.ts`, "<path>"],
+  ["/home/dev/My Projects/app/x.ts", "<path>"],
+  ['"/srv/My Data/app"', '"<path>"'],
+])(
+  "Given `%s` in a draft, Then it reads %s by default and stays with --include-workspace",
+  (text, expected) => {
+    const out = redact(`see ${text} now`);
+    expect(out).toBe(`see ${expected} now`);
+    // A URL's userinfo is a credential: masked even with the opt-in.
+    if (!/:\/\/[^/]*@/u.test(text)) expect(redact(text, true)).toBe(text);
+  },
+);
+
+test("Given a URL with a credential, Then no part of it survives, with or without the opt-in's secret masking", () => {
+  const text = "clone https://oauth2:SECRET@gitlab.corp.local/team/proj.git failed";
+  expect(redact(text)).toBe("clone <url> failed");
+  expect(redact(text, true)).not.toContain("SECRET");
+});
+
+test("Given the tracker's own URLs and ordinary prose, Then they stay", () => {
+  for (const text of [
+    "see https://github.com/BrainerVirus/workit/issues/777.",
+    "github.com/BrainerVirus/workit#readme",
+    "Workit 2.18.1 on linux, UTF-8 output, SHA-256 hash, README.md and node.js, e.g. and/or 12:30:45",
+    "workit pr status failed: exit 1",
+  ])
+    expect(redact(text)).toBe(text);
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given GH_TOKEN for a work account in the env, When --post reads the feedback account's token, Then gh runs without it and the post carries the account's own token",
+  async () => {
+    const root = workRepo();
+    workspaces(root, {}, { feedback: { account: "me-personal" } });
+    const bin = path.join(root, "fake-bin");
+    const posted = path.join(root, "posted-token");
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, "gh"),
+      [
+        "#!/bin/sh",
+        'case "$1 $2" in',
+        `  "auth token") printf '%s\\n' "\${GH_TOKEN:-personal-token}" ;;`,
+        `  "api -X") if [ "$3" = GET ]; then echo '{"items":[]}'; else printf '%s' "$GH_TOKEN" > "${posted}"; echo '{"number":7}'; fi ;;`,
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    Object.assign(forgeDeps, { runner: undefined, readStdin: () => REPRO });
+    let stdout = "";
+    const code = await main(["feedback", "t", "--body-file", "-", "--post"], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PWD: root,
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        GH_TOKEN: "work-token",
+        GITHUB_TOKEN: "work-token",
+      },
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+    });
+    expect(code).toBe(0);
+    expect(stdout).toContain("posted issue #7");
+    expect(readFileSync(posted, "utf8")).toBe("personal-token");
+  },
+);

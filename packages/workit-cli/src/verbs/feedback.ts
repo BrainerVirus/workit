@@ -96,13 +96,52 @@ export function workspaceFacts(
 
 const escape = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
-/** Spellings that look like ticket IDs but are not (UTF-8, SHA-256, ISO-8601). */
-const NOT_TICKETS = /^(?:UTF|SHA|ISO|RFC|HTTP|TLS|ES|ECMA)-/u;
+/** Spellings that look like ticket IDs but are not (UTF-8, SHA-256, ISO-8601, ES-2022). */
+const NOT_TICKETS = /^(?:utf|sha|iso|rfc|http|https|tls|ssl|es|ecma|ipv|node|bun|win|x)-/iu;
+
+/** Endings that make `name.ext` a file, not a host. */
+const FILE_EXTENSIONS = new Set(
+  "ts tsx mts cts js jsx mjs cjs json jsonc md mdx txt log lock yml yaml toml sh zsh bash ps1 py rb go rs java kt c h cpp css scss html xml svg png jpg gif env ini cfg conf d map snap test spec".split(
+    " ",
+  ),
+);
+/** Endings that make a one-dot `name.tld` a host. */
+const HOST_TLDS = new Set(
+  "com net org io dev app ai co cloud local internal corp lan intra home test example invalid int edu gov biz info me us uk de cl es fr eu ca au in jp cn br mx ar nl se ch it pl".split(
+    " ",
+  ),
+);
+/** Public hosts a Workit report may name. */
+const PUBLIC_HOSTS = new Set(["github.com", "www.github.com"]);
+
+/** A dotted name that is a host (not a file, a version or the public forge). */
+const isHost = (name: string): boolean => {
+  const labels = name.toLowerCase().split(".");
+  const last = labels.at(-1) ?? "";
+  if (PUBLIC_HOSTS.has(name.toLowerCase()) || FILE_EXTENSIONS.has(last) || /^\d+$/u.test(last))
+    return false;
+  return labels.length > 2 || HOST_TLDS.has(last);
+};
+
+/** IPv6 (bracketed or bare, with an optional port), never a clock time like 12:30:45. */
+const isIpv6 = (value: string): boolean => {
+  const bare = value.replace(/^\[|\](?::\d+)?$/gu, "");
+  return bare.includes("::") || bare.split(":").length >= 5;
+};
+
+/** A relative path with directory segments: `./x`, `../x/y`, `a/b/c` or `dir/file.ext`. */
+const isRelativePath = (value: string): boolean =>
+  /^\.{1,2}\//u.test(value) ||
+  value.split("/").length > 2 ||
+  /\.[A-Za-z0-9]{1,6}$/u.test(value.split("/").at(-1) ?? "");
 
 /**
- * Secrets are always masked; unless `include`, so are remote URLs (the
- * tracker's own stay), absolute and home paths, ticket IDs, the branch and
- * the workspace's org, repo and workspace names.
+ * Secrets are always masked. Unless `include`, so is everything that names
+ * the workspace: URLs (the tracker's own stay), `user@host:path` remotes,
+ * emails, host names other than github.com, IPv4 and IPv6 addresses,
+ * absolute, home, UNC and relative paths (spaces included), ticket IDs, the
+ * branch and the workspace's org, repo and workspace names. URLs go first,
+ * before the secret masking, so a credential in a URL never splits it.
  */
 export function redactDraft(
   text: string,
@@ -110,28 +149,59 @@ export function redactDraft(
   tracker: string,
   include = false,
 ): string {
-  let out = redactText(text);
-  if (include) return out;
-  if (facts.branch) out = out.replaceAll(facts.branch, "<branch>");
-  // The tracker's own URLs stay, held aside so the path rule cannot reach them.
-  const trackerUrl = `https://github.com/${tracker}`.toLowerCase();
+  if (include) return redactText(text);
   const kept: string[] = [];
+  const hold = (value: string): string => {
+    kept.push(value);
+    return `${kept.length - 1}`;
+  };
+  const isTracker = new RegExp(
+    String.raw`^(?:https?://)?(?:www\.)?github\.com/${escape(tracker)}(?=$|[/#?])`,
+    "iu",
+  );
+  /** A URL without the sentence punctuation that follows it. */
+  const url = (match: string): string => {
+    const value = match.replace(/[.,;:!?)\]]+$/u, "");
+    const rest = match.slice(value.length);
+    return (isTracker.test(value) ? hold(value) : "<url>") + rest;
+  };
+  let out = text;
+  if (facts.branch) out = out.replaceAll(facts.branch, "<branch>");
   out = out
-    .replaceAll(/\b[a-z][a-z0-9+.-]*:\/\/[^\s)>\]"'`]+/giu, (url) => {
-      if (!url.toLowerCase().startsWith(trackerUrl)) return "<url>";
-      kept.push(url);
-      return `\uE000${kept.length - 1}\uE000`;
-    })
-    .replaceAll(/\b[\w.-]+@[\w.-]+:[\w./-]+/gu, "<url>")
-    .replaceAll(/\b[A-Za-z]:\\[^\s"'`]*/gu, "<path>");
+    .replaceAll(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`]+/giu, url)
+    .replaceAll(/\b(?:www\.)?github\.com\/[\w.-]+(?:\/[^\s<>"'`]*)?/giu, url)
+    .replaceAll(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)*:[\w./~-]*/gu, "<url>");
+  out = redactText(out)
+    .replaceAll(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/gu, "<email>")
+    // Quoted paths keep their spaces: the whole quoted text goes.
+    .replaceAll(/(["'`])((?:[A-Za-z]:)?[\\/~.][^"'`\n]*[\\/][^"'`\n]*)\1/gu, "$1<path>$1")
+    .replaceAll(/\\\\[^\s\\"'`]+\\[^\s"'`]*/gu, "<path>")
+    .replaceAll(/\b[A-Za-z]:\\(?:[^\s\\"'`]+(?: [^\s\\"'`]+)*\\)*[^\s\\"'`]*/gu, "<path>");
   if (facts.home.length > 1) out = out.replaceAll(facts.home, "~");
+  const segment = String.raw`[\w.@+-]+(?: [\w.@+-]+)*`;
   out = out
-    .replaceAll(/(?<![\w.~<>-])~?\/(?:[\w.@+-]+\/)+[\w.@+-]*/gu, "<path>")
+    .replaceAll(
+      new RegExp(String.raw`(?<![\w.~<>-])~?\/(?:${segment}\/)+[\w.@+-]*`, "gu"),
+      "<path>",
+    )
     .replaceAll(/(?<![\w/])~\/[\w.@+/-]*/gu, "<path>")
-    .replaceAll(/\b[A-Z][A-Z0-9]{1,9}-\d+\b/gu, (id) => (NOT_TICKETS.test(id) ? id : "<ticket>"));
+    .replaceAll(/(?<![\w.~<>/-])(?:\.{1,2}\/)?(?:[\w.@+-]+\/)+[\w.@+-]+/gu, (value) =>
+      isRelativePath(value) ? "<path>" : value,
+    )
+    .replaceAll(
+      /(?<![\w:])\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?::\d+)?(?![\w:])/giu,
+      (value) => (isIpv6(value) && /[0-9a-f]/iu.test(value) ? "<host>" : value),
+    )
+    .replaceAll(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/gu, "<host>")
+    .replaceAll(/\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)+(?::\d+)?\b/giu, (value) =>
+      isHost(value.replace(/:\d+$/u, "")) ? "<host>" : value,
+    )
+    .replaceAll(/\b[A-Za-z][A-Za-z0-9]{1,9}-\d+\b/gu, (id) =>
+      NOT_TICKETS.test(id) ? id : "<ticket>",
+    );
   for (const name of facts.names.toSorted((a, b) => b.length - a.length))
     out = out.replaceAll(new RegExp(`(?<![\\w-])${escape(name)}(?![\\w-])`, "giu"), "<name>");
-  return out.replaceAll(/\uE000(\d+)\uE000/gu, (_, index: string) => kept[Number(index)]);
+  return out.replaceAll(/(\d+)/gu, (_, index: string) => kept[Number(index)]);
 }
 
 export type DraftInput = {
@@ -280,6 +350,18 @@ const withToken =
   (bin, args, options) =>
     base(bin, args, { ...options, token });
 
+/** Variables that would make `gh auth token` print themselves instead of the named login's token. */
+const TOKEN_VARIABLES = new Set([
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+]);
+
+/** `env` without the token variables (gh prefers them over `--user`). */
+export const withoutTokenEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(env).filter(([key]) => !TOKEN_VARIABLES.has(key)));
+
 /** The login's gh token on github.com (`gh auth token --user`), never printed. */
 function accountToken(runner: ForgeRunner, account: string): { token: string } | { error: string } {
   const done = runner("gh", ["auth", "token", "--hostname", API_HOST, "--user", account], {
@@ -392,7 +474,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
 
   const base = forgeDeps.runner ?? systemRunner("github", API_HOST, io.env);
   const login = account ?? settings.account;
-  const token = flags.booleans.has("post") && login ? accountToken(base, login) : null;
+  // The lookup runs without GH_TOKEN and kin: gh would print those, not the login's token.
+  const lookup = forgeDeps.runner ?? systemRunner("github", API_HOST, withoutTokenEnv(io.env));
+  const token = flags.booleans.has("post") && login ? accountToken(lookup, login) : null;
   const runner = token && "token" in token ? withToken(base, token.token) : base;
   const search = searchDuplicates(runner, repo, title);
   const draft: Draft = {

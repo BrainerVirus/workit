@@ -30,9 +30,10 @@
 // flow judges the rewrite. Never: `workit check -- …`, `workit lock run -- …`,
 // `workit run …`, `workit grant …`, or any verb outside WORKIT_ALLOWED_VERBS. The user-only calls (WORKIT_USER_ONLY,
 // #615) are asked (Claude Code, Codex) or denied (Cursor) on top of that.
-// `workit feedback` (#777) is asked on Claude Code and Codex and never allowed
-// on Cursor (its own approval prompt then asks), so a report reaches the
-// Workit tracker only with the user's yes.
+// `workit feedback` (#777) is asked on Claude Code, Codex and OpenCode (V2
+// shell ask rules, OPENCODE_ASK) and never allowed on Cursor (its own approval
+// prompt then asks), so a report reaches the Workit tracker only with the
+// user's yes.
 //
 // The merges are pure (input record in, record and added entries out), the
 // entries Workit added are recorded in its state dir so uninstall removes
@@ -256,6 +257,24 @@ const isNativeDeny = (host: string, dotted: string, entry: unknown): entry is st
 /** The OpenCode V2 rule Workit writes to deny edits of `resource`. */
 const editDenyRule = (resource: string) => ({ action: "edit", resource, effect: "deny" });
 
+/**
+ * OpenCode V2 shell ask rules (#777): `workit feedback` asks, also behind a
+ * `--cwd <dir>` or `--json` global option. Recorded as `ask shell <resource>`;
+ * appended after the user's rules, so they win over a broader allow.
+ */
+export const OPENCODE_ASK: readonly string[] = [
+  "ask shell workit feedback*",
+  "ask shell workit --cwd * feedback*",
+  "ask shell workit --json feedback*",
+];
+const ASK_SHELL = "ask shell ";
+
+/** The V2 rule for a recorded key: a shell ask, else an edit deny. */
+const ruleFor = (key: string) =>
+  key.startsWith(ASK_SHELL)
+    ? { action: "shell", resource: key.slice(ASK_SHELL.length), effect: "ask" }
+    : editDenyRule(key);
+
 /** The resource of an OpenCode V2 rule that denies edits of exactly it, or null. */
 const editDenied = (entry: unknown): string | null =>
   isRecord(entry) &&
@@ -266,9 +285,22 @@ const editDenied = (entry: unknown): string | null =>
     ? entry.resource
     : null;
 
-/** A deny list entry as the string Workit records: the entry itself, or a V2 edit deny rule's resource. */
+/** The recorded key of a V2 shell ask rule (`ask shell <resource>`), or null. */
+const shellAsked = (entry: unknown): string | null =>
+  isRecord(entry) &&
+  Object.keys(entry).length === 3 &&
+  entry.action === "shell" &&
+  entry.effect === "ask" &&
+  typeof entry.resource === "string"
+    ? `${ASK_SHELL}${entry.resource}`
+    : null;
+
+/** The key Workit records for a V2 rule it writes, or null. */
+const ruleKey = (entry: unknown): string | null => editDenied(entry) ?? shellAsked(entry);
+
+/** A deny list entry as the string Workit records: the entry itself, or a V2 rule's key. */
 const denyKey = (entry: unknown): string | null =>
-  typeof entry === "string" ? entry : editDenied(entry);
+  typeof entry === "string" ? entry : ruleKey(entry);
 
 // ---------------------------------------------------------------------------
 // Pure merges and removals
@@ -427,10 +459,10 @@ const appendDenyRules = (
   const list = root[dotted];
   if (!Array.isArray(list))
     return `${dotted} is not a list of rules; make it one to take Workit's edit deny rules`;
-  const present = new Set(list.map(editDenied));
+  const present = new Set(list.map(ruleKey));
   for (const entry of wanted)
     if (!present.has(entry)) {
-      list.push(editDenyRule(entry));
+      list.push(ruleFor(entry));
       present.add(entry);
       (owned.lists[dotted] ??= []).push(entry);
     }
@@ -583,7 +615,7 @@ function mergeOpenCodeConfig(config: Json, input: MergeInput): HostMerge {
     ...(skip[DENY_AT.opencode] ?? []),
     ...(skip[legacy] ?? []).filter((entry) => !movedSet.has(entry)),
   ];
-  const error = appendDenyRules(next, DENY_AT.opencode, deny, owned, {
+  const error = appendDenyRules(next, DENY_AT.opencode, [...deny, ...OPENCODE_ASK], owned, {
     ...skip,
     [DENY_AT.opencode]: skipped,
   });
@@ -603,7 +635,7 @@ const STATIC_LISTS: Record<JsonHost, Record<string, string[]>> = {
     "permissions.allow": [...CURSOR_ALLOW],
     "permissions.deny": [...CURSOR_DENY],
   },
-  opencode: {},
+  opencode: { permissions: [...OPENCODE_ASK] },
 };
 
 /** Every entry this version writes for `host`, its native deny entries (`deny`) included. */
@@ -741,7 +773,7 @@ export function removeOwnedEntries(
       // OpenCode's V2 rules: an edit deny rule goes when its resource is named.
       const rules = dotted === DENY_AT[host];
       const kept = value.filter(
-        (entry) => !drop.has(entry) && !(rules && drop.has(editDenied(entry))),
+        (entry) => !drop.has(entry) && !(rules && drop.has(ruleKey(entry))),
       );
       if (kept.length !== value.length) {
         at.parent[at.key] = kept;

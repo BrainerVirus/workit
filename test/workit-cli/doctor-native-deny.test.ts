@@ -210,9 +210,9 @@ test("G Workit's patterns only in OpenCode's deprecated permission.edit map, W d
   const config = path.join(f.home, ".config", "opencode", "opencode.json");
   mkdirSync(path.dirname(config), { recursive: true });
   f.setup(["opencode"]);
-  const patterns: string[] = JSON.parse(readFileSync(config, "utf8")).permissions.map(
-    (rule: { resource: string }) => rule.resource,
-  );
+  const patterns: string[] = JSON.parse(readFileSync(config, "utf8"))
+    .permissions.filter((rule: { action: string }) => rule.action === "edit")
+    .map((rule: { resource: string }) => rule.resource);
   writeFileSync(
     config,
     JSON.stringify({ permission: { edit: Object.fromEntries(patterns.map((p) => [p, "deny"])) } }),
