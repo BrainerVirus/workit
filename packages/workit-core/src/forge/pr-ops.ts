@@ -64,7 +64,7 @@ import {
   uncoveredBaseRed,
   type BaseRedCause,
 } from "./merge-gate-base-red";
-import { buildStatusDoc, selectPr, type PrStatusDoc } from "./report";
+import { buildStatusDoc, computeBehindBase, selectPr, type PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
 import {
   failure,
@@ -800,6 +800,34 @@ function baseCiState(cwd: string, resolved: ResolvedForge, base: string): BaseCi
   };
 }
 
+/**
+ * Whether the PR head contains the base tip its red CI ran on (#906). Not
+ * confirmed (no tip, an unfetchable commit) counts as not contained.
+ */
+function baseTipInHead(
+  cwd: string,
+  resolved: ResolvedForge,
+  baseSha: string | null,
+  head: string,
+): { ok: true } | { ok: false; why: string | null } {
+  if (!baseSha) return { ok: false, why: "the forge reported no tip for its red CI" };
+  const counted = computeBehindBase(
+    cwd,
+    { base: resolved.baseRemote, head: resolved.remote },
+    baseSha,
+    head,
+  );
+  if (!counted.ok) return { ok: false, why: counted.error };
+  if (counted.data.upToDate) return { ok: true };
+  return {
+    ok: false,
+    why:
+      counted.data.upToDate === false
+        ? `${counted.data.behind ?? "some"} commit(s) behind`
+        : (counted.data.error ?? null),
+  };
+}
+
 /** The forge login (the account the CLI acts as), or null when it cannot be read. */
 export function forgeLogin(resolved: ResolvedForge): string | null {
   const account = resolved.expectedAccount?.trim() || null;
@@ -1052,16 +1080,26 @@ export async function mergePullRequest(
   let baseRedOverride: { reason: string } | null = null;
   let baseRedFixed: string[] | null = null;
   // A head that passes every red base check is the fix, so it merges without
-  // the bypass; only the checks it does not cover gate (#906).
-  const uncovered = baseCi.ok ? [] : uncoveredBaseRed(baseCi.failing, status.data.checks);
+  // the bypass; only the checks it does not cover gate (#906). Its green
+  // proves that only when the head contains the base tip the red CI ran on:
+  // a head behind it never ran those checks on the red code.
+  const byName = baseCi.ok ? [] : uncoveredBaseRed(baseCi.failing, status.data.checks);
+  const contains =
+    baseCi.ok || byName.length === baseCi.failing.length
+      ? null
+      : baseTipInHead(cwd, resolved, baseCi.sha, head);
+  const uncovered = baseCi.ok ? [] : contains?.ok === false ? baseCi.failing : byName;
   if (!baseCi.ok && !uncovered.length) baseRedFixed = baseCi.failing.map((failed) => failed.name);
   else if (!baseCi.ok) {
     const names = baseCi.failing.map((failed) => failed.name).join(", ");
     const url = uncovered.find((failed) => failed.url)?.url ?? null;
-    const passed = baseCi.failing.filter((failed) => !uncovered.includes(failed));
-    const coverage = passed.length
-      ? `; ${label}'s head passes ${passed.map((failed) => failed.name).join(", ")} but not ${uncovered.map((failed) => failed.name).join(", ")}`
-      : `; ${label}'s head does not pass ${uncovered.map((failed) => failed.name).join(", ")}`;
+    const passed = baseCi.failing.filter((failed) => !byName.includes(failed));
+    const stale = contains?.ok === false;
+    const coverage = stale
+      ? `; ${label} is not up to date with ${doc.base} (${baseCi.sha?.slice(0, 12) ?? "its head"}); rebase so its CI runs on the red base${contains.why ? ` (${contains.why})` : ""}`
+      : passed.length
+        ? `; ${label}'s head passes ${passed.map((failed) => failed.name).join(", ")} but not ${uncovered.map((failed) => failed.name).join(", ")}`
+        : `; ${label}'s head does not pass ${uncovered.map((failed) => failed.name).join(", ")}`;
     if (!baseRed) {
       const cause = classifyBaseRed(uncovered, previousBaseChecks(resolved, doc.base));
       const next = baseRedNextStep(
@@ -1071,7 +1109,9 @@ export async function mergePullRequest(
       );
       return refuse(
         `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base${coverage}; ${next.detail}`,
-        next.unblock,
+        stale
+          ? `workit git rebase  # then: workit git push --force-with-lease, workit ci wait, and workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} again`
+          : next.unblock,
         {
           reason: "base_red",
           blockers: uncovered.map((failed) => failed.name),

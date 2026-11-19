@@ -19,8 +19,9 @@ import {
 // #906: base_red lets through the PR that fixes the red base. A PR whose own
 // head passes every check that is red on the base (same `<workflow> / <job>`
 // name) merges without --base-red-ok and says it fixes the red base check; a
-// PR that does not cover them is refused, naming the check it leaves red. All
-// forge calls are replayed stubs.
+// PR that does not cover them, or whose head does not contain main's red tip,
+// is refused, naming the check it leaves red or the rebase. All forge calls
+// are replayed stubs.
 
 setDefaultTimeout(60_000);
 
@@ -73,7 +74,7 @@ const baseChecks = (nodes: Node[]) =>
     data: {
       repository: {
         object: {
-          oid: "basehead",
+          oid: "{{BASE}}",
           statusCheckRollup: {
             contexts: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
           },
@@ -101,8 +102,16 @@ const PROTECTION = JSON.stringify({
   },
 });
 
-/** A docs-only READY PR (lane none: no verdict needed) onto a main whose checks are `base`. */
-const setup = (base: Node[], head: Node[], extra: Record<string, Reply> = {}) => {
+/**
+ * A docs-only READY PR (lane none: no verdict needed) onto a main whose checks
+ * are `base`; the head is rebased onto main's red tip unless `behind`.
+ */
+const setup = (
+  base: Node[],
+  head: Node[],
+  extra: Record<string, Reply> = {},
+  { behind = false } = {},
+) => {
   writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
@@ -113,6 +122,11 @@ const setup = (base: Node[], head: Node[], extra: Record<string, Reply> = {}) =>
   writeFileSync(path.join(repo.cwd, "README.md"), "# Feature\n");
   repo.git("add", "-A");
   repo.git("commit", "-q", "--amend", "-m", "feature");
+  if (!behind) {
+    // The rebased head contains main's red tip; local main follows it, so the diff stays docs-only.
+    repo.git("rebase", "-q", repo.base);
+    repo.git("branch", "-q", "-f", "main", repo.base);
+  }
   repo.subs["{{HEAD}}"] = repo.git("rev-parse", "HEAD");
   let merged = false;
   const routes: Record<string, Reply> = {
@@ -184,6 +198,29 @@ test("Given main red on test (windows-latest) and a PR whose head passes it, Whe
   expect(rows(repo.cwd, "pr.merged")).toEqual([
     expect.objectContaining({ baseRedFixed: [`CI / ${WINDOWS}`] }),
   ]);
+});
+
+test("Given main red on test (windows-latest) and a PR whose head passes it but is behind main's red tip, When pr merge runs, Then base_red refuses and names the rebase", async () => {
+  const { repo, runner } = setup(
+    [checkRun("fast checks", "SUCCESS"), checkRun(WINDOWS, "FAILURE")],
+    [checkRun(WINDOWS, "SUCCESS", true)],
+    {},
+    { behind: true },
+  );
+  const result = await run(["pr", "merge", "--keep-branch", "--json"], repo.cwd);
+  expect(result.code).toBe(3);
+  const out = result.json();
+  expect(out.error).toStartWith("base_red: main");
+  expect(out.error).toContain(`CI / ${WINDOWS}`);
+  expect(out.error).toContain(
+    `PR #12 is not up to date with main (${repo.base.slice(0, 12)}); rebase so its CI runs on the red base`,
+  );
+  expect(out.data).toMatchObject({ reason: "base_red", blockers: [`CI / ${WINDOWS}`] });
+  expect(out.unblock).toBe(
+    "workit git rebase  # then: workit git push --force-with-lease, workit ci wait, and workit pr merge again",
+  );
+  expect(merges(runner.calls)).toEqual([]);
+  expect(rows(repo.cwd, "pr.merge.intent")).toEqual([]);
 });
 
 test("Given main red on a check the PR's head lacks, When pr merge runs, Then base_red refuses as before, naming the check and the exact next step", async () => {
