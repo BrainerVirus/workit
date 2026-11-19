@@ -1,0 +1,21 @@
+{
+  "id": "cc-default-heavy-rewritten",
+  "source": "#908: Claude Code auto mode refuses a call whose input a PreToolUse hook changed (four refusals 2026-11-18/19, reviewer and verifier subagents): outside auto mode the rewrite stays",
+  "repo": {
+    "branch": "feature/x"
+  },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_input": {
+        "command": "npx jest"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["rewrite"],
+    "require": ["(^|\n)workit check --heavy -- npx jest(\n|$)"],
+    "forbid": ["Retry as:"]
+  }
+}
