@@ -835,10 +835,10 @@ function misfiledVerdict(
 }
 
 /**
- * The Io a `--branch` verdict is recorded with: this checkout when its repo
- * has the branch, else the one checkout next to it (or under it, from the
- * parent of the workspace's repos) that has it, said on stderr. Two or more
- * are refused naming each; none falls through to the branch_not_in_repo refusal.
+ * The Io a `--branch` verdict is recorded with: this checkout when cwd is
+ * one, else (cwd is the parent of the workspace's repos) the one checkout
+ * under it that has the branch, said on stderr. Two or more are refused
+ * naming each; none falls through to the usual refusal.
  */
 function verdictCheckout(io: Io, branch: string): Io | number {
   const found = verdictCheckouts(io.cwd, branch);
@@ -848,7 +848,7 @@ function verdictCheckout(io: Io, branch: string): Io | number {
       io,
       fail(
         "invalid_input",
-        `branch_ambiguous: ${found.candidates.length} checkouts near ${io.cwd} have a branch ${branch} (${found.candidates.join(", ")}), so nothing was recorded`,
+        `branch_ambiguous: ${found.candidates.length} checkouts under ${io.cwd} have a branch ${branch} (${found.candidates.join(", ")}), so nothing was recorded`,
         {
           unblock: `Retry as: workit --cwd ${found.candidates[0]} ledger verdict …  # the checkout whose ${branch} you judged`,
         },
@@ -857,7 +857,7 @@ function verdictCheckout(io: Io, branch: string): Io | number {
   const [there] = found.candidates;
   if (!io.json)
     io.stderr(
-      `workit: ${io.cwd} has no branch ${branch}; recording in ${there}, the one checkout next to it that has it\n`,
+      `workit: ${io.cwd} is not a checkout; recording in ${there}, the one checkout under it with branch ${branch}\n`,
     );
   return { ...io, cwd: there };
 }

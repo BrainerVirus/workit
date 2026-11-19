@@ -2628,17 +2628,17 @@ function childrenWithBranch(dir: string, branch: string): string[] {
 
 /**
  * Where a verdict for `branch` filed from `cwd` belongs (#759): `cwd` itself
- * when its repo has the branch (`here`), else the checkouts next to it, or
- * under it when `cwd` is not a checkout (the parent of the workspace's repos),
- * that have it. One candidate is where the CLI records it.
+ * when it is a checkout (`here`: a branch missing there stays the
+ * branch_not_in_repo refusal, never a silent move to a sibling), else the
+ * checkouts directly under it (the parent of the workspace's repos) that have
+ * the branch. One candidate is where the CLI records it.
  */
 export function verdictCheckouts(
   cwd: string,
   branch: string,
 ): { here: true } | { here: false; candidates: string[] } {
-  if (gitDirs(cwd) === null) return { here: false, candidates: childrenWithBranch(cwd, branch) };
-  if (branchNotInRepo(cwd, branch) === null) return { here: true };
-  return { here: false, candidates: siblingsWithBranch(cwd, branch) };
+  if (gitDirs(cwd) !== null) return { here: true };
+  return { here: false, candidates: childrenWithBranch(cwd, branch) };
 }
 
 /**
