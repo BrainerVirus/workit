@@ -35,7 +35,10 @@ seam, `YouTrackBackend` in `packages/workit-core/src/core/youtrack-backend.ts`
 `issue comment --attach`, `issue attach` and `auth paths`), and `texts` for the
 marker read-back), and its only implementation, `ytrackBackend`, runs
 `ytrack … --json` (`core/youtrack-ytrack.ts`). It sets `YTRACK_HOST` from
-`youtrack.json`'s `baseUrl` and passes no token.
+`youtrack.json`'s `baseUrl` and passes no token. Every ytrack it runs gets
+`YTRACK_NO_UPDATE_NOTIFIER=1` and `YTRACK_NO_AUTO_UPGRADE=1` (`YTRACK_QUIET_ENV`), so
+Workit never starts ytrack's release check, its background upgrade or the skill
+refresh that upgrade brings.
 
 - ytrack missing: `unavailable`, unblock `install ytrack (…youtrack-cli:
   install.sh, or install.ps1 on Windows), then ytrack auth login --host <host>`

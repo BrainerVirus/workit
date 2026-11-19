@@ -27,9 +27,19 @@ export const findYtrack = (env: NodeJS.ProcessEnv): string | null =>
   env.WORKIT_NO_YTRACK === "1" ? null : findExecutable("ytrack", env);
 
 /**
+ * What every ytrack Workit runs gets: no daily release check, no background
+ * `ytrack upgrade` (and so no skill refresh it would start). ytrack is the
+ * user's tool, like gh: Workit never upgrades it or writes its state.
+ */
+export const YTRACK_QUIET_ENV = {
+  YTRACK_NO_UPDATE_NOTIFIER: "1",
+  YTRACK_NO_AUTO_UPGRADE: "1",
+} as const;
+
+/**
  * Run ytrack from `env`'s PATH. `host` (youtrack.json's baseUrl, when set)
  * goes in YTRACK_HOST so ytrack talks to the instance Workit is configured
- * for; Workit adds no token to argv or env.
+ * for; Workit adds no token to argv or env, and YTRACK_QUIET_ENV always.
  */
 export function ytrackRunner(
   env: NodeJS.ProcessEnv,
@@ -41,7 +51,12 @@ export function ytrackRunner(
     if (!exe) return { status: null, stdout: "", stderr: "", missing: true };
     const result = spawnSync(exe, args, {
       encoding: "utf8",
-      env: { ...env, NO_COLOR: "1", ...(host ? { YTRACK_HOST: host } : {}) },
+      env: {
+        ...env,
+        NO_COLOR: "1",
+        ...YTRACK_QUIET_ENV,
+        ...(host ? { YTRACK_HOST: host } : {}),
+      },
       timeout: timeoutMs,
       killSignal: "SIGKILL",
       windowsHide: true,
