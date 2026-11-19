@@ -570,7 +570,10 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - `ci wait --branch <b>` (or `--ref <b>`) on a branch with no PR waits on the
   push runs of the branch's remote tip, as `release tag` reads them: exit 0
   green, 1 red (with the `ci rerun --ref` fix), 4 still pending, with a
-  `Retry as:` call. `--head <sha>` waits until CI reports that commit.
+  `Retry as:` call. `--head <sha>` waits until CI reports that commit. A
+  required check not reported yet is waited for within the 2-minute grace;
+  one that never reports on a push (a pull-request-only check) is listed on
+  the `pass` line.
 - Piping `ci wait`, `check`, `pr merge`, `release …` or `verify-delivery` into
   `tail` or `head` hides the exit code (the pipeline's status is the filter's),
   so the shell hook on every host denies it with the unpiped call. Their

@@ -188,10 +188,40 @@ test("Given a required check not reported on main yet, When ci wait --branch mai
   const result = await run(["ci", "wait", "--branch", "main", "--json"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(polls()).toBe(2);
-  const never = setup([[checkRun("SUCCESS", "COMPLETED", "fast checks")]]);
-  const pending = await run(
+});
+
+test("Given a required check that never reports on a push (a PR-only check), When ci wait --branch main runs, Then it passes after the grace and lists it", async () => {
+  const { repo } = setup([[checkRun("SUCCESS", "COMPLETED", "fast checks")]]);
+  const result = await run(["ci", "wait", "--branch", "main", "--json"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  const data = result.json().data;
+  expect(data).toMatchObject({ state: "ready", missingRequired: ["test (ubuntu-latest)"] });
+  expect(data.elapsedMs).toBeGreaterThanOrEqual(120_000);
+  expect(data.elapsedMs).toBeLessThan(data.timeoutMs);
+  const human = setup([[checkRun("SUCCESS", "COMPLETED", "fast checks")]]);
+  const text = await run(["ci", "wait", "--branch", "main"], human.repo.cwd);
+  expect(text.code).toBe(0);
+  expect(text.stdout).toContain("never reported on main: test (ubuntu-latest)");
+});
+
+test("Given a required check not reported and a timeout inside the grace, When ci wait --branch main ends, Then it exits 4 naming the check", async () => {
+  const { repo } = setup([[checkRun("SUCCESS", "COMPLETED", "fast checks")]]);
+  const result = await run(
     ["ci", "wait", "--branch", "main", "--timeout", "1m", "--json"],
-    never.repo.cwd,
+    repo.cwd,
   );
-  expect(pending.code).toBe(4);
+  expect(result.code).toBe(4);
+  expect(result.json().error).toContain("not reported yet");
+  expect(result.json().error).toContain("test (ubuntu-latest)");
+  expect(result.json().unblock).toBe("Retry as: workit ci wait --branch main");
+});
+
+test("Given a check still in progress at a 5m timeout, When ci wait --branch main ends, Then it exits 4 still pending", async () => {
+  const { repo } = setup([both(null, "IN_PROGRESS")]);
+  const result = await run(
+    ["ci", "wait", "--branch", "main", "--timeout", "5m", "--json"],
+    repo.cwd,
+  );
+  expect(result.code).toBe(4);
+  expect(result.json().error).toContain("still pending");
 });

@@ -24,13 +24,14 @@ const failingChecks = (checks: RefChecks): ForgeCheck[] =>
  * CI on a branch tip: `moved` when `sha` is set and the forge reports another
  * commit, then failed, pending, passed, or no checks at all.
  */
-function branchCiState(checks: RefChecks, sha: string | null, requireAll = false): BranchCiState {
+function branchCiState(checks: RefChecks, sha: string | null, awaitMissing = false): BranchCiState {
   if (sha && checks.sha && !checks.sha.startsWith(sha)) return "moved";
   if (failingChecks(checks).length) return "failed";
-  // `requireAll`: a required check not reported yet is still to come (report.ts waitVerdict's ciRequired).
+  // `awaitMissing`: a not-yet-reported required check is awaited only within the
+  // no-checks grace, as waitVerdict's expectedMissing; a PR-only check never reports on push.
   if (
     checks.checks.some((check) => check.state === "pending") ||
-    (requireAll && (checks.missingRequired?.length ?? 0) > 0)
+    (awaitMissing && (checks.missingRequired?.length ?? 0) > 0)
   )
     return "pending";
   return checks.checks.some((check) => check.state === "passing") ? "passed" : "no_checks";
@@ -52,7 +53,7 @@ export async function pollBranchChecks(
     deadline: number;
     intervalMs: number;
     waitMoved?: boolean;
-    /** Wait for required checks the forge has not reported yet (ci wait --branch). */
+    /** Wait, within the no-checks grace, for required checks the forge has not reported yet (ci wait --branch). */
     requireAll?: boolean;
     onPoll?: (poll: BranchPoll) => void;
   },
@@ -65,13 +66,13 @@ export async function pollBranchChecks(
     polls += 1;
     if (read.ok) {
       errors = 0;
+      const grace = forgeDeps.now() - options.started < NO_CHECKS_GRACE_MS;
       last = {
         checks: read.data,
-        state: branchCiState(read.data, options.sha, options.requireAll),
+        state: branchCiState(read.data, options.sha, options.requireAll === true && grace),
         polls,
       };
       options.onPoll?.(last);
-      const grace = forgeDeps.now() - options.started < NO_CHECKS_GRACE_MS;
       const waits =
         last.state === "pending" ||
         (last.state === "no_checks" && grace) ||
@@ -131,6 +132,7 @@ export async function waitOnBranch(
   waiting.end(state === "passed" || state === "no_checks" ? "done" : "failed");
   const sha = checks.sha;
   const at = sha ? ` at ${sha.slice(0, 12)}` : "";
+  const missing = checks.missingRequired ?? [];
   const data = {
     state: state === "passed" || state === "no_checks" ? "ready" : state,
     target: "branch",
@@ -141,16 +143,23 @@ export async function waitOnBranch(
       state: checkState,
       url,
     })),
+    ...(missing.length ? { missingRequired: missing } : {}),
     polls,
     elapsedMs,
     timeoutMs,
   };
+  const never = missing.length
+    ? `; required checks that never reported on ${branch}: ${missing.join(", ")}`
+    : "";
   const polledFor = `after ${polls} poll${polls === 1 ? "" : "s"}, ${seconds(elapsedMs)}`;
   if (state === "passed" || state === "no_checks")
-    return emit(io, ok(data), () =>
-      state === "passed"
-        ? `CI pass on ${branch}${at}: ${checks.checks.filter((check) => check.state === "passing").length} passing ${polledFor}`
-        : `CI none: no checks reported on ${branch}${at} within the grace ${polledFor}`,
+    return emit(
+      io,
+      ok(data),
+      () =>
+        (state === "passed"
+          ? `CI pass on ${branch}${at}: ${checks.checks.filter((check) => check.state === "passing").length} passing ${polledFor}`
+          : `CI none: no checks reported on ${branch}${at} within the grace ${polledFor}`) + never,
     );
   if (state === "failed")
     return emit(
@@ -173,7 +182,9 @@ export async function waitOnBranch(
       "pending",
       state === "moved"
         ? `CI on ${branch} still reports ${sha?.slice(0, 12) ?? "another commit"}, not ${head}, after ${seconds(elapsedMs)}`
-        : `CI on ${branch}${at} still pending after ${seconds(elapsedMs)}`,
+        : !checks.checks.some((check) => check.state === "pending") && missing.length
+          ? `CI on ${branch}${at}: required checks not reported yet (${missing.join(", ")}) after ${seconds(elapsedMs)}`
+          : `CI on ${branch}${at} still pending after ${seconds(elapsedMs)}`,
       { data, unblock: `Retry as: ${retry}` },
     ),
   );
