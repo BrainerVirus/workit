@@ -1,8 +1,8 @@
 {
-  "passed": 42,
-  "total": 68,
+  "passed": 43,
+  "total": 69,
   "firstTry": {
-    "interactions": 743,
+    "interactions": 753,
     "failed": 32,
     "denied": 90
   },
@@ -702,6 +702,93 @@
       "costUsd": 0.00304335,
       "workitVersion": "workit-dev-v2.8.1+45b0e26783",
       "graderVersion": 2
+    },
+    {
+      "case": "cwd-check-auto-first-try",
+      "pass": true,
+      "firstTry": {
+        "interactions": 10,
+        "failed": 0,
+        "denied": 0
+      },
+      "passes": 5,
+      "failures": [],
+      "turns": 15,
+      "costUsd": 0.01678954,
+      "workitVersion": "workit-dev-v2.15.0+da2059e969",
+      "graderVersion": 2,
+      "runs": [
+        {
+          "case": "cwd-check-auto-first-try",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0.00339759,
+          "workitVersion": "workit-dev-v2.15.0+da2059e969",
+          "graderVersion": 2
+        },
+        {
+          "case": "cwd-check-auto-first-try",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0.00333263,
+          "workitVersion": "workit-dev-v2.15.0+da2059e969",
+          "graderVersion": 2
+        },
+        {
+          "case": "cwd-check-auto-first-try",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0.0033510500000000004,
+          "workitVersion": "workit-dev-v2.15.0+da2059e969",
+          "graderVersion": 2
+        },
+        {
+          "case": "cwd-check-auto-first-try",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0.00330843,
+          "workitVersion": "workit-dev-v2.15.0+da2059e969",
+          "graderVersion": 2
+        },
+        {
+          "case": "cwd-check-auto-first-try",
+          "pass": true,
+          "firstTry": {
+            "interactions": 2,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 3,
+          "costUsd": 0.0033998400000000003,
+          "workitVersion": "workit-dev-v2.15.0+da2059e969",
+          "graderVersion": 2
+        }
+      ]
     },
     {
       "case": "fanout-brief",

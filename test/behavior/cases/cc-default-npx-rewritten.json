@@ -1,0 +1,21 @@
+{
+  "id": "cc-default-npx-rewritten",
+  "source": "#908: Claude Code auto mode refuses a call whose input a PreToolUse hook changed (four refusals 2026-11-18/19, reviewer and verifier subagents): outside auto mode the rewrite stays",
+  "repo": {
+    "branch": "feature/x"
+  },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "tool_input": {
+        "command": "npx -y @workit-dev/cli check test"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["rewrite"],
+    "require": ["(^|\n)workit check test(\n|$)"],
+    "forbid": ["Retry as:"]
+  }
+}

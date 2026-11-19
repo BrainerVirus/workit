@@ -4,6 +4,8 @@
 // it), so the auto-mode classifier judged it. The rewrite is exact and
 // conservative: one literal directory, one workit call, and only read-only
 // filters after it. Anything else is left alone. Pure string work.
+// Under Claude Code auto mode, which refuses a hook-rewritten call (#908),
+// the hook denies with the rewrite as `Retry as:` instead (hooks/handle.ts).
 //
 // The verb goes first (issue #297): Workit's enumerated host rules, such as
 // `Bash(workit git *)`, cannot match a variable directory before the verb.
@@ -13,7 +15,10 @@ import { WORKIT_ALLOWED_VERBS } from "./delivery-verbs";
 import { segmentsOf, type Segment } from "./shell-words";
 
 // A directory spelled as one literal word: bare, '…' or "…" with no expansion.
-const DIR = String.raw`[A-Za-z0-9_./@%+:,=-]+|'[^'$${"`"}\\\n]*'|"[^"$${"`"}\\!\n]*"`;
+// Windows (Git Bash): a `~` only after a letter or digit (a short name such as
+// `RUNNER~1`, never a tilde prefix), and a backslash only inside quotes
+// (`"C:\Users\dev"`), never one that escapes something in "…".
+const DIR = String.raw`(?:[A-Za-z0-9_./@%+:,=-]|(?<=[A-Za-z0-9])~)+|'[^'$${"`"}\n]*'|"(?:[^"$${"`"}\\!\n]|\\(?=[^"$${"`"}\\!\n]))*"`;
 const COMPOUND = new RegExp(String.raw`^\s*cd\s+(${DIR})\s*&&\s*(workit(?:\s[\s\S]*)?)$`, "u");
 // `workit` then `--json` / `--cwd <dir>` globals, then the verb.
 const GLOBALS_FIRST = new RegExp(

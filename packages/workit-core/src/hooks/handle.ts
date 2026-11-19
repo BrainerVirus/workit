@@ -15,7 +15,14 @@ import { workitOnPath } from "../core/heavy";
 import { approveCallDeny, approveCallIn } from "../approvals/call";
 import { namesTicket, TICKET_DENY } from "../approvals/store";
 import { userOnlyWorkitCall, workitBypassFlag } from "./delivery-verbs";
-import { heavyDenial, heavyGate, rewriteNote, splitDenial } from "./heavy-gate";
+import {
+  autoRouteDenial,
+  heavyDenial,
+  heavyGate,
+  retryDenial,
+  rewriteNote,
+  splitDenial,
+} from "./heavy-gate";
 import { shellPolicy } from "./policy";
 import {
   callKey,
@@ -252,6 +259,10 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       );
     }
     case "shell.pre": {
+      // Claude Code's auto mode refuses a call whose input a hook changed after
+      // its classifier reviewed it (#908): there no Bash call is rewritten; each
+      // rewrite below is a deny naming the exact call to send instead.
+      const auto = input.host === "claude_code" && input.permissionMode === "auto";
       // `npx @workit-dev/cli …` with `workit` on PATH is judged as the `workit …`
       // call it runs, by every gate below; only a pass becomes that call.
       const npx = npxWorkit(event.command);
@@ -265,6 +276,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         }
         const plain = decide({ ...input, event: { ...event, command: npx } }, deps);
         if (plain.kind !== "none" && plain.kind !== "context") return plain;
+        if (auto && canDeny)
+          return retryDenial("npx", "workit is on PATH, so run it directly", npx);
         if (usable(descriptor.shellPolicy.rewrite))
           return {
             kind: "rewrite",
@@ -349,14 +362,17 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (plan.kind === "split" && canDeny) return splitDenial(plan);
       const rewrites = usable(descriptor.shellPolicy.rewrite);
       if (plan.kind === "rewrite" && !rewrites && canDeny) return heavyDenial(event.command, plan);
+      if (plan.kind === "rewrite" && auto && canDeny) return autoRouteDenial(plan);
       const lease = plan.kind === "rewrite" && rewrites ? plan : null;
       // `cd <dir> && workit …` becomes `workit <verb> --cwd <dir> …` (issue
       // #388), and `workit --cwd <dir> <verb>` puts the verb first (#297), so
       // Workit's enumerated allow rules match. A workit command is never heavy
-      // itself, so the lease plan wins when set.
+      // itself, so the lease plan wins when set. Under auto mode the `cd`
+      // compound is denied with its --cwd call below, and the verb-first
+      // reorder is skipped: that call already runs as written.
       const cwdCommand =
         !lease && rewrites && input.host === "claude_code"
-          ? (cwdRewrite(event.command) ?? verbFirst(event.command))
+          ? (cwdRewrite(event.command) ?? (auto ? null : verbFirst(event.command)))
           : null;
       const aside = plan.kind === "passthrough" ? plan.note : null;
       // The command will run: note HEAD so the post-tool hook (or the next
@@ -399,10 +415,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         shipNudge(input, event.command),
       );
       // A deny always wins over the cwd rewrite.
-      if (!lease)
-        return cwdCommand && nudged.kind !== "deny"
-          ? rewritten(nudged.kind === "context" ? nudged.text : null)
-          : nudged;
+      if (!lease) {
+        if (!cwdCommand || nudged.kind === "deny") return nudged;
+        return auto
+          ? retryDenial("cwd", "run one verb per call with --cwd", cwdCommand)
+          : rewritten(nudged.kind === "context" ? nudged.text : null);
+      }
       return rewritten(
         [rewriteNote(lease), nudged.kind === "context" ? nudged.text : null]
           .filter(Boolean)

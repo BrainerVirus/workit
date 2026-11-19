@@ -1,0 +1,27 @@
+{
+  "case": "cwd-check-auto-first-try",
+  "run": 4,
+  "model": "claude-haiku-5-5",
+  "workitVersion": "workit-dev-v2.15.0+da2059e969",
+  "key": "88777d242f1dc2f0",
+  "date": "2026-11-19T06:42:38.241Z",
+  "exit": 0,
+  "timedOut": false,
+  "usage": {
+    "turns": 3,
+    "durationMs": 7654,
+    "costUsd": 0.00330843,
+    "stop": "success"
+  },
+  "grade": {
+    "graderVersion": 2,
+    "pass": true,
+    "calls": 2,
+    "failures": [],
+    "firstTry": {
+      "interactions": 2,
+      "failed": 0,
+      "denied": 0
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "id": "cwd-check-auto-first-try",
+  "source": "#908: under Claude Code auto mode the hook's `cd <dir> && workit …` to `--cwd` rewrite was refused by the host (\"a hook changed this call's input after auto mode reviewed it\"), four times on 2026-11-18/19; test/behavior/cases/cc-auto-cwd-denied-retry.json",
+  "tier": "full",
+  "firstTry": true,
+  "prompt": "The checkout at {{worktree}} has a configured check named test. Run it there with exactly this command: cd {{worktree}} && workit check test. If Workit names another call to send instead, send that call once. Report whether the check passed.",
+  "scaffold": {
+    "branch": "feature/main-line",
+    "worktree": "feature/greet",
+    "files": {
+      "package.json": "{\n  \"name\": \"greet\",\n  \"private\": true\n}\n"
+    },
+    "checks": {
+      "test": ["sh", "-c", "echo ok"]
+    }
+  },
+  "maxTurns": 6,
+  "expect": {
+    "require": [
+      {
+        "tool": "Bash",
+        "pattern": "^\\s*cd \\S+ && workit check test",
+        "denied": true,
+        "result": "Retry as: workit --cwd \\S+ check test",
+        "why": "under auto mode the cd compound is denied (not rewritten) and the deny names the exact --cwd call"
+      },
+      {
+        "tool": "Bash",
+        "pattern": "^\\s*workit --cwd \\S+ check test\\s*$",
+        "denied": false,
+        "why": "the Retry as call is sent as written and runs"
+      }
+    ],
+    "forbid": [
+      {
+        "tool": "Bash",
+        "pattern": "workit",
+        "denied": true,
+        "result": "changed this call's input|after auto mode reviewed",
+        "why": "no Workit call is refused by the host because a hook rewrote it"
+      }
+    ],
+    "atMost": [
+      {
+        "tool": "Bash",
+        "pattern": "workit --cwd \\S+ check test",
+        "max": 1,
+        "why": "the retry succeeds the first time it is sent"
+      }
+    ],
+    "answer": [
+      {
+        "pattern": "pass",
+        "flags": "i",
+        "why": "reports the check passed"
+      }
+    ]
+  }
+}

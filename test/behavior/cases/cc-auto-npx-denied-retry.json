@@ -1,0 +1,21 @@
+{
+  "id": "cc-auto-npx-denied-retry",
+  "source": "#908: Claude Code auto mode refuses a call whose input a PreToolUse hook changed (four refusals 2026-11-18/19, reviewer and verifier subagents): under auto mode the rewrite is a deny naming the exact call",
+  "repo": {
+    "branch": "feature/x"
+  },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "permission_mode": "auto",
+      "tool_input": {
+        "command": "npx -y @workit-dev/cli check test"
+      }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["^workit npx: ", "\nRetry as: workit check test\n"]
+  }
+}

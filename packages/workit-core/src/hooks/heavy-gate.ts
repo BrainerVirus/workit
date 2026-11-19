@@ -4,7 +4,8 @@
 // heavy-check lease:
 //   - one simple heavy command: rewritten to `workit check --heavy -- <cmd>`
 //     where the host can replace it (Claude Code, OpenCode, Pi), else denied
-//     with that exact command (Codex, Cursor);
+//     with that exact command (Codex, Cursor, and Claude Code in auto mode,
+//     which refuses a hook-rewritten call, #908);
 //   - a chain with heavy parts: denied, naming each part's lease command
 //     (never `bash -c`);
 //   - a command a host permission rule names, or one whose wrapper only an
@@ -103,6 +104,27 @@ export const heavyDenial = (
     : `heavy_command: \`${original.trim()}\` is heavy (${plan.reason}) and must run under the machine-wide heavy-check lease, so parallel agents cannot exhaust this machine's memory and CPU. Run exactly: ${plan.command}`,
   unblock: plan.command,
 });
+
+/** One line of what and why, then the exact call (test/behavior/deny-shape). */
+export const retryDenial = (gate: string, what: string, retry: string): HookDecision => ({
+  kind: "deny",
+  reason: `workit ${gate}: ${what}.\nRetry as: ${retry}\nWhy: Claude Code auto mode refuses a call whose input a hook changed.`,
+  unblock: retry,
+});
+
+/** Claude Code auto mode (#908): the lease or background route as a deny naming the call. */
+export const autoRouteDenial = (plan: Extract<HeavyPlan, { kind: "rewrite" }>): HookDecision =>
+  plan.server
+    ? retryDenial(
+        "dev-server",
+        "a dev server never returns, so start it in the background, owned by this session",
+        plan.command,
+      )
+    : retryDenial(
+        "heavy",
+        "this heavy command runs under the machine-wide heavy-check lease",
+        plan.command,
+      );
 
 /** The deny for a chain with heavy parts. */
 export const splitDenial = (plan: Extract<HeavyPlan, { kind: "split" }>): HookDecision => ({
