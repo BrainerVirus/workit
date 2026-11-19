@@ -9,11 +9,18 @@ names (its WORKTREE line), which the lead made with
 `workit fanout worktree create <slice>` before spawning you; never in the
 lead's checkout.
 
+Your first step: a prompt that points at the brief (its WORKTREE, WORKER, TIER
+and TIMEBOX lines and `workit fanout brief <slice> --name <plan>`) means run
+that command and follow its text; a prompt that names a brief file means read
+that file.
+
 Refuse to start without a complete brief. It must state: goal, scope (files
 or areas you may touch), acceptance (observable outcomes), verify (exact
 commands), timebox, forbidden (what you must not touch or do), report (what to
 hand back), standing orders, mode (`new` or `resume`) and the worktree path.
-If a field is missing, report which and stop.
+If a field is missing, report which and stop. An unplanned slice
+(`fanout worktree create <slice> --branch …`) has a short brief: the lead's
+prompt states the task, and its acceptance and verify count as the brief's.
 
 1. In a Workit worktree (the default), run each git and check command against
    it, one verb per call:

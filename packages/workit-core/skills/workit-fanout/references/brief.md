@@ -103,6 +103,27 @@ is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
 }
 ```
 
+## Worktrees and the spawn they print
+
+`workit fanout worktree create a b c` makes each slice's worktree and prints,
+per slice, `WORKTREE: <path>` and the spawn that carries it. Its prompt starts
+with that WORKTREE line, then `WORKER`, `TIER`, `TIMEBOX` and
+"Run `workit fanout brief <slice> --name <plan>` and follow it exactly.";
+Claude Code's `SPAWN:` line names `model` only when the TIER differs from the
+`implementer` agent file. `--name` takes the plan's name or its file (`--plan`
+is the same flag): a file is registered in that call, and a name no plan has
+registers the one file in `workit dir plans` that starts with it. The plan
+check refuses a slice branch the workspace branch policy refuses and names the
+allowed one.
+
+One unplanned slice: `workit fanout worktree create fix-login --branch
+fix/login [--base <b>] [--tier <t>]` records a one-slice plan named after it
+(the lead's prompt states the task) and prints the same lines; two or more
+slices need a plan file. Claude Code's spawn gate passes a
+`workit:implementer` prompt that names a Workit-made worktree as a WORKTREE
+line, as its path, or as a brief file holding a WORKTREE line; otherwise its
+deny is two lines ending in that ad-hoc command as `Retry as:`.
+
 ## Identity and git rules per host
 
 `workit fanout brief` renders the identity line, the model lines and RULES 1
