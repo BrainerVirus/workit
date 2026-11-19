@@ -1,11 +1,13 @@
 // The CI workflow risk-path sub-rule (#891). A GitHub Actions workflow is a
-// risk path, but an edit that only appends a guarded `&& <command>` to a
-// step's `run:` string or to an existing `with:` input leaves it (lane.ts
-// decides how far the lane then drops). Additive is decided on the parsed
-// YAML of both sides, never on lines: both sides parse, every key and
-// sequence item is still there, and every changed value is one of those
-// strings grown at its end by text that cannot hide a failure of what ran
-// before (see masking). Anything else stays full: `permissions`, `secrets`,
+// risk path, but an edit that only appends `&& <command>` or
+// `&& (<command> || echo "<text>")` to a step's `run:` string, or to a
+// command-named input (`lint_command`, `test-cmd`, `script`) of a job-level
+// reusable workflow call, leaves it (lane.ts decides how far the lane then
+// drops). An action's inputs never grow: they are not known to be shell.
+// Additive is decided on the parsed YAML of both sides, never on lines: both
+// sides parse, every key and sequence item is still there, and every changed
+// value is one of those strings grown at its end by text in that allow-list
+// grammar (see masking). Anything else stays full: `permissions`, `secrets`,
 // `on:`, a `uses:` ref, `environment:`, `if:`, a removed or added step, job
 // or input, an appended `${{ }}` expression, a change to comments or layout
 // alone (read as code, as before), or a file this reader cannot parse.
@@ -339,47 +341,106 @@ type Change = { path: string[]; what: string };
 
 const pathText = (keys: readonly string[]): string => keys.join(".").replaceAll(".[", "[");
 
-/** Where a child of `node` may grow: a step's `run`, or the inputs of a `uses:` step or job. */
+/** Where a scalar may grow: a step's `run`, or a command-named input of a job-level reusable workflow call. */
 type Room = "run" | "with" | null;
 
-const SHELL_ESCAPE = /`|\$\(|\bexit\b|\bset\s+\+e\b|\btrap\b/u;
+/** An argument: letters, digits and `_ . / : @ = + , -`; no quote, `$`, glob, redirect, `#` or `\`. */
+const WORD = /[\w./:@=+,-]+/uy;
+/** Double-quoted text that expands nothing: no `"`, `$`, backtick or backslash inside. */
+const QUOTED = /"[^"$`\\]*"/uy;
+/** A command name: a word with no `=` or `:` (no `VAR=x cmd` prefix) that starts with no `-` or `/`. */
+const COMMAND = /^[\w.+][\w./+-]*$/u;
+/** Shell words that change the shell itself or what runs after them: never a command name. */
+const SHELL_STATE = new Set(
+  ". alias bg bind break builtin call caller case cd command compgen complete compopt continue coproc declare dirs disown do done elif else enable esac eval exec exit export fc fg fi for function getopts goto hash help history if in jobs kill let local logout mapfile popd pushd read readarray readonly return select set shift shopt source suspend then time times trap type typeset ulimit umask unalias unset until wait while".split(
+    " ",
+  ),
+);
+/** What may follow `||` inside the group: it reports, it never runs a tool. */
+const FALLBACK: ReadonlySet<string> = new Set(["echo", "true"]);
+const FORM = 'more than && <command> or && (<command> || echo "<text>")';
+const OUTSIDE = '(outside plain words and "double-quoted text")';
+/** A reusable workflow's input that names a command (`lint_command`, `test-cmd`, `script`). */
+const COMMAND_INPUT = /(?:^|[-_])(?:commands?|cmd|script)$/iu;
+
+type Token = { op: string } | { word: string } | { quoted: string };
+
+/** The appended text as operators, words and quoted texts, or why it is none of them. */
+function tokens(text: string): Token[] | string {
+  const out: Token[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index] ?? "";
+    if (char === " " || char === "\t") index += 1;
+    else if (char === "(" || char === ")") {
+      out.push({ op: char });
+      index += 1;
+    } else if ((char === "&" || char === "|") && text[index + 1] === char) {
+      out.push({ op: char + char });
+      index += 2;
+    } else {
+      const pattern = char === '"' ? QUOTED : WORD;
+      pattern.lastIndex = index;
+      const match = pattern.exec(text);
+      if (!match)
+        return char === '"'
+          ? 'a "quoted text" left open or holding $, a backtick or a backslash'
+          : `the character ${char} ${OUTSIDE}`;
+      index += match[0].length;
+      // A word or a text ends at a space or an operator: `ex"it"` would spell another command.
+      const next = text[index] ?? " ";
+      if (!" \t)&|".includes(next)) return `the character ${next} ${OUTSIDE}`;
+      out.push(char === '"' ? { quoted: match[0] } : { word: match[0] });
+    }
+  }
+  return out;
+}
 
 /**
- * Why text appended to a command could hide a failure of what ran before it,
- * or null when it cannot. It must start with `&&` (it runs only after
- * success), stay on one line, and hold no `||`, `;`, `&` or `|` outside one
- * parenthesised group (`&& (npm run x || echo warn)` cannot mask the left
- * side: `&&` already stopped on its failure); no `exit`, `set +e`, `trap`,
- * backtick, `$(` or `${{` anywhere. Quotes and groups must close.
+ * Why text appended to `before` could hide a failure of what ran before it,
+ * or null when it cannot. An allow-list, never a reading of shell syntax: the
+ * text is one or more `&& <command>` or `&& (<command> || echo "<text>")`
+ * (`|| true` too), on one line. A command is a name and its arguments, each
+ * a plain word or a double-quoted text without `$`, a backtick or a
+ * backslash; the name is no shell word that changes what runs after it
+ * (`exit`, `set`, `trap`, `eval`, `exec`, `source`, `cd`, …). Every other
+ * character (`;`, `|`, `&`, `'`, `$`, `#`, `>`, `<`, `\`, `*`, `{`, a
+ * backtick) is refused wherever it stands, so no quoting form needs reading.
  */
-function masking(appended: string): string | null {
+function masking(before: string, appended: string): string | null {
   if (appended.includes("${{")) return "an expression";
   if (/[\n\r]/u.test(appended)) return "a new line";
-  if (SHELL_ESCAPE.test(appended)) return "exit, set +e, trap or a command substitution";
-  const body = appended.trimStart();
-  if (!body.startsWith("&&")) return "a command not chained with a leading &&";
-  let depth = 0;
-  let quote: string | null = null;
-  for (let index = 2; index < body.length; index += 1) {
-    const char = body[index];
-    if (quote) {
-      if (char === "\\" && quote === '"') index += 1;
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"') quote = char;
-    else if (char === "\\") index += 1;
-    else if (char === "(") depth += 1;
-    else if (char === ")") {
-      depth -= 1;
-      if (depth < 0) return "an unbalanced group";
-    } else if ((char === "&" || char === "|") && body[index + 1] === char) {
-      if (char === "|" && depth === 0) return "a || outside a group, which can hide a failure";
-      index += 1;
-    } else if (char === ";" || char === "&" || char === "|")
-      return `a ${char} that can run past a failure`;
+  if (!before.trim()) return "a command where none ran before";
+  // `cmd \` + `&& x` reads `\&` as a literal and `& x` as a background job.
+  if (before.endsWith("\\")) return "a command after a trailing backslash";
+  if (!appended.trimStart().startsWith("&&")) return "a command not chained with a leading &&";
+  const list = tokens(appended);
+  if (typeof list === "string") return list;
+  let index = 0;
+  const op = (text: string): boolean => {
+    const token = list[index];
+    if (!token || !("op" in token) || token.op !== text) return false;
+    index += 1;
+    return true;
+  };
+  /** `<name> <argument>…` read from `index`; why not, or null. */
+  const command = (names?: ReadonlySet<string>): string | null => {
+    const name = list[index];
+    if (!name || !("word" in name) || !COMMAND.test(name.word)) return FORM;
+    if (names ? !names.has(name.word) : SHELL_STATE.has(name.word.toLowerCase()))
+      return names ? FORM : `the shell command ${name.word}`;
+    index += 1;
+    for (let token = list[index]; token && !("op" in token); token = list[index]) index += 1;
+    return null;
+  };
+  while (index < list.length) {
+    if (!op("&&")) return FORM;
+    const group = op("(");
+    const bad = command() ?? (group && op("||") ? command(FALLBACK) : null);
+    if (bad) return bad;
+    if (group && !op(")")) return FORM;
   }
-  return quote || depth ? "an unclosed quote or group" : null;
+  return null;
 }
 
 function compare(
@@ -398,7 +459,7 @@ function compare(
       before.folded === after.folded &&
       after.text.length > before.text.length &&
       after.text.startsWith(before.text);
-    const masks = grown ? masking(after.text.slice(before.text.length)) : null;
+    const masks = grown ? masking(before.text, after.text.slice(before.text.length)) : null;
     if (masks) out.refused.push({ path: at, what: `appends ${masks} to ${pathText(at)}` });
     else if (grown) out.allowed.push(`${pathText(at)} appended`);
     else out.refused.push({ path: at, what: `changes ${pathText(at)}` });
@@ -421,6 +482,8 @@ function compare(
   }
   if (before.kind === "map" && after.kind === "map") {
     const step = at.at(-2) === "steps";
+    // Only a reusable workflow call (`jobs.<id>.uses`) has inputs that may grow; an action's never do.
+    const job = at.length === 2 && at[0] === "jobs";
     const usesBoth = before.entries.has("uses") && after.entries.has("uses");
     for (const [key, value] of before.entries) {
       const next = after.entries.get(key);
@@ -434,7 +497,7 @@ function compare(
         });
         continue;
       }
-      if (key === "with" && usesBoth && value.kind === "map" && next.kind === "map")
+      if (key === "with" && job && usesBoth && value.kind === "map" && next.kind === "map")
         compareInputs(value, next, [...at, key], out);
       else compare(value, next, [...at, key], key === "run" && step ? "run" : null, out);
     }
@@ -455,7 +518,7 @@ function compareInputs(
 ): void {
   for (const [key, value] of before.entries) {
     const next = after.entries.get(key);
-    if (next) compare(value, next, [...at, key], "with", out);
+    if (next) compare(value, next, [...at, key], COMMAND_INPUT.test(key) ? "with" : null, out);
     else out.refused.push({ path: [...at, key], what: `removes ${pathText([...at, key])}` });
   }
   for (const [key] of after.entries)

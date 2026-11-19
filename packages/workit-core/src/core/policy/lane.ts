@@ -354,7 +354,14 @@ export function computeLane(input: LaneInput): LaneAssessment {
   if (input.riskTier === "high") return result("full", ["the task judgment records high risk"]);
   if (riskFiles.length)
     return result("full", [
-      `touches a risk path: ${riskFiles.slice(0, 3).join(", ")}${riskFiles.length > 3 ? ", …" : ""}`,
+      `touches a risk path: ${riskFiles
+        .slice(0, 3)
+        .map((file) => {
+          // A workflow the sub-rule refused says why (workflow-edit.ts).
+          const refused = input.files.find((entry) => entry.path === file)?.workflow;
+          return refused && !refused.additive ? `${file} (${refused.detail})` : file;
+        })
+        .join(", ")}${riskFiles.length > 3 ? ", …" : ""}`,
     ]);
   const bump = dependencyBump(input.files, relaxed);
   if (bump && lines < fullMinLines) return result("self", [bump], "dependency-bump");
