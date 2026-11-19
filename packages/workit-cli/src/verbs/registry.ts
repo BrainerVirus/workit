@@ -813,7 +813,7 @@ export const VERBS: readonly VerbEntry[] = [
         usage:
           "workit git branch <name> | git branch --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]",
         summary:
-          "Create and switch to a branch from the trunk, the git-flow route of its kind or a release track",
+          "Create and switch to a branch from the trunk, the git-flow route of its kind or a release track; --carry brings uncommitted changes along, still uncommitted (no stash)",
       },
       {
         name: "commit",
@@ -863,6 +863,7 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     examples: [
       "workit git branch --kind feature --slug help-everywhere",
+      "workit git branch feature/next --base main --carry  # move the uncommitted change too",
       'workit git commit -m "fix(cli): answer help flags first" --all',
       'workit git commit -m "feat: x" --trailer "Co-Authored-By: Name <email>" --all',
       "workit git commit --amend --no-edit -- src/forgotten.ts",
