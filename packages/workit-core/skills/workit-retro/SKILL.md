@@ -43,7 +43,7 @@ proposes and stops. Nothing changes until the user approves.
    memory (one host reads it). Never fork a local copy. Use a minimal synthetic
    repro: no private repo name, path, code, ledger text, PR, thread or transcript.
    Draft it with `workit feedback "<title>" --body-file -` (redacted, duplicate
-   search, saved under `workit dir retros`); post with `--post` once approved.
+   search), paste the whole draft it prints, and post with `--post` once approved.
 6. **Bloat guards.** AGENTS.md stays within 8 KB: each addition names what it
    removes. Create `CODING_STANDARDS.md` or `GLOSSARY.md` only in the same
    edit as its first real entry, never as a scaffold. Edit steering text by
