@@ -8,6 +8,8 @@
 //   workit release publish [<version>]
 //   workit release notes draft|show|approve <version>|<pkg-tag> [--package <name>] [--track <t>]
 //   workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]
+//   workit release tag <vX.Y.Z> [--at <ref>] [--wait] [--dry-run]
+//   workit release notes edit <tag> --from-changelog
 //
 // Release notes (workspace or release track `releaseNotes`, default auto):
 // finish publishes the draft (`.git/workit/release-notes/<v>.md`), else the
@@ -61,15 +63,16 @@ import { emit, fail, ok, type Envelope, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
 import { agentMarker, type GrantDeps } from "./grant";
 import { connect, forgeDeps, forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
+import { notesEdit, releaseTag } from "./release-tag";
 
 const START_USAGE = "workit release start <version> [--hotfix] [--track <t>] [--json]";
 const FINISH_USAGE = "workit release finish [<version>] [--track <t>] [--dry-run] [--json]";
 const PUBLISH_USAGE = "workit release publish [<version>] [--json]";
 const NOTES_USAGE =
-  "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--package <name>] [--track <t>] [--json]";
+  "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--package <name>] [--track <t>] | notes edit <tag> --from-changelog [--json]";
 const PACKAGE_USAGE =
   "workit release package <name> <version> [--at <ref>] [--latest] [--dry-run] [--json]";
-const USAGE = "workit release start|finish|publish|notes|package ... (workit help release)";
+const USAGE = "workit release start|finish|publish|notes|package|tag ... (workit help release)";
 
 const defaultDeps: GrantDeps = {
   interactive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
@@ -428,12 +431,13 @@ async function publish(argv: string[], io: Io): Promise<number> {
 /** The draft, its path and the next steps: what an agent fills and the user approves. */
 async function notesVerb(argv: string[], io: Io, deps: GrantDeps): Promise<number> {
   const [action, ...rest] = argv;
+  if (action === "edit") return notesEdit(rest, io);
   const flags = parseFlags(rest, { track: "value", package: "value", reset: "boolean" });
   if (typeof flags === "string") return usage(io, flags, NOTES_USAGE);
   if (!["draft", "show", "approve"].includes(action ?? ""))
     return usage(
       io,
-      action ? `unknown release notes action "${action}"` : "missing draft|show|approve",
+      action ? `unknown release notes action "${action}"` : "missing draft|show|approve|edit",
       NOTES_USAGE,
     );
   if (flags.positionals.length !== 1)
@@ -793,6 +797,15 @@ export async function runRelease(
   if (sub === "publish") return publish(rest, io);
   if (sub === "notes") return notesVerb(rest, io, deps);
   if (sub === "package") return releasePackage(rest, io);
+  if (sub === "tag")
+    return releaseTag(rest, io, (tag) =>
+      // The release workflow the tag starts publishes the forge release, not the push.
+      subVerb(
+        () => import("./git").then((verb) => ({ run: verb.runFinishPush })),
+        ["push", "--release", tag],
+        io,
+      ),
+    );
   return usage(
     io,
     sub && !sub.startsWith("-")
