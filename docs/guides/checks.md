@@ -61,6 +61,31 @@ ran locally.
 A group member must be a configured check, and a group cannot share a name with
 a check.
 
+## A check's own `heavy`
+
+A check entry can also be an object with its command and its own `heavy`:
+
+```json
+{
+  "checks": {
+    "test": { "command": ["bun", "run", "test"], "heavy": true },
+    "bench": { "command": "bun run bench", "heavy": "io" }
+  }
+}
+```
+
+- `"heavy": true` queues the check for the heavy-check lease, like listing it
+  under `resources.heavy`.
+- `"heavy": "io"` marks it network-bound: a run that mostly waits on a model
+  API or the network. It runs without taking a CPU slot, even with every slot
+  held, while the memory budget and the pressure gate allow; when memory is
+  short it queues like any heavy check. An ad-hoc run passes `--io` for the
+  same (`workit check --io --name bench -- bun run bench`).
+
+Any other `heavy` value, or any key but `command` and `heavy`, makes the
+config invalid, and the error names the allowed values. A repo cannot mark a
+check light with `heavy`: only the machine owner's `resources.light` does.
+
 ## Waiting for the heavy-check lease
 
 Heavy checks share one machine-wide lease
@@ -82,6 +107,23 @@ side:
   The estimate uses each check's last measured run in the ledger of the repo it
   runs in: the holder's time left, then the runs of the waiters ahead. A check
   never measured gives `no wait estimate yet (no measured run of <check>)`.
+- **Short checks go first.** The queue serves the shortest measured run first,
+  also among one session's checks (all agents of one lead share a session), so
+  an 8-second suite never waits behind a queued 15-minute one. A waiter queued
+  5 minutes goes ahead of every newer one, so a long suite is overtaken for at
+  most that long. A check never measured ranks as a 15-minute run and keeps
+  the old round-robin order among other unmeasured ones.
+- **Checks under 30 seconds run without a slot.** A heavy check whose last
+  measured run took under 30 s starts at once, even with every slot held,
+  while its memory fits the budget and the pressure gate is open:
+
+  ```text
+  workit: running without a heavy-check slot: its last measured run took 8s, under 30s, and its memory fits the budget
+  ```
+
+  Otherwise it queues, first in line. A network-bound check (`"heavy": "io"`,
+  `--io`) does the same whatever its runtime. A check never measured always
+  queues for a slot.
 - **A holder in another checkout is not your run.** Subagents share the lead's
   session id, so a holder can show your own session. A check never joins or
   reports another run: when a holder runs in another worktree (one nested
@@ -116,8 +158,12 @@ side:
   not refuse, and `failed` or `blocked` always record. Run the checks on the
   new head, then record.
 - **`workit lock status`** shows each holder's time left (`~9m left`, or
-  `past its last 14m run`) and each waiter's estimated wait; `--json` adds them
-  under `estimates`.
+  `past its last 14m run`) and, for each waiter in serving order, its own
+  check's last run and its estimated wait (`its last run took 8s, estimated
+  wait ~3m`, or `no measured run` for that waiter alone); `--json` adds them
+  under `estimates`. A network-bound check shows as `io`, queued
+  (`bench (io), pid …`) or running without a slot (`io bench, pid …` under
+  `admitted`).
 - **A dead holder frees its slot at once.** When a holder's `workit` process
   and its check are gone (crashed or killed), the next waiter takes the slot
   on its next poll, about a second later, and says it reclaimed it.
