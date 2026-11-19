@@ -64,8 +64,15 @@ const RESERVE_MIN_BYTES = 2 * 1024 ** 3;
 const RESERVE_MAX_BYTES = 6 * 1024 ** 3;
 /** Cores kept for the desktop: 2 from 8 CPUs, else 1. A heavy check's default CPUQuota leaves them free. */
 const reserveCores = (cpus: number): number => (cpus >= 8 ? 2 : 1);
-/** A waiter queued this long holds its place: nobody behind it backfills the budget it needs. */
+/**
+ * A waiter queued this long holds its place: nobody behind it backfills the
+ * budget it needs, and no shorter check is served before it (#884).
+ */
 export const DEFAULT_AGING_MS = 5 * 60_000;
+/** A check whose last measured run is shorter than this runs without a slot while memory allows (#884). */
+export const SHORT_CHECK_MS = 30_000;
+/** A waiter whose check was never measured is served as if it ran this long: the default hold limit. */
+const UNMEASURED_RUN_MS = DEFAULT_MAX_HOLD_MS;
 /**
  * Pressure alone holds a check at most this long: past it the check runs and
  * the pressure stays named on its lease's wait, so a machine whose load never
@@ -508,6 +515,10 @@ export type LeaseRecord = {
   peakRssBytes?: number | null;
   /** The registry's id for an admitted holder (`workit stop <id>`). */
   ref?: string | null;
+  /** The check's last measured run (ms) when it queued; null or absent: never measured (#884). */
+  expectedMs?: number | null;
+  /** `io`: a network-bound check, which runs without a CPU slot while memory allows (#884). */
+  lane?: "io" | null;
 };
 
 const readText = (file: string): string | null => {
@@ -727,6 +738,8 @@ export type LeaseHolder = Pick<LeaseRecord, "pid" | "check" | "cwd" | "session" 
   ref?: string | null;
   /** An admitted holder's memory charge. */
   bytes?: number;
+  /** A queued or slot-holding network-bound check (#884). */
+  lane?: "io";
 };
 
 const holderOf = (lease: LeaseRecord): LeaseHolder => ({
@@ -737,7 +750,9 @@ const holderOf = (lease: LeaseRecord): LeaseHolder => ({
   startedAt: lease.startedAt,
   ...(lease.kind && lease.kind !== "check"
     ? { kind: lease.kind, ref: lease.ref ?? null, bytes: lease.bytes ?? 0 }
-    : {}),
+    : lease.lane === "io"
+      ? { lane: "io" as const }
+      : {}),
 });
 
 /** Why a queued ticket's owner (the process that started its workit) is gone, or null. */
@@ -789,8 +804,11 @@ export function reclaim(
 
 export type HeldLease = {
   record: LeaseRecord;
-  slot: number;
+  /** The slot taken; null when the check was admitted without one (`admitted`). */
+  slot: number | null;
   file: string;
+  /** Admitted without a slot (#884): a short measured check, or a network-bound one. */
+  admitted?: AdmittedLane;
   /** Holders seen while waiting (empty when the lease was free). */
   waitedOn: LeaseHolder[];
   waitedMs: number;
@@ -798,6 +816,9 @@ export type HeldLease = {
   reclaimed: Reclaimed[];
   release: () => void;
 };
+
+/** Why a check runs without a slot: its last measured run is short, or it is network-bound. */
+export type AdmittedLane = "short" | "io";
 
 /** A slot reclaimed from a gone holder, or (`reaped`) from a live one past its auto-reap bound. */
 export type Reclaimed = LeaseHolder & { reason: string; reaped?: boolean };
@@ -816,6 +837,14 @@ export type AcquireOptions = {
   maxHoldMs?: number;
   /** This check's own max hold time, recorded on its lease (heavy-eta holdLimit: from its measured runs). */
   holdMs?: number;
+  /**
+   * This check's last measured run (ms), or null when it was never measured:
+   * the queue serves shorter runs first, and one under SHORT_CHECK_MS runs
+   * without a slot while memory allows (#884).
+   */
+  expectedMs?: number | null;
+  /** A network-bound check (`heavy: "io"`, `--io`): it runs without a CPU slot while memory allows (#884). */
+  io?: boolean;
   /** The process that started this waiter (default: the parent); null records none. */
   ownerPid?: number | null;
   /** Called once, when the first attempt finds every slot held. */
@@ -1151,14 +1180,52 @@ export function fairOrder<T extends { holder: LeaseHolder }>(
     .map(({ entry }) => entry);
 }
 
+/** A ticket's measured run for shortest-first serving: a corrupt or absent one ranks as never measured. */
+export const expectedRun = (
+  record: Pick<LeaseRecord, "expectedMs"> | null | undefined,
+): number | null => {
+  const ms = record?.expectedMs;
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : null;
+};
+
+/**
+ * `waiting` (live, in arrival order) in serving order (#884): a waiter queued
+ * `agingMs` or longer goes first, in fairOrder among those; the rest go
+ * shortest measured run first, a never-measured one ranking as
+ * UNMEASURED_RUN_MS, with fairOrder (round-robin per session, then arrival)
+ * breaking ties. So short checks overtake a full suite, also within one
+ * session, and the suite is overtaken for at most `agingMs`.
+ */
+export function servingOrder<T extends { holder: LeaseHolder; record?: LeaseRecord | null }>(
+  waiting: T[],
+  holders: LeaseHolder[],
+  grants: Grant[],
+  now: number,
+  agingMs: number = DEFAULT_AGING_MS,
+): T[] {
+  return fairOrder(waiting, holders, grants)
+    .map((entry, rank) => ({
+      entry,
+      rank,
+      aged: now - Date.parse(entry.holder.startedAt) >= agingMs,
+      run: expectedRun(entry.record) ?? UNMEASURED_RUN_MS,
+    }))
+    .toSorted(
+      (a, b) => Number(b.aged) - Number(a.aged) || (a.aged ? 0 : a.run - b.run) || a.rank - b.rank,
+    )
+    .map(({ entry }) => entry);
+}
+
 type Waiter = { name: string; holder: LeaseHolder; slots: number | null; record?: LeaseRecord };
 
 /** The live tickets served before `own` (a ticket name, or "~" before queueing), removing stale ones on the way. */
 function waitersAhead(
   options: AcquireOptions,
   own: string,
-  self: LeaseHolder,
+  self: Pick<Waiter, "holder" | "record">,
   holders: LeaseHolder[],
+  now: number,
+  agingMs: number,
 ): Waiter[] {
   const live: Waiter[] = [];
   for (const entry of leaseQueue(options.dir, options.probe)) {
@@ -1177,12 +1244,14 @@ function waitersAhead(
       record: entry.record,
     });
   }
-  const order = fairOrder(
-    [...live, { name: own, holder: self, slots: options.slots }].toSorted((a, b) =>
+  const order = servingOrder(
+    [...live, { name: own, ...self, slots: options.slots }].toSorted((a, b) =>
       a.name < b.name ? -1 : 1,
     ),
     holders,
     readGrants(options.dir, options.probe?.now),
+    now,
+    agingMs,
   );
   return order.slice(
     0,
@@ -1599,6 +1668,30 @@ export function admit(options: AdmitOptions): AdmitResult {
   };
 }
 
+/**
+ * Record `record` (a short or network-bound check) as an admitted holder when
+ * its memory charge fits what the slot holders and admitted holders leave of
+ * the budget (#884); its file, or null when it does not fit or the guard is busy.
+ */
+function admitWithoutSlot(
+  options: AcquireOptions,
+  budget: Budget,
+  maxHoldMs: number,
+  record: LeaseRecord,
+): string | null {
+  const file = path.join(
+    admittedDir(options.dir),
+    `${String(Date.parse(record.startedAt)).padStart(15, "0")}-${record.id}.json`,
+  );
+  return underGuard(options.dir, () => {
+    const use = budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHoldMs);
+    if (use.used.bytes + (record.bytes ?? 0) > budget.memoryBytes) return null;
+    fs.mkdirSync(admittedDir(options.dir), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: "wx" });
+    return file;
+  });
+}
+
 /** The machine's default budget, with the real pressure gate. */
 const defaultBudget = (): Budget => withGate(resolveWith([], hostShape()).budget);
 
@@ -1666,7 +1759,13 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   const budget = budgetFor(options);
   // `slots` alone counts checks as before; any other budget weighs them.
   const weighted = budget.mode !== "slots";
-  const charge = weighted ? checkCharge(budget, options.dir, options.check, options.cwd) : null;
+  const charge = checkCharge(budget, options.dir, options.check, options.cwd);
+  const expectedMs = expectedRun({ expectedMs: options.expectedMs });
+  const lane: AdmittedLane | null = options.io
+    ? "io"
+    : expectedMs !== null && expectedMs < SHORT_CHECK_MS
+      ? "short"
+      : null;
   const record: LeaseRecord = {
     id: randomUUID(),
     pid,
@@ -1683,7 +1782,12 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
     scope: null,
     heartbeatAt: null,
     maxHoldMs: options.holdMs ?? options.maxHoldMs ?? null,
-    ...(charge ? { units: charge.units, bytes: charge.bytes } : {}),
+    // A counted lease records no units weight (an older CLI reads it as before); its memory
+    // charge is what admission without a slot weighs it at (#884).
+    ...(weighted ? { units: charge.units } : {}),
+    bytes: charge.bytes,
+    ...(expectedMs !== null ? { expectedMs } : {}),
+    ...(options.io ? { lane: "io" as const } : {}),
   };
   try {
     fs.mkdirSync(options.dir, { recursive: true, mode: 0o700 });
@@ -1731,6 +1835,32 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
   // Every waiter reads every slot file, whatever its own count, so all serve the queue in one order.
   const holding = () =>
     liveHolders(options.dir, slotRange(options.dir, options.slots), options.probe, maxHold);
+  const granted = (file: string, slot: number | null, admitted?: AdmittedLane): AcquireResult => {
+    // Measured at the grant, not the loop top: the gates above read the clock later.
+    const waitedMs = queued ? clock.now() - started : 0;
+    leave();
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      process.off("exit", release);
+      removeOwn(file, record.id);
+    };
+    process.on("exit", release);
+    return {
+      ok: true,
+      lease: {
+        record,
+        slot,
+        file,
+        ...(admitted ? { admitted } : {}),
+        waitedOn,
+        waitedMs,
+        reclaimed,
+        release,
+      },
+    };
+  };
   // Watching starts before the first read, so a release right after it still wakes this waiter.
   const wake = leaseWake(options.dir, clock, name, options.watch ?? true);
   try {
@@ -1741,7 +1871,14 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         if (by) return { ok: false, reason: "cancelled", by, waitedMs: waited };
       }
       const before = holding();
-      const waiters = waitersAhead(options, queued ? name : "~", self, [...before.values()]);
+      const waiters = waitersAhead(
+        options,
+        queued ? name : "~",
+        { holder: self, record: ticketRecord },
+        [...before.values()],
+        clock.now(),
+        budget.agingMs,
+      );
       const aheadOf = waiters.map((waiter) => waiter.holder);
       const ahead = aheadOf.length;
       const reading = budget.pressure?.() ?? null;
@@ -1757,7 +1894,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         ? budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHold)
         : null;
       const fitsNow = (current: { used: Charge } | null, line: readonly Waiter[]) =>
-        current && charge
+        current
           ? fitsBudget(
               budget,
               current.used,
@@ -1770,6 +1907,21 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
               budget.mode !== "units",
             )
           : slotLeft(new Set(before.keys()), line, options.slots);
+      // A short or network-bound check runs without a slot, the memory budget and the pressure gate still applying (#884).
+      if (lane && !pressed) {
+        const now = new Date(clock.now()).toISOString();
+        const file = admitWithoutSlot(options, budget, maxHold, {
+          ...record,
+          startedAt: now,
+          heartbeatAt: now,
+          kind: lane,
+          units: 0,
+        });
+        if (file) {
+          Object.assign(record, { startedAt: now, heartbeatAt: now, kind: lane, units: 0 });
+          return granted(file, null, lane);
+        }
+      }
       if (!pressed && fitsNow(use, waiters)) {
         const now = new Date(clock.now()).toISOString();
         record.startedAt = now;
@@ -1787,30 +1939,7 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
           : tryOnce(options, record, reclaimed);
         if ("slot" in outcome) {
           recordGrant(options.dir, self, clock.now());
-          // Measured at the grant, not the loop top: the gates above read the clock later.
-          const waitedMs = queued ? clock.now() - started : 0;
-          leave();
-          const { file, slot } = outcome;
-          let released = false;
-          const release = () => {
-            if (released) return;
-            released = true;
-            process.off("exit", release);
-            removeOwn(file, record.id);
-          };
-          process.on("exit", release);
-          return {
-            ok: true,
-            lease: {
-              record,
-              slot,
-              file,
-              waitedOn,
-              waitedMs,
-              reclaimed,
-              release,
-            },
-          };
+          return granted(outcome.file, outcome.slot);
         }
       }
       // Name everything that keeps this check waiting: the pressure gate, the checks, the admitted holders.
@@ -1971,7 +2100,7 @@ export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
   const age = formatWait(now - Date.parse(holder.startedAt));
   if (holder.kind)
     return `${holder.kind} ${holder.check}${holder.ref ? ` (${holder.ref})` : ""}, pid ${holder.pid}, ${formatBytes(holder.bytes ?? 0)}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}`;
-  return `${holder.check}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}${holder.stuck ? `, stuck? (${holder.stuck})` : ""}`;
+  return `${holder.check}${holder.lane ? ` (${holder.lane})` : ""}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}${holder.stuck ? `, stuck? (${holder.stuck})` : ""}`;
 }
 
 /** systemd-run's own failure before it ran the command (bus, unit, property). */
