@@ -1,25 +1,30 @@
 {
   "case": "spawn-implementer-parallel",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+b7e57484a7",
-  "key": "45417c7cff8598d6",
-  "date": "2026-11-19T04:24:07.370Z",
+  "workitVersion": "workit-dev-v2.15.0+0e96b09954",
+  "key": "d8bcebe1d2840ead",
+  "date": "2026-11-19T04:32:19.429Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 8845,
-    "costUsd": 0.11458773999999998,
+    "turns": 2,
+    "durationMs": 5121,
+    "costUsd": 0.15088576999999997,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
-    "calls": 24,
-    "failures": [],
+    "pass": false,
+    "calls": 44,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 7 failed of 32 Workit interaction(s): #5 Bash(workit fanout brief add) failed: Exit code 2; #6 Bash(workit fanout brief mul) failed: Exit code 2; #7 Bash(workit fanout brief sub) failed: Exit code 2; #13 Bash(workit fanout worktree release add mul sub) failed: Exit code 2; #14 Bash(workit fanout worktree release add) failed: Exit code 2; #15 Bash(workit fanout worktree release mul) failed: Exit code 2; #16 Bash(workit fanout worktree release sub) failed: Exit code 2"
+      }
+    ],
     "firstTry": {
-      "interactions": 16,
-      "failed": 0,
+      "interactions": 32,
+      "failed": 7,
       "denied": 0
     }
   }

@@ -2,29 +2,29 @@
   "case": "spawn-implementer-parallel",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+b7e57484a7",
-  "key": "45417c7cff8598d6",
-  "date": "2026-11-19T04:24:42.707Z",
+  "workitVersion": "workit-dev-v2.15.0+0e96b09954",
+  "key": "d8bcebe1d2840ead",
+  "date": "2026-11-19T04:33:03.470Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 7,
-    "durationMs": 13014,
-    "costUsd": 0.12444641000000002,
+    "turns": 6,
+    "durationMs": 14777,
+    "costUsd": 0.12619438000000002,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 31,
+    "calls": 30,
     "failures": [
       {
         "rule": "first-try",
-        "detail": "0 denied and 1 failed of 21 Workit interaction(s): #25 Bash(workit fanout status math) failed: Exit code 2"
+        "detail": "0 denied and 1 failed of 18 Workit interaction(s): #29 Bash(workit pr status --branch feature/add; workit pr status --branch feature/mul; workit pr status --branch feature/sub) failed: Exit code 1"
       }
     ],
     "firstTry": {
-      "interactions": 21,
+      "interactions": 18,
       "failed": 1,
       "denied": 0
     }

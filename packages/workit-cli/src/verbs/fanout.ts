@@ -28,6 +28,7 @@ import {
   isPlanPath,
   planFileMatches,
   planHolding,
+  plansHolding,
 } from "@workit-dev/core/src/fanout-adhoc";
 import { checkFanout, type CheckOutcome } from "@workit-dev/core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-status";
@@ -129,7 +130,7 @@ function registerPlan(
  * plan has registers the one `workit dir plans` file that starts with it.
  * A failure is emitted here and returns its exit code.
  */
-function pickFanout(io: Io, values: { name?: string }): FanoutFile | number {
+function pickFanout(io: Io, values: { name?: string }, slice?: string): FanoutFile | number {
   const select = (name: string | null): FanoutFile | number => {
     const selected = selectFanout(
       io.cwd,
@@ -147,7 +148,11 @@ function pickFanout(io: Io, values: { name?: string }): FanoutFile | number {
     if (matches.length !== 1) return select(name);
     file = matches[0];
   }
-  if (!file) return select(null);
+  if (!file) {
+    // `brief <slice>`, `worktree release <slice>`: the one plan holding it.
+    const holders = slice === undefined ? [] : plansHolding(io.cwd, slice);
+    return holders.length === 1 ? holders[0] : select(null);
+  }
   const registered = registerPlan(io, file, {
     name: null,
     trunk: null,
@@ -315,7 +320,7 @@ function brief(argv: string[], io: Io): number {
     io.stderr(
       `workit: warning: no known host for this brief (WORKIT_HOST is ${io.env.WORKIT_HOST?.trim() || "unset"}): it renders a plain-terminal worker; pass --host <${hosts}> for the worker's host\n`,
     );
-  const selected = pickFanout(io, flags.values);
+  const selected = pickFanout(io, flags.values, flags.positionals[0]);
   if (typeof selected === "number") return selected;
   const result = renderBrief(io.cwd, selected, {
     slice: flags.positionals[0],
@@ -498,6 +503,7 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
   }
   if (typeof chosen === "number") return chosen;
   const made: MadeSlice[] = [];
+  const byId = new Map(chosen.slices.map((one) => [one.id, one]));
   for (const slice of slices) {
     const result = createSliceWorktree(io.cwd, chosen, {
       slice,
@@ -508,7 +514,7 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
       if (!io.json) for (const line of made.flatMap(renderMade)) io.stdout(`${line}\n`);
       return failed(io, result);
     }
-    const found = chosen.slices.find((one) => one.id === slice);
+    const found = byId.get(slice);
     if (!found) return failed(io, findSliceMissing(chosen.name, slice));
     made.push({
       ...result.data,
@@ -549,7 +555,7 @@ async function worktree(argv: string[], io: Io): Promise<number> {
   for (const only of ["branch", "base", "tier"])
     if (flags.values[only] !== undefined)
       return usage(io, `--${only} applies to create only`, WORKTREE_USAGE);
-  const selected = pickFanout(io, flags.values);
+  const selected = pickFanout(io, flags.values, flags.positionals[0]);
   if (typeof selected === "number") return selected;
   const actor = actorFromEnv(io.env);
   const result = await releaseSliceWorktree(io.cwd, selected, {

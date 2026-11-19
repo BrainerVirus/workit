@@ -73,13 +73,15 @@ export function defaultSliceBranch(cwd: string, slice: string): string {
 export const isAdhocPlan = (plan: FanoutFile): boolean =>
   plan.slices.length === 1 && plan.slices[0].id === plan.name;
 
-/** The registered plan that holds slice `id`, if any. */
-export function planHolding(cwd: string, id: string): FanoutFile | null {
+/** Every registered plan that holds slice `id`. */
+export function plansHolding(cwd: string, id: string): FanoutFile[] {
   const all = listFanouts(cwd);
-  return all.ok
-    ? (all.data.find((plan) => plan.slices.some((slice) => slice.id === id)) ?? null)
-    : null;
+  return all.ok ? all.data.filter((plan) => plan.slices.some((slice) => slice.id === id)) : [];
 }
+
+/** The registered plan that holds slice `id`, if any. */
+export const planHolding = (cwd: string, id: string): FanoutFile | null =>
+  plansHolding(cwd, id)[0] ?? null;
 
 /**
  * The plan for one unplanned slice on `branch`: the registered plan that

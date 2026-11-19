@@ -232,6 +232,10 @@ test("Given no plan and no --branch, When `worktree create hello --base main` ru
     expect(tokened(data.path)).toBe(true);
     expect(gate(cwd, data.prompt)).toBeNull();
   });
+  // With two one-slice plans, `brief <slice>` picks the one holding it.
+  const brief = await run(cwd, ["fanout", "brief", "again", "--json"]);
+  expect(brief.code, brief.stdout + brief.stderr).toBe(0);
+  expect(JSON.parse(brief.stdout).data.fanout).toBe("again");
   // Two slices with no plan still need one.
   const two = await run(cwd, ["fanout", "worktree", "create", "x", "y", "--json"]);
   expect(two.code).not.toBe(0);
