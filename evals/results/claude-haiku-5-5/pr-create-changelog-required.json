@@ -1,15 +1,15 @@
 {
   "case": "pr-create-changelog-required",
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "f6c4696842bf7021",
-  "date": "2026-11-18T17:01:13.956Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "00fa41e5825d8c87",
+  "date": "2026-11-19T01:06:23.579Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 10,
-    "durationMs": 21773,
-    "costUsd": 0.00710199,
+    "durationMs": 20692,
+    "costUsd": 0.00704813,
     "stop": "success"
   },
   "grade": {
@@ -23,23 +23,13 @@
       },
       {
         "rule": "first-try",
-        "detail": "0 denied and 1 failed of 6 Workit interaction(s): #5 Bash(workit git commit --trailer \"Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>\" -m \"docs: changelog entry for nod) failed: Exit code 5"
+        "detail": "0 denied and 1 failed of 5 Workit interaction(s): #5 Bash(workit changelog apply --entries '{\"Fixed\":[\"`node x.js` now prints `y`\"]}' && git diff && workit git commit --trailer \") failed: <outside-world file: unresolved, 492 bytes>"
       }
     ],
     "firstTry": {
-      "interactions": 6,
+      "interactions": 5,
       "failed": 1,
       "denied": 0
     }
-  },
-  "outsideChanges": [
-    {
-      "path": "~/.local/state/workit/issued/549912da793576113b38c0693e53600b/3e297892331a1904fef299d23fce4009",
-      "change": "created"
-    },
-    {
-      "path": "~/.local/state/workit/issued-tokens/549912da793576113b38c0693e53600b/3e297892331a1904fef299d23fce4009",
-      "change": "created"
-    }
-  ]
+  }
 }

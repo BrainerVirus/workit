@@ -2,24 +2,24 @@
   "case": "rebase-positional",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "b7ec0caf52c4786e",
-  "date": "2026-11-18T17:30:58.826Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "50acc4c3bc060841",
+  "date": "2026-11-19T01:10:03.988Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 6111,
-    "costUsd": 0.00325084,
+    "turns": 4,
+    "durationMs": 7805,
+    "costUsd": 0.00378478,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 2,
+    "calls": 3,
     "failures": [],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 3,
       "failed": 0,
       "denied": 0
     }

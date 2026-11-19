@@ -2,30 +2,34 @@
   "case": "pr-create-changelog-required",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "f6c4696842bf7021",
-  "date": "2026-11-18T17:01:38.189Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "00fa41e5825d8c87",
+  "date": "2026-11-19T01:06:45.525Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 10,
-    "durationMs": 20599,
-    "costUsd": 0.00699351,
+    "turns": 9,
+    "durationMs": 18722,
+    "costUsd": 0.006597000000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 7,
+    "calls": 6,
     "failures": [
       {
         "rule": "require",
         "detail": "no call matches /workit[^\\n]*pr create/ not denied: the PR is created"
+      },
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 5 Workit interaction(s): #5 Bash(workit changelog apply --entries '{\"Fixed\":[\"`node x.js` now prints `y`\"]}' && git diff --stat && workit git commit --tr) failed: <outside-world file: unresolved, 343 bytes>"
       }
     ],
     "firstTry": {
-      "interactions": 6,
-      "failed": 0,
+      "interactions": 5,
+      "failed": 1,
       "denied": 0
     }
   }

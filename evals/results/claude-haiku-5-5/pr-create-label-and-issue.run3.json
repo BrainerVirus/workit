@@ -2,30 +2,25 @@
   "case": "pr-create-label-and-issue",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "6e425d156f23ac51",
-  "date": "2026-11-18T17:21:27.539Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "18011cd1c10b66ee",
+  "date": "2026-11-19T01:09:11.016Z",
   "exit": 1,
   "timedOut": false,
   "usage": {
     "turns": 9,
-    "durationMs": 22670,
-    "costUsd": 0.006535010000000001,
+    "durationMs": 17762,
+    "costUsd": 0.006407659999999999,
     "stop": "error_max_turns"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
+    "pass": true,
     "calls": 8,
-    "failures": [
-      {
-        "rule": "first-try",
-        "detail": "0 denied and 1 failed of 6 Workit interaction(s): #3 Bash(git diff main...HEAD --stat; git remote -v; workit pr template 2>&1 | head -60; workit check --help 2>&1 | head -20; ls ) failed: Exit code 2"
-      }
-    ],
+    "failures": [],
     "firstTry": {
-      "interactions": 6,
-      "failed": 1,
+      "interactions": 5,
+      "failed": 0,
       "denied": 0
     }
   }

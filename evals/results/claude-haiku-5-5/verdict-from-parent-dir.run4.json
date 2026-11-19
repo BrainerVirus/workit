@@ -2,35 +2,26 @@
   "case": "verdict-from-parent-dir",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "5ffa9a8ec05b84f4",
-  "date": "2026-11-18T16:31:40.849Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "32f3be843b3c7ddb",
+  "date": "2026-11-19T01:12:32.789Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 23095,
-    "costUsd": 0.03584223,
+    "turns": 0,
+    "durationMs": 10,
+    "costUsd": 0.03488190000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 6,
-    "failures": [
-      {
-        "rule": "spawn-refused",
-        "detail": "#1 Agent(workit:verifier: Verify greet-version branch) was refused: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: false (descriptio"
-      },
-      {
-        "rule": "first-try",
-        "detail": "2 denied and 0 failed of 4 Workit interaction(s): #1 Agent(workit:verifier: Verify greet-version branch) denied: PreToolUse:Agent hook error: workit spawn args: spawn again with exactly subagent_type: \"workit:verifier\", model: \"sonnet\", run_in_background: false (descriptio; #3 Bash(git rev-parse HEAD && git status --short && node bin/greet.js ada; echo \"exit=$?\"; grep '\"version\"' package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a3f35962b81b41d6d may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat"
-      }
-    ],
+    "pass": true,
+    "calls": 4,
+    "failures": [],
     "firstTry": {
-      "interactions": 4,
+      "interactions": 2,
       "failed": 0,
-      "denied": 2
+      "denied": 0
     }
   }
 }

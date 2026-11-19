@@ -2,15 +2,15 @@
   "case": "pr-create-changelog-required",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "f6c4696842bf7021",
-  "date": "2026-11-18T17:02:08.591Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "00fa41e5825d8c87",
+  "date": "2026-11-19T01:07:12.126Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 11,
-    "durationMs": 27364,
-    "costUsd": 0.007910760000000001,
+    "durationMs": 23477,
+    "costUsd": 0.0076202299999999995,
     "stop": "success"
   },
   "grade": {
@@ -21,11 +21,15 @@
       {
         "rule": "require",
         "detail": "no call matches /workit[^\\n]*pr create/ not denied: the PR is created"
+      },
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 6 Workit interaction(s): #6 Bash(workit git push && workit pr template) failed: Exit code 5"
       }
     ],
     "firstTry": {
       "interactions": 6,
-      "failed": 0,
+      "failed": 1,
       "denied": 0
     }
   }

@@ -2,31 +2,26 @@
   "case": "pr-create-label-and-issue",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "6e425d156f23ac51",
-  "date": "2026-11-18T17:21:51.456Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "18011cd1c10b66ee",
+  "date": "2026-11-19T01:09:28.103Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 7,
-    "durationMs": 20667,
-    "costUsd": 0.005625880000000001,
+    "durationMs": 14493,
+    "costUsd": 0.005161219999999999,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
+    "pass": true,
     "calls": 5,
-    "failures": [
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 1 failed of 4 Workit interaction(s): #4 Bash(workit git push) failed: Exit code 5; #5 Bash(git ls-remote origin 2>&1 | head -5; printf '%s\\n' ---; git ls-remote https://github.example.invalid/eval/demo.git 2>&1 ) denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Unsanctioned Communication]. If you have other tasks that don't depend o"
-      }
-    ],
+    "failures": [],
     "firstTry": {
-      "interactions": 4,
-      "failed": 1,
-      "denied": 1
+      "interactions": 3,
+      "failed": 0,
+      "denied": 0
     }
   }
 }

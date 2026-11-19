@@ -2,36 +2,26 @@
   "case": "commit-format-hook",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "d73d2f84b55e7829",
-  "date": "2026-11-18T16:59:26.816Z",
+  "workitVersion": "workit-dev-v2.15.0+73592e28b7",
+  "key": "411d02e4ce139e3e",
+  "date": "2026-11-19T01:21:22.578Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 7,
-    "durationMs": 18088,
-    "costUsd": 0.00549962,
+    "turns": 5,
+    "durationMs": 11809,
+    "costUsd": 0.0044709699999999995,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 6,
+    "calls": 4,
     "failures": [],
     "firstTry": {
       "interactions": 3,
       "failed": 0,
       "denied": 0
     }
-  },
-  "outsideChanges": [
-    {
-      "path": "~/.local/state/workit/issued/549912da793576113b38c0693e53600b/874870205ecfcd9307246a43c7ac6546",
-      "change": "created"
-    },
-    {
-      "path": "~/.local/state/workit/issued-tokens/549912da793576113b38c0693e53600b/874870205ecfcd9307246a43c7ac6546",
-      "change": "created"
-    }
-  ]
+  }
 }

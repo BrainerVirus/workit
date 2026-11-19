@@ -2,15 +2,15 @@
   "case": "install-help",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "3e3315a6817dbbd4",
-  "date": "2026-11-18T16:51:00.698Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "15bbcfb950958950",
+  "date": "2026-11-19T01:16:17.091Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 3,
-    "durationMs": 7269,
-    "costUsd": 0.0036936000000000004,
+    "durationMs": 8239,
+    "costUsd": 0.0032039600000000005,
     "stop": "success"
   },
   "grade": {
@@ -24,11 +24,11 @@
       },
       {
         "rule": "first-try",
-        "detail": "1 denied and 0 failed of 2 Workit interaction(s): #1 Bash(workit install --help) denied: Only the user runs `workit install`: the user decides this call."
+        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Bash(workit install --help 2>&1 || npx -y @workit-dev/cli install --help 2>&1) denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Undermining Oversight]. If you have other tasks that don't depend on thi"
       }
     ],
     "firstTry": {
-      "interactions": 2,
+      "interactions": 1,
       "failed": 0,
       "denied": 1
     }
