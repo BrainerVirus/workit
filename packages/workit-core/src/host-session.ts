@@ -240,6 +240,8 @@ export function verdictCommand(options: {
   judge: "verifier" | "reviewer" | null;
   session?: string | null;
   token?: string | null;
+  /** The checkout the hook ran in: named so a judge whose shell is elsewhere files it there. */
+  cwd?: string | null;
 }): string {
   const kind =
     options.judge === "verifier"
@@ -249,6 +251,9 @@ export function verdictCommand(options: {
         : "<live|unit|review>";
   return [
     "workit ledger verdict <verified|failed|blocked>",
+    options.cwd
+      ? `--cwd ${/^[\w@%+=:,./-]+$/u.test(options.cwd) ? options.cwd : JSON.stringify(options.cwd)}`
+      : null,
     `--kind ${kind}`,
     `--branch ${options.branch ?? "<branch>"}`,
     options.session ? `--session ${options.session}` : null,
