@@ -137,18 +137,13 @@ import {
 } from "@workit-dev/core/src/core/youtrack-ytrack";
 import { pathWants, reviewYtrackPaths } from "@workit-dev/core/src/core/youtrack-paths";
 import {
-  installedSkillVersion,
-  readYtrackSkillRecord,
-  sameVersion,
+  listYtrackSkill,
   youTrackInUse,
-  YTRACK_SKILL,
+  YTRACK_SKILL_LIST_SINCE,
   YTRACK_UPGRADE,
-  ytrackSkillSupport,
-  type SkillHost,
+  ytrackSkillCommand,
 } from "@workit-dev/core/src/core/ytrack-skill";
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
-import { hostSkillsRoot } from "../upgrade/skill-roots";
-import { detectHosts } from "./detect-hosts";
 import {
   isLegacyClaudePlugin,
   LEGACY_SCOPE,
@@ -2978,58 +2973,71 @@ const checkYtrackPaths = (res: Resolved): DoctorCheck | null => {
   };
 };
 
-const SKILL_HOSTS: SkillHost[] = ["claude-code", "codex", "cursor", "opencode", "pi"];
-
 /**
- * The ytrack agent skill (youtrack-cli #16) in each host Workit is installed
- * in or installed the skill for: its SKILL.md version against `ytrack
- * version`. No row without YouTrack or without ytrack on PATH (the
- * `youtrack` row covers that).
+ * The ytrack agent skill (youtrack-cli #16), which ytrack 0.6.0 and newer
+ * installs and keeps current itself: `ytrack skill list --json`. Read-only;
+ * each fix is a ytrack command, never a Workit one. No row without YouTrack
+ * or without ytrack on PATH (the `youtrack` row covers that).
  */
 const checkYtrackSkill = (res: Resolved): DoctorCheck | null => {
   if (!youTrackInUse(res.configDir, res.env) || !findYtrack(res.env)) return null;
-  const support = ytrackSkillSupport(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
-  if (support.state === "missing") return null;
-  if (support.state === "unsupported")
+  const list = listYtrackSkill(ytrackRunner(res.env, null, YTRACK_DOCTOR_TIMEOUT_MS));
+  if (list.state === "missing") return null;
+  if (list.state === "unsupported")
     return {
       id: "ytrack_skill",
       status: "warn",
-      detail: `ytrack${support.version ? ` ${support.version}` : ""} has no \`ytrack skill\`: agents get no ytrack skill`,
-      fix: YTRACK_UPGRADE,
+      detail: `ytrack${list.version ? ` ${list.version}` : ""} has no \`ytrack skill list\`: ytrack ${YTRACK_SKILL_LIST_SINCE} or newer installs and keeps its agent skill current`,
+      fix: `${YTRACK_UPGRADE} (to ${YTRACK_SKILL_LIST_SINCE} or newer)`,
     };
-  const env = {
-    ...res.env,
-    ...(res.codexHome ? { CODEX_HOME: res.codexHome } : {}),
-    ...(res.piAgentDir ? { PI_CODING_AGENT_DIR: res.piAgentDir } : {}),
-  };
-  const recorded = new Set(readYtrackSkillRecord(res.stateDir).map((install) => install.host));
-  const found = detectHosts({ home: res.home, env });
-  const hosts = SKILL_HOSTS.filter((host) => recorded.has(host) || found[host].configured);
-  if (hosts.length === 0) return null;
-  const rows = hosts.map((host) => ({
-    host,
-    installed: installedSkillVersion(path.join(hostSkillsRoot(host, res.home, env), YTRACK_SKILL)),
-  }));
-  const off = rows.filter(
-    (row) => row.installed === null || !sameVersion(row.installed, support.version),
+  const held = list.copies.filter((copy) => copy.state !== "missing");
+  if (held.length === 0)
+    return {
+      id: "ytrack_skill",
+      status: "warn",
+      detail: "no copy of the ytrack agent skill: agents do not learn ytrack's commands",
+      fix: "ytrack skill install",
+    };
+  // A copy Workit's upgrade retired stays listed as missing until `ytrack skill
+  // sync`: harmless while a current copy sits in a home skills dir agents read.
+  const homeDirs = new Set([".agents", ".claude"].map((dir) => path.join(res.home, dir, "skills")));
+  const homeCurrent = list.copies.some(
+    (copy) => copy.state === "current" && homeDirs.has(copy.dir),
   );
-  if (off.length === 0)
+  const retired = homeCurrent
+    ? list.copies.filter((copy) => copy.state === "missing" && copy.managed)
+    : [];
+  const retiredSet = new Set(retired);
+  const synced = list.copies.filter(
+    (copy) =>
+      !retiredSet.has(copy) &&
+      (copy.state === "missing" || (copy.state === "stale" && copy.managed)),
+  );
+  // A copy in a repository changes only by hand, in that directory.
+  const manual = list.copies.filter((copy) => copy.state === "stale" && !copy.managed);
+  const note = retired.length
+    ? `; ytrack still lists ${retired.length} removed ${retired.length === 1 ? "copy" : "copies"} (\`ytrack skill sync\` forgets them)`
+    : "";
+  if (synced.length === 0 && manual.length === 0)
     return {
       id: "ytrack_skill",
       status: "pass",
-      detail: `ytrack skill ${support.version} in ${hosts.join(", ")}`,
+      detail: `ytrack skill ${held[0].version} in ${held.map((copy) => copy.dir).join(", ")}${note}`,
     };
   return {
     id: "ytrack_skill",
     status: "warn",
-    detail: `ytrack ${support.version}: ${off
-      .map((row) =>
-        row.installed === null
-          ? `no ytrack skill for ${row.host}`
-          : `${row.host} has skill ${row.installed || "without a version"}`,
+    detail: [...synced, ...manual]
+      .map((copy) =>
+        copy.state === "missing"
+          ? `${copy.path} is gone`
+          : `${copy.path} holds skill ${copy.version || "without a version"}`,
       )
-      .join("; ")}`,
-    fix: `workit upgrade --hosts=${off.map((row) => row.host).join(",")}`,
+      .join("; "),
+    fix: [
+      ...(synced.length ? ["ytrack skill sync"] : []),
+      ...manual.map((copy) => ytrackSkillCommand(copy.dir)),
+    ].join("; "),
   };
 };
 
@@ -4535,7 +4543,6 @@ const UPGRADE_CHECKS = new Set<(res: Resolved) => DoctorCheck | null>([
   checkPluginFiles,
   checkStalePin,
   checkStaleInstall,
-  checkYtrackSkill,
   // An upgrade may be what starts the seal fallback (#819): say so after it.
   checkGrantSeal,
   // An upgrade refreshes the native deny rules with the permission block (#820).

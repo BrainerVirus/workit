@@ -52,7 +52,9 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   ...over,
 });
 
-const envFor = (home: string, configDir: string) => isolatedEnv(home, { WORKIT_CONFIG: configDir });
+// No real ytrack: one on the developer's PATH would write its own state under the temp home.
+const envFor = (home: string, configDir: string) =>
+  isolatedEnv(home, { WORKIT_CONFIG: configDir, WORKIT_NO_YTRACK: "1" });
 
 const wsEntry = (name: string, glob: string) => ({
   name,

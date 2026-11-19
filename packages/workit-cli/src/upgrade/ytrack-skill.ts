@@ -1,119 +1,102 @@
-// `workit init`, `workit setup` and `workit upgrade` install the ytrack agent
-// skill into each Workit host's skills directory when YouTrack is in use
-// (youtrack-cli #16).
+// ytrack 0.6.0 and newer installs and refreshes its own agent skill, into
+// ~/.agents/skills (read by Codex, Cursor, OpenCode and Pi) and
+// ~/.claude/skills. Workit no longer installs it; `workit upgrade` removes the
+// per-host copies an older Workit installed once ytrack's shared copy exists,
+// so those hosts do not list the skill twice.
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import {
-  configDir as workitConfigDir,
-  stateDir as workitStateDir,
-} from "@workit-dev/core/src/core/workit-paths.mjs";
-import {
-  syncYtrackSkill,
-  youTrackInUse,
-  YTRACK_UPGRADE,
+  forgetYtrackSkillRecord,
+  installedSkillVersion,
+  readYtrackSkillRecord,
+  removeYtrackSkill,
+  YTRACK_SKILL,
   type SkillHost,
 } from "@workit-dev/core/src/core/ytrack-skill";
-import { ytrackRunner } from "@workit-dev/core/src/core/youtrack-ytrack";
-import { detectHosts } from "../admin/detect-hosts";
-import { type Style } from "../style";
 import { type HostOutcome } from "./shared";
 import { hostSkillsRoot } from "./skill-roots";
 
-const SKILL_HOSTS: readonly SkillHost[] = ["claude-code", "codex", "cursor", "opencode", "pi"];
-// `ytrack skill` is offline; a stuck binary still never holds the run long.
-const YTRACK_SKILL_TIMEOUT_MS = 30_000;
+// ~/.claude/skills/ytrack is one of ytrack's own default copies: it stays.
+const SHARED_READERS: ReadonlySet<SkillHost> = new Set(["codex", "cursor", "opencode", "pi"]);
 
-/** The hosts among `among` that have Workit installed. */
-export const workitHosts = (
-  among: readonly string[],
-  home: string,
-  env: NodeJS.ProcessEnv,
-): SkillHost[] => {
-  const found = detectHosts({ home, env });
-  return SKILL_HOSTS.filter((host) => among.includes(host) && found[host].configured);
-};
+/** ytrack's shared copy of its skill, `~/.agents/skills/ytrack`. */
+const sharedYtrackSkill = (home: string): string =>
+  path.join(home, ".agents", "skills", YTRACK_SKILL);
+
+/** Whether ytrack keeps its own skill copies here: `~/.agents/skills/ytrack` holds the skill. */
+const ytrackKeepsSkill = (home: string): boolean =>
+  installedSkillVersion(sharedYtrackSkill(home)) !== null;
 
 /**
- * Install or refresh the ytrack skill for `hosts`, as one `ytrack` result
- * row; null when YouTrack is unused, ytrack is not on PATH (doctor's
- * `youtrack` row says so) or there is no host.
+ * Whether `host`'s skill copy is ytrack's own now: Claude Code's
+ * `~/.claude/skills/ytrack` is one of ytrack's default copies once ytrack
+ * keeps its skill, so uninstall leaves it even when Workit recorded it.
  */
-export function refreshYtrackSkill(options: {
-  hosts: readonly string[];
+export const ytrackOwnsCopy = (host: SkillHost, home: string): boolean =>
+  !SHARED_READERS.has(host) && ytrackKeepsSkill(home);
+
+const realOrResolved = (file: string): string => {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return path.resolve(file);
+  }
+};
+
+/** `a` is `b`, holds it, or sits inside it. */
+const overlaps = (a: string, b: string): boolean =>
+  a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+
+/**
+ * Remove the Codex, Cursor, OpenCode and Pi copies Workit installed (its
+ * ytrack-skill.json record, the files it wrote, never a copy someone else
+ * made) when `~/.agents/skills/ytrack` holds the ytrack skill, then forget the
+ * whole record, so uninstall leaves ytrack's own copies alone. A recorded copy
+ * that is the shared one through a symlink (either way round), holds it or
+ * sits inside it is never removed, and the shared copy is checked again
+ * before each removal. One `ytrack` row when something was removed or could
+ * not be; null otherwise.
+ */
+export function retireYtrackSkillCopies(options: {
   home: string;
   env: NodeJS.ProcessEnv;
 }): HostOutcome | null {
   const { env, home } = options;
-  const hosts = SKILL_HOSTS.filter((host) => options.hosts.includes(host));
-  if (hosts.length === 0 || !youTrackInUse(workitConfigDir(env), env)) return null;
-  const sync = syncYtrackSkill({
-    roots: hosts.map((host) => ({ host, root: hostSkillsRoot(host, home, env) })),
-    stateDir: workitStateDir(env),
-    run: ytrackRunner(env, null, YTRACK_SKILL_TIMEOUT_MS),
-  });
-  if (sync.state === "missing") return null;
-  if (sync.state === "unsupported")
-    return {
-      host: "ytrack",
-      status: "skipped",
-      reason: `ytrack${sync.version ? ` ${sync.version}` : ""} has no \`ytrack skill\`: the agent skill needs a newer ytrack`,
-      fix: YTRACK_UPGRADE,
-    };
-  const names = (status: string) =>
-    sync.results.filter((result) => result.status === status).map((result) => result.host);
-  const failed = sync.results.filter((result) => result.status === "failed");
-  const installed = names("installed");
-  const current = names("current");
-  const parts = [
-    ...(installed.length ? [`installed for ${installed.join(", ")}`] : []),
-    ...(current.length ? [`current for ${current.join(", ")}`] : []),
-    ...failed.map((result) => `not installed for ${result.host}: ${result.error}`),
-  ];
-  const reason = `skill ${sync.version} ${parts.join("; ")}`;
-  // A directory ytrack refuses (another skill named ytrack) is the person's
-  // to resolve: the row says so without failing the run.
+  const stateDir = workitStateDir(env);
+  const recorded = readYtrackSkillRecord(stateDir);
+  const shared = sharedYtrackSkill(home);
+  if (recorded.length === 0 || !ytrackKeepsSkill(home)) return null;
+  const realShared = realOrResolved(shared);
+  const removed: string[] = [];
+  const failed: string[] = [];
+  for (const install of recorded) {
+    if (!SHARED_READERS.has(install.host)) continue;
+    if (overlaps(realOrResolved(install.path), realShared)) continue;
+    // Each removal may change the tree: the shared copy must still be ytrack's.
+    if (!ytrackKeepsSkill(home) || realOrResolved(shared) !== realShared) {
+      failed.push(`${shared} no longer holds the ytrack skill; nothing more removed`);
+      break;
+    }
+    const root = hostSkillsRoot(install.host, home, env);
+    const outcome = removeYtrackSkill(install, stateDir, { root, home });
+    if (outcome.status === "removed") removed.push(install.path);
+    if (outcome.status === "failed") failed.push(`${install.path}: ${outcome.detail}`);
+  }
+  // A failed removal keeps the record, so the next upgrade tries again.
   if (failed.length)
     return {
       host: "ytrack",
       status: "skipped",
-      reason,
-      fix: failed.map((result) => result.command).join("; "),
+      reason: `Workit's copies of the ytrack skill not removed: ${failed.join("; ")}`,
+      fix: "workit upgrade",
     };
+  forgetYtrackSkillRecord(stateDir);
+  if (removed.length === 0) return null;
   return {
     host: "ytrack",
-    status: installed.length ? "updated" : "current",
-    reason,
-    ...(installed.length
-      ? {
-          details: sync.results
-            .filter((result) => result.status === "installed")
-            .map((result) => result.path),
-        }
-      : {}),
+    status: "updated",
+    reason: `retired Workit's copies of the ytrack skill: ytrack keeps ${shared}; ytrack still lists them as missing until \`ytrack skill sync\` (optional)`,
+    details: removed,
   };
 }
-
-/**
- * `workit init`'s ytrack row: when the wizard chose YouTrack, the skill for
- * each selected host that now has Workit; null otherwise (as refreshYtrackSkill).
- */
-export const initYtrackSkill = (
-  values: { issueTracker: string; platforms: readonly string[] },
-  home: string,
-  env: NodeJS.ProcessEnv,
-): HostOutcome | null =>
-  values.issueTracker === "youtrack"
-    ? refreshYtrackSkill({ hosts: workitHosts(values.platforms, home, env), home, env })
-    : null;
-
-/** The ytrack row as lines, with the command that finishes it by hand. */
-export const ytrackSkillLines = (
-  row: HostOutcome | null,
-  style: Pick<Style, "path" | "command">,
-): string[] =>
-  row
-    ? [
-        // An unsupported ytrack's reason already opens with "ytrack".
-        row.reason.startsWith("ytrack") ? row.reason : `ytrack ${row.reason}`,
-        ...(row.details ?? []).map((dir) => `  ${style.path(dir)}`),
-        ...(row.fix ? [`  fix: ${style.command(row.fix)}`] : []),
-      ]
-    : [];

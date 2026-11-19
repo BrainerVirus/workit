@@ -42,7 +42,7 @@ export type CommandResult = {
 };
 /** Where a command runs (OpenCode's plugin commands act on the cwd's location). */
 export type RunOptions = { cwd?: string };
-/** `ytrack`: the ytrack agent skill in each host's skills directory. */
+/** `ytrack`: retiring the per-host ytrack skill copies an older Workit installed. */
 export type UpgradeHost = HostId | "cli" | "permissions" | "ytrack";
 
 /** The last few lines of a command's stderr, for a failed row's reason. */

@@ -7,16 +7,13 @@ import {
   permissionDiff,
   planHostPermissions,
 } from "../admin/host-permissions";
-import { userHome } from "@workit-dev/core/src/core/workit-paths.mjs";
 import pkg from "../../package.json" with { type: "json" };
 import { completionLines, installCompletion } from "../completion/install";
 import { emit, fail, ok, type Io } from "../output";
 import { askLine, askOrCancel, cancelled } from "../prompt";
-import { colorDiff, createStyle, type Style } from "../style";
-import { type HostOutcome } from "../upgrade/shared";
+import { colorDiff, createStyle } from "../style";
 import { offerFirstSeal } from "../upgrade/seal-offer";
 import { type GrantDeps } from "./grant";
-import { refreshYtrackSkill, workitHosts } from "../upgrade/ytrack-skill";
 
 const ALL_HOSTS = ["claude-code", "codex", "cursor", "opencode", "pi"];
 const USAGE =
@@ -99,23 +96,12 @@ async function runSetup(argv: string[], io: Io): Promise<number> {
     );
   // The completion script for $SHELL: user files only, never an rc file.
   const completion = () => installCompletion({ env: io.env, version: pkg.version });
-  // With YouTrack in use, each selected host with Workit gets the ytrack skill.
-  const skill = () => {
-    const home = userHome(io.env);
-    return refreshYtrackSkill({ hosts: workitHosts(args.hosts, home, io.env), home, env: io.env });
-  };
   if (plan.changes.length === 0 && !args.dryRun) {
     const installed = completion();
-    const ytrack = skill();
-    return emit(
-      io,
-      ok({ ...summary, written: [], completion: installed, ...(ytrack ? { ytrack } : {}) }),
-      () => [
-        plan.blocked.length ? "Nothing written." : "Host permissions are up to date.",
-        ...completionLines(installed, style),
-        ...skillLines(ytrack, style),
-      ],
-    );
+    return emit(io, ok({ ...summary, written: [], completion: installed }), () => [
+      plan.blocked.length ? "Nothing written." : "Host permissions are up to date.",
+      ...completionLines(installed, style),
+    ]);
   }
   if (plan.changes.length === 0)
     return emit(io, ok({ ...summary, written: [] }), () =>
@@ -148,13 +134,7 @@ async function runSetup(argv: string[], io: Io): Promise<number> {
   });
   const failed = entries.filter((e) => e.status === "failed");
   const installed = completion();
-  const ytrack = skill();
-  const data = {
-    ...summary,
-    written: entries,
-    completion: installed,
-    ...(ytrack ? { ytrack } : {}),
-  };
+  const data = { ...summary, written: entries, completion: installed };
   if (failed.length)
     return emit(
       io,
@@ -164,16 +144,5 @@ async function runSetup(argv: string[], io: Io): Promise<number> {
     ...entries.map((e) => `${style.ok("written")} ${style.path(e.file)}`),
     "Restart the host sessions to load the new permissions. `workit uninstall` removes them.",
     ...completionLines(installed, style),
-    ...skillLines(ytrack, style),
   ]);
 }
-
-/** The ytrack skill's result, with the command to finish it by hand. */
-const skillLines = (row: HostOutcome | null, style: Style): string[] =>
-  row
-    ? [
-        `ytrack ${row.reason}`,
-        ...(row.details ?? []).map((dir) => `  ${style.path(dir)}`),
-        ...(row.fix ? [`  fix: ${style.command(row.fix)}`] : []),
-      ]
-    : [];

@@ -1,8 +1,8 @@
-// The ytrack agent skill (youtrack-cli #16): ytrack ships a skill stamped
-// with its own version (`ytrack skill print`, `ytrack skill install --dir`).
-// Workit runs that install into each agent host's native user skills
-// directory and records what it installed, so uninstall removes exactly
-// those directories. Workit never copies the skill's text.
+// The ytrack agent skill (youtrack-cli #16). ytrack 0.6.0 and newer installs,
+// remembers and refreshes every copy itself (`ytrack skill install|list|sync`),
+// so Workit never installs it: doctor reads `ytrack skill list --json`, and
+// the copies an older Workit installed (recorded in ytrack-skill.json) are
+// removed once ytrack's own ~/.agents/skills/ytrack is there, or by uninstall.
 import {
   existsSync,
   lstatSync,
@@ -19,15 +19,18 @@ import {
 import path from "node:path";
 import { issueTrackerOf } from "./vcs-config";
 import { readWorkspacesResult } from "./workspaces";
-import { ytrackDetail, type YtrackRun } from "./youtrack-ytrack";
+import { type YtrackRun } from "./youtrack-ytrack";
 
 export type SkillHost = "claude-code" | "codex" | "cursor" | "opencode" | "pi";
 
 /** The skill's directory name and its frontmatter `name`. */
 export const YTRACK_SKILL = "ytrack";
 
-/** The ytrack that adds `ytrack skill`; an older one needs this. */
+/** The fix for a ytrack too old for a command Workit reads. */
 export const YTRACK_UPGRADE = "ytrack upgrade";
+
+/** The first ytrack that keeps its own skill copies (`ytrack skill list`). */
+export const YTRACK_SKILL_LIST_SINCE = "0.6.0";
 
 /** Whether Workit uses YouTrack: youtrack.json exists, or a workspace tracks issues in YouTrack. */
 export const youTrackInUse = (configDir: string, env: NodeJS.ProcessEnv): boolean => {
@@ -37,11 +40,6 @@ export const youTrackInUse = (configDir: string, env: NodeJS.ProcessEnv): boolea
     return issueTrackerOf(raw.issues, raw.youtrack)?.provider === "youtrack";
   });
 };
-
-const bare = (version: string): string => version.trim().replace(/^v/u, "");
-
-/** Two versions name the same release (`v0.3.0` and `0.3.0` do). */
-export const sameVersion = (a: string, b: string): boolean => bare(a) === bare(b);
 
 /** A SKILL.md's frontmatter `name` and `metadata.version`. */
 export const parseSkillMeta = (text: string): { name: string | null; version: string | null } => {
@@ -73,24 +71,54 @@ export const installedSkillVersion = (dir: string): string | null => {
   }
 };
 
-export type YtrackSkillSupport =
+/** One copy of the skill ytrack keeps (`ytrack skill list --json`). */
+export type YtrackSkillCopy = {
+  /** The skills directory, e.g. ~/.claude/skills. */
+  dir: string;
+  /** The skill directory, `<dir>/ytrack`. */
+  path: string;
+  /** Its SKILL.md's metadata.version; empty when missing. */
+  version: string;
+  state: "current" | "stale" | "missing";
+  /** ytrack rewrites it when a newer ytrack runs (a home copy); false for one in a repository. */
+  managed: boolean;
+};
+
+export type YtrackSkillList =
   | { state: "missing" }
   | { state: "unsupported"; version: string | null }
-  | { state: "supported"; version: string };
+  | { state: "listed"; copies: YtrackSkillCopy[] };
+
+const isCopy = (row: unknown): row is YtrackSkillCopy => {
+  const copy = row as YtrackSkillCopy;
+  return (
+    typeof row === "object" &&
+    row !== null &&
+    typeof copy.dir === "string" &&
+    typeof copy.path === "string" &&
+    typeof copy.version === "string" &&
+    ["current", "stale", "missing"].includes(copy.state) &&
+    typeof copy.managed === "boolean"
+  );
+};
 
 /**
- * Whether the ytrack on PATH ships the skill: `ytrack skill print` exits 0
- * with the ytrack skill. An older ytrack (0.2.1 and before) has no `skill` command.
+ * The skill copies the ytrack on PATH keeps: `ytrack skill list --json`, an
+ * array. A ytrack before 0.6.0 has no `skill list` (or no `skill`): that is
+ * `unsupported`, with the version `ytrack version` prints. Reads only.
  */
-export function ytrackSkillSupport(run: YtrackRun): YtrackSkillSupport {
-  const out = run(["version"]);
+export function listYtrackSkill(run: YtrackRun): YtrackSkillList {
+  const out = run(["skill", "list", "--json"]);
   if (out.missing) return { state: "missing" };
-  const version = /ytrack version (\S+)/u.exec(out.stdout)?.[1] ?? null;
-  const print = run(["skill", "print"]);
-  const meta = print.status === 0 ? parseSkillMeta(print.stdout) : null;
-  if (!meta || meta.name !== YTRACK_SKILL) return { state: "unsupported", version };
-  const stamped = version ?? meta.version;
-  return stamped ? { state: "supported", version: stamped } : { state: "unsupported", version };
+  let rows: unknown = null;
+  try {
+    rows = out.status === 0 ? JSON.parse(out.stdout) : null;
+  } catch {
+    rows = null;
+  }
+  if (Array.isArray(rows)) return { state: "listed", copies: rows.filter(isCopy) };
+  const version = /ytrack version (\S+)/u.exec(run(["version"]).stdout)?.[1] ?? null;
+  return { state: "unsupported", version };
 }
 
 /**
@@ -139,90 +167,15 @@ const writeRecord = (stateDir: string, installs: YtrackSkillInstall[]): void => 
   renameSync(temp, file);
 };
 
-export type YtrackSkillResult = {
-  host: SkillHost;
-  /** The skill directory (`<host skills root>/ytrack`). */
-  path: string;
-  /** installed: new or refreshed; current: already this version; failed: ytrack refused. */
-  status: "installed" | "current" | "failed";
-  /** The version found before this run, when a ytrack skill was there. */
-  previous: string | null;
-  error?: string;
-  /** The command that installs this host's skill by hand. */
-  command: string;
-};
-
-export type YtrackSkillSync =
-  | { state: "missing" }
-  | { state: "unsupported"; version: string | null }
-  | { state: "synced"; version: string; results: YtrackSkillResult[] };
-
 const quoteArg = (value: string): string =>
   /^[\w./:@~+-]+$/u.test(value) ? value : `"${value.replaceAll('"', '\\"')}"`;
 
-/** The command that installs the skill into `root` by hand. */
-export const ytrackSkillCommand = (root: string): string =>
-  `ytrack skill install --dir ${quoteArg(root)}`;
+/** The command that installs the skill into the skills directory `dir` by hand. */
+export const ytrackSkillCommand = (dir: string): string =>
+  `ytrack skill install --dir ${quoteArg(dir)}`;
 
-/**
- * Install the skill of the ytrack on PATH into each host's skills directory
- * (`roots`: the host's native user skills directory)
- * (`ytrack skill install --dir <root> --json`). A directory already at this
- * version is left alone. Workit records a directory it created, and keeps
- * recording one it created before; a ytrack skill someone else put there is
- * refreshed but never recorded, so uninstall leaves it.
- */
-export function syncYtrackSkill(options: {
-  roots: readonly { host: SkillHost; root: string }[];
-  stateDir: string;
-  run: YtrackRun;
-}): YtrackSkillSync {
-  const support = ytrackSkillSupport(options.run);
-  if (support.state !== "supported") return support;
-  const recorded = readYtrackSkillRecord(options.stateDir);
-  const results: YtrackSkillResult[] = [];
-  for (const { host, root } of options.roots) {
-    const dir = path.join(root, YTRACK_SKILL);
-    const command = ytrackSkillCommand(root);
-    const previous = installedSkillVersion(dir);
-    const ours = recorded.find((row) => row.host === host && row.path === dir);
-    if (previous !== null && sameVersion(previous, support.version)) {
-      results.push({ host, path: dir, status: "current", previous, command });
-      continue;
-    }
-    const existed = previous !== null || existsSync(dir) || isLink(dir);
-    const out = options.run(["skill", "install", "--dir", root, "--json"]);
-    let installed: { path?: unknown; version?: unknown } | null = null;
-    try {
-      installed = out.status === 0 ? JSON.parse(out.stdout) : null;
-    } catch {
-      installed = null;
-    }
-    if (!installed || typeof installed.version !== "string") {
-      results.push({
-        host,
-        path: dir,
-        status: "failed",
-        previous,
-        error: ytrackDetail(out) || `ytrack exited ${out.status ?? "without a status"}`,
-        command,
-      });
-      continue;
-    }
-    results.push({ host, path: dir, status: "installed", previous, command });
-    if (ours || !existed) {
-      const rest = recorded.filter((row) => row.host !== host);
-      recorded.splice(0, recorded.length, ...rest, {
-        host,
-        path: dir,
-        version: installed.version,
-        files: filesUnder(dir),
-      });
-    }
-  }
-  writeRecord(options.stateDir, recorded);
-  return { state: "synced", version: support.version, results };
-}
+/** Forget every skill install Workit recorded (ytrack-skill.json goes). */
+export const forgetYtrackSkillRecord = (stateDir: string): void => writeRecord(stateDir, []);
 
 /** Every non-directory entry under `dir` (links not followed), relative and `/`-separated. */
 const filesUnder = (dir: string, prefix = ""): string[] => {
