@@ -64,6 +64,7 @@ import {
   uncoveredBaseRed,
   type BaseRedCause,
 } from "./merge-gate-base-red";
+import { rebaseChangelogConflict, type ChangelogRebased } from "./merge-rebase";
 import { buildStatusDoc, computeBehindBase, selectPr, type PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
 import {
@@ -400,6 +401,11 @@ export type MergeInput = {
    */
   subject?: string;
   body?: string;
+  /**
+   * The command that repeats this merge, printed after a changelog-only
+   * conflict is rebased and pushed (#923); default `workit pr merge [--pr n] --method <m>`.
+   */
+  again?: string;
 };
 
 export type MergeOutcome = {
@@ -503,9 +509,14 @@ export type MergeRefusal = {
     | "base_red"
     | "ledger_tampered"
     | "intent_unrecorded"
-    | "head_unfetched";
+    | "head_unfetched"
+    | "rebased_pushed";
   next?: string;
   blockers?: string[];
+  /** A conflict state: the paths git here reports conflicting with the base. */
+  conflicts?: string[];
+  /** rebased_pushed: the changelog-only conflict was rebased and pushed; nothing was merged. */
+  rebased?: ChangelogRebased;
   /** base_red: whether the previous base run makes it look like a flake. */
   baseRedCause?: BaseRedCause["kind"];
   verdict?: Pick<VerdictCheck, "head" | "accepted" | "authors">;
@@ -614,13 +625,14 @@ const refuse = (error: string, unblock: string, refusal: MergeRefusal): MergeRes
  * The command (or step) that clears a `next` blocker, for `pr status` and a
  * `pr merge` refusal; null for READY and the terminal states.
  */
-export function nextHint(next: string, number: number): string | null {
+export function nextHint(next: string, number: number, onto?: string): string | null {
   const pr = `--pr ${number}`;
+  const rebase = `workit git rebase${onto ? ` --onto ${onto}` : ""}`;
   switch (next) {
     case "RESOLVE_CONFLICTS":
-      return "rebase onto the base, resolve, then workit git push --force-with-lease";
+      return `${rebase}  # then: workit git push --force-with-lease; a conflict outside the changelog stops it: merge the base, resolve and commit, then workit git push`;
     case "REBASE":
-      return "rebase onto the base, then workit git push --force-with-lease";
+      return `${rebase}  # then: workit git push --force-with-lease`;
     case "RESOLVE_THREADS":
       return `workit pr threads ${pr}; fix or answer each: workit pr reply ${pr} --thread <id> --body-file <f> [--resolve]`;
     case "FIX_CI":
@@ -908,12 +920,49 @@ export async function mergePullRequest(
     return refuse(`closed: ${label} is closed`, "reopen it on the forge first", {
       reason: "closed",
     });
-  if (doc.next !== "READY")
+  if (doc.next !== "READY") {
+    const notReady = `not_ready: ${label} is ${doc.next} (${doc.blockers.join(", ") || doc.next.toLowerCase()})`;
+    const refusal: MergeRefusal = { reason: "not_ready", next: doc.next, blockers: doc.blockers };
+    // A stack land (`expect`) syncs its own branches; only a plain merge rebases.
+    if ((doc.next === "RESOLVE_CONFLICTS" || doc.next === "REBASE") && !input.expect) {
+      const foreign = otherAuthor(resolved, doc.number);
+      const settled = rebaseChangelogConflict(cwd, resolved, {
+        doc,
+        label,
+        again:
+          input.again ??
+          `workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --method ${input.method}`,
+        ciWait: `workit ci wait${input.pr ? ` --pr ${doc.number}` : ""}`,
+        actor: input.actor,
+        notYours:
+          foreign === null
+            ? null
+            : foreign.ok
+              ? `${label} is by ${foreign.author}, not ${foreign.login} (the forge login)`
+              : `${foreign.error}, so ${label} cannot be shown to be yours`,
+      });
+      if (settled.ok)
+        return refuse(settled.message, settled.unblock, {
+          reason: "rebased_pushed",
+          rebased: settled.data,
+        });
+      const conflicts = settled.conflicts ? { conflicts: settled.conflicts } : {};
+      if (settled.code === "failed")
+        return {
+          ok: false,
+          code: "failed",
+          error: `${notReady}; ${settled.why}`,
+          unblock: settled.unblock,
+          refusal: { ...refusal, ...conflicts },
+        };
+      return refuse(`${notReady}; ${settled.why}`, settled.unblock, { ...refusal, ...conflicts });
+    }
     return refuse(
-      `not_ready: ${label} is ${doc.next} (${doc.blockers.join(", ") || doc.next.toLowerCase()})`,
-      nextHint(doc.next, doc.number) ?? "workit pr status",
-      { reason: "not_ready", next: doc.next, blockers: doc.blockers },
+      notReady,
+      nextHint(doc.next, doc.number, `${resolved.baseRemote}/${doc.base}`) ?? "workit pr status",
+      refusal,
     );
+  }
 
   if (input.expect && (doc.base !== input.expect.base || doc.head.branch !== input.expect.branch))
     return refuse(

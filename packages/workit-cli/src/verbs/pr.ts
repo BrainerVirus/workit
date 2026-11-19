@@ -469,7 +469,7 @@ async function status(argv: string[], io: Io): Promise<number> {
   });
   if (!report.ok) return forgeFail(io, report);
   const doc = report.data.doc;
-  const hint = nextHint(doc.next, doc.number);
+  const hint = nextHint(doc.next, doc.number, `${connected.data.baseRemote}/${doc.base}`);
   const issues = issuesBlock(io.cwd, doc);
   return emit(
     io,
@@ -1371,6 +1371,10 @@ async function merge(argv: string[], io: Io): Promise<number> {
           ...(othersPr && baseRedReason ? { othersPr: { reason: baseRedReason } } : {}),
           ...(subject !== undefined ? { subject } : {}),
           ...(body !== undefined ? { body } : {}),
+          again: `workit pr merge ${argv
+            .filter((arg) => arg !== "--json")
+            .map(shellQuote)
+            .join(" ")}`.trimEnd(),
         },
         forgeDeps.sleep,
       ),
