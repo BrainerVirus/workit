@@ -180,7 +180,10 @@ const upgrade = async (w: ReturnType<typeof world>, extra: Record<string, string
 };
 
 /** A skill copy an older Workit installed for `host`, with its record row. */
-const workitCopy = (w: ReturnType<typeof world>, host: "claude-code" | "codex" | "pi") => {
+const workitCopy = (
+  w: ReturnType<typeof world>,
+  host: "claude-code" | "codex" | "cursor" | "pi",
+) => {
   const dir = path.join(hostSkillsRoot(host, w.home, w.env()), "ytrack");
   w.skillAt(dir, "0.5.4");
   mkdirSync(path.join(dir, "references"), { recursive: true });
@@ -276,7 +279,7 @@ describe("workit upgrade retires Workit's per-host copies", () => {
       expect(row).toEqual({
         host: "ytrack",
         status: "updated",
-        reason: `Workit's copies of the ytrack skill removed: ytrack keeps ${sharedCopy(w)}`,
+        reason: `retired Workit's copies of the ytrack skill: ytrack keeps ${sharedCopy(w)}; ytrack still lists them as missing until \`ytrack skill sync\` (optional)`,
         details: [pi],
       });
       expect(existsSync(pi)).toBe(false);
@@ -287,6 +290,62 @@ describe("workit upgrade retires Workit's per-host copies", () => {
       expect(skillWrites(w)).toEqual([]);
     },
   );
+
+  posix(
+    "Given ~/.agents/skills is a symlink to ~/.codex/skills, When upgrade runs, Then the Codex copy (the shared one) stays",
+    async () => {
+      const w = world({ pi: true });
+      const codex = workitCopy(w, "codex");
+      const pi = workitCopy(w, "pi");
+      mkdirSync(path.join(w.home, ".agents"), { recursive: true });
+      symlinkSync(path.dirname(codex), path.join(w.home, ".agents", "skills"));
+      const { row } = await upgrade(w);
+      expect(row?.details).toEqual([pi]);
+      expect(existsSync(path.join(codex, "SKILL.md"))).toBe(true);
+      expect(existsSync(path.join(sharedCopy(w), "SKILL.md"))).toBe(true);
+    },
+  );
+
+  posix(
+    "Given ~/.agents/skills/ytrack is a symlink to ~/.cursor/skills/ytrack, When upgrade runs, Then the Cursor copy (the shared one) stays",
+    async () => {
+      const w = world({ pi: true });
+      const cursor = workitCopy(w, "cursor");
+      const pi = workitCopy(w, "pi");
+      mkdirSync(path.join(w.home, ".agents", "skills"), { recursive: true });
+      symlinkSync(cursor, sharedCopy(w));
+      const { row } = await upgrade(w);
+      expect(row?.details).toEqual([pi]);
+      expect(existsSync(path.join(cursor, "SKILL.md"))).toBe(true);
+      expect(existsSync(path.join(sharedCopy(w), "SKILL.md"))).toBe(true);
+    },
+  );
+
+  for (const [name, make] of [
+    [
+      "a dangling symlink",
+      (w: ReturnType<typeof world>) => {
+        mkdirSync(path.join(w.home, ".agents", "skills"), { recursive: true });
+        symlinkSync(path.join(w.home, "nowhere"), sharedCopy(w));
+      },
+    ],
+    [
+      "another skill named ytrack",
+      (w: ReturnType<typeof world>) => w.skillAt(sharedCopy(w), "1.0.0", "my-ytrack-notes"),
+    ],
+  ] as const)
+    posix(
+      `Given ~/.agents/skills/ytrack is ${name}, When upgrade runs, Then every Workit copy and the record stay`,
+      async () => {
+        const w = world({ pi: true });
+        make(w);
+        const pi = workitCopy(w, "pi");
+        const { row } = await upgrade(w);
+        expect(row).toBeUndefined();
+        expect(existsSync(path.join(pi, "SKILL.md"))).toBe(true);
+        expect(existsSync(recordFile(w))).toBe(true);
+      },
+    );
 
   posix(
     "Given a Workit-made Pi copy but no ~/.agents/skills/ytrack, When upgrade runs, Then the copy and its record stay",
@@ -389,6 +448,41 @@ describe("doctor ytrack_skill reads `ytrack skill list --json`", () => {
       status: "warn",
       fix: "ytrack skill sync; ytrack skill install --dir /repo/.agents/skills",
     });
+  });
+
+  posix(
+    "Given copies Workit's upgrade retired (missing, managed) and a current home copy, Then the row passes with a note",
+    () => {
+      const w = world();
+      const home = (dir: string) => path.join(w.home, dir, "skills");
+      expect(
+        doctorRow(
+          w,
+          list(
+            copy(home(".agents"), "current"),
+            copy(home(".codex"), "missing"),
+            copy(home(".cursor"), "missing"),
+          ),
+        ),
+      ).toEqual({
+        id: "ytrack_skill",
+        status: "pass",
+        detail: `ytrack skill 0.6.1 in ${home(".agents")}; ytrack still lists 2 removed copies (\`ytrack skill sync\` forgets them)`,
+      });
+    },
+  );
+
+  posix("Given a stale repository copy in a dir with spaces, Then the fix quotes it", () => {
+    const w = world();
+    expect(
+      doctorRow(
+        w,
+        list(
+          copy("/h/.agents/skills", "current"),
+          copy("/my repo/skills", "stale", { managed: false }),
+        ),
+      ),
+    ).toMatchObject({ fix: 'ytrack skill install --dir "/my repo/skills"' });
   });
 
   posix("Given no copy of the skill, Then the row names `ytrack skill install`", () => {

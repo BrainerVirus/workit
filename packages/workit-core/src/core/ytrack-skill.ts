@@ -167,6 +167,13 @@ const writeRecord = (stateDir: string, installs: YtrackSkillInstall[]): void => 
   renameSync(temp, file);
 };
 
+const quoteArg = (value: string): string =>
+  /^[\w./:@~+-]+$/u.test(value) ? value : `"${value.replaceAll('"', '\\"')}"`;
+
+/** The command that installs the skill into the skills directory `dir` by hand. */
+export const ytrackSkillCommand = (dir: string): string =>
+  `ytrack skill install --dir ${quoteArg(dir)}`;
+
 /** Forget every skill install Workit recorded (ytrack-skill.json goes). */
 export const forgetYtrackSkillRecord = (stateDir: string): void => writeRecord(stateDir, []);
 

@@ -133,7 +133,12 @@ created in `<state dir>/ytrack-skill.json`. When `~/.agents/skills/ytrack`
 holds the skill, `workit upgrade` (`retireYtrackSkillCopies` in
 `upgrade/ytrack-skill.ts`) removes the recorded Codex, Cursor, OpenCode and Pi
 copies through `removeYtrackSkill` and deletes the record; a failed removal
-keeps it for the next run. `~/.claude/skills/ytrack` is one of ytrack's own
+keeps it for the next run. A recorded copy whose real path is the shared
+copy's, holds it or sits inside it (a symlink either way) is never removed,
+and the shared copy is checked again before each removal. ytrack still lists
+the removed copies as missing; while a current copy sits in `~/.agents/skills`
+or `~/.claude/skills`, doctor passes with a note that `ytrack skill sync`
+forgets them. `~/.claude/skills/ytrack` is one of ytrack's own
 copies then, so upgrade forgets it and uninstall keeps it (`ytrackOwnsCopy`).
 Uninstall removes any other recorded row only when its path is exactly that
 host's `<root>/ytrack` and no component from the home down is a symlink

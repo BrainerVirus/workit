@@ -141,6 +141,7 @@ import {
   youTrackInUse,
   YTRACK_SKILL_LIST_SINCE,
   YTRACK_UPGRADE,
+  ytrackSkillCommand,
 } from "@workit-dev/core/src/core/ytrack-skill";
 import { describeInstall, listInstalls, type FoundInstall } from "../install/discover";
 import {
@@ -2997,16 +2998,30 @@ const checkYtrackSkill = (res: Resolved): DoctorCheck | null => {
       detail: "no copy of the ytrack agent skill: agents do not learn ytrack's commands",
       fix: "ytrack skill install",
     };
+  // A copy Workit's upgrade retired stays listed as missing until `ytrack skill
+  // sync`: harmless while a current copy sits in a home skills dir agents read.
+  const homeDirs = new Set([".agents", ".claude"].map((dir) => path.join(res.home, dir, "skills")));
+  const homeCurrent = list.copies.some(
+    (copy) => copy.state === "current" && homeDirs.has(copy.dir),
+  );
+  const retired = homeCurrent
+    ? list.copies.filter((copy) => copy.state === "missing" && copy.managed)
+    : [];
   const synced = list.copies.filter(
-    (copy) => copy.state === "missing" || (copy.state === "stale" && copy.managed),
+    (copy) =>
+      !retired.includes(copy) &&
+      (copy.state === "missing" || (copy.state === "stale" && copy.managed)),
   );
   // A copy in a repository changes only by hand, in that directory.
   const manual = list.copies.filter((copy) => copy.state === "stale" && !copy.managed);
+  const note = retired.length
+    ? `; ytrack still lists ${retired.length} removed ${retired.length === 1 ? "copy" : "copies"} (\`ytrack skill sync\` forgets them)`
+    : "";
   if (synced.length === 0 && manual.length === 0)
     return {
       id: "ytrack_skill",
       status: "pass",
-      detail: `ytrack skill ${held[0].version} in ${held.map((copy) => copy.dir).join(", ")}`,
+      detail: `ytrack skill ${held[0].version} in ${held.map((copy) => copy.dir).join(", ")}${note}`,
     };
   return {
     id: "ytrack_skill",
@@ -3020,7 +3035,7 @@ const checkYtrackSkill = (res: Resolved): DoctorCheck | null => {
       .join("; "),
     fix: [
       ...(synced.length ? ["ytrack skill sync"] : []),
-      ...manual.map((copy) => `ytrack skill install --dir ${copy.dir}`),
+      ...manual.map((copy) => ytrackSkillCommand(copy.dir)),
     ].join("; "),
   };
 };

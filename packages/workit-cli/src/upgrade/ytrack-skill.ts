@@ -3,6 +3,7 @@
 // ~/.claude/skills. Workit no longer installs it; `workit upgrade` removes the
 // per-host copies an older Workit installed once ytrack's shared copy exists,
 // so those hosts do not list the skill twice.
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { stateDir as workitStateDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 import {
@@ -35,12 +36,27 @@ const ytrackKeepsSkill = (home: string): boolean =>
 export const ytrackOwnsCopy = (host: SkillHost, home: string): boolean =>
   !SHARED_READERS.has(host) && ytrackKeepsSkill(home);
 
+const realOrResolved = (file: string): string => {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return path.resolve(file);
+  }
+};
+
+/** `a` is `b`, holds it, or sits inside it. */
+const overlaps = (a: string, b: string): boolean =>
+  a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+
 /**
  * Remove the Codex, Cursor, OpenCode and Pi copies Workit installed (its
  * ytrack-skill.json record, the files it wrote, never a copy someone else
  * made) when `~/.agents/skills/ytrack` holds the ytrack skill, then forget the
- * whole record, so uninstall leaves ytrack's own copies alone. One `ytrack`
- * row when something was removed or could not be; null otherwise.
+ * whole record, so uninstall leaves ytrack's own copies alone. A recorded copy
+ * that is the shared one through a symlink (either way round), holds it or
+ * sits inside it is never removed, and the shared copy is checked again
+ * before each removal. One `ytrack` row when something was removed or could
+ * not be; null otherwise.
  */
 export function retireYtrackSkillCopies(options: {
   home: string;
@@ -51,10 +67,17 @@ export function retireYtrackSkillCopies(options: {
   const recorded = readYtrackSkillRecord(stateDir);
   const shared = sharedYtrackSkill(home);
   if (recorded.length === 0 || !ytrackKeepsSkill(home)) return null;
+  const realShared = realOrResolved(shared);
   const removed: string[] = [];
   const failed: string[] = [];
   for (const install of recorded) {
     if (!SHARED_READERS.has(install.host)) continue;
+    if (overlaps(realOrResolved(install.path), realShared)) continue;
+    // Each removal may change the tree: the shared copy must still be ytrack's.
+    if (!ytrackKeepsSkill(home) || realOrResolved(shared) !== realShared) {
+      failed.push(`${shared} no longer holds the ytrack skill; nothing more removed`);
+      break;
+    }
     const root = hostSkillsRoot(install.host, home, env);
     const outcome = removeYtrackSkill(install, stateDir, { root, home });
     if (outcome.status === "removed") removed.push(install.path);
@@ -73,7 +96,7 @@ export function retireYtrackSkillCopies(options: {
   return {
     host: "ytrack",
     status: "updated",
-    reason: `Workit's copies of the ytrack skill removed: ytrack keeps ${shared}`,
+    reason: `retired Workit's copies of the ytrack skill: ytrack keeps ${shared}; ytrack still lists them as missing until \`ytrack skill sync\` (optional)`,
     details: removed,
   };
 }

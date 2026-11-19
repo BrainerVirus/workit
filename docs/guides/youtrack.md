@@ -73,6 +73,8 @@ is on `PATH`. It reads `ytrack skill list --json` and changes nothing:
 
 - No copy of the skill: the fix is `ytrack skill install`.
 - A stale or deleted copy in your home directory: the fix is `ytrack skill sync`.
+  The copies `workit upgrade` removed only add a note while a current copy is
+  in `~/.agents/skills` or `~/.claude/skills`; `ytrack skill sync` forgets them.
   A stale copy in a repository names `ytrack skill install --dir <dir>`.
 - A ytrack older than 0.6.0, without `ytrack skill list`: the fix is
   `ytrack upgrade` (to 0.6.0 or newer).

@@ -9,8 +9,8 @@ export const configHome = (home: string, env: NodeJS.ProcessEnv): string =>
 
 /**
  * Each host's native user skills directory (sources in
- * docs/agents/hosts.md#host-parity): the directory `ytrack skill install
- * --dir` writes `ytrack/` into.
+ * docs/agents/hosts.md#host-parity): where an older Workit installed
+ * `ytrack/`, which upgrade retires and uninstall removes.
  */
 export const hostSkillsRoot = (host: SkillHost, home: string, env: NodeJS.ProcessEnv): string => {
   switch (host) {
