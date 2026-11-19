@@ -104,7 +104,10 @@ workit gc --procs --apply  # stop them, with a proc.stopped ledger row each
 
 When the host session ends, Workit stops the processes it registered, and its
 workers' processes too. It runs `workit stop --session <id> --reason
-session-end` in the background, so the host never waits on it. Kept rows and
+session-end` in the background, so the host never waits on it. That stop
+runs in Workit's state directory (`<state>/procs`), never in your checkout, so
+it never keeps your checkout busy (on Windows, a folder a process runs in can't
+be deleted). Kept rows and
 rows in a workspace with `cleanup: keep` keep running. So does anything
 started from a plain terminal. The log says why each one was kept (on
 Windows it records only the stop that started; see Limits).
