@@ -418,7 +418,12 @@ test("usage: unknown names, --shell with argv, and the exit code mirrors the com
   const root = repo();
   const missing = await run(root, ["check", "lint", "--json"]);
   expect(missing.code).toBe(1);
-  expect(missing.json()).toMatchObject({ code: "not_found", unblock: "workit check test" });
+  expect(missing.json()).toMatchObject({
+    code: "not_found",
+    error: expect.stringContaining("configured: test"),
+  });
+  expect(missing.json().unblock).toStartWith("workit check test runs a configured one");
+  expect(missing.json().unblock).toEndWith("Retry as: workit check --name lint -- <command>");
   const shellArgv = await run(root, ["check", "--shell", "--json", "--", "echo", "hi"]);
   expect(shellArgv.code).toBe(2);
   const shell = await run(root, ["check", "--shell", "--json", "--", "exit 3"]);

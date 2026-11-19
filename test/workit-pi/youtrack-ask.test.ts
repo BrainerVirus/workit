@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { consumeInlineAsk } from "@/packages/workit-core/src/approvals/store";
+import { consumeInlineAsk, INLINE_TICKET_ENV } from "@/packages/workit-core/src/approvals/store";
 import { youTrackAsk } from "@/packages/workit-core/src/approvals/youtrack-ask";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -107,11 +107,23 @@ test("Given Pi print mode, When the call runs, Then no dialog shows and no ticke
 });
 
 test("Given a wrapped YouTrack write in Pi, When it is called, Then it is blocked naming the plain call", async () => {
-  const { result } = await call(`${COMMAND} | tail -3`, ctx("tui", "Approve once"));
+  const { result } = await call(`${COMMAND} | tee out.txt`, ctx("tui", "Approve once"));
   expect(result).toMatchObject({
     block: true,
     reason: expect.stringContaining(`Run \`${COMMAND}\` as its own call`),
   });
+});
+
+// Pi's dialog shows the full comment on the call itself, so a trailing
+// `| tail -3` hides nothing from the user and the call stays plain.
+test("Given a YouTrack write piped into tail in Pi's TUI, When the user approves the dialog showing the full comment, Then the call runs with its ticket", async () => {
+  writeFileSync(path.join(base, "note.md"), NOTE);
+  const shown: string[] = [];
+  const { result, command } = await call(`${COMMAND} | tail -3`, ctx("tui", "Approve once", shown));
+  expect(result).toBeUndefined();
+  for (const line of NOTE.split("\n")) expect(shown[0]).toContain(line);
+  expect(command.startsWith(`${INLINE_TICKET_ENV}=`)).toBe(true);
+  expect(command.endsWith(`${COMMAND} | tail -3`)).toBe(true);
 });
 
 // A supervised Pi worker (worker.ts): its pi process has WORKIT_PI_WORKER_SESSION

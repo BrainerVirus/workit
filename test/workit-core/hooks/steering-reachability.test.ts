@@ -37,8 +37,10 @@ const unreachable = (command: string): string | null => {
   while (words.length && GLOBAL.test(words[0])) words.splice(0, 2);
   const [verb, sub] = words;
   if (!verb || !/^[a-z][a-z-]*$/.test(verb)) return null;
-  // `workit help <verb>` is the router's own; its operand is a verb.
-  if (verb === "help") return !sub || findVerb(sub) ? null : `no verb ${sub}`;
+  // `workit help <verb> [sub]` is the router's own; its operand is a verb.
+  // A templated operand (`workit help ${words}`, the user-only verb's own
+  // words) is the call being answered, so only a literal one is checked.
+  if (verb === "help") return !sub || sub === "<x>" || findVerb(sub) ? null : `no verb ${sub}`;
   const entry = findVerb(verb);
   if (!entry) return `no verb ${verb}`;
   if (!entry.subcommands?.length || !sub || !/^[a-z][a-z-]*$/.test(sub)) return null;
