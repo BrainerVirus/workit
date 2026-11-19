@@ -398,7 +398,14 @@ const npmView = (stdout: string): NpmView | null => {
 
 export function verifyReleased(
   cwd: string,
-  input: { tag?: string | null; pkg?: string | null; sha?: string | null; actor: LedgerActor },
+  input: {
+    tag?: string | null;
+    pkg?: string | null;
+    sha?: string | null;
+    /** The remote the tag was pushed to; default origin, else the push remote. */
+    remote?: string | null;
+    actor: LedgerActor;
+  },
   npm: NpmRunner = systemNpm,
 ): ForgeResult<DeliveryReport> {
   if (!input.tag && !input.pkg)
@@ -408,7 +415,8 @@ export function verifyReleased(
   const observations: Observation[] = [];
   let tagSha: string | null = null;
   if (input.tag) {
-    const remote = remoteNames(cwd).includes("origin") ? "origin" : pushRemoteName(cwd);
+    const remote =
+      input.remote ?? (remoteNames(cwd).includes("origin") ? "origin" : pushRemoteName(cwd));
     if (!remote) return failure("not_found", "no remote is configured");
     const tip = remoteRefTip(cwd, remote, `refs/tags/${input.tag}`);
     if (!tip.ok) return failure(tip.code, tip.error);

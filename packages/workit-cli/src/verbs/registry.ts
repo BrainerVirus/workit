@@ -878,7 +878,7 @@ export const VERBS: readonly VerbEntry[] = [
     name: "release",
     group: "delivery",
     summary:
-      "git-flow releases without the git-flow binary: make a release locally, finish it (merge, tag, merge back, push, forge release), publish it, tag packages",
+      "git-flow releases without the git-flow binary: make a release locally, finish it (merge, tag, merge back, push, forge release), publish it, tag packages; tag-driven releases (goreleaser and similar): tag the green trunk",
     subcommands: [
       {
         name: "start",
@@ -900,15 +900,22 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "notes",
         usage:
-          "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--package <name>] [--track <t>]",
+          "workit release notes draft <version> [--reset] | notes show <version> | notes approve <version>  [--package <name>] [--track <t>] | notes edit <tag> --from-changelog",
         summary:
-          "Draft the forge release notes (Highlights, Breaking changes, Changes, Full changelog) in .git/workit/release-notes/, show them, or approve them (the user only, at a terminal; releaseNotes: review); a release package's tag (pkg-a@0.1.0) or --package reads that package's changelog",
+          "Draft the forge release notes (Highlights, Breaking changes, Changes, Full changelog) in .git/workit/release-notes/, show them, or approve them (the user only, at a terminal; releaseNotes: review); a release package's tag (pkg-a@0.1.0) or --package reads that package's changelog; edit puts a published release's changelog section at the top of its body (idempotent, release grant)",
       },
       {
         name: "package",
         usage: "workit release package <name> <version> [--at <ref>] [--latest] [--dry-run]",
         summary:
           "Tag a release package (workspace releasePackages) <namespace><version> on the workspace's release commit (default: the newest release tag on the remote production branch), push it under the release grant, publish its forge release from its changelog (not Latest unless --latest) and verify it",
+      },
+      {
+        name: "tag",
+        usage:
+          "workit release tag <vX.Y.Z> [--at <ref>] [--wait [--timeout 30m] [--interval 30s]] [--dry-run]",
+        summary:
+          "Tag-driven release (goreleaser and similar): under the release grant, tag the fetched remote trunk (or --at a commit on it) once its CI is green, the tag is new and the changelog has the version's section; push it (remote tip verified) without moving a local branch; --wait watches the release workflow and verifies the forge release",
       },
     ],
     examples: [
@@ -918,6 +925,8 @@ export const VERBS: readonly VerbEntry[] = [
       "workit release finish --dry-run",
       "workit release finish",
       "workit release package pkg-a 0.1.0 --dry-run",
+      "workit release tag v1.4.0 --dry-run",
+      "workit release notes edit v1.3.0 --from-changelog",
     ],
     load: () => import("./release"),
   }),

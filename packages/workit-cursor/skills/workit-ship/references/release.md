@@ -48,3 +48,11 @@ A workspace `releasePackages` entry, after the workspace release finished:
 release commit (`--at <ref>`), pushes it, creates its forge release (not
 Latest; `--latest` only when asked) and verifies it. Notes:
 `workit release notes draft <name>@<version>`.
+
+## Release by tag (goreleaser and similar)
+
+A repo whose workflow releases on a pushed `v<version>` tag: merge the
+changelog roll (`## [<version>]`) by PR, then `workit release tag
+v<version>` (never raw `git tag`). It refuses red CI, an existing tag or a
+missing section, naming the fix; `--wait` (background) watches the release
+workflow. Backfill notes: `workit release notes edit <tag> --from-changelog`.
