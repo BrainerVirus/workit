@@ -30,6 +30,9 @@
 // flow judges the rewrite. Never: `workit check -- …`, `workit lock run -- …`,
 // `workit run …`, `workit grant …`, or any verb outside WORKIT_ALLOWED_VERBS. The user-only calls (WORKIT_USER_ONLY,
 // #615) are asked (Claude Code, Codex) or denied (Cursor) on top of that.
+// `workit feedback` (#777) is asked on Claude Code and Codex and never allowed
+// on Cursor (its own approval prompt then asks), so a report reaches the
+// Workit tracker only with the user's yes.
 //
 // The merges are pure (input record in, record and added entries out), the
 // entries Workit added are recorded in its state dir so uninstall removes
@@ -80,6 +83,8 @@ export const CLAUDE_ASK: readonly string[] = [
   "Bash(workit stack land *--unverified*)",
   "Bash(workit git push *--overwrite-unintegrated*)",
   ...WORKIT_USER_ONLY.map((words) => `Bash(workit ${words.join(" ")}*)`),
+  // #777: an upstream report is the user's to approve, draft or post.
+  "Bash(workit feedback*)",
 ];
 /**
  * The mid-command ask globs Workit wrote before they were anchored (#759): a
@@ -141,7 +146,8 @@ export const codexRulesText = (): string => {
     (words) =>
       `prefix_rule(\n    pattern = ${JSON.stringify(["workit", ...words])},\n    decision = "prompt",\n    justification = "Only the user runs this Workit call (an approval, a grant change, host setup or a seal)",\n)\n`,
   );
-  return `${CODEX_HEADER}\n${[...rules, ...lease, grant, ...userOnly].join("\n")}`;
+  const feedback = `prefix_rule(\n    pattern = ["workit", "feedback"],\n    decision = "prompt",\n    justification = "A report to the Workit tracker is posted only with the user's yes",\n)\n`;
+  return `${CODEX_HEADER}\n${[...rules, ...lease, grant, ...userOnly, feedback].join("\n")}`;
 };
 
 // ---------------------------------------------------------------------------

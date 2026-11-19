@@ -270,6 +270,13 @@ export const workspaceConfigSchema = z
       .describe(
         "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing. A value Workit does not know reads as `keep`.",
       ),
+    // Read leniently (workspaceFeedback): an unknown value reads as on.
+    feedback: z
+      .unknown()
+      .optional()
+      .describe(
+        '`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ "account": "<login>" }` names the GitHub login it posts with. Inherited by nested workspaces.',
+      ),
     liveSessionGuard: z
       .boolean()
       .optional()
@@ -427,6 +434,17 @@ export const workspacesFileSchema = z
       .describe(
         "The global default model and effort per role and host (roles), the lead's own advisory model (lead), how a role model applies (enforce: advise, the default, or strict) and, under strict, whether a model the lead names on a spawn wins (allowLeadOverride, default false).",
       ),
+    feedback: z
+      .object({
+        account: nonBlank
+          .optional()
+          .describe(
+            "The GitHub login `workit feedback --post` uses when no workspace names one; never the workspace's work account by default.",
+          ),
+      })
+      .passthrough()
+      .optional()
+      .describe("`workit feedback` defaults for every workspace."),
   })
   .passthrough()
   .superRefine((file, context) => {
@@ -1325,6 +1343,45 @@ const isDelegation = (value: unknown): value is DelegationMode =>
 export const workspaceDelegation = (cwd: string, dir?: string): DelegationMode => {
   const source = inheritedSetting(cwd, dir, (entry) => isDelegation(entry.delegation))?.source;
   return isDelegation(source?.delegation) ? source.delegation : "inline-first";
+};
+
+/** A GitHub login as `workit feedback` takes it; anything else reads as unset. */
+const feedbackLogin = (value: unknown): string | null => {
+  const account = (value as { account?: unknown } | null)?.account;
+  return typeof account === "string" && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(account)
+    ? account
+    : null;
+};
+
+/** The entry cwd's `feedback` comes from (inherited like `trailers`), and whether it is off. */
+const feedbackSetting = (cwd: string, dir: string | undefined) => {
+  const found = inheritedSetting(cwd, dir, (entry) => entry.feedback !== undefined);
+  const value = found?.source?.feedback;
+  return { found, value, off: value === "off" };
+};
+
+/** Whether `workit feedback` is off for cwd's workspace (#777): its contract line is then hidden. */
+export const workspaceFeedbackOff = (cwd: string, dir?: string): boolean =>
+  feedbackSetting(cwd, dir).off;
+
+/**
+ * `workit feedback` for cwd's workspace (#777): `off` as above, and the login
+ * it posts with: the nearest entry's `feedback.account`, else the file's
+ * top-level `feedback.account`, else null (the verb then asks for
+ * --account). An unreadable workspaces.json reads as on with no account.
+ */
+export const workspaceFeedback = (
+  cwd: string,
+  dir?: string,
+): { off: boolean; account: string | null; workspace: string | null } => {
+  const { found, value, off } = feedbackSetting(cwd, dir);
+  const read = readWorkspacesResult(dir);
+  const global = read.status === "valid" ? feedbackLogin(read.document?.feedback) : null;
+  return {
+    off,
+    account: off ? null : (feedbackLogin(value) ?? global),
+    workspace: found?.workspace ?? null,
+  };
 };
 
 export const CHANGELOG_MODES = ["off", "update", "create"] as const;

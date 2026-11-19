@@ -693,6 +693,23 @@ Per host:
   launch from the shared store. No hook reads a worker's error, so Pi marks no
   limit itself.
 
+### Feedback
+
+`workit feedback` ([reporting Workit friction](feedback.md)) reads one key,
+`feedback`, in workspaces.json. At the top level, `{ "account": "<login>" }`
+names the GitHub login `--post` uses in every workspace. On a workspace,
+`"off"` drops the feedback line from the agent contract and makes the verb
+refuse, and `{ "account": "<login>" }` overrides the top-level login. Nested
+workspaces inherit it. With no login configured, `--post` needs `--account`:
+the workspace's own forge account is never used by default.
+
+```json
+{
+  "feedback": { "account": "your-personal-login" },
+  "workspaces": [{ "name": "client", "glob": "/home/you/client/**", "feedback": "off" }]
+}
+```
+
 ### Live-session guard
 
 Two agent sessions editing one checkout overwrite each other's work. The

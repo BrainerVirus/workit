@@ -148,6 +148,25 @@
             "enum": ["auto", "keep"],
             "description": "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing. A value Workit does not know reads as `keep`."
           },
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["on", "off"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "account": {
+                    "type": "string",
+                    "description": "The GitHub login `workit feedback --post` uses."
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "description": "`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ \"account\": \"<login>\" }` names the GitHub login it posts with. Inherited by nested workspaces."
+          },
           "liveSessionGuard": {
             "description": "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
             "type": "boolean"
@@ -843,6 +862,18 @@
             }
           ],
           "description": "How long a provider stays exhausted after a usage limit that names no reset time: a duration (5h, 1d 12h) or hours (default 5h)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "feedback": {
+      "description": "`workit feedback` defaults for every workspace.",
+      "type": "object",
+      "properties": {
+        "account": {
+          "description": "The GitHub login `workit feedback --post` uses when no workspace names one; never the workspace's work account by default.",
+          "type": "string",
+          "pattern": "\\S"
         }
       },
       "additionalProperties": false

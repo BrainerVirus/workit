@@ -1,6 +1,6 @@
 import { claudeSpawnTable } from "./role-models";
 import type { Assurance, Capability, Dimension, Policy } from "./task-contract";
-import { hostFamily } from "./workspaces";
+import { hostFamily, workspaceFeedbackOff } from "./workspaces";
 
 export type MethodId =
   | "workit-shape"
@@ -102,6 +102,14 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
   });
 }
 
+/**
+ * The upstream-report rule (#777); a workspace with `feedback: off` drops it.
+ * A host that renders the contract without a session (OpenCode, Pi) always
+ * shows it, and the verb itself still refuses there.
+ */
+export const FEEDBACK_LINE =
+  "Friction Workit caused (a verb failing wrongly, a hook blocking wrongly): offer the user\n`workit feedback`, once per distinct problem, without stopping the task.";
+
 const BOOTSTRAP = `
 Workit is optional coordination and proof tooling: you decide what and
 whether, the CLI does how and records what it observed.
@@ -156,6 +164,7 @@ effect before a retry.
 Mid-task: never silently drop or resume an objective (workit-continue).
 Notes, drafts, logs, resume files: \`workit dir notes|handoffs\` (outside the
 repo), never the repo tree.
+FEEDBACK_LINE
 
 Skills: load the skill, never act from memory.
 - brainstorm, plan, spec, grill, should we: workit-shape
@@ -181,7 +190,11 @@ Skills: load the skill, never act from memory.
 export const invariantBootstrap = (
   session: { cwd: string; host: string } | null = null,
 ): string => {
+  const feedbackOff = session !== null && workspaceFeedbackOff(session.cwd);
+  const bootstrap = BOOTSTRAP.replace("FEEDBACK_LINE\n", () =>
+    feedbackOff ? "" : `${FEEDBACK_LINE}\n`,
+  );
   const table =
     session && hostFamily(session.host) === "claude_code" ? claudeSpawnTable(session.cwd) : null;
-  return table ? `${BOOTSTRAP}\n${table}` : BOOTSTRAP;
+  return table ? `${bootstrap}\n${table}` : bootstrap;
 };

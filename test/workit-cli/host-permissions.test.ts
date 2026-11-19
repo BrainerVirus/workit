@@ -115,6 +115,7 @@ test("Given a settings.json with user entries, When `workit setup --hosts claude
     "Bash(workit uninstall*)",
     "Bash(workit install*)",
     "Bash(workit workspace seal*)",
+    "Bash(workit feedback*)",
   ]);
   expect(value.autoMode.environment.slice(0, 2)).toEqual([
     "$defaults",
@@ -249,6 +250,7 @@ test("Given a Codex home, When setup and uninstall run, Then Workit's rules file
     "workit uninstall",
     "workit install",
     "workit workspace seal",
+    "workit feedback",
   ]);
   applyUninstall(planUninstall({ home, env }), { home, env });
   expect(existsSync(file)).toBe(false);
@@ -307,6 +309,7 @@ const FORBIDDEN = [
   "workit grant unset work merge",
   "workit gc --prune-recovery --yes",
   "workit test-audit run",
+  'workit feedback "t" --body-file - --post --account me',
 ];
 
 test.each(FORBIDDEN)(
@@ -321,6 +324,22 @@ test.each(FORBIDDEN)(
     expect(codexAllows.filter((p) => p.every((w, i) => words[i] === w))).toEqual([]);
   },
 );
+
+test("Given `workit setup`, Then `workit feedback --post` is an ask on Claude Code and Codex and never allowed on Cursor (#777)", () => {
+  const command = 'workit feedback "t" --body-file d.md --post --account me';
+  expect(CLAUDE_ASK.filter((rule) => claudeMatches(rule, command))).toEqual([
+    "Bash(workit feedback*)",
+  ]);
+  expect(CURSOR_ALLOW.some((rule) => cursorMatches(rule, command))).toBe(false);
+  const prompts = [
+    ...codexRulesText().matchAll(/pattern = \[([^\]]*)\],\n\s*decision = "prompt"/gu),
+  ].map((m) => JSON.parse(`[${m[1]}]`) as string[]);
+  const words = command.split(" ");
+  expect(prompts.filter((p) => p.every((w, i) => words[i] === w))).toEqual([
+    ["workit", "feedback"],
+  ]);
+  expect(isAllowedWorkitCall(words)).toBe(false);
+});
 
 test("Given the lease verbs, Then Claude Code, Cursor and Codex allow `workit check <name>` and `workit lock status|wait`", () => {
   const codexAllows = [
