@@ -37,9 +37,9 @@ import {
   usage,
 } from "./forge-common";
 
-export const TAG_USAGE =
+const TAG_USAGE =
   "workit release tag <vX.Y.Z> [--at <ref>] [--wait [--timeout 30m] [--interval 30s]] [--dry-run] [--json]";
-export const NOTES_EDIT_USAGE = "workit release notes edit <tag> --from-changelog [--json]";
+const NOTES_EDIT_USAGE = "workit release notes edit <tag> --from-changelog [--json]";
 
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_INTERVAL_MS = 30_000;
