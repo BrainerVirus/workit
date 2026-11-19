@@ -370,6 +370,11 @@ function unstage(argv: string[], io: Io): number {
 type PushOptions = {
   /** Publish the forge release of a pushed tag (not when `release finish` pushes: it publishes it). */
   forgeRelease: boolean;
+  /**
+   * Push to the remote the caller checked, not the current branch's: `release
+   * tag` read CI and the tag on its trunk's push remote (`branch` is that trunk).
+   */
+  remote?: { name: string; branch: string };
 };
 
 async function push(
@@ -492,7 +497,7 @@ async function push(
  * Needs the `release` grant (never a default) and the `push` grant.
  */
 async function releasePush(names: string[], io: Io, options: PushOptions): Promise<number> {
-  const plan = releasePushPreflight(io.cwd, names);
+  const plan = releasePushPreflight(io.cwd, names, { remote: options.remote?.name ?? null });
   if (!plan.ok) return forgeFail(io, plan);
   // Each pushed release tag's notes (workspace or track releaseNotes); under
   // review an unapproved draft refuses before anything is pushed.
@@ -530,7 +535,9 @@ async function releasePush(names: string[], io: Io, options: PushOptions): Promi
       }),
     );
   const firstBranch = plan.data.refs.find((ref) => ref.kind === "branch")?.name;
-  const identity = plan.data.local ? null : pushIdentity(io, firstBranch ?? plan.data.refs[0].name);
+  const identity = plan.data.local
+    ? null
+    : pushIdentity(io, options.remote?.branch ?? firstBranch ?? plan.data.refs[0].name);
   if (identity && !identity.ok) return forgeFail(io, identity);
   const checked = identity?.data ?? null;
   const pushGrant = requireGrant(io.cwd, "push", { forge: checked?.forge != null, target });
@@ -683,10 +690,14 @@ function trailers(argv: string[], io: Io): number {
 const READ_ONLY = new Set(["status", "diff", "log", "fetch", "show", "blame"]);
 
 /** `release finish`'s push: `git push --release` without the forge release (finish publishes it). */
-export async function runFinishPush(argv: string[], io: Io): Promise<number> {
+export async function runFinishPush(
+  argv: string[],
+  io: Io,
+  remote?: PushOptions["remote"],
+): Promise<number> {
   const [sub, ...rest] = argv;
   if (sub !== "push") return usage(io, "runFinishPush only pushes", PUSH_USAGE);
-  return push(rest, io, { forgeRelease: false });
+  return push(rest, io, { forgeRelease: false, ...(remote ? { remote } : {}) });
 }
 
 export async function run(argv: string[], io: Io): Promise<number> {

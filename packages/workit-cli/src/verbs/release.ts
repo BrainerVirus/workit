@@ -798,10 +798,14 @@ export async function runRelease(
   if (sub === "notes") return notesVerb(rest, io, deps);
   if (sub === "package") return releasePackage(rest, io);
   if (sub === "tag")
-    return releaseTag(rest, io, (tag) =>
-      // The release workflow the tag starts publishes the forge release, not the push.
+    return releaseTag(rest, io, (tag, remote) =>
+      // The release workflow the tag starts publishes the forge release, not the push;
+      // the push goes to the remote whose trunk, tag and CI were checked.
       subVerb(
-        () => import("./git").then((verb) => ({ run: verb.runFinishPush })),
+        () =>
+          import("./git").then((verb) => ({
+            run: (args: string[], subIo: Io) => verb.runFinishPush(args, subIo, remote),
+          })),
         ["push", "--release", tag],
         io,
       ),

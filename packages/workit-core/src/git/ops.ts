@@ -1735,6 +1735,8 @@ const lineOfTag = (tag: string, lines: readonly ReleaseLine[]): ReleaseLine | nu
 export function releasePushPreflight(
   cwd: string,
   names: readonly string[],
+  /** The remote a caller already checked (`release tag`: its trunk's push remote); else the branch's. */
+  options: { remote?: string | null } = {},
 ): ForgeResult<ReleasePushPlan> {
   const progress = operationInProgress(cwd);
   if (progress) return inProgressFailure(progress.operation, "push");
@@ -1821,7 +1823,8 @@ export function releasePushPreflight(
       );
     refs.push({ kind: "branch", name: branchName, ref: `refs/heads/${branchName}`, sha: branch });
   }
-  const remote = pushRemoteName(cwd, refs.find((ref) => ref.kind === "branch")?.name ?? null);
+  const remote =
+    options.remote ?? pushRemoteName(cwd, refs.find((ref) => ref.kind === "branch")?.name ?? null);
   if (!remote)
     return failure(
       "not_found",
