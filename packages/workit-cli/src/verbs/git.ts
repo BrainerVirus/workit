@@ -40,7 +40,7 @@ import { findSubcommand, findVerb } from "./registry";
 import { ensureImplicitTask } from "./implicit-task";
 import { emit, fail, ok, type Io } from "../output";
 import { success, type ForgeResult } from "@workit-dev/core/src/forge/types";
-import { connect, forgeFail, parseFlags, pushIdentity, usage } from "./forge-common";
+import { connect, forgeFail, parseFlags, pushIdentity, readAllStdin, usage } from "./forge-common";
 import { rebase } from "./git-rebase";
 import { hold } from "./git-hold";
 
@@ -251,9 +251,7 @@ function commitMessage(parsed: CommitArgs, io: Io): string | { error: string } {
   const [file] = parsed.files;
   if (file === undefined) return parsed.messages.join("\n\n");
   try {
-    return file === "-"
-      ? readFileSync(0, "utf8")
-      : readFileSync(path.resolve(io.cwd, file), "utf8");
+    return file === "-" ? readAllStdin() : readFileSync(path.resolve(io.cwd, file), "utf8");
   } catch (error) {
     return {
       error: `cannot read -F ${file}: ${error instanceof Error ? error.message : String(error)}`,
@@ -322,9 +320,7 @@ async function commit(argv: string[], io: Io): Promise<number> {
 /** The patch text from `--patch <file|->` (a path relative to the checkout, or `-` for stdin). */
 function readPatch(file: string, io: Io): string | { error: string } {
   try {
-    return file === "-"
-      ? readFileSync(0, "utf8")
-      : readFileSync(path.resolve(io.cwd, file), "utf8");
+    return file === "-" ? readAllStdin() : readFileSync(path.resolve(io.cwd, file), "utf8");
   } catch (error) {
     return {
       error: `cannot read --patch ${file}: ${error instanceof Error ? error.message : String(error)}`,

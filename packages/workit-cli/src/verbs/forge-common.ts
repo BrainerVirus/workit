@@ -1,7 +1,7 @@
 // Shared plumbing for the forge verbs (`pr`, `ci`, `git push`, `verify-delivery`):
 // flag parsing, forge resolution + identity check, envelope mapping, and the
 // human rendering of a PR status document.
-import { readFileSync } from "node:fs";
+import { readFileSync, readSync } from "node:fs";
 import type { ForgeRunner } from "@workit-dev/core/src/forge/exec";
 import type { PrStatusDoc } from "@workit-dev/core/src/forge/report";
 import { evidenceLines } from "@workit-dev/core/src/core/policy/check-evidence";
@@ -18,6 +18,35 @@ import { vcsConfig } from "@workit-dev/core/src/core/vcs-config";
 export { parseDuration } from "@workit-dev/core/src/duration";
 import { emit, fail, type Io } from "../output";
 
+/**
+ * All of stdin, read synchronously. Touching `process.stdin` (the TTY checks
+ * do) leaves fd 0 non-blocking when it is a pipe, so a plain read fails with
+ * EAGAIN while the writer has not written yet (`gh … | workit pr edit
+ * --body-file -`); wait and read again until end of file.
+ */
+export function readAllStdin(): string {
+  try {
+    return readFileSync(0, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+  }
+  const chunks: Buffer[] = [];
+  const buffer = Buffer.alloc(65_536);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    let read: number;
+    try {
+      read = readSync(0, buffer, 0, buffer.length, null);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+      Atomics.wait(pause, 0, 0, 10);
+      continue;
+    }
+    if (read === 0) return Buffer.concat(chunks).toString("utf8");
+    chunks.push(Buffer.from(buffer.subarray(0, read)));
+  }
+}
+
 /** Test seams: a recorded-fixture runner, a virtual clock, a fake npm and stdin. */
 export const forgeDeps: {
   runner: ForgeRunner | undefined;
@@ -28,7 +57,7 @@ export const forgeDeps: {
 } = {
   runner: undefined,
   npm: undefined,
-  readStdin: () => readFileSync(0, "utf8"),
+  readStdin: readAllStdin,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
 };

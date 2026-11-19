@@ -14,7 +14,7 @@ import {
   mergeChangelogFiles,
 } from "@workit-dev/core/src/core/changelog-merge";
 import { emit, fail, ok, type Io } from "../output";
-import { parseFlags, usage } from "./forge-common";
+import { parseFlags, readAllStdin, usage } from "./forge-common";
 
 const MERGE_USAGE = "workit changelog merge <base> <ours> <theirs>";
 const DRIVER_USAGE = "workit changelog driver install";
@@ -24,7 +24,7 @@ const USAGE =
 const readEntries = (raw: string, cwd: string): unknown => {
   const text =
     raw === "-"
-      ? readFileSync(0, "utf8")
+      ? readAllStdin()
       : raw.startsWith("@")
         ? readFileSync(path.resolve(cwd, raw.slice(1)), "utf8")
         : raw;
