@@ -26,6 +26,7 @@ import {
   type ForgeHosts,
   type SshConfig,
 } from "../git/rev";
+import { gitDirs } from "../git/facts";
 import { FORGE_TIMEOUTS, isNetworkError, systemRunner, type ForgeRunner } from "./exec";
 import { createGitHubForge } from "./github";
 import { createGitLabForge } from "./gitlab";
@@ -70,6 +71,12 @@ export type ResolveOptions = {
   sshConfig?: string | SshConfig;
   /** Absolute deadline (`now()` clock) for every call, resolution included; null = none. */
   deadline?: number | null;
+  /**
+   * `--repo owner/name`: outside a git checkout there is no push remote, so
+   * the forge is this repo on the workspace provider's host (github.com by
+   * default). Inside a checkout the push remote still decides the forge.
+   */
+  repo?: string | null;
 };
 
 // Per-process memo of credential lookups and /user answers (a long-lived MCP
@@ -279,6 +286,29 @@ const configuredHosts = (): ForgeHosts => {
   return { github: host("github"), gitlab: host("gitlab") };
 };
 
+/** The forge of `--repo owner/name` named outside a checkout: the provider's host, github.com by default. */
+const namedRepoForge = (
+  repo: string,
+  provider: string | undefined,
+  hosts: ForgeHosts,
+):
+  | ReturnType<typeof pushForge>
+  | { ok: false; code: "invalid_input"; error: string; unblock: string } => {
+  const kind = provider === "gitlab" ? "gitlab" : "github";
+  const host = hosts[kind]?.[0] ?? `${kind}.com`;
+  const forge = /^[\w-]+(?:\/\w[\w.-]*)+$/u.test(repo)
+    ? deriveForge(`https://${host}/${repo}`, { hosts })
+    : null;
+  return forge
+    ? { ok: true, remote: "", url: `https://${host}/${repo}`, forge }
+    : {
+        ok: false,
+        code: "invalid_input",
+        error: `--repo is owner/name or group/project on ${host}, without the host: not "${repo}"`,
+        unblock: `workit issue … --repo <owner/name>`,
+      };
+};
+
 const createForge = (derived: DerivedForge, repo: string, runner: ForgeRunner): Forge =>
   derived.kind === "github"
     ? createGitHubForge({ apiHost: derived.apiHost, repo, runner })
@@ -303,7 +333,18 @@ export function resolveForge(
   const unsealed = identityDenial(cwd, workspace);
   if (unsealed) return failure("blocked", unsealed, SEAL_UNBLOCK);
   const hosts = configuredHosts();
-  const pushed = pushForge(cwd, { branch: options.branch, hosts, sshConfig: options.sshConfig });
+  const outside = options.repo && gitDirs(cwd) === null ? options.repo : null;
+  // Outside a checkout only a workspace says which forge and account --repo
+  // means: without one, guessing github.com could file on the wrong forge.
+  if (outside && workspace === null)
+    return failure(
+      "blocked",
+      `--repo ${outside} outside a git checkout needs a workspace covering ${cwd} to name its forge, and none does`,
+      `run it from a checkout of ${outside}, or from a folder a workspace covers (workit workspace list --cwd <folder>)`,
+    );
+  const pushed = outside
+    ? namedRepoForge(outside, workspace?.vcs?.provider, hosts)
+    : pushForge(cwd, { branch: options.branch, hosts, sshConfig: options.sshConfig });
   if (!pushed.ok) return failure(pushed.code, pushed.error, pushed.unblock);
   const conflict = forgeConflict(pushed.forge, workspace?.vcs?.provider);
   if (conflict) return failure("blocked", conflict.error, conflict.unblock);

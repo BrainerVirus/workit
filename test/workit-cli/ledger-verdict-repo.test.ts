@@ -142,3 +142,74 @@ test("a --pr verdict without --branch is refused when this checkout is on anothe
   expect(named.code).toBe(0);
   expect(named.json().data.branch).toBe("feature/y");
 });
+
+test("from the parent of the workspace's repos, a --branch verdict is recorded in the one repo that has the branch", async () => {
+  const root = workspace();
+  const repoA = repoOn(path.join(root, "repo-a"), "feature/x");
+  const repoB = repoOn(path.join(root, "repo-b"), "feature/y");
+
+  const recorded = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "live run",
+    "--branch",
+    "feature/y",
+  ]);
+
+  expect(recorded.code).toBe(0);
+  expect(recorded.stderr).toContain(`recording in ${repoB}`);
+  expect((await verdictRows(repoB)).map((row) => row.branch)).toEqual(["feature/y"]);
+  expect(await verdictRows(repoA)).toEqual([]);
+});
+
+test("from the parent of two repos that both have the branch, the verdict is refused naming both", async () => {
+  const root = workspace();
+  const repoA = repoOn(path.join(root, "repo-a"), "feature/x");
+  const repoB = repoOn(path.join(root, "repo-b"), "feature/x");
+
+  const refused = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "live run",
+    "--branch",
+    "feature/x",
+    "--json",
+  ]);
+
+  expect(refused.code).not.toBe(0);
+  const body = refused.json();
+  expect(body.error).toContain("branch_ambiguous");
+  expect(body.error).toContain(repoA);
+  expect(body.error).toContain(repoB);
+  expect(body.unblock).toContain("workit --cwd ");
+  expect(await verdictRows(repoA)).toEqual([]);
+  expect(await verdictRows(repoB)).toEqual([]);
+});
+
+test("from a parent with more folders than the scan reads, one match is refused as branch_ambiguous, not routed", async () => {
+  const root = workspace();
+  const repoA = repoOn(path.join(root, "a-repo"), "feature/x");
+  for (let i = 0; i < 200; i++) mkdirSync(path.join(root, `z-${String(i).padStart(3, "0")}`));
+
+  const refused = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "live run",
+    "--branch",
+    "feature/x",
+    "--json",
+  ]);
+
+  expect(refused.code).not.toBe(0);
+  const body = refused.json();
+  expect(body.error).toContain("branch_ambiguous");
+  expect(body.error).toContain("too many folders");
+  expect(body.unblock).toContain(`workit --cwd ${repoA} `);
+  expect(await verdictRows(repoA)).toEqual([]);
+});

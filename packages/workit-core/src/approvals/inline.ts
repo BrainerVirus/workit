@@ -6,11 +6,13 @@
 // A host acts only on one plain call: anything around it (a chain, a pipe, a
 // redirect, a substitution, a variable, a leading cd, a shell's -c script)
 // could change what runs or repeat it, so the hook denies it and names the
-// plain form. Global options before the verb (`--json`, `--cwd`,
+// plain form. A trailing read-only filter (`| tail -5`, `| head -n 20`)
+// reads the output and neither changes nor repeats the call, so it keeps a
+// call plain; `2>&1` is no redirect the tokenizer records. Global options before the verb (`--json`, `--cwd`,
 // `--session`) are the CLI's own and keep a call plain.
 import path from "node:path";
 import { youTrackWritesMode } from "../autonomy";
-import { segmentsOf, type ShellDialect } from "../hooks/shell-words";
+import { segmentsOf, type Segment, type ShellDialect } from "../hooks/shell-words";
 import { isWorkitWord, verbIndex } from "./call";
 import { isReleaseNotesApprove, releaseNotesAskAt } from "./release-notes-ask";
 import type { ApprovalKind } from "./store";
@@ -69,6 +71,28 @@ const cwdOf = (globals: readonly string[]): string | null => {
 export const inlineCallCwd = (call: { cwd: string | null }, base: string): string =>
   call.cwd ? path.resolve(base, call.cwd) : base;
 
+/** `tail`/`head` with only a line or byte count. */
+const isReadFilter = (segment: Segment): boolean =>
+  (segment.words[0] === "tail" || segment.words[0] === "head") &&
+  segment.words.slice(1).every((word) => /^(?:-[nc]|-[nc]?\d+|\+?\d+)$/u.test(word)) &&
+  !segment.redirects.length &&
+  !segment.subs?.length &&
+  !segment.stdin?.length &&
+  !segment.inputs?.length &&
+  !segment.expands?.length &&
+  !segment.group &&
+  !segment.unanalyzable;
+
+/** The segments after the first are one pipeline of read-only filters fed by it. */
+const onlyFiltersAfter = (segments: readonly Segment[]): boolean =>
+  segments[0]?.pipe === true &&
+  segments
+    .slice(1)
+    .every(
+      (segment, index, rest) =>
+        isReadFilter(segment) && (index === rest.length - 1 ? !segment.pipe : segment.pipe),
+    );
+
 /** The inline-asked Workit call `command` runs, or null when it runs none. */
 export const inlineCallIn = (
   command: string,
@@ -90,7 +114,7 @@ export const inlineCallIn = (
     const call = words.slice(at);
     if (!asked(call)) continue;
     const plain =
-      segments.length === 1 &&
+      (segments.length === 1 || (segment === segments[0] && onlyFiltersAfter(segments))) &&
       start === 0 &&
       words[0] === "workit" &&
       !segment.redirects.length &&

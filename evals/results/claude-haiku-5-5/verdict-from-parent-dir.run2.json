@@ -2,31 +2,26 @@
   "case": "verdict-from-parent-dir",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "5ffa9a8ec05b84f4",
-  "date": "2026-11-18T16:30:37.245Z",
+  "workitVersion": "workit-dev-v2.15.0+998be989db",
+  "key": "797439cd4f24250a",
+  "date": "2026-11-19T02:08:25.118Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 0,
-    "durationMs": 9,
-    "costUsd": 0.03624566,
+    "durationMs": 5,
+    "costUsd": 0.03172955,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 5,
-    "failures": [
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 1 failed of 3 Workit interaction(s): #2 Bash(git rev-parse HEAD && git status --short && node bin/greet.js ada; echo \"exit $?\"; grep -n '\"version\"' package.json) in a subagent denied: PreToolUse:Bash hook error: workit scratch confinement: verifier a84e2e49f3c04a57f may write only in its scratch dir <world>/repo/.workit-scratch, and `git stat; #4 Bash(workit ledger verdict verified --kind live --cwd <world> --branch feature/greet-version --session f472a3bd-3834-4f04-b59) in a subagent failed: Exit code 2"
-      }
-    ],
+    "pass": true,
+    "calls": 4,
+    "failures": [],
     "firstTry": {
-      "interactions": 3,
-      "failed": 1,
-      "denied": 1
+      "interactions": 2,
+      "failed": 0,
+      "denied": 0
     }
   }
 }

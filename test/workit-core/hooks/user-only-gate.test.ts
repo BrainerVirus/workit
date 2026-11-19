@@ -75,6 +75,8 @@ test.each([
   ["workit --json release notes approve 1.0.0", ["release", "notes", "approve"]],
   ["workit --session s1 --json grant set ws merge=true", ["grant", "set"]],
   ["cd /x && /usr/bin/workit --cwd /x grant raise ws", ["grant", "raise"]],
+  ["workit install --help --hosts=cursor", ["install"]],
+  ["workit install --yes --help", ["install"]],
 ])("Given `%s`, When read, Then it is a user-only call", (command, words) => {
   expect(userOnlyWorkitCall(command)).toEqual(words);
 });
@@ -86,6 +88,9 @@ test.each([
   ["workit --cwd /x grant show ws"],
   ["workit check test -- grant set"],
   ["echo grant set"],
+  ["workit install --help"],
+  ["workit --cwd /x uninstall -h"],
+  ["workit grant set --help"],
 ])("Given `%s`, When read, Then it is not a user-only call", (command) => {
   expect(userOnlyWorkitCall(command)).toBeNull();
 });
@@ -94,6 +99,7 @@ test("Given a user-only call with a global option first on Cursor, When the hook
   const out = cursor(repo(), "workit --cwd /x grant set ws merge=true");
   expect(out.permission).toBe("deny");
   expect(out.agent_message).toContain("run it in your own terminal");
+  expect(out.agent_message).toContain("`workit help grant set`");
 });
 
 test("Given a user-only call on Claude Code, When PreToolUse runs, Then it asks", () => {
@@ -121,16 +127,19 @@ test("Given workit grant raise on Codex and Pi, When the hook runs, Then it deni
   expect(pi(root, "workit --cwd /x grant raise ws")?.block).toBe(true);
 });
 
-test.each([["workit grant show"], ["workit help grant set"], ["workit release notes draft 1"]])(
-  "Given `%s`, When the hooks run, Then this gate does not deny or ask",
-  (command) => {
-    const root = repo();
-    expect(claude(root, command)?.permissionDecision).toBeUndefined();
-    expect(cursor(root, command).permission).not.toBe("deny");
-    expect(codex(root, command)?.permissionDecision).toBeUndefined();
-    expect(pi(root, command)?.block).toBeUndefined();
-  },
-);
+test.each([
+  ["workit grant show"],
+  ["workit help grant set"],
+  ["workit release notes draft 1"],
+  ["workit install --help"],
+  ["workit uninstall --help"],
+])("Given `%s`, When the hooks run, Then this gate does not deny or ask", (command) => {
+  const root = repo();
+  expect(claude(root, command)?.permissionDecision).toBeUndefined();
+  expect(cursor(root, command).permission).not.toBe("deny");
+  expect(codex(root, command)?.permissionDecision).toBeUndefined();
+  expect(pi(root, command)?.block).toBeUndefined();
+});
 
 // Whole-verb user-only calls (round 2 user decision): setup, uninstall,
 // install and workspace seal, behind every wrapper an agent reaches for, in a

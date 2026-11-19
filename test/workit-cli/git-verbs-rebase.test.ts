@@ -177,3 +177,17 @@ test("git rebase: an unknown argument is a usage error", async () => {
   expect(result.code).not.toBe(0);
   expect(result.stderr).toContain("workit git rebase");
 });
+
+test("Given `workit git rebase origin/main` (git's positional shape), When run, Then it rebases onto the fetched origin/main", async () => {
+  const repo = setup();
+  await pushedFeature(repo);
+  const mainTip = repo.pushFromElsewhere("main");
+
+  const result = await run(["git", "rebase", "origin/main", "--json"], repo.cwd);
+  expect(result.code).toBe(0);
+  expect(result.json().data.base).toBe("origin/main");
+  expect(repo.git("rev-parse", "HEAD~1")).toBe(mainTip);
+
+  const both = await run(["git", "rebase", "origin/main", "--onto", "main", "--json"], repo.cwd);
+  expect(both.code).toBe(2);
+});

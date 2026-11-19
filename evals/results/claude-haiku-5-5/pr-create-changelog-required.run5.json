@@ -2,15 +2,15 @@
   "case": "pr-create-changelog-required",
   "run": 5,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "f6c4696842bf7021",
-  "date": "2026-11-18T17:02:56.361Z",
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "00fa41e5825d8c87",
+  "date": "2026-11-19T01:08:13.033Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 10,
-    "durationMs": 22573,
-    "costUsd": 0.0070949,
+    "durationMs": 27071,
+    "costUsd": 0.00788493,
     "stop": "success"
   },
   "grade": {
@@ -19,16 +19,12 @@
     "calls": 7,
     "failures": [
       {
-        "rule": "require",
-        "detail": "no call matches /workit[^\\n]*pr create/ not denied: the PR is created"
-      },
-      {
         "rule": "first-try",
-        "detail": "0 denied and 1 failed of 5 Workit interaction(s): #2 Bash(workit grant show; printf '%s\\n' ---; git status --short; printf '%s\\n' ---; git log --oneline main..HEAD; printf '%s\\n') failed: Exit code 1"
+        "detail": "0 denied and 1 failed of 6 Workit interaction(s): #4 Bash(workit changelog apply --entries '{\"Fixed\":[\"`node x.js` now prints `y`\"]}' --preview 2>&1; printf '%s\\n' ---; workit ch) failed: <outside-world file: unresolved, 334 bytes>"
       }
     ],
     "firstTry": {
-      "interactions": 5,
+      "interactions": 6,
       "failed": 1,
       "denied": 0
     }

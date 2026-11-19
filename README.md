@@ -303,8 +303,8 @@ shape  →  implement  →  review  →  ship
    fork, stack-parent or foreign-author branch). `workit verify-delivery`
    confirms it landed. A workspace can opt in to a changelog step
    (`workit workspace set <ws> changelog=update|create docs=when-user-facing`,
-   default off): ship writes the Unreleased entry with
-   `workit changelog apply` before the PR, and `pr create` refuses a
+   default off): ship passes the Unreleased entry as
+   `workit pr create … --changelog "<Section>: <entry>"`, and `pr create` refuses a
    user-facing PR without one unless given `--no-changelog "<reason>"`
    ([changelog gate](docs/guides/delivery.md#changelog-gate)).
    The PR body fills the repo's GitHub or GitLab template, else Workit's

@@ -67,7 +67,8 @@ const ledgerLine = (recorded: Recorded | null): string[] =>
   recorded && "error" in recorded ? [`ledger: not recorded (${recorded.error})`] : [];
 
 function connectIssues(io: Io, repo: string | undefined) {
-  const connected = connect(io);
+  // Outside a checkout, --repo names the forge too (no push remote to read).
+  const connected = connect(io, undefined, { repo: repo ?? null });
   if (!connected.ok) return connected;
   return issueTarget(io.cwd, connected.data, { repo: repo ?? null });
 }

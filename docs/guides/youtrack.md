@@ -151,8 +151,9 @@ workspace. How you give it depends on the host (#864):
 
 A changed text or length needs a new yes. Refusing the same text again reuses
 its request: one text, one id. The agent must run the call as its own plain
-command (no pipe, chain, redirect, `bash -c` or variable around it), or the
-host cannot show it to you; a wrapped call is denied with the plain form. See
+command (no pipe, chain, redirect, `bash -c` or variable around it; a
+trailing `| tail -5` or `| head -n 20` is fine), or the host cannot show it
+to you; a wrapped call is denied with the plain form. See
 [Approvals](approvals.md) for the other approvals.
 
 The agent also shows you the draft in chat, in full, before asking. Each call

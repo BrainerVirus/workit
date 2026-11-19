@@ -663,9 +663,9 @@ export const VERBS: readonly VerbEntry[] = [
           head: "pr create opens the PR for the current branch: git switch <branch>, then workit pr create (--base sets the target)",
         },
         usage:
-          "workit pr create [--base <b> | --track <t>] (--title <t> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]",
+          'workit pr create [--base <b> | --track <t>] (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]',
         summary:
-          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues; refuses a body that leaves the PR template unfilled",
+          "Open a PR/MR for the pushed branch, verified against the local HEAD, linking its issues (Closes; --refs links one slice of an umbrella issue without closing it); --changelog writes, commits and pushes the missing Unreleased entry first; refuses a body that leaves the PR template unfilled",
       },
       {
         name: "template",
@@ -806,14 +806,14 @@ export const VERBS: readonly VerbEntry[] = [
       log: readOnlyGuess("log", "log --oneline -20"),
     },
     summary:
-      "Policy-checked branch, hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
+      "Policy-checked branch (--carry moves uncommitted changes onto it), hunk staging and commit (Workit-Session trailer); push with a lease and the tip verified",
     subcommands: [
       {
         name: "branch",
         usage:
           "workit git branch <name> | git branch --kind feature|bugfix|release|hotfix --slug <s>  [--base <b>] [--track <t>] [--carry]",
         summary:
-          "Create and switch to a branch from the trunk, the git-flow route of its kind or a release track",
+          "Create and switch to a branch from the trunk, the git-flow route of its kind or a release track; --carry brings uncommitted changes along, still uncommitted (no stash)",
       },
       {
         name: "commit",
@@ -844,7 +844,7 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "rebase",
-        usage: "workit git rebase [--onto <base>]",
+        usage: "workit git rebase [<base> | --onto <base>]",
         summary:
           "Replay the current branch onto its freshly fetched base (the default base, or --onto); a conflict aborts and names the paths, a rewrite is recorded and prints the leased push",
       },
@@ -863,6 +863,7 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     examples: [
       "workit git branch --kind feature --slug help-everywhere",
+      "workit git branch feature/next --base main --carry  # move the uncommitted change too",
       'workit git commit -m "fix(cli): answer help flags first" --all',
       'workit git commit -m "feat: x" --trailer "Co-Authored-By: Name <email>" --all',
       "workit git commit --amend --no-edit -- src/forgotten.ts",
@@ -1067,8 +1068,28 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "list",
         aliases: ["show"],
-        usage: "workit ledger list|show [--branch <b>] [--pr <n>] [--type <t>] [--last <n>]",
+        usage:
+          "workit ledger list|show [--branch <b>] [--pr <n>] [--type <t>] [--last|--limit <n>]",
         summary: "List ledger rows, newest last (findings live in the task: workit finding list)",
+      },
+      {
+        name: "finding",
+        usage:
+          "workit ledger finding [record|list|resolve] [--payload <JSON|@file|->] [<workit finding flags>]",
+        summary:
+          "Runs workit finding <action> (record by default): findings live in the task store",
+        // workit finding's own flags, checked by that verb.
+        deferredFlags: [
+          "task",
+          "revision",
+          "workspace-revision",
+          "view",
+          "actor",
+          "confirm",
+          "queue",
+          "status",
+          "branch",
+        ],
       },
       {
         name: "check",

@@ -31,7 +31,7 @@ denial, a review comment that needs a product decision, a required update
 that repeats because the base keeps moving, or after 3 failed fix attempts on
 the same check. Fix round and recheck both failed: the decider agent (read the `workit-fanout` skill's SKILL.md and follow it).
 
-1. **Open.** Last before the PR, if `workit grant show` has `changelog: update|create`: write the Unreleased entry with `workit changelog apply`, commit it; with `docs: when-user-facing` fix only docs the diff made false (`references/changelog.md`).
+1. **Open.** Last before the PR, if `workit grant show` has `changelog: update|create`: pass the Unreleased entry as `workit pr create … --changelog "<Section>: <entry>"` (it commits and pushes it); with `docs: when-user-facing` fix only docs the diff made false (`references/changelog.md`).
    Full local check (`workit check ci` when `.workit/checks.json` has a `ci` group), push once: `workit git push`, then `workit pr template` and fill the template it prints: every heading, each `<!-- -->` replaced (Workit's: `references/pr-body.md`).
    `workit pr create --title "<title>" --body-file <f|->` refuses a body that leaves a repo template (or `prTemplate: workit`) unfilled; add `--issue <#n|ID>` (`--refs`: no close; `workit pr edit`).
    YouTrack issue work: `workit youtrack …` (`--help`; the `ytrack` skill for the rest). A draft that needs the user's yes (YouTrack text, release notes, a PR body they asked to review): paste it whole in chat before asking, never only its path, and again after every edit (the verb prints the diff and the new text).

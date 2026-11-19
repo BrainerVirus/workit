@@ -2,30 +2,25 @@
   "case": "pr-create-label-and-issue",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "6e425d156f23ac51",
-  "date": "2026-11-18T17:21:01.465Z",
-  "exit": 1,
+  "workitVersion": "workit-dev-v2.15.0+cff039f50b",
+  "key": "18011cd1c10b66ee",
+  "date": "2026-11-19T01:08:50.808Z",
+  "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 9,
-    "durationMs": 29542,
-    "costUsd": 0.0065045,
-    "stop": "error_max_turns"
+    "turns": 7,
+    "durationMs": 14576,
+    "costUsd": 0.00528858,
+    "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 8,
-    "failures": [
-      {
-        "rule": "first-try",
-        "detail": "0 denied and 1 failed of 6 Workit interaction(s): #7 Bash(workit pr edit --pr 1 --base main --add-label bug 2>&1) failed: Exit code 3"
-      }
-    ],
+    "pass": true,
+    "calls": 5,
+    "failures": [],
     "firstTry": {
-      "interactions": 6,
-      "failed": 1,
+      "interactions": 3,
+      "failed": 0,
       "denied": 0
     }
   }

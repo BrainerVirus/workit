@@ -5,6 +5,7 @@ import { readLedger } from "@/packages/workit-core/src/ledger";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { prCreateDeps } from "@/packages/workit-cli/src/verbs/pr";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import {
   fixture,
@@ -23,6 +24,7 @@ setDefaultTimeout(60_000);
 
 let configHome: ConfigHome;
 const original = { ...forgeDeps };
+const originalGit = prCreateDeps.git;
 beforeAll(() => {
   configHome = useConfigHome("wk-pr-changelog-");
 });
@@ -31,6 +33,7 @@ afterAll(() => configHome.restore());
 const repos: ForgeRepo[] = [];
 afterEach(() => {
   Object.assign(forgeDeps, original);
+  prCreateDeps.git = originalGit;
   for (const name of ["workspaces.json", "config.json"])
     rmSync(path.join(configHome.configDir, name), { force: true });
   for (const repo of repos.splice(0)) repo.cleanup();
@@ -116,7 +119,7 @@ test("Given changelog create and no CHANGELOG.md, When pr create --title 'feat: 
   expect(human.code).toBe(3);
   expect(human.stderr).toContain("workit: changelog_required: ");
   expect(human.stderr).toContain(
-    `  unblock: workit changelog apply --entries '{"Added": ["<what users can now do>"]}'`,
+    `  unblock: Retry as: workit pr create --base main --title 'feat: x' --body 'Why: y' --changelog 'Added: <what users can now do>'`,
   );
   const json = await create(repo, "--json");
   expect(json.code).toBe(3);
@@ -335,4 +338,64 @@ test("Given neither step is on, When pr create runs, Then it records no check an
   expect(result.code).toBe(0);
   expect(checkRows(repo)).toEqual([]);
   expect(result.stdout).not.toContain("docs: ");
+});
+
+test("Given changelog create and no entry, When pr create --changelog 'Fixed: x' runs, Then the entry is committed with a Conventional subject, pushed and the PR opened in that one call", async () => {
+  const { repo, runner } = setup({ changelog: "create" });
+  const pushes: string[] = [];
+  // The forge push URL is fake: push the branch to the bare remote instead, as git would.
+  prCreateDeps.git = async (argv, io) => {
+    if (argv[0] !== "push") return originalGit(argv, io);
+    pushes.push(repo.git("rev-parse", "HEAD"));
+    repo.git("push", "-q", path.join(repo.root, "remote.git"), "feature/x");
+    return 0;
+  };
+  repo.git("config", "user.name", "t");
+  repo.git("config", "user.email", "t@t");
+  repo.git("config", "commit.gpgsign", "false");
+  const routes = runner as unknown as { calls: Call[] };
+  const head = () => repo.git("rev-parse", "HEAD");
+  const result = await create(repo, "--changelog", "Fixed: x no longer crashes");
+  expect(result.stderr).not.toContain("changelog_required");
+  expect(pushes).toEqual([head()]);
+  expect(repo.git("log", "-1", "--format=%s")).toBe("docs(changelog): add the changelog entry");
+  expect(repo.git("show", "HEAD:CHANGELOG.md")).toContain("- x no longer crashes");
+  expect(result.stdout).toContain('changelog: added "Fixed: x no longer crashes" to CHANGELOG.md');
+  expect(opened(routes.calls)).toHaveLength(1);
+});
+
+test("Given --changelog and a refused commit, When pr create runs, Then it says the changelog is left edited and uncommitted and opens nothing", async () => {
+  const { repo, runner } = setup({ changelog: "create" });
+  const before = repo.git("rev-parse", "HEAD");
+  prCreateDeps.git = async (argv, io) => (argv[0] === "commit" ? 1 : originalGit(argv, io));
+  const result = await create(repo, "--changelog", "Fixed: x no longer crashes", "--json");
+  expect(result.code).not.toBe(0);
+  const body = result.json();
+  expect(body.error).toContain("CHANGELOG.md is left edited and uncommitted");
+  expect(body.unblock).toContain("workit git commit -m 'docs(changelog): add the changelog entry'");
+  expect(repo.git("rev-parse", "HEAD")).toBe(before);
+  expect(repo.git("status", "--porcelain")).toContain("CHANGELOG.md");
+  expect(opened((runner as unknown as { calls: Call[] }).calls)).toHaveLength(0);
+});
+
+test("Given --changelog and a refused push, When pr create runs, Then it says the entry is committed locally only and opens nothing", async () => {
+  const { repo, runner } = setup({ changelog: "create" });
+  repo.git("config", "user.name", "t");
+  repo.git("config", "user.email", "t@t");
+  repo.git("config", "commit.gpgsign", "false");
+  prCreateDeps.git = async (argv, io) => (argv[0] === "push" ? 1 : originalGit(argv, io));
+  const result = await create(repo, "--changelog", "Fixed: x no longer crashes", "--json");
+  expect(result.code).not.toBe(0);
+  expect(result.json().error).toContain("the entry is committed locally only");
+  expect(repo.git("log", "-1", "--format=%s")).toBe("docs(changelog): add the changelog entry");
+  expect(opened((runner as unknown as { calls: Call[] }).calls)).toHaveLength(0);
+});
+
+test("Given changelog create and no entry, When pr create runs without --changelog, Then the refusal's Retry as is the same call plus --changelog", async () => {
+  const { repo } = setup({ changelog: "create" });
+  const result = await create(repo);
+  expect(result.code).toBe(3);
+  expect(result.stderr).toContain(
+    "Retry as: workit pr create --base main --title 'feat: x' --body 'Why: y' --changelog 'Added: <what users can now do>'",
+  );
 });

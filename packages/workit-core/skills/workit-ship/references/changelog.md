@@ -17,19 +17,23 @@ belongs to). Otherwise:
    do, not with internals: "Added: `workit pr create --no-changelog <reason>`
    skips the changelog check with a recorded reason", not "refactor gate
    module".
-2. Apply it only with `workit changelog apply --entries '{"Added": ["…"]}'`
-   (categories: Added, Changed, Deprecated, Removed, Fixed, Security), adding
-   `--path <file>` when the file is not the root CHANGELOG.md. It
-   merges into `## [Unreleased]` and creates the Keep a Changelog file when it
-   is missing. Never clobber CHANGELOG.md: never rewrite, reorder or delete an
+2. Open the PR with the entry in the same call:
+   `workit pr create … --changelog "<Section>: <entry>"` (sections: Added,
+   Changed, Deprecated, Removed, Fixed, Security). It merges the bullet into
+   `## [Unreleased]` of the right file (creating a missing Keep a Changelog
+   file), commits it with a subject commitlint accepts, pushes and opens the
+   PR. Never clobber CHANGELOG.md: never rewrite, reorder or delete an
    existing entry, and never hand-edit released sections.
-3. Commit it (`workit git commit -m "<message>" -- <file>`)
-   with the change, then push.
+3. With no PR to open yet, apply it alone with
+   `workit changelog apply --entries '{"Added": ["…"]}'` (`--path <file>` when
+   it is not the root CHANGELOG.md), then commit it
+   (`workit git commit -m "<message>" -- <file>`) with the change and push.
 
 `workit pr create` refuses a user-facing PR without a new Unreleased bullet
-(`changelog_required`) and prints the exact `workit changelog apply` command.
-When the PR truly needs no entry, pass `--no-changelog "<why>"`: the reason is
-written into the PR body.
+(`changelog_required`); its `Retry as:` line is your call plus
+`--changelog "<Section>: <what users can now do>"`: fill in the entry and run
+it. When the PR truly needs no entry, pass `--no-changelog "<why>"`: the
+reason is written into the PR body.
 
 ## Docs (`docs: when-user-facing`)
 

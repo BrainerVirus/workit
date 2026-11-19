@@ -293,8 +293,13 @@ export async function main(
         return emit(routed, fail("blocked", refusal.error, { unblock: refusal.unblock }));
       }
     }
+    // The directory to return to after the verb: an in-process caller (tests,
+    // a long-lived host) keeps its own cwd, and Windows can delete --cwd's
+    // folder only once no process sits in it.
+    let left: string | null = null;
     if (parsed.cwd !== null) {
       try {
+        left = process.cwd();
         // Existing verbs resolve from process.cwd(); keep them in step with routed.cwd.
         process.chdir(routed.cwd);
       } catch {
@@ -321,12 +326,25 @@ export async function main(
       );
     const verb = await entry.load();
     const runVerb = (target: Io) => guarded(target, () => verb.run(checked.args, target));
-    return routed.json ? runJsonPure(routed, command, runVerb) : runVerb(routed);
+    try {
+      return await (routed.json ? runJsonPure(routed, command, runVerb) : runVerb(routed));
+    } finally {
+      if (left !== null) returnTo(left);
+    }
   };
   if (io.json) return route(io);
   const verbWord = firstWord(verbArgs);
   const outcome = verbWord ? OUTCOMES[`${entry.name} ${verbWord}`] : undefined;
   return withFailureLine(io, command, route, outcome);
+}
+
+/** Back to `dir` after a `--cwd` verb; a folder deleted meanwhile leaves the cwd where it is. */
+function returnTo(dir: string): void {
+  try {
+    process.chdir(dir);
+  } catch {
+    // Nothing to return to.
+  }
 }
 
 /**

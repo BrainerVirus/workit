@@ -12,7 +12,8 @@
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
 //                          [--evidence <ref>…] [--self] [--session <id> [--token <t>] | --as <role>]
 //   workit ledger verdict  [<branch>]                 # current + accepted verdicts
-//   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
+//   workit ledger list|show [--branch b] [--pr n] [--type t] [--last|--limit n]
+//   workit ledger finding …                         # runs workit finding record|list|resolve
 //   workit ledger check    [--pr n|--branch b]
 //   workit ledger verify-integrity                    # rows outside the CLI's hash chain
 //   workit ledger void <verdict id|#n> --reason "<why>"
@@ -72,6 +73,7 @@ import {
   recordVerdict,
   recordVerdictVoid,
   branchNotInRepo,
+  verdictCheckouts,
   summarizeRow,
   supersedeAllowed,
   unboundRecovery,
@@ -190,6 +192,7 @@ const OPTIONS = {
   pr: { type: "string" },
   type: { type: "string" },
   last: { type: "string" },
+  limit: { type: "string" },
   supersedes: { type: "string" },
   session: { type: "string" },
   token: { type: "string" },
@@ -219,6 +222,7 @@ type Values = {
   pr?: string;
   type?: string;
   last?: string;
+  limit?: string;
   supersedes?: string;
   session?: string;
   token?: string;
@@ -423,7 +427,10 @@ function targetBranch(
   return { ok: true, value: branch ?? null };
 }
 
-export async function run(argv: string[], io: Io): Promise<number> {
+export async function run(argv: string[], ioIn: Io): Promise<number> {
+  let io = ioIn;
+  const findingAt = argv[0] === "add" ? 1 : 0;
+  if (argv[findingAt] === "finding") return ledgerFinding(argv.slice(findingAt + 1), io);
   let parsed: { values: Values; positionals: string[] };
   try {
     parsed = parseArgs({
@@ -445,7 +452,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const [sub, ...rest] = positionals;
   const pr = positiveInt(values.pr, "--pr");
   if (pr instanceof Error) return usage(io, pr.message);
-  const last = positiveInt(values.last, "--last");
+  // `--limit n` is `--last n`, the name `gh` and most list commands use.
+  const last = positiveInt(values.last ?? values.limit, values.last ? "--last" : "--limit");
   if (last instanceof Error) return usage(io, last.message);
   const text = rest.join(" ");
   if (sub === undefined) return usage(io, "missing subcommand");
@@ -464,6 +472,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
   )
     return usage(io, `unknown ledger subcommand "${sub}"`);
   if (sub === "standing") return standing(io, values, rest);
+  if (
+    sub === "verdict" &&
+    values.branch !== undefined &&
+    (values.how !== undefined || (VERDICT_RESULTS as readonly string[]).includes(rest[0] ?? ""))
+  ) {
+    const routed = verdictCheckout(io, values.branch);
+    if (typeof routed === "number") return routed;
+    io = routed;
+  }
 
   // The hash chain is verified only where it is reported.
   const ledger = readLedger(io.cwd, {
@@ -821,6 +838,75 @@ function misfiledVerdict(
     error: `branch_mismatch: PR ${pr} is branch ${target}, but this checkout is on ${here}; a --pr verdict names its branch when recorded from another branch's checkout, so nothing was recorded`,
     unblock: `if you judged ${target} of this repo, add --branch ${target}; if PR ${pr} belongs to another repo, record it there: workit --cwd <that repo's checkout> ledger verdict <result> --how "<what you ran>" --pr ${pr}`,
   };
+}
+
+const FINDING_ACTIONS = new Set(["record", "list", "resolve"]);
+
+/**
+ * `workit ledger finding …`: findings live in the task store, not the run
+ * ledger, so this runs `workit finding <action> …` (record when no action is
+ * named) and says so. Free text with no --payload has no claim shape to
+ * guess, so it is refused with the full `finding record` call carrying it.
+ */
+async function ledgerFinding(argv: string[], io: Io): Promise<number> {
+  const named = FINDING_ACTIONS.has(argv[0] ?? "");
+  const action = named ? argv[0] : "record";
+  const rest = named ? argv.slice(1) : argv;
+  const text = rest.filter((arg) => !arg.startsWith("-")).join(" ");
+  if (action === "record" && !rest.some((arg) => arg.startsWith("--payload")) && text !== "") {
+    const payload = JSON.stringify({
+      claim: text,
+      consequence: "<what goes wrong because of it>",
+      scope: { description: "checkout", paths: ["."], exclusions: [] },
+      candidateId: null,
+      refs: [],
+    }).replaceAll("'", "'\\''");
+    return emit(
+      io,
+      fail("invalid_input", "a finding is recorded with workit finding record, not the ledger", {
+        unblock: `Retry as: workit finding record --payload '${payload}'`,
+      }),
+    );
+  }
+  if (!io.json)
+    io.stderr(`workit: findings live in the task store; running workit finding ${action}\n`);
+  const { runTaskCommand } = await import("../task");
+  return runTaskCommand(["finding", action, ...rest], {
+    cwd: io.cwd,
+    out: { write: io.stdout },
+    err: { write: io.stderr },
+  });
+}
+
+/**
+ * The Io a `--branch` verdict is recorded with: this checkout when cwd is
+ * one, else (cwd is the parent of the workspace's repos) the one checkout
+ * under it that has the branch, said on stderr. Two or more, or one from a
+ * scan cut short, are refused naming each; none falls through to the usual
+ * refusal.
+ */
+function verdictCheckout(io: Io, branch: string): Io | number {
+  const found = verdictCheckouts(io.cwd, branch);
+  if (found.here || found.candidates.length === 0) return io;
+  if (found.candidates.length > 1 || found.truncated)
+    return emit(
+      io,
+      fail(
+        "invalid_input",
+        found.truncated
+          ? `branch_ambiguous: ${io.cwd} has too many folders to scan them all for a branch ${branch} (found in ${found.candidates.join(", ")}), so nothing was recorded`
+          : `branch_ambiguous: ${found.candidates.length} checkouts under ${io.cwd} have a branch ${branch} (${found.candidates.join(", ")}), so nothing was recorded`,
+        {
+          unblock: `Retry as: workit --cwd ${found.candidates[0]} ledger verdict …  # the checkout whose ${branch} you judged`,
+        },
+      ),
+    );
+  const [there] = found.candidates;
+  if (!io.json)
+    io.stderr(
+      `workit: ${io.cwd} is not a checkout; recording in ${there}, the one checkout under it with branch ${branch}\n`,
+    );
+  return { ...io, cwd: there };
 }
 
 /**

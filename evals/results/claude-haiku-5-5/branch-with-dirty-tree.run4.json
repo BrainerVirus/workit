@@ -2,21 +2,21 @@
   "case": "branch-with-dirty-tree",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.8.1+45b0e26783",
-  "key": "0444bd6b2938598c",
-  "date": "2026-11-18T16:39:37.890Z",
+  "workitVersion": "workit-dev-v2.15.0+998be989db",
+  "key": "81f58c1a8cf73265",
+  "date": "2026-11-19T02:07:17.564Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 5,
-    "durationMs": 8157,
-    "costUsd": 0.00400066,
+    "turns": 4,
+    "durationMs": 7119,
+    "costUsd": 0.00413795,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": false,
-    "calls": 4,
+    "calls": 3,
     "failures": [
       {
         "rule": "at-most",

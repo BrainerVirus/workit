@@ -968,12 +968,14 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (!check)
       return emit(
         io,
-        fail("not_found", `no configured check named "${name}"`, {
-          data: { configured: config.checks.map((item) => item.name), source: config.source },
-          unblock: config.checks.length
-            ? `workit check ${config.checks.map((item) => item.name).join("|")}`
-            : `add {"checks":{"${name}":"<command>"}} to .workit/checks.json, or run workit check --name ${name} -- <cmd…>`,
-        }),
+        fail(
+          "not_found",
+          `no configured check named "${name}"; configured: ${config.checks.map((item) => item.name).join(", ") || `none (add {"checks":{"${name}":"<command>"}} to ${CHECKS_FILE})`}`,
+          {
+            data: { configured: config.checks.map((item) => item.name), source: config.source },
+            unblock: `${config.checks.length ? `workit check ${config.checks.map((item) => item.name).join("|")} runs a configured one; for another command, ` : ""}Retry as: workit check --name ${name} -- <command>`,
+          },
+        ),
       );
     command = check.argv;
     runCwd = config.root;

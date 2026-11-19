@@ -80,6 +80,10 @@ const argvOf = (line: string): string[] =>
     .filter(Boolean)
     .slice(1);
 
+/** The checkout the hook names with --cwd: git's top of `root`. */
+const top = (root: string): string =>
+  spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" }).stdout.trim();
+
 test("Given a verifier and a reviewer spawned on Claude Code, When they start, Then each context holds its exact verdict line with branch, session and --token=", () => {
   const root = repo();
   for (const [agent, id, kind] of [
@@ -89,7 +93,7 @@ test("Given a verifier and a reviewer spawned on Claude Code, When they start, T
     const line = lineIn(claude(root, agent, id));
     expect(line, agent).toMatch(
       new RegExp(
-        `^workit ledger verdict <verified\\|failed\\|blocked> --kind ${kind} --branch feature/x --session claude-session-1:${id} --token=[0-9a-f]{36} --how "<what you ran and saw>"$`,
+        `^workit ledger verdict <verified\\|failed\\|blocked> --cwd ${top(root)} --kind ${kind} --branch feature/x --session claude-session-1:${id} --token=[0-9a-f]{36} --how "<what you ran and saw>"$`,
         "u",
       ),
     );
@@ -100,10 +104,10 @@ test("Given a verifier and a reviewer spawned on Claude Code, When they start, T
 test("Given a verifier and a reviewer spawned on Codex, When they start, Then the line carries no --session and no --token", () => {
   const root = repo();
   expect(lineIn(codex(root, "workit-verifier"))).toBe(
-    'workit ledger verdict <verified|failed|blocked> --kind <live|unit> --branch feature/x --how "<what you ran and saw>"',
+    `workit ledger verdict <verified|failed|blocked> --cwd ${top(root)} --kind <live|unit> --branch feature/x --how "<what you ran and saw>"`,
   );
   expect(lineIn(codex(root, "workit-reviewer", "agent-2"))).toBe(
-    'workit ledger verdict <verified|failed|blocked> --kind review --branch feature/x --how "<what you ran and saw>"',
+    `workit ledger verdict <verified|failed|blocked> --cwd ${top(root)} --kind review --branch feature/x --how "<what you ran and saw>"`,
   );
   expect(codex(root, "workit-verifier", "agent-3")).not.toMatch(/--token|--session/u);
 });

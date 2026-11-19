@@ -15,7 +15,7 @@ pre-commit:
     - name: format
       glob: "*.{ts,tsx,js,cjs,mjs,json,jsonc,yml,yaml}"
       run: node_modules/.bin/oxfmt --check --config .oxfmtrc.json --no-error-on-unmatched-pattern {staged_files}
-      fail_text: staged files are not formatted; run `bun run format`, `git add` them, commit again
+      fail_text: staged files are not formatted; run `workit check --name fix -- bun run format`, then `workit git add -- <paths>` and the same commit again
     - name: lint
       glob: "*.{ts,tsx,js,cjs,mjs}"
       run: node_modules/.bin/oxlint --no-error-on-unmatched-pattern {staged_files}

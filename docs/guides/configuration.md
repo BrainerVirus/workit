@@ -416,11 +416,10 @@ A workspace can add a Keep a Changelog step and a docs refresh to shipping.
 Both are off by default.
 
 - `changelog`: `off` (default), `update` or `create`. When it is on, the ship
-  skill writes the PR's entry under `## [Unreleased]` with
-  `workit changelog apply`, as the last step before `workit pr create`, and
-  `pr create` refuses a user-facing PR whose branch adds no bullet there
-  (`changelog_required`, with the `workit changelog apply --entries …` command
-  to run). `update` asks for an entry only where CHANGELOG.md already exists
+  skill passes the PR's entry under `## [Unreleased]` as
+  `workit pr create … --changelog "<Section>: <entry>"`, which commits and
+  pushes it, and `pr create` refuses a user-facing PR whose branch adds no
+  bullet there (`changelog_required`, whose `Retry as:` adds that flag). `update` asks for an entry only where CHANGELOG.md already exists
   and says in one line when there is none; `create` asks for it always
   (`workit changelog apply` creates the file). See
   [delivery](delivery.md#changelog-gate).
@@ -433,7 +432,7 @@ Both are off by default.
   Without it, a repo
   whose only changelog sits elsewhere is told the exact
   `workit workspace set <ws> changelogPath=<file>` to run, and the
-  `workit changelog apply` command the gate prints carries `--path <file>`.
+  by-hand `workit changelog apply` command the gate prints carries `--path <file>`.
 - `docs`: `off` (default) or `when-user-facing`. When it is on, the ship skill
   updates only the README and guide lines the diff made false, names public
   surfaces no doc covers in the PR body, and reports a pass that changed

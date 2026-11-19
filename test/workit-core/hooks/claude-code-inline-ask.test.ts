@@ -19,6 +19,7 @@ import path from "node:path";
 import {
   consumeApproval,
   createApprovalRequest,
+  INLINE_TICKET_ENV,
   type ApprovalFields,
 } from "@/packages/workit-core/src/approvals/store";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
@@ -100,9 +101,23 @@ test("Given a comment longer than the prompt shows, When the hook asks, Then the
   expect(out.permissionDecisionReason).toContain("time: 15m");
 });
 
-test("Given a YouTrack write inside a pipe, a chain or bash -c, When the hook runs, Then it denies naming the plain call and records nothing", () => {
+test("Given a YouTrack write piped into a read-only tail or head, When the hook runs, Then it asks on the call and runs the whole pipeline with a ticket", () => {
   for (const command of [
-    "workit youtrack note X-1 --markdown hi 2>&1 | tail -5",
+    "workit youtrack time X-1 --minutes 30 --text 'code review' 2>&1 | tail -5",
+    "workit youtrack time X-1 --minutes 30 --text 'code review' | head -n 20",
+  ]) {
+    const out = hook("PreToolUse", command);
+    expect(out.permissionDecision, command).toBe("ask");
+    expect(out.permissionDecisionReason, command).toContain('time: 30m on today ("code review")');
+    expect(out.updatedInput?.command, command).toStartWith(`${INLINE_TICKET_ENV}=`);
+    expect(out.updatedInput?.command, command).toEndWith(` ${command}`);
+  }
+});
+
+test("Given a YouTrack write inside a pipe to a writer, a chain or bash -c, When the hook runs, Then it denies naming the plain call and records nothing", () => {
+  for (const command of [
+    "workit youtrack note X-1 --markdown hi 2>&1 | tee out.log",
+    "workit youtrack note X-1 --markdown hi | tail -f",
     "cd /tmp && workit youtrack note X-1 --markdown hi",
     "bash -c 'workit youtrack note X-1 --markdown hi'",
   ]) {

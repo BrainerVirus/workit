@@ -2608,6 +2608,52 @@ function siblingsWithBranch(cwd: string, branch: string): string[] {
 }
 
 /**
+ * Checkouts directly under `dir` (not itself a checkout) that have a local
+ * branch `branch`, reading the first MAX_SIBLINGS directories by name;
+ * `truncated` when there were more, so a lone match is not proof of one.
+ */
+function childrenWithBranch(
+  dir: string,
+  branch: string,
+): { candidates: string[]; truncated: boolean } {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { candidates: [], truncated: false };
+  }
+  const dirs = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .toSorted();
+  const candidates = dirs
+    .slice(0, MAX_SIBLINGS)
+    .map((name) => path.join(dir, name))
+    .filter(
+      (child) =>
+        fs.existsSync(path.join(child, ".git")) &&
+        resolveCommit(child, `refs/heads/${branch}`) !== null,
+    );
+  return { candidates, truncated: dirs.length > MAX_SIBLINGS };
+}
+
+/**
+ * Where a verdict for `branch` filed from `cwd` belongs (#759): `cwd` itself
+ * when it is a checkout (`here`: a branch missing there stays the
+ * branch_not_in_repo refusal, never a silent move to a sibling), else the
+ * checkouts directly under it (the parent of the workspace's repos) that have
+ * the branch. One candidate from a complete scan is where the CLI records it;
+ * `truncated` means the scan stopped at MAX_SIBLINGS directories.
+ */
+export function verdictCheckouts(
+  cwd: string,
+  branch: string,
+): { here: true } | { here: false; candidates: string[]; truncated: boolean } {
+  if (gitDirs(cwd) !== null) return { here: true };
+  return { here: false, ...childrenWithBranch(cwd, branch) };
+}
+
+/**
  * Refuse a verdict for `branch` when this repository has no such branch
  * (#759): a verdict about another repo's branch must never land here. Null
  * when the branch exists, or is the checked-out branch (an unborn branch says

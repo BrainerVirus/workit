@@ -36,3 +36,11 @@ leaves the branch where it was.
 
 `workit fanout check` never reports a configured changelog path as out of a slice's scope: the
 lead writes that entry on each slice branch.
+
+## Adding an entry
+
+`workit changelog apply --entries '{"Fixed": ["…"]}'` adds bullets under `## [Unreleased]`
+(`--entries -` reads the JSON from stdin, a pipe included). When `pr create` refuses with
+`changelog_required`, rerun it with `--changelog "<Section>: <entry>"` instead: it adds the entry,
+commits it with a conventional subject commitlint accepts, pushes and opens the PR in one call
+([changelog gate](delivery.md#changelog-gate)).
