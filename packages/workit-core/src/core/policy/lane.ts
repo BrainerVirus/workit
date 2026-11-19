@@ -272,7 +272,7 @@ function additiveWorkflow(file: ChangedFile, extra: readonly string[]): boolean 
 }
 
 /** Without a dependency bump, an additive workflow edit still changes what CI runs. */
-const WORKFLOW_FLOOR =
+const ADDITIVE_CI_FLOOR =
   "an additive workflow edit needs a non-author verdict unless it rides a dependency bump";
 
 const CHANGELOG = /^(?:changelog|changes)(?:\.[^.]+)?$/iu;
@@ -343,7 +343,7 @@ export function computeLane(input: LaneInput): LaneAssessment {
     const floor = additive.length > 0 && !classification && (lane === "none" || lane === "self");
     return {
       lane: floor ? "focused" : lane,
-      reasons: [...(floor ? [WORKFLOW_FLOOR] : []), ...reasons, ...workflowNote],
+      reasons: [...(floor ? [ADDITIVE_CI_FLOOR] : []), ...reasons, ...workflowNote],
       lines,
       files: behavior.length,
       riskFiles,
