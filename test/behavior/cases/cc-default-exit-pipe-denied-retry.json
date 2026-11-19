@@ -1,0 +1,17 @@
+{
+  "id": "cc-default-exit-pipe-denied-retry",
+  "source": "#912: outside auto mode too, a Workit verb's exit code piped into tail is denied with the unpiped call, not rewritten",
+  "repo": { "branch": "feature/x" },
+  "hook": {
+    "host": "claude-code",
+    "fixture": "pre-tool-use-bash",
+    "overrides": {
+      "permission_mode": "default",
+      "tool_input": { "command": "workit check test | head -40" }
+    }
+  },
+  "expect": {
+    "kind": ["deny"],
+    "require": ["^workit exit-pipe: ", "\nRetry as: workit check test\n"]
+  }
+}
