@@ -100,7 +100,7 @@ test("Given a pre-commit check that names `run bun run format`, When `workit git
   const refused = await run(argv, repo.cwd);
   expect(refused.code).toBe(1);
   expect(refused.stderr.trimEnd()).toEndWith(
-    "workit check --name fix -- bun run format, then rerun the same workit git commit",
+    "workit check --name fix -- bun run format (the repo's own fix for what this hook refused: apply it and commit the result), then rerun the same workit git commit",
   );
 
   // The fix the route names rewrites the file after the refusal staged it.

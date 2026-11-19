@@ -195,7 +195,7 @@ export const hookFixCommand = (output: string): string | null => {
 
 /** The route a commit refused by a fixable hook ends with. */
 const hookFixRoute = (command: string): string =>
-  `workit check --name fix -- ${command}, then rerun the same workit git commit`;
+  `workit check --name fix -- ${command} (the repo's own fix for what this hook refused: apply it and commit the result), then rerun the same workit git commit`;
 
 /** Past this many lines, hook output keeps its head and tail. */
 const OUTPUT_LINES = 200;
