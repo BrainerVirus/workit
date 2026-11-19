@@ -398,6 +398,13 @@ test("manifests: given package.json pins moved and a new script, then only pins 
       "adds the script lint:zz, which the script lint runs by glob",
     ]);
   expect(adding("eslint 'src/**/*.ts'")).toBe("");
+  for (const command of ["run-s 'lint*zz'", "run-s '*:*z'", "run-s 'l*n*t*:zz'"])
+    expect([command, adding(command)]).toEqual([
+      command,
+      "adds the script lint:zz, which the script lint runs by glob",
+    ]);
+  for (const command of ["run-s 'lint:*x'", "run-s 'li*zz*z'", "run-s 'lint:z*zz'"])
+    expect([command, adding(command)]).toEqual([command, ""]);
   expect(
     why(
       PKG.replace('"lint": "eslint ."', '"lint": "eslint .",\n    "pnpm:devPreinstall": "node x"'),
@@ -680,3 +687,18 @@ test("from git: the #891 diff (two pins, a new script, lockfile, changelog line,
     ],
   });
 });
+
+// #918: a RegExp from a 30-star glob backtracked for minutes on a 60-char name.
+test("Given a 30-star existing glob and a 60-char new script name, When the manifest edit is read, Then it answers within the test's own timeout", () => {
+  const glob = `${"a*".repeat(30)}b`;
+  const name = "a".repeat(60);
+  const before = PKG.replace('"eslint ."', JSON.stringify(`run-s '${glob}'`));
+  const after = before.replace(
+    `"lint": ${JSON.stringify(`run-s '${glob}'`)}`,
+    `"lint": ${JSON.stringify(`run-s '${glob}'`)},\n    "${name}": "x"`,
+  );
+  expect(manifestEdit("package.json", before, after).why).toBe("");
+  expect(manifestEdit("package.json", before, after.replaceAll(name, `${name}b`)).why).toBe(
+    `adds the script ${name}b, which the script lint runs by glob`,
+  );
+}, 2000);
