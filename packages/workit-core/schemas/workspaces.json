@@ -165,7 +165,7 @@
                 "additionalProperties": false
               }
             ],
-            "description": "`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ \"account\": \"<login>\" }` names the GitHub login it posts with. Inherited by nested workspaces."
+            "description": "`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ \"account\": \"<login>\" }` names the GitHub login it posts with; workspaces inside this one inherit it."
           },
           "liveSessionGuard": {
             "description": "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",

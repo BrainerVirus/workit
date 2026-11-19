@@ -12,12 +12,12 @@
 // A workspace with `feedback: "off"` makes the verb refuse.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { systemRunner, type ForgeRunner } from "@workit-dev/core/src/forge/exec";
 import type { ForgeResult } from "@workit-dev/core/src/forge/types";
 import { githubIssues } from "@workit-dev/core/src/forge/issue-forge";
 import { redactText } from "@workit-dev/core/src/forge/redact";
+import { accountHome } from "@workit-dev/core/src/core/account-home";
 import { repoDir } from "@workit-dev/core/src/core/repo-paths";
 import { workspaceFeedback } from "@workit-dev/core/src/core/workspaces";
 import pkg from "../../package.json" with { type: "json" };
@@ -90,7 +90,7 @@ export function workspaceFacts(
   return {
     names: [...names],
     branch: branch && !/^(?:main|master|develop|trunk)$/u.test(branch) ? branch : null,
-    home: os.homedir(),
+    home: accountHome() ?? "",
   };
 }
 

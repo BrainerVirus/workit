@@ -275,7 +275,7 @@ export const workspaceConfigSchema = z
       .unknown()
       .optional()
       .describe(
-        '`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ "account": "<login>" }` names the GitHub login it posts with. Inherited by nested workspaces.',
+        '`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ "account": "<login>" }` names the GitHub login it posts with; workspaces inside this one inherit it.',
       ),
     liveSessionGuard: z
       .boolean()
