@@ -4,6 +4,8 @@
 // it), so the auto-mode classifier judged it. The rewrite is exact and
 // conservative: one literal directory, one workit call, and only read-only
 // filters after it. Anything else is left alone. Pure string work.
+// Under Claude Code auto mode, which refuses a hook-rewritten call (#908),
+// the hook denies with the rewrite as `Retry as:` instead (hooks/handle.ts).
 //
 // The verb goes first (issue #297): Workit's enumerated host rules, such as
 // `Bash(workit git *)`, cannot match a variable directory before the verb.
