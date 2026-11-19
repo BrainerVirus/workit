@@ -44,28 +44,47 @@ const parseBody = (body: string): { preamble: string[]; sections: Section[] } =>
   return { preamble: preamble.map(withNewline), sections };
 };
 
-/** Ours, then theirs; a bullet one side dropped from base stays dropped. */
+/**
+ * Ours, then theirs; a bullet one side dropped from base stays dropped, also
+ * when that side dropped its whole `###` group (a roll empties Unreleased).
+ */
 const mergeBlocks = (
   base: Map<string, string[]> | undefined,
   ours: Map<string, string[]> | undefined,
   theirs: Map<string, string[]> | undefined,
-): string[][] => {
+): Map<string, string[]> => {
   const out = new Map<string, string[]>();
   for (const [key, lines] of ours ?? []) {
-    if (base?.has(key) && theirs && !theirs.has(key)) continue;
+    if (base?.has(key) && !theirs?.has(key)) continue;
     out.set(key, lines);
   }
   for (const [key, lines] of theirs ?? []) {
     if (out.has(key) || base?.has(key)) continue;
     out.set(key, lines);
   }
-  return [...out.values()];
+  return out;
 };
 
-/** The merged `## [Unreleased]` body (everything after that heading line). */
-export const mergeUnreleasedBody = (base: string, ours: string, theirs: string): string => {
+/** The key of every bullet in `text`, as the merge keys Unreleased bullets. */
+const bulletKeys = (text: string): Set<string> => {
+  const keys = new Set<string>();
+  for (const [key] of bulletBlocks(text.split(/(?<=\n)/u))) if (key !== null) keys.add(key);
+  return keys;
+};
+
+/**
+ * The merged `## [Unreleased]` body (everything after that heading line).
+ * `released` holds the keys of bullets a version section of either side
+ * already has: a roll moved them there, so the merge never puts them back.
+ */
+export const mergeUnreleasedBody = (
+  base: string,
+  ours: string,
+  theirs: string,
+  released: ReadonlySet<string> = new Set(),
+): string => {
   if (ours === theirs || theirs === base) return ours;
-  if (ours === base) return theirs;
+  if (ours === base && ![...bulletKeys(theirs)].some((key) => released.has(key))) return theirs;
   const b = parseBody(base);
   const o = parseBody(ours);
   const t = parseBody(theirs);
@@ -77,9 +96,11 @@ export const mergeUnreleasedBody = (base: string, ours: string, theirs: string):
     const mine = sectionOf(o, id);
     const theirsOne = sectionOf(t, id);
     const baseOne = sectionOf(b, id);
-    const blocks = mergeBlocks(baseOne?.blocks, mine?.blocks, theirsOne?.blocks);
-    // A section both sides emptied (or one emptied that the other left alone) is dropped.
-    if (!blocks.length && baseOne && (!mine || !theirsOne)) continue;
+    const merged = mergeBlocks(baseOne?.blocks, mine?.blocks, theirsOne?.blocks);
+    const blocks = [...merged].filter(([key]) => !released.has(key)).map(([, lines]) => lines);
+    // A section both sides emptied (or one emptied that the other left alone),
+    // or one holding only released bullets, is dropped.
+    if (!blocks.length && ((baseOne && (!mine || !theirsOne)) || merged.size)) continue;
     const prose = (mine ?? theirsOne)?.preamble.join("") ?? "";
     const heading = (mine ?? theirsOne)!.heading;
     out += `${withNewline(heading)}\n${prose}${blocks.flat().join("")}\n`;
@@ -102,7 +123,8 @@ export const withMergedUnreleased = (
   const [bBefore, bBody, bAfter] = splitUnreleased(base);
   const [oBefore, oBody, oAfter] = splitUnreleased(ours);
   const [tBefore, tBody, tAfter] = splitUnreleased(theirs);
-  const merged = mergeUnreleasedBody(bBody, oBody, tBody);
+  const released = new Set([...bulletKeys(oAfter), ...bulletKeys(tAfter)]);
+  const merged = mergeUnreleasedBody(bBody, oBody, tBody, released);
   return {
     base: bBefore + merged + bAfter,
     ours: oBefore + merged + oAfter,

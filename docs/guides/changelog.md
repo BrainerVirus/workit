@@ -20,7 +20,11 @@ again changes nothing.
 
 - Under `## [Unreleased]`, each `###` heading appears once. Entries keep ours first, then
   theirs; an identical entry on both sides appears once.
-- An entry one side removed from the base stays removed.
+- An entry one side removed from the base stays removed, also when that side removed its whole
+  `###` group.
+- An entry a released `## [X.Y.Z]` section holds on either side is never put back under
+  `## [Unreleased]`, so rebasing a changelog roll onto a branch that still lists the rolled
+  entries keeps one copy, in its release.
 - Anything outside `## [Unreleased]` merges with git's normal three-way rules. When both sides
   edit the same released text, the driver exits 1 and leaves git's conflict markers, so
   nothing is lost silently.
