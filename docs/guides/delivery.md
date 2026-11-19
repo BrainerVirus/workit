@@ -532,7 +532,19 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   only). A failing check there refuses the merge (`base_red`, exit 3), naming
   the failing checks and the run URL, so a PR never lands silently on a red
   base. Checks still running only print a note, and a base with no checks or
-  green checks merges quietly. The refusal reads the previous run on the base
+  green checks merges quietly. A PR whose own head passes every check that is
+  red on the base, under the same `<workflow> / <job>` name, and whose head
+  contains the base tip that red CI ran on, is the fix for that base: it
+  merges without `--base-red-ok` and says so ("this merge fixes the red base
+  check"; `baseCi.fixes` in `--json`, `baseRedFixed` in the merge rows). Only
+  forge check data and git ancestry decide this, never the PR title or body.
+  When the head lacks or fails one of them, the refusal names the checks it
+  does not pass and gates on those alone. A head behind that tip never ran
+  them on the red code, so every red check still gates and the refusal says
+  "PR #N is not up to date with <base> (<sha>); rebase so its CI runs on the
+  red base", with `workit git rebase` (then `workit git push
+  --force-with-lease`, `workit ci wait` and the merge again) as the unblock; a
+  tip that cannot be fetched counts as not contained. The refusal reads the previous run on the base
   (`<base>~1`) and names the next step (`baseRedCause` in `--json`):
   - `flaky`: every failing job passed on the previous run. The refusal says
     likely flaky, names each job and its run URL, and its unblock is the exact

@@ -271,7 +271,10 @@ const redBase = (forge: StackForge) => {
                         conclusion: "FAILURE",
                         detailsUrl: null,
                         databaseId: 1,
-                        checkSuite: null,
+                        // A main-only workflow: the PR's head never runs it.
+                        checkSuite: {
+                          workflowRun: { databaseId: 1, workflow: { name: "Nightly" } },
+                        },
                         isRequired: true,
                       },
                     ],

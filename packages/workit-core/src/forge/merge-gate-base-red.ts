@@ -29,6 +29,22 @@ export function classifyBaseRed(
 }
 
 /**
+ * The base's failing checks this PR's head does not pass. A check is covered
+ * only when the head reports it under the same name (`<workflow> / <job>` on
+ * GitHub, `<stage> / <job>` on GitLab) and every such run passed: a PR whose
+ * head passes them all is the fix for the red base, not a landing on it.
+ */
+export function uncoveredBaseRed(
+  failing: readonly ForgeCheck[],
+  head: readonly ForgeCheck[],
+): ForgeCheck[] {
+  return failing.filter((check) => {
+    const runs = head.filter((run) => run.name === check.name);
+    return !runs.length || runs.some((run) => run.state !== "passing");
+  });
+}
+
+/**
  * The checks of the base commit before the head (`<base>~1`), the previous
  * run on a squash-merged base. GitHub resolves the revision expression; GitLab
  * reads pipelines by branch name only, so it reports no previous run.

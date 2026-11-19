@@ -198,6 +198,8 @@ test("given pr merge refuses with base_red and the previous main run is unreadab
   const { repo } = setup({
     [`graphql branch-checks ${JSON.stringify({ owner: "o", name: "r", ref: "refs/heads/main~1" })}`]:
       replyError("HTTP 502 bad gateway"),
+    // The PR's head runs `fast checks` in another workflow, so it does not cover main's red one.
+    "graphql status": fixture("github/pr-passing.json").replaceAll('"name": "CI"', '"name": "PR"'),
   });
   repo.git("rm", "-q", "feature.txt");
   writeFileSync(path.join(repo.cwd, "README.md"), "# Feature\n");
