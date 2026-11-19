@@ -11,7 +11,7 @@ permission prompt. The workspace's `release` grant decides whether it runs
 ```bash
 workit release tag v1.4.0 --dry-run    # the steps, CI verdict and grant, nothing changes
 workit release tag v1.4.0              # tag origin/main and push the tag
-workit release tag v1.4.0 --wait       # also wait for the release workflow and the forge release
+workit release tag v1.4.0 --wait       # wait for trunk CI, tag, then wait for the release workflow and the forge release
 workit release notes edit v1.3.0 --from-changelog   # backfill a published release's notes
 ```
 
@@ -28,8 +28,12 @@ In order, it:
    takes an older commit the trunk has.
 3. Reads CI on the trunk tip. Red CI (`ci_red`, with the `workit ci rerun`
    fix), CI still running (`ci_pending`) and no CI report on that commit
-   (`ci_unknown`) are refused. A push remote that is a local path has no
-   forge, so CI is not read there.
+   (`ci_unknown`) are refused. With `--wait`, CI still running (or not yet
+   reported, as right after a merge) is waited out first, within `--timeout`,
+   and the tag goes on once it is green; red CI is still refused. Without
+   `--wait`, the `ci_pending` refusal ends in `Retry as: workit release tag
+   <vX.Y.Z> --wait`. A push remote that is a local path has no forge, so CI is
+   not read there.
 4. Refuses a tag that already exists here or on the remote (`tag_exists`):
    a release tag never moves.
 5. When the repository keeps a changelog (`CHANGELOG.md` or the workspace's
@@ -41,8 +45,8 @@ In order, it:
 7. Pushes the tag through `workit git push --release`, with the same grant,
    identity and remote-tip checks. When the push is refused, it deletes the
    local tag it made so a rerun can tag again.
-8. With `--wait` (`--timeout`, default 30m; `--interval`, default 30s), it
-   polls the workflow runs on the tag (GitHub Actions runs, GitLab tag
+8. With `--wait` (`--timeout`, default 30m for each wait; `--interval`,
+   default 30s), it polls the workflow runs on the tag (GitHub Actions runs, GitLab tag
    pipelines). It fails when one fails and succeeds once the forge release
    exists. `--wait` can outlast a shell timeout, so run it in the background.
 
