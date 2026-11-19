@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { cwdRewrite } from "@/packages/workit-core/src/hooks/cwd-normalize";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 
 const KEYS = [
@@ -82,13 +83,20 @@ const pre = (root: string, command: string, mode: string): Out =>
     tool_use_id: "toolu_1",
   }).json.hookSpecificOutput ?? {};
 
+/** The directory as Git Bash spells it on Windows: an unquoted backslash is an escape there. */
+const bash = (dir: string): string =>
+  process.platform === "win32" ? dir.replaceAll("\\", "/") : dir;
+
 /** Each Bash rewrite Workit makes on Claude Code: the command and the call it becomes. */
-const REWRITES = (wt: string): [string, string, string][] => [
-  ["cwd", `cd ${wt} && workit check test`, `workit --cwd ${wt} check test`],
-  ["heavy", "npx jest", "workit check --heavy -- npx jest"],
-  ["dev server", "npm run dev", "workit run --bg -- npm run dev"],
-  ["npx", "npx -y @workit-dev/cli check test", "workit check test"],
-];
+const REWRITES = (root: string): [string, string, string][] => {
+  const wt = bash(root);
+  return [
+    ["cwd", `cd ${wt} && workit check test`, `workit --cwd ${wt} check test`],
+    ["heavy", "npx jest", "workit check --heavy -- npx jest"],
+    ["dev server", "npm run dev", "workit run --bg -- npm run dev"],
+    ["npx", "npx -y @workit-dev/cli check test", "workit check test"],
+  ];
+};
 
 test("Given Claude Code auto mode, When each rewritable Bash call runs, Then it is denied with no updatedInput and `Retry as:` names the exact call", () => {
   const wt = repo();
@@ -123,10 +131,40 @@ test("Given a mode other than auto, When each rewritable Bash call runs, Then it
 
 test("Given Claude Code auto mode and `workit --cwd <dir> git status`, When the hook runs, Then the call runs as written (the verb-first reorder is skipped, not denied)", () => {
   const wt = repo();
-  const out = pre(wt, `workit --cwd ${wt} git status`, "auto");
+  const dir = bash(wt);
+  const out = pre(wt, `workit --cwd ${dir} git status`, "auto");
   expect(out.permissionDecision).toBeUndefined();
   expect(out.updatedInput).toBeUndefined();
-  expect(pre(wt, `workit --cwd ${wt} git status`, "default").updatedInput?.command).toBe(
-    `workit git --cwd ${wt} status`,
+  expect(pre(wt, `workit --cwd ${dir} git status`, "default").updatedInput?.command).toBe(
+    `workit git --cwd ${dir} status`,
   );
+});
+
+// Windows (Git Bash): a drive path with forward slashes and an 8.3 short name
+// (`RUNNER~1`), or a quoted backslash path, is one literal directory; an
+// unquoted backslash path, a leading `~` or an expansion is not.
+test.each([
+  [
+    "cd C:/Users/RUNNER~1/AppData/Local/Temp/wt && workit check test",
+    "workit --cwd C:/Users/RUNNER~1/AppData/Local/Temp/wt check test",
+  ],
+  [
+    'cd "C:\\Users\\RUNNER~1\\wt" && workit check test',
+    'workit --cwd "C:\\Users\\RUNNER~1\\wt" check test',
+  ],
+  ["cd 'C:\\Users\\dev\\wt' && workit git status", "workit git --cwd 'C:\\Users\\dev\\wt' status"],
+  ["cd /c/Users/dev/wt && workit check test", "workit --cwd /c/Users/dev/wt check test"],
+])("`%s` is rewritten to `%s`", (command, call) => {
+  expect(cwdRewrite(command)).toBe(call);
+});
+
+test.each([
+  ["cd C:\\Users\\dev\\wt && workit check test"],
+  ["cd ~/wt && workit check test"],
+  ["cd ~dev/wt && workit check test"],
+  ['cd "C:\\Users\\$USER" && workit check test'],
+  ['cd "C:\\wt\\" && workit check test'],
+  ['cd "a\\"b" && workit check test'],
+])("`%s` is left alone", (command) => {
+  expect(cwdRewrite(command)).toBeNull();
 });
