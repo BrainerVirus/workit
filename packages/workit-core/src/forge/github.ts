@@ -514,7 +514,13 @@ export function createGitHubForge(options: {
       ).map((check) =>
         required ? { ...check, required: required.includes(check.context) } : check,
       );
-      return success({ sha, checks, requiredKnown: required !== null });
+      const seen = new Set(checks.map((check) => check.context));
+      return success({
+        sha,
+        checks,
+        requiredKnown: required !== null,
+        ...(required ? { missingRequired: required.filter((context) => !seen.has(context)) } : {}),
+      });
     },
 
     jobLogTail(job, lines) {

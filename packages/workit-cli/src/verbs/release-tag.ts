@@ -76,10 +76,10 @@ async function waitForRelease(
   io: Io,
   resolved: ResolvedForge,
   tag: string,
-  timeoutMs: number,
+  deadline: number,
   intervalMs: number,
 ): Promise<Waited> {
-  const deadline = forgeDeps.now() + timeoutMs;
+  const started = forgeDeps.now();
   const unblock = `workit verify-delivery release --tag ${tag}  # the tag; the forge release appears when the workflow on ${tag} finishes`;
   let runs: WorkflowRun[] = [];
   for (;;) {
@@ -110,7 +110,7 @@ async function waitForRelease(
         ok: false,
         envelope: fail(
           "pending",
-          `release_pending: ${runs.length ? `the release workflow on ${tag} ${runs.some((entry) => entry.state === "pending") ? "is still running" : "passed"}` : `no workflow run on ${tag} yet`} and the forge has no release ${tag} after ${Math.round(timeoutMs / 1000)}s; the tag is pushed`,
+          `release_pending: ${runs.length ? `the release workflow on ${tag} ${runs.some((entry) => entry.state === "pending") ? "is still running" : "passed"}` : `no workflow run on ${tag} yet`} and the forge has no release ${tag} after ${Math.round((forgeDeps.now() - started) / 1000)}s (the --timeout covers the CI wait too); the tag is pushed`,
           { unblock, data: { tag, runs } },
         ),
       };
@@ -150,6 +150,9 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
   if (timeoutMs === null || intervalMs === null || intervalMs <= 0)
     return usage(io, "--timeout and --interval take a duration (30s, 20m)", TAG_USAGE);
   const tag = flags.positionals[0];
+  // One --timeout for the whole --wait: the CI wait and the release workflow wait share it.
+  const started = forgeDeps.now();
+  const deadline = started + timeoutMs;
   const dryRun = flags.booleans.has("dry-run");
   // The grant first: nothing is fetched or read for a workspace that never allowed a release.
   const parsed = releaseTagVersion(io.cwd, tag);
@@ -159,7 +162,7 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
   if (wait)
     announce(
       io,
-      `release tag ${tag} --wait waits for pending CI on the trunk, then for the release workflow, up to ${Math.round(timeoutMs / 60_000)}m each; ${BACKGROUND_HINT}`,
+      `release tag ${tag} --wait waits for pending CI on the trunk, then for the release workflow, up to ${Math.round(timeoutMs / 60_000)}m in all; ${BACKGROUND_HINT}`,
     );
   const planned = progressFor(io).runSync(
     "Fetching the trunk and checking the tag",
@@ -182,7 +185,6 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
     const forge = connected.data.forge;
     const trunk = `${plan.remote}/${plan.production}`;
     // --wait: pending (or not yet reported) CI on the target is waited out first.
-    const started = forgeDeps.now();
     const read =
       wait && !dryRun
         ? await progressFor(io).run(
@@ -191,7 +193,7 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
               const polled = await pollBranchChecks(connected.data, plan.production, {
                 sha: plan.target,
                 started,
-                deadline: started + timeoutMs,
+                deadline,
                 intervalMs,
               });
               return polled.ok ? { ok: true as const, data: polled.data.checks } : polled;
@@ -205,7 +207,12 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
           );
     if (!read.ok) return forgeFail(io, read, { tag, step: "ci" });
     const checks = read;
-    const rerun = `workit release tag ${tag}${flags.values.at ? ` --at ${flags.values.at}` : ""}`;
+    const rerun = [
+      `workit release tag ${tag}`,
+      ...(["at", "timeout", "interval"] as const).flatMap((name) =>
+        flags.values[name] ? [`--${name} ${flags.values[name]}`] : [],
+      ),
+    ].join(" ");
     const verdict = releaseCiVerdict(checks.data, plan, rerun);
     if (!verdict.green)
       return emit(
@@ -270,7 +277,7 @@ export async function releaseTag(argv: string[], io: Io, pushTag: TagPush): Prom
     );
   let forgeRelease: { url: string | null; runs: WorkflowRun[] } | null = null;
   if (wait && resolved) {
-    const waited = await waitForRelease(io, resolved, tag, timeoutMs, intervalMs);
+    const waited = await waitForRelease(io, resolved, tag, deadline, intervalMs);
     if (!waited.ok) return emit(io, waited.envelope);
     forgeRelease = { url: waited.release.url, runs: waited.runs };
     appendObserved(io.cwd, {

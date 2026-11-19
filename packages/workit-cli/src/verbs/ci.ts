@@ -158,7 +158,12 @@ async function wait(argv: string[], io: Io): Promise<number> {
   if (flags.values.ref !== undefined) {
     if (flags.values.branch !== undefined)
       return usage(io, "pass --branch or --ref, not both: --ref is --branch here", WAIT_USAGE);
-    if (/^[0-9a-f]{7,64}$/u.test(flags.values.ref))
+    // Branch-only: a hex-looking name is a commit unless such a branch is known here.
+    const ref = flags.values.ref;
+    const known = [`refs/heads/${ref}`, `refs/remotes/origin/${ref}`].some(
+      (name) => resolveRef(io.cwd, name) !== null,
+    );
+    if (/^[0-9a-f]{7,64}$/u.test(ref) && !known)
       return usage(
         io,
         `--ref names a branch here; for a commit pass --branch <b> --head ${flags.values.ref}`,

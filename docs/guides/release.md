@@ -32,7 +32,7 @@ In order, it:
    reported, as right after a merge) is waited out first, within `--timeout`,
    and the tag goes on once it is green; red CI is still refused. Without
    `--wait`, the `ci_pending` refusal ends in `Retry as: workit release tag
-   <vX.Y.Z> --wait`. A push remote that is a local path has no forge, so CI is
+   <vX.Y.Z> --wait` (with the `--at`, `--timeout` and `--interval` given). A push remote that is a local path has no forge, so CI is
    not read there.
 4. Refuses a tag that already exists here or on the remote (`tag_exists`):
    a release tag never moves.
@@ -45,8 +45,8 @@ In order, it:
 7. Pushes the tag through `workit git push --release`, with the same grant,
    identity and remote-tip checks. When the push is refused, it deletes the
    local tag it made so a rerun can tag again.
-8. With `--wait` (`--timeout`, default 30m for each wait; `--interval`,
-   default 30s), it polls the workflow runs on the tag (GitHub Actions runs, GitLab tag
+8. With `--wait` (`--timeout`, default 30m, one deadline for the CI wait
+   and this one; `--interval`, default 30s), it polls the workflow runs on the tag (GitHub Actions runs, GitLab tag
    pipelines). It fails when one fails and succeeds once the forge release
    exists. `--wait` can outlast a shell timeout, so run it in the background.
 

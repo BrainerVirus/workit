@@ -24,10 +24,15 @@ const failingChecks = (checks: RefChecks): ForgeCheck[] =>
  * CI on a branch tip: `moved` when `sha` is set and the forge reports another
  * commit, then failed, pending, passed, or no checks at all.
  */
-function branchCiState(checks: RefChecks, sha: string | null): BranchCiState {
+function branchCiState(checks: RefChecks, sha: string | null, requireAll = false): BranchCiState {
   if (sha && checks.sha && !checks.sha.startsWith(sha)) return "moved";
   if (failingChecks(checks).length) return "failed";
-  if (checks.checks.some((check) => check.state === "pending")) return "pending";
+  // `requireAll`: a required check not reported yet is still to come (report.ts waitVerdict's ciRequired).
+  if (
+    checks.checks.some((check) => check.state === "pending") ||
+    (requireAll && (checks.missingRequired?.length ?? 0) > 0)
+  )
+    return "pending";
   return checks.checks.some((check) => check.state === "passing") ? "passed" : "no_checks";
 }
 
@@ -47,6 +52,8 @@ export async function pollBranchChecks(
     deadline: number;
     intervalMs: number;
     waitMoved?: boolean;
+    /** Wait for required checks the forge has not reported yet (ci wait --branch). */
+    requireAll?: boolean;
     onPoll?: (poll: BranchPoll) => void;
   },
 ): Promise<ForgeResult<BranchPoll>> {
@@ -58,7 +65,11 @@ export async function pollBranchChecks(
     polls += 1;
     if (read.ok) {
       errors = 0;
-      last = { checks: read.data, state: branchCiState(read.data, options.sha), polls };
+      last = {
+        checks: read.data,
+        state: branchCiState(read.data, options.sha, options.requireAll),
+        polls,
+      };
       options.onPoll?.(last);
       const grace = forgeDeps.now() - options.started < NO_CHECKS_GRACE_MS;
       const waits =
@@ -103,6 +114,7 @@ export async function waitOnBranch(
     deadline,
     intervalMs,
     waitMoved: true,
+    requireAll: true,
     onPoll: ({ checks }) => {
       const pending = checks.checks.filter((check) => check.state === "pending");
       waiting.label(

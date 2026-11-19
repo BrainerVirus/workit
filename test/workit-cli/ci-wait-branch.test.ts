@@ -53,15 +53,20 @@ const run = async (argv: string[], cwd: string) => {
 const MAIN_HEAD = "c".repeat(40);
 
 type Node = Record<string, unknown>;
-const checkRun = (conclusion: string | null, status = "COMPLETED"): Node => ({
+const checkRun = (conclusion: string | null, status = "COMPLETED", name = "test"): Node => ({
   __typename: "CheckRun",
-  name: "test",
+  name,
   status,
   conclusion,
   detailsUrl: "https://github.com/o/r/actions/runs/777",
   databaseId: 1,
   checkSuite: { workflowRun: { databaseId: 777, workflow: { name: "CI" } } },
 });
+/** main's two required checks (fixture github/branch-main.json), both in one state. */
+const both = (conclusion: string | null, status = "COMPLETED"): Node[] => [
+  checkRun(conclusion, status, "fast checks"),
+  checkRun(conclusion, status, "test (ubuntu-latest)"),
+];
 const branchChecks = (nodes: Node[]) =>
   JSON.stringify({
     data: {
@@ -118,7 +123,7 @@ const setup = (polls: Node[][]) => {
 };
 
 test("Given no PR for main and its push run still in progress, When ci wait --branch main runs, Then it waits and exits 0 once the run is green", async () => {
-  const { repo, polls } = setup([[checkRun(null, "IN_PROGRESS")], [checkRun("SUCCESS")]]);
+  const { repo, polls } = setup([both(null, "IN_PROGRESS"), both("SUCCESS")]);
   const result = await run(["ci", "wait", "--branch", "main", "--json"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(result.json().data).toMatchObject({
@@ -132,7 +137,7 @@ test("Given no PR for main and its push run still in progress, When ci wait --br
 });
 
 test("Given no PR for main and a red push run, When ci wait --branch main runs, Then it exits 1 naming the failing check and the rerun", async () => {
-  const { repo } = setup([[checkRun("FAILURE")]]);
+  const { repo } = setup([both("FAILURE")]);
   const result = await run(["ci", "wait", "--branch", "main", "--json"], repo.cwd);
   expect(result.code).toBe(1);
   expect(result.json()).toMatchObject({
@@ -144,7 +149,7 @@ test("Given no PR for main and a red push run, When ci wait --branch main runs, 
 });
 
 test("Given ci wait --ref main, When it runs, Then it behaves as --branch main", async () => {
-  const { repo } = setup([[checkRun(null, "IN_PROGRESS")], [checkRun("SUCCESS")]]);
+  const { repo } = setup([both(null, "IN_PROGRESS"), both("SUCCESS")]);
   const result = await run(["ci", "wait", "--ref", "main", "--json"], repo.cwd);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   expect(result.json().data).toMatchObject({ state: "ready", branch: "main" });
@@ -154,7 +159,7 @@ test("Given ci wait --ref main, When it runs, Then it behaves as --branch main",
 });
 
 test("Given main's run still pending at the timeout, When ci wait --branch main ends, Then it exits 4 with a working Retry as", async () => {
-  const { repo } = setup([[checkRun(null, "IN_PROGRESS")]]);
+  const { repo } = setup([both(null, "IN_PROGRESS")]);
   const result = await run(
     ["ci", "wait", "--branch", "main", "--timeout", "1m", "--json"],
     repo.cwd,
@@ -167,10 +172,26 @@ test("Given main's run still pending at the timeout, When ci wait --branch main 
 });
 
 test("Given --ref with --branch, or a commit for --ref, When ci wait parses them, Then it refuses as usage naming the right call", async () => {
-  const { repo } = setup([[checkRun("SUCCESS")]]);
-  const both = await run(["ci", "wait", "--ref", "main", "--branch", "main"], repo.cwd);
-  expect(both.code).toBe(2);
+  const { repo } = setup([both("SUCCESS")]);
+  const twice = await run(["ci", "wait", "--ref", "main", "--branch", "main"], repo.cwd);
+  expect(twice.code).toBe(2);
   const sha = await run(["ci", "wait", "--ref", "abcdef1"], repo.cwd);
   expect(sha.code).toBe(2);
   expect(sha.stderr).toContain("--head abcdef1");
+});
+
+test("Given a required check not reported on main yet, When ci wait --branch main polls, Then it keeps waiting until it reports green", async () => {
+  const { repo, polls } = setup([
+    [checkRun("SUCCESS", "COMPLETED", "fast checks")],
+    both("SUCCESS"),
+  ]);
+  const result = await run(["ci", "wait", "--branch", "main", "--json"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(polls()).toBe(2);
+  const never = setup([[checkRun("SUCCESS", "COMPLETED", "fast checks")]]);
+  const pending = await run(
+    ["ci", "wait", "--branch", "main", "--timeout", "1m", "--json"],
+    never.repo.cwd,
+  );
+  expect(pending.code).toBe(4);
 });
