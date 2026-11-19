@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Review lanes: a GitHub workflow edit that only appends `&& <command>` (or `&& (<command> || echo "<text>")`) to a step's `run:` string, or to a command-named input (`lint_command`, `*-cmd`, `script`) of a job-level reusable workflow call, no longer forces the full lane (on its own it stays at least focused; action inputs never soften), and a dependency bump (manifest version pins, lockfiles, a changelog line, new package.json scripts, such workflow appends) lands on self, where the author's `--self` verdict counts only with green CI on the head; `workit pr status --json` names `dependency-bump` in `verdict.lane.reasons` and `classification`, and a refused workflow's full-lane reason says why (#891).
 - `workit release tag <v> --wait` waits for CI still running on the trunk tip (as right after a merge), then tags on green, within one `--timeout` for the CI and release waits; red CI is still refused, and a `ci_pending` refusal without `--wait` ends in `Retry as: workit release tag <v> --wait`
 - `workit ci wait --branch <b>` on a branch with no PR (the trunk after a merge) waits on its push runs, exit 0 green and 1 red; `--ref <b>` is accepted as the same flag, and `workit issue create` takes `--add-label` as `pr create` does
 - A Workit verb whose exit code is its answer (`ci wait`, `check`, `pr merge`, `release …`, `verify-delivery`) piped into `tail` or `head` is denied by the shell hook on every host, naming the unpiped call
