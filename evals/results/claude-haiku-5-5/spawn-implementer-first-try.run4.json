@@ -2,35 +2,26 @@
   "case": "spawn-implementer-first-try",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+6cb0e71cc7",
-  "key": "2ab6db5f40ff7116",
-  "date": "2026-11-19T04:47:46.846Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "3948bcf0e38220da",
+  "date": "2026-11-19T05:00:08.884Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 9873,
-    "costUsd": 0.0031366199999999997,
+    "durationMs": 4475,
+    "costUsd": 0.040313850000000005,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": false,
-    "calls": 1,
-    "failures": [
-      {
-        "rule": "require",
-        "detail": "no call matches /implementer/ not denied: the work is delegated and the first implementer spawn runs"
-      },
-      {
-        "rule": "first-try",
-        "detail": "1 denied and 0 failed of 1 Workit interaction(s): #1 Bash(workit fanout worktree create hello-ts 2>&1 || npx -y @workit-dev/cli fanout worktree create hello-ts 2>&1) denied: Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Undermining Oversight]. If you have other tasks that don't depend on thi"
-      }
-    ],
+    "pass": true,
+    "calls": 9,
+    "failures": [],
     "firstTry": {
-      "interactions": 1,
+      "interactions": 6,
       "failed": 0,
-      "denied": 1
+      "denied": 0
     }
   }
 }

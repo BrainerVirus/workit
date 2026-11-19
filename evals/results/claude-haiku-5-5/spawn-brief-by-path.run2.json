@@ -2,24 +2,24 @@
   "case": "spawn-brief-by-path",
   "run": 2,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+6cb0e71cc7",
-  "key": "4ba9154ae7911349",
-  "date": "2026-11-19T04:37:59.468Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "3c7af16d27f15573",
+  "date": "2026-11-19T04:51:09.773Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 6635,
-    "costUsd": 0.0825688,
+    "durationMs": 7057,
+    "costUsd": 0.09479037000000001,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
     "pass": true,
-    "calls": 14,
+    "calls": 12,
     "failures": [],
     "firstTry": {
-      "interactions": 9,
+      "interactions": 8,
       "failed": 0,
       "denied": 0
     }

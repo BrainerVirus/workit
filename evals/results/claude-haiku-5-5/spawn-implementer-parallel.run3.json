@@ -2,25 +2,30 @@
   "case": "spawn-implementer-parallel",
   "run": 3,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+6cb0e71cc7",
-  "key": "299d6a204ffaa5bc",
-  "date": "2026-11-19T04:42:18.755Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "dc6449cf0cba0a31",
+  "date": "2026-11-19T04:55:03.295Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
-    "turns": 3,
-    "durationMs": 8928,
-    "costUsd": 0.12972188000000004,
+    "turns": 4,
+    "durationMs": 10448,
+    "costUsd": 0.11993133000000002,
     "stop": "success"
   },
   "grade": {
     "graderVersion": 2,
-    "pass": true,
-    "calls": 30,
-    "failures": [],
+    "pass": false,
+    "calls": 27,
+    "failures": [
+      {
+        "rule": "first-try",
+        "detail": "0 denied and 1 failed of 18 Workit interaction(s): #3 Bash(workit fanout --help; printf '%s\\n' ---; workit dir plans; printf '%s\\n' ---; workit grant show; printf '%s\\n' ---; work) failed: Exit code 1"
+      }
+    ],
     "firstTry": {
-      "interactions": 20,
-      "failed": 0,
+      "interactions": 18,
+      "failed": 1,
       "denied": 0
     }
   }

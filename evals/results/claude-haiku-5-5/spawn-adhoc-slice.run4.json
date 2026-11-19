@@ -2,15 +2,15 @@
   "case": "spawn-adhoc-slice",
   "run": 4,
   "model": "claude-haiku-5-5",
-  "workitVersion": "workit-dev-v2.15.0+6cb0e71cc7",
-  "key": "cc973a9a83441774",
-  "date": "2026-11-19T04:45:53.429Z",
+  "workitVersion": "workit-dev-v2.15.0+e7079139db",
+  "key": "7cab5960586cf47e",
+  "date": "2026-11-19T04:58:00.147Z",
   "exit": 0,
   "timedOut": false,
   "usage": {
     "turns": 2,
-    "durationMs": 4457,
-    "costUsd": 0.046253760000000005,
+    "durationMs": 4600,
+    "costUsd": 0.04095081,
     "stop": "success"
   },
   "grade": {
@@ -19,7 +19,7 @@
     "calls": 10,
     "failures": [],
     "firstTry": {
-      "interactions": 6,
+      "interactions": 5,
       "failed": 0,
       "denied": 0
     }
