@@ -14,7 +14,7 @@ export type Segment = {
   redirects: string[];
   /** A `(`/`$(` group starts or ends here; the segment carries no words. */
   group?: "open" | "close";
-  /** Its standard output feeds the next segment (`a | b`). */
+  /** Its standard output feeds the next segment (`a | b`, `( … ) | b` on the close). */
   pipe?: true;
   /**
    * Whether it may not run, or runs in its own process, so a shell variable it
@@ -495,7 +495,7 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
         if (current.words.length) {
           current.pipe = true;
           current.conditional = true;
-        }
+        } else if (segments.at(-1)?.group === "close") segments.at(-1)!.pipe = true;
         if (next === "&") index++;
       }
       flushSegment();

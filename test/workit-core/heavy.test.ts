@@ -183,6 +183,14 @@ test("given one heavy command followed only by redirects or one tail/head/grep f
     kind: "rewrite",
     command: "workit check --heavy -- bun test",
   });
+  // #913: the file the filter wrote stays on the unpiped call.
+  expect(plan("bun test | tail -50 > out.txt")).toMatchObject({
+    kind: "rewrite",
+    command: "workit check --heavy -- bun test > out.txt",
+  });
+  expect(plan("bun test 2>&1 | head -n 20 >> log/run.txt")).toMatchObject({
+    command: "workit check --heavy -- bun test >> log/run.txt 2>&1",
+  });
   expect(plan("npm run lint >/dev/null 2>&1")).toMatchObject({
     command: "workit check --heavy -- npm run lint >/dev/null 2>&1",
   });

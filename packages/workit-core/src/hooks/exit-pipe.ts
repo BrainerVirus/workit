@@ -69,8 +69,6 @@ export function exitPipeGate(
   dialect: ShellDialect = "posix",
 ): HookDecision | null {
   if (!/\bworkit/u.test(command) || !/\b(?:tail|head)\b/u.test(command)) return null;
-  // `( … ) | x` and `( … ) && x` tokenize alike: the text says which.
-  const subshellPiped = /\)\s*(?:\d*>&?\d*\s*)*\|(?!\|)/u.test(command);
   const groups: (Found | null)[] = [];
   let carry: Found | null = null;
   let pipefail = false;
@@ -92,10 +90,11 @@ export function exitPipeGate(
     }
     if (closes) {
       const inner = groups.pop() ?? null;
-      const piped = segment.pipe === true || (segment.group === "close" && subshellPiped);
-      carry = piped ? (inner ?? carry) : null;
+      carry = segment.pipe ? (inner ?? carry) : null;
       continue;
     }
+    // Redirects alone after a group close (`( … ) 2>&1 | x`) leave its output flowing.
+    if (!words.length && !segment.stdin && !segment.subs) continue;
     if (setsPipefail(words)) pipefail = true;
     const filter = base(words[0]);
     if (carry && !pipefail && (filter === "tail" || filter === "head")) {
