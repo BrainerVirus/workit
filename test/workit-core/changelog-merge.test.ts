@@ -179,3 +179,49 @@ test("Given entries only in Unreleased on both sides, Then both sides' entries a
     "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- base\n- ours only\n- theirs only\n\n",
   );
 });
+
+test("Given a new Unreleased entry whose first line repeats an entry of a release older than the base, Then the merge keeps it", () => {
+  const base = doc("", "- Dependencies bumped.\n");
+  const ours = doc("### Added\n\n- ours new\n\n", "- Dependencies bumped.\n");
+  const theirs = doc("### Added\n\n- Dependencies bumped.\n\n", "- Dependencies bumped.\n");
+  const { code, text } = merge(base, ours, theirs);
+  expect(code).toBe(0);
+  expect(unreleasedOf(text)).toBe(
+    "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- ours new\n- Dependencies bumped.\n\n",
+  );
+});
+
+test("Given ours is unchanged and theirs adds an entry that repeats an old release's entry, Then theirs is taken with it", () => {
+  const base = doc("", "- Dependencies bumped.\n");
+  const theirs = doc("### Added\n\n- Dependencies bumped.\n\n", "- Dependencies bumped.\n");
+  const { code, text } = merge(base, base, theirs);
+  expect(code).toBe(0);
+  expect(text).toBe(theirs);
+});
+
+test("Given a multi-line Docs bullet adds a sub-item under an old release's Docs bullet, Then the new bullet survives the merge", () => {
+  const old = "- Docs:\n  - old guide\n";
+  const base = doc("", old);
+  const ours = doc("### Added\n\n- ours new\n\n", old);
+  const theirs = doc("### Added\n\n- Docs:\n  - new guide\n\n", old);
+  const { code, text } = merge(base, ours, theirs);
+  expect(code).toBe(0);
+  expect(unreleasedOf(text)).toBe(
+    "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- ours new\n- Docs:\n  - new guide\n\n",
+  );
+});
+
+test("Given the issue's roll in either direction, Then Unreleased holds only gamma", () => {
+  const base = doc("### Added\n\n- alpha\n- beta\n\n");
+  const roll = rolled("", "- alpha\n- beta\n");
+  const added = doc("### Added\n\n- alpha\n- beta\n- gamma\n\n");
+  for (const [ours, theirs] of [
+    [roll, added],
+    [added, roll],
+  ]) {
+    const { code, text } = merge(base, ours, theirs);
+    expect(code).toBe(0);
+    expect(unreleasedOf(text)).toBe("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- gamma\n\n");
+    expect(text.match(/- alpha/g)).toHaveLength(1);
+  }
+});

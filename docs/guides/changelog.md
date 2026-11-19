@@ -22,9 +22,12 @@ again changes nothing.
   theirs; an identical entry on both sides appears once.
 - An entry one side removed from the base stays removed, also when that side removed its whole
   `###` group.
-- An entry a released `## [X.Y.Z]` section holds on either side is never put back under
-  `## [Unreleased]`, so rebasing a changelog roll onto a branch that still lists the rolled
-  entries keeps one copy, in its release.
+- An entry that either side moved into a `## [X.Y.Z]` section since the branches split is
+  never put back under `## [Unreleased]`, so rebasing a changelog roll onto a branch that still
+  lists the rolled entries keeps one copy, in its release. Releases older than the merge base
+  do not count: a new entry that repeats an old one ("Dependencies bumped.") is kept. When
+  entries are left out, the driver prints one line to stderr, such as
+  `workit: changelog merge left 2 Unreleased entries out, already in [1.2.0]`.
 - Anything outside `## [Unreleased]` merges with git's normal three-way rules. When both sides
   edit the same released text, the driver exits 1 and leaves git's conflict markers, so
   nothing is lost silently.

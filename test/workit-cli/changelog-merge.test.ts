@@ -193,3 +193,61 @@ test("Given the driver is installed, When a roll branch is rebased onto a main t
     "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- gamma\n\n",
   );
 }, 60_000);
+
+test("Given the driver is installed, When a branch adding an entry that repeats an old release's entry is rebased, Then the commit and the entry are kept", async () => {
+  const dir = repo();
+  const home = mkdtempSync(path.join(os.tmpdir(), "wk-clmerge-home-"));
+  dirs.push(home);
+  expect(await run(["driver", "install"], io(dir))).toBe(0);
+  sh(dir, "add", ".gitattributes");
+  sh(dir, "commit", "-q", "-m", "attrs");
+
+  const bin = path.join(dir, ".bin");
+  mkdirSync(bin);
+  const main = path.resolve(import.meta.dir, "../../packages/workit-cli/src/main.ts");
+  const shim = path.join(bin, "workit");
+  writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${main}" "$@"\n`);
+  chmodSync(shim, 0o755);
+  const env = {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+  };
+
+  sh(dir, "switch", "-q", "-c", "feature");
+  // `- first` is the 1.0.0 entry every side already has.
+  writeFileSync(path.join(dir, "CHANGELOG.md"), changelog("### Added\n\n- first\n- base\n\n"));
+  sh(dir, "commit", "-q", "-am", "feature");
+  sh(dir, "switch", "-q", "main");
+  writeFileSync(path.join(dir, "CHANGELOG.md"), changelog("### Added\n\n- main entry\n- base\n\n"));
+  sh(dir, "commit", "-q", "-am", "main change");
+  sh(dir, "switch", "-q", "feature");
+
+  const rebase = spawnSync("git", ["rebase", "main"], { cwd: dir, encoding: "utf8", env });
+  expect(rebase.status).toBe(0);
+  expect(sh(dir, "log", "-1", "--format=%s")).toBe("feature");
+  const text = readFileSync(path.join(dir, "CHANGELOG.md"), "utf8");
+  expect(text.split("## [1.0.0]")[0]).toBe(
+    "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- main entry\n- base\n- first\n\n",
+  );
+}, 60_000);
+
+test("Given the merge leaves out entries released since the base, Then the verb names how many and where on stderr", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-clmerge-cli-"));
+  dirs.push(dir);
+  const base = changelog("### Added\n\n- alpha\n- beta\n\n");
+  const ours = changelog("## [1.2.0] - 2026-02-01\n\n### Added\n\n- alpha\n- beta\n\n");
+  writeFileSync(path.join(dir, "base"), changelog(""));
+  writeFileSync(path.join(dir, "ours"), ours);
+  writeFileSync(path.join(dir, "theirs"), base.replace("- beta\n", "- beta\n- gamma\n"));
+  const errors: string[] = [];
+  const out = { ...io(dir), stderr: (text: string) => void errors.push(text) };
+  expect(await run(["merge", "base", "ours", "theirs"], out)).toBe(0);
+  expect(errors).toEqual([
+    "workit: changelog merge left 2 Unreleased entries out, already in [1.2.0]\n",
+  ]);
+  expect(readFileSync(path.join(dir, "ours"), "utf8")).toContain(
+    "## [Unreleased]\n\n### Added\n\n- gamma\n\n## [1.2.0]",
+  );
+});

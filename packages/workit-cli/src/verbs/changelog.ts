@@ -44,6 +44,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
         theirs: path.resolve(io.cwd, theirs),
       });
       if (merged.error) return emit(io, fail("failed", merged.error));
+      const dropped = merged.dropped ?? [];
+      if (dropped.length) {
+        const versions = [...new Set(dropped)].map((v) => `[${v}]`).join(", ");
+        io.stderr(
+          `workit: changelog merge left ${dropped.length} Unreleased ${dropped.length === 1 ? "entry" : "entries"} out, already in ${versions}\n`,
+        );
+      }
       // Exit 1 is git's "conflict": the markers are already in <ours>.
       if (merged.code !== 0) io.stderr("workit: changelog conflict outside [Unreleased]\n");
       return merged.code;
