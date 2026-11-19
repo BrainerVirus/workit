@@ -61,6 +61,7 @@ import {
   baseRedNextStep,
   classifyBaseRed,
   previousBaseChecks,
+  uncoveredBaseRed,
   type BaseRedCause,
 } from "./merge-gate-base-red";
 import { buildStatusDoc, selectPr, type PrStatusDoc } from "./report";
@@ -434,7 +435,8 @@ export type MergeOutcome = {
   /** Set when `--others-pr` merged another author's PR: who, and the recorded reason. */
   othersPr: { author: string; login: string; reason: string } | null;
   /** The base branch's CI at its head: a one-line note when it was not green, and the override used. */
-  baseCi: { note: string | null; override: { reason: string } | null };
+  /** `fixes`: the red base checks this PR's head passes, so it merged without `--base-red-ok`. */
+  baseCi: { note: string | null; override: { reason: string } | null; fixes?: string[] };
   grant: { source: AutonomySource };
   /** `skipped`: the implicit default found a reason to keep the branch; the merge is unaffected. */
   deletedBranch: boolean | { error: string } | { skipped: string };
@@ -1048,22 +1050,31 @@ export async function mergePullRequest(
 
   const baseCi = baseCiState(cwd, resolved, doc.base);
   let baseRedOverride: { reason: string } | null = null;
-  if (!baseCi.ok) {
+  let baseRedFixed: string[] | null = null;
+  // A head that passes every red base check is the fix, so it merges without
+  // the bypass; only the checks it does not cover gate (#906).
+  const uncovered = baseCi.ok ? [] : uncoveredBaseRed(baseCi.failing, status.data.checks);
+  if (!baseCi.ok && !uncovered.length) baseRedFixed = baseCi.failing.map((failed) => failed.name);
+  else if (!baseCi.ok) {
     const names = baseCi.failing.map((failed) => failed.name).join(", ");
-    const url = baseCi.failing.find((failed) => failed.url)?.url ?? null;
+    const url = uncovered.find((failed) => failed.url)?.url ?? null;
+    const passed = baseCi.failing.filter((failed) => !uncovered.includes(failed));
+    const coverage = passed.length
+      ? `; ${label}'s head passes ${passed.map((failed) => failed.name).join(", ")} but not ${uncovered.map((failed) => failed.name).join(", ")}`
+      : `; ${label}'s head does not pass ${uncovered.map((failed) => failed.name).join(", ")}`;
     if (!baseRed) {
-      const cause = classifyBaseRed(baseCi.failing, previousBaseChecks(resolved, doc.base));
+      const cause = classifyBaseRed(uncovered, previousBaseChecks(resolved, doc.base));
       const next = baseRedNextStep(
         doc.base,
         cause,
         `workit pr merge${input.pr ? ` --pr ${doc.number}` : ""} --base-red-ok --reason "<why>"`,
       );
       return refuse(
-        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base; ${next.detail}`,
+        `base_red: ${doc.base} at ${baseCi.sha?.slice(0, 12) ?? "its head"} has failing CI (${names}${baseCi.requiredKnown ? "" : "; the required checks could not be read, so every failed check counts"})${url ? `: ${url}` : ""}; merging ${label} onto it would land on a red base${coverage}; ${next.detail}`,
         next.unblock,
         {
           reason: "base_red",
-          blockers: baseCi.failing.map((failed) => failed.name),
+          blockers: uncovered.map((failed) => failed.name),
           baseRedCause: cause.kind,
         },
       );
@@ -1089,6 +1100,7 @@ export async function mergePullRequest(
     lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
+    ...(baseRedFixed ? { baseRedFixed } : {}),
     ...(othersPr ? { othersPr } : {}),
     grant: grant.source,
   });
@@ -1126,6 +1138,7 @@ export async function mergePullRequest(
     lane: verdict.lane,
     ...(unverified ? { unverified: unverified.recorded } : {}),
     ...(baseRedOverride ? { baseRedOk: baseRedOverride.reason } : {}),
+    ...(baseRedFixed ? { baseRedFixed } : {}),
     ...(othersPr ? { othersPr } : {}),
     grant: grant.source,
     intent: intentId,
@@ -1201,12 +1214,15 @@ export async function mergePullRequest(
       unverified,
       othersPr,
       baseCi: {
-        note: baseRedOverride
-          ? `base ${doc.base} CI is red; merged anyway (--base-red-ok: ${baseRedOverride.reason})`
-          : baseCi.ok
-            ? baseCi.note
-            : null,
+        note: baseRedFixed
+          ? `base ${doc.base} CI is red (${baseRedFixed.join(", ")}); ${label}'s head passes it, so this merge fixes the red base check`
+          : baseRedOverride
+            ? `base ${doc.base} CI is red; merged anyway (--base-red-ok: ${baseRedOverride.reason})`
+            : baseCi.ok
+              ? baseCi.note
+              : null,
         override: baseRedOverride,
+        ...(baseRedFixed ? { fixes: baseRedFixed } : {}),
       },
       grant: { source: grant.source },
       deletedBranch,

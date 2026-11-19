@@ -78,6 +78,9 @@ const baseChecks = (nodes: Node[] | null) =>
     },
   });
 
+/** The PR's head runs its checks in another workflow, so it covers none of main's red ones. */
+const PR_HEAD = fixture("github/pr-passing.json").replaceAll('"name": "CI"', '"name": "PR"');
+
 const previousKey = `graphql branch-checks ${JSON.stringify({ owner: "o", name: "r", ref: "refs/heads/main~1" })}`;
 
 /** A docs-only READY PR (lane none: no verdict needed) whose base checks are `nodes`, and `previous` on the base commit before. */
@@ -106,8 +109,7 @@ const setup = (
     "GET repos/o/r/rules/branches/main": fixture("github/rules-main.json"),
     "CLI auth token --hostname github.com --user octo": "gho_token_for_octo_0000000000000000",
     "graphql find": fixture("github/find-pr.json"),
-    "graphql status": () =>
-      merged ? fixture("github/pr-merged.json") : (status ?? fixture("github/pr-passing.json")),
+    "graphql status": () => (merged ? fixture("github/pr-merged.json") : (status ?? PR_HEAD)),
     "graphql branch-checks": baseChecks(nodes),
     [previousKey]: baseChecks(previous),
     "GET repos/o/r/branches/main~1": replyError("HTTP 404 Branch not found"),
