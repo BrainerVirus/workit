@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
@@ -102,6 +102,7 @@ test("G an implementer spawn that names no worktree, W PreToolUse runs, T the de
     [{ description: "Fix login", prompt: "fix the tests" }, "fix-login"],
     [{ description: "d", prompt: "WORKER: api-v2\nGOAL: g\n" }, "api-v2"],
     [{ description: "d", prompt: "Run `workit fanout brief ui` first" }, "ui"],
+    [{ description: "Fix login", prompt: "The brief is below; create a test for it" }, "fix-login"],
   ] as const) {
     const out = spawn({ subagent_type: "workit:implementer", model: "opus", ...input });
     expect(out.hookSpecificOutput?.permissionDecision, slice).toBe("deny");
@@ -149,6 +150,23 @@ test("G a prompt naming a worktree's path with no WORKTREE line, W PreToolUse ru
     spawn({ subagent_type: "workit:implementer", prompt: "Read /dev/zero and /etc then stop" })
       .hookSpecificOutput?.permissionDecision,
   ).toBe("deny");
+});
+
+test("G a prompt naming a directory whose .git is a FIFO or a device, W PreToolUse runs, T it is denied without reading it (no hang)", () => {
+  const fifo = path.join(cwd, "fifo-dir");
+  mkdirSync(fifo);
+  spawnSync("mkfifo", [path.join(fifo, ".git")]);
+  const zero = path.join(cwd, "zero-dir");
+  mkdirSync(zero);
+  symlinkSync("/dev/zero", path.join(zero, ".git"));
+  const started = Date.now();
+  for (const dir of [fifo, zero])
+    expect(
+      spawn({ subagent_type: "workit:implementer", prompt: `Work in ${dir}` }).hookSpecificOutput
+        ?.permissionDecision,
+      dir,
+    ).toBe("deny");
+  expect(Date.now() - started).toBeLessThan(2000);
 });
 
 test("G an implementer prompt that points at its brief (WORKER, TIER, TIMEBOX and WORKTREE lines, render the rest), W PreToolUse runs, T it is accepted as a brief", () => {

@@ -28,7 +28,11 @@ const namesMade = (word: string): boolean => {
   try {
     const stat = fs.statSync(word);
     if (stat.isFile()) return stat.size < 1e6 && MADE_WORKTREE.test(fs.readFileSync(word, "utf8"));
-    const admin = /^gitdir: *(.+)/u.exec(fs.readFileSync(path.join(word, ".git"), "utf8"));
+    // Only a small regular .git file is read: a FIFO or device must not hang the hook.
+    const dotGit = path.join(word, ".git");
+    const link = fs.statSync(dotGit);
+    const admin =
+      link.isFile() && link.size <= 4096 && /^gitdir: *(.+)/u.exec(fs.readFileSync(dotGit, "utf8"));
     return !!admin && fs.existsSync(path.resolve(word, admin[1].trim(), FANOUT_TOKEN_FILE));
   } catch {
     return false;
@@ -41,11 +45,12 @@ const namesWorktree = (prompt: string): boolean =>
     namesMade(word.replace(/[.:]+$/u, "")),
   );
 
-/** The slice word a prompt or description names, as a slice id. */
+/** The slice a prompt names (`fanout brief <x>`, `worktree create <x>`, `WORKER: <x>`), else the description, as a slice id. */
 const sliceWord = (tool: Record<string, unknown>): string =>
   (
-    /\b(?:WORKER:|brief|create) +([a-z0-9][\w.-]*)/iu.exec(String(tool.prompt))?.[1] ??
-    String(tool.description ?? "")
+    /(?:\bfanout brief|\bworktree create|\bWORKER:) +([a-z0-9][\w.-]*)/iu.exec(
+      String(tool.prompt),
+    )?.[1] ?? String(tool.description ?? "")
   )
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/gu, "-")
