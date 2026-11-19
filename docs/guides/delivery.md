@@ -36,7 +36,7 @@ workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last com
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
-workit git rebase [--onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>); a conflict aborts and lists the paths; then push --force-with-lease
+workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict aborts and lists the paths; then push --force-with-lease
 workit git hold --why "<the user's words>" | --clear   # the user said not yet: the Stop hook stops asking to push or open a PR for this branch
 ```
 
@@ -414,7 +414,7 @@ and how to fix it.
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [--issue <#n|ID|url>]… [--refs] [--label <l>]… [--reviewer <login>]… [--draft] [--no-changelog <reason>]
+workit pr create (--title <t ≤100 chars> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]
 workit pr template [--json]            # the PR template to fill (the repo's, else Workit's) and its source
 workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
 workit pr ready [--undo]               # mark the draft ready (or back to draft)
@@ -433,6 +433,10 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   that SHA as the PR head. It ends with a `next:` line (`next` in `--json`):
   a non-author verifies the head, then what the effective endpoint does
   (stop, babysit, or land after verification).
+- `pr create` reads a positional issue id or URL as `--issue`, and takes
+  `--add-label` and `--add-reviewer` as `pr edit` spells them. An issue with
+  open sub-issues (an umbrella) gets a warning: link one slice of it with
+  `--refs`, which does not close it.
 - `pr create` and `pr edit --title` check the title against the repository's
   commitlint rules before the forge call: the type list, the header length and
   an empty type or subject, with commitlint's default ignores (merge, revert,
@@ -447,7 +451,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 - `pr create --fill` takes the title from the oldest commit and the body from
   the commit messages (one commit: its body; several: each subject with its
   body), leaving out Workit's `Workit-Session:` trailer. `--body-file -` reads
-  the body from stdin.
+  the body from stdin, including a pipe whose writer starts late
+  (`echo body | workit pr edit --body-file -`).
 - `pr status` prints the command that clears `next` on a `do:` line
   (`nextHint` in `--json`), e.g. `workit pr ready --pr 12` for a draft.
 - `pr ready`, `pr edit` and `pr reply` need the `pr` grant and an open PR.
@@ -630,7 +635,11 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   has no changelog but the repo keeps one elsewhere, the refusal names it and
   the `workit workspace set <ws> changelogPath=<file>` that points the gate
   there.
-  Commit and push the entry, then run `pr create` again.
+  Commit and push the entry, then run `pr create` again, or let `pr create`
+  do it in the same call with `--changelog "<Section>: <entry>"` (for example
+  `--changelog "Fixed: the retry loop keeps the timeout"`): it adds the entry,
+  commits it as `docs(<scope>): add the changelog entry`, pushes and opens the PR. The
+  refusal's `Retry as:` line is the original call plus that flag.
 - Under `update`, a repo without its changelog file passes with one line saying
   there is nothing to update; under `create` the entry is still required. A
   glob such as `projects/*/CHANGELOG.md` that matches no file in a repo falls
@@ -742,7 +751,10 @@ workit issue create --title <t> --body-file <f|-> [--label <l>]…
 
 Issues live on the workspace tracker (`issues.provider` github or gitlab,
 its `issues.repo`), else on the checkout's forge. `--repo <owner/name>` picks
-another repository on the same host. YouTrack and other hosts are refused,
+another repository on the same host. Outside a git checkout `--repo` names
+the forge too: the repository on the workspace provider's host (github.com by
+default), so `workit issue create --repo owner/name …` works from any
+directory. YouTrack and other hosts are refused,
 because no account is verified there. Comment, close and create need the
 `pr` grant, the same one as `pr edit` and `pr reply`, and each writes an
 `issue.commented`, `issue.closed` or `issue.created` ledger row. `close`
