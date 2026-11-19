@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createGitLabForge } from "@/packages/workit-core/src/forge/gitlab";
+import { nextHint } from "@/packages/workit-core/src/forge/pr-ops";
 import { waiveChecks } from "@/packages/workit-core/src/forge/report";
 import type { ForgeCheck, ForgePrStatus } from "@/packages/workit-core/src/forge/types";
 import { replyError, replayRunner } from "@/test/shared/helpers/forge-replay";
@@ -110,4 +111,16 @@ test("Given an unreadable GitLab project, When an MR has a failing job, Then the
   const read = gitlabStatus(replyError("glab: HTTP 500"));
   const failing = read.checks.find((item) => item.state === "failing");
   expect(failing?.required).toBe(true);
+});
+
+test("Given a conflicting or rebase-required PR, When nextHint names the step, Then it is the exact workit git rebase onto the PR's base, then the leased push", () => {
+  expect(nextHint("RESOLVE_CONFLICTS", 12, "origin/develop")).toStartWith(
+    "workit git rebase --onto origin/develop  # then: workit git push --force-with-lease",
+  );
+  expect(nextHint("REBASE", 12, "origin/main")).toBe(
+    "workit git rebase --onto origin/main  # then: workit git push --force-with-lease",
+  );
+  expect(nextHint("REBASE", 12)).toBe(
+    "workit git rebase  # then: workit git push --force-with-lease",
+  );
 });

@@ -484,6 +484,27 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   commit for the check, and removes the ref it made. A local branch at another
   commit is still refused `head_mismatch`; a head it cannot fetch is refused
   `head_unfetched` with the head SHA and the `git fetch` to run.
+- A PR the forge reports conflicting (or needing a rebase) is read locally
+  first: `pr merge` fetches the base and asks git (`git merge-tree`, git
+  2.38+) which paths conflict. When the only one is the workspace changelog
+  and Workit's changelog merge driver merges it (both sides added Unreleased
+  entries; GitHub's own merge ignores the driver), `pr merge` rebases the
+  branch onto the base with the driver, pushes it with `--force-with-lease`
+  on the PR head (both recorded in the ledger), and stops without merging:
+  it exits 3 with `rebased_pushed` and prints the next commands,
+  `workit ci wait` and the same `workit pr merge …` again, which then goes
+  through every gate on the new head (its CI, a verdict for it). It never
+  waits for CI itself and takes no flag. It does this only when the
+  workspace grants both `push` and `merge`, the branch is checked out in this
+  checkout with no uncommitted changes to tracked files, the local branch and
+  the remote branch are both at the PR head, and the PR is yours and not from
+  a fork; otherwise it refuses `not_ready`, pushes nothing, and names the
+  exact commands (`workit git rebase --onto origin/main`, then
+  `workit git push --force-with-lease`, `workit ci wait` and the merge; or
+  the same merge with `--cwd <worktree>` when the branch is checked out in
+  another worktree). A conflict in any other path refuses as before, naming
+  the paths (`conflicts` in `--json`), with `workit git rebase --onto <base>`
+  as the unblock. `stack land` never rebases this way.
 - `pr merge` ends one of two ways. A merge exits 0 and prints
   `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout.
   Anything else exits non-zero and ends with
