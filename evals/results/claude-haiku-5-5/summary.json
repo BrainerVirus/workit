@@ -2,8 +2,8 @@
   "passed": 42,
   "total": 68,
   "firstTry": {
-    "interactions": 742,
-    "failed": 33,
+    "interactions": 743,
+    "failed": 32,
     "denied": 90
   },
   "outsideChanges": 11,
@@ -2048,15 +2048,15 @@
       "case": "spawn-implementer-parallel",
       "pass": true,
       "firstTry": {
-        "interactions": 92,
-        "failed": 1,
+        "interactions": 93,
+        "failed": 0,
         "denied": 0
       },
-      "passes": 4,
-      "failures": ["first-try"],
-      "turns": 17,
-      "costUsd": 0.63715605,
-      "workitVersion": "workit-dev-v2.15.0+e7079139db",
+      "passes": 5,
+      "failures": [],
+      "turns": 20,
+      "costUsd": 0.67999816,
+      "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
       "graderVersion": 2,
       "runs": [
         {
@@ -2069,50 +2069,8 @@
           },
           "failures": [],
           "turns": 3,
-          "costUsd": 0.11743907,
-          "workitVersion": "workit-dev-v2.15.0+e7079139db",
-          "graderVersion": 2
-        },
-        {
-          "case": "spawn-implementer-parallel",
-          "pass": true,
-          "firstTry": {
-            "interactions": 18,
-            "failed": 0,
-            "denied": 0
-          },
-          "failures": [],
-          "turns": 0,
-          "costUsd": 0.13598470000000001,
-          "workitVersion": "workit-dev-v2.15.0+e7079139db",
-          "graderVersion": 2
-        },
-        {
-          "case": "spawn-implementer-parallel",
-          "pass": false,
-          "firstTry": {
-            "interactions": 18,
-            "failed": 1,
-            "denied": 0
-          },
-          "failures": ["first-try"],
-          "turns": 4,
-          "costUsd": 0.11993133000000002,
-          "workitVersion": "workit-dev-v2.15.0+e7079139db",
-          "graderVersion": 2
-        },
-        {
-          "case": "spawn-implementer-parallel",
-          "pass": true,
-          "firstTry": {
-            "interactions": 18,
-            "failed": 0,
-            "denied": 0
-          },
-          "failures": [],
-          "turns": 5,
-          "costUsd": 0.12837640999999997,
-          "workitVersion": "workit-dev-v2.15.0+e7079139db",
+          "costUsd": 0.18866147000000003,
+          "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
           "graderVersion": 2
         },
         {
@@ -2124,9 +2082,51 @@
             "denied": 0
           },
           "failures": [],
-          "turns": 5,
-          "costUsd": 0.13542453999999998,
-          "workitVersion": "workit-dev-v2.15.0+e7079139db",
+          "turns": 2,
+          "costUsd": 0.12238855000000004,
+          "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-implementer-parallel",
+          "pass": true,
+          "firstTry": {
+            "interactions": 16,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 4,
+          "costUsd": 0.12370835999999998,
+          "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-implementer-parallel",
+          "pass": true,
+          "firstTry": {
+            "interactions": 21,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 7,
+          "costUsd": 0.12483334999999998,
+          "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
+          "graderVersion": 2
+        },
+        {
+          "case": "spawn-implementer-parallel",
+          "pass": true,
+          "firstTry": {
+            "interactions": 18,
+            "failed": 0,
+            "denied": 0
+          },
+          "failures": [],
+          "turns": 4,
+          "costUsd": 0.12040643000000001,
+          "workitVersion": "workit-dev-v2.15.0+0a00d28b34",
           "graderVersion": 2
         }
       ]
