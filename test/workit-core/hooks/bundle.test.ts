@@ -100,8 +100,8 @@ const HOOK_ENTRIES = [
 // Wave 12's spenders (2026-11-18, Bun 1.4.4, rebased on #899): ft-spawn-models (+694 B) and
 // session-teardown (+4,460 B: the session-end stop and session-start reap, hooks/teardown.ts)
 // took core run to 578,817 B. The ceiling is that plus 2,000 B.
-// trunk-ci-wait (#912, the exit-pipe deny) took core run to 582,133 B; the ceiling is that plus 2 KiB.
-const BUDGET = 584_181;
+// trunk-ci-wait (#912, the exit-pipe deny) took core run to 582,564 B (after its fix round); the ceiling is that plus 2 KiB.
+const BUDGET = 584_612;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

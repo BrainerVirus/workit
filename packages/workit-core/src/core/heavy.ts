@@ -591,7 +591,9 @@ export function heavyPlan(command: string, options: PlanOptions): HeavyPlan {
         };
     }
   if (single) {
-    const rewrite = leaseRewrite(command);
+    // A trailing `[2>&1] | tail|head …` is dropped (#912): piped, `workit check`'s
+    // exit code would be the filter's (the exit-pipe gate denies it), and its output is bounded.
+    const rewrite = leaseRewrite(command.trim().replace(TAIL_FILTER, ""));
     return rewrite
       ? { kind: "rewrite", command: rewrite, reason: single.reason }
       : { kind: "none" };
@@ -659,6 +661,9 @@ export function workitOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
     }
   return false;
 }
+
+/** A trailing `| tail …` or `| head …` with plain arguments, and a `2>&1` before it. */
+const TAIL_FILTER = /(?:\s+2>&1)?\s*\|\s*(?:tail|head)(?:\s+[\w=.+-]+)*\s*$/u;
 
 /** Leading `VAR=value` words, kept in front of `workit` so the command still sees them. */
 const ASSIGNMENTS = /^\s*((?:[A-Za-z_]\w*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"])*\s+)*)/u;

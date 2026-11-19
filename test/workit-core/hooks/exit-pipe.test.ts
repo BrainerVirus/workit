@@ -12,6 +12,9 @@ import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hook
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 import { handleCursorHook } from "@/packages/workit-cursor/hooks/workit-hook";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
+import { observeShellBefore } from "@/packages/workit-opencode/src/v2/shell";
+import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
+import { heavyGate } from "@/packages/workit-core/src/hooks/heavy-gate";
 
 const KEYS = [
   "PATH",
@@ -97,6 +100,10 @@ test.each([
   ["FOO=1 workit --json ci wait | tail -1", "tail", "workit --json ci wait"],
   ["cd /tmp/wt && workit ci wait | tail -5", "tail", "workit ci --cwd /tmp/wt wait"],
   ["workit check --name t -- 'bun test x' | tail", "tail", "workit check --name t -- 'bun test x'"],
+  ["workit ci wait | tee log | tail", "tail", "workit ci wait"],
+  ["workit ci wait 2>&1 | grep -v ok | tail -3", "tail", "workit ci wait"],
+  ["(workit ci wait) | tail -3", "tail", "workit ci wait"],
+  ["{ workit ci wait; } 2>&1 | head -3", "head", "workit ci wait"],
 ])(
   "Given `%s`, When the gate reads it, Then it denies with the unpiped call",
   (command, filter, retry) => {
@@ -118,6 +125,10 @@ test.each([
   ["workit ci wait | tee out.txt"],
   ["echo workit ci wait | tail"],
   ["bun test 2>&1 | tail -50"],
+  ["set -o pipefail; workit ci wait | tail -5"],
+  ["set -euo pipefail; workit check test 2>&1 | tail -20"],
+  ["(workit ci wait) && tail -3 log.txt"],
+  ["(workit ci wait); tail -3 log.txt"],
 ])("Given `%s`, When the gate reads it, Then it leaves it alone", (command) => {
   expect(exitPipeGate(command)).toBeNull();
 });
@@ -164,4 +175,31 @@ test("Given `workit ci wait | tail -5` on Codex, Cursor and Pi, When the shell h
   ) as { block?: boolean; reason?: string } | undefined;
   expect(pi?.block).toBe(true);
   expect(pi?.reason).toContain("Retry as: workit ci wait");
+});
+
+test("Given `workit ci wait | tail -5` on OpenCode, When permission.evaluate runs, Then it is denied naming `workit ci wait`", () => {
+  const root = repo();
+  const input = { command: "workit ci wait | tail -5" };
+  observeShellBefore(root, { tool: "shell", sessionID: "ses_1", id: "call-1", input }, new Map());
+  const event = {
+    sessionID: "ses_1",
+    action: "shell",
+    resources: [input.command],
+    effect: "allow",
+    message: undefined as string | undefined,
+  };
+  evaluateShellPermission(root, event);
+  expect(event.effect).toBe("deny");
+  expect(event.message).toContain("Retry as: workit ci wait");
+});
+
+test("Given a heavy command shaped with `| tail`, When the heavy gate routes it, Then its call passes the pipe gate (no second deny)", () => {
+  const root = repo();
+  for (const command of ["bun test 2>&1 | tail -50", "npx jest | head -20"]) {
+    const plan = heavyGate(root, command, { host: "claude_code" });
+    expect(plan.kind, command).toBe("rewrite");
+    const routed = plan.kind === "rewrite" ? plan.command : "";
+    expect(routed, command).not.toMatch(/\|\s*(?:tail|head)/u);
+    expect(exitPipeGate(routed), command).toBeNull();
+  }
 });

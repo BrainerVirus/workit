@@ -9,7 +9,7 @@
   },
   "expect": {
     "kind": ["deny"],
-    "require": ["workit check --heavy -- bun test 2>&1 \\| tail -50"],
+    "require": ["Run exactly: workit check --heavy -- bun test\n"],
     "forbid": ["chains heavy work"]
   }
 }

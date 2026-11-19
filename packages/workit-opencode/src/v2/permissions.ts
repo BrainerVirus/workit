@@ -10,6 +10,7 @@ import {
 import { namesTicket, TICKET_DENY } from "@workit-dev/core/src/approvals/store";
 import { userOnlyWorkitCall } from "@workit-dev/core/src/hooks/delivery-verbs";
 import { ytrackGate } from "@workit-dev/core/src/hooks/ytrack-guard";
+import { exitPipeGate } from "@workit-dev/core/src/hooks/exit-pipe";
 
 export type PermissionEvaluationEvent = {
   sessionID?: string;
@@ -74,6 +75,9 @@ export const evaluateShellPermission = (
     // A raw ytrack write asks the user first (#780): OpenCode's hook denies it with the workit call.
     const ytrack = ytrackGate(cwd, resource, "posix", false);
     if (ytrack?.kind === "deny") return deny(ytrack.reason);
+    // A Workit verb's exit code piped into tail/head is lost (#912): denied with the unpiped call.
+    const piped = exitPipeGate(resource, "posix");
+    if (piped?.kind === "deny") return deny(piped.reason);
     const raw = rawGitPre(
       {
         host: "opencode",
