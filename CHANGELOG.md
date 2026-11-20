@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A second GitHub workflow with the same display name no longer covers a red base check or hides a failing run from the PR's CI gate; a `--base-red-ok` reason given on a PR that already fixes the red base is recorded and reported as not needed (#920).
 - `workit pr merge` on a PR that conflicts with its base only in the changelog rebases it with the changelog merge driver, pushes it with `--force-with-lease` and stops, printing `workit ci wait` and the same merge as the next commands; any other conflict refuses with an exact `workit git rebase` command (#923).
 - The CHANGELOG merge driver no longer re-adds Unreleased entries that a rebased branch moved into a version section since the branches split, so a rolled changelog keeps each entry once; it reports any entries it leaves out on stderr (#896).
 - Under Claude Code auto mode, Workit no longer rewrites a Bash call (which auto mode refuses as a changed input): `cd <dir> && workit …`, a heavy command, a raw dev server and `npx @workit-dev/cli …` are denied with the exact call to send instead (`Retry as: workit --cwd <dir> …`, `workit check --heavy -- <cmd>`, `workit run --bg -- <cmd>`, `workit …`). Outside auto mode they are rewritten as before.
