@@ -13,11 +13,13 @@ workit feedback "pr status fails outside a checkout" --body-file - \
 
 The body is a minimal synthetic repro. The verb adds the Workit version, the
 host, the platform, the failing verb (`--verb`) and its exit text
-(`--exit-file`), then:
+(`--exit-file`). Without both flags it takes the session's last failing
+Workit verb and its output instead, when that failure is under a day old,
+and says so in the draft's header. Then it:
 
 - **Redacts the draft.** URLs (credentials included), `user@host:path`
   remotes, emails, host names other than github.com, IP addresses, absolute,
-  home, UNC and relative paths, the current branch, ticket IDs (`ABC-123`,
+  home, UNC and relative paths (`/` or `\`), the current branch, ticket IDs (`ABC-123`,
   `app-123`) and the workspace's org, repository and workspace names are
   replaced with `<url>`, `<email>`, `<host>`, `<path>`, `<branch>`,
   `<ticket>` and `<name>`. The tracker's own URLs stay. Tokens and passwords

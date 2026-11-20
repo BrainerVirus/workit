@@ -325,7 +325,15 @@ export async function main(
         `workit: migrated ${report.tasks} task${report.tasks === 1 ? "" : "s"} from ${report.from} to ${report.to} (backup: ${report.backup})\n`,
       );
     const verb = await entry.load();
-    const runVerb = (target: Io) => guarded(target, () => verb.run(checked.args, target));
+    const guardedRun = (target: Io) => guarded(target, () => verb.run(checked.args, target));
+    // The session's last failure inside a verb fills `workit feedback` in
+    // (#916); a refusal before the verb runs changes nothing, and feedback's
+    // own failure never replaces the one it reports.
+    const runVerb =
+      entry.name === "feedback"
+        ? guardedRun
+        : async (target: Io) =>
+            (await import("./last-failure")).recordingFailure(target, argv, guardedRun);
     try {
       return await (routed.json ? runJsonPure(routed, command, runVerb) : runVerb(routed));
     } finally {
