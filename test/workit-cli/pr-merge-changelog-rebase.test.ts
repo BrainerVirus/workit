@@ -5,7 +5,13 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
-import { mergeRebaseDeps } from "@/packages/workit-core/src/forge/merge-rebase";
+import {
+  mergeRebaseDeps,
+  rebaseChangelogConflict,
+} from "@/packages/workit-core/src/forge/merge-rebase";
+import { mergePullRequest } from "@/packages/workit-core/src/forge/pr-ops";
+import type { PrStatusDoc } from "@/packages/workit-core/src/forge/report";
+import { resolveForge, type ResolvedForge } from "@/packages/workit-core/src/forge/resolve";
 import { success } from "@/packages/workit-core/src/forge/types";
 import { pushPreflight } from "@/packages/workit-core/src/git/ops";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
@@ -368,4 +374,151 @@ test("Given the changelog-only conflict with the branch checked out in another w
   expect(envelope.unblock).toStartWith(`workit pr merge --pr 12 --cwd ${other}`);
   expect(remoteTip()).toBe(head);
   expect(merges()).toBe(0);
+});
+
+// Review of #924: each guard below has its own test, and each asserts that
+// nothing was pushed and the branch was not rewritten.
+const ACTOR = { host: "test", session: "author-1", agentId: null };
+
+const unchanged = (made: Setup, local = made.head) => {
+  expect(made.remoteTip()).toBe(made.head);
+  expect(made.repo.git("rev-parse", "HEAD")).toBe(local);
+  expect(made.repo.git("status", "--porcelain")).toBe("");
+  expect(made.merges()).toBe(0);
+};
+
+test("Given the changelog-only conflict and the remote branch at another commit than the PR head, When pr merge runs, Then it refuses, rewrites nothing and names pr status", async () => {
+  const made = setup();
+  const { repo, bare, head, baseTip, remoteTip, merges } = made;
+  repo.git("push", "-q", "-f", bare, `${baseTip}:refs/heads/feature/x`);
+
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const envelope = result.json();
+  expect(envelope.data).toMatchObject({ reason: "not_ready", conflicts: ["CHANGELOG.md"] });
+  expect(envelope.error).toContain(
+    `${bare}/feature/x is at ${baseTip.slice(0, 12)}, not the PR head ${head.slice(0, 12)}`,
+  );
+  expect(envelope.unblock).toBe(
+    "workit pr status  # once the forge shows the new head: workit pr merge",
+  );
+  expect(remoteTip()).toBe(baseTip);
+  expect(repo.git("rev-parse", "HEAD")).toBe(head);
+  expect(merges()).toBe(0);
+});
+
+test("Given the changelog-only conflict on a PR from a fork, When the auto rebase is asked, Then it refuses naming the fork and pushes nothing", () => {
+  const made = setup();
+  const { repo, head } = made;
+  const prDoc = {
+    number: 12,
+    base: "main",
+    head: { branch: "feature/x", sha: head },
+    headRepo: "someone/r",
+  };
+  const result = rebaseChangelogConflict(
+    repo.cwd,
+    { baseRemote: "origin", remote: "origin" } as unknown as ResolvedForge,
+    {
+      doc: prDoc as unknown as PrStatusDoc,
+      label: "PR #12",
+      again: "workit pr merge --method squash",
+      ciWait: "workit ci wait",
+      actor: ACTOR,
+      notYours: null,
+    },
+  );
+  expect(result).toMatchObject({ ok: false, code: "blocked", conflicts: ["CHANGELOG.md"] });
+  if (result.ok) return;
+  expect(result.why).toContain("PR #12 comes from a fork (someone/r)");
+  expect(result.unblock).toStartWith("workit git rebase --onto origin/main");
+  unchanged(made);
+});
+
+test("Given a CHANGELOG.md conflict outside the Unreleased entries, When pr merge runs, Then it refuses because the driver does not merge it and pushes nothing", async () => {
+  const released = (entry: string, line: string) =>
+    doc([entry]).replace("- first\n", `- ${line}\n`);
+  const made = setup({
+    mainFiles: { "CHANGELOG.md": released("main entry", "first, main wording") },
+    featureFiles: { "CHANGELOG.md": released("x entry", "first, x wording") },
+  });
+
+  const result = await run(["pr", "merge", "--json"], made.repo.cwd);
+  const envelope = result.json();
+  expect(envelope.data).toMatchObject({ reason: "not_ready", conflicts: ["CHANGELOG.md"] });
+  expect(envelope.error).toContain(
+    "CHANGELOG.md conflicts with origin/main outside its Unreleased entries, which the changelog merge driver does not resolve",
+  );
+  expect(envelope.unblock).toStartWith(
+    "workit git rebase --onto origin/main  # it stops on CHANGELOG.md",
+  );
+  unchanged(made);
+});
+
+test("Given a changelog-only conflict overall but a commit that conflicts on a source file mid-replay, When pr merge runs, Then the rebase is aborted, the branch is unchanged and nothing is pushed", async () => {
+  const made = setup({ mainFiles: { "a.txt": "main side\n" } });
+  const { repo, bare } = made;
+  const aText = repo.git("show", `${made.head}:a.txt`);
+  writeFileSync(path.join(repo.cwd, "a.txt"), "x side\n");
+  repo.git("commit", "-q", "-am", "feat: x edits a");
+  writeFileSync(path.join(repo.cwd, "a.txt"), `${aText}\n`);
+  repo.git("commit", "-q", "-am", "revert: x restores a");
+  const head = repo.git("rev-parse", "HEAD");
+  repo.git("push", "-q", "-f", bare, "feature/x:refs/heads/feature/x");
+  repo.subs["{{HEAD}}"] = head;
+
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const envelope = result.json();
+  expect(envelope.data).toMatchObject({ reason: "not_ready", conflicts: ["CHANGELOG.md"] });
+  expect(envelope.error).toContain("feature/x was not rebased: rebase_conflict");
+  expect(envelope.error).toContain(
+    `the rebase was aborted and feature/x is unchanged at ${head.slice(0, 12)}`,
+  );
+  expect(made.remoteTip()).toBe(head);
+  expect(repo.git("rev-parse", "HEAD")).toBe(head);
+  expect(repo.git("status", "--porcelain")).toBe("");
+  expect(made.merges()).toBe(0);
+});
+
+test("Given the changelog-only conflict on another author's PR and --others-pr, When pr merge runs, Then it still never rewrites the branch and pushes nothing", async () => {
+  const made = setup({ author: "someone" });
+
+  const result = await run(
+    ["pr", "merge", "--others-pr", "--reason", "pairing", "--json"],
+    made.repo.cwd,
+  );
+  const envelope = result.json();
+  expect(envelope.data).toMatchObject({ reason: "not_ready", conflicts: ["CHANGELOG.md"] });
+  expect(envelope.error).toContain("never rewrites another author's branch");
+  unchanged(made);
+});
+
+test("Given the changelog-only conflict, When stack land merges the PR (an expected base and branch), Then it refuses not_ready without the auto rebase and pushes nothing", async () => {
+  const made = setup();
+  const resolved = resolveForge(made.repo.cwd, {
+    env: process.env,
+    runner: forgeDeps.runner,
+    now: forgeDeps.now,
+  });
+  if (!resolved.ok) throw new Error(resolved.error);
+
+  const result = await mergePullRequest(
+    made.repo.cwd,
+    resolved.data,
+    {
+      pr: 12,
+      method: "squash",
+      deleteBranch: false,
+      actor: ACTOR,
+      expect: { base: "main", branch: "feature/x" },
+    },
+    async () => {},
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: "not_ready: PR #12 is RESOLVE_CONFLICTS (conflicts, checks_pending)",
+    refusal: { reason: "not_ready", next: "RESOLVE_CONFLICTS" },
+  });
+  expect(result).not.toHaveProperty("refusal.rebased");
+  expect(result).not.toHaveProperty("refusal.conflicts");
+  unchanged(made);
 });

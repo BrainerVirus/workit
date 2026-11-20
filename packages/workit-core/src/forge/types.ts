@@ -67,6 +67,12 @@ export type ForgeCheck = {
   scope: string | null;
   /** Required by branch protection (GitHub isRequired); null when the forge cannot say. */
   required: boolean | null;
+  /**
+   * GitHub Actions: the workflow's id, which tells apart two workflows with
+   * the same display name; null when the run's workflow could not be read.
+   * Absent for checks outside a workflow (status contexts, GitLab jobs).
+   */
+  workflow?: number | null;
 };
 
 export type ForgeThread = {

@@ -31,8 +31,11 @@ export function classifyBaseRed(
 /**
  * The base's failing checks this PR's head does not pass. A check is covered
  * only when the head reports it under the same name (`<workflow> / <job>` on
- * GitHub, `<stage> / <job>` on GitLab) and every such run passed: a PR whose
- * head passes them all is the fix for the red base, not a landing on it.
+ * GitHub, `<stage> / <job>` on GitLab), every such run passed, and on GitHub
+ * every such run comes from the same workflow: a PR whose head passes them all
+ * is the fix for the red base, not a landing on it. A second workflow with the
+ * same display name never covers it, and a run whose workflow could not be
+ * read fails closed (#920).
  */
 export function uncoveredBaseRed(
   failing: readonly ForgeCheck[],
@@ -40,7 +43,11 @@ export function uncoveredBaseRed(
 ): ForgeCheck[] {
   return failing.filter((check) => {
     const runs = head.filter((run) => run.name === check.name);
-    return !runs.length || runs.some((run) => run.state !== "passing");
+    return (
+      !runs.length ||
+      check.workflow === null ||
+      runs.some((run) => run.state !== "passing" || run.workflow !== check.workflow)
+    );
   });
 }
 
