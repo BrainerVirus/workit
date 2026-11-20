@@ -1279,7 +1279,8 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   ([verification guide](verification.md#heavy-commands-and-the-lease)).
 - **The lease is a queue.** It has `slots` places (default 1) across every
   worktree and agent of the user. A heavy check that finds them taken joins a
-  queue served round-robin per session, says where it stands, and prints a
+  queue that serves the shortest measured run first (a waiter queued 5 min
+  goes ahead of newer ones), says where it stands, and prints a
   status line every 30 s: each holder with its age, the queue position, the
   time waited, and an estimated wait. It waits up to `--wait <dur>`
   (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min). At that limit

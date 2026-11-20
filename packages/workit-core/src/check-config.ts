@@ -99,7 +99,19 @@ export type NamedCheck = {
   argv: string[];
   /** Every argv that counts as this check (the run argv plus package-manager aliases). */
   accepts: string[][];
+  /**
+   * Its own `heavy` (#884): true queues it for the heavy-check lease like a
+   * `resources.heavy` name; "io" marks it network-bound, so it runs without a
+   * CPU slot while memory allows. Absent: `resources.heavy` decides.
+   */
+  heavy?: CheckHeavy;
 };
+
+/** The values of a check's own `heavy` (#884). */
+export const CHECK_HEAVY = [true, "io"] as const;
+export type CheckHeavy = (typeof CHECK_HEAVY)[number];
+
+const CHECK_KEYS = ["command", "heavy"];
 
 export type CheckConfig = {
   /** Where the config came from; `defaults` = detected ecosystem defaults, `none` = nothing. */
@@ -334,16 +346,9 @@ export function loadCheckConfig(cwd: string): CheckConfig {
   for (const [name, value] of Object.entries(parsed.checks)) {
     if (!CHECK_NAME.test(name))
       return none(`${label}: check name "${name}" must match ${CHECK_NAME.source}`);
-    const argv =
-      typeof value === "string"
-        ? splitCommand(value)
-        : Array.isArray(value) &&
-            value.length > 0 &&
-            value.every((item) => typeof item === "string" && item.length > 0)
-          ? (value as string[])
-          : new Error("expected a command string or a non-empty argv array");
-    if (argv instanceof Error) return none(`${label}: check "${name}": ${argv.message}`);
-    checks.push({ name, argv, accepts: [argv] });
+    const check = checkEntry(value);
+    if (check instanceof Error) return none(`${label}: check "${name}": ${check.message}`);
+    checks.push({ name, argv: check.argv, accepts: [check.argv], ...check.heavy });
   }
   const gates: CheckConfig["gates"] = {};
   if (parsed.gates !== undefined) {
@@ -392,6 +397,38 @@ export function loadCheckConfig(cwd: string): CheckConfig {
     resources: parsed.resources,
     regenerable,
   };
+}
+
+/** A command string or a non-empty argv array. */
+function commandArgv(value: unknown): string[] | Error {
+  if (typeof value === "string") return splitCommand(value);
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "string" && item.length > 0)
+    ? (value as string[])
+    : new Error("expected a command string or a non-empty argv array");
+}
+
+/** One `checks` entry: a command, or {"command": <command>, "heavy": true|"io"} (#884). */
+function checkEntry(value: unknown): { argv: string[]; heavy: { heavy?: CheckHeavy } } | Error {
+  if (!isRecord(value)) {
+    const argv = commandArgv(value);
+    return argv instanceof Error ? argv : { argv, heavy: {} };
+  }
+  const unknown = Object.keys(value).find((key) => !CHECK_KEYS.includes(key));
+  if (unknown)
+    return new Error(`"${unknown}" is not a check setting (use ${CHECK_KEYS.join(" or ")})`);
+  if (value.command === undefined)
+    return new Error('needs "command": a command string or a non-empty argv array');
+  const argv = commandArgv(value.command);
+  if (argv instanceof Error) return new Error(`command: ${argv.message}`);
+  if (value.heavy === undefined) return { argv, heavy: {} };
+  const heavy = CHECK_HEAVY.find((allowed) => allowed === value.heavy);
+  if (heavy === undefined)
+    return new Error(
+      `heavy must be ${CHECK_HEAVY.map((allowed) => JSON.stringify(allowed)).join(" or ")}, not ${JSON.stringify(value.heavy)}`,
+    );
+  return { argv, heavy: { heavy } };
 }
 
 const sameArgv = (left: readonly string[], right: readonly string[]): boolean =>

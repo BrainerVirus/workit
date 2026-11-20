@@ -1078,10 +1078,15 @@ verified.
 The machine-wide heavy-check lease
 ([delivery guide](delivery.md#heavy-checks-share-the-machine)) is a queue, not
 a door that shuts. A heavy check that finds every slot held takes a ticket and
-waits its turn across every agent and worktree of the user. Sessions are
-served round-robin, so one session's chain of checks cannot starve another's
-single check. It prints where it stands when it starts waiting and every 30 s
-after:
+waits its turn across every agent and worktree of the user. The shortest
+measured run is served first, so a short suite never waits behind a queued
+full one; a waiter queued 5 minutes goes ahead of every newer one, so nothing
+starves; checks with equal runs (or never measured) are served round-robin per
+session. A heavy check whose last run took under 30 s, or a network-bound one
+(`"heavy": "io"` on its entry in `.workit/checks.json`, `--io` ad hoc), runs
+without a slot while the memory budget and the pressure gate allow
+([checks guide](checks.md#a-checks-own-heavy)). It prints where it stands when
+it starts waiting and every 30 s after:
 
 ```text
 workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s-a, 3m 10s, /work/wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it)
@@ -1104,8 +1109,9 @@ workit lock cancel                # drop this session's queued checks (each exit
   light: they never take the lease, so they run at once beside a long suite.
   The machine owner sets the list with `resources.light` in
   `workspaces.json`; listing a check under `resources.heavy` there makes it
-  heavy again. A repo's `.workit/checks.json` can add heavy checks (that
-  removes them from the light list) but cannot mark one light.
+  heavy again. A repo's `.workit/checks.json` can add heavy checks, under
+  `resources.heavy` or with a check's own `"heavy": true | "io"` (that
+  removes them from the light list), but cannot mark one light.
 - **A waiter that dies gives up its place.** A ticket holds while its
   `workit` process runs; the next waiter removes a ticket whose process is
   gone, by the same test as a stale lease. A shell tool that kills a long

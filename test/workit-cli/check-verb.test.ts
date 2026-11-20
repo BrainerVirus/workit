@@ -649,7 +649,8 @@ test("G the lease is held elsewhere, T an ad-hoc check runs without it, --heavy 
   const adhoc = await runEnv(root, ["check", "--json", "--", ...SLOW(10)], env);
   expect(adhoc.code).toBe(0);
   expect(adhoc.json().data).toMatchObject({ lease: null, scope: null });
-  const queued = await runEnv(root, ["check", "--heavy", "--json", "--", ...SLOW(10)], env);
+  // Another command than the ad-hoc run's: a command measured under 30 s runs without a slot (#884).
+  const queued = await runEnv(root, ["check", "--heavy", "--json", "--", ...SLOW(11)], env);
   expect(queued.code).toBe(4);
   expect(queued.json()).toMatchObject({
     ok: false,

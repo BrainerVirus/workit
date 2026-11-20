@@ -99,9 +99,9 @@ test("Given a holder 1m into a 10m check and a queued 3m packaging run, When loc
   expect(text.stdout).toMatch(
     /slot 0: test, pid \d+, session s-other, 1m( \ds)?, .*; ~(8|9)m( \d+s)? left/u,
   );
-  expect(text.stdout).toMatch(/1\. packaging, .*; estimated wait ~(8|9)m/u);
+  expect(text.stdout).toMatch(/1\. packaging, .*; its last run took 3m, estimated wait ~(8|9)m/u);
   // The second waiter starts once packaging (3m) ran after the holder's ~9m.
-  expect(text.stdout).toMatch(/2\. test, .*; estimated wait ~1[12]m/u);
+  expect(text.stdout).toMatch(/2\. test, .*; its last run took 10m, estimated wait ~1[12]m/u);
   const json = await status(root, env, true);
   const data = JSON.parse(json.stdout).data;
   expect(data.estimates.slots).toEqual([
@@ -111,7 +111,7 @@ test("Given a holder 1m into a 10m check and a queued 3m packaging run, When loc
   expect(data.estimates.queue[1].waitMs).toBeGreaterThan(data.estimates.queue[0].waitMs);
 });
 
-test("Given a holder whose check was never measured, When lock status runs, Then the waiter has no estimate and says why", async () => {
+test("Given a holder whose check was never measured, When lock status runs, Then the waiter shows its own measured run and no wait estimate it cannot make", async () => {
   const { root, env, leases } = setup();
   const now = Date.now();
   writeFileSync(
@@ -122,7 +122,9 @@ test("Given a holder whose check was never measured, When lock status runs, Then
     path.join(leases, "queue", `${String(now).padStart(15, "0")}-${"1".padStart(16, "0")}-q.json`),
     JSON.stringify(lease(root, "q", "test", now)),
   );
+  measured(root, env, "test", 8_000);
   const text = await status(root, env);
-  expect(text.stdout).toContain("1. test");
-  expect(text.stdout).toContain("no wait estimate yet (no measured run of build)");
+  expect(text.stdout).toMatch(/1\. test, .*; its last run took 8s\n/u);
+  // The holder's missing history is not the waiter's: no "no measured run of build" on its line.
+  expect(text.stdout).not.toContain("no measured run of build");
 });

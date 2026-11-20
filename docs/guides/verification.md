@@ -84,7 +84,7 @@ next poll.
 - **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
   build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
   command>'`) runs as `workit check --heavy -- <cmd>` on Claude Code, OpenCode
-  and Pi. A busy lease queues the command round-robin per session
+  and Pi. A busy lease queues the command, shortest measured run first
   ([delivery guide](delivery.md#heavy-checks-share-the-machine)); run a long
   check in the background, since the shell tool's own timeout can end a
   foreground wait. The rewrite uses only flags every supported CLI accepts. Codex and Cursor

@@ -377,9 +377,10 @@ export function startHeartbeat(
     stop: () => {
       clearInterval(timer);
       clearInterval(sampler);
+      // An admitted check's file is in the lease dir's admitted/ (#884).
       if (peak > 0)
         recordPeakRss(
-          path.dirname(lease.file),
+          lease.slot === null ? path.dirname(path.dirname(lease.file)) : path.dirname(lease.file),
           lease.record.check,
           lease.record.cwd,
           peak,

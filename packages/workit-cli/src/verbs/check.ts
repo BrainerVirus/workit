@@ -2,7 +2,7 @@
 // record what the CLI itself observed.
 //
 //   workit check <name> [--timeout <s>] [--task <id>] [--no-lease --reason <why>] [--json]   # the configured command
-//   workit check [--name <n>] [--shell] [--heavy] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
+//   workit check [--name <n>] [--shell] [--heavy | --io] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>
 //
 // - The command runs without a shell (with --shell, pass one command string).
 //   Its combined output goes to a bounded, redacted log blob; the agent sees
@@ -21,11 +21,14 @@
 //   configured runs satisfy gates; `workit check -- true` never does.
 // - The tree key is taken before and after the run: a command that changed
 //   the worktree leaves stale evidence (`modifiedWorktree`).
-// - A heavy check (a named check listed in `resources.heavy`, default
-//   test/build; an ad-hoc one only with --heavy) first takes a machine-wide
-//   lease (core/resources.ts), queueing round-robin per session for a free
-//   slot (#608: `workit lock cancel` ends the wait, a stuck holder is shown
-//   and can be reaped), and on
+// - A heavy check (a named check listed in `resources.heavy` or configured
+//   with its own `heavy`, default test/build; an ad-hoc one only with --heavy
+//   or --io) first takes a machine-wide lease (core/resources.ts), queueing
+//   shortest measured run first with aging for a free slot (#884; #608:
+//   `workit lock cancel` ends the wait, a stuck holder is shown and can be
+//   reaped). One whose last measured run is under 30 s, or a network-bound
+//   one (`heavy: "io"`, --io), runs without a slot while the memory budget
+//   and the pressure gate allow. On
 //   Linux with a delegated user systemd runs in its own `systemd-run --user
 //   --scope` with MemoryMax and CPUQuota. `--json` reports `lease` and `scope`.
 //   `--no-lease` skips both and needs `--reason`, recorded as `noLease`.
@@ -62,6 +65,7 @@ import {
   matchesNamedCheck,
   splitCommand,
   type CheckConfig,
+  type CheckHeavy,
   type LightCommand,
 } from "@workit-dev/core/src/check-config";
 import {
@@ -94,7 +98,9 @@ import {
   leaseDir,
   recordGroup,
   resolveResourceSettings,
+  SHORT_CHECK_MS,
   withGate,
+  type AdmittedLane,
   type Budget,
   runScoped,
   scopePrefix,
@@ -118,7 +124,7 @@ import { announce, BACKGROUND_HINT } from "./forge-common";
 import { configDir } from "@workit-dev/core/src/core/workit-paths.mjs";
 
 const USAGE =
-  'workit check [--list] | workit check <name> [--full] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
+  'workit check [--list] | workit check <name> [--full] [--io] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--heavy | --io] [--full] [--wait <dur> | --no-wait] [--timeout <s>] [--task <id>] [--json] -- <cmd…>';
 /**
  * Output lines a check prints by default: enough for a compiler error or a
  * failing test with its stack, far below a build log (#426). --full streams all.
@@ -166,6 +172,8 @@ type Options = {
   name: string | null;
   shell: boolean;
   heavy: boolean;
+  /** A network-bound run (#884): it takes the lease path, without a CPU slot while memory allows. */
+  io: boolean;
   /** Stream the child's output as it runs instead of printing its tail. */
   full: boolean;
   /** List the configured checks instead of running one. */
@@ -189,6 +197,7 @@ function parse(argv: readonly string[]): Options | Error {
     name: null,
     shell: false,
     heavy: false,
+    io: false,
     full: false,
     list: false,
     noLease: false,
@@ -220,8 +229,9 @@ function parse(argv: readonly string[]): Options | Error {
       else options.full = true;
       continue;
     }
-    if (flag === "--heavy" || flag === "--no-lease") {
+    if (flag === "--heavy" || flag === "--io" || flag === "--no-lease") {
       if (flag === "--heavy") options.heavy = true;
+      else if (flag === "--io") options.io = true;
       else options.noLease = true;
       continue;
     }
@@ -267,6 +277,7 @@ function parse(argv: readonly string[]): Options | Error {
       '--no-lease needs --reason "<why>": heavy commands share one machine-wide lease so parallel agents cannot exhaust memory and CPU',
     );
   if (options.reason && !options.noLease) return new Error("--reason goes with --no-lease");
+  if (options.io && options.noLease) return new Error("--io goes without --no-lease");
   return options;
 }
 
@@ -505,6 +516,8 @@ type LeaseReport = {
   reclaimed: Reclaimed[];
   /** Set when an outer heavy check already holds the lease for this process tree. */
   inherited: boolean;
+  /** Run without a slot (#884): a short measured check, or a network-bound one; null took a slot. */
+  admitted: AdmittedLane | null;
 };
 type ScopeReport =
   | { unit: string; memoryMax: string; cpuQuota: string }
@@ -644,6 +657,8 @@ async function prepareHeavy(
   top: string,
   timeoutMs: number,
   retry: (waitMs: number) => string,
+  /** A network-bound check (`heavy: "io"`, --io; #884). */
+  network = false,
 ): Promise<HeavyRun | number> {
   // The wait is the check's own --timeout when that is shorter (#645).
   const waitByTimeout = timeoutMs > 0 && settings.waitMs >= timeoutMs;
@@ -654,7 +669,14 @@ async function prepareHeavy(
   if (outer)
     return {
       lease: null,
-      leaseReport: { slot: null, waitedMs: 0, holder: null, reclaimed: [], inherited: true },
+      leaseReport: {
+        slot: null,
+        waitedMs: 0,
+        holder: null,
+        reclaimed: [],
+        inherited: true,
+        admitted: null,
+      },
       scope: { unit: outer.scope, reason: "inherited from the outer heavy check" },
       wrapper: null,
       env: io.env,
@@ -670,6 +692,7 @@ async function prepareHeavy(
       durationOf,
     });
   let lastEstimate: WaitEstimate | null = null;
+  const measuredMs = durationOf({ check: label, cwd: runCwd });
   const acquired = await acquireLease({
     dir,
     slots: settings.slots,
@@ -685,7 +708,11 @@ async function prepareHeavy(
     maxAgeMs: (timeoutMs || MAX_UNVERIFIED_RUN_MS) + 60_000,
     // A check that measured 25 min is not stuck at 15 (#705 follow-up).
     maxHoldMs: settings.maxHoldMs,
-    holdMs: holdLimit(durationOf({ check: label, cwd: runCwd }), settings.maxHoldMs),
+    holdMs: holdLimit(measuredMs, settings.maxHoldMs),
+    // #884: shorter measured runs are served first, and one under 30 s or a
+    // network-bound one runs without a slot while memory allows.
+    expectedMs: measuredMs,
+    io: network,
     // #645: a wait bounded by the check's --timeout, or --no-wait, never re-queues.
     ...(settings.waitMs > 0 && !waitByTimeout
       ? {
@@ -795,6 +822,12 @@ async function prepareHeavy(
   if (acquired.ok) lease = acquired.lease;
   // Fail open: an unwritable state dir must not stop the check.
   else io.stderr(`workit: running without the heavy-check lease: ${acquired.error}\n`);
+  if (lease?.admitted)
+    io.stderr(
+      lease.admitted === "io"
+        ? "workit: running without a heavy-check slot: a network-bound check (io) takes only its memory from the budget\n"
+        : `workit: running without a heavy-check slot: its last measured run took ${formatWait(measuredMs ?? 0)}, under ${formatWait(SHORT_CHECK_MS)}, and its memory fits the budget\n`,
+    );
   noteReclaimed(io, lease?.reclaimed ?? []);
   const leaseReport: LeaseReport | null = lease
     ? {
@@ -803,6 +836,7 @@ async function prepareHeavy(
         holder: lease.waitedOn[0] ?? null,
         reclaimed: lease.reclaimed,
         inherited: false,
+        admitted: lease.admitted ?? null,
       }
     : null;
   const env = lease ? { ...io.env, WORKIT_LEASE: lease.record.id } : io.env;
@@ -850,7 +884,9 @@ async function runGroup(
     { label: "workspaces.json", trust: "machine", value: workspace.value },
     { label: CHECKS_FILE, trust: "repo", value: config.resources },
   ]);
-  const isHeavy = (name: string) => settings.heavy.includes(name);
+  const isHeavy = (name: string) =>
+    settings.heavy.includes(name) ||
+    config.checks.some((check) => check.name === name && check.heavy !== undefined);
   const ordered = [...members.filter((m) => !isHeavy(m)), ...members.filter(isHeavy)];
   // The group name is the only positional; every other token is a flag (or its value) each member takes.
   const passthrough = argv.filter((arg) => arg !== group);
@@ -954,6 +990,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   let command: string[];
   let runCwd = io.cwd;
   let name = options.name;
+  /** The named check's own `heavy` (#884). */
+  let declared: CheckHeavy | undefined;
   if (options.command === null) {
     // `workit check <name>`: the configured command, from the repo top.
     if (options.positionals.length !== 1 || options.name || options.shell)
@@ -979,6 +1017,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       );
     command = check.argv;
     runCwd = config.root;
+    declared = check.heavy;
   } else {
     if (options.positionals.length)
       return emit(
@@ -1031,7 +1070,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
   // formatters and file-scoped linters never do, even with --heavy (#418).
   let heavy: HeavyRun | null = null;
   let light: LightCommand | null = null;
-  if (!options.noLease && (options.heavy || options.command === null)) {
+  const ioRun = options.io || declared === "io";
+  if (!options.noLease && (options.heavy || ioRun || options.command === null)) {
     const workspace = await workspaceResources(io);
     const { settings, warnings, budget } = resolveResourceSettings([
       { label: "workspaces.json", trust: "machine", value: workspace.value },
@@ -1042,7 +1082,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (options.timeoutMs > 0) settings.waitMs = Math.min(settings.waitMs, options.timeoutMs);
     for (const warning of [workspace.warning, ...warnings])
       if (warning) io.stderr(`workit: resources: ${warning}\n`);
-    const takesLease = options.heavy || (name !== null && settings.heavy.includes(name));
+    const takesLease =
+      options.heavy ||
+      ioRun ||
+      declared !== undefined ||
+      (name !== null && settings.heavy.includes(name));
     const adHoc = options.command === null ? null : options.shell ? shellArgv(command[0]) : command;
     light = takesLease && adHoc ? lightCommand(adHoc, runCwd) : null;
     if (light)
@@ -1059,6 +1103,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         top,
         options.timeoutMs,
         (waitMs) => retryCommand(argv, io.cwd, waitMs),
+        ioRun,
       );
       if (typeof prepared === "number") return prepared;
       heavy = prepared;
