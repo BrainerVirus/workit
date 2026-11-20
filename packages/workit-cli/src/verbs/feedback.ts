@@ -9,6 +9,8 @@
 // (host-permissions.ts), and --post takes the GitHub login from --account or
 // `feedback.account` in workspaces.json, never the workspace's work account
 // by default. A draft that is not posted is saved under `workit dir retros`.
+// Without --verb and --exit-file, the session's last failing verb and its exit
+// text (last-failure.ts, under a day old) fill both in.
 // A workspace with `feedback: "off"` makes the verb refuse.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,6 +23,7 @@ import { accountHome } from "@workit-dev/core/src/core/account-home";
 import { repoDir } from "@workit-dev/core/src/core/repo-paths";
 import { workspaceFeedback } from "@workit-dev/core/src/core/workspaces";
 import pkg from "../../package.json" with { type: "json" };
+import { readLastFailure } from "../last-failure";
 import { emit, fail, ok, type Io } from "../output";
 import { forgeDeps, parseFlags, usage } from "./forge-common";
 
@@ -171,7 +174,7 @@ const isRelativePath = (value: string): boolean =>
  * Secrets are always masked. Unless `include`, so is everything that names
  * the workspace: URLs (the tracker's own stay), `user@host:path` remotes,
  * emails, host names other than github.com, IPv4 and IPv6 addresses,
- * absolute, home, UNC and relative paths (spaces included), ticket IDs, the
+ * absolute, home, UNC and relative paths (`/` or `\\`, spaces included), ticket IDs, the
  * branch and the workspace's org, repo and workspace names. URLs go first,
  * before the secret masking, so a credential in a URL never splits it.
  */
@@ -221,6 +224,11 @@ export function redactDraft(
     .replaceAll(/(?<![\w.~<>/-])(?:\.{1,2}\/)?(?:[\w.@+-]+\/)+[\w.@+-]+/gu, (value) =>
       isWorkitPath(value) || !isRelativePath(value) ? value : "<path>",
     )
+    // Windows spelling of the same (`.\\scripts\\x.ps1`, `src\\app\\main.ts`), judged as `/` (#916).
+    .replaceAll(/(?<![\w.~<>\\-])(?:\.{1,2}\\)?(?:[\w.@+-]+\\)+[\w.@+-]+/gu, (value) => {
+      const slashed = value.replaceAll("\\", "/");
+      return isWorkitPath(slashed) || !isRelativePath(slashed) ? value : "<path>";
+    })
     .replaceAll(
       /(?<![\w:])\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?::\d+)?(?![\w:])/giu,
       (value) => (isIpv6(value) && /[0-9a-f]/iu.test(value) ? "<host>" : value),
@@ -414,6 +422,8 @@ type Draft = {
   body: string;
   duplicates: Duplicate[];
   duplicateSearch: string | null;
+  /** The session's last failure the verb and exit text came from (#916). */
+  lastFailure: { verb: string; exit: number; at: string } | null;
   saved: string | null;
   saveError?: string;
   posted: { kind: "issue" | "comment"; number: number; url: string | null } | null;
@@ -426,6 +436,11 @@ const REVIEW =
 const human = (data: Draft): string[] => [
   `Draft for ${data.repo}: ${data.title}`,
   ...(data.posted ? [] : [REVIEW]),
+  ...(data.lastFailure
+    ? [
+        `verb and exit text: this session's last failure (exit ${data.lastFailure.exit} at ${data.lastFailure.at}); pass --verb and --exit-file to report another`,
+      ]
+    : []),
   "",
   ...data.body.trimEnd().split("\n"),
   "",
@@ -495,6 +510,10 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (!body.text.trim()) return usage(io, "the body is empty: describe a synthetic repro", USAGE);
   const exit = exitFile === undefined ? null : readText(io, "exit-file", exitFile);
   if (typeof exit === "string") return usage(io, exit, USAGE);
+  const last =
+    flags.values.verb === undefined && exitFile === undefined
+      ? readLastFailure(io.env, forgeDeps.now)
+      : null;
 
   const repo = trackerRepo();
   const include = flags.booleans.has("include-workspace");
@@ -506,8 +525,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
     draftBody({
       title,
       body: body.text,
-      verb: flags.values.verb ?? null,
-      exitText: exit?.text ?? null,
+      verb: flags.values.verb ?? last?.verb ?? null,
+      exitText: exit?.text ?? last?.text ?? null,
       host: hostOf(io.env),
       include,
     }),
@@ -526,6 +545,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
     body: text,
     duplicates: "found" in search ? search.found : [],
     duplicateSearch: "error" in search ? `unavailable (${search.error})` : null,
+    lastFailure: last
+      ? { verb: redact(last.verb), exit: last.exit, at: new Date(last.at).toISOString() }
+      : null,
     saved: null,
     posted: null,
   };

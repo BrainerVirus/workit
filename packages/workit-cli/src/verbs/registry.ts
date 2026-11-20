@@ -761,6 +761,7 @@ export const VERBS: readonly VerbEntry[] = [
       "Draft a report of Workit friction for the Workit tracker (redacted, with version, host, verb and exit text), suggest a duplicate, and post only with --post after the user's yes",
     notes: [
       "Redacted by default: remote URLs, absolute paths, the branch, ticket IDs and the workspace's org, repo and workspace names; --include-workspace keeps them. Without --post the draft is saved under `workit dir retros` and its path printed. --post uses --account or feedback.account in workspaces.json, never the workspace's own account by default; the hosts ask the user before it runs. A workspace with feedback: \"off\" refuses.",
+      "Without --verb and --exit-file, the session's last failing Workit verb (under a day old) and its output fill both in.",
     ],
     flagHints: {
       body: 'the text goes through --body-file; - reads stdin: echo "<repro>" | workit feedback "<title>" --body-file -',

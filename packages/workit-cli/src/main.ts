@@ -332,10 +332,15 @@ export async function main(
       if (left !== null) returnTo(left);
     }
   };
-  if (io.json) return route(io);
   const verbWord = firstWord(verbArgs);
   const outcome = verbWord ? OUTCOMES[`${entry.name} ${verbWord}`] : undefined;
-  return withFailureLine(io, command, route, outcome);
+  const routeAll = (routed: Io): Promise<number> =>
+    routed.json ? route(routed) : withFailureLine(routed, command, route, outcome);
+  // The session's last failure fills `workit feedback` in (#916); feedback's
+  // own failure never replaces the one it reports.
+  if (entry.name === "feedback") return routeAll(io);
+  const { recordingFailure } = await import("./last-failure");
+  return recordingFailure(io, argv, routeAll);
 }
 
 /** Back to `dir` after a `--cwd` verb; a folder deleted meanwhile leaves the cwd where it is. */

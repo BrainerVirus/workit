@@ -268,6 +268,9 @@ test.each([
   ["BILL-482", "<ticket>"],
   ["src/billing/invoice.ts", "<path>"],
   ["./scripts/run", "<path>"],
+  [String.raw`src\billing\invoice.ts`, "<path>"],
+  [String.raw`.\scripts\deploy.ps1`, "<path>"],
+  [String.raw`..\acme\run`, "<path>"],
   [String.raw`\\fileserver\share\team\notes.txt`, "<path>"],
   [String.raw`C:\Users\dev\My Projects\app\x.ts`, "<path>"],
   ["/home/dev/My Projects/app/x.ts", "<path>"],
@@ -358,6 +361,10 @@ test("Given Workit's own paths and well-known dotted names, Then they stay while
   ])
     expect(redact(`at ${text} now`)).toBe(`at ${text} now`);
   expect(redact("at packages/billing/src/x.ts now")).toBe("at <path> now");
+  const windows = String.raw`packages\workit-cli\src\verbs\feedback.ts`;
+  expect(redact(`at ${windows} now`)).toBe(`at ${windows} now`);
+  // An escape in quoted exit text is not a path: two segments, no extension.
+  expect(redact(String.raw`"one\nline"`)).toBe(String.raw`"one\nline"`);
 });
 
 test("Given a path that only looks like Workit's, Then the path or the workspace details in it still go", () => {
@@ -383,4 +390,45 @@ test("Given input holding the private-use placeholder, Then it never comes back 
   );
   expect(out).not.toContain("undefined");
   expect(out).toBe("a 0 b 7 c https://github.com/BrainerVirus/workit/issues/9");
+});
+
+test("Given a verb failed earlier in this session, When feedback runs without --verb and --exit-file, Then the draft carries that verb and its exit text, redacted, and says where they came from", async () => {
+  const root = workRepo();
+  workspaces(root);
+  const session = `feedback-last-${process.pid}`;
+  const feedback = (sessionId: string, ...extra: string[]) => {
+    fake({ "GET search/issues": JSON.stringify({ items: [] }) }, REPRO);
+    return run(
+      ["--session", sessionId, "feedback", "t", "--body-file", "-", ...extra, "--json"],
+      root,
+    );
+  };
+  // An unknown verb is refused before routing: it is not recorded.
+  expect((await run(["--session", session, "no-such-verb-xyz"], root)).code).not.toBe(0);
+  expect((await feedback(session)).json().data.lastFailure).toBeNull();
+  const failed = await run(
+    [
+      "--session",
+      session,
+      "check",
+      "--",
+      "sh",
+      "-c",
+      "echo acme-corp/billing-api broke >&2; exit 3",
+    ],
+    root,
+  );
+  expect(failed.code).not.toBe(0);
+  const data = (await feedback(session)).json().data;
+  expect(data.lastFailure.exit).toBe(failed.code);
+  expect(data.lastFailure.verb).toStartWith("workit --session ");
+  expect(data.body).toContain("- Verb: `workit --session ");
+  expect(data.body).toContain("Exit text:");
+  expect(data.body).toContain("<name>/<name> broke");
+  for (const leak of ["acme-corp", "billing-api"]) expect(data.body).not.toContain(leak);
+  // Another session sees none of it, and an explicit --verb wins.
+  expect((await feedback("another-session")).json().data.lastFailure).toBeNull();
+  const explicit = (await feedback(session, "--verb", "workit x")).json().data;
+  expect(explicit.lastFailure).toBeNull();
+  expect(explicit.body).toContain("- Verb: `workit x`");
 });
