@@ -19,7 +19,6 @@
     "@openclaw/fs-safe",
     "ansi-escapes",
     "ansi-regex",
-    "ansi-styles",
     "auto-bind",
     "cli-boxes",
     "cli-cursor",
@@ -60,7 +59,6 @@
     "wrap-ansi",
     "wrap-ansi/ansi-styles",
     "wrap-ansi/string-width",
-    "ws",
     "yoga-layout",
     "zod"
   ],
@@ -97,7 +95,6 @@
     "@openclaw/fs-safe",
     "ansi-escapes",
     "ansi-regex",
-    "ansi-styles",
     "auto-bind",
     "cli-boxes",
     "cli-cursor",
@@ -138,7 +135,6 @@
     "wrap-ansi",
     "wrap-ansi/ansi-styles",
     "wrap-ansi/string-width",
-    "ws",
     "yoga-layout",
     "zod"
   ]
