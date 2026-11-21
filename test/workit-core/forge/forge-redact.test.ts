@@ -161,29 +161,27 @@ describe("S10 redaction and verdicts", () => {
   });
 
   // #933: patterns that rescanned a long run from every position were
-  // quadratic (a 40 KB `--a-a-…` took 12 s). Generous bounds for slow CI.
+  // quadratic (a 40 KB `--a-a-…` took 12 s, 200 KB minutes). The test's own
+  // timeout bounds it, generous for slow CI (linear runs take ~10 ms).
   test.each([
     ["a hyphen run", "--" + "a-".repeat(100_000)],
     ["a secret-word run", "--" + "token-".repeat(34_000)],
     ["mysql on one line", "mysql ".repeat(34_000)],
     ["unterminated OSC escapes", "\u001b]".repeat(100_000)],
   ])(
-    "Given a 200 KB adversarial string (%s), When redacted, Then it takes under a second",
+    "Given a 200 KB adversarial string (%s), When redacted, Then it comes back unchanged in linear time",
     (_, text) => {
-      const started = performance.now();
-      redactText(text);
-      expect(performance.now() - started).toBeLessThan(1000);
+      expect(redactText(text)).toBe(text);
     },
+    1_000,
   );
 
-  test("Given a 5 MB ordinary log, When redacted, Then it stays within a few seconds", () => {
+  test("Given a 5 MB ordinary log, When redacted, Then it comes back unchanged in linear time", () => {
     const line =
       "2026-01-01T00:00:00Z (pass) Given a step, Then src/a/b.ts:12 --title x DB_HOST=db at 209cdeb890ea6b264f50fa34ef6f160549b7dd8b\n";
     const log = line.repeat(Math.ceil(5_000_000 / line.length));
-    const started = performance.now();
     expect(redactText(log)).toBe(log);
-    expect(performance.now() - started).toBeLessThan(5000);
-  });
+  }, 5_000);
 
   // #930: the value after a secret-named long flag, either spelling.
   test.each([
