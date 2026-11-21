@@ -76,7 +76,7 @@ const maskMysql = (line: string): string => {
 // following flag (`--token --json`) is not a value. A quote with no closing
 // quote on its line masks the rest of the line. Over-masking a non-secret
 // value (`--token-budget 5`, `--auth-method oauth`) is accepted as the safe
-// default. An auth flag (`--authorization Bearer x`) keeps its scheme and
+// default. An auth flag (`--authorization <scheme> x`) keeps its scheme and
 // masks the credential; any other flag masks the scheme word too. The name is
 // one run checked by a lookahead, so a long `--a-a-…` stays linear.
 const SECRET_FLAG = new RegExp(
