@@ -340,6 +340,22 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+// #930: a secret passed as a flag's separate word or after `=`.
+test.each([
+  ["--password hunter2secret", "--password [REDACTED]"],
+  ["--secret=x", "--secret=[REDACTED]"],
+  ["--API-KEY x", "--API-KEY [REDACTED]"],
+  ["--client-secret x", "--client-secret [REDACTED]"],
+  ["--body some text", "--body some text"],
+  ["--title x", "--title x"],
+  ["--branch y", "--branch y"],
+])("Given `workit pr create %s` in a draft, Then it reads `%s`", (flags, expected) => {
+  for (const include of [false, true])
+    expect(redact(`ran workit pr create ${flags}`, include)).toBe(
+      `ran workit pr create ${expected}`,
+    );
+});
+
 // #916: what the first review of `workit feedback` left open.
 test("Given a secret in a kept tracker URL's query or fragment, Then the draft masks it and keeps the URL", () => {
   const out = redact(

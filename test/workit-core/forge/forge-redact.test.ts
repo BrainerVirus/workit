@@ -160,6 +160,41 @@ describe("S10 redaction and verdicts", () => {
       expect(redactText(keep)).toBe(keep);
   });
 
+  // #930: the value after a secret-named long flag, either spelling.
+  test.each([
+    ["--password hunter2secret", "--password [REDACTED]"],
+    ["--secret=x", "--secret=[REDACTED]"],
+    ["--API-KEY x", "--API-KEY [REDACTED]"],
+    ["--api_key=x", "--api_key=[REDACTED]"],
+    ["--client-secret x", "--client-secret [REDACTED]"],
+    ["--auth x", "--auth [REDACTED]"],
+    ["--db-passwd x", "--db-passwd [REDACTED]"],
+    ["--pwd=x", "--pwd=[REDACTED]"],
+    ["--credentials x", "--credentials [REDACTED]"],
+    ["--private-key x", "--private-key [REDACTED]"],
+    ["--access_key x", "--access_key [REDACTED]"],
+    ["--token x", "--token [REDACTED]"],
+    ['--password "correct horse"', '--password "[REDACTED]"'],
+    ["--password='a b'", "--password='[REDACTED]'"],
+  ])("Given `pr create %s`, Then the flag stays and its value is masked", (flag, expected) => {
+    expect(redactText(`workit pr create ${flag} --json`)).toBe(
+      `workit pr create ${expected} --json`,
+    );
+  });
+
+  test.each([
+    "--body some text",
+    "--title x",
+    "--branch y",
+    "--author me",
+    "--tokens 5",
+    "--authority x",
+    "--token --json",
+    "-p x",
+  ])("Given `pr create %s`, Then nothing changes", (flags) => {
+    expect(redactText(`workit pr create ${flags}`)).toBe(`workit pr create ${flags}`);
+  });
+
   test("a private key split across log lines is gone from the tail; secrets in comments too", () => {
     const keylog = [
       "start",

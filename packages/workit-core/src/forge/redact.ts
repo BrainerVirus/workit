@@ -59,6 +59,15 @@ const FLAG_SECRETS: readonly RegExp[] = [
   /\b(mysql(?:dump|admin|import|show)?\b[^\n]*?\s-p)(?!\s|$)\S+/gu,
 ];
 
+// The value after a long flag whose name carries a secret word, as a whole
+// dash or underscore segment: `--password x`, `--client-secret=x`,
+// `--API-KEY "a b"`. `--author` and `--tokens` are not secret names, and a
+// following flag (`--token --json`) is not a value.
+const SECRET_FLAG = new RegExp(
+  String.raw`(?<![\w-])(--(?:[a-z0-9]+[-_])*(?:password|passwd|pwd|secret|token|api[-_]?key|auth|credentials?|private[-_]?key|access[-_]?key)(?:[-_][a-z0-9]+)*(?:\s+|=))(?:(["'])[^"'\n]*\2|(?!-)[^\s"']+)`,
+  "giu",
+);
+
 // Signed-URL and query-string credentials (Azure SAS `sig=`, `token=`, …).
 const QUERY_SECRET =
   /([?&;](?:sig|signature|token|access_token|api_key|apikey|key|password|secret|client_secret|X-Amz-Signature|X-Goog-Signature)=)[^&\s#"']+/giu;
@@ -103,6 +112,9 @@ export function redactText(value: string): string {
   );
   out = out.replace(NETRC, `$1${R}`);
   for (const pattern of FLAG_SECRETS) out = out.replace(pattern, `$1${R}`);
+  out = out.replace(SECRET_FLAG, (match, flag: string, quote: string | undefined) =>
+    match.slice(flag.length).startsWith(R) ? match : `${flag}${quote ?? ""}${R}${quote ?? ""}`,
+  );
   out = out.replace(QUERY_SECRET, `$1${R}`);
   out = out.replace(
     ASSIGNMENT,
