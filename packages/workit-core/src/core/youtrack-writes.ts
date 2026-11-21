@@ -8,6 +8,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { ApprovalFields } from "../approvals/store";
+import { youTrackWritesMode as writesModeFor, type YouTrackWritesMode } from "../autonomy";
 import { resolveStateDir } from "./logger";
 import { writeFileAtomic } from "./safe-write";
 import { sha256 } from "./task-contract";
@@ -83,8 +84,18 @@ export async function writeOnce(
 
 // ------------------------------------------------- asking first (#780)
 
-// One reader for the hooks and the verbs: autonomy.ts youTrackWritesMode.
-export { youTrackWritesMode, type YouTrackWritesMode } from "../autonomy";
+export type { YouTrackWritesMode } from "../autonomy";
+
+/**
+ * autonomy.ts youTrackWritesMode (the one reader for the hooks and the
+ * verbs) for a write that reaches `host`; by default youtrack.json's
+ * baseUrl, the instance youTrackBackend() reaches, so under
+ * youtrack.autoHosts a caller that posts there is `auto` only for an allowed host.
+ */
+export const youTrackWritesMode = (
+  cwd: string,
+  host: string | null = youTrackBaseUrl(),
+): YouTrackWritesMode => writesModeFor(cwd, host);
 
 /** What the user approves for one `workit youtrack` write: the issue, the text, the minutes, the day. */
 export const youTrackApprovalFields = (input: {

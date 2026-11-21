@@ -4,6 +4,7 @@ import { readTemplate } from "./templates";
 import { resolveWorkspaceRoot } from "./scripts";
 import { configDir, isConfigObject, resolveConfigDir } from "./config";
 import { resolveInside } from "../core";
+import { resolveWorkspace } from "./workspaces";
 import {
   YTRACK_EXIT,
   YTRACK_MISSING,
@@ -174,6 +175,21 @@ export const youTrackBaseUrl = (): string | null => {
   if ("error" in read) return null;
   const base = typeof read.data.baseUrl === "string" ? read.data.baseUrl.replace(/\/+$/, "") : "";
   return base || null;
+};
+
+/**
+ * The YouTrack a `workit youtrack` write from `cwd` reaches: the workspace
+ * entry's youtrack.baseUrl, else youtrack.json's; null when neither names
+ * one (ytrack then picks the host itself).
+ */
+export const youTrackTarget = (cwd: string): string | null => {
+  try {
+    const base = (resolveWorkspace(cwd)?.youtrack as { baseUrl?: unknown } | undefined)?.baseUrl;
+    if (typeof base === "string" && base.trim()) return base.trim().replace(/\/+$/, "");
+  } catch {
+    // An unreadable or ambiguous workspaces.json names no workspace URL.
+  }
+  return youTrackBaseUrl();
 };
 
 /** Parse bare id (NSR-40) or YouTrack URL into issue id. */
