@@ -207,6 +207,16 @@ describe("S10 redaction and verdicts", () => {
     );
   });
 
+  // A quote with no closing quote on its line masks the rest of that line.
+  test.each([
+    ["x --password 'unbalanced value", "x --password '[REDACTED]"],
+    ['x --password "unbalanced value\nnext line', 'x --password "[REDACTED]\nnext line'],
+    ['x --password "it\'s mine" --json', 'x --password "[REDACTED]" --json'],
+    ['x --secret="a b --json', 'x --secret="[REDACTED]'],
+  ])("Given %j, Then the secret is masked", (text, expected) => {
+    expect(redactText(text)).toBe(expected);
+  });
+
   test.each([
     "--body some text",
     "--title x",

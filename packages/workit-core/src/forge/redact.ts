@@ -73,10 +73,13 @@ const maskMysql = (line: string): string => {
 // The value after a long flag whose name carries a secret word, as a whole
 // dash or underscore segment: `--password x`, `--client-secret=x`,
 // `--API-KEY "a b"`. `--author` and `--tokens` are not secret names, and a
-// following flag (`--token --json`) is not a value.
-// The name is one run checked by a lookahead, so a long `--a-a-…` stays linear.
+// following flag (`--token --json`) is not a value. A quote with no closing
+// quote on its line masks the rest of the line. Over-masking a non-secret
+// value (`--token-budget 5`, `--auth-method oauth`) is accepted as the safe
+// default. The name is one run checked by a lookahead, so a long `--a-a-…`
+// stays linear.
 const SECRET_FLAG = new RegExp(
-  String.raw`(?<![\w-])(--(?=[\w-]*?(?<![a-z0-9])(?:password|passwd|pwd|secret|token|api[-_]?key|auth|credentials?|private[-_]?key|access[-_]?key)(?![a-z0-9]))[\w-]+(?:\s+|=))(?:(["'])[^"'\n]*\2|(?!-)[^\s"']+)`,
+  String.raw`(?<![\w-])(--(?=[\w-]*?(?<![a-z0-9])(?:password|passwd|pwd|secret|token|api[-_]?key|auth|credentials?|private[-_]?key|access[-_]?key)(?![a-z0-9]))[\w-]+(?:\s+|=))(?:(["'])(?:[^\n]*?\2|[^\n]*)|(?!-)[^\s"']+)`,
   "giu",
 );
 
@@ -130,9 +133,13 @@ export function redactText(value: string): string {
   out = out.replace(NETRC, `$1${R}`);
   out = out.replace(SSHPASS, `$1${R}`);
   if (MYSQL.test(out)) out = out.split("\n").map(maskMysql).join("\n");
-  out = out.replace(SECRET_FLAG, (match, flag: string, quote: string | undefined) =>
-    match.slice(flag.length).startsWith(R) ? match : `${flag}${quote ?? ""}${R}${quote ?? ""}`,
-  );
+  out = out.replace(SECRET_FLAG, (match, flag: string, quote: string | undefined) => {
+    const secret = match.slice(flag.length);
+    if (secret.startsWith(R)) return match;
+    if (!quote) return `${flag}${R}`;
+    const closed = secret.length > 1 && secret.endsWith(quote);
+    return `${flag}${quote}${R}${closed ? quote : ""}`;
+  });
   out = out.replace(QUERY_SECRET, `$1${R}`);
   out = out.replace(
     ASSIGNMENT,
