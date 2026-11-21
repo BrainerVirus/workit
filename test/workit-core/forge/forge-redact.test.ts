@@ -207,6 +207,19 @@ describe("S10 redaction and verdicts", () => {
     );
   });
 
+  // An Authorization value keeps its scheme and loses its credential.
+  test.each([
+    ["curl --authorization Bearer abc123 x", "curl --authorization Bearer [REDACTED] x"],
+    ["curl --auth=Basic xyz x", "curl --auth=Basic [REDACTED] x"],
+    ["curl --authorization 'Token abc def'", "curl --authorization '[REDACTED]'"],
+    ["curl --authorization abc123 x", "curl --authorization [REDACTED] x"],
+    ['curl -H "Authorization: Bearer abc" x', 'curl -H "Authorization: Bearer [REDACTED]" x'],
+    ["curl --header=Authorization:Basic xyz x", "curl --header=Authorization:Basic [REDACTED] x"],
+    ["x --password basic hunter2 --json", "x --password [REDACTED] --json"],
+  ])("Given %j, Then the credential is masked", (text, expected) => {
+    expect(redactText(text)).toBe(expected);
+  });
+
   // A quote with no closing quote on its line masks the rest of that line.
   test.each([
     ["x --password 'unbalanced value", "x --password '[REDACTED]"],
