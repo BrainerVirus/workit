@@ -53,6 +53,22 @@ test(
     // (~/.agents/skills) — see extension.test.ts discovery test.
     const home = path.join(stage, "home");
     mkdirSync(home);
+    // Pi 1.6 writes its startup diagnostics, "No models available" among them, to stderr in
+    // RPC mode. A dummy local model keeps stderr to what the Workit extension writes; no
+    // command below reaches a model.
+    writeFileSync(
+      path.join(agentDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          stub: {
+            baseUrl: "http://127.0.0.1:9/v1",
+            api: "openai-completions",
+            apiKey: "stub",
+            models: [{ id: "stub-model" }],
+          },
+        },
+      }),
+    );
     const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, HOME: home };
     const extracted = extractPackedPi(stage);
     const installed = spawnSync(
