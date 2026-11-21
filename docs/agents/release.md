@@ -119,8 +119,8 @@ instead of the tagged source; the release job sets
 Releases publish with npm trusted publishing: npm authenticates
 `npm publish` through the release job's GitHub Actions OIDC token, so no npm
 token exists in the repo or the workflow, and provenance is attached
-automatically. The release job installs npm 11.21.1 (Node 24.20.0 bundles
-11.19.0; OIDC needs 11.5.1 and `npm dist-tag` over OIDC needs 11.21.0) and
+automatically. The release job installs npm 11.21.3 (Node 24.22.3 bundles
+11.19.1; OIDC needs 11.5.1 and `npm dist-tag` over OIDC needs 11.21.0) and
 prints `npm --version` before releasing. Both the `release` job in `ci.yml`
 and the reusable `release.yml` grant `id-token: write`, and `setup-node` gets
 no `registry-url`, whose `_authToken` line would stand in for OIDC.

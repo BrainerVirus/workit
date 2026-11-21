@@ -40,14 +40,14 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.20.0"
+          node-version: "24.22.3"
           # No registry-url: it writes an `_authToken=${NODE_AUTH_TOKEN}` line
           # into a temp .npmrc, and a token there must not stand in for OIDC.
 
       # Trusted publishing needs npm >= 11.5.1 and `npm dist-tag` over OIDC
-      # needs >= 11.21.0; Node 24.20.0 bundles 11.19.0.
+      # needs >= 11.21.0; Node 24.22.3 bundles 11.19.1.
       - name: Install npm with trusted publishing
-        run: npm install --global npm@11.21.1 # zizmor: ignore[adhoc-packages] -- exact pin
+        run: npm install --global npm@11.21.3 # zizmor: ignore[adhoc-packages] -- exact pin
 
       - name: Check npm version
         run: |
