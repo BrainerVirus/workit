@@ -151,7 +151,8 @@ version with its age in its `updates` row, read from local files only.
 checkout, read-only: the matched workspace, the vcs provider and default target
 branch, the model per role and the heavy-check resources, each with where it
 comes from (a key in `workspaces.json`, `vcs.json` or `.workit/checks.json`,
-the origin remote, a release track, or `default`). `--json` gives the same as
+the origin remote, a release track, the branch preset, Workit's built-in role
+defaults, or `default`). `--json` gives the same as
 `{ value, source }` pairs. `workit grant show` names the `vcs.provider` and its
 source too.
 
@@ -161,7 +162,7 @@ Global config lives in `~/.config/workit/` (`%APPDATA%\workit\` on Windows;
 the state dir, `~/.local/state/workit/` on Linux and macOS
 (`%LOCALAPPDATA%\workit\` on Windows), and so do the worktrees Workit manages
 (`worktrees/<repo>/<slice>`; see [cleanup](cleanup.md)); `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`,
-`WORKIT_CONFIG_DIR` and `WORKIT_STATE_DIR` move them. macOS kept state in
+`WORKIT_CONFIG` (or `WORKIT_CONFIG_DIR`) and `WORKIT_STATE_DIR` move them. macOS kept state in
 `~/Library/Application Support/workit` in older versions: the first `workit` run or
 hook run moves it, leaves a `workit.moved-<time>` note beside the old place,
 and `workit doctor` (row `legacy_dirs`) prints the command that finishes a move
@@ -187,6 +188,14 @@ nothing reads any more is named obsolete, with the removal as the fix: the
 global `timezone` in `config.json` (the setup wizard wrote it through 2.1.2; a
 work item's day comes from `youtrack.json`'s `timezone`, else `TZ`).
 
+Besides `updates`, `config.json` holds `locale` (the language of Workit's
+prompts and drafts, e.g. `en` or `es-419`), `localeOptions` (the locales the
+setup wizard offers) and the global `branchPolicy`/`commitPolicy`. `vcs.json`
+holds the fallback `provider` (`github` or `gitlab`) and
+`defaultTargetBranch`, `github`/`gitlab` blocks with `host`, `apiUrl` and
+`tokenFile` for a self-hosted forge, and `pr` defaults (`squashOnMerge`,
+`removeSourceBranch`, `pushBranch`, `confirmSkip`).
+
 `workit init` edits the entries you open and leaves every other entry
 byte-for-byte as it was. To add or adjust one entry without the wizard:
 
@@ -208,8 +217,8 @@ whichever entry or default matches them next, and a glob's text cannot say
 which (symlinks, linked worktrees), so every other entry and the defaults count
 as a possible taker. When any of them could grant more (or an equally specific
 entry could take a folder that was ambiguous), `rm` is a raise: refused in an
-agent or headless shell and confirmed by typing the workspace name in your own
-terminal. A removal that raises nothing proceeds anywhere and prints what now
+agent or headless shell and confirmed with a y/N in your own terminal (one
+answer for several names). A removal that raises nothing proceeds anywhere and prints what now
 covers the removed glob. `rm` never removes the last entry. Raise a grant
 with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
@@ -219,8 +228,10 @@ authority fields you last accepted with `workit workspace seal` in your own
 terminal: grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
 `youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge identity (`vcs.provider`,
 `account`, `tokenFile`, `host`). While it is missing or does not match, each
-of them is the stricter of the file and the last seal (the defaults when there
-is none). A write at your terminal reseals when the seal matched before; any
+grant, `defaultEndpoint` and `verification` is the stricter of the file and
+the last seal (the defaults when there is none), `youtrack.writes: auto` reads
+as `ask`, and a forge identity that differs from the sealed one blocks forge
+verbs (`identity_unsealed`). A write at your terminal reseals when the seal matched before; any
 other write reseals only when it lowers them. A redirected config dir
 (`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`) is never read for
 authority and only lowers it; see [the seal](grants.md#the-seal). It is a
@@ -239,8 +250,8 @@ files are unaffected.
 `remotes` lists the remote URLs a workspace owns: a checkout anywhere whose
 remote it claims never exceeds its grants ([grants](grants.md#remotes)). Like
 a grant, only you change it: `workit workspace set <name> remotes=<url>,…`
-needs your terminal and the workspace name typed, and `add` at your terminal
-offers the folder's `origin`.
+needs your terminal and a y/N, and `add` at your terminal offers the
+folder's `origin`.
 
 A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
 `commit` (default), `pr`, `green` (babysit the PR until merge-ready, never
@@ -307,6 +318,25 @@ merge ([when it keeps one](delivery.md)). Turn it off with
 `workit workspace set <name> deleteBranch=false`; `pr merge --keep-branch` does
 it for one merge. A workspace nested inside another inherits it the way it
 inherits `trailers`.
+
+### Branch and commit policy
+
+`branchPolicy.preset` is `gitflow`, `github-flow`, `trunk-based` or `custom`
+(required when `branchPolicy` is set). `allowed` lists the branch-name globs a
+new branch must match, `protected` the branches nobody commits or pushes to
+directly, `integration` is `pr` (default) or `merge`, `developBranch` names
+gitflow's integration branch (default `develop`) and `prefixes` sets the
+`feature`, `bugfix`, `release` and `hotfix` prefixes (all four). A workspace
+with its own preset takes that preset's default target branch over
+`vcs.json`'s. `commitPolicy.preset` is `conventional`, `gitmoji`,
+`ticket-prefix`, `freeform`, `custom` or `auto`, and `pattern` is a regular
+expression every subject must match. `config.json` may hold a global
+`branchPolicy` and `commitPolicy`; a workspace's own wins.
+
+`profiles` names variants of one workspace's policies, each with a
+`branchPolicy`, a `commitPolicy` or both; `defaultProfile` (a key of
+`profiles`) applies when none is named, and `WORKIT_PROFILE=<name>` picks one
+for a session. An unknown profile name is an error.
 
 ### Cleanup when work finishes
 
@@ -533,8 +563,9 @@ auto, with a note.
 Subagents inherit the lead's model unless the spawn names one, so a lead on a
 large model runs every verifier and implementer on it too. `models.roles` names
 the model (and, where the host takes one, the effort) each role runs on, per
-host. Put it at the top of `workspaces.json` for a global default, and on a
-workspace to override it; a nested workspace inherits each role it leaves unset
+host. Put it at the top of `workspaces.json` for a global default
+(`workit workspace set --global models.roles.verifier.claude_code=sonnet`),
+and on a workspace to override it (`workit workspace set <name> models.…`); a nested workspace inherits each role it leaves unset
 from the enclosing one, then from the global default.
 
 Roles: `decider`, `implementer` (one entry per fanout tier: `mundane`,
@@ -542,8 +573,9 @@ Roles: `decider`, `implementer` (one entry per fanout tier: `mundane`,
 `babysit` (PR and CI watching) and `default` (a general spawn: Claude Code's
 `general-purpose`, OpenCode's `general`; a `ROLE: <role>` line in the spawn
 prompt picks another role). A role is an object keyed by host
-(`claude_code`, `opencode`, `codex`, `cursor`, `pi`, plus an optional
-`default`) whose values are a model name or `{ "model": "...", "effort": "..." }`.
+(`claude_code`, `opencode`, `codex`, `codex_cli`, `codex_desktop`, `cursor`,
+`pi`, plus an optional `default`; `codex_cli` and `codex_desktop` win over
+`codex` for that app) whose values are a model name or `{ "model": "...", "effort": "..." }`.
 A bare model name or `{ model, effort }` applies to every host. Effort values
 are the host's own (Claude Code: `low`, `medium`, `high`, `xhigh`, `max`; Pi
 `--thinking` levels; Codex `model_reasoning_effort`).
@@ -706,8 +738,11 @@ Per host:
 `feedback`, in workspaces.json. At the top level, `{ "account": "<login>" }`
 names the GitHub login `--post` uses in every workspace. On a workspace,
 `"off"` drops the feedback line from the agent contract and makes the verb
-refuse, and `{ "account": "<login>" }` overrides the top-level login. Nested
-workspaces inherit it. With no login configured, `--post` needs `--account`:
+refuse, `"on"` turns it back on inside an `"off"` workspace, and
+`{ "account": "<login>" }` overrides the top-level login (a value that is not
+a GitHub login reads as unset). Nested workspaces inherit it from the nearest
+entry that sets it. `workit workspace set` does not take `feedback` yet: edit
+it by hand in your own terminal. With no login configured, `--post` needs `--account`:
 the workspace's own forge account is never used by default.
 
 ```json
@@ -790,7 +825,7 @@ Two heavy checks on one machine are kept apart separately, by the
 
 `resources.slots` in a workspaces.json entry sets how many heavy checks run at
 once on this machine. The default is 1: parallel test suites pushed the
-desktop session out of memory before the lease existed. Raise it only on a
+desktop session out of memory before the lease existed. Raise it (at most 64) only on a
 machine with room for more:
 
 ```bash
@@ -803,12 +838,20 @@ naming a `memoryMax` that fits. A repo's `.workit/checks.json` cannot change
 `slots`. `workit lock status` shows the slots, who holds them and each
 waiter's estimated wait.
 
+On Linux each heavy check also runs in a systemd scope with `MemoryMax`
+(`memoryMax`) and `CPUQuota` (`cpuQuota`); `"scope": false` turns the scope off
+and keeps the lease. A repo can only lower `memoryMax` and `cpuQuota`, and
+cannot set `scope` ([delivery](delivery.md#heavy-checks-share-the-machine)).
+
 ### Heavy-check budget
 
 Instead of a count of slots, a machine can weigh its heavy checks. These keys
 live in the workspaces.json entry only; a repo's `.workit/checks.json` can
 only tighten them (a lower `budget`, a larger `reserve`, a heavier weight), and
-anything else there is ignored with the machine-only warning.
+anything else there is ignored with the machine-only warning. The published
+editor schema does not list `budget`, `weights`, `reserve`, `pressure` or
+`maxHold` yet, so an editor underlines them and `workit doctor`'s
+`config_schema` row names them as unknown keys; Workit still reads them.
 
 ```json
 "resources": {
