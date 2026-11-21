@@ -66,6 +66,7 @@ import {
   validateWorkspacesDocument,
   type WorkspaceConfig,
 } from "./core/workspaces";
+import { youTrackHostAllowed } from "./core/youtrack-ytrack";
 
 /**
  * Grants are read only from the user's real config directory, the default
@@ -187,31 +188,74 @@ const sealNote = (seal: SealCheck = sealOf()): string | null =>
  * workspace): each write needs the user's yes through the approval channel.
  * `auto` is the opt-out a user sets in the workspace entry
  * (`youtrack: { writes: "auto" }`); it keeps the WORKIT_YT_WRITE gate alone.
- * Only the account's sealed file gives `auto` (see youTrackWritesMode). Here,
+ * Only the account's sealed file gives `auto` (see youTrackWritesPolicy). Here,
  * not in core/youtrack-writes.ts, so the shell hook's raw ytrack guard reads
  * it without the YouTrack client.
  */
 export type YouTrackWritesMode = "ask" | "auto";
 
 /**
+ * `auto` with `hosts`, the workspace's `youtrack.autoHosts`: the only
+ * YouTrack hosts a write reaches unasked; null when it sets none (any host,
+ * what `auto` meant before autoHosts). `baseUrl`: the entry's youtrack.baseUrl.
+ */
+export type YouTrackWritesPolicy =
+  | { mode: "ask" }
+  | { mode: "auto"; hosts: string[] | null; baseUrl: string | null };
+
+const ASK: YouTrackWritesPolicy = { mode: "ask" };
+
+type YouTrackFields = { writes?: unknown; autoHosts?: unknown; baseUrl?: unknown } | undefined;
+const youtrackOf = (entry: WorkspaceConfig | null) => entry?.youtrack as YouTrackFields;
+
+/** An entry's youtrack.autoHosts, or null when it sets none. */
+const autoHostsOf = (entry: WorkspaceConfig | null): string[] | null => {
+  const hosts = youtrackOf(entry)?.autoHosts;
+  return Array.isArray(hosts)
+    ? hosts.filter((host): host is string => typeof host === "string")
+    : null;
+};
+
+/**
  * `auto` only from the account's own file with a valid seal, never under a
  * config redirect (WORKIT_CONFIG, WORKIT_CONFIG_DIR, XDG_CONFIG_HOME) or in a
  * bench world; with WORKIT_WORKSPACE_NAME, the named entry and the folder's
- * unnamed one must both say auto. Anything that throws reads as `ask`.
+ * unnamed one must both say auto, and only the hosts both allow stay
+ * allowed. Anything that throws reads as `ask`.
  */
-export const youTrackWritesMode = (cwd: string): YouTrackWritesMode => {
+export const youTrackWritesPolicy = (cwd: string): YouTrackWritesPolicy => {
   try {
     const dir = accountDir();
-    if (dir === null || redirected(dir) || evalWorld(cwd)) return "ask";
-    if (checkSeal(dir).state !== "valid") return "ask";
-    const auto = (entry: WorkspaceConfig | null) =>
-      (entry?.youtrack as { writes?: unknown } | undefined)?.writes === "auto";
+    if (dir === null || redirected(dir) || evalWorld(cwd)) return ASK;
+    if (checkSeal(dir).state !== "valid") return ASK;
+    const auto = (entry: WorkspaceConfig | null) => youtrackOf(entry)?.writes === "auto";
     const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
-    if (!auto(resolveWorkspaceFrom(cwd, dir, name))) return "ask";
-    return !name || auto(resolveWorkspaceFrom(cwd, dir)) ? "auto" : "ask";
+    const named = resolveWorkspaceFrom(cwd, dir, name);
+    const folder = name ? resolveWorkspaceFrom(cwd, dir) : named;
+    if (!auto(named) || !auto(folder)) return ASK;
+    const [a, b] = [autoHostsOf(named), autoHostsOf(folder)];
+    const base = youtrackOf(named)?.baseUrl;
+    return {
+      mode: "auto",
+      hosts: a === null ? b : b === null ? a : a.filter((host) => youTrackHostAllowed(b, host)),
+      baseUrl: typeof base === "string" && base.trim() ? base.trim() : null,
+    };
   } catch {
-    return "ask";
+    return ASK;
   }
+};
+
+/**
+ * The mode of a write that reaches `host`: under youtrack.autoHosts, `auto`
+ * only when the host is one of them. With no host given, the workspace
+ * entry's own youtrack.baseUrl; with none at all, a scoped auto asks.
+ */
+export const youTrackWritesMode = (cwd: string, host?: string | null): YouTrackWritesMode => {
+  const policy = youTrackWritesPolicy(cwd);
+  if (policy.mode === "ask" || policy.hosts === null) return policy.mode;
+  return youTrackHostAllowed(policy.hosts, host === undefined ? policy.baseUrl : host)
+    ? "auto"
+    : "ask";
 };
 
 /** Whether the config dir the rest of the config reads is not the account's own. */
@@ -1279,9 +1323,10 @@ const SCOPE_FIELDS = new Set([
 
 /**
  * Whether `next` keeps every entry of `sealed` in place (name, glob, remotes,
- * forge identity) and only lowers grants, endpoint, verification and
- * youtrack.writes, or keeps them. Anything else (an entry added, removed or
- * moved, a glob, remote or identity change) is not a lowering.
+ * forge identity) and only lowers grants, endpoint, verification,
+ * youtrack.writes and youtrack.autoHosts (youTrackLowers), or keeps them.
+ * Anything else (an entry added, removed or moved, a glob, remote or
+ * identity change) is not a lowering.
  */
 export function lowersOnly(sealed: readonly unknown[], next: readonly unknown[]): boolean {
   if (sealed.length !== next.length) return false;
@@ -1298,18 +1343,30 @@ export function lowersOnly(sealed: readonly unknown[], next: readonly unknown[])
     if (scope(entry) !== scope(now[at])) return false;
     const before = autonomyOf(sealed[at] as WorkspaceConfig);
     const after = autonomyOf(next[at] as WorkspaceConfig);
-    const writes = (item: unknown) =>
-      (item as { youtrack?: { writes?: unknown } }).youtrack?.writes === "auto";
     return (
       !GRANT_KINDS.some((kind) => raises(kind, before.grants[kind], after.grants[kind])) &&
       !raisesEndpoint(before.defaultEndpoint, after.defaultEndpoint) &&
       VERIFICATION_STRICTNESS.indexOf(after.verification) <=
         VERIFICATION_STRICTNESS.indexOf(before.verification) &&
       !(needsAccount(before) && !needsAccount(after)) &&
-      (writes(sealed[at]) || !writes(next[at]))
+      youTrackLowers(sealed[at] as WorkspaceConfig, next[at] as WorkspaceConfig)
     );
   });
 }
+
+/**
+ * Whether `next`'s YouTrack writes reach no host `sealed`'s did not: `ask`
+ * always lowers; `auto` lowers only from `auto`, with every autoHost already
+ * allowed. Adding a host, or dropping autoHosts under `auto` (any host
+ * again), is a raise.
+ */
+const youTrackLowers = (sealed: WorkspaceConfig, next: WorkspaceConfig): boolean => {
+  const auto = (entry: WorkspaceConfig) => youtrackOf(entry)?.writes === "auto";
+  if (!auto(next)) return true;
+  if (!auto(sealed)) return false;
+  const [was, now] = [autoHostsOf(sealed), autoHostsOf(next)];
+  return was === null || (now !== null && now.every((host) => youTrackHostAllowed(was, host)));
+};
 
 /** The account's seal for doctor, `workspace seal` and the setup/upgrade offer. */
 export type SealStatus =

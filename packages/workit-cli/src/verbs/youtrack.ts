@@ -8,7 +8,8 @@
 // text (approvals/youtrack-ask.ts), and a yes posts in the same call; on the
 // other hosts the verb records one request per text and refuses with the
 // terminal step (`workit approve`), then the re-run consumes that yes once. A
-// workspace with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead.
+// workspace with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead,
+// with `autoHosts` only when youTrackTarget (the instance the call reaches) is one.
 // Every comment or work item carries a deterministic marker and is read back
 // first, so a retry after a lost response never posts twice; an identical
 // entry by the same user is refused as `duplicate_entry`; a write an earlier
@@ -31,7 +32,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { youTrackBaseUrl, youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
+import { youTrackTarget, youTrackWorkDateMs } from "@workit-dev/core/src/core/youtrack";
 import {
   draftLines,
   forgetDraft,
@@ -88,9 +89,9 @@ import { parseFlags, positiveInt, usage } from "./forge-common";
 const USAGE =
   "workit youtrack note <ISSUE> (--markdown <t> | --file <p>) [--minutes <n>] [--date auto|YYYY-MM-DD] | youtrack time <ISSUE> --minutes <n> [--text <t>] [--date …] | youtrack meeting <ISSUE> --minutes <n> --text <t> [--date …] | youtrack update <ISSUE> [--markdown <t> | --file <p>] [--attach <file>]... [--minutes <n> [--text <t>] [--date …]] [--state <S>] [--command '<command>'] | youtrack show <ISSUE> | youtrack create --project <P> --summary <s> [--description <t> | --file <p>] [--attach <file>]... [--command '<command>']";
 
-/** Test seams: the workspace's `youtrack.writes` mode for a cwd, and how a named file is read. */
+/** Test seams: the workspace's `youtrack.writes` mode for a cwd and the host a write reaches, and how a named file is read. */
 export type YouTrackDeps = {
-  writes?: (cwd: string) => YouTrackWritesMode;
+  writes?: (cwd: string, host: string | null) => YouTrackWritesMode;
   read?: (file: string) => Buffer;
 };
 
@@ -179,7 +180,7 @@ type StepResult = {
 export async function run(
   argv: string[],
   io: Io,
-  backend: () => YouTrackBackend = () => youTrackBackend(io.env),
+  backend: () => YouTrackBackend = () => youTrackBackend(io.env, youTrackTarget(io.cwd)),
   deps: YouTrackDeps = {},
 ): Promise<number> {
   const read = deps.read ?? ((full: string) => readFileSync(full));
@@ -207,7 +208,8 @@ async function runVerb(
   deps: YouTrackDeps,
 ): Promise<number> {
   const [sub, ...rest] = argv;
-  const writesMode = () => (deps.writes ?? youTrackWritesMode)(io.cwd);
+  // Under youtrack.autoHosts, auto only for the instance the default backend reaches.
+  const writesMode = () => (deps.writes ?? youTrackWritesMode)(io.cwd, youTrackTarget(io.cwd));
   if (sub === "show") return show(rest, io, backend);
   if (sub === "create") return create(rest, io, backend, writesMode(), argv);
   if (sub !== "note" && sub !== "time" && sub !== "meeting" && sub !== "update")
@@ -528,7 +530,7 @@ function updatePlan(
     localDate,
     steps,
     action: `workit youtrack update ${issueId}`,
-    effect: `on ${issueId} at ${trackerName()}, in order: ${effects.map((effect, index) => `${index + 1}. ${effect}`).join("; ")}`,
+    effect: `on ${issueId} at ${trackerName(io.cwd)}, in order: ${effects.map((effect, index) => `${index + 1}. ${effect}`).join("; ")}`,
     subject,
     ...(comment !== null
       ? {
@@ -565,8 +567,8 @@ function updatePlan(
 }
 
 /** The YouTrack the writes go to, as the user knows it. */
-const trackerName = (): string => {
-  const base = youTrackBaseUrl();
+const trackerName = (cwd: string): string => {
+  const base = youTrackTarget(cwd);
   return base ? ytrackHostName(base) : "ytrack's default host";
 };
 
@@ -580,7 +582,7 @@ function unsupported(
   if (!plan.needs) return null;
   const support = yt.supports(plan.needs.feature);
   if (support === "ok") return null;
-  const host = youTrackBaseUrl();
+  const host = youTrackTarget(io.cwd);
   return emit(
     io,
     fail(

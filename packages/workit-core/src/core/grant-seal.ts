@@ -64,7 +64,7 @@ export const IDENTITY_KEYS = ["provider", "account", "tokenFile", "host"] as con
 /**
  * The authority fields of every entry, in entry order: name, glob, remotes,
  * the forge identity (vcs.provider, account, tokenFile, host), autonomy, legacy autoApprove, defaultEndpoint,
- * verification and youtrack.writes. Roles, branch policy, checks and the rest
+ * verification, youtrack.writes and youtrack.autoHosts. Roles, branch policy, checks and the rest
  * stay outside, so changing them keeps the seal valid.
  */
 export const sealProjection = (entries: readonly unknown[]): Record<string, unknown>[] =>
@@ -74,7 +74,9 @@ export const sealProjection = (entries: readonly unknown[]): Record<string, unkn
       {
         ...all,
         vcs: pick(all.vcs, IDENTITY_KEYS),
-        youtrack: pick(all.youtrack, ["writes"]),
+        // A key absent from an entry stays absent here, so a seal taken before
+        // autoHosts existed hashes as it did.
+        youtrack: pick(all.youtrack, ["writes", "autoHosts"]),
       },
       ENTRY_KEYS,
     )!;

@@ -153,6 +153,41 @@ export const ytrackHostName = (urlOrHost: string): string =>
     .toLowerCase();
 
 /**
+ * The key ytrack files a host under (youtrack-cli internal/hosts/hosts.go
+ * Parse): lower-case host, a port only when not the scheme's default, and the
+ * service path without a trailing `/` or `/api`; `https://` when no scheme is
+ * given. Null for what ytrack refuses (another scheme, credentials in the
+ * URL, no host) or cannot parse. `youtrack.autoHosts` matches on it exactly;
+ * ytrackHostName keeps a default port and credentials, so it never compares hosts.
+ */
+export const youTrackHostKey = (input: string): string | null => {
+  const text = input.trim();
+  if (!text || /\s/u.test(text)) return null;
+  let url: URL;
+  try {
+    url = new URL(text.includes("://") ? text : `https://${text}`);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/u.test(url.protocol) || !url.hostname || url.username || url.password)
+    return null;
+  const service = url.pathname
+    .replace(/\/+$/u, "")
+    .replace(/\/api$/u, "")
+    .replace(/\/+$/u, "");
+  return `${url.host.toLowerCase()}${service}`;
+};
+
+/** Whether `host` is one of `allowed` (youtrack.autoHosts), by youTrackHostKey. */
+export const youTrackHostAllowed = (
+  allowed: readonly string[],
+  host: string | null | undefined,
+): boolean => {
+  const key = host ? youTrackHostKey(host) : null;
+  return key !== null && allowed.some((entry) => youTrackHostKey(entry) === key);
+};
+
+/**
  * The auth state ytrack reports for `host` (a youtrack.json or workspace
  * baseUrl); with no host, the active one's. A host ytrack has no login for is
  * logged_out.

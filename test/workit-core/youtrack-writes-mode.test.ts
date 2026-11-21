@@ -60,3 +60,61 @@ test("Given a writes value the schema does not know, Then the file does not vali
     },
   );
 });
+
+const withYouTrackJson = (baseUrl: string, fn: () => void) => {
+  const saved = process.env.WORKIT_YOUTRACK_CONFIG;
+  const home = useConfigHome("wk-yt-json-");
+  const file = path.join(home.configDir, "youtrack.json");
+  writeFileSync(file, JSON.stringify({ baseUrl }));
+  process.env.WORKIT_YOUTRACK_CONFIG = file;
+  try {
+    fn();
+  } finally {
+    if (saved === undefined) delete process.env.WORKIT_YOUTRACK_CONFIG;
+    else process.env.WORKIT_YOUTRACK_CONFIG = saved;
+    home.restore();
+  }
+};
+
+test("Given writes auto with autoHosts, Then a write is auto only for an allowed host, and by default for youtrack.json's (what the MCP tools and the PR backlink reach)", () => {
+  withWorkspaces(
+    [
+      {
+        name: "personal",
+        glob: "/srv/personal/**",
+        youtrack: { writes: "auto", autoHosts: ["sandbox.youtrack.cloud"] },
+      },
+    ],
+    () => {
+      const cwd = "/srv/personal/repo";
+      expect(youTrackWritesMode(cwd, "https://Sandbox.YouTrack.cloud/")).toBe("auto");
+      expect(youTrackWritesMode(cwd, "https://sandbox.youtrack.cloud:443/api")).toBe("auto");
+      // ytrack keys a host without its scheme (hosts.Parse: Key is host[:port]+path), so http is the same host.
+      expect(youTrackWritesMode(cwd, "http://sandbox.youtrack.cloud")).toBe("auto");
+      expect(youTrackWritesMode(cwd, "http://sandbox.youtrack.cloud:443")).toBe("ask");
+      expect(youTrackWritesMode(cwd, "https://work.youtrack.cloud")).toBe("ask");
+      expect(youTrackWritesMode(cwd, "https://sandbox.youtrack.cloud.evil.test")).toBe("ask");
+      expect(youTrackWritesMode(cwd, "https://me@sandbox.youtrack.cloud")).toBe("ask");
+      expect(youTrackWritesMode(cwd, null)).toBe("ask");
+    },
+  );
+  for (const [baseUrl, mode] of [
+    ["https://work.youtrack.cloud", "ask"],
+    ["https://sandbox.youtrack.cloud", "auto"],
+  ] as const)
+    withYouTrackJson(baseUrl, () => {
+      writeFileSync(
+        path.join(process.env.WORKIT_CONFIG!, "workspaces.json"),
+        JSON.stringify({
+          workspaces: [
+            {
+              name: "personal",
+              glob: "/srv/personal/**",
+              youtrack: { writes: "auto", autoHosts: ["sandbox.youtrack.cloud"] },
+            },
+          ],
+        }),
+      );
+      expect(youTrackWritesMode("/srv/personal/repo"), baseUrl).toBe(mode);
+    });
+});

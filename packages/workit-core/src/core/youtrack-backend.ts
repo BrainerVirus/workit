@@ -371,9 +371,14 @@ export function ytrackBackend(run: YtrackRun, host: string | null = null): YouTr
 
 // ---------------------------------------------------------------- selection
 
-/** ytrack from `env`'s PATH, aimed at youtrack.json's baseUrl when set. */
-export function youTrackBackend(env: NodeJS.ProcessEnv = process.env): YouTrackBackend {
-  const host = youTrackBaseUrl();
+/**
+ * ytrack from `env`'s PATH, aimed at `host` (YTRACK_HOST, over any inherited
+ * one); by default youtrack.json's baseUrl when set.
+ */
+export function youTrackBackend(
+  env: NodeJS.ProcessEnv = process.env,
+  host: string | null = youTrackBaseUrl(),
+): YouTrackBackend {
   return ytrackBackend(ytrackRunner(env, host), host);
 }
 

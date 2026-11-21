@@ -217,7 +217,7 @@ with `workit grant set` in your own terminal. Each write keeps the previous file
 `workspaces.json.seal`, beside it in the account's config dir, holds the
 authority fields you last accepted with `workit workspace seal` in your own
 terminal: grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
-`name`, `glob`, entry order, `remotes` and the forge identity (`vcs.provider`,
+`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge identity (`vcs.provider`,
 `account`, `tokenFile`, `host`). While it is missing or does not match, each
 of them is the stricter of the file and the last seal (the defaults when there
 is none). A write at your terminal reseals when the seal matched before; any
@@ -355,6 +355,13 @@ YouTrack, a GitLab one in GitLab issues.
   ([Approvals](approvals.md), [YouTrack](youtrack.md#writes-ask-you-first)). `auto` posts
   without asking and needs `WORKIT_YT_WRITE=1` instead; set it yourself, in
   your own terminal.
+- `youtrack.autoHosts` (with `writes: "auto"`): the only YouTrack hosts a
+  write posts to unasked, `["sandbox.youtrack.cloud"]`; a write to any other
+  host asks as with `ask`, and a raw `ytrack` write must name an allowed host
+  with `--host` ([YouTrack](youtrack.md#writes-ask-you-first)). Without it,
+  `auto` covers every instance a write reaches, and `workit doctor` warns.
+  A writer outside your terminal may only remove hosts; adding one needs
+  `workit workspace seal`.
 
 - `provider`: `github`, `gitlab` or `youtrack`. A bare `--issue 42` (and a
   number from the branch) is an issue on this tracker when it is `github` or

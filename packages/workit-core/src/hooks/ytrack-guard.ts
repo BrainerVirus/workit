@@ -5,9 +5,14 @@
 // plus `workit check -- …` and package runners (`npx ytrack`), and routes it to
 // the `workit youtrack …` call that asks first; one with no such verb needs
 // the user's own yes. `youtrack.writes: auto` turns the guard off, unless the
-// grant seal is broken (#819, autonomy.ts youTrackWritesMode).
+// grant seal is broken (#819, autonomy.ts youTrackWritesPolicy); with
+// `youtrack.autoHosts` only for a plain call whose `--host` is one of them: a
+// write naming no host is denied with the retry that names one, a write to
+// another host asks as without auto. URLs and YTRACK_HOST never count: the
+// hook cannot see an inherited YTRACK_HOST, and `ytrack api <URL>` keeps its host.
 import { namesTicket, TICKET_DENY } from "../approvals/store";
-import { youTrackWritesMode } from "../autonomy";
+import { youTrackWritesPolicy } from "../autonomy";
+import { youTrackHostAllowed, youTrackHostKey } from "../core/youtrack-ytrack";
 import type { HookDecision } from "./protocol";
 import { commandLines, workitCheckTail } from "./raw-git";
 import { segmentsOf, type ShellDialect } from "./shell-words";
@@ -416,7 +421,47 @@ const judge = (args: readonly string[], words: readonly string[]): Mapped | null
   return /^(?:edit|update|delete|rm)$/.test(verb) ? UNCOVERED : null;
 };
 
-type YtrackWrite = Mapped & { command: string; hint?: string };
+/**
+ * What a write names as its YouTrack host. Every `--host`/`--host=` word
+ * before a bare `--` counts, whatever precedes it: after a flag Workit does
+ * not know (`-i --host x`) it may be ytrack's own, and ytrack takes the last
+ * one, so each must be an allowed host (one inside a value, `--body --host x`,
+ * then counts too: an over-ask). null when one is no literal host (a
+ * variable, a glob, a missing value). [] when none is named, or when none
+ * surely is the flag (each follows an option that may take it as its value):
+ * then ytrack may pick its own host. `bare`: the argv without them, for the
+ * retry that names an allowed host (the whole argv when none surely is the flag).
+ */
+const hostsOf = (args: readonly string[]): { hosts: string[] | null; bare: string[] } => {
+  const end = args.indexOf("--");
+  const hosts: string[] = [];
+  const bare: string[] = [];
+  let literal = true;
+  let named = false;
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at];
+    if ((end >= 0 && at >= end) || !/^--host(?:=|$)/.test(arg)) {
+      bare.push(arg);
+      continue;
+    }
+    named ||= standsAlone(args, at);
+    const value = arg === "--host" ? args[++at] : arg.slice("--host=".length);
+    if (value === undefined || !value.trim() || EXPANDS.test(value)) literal = false;
+    else hosts.push(value);
+  }
+  if (!literal) return { hosts: null, bare };
+  return named ? { hosts, bare } : { hosts: [], bare: [...args] };
+};
+
+type YtrackWrite = Mapped & {
+  command: string;
+  hint?: string;
+  /** hostsOf's hosts; `bare` is the argv without them, absent for a joined write. */
+  hosts: string[] | null;
+  bare?: string[];
+  /** Found in a plain command (plainLines), where the hook saw every argument ytrack gets. */
+  plain: boolean;
+};
 
 const SHELLS = /^(?:sh|bash|zsh|dash|ksh|ash|mksh|yash|fish)$/;
 /** Nested scripts read this deep; deeper ones that name ytrack are refused. */
@@ -441,6 +486,9 @@ const ungrant = (write: YtrackWrite): YtrackWrite =>
   write.workit
     ? {
         command: write.command,
+        hosts: write.hosts,
+        bare: write.bare,
+        plain: write.plain,
         ...NOT_PLAIN,
         ...(timeOnly(write.effect) ? { hint: write.workit } : {}),
       }
@@ -448,7 +496,15 @@ const ungrant = (write: YtrackWrite): YtrackWrite =>
 
 /** A time log found in a command that is not plain: its call, run as its own plain call. */
 const hinted = (write: YtrackWrite): YtrackWrite =>
-  write.hint ? { command: write.command, workit: write.hint } : write;
+  write.hint
+    ? {
+        command: write.command,
+        hosts: write.hosts,
+        bare: write.bare,
+        plain: false,
+        workit: write.hint,
+      }
+    : write;
 
 /**
  * The ytrack writes one command line runs: past a package runner (`npx -y
@@ -506,7 +562,12 @@ const ytrackArgs = (
   const argv = [...(alias ?? []), ...line.slice(at + 1)];
   const write = classify(argv);
   if (write) {
-    const one = { command: ["ytrack", ...argv].map(quote).join(" "), ...write };
+    const one = {
+      command: ["ytrack", ...argv].map(quote).join(" "),
+      ...write,
+      ...hostsOf(argv),
+      plain,
+    };
     found.push(plain ? one : ungrant(one));
   }
   return true;
@@ -621,7 +682,20 @@ const chained = (
   if (effects.length !== found.length) return null;
   const effect = combine(effects);
   if (!effect) return null;
-  return [{ command: found.map((write) => write.command).join(" && "), ...mapped(effect) }];
+  // The joined write names a host only when each of its calls does.
+  const hosts = found.map((write) => write.hosts);
+  return [
+    {
+      command: found.map((write) => write.command).join(" && "),
+      ...mapped(effect),
+      hosts: hosts.includes(null)
+        ? null
+        : hosts.some((list) => !list?.length)
+          ? []
+          : hosts.flatMap((list) => list ?? []),
+      plain: true,
+    },
+  ];
 };
 
 /**
@@ -663,6 +737,61 @@ const ytrackWrites = (
 };
 
 /**
+ * A command that sets where ytrack reads its hosts (hosts.yml maps a host key
+ * to the URL ytrack calls): YTRACK_CONFIG_DIR named anywhere but in a plain
+ * `$` read. Any other assignment before the call (the home ytrack's config
+ * dir derives from) makes it not plain, which reachesOnly refuses.
+ */
+const RELOCATES = /(?<![$\w])YTRACK_CONFIG_DIR\b/;
+
+/** A write youtrack.autoHosts lets through: a plain call naming only allowed hosts. */
+const reachesOnly = (allowed: readonly string[], write: YtrackWrite): boolean =>
+  write.plain &&
+  !!write.hosts?.length &&
+  write.hosts.every((host) => youTrackHostAllowed(allowed, host));
+
+/**
+ * Under youtrack.autoHosts (`allowed`), the deny for a write that does not
+ * name its host so the hook can see it: no `--host`, one that is no literal
+ * host, or an allowed one inside a wrapper; and for a command that moves
+ * ytrack's config. Null when only writes to other hosts remain (they ask).
+ */
+const scopedGate = (
+  allowed: readonly string[],
+  command: string,
+  writes: readonly YtrackWrite[],
+): HookDecision | null => {
+  const scope = `youtrack.autoHosts (${allowed.join(", ")})`;
+  if (RELOCATES.test(command))
+    return {
+      kind: "deny",
+      reason: `This command sets YTRACK_CONFIG_DIR, where ytrack reads its hosts, so a --host may reach another instance: ${scope} lets a YouTrack write through only with ytrack's own config. Run the ytrack call without it.`,
+      unblock: null,
+    };
+  const first = allowed.map(youTrackHostKey).find(Boolean);
+  if (!first) return null;
+  const unnamed = writes.filter(
+    (write) =>
+      !reachesOnly(allowed, write) &&
+      (!write.hosts?.length || write.hosts.every((host) => youTrackHostAllowed(allowed, host))),
+  );
+  if (!unnamed.length) return null;
+  const why = (write: YtrackWrite) =>
+    write.hosts === null
+      ? "its --host is no literal host"
+      : !write.hosts.length
+        ? "it names no --host"
+        : "it is not a plain command of its own";
+  const bare = unnamed.find((write) => write.bare)?.bare;
+  const retry = bare ? ["ytrack", "--host", first, ...bare].map(quote).join(" ") : null;
+  return {
+    kind: "deny",
+    reason: `${scope} posts to YouTrack unasked only from a plain ytrack call that names an allowed host with --host: ${unnamed.map((write) => `\`${write.command}\` (${why(write)})`).join(", ")}. Name the host, as its own plain call.${retry ? `\nRetry as: ${retry}` : ""}`,
+    unblock: retry,
+  };
+};
+
+/**
  * The hook's answer to raw ytrack writes in a shell command, or null: a deny
  * naming each `workit youtrack …` call; for a write no verb covers, an ask on
  * Claude Code (`ask`), else a deny that hands the command to the user.
@@ -688,15 +817,26 @@ export const ytrackGate = (
     }
     writes = [...merged.values()];
   } catch {
-    // Unanalysable and naming ytrack: denied unless the user opted out.
-    if (youTrackWritesMode(cwd) === "auto") return null;
+    // Unanalysable and naming ytrack: denied unless the user opted out for every host.
+    const policy = youTrackWritesPolicy(cwd);
+    if (policy.mode === "auto" && policy.hosts === null) return null;
     return {
       kind: "deny",
       reason: `Workit could not analyse this command, which names ytrack: run each ytrack call as its own plain command so a YouTrack write can ask the user first (#780).`,
       unblock: null,
     };
   }
-  if (!writes.length || youTrackWritesMode(cwd) === "auto") return null;
+  if (!writes.length && !RELOCATES.test(command)) return null;
+  const policy = youTrackWritesPolicy(cwd);
+  if (policy.mode === "auto") {
+    const hosts = policy.hosts;
+    if (hosts === null) return null;
+    const scoped = scopedGate(hosts, command, writes);
+    if (scoped) return scoped;
+    // Writes to another host fall to the ask path below.
+    writes = writes.filter((write) => !reachesOnly(hosts, write));
+  }
+  if (!writes.length) return null;
   const calls = writes.flatMap((write) => (write.workit ? [`\`${write.workit}\``] : []));
   const bare = writes
     .filter((write) => !write.workit)

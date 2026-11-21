@@ -348,6 +348,12 @@ export const workspaceConfigSchema = z
           .describe(
             "ask (default): each workit youtrack write waits for the user's yes. auto: posts without asking, behind WORKIT_YT_WRITE=1.",
           ),
+        autoHosts: z
+          .array(nonBlank)
+          .optional()
+          .describe(
+            "With writes auto: the only YouTrack hosts (`acme.youtrack.cloud`) a write may reach without asking. A raw ytrack write must name one with --host; a write elsewhere asks. Only the user widens it, in their own terminal (`workit workspace seal`).",
+          ),
       })
       .passthrough()
       .optional()
