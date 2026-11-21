@@ -927,9 +927,8 @@ const realBase = (dir: string): string => {
 };
 
 /** Whose standing orders count: the lead and those it took over from; null before leads. */
-export const planLeads = (
-  plan: Pick<FanoutFile, "leadSession" | "formerLeads">,
-): string[] | null => (plan.leadSession ? [plan.leadSession, ...plan.formerLeads] : null);
+export const planLeads = (plan: Pick<FanoutFile, "leadSession" | "formerLeads">): string[] | null =>
+  plan.leadSession ? [plan.leadSession, ...plan.formerLeads] : null;
 
 /**
  * sha256 (16 hex) of the slice's definition. Brief-only fields (tier,

@@ -44,6 +44,7 @@ const SKIP_KEYS = new Set([
   "typeArguments",
   "returnType",
   "superTypeParameters",
+  "superTypeArguments",
 ]);
 
 // Type-only declarations hold no runtime behavior to audit or mutate.

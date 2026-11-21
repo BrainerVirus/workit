@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseSource } from "@/packages/workit-cli/src/test-audit/ast";
+import { parseSource, walk } from "@/packages/workit-cli/src/test-audit/ast";
 import { auditFiles } from "@/packages/workit-cli/src/test-audit/audit";
 import { auditParsed, RULES, type RuleId } from "@/packages/workit-cli/src/test-audit/rules";
 
@@ -397,4 +397,15 @@ test("TSX and JS test files parse; a syntax error is reported, not thrown", () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the AST walk skips type arguments, a superclass's included (Babel 8 superTypeArguments)", () => {
+  const parsed = parseSource('class A extends B<"x"> {}\nconst f = (v: Set<"y">) => v;\n', "a.ts");
+  const seen: string[] = [];
+  walk(parsed.program, (node) => {
+    seen.push(node.type);
+  });
+  expect(seen).toContain("ClassDeclaration");
+  expect(seen).toContain("ArrowFunctionExpression");
+  expect(seen).not.toContain("TSTypeParameterInstantiation");
 });

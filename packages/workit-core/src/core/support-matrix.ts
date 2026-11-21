@@ -5,12 +5,12 @@
 // Deno is intentionally not part of the matrix (PT-12): nothing advertises a
 // host that has no executable artifact/test evidence.
 export const SUPPORT_MATRIX = {
-  bun: "1.4.4",
-  node: { minimum: "24", current: "24.20.0" },
+  bun: "1.4.5",
+  node: { minimum: "24", current: "24.22.3" },
   // OpenCode V2 plugin API only: the entry exports `setup()` (Workit 3.0
-  // retired the V1 `server()` adapter), so 1.x hosts cannot load it. 2.0.18 is
-  // the `@opencode/plugin` contract the adapter is built and tested against.
-  opencode: { minimum: "2.0.18", current: "2.0.18" },
+  // retired the V1 `server()` adapter), so 1.x hosts cannot load it. 2.0.18 is the floor;
+  // 2.3.2 is the `@opencode/plugin` contract the adapter is built and tested against.
+  opencode: { minimum: "2.0.18", current: "2.3.2" },
   // Codex is a qualification host, not a runtime dependency: the CLI version
   // below is the one live qualification evidence covers. The doctor warns when
   // an installed CLI drifts ahead so a fresh install never silently outruns

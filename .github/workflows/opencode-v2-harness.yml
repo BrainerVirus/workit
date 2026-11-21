@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: "1.4.4"
-  NODE_CURRENT: "24.20.0"
+  BUN_VERSION: "1.4.5"
+  NODE_CURRENT: "24.22.3"
 
 jobs:
   harness:

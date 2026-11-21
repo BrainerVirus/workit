@@ -51,8 +51,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openclaw/fs-safe": "0.8.1",
-    "zod": "4.6.5"
+    "@openclaw/fs-safe": "0.9.0",
+    "zod": "4.6.7"
   },
   "engines": {
     "node": ">=24"

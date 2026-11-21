@@ -38,11 +38,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@babel/parser": "7.29.9",
+    "@babel/parser": "8.1.3",
     "@inkjs/ui": "2.0.0",
     "@workit-dev/cursor": "workspace:*",
-    "ink": "7.1.1",
-    "react": "19.2.8"
+    "ink": "8.0.0",
+    "react": "19.3.1"
   },
   "devDependencies": {
     "@workit-dev/core": "workspace:*"

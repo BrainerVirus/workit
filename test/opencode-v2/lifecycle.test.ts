@@ -157,7 +157,13 @@ harnessTest(
       .find((c) => c.type === "tool" && c.name === "shell");
     expect(call.executed).toBe(false);
     expect(call.state.status).toBe("error");
-    expect(call.state.error).toMatchObject({ type: "aborted" });
+    // OpenCode 2.0.x reports an interrupted shell as `aborted`; 2.3.0 keeps the
+    // shell's output and reports a tool error naming the interrupt instead.
+    if (call.state.error.type !== "aborted")
+      expect(call.state.error).toMatchObject({
+        type: "tool.execution",
+        message: expect.stringContaining("Command interrupted by the user"),
+      });
     const got = await need().api("GET", `/api/session/${id}`);
     expect(got.data).toMatchObject({ id, outcome: "interrupted" });
   },

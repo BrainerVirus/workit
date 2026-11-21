@@ -169,16 +169,16 @@ test("CA-31 toolchain evidence records actual Node, Bun, compiler, schema, and S
   expect(evidence.node).toMatch(/^v\d+/);
   expect(evidence.bun).toMatch(/^\d+\.\d+/);
   expect(evidence.typescript).toBe("7.0.2");
-  expect(evidence.zod).toBe("4.6.5");
-  expect(evidence.mcpSdk).toBe("1.32.0");
+  expect(evidence.zod).toBe("4.6.7");
+  expect(evidence.mcpSdk).toBe("1.32.2");
   for (const host of CODING_HOSTS) {
     expect(hostVersionIsProbed(evidence.hosts[host])).toBe(true);
   }
-  expect(evidence.hosts.opencode).toContain("@opencode/plugin@2.0.18");
+  expect(evidence.hosts.opencode).toContain("@opencode/plugin@2.3.2");
   expect(evidence.hosts.cursor).toContain("@workit-dev/cursor@");
   expect(evidence.hosts.codex_cli).toContain("codex-cli@0.153.");
   expect(evidence.hosts.codex_desktop).toContain("codex-desktop@");
-  expect(evidence.hosts.pi).toContain("@earendil-works/pi-coding-agent@1.4.0");
+  expect(evidence.hosts.pi).toContain("@earendil-works/pi-coding-agent@1.6.0");
 });
 
 test("CA-32 MCP schemas publish draft-2020-12 from core definitions", () => {

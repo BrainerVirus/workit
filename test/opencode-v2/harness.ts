@@ -15,20 +15,17 @@
  */
 
 import { test } from "bun:test";
-import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { $ } from "bun";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { v2Image } from "./image";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The OpenCode version the pinned V2 image runs: the support-matrix
- * `current` pin (keep the digest below and the matrix in step). */
-export const V2_IMAGE_VERSION = SUPPORT_MATRIX.opencode.current;
-export const V2_IMAGE =
-  "ghcr.io/anomalyco/opencode@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28";
+export { V2_IMAGE_VERSION } from "./image";
+export const V2_IMAGE = v2Image();
 const BUN_IMAGE =
   "oven/bun@sha256:1d653098bf847813e26adb2435f932b7cfa3c132a7e25dd5216dbb1f67dbd118";
 
