@@ -104,7 +104,10 @@ const HOOK_ENTRIES = [
 // dep-bump-lane (#891: the workflow YAML reader and the manifest pin reader the lane loads)
 // took core run to 595,869 B, its first fix round to 597,461 B, and the allow-list append
 // grammar (on top of #915) to 600,499 B; the ceiling is that plus 2 KiB.
-const BUDGET = 602_547;
+// YouTrack autoHosts (2026-11-21, Bun 1.4.4, measured at 5a97f1bf after #925 and #927): core run
+// 602,293 B. One ceiling for the scoped youtrack auto writes change, core run plus 6 KiB: the
+// raw-ytrack guard's --host allow-list and the seal's autoHosts key may spend it, printing the delta in their PR.
+const BUDGET = 608_437;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
