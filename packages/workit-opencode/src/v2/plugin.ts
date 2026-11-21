@@ -225,7 +225,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
       });
     }
   });
-  const stopRoleAgents = await installRoleAgents(root, (ctx as Partial<Context>).agent as never);
+  const stopRoleAgents = await installRoleAgents(root, (ctx as Partial<Context>).agent);
   const shellWorkdirs: ShellWorkdirs = new Map();
   const pendingShells: PendingShells = new Map();
   const spawnNotes: SpawnNotes = new Map();
