@@ -116,7 +116,7 @@ or `/api`; credentials never match). A write that names no host, a non-literal
 -exec` and `parallel` append words the hook never sees) is denied on every
 host with `Retry as: ytrack --host <first allowed> …`; a write to another host
 gets the answer it gets under ask; a command that names `YTRACK_CONFIG_DIR`
-(or assigns `HOME`/`XDG_CONFIG_HOME` around ytrack: hosts.yml maps a host key
+(hosts.yml maps a host key
 to the URL called) and an unanalysable one naming ytrack are denied. URLs and
 `YTRACK_HOST` never name the target. The verbs ask unless `youTrackTarget`
 (the workspace's `youtrack.baseUrl`, else youtrack.json's) is allowed, and
@@ -140,7 +140,10 @@ without the key keeps any host; doctor's `youtrack_writes` row warns.
   (L) Claude Code and Pi: the inline ask on a `workit youtrack` call
   (`approvals/inline.ts`) passes no host, so it reads the workspace's own
   `youtrack.baseUrl`; with none it asks although the verb would post unasked
-  to youtrack.json's allowed host.
+  to youtrack.json's allowed host. (L) Claude Code and Codex: the hook entry's
+  ytrack-word test sends only a command that names ytrack to the runtime, so a bare
+  `export YTRACK_CONFIG_DIR=…` with no ytrack call in it is not judged; one in
+  the same command as the ytrack call is.
 - (L) A ytrack name the text does not spell as a word (`$a$b`, `xargs -IEXT ytrackEXT`, `$'\x79track'`, a glob, cmd `^`), a variable only the nested shell sees (`YT=ytrack bash -c '$YT …'`), an alias or function from an earlier call, `ssh`, `docker` or `su -c` running it elsewhere, and an interpreter or script file that runs it are not seen. (P) A help or read call whose `--help` or `-X GET` directly follows an option Workit does not know is asked: put it first.
 
 A launcher pre-filter is the gate's own first test, copied byte for byte and compared by a test, and it may skip the runtime only on a property the gate itself passes on; it never lists the positions, wrappers or commands where a tool name counts, because a list of places to look misses every place it does not name.

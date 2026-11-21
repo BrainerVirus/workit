@@ -1323,9 +1323,10 @@ const SCOPE_FIELDS = new Set([
 
 /**
  * Whether `next` keeps every entry of `sealed` in place (name, glob, remotes,
- * forge identity) and only lowers grants, endpoint, verification and
- * youtrack.writes and autoHosts (youTrackLowers), or keeps them. Anything else (an entry added, removed or
- * moved, a glob, remote or identity change) is not a lowering.
+ * forge identity) and only lowers grants, endpoint, verification,
+ * youtrack.writes and youtrack.autoHosts (youTrackLowers), or keeps them.
+ * Anything else (an entry added, removed or moved, a glob, remote or
+ * identity change) is not a lowering.
  */
 export function lowersOnly(sealed: readonly unknown[], next: readonly unknown[]): boolean {
   if (sealed.length !== next.length) return false;

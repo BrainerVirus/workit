@@ -231,7 +231,7 @@ your yes, and a write anywhere else asks as above:
   `--host <the first autoHosts entry>`; an issue URL or `YTRACK_HOST` does not
   count, because ytrack's own pick can differ from what the hook sees. A write
   with `--host` set to another host asks as with `ask`. A command that sets
-  `YTRACK_CONFIG_DIR` (or `HOME` or `XDG_CONFIG_HOME` around ytrack), or that
+  `YTRACK_CONFIG_DIR` (any assignment before the call makes it not plain), or that
   Workit cannot analyse, is refused.
 
 Hosts match on ytrack's own host key: lower case, with no scheme, default

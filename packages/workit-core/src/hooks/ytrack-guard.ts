@@ -730,12 +730,10 @@ const ytrackWrites = (
 /**
  * A command that sets where ytrack reads its hosts (hosts.yml maps a host key
  * to the URL ytrack calls): YTRACK_CONFIG_DIR named anywhere but in a plain
- * `$` read, or HOME / XDG_CONFIG_HOME assigned around a ytrack call.
+ * `$` read. Any other assignment before the call (the home ytrack's config
+ * dir derives from) makes it not plain, which reachesOnly refuses.
  */
 const RELOCATES = /(?<![$\w])YTRACK_CONFIG_DIR\b/;
-const relocates = (command: string): boolean =>
-  RELOCATES.test(command) ||
-  (/(?<![$\w])(?:XDG_CONFIG_HOME|HOME)\s*=/.test(command) && namesYtrack(command));
 
 /** A write youtrack.autoHosts lets through: a plain call naming only allowed hosts. */
 const reachesOnly = (allowed: readonly string[], write: YtrackWrite): boolean =>
@@ -755,10 +753,10 @@ const scopedGate = (
   writes: readonly YtrackWrite[],
 ): HookDecision | null => {
   const scope = `youtrack.autoHosts (${allowed.join(", ")})`;
-  if (relocates(command))
+  if (RELOCATES.test(command))
     return {
       kind: "deny",
-      reason: `This command changes where ytrack reads its hosts (YTRACK_CONFIG_DIR, or HOME or XDG_CONFIG_HOME around ytrack), so a --host may reach another instance: ${scope} lets a YouTrack write through only with ytrack's own config. Run the ytrack call without it.`,
+      reason: `This command sets YTRACK_CONFIG_DIR, where ytrack reads its hosts, so a --host may reach another instance: ${scope} lets a YouTrack write through only with ytrack's own config. Run the ytrack call without it.`,
       unblock: null,
     };
   const first = allowed.map(youTrackHostKey).find(Boolean);
