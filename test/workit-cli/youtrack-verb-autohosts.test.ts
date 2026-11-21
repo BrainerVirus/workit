@@ -20,7 +20,7 @@ import { run } from "@/packages/workit-cli/src/verbs/youtrack";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
 const SANDBOX = "sandbox.youtrack.cloud";
-const WORK = "https://enghouseamg.youtrack.cloud";
+const WORK = "https://acme.youtrack.cloud";
 
 /** Logs YTRACK_HOST and argv; answers the read-backs with empty lists. */
 const STUB = `#!/bin/sh

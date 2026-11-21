@@ -41,8 +41,8 @@ afterEach(() => {
 });
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-const SANDBOX = "cristhoferpincetti.youtrack.cloud";
-const WORK = "enghouseamg.youtrack.cloud";
+const SANDBOX = "sandbox.youtrack.cloud";
+const WORK = "acme.youtrack.cloud";
 
 const sealed = (youtrack: Record<string, unknown>) => {
   writeFileSync(
@@ -109,7 +109,7 @@ test("G sealed auto with autoHosts [sandbox], W a plain write names the sandbox 
   sealed({ writes: "auto", autoHosts: [SANDBOX] });
   for (const command of [
     `ytrack issue comment DEMO-1 --body x --host ${SANDBOX}`,
-    `ytrack --host=https://CristhoferPincetti.youtrack.cloud/ issue comment DEMO-1 --body x`,
+    `ytrack --host=https://Sandbox.YouTrack.cloud/ issue comment DEMO-1 --body x`,
     `ytrack --host https://${SANDBOX}:443/api issue update DEMO-1 --field State=Fixed`,
     `ytrack --host ${SANDBOX} issue comment DEMO-1 --body x | jq .`,
     `ytrack --host ${SANDBOX} api /issues/DEMO-1/comments -X POST -f text=hi`,
