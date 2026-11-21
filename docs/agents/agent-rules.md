@@ -28,3 +28,18 @@ those projects.
   prose is not rewritten.
 - `test/workit-core/skill-set.test.ts` keeps descriptions, trigger words and
   the routing list in step.
+
+## Role agents
+
+- The role agents (implementer, verifier, reviewer, decider, babysitter)
+  have one source, `packages/workit-claude-code/agents/*.md`; its
+  `model:`/`effort:` frontmatter is each role's default, mirrored in
+  `CLAUDE_AGENT_FILES` (`packages/workit-core/src/core/role-models.ts`).
+- The Codex and Cursor builds render committed copies
+  (`packages/workit-codex/agents/workit-<role>.toml`;
+  `packages/workit-cursor/agents/workit-<role>.md`), and OpenCode imports the
+  bodies (`packages/workit-opencode/src/v2/agents.ts`).
+  `test/workit-codex/agents.test.ts` and
+  `test/workit-cursor/role-agents.test.ts` fail when a copy drifts;
+  regenerate with `bun packages/workit-codex/scripts/build.ts` and
+  `bun packages/workit-cursor/scripts/build.ts --skills-only`.

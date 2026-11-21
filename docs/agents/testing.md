@@ -210,3 +210,9 @@ applies to `docs/qualification/context-budget.json`: a key-wise three-way merge
 parallel PRs rebase without a conflict; run `bun run write:budget` afterwards (the drift test asks
 for it). If `bun` cannot run, a `git merge-file` fallback leaves normal conflict markers. GitHub runs
 no custom merge drivers, so a PR whose base moved on the same key still needs a local rebase.
+
+`.gitattributes` also sets `CHANGELOG.md merge=workit-changelog`, which `bun run hooks:install`
+does not register: run `workit changelog driver install` once per clone
+([changelog guide](../guides/changelog.md)) so two branches' `[Unreleased]` entries merge without
+a conflict and a rebase never puts back entries a roll moved into a release (#896). Without it git
+merges `CHANGELOG.md` as plain text.
