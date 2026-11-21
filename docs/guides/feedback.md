@@ -23,7 +23,8 @@ and says so in the draft's header. Then it:
   `app-123`) and the workspace's org, repository and workspace names are
   replaced with `<url>`, `<email>`, `<host>`, `<path>`, `<branch>`,
   `<ticket>` and `<name>`. The tracker's own URLs stay. Tokens and passwords
-  are always masked, inside a kept tracker URL too. Workit's own paths
+  are always masked, inside a kept tracker URL too, and so is the value after
+  a secret-named flag (`--password x`, `--client-secret=x`). Workit's own paths
   (`packages/workit-cli/…`, `@workit-dev/cli/…`) and public names such as
   `npmjs.com` and `socket.io` stay. `--include-workspace`
   keeps the workspace details; use it only when you want them in a public

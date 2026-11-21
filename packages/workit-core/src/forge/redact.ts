@@ -28,7 +28,9 @@ const WEBHOOK =
   /\b(https?:\/\/(?:hooks\.slack\.com\/(?:services|workflows|triggers)|discord(?:app)?\.com\/api\/webhooks))\/[^\s"'<>]+/giu;
 
 // Userinfo in any URL (`https://user:pw@`, `postgres://a:b:c@`, `https://tok@`).
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu;
+// The scheme starts where its run starts: `\b` started a scan at every word of
+// a long `a-a-a-…` run, which was quadratic.
+const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu;
 
 // `curl -u user:pass`, `--user user:pass`.
 const CURL_USER = /(\s(?:-u|--user)(?:\s+|=))(["']?)[^\s"':]+:[^\s"']+\2/gu;
@@ -36,7 +38,11 @@ const CURL_USER = /(\s(?:-u|--user)(?:\s+|=))(["']?)[^\s"':]+:[^\s"']+\2/gu;
 // Secret-ish keys in env dumps, YAML, JSON, headers and connection strings:
 // DB_PASSWORD=…, "access_token": "…", X-Api-Key: …, PRIVATE-TOKEN: …,
 // AccountKey=…; an optional auth scheme (Basic/Bearer) is kept.
-const KEY = String.raw`[A-Za-z0-9_.-]*?(?:token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret|credentials?|authorization|cookie|signature)[A-Za-z0-9_.-]*`;
+// The key starts only where its name run starts, and the secret word is a
+// lookahead bounded by that run: a scan from every inner `-` made a long
+// `--a-a-a-…` run quadratic.
+const NAME = "[A-Za-z0-9_.-]";
+const KEY = String.raw`(?<!${NAME})(?=${NAME}*?(?:token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret|credentials?|authorization|cookie|signature))${NAME}+`;
 const ASSIGNMENT = new RegExp(
   String.raw`(?<![A-Za-z0-9])(["']?${KEY}["']?\s*[:=]\s*["']?)((?:bearer|basic|token|digest)\s+)?([^\s"',;&]+)`,
   "giu",
@@ -54,10 +60,29 @@ const QUOTED_ASSIGNMENT = new RegExp(
 const NETRC = /\b((?:machine|login)\s+\S+\s+(?:login\s+\S+\s+)?password\s+)\S+/giu;
 
 // Secrets passed as CLI flags: sshpass -p X, mysql -pX / -p X.
-const FLAG_SECRETS: readonly RegExp[] = [
-  /\b(sshpass\s+-p\s*)\S+/gu,
-  /\b(mysql(?:dump|admin|import|show)?\b[^\n]*?\s-p)(?!\s|$)\S+/gu,
-];
+const SSHPASS = /\b(sshpass\s+-p\s*)\S+/gu;
+// mysql's `-pX` is masked after the line's first mysql. A lazy scan from every
+// `mysql` to its `-p` was quadratic on a long line.
+const MYSQL = /\bmysql(?:dump|admin|import|show)?\b/u;
+const MYSQL_PASSWORD = /(\s-p)(?!\s|$)\S+/gu;
+const maskMysql = (line: string): string => {
+  const at = line.search(MYSQL);
+  return at < 0 ? line : line.slice(0, at) + line.slice(at).replace(MYSQL_PASSWORD, `$1${R}`);
+};
+
+// The value after a long flag whose name carries a secret word, as a whole
+// dash or underscore segment: `--password x`, `--client-secret=x`,
+// `--API-KEY "a b"`. `--author` and `--tokens` are not secret names, and a
+// following flag (`--token --json`) is not a value. A quote with no closing
+// quote on its line masks the rest of the line. Over-masking a non-secret
+// value (`--token-budget 5`, `--auth-method oauth`) is accepted as the safe
+// default. An auth flag (`--authorization <scheme> x`) keeps its scheme and
+// masks the credential; any other flag masks the scheme word too. The name is
+// one run checked by a lookahead, so a long `--a-a-…` stays linear.
+const SECRET_FLAG = new RegExp(
+  String.raw`(?<![\w-])(--(?=[\w-]*?(?<![a-z0-9])(?:password|passwd|pwd|secret|token|api[-_]?key|auth|authorization|credentials?|private[-_]?key|access[-_]?key)(?![a-z0-9]))[\w-]+(?:\s+|=))((?:bearer|basic|token|digest)\s+(?![\s-]))?(?:(["'])(?:[^\n]*?\3|[^\n]*)|(?!-)[^\s"']+)`,
+  "giu",
+);
 
 // Signed-URL and query-string credentials (Azure SAS `sig=`, `token=`, …).
 const QUERY_SECRET =
@@ -71,7 +96,12 @@ const PRIVATE_KEY =
 // line that decodes base64 (`echo … | base64 -d`).
 const BASE64 = /[A-Za-z0-9+/]{32,}={0,2}/gu;
 
-const ANSI = new RegExp(String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007`, "gu");
+// An OSC sequence ends at BEL and holds no ESC, so each scan stops at the
+// next ESC (a scan to the end of the text from every `ESC ]` was quadratic).
+const ANSI = new RegExp(
+  String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*\u0007`,
+  "gu",
+);
 
 export const stripAnsi = (value: string): string => value.replace(ANSI, "");
 
@@ -102,7 +132,16 @@ export function redactText(value: string): string {
     secret.startsWith(R) ? match : `${lead}${quote}${R}${quote}`,
   );
   out = out.replace(NETRC, `$1${R}`);
-  for (const pattern of FLAG_SECRETS) out = out.replace(pattern, `$1${R}`);
+  out = out.replace(SSHPASS, `$1${R}`);
+  if (MYSQL.test(out)) out = out.split("\n").map(maskMysql).join("\n");
+  out = out.replace(SECRET_FLAG, (match, flag: string, scheme?: string, quote?: string) => {
+    const kept = scheme && /auth/iu.test(flag) ? scheme : "";
+    const secret = match.slice(flag.length + kept.length);
+    if (secret.startsWith(R)) return match;
+    if (!quote) return `${flag}${kept}${R}`;
+    const closed = secret.length > 1 && secret.endsWith(quote);
+    return `${flag}${kept}${quote}${R}${closed ? quote : ""}`;
+  });
   out = out.replace(QUERY_SECRET, `$1${R}`);
   out = out.replace(
     ASSIGNMENT,

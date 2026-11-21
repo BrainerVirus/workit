@@ -160,6 +160,87 @@ describe("S10 redaction and verdicts", () => {
       expect(redactText(keep)).toBe(keep);
   });
 
+  // #933: patterns that rescanned a long run from every position were
+  // quadratic (a 40 KB `--a-a-…` took 12 s, 200 KB minutes). The test's own
+  // timeout bounds it, generous for slow CI (linear runs take ~10 ms).
+  test.each([
+    ["a hyphen run", "--" + "a-".repeat(100_000)],
+    ["a secret-word run", "--" + "token-".repeat(34_000)],
+    ["mysql on one line", "mysql ".repeat(34_000)],
+    ["unterminated OSC escapes", "\u001b]".repeat(100_000)],
+  ])(
+    "Given a 200 KB adversarial string (%s), When redacted, Then it comes back unchanged in linear time",
+    (_, text) => {
+      expect(redactText(text)).toBe(text);
+    },
+    1_000,
+  );
+
+  test("Given a 5 MB ordinary log, When redacted, Then it comes back unchanged in linear time", () => {
+    const line =
+      "2026-01-01T00:00:00Z (pass) Given a step, Then src/a/b.ts:12 --title x DB_HOST=db at 209cdeb890ea6b264f50fa34ef6f160549b7dd8b\n";
+    const log = line.repeat(Math.ceil(5_000_000 / line.length));
+    expect(redactText(log)).toBe(log);
+  }, 5_000);
+
+  // #930: the value after a secret-named long flag, either spelling.
+  test.each([
+    ["--password hunter2secret", "--password [REDACTED]"],
+    ["--secret=x", "--secret=[REDACTED]"],
+    ["--API-KEY x", "--API-KEY [REDACTED]"],
+    ["--api_key=x", "--api_key=[REDACTED]"],
+    ["--client-secret x", "--client-secret [REDACTED]"],
+    ["--auth x", "--auth [REDACTED]"],
+    ["--db-passwd x", "--db-passwd [REDACTED]"],
+    ["--pwd=x", "--pwd=[REDACTED]"],
+    ["--credentials x", "--credentials [REDACTED]"],
+    ["--private-key x", "--private-key [REDACTED]"],
+    ["--access_key x", "--access_key [REDACTED]"],
+    ["--token x", "--token [REDACTED]"],
+    ['--password "correct horse"', '--password "[REDACTED]"'],
+    ["--password='a b'", "--password='[REDACTED]'"],
+  ])("Given `pr create %s`, Then the flag stays and its value is masked", (flag, expected) => {
+    expect(redactText(`workit pr create ${flag} --json`)).toBe(
+      `workit pr create ${expected} --json`,
+    );
+  });
+
+  // An Authorization value keeps its scheme and loses its credential.
+  test.each([
+    ["curl --authorization Bearer abc123 x", "curl --authorization Bearer [REDACTED] x"],
+    ["curl --auth=Basic xyz x", "curl --auth=Basic [REDACTED] x"],
+    ["curl --authorization 'Token abc def'", "curl --authorization '[REDACTED]'"],
+    ["curl --authorization abc123 x", "curl --authorization [REDACTED] x"],
+    ['curl -H "Authorization: Bearer abc" x', 'curl -H "Authorization: Bearer [REDACTED]" x'],
+    ["curl --header=Authorization:Basic xyz x", "curl --header=Authorization:Basic [REDACTED] x"],
+    ["x --password basic hunter2 --json", "x --password [REDACTED] --json"],
+  ])("Given %j, Then the credential is masked", (text, expected) => {
+    expect(redactText(text)).toBe(expected);
+  });
+
+  // A quote with no closing quote on its line masks the rest of that line.
+  test.each([
+    ["x --password 'unbalanced value", "x --password '[REDACTED]"],
+    ['x --password "unbalanced value\nnext line', 'x --password "[REDACTED]\nnext line'],
+    ['x --password "it\'s mine" --json', 'x --password "[REDACTED]" --json'],
+    ['x --secret="a b --json', 'x --secret="[REDACTED]'],
+  ])("Given %j, Then the secret is masked", (text, expected) => {
+    expect(redactText(text)).toBe(expected);
+  });
+
+  test.each([
+    "--body some text",
+    "--title x",
+    "--branch y",
+    "--author me",
+    "--tokens 5",
+    "--authority x",
+    "--token --json",
+    "-p x",
+  ])("Given `pr create %s`, Then nothing changes", (flags) => {
+    expect(redactText(`workit pr create ${flags}`)).toBe(`workit pr create ${flags}`);
+  });
+
   test("a private key split across log lines is gone from the tail; secrets in comments too", () => {
     const keylog = [
       "start",
