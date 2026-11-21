@@ -32,6 +32,7 @@ Cursor, Codex CLI/desktop and Pi**, plus a standalone CLI.
 - [CLI reference](#cli-reference)
 - [Upgrading](#upgrading)
 - [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
 - [Contributing](#contributing)
 
 ## Quickstart
@@ -40,8 +41,9 @@ Requires **Node.js 24+**. Claude Code, Codex and Cursor hooks start the `node`
 on your `PATH`; in a repo pinned to an older Node they find a Node 24+ on their
 own (`WORKIT_NODE`, the Node `workit setup` recorded, then fnm, nvm, volta, mise
 and asdf installs). `workit doctor` (row `hook_node`) shows which Node they use;
-with none, install Node 24 or run `workit setup` from a Node 24 shell. The setup wizard detects your hosts, installs the
-ones you pick with their native commands, and writes your global config:
+with none, install Node 24 or run `workit setup` from a Node 24 shell. The
+setup wizard detects your hosts, installs the ones you pick with their native
+commands, and writes your global config:
 
 ```bash
 npx @workit-dev/cli init
@@ -82,11 +84,6 @@ Coming from `@brainervirus/workit-*` (14.x)? The packages moved to
 `npx -y @brainervirus/workit-cli@latest upgrade` once, and see
 [the migration guide](docs/guides/migration.md#100-the-packages-move-to-workit-dev).
 
-A CLI older than 8.38.0 has no `--yes` (it fails with `unknown option --yes`).
-Update the CLI once with `npx -y @workit-dev/cli@latest upgrade --cli --hosts=none --yes`
-(or, on the old CLI, `workit upgrade --cli --hosts=none --apply --confirm`), then run
-`workit upgrade`.
-
 <details>
 <summary><strong>Claude Code</strong></summary>
 
@@ -110,7 +107,8 @@ claude --plugin-dir "$PWD/packages/workit-claude-code"
 ```
 
 Skills appear as `/workit:<name>`, plus `verifier`, `reviewer`,
-`implementer`, `decider` and `babysitter` agents, each on its own model. See [the Claude Code guide](docs/guides/claude-code.md).
+`implementer`, `decider` and `babysitter` agents, each on its own model. See
+[the Claude Code guide](docs/guides/claude-code.md).
 
 </details>
 
@@ -165,7 +163,7 @@ Skills are invoked as `$workit-<name>` or from the `/skills` picker.
 </details>
 
 <details>
-<summary><strong>Pi</strong> (1.4.0)</summary>
+<summary><strong>Pi</strong> (1.4.0+)</summary>
 
 ```bash
 pi install npm:@workit-dev/pi
@@ -227,25 +225,16 @@ one verdict at the top of a stack covers its unchanged lower PRs
 
 **Autonomy grants.** Per-workspace grants in `~/.config/workit/workspaces.json`
 set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs
-`true` or `verified`, and both merge only with the verdict the PR's review
-lane asks for (an accepted independent one outside `verification:
-proportional`; `true` also allows a ledger-recorded `--unverified --reason` bypass);
-`defaultEndpoint` is where an unnamed delivery request
-stops: `commit` (default), `pr` (push and open the PR), `green` (open the PR,
-then babysit CI, review threads and required rebases until it is merge-ready,
-never merging) or `merged` (`green`, then `workit pr merge`; it acts as `green`
-until the workspace has the merge grant). Without the `push` or `pr` grant any
-of them acts as `commit`; `workit grant show` reports the effective endpoint. Raising a grant or the endpoint needs
-you at a terminal; agents can only lower them. The authority fields are sealed
-(`workspaces.json.seal`): `workit workspace seal`, in your own terminal, shows
-what changed and accepts it; while the seal is missing or does not match,
-nothing above the last seal (or the defaults) applies, a changed forge identity
-blocks forge verbs, and `workit doctor` warns (`grant_seal`); `workit upgrade`
-and `workit setup` at your terminal offer the first seal. It stops an
-honest agent, not one that also forges the seal (D18). A config redirect
-(`WORKIT_CONFIG` and the like) never raises a grant. See
-[grants](docs/guides/grants.md). `workit workspace list|add|set` adds or
-adjusts one entry without the wizard and never raises a grant
+`true` or `verified`, and merges only with the verdict the PR's review lane
+asks for. `defaultEndpoint` is where an unnamed delivery request stops:
+`commit` (default), `pr`, `green` (babysit CI and threads until merge-ready,
+never merging) or `merged`; `workit grant show` reports the effective one.
+Raising a grant or the endpoint needs you at a terminal; agents can only lower
+them. The authority fields are sealed: `workit workspace seal`, in your own
+terminal, accepts a change, and until then nothing above the last seal applies
+(`workit doctor` warns, `grant_seal`). See [grants](docs/guides/grants.md).
+`workit workspace list|add|set` adds or adjusts one entry without the wizard
+and never raises a grant
 ([configuration](docs/guides/configuration.md#config-files)).
 
 **Policy.** Judge tracked work in four calls (`workit policy assess --judge
@@ -299,36 +288,21 @@ shape  →  implement  →  review  →  ship
    issue on GitHub, GitLab or [YouTrack](docs/guides/youtrack.md)), `workit ci wait`,
    `workit pr status`; `workit pr merge` only when the PR is READY, verified and
    the `merge` grant allows it, and then deletes the merged head branch
-   (workspace `deleteBranch`, `--keep-branch` to opt out; never a protected,
-   fork, stack-parent or foreign-author branch). `workit verify-delivery`
-   confirms it landed. A workspace can opt in to a changelog step
-   (`workit workspace set <ws> changelog=update|create docs=when-user-facing`,
-   default off): ship passes the Unreleased entry as
-   `workit pr create … --changelog "<Section>: <entry>"`, and `pr create` refuses a
-   user-facing PR without one unless given `--no-changelog "<reason>"`
-   ([changelog gate](docs/guides/delivery.md#changelog-gate)).
-   The PR body fills the repo's GitHub or GitLab template, else Workit's
-   Summary, Evidence and Merge danger: `workit pr template` prints it. When a
-   template is chosen (the repo's, or Workit's with `prTemplate: workit`),
-   `pr create` refuses a body that leaves out its headings or keeps its
-   `<!-- -->` placeholders (workspace `prTemplate: auto|repo|workit|<path>`,
-   [PR template](docs/guides/delivery.md#pr-description-template)).
+   (`--keep-branch` to opt out). `workit verify-delivery` confirms it landed.
+   The PR body fills the repo's template, else Workit's (`workit pr template`);
+   a workspace can require a changelog entry per user-facing PR
+   (`workit pr create … --changelog "<Section>: <entry>"`). See
+   [delivery](docs/guides/delivery.md) and its
+   [changelog gate](docs/guides/delivery.md#changelog-gate).
 
 For independent slices, **fanout** runs one worker per isolated worktree with
-a fixed brief and file-scope manifest, and a non-author verifier per slice.
-`workit fanout plan` refuses incomplete briefs and overlapping scopes before
-any spawn, `workit fanout brief` renders each worker's brief with the lead's
-standing orders (`workit ledger standing`; workers already running get each
-change on their next tool call, and `standing add --stop` tells them to stop
-and report), `workit fanout status` flags
-stuck workers and suggests a landing
-order, `workit fanout worktree create|release` gives each worker its own
-worktree on every host (with `node_modules` linked so its tests import its own
-code; Workit's hooks keep an implementer inside it) and prints each slice's
-`WORKTREE:` line and exact spawn (a plan file in `--name` is registered in the
-same call; a slice no plan holds is made unplanned), and `workit fanout check`
-gates fan-in. See
-[parallel slices](docs/guides/delivery.md#parallel-slices-fanout).
+a fixed brief and file-scope manifest, and a non-author verifier per slice:
+`workit fanout plan` refuses incomplete briefs and overlapping scopes,
+`workit fanout worktree create <slice>…` makes each worker's worktree and
+prints its `WORKTREE:` line and exact spawn, `workit fanout brief` renders the
+brief with the lead's standing orders, `workit fanout status` flags stuck
+workers and suggests a landing order, and `workit fanout check` gates fan-in.
+See [parallel slices](docs/guides/delivery.md#parallel-slices-fanout).
 
 ## Skills
 
@@ -368,7 +342,7 @@ select a fanout plan, `ledger verdict --sha <sha>` is `--head <sha>` (the sha
 must be the head being judged), and `task list --status all` lists every task.
 Global flags:
 `--json` (envelope `{"ok","code","data","error"?,"unblock"?}`), `--cwd <dir>`,
-`--version`. Exit codes: `0` ok, `1` failed, `2` usage, `3` blocked,
+`--session <id>` (act as that session; beats `WORKIT_SESSION_ID`), `--version`. Exit codes: `0` ok, `1` failed, `2` usage, `3` blocked,
 `4` busy/pending, `5` unavailable.
 
 In a color terminal, help prints bold headings, commands and flags in cyan
@@ -384,33 +358,37 @@ text.
 | `workit upgrade --check` / `--set-updates=prompt\|auto\|off` | Compare installed and latest versions; choose how a launch handles a new release |
 | `workit launch <host> --auto-upgrade` | Upgrade, then start a host |
 | `workit completion zsh\|bash\|fish\|powershell` | Print the shell completion script (setup and upgrade install it for `$SHELL`) |
+| `workit dir [plans\|retros\|handoffs\|notes\|config\|state\|…]` | Print where a kind of file lives (plans, retros, handoffs and notes per clone; config, state, data, cache and runtime per user) |
 | `workit gc [--dry-run]` | Compact task logs, drop unreferenced blobs and old check logs; `--worktrees`, `--branches` and `--procs` list (`--apply` removes or stops) what finished work left |
 | `workit install --hosts=<h,…> [--preview\|--yes]` | Install or repair Workit on the named hosts only; a healthy host changes nothing |
 | `workit uninstall [--hosts=<h,…> [--preview\|--yes]]` | Pick hosts (and the owned CLI install), or name them, and remove what Workit put there (keeps `~/.config/workit`) |
 | `workit grant show\|set\|unset` | Workspace autonomy grants and `defaultEndpoint` |
+| `workit approve <id>…` | Ask you to approve a Workit request (a YouTrack write, release notes under review) on a host with no prompt on the action; your yes is recorded once ([approvals](docs/guides/approvals.md)) |
+| `workit config show` | The effective config here (workspace, VCS provider, target branch, role models, heavy-check resources), each value with its source |
 | `workit workspace list\|add\|set\|rm\|seal` | List, add, edit or remove workspace entries without the wizard (never raises a grant); `seal` accepts the authority fields at your terminal |
 | `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer, babysit) runs on for a host, how it reaches a spawn there (`agent file`, `spawn fill` or `advisory`) and the `models.enforce` mode |
 | `workit task status\|start\|note\|close\|adopt` | The current branch's task |
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
 | `workit check <name>` | Run a configured check and record observed evidence |
-| `workit lock status\|wait\|run\|heavy` | The machine-wide heavy-check lease: holders, waiting, running a command under it, heavy patterns |
+| `workit lock status\|reap\|cancel\|wait\|run\|heavy` | The machine-wide heavy-check lease: holders and waiters, freeing a stuck holder's slot, dropping queued checks, waiting, running a command under it, heavy patterns |
 | `workit run --bg [--port <n>] [--name <n>] -- <cmd…>` | Start a dev server or `docker compose up` under the process registry: one server per repo, charged to the heavy budget ([background processes](docs/guides/processes.md)) |
 | `workit ps [--all]` | The registered background processes: id, pid, port, RSS, owner session |
 | `workit stop <id>… \| --session <s> \| --within <dir> \| --orphans` | Stop registered processes (process group, SIGTERM then SIGKILL; docker rows stop only their containers), with a ledger row each |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
 | `workit deslop scan\|result` | Class the comments, suppressions and debug leftovers a branch adds, by review lane, with no agent; record one result line per PR ([review depth](docs/guides/review.md)) |
 | `workit knowledge lint` | Lint AGENTS.md budget, local links, scaffold-only and duplicated rules; register as `workit check knowledge` |
-| `workit ledger decision\|ruling\|verdict\|standing\|list\|check\|verify-integrity` | Decisions, rulings, SHA-keyed verdicts, a fanout's standing orders and the hash chain |
-| `workit git branch\|commit\|push\|trailers` | Policy-checked branch/commit; leased push with verified remote tip |
-| `workit pr status\|create\|ready\|edit\|threads\|reply\|merge` | PR state and next action; SHA-bound create; review threads; gated merge |
+| `workit ledger decision\|ruling\|verdict\|standing\|list\|check\|verify-integrity\|finding\|void\|add` | Decisions, rulings, SHA-keyed verdicts, a fanout's standing orders and the hash chain; `finding` runs `workit finding`; `void` (yours, at a terminal) voids a verdict that is wrong on its face |
+| `workit git branch\|commit\|stage\|unstage\|push\|rebase\|hold\|trailers` | Policy-checked branch (`--carry` moves uncommitted work onto it) and commit; hunk staging; leased push with verified remote tip; rebase onto the trunk; `hold` records your "not yet" so the Stop hook stops asking to push |
+| `workit pr status\|create\|template\|ready\|edit\|threads\|reply\|merge` | PR state and next action; SHA-bound create; the body template; review threads; gated merge |
+| `workit issue view\|comment\|close\|create` | Read, comment on, close or open an issue on the workspace's GitHub or GitLab tracker (writes need the `pr` grant) |
 | `workit ci wait\|rerun\|logs` | Wait for CI on the PR head; rerun failed jobs once per head; print the failing jobs' log tails |
-| `workit stack plan\|status\|sync\|land` | Base-branch PR stacks |
+| `workit stack plan\|status\|sync\|restack\|land` | Base-branch PR stacks: plan, restack after a parent merged, land root first |
 | `workit fanout plan\|brief\|check\|status\|worktree` | Register parallel slices (complete briefs, disjoint scopes); render each worker's brief with the standing orders; watch them (STUCK, PR, CI, verdict, landed); create and release slice worktrees; gate fan-in on scope, merge conflicts and landing order |
-| `workit verify-delivery [push\|pr\|merge\|release]` | Confirm on the remote that it landed |
+| `workit verify-delivery push\|pr\|merge\|release` | Confirm on the remote that it landed (bare, it infers which; exit 1 when not) |
 | `workit release start\|finish\|publish\|notes\|package\|tag` | git-flow releases without the git-flow binary: cut, finish (merge, tag, merge back, forge release with user-facing notes) and publish per release track; `notes draft\|show\|approve` drafts the release notes, and under `releaseNotes: review` only the user approves them ([release notes](docs/guides/delivery.md#release-notes)); `package <name> <version>` tags, pushes and releases a monorepo package (`pkg-a@0.1.0`) on the same release commit, not Latest ([release packages](docs/guides/configuration.md#release-packages)); `tag v<version>` releases a tag-driven repository (GoReleaser and similar): it tags the green remote trunk and pushes the tag, and `notes edit <tag> --from-changelog` backfills a published release's notes ([tag-driven releases](docs/guides/release.md)) |
-| `workit youtrack note\|time\|meeting\|update` | YouTrack comments, attachments, work time and state, one yes per update ([YouTrack guide](docs/guides/youtrack.md)) |
+| `workit youtrack note\|time\|meeting\|update\|show\|create` | Read and create YouTrack issues; comments, attachments, work time and state, one yes per write unless `writes: auto` covers the host ([YouTrack guide](docs/guides/youtrack.md)) |
 | `workit feedback "<title>" --body-file <f\|->` | Draft a redacted report of Workit friction for the Workit tracker, with version, host, verb and exit text; suggests a duplicate, saves the draft under `workit dir retros`, and posts only with `--post` after your yes ([reporting friction](docs/guides/feedback.md)) |
-| `workit changelog apply` | Add entries under the changelog's Unreleased section |
+| `workit changelog apply\|merge\|driver` | Add entries under the changelog's Unreleased section; `driver install` registers the merge driver (`merge`) that keeps both sides' entries |
 | `workit <family> <action>` | Low-level task families: `task`, `policy`, `evidence`, `finding`, `decision`, `worker`, `state` |
 
 ### Shell completion
@@ -487,19 +465,32 @@ repair. The table maps common symptoms to those ids.
 | Codex verifier or reviewer agents missing | `codex_agents` | `workit upgrade`, then a new Codex session |
 | OpenCode fails `opencode_version` | `opencode_version` | Upgrade OpenCode to 2.0.18+ |
 | Pi does not load Workit | `pi_extension` | See [Pi](docs/guides/hosts.md#pi) |
+| An agent could edit a Workit-guarded file (`workspaces.json` and its seal, approvals, issued sessions) | `native_deny` | `workit setup` in your own terminal writes each host's own deny rules (Claude Code, Cursor, OpenCode) |
+| `youtrack.writes: auto` posts to any YouTrack | `youtrack_writes` | Name the allowed hosts in `youtrack.autoHosts` ([YouTrack guide](docs/guides/youtrack.md)) |
+| Agents do not know ytrack's commands | `ytrack_skill` | The fix doctor names: `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade` (ytrack 0.6.0+ keeps its own skill) |
 
 More: [configuration and storage](docs/guides/configuration.md).
 
 ## Documentation
 
-- Guides: [Claude Code](docs/guides/claude-code.md) ·
+- Setup: [Install](docs/guides/install.md) ·
+  [Claude Code](docs/guides/claude-code.md) ·
   [Other hosts](docs/guides/hosts.md) ·
-  [Verification](docs/guides/verification.md) ·
-  [Delivery and stacks](docs/guides/delivery.md) ·
-  [Background processes](docs/guides/processes.md) ·
-  [Grants](docs/guides/grants.md) ·
   [Configuration](docs/guides/configuration.md) ·
-  [Migration](docs/guides/migration.md)
+  [Grants](docs/guides/grants.md) ·
+  [Approvals](docs/guides/approvals.md) ·
+  [Migration](docs/guides/migration.md) ·
+  [Troubleshooting](docs/guides/troubleshooting.md)
+- Daily work: [Verification](docs/guides/verification.md) ·
+  [Checks](docs/guides/checks.md) ·
+  [Review depth](docs/guides/review.md) ·
+  [Delivery and stacks](docs/guides/delivery.md) ·
+  [Changelog](docs/guides/changelog.md) ·
+  [Tag-driven releases](docs/guides/release.md) ·
+  [Background processes](docs/guides/processes.md) ·
+  [Cleanup](docs/guides/cleanup.md) ·
+  [YouTrack](docs/guides/youtrack.md) ·
+  [Reporting friction](docs/guides/feedback.md)
 - Design record: [`docs/workit-next/`](docs/workit-next/spec.md)
 - Release qualification: [`docs/qualification/`](docs/qualification/qualification.md)
 - History: [`docs/archive/`](docs/archive/README.md) · [CHANGELOG](CHANGELOG.md)
