@@ -41,6 +41,10 @@ When every conflict is in a configured changelog path and merges cleanly as abov
 merge, continues and names the file in its output. Any other conflict aborts the rebase and
 leaves the branch where it was.
 
+`workit pr merge` on a PR that conflicts with its base only in the changelog rebases it the same
+way, pushes it with `--force-with-lease` and stops, printing `workit ci wait` and the same merge as
+the next commands; any other conflict is refused with an exact `workit git rebase` command.
+
 `workit fanout check` never reports a configured changelog path as out of a slice's scope: the
 lead writes that entry on each slice branch.
 

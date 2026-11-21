@@ -26,7 +26,7 @@ grants.
 ## Branch, commit, push
 
 ```bash
-workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
+workit git branch feature/x [--base <b>] [--track <t>] [--carry]   # policy-checked name, from the fetched default target; --carry brings uncommitted changes along
 workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (per preset, below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
 workit git stage --patch <file|->                # stage selected hunks (a unified diff) in the index only
@@ -36,7 +36,7 @@ workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last com
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
-workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict aborts and lists the paths; then push --force-with-lease
+workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict only in the changelog is merged entry by entry and the rebase goes on, any other conflict aborts and lists the paths; then push --force-with-lease
 workit git hold --why "<the user's words>" | --clear   # the user said not yet: the Stop hook stops asking to push or open a PR for this branch
 ```
 
@@ -180,6 +180,15 @@ GitHub or GitLab release on the tag with them. Before release notes, this path
 created no forge release: under the default `auto` it now creates one, and
 `releaseNotes: off` keeps the old behavior.
 
+A repository that releases by pushing a tag (GoReleaser and similar,
+github-flow with no release branch) uses `workit release tag v<version>`
+instead: under the `release` grant it tags the green remote trunk without
+moving a local branch and pushes the tag; `--wait` first waits for trunk CI
+still running after a merge, then for the release workflow and the forge
+release. `workit release notes edit <tag> --from-changelog` puts a published
+release's changelog section at the top of its notes. See
+[tag-driven releases](release.md).
+
 #### Release notes
 
 The forge release body is written for users, not the changelog verbatim:
@@ -284,9 +293,22 @@ local branch under `--all`/`--branches`) is denied with the allowed kinds and
 the closest name; a branch the remote already has (a legacy or bot branch),
 and a delete (`--delete`, `:chore/old`), is never judged.
 
+- `git branch` refuses (`dirty_worktree`) when tracked changes outside
+  `docs/` would ride along to the new branch: commit them first, or pass
+  `--carry` to take them along, still uncommitted. When the base the route
+  names does not exist in the clone (git-flow's `develop` in a main-only
+  clone) and no `--base` is given, it starts from the repository's trunk
+  (origin's default branch, else `main`, else `master`) and says so.
+- A `wip: <state>` subject (a handoff checkpoint) that the commit convention
+  refuses is committed as `chore: wip <state>`, and the output says so. When a
+  failing pre-commit hook names its own fix (`run bun run format`), the
+  refusal ends with `workit check --name fix -- <that command>`, then the same
+  `workit git commit`.
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
-  name. Commits carry a `Workit-Session:` trailer. An amend keeps the old
+  name. Commits carry a `Workit-Session:` trailer unless the workspace sets
+  `trailers: false` ([configuration](configuration.md#config-files));
+  `--trailer "<key: value>"` adds another. An amend keeps the old
   commit's trailers (`--no-edit` keeps the whole message; a new `-m`/`-F`
   message gets the old trailers carried over) and never repeats one.
   `--amend` refuses a commit that is already on the default target or a
@@ -426,7 +448,7 @@ workit ci wait --branch main           # a branch with no PR (the trunk after a 
 workit ci rerun --failed --reason flake|infra   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
-workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--allow-failing <check>… --reason <why>]
+workit pr merge [--pr <n>] [--method squash|merge|rebase] [--subject <s>] [--body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
 workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
 ```
 
@@ -470,8 +492,11 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `git branch`, the default target of `pr create` and the default trunk of
   `stack plan` come from the track the branch belongs to; `pr merge` onto a
   track's production branch reports the branches to merge back into.
-- `pr merge` merges only when `pr status` reads READY, an independent verdict
-  is accepted for that head (`workit ledger check`), and the `merge` grant
+- `pr merge` merges only when `pr status` reads READY, the verdict the
+  head's [review lane](verification.md#review-lanes) asks for is accepted for
+  that head (`workit ledger check`: an independent one, or on the `self` lane
+  the author's `--self` verdict, which for a dependency bump also needs green
+  CI on the head), and the `merge` grant
   allows it, under `merge: true` and `merge: "verified"` alike. The merge call
   carries the head SHA, so a moved head is refused. Only `merge: true` accepts
   `--unverified --reason "<why>"`, which merges without a verdict and records
@@ -911,7 +936,7 @@ workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record th
 workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
 workit stack sync [--local] [--dry-run] [--force <branch>]
 workit stack restack [--dry-run] [--force <branch>]                # sync, then delete the merged branches locally
-workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
+workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]
 ```
 
 - The order is stored in `<git common dir>/workit/stacks/`, shared by every
@@ -1002,7 +1027,7 @@ subagents do that.
 workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]  # register slices; refuse gaps and overlap
 workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the lead's standing orders for every worker
 workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the stop line for running workers, and lifting it
-workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
+workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--host <h>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
 workit fanout worktree create <slice>… [--name <plan|plan.json>]       # each slice's worktree, scratch dir, links, WORKTREE line and spawn
 workit fanout worktree create <slice> [--branch <b>] [--base <b>] [--tier <t>]  # one unplanned slice (a one-slice plan named after it)
@@ -1180,8 +1205,9 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
 - `worktree create` takes several slices and prints, per slice, its
   `WORKTREE: <path>` line and the spawn that carries it: Claude Code's
   `SPAWN: Agent subagent_type: "workit:implementer", run_in_background: true,
-  description: "<slice>", prompt: "…"` (with `model` only when the slice's
-  tier differs from the `implementer` agent file), elsewhere the prompt for the
+  description: "<slice>", prompt: "…"` (with `model` and `effort` only when the model or
+  effort configured for the implementer at the slice's tier differs from its
+  agent file), elsewhere the prompt for the
   host's implementer subagent. The prompt is the WORKTREE line first, then
   `WORKER`, `TIER`, `TIMEBOX` and "Run `workit fanout brief <slice> --name
   <plan>` and follow it exactly.", so the brief never passes through the lead's
@@ -1281,7 +1307,9 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   it is a formatter (`oxfmt`, `prettier`, `cargo fmt`, `bun run format`) or a
   linter whose every target is a file (`eslint a.ts b.ts`, not `eslint src`):
   it runs at once and says why. A raw heavy shell command an agent runs (`npx jest`, `npm run test:ci`) is rewritten
-  through the lease, or denied with the exact rewrite on Codex and Cursor. A
+  through the lease (Claude Code, OpenCode, Pi), or denied with the exact
+  rewrite on Codex, Cursor and Claude Code in auto mode (which refuses a call a
+  hook changed). A
   chain with heavy parts is denied with each part's lease command, and a
   command a host permission rule names runs outside the lease
   ([verification guide](verification.md#heavy-commands-and-the-lease)).
@@ -1295,8 +1323,13 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   it re-queues once in the same place, printing the estimated wait, and gives
   up only at the second limit, naming the exact command to run again with a
   `--wait` sized to the estimate. A wait bounded by `--timeout` never
-  re-queues past it, and `--no-wait` refuses at once. `workit lock status` lists holders and the queue, with
-  each holder's time left (`~3m left`, or `past its last 14m run`).
+  re-queues past it, and `--no-wait` refuses at once. A check whose last
+  measured run took under 30 s, or one marked network-bound
+  (`{"command": …, "heavy": "io"}` in `.workit/checks.json`, `--io` ad hoc),
+  runs without a slot while the memory budget and the pressure gate allow.
+  `workit lock status` lists holders and the queue, with each holder's time
+  left (`~3m left`, or `past its last 14m run`) and each waiter's own last run
+  and estimated wait.
   A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
   end before a long wait: run long checks in the background. The lease is
   released when the check ends, and a queued check gives up its place when it

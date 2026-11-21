@@ -1,7 +1,7 @@
 # Claude Code
 
 Workit ships as a native Claude Code plugin: hooks, the thirteen method skills
-(`/workit:<name>`), three agents, and `workit` on the Bash tool's `PATH`. No MCP
+(`/workit:<name>`), five agents, and `workit` on the Bash tool's `PATH`. No MCP
 server is registered: Claude has a shell, and tool schemas cost context. To
 opt in anyway, add `workit-mcp` to your own Claude settings.
 
@@ -34,8 +34,12 @@ merge` as "Merge Without Review". Run `workit setup --hosts=claude-code` in
 your own terminal (not from a Claude Code session: it refuses there): after
 showing the diff it adds enumerated `Bash(workit <verb> *)` allows, `ask`
 rules for `--unverified` and `--overwrite-unintegrated` (the Workit hook also
-asks for them however they are quoted), one
-`autoMode.environment` and one `autoMode.allow` line describing Workit's
+asks for them however they are quoted), for the calls only you run (`workit
+approve`, `grant set|raise`, `ledger void`, `release notes approve`, `setup`,
+`install`, `uninstall`, `workspace seal`) and for `workit feedback`, `deny`
+rules for the files only Workit or you may write (issued sessions, approvals,
+`workspaces.json` and its seal), one `autoMode.environment` and one
+`autoMode.allow` line describing Workit's
 gates, and `env.CLAUDE_CODE_SHELL` (bash) when your shell is zsh. See
 [the hosts guide](hosts.md#host-permissions-workit-setup).
 
@@ -61,7 +65,17 @@ forces one runtime; `WORKIT_SHIM_TRACE=1 workit …` prints which entry ran.
 | `UserPromptSubmit` | Re-injects task context only when it changed |
 | `PreToolUse` on `Bash`/`PowerShell` and `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | Denies protected or non-compliant branch operations, and working-tree edits while the branch task has an open product choice or needs a plan (the before-write gate), and in a Workit workspace raw gate bypasses (`gh pr merge`, `glab mr merge`, a push onto a protected branch), with `permissionDecision: "deny"` and the unblock. Routine raw `git commit`/`git push`/`gh pr create` get an `additionalContext` nudge toward the workit verb ([hosts](hosts.md)). Never answers `allow`, so your permission prompts stay in charge. Plain shell commands, and edits in a checkout without Workit tasks, are answered before the runtime loads; so is a PostToolUse whose command has no `commit` |
 | `PostToolUse` on `Bash`/`PowerShell` | Records a raw `git commit` that moved HEAD (noted by PreToolUse) as the session's `commit.recorded` ledger row, so its own verdict is not independent |
+| `PreToolUse` on `Agent`/`Task` | The spawn gate: a `workit:implementer` prompt must name a Workit-made worktree (its path, a `WORKTREE:` line, or a brief file holding one), else it is denied in two lines ending in `Retry as: workit fanout worktree create <slice>`. Fills a role's configured model or effort on a spawn that names none |
+| `Stop` | Continues the main agent once when the ledger or git proves a delivery obligation unmet ([stop control](hosts.md)) |
+| `SessionEnd` | When the session really ends (not `clear` or `resume`), stops the processes and automation browsers it started, detached so Claude Code is not delayed; `SessionStart` also stops leftovers whose session is gone, at most once every 10 minutes ([processes](processes.md)) |
 | `SubagentStart` | Tells the `implementer` it works only in the worktree its lead made with `workit fanout worktree create`, through `workit <verb> --cwd <worktree> …`; tells other subagents they are read-only |
+
+Under auto mode, which refuses a call whose input a hook changed, Workit
+rewrites nothing: `cd <dir> && workit …`, a heavy command, a raw dev server
+and `npx @workit-dev/cli …` are denied with the exact call to send instead
+(`Retry as: workit <verb> --cwd <dir> …`, `workit check --heavy -- <cmd>`,
+`workit run --bg -- <cmd>`, `workit …`). Outside auto mode they are
+rewritten as before.
 
 Hooks fail open: if the runtime cannot start (no Bun for a pin, missing
 `dist/`), the hook answers nothing, prints one
@@ -84,11 +98,19 @@ skips over the last day in its `hook_deadline` row. To change the deadline, set
 
 | Agent | Role |
 | --- | --- |
-| `verifier` | Read-only. Runs the brief's checks through `workit check` and records a `workit ledger verdict` under its own session |
-| `reviewer` | Read-only. Reviews intent fidelity, standards, test quality and blast radius; records a review verdict |
-| `implementer` | No `isolation` (Claude Code's refused every wrapped git). Edits and commits only in the worktree the lead made with `workit fanout worktree create <slice>`, running `workit git\|check --cwd <worktree> …` one verb per call; the `PreToolUse` hook denies its edits and mutating git commands outside that worktree |
+| `verifier` | Read-only, `sonnet`. Runs the brief's checks through `workit check` and records a `workit ledger verdict` under its own session |
+| `reviewer` | Read-only, `opus`. Reviews intent fidelity, standards, test quality and blast radius; records a review verdict |
+| `implementer` | `sonnet`. No `isolation` (Claude Code's refused every wrapped git). Edits and commits only in the worktree the lead made with `workit fanout worktree create <slice>`, running `workit git\|check --cwd <worktree> …` one verb per call; the `PreToolUse` hook denies its edits and mutating git commands outside that worktree |
 | `decider` | Read-only, `fable` with effort `high`. Settles a stuck call (a failed fix round and recheck) with options, a pick by reversibility and the exact change list |
 | `babysitter` | `haiku`. Drives one pushed PR to its endpoint in the worktree its prompt names (workit-ship's babysit loop) |
 
 The SubagentStart hook gives each verifier/reviewer its own session id, so the
 ledger never accepts the author's verdict on its own work.
+
+Each agent file carries its role's model and effort, so spawn it by name with
+no `model`; a model you name on the spawn wins. A role you configured to
+another model in `models.roles` is filled on a spawn that names none (under
+auto mode the spawn runs as written and the lead gets a note). A spawn is
+denied over model or effort only with `models.enforce: "strict"`.
+`workit models show` prints how each host applies each role
+([configuration](configuration.md)).

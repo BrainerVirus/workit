@@ -42,6 +42,10 @@ workspace (a repository with a Workit store, or one `workspaces.json` matches):
   never records someone else's HEAD.
 - `--help`, `git push --dry-run` and a push to a remote other than the one
   workit pushes to (a fork) are never denied.
+- A Workit verb whose exit code is its answer (`workit ci wait`, `check`,
+  `pr merge`, `release …`, `verify-delivery`) piped into `tail` or `head` is
+  denied on every host with the unpiped call: the pipeline's status would be
+  the filter's. `set -o pipefail` first leaves it alone.
 
 Commands are parsed as text (chains, `cd x &&`, `( … )` subshells,
 `pushd`/`popd`, `git -C`, env prefixes, `bash -c '…'`, and PowerShell quoting
@@ -67,8 +71,10 @@ workit setup --hosts=codex,cursor --yes
 
 It allows only the delivery and state verbs `git`, `pr`, `ci`, `stack`,
 `release`, `task`, `ledger`, `evidence`, `finding`, `decision`, `worker`,
-`verify-delivery`, `policy`, `doctor`, `help` and `workit --version`. Never
-`check` or `lock run` (they run any command), `grant` (authority), `fanout`,
+`verify-delivery`, `policy`, `doctor`, `help`, `ps`, `stop` and
+`workit --version`, plus `workit check test|lint|typecheck|build|format|docs`
+and `workit lock status|wait`. Never any other `check` or `lock run` (they
+run any command), `grant` (authority), `fanout`,
 `test-audit`, `gc`, `init`, `upgrade`, `install` or `uninstall`. It refuses inside an
 agent session (`CLAUDECODE`, `WORKIT_SESSION_ID`, `CODEX_THREAD_ID`,
 `OPENCODE_SESSION_ID`, `PI_SESSION_ID` or `CURSOR_AGENT` set) and prints the
@@ -148,16 +154,19 @@ PATH shows a `blocked` row, and the Workit config is never written. Like
 
 | Host | What `workit setup` writes |
 | --- | --- |
-| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb and `Bash(workit --version)`; `permissions.ask` `Bash(workit pr merge *--unverified*)`, `Bash(workit stack land *--unverified*)`, `Bash(workit git push *--overwrite-unintegrated*)` and `Bash(workit <user-only call>*)` (`release notes approve`, `grant set|raise`, `ledger void`) as a second layer: each is anchored at its verb, so a call that only mentions one in its text (a verdict's `--how`, a changelog entry) is not asked, and a refresh removes the older `Bash(workit * …)` rules Workit wrote, never yours (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you (a word with a `$VAR`, glob or `$(…)` is not read, so it never asks: the merge grant and `--reason` stay the gate). With the hooks off (Node below 24) only the anchored rules stand, and they miss a global option placed between the verb and its subcommand: `workit pr --cwd X merge --unverified` matches the `workit pr *` allow, so the merge grant and `--reason` are its only gate; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it); `permissions.deny` `Edit(//<state dir>/issued*)`, `Edit(//<state dir>/issued*/**)`, `Edit(//<state dir>/approvals)`, `Edit(//<state dir>/approvals/**)`, `Edit(//<config dir>/workspaces.json)` and `Edit(//<config dir>/workspaces.json.seal)` (an `Edit` rule also covers `Write` and `NotebookEdit`) |
-| Codex | `~/.codex/rules/workit.rules` (or under `$CODEX_HOME`), a file Workit owns: one `prefix_rule(pattern=["workit", "<verb>"], decision="allow")` per verb and `["workit", "grant"]` → `prompt`. `config.toml` and its sandbox settings are untouched (Codex has no path deny rule) |
-| Cursor | `Shell(workit <verb>)` per verb in `~/.cursor/cli-config.json` `permissions.allow` (cursor-agent matches the rule as a command prefix); `permissions.deny` `Write(<state dir>/issued*)`, `Write(<state dir>/approvals)`, `Write(<state dir>/approvals/*)`, `Write(<config dir>/workspaces.json)` and `Write(<config dir>/workspaces.json.seal)` (they stop Cursor's edit tools, not shell commands) |
+| Claude Code | In `$CLAUDE_CONFIG_DIR/settings.json` (else `~/.claude/settings.json`; managed settings are never written): `permissions.allow` `Bash(workit <verb> *)` per verb, `Bash(workit check <test|lint|typecheck|build|format|docs> *)`, `Bash(workit lock status *)`, `Bash(workit lock wait *)` and `Bash(workit --version)`; `permissions.ask` `Bash(workit pr merge *--unverified*)`, `Bash(workit stack land *--unverified*)`, `Bash(workit git push *--overwrite-unintegrated*)` and `Bash(workit <user-only call>*)` (`release notes approve`, `grant set|raise`, `ledger void`) as a second layer: each is anchored at its verb, so a call that only mentions one in its text (a verdict's `--how`, a changelog entry) is not asked, and a refresh removes the older `Bash(workit * …)` rules Workit wrote, never yours (a text pattern: quoting can slip past it). The first layer is the Workit hook: it reads the words of each `workit` call and answers `ask`, never `allow`, when one carries a bypass flag before `--`, so `"--unverified"` or `--unverif''ied` still reaches you (a word with a `$VAR`, glob or `$(…)` is not read, so it never asks: the merge grant and `--reason` stay the gate). With the hooks off (Node below 24) only the anchored rules stand, and they miss a global option placed between the verb and its subcommand: `workit pr --cwd X merge --unverified` matches the `workit pr *` allow, so the merge grant and `--reason` are its only gate; one `autoMode.environment` and one `autoMode.allow` line next to `"$defaults"` and your own; `env.CLAUDE_CODE_SHELL` set to bash when your shell is zsh and nothing is set (`--no-shell` skips it); `permissions.deny` `Edit(//<state dir>/issued*)`, `Edit(//<state dir>/issued*/**)`, `Edit(//<state dir>/approvals)`, `Edit(//<state dir>/approvals/**)`, `Edit(//<config dir>/workspaces.json)` and `Edit(//<config dir>/workspaces.json.seal)` (an `Edit` rule also covers `Write` and `NotebookEdit`) |
+| Codex | `~/.codex/rules/workit.rules` (or under `$CODEX_HOME`), a file Workit owns: one `prefix_rule(pattern=["workit", "<verb>"], decision="allow")` per verb and for `workit check <test|lint|typecheck|build|format|docs>` and `workit lock status|wait`; `["workit", "grant"]`, each user-only call (`release notes approve`, `grant set|raise`, `ledger void`, `approve`, `setup`, `uninstall`, `install`, `workspace seal`) and `["workit", "feedback"]` → `prompt`. `config.toml` and its sandbox settings are untouched (Codex has no path deny rule) |
+| Cursor | `Shell(workit <verb>)` per verb, `Shell(workit check <test|lint|typecheck|build|format|docs>)`, `Shell(workit lock status|wait)` and `Shell(workit --version)` in `~/.cursor/cli-config.json` `permissions.allow` (cursor-agent matches the rule as a command prefix); `permissions.deny` `Shell(workit <user-only call>)` for each call only you run (Cursor has no ask rule), and `Write(<state dir>/issued*)`, `Write(<state dir>/approvals)`, `Write(<state dir>/approvals/*)`, `Write(<config dir>/workspaces.json)` and `Write(<config dir>/workspaces.json.seal)` (they stop Cursor's edit tools, not shell commands) |
 | OpenCode | No allow rule: the Workit plugin's `permission.evaluate` turns an `ask` for a command made only of allowed Workit calls into `allow`. A config `deny` still wins, and `check`, `lock`, `grant`, `--session`, a bypass flag, an expansion (`$VAR`, glob), a redirect or a substitution stay `ask`. In the global `opencode.json` (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`): `permissions` rules `{"action": "edit", "resource": <path>, "effect": "deny"}` for `<state dir>/issued*`, `<state dir>/approvals`, `<state dir>/approvals/*`, `<config dir>/workspaces.json` and `<config dir>/workspaces.json.seal`, after your own rules (OpenCode's last matching rule wins; they stop the edit, write and patch tools, not the shell). The deprecated `permission.edit` patterns an older Workit wrote move to `permissions`; your own `permission` entries stay. Setup leaves the file alone and says so when `permissions` is not a list or your config is an `opencode.jsonc` |
 | Pi | Nothing: Pi has no permission layer |
 
 Write the verb first: `workit <verb> --cwd <dir> …`. A host rule cannot match
 a variable directory before the verb, so `workit --cwd <dir> git push` would
 still prompt; on Claude Code the Workit hook reorders `workit --cwd <dir>
-<verb>` and `cd <dir> && workit <verb>` for you. Limits: Codex and Cursor
+<verb>` and `cd <dir> && workit <verb>` for you (under auto mode, which
+refuses a changed call, `cd <dir> && workit <verb>` is denied with
+`Retry as: workit <verb> --cwd <dir> …` and `workit --cwd <dir> <verb>` runs
+as written). Limits: Codex and Cursor
 rules match a prefix, so a bypass flag later in the command
 (`workit pr merge --unverified`) is not asked for there (Workit's own grant
 and `--reason` still apply), and on Cursor the `workit --session <id> …` form
@@ -251,7 +260,11 @@ Code's worktree isolation, which refuses any command it cannot verify and any
 command that wraps git (`workit git …`, `workit check`) and cannot be turned
 off. The lead makes the worktree first with `workit fanout worktree create
 <slice>` (on every host), which also links the main checkout's
-`node_modules` so the worktree's tests import its own workspace packages. The
+`node_modules` so the worktree's tests import its own workspace packages.
+On Claude Code a `workit:implementer` spawn whose prompt names no Workit-made
+worktree (its path, a `WORKTREE:` line, or a brief file holding one) is
+denied in two lines whose `Retry as:` is the `workit fanout worktree create`
+call for that slice. The
 implementer works there with `workit git|check --cwd <worktree> …`, one verb
 per call. Workit's pre-tool hooks bind it to the first Workit worktree it
 changes and deny its edits and mutating git commands outside that worktree,
@@ -318,7 +331,11 @@ The plugin (V2 `setup()` API, self-contained bundle) registers nine tools: the
 seven task families, read-only `workit_context`, and `workit_init_apply`. It
 adds the thirteen skills with `wk-*` commands (an existing user skill with the
 same id wins), direct-child subagent delegation, and context injection on
-session start and after compaction. Its shell hook denies direct, unquoted
+session start and after compaction. It also registers the
+`workit-implementer`, `workit-verifier`, `workit-reviewer`, `workit-decider`
+and `workit-babysitter` agents, each on its `models.roles` model for the
+project (none: the parent's), with edits denied for the judges and the
+decider; a model a spawn names still wins. Its shell hook denies direct, unquoted
 literal branch-creation commands that break the workspace naming policy and
 the raw git/forge gate bypasses above.
 
@@ -420,12 +437,15 @@ work only in its own worktree (`workit fanout worktree create <slice>`) on a
 policy-compliant branch, and Workit's `PreToolUse` hook denies its changes
 outside that worktree when Codex names the agent on the tool call.
 
-The plugin ships those three agents. Codex plugins cannot register agents, so
-the plugin's MCP server copies `workit-verifier.toml`, `workit-reviewer.toml`
-and `workit-implementer.toml` into `~/.codex/agents/` (the Codex home that
-installed the plugin) each time it starts; Codex offers them from the next
+The plugin ships those three agents plus `workit-decider` and
+`workit-babysitter`. Codex plugins cannot register agents, so the plugin's
+MCP server copies `workit-verifier.toml`, `workit-reviewer.toml`,
+`workit-implementer.toml`, `workit-decider.toml` and `workit-babysitter.toml`
+into `~/.codex/agents/` (the Codex home that installed the plugin) each time
+it starts, with `model` and `model_reasoning_effort` only for a role you
+configured; Codex offers them from the next
 session. Their instructions come from the same source as the Claude Code
-agents. The verifier and reviewer run in a read-only sandbox, so they ask you
+agents. The verifier, reviewer and decider run in a read-only sandbox, so they ask you
 to approve `workit check` and `workit ledger verdict`; the implementer never
 records a verdict. A file of the same name that you wrote yourself is never
 overwritten, nor is a symlink, nor a copy written by a newer plugin version

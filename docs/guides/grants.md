@@ -316,8 +316,8 @@ when grants are read instead, however the file was written.
 `WORKIT_STATE_DIR` moves it), holds a hash of each entry's authority fields
 and their last sealed values: `name`, `glob`, entry order, `remotes`, the
 forge identity (`vcs.provider`, `vcs.account`, `vcs.tokenFile`, `vcs.host`),
-`autonomy`, legacy `autoApprove`, `defaultEndpoint`, `verification` and
-`youtrack.writes`. `vcs.defaultTargetBranch`, roles, branch policy and checks
+`autonomy`, legacy `autoApprove`, `defaultEndpoint`, `verification`,
+`youtrack.writes` and `youtrack.autoHosts`. `vcs.defaultTargetBranch`, roles, branch policy and checks
 are outside it.
 
 `workit workspace seal`, in your own terminal, shows what changed since the
