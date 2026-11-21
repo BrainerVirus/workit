@@ -107,9 +107,11 @@ pass.
 sealed in `grant-seal.ts` `sealProjection` next to `writes`; `lowersOnly`
 reseals a non-terminal write only when the list shrinks or `writes` goes to
 ask, and an absent key keeps an older seal's digest). Under it the gate lets a
-write through only from a plain command whose `--host` values standing alone
-(`hostsOf`; `--body --host x` is a body, and ytrack takes the last, so every
-one counts) are all literal and allowed, compared by `youTrackHostKey`
+write through only from a plain command whose `--host` words before a bare
+`--` (`hostsOf`: every one counts, whatever precedes it, since after a flag
+Workit does not know, `-i --host x`, it may be ytrack's own and ytrack takes
+the last; at least one must stand alone, so `--body --host x` alone names no
+host) are all literal and allowed, compared by `youTrackHostKey`
 (youtrack-cli `hosts.Parse`: lower case, no scheme, default port, trailing `/`
 or `/api`; credentials never match). A write that names no host, a non-literal
 `--host`, or an allowed one in a command that is not plain (`xargs`, `find

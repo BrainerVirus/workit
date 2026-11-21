@@ -89,6 +89,9 @@ test("Given writes auto with autoHosts, Then a write is auto only for an allowed
       const cwd = "/srv/personal/repo";
       expect(youTrackWritesMode(cwd, "https://Sandbox.YouTrack.cloud/")).toBe("auto");
       expect(youTrackWritesMode(cwd, "https://sandbox.youtrack.cloud:443/api")).toBe("auto");
+      // ytrack keys a host without its scheme (hosts.Parse: Key is host[:port]+path), so http is the same host.
+      expect(youTrackWritesMode(cwd, "http://sandbox.youtrack.cloud")).toBe("auto");
+      expect(youTrackWritesMode(cwd, "http://sandbox.youtrack.cloud:443")).toBe("ask");
       expect(youTrackWritesMode(cwd, "https://work.youtrack.cloud")).toBe("ask");
       expect(youTrackWritesMode(cwd, "https://sandbox.youtrack.cloud.evil.test")).toBe("ask");
       expect(youTrackWritesMode(cwd, "https://me@sandbox.youtrack.cloud")).toBe("ask");

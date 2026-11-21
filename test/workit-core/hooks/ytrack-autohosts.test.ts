@@ -163,6 +163,28 @@ test("G sealed auto with autoHosts [sandbox], W --host is a value, not literal, 
   expect(wrapped && "reason" in wrapped ? wrapped.reason : "").toContain("not a plain command");
 });
 
+// Verdict mwqgyb4y: a `--host` after a boolean flag Workit does not know was
+// read as that flag's value and dropped, while ytrack 0.6.2 posted to it (the last --host).
+test("G sealed auto with autoHosts [sandbox], W an allowed --host then a flag Workit does not know then --host <other>, T it is never let through", () => {
+  sealed({ writes: "auto", autoHosts: [SANDBOX] });
+  for (const flag of ["-i", "--slurp", "-e", "--editor", "--web", "--comments", "--zzz"])
+    for (const command of [
+      `ytrack --host ${SANDBOX} api issues -X POST ${flag} --host ${WORK}`,
+      `ytrack --host ${SANDBOX} issue comment DEMO-1 --body x ${flag} --host ${WORK}`,
+      `ytrack --host ${SANDBOX} issue update DEMO-1 ${flag} --host=${WORK}`,
+    ]) {
+      for (const ask of [true, false])
+        expect(gate(command, ask), `${ask}: ${command}`).not.toBeNull();
+      for (const [host, run] of Object.entries(HOSTS))
+        expect(run(command), `${host}: ${command}`).not.toBe("pass");
+    }
+  // Every --host before `--` counts; one after `--` is an operand ytrack never reads as a flag.
+  expect(gate(`ytrack --host ${SANDBOX} -i --host ${SANDBOX} issue update DEMO-1`)).toBeNull();
+  expect(gate(`ytrack --host ${SANDBOX} issue comment DEMO-1 --body x -- --host`)).toBeNull();
+  // A --host with no value as the last word is no literal host.
+  expect(gate(`ytrack issue comment DEMO-1 --body x --host ${SANDBOX} --host`)).not.toBeNull();
+});
+
 test("G auto with autoHosts, W ytrack reads or a mention, T nothing is denied", () => {
   sealed({ writes: "auto", autoHosts: [SANDBOX] });
   for (const command of [

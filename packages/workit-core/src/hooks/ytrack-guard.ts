@@ -422,26 +422,35 @@ const judge = (args: readonly string[], words: readonly string[]): Mapped | null
 };
 
 /**
- * What a write names as its YouTrack host: the `--host` values standing alone
- * (`--body --host x` is a body; ytrack takes the last, so every one counts),
- * [] for none, null when one is no literal host (a variable, a glob, missing).
- * `bare`: the argv without them, for the retry that names an allowed host.
+ * What a write names as its YouTrack host. Every `--host`/`--host=` word
+ * before a bare `--` counts, whatever precedes it: after a flag Workit does
+ * not know (`-i --host x`) it may be ytrack's own, and ytrack takes the last
+ * one, so each must be an allowed host (one inside a value, `--body --host x`,
+ * then counts too: an over-ask). null when one is no literal host (a
+ * variable, a glob, a missing value). [] when none is named, or when none
+ * surely is the flag (each follows an option that may take it as its value):
+ * then ytrack may pick its own host. `bare`: the argv without them, for the
+ * retry that names an allowed host (the whole argv when none surely is the flag).
  */
 const hostsOf = (args: readonly string[]): { hosts: string[] | null; bare: string[] } => {
+  const end = args.indexOf("--");
   const hosts: string[] = [];
   const bare: string[] = [];
   let literal = true;
+  let named = false;
   for (let at = 0; at < args.length; at++) {
     const arg = args[at];
-    if (!/^--host(?:=|$)/.test(arg) || !standsAlone(args, at)) {
+    if ((end >= 0 && at >= end) || !/^--host(?:=|$)/.test(arg)) {
       bare.push(arg);
       continue;
     }
+    named ||= standsAlone(args, at);
     const value = arg === "--host" ? args[++at] : arg.slice("--host=".length);
     if (value === undefined || !value.trim() || EXPANDS.test(value)) literal = false;
     else hosts.push(value);
   }
-  return { hosts: literal ? hosts : null, bare };
+  if (!literal) return { hosts: null, bare };
+  return named ? { hosts, bare } : { hosts: [], bare: [...args] };
 };
 
 type YtrackWrite = Mapped & {
