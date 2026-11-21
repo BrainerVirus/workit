@@ -438,6 +438,14 @@ background, so no command waits on the network:
 
 | From | Key breaks |
 | --- | --- |
+| `@workit-dev` 1.x → 2.0 | Raised grants need a seal: run `workit workspace seal` once in your own terminal (the upgrade offers it); a config redirect never raises a grant |
+| `@brainervirus` 14.x → `@workit-dev` 1.0.0 | New package scope, versions restarted at 1.0.0; `npx -y @brainervirus/workit-cli@latest upgrade` moves every install |
+
+The rows below are majors of the old `@brainervirus/workit-*` packages, for a
+machine still on one of them:
+
+| From (`@brainervirus`) | Key breaks |
+| --- | --- |
 | 2.x → 3.0 | OpenCode V1 adapter removed (OpenCode 2.0.18+); `workit cutover` removed |
 | 3.x → 4.0 | Task state moves to `.git/workit/` event store, implicit task per branch; old `.workit/` migrates on first CLI use (backup kept) |
 | 4.x → 5.0 | Skill set v3: 16 skills merged into 11; old `wk-*` aliases removed; `ledger verdict --as` never makes the author independent |

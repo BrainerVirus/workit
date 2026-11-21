@@ -25,8 +25,25 @@ and prints that command. It never compares a 14.x version with a 1.x one.
 
 New installs use the new names: `npx @workit-dev/cli init`.
 
-## 2.x to 6.x
+## 2.0.0: raised grants need a seal
 
+From `@workit-dev` 2.0.0 the authority fields of `workspaces.json` (grants,
+`defaultEndpoint`, `verification`, `youtrack.writes`, remotes, the forge
+identity) apply only once sealed. Until you run `workit workspace seal` in
+your own terminal, each grant is the stricter of its current and last sealed
+value (the defaults when nothing was sealed), so a `merge`, `release` or
+`merged` endpoint you had raised stops applying. The upgrade that installs 2.0
+offers the seal at your terminal; if you declined or upgraded from a script,
+run it once yourself. `workit doctor` reports it in the `grant_seal` row.
+
+A config redirect (`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`)
+no longer raises authority, and hand-editing the forge identity under a seal
+blocks forge verbs until you reseal. Details: [the seal](grants.md#the-seal).
+
+## `@brainervirus` 2.x to 6.x
+
+This section and the ones after it are versions of the old
+`@brainervirus/workit-*` packages, for a machine still on one of them.
 
 Upgrade every host together. A runtime that reads a store record written by a
 newer major stops with "upgrade Workit" instead of guessing. Run `workit upgrade`:
