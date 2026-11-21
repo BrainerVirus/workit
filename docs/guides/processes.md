@@ -121,7 +121,9 @@ When a session starts, Workit stops the orphans dead sessions left behind:
 `workit stop --orphans --reason session-start`. It does this at most once
 every 10 minutes per user.
 
-Each host has its own end event. Codex has one, but it can't tell a
+Each host has its own end event. Claude Code's SessionEnd ends a session on
+logout, exit or `other`; Cursor's sessionEnd on `completed`, `aborted`,
+`error`, `window_close` and `user_close`; Pi's on quit. Codex has one, but it can't tell a
 subagent's end from the session's, so Workit doesn't use it: a Codex
 session's processes stop at the next session start after Codex exits.
 OpenCode has neither a start nor an exit event. A deleted OpenCode session's processes stop. The reap runs on the first
@@ -203,9 +205,10 @@ processes it takes about 16 ms.
 - On Windows the teardown log records each stop it starts, not the CLI's
   output, so it doesn't say why a row was kept. Run `workit ps` to see what
   still runs.
-- Marking a process kept comes with the end-of-work cleanup in a later
-  release (a ledger decision naming `proc:<id>`); the registry already honors
-  the keep flag.
+- A process is kept by the user's decision (`workit ledger decision "<what>"
+  --why "<the user's words>" --keep proc:<id>`; see
+  [keeping things](cleanup.md#keeping-things)); a later decision that
+  supersedes it lifts the keep.
 
 ## Where the files live
 

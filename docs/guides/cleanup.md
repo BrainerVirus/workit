@@ -2,7 +2,9 @@
 
 A finished change should leave nothing on disk. Workit removes what a merged
 branch left behind, `workit gc --worktrees` sweeps the worktrees older changes
-left, and `workit gc --branches` sweeps their local branches.
+left, `workit gc --branches` sweeps their local branches, and
+`workit gc --procs` stops orphaned background processes
+([background processes](processes.md)).
 It never forces anything: work that is uncommitted or not merged stays where it
 is, and the output names it.
 
@@ -287,8 +289,3 @@ until it is fixed.
   check and the delete is not seen; its worktree still holds the commits it
   started from, and `git reflog` in it finds them.
 - An admin dir Workit cannot read keeps the branch, with a note.
-
-## Not covered yet
-
-Dev servers and compose stacks that a change started are not tracked or
-stopped yet. They need a process registry (#328).

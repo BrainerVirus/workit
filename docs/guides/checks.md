@@ -96,12 +96,14 @@ side:
   for the lease at most that long, and the command gets what is left, so a
   queued check never outlives the timeout its caller set. A wait that ran out
   exits 4 and says the check did not run. Without `--timeout`, the wait is
-  `--wait <dur>`, else `resources.wait` (30 min).
+  `--wait <dur>`, else `resources.wait` (30 min); at that limit the check
+  re-queues once in the same place for as long again before it gives up
+  (within `--timeout` when one is set; never with `--no-wait`).
 - **A waiter says where it stands.** The first line names the holder with how
   long it has run, the queue position and an estimated wait:
 
   ```text
-  workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s1, 4m 12s, /wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it); estimated wait ~13m (last measured runs)
+  workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s1, 4m 12s, /wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it), then once more in the same place; estimated wait ~13m (last measured runs)
   ```
 
   The estimate uses each check's last measured run in the ledger of the repo it
