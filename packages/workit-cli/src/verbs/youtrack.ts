@@ -8,7 +8,8 @@
 // text (approvals/youtrack-ask.ts), and a yes posts in the same call; on the
 // other hosts the verb records one request per text and refuses with the
 // terminal step (`workit approve`), then the re-run consumes that yes once. A
-// workspace with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead.
+// workspace with `youtrack: { writes: "auto" }` keeps the WORKIT_YT_WRITE=1 gate instead,
+// with `autoHosts` only when youTrackTarget (the instance the call reaches) is one.
 // Every comment or work item carries a deterministic marker and is read back
 // first, so a retry after a lost response never posts twice; an identical
 // entry by the same user is refused as `duplicate_entry`; a write an earlier

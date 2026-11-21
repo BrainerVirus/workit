@@ -201,12 +201,48 @@ Reads (`ytrack issue view`, `ytrack work-item list`, `ytrack api` GET) are
 never stopped.
 
 To post without asking in one workspace, set this yourself in its entry in
-`workspaces.json`; writes there then need `WORKIT_YT_WRITE=1` instead, and the
-shell hook lets raw `ytrack` writes through:
+`workspaces.json`, naming the YouTrack hosts it may post to unasked in
+`autoHosts`:
 
 ```json
-{ "name": "work", "glob": "/home/*/work/**", "youtrack": { "writes": "auto" } }
+{
+  "name": "personal",
+  "glob": "/home/*/personal/**",
+  "youtrack": {
+    "baseUrl": "https://sandbox.youtrack.cloud",
+    "writes": "auto",
+    "autoHosts": ["sandbox.youtrack.cloud"]
+  }
+}
 ```
+
+There, a write to one of those hosts needs `WORKIT_YT_WRITE=1` instead of
+your yes, and a write anywhere else asks as above:
+
+- A `workit youtrack` verb (and a YouTrack PR backlink) posts unasked only
+  when the instance it reaches is in `autoHosts`. The verbs reach the
+  workspace's `youtrack.baseUrl`, else `youtrack.json`'s, and pass it to
+  ytrack as `YTRACK_HOST`, so an inherited `YTRACK_HOST` cannot redirect them.
+  A PR backlink reaches `youtrack.json`'s.
+- A raw `ytrack` write goes through unasked only when it is a plain call of
+  its own that names an allowed host with `--host` (`ytrack --host
+  sandbox.youtrack.cloud issue comment DEMO-1 --body …`). A write that names
+  no host is refused on every host with the exact retry that adds
+  `--host <the first autoHosts entry>`; an issue URL or `YTRACK_HOST` does not
+  count, because ytrack's own pick can differ from what the hook sees. A write
+  with `--host` set to another host asks as with `ask`. A command that sets
+  `YTRACK_CONFIG_DIR` (or `HOME` or `XDG_CONFIG_HOME` around ytrack), or that
+  Workit cannot analyse, is refused.
+
+Hosts match on ytrack's own host key: lower case, with no scheme, default
+port, trailing `/` or `/api`, so `https://Sandbox.youtrack.cloud/` is
+`sandbox.youtrack.cloud`. `autoHosts` is sealed with `writes`
+([Configuration](configuration.md)): removing a host or setting `writes` to
+`ask` applies at once; adding a host, or dropping `autoHosts` while `writes`
+stays `auto`, waits for `workit workspace seal` in your own terminal. `"writes": "auto"` without `autoHosts` still posts unasked
+to any instance, the work one included; `workit doctor` warns about it in its
+`youtrack_writes` row with the fix, for example
+`workit workspace set personal youtrack.autoHosts='["sandbox.youtrack.cloud"]'`.
 
 ## Which YouTrack a folder uses
 

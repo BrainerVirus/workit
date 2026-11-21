@@ -103,6 +103,27 @@ stdin, a URL for the issue) is treated as a write no verb covers, naming the
 part Workit cannot carry. Reads, `ytrack api` GET and `youtrack.writes: auto`
 pass.
 
+`youtrack.autoHosts` scopes `auto` (`autonomy.ts` `youTrackWritesPolicy`,
+sealed in `grant-seal.ts` `sealProjection` next to `writes`; `lowersOnly`
+reseals a non-terminal write only when the list shrinks or `writes` goes to
+ask, and an absent key keeps an older seal's digest). Under it the gate lets a
+write through only from a plain command whose `--host` values standing alone
+(`hostsOf`; `--body --host x` is a body, and ytrack takes the last, so every
+one counts) are all literal and allowed, compared by `youTrackHostKey`
+(youtrack-cli `hosts.Parse`: lower case, no scheme, default port, trailing `/`
+or `/api`; credentials never match). A write that names no host, a non-literal
+`--host`, or an allowed one in a command that is not plain (`xargs`, `find
+-exec` and `parallel` append words the hook never sees) is denied on every
+host with `Retry as: ytrack --host <first allowed> …`; a write to another host
+gets the answer it gets under ask; a command that names `YTRACK_CONFIG_DIR`
+(or assigns `HOME`/`XDG_CONFIG_HOME` around ytrack: hosts.yml maps a host key
+to the URL called) and an unanalysable one naming ytrack are denied. URLs and
+`YTRACK_HOST` never name the target. The verbs ask unless `youTrackTarget`
+(the workspace's `youtrack.baseUrl`, else youtrack.json's) is allowed, and
+pass it as `YTRACK_HOST`; `ytrackWrite` and the PR backlink check
+youtrack.json's host, the one `youTrackBackend()` reaches. Plain `auto`
+without the key keeps any host; doctor's `youtrack_writes` row warns.
+
 - **Claude Code:** N. The launcher sends a command to the runtime when its text, with quotes and backslashes removed (and again with backticks removed), has `ytrack` not followed by `[\w/-]` or by a `.` other than `.exe`/`.cmd`, in any position (`hooks/ytrack-word.ts`, the test the gate itself starts with): `cat docs/ytrack-notes.md` stays on the fast path, `grep -rn ytrack docs` loads the runtime and passes; a write no verb covers gets `permissionDecision: "ask"`.
 - **Codex:** N. The hook entry uses the same test; a write
   no verb covers is denied, handing the command to the user's terminal (the
@@ -111,6 +132,15 @@ pass.
 - **Pi:** N. The `tool_call` hook blocks the same way (it drops an ask).
 - **OpenCode:** N. `permission.evaluate` (`v2/permissions.ts`) denies the same
   way, after `execute.before` rewrote an npx workit call.
+- **Under `youtrack.autoHosts`, every host:** N, one core gate. An allowed write
+  passes with no answer (Claude Code, Codex, Cursor, Pi, OpenCode alike); a
+  write with no host (or a wrapped or non-literal one) is denied on all five,
+  never asked, with the `--host` retry; a write to another host is asked on
+  Claude Code and denied on Codex, Cursor, Pi and OpenCode, as under ask.
+  (L) Claude Code and Pi: the inline ask on a `workit youtrack` call
+  (`approvals/inline.ts`) passes no host, so it reads the workspace's own
+  `youtrack.baseUrl`; with none it asks although the verb would post unasked
+  to youtrack.json's allowed host.
 - (L) A ytrack name the text does not spell as a word (`$a$b`, `xargs -IEXT ytrackEXT`, `$'\x79track'`, a glob, cmd `^`), a variable only the nested shell sees (`YT=ytrack bash -c '$YT …'`), an alias or function from an earlier call, `ssh`, `docker` or `su -c` running it elsewhere, and an interpreter or script file that runs it are not seen. (P) A help or read call whose `--help` or `-X GET` directly follows an option Workit does not know is asked: put it first.
 
 A launcher pre-filter is the gate's own first test, copied byte for byte and compared by a test, and it may skip the runtime only on a property the gate itself passes on; it never lists the positions, wrappers or commands where a tool name counts, because a list of places to look misses every place it does not name.
