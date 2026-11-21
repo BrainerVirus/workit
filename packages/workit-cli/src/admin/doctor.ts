@@ -136,6 +136,7 @@ import {
   type YtrackStatus,
 } from "@workit-dev/core/src/core/youtrack-ytrack";
 import { pathWants, reviewYtrackPaths } from "@workit-dev/core/src/core/youtrack-paths";
+import { unscopedAutoWrites } from "@workit-dev/core/src/doctor-youtrack";
 import {
   listYtrackSkill,
   youTrackInUse,
@@ -196,6 +197,7 @@ type DoctorCheckId =
   | "workspace_lock"
   | "session_hook"
   | "youtrack"
+  | "youtrack_writes"
   | "ytrack_skill"
   | "ytrack_paths"
   | "github_identity"
@@ -2918,6 +2920,23 @@ const ytrackStatusOf = (res: Resolved): YtrackStatus => {
 };
 
 /**
+ * `youtrack.writes: auto` with no `youtrack.autoHosts` posts unasked to any
+ * YouTrack a write reaches (core/doctor-youtrack.ts); the fix scopes it. No
+ * row when no workspace sets auto.
+ */
+const checkYouTrackWrites = (res: Resolved): DoctorCheck | null => {
+  const unscoped = unscopedAutoWrites(readWorkspacesResult(res.configDir).entries);
+  if (!unscoped.length) return null;
+  return {
+    id: "youtrack_writes",
+    status: "warn",
+    detail: `youtrack.writes is auto with no youtrack.autoHosts in ${unscoped.map((item) => item.workspace).join(", ")}: a write there posts unasked to any YouTrack it reaches, the work instance included`,
+    // Narrowing an unscoped auto is a lowering: the write keeps the seal valid.
+    fix: unscoped.map((item) => item.fix).join("; "),
+  };
+};
+
+/**
  * ytrack's folder-to-host map (`ytrack auth paths`): each workspace with a
  * YouTrack baseUrl should have its glob mapped to that host, so an agent's
  * own ytrack there reaches it, not ytrack's default host. Read-only; the fix
@@ -4506,6 +4525,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkWorkspaceLock,
   checkSessionHook,
   checkYouTrack,
+  checkYouTrackWrites,
   checkYtrackPaths,
   checkYtrackSkill,
   checkGithubIdentity,
