@@ -989,11 +989,7 @@ const CLI_ENTRY =
  * bodies, and their uses expanded) and package runners or interpreters that
  * start the CLI by package or path.
  */
-const workitCalls = (
-  command: string,
-  depth = 0,
-  aliases = new Map<string, string>(),
-): string[][] =>
+const workitCalls = (command: string, depth = 0, aliases = new Map<string, string>()): string[][] =>
   depth > 4
     ? []
     : commandLines(command).flatMap((words) => {

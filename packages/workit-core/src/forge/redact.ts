@@ -143,10 +143,8 @@ export function redactText(value: string): string {
     return `${flag}${kept}${quote}${R}${closed ? quote : ""}`;
   });
   out = out.replace(QUERY_SECRET, `$1${R}`);
-  out = out.replace(
-    ASSIGNMENT,
-    (match, lead: string, scheme: string | undefined, secret: string) =>
-      secret.startsWith(R) ? match : `${lead}${scheme ?? ""}${R}`,
+  out = out.replace(ASSIGNMENT, (match, lead: string, scheme: string | undefined, secret: string) =>
+    secret.startsWith(R) ? match : `${lead}${scheme ?? ""}${R}`,
   );
   return out
     .split("\n")
