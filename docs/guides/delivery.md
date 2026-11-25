@@ -489,6 +489,15 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
   is read; a JS, TS or YAML config, custom `ignores` or another shareable config
   is left to CI and a note says so. A level-2 rule refuses with a usage error
   naming the rule broken; a level-1 rule only warns.
+- A PR goes to the **base repository**: on GitHub, the remote `gh repo set-default`
+  chose (`remote.<name>.gh-resolved` = `base` in the checkout's own git config;
+  an older `owner/repo` value, a global or an included key is ignored), else an `upstream` remote on the same forge, else the parent
+  of a GitHub fork, else the repository you push to. When you work in a fork and
+  want PRs there, not in its parent, run `gh repo set-default <owner>/<fork>` once
+  in the checkout; the `pr` and `ci` verbs (`pr create`, `pr status`, `pr merge`,
+  `ci wait`) then use the fork. A default naming a remote that is missing, has
+  several push URLs or is on another host is skipped with a note naming the
+  remote and why. A GitLab checkout ignores the key.
 - `pr create` runs the [changelog gate](#changelog-gate) when the workspace
   turns it on, and refuses a body that leaves the
   [PR template](#pr-description-template) unfilled.

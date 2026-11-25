@@ -2178,7 +2178,14 @@ export function rawGitPre(
  * or GH_REPO; glab a URL only), else the cwd's as gh resolves it: the
  * `gh repo set-default` remote (`gh-resolved`), else upstream, else origin.
  */
-const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, config: GitConfig) => {
+const forgeRepo = (
+  gh: boolean,
+  named: string,
+  env: Record<string, string>,
+  config: GitConfig,
+  branch: string | null,
+  dir: string,
+) => {
   const repo = explicitRepo(gh, named, env);
   const host = (
     gh
@@ -2198,15 +2205,65 @@ const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, conf
       ? `https://${hosted ? "" : `${host}/`}${repo}`
       : "";
   if (!repo) {
-    const resolved = gh
-      ? [...config.keys()].find((key) => /^remote\..+\.gh-resolved$/.test(key))?.slice(7, -12)
-      : undefined;
     const remote =
-      resolved ?? ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
+      (gh ? ghDefaultOf(config, branch, dir, env) : null) ??
+      ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
     url = rewrittenUrl(configValue(config, `remote.${remote}.url`) ?? "", config);
   }
   const key = remoteKey(url);
   return key ? { remotes: [{ name: "forge", url, key }] } : Error("its repository is unknown");
+};
+
+/** The host a remote pushes to through its single push URL, or null (no URL, or several). */
+const pushHostOf = (config: GitConfig, remote: string): string | null => {
+  const urls = config.get(`remote.${remote}.pushurl`) ?? config.get(`remote.${remote}.url`) ?? [];
+  if (urls.length !== 1) return null;
+  return remoteKey(rewrittenUrl(urls[0], config))?.split("/")[0] ?? null;
+};
+
+/**
+ * The `gh repo set-default` remote the forge verbs honour (core resolveForge), or null:
+ * the first `remote.<name>.gh-resolved` = `base` (the only value current gh writes) whose
+ * remote has a single push URL on the push remote's host. Anything else falls back.
+ */
+const ghDefaultOf = (
+  config: GitConfig,
+  branch: string | null,
+  dir: string,
+  env: Record<string, string>,
+): string | null => {
+  const pushHost = pushHostOf(config, pushRemoteOf(config, branch) ?? "origin");
+  for (const [key, value] of localGhResolved(dir, env)) {
+    const name = key.slice(7, -12);
+    if (!name || value !== "base") continue;
+    const host = pushHostOf(config, name);
+    return host !== null && host === pushHost ? name : null;
+  }
+  return null;
+};
+
+/**
+ * Each `remote.<name>.gh-resolved` key in the repository-local config (where gh writes it;
+ * a global or included key is never read), its last value. Empty on any failure.
+ */
+const localGhResolved = (dir: string, env: Record<string, string>): Map<string, string> => {
+  const values = new Map<string, string>();
+  const listed = spawnSync(
+    "git",
+    ["config", "--local", "-z", "--get-regexp", "^remote\\..+\\.gh-resolved$"],
+    {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 3_000,
+      windowsHide: true,
+      env: { ...process.env, ...env },
+    },
+  );
+  for (const entry of (listed.stdout ?? "").split("\0")) {
+    const split = entry.indexOf("\n");
+    if (split > 0) values.set(entry.slice(0, split), entry.slice(split + 1));
+  }
+  return values;
 };
 
 /** The repository a gh/glab call names itself (`-R`, an API path, GH_REPO), or "". */
@@ -2232,6 +2289,8 @@ const grantRefusal = (
       ("repo" in action && action.repo) || "",
       env,
       gitConfig(repo.dir, invocation, cache),
+      repo.branch,
+      repo.dir,
     );
   if (action.kind === "push") {
     target = () => {

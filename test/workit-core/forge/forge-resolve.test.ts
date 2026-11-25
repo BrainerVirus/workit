@@ -238,6 +238,107 @@ describe("S10 forge resolution and identity", () => {
     });
   });
 
+  test("`gh repo set-default` keeps PRs in the fork the user works in", () => {
+    const forkRoutes = (): Record<string, Reply> => ({
+      ...githubRoutes(),
+      "GET repos/me/r": JSON.stringify({ id: 7, fork: true, parent: { full_name: "o/r" } }),
+    });
+    // Without a default, the fork's parent is the base (M6).
+    const plain = repoFor("github");
+    plain.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    expect(connect(plain, forkRoutes()).resolved).toMatchObject({
+      fork: true,
+      forge: { repo: "o/r" },
+    });
+    // `gh repo set-default me/r` writes remote.origin.gh-resolved=base: the fork is the base.
+    const chosen = repoFor("github");
+    chosen.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    chosen.git("config", "remote.origin.gh-resolved", "base");
+    expect(connect(chosen, forkRoutes()).resolved).toMatchObject({
+      fork: false,
+      headRepo: "me/r",
+      forge: { repo: "me/r" },
+    });
+    // It also wins over an `upstream` remote.
+    const withUpstream = repoFor("github");
+    withUpstream.git("remote", "add", "upstream", "https://github.com/o/r.git");
+    withUpstream.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    withUpstream.git("config", "remote.origin.gh-resolved", "base");
+    expect(connect(withUpstream, forkRoutes()).resolved).toMatchObject({
+      fork: false,
+      forge: { repo: "me/r" },
+    });
+    // A default naming the upstream remote is the base, as before.
+    const upstreamDefault = repoFor("github");
+    upstreamDefault.git("remote", "add", "upstream", "https://github.com/o/r.git");
+    upstreamDefault.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    upstreamDefault.git("config", "remote.upstream.gh-resolved", "base");
+    expect(connect(upstreamDefault, forkRoutes()).resolved).toMatchObject({
+      fork: true,
+      baseRemote: "upstream",
+      forge: { repo: "o/r" },
+    });
+    // A legacy `owner/repo` value is not read, not even as a repository name: the parent wins.
+    const legacy = repoFor("github");
+    legacy.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    legacy.git("config", "remote.origin.gh-resolved", "x/y");
+    const ignored = connect(legacy, forkRoutes()).resolved;
+    expect(ignored).toMatchObject({ fork: true, forge: { repo: "o/r" } });
+    expect(ignored.note).toBeUndefined();
+  });
+
+  test("a `gh repo set-default` remote that is missing, ambiguous or elsewhere falls back with a note", () => {
+    const forkRoutes = (): Record<string, Reply> => ({
+      ...githubRoutes(),
+      "GET repos/me/r": JSON.stringify({ id: 7, fork: true, parent: { full_name: "o/r" } }),
+    });
+    const fallback = (setup: (repo: ForgeRepo) => void) => {
+      const repo = repoFor("github");
+      repo.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+      setup(repo);
+      const { resolved } = connect(repo, forkRoutes());
+      expect(resolved).toMatchObject({ fork: true, forge: { repo: "o/r" } });
+      return resolved.note;
+    };
+    expect(fallback((repo) => repo.git("config", "remote.gone.gh-resolved", "base"))).toStartWith(
+      "gh repo set-default names remote gone, not used as the PR base: that remote does not exist; using o/r",
+    );
+    expect(
+      fallback((repo) => {
+        repo.git("remote", "add", "mirror", "https://gitlab.com/me/r.git");
+        repo.git("config", "remote.mirror.gh-resolved", "base");
+      }),
+    ).toContain(
+      "remote mirror, not used as the PR base: it is not a GitHub repository on github.com",
+    );
+    expect(
+      fallback((repo) => {
+        repo.git("remote", "add", "enterprise", "https://github.example.com/me/r.git");
+        repo.git("config", "remote.enterprise.gh-resolved", "base");
+      }),
+    ).toContain("remote enterprise, not used as the PR base: it is not a GitHub repository");
+    expect(
+      fallback((repo) => {
+        repo.git("remote", "add", "both", "https://github.com/me/r.git");
+        repo.git("remote", "set-url", "--add", "--push", "both", "https://github.com/me/r.git");
+        repo.git("remote", "set-url", "--add", "--push", "both", "https://github.com/o/r.git");
+        repo.git("config", "remote.both.gh-resolved", "base");
+      }),
+    ).toContain("remote both, not used as the PR base: it has no single push URL");
+  });
+
+  test("a GitLab checkout ignores gh's `gh repo set-default` key", () => {
+    const gitlab = repoFor("gitlab");
+    gitlab.git("remote", "add", "other", "https://gitlab.com/group/other.git");
+    gitlab.git("config", "remote.other.gh-resolved", "base");
+    const { resolved } = connect(gitlab, gitlabRoutes());
+    expect(resolved).toMatchObject({
+      fork: false,
+      forge: { kind: "gitlab", repo: "group/project" },
+    });
+    expect(resolved.note).toBeUndefined();
+  });
+
   test("a GitLab account mismatch is blocked with a workspace-token fix", () => {
     const gitlab = repoFor("gitlab");
     writeWorkspace(gitlab, { provider: "gitlab", account: "Octo" });

@@ -824,12 +824,51 @@ export function pushRemoteName(cwd: string, branch?: string | null): string | nu
  * target would be ambiguous).
  */
 export function pushUrl(cwd: string, remote: string): string | null {
-  if (!safeArg(remote)) return null;
-  const urls = git(cwd, ["remote", "get-url", "--push", "--all", remote])
+  const urls = pushUrls(cwd, remote);
+  return urls.length === 1 ? urls[0] : null;
+}
+
+/** Every push URL of `remote` after rewrites; empty when it sets neither url nor pushurl. */
+export function pushUrls(cwd: string, remote: string): string[] {
+  // git reads a remote with no url (only other keys, such as gh-resolved) as a path named after it.
+  if (
+    !safeArg(remote) ||
+    (config(cwd, `remote.${remote}.url`) === null &&
+      config(cwd, `remote.${remote}.pushurl`) === null)
+  )
+    return [];
+  return git(cwd, ["remote", "get-url", "--push", "--all", remote])
     .stdout.split(/\r?\n/u)
     .map((value) => value.trim())
     .filter(Boolean);
-  return urls.length === 1 ? urls[0] : null;
+}
+
+/**
+ * The remote `gh repo set-default` chose for this checkout (git config
+ * `remote.<name>.gh-resolved` = `base`, the only value current gh writes),
+ * else null. Only the repository-local config counts (gh writes the key there; a
+ * global or included key would redirect PRs in every repository). A key's last
+ * value counts and the first key set to `base` wins, as in the raw-git hook; a
+ * legacy `owner/repo` value is not read.
+ */
+export function ghDefaultRemote(cwd: string): string | null {
+  const values = new Map<string, string>();
+  const out = git(cwd, [
+    "config",
+    "--local",
+    "-z",
+    "--get-regexp",
+    "^remote\\..+\\.gh-resolved$",
+  ]).stdout;
+  for (const entry of out.split("\0")) {
+    const split = entry.indexOf("\n");
+    if (split > 0) values.set(entry.slice(0, split), entry.slice(split + 1));
+  }
+  for (const [key, value] of values) {
+    const name = key.slice("remote.".length, -".gh-resolved".length);
+    if (value === "base" && safeArg(name)) return name;
+  }
+  return null;
 }
 
 export type RemoteUrl = {

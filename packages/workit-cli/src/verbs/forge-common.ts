@@ -182,6 +182,11 @@ export const forgeFail = (
   data?: Record<string, unknown>,
 ): number => emit(io, fail(result.code, result.error, { data, unblock: result.unblock }));
 
+/** Print a resolution note (a `gh repo set-default` remote skipped) on stderr. */
+export const announceResolution = (io: Io, resolved: Pick<ResolvedForge, "note">): void => {
+  if (resolved.note) announce(io, resolved.note);
+};
+
 /** Bound on resolving the forge and checking the account, for verbs without a --timeout. */
 const CONNECT_BUDGET_MS = 15_000;
 
@@ -207,6 +212,7 @@ export function connect(
     deadline: verbDeadline ?? forgeDeps.now() + CONNECT_BUDGET_MS,
   });
   if (!resolved.ok) return resolved;
+  announceResolution(io, resolved.data);
   const identity = checkIdentity(resolved.data);
   resolved.data.limits.deadline = verbDeadline;
   if (!identity.ok) return identity;

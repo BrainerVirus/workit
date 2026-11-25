@@ -8,6 +8,8 @@ import type { BranchForge } from "@/packages/workit-core/src/core/cleanup";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { gcDeps, run as gc } from "@/packages/workit-cli/src/verbs/gc";
+import { connect, forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { replayRunner } from "@/test/shared/helpers/forge-replay";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnHeavyTimeout } from "@/test/shared/timeouts";
 
@@ -177,4 +179,36 @@ test("gc --worktrees --branches together exits 2", async () => {
   const result = await run(["gc", "--worktrees", "--branches"], env.main);
   expect(result.code).toBe(2);
   expect(branches(env.main)).toEqual(["feature/s", "feature/u", "main"]);
+});
+
+test("Given a gh set-default remote that is missing, When gc --branches and the PR verbs resolve the forge, Then each prints the skipped-default note on stderr", () => {
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "wk-gcbr-note-")));
+  roots.push(root);
+  git(root, "init", "-q", "-b", "main");
+  git(root, "remote", "add", "origin", "https://github.com/me/r.git");
+  git(root, "config", "remote.gone.gh-resolved", "base");
+  const saved = forgeDeps.runner;
+  forgeDeps.runner = replayRunner({
+    "GET repos/me/r": JSON.stringify({ id: 7, fork: false }),
+    "GET user": JSON.stringify({ login: "octo" }),
+  });
+  try {
+    const stderrOf = (call: (io: Io) => unknown): string => {
+      let stderr = "";
+      call({
+        cwd: root,
+        json: false,
+        env: { ...process.env, WORKIT_SESSION_ID: "lead-gc" },
+        stdout: () => {},
+        stderr: (text) => void (stderr += text),
+      });
+      return stderr;
+    };
+    const note =
+      "workit: gh repo set-default names remote gone, not used as the PR base: that remote does not exist; using me/r";
+    expect(stderrOf((io) => original.forge(io))).toStartWith(note);
+    expect(stderrOf((io) => connect(io))).toStartWith(note);
+  } finally {
+    forgeDeps.runner = saved;
+  }
 });

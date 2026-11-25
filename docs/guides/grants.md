@@ -127,7 +127,9 @@ make it unknown, which grants nothing while a workspace claims remotes. A PR's
 base is read from `-R`/`--repo` in any spelling (gh `[HOST/]OWNER/REPO` or
 `GH_REPO`; glab `[HOST/]GROUP/REPO` or a URL, the host from `GITLAB_HOST` or
 gitlab.com), even outside a git repository, else from the checkout as gh resolves
-it: the `gh repo set-default` remote, else `upstream`, else `origin`. Only when
+it: the `gh repo set-default` remote (`gh-resolved` = `base`, on a remote with one
+push URL on the push remote's host, as the `pr` verbs require), else `upstream`,
+else `origin`. Only when
 none resolves, while a workspace claims remotes, is the raw command denied in
 favour of `workit pr create`. `gh api`/`glab api` REST writes are judged like
 their verb (a PR merge, a PR create or edit, a release); reads never are. Env

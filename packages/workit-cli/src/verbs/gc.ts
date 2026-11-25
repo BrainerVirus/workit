@@ -38,7 +38,7 @@ import {
 } from "@workit-dev/core/src/core/cleanup";
 import { resolveForge } from "@workit-dev/core/src/forge/resolve";
 import { actorFromEnv } from "@workit-dev/core/src/ledger";
-import { forgeDeps } from "./forge-common";
+import { announceResolution, forgeDeps } from "./forge-common";
 import { reapOrphans, type OrphanReport } from "@workit-dev/core/src/core/procs";
 import {
   sweepUnstagedBackups,
@@ -61,7 +61,9 @@ export const gcDeps = {
       now: forgeDeps.now,
       deadline: forgeDeps.now() + FORGE_BUDGET_MS,
     });
-    return resolved.ok ? resolved.data : { skipped: resolved.error };
+    if (!resolved.ok) return { skipped: resolved.error };
+    announceResolution(io, resolved.data);
+    return resolved.data;
   },
 };
 
