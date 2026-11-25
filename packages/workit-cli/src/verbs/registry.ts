@@ -1244,8 +1244,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "changelog",
     group: "delivery",
-    summary:
-      "Add entries under the Unreleased section of the changelog, and roll them into releases",
+    summary: "Add Unreleased entries; roll into releases",
     subcommands: [
       {
         name: "apply",
