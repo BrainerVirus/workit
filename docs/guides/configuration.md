@@ -1109,8 +1109,9 @@ package claims.
 ## Task store
 
 Task state lives in the git common directory, `.git/workit/` (shared by every
-worktree, kept across worktree removal and `git clean`), or in
-`<dir>/.workit/` outside git. Never edit it by hand.
+worktree, kept across worktree removal and `git clean`), or outside git in
+the state dir, `<state>/folders/<folder>-<hash>` (`workit dir notes` prints a
+path in it), never in the folder itself. Never edit it by hand.
 
 - Each task is an append-only `tasks/<id>/events.jsonl` with a rebuildable
   `snapshot.json`. A crash can only leave a torn last line, which readers

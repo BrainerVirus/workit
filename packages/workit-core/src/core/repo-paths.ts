@@ -2,7 +2,8 @@
 // A repo's `.workit/` holds only committed team config (checks.json,
 // risk-paths); plans, retro reports, handoffs and notes an agent writes live
 // in the store, `<git-common-dir>/workit/` (shared by every worktree of the clone,
-// beside the ledger and check logs), or `<dir>/.workit` outside git.
+// beside the ledger and check logs), or `<state>/folders/<folder>-<hash>`
+// outside git (never the folder itself).
 // User-level locations (config, state, data, cache, runtime) are
 // workit-paths.mjs's.
 import fs from "node:fs";

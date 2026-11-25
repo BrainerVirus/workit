@@ -24,6 +24,7 @@ maps common symptoms to those ids.
 | An agent could edit a Workit-guarded file (`workspaces.json` and its seal, approvals, issued sessions) | `native_deny` | `workit setup` in your own terminal writes each host's own deny rules (Claude Code, Cursor, OpenCode) |
 | A heavy check waits with no holder named, or names "memory pressure" | `pressure_gate`, `heavy_scope` | The machine is over its pressure line; `workit lock status` shows the budget. A failing `heavy_scope` names the systemd `Delegate` fix. See [checks](checks.md) |
 | `youtrack.writes: auto` posts to any YouTrack | `youtrack_writes` | Name the allowed hosts in `youtrack.autoHosts` ([YouTrack guide](youtrack.md)) |
+| A `.workit` folder appeared outside a repository | `stray_workit` | Any Workit command there moves it into the state dir once; see [A `.workit` folder outside a repository](#a-workit-folder-outside-a-repository) |
 | Agents do not know ytrack's commands | `ytrack_skill` | The fix doctor names: `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade` (ytrack 0.6.0+ keeps its own skill) |
 
 ## "Workit hooks are off"
@@ -96,3 +97,27 @@ To update by hand, run `opencode plugin update @workit-dev/opencode` from your
 home directory. OpenCode loads plugins separately for each directory, in the
 background. In a directory it has not used before, the first call can answer
 `Plugin is not configured`. Run the same command a second time.
+
+## A `.workit` folder outside a repository
+
+Outside a git repository Workit keeps a folder's ledger, tasks, plans, retros,
+handoffs and notes in its state dir, `<state>/folders/<folder>-<hash>`
+(`workit dir notes` prints a path there), never in the folder. Older Workit
+wrote them into `<folder>/.workit`, so a multi-repo parent, a home folder or a
+synced folder could collect one.
+
+The first Workit command in that folder moves it and prints one line:
+
+```text
+workit: moved /work/.workit to ~/.local/state/workit/folders/work-1a2b3c4d5e6f (outside a git repository Workit keeps its state there)
+```
+
+`checks.json` and `risk-paths` stay where they are. When the state dir already
+holds an entry by the same name, Workit keeps both and leaves
+`.workit/MOVED-TO-STATE.txt` with the `cp -Rn` command that merges the rest; delete
+the old copies once merged.
+
+`workit doctor` reports such a folder in the current directory or any parent
+as `stray_workit`, with the command that moves it (`workit --cwd <folder> dir
+notes`). The [file locations](../agents/file-locations.md#a-workit-outside-git)
+reference has the details.
