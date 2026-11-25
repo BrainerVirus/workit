@@ -4,8 +4,9 @@
 // - The push remote host decides GitHub vs GitLab. A workspace provider that
 //   disagrees is `blocked` for the forge verbs, never silently overridden;
 //   `git push` (checkPushIdentity) only needs git, so it pushes with a note.
-// - PRs/MRs live in the base repository: an `upstream` remote on the same
-//   forge, else the push repo's fork parent, else the push repo itself.
+// - PRs/MRs live in the base repository: the remote `gh repo set-default`
+//   chose, else an `upstream` remote on the same forge, else the push repo's
+//   fork parent, else the push repo itself.
 // - Every API call carries the workspace's credential explicitly, so the
 //   machine-wide active gh/glab account is never switched or relied on:
 //   the workspace `vcs.tokenFile`, else (GitHub) `gh auth token --user
@@ -20,6 +21,7 @@ import {
   deriveForge,
   forgeConflict,
   pushForge,
+  ghDefaultRemote,
   pushUrl,
   remoteNames,
   type DerivedForge,
@@ -360,7 +362,9 @@ export function resolveForge(
   if (!credential.ok) return credential;
   const runner = clampedRunner(base, limits, now, credential.data.token);
 
-  // Base repository: an `upstream` remote on the same forge, else the fork parent.
+  // Base repository: the `gh repo set-default` remote, else an `upstream` remote on the same
+  // forge, else the fork parent. `gh repo set-default <push repo>` keeps PRs in a fork the user
+  // works in (a fork whose parent is only a source of changes).
   const headRepo = derived.repo;
   const probe = memoizedIdentity(createForge(derived, headRepo, runner), scope, credential.data);
   const info = probe.repoInfo(headRepo);
@@ -374,12 +378,15 @@ export function resolveForge(
   };
   const upstream =
     pushed.remote !== "upstream" && remotes.includes("upstream") ? repoOfRemote("upstream") : null;
+  const chosen = ghDefaultRemote(cwd);
+  const chosenRepo = chosen ? repoOfRemote(chosen) : null;
   const baseRepo =
-    upstream && upstream !== headRepo
+    chosenRepo ??
+    (upstream && upstream !== headRepo
       ? upstream
       : info.ok && info.data.parent
         ? info.data.parent
-        : headRepo;
+        : headRepo);
   const baseRemote =
     baseRepo === headRepo
       ? pushed.remote

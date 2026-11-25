@@ -832,6 +832,21 @@ export function pushUrl(cwd: string, remote: string): string | null {
   return urls.length === 1 ? urls[0] : null;
 }
 
+/**
+ * The remote `gh repo set-default` chose for this checkout (git config
+ * `remote.<name>.gh-resolved` = `base`), else null. gh itself and the raw-git
+ * hook already treat it as the repository PRs go to.
+ */
+export function ghDefaultRemote(cwd: string): string | null {
+  const out =
+    git(cwd, ["config", "--local", "--get-regexp", "^remote\\..+\\.gh-resolved$"]).stdout ?? "";
+  for (const entry of out.split(/\r?\n/u)) {
+    const name = /^remote\.(.+)\.gh-resolved\s+base$/u.exec(entry.trim())?.[1];
+    if (name && safeArg(name)) return name;
+  }
+  return null;
+}
+
 export type RemoteUrl = {
   protocol: "ssh" | "https" | "http" | "git" | "file";
   user: string | null;

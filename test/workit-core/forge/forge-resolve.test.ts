@@ -238,6 +238,56 @@ describe("S10 forge resolution and identity", () => {
     });
   });
 
+  test("`gh repo set-default` keeps PRs in the fork the user works in", () => {
+    const forkRoutes = (): Record<string, Reply> => ({
+      ...githubRoutes(),
+      "GET repos/me/r": JSON.stringify({ id: 7, fork: true, parent: { full_name: "o/r" } }),
+    });
+    // Without a default, the fork's parent is the base (M6).
+    const plain = repoFor("github");
+    plain.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    expect(connect(plain, forkRoutes()).resolved).toMatchObject({
+      fork: true,
+      forge: { repo: "o/r" },
+    });
+    // `gh repo set-default me/r` writes remote.origin.gh-resolved=base: the fork is the base.
+    const chosen = repoFor("github");
+    chosen.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    chosen.git("config", "remote.origin.gh-resolved", "base");
+    expect(connect(chosen, forkRoutes()).resolved).toMatchObject({
+      fork: false,
+      headRepo: "me/r",
+      forge: { repo: "me/r" },
+    });
+    // It also wins over an `upstream` remote.
+    const withUpstream = repoFor("github");
+    withUpstream.git("remote", "add", "upstream", "https://github.com/o/r.git");
+    withUpstream.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    withUpstream.git("config", "remote.origin.gh-resolved", "base");
+    expect(connect(withUpstream, forkRoutes()).resolved).toMatchObject({
+      fork: false,
+      forge: { repo: "me/r" },
+    });
+    // A default naming the upstream remote is the base, as before.
+    const upstreamDefault = repoFor("github");
+    upstreamDefault.git("remote", "add", "upstream", "https://github.com/o/r.git");
+    upstreamDefault.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    upstreamDefault.git("config", "remote.upstream.gh-resolved", "base");
+    expect(connect(upstreamDefault, forkRoutes()).resolved).toMatchObject({
+      fork: true,
+      baseRemote: "upstream",
+      forge: { repo: "o/r" },
+    });
+    // A value other than `base` (a repo name gh may store) is not read.
+    const other = repoFor("github");
+    other.git("remote", "set-url", "--push", "origin", "https://github.com/me/r.git");
+    other.git("config", "remote.origin.gh-resolved", "o/r");
+    expect(connect(other, forkRoutes()).resolved).toMatchObject({
+      fork: true,
+      forge: { repo: "o/r" },
+    });
+  });
+
   test("a GitLab account mismatch is blocked with a workspace-token fix", () => {
     const gitlab = repoFor("gitlab");
     writeWorkspace(gitlab, { provider: "gitlab", account: "Octo" });
