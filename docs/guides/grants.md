@@ -128,8 +128,11 @@ base is read from `-R`/`--repo` in any spelling (gh `[HOST/]OWNER/REPO` or
 `GH_REPO`; glab `[HOST/]GROUP/REPO` or a URL, the host from `GITLAB_HOST` or
 gitlab.com), even outside a git repository, else from the checkout as gh resolves
 it: the `gh repo set-default` remote (`gh-resolved` = `base`, on a remote with one
-push URL on the push remote's host, as the `pr` verbs require), else `upstream`,
-else `origin`. Only when
+push URL on the push remote's host, as the `pr` verbs require), else `upstream`
+(when it has one push URL on that host), else `origin`. Every remote is judged by
+its push URL, as `git remote get-url --push` gives it (`pushInsteadOf` and
+`insteadOf` applied), like the verbs. Where the verbs would use the fork parent (no
+usable `upstream`), the hook, which makes no forge API call, judges `origin`. Only when
 none resolves, while a workspace claims remotes, is the raw command denied in
 favour of `workit pr create`. `gh api`/`glab api` REST writes are judged like
 their verb (a PR merge, a PR create or edit, a release); reads never are. Env
