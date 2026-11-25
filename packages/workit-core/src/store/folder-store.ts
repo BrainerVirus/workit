@@ -4,6 +4,7 @@
 // resolve moves it once, keeping the folder's own config (checks.json,
 // risk-paths) and what a 2.x migration left for 2.x readers where they are.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /** What `<folder>/.workit` may hold that is the folder's own config, not state. */
@@ -144,6 +145,48 @@ const merge = (from: string, to: string, rel: string, moved: string[]): string[]
   return kept;
 };
 
+const canonical = (dir: string): string => {
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+};
+
+/** `child` is strictly below `parent`. */
+const below = (parent: string, child: string): boolean => {
+  const rel = path.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+};
+
+/** Where a refused resolve is recorded under a test run, in the `WORKIT_TEST_RUN` dir. */
+export const TEST_RUN_REFUSALS = "folder-store-refusals.log";
+
+/**
+ * Under a test run (`WORKIT_TEST_RUN`, set by the suite's state-isolation
+ * preload), why resolving a folder store at `folder` must fail: a test may
+ * only resolve one in a dir of its own inside the OS temp dir. The temp dir
+ * itself or a parent of it (a `cwd: "/tmp"` payload) always fails; any other
+ * folder outside it (the account's home, a developer's folders) fails once
+ * there is something to move, since the move would carry a real `.workit`
+ * into the run's throwaway state dir, which the run deletes (#892).
+ * Null outside a test run, or for a folder the test owns.
+ */
+export const testRunFolderRefusal = (
+  folder: string,
+  hasStray: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  tempDir: string = os.tmpdir(),
+): string | null => {
+  if (env.WORKIT_TEST_RUN === undefined) return null;
+  const real = canonical(folder);
+  const tmp = canonical(tempDir);
+  if (below(tmp, real)) return null;
+  const shared = real === tmp || below(real, tmp);
+  if (!shared && !hasStray) return null;
+  return `workit test run (WORKIT_TEST_RUN): refusing to resolve a folder store at ${real}${hasStray ? ` (it would move ${path.join(real, ".workit")})` : ""}; a test must work in a fresh dir inside ${tmp}, never the temp dir itself, a parent of it or a folder outside it (#892)`;
+};
+
 /**
  * Move a folder's old `<folder>/.workit` store into `target` once. Never
  * replaces an entry the target has; what stays gets a pointer file naming the
@@ -156,6 +199,17 @@ export function migrateFolderStore(
 ): FolderMigration | null {
   const workit = path.join(folder, ".workit");
   const names = strayEntries(workit);
+  const refusal = testRunFolderRefusal(folder, names.length > 0);
+  if (refusal) {
+    // Hooks fail open, so the throw alone may go unseen: the suite's preload
+    // fails the test that left this file (test/shared/state-isolation.ts).
+    const run = process.env.WORKIT_TEST_RUN ?? "";
+    if (path.isAbsolute(run))
+      try {
+        fs.appendFileSync(path.join(run, TEST_RUN_REFUSALS), `${refusal}\n`);
+      } catch {}
+    throw new Error(refusal);
+  }
   // A 2.x store migrates through the task store first (task-store.ts).
   if (names.length === 0 || v2Workspace(workit) === true) return null;
   try {

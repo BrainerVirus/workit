@@ -108,8 +108,8 @@ const HOOK_ENTRIES = [
 // 602,293 B. One ceiling for the scoped youtrack auto writes change, core run plus 6 KiB: the
 // raw-ytrack guard's --host allow-list and the seal's autoHosts key may spend it, printing the delta in their PR.
 // state-outside-repo (#892, 2026-11-25, Bun 1.4.5): a non-git folder's store in the state dir and
-// the one-time move of an older <folder>/.workit (store/folder-store.ts) took core run to 609,547 B;
-// the ceiling is that plus 2 KiB.
+// the one-time move of an older <folder>/.workit (store/folder-store.ts) took core run to 609,547 B,
+// the ceiling is that plus 2 KiB; its test-run guard (testRunFolderRefusal) then took it to 610,332 B.
 const BUDGET = 611_595;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
