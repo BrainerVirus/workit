@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** What `<folder>/.workit` may hold that is the folder's own config, not state. */
-export const FOLDER_CONFIG = new Set(["checks.json", "risk-paths"]);
+const FOLDER_CONFIG = new Set(["checks.json", "risk-paths"]);
 
 /** The note left in `<folder>/.workit` when some of it could not move. */
 export const MOVED_POINTER = "MOVED-TO-STATE.txt";
@@ -98,7 +98,7 @@ export const strayEntries = (workit: string): string[] => {
   );
 };
 
-export type FolderMigration = {
+type FolderMigration = {
   from: string;
   to: string;
   /** Paths (relative to `.workit`) moved, each whole. */

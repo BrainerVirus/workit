@@ -3724,7 +3724,7 @@ const inRepo = (dir: string): boolean => {
 };
 
 /** Each `<dir>/.workit` holding Workit state, for `cwd` and its parents outside a repo. */
-export const strayWorkitDirs = (cwd: string): Array<{ dir: string; to: string }> => {
+const strayWorkitDirs = (cwd: string): Array<{ dir: string; to: string }> => {
   const found: Array<{ dir: string; to: string }> = [];
   for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
     const workit = path.join(dir, ".workit");
