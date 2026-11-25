@@ -18,7 +18,7 @@ repository.
 | Grant | Default | Gates |
 | --- | --- | --- |
 | `push` | allowed | `workit git push`, `stack sync` |
-| `pr` | allowed | `workit pr create`, `pr edit`, `pr ready`, `issue create`, `issue comment` and the PRs a stack opens |
+| `pr` | allowed | `workit pr create`, `pr edit`, `pr ready`, `issue create`, `issue comment`, `issue close` and the PRs a stack opens. `pr edit` and `pr ready` on another author's PR also need `--others-pr --reason`, and an issue `--repo` under another owner needs [`externalRepos`](#external-repositories) |
 | `rerun` | allowed | `workit ci rerun` |
 | `merge` | needs a grant | `workit pr merge`, `stack land`. Both need the verdict the head's [review lane](verification.md#review-lanes) asks for (under the default `proportional`: none, the author's `--self` one, or a non-author one). `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
 | `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the git-flow main and develop branches and release tags (`v*`, or the prefix in `gitflow.prefix.versiontag`, which may be empty) whose commit already landed, which `workit git push` refuses; outside git-flow, tags only. Also `workit release finish`, `publish`, `tag`, `package` and `notes edit`. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
@@ -165,6 +165,34 @@ folder's `origin` as the default, and `workit workspace rm` of an entry with
 checkout's remote is claimed by another workspace (its grants are capped
 there). When its workspace claims no remotes, they print a note (doctor:
 `info`) with the command to set them.
+
+## External repositories
+
+`workit issue create|comment|close --repo <owner/name>` writes only inside
+the workspace's own forge owners: the owner of the checkout's forge
+repository (and of its push repository, for a fork), of the workspace
+tracker (`issues.repo`), the workspace's `vcs.account`, and any repository
+its [`remotes`](#remotes) claim. Outside a checkout, `--repo` adds no owner
+of its own. Any other repository is refused with `outside_owner` and an
+unblock naming the command below, so a `pr` grant never lets an agent open
+or comment on issues in someone else's repository by accident. Reading with
+`issue view` is never refused.
+
+List the other repositories the workspace may write issues to in its
+`externalRepos`, as `owner/name` (`group/project` on GitLab) or `owner/*`
+for a whole owner, without the host:
+
+```bash
+workit workspace set personal externalRepos='["BrainerVirus/workit", "acme/*"]'
+```
+
+Like `remotes`, it widens what an agent may do, so only you change it, at
+your own terminal: `workspace set` asks a y/N and refuses an agent or
+headless shell. It is sealed with the grants, and Workit reads it only while
+the [seal](#the-seal) is valid; under `WORKIT_WORKSPACE_NAME` only the
+repositories both the named and the folder's entry list count.
+`workit feedback --post` is not affected: it always posts to Workit's own
+tracker with the account you name.
 
 ## Releasing
 

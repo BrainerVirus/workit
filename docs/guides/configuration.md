@@ -230,8 +230,8 @@ with `workit grant set` in your own terminal. Each write keeps the previous file
 `workspaces.json.seal`, beside it in the account's config dir, holds the
 authority fields you last accepted with `workit workspace seal` in your own
 terminal (grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
-`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge
-identity). While it is missing or does not match, Workit applies the stricter
+`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes`,
+`externalRepos` and the forge identity). While it is missing or does not match, Workit applies the stricter
 of the file and the last seal: [the seal](grants.md#the-seal) has the full
 rules.
 
@@ -256,6 +256,11 @@ remote it claims never exceeds its grants ([grants](grants.md#remotes)). Like
 a grant, only you change it: `workit workspace set <name> remotes=<url>,…`
 needs your terminal and a y/N, and `add` at your terminal offers the
 folder's `origin`.
+
+`externalRepos` lists the repositories outside the workspace's own forge
+owners that `workit issue create|comment|close --repo` may write to
+(`owner/name` or `owner/*`; [grants](grants.md#external-repositories)). It
+too needs your terminal: `workit workspace set <name> externalRepos=<repo>,…`.
 
 A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
 `commit` (default), `pr`, `green` (babysit the PR until merge-ready, never
