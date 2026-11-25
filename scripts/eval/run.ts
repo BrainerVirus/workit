@@ -1378,12 +1378,21 @@ export const main = async (
     carried: [],
   };
   opts.roots = benchRoots(opts);
+  const ids = values.cases?.split(",").filter(Boolean) ?? [];
+  const selected = selectCases(cases, tier, ids);
+  // A gate over nothing proves nothing: an empty selection never reaches "pass".
+  if (selected.length === 0 && !settling) {
+    print(
+      `no case selected: --tier ${tier}${ids.length > 0 ? ` --cases ${ids.join(",")}` : ""} matches nothing (a full-tier case needs --tier full); nothing runs`,
+    );
+    return 2;
+  }
   return tripwired(
     opts,
     print,
     async () =>
       bench(opts, print, {
-        selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
+        selected,
         repeat,
         budget,
         force: values.force,
@@ -1692,9 +1701,19 @@ const bench = async (
     print(
       `void (auth): ${voided.length} case(s) never reached the model, the host's login failed: ${voided.join(", ")}\n    re-login: ${RELOGIN[host]}, then rerun`,
     );
+  // Every selected case n/a on this leg, or none graded: the gate has nothing to pass on.
+  const graded =
+    selected.length - notApplicable.length - skipped.length - limited.length - voided.length;
+  const gatePass =
+    gateFailed.length === 0 &&
+    drops.length === 0 &&
+    voided.length === 0 &&
+    limited.length === 0 &&
+    skipped.length === 0 &&
+    graded > 0;
   if (gate)
     print(
-      `gate first-try: ${gateFailed.length === 0 && drops.length === 0 && voided.length === 0 && limited.length === 0 && skipped.length === 0 ? "pass" : "FAIL"}; firstTry cases short of ${FIRST_TRY_RUNS} of ${FIRST_TRY_RUNS}: ${gateFailed.join(", ") || "none"}; drops against the committed summary: ${drops.join(", ") || "none"}`,
+      `gate first-try: ${gatePass ? "pass" : "FAIL"}; firstTry cases short of ${FIRST_TRY_RUNS} of ${FIRST_TRY_RUNS}: ${gateFailed.join(", ") || "none"}; drops against the committed summary: ${drops.join(", ") || "none"}${graded > 0 ? "" : "; no case was graded on this leg"}`,
     );
   if (skipped.length > 0)
     print(
@@ -1702,14 +1721,7 @@ const bench = async (
     );
   if (runs > 0)
     print(`results: ${path.relative(REPO, dir) || dir}; commit them with the change they measure`);
-  if (gate)
-    return gateFailed.length > 0 ||
-      drops.length > 0 ||
-      voided.length > 0 ||
-      limited.length > 0 ||
-      skipped.length > 0
-      ? 1
-      : 0;
+  if (gate) return gatePass ? 0 : 1;
   return failed > 0 || limited.length > 0 || voided.length > 0 ? 1 : 0;
 };
 

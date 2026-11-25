@@ -35,7 +35,9 @@ bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored 
   packages/workit-cli/src and packages/workit-claude-code on disk>`). An edit to
   a skill, hook or CLI text re-runs every case; `--force` re-runs anyway.
 - Exit 1 when a graded case fails or a case is void, else 0 (with `--gate`,
-  the gate decides; see [First try](#first-try)). Commit `evals/results/`
+  the gate decides; see [First try](#first-try)). Exit 2, with nothing run,
+  when `--tier` and `--cases` select no case (a full-tier case on the default
+  smoke tier). Commit `evals/results/`
   with the change it measures.
 - A run whose host login failed before any tool call (Claude Code asking for
   `/login`, OpenCode's `provider.auth` "Reconnect OpenCode Console") is
@@ -454,8 +456,8 @@ each `firstTry` case runs 5 times (or `--repeat`, if more) and needs all of
 them; every other case keeps the two-thirds rule and must not drop against
 the committed `summary.json` (a case that passed there and fails now). The
 bench ends `gate first-try: pass|FAIL` with the short cases and the drops,
-and exits 1 on any of them, a void or limited case, or a case the budget
-left unrun. The first-try cases are written by outcome ("no spawn refused",
+and exits 1 on any of them, a void or limited case, a case the budget
+left unrun, or no case graded at all (every selected case `n/a` on this leg). The first-try cases are written by outcome ("no spawn refused",
 "the call ran"), so a fix changes Workit, not the case.
 
 Three drift tests run in `bun run test` with no model:

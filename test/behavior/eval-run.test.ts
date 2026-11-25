@@ -559,6 +559,40 @@ test("Given a case with permissionMode default, Then claude -p runs it in that m
   expect(call).not.toContain("--permission-mode auto");
 });
 
+test("Given --gate first-try with a full-tier case on the default smoke tier, When run, Then it refuses with exit 2 and no host runs", async () => {
+  const printed: string[] = [];
+  const code = await main(
+    ["--model", "haiku", "--gate", "first-try", "--cases", "d-full", ...argv],
+    quiet(printed),
+  );
+  expect(code).toBe(2);
+  expect(calls()).toEqual([]);
+  expect(printed.join("\n")).toContain("no case selected: --tier smoke --cases d-full");
+  expect(printed.join("\n")).not.toContain("gate first-try: pass");
+});
+
+test("Given --gate first-try where every selected case applies to the other leg, When run, Then the gate fails with no case graded", async () => {
+  writeFileSync(
+    path.join(root, "cases", "e-full.json"),
+    JSON.stringify({
+      id: "e-full",
+      source: "test",
+      tier: "full",
+      prompt: "p",
+      hosts: ["opencode"],
+    }),
+  );
+  const printed: string[] = [];
+  const code = await main(
+    ["--model", "haiku", "--tier", "full", "--gate", "first-try", "--cases", "e-full", ...argv],
+    quiet(printed),
+  );
+  expect(code).toBe(1);
+  expect(calls()).toEqual([]);
+  expect(printed.join("\n")).toContain("gate first-try: FAIL");
+  expect(printed.join("\n")).toContain("no case was graded on this leg");
+});
+
 const PUSH = [
   JSON.stringify({
     type: "assistant",
