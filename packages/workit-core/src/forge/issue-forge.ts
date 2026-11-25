@@ -46,6 +46,12 @@ export interface IssueApi {
   /** Close issue `n`; GitLab has no close reason and ignores it. */
   close(n: number, reason: IssueCloseReason): ForgeResult<void>;
   create(input: CreateIssueInput): ForgeResult<{ number: number; url: string | null }>;
+  /**
+   * Set by issueTarget when `--repo` names a repository outside the
+   * workspace's forge owners that no `externalRepos` grant names (#882):
+   * every write refuses with it; reads are unaffected.
+   */
+  outside?: { error: string; unblock: string };
 }
 
 type Options = { apiHost: string; repo: string; runner: ForgeRunner };

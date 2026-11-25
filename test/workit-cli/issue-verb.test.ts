@@ -327,6 +327,8 @@ test("issue create --repo: another repository on the same host is used, and a ma
     const bad = await run([...args, "--repo", value], repo.cwd);
     expect(bad.json(), value).toMatchObject({ code: "invalid_input" });
   }
+  // Another owner needs an externalRepos grant (#882; issue-scope.test.ts).
+  workspace(repo, { externalRepos: ["BrainerVirus/workit"] });
   const created = await run([...args, "--repo", "BrainerVirus/workit"], repo.cwd);
   expect(created.code, created.stdout).toBe(0);
   expect(writes(runner.calls).map((call) => call[1])).toEqual(["repos/BrainerVirus/workit/issues"]);
@@ -350,7 +352,8 @@ test("issue create --repo outside a git checkout: the named repo is the forge, n
   expect(uncovered.json().error).toContain("needs a workspace covering");
   expect(uncovered.json().unblock).toContain("from a checkout of o/r");
   expect(writes(runner.calls)).toEqual([]);
-  workspace(repo, { vcs: { provider: "github" } });
+  // Outside a checkout no owner comes from it: o/r is in scope only by a grant (#882).
+  workspace(repo, { vcs: { provider: "github" }, externalRepos: ["o/*"] });
   const created = await run(args, outside);
   expect(created.code, created.stdout).toBe(0);
   expect(writes(runner.calls)).toEqual([

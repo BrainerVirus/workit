@@ -326,6 +326,14 @@
               "type": "string"
             }
           },
+          "externalRepos": {
+            "description": "Repositories outside this workspace's own forge owners that `workit issue create|comment|close --repo` may write to: `owner/name`, or `owner/*` for a whole owner. Only the user changes it, in their own terminal.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[\\w-]+(?:\\/\\w[\\w.-]*)*\\/(?:\\w[\\w.-]*|\\*)$"
+            }
+          },
           "autonomy": {
             "description": "Autonomy grants (D15): only ever set here, by the user, with `workit grant set`.",
             "type": "object",
