@@ -119,6 +119,17 @@ test.skipIf(process.getuid?.() === 0)(
 );
 
 /** The store directory holding a checkout lock (`<store>/checkouts/<slug>/metadata.lock`). */
+/** The lock the CLI child resolves: outside git the store is under its WORKIT_STATE_DIR (#892). */
+const fixtureLock = (cwd: string): string => {
+  const saved = process.env.WORKIT_STATE_DIR;
+  process.env.WORKIT_STATE_DIR = fixture.stateDir;
+  try {
+    return lockPathFor(cwd);
+  } finally {
+    process.env.WORKIT_STATE_DIR = saved;
+  }
+};
+
 const storeOf = (lockPath: string) => path.dirname(path.dirname(path.dirname(lockPath)));
 
 const deadPid = (): number =>
@@ -129,7 +140,7 @@ const deadPid = (): number =>
   );
 
 test("Given a stale lock left by a dead pid, When workit doctor runs, Then it warns and names --fix-lock", () => {
-  const lockPath = lockPathFor(fixture.cwd);
+  const lockPath = fixtureLock(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
@@ -148,7 +159,7 @@ test("Given a stale lock left by a dead pid, When workit doctor runs, Then it wa
 });
 
 test("Given a stale lock and an abandoned reclaim guard, When workit doctor --fix-lock runs, Then both are cleared", () => {
-  const lockPath = lockPathFor(fixture.cwd);
+  const lockPath = fixtureLock(fixture.cwd);
   mkdirSync(`${lockPath}.reclaim`, { recursive: true });
   utimesSync(`${lockPath}.reclaim`, new Date(0), new Date(0));
   writeFileSync(
@@ -168,7 +179,7 @@ test("Given a stale lock and an abandoned reclaim guard, When workit doctor --fi
 });
 
 test("Given a lock held by a live process, When workit doctor --fix-lock runs, Then the lock is kept", () => {
-  const lockPath = lockPathFor(fixture.cwd);
+  const lockPath = fixtureLock(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const bytes = JSON.stringify({
     pid: process.pid,
@@ -188,7 +199,7 @@ test("Given a lock held by a live process, When workit doctor --fix-lock runs, T
 });
 
 test("Given a lock past the TTL whose pid is running but whose start time cannot be checked (Windows), When workit doctor runs, Then it reports stale as the store would, and --fix-lock clears it", () => {
-  const lockPath = lockPathFor(fixture.cwd);
+  const lockPath = fixtureLock(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
@@ -216,7 +227,7 @@ test("Given a lock past the TTL whose pid is running but whose start time cannot
 test("Given WORKIT_WORKSPACE_ROOT points at another checkout, When workit doctor --fix-lock runs, Then it clears that checkout's stale lock", () => {
   const other = path.join(fixture.root, "other-workspace");
   mkdirSync(other, { recursive: true });
-  const lockPath = lockPathFor(other);
+  const lockPath = fixtureLock(other);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
@@ -234,7 +245,7 @@ test("Given WORKIT_WORKSPACE_ROOT points at another checkout, When workit doctor
 });
 
 test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock --force runs without --yes or a TTY, Then it refuses and keeps the lock; with --yes it clears it", () => {
-  const lockPath = lockPathFor(fixture.cwd);
+  const lockPath = fixtureLock(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const bytes = JSON.stringify({ pid: 1, processStart: null, host: "elsewhere", nonce: "n" });
   writeFileSync(lockPath, bytes);
@@ -253,7 +264,7 @@ test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock
 });
 
 test("Given an unverifiable lock that has blocked writes for over 30s, When workit doctor runs, Then it warns with the exact force command; a fresh one passes", () => {
-  const lockPath = lockPathFor(fixture.cwd);
+  const lockPath = fixtureLock(fixture.cwd);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
