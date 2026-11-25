@@ -575,3 +575,56 @@ test("Given a gh default remote whose fetch and push repositories differ, When t
   notDenied(w.own, "gh pr create --fill");
   expect(verbsIn(w.own)).toMatchObject({ forge: { repo: "acme/open" }, baseRemote: "main" });
 });
+
+test("Given an upstream that pushes off the push remote's host or to several URLs, When the hook and the forge verbs resolve the base, Then both skip it and the hook judges origin", () => {
+  const w = world();
+  git(w.own, "remote", "set-url", "origin", "https://github.com/acme/open.git");
+  const verbs = () => {
+    const runner = replayRunner({
+      "CLI auth token --hostname github.com --user me": "gho_pinToken\n",
+      "GET repos/acme/open": JSON.stringify({ id: 8, fork: false }),
+    });
+    const resolved = resolveForge(w.own, { runner });
+    if (!resolved.ok) throw new Error(resolved.error);
+    return resolved.data;
+  };
+  // On the same host, upstream (strict's) is the base for both.
+  git(w.own, "remote", "add", "upstream", "https://github.com/acme/strict.git");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/strict" }, baseRemote: "upstream" });
+  // On gitlab.com the verbs would take the fork parent; the hook takes origin (acme/open, pr granted).
+  git(w.own, "remote", "set-url", "upstream", "https://gitlab.com/acme/strict.git");
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/open" }, fork: false });
+  // So does a pushInsteadOf sending it there, and an upstream with two push URLs.
+  git(w.own, "remote", "set-url", "upstream", "https://github.com/acme/strict.git");
+  git(
+    w.own,
+    "config",
+    "url.https://gitlab.com/acme/strict.pushInsteadOf",
+    "https://github.com/acme/strict",
+  );
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/open" }, fork: false });
+  git(w.own, "config", "--unset", "url.https://gitlab.com/acme/strict.pushInsteadOf");
+  git(
+    w.own,
+    "remote",
+    "set-url",
+    "--add",
+    "--push",
+    "upstream",
+    "https://github.com/acme/strict.git",
+  );
+  git(
+    w.own,
+    "remote",
+    "set-url",
+    "--add",
+    "--push",
+    "upstream",
+    "https://github.com/acme/other.git",
+  );
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/open" }, fork: false });
+});

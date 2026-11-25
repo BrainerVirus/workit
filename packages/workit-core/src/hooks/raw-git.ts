@@ -2224,9 +2224,16 @@ const forgeRepo = (
       ? `https://${hosted ? "" : `${host}/`}${repo}`
       : "";
   if (!repo) {
+    // An upstream off the push remote's host is skipped, as the verbs skip it (they take
+    // the fork parent there, which needs the forge API): origin is the closest safe answer.
+    const pushHost = pushHostOf(config, pushRemoteOf(config, branch) ?? "origin");
     const remote =
-      (gh ? ghDefaultOf(config, branch, dir, env) : null) ??
-      ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
+      (gh ? ghDefaultOf(config, pushHost, dir, env) : null) ??
+      ["upstream", "origin"].find(
+        (name) =>
+          config.has(`remote.${name}.url`) &&
+          (name === "origin" || pushHost === null || pushHostOf(config, name) === pushHost),
+      );
     // Judged by its push URL, as the forge verbs judge a base remote.
     url = remote ? (pushUrlsOf(config, remote).at(-1) ?? "") : "";
   }
@@ -2247,11 +2254,10 @@ const pushHostOf = (config: GitConfig, remote: string): string | null => {
  */
 const ghDefaultOf = (
   config: GitConfig,
-  branch: string | null,
+  pushHost: string | null,
   dir: string,
   env: Record<string, string>,
 ): string | null => {
-  const pushHost = pushHostOf(config, pushRemoteOf(config, branch) ?? "origin");
   for (const [key, value] of localGhResolved(dir, env)) {
     const name = key.slice(7, -12);
     if (!name || value !== "base") continue;
