@@ -31,6 +31,7 @@ let configDir = "";
 let configHome: ConfigHome;
 const original = { ...forgeDeps };
 const originalPlan = mergeRebaseDeps.pushPlan;
+const originalRestore = mergeRebaseDeps.restore;
 beforeAll(() => {
   configHome = useConfigHome("wk-merge-changelog-config-");
   configDir = configHome.configDir;
@@ -41,6 +42,7 @@ const repos: ForgeRepo[] = [];
 afterEach(() => {
   Object.assign(forgeDeps, original);
   mergeRebaseDeps.pushPlan = originalPlan;
+  mergeRebaseDeps.restore = originalRestore;
   for (const name of ["workspaces.json", "config.json"])
     rmSync(path.join(configDir, name), { force: true });
   for (const repo of repos.splice(0)) repo.cleanup();
@@ -708,4 +710,46 @@ test("Given the forge reports a conflict git here does not see, When pr merge ru
   );
   expect(envelope.unblock).toStartWith("workit git rebase --onto origin/main");
   unchanged(made, rebased, rebased);
+});
+
+test("Given main already has the PR head at rebase time and feature/x cannot be put back, When pr merge runs, Then it fails naming git reset --keep and pushes nothing", async () => {
+  const made = setup();
+  const { repo, bare, head, baseTip } = made;
+  const tree = repo.git("rev-parse", `${head}^{tree}`);
+  const landed = repo.git("commit-tree", tree, "-p", baseTip, "-p", head, "-m", "Merge PR #12");
+  const plan = mergeRebaseDeps.pushPlan;
+  mergeRebaseDeps.pushPlan = (cwd, branch) => {
+    repo.git("push", "-q", bare, `${landed}:refs/heads/main`);
+    return plan(cwd, branch);
+  };
+  // A reset git refuses: the real one, onto a commit that does not exist.
+  mergeRebaseDeps.restore = (cwd) => originalRestore(cwd, "f".repeat(40));
+
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const envelope = result.json();
+  expect(envelope.code).toBe("failed");
+  expect(envelope.data).toMatchObject({ reason: "not_ready", conflicts: ["CHANGELOG.md"] });
+  expect(envelope.error).toContain(
+    `origin/main (${short(landed)}) already contains the PR head ${short(head)}, and feature/x could not be put back from ${short(landed)} (`,
+  );
+  expect(envelope.error).toContain("nothing was pushed");
+  expect(envelope.unblock).toBe(`git reset --keep ${head}  # then: workit pr status`);
+  expect(made.remoteTip()).toBe(head);
+  expect(repo.git("rev-parse", "HEAD")).toBe(landed);
+  expect(made.merges()).toBe(0);
+});
+
+test("Given a local branch literally named origin/main pointing elsewhere, When pr merge rebases the changelog-only conflict, Then it rebases onto the fetched remote main, not the local branch", async () => {
+  const made = setup();
+  const { repo, bare, head, baseTip, remoteTip, merges } = made;
+  repo.git("branch", "origin/main", `${head}~1`);
+
+  const result = await run(["pr", "merge", "--json"], repo.cwd);
+  const envelope = result.json();
+  expect(envelope.data).toMatchObject({ reason: "rebased_pushed", rebased: { baseSha: baseTip } });
+  const rebased = repo.git("rev-parse", "HEAD");
+  expect(repo.git("rev-parse", "HEAD~1")).toBe(baseTip);
+  expect(remoteTip()).toBe(rebased);
+  expect(changelogAt(bare, rebased)).toBe(doc(["main entry", "x entry"]));
+  expect(merges()).toBe(0);
 });

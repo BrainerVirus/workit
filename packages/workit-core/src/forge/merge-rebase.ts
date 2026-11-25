@@ -27,9 +27,10 @@ import type { PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
 import type { ForgeResult } from "./types";
 
-/** Test seam: where the rebased branch is pushed (the forge push URL in production). */
+/** Test seams: where the rebased branch is pushed (the forge push URL in production), and how a fast-forward is put back. */
 export const mergeRebaseDeps = {
   pushPlan: (cwd: string, branch: string): ForgeResult<PushPlan> => pushPreflight(cwd, { branch }),
+  restore: (cwd: string, sha: string) => git(cwd, ["reset", "--quiet", "--keep", sha]),
 };
 
 export type ChangelogRebased = {
@@ -276,7 +277,7 @@ export function rebaseChangelogConflict(
   // A base that moved on to include the PR head fast-forwards the branch onto
   // it: nothing of the PR is left to push, so put the branch back (#928).
   if (after.commits === 0) {
-    const restored = git(cwd, ["reset", "--quiet", "--keep", head]);
+    const restored = mergeRebaseDeps.restore(cwd, head);
     if (!restored.ok)
       return {
         ok: false,
