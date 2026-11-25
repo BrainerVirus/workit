@@ -10,6 +10,10 @@ import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { run } from "@/packages/workit-cli/src/verbs/changelog";
+import { stripsWorkitKey } from "@/test/shared/helpers/env";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
+
+const CLI = path.join(REPO_ROOT, "packages/workit-cli/src/main.ts");
 
 const dirs: string[] = [];
 const saved: Record<string, string | undefined> = {};
@@ -265,4 +269,29 @@ test("Given a changelog in a package directory, When release runs with --path fr
     ),
   ).toBe(0);
   expect(r.read("pkg/CHANGELOG.md")).toBe(RELEASED);
+});
+
+test("Given the installed command line, When `changelog release` runs in a pipeline shell, Then it releases with exit 0 and a bad version exits 2", () => {
+  const r = repo([{ text: changelog(""), tag: "v1.0.0" }, { text: changelog(FIXED) }]);
+  const home = path.join(r.dir, ".home");
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH };
+  for (const [key, value] of Object.entries(process.env))
+    if (!stripsWorkitKey(key) && !key.startsWith("XDG_")) env[key] = value;
+  Object.assign(env, {
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+  });
+  const cli = (...args: string[]) =>
+    spawnSync("bun", [CLI, "changelog", ...args], {
+      cwd: r.dir,
+      encoding: "utf8",
+      env,
+      timeout: 60_000,
+    });
+  const done = cli("release", "1.1.0", "--date", "2026-11-25", "--notes-out", "n.md");
+  expect(done.status, done.stderr).toBe(0);
+  expect(r.read()).toBe(RELEASED);
+  expect(r.read("n.md")).toBe(FIXED);
+  expect(cli("release", "1.1").status).toBe(2);
 });
