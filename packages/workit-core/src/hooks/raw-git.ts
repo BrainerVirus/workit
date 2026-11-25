@@ -2178,7 +2178,13 @@ export function rawGitPre(
  * or GH_REPO; glab a URL only), else the cwd's as gh resolves it: the
  * `gh repo set-default` remote (`gh-resolved`), else upstream, else origin.
  */
-const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, config: GitConfig) => {
+const forgeRepo = (
+  gh: boolean,
+  named: string,
+  env: Record<string, string>,
+  config: GitConfig,
+  branch: string | null,
+) => {
   const repo = explicitRepo(gh, named, env);
   const host = (
     gh
@@ -2198,24 +2204,36 @@ const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, conf
       ? `https://${hosted ? "" : `${host}/`}${repo}`
       : "";
   if (!repo) {
-    // Only `base` (what current gh writes) names the default, as in core's ghDefaultRemote;
-    // a default naming a remote with no URL falls back like the forge verbs.
-    const resolved = gh
-      ? [...config.keys()]
-          .find(
-            (key) =>
-              /^remote\..+\.gh-resolved$/.test(key) &&
-              configValue(config, key) === "base" &&
-              config.has(`${key.slice(0, -12)}.url`),
-          )
-          ?.slice(7, -12)
-      : undefined;
     const remote =
-      resolved ?? ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
+      (gh ? ghDefaultOf(config, branch) : null) ??
+      ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
     url = rewrittenUrl(configValue(config, `remote.${remote}.url`) ?? "", config);
   }
   const key = remoteKey(url);
   return key ? { remotes: [{ name: "forge", url, key }] } : Error("its repository is unknown");
+};
+
+/** The host a remote pushes to through its single push URL, or null (no URL, or several). */
+const pushHostOf = (config: GitConfig, remote: string): string | null => {
+  const urls = config.get(`remote.${remote}.pushurl`) ?? config.get(`remote.${remote}.url`) ?? [];
+  if (urls.length !== 1) return null;
+  return remoteKey(rewrittenUrl(urls[0], config))?.split("/")[0] ?? null;
+};
+
+/**
+ * The `gh repo set-default` remote the forge verbs honour (core resolveForge), or null:
+ * the first `remote.<name>.gh-resolved` = `base` (the only value current gh writes) whose
+ * remote has a single push URL on the push remote's host. Anything else falls back.
+ */
+const ghDefaultOf = (config: GitConfig, branch: string | null): string | null => {
+  const pushHost = pushHostOf(config, pushRemoteOf(config, branch) ?? "origin");
+  for (const key of config.keys()) {
+    const name = /^remote\.(.+)\.gh-resolved$/.exec(key)?.[1];
+    if (!name || configValue(config, key) !== "base") continue;
+    const host = pushHostOf(config, name);
+    return host !== null && host === pushHost ? name : null;
+  }
+  return null;
 };
 
 /** The repository a gh/glab call names itself (`-R`, an API path, GH_REPO), or "". */
@@ -2241,6 +2259,7 @@ const grantRefusal = (
       ("repo" in action && action.repo) || "",
       env,
       gitConfig(repo.dir, invocation, cache),
+      repo.branch,
     );
   if (action.kind === "push") {
     target = () => {

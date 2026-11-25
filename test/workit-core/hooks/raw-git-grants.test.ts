@@ -15,6 +15,8 @@ import {
   dispatchHook,
 } from "@/packages/workit-core/src/hooks/index";
 import { sshSeam } from "@/packages/workit-core/src/core/remotes";
+import { resolveForge } from "@/packages/workit-core/src/forge/resolve";
+import { replayRunner } from "@/test/shared/helpers/forge-replay";
 import { evaluateShellPermission } from "@/packages/workit-opencode/src/v2/permissions";
 import { enforceToolPolicy } from "@/packages/workit-pi/src/tools";
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
@@ -247,6 +249,35 @@ test("Given open's checkouts and no -R, When raw gh PR commands run, Then the ba
   git(w.own, "remote", "remove", "upstream");
   git(w.own, "remote", "remove", "origin");
   expect(denied(w.own, "gh pr create --fill")).toContain("pr grant");
+});
+
+test("Given a gh set-default remote on another forge or host, When the hook and the forge verbs resolve the base, Then both skip it for upstream", () => {
+  const w = world();
+  git(w.own, "remote", "set-url", "origin", "https://github.com/me/fork.git");
+  git(w.own, "remote", "add", "upstream", "https://github.com/acme/strict.git");
+  const verbs = () => {
+    const runner = replayRunner({
+      "CLI auth token --hostname github.com --user me": "gho_pinToken\n",
+      "GET repos/me/fork": JSON.stringify({ id: 7, fork: false }),
+    });
+    const resolved = resolveForge(w.own, { runner });
+    if (!resolved.ok) throw new Error(resolved.error);
+    return resolved.data;
+  };
+  for (const [name, url] of [
+    ["mirror", "https://gitlab.com/acme/open.git"],
+    ["enterprise", "https://github.example.com/acme/open.git"],
+  ]) {
+    git(w.own, "remote", "add", name, url);
+    git(w.own, "config", `remote.${name}.gh-resolved`, "base");
+    // The hook targets upstream (strict, which grants no pr), not open via the default.
+    expect(denied(w.own, "gh pr create --fill"), name).toContain("strict");
+    const resolved = verbs();
+    expect(resolved.forge.repo, name).toBe("acme/strict");
+    expect(resolved.baseRemote, name).toBe("upstream");
+    expect(resolved.note, name).toContain(`names remote ${name}, not used as the PR base`);
+    git(w.own, "remote", "remove", name);
+  }
 });
 
 test("Given every grant false in a Workit workspace, When local-only commands run, Then each gets the same decision as with no workspaces at all", () => {
