@@ -24,10 +24,8 @@ const plain = makeWorld({ id: "forge-none", tier: "smoke", prompt: "x", source: 
 afterAll(() => {
   for (const dir of [world.dir, plain.dir]) rmSync(dir, { recursive: true, force: true });
 });
-const env = childEnv(
-  world,
-  path.join(import.meta.dir, "..", "..", "packages", "workit-claude-code", "bin"),
-);
+const pluginBin = path.join(import.meta.dir, "..", "..", "packages", "workit-claude-code", "bin");
+const env = childEnv(world, pluginBin);
 const gh = (...args: string[]) =>
   spawnSync("gh", args, { cwd: world.repo, env, encoding: "utf8", timeout: 20_000 });
 const git = (...args: string[]) =>
@@ -89,7 +87,7 @@ test.skipIf(process.platform === "win32")(
     spawnSync("git", ["add", "next.txt"], { cwd: world.repo });
     spawnSync("git", ["commit", "-q", "-m", "fix: next"], { cwd: world.repo, env });
     const head = git("rev-parse", "HEAD");
-    const push = spawnSync("workit", ["git", "push"], {
+    const push = spawnSync(path.join(pluginBin, "workit"), ["git", "push"], {
       cwd: world.repo,
       env,
       encoding: "utf8",
