@@ -17,6 +17,11 @@
 // whose owner's host process is gone (core/procs.ts reapOrphans) and stops
 // them with --apply. Processes Workit did not start are never touched.
 //
+// `workit gc --unstaged [--apply]` lists the unstaged changes a killed
+// `workit git commit` left set aside under a git dir (git/unstaged-backups.ts)
+// and, with --apply, puts back each file the working tree still holds at its
+// staged content; a file edited since is never overwritten.
+//
 // Every form refuses an argument it does not know (exit 2), so a caller built
 // for an older or newer CLI never falls through to the task-store gc.
 import { progressFor } from "../progress";
@@ -35,10 +40,14 @@ import { resolveForge } from "@workit-dev/core/src/forge/resolve";
 import { actorFromEnv } from "@workit-dev/core/src/ledger";
 import { forgeDeps } from "./forge-common";
 import { reapOrphans, type OrphanReport } from "@workit-dev/core/src/core/procs";
+import {
+  sweepUnstagedBackups,
+  type UnstagedSweep,
+} from "@workit-dev/core/src/git/unstaged-backups";
 
 /** The usage line (the registry's gc entry carries the same text). */
 const GC_USAGE =
-  "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply] | --procs [--apply]";
+  "workit gc [--dry-run] [--prune-recovery --yes] | --worktrees [--apply] | --branches [--apply] | --procs [--apply] | --unstaged [--apply]";
 
 /** Bound on reaching the forge for the merged-PR check. */
 const FORGE_BUDGET_MS = 15_000;
@@ -56,7 +65,10 @@ export const gcDeps = {
   },
 };
 
-const ALLOWED: Record<"worktrees" | "branches" | "procs" | "store", ReadonlySet<string>> = {
+type Form = "worktrees" | "branches" | "procs" | "unstaged" | "store";
+
+const ALLOWED: Record<Form, ReadonlySet<string>> = {
+  unstaged: new Set(["--unstaged", "--apply", "--dry-run", "--json"]),
   procs: new Set(["--procs", "--apply", "--dry-run", "--json"]),
   worktrees: new Set(["--worktrees", "--apply", "--dry-run", "--json"]),
   branches: new Set(["--branches", "--apply", "--dry-run", "--json"]),
@@ -94,6 +106,17 @@ const procLines = (data: OrphanReport): string[] => [
   ...data.skipped.map((entry) => `kept ${entry.id}: ${entry.reason} -- ${entry.cmd}`),
 ];
 
+const minutes = (ms: number): string =>
+  ms < 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 3_600_000).toFixed(1)} h`;
+
+const unstagedLines = (data: UnstagedSweep): string[] => [
+  `workit gc --unstaged${data.apply ? "" : " (dry run; --apply restores)"}`,
+  ...(data.backups.length ? [] : ["no unstaged changes set aside by a commit"]),
+  ...data.backups.map(
+    (entry) => `${entry.action} ${entry.dir} (${minutes(entry.ageMs)} old): ${entry.reason}`,
+  ),
+];
+
 const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 
 const sweepLines = (data: WorktreeSweep): string[] => {
@@ -128,17 +151,25 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (argv.includes("--worktrees") && argv.includes("--branches"))
     return emit(io, fail("invalid_input", `pass --worktrees or --branches, not both: ${GC_USAGE}`));
   // Any other second form is an unknown argument of the first.
-  const form = argv.includes("--worktrees")
+  const form: Form = argv.includes("--worktrees")
     ? "worktrees"
     : argv.includes("--branches")
       ? "branches"
       : argv.includes("--procs")
         ? "procs"
-        : "store";
+        : argv.includes("--unstaged")
+          ? "unstaged"
+          : "store";
   const unknown = argv.find((arg) => !ALLOWED[form].has(arg));
   if (unknown) return emit(io, fail("invalid_input", `unknown argument ${unknown}: ${GC_USAGE}`));
   if (form !== "store" && argv.includes("--apply") && argv.includes("--dry-run"))
     return emit(io, fail("invalid_input", "pass --apply or --dry-run, not both"));
+  if (form === "unstaged")
+    return emit(
+      io,
+      ok(sweepUnstagedBackups(io.cwd, { apply: argv.includes("--apply") })),
+      unstagedLines,
+    );
   if (form === "procs") {
     try {
       const report = await reapOrphans({

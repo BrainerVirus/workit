@@ -122,6 +122,7 @@ import {
   type SessionHookRemoval,
   type SessionHookStatus,
 } from "@workit-dev/core/src/git/session-hook";
+import { findUnstagedBackups } from "@workit-dev/core/src/git/unstaged-backups";
 import { readHookRuns, type HookRun } from "@workit-dev/core/src/hooks/hook-runs";
 import { issueTrackerOf } from "@workit-dev/core/src/core/vcs-config";
 import {
@@ -221,7 +222,8 @@ type DoctorCheckId =
   | "claude_permissions"
   | "codex_permissions"
   | "cursor_permissions"
-  | "native_deny";
+  | "native_deny"
+  | "unstaged_backups";
 
 /** `info` is a true fact that needs no action (a normal install has no dev
  *  checkout, a newer host CLI than qualified); it counts as passed. */
@@ -2786,6 +2788,53 @@ const checkSessionHook = (res: Resolved): DoctorCheck => {
   };
 };
 
+const ageText = (ms: number): string =>
+  ms < 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 3_600_000).toFixed(1)} h`;
+
+/**
+ * Unstaged changes a killed `workit git commit` left set aside under a git
+ * dir (#907): each folder with its age and, per saved file, whether the
+ * working tree still differs from it. Not in a git repository: no row.
+ */
+export const unstagedBackupsCheck = (cwd: string): DoctorCheck | null => {
+  const inside = spawnSync("git", ["rev-parse", "--git-dir"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (inside.status !== 0) return null;
+  const backups = findUnstagedBackups(cwd);
+  const left = backups.filter((backup) => !backup.live);
+  if (!left.length)
+    return {
+      id: "unstaged_backups",
+      status: "pass",
+      detail: backups.length
+        ? `${backups.length} commit(s) in progress hold unstaged changes aside`
+        : "no unstaged changes set aside by a commit",
+    };
+  const describe = (backup: (typeof left)[number]) => {
+    const files = backup.problem
+      ? backup.problem
+      : backup.files
+          .map(
+            (entry) =>
+              `${entry.file} ${entry.state === "restored" ? "matches the working tree" : entry.state === "hidden" ? "differs (working tree still at the staged content)" : "differs (edited since)"}`,
+          )
+          .join(", ");
+    return `${backup.dir} (${ageText(backup.ageMs)} old): ${files}`;
+  };
+  return {
+    id: "unstaged_backups",
+    status: "warn",
+    detail: `a killed workit git commit left unstaged changes set aside: ${left.map(describe).join("; ")}`,
+    fix: "workit gc --unstaged (dry run), then workit gc --unstaged --apply; a file edited since is never overwritten: copy it back from the folder by hand",
+  };
+};
+
+const checkUnstagedBackups = (res: Resolved): DoctorCheck | null => unstagedBackupsCheck(res.cwd);
+
 export type SessionHookFix =
   | (SessionHookInstall & { workspace: string })
   | (SessionHookRemoval & { workspace: string })
@@ -4542,6 +4591,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkWorkitNotes,
   checkUpdates,
   checkNativeDeny,
+  checkUnstagedBackups,
   checkHostPermissions("claude-code", "claude_permissions"),
   checkHostPermissions("codex", "codex_permissions"),
   checkHostPermissions("cursor", "cursor_permissions"),

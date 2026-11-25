@@ -365,6 +365,9 @@ legacy HEAD`) is not. A command that changes into a directory is judged
   committed and has no unstaged rest to stash (lefthook before 2.2 failed
   that stash in a linked worktree); the rest is put back afterwards, and if
   that ever fails the error names the copy under the git dir's `workit/`.
+  A commit killed before that leaves the copy: `workit doctor` reports it
+  (`unstaged_backups`) and `workit gc --unstaged --apply` puts back each file
+  still at its staged content, never one edited since.
   Agents stage hunks
   by cutting `git diff -- <file>` down to the hunks they want (whole hunks;
   line counts are recounted) and passing it to `workit git stage --patch

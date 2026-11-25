@@ -11,8 +11,10 @@
 // exact bytes and mode back afterwards. Hooks then check what is committed
 // and find nothing staged in part to stash.
 //
-// The originals are copied under `<git dir>/workit/` first and removed only
-// once restored, so an interrupted commit leaves them there to copy back.
+// The originals are copied to `<git dir>/workit/unstaged-<pid>-<ms>/` with a
+// manifest first and removed only once restored, so an interrupted commit
+// leaves them there; `workit doctor` reports such a folder and
+// `workit gc --unstaged` puts them back (git/unstaged-backups.ts).
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -29,23 +31,72 @@ import path from "node:path";
 
 const GIT_TIMEOUT_MS = 20_000;
 
-const gitLine = (cwd: string, args: string[]): string | null => {
-  const run = spawnSync("git", args, {
+export const runGit = (cwd: string, args: string[], input?: string) =>
+  spawnSync("git", args, {
     cwd,
     encoding: "utf8",
+    input,
     timeout: GIT_TIMEOUT_MS,
     killSignal: "SIGKILL",
     windowsHide: true,
   });
+
+const gitLine = (cwd: string, args: string[]): string | null => {
+  const run = runGit(cwd, args);
   return run.status === 0 ? run.stdout.trim() : null;
 };
 
-/** `copy` null: the file was gone from the working tree; `link`: it was a symlink. */
-type Saved = { file: string; copy: string | null; mode: number; link?: string };
+/** A backup folder's name: the committing process and when it started. */
+export const BACKUP_DIR = /^unstaged-(\d+)-(\d+)$/u;
+export const MANIFEST = "files.json";
+
+/**
+ * One file set aside. `copy` (a name in the folder) holds its bytes; null
+ * with no `link`: the file was gone from the working tree. `staged` is the
+ * blob the hide step wrote to the working tree.
+ */
+export type SavedFile = {
+  file: string;
+  copy: string | null;
+  mode: number;
+  link?: string;
+  staged: string;
+};
+
+export type BackupManifest = {
+  version: 1;
+  pid: number;
+  createdAt: number;
+  /** The worktree's top directory. */
+  top: string;
+  files: SavedFile[];
+};
+
+/** Put one saved file back as it was; throws on an I/O error. */
+export function restoreSaved(dir: string, top: string, entry: SavedFile): void {
+  const target = path.join(top, entry.file);
+  rmSync(target, { force: true });
+  if (entry.link !== undefined) symlinkSync(entry.link, target);
+  else if (entry.copy !== null) {
+    writeFileSync(target, readFileSync(path.join(dir, entry.copy)));
+    chmodSync(target, entry.mode);
+  }
+}
 
 export type HiddenUnstaged = {
   /** Put every file's working-tree bytes and mode back; null when done, else why not. */
   restore: () => string | null;
+};
+
+/** `path -> staged blob` from the real index (top-relative paths). */
+const stagedBlobs = (top: string, files: readonly string[]): Map<string, string> => {
+  const blobs = new Map<string, string>();
+  const run = runGit(top, ["ls-files", "-s", "-z", "--", ...files.map((f) => `:(literal)${f}`)]);
+  for (const entry of (run.stdout ?? "").split("\0")) {
+    const match = /^\d+ ([0-9a-f]+) 0\t(.+)$/u.exec(entry);
+    if (match) blobs.set(match[2], match[1]);
+  }
+  return blobs;
 };
 
 /**
@@ -59,53 +110,55 @@ export function hideUnstaged(
   files: readonly string[],
 ): HiddenUnstaged | { error: string } {
   const top = gitLine(cwd, ["rev-parse", "--show-toplevel"]);
+  const createdAt = Date.now();
   const store = gitLine(cwd, [
     "rev-parse",
     "--path-format=absolute",
     "--git-path",
-    `workit/unstaged-${process.pid}-${Date.now()}`,
+    `workit/unstaged-${process.pid}-${createdAt}`,
   ]);
   if (!top || !store)
     return { error: "could not locate the worktree to set the unstaged changes aside" };
-  const saved: Saved[] = [];
+  const blobs = stagedBlobs(top, files);
+  const missing = files.filter((file) => !blobs.has(file));
+  if (missing.length) return { error: `no staged content to commit for ${missing.join(", ")}` };
+  const saved: SavedFile[] = [];
   const restore = (): string | null => {
     const failed: string[] = [];
     for (const entry of saved) {
-      const target = path.join(top, entry.file);
       try {
-        rmSync(target, { force: true });
-        if (entry.link !== undefined) symlinkSync(entry.link, target);
-        else if (entry.copy !== null) {
-          writeFileSync(target, readFileSync(entry.copy));
-          chmodSync(target, entry.mode);
-        }
+        restoreSaved(store, top, entry);
       } catch {
         failed.push(entry.file);
       }
     }
     if (failed.length)
-      return `could not put back the unstaged changes of ${failed.join(", ")}; the originals are in ${store}`;
+      return `could not put back the unstaged changes of ${failed.join(", ")}; the originals are in ${store} (workit gc --unstaged --apply restores them)`;
     rmSync(store, { recursive: true, force: true });
     return null;
   };
   try {
     mkdirSync(store, { recursive: true });
     files.forEach((file, index) => {
+      const staged = blobs.get(file)!;
       const source = path.join(top, file);
       const stat = lstatSync(source, { throwIfNoEntry: false });
-      if (!stat) {
-        saved.push({ file, copy: null, mode: 0 });
-        return;
+      if (!stat) saved.push({ file, copy: null, mode: 0, staged });
+      else if (stat.isSymbolicLink())
+        saved.push({ file, copy: null, mode: 0, link: readlinkSync(source), staged });
+      else {
+        copyFileSync(source, path.join(store, String(index)));
+        saved.push({ file, copy: String(index), mode: stat.mode & 0o7777, staged });
       }
-      if (stat.isSymbolicLink()) {
-        saved.push({ file, copy: null, mode: 0, link: readlinkSync(source) });
-        return;
-      }
-      const copy = path.join(store, String(index));
-      copyFileSync(source, copy);
-      saved.push({ file, copy, mode: stat.mode & 0o7777 });
     });
-    writeFileSync(path.join(store, "files.json"), JSON.stringify(saved));
+    const manifest: BackupManifest = {
+      version: 1,
+      pid: process.pid,
+      createdAt,
+      top,
+      files: saved,
+    };
+    writeFileSync(path.join(store, MANIFEST), JSON.stringify(manifest));
   } catch (error) {
     rmSync(store, { recursive: true, force: true });
     return {
@@ -113,13 +166,7 @@ export function hideUnstaged(
     };
   }
   // checkout-index takes paths relative to the cwd, without pathspec magic.
-  const checkout = spawnSync("git", ["checkout-index", "-f", "--", ...files], {
-    cwd: top,
-    encoding: "utf8",
-    timeout: GIT_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-    windowsHide: true,
-  });
+  const checkout = runGit(top, ["checkout-index", "-f", "--", ...files]);
   if (checkout.status !== 0) {
     const restored = restore();
     return {

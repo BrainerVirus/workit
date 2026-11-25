@@ -4,7 +4,9 @@ A finished change should leave nothing on disk. Workit removes what a merged
 branch left behind, `workit gc --worktrees` sweeps the worktrees older changes
 left, `workit gc --branches` sweeps their local branches, and
 `workit gc --procs` stops orphaned background processes
-([background processes](processes.md)).
+([background processes](processes.md)), and `workit gc --unstaged` puts back
+the unstaged changes a killed `workit git commit` left set aside
+([delivery](delivery.md)).
 It never forces anything: work that is uncommitted or not merged stays where it
 is, and the output names it.
 
