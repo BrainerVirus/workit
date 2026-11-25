@@ -282,7 +282,10 @@ semantic-release, with `@semantic-release/exec` before `@semantic-release/github
 }],
 ```
 
-GoReleaser, on the pushed tag (the tag already holds the entries, so they go to its version):
+GoReleaser, on the pushed tag (the tag already holds the entries, so they go to its version).
+`${GITHUB_REF_NAME#v}` strips a `v` prefix; with another prefix, strip that one and pass it as
+`--tag-prefix <prefix>` (for example `--tag-prefix app-v` for `app-v1.4.0`), or the roll reads
+the wrong tags:
 
 ```yaml
 - uses: actions/checkout@v4

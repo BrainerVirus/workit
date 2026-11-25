@@ -80,7 +80,7 @@ what to fix.
   `scripts/repo-rules/private-names.mts`: use `acme`, `alice`, `work-gh`).
   One rule only warns: `released-changelog` prints each `CHANGELOG.md`
   [Unreleased] entry a `workit-dev-v*` tag already shipped (fix: run
-  `bun scripts/roll-changelog.ts`) and never fails the run; a checkout
+  `workit changelog roll`) and never fails the run; a checkout
   without those tags skips it. Existing hits sit in `scripts/repo-rules/baseline.json`,
   which only shrinks (`bun run lint:rules --write`). A new rule cites its
   mistake, fails on it in `test/repo-rules/`, and seeds its hits with

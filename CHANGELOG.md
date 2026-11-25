@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > **Version model.** Semantic-release computes published versions from
 > Conventional Commits. Each PR adds its entries under [Unreleased]; an entry
 > belongs to the first `workit-dev-v*` release whose tag holds it, and
-> `bun scripts/roll-changelog.ts` moves released entries into that version's
+> `workit changelog roll` moves released entries into that version's
 > section. A GitHub release lists its version's entries first, then the
 > generated list of PR titles.
 
