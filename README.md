@@ -191,11 +191,8 @@ your machine ([install guide](docs/guides/install.md)).
 
 Every verb works without a host; hosts just put `workit` and the skills in
 front of the agent. Update with `workit upgrade --hosts=none --cli`; remove it with
-`workit uninstall` (pick the CLI). It removes the `~/.local/bin/workit` link
-only when it points into the install; in `bin/`, only the launcher Workit wrote
-and its temp files; it unlinks `current`; and from `versions/`, only entries
-holding the Workit CLI package. Anything else (a file of your own, a link
-elsewhere, an install root set to your home) is left untouched and named.
+`workit uninstall` (pick the CLI), which removes only what Workit installed
+([removing the CLI](docs/guides/install.md#removing-the-cli)).
 
 </details>
 
@@ -391,32 +388,9 @@ text.
 | `workit changelog apply\|merge\|driver` | Add entries under the changelog's Unreleased section; `driver install` registers the merge driver (`merge`) that keeps both sides' entries |
 | `workit <family> <action>` | Low-level task families: `task`, `policy`, `evidence`, `finding`, `decision`, `worker`, `state` |
 
-### Shell completion
-
-`workit setup` and `workit upgrade` install tab completion for the shell in
-`$SHELL`: verbs, subcommands and flags, plus configured check names
-(`workit check <Tab>`), fanout slice ids (`workit fanout worktree create <Tab>`)
-and workspace names. The values come from `workit __complete`, which reads only
-local files. No rc file is edited:
-
-| Shell | Installed to |
-| --- | --- |
-| zsh | `$XDG_DATA_HOME/zsh/site-functions/_workit` (`~/.local/share/zsh/site-functions/_workit`) |
-| bash | `$XDG_DATA_HOME/bash-completion/completions/workit` (loaded by bash-completion) |
-| fish | `$XDG_CONFIG_HOME/fish/completions/workit.fish` |
-| PowerShell | nothing; add `workit completion powershell \| Out-String \| Invoke-Expression` to `$PROFILE` |
-
-zsh loads `_workit` only from a directory on its `$fpath`. When that directory
-is missing from it, setup prints the lines to add to `~/.zshrc`, before any
-other `compinit`:
-
-```zsh
-fpath=("$HOME/.local/share/zsh/site-functions" $fpath)
-autoload -Uz compinit && compinit
-```
-
-`workit completion <shell>` prints the script for any other setup
-(`source <(workit completion zsh)`). Only a file Workit wrote is replaced.
+`workit setup` and `workit upgrade` also install tab completion for the shell in
+`$SHELL` (verbs, subcommands, flags, check names, slice ids, workspaces); see
+[shell completion](docs/guides/install.md#shell-completion).
 
 ## Upgrading
 
@@ -441,43 +415,15 @@ background, so no command waits on the network:
 | `@workit-dev` 1.x → 2.0 | Raised grants need a seal: run `workit workspace seal` once in your own terminal (the upgrade offers it); a config redirect never raises a grant |
 | `@brainervirus` 14.x → `@workit-dev` 1.0.0 | New package scope, versions restarted at 1.0.0; `npx -y @brainervirus/workit-cli@latest upgrade` moves every install |
 
-The rows below are majors of the old `@brainervirus/workit-*` packages, for a
-machine still on one of them:
-
-| From (`@brainervirus`) | Key breaks |
-| --- | --- |
-| 2.x → 3.0 | OpenCode V1 adapter removed (OpenCode 2.0.18+); `workit cutover` removed |
-| 3.x → 4.0 | Task state moves to `.git/workit/` event store, implicit task per branch; old `.workit/` migrates on first CLI use (backup kept) |
-| 4.x → 5.0 | Skill set v3: 16 skills merged into 11; old `wk-*` aliases removed; `ledger verdict --as` never makes the author independent |
-| 5.x → 6.0 | Approval receipts, `autoApprove`, managed external actions and the writer/checkout lease are gone; authority is host permissions plus autonomy grants |
-
-Details and the skill rename table: [migration guide](docs/guides/migration.md).
+Majors of the old `@brainervirus/workit-*` packages (2.x to 6.x) and the skill
+rename table: [migration guide](docs/guides/migration.md).
 
 ## Troubleshooting
 
 Run `workit doctor` (or `--json`) first: each row names its check id and its
-repair. The table maps common symptoms to those ids.
-
-| Symptom | Doctor check | Fix |
-| --- | --- | --- |
-| Something is off after install or upgrade | `versions`, `stale_install`, `stale_pin` | `workit upgrade`; each finding names its repair |
-| Hook says `workit migration pending` | none | Run `workit task status` once in that checkout; hooks never migrate |
-| A command returns `busy` (exit 4) | `workspace_lock` | Another workit process holds the store or stack lock; retry. A dead holder is reclaimed automatically; `workit doctor --fix-lock` clears a stale one. For the heavy-check lease, `workit lock status` names the holder |
-| `blocked` (exit 3) on push/PR/merge | `grant_endpoint`, `grant_seal`, `github_identity`, `gitlab_identity` | Read `unblock` in the output: usually a missing grant (`workit grant show`), an unsealed change (`workit workspace seal` in your own terminal) or a `gh`/`glab` login that is not the workspace account |
-| Agents get permission prompts for `workit` verbs | `claude_permissions`, `codex_permissions`, `cursor_permissions`, `*_grant_rules` | `workit setup` in your own terminal |
-| Hook answers `workit context skipped: host under load` | `hook_deadline` | Rare under normal load; see the [Claude Code guide](docs/guides/claude-code.md) for `WORKIT_HOOK_DEADLINE_MS` |
-| Store grows large | none | `workit gc --dry-run`, then `workit gc` |
-| `recovery` copies from 2.x reported | none | `workit gc --prune-recovery --yes` |
-| Claude Code hook prints `[workit] Claude Code hook unavailable` | `claude_plugin`, `claude_session_plugin` | The hook failed open: install Bun for a local pin, or `workit upgrade` and restart Claude Code |
-| Codex hooks do not run | `codex_hooks` | Trust them with `/hooks` in Codex |
-| Codex verifier or reviewer agents missing | `codex_agents` | `workit upgrade`, then a new Codex session |
-| OpenCode fails `opencode_version` | `opencode_version` | Upgrade OpenCode to 2.0.18+ |
-| Pi does not load Workit | `pi_extension` | See [Pi](docs/guides/hosts.md#pi) |
-| An agent could edit a Workit-guarded file (`workspaces.json` and its seal, approvals, issued sessions) | `native_deny` | `workit setup` in your own terminal writes each host's own deny rules (Claude Code, Cursor, OpenCode) |
-| `youtrack.writes: auto` posts to any YouTrack | `youtrack_writes` | Name the allowed hosts in `youtrack.autoHosts` ([YouTrack guide](docs/guides/youtrack.md)) |
-| Agents do not know ytrack's commands | `ytrack_skill` | The fix doctor names: `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade` (ytrack 0.6.0+ keeps its own skill) |
-
-More: [configuration and storage](docs/guides/configuration.md).
+repair. [Troubleshooting](docs/guides/troubleshooting.md) maps common symptoms
+to those ids; storage and config are in
+[configuration](docs/guides/configuration.md).
 
 ## Documentation
 

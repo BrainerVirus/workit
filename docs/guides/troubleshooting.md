@@ -1,5 +1,27 @@
 # Troubleshooting
 
+Run `workit doctor` (or `--json`) first: each row names its check id and its repair. The table
+maps common symptoms to those ids.
+
+| Symptom | Doctor check | Fix |
+| --- | --- | --- |
+| Something is off after install or upgrade | `versions`, `stale_install`, `stale_pin` | `workit upgrade`; each finding names its repair |
+| Hook says "workit migration pending" | none | Run `workit task status` once in that checkout; hooks never migrate |
+| A command returns `busy` (exit 4) | `workspace_lock` | Another workit process holds the store or stack lock; retry. A dead holder is reclaimed automatically; `workit doctor --fix-lock` clears a stale one. For the heavy-check lease, `workit lock status` names the holder |
+| `blocked` (exit 3) on push/PR/merge | `grant_endpoint`, `grant_seal`, `github_identity`, `gitlab_identity` | Read `unblock` in the output: usually a missing grant (`workit grant show`), an unsealed change (`workit workspace seal` in your own terminal) or a `gh`/`glab` login that is not the workspace account |
+| Agents get permission prompts for `workit` verbs | `claude_permissions`, `codex_permissions`, `cursor_permissions`, `*_grant_rules` | `workit setup` in your own terminal |
+| Hook answers "workit context skipped: host under load" | `hook_deadline` | Rare under normal load; see the [Claude Code guide](claude-code.md) for `WORKIT_HOOK_DEADLINE_MS` |
+| Store grows large | none | `workit gc --dry-run`, then `workit gc` |
+| `recovery` copies from 2.x reported | none | `workit gc --prune-recovery --yes` |
+| Claude Code hook prints `[workit] Claude Code hook unavailable` | `claude_plugin`, `claude_session_plugin` | The hook failed open: install Bun for a local pin, or `workit upgrade` and restart Claude Code |
+| Codex hooks do not run | `codex_hooks` | Trust them with `/hooks` in Codex |
+| Codex verifier or reviewer agents missing | `codex_agents` | `workit upgrade`, then a new Codex session |
+| OpenCode fails `opencode_version` | `opencode_version` | Upgrade OpenCode to 2.0.18+ |
+| Pi does not load Workit | `pi_extension` | See [Pi](hosts.md#pi) |
+| An agent could edit a Workit-guarded file (`workspaces.json` and its seal, approvals, issued sessions) | `native_deny` | `workit setup` in your own terminal writes each host's own deny rules (Claude Code, Cursor, OpenCode) |
+| `youtrack.writes: auto` posts to any YouTrack | `youtrack_writes` | Name the allowed hosts in `youtrack.autoHosts` ([YouTrack guide](youtrack.md)) |
+| Agents do not know ytrack's commands | `ytrack_skill` | The fix doctor names: `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade` (ytrack 0.6.0+ keeps its own skill) |
+
 ## "Workit hooks are off"
 
 Claude Code, Codex and Cursor start Workit's hooks with the `node` the repo

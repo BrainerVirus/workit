@@ -1,7 +1,4 @@
 [
-  "README.md: workit __complete",
-  "README.md: workit cutover",
-  "README.md: workit migration pending",
   "README.md: workit status",
   "docs/guides/migration.md: workit action",
   "docs/guides/migration.md: workit cutover"
