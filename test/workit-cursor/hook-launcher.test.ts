@@ -22,6 +22,10 @@ import {
   runCursorHookLaunch,
 } from "@/packages/workit-cursor/hooks/launch-runtime.mjs";
 
+// Never the shared /tmp itself: a hook resolving the store there would move a
+// stray /tmp/.workit into this run's throwaway state dir (#892).
+const HOOK_CWD = mkdtempSync(path.join(tmpdir(), "wk-hook-cwd-"));
+
 const HOOKS_SRC = path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks");
 const PKG = "@workit-dev/cursor";
 const roots: string[] = [];
@@ -74,7 +78,7 @@ const launch = (root: string, payload: unknown, env: Record<string, string>) =>
 const SHELL_PAYLOAD = {
   hook_event_name: "beforeShellExecution",
   conversation_id: "c1",
-  workspace_roots: ["/tmp"],
+  workspace_roots: [HOOK_CWD],
   command: "ls",
 };
 

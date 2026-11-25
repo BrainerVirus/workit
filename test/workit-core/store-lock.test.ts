@@ -21,6 +21,7 @@ import {
 } from "@/packages/workit-core/src/core/store-lock";
 import { appendRow, ledgerPath } from "@/packages/workit-core/src/ledger";
 import { join, resolve } from "node:path";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { TaskStore } from "@/packages/workit-core/src/core/task-store";
 import { stackLockStale } from "@/packages/workit-core/src/stack";
 import { success, type TaskRecord } from "@/packages/workit-core/src/core/task-contract";
@@ -50,7 +51,7 @@ const startedStore = (options?: { lockTimeoutMs?: number }) => {
   return {
     store,
     task: created.data,
-    lockPath: join(store.root, ".workit", "tasks", created.data.id, "lock"),
+    lockPath: join(folderStoreDir(store.root), "tasks", created.data.id, "lock"),
     checkoutLock: lockPathFor(store.root),
   };
 };
@@ -193,7 +194,7 @@ test("Given an abandoned reclaim guard older than the TTL, When a write runs, Th
 
 test("Given a corrupt task record, When a write runs, Then recovery_required still surfaces", () => {
   const { store, task } = startedStore();
-  const file = join(store.root, ".workit", "tasks", task.id, "events.jsonl");
+  const file = join(folderStoreDir(store.root), "tasks", task.id, "events.jsonl");
   writeFileSync(file, "{broken}\n{broken");
   expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
     ok: false,
@@ -451,7 +452,7 @@ for (const simulateWindows of [false, true])
     `Given a read-only .workit and no lock holder${simulateWindows ? " (simulated Windows)" : ""}, When a write runs, Then it fails fast with storage_error and a permissions hint`,
     () => {
       const { store, task } = startedStore({ lockTimeoutMs: 2_000 });
-      const workit = join(store.root, ".workit", "tasks", task.id);
+      const workit = join(folderStoreDir(store.root), "tasks", task.id);
       const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
       chmodSync(workit, 0o555);
       try {

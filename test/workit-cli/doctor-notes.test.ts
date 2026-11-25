@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fixWorkitNotes, runDoctor } from "@/packages/workit-cli/src/admin/doctor";
 import { main } from "@/packages/workit-cli/src/main";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 // The full doctor run spawns many probes; a loaded machine needs the room.
 setDefaultTimeout(120_000);
@@ -182,9 +183,10 @@ test("Given a linked worktree with notes in its .workit/, When --fix runs there,
   expect(existsSync(path.join(wt, ".workit"))).toBe(false);
 });
 
-test("Given a directory outside git with files in .workit/, When doctor and --fix run, Then nothing is reported or moved", () => {
+test("Given a directory outside git with files in .workit/, When doctor and --fix run, Then workit_notes reports nothing and the file goes with the folder's store into the state dir (#892)", () => {
   const root = repo({ ".workit/plan.md": "# plan\n" }, [], false);
   expect(row(root)).toMatchObject({ status: "pass", detail: "not a git checkout" });
   expect(fixWorkitNotes({ cwd: root })).toMatchObject({ action: "none", moves: [] });
-  expect(readFileSync(path.join(root, ".workit", "plan.md"), "utf8")).toBe("# plan\n");
+  expect(readFileSync(path.join(folderStoreDir(root), "plan.md"), "utf8")).toBe("# plan\n");
+  expect(existsSync(path.join(root, ".workit"))).toBe(false);
 });

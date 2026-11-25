@@ -17,6 +17,7 @@ import {
 } from "@/packages/workit-core/src/core/task-context";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
 import { caller, scope, taskStartRequest } from "./task-fixtures";
+import { workspaceFileOf } from "./store-files";
 
 const root = () => mkdtempSync(join(tmpdir(), "workit-continuity-"));
 const context = (checkout: string): OperationContext => ({
@@ -56,7 +57,7 @@ test("export digest excludes its own digest and never exports live workspace own
     acquiredAt: "2026-01-01T00:00:00Z",
   };
   writeFileSync(
-    join(source.checkout, ".workit", "workspace.json"),
+    workspaceFileOf(source.checkout),
     `${JSON.stringify({ ...source.workspace, writer })}\n`,
   );
   const exported = source.core.state({

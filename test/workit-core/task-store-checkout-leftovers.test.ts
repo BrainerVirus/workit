@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { TaskStore } from "@/packages/workit-core/src/core/task-store";
 import { checkoutSlug } from "@/packages/workit-core/src/store/paths";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { ref, scope } from "./task-fixtures";
 
 const dirs: string[] = [];
@@ -76,15 +77,11 @@ test("Given a git checkout, When the store writes, Then nothing lands in .workit
   expect(existsSync(path.join(root, ".workit"))).toBe(false);
 });
 
-test("Given a non-git directory, When the store writes, Then .workit is the store and keeps its 2.x tombstone", () => {
+test("Given a non-git directory, When the store writes, Then the store is in the state dir and nothing lands in the folder (#892)", () => {
   const root = tempDir();
   expect(write(root).ok).toBe(true);
-  const marker = JSON.parse(readFileSync(path.join(root, ".workit", "workspace.json"), "utf8"));
-  expect(marker).toMatchObject({
-    store: { format: "workit-store" },
-    critical: ["store"],
-  });
-  expect(readFileSync(path.join(root, ".workit", ".gitignore"), "utf8")).toBe("*\n");
+  expect(existsSync(path.join(folderStoreDir(root), "store.json"))).toBe(true);
+  expect(existsSync(path.join(root, ".workit"))).toBe(false);
 });
 
 test("Given leftover .workit/tasks data, When the store opens, Then it moves once into the git store's backup, markers go, and a second open does nothing", () => {

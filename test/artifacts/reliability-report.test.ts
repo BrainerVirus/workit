@@ -74,13 +74,14 @@ test(
     // is info (the launch update check's setting, local files only); hook_node
     // passes (the PATH node meets the floor); legacy_dirs passes (no pre-XDG dir);
     // legacy_scope passes (no pre-1.0.0 install); grant_seal passes (no
-    // workspace entries: nothing to seal, #819).
+    // workspace entries: nothing to seal, #819); stray_workit passes (no
+    // .workit state outside a repo, #892).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 47,
+      passed: 48,
       warned: 1,
       failed: 1,
-      total: 49,
+      total: 50,
       fixes: 1,
     });
     expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -125,13 +126,14 @@ test(
       // (no Codex process running, #561); updates is info (the launch update
       // check's setting, local files only); legacy_dirs passes (no pre-XDG dir);
       // legacy_scope passes (no pre-1.0.0 install); grant_seal passes (no
-      // workspace entries: nothing to seal, #819).
+      // workspace entries: nothing to seal, #819); stray_workit passes (no
+      // .workit state outside a repo, #892).
       expect(report.doctor).toEqual({
         ok: false,
-        passed: 47,
+        passed: 48,
         warned: 1,
         failed: 1,
-        total: 49,
+        total: 50,
         fixes: 1,
       });
     } finally {

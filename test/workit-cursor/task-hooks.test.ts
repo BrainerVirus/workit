@@ -13,6 +13,10 @@ import {
   parseCursorHookInput,
 } from "@/packages/workit-cursor/hooks/workit-hook";
 
+// Never the shared /tmp itself: a hook resolving the store there would move a
+// stray /tmp/.workit into this run's throwaway state dir (#892).
+const HOOK_CWD = mkdtempSync(path.join(tmpdir(), "wk-hook-cwd-"));
+
 // Hooks under test read Workit state from their workspace root: give them a
 // scratch root, never this checkout, whose real state (learnings) leaked into
 // hook output in a full run.
@@ -38,7 +42,7 @@ test("Cursor hook rejects malformed trust-boundary inputs", () => {
     handleCursorHook({
       hook_event_name: "preToolUse",
       conversation_id: "conv-1",
-      workspace_roots: ["/tmp/workit"],
+      workspace_roots: [path.join(HOOK_CWD, "workit")],
       tool_name: "Write",
       tool_input: { file_path: "src/index.ts" },
     }),
@@ -65,7 +69,7 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
       conversation_id: "conv-1",
       workspace_roots: [root],
       cwd: root,
-      command: "cp src/in-scope /tmp/outside",
+      command: `cp src/in-scope ${path.join(HOOK_CWD, "outside")}`,
     }),
   ).toEqual({});
   expect(
@@ -82,7 +86,7 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
       hook_event_name: "beforeShellExecution",
       conversation_id: "conv-1",
       workspace_roots: [root],
-      cwd: "/tmp",
+      cwd: HOOK_CWD,
       command: "touch file",
     }),
   ).toEqual({});
@@ -92,7 +96,7 @@ test("shell hooks pass through when cwd is missing and redirections are opaque",
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
   // File writes are host-policy: unparseable shapes and missing cwds pass
   // through instead of denying.
-  for (const command of [">/tmp/out", "2>/tmp/err"]) {
+  for (const command of [`>${path.join(HOOK_CWD, "out")}`, `2>${path.join(HOOK_CWD, "err")}`]) {
     expect(
       handleCursorHook({
         hook_event_name: "beforeShellExecution",
@@ -465,8 +469,8 @@ test("shell intent captures unlisted verbs and skips env assignments", () => {
     expect(shell(root, "echo hi")).toEqual({});
     expect(shell(root, 'echo "hi" > out.txt')).toEqual({});
     expect(shell(root, "mkdir a && mkdir b")).toEqual({});
-    expect(shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual({});
-    expect(shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual(
+    expect(shell(root, `tee ${path.join(HOOK_CWD, `wk-outside-${process.pid}.txt`)}`)).toEqual({});
+    expect(shell(root, `FOO=1 rm ${path.join(HOOK_CWD, `wk-outside-${process.pid}.txt`)}`)).toEqual(
       {},
     );
     // Outside a git checkout the heavy-command gate stays out too.
@@ -478,7 +482,7 @@ test("shell intent captures unlisted verbs and skips env assignments", () => {
 
 test("shell paths pass through canonical absolute targets without a task", () => {
   const root = shellRoot();
-  const outside = path.join(tmpdir(), `wk-escape-${process.pid}.txt`);
+  const outside = path.join(HOOK_CWD, `wk-escape-${process.pid}.txt`);
   try {
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, path.join(root, "link"));
@@ -534,7 +538,7 @@ test("outside absolute paths pass through without writer ownership", () => {
         conversation_id: "parent",
         workspace_roots: [root],
         tool_name: "Write",
-        tool_input: { file_path: path.join(tmpdir(), "workit-elsewhere-x.ts") },
+        tool_input: { file_path: path.join(HOOK_CWD, "workit-elsewhere-x.ts") },
       }),
     ).toEqual({});
   } finally {

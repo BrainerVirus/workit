@@ -61,6 +61,7 @@ import { resolveStateDir } from "@workit-dev/core/src/core/logger";
 import {
   LEGACY_MARKER_INFIX,
   configDir as workitConfigDir,
+  folderStoreDir,
   isRealDir,
   legacyDirs,
   legacyWorktreesDir,
@@ -80,6 +81,7 @@ import {
   type PressureReading,
 } from "@workit-dev/core/src/core/pressure";
 import { repoDir } from "@workit-dev/core/src/core/repo-paths";
+import { strayEntries } from "@workit-dev/core/src/store/folder-store";
 import { CHECKOUT_LEFTOVERS } from "@workit-dev/core/src/core/checkout-leftovers";
 import { packageRoot } from "@workit-dev/core/src/core/package-root";
 import {
@@ -219,6 +221,7 @@ type DoctorCheckId =
   | "cursor_grant_rules"
   | "checks_config"
   | "workit_notes"
+  | "stray_workit"
   | "config_schema"
   | "release_packages"
   | "updates"
@@ -3708,6 +3711,50 @@ const checkWorkitNotes = (res: Resolved): DoctorCheck => {
   };
 };
 
+// Outside every git repository Workit keeps a folder's store in the state dir
+// (`<state>/folders/<slug>`); an older Workit wrote it into `<folder>/.workit`
+// (#892). Any Workit call in that folder moves it once; until then this row
+// names each one in the cwd or its parents.
+/** True when `dir` or a parent holds `.git`: its `.workit/` is a repo's team config dir. */
+const inRepo = (dir: string): boolean => {
+  for (let at = dir; ; at = path.dirname(at)) {
+    if (existsSync(path.join(at, ".git"))) return true;
+    if (path.dirname(at) === at) return false;
+  }
+};
+
+/** Each `<dir>/.workit` holding Workit state, for `cwd` and its parents outside a repo. */
+const strayWorkitDirs = (cwd: string): Array<{ dir: string; to: string }> => {
+  const found: Array<{ dir: string; to: string }> = [];
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    const workit = path.join(dir, ".workit");
+    if (strayEntries(workit).length > 0 && !inRepo(dir))
+      found.push({ dir: workit, to: folderStoreDir(dir) });
+    if (path.dirname(dir) === dir) return found;
+  }
+};
+
+const checkStrayWorkit = (res: Resolved): DoctorCheck => {
+  const found = strayWorkitDirs(res.cwd);
+  if (found.length === 0)
+    return {
+      id: "stray_workit",
+      status: "pass",
+      detail: "no Workit state in a .workit/ outside a repo here or above",
+    };
+  return {
+    id: "stray_workit",
+    status: "warn",
+    detail: `Workit state outside a repo: ${found.map((row) => `${row.dir} (belongs in ${row.to})`).join("; ")}`,
+    fix: found
+      .map((row) => `workit --cwd ${shellQuote(path.dirname(row.dir))} dir notes`)
+      .join(" && ")
+      .concat(
+        " (moves each once, never replacing what is there; what stays is named in its MOVED-TO-STATE.txt)",
+      ),
+  };
+};
+
 export type WorkitNotesFix = {
   action: "moved" | "none" | "failed";
   /** Each move, `.workit/<rel>` to its absolute place under the notes dir. */
@@ -4594,6 +4641,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkHookRuns,
   checkChecksConfig,
   checkWorkitNotes,
+  checkStrayWorkit,
   checkUpdates,
   checkNativeDeny,
   checkUnstagedBackups,

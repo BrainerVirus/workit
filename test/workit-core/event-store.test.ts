@@ -18,6 +18,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { runtimeVersion } from "@/packages/workit-core/src/core/task-store";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import {
@@ -201,11 +202,9 @@ test("detached HEAD keys by worktree and a non-git directory keys by directory",
   const plain = tempDir("wk-s15-plain-");
   const dir = implicit(plain)!;
   expect(dir.key).toMatchObject({ kind: "dir", branch: null });
-  expect(storeDirOf(plain)).toBe(path.join(plain, ".workit"));
-  // A plain directory's store marks itself for 2.x readers.
-  expect(
-    JSON.parse(readFileSync(path.join(plain, ".workit", "workspace.json"), "utf8")),
-  ).toMatchObject({ store: { format: "workit-store" }, critical: ["store"] });
+  // Outside git the store is in the state dir and the folder gets nothing (#892).
+  expect(storeDirOf(plain)).toBe(folderStoreDir(plain));
+  expect(existsSync(path.join(plain, ".workit"))).toBe(false);
 });
 
 test("an explicitly started task takes the branch over; a closed task frees it", () => {
@@ -551,6 +550,7 @@ const asV2Store = (root: string) => {
   if (!workspace.ok || !workspace.data || !tasks.ok) throw new Error("fixture state missing");
   const workit = path.join(root, ".workit");
   rmSync(workit, { recursive: true, force: true });
+  rmSync(storeDirOf(root), { recursive: true, force: true });
   mkdirSync(path.join(workit, "tasks"), { recursive: true });
   mkdirSync(path.join(workit, "recovery"), { recursive: true });
   writeFileSync(path.join(workit, ".gitignore"), "*\n");
@@ -635,7 +635,7 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
   for (const id of ids) expect(eventsOf(root, id)[0].type).toBe("migrated.from_v2");
 
   // Backup kept; 2.x task files gone; recovery left in place.
-  const backup = path.join(root, ".workit", "legacy");
+  const backup = path.join(storeDirOf(root), "legacy");
   const backedUp = readdirSync(backup, { recursive: true }).map(String);
   for (const id of ids) expect(backedUp.some((name) => name.endsWith(`${id}.json`))).toBe(true);
   // Each 2.x task file is now a marker a 2.x reader fails closed on.

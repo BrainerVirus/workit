@@ -34,6 +34,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { floorMessage, floorOfRange, handleBelowFloor } from "./node-resolve.mjs";
 import {
   configDir as workitConfigDir,
+  folderStoreDir,
   migrateLegacyDirs,
   stateDir as workitStateDir,
   userHome,
@@ -303,7 +304,7 @@ const READS = new Set(["Read", "Grep", "Glob"]);
 // A copy of workit-core hooks/write-reach.ts between its markers, types removed
 // (test/workit-core/hooks/write-reach.test.ts holds them equal).
 // write-reach:begin
-/** `<git-common-dir>/workit` (or `<dir>/.workit` outside git) holds tasks. */
+/** `<git-common-dir>/workit` (or `<state>/folders/<slug>`, or an older `<dir>/.workit`, outside git) holds tasks. */
 const hasTaskStore = (cwd) => {
   try {
     for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
@@ -323,7 +324,11 @@ const hasTaskStore = (cwd) => {
           existsSync(path.join(store, "tasks")) || existsSync(path.join(store, "task-index.json"))
         );
       }
-      if (existsSync(path.join(dir, ".workit"))) return true;
+      if (
+        existsSync(path.join(dir, ".workit")) ||
+        existsSync(path.join(folderStoreDir(dir, process.env), "tasks"))
+      )
+        return true;
       if (path.dirname(dir) === dir) return false;
     }
   } catch {

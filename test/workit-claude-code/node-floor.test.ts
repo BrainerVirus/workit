@@ -4,12 +4,22 @@
 // the agent once.
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { bareNodeEnv, fakeNode } from "../shared/helpers/hook-node";
 import { PLUGIN_DIR } from "./plugin-helpers";
 
+// Never the shared /tmp itself: a hook resolving the store there would move a
+// stray /tmp/.workit into this run's throwaway state dir (#892).
+const HOOK_CWD = mkdtempSync(path.join(tmpdir(), "wk-hook-cwd-"));
+
 const LAUNCHER = path.join(PLUGIN_DIR, "bin", "workit-hook.mjs");
-const PRE_TOOL = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", cwd: "/tmp" });
+const PRE_TOOL = JSON.stringify({
+  hook_event_name: "PreToolUse",
+  tool_name: "Bash",
+  cwd: HOOK_CWD,
+});
 const SESSION_START = JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1" });
 const run = (version: string, env: Record<string, string> = {}, input = PRE_TOOL) =>
   spawnSync("node", [LAUNCHER], {

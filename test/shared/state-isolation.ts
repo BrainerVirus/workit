@@ -3,12 +3,13 @@
 // the CLI) inherit it, so their logs and heartbeats never land in the real
 // ~/.local/state/workit. Tests that need a specific state dir still set
 // WORKIT_STATE_DIR (or HOME/XDG_STATE_HOME after clearing it) themselves.
-import { afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, afterEach } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TEST_RUN_ENV, grantsHome } from "@/packages/workit-core/src/core/account-home";
 import { guardRealHome, guardRealState } from "./real-state-guard";
+import { TEST_RUN_REFUSALS } from "@/packages/workit-core/src/store/folder-store";
 
 // Fail the run if a test left a worktree in the real state dir (a child given
 // an env without this run's WORKIT_STATE_DIR), or changed the account's
@@ -54,6 +55,19 @@ process.env.WORKIT_NO_YTRACK = "1";
 // the pressure gate's tests inject their own reading.
 process.env.WORKIT_NO_PRESSURE_GATE = "1";
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// A test (or a hook or CLI child it spawned) that resolved a folder store at
+// the temp dir itself, a parent of it, or a folder outside it holding a
+// .workit: the move would carry a real `.workit` into this run's state dir,
+// deleted below (#892). Hooks fail open, so the refusal is recorded here and
+// fails the test that caused it.
+afterEach(() => {
+  const file = path.join(dir, TEST_RUN_REFUSALS);
+  if (!existsSync(file)) return;
+  const text = readFileSync(file, "utf8");
+  rmSync(file, { force: true });
+  throw new Error(`folder-store guard tripped:\n${text}`);
+});
 
 // Grants are read from the OS account's home, which no env var moves (D15):
 // in-process, every test reads them from a run-scoped temp home instead, so

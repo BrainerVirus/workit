@@ -107,7 +107,14 @@ const HOOK_ENTRIES = [
 // YouTrack autoHosts (2026-11-21, Bun 1.4.4, measured at 5a97f1bf after #925 and #927): core run
 // 602,293 B. One ceiling for the scoped youtrack auto writes change, core run plus 6 KiB: the
 // raw-ytrack guard's --host allow-list and the seal's autoHosts key may spend it, printing the delta in their PR.
-const BUDGET = 608_437;
+// state-outside-repo (#892, 2026-11-25, Bun 1.4.5): a non-git folder's store in the state dir and
+// the one-time move of an older <folder>/.workit (store/folder-store.ts) took core run to 609,547 B,
+// the ceiling is that plus 2 KiB; its test-run guard (testRunFolderRefusal) then took it to 610,282 B.
+// Rebased on #950 (raw-git push URLs, 20 B under the old ceiling) with the move's hardening (an atomic
+// copy fallback and the O_EXCL move lock), core run is 613,067 B: #892 adds 4,650 B over #950's 608,417 B.
+// Nothing trims without dropping the move's safety (resolveStore runs in every hook, so the move ships
+// in the hook bundle); one ceiling for both changes, that plus 2 KiB.
+const BUDGET = 615_115;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

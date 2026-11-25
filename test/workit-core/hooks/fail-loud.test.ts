@@ -6,10 +6,15 @@
 // and records a hook-runs failure row that `workit doctor` reads.
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { readHookRuns } from "@/packages/workit-core/src/hooks/hook-runs";
 import { bareNodeEnv, scratchDir } from "../../shared/helpers/hook-node";
+
+// Never the shared /tmp itself: a hook resolving the store there would move a
+// stray /tmp/.workit into this run's throwaway state dir (#892).
+const HOOK_CWD = mkdtempSync(path.join(tmpdir(), "wk-hook-cwd-"));
 
 const REPO = path.resolve(import.meta.dir, "../../..");
 const CLAUDE = path.join(REPO, "packages/workit-claude-code");
@@ -18,7 +23,7 @@ const CODEX_LAUNCHER = path.join(REPO, "packages/workit-codex/hooks/launcher.ts"
 const NODE = spawnSync("node", ["-p", "process.execPath"], { encoding: "utf8" }).stdout.trim();
 
 const event = (name: string, extra: Record<string, unknown> = {}) =>
-  JSON.stringify({ hook_event_name: name, session_id: "s1", cwd: "/tmp", ...extra });
+  JSON.stringify({ hook_event_name: name, session_id: "s1", cwd: HOOK_CWD, ...extra });
 
 const failures = (env: Record<string, string>) =>
   readHookRuns(env.WORKIT_STATE_DIR).filter((row) => row.failure !== undefined);
