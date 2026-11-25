@@ -7,6 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { bareNodeEnv, fakeNode } from "../shared/helpers/hook-node";
 
+// Never the shared /tmp itself: a hook resolving the store there would move a
+// stray /tmp/.workit into this run's throwaway state dir (#892).
+const HOOK_CWD = mkdtempSync(path.join(tmpdir(), "wk-hook-cwd-"));
+
 const LAUNCHER = path.resolve(import.meta.dir, "../../packages/workit-codex/hooks/launcher.ts");
 const dirs: string[] = [];
 afterAll(() => {
@@ -16,7 +20,7 @@ afterAll(() => {
 const payload = JSON.stringify({
   hook_event_name: "PreToolUse",
   session_id: "s",
-  cwd: "/tmp",
+  cwd: HOOK_CWD,
   tool_name: "bash",
   tool_input: { command: "ls" },
 });

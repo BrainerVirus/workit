@@ -13,6 +13,10 @@ import {
   parseCursorHookInput,
 } from "@/packages/workit-cursor/hooks/workit-hook";
 
+// Never the shared /tmp itself: a hook resolving the store there would move a
+// stray /tmp/.workit into this run's throwaway state dir (#892).
+const HOOK_CWD = mkdtempSync(path.join(tmpdir(), "wk-hook-cwd-"));
+
 // Hooks under test read Workit state from their workspace root: give them a
 // scratch root, never this checkout, whose real state (learnings) leaked into
 // hook output in a full run.
@@ -82,7 +86,7 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
       hook_event_name: "beforeShellExecution",
       conversation_id: "conv-1",
       workspace_roots: [root],
-      cwd: "/tmp",
+      cwd: HOOK_CWD,
       command: "touch file",
     }),
   ).toEqual({});
