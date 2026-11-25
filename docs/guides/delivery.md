@@ -449,20 +449,20 @@ and how to fix it.
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t ≤100 chars> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]
+workit pr create (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [--base <b> | --track <t>] [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]
 workit pr template [--json]            # the PR template to fill (the repo's, else Workit's) and its source
-workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
+workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
 workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
 workit pr threads                      # unresolved review threads, one line each with its id
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
-workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
+workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]   # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
 workit ci wait --branch main           # a branch with no PR (the trunk after a merge): its push runs; --ref main is the same
-workit ci rerun --failed --reason flake|infra   # once per PR head without --force
+workit ci rerun [--check <name>… | --failed] --reason flake|infra [--force]   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
-workit pr merge [--pr <n>] [--method squash|merge|rebase] [--subject <s>] [--body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
-workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
+workit pr merge [--pr <n>] [--squash | --merge | --rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
+workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|released] [--pr <n> | --branch <b>] [--sha <sha>] [--tag <t>] [--package <name[@version]>]  # exit 1 when it did not land
 ```
 
 - `pr create` requires the branch to be pushed and checks the forge reports
@@ -949,10 +949,10 @@ Ultimate) are not read.
 child PR on its parent branch) on GitHub and GitLab.
 
 ```bash
-workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record the chain (default: the current branch's)
-workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
-workit stack sync [--local] [--dry-run] [--force <branch>]
-workit stack restack [--dry-run] [--force <branch>]                # sync, then delete the merged branches locally
+workit stack plan [--name <n>] [--trunk <b> | --track <t>] [<bottom> … <top>]   # record the chain (default: the current branch's)
+workit stack status [--name <n>]         # per PR: READY | WAITING | ADVANCE | COMPLETE
+workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]
+workit stack restack [--name <n>] [--dry-run] [--force <branch>]   # sync, then delete the merged branches locally
 workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]
 ```
 
@@ -1304,178 +1304,10 @@ fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
 ## Heavy checks share the machine
 
 Parallel agents run their checks on one machine. Workit runs each heavy check
-under a machine-wide lease, so two test suites never start at once, and on
-Linux it gives each one its own memory and CPU limit.
-
-```bash
-workit check test                 # heavy by default: waits for the lease, then runs
-workit check --heavy -- npx jest  # an ad-hoc command takes the lease only with --heavy
-workit check --name unit -- bun test a.test.ts  # a light ad-hoc command: no lease, runs at once
-workit check --heavy -- bunx oxfmt a.ts         # a formatter never takes the lease, even with --heavy
-workit check test --timeout 1200  # bounds the lease wait and the run together
-workit check test --no-lease --reason "<why>"  # run it now, outside the lease (for you, not for briefs)
-workit lock status                # who holds the lease; `workit lock wait` waits for a slot
-```
-
-- **Which checks are heavy.** The named checks `test`, `build` and `packaging` are heavy by
-  default; `lint`, `typecheck` and `format` are light and never take the lease
-  (`resources.light` in workspaces.json changes the list). An ad-hoc
-  `workit check -- <cmd>` takes the lease only with `--heavy`, and never when
-  it is a formatter (`oxfmt`, `prettier`, `cargo fmt`, `bun run format`) or a
-  linter whose every target is a file (`eslint a.ts b.ts`, not `eslint src`):
-  it runs at once and says why. A raw heavy shell command an agent runs (`npx jest`, `npm run test:ci`) is rewritten
-  through the lease (Claude Code, OpenCode, Pi), or denied with the exact
-  rewrite on Codex, Cursor and Claude Code in auto mode (which refuses a call a
-  hook changed). A
-  chain with heavy parts is denied with each part's lease command, and a
-  command a host permission rule names runs outside the lease
-  ([verification guide](verification.md#heavy-commands-and-the-lease)).
-- **The lease is a weighted budget and a queue.** It is shared across every
-  worktree and agent of the user, and counted in units (`resources.slots`,
-  default 1, or a units `budget` with per-check `weights`) and in memory (the
-  RAM less a `reserve`, each check charged its measured peak RSS; see
-  [heavy-check budget](configuration.md#heavy-check-budget)). A pressure gate
-  holds a heavy check while the machine is over its critical pressure line
-  (the wait line then names `memory pressure`), at most 5 min. A heavy check
-  that finds no room joins a
-  queue that serves the shortest measured run first (a waiter queued 5 min
-  goes ahead of newer ones), says where it stands, and prints a
-  status line every 30 s: each holder with its age, the queue position, the
-  time waited, and an estimated wait. It waits up to `--wait <dur>`
-  (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min). At that limit
-  it re-queues once in the same place, printing the estimated wait, and gives
-  up only at the second limit, naming the exact command to run again with a
-  `--wait` sized to the estimate. A wait bounded by `--timeout` never
-  re-queues past it, and `--no-wait` refuses at once. A check whose last
-  measured run took under 30 s, or one marked network-bound
-  (`{"command": …, "heavy": "io"}` in `.workit/checks.json`, `--io` ad hoc),
-  runs without a slot while the memory budget and the pressure gate allow.
-  `workit lock status` lists holders and the queue, with each holder's time
-  left (`~3m left`, or `past its last 14m run`) and each waiter's own last run
-  and estimated wait.
-  A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
-  end before a long wait: run long checks in the background. The lease is
-  released when the check ends, and a queued check gives up its place when it
-  stops waiting, also on Ctrl-C or SIGTERM. Leases are files
-  under the Workit state dir (`~/.local/state/workit/leases` on Linux and macOS).
-- **Estimates.** The estimated wait comes from each check's last measured
-  run in the ledger of the repo it runs in (a passed run wins over a later
-  failed one; a timed-out run never counts), read from the ledger's last
-  512 KiB. A check with no measured run gives `no wait estimate yet` and
-  names it.
-- **`--timeout` bounds the whole check.** The lease wait counts toward
-  `--timeout`, so a queued check never outlives the timeout its caller set:
-  the wait is at most the timeout, and the command gets what is left. When a
-  slot frees with less than 10 s (or a quarter of the timeout, if smaller)
-  left, the check gives up as a wait timeout and never starts the command.
-- **Exit codes.** A check that never ran because of the lease exits 4
-  (`busy`): `--no-wait` with every slot held, a wait that ran out (`--wait`
-  or `--timeout`), a wait that left too little of `--timeout`, or
-  `workit lock cancel`. A command killed by `--timeout` also exits 4; every
-  other run exits with the command's own code. The two timeouts share 4
-  because Workit's codes (0-5) have no free one and any other number could be
-  a command's own; `--json` tells them apart: `"code": "busy"` with
-  `data.lease` for the wait, `"code": "failed"` with `data.timedOut: true`
-  for the command. The stderr line says which (`the check did not run`, or
-  `timed out after`).
-- **Stuck holders.** A holder is shown `stuck?` once it holds its slot past
-  its limit, or its check printed nothing and used no CPU for 5 min. The
-  limit is 1.5 times the check's last measured run, never below
-  `resources.maxHold` (default 15 min), which alone applies to a check with no
-  measured run; so two full suites that each take 25 min are not flagged at
-  20 min. `workit lock reap` frees a stuck slot. The next acquirer reclaims
-  one itself only when it is past 3 times its limit and silent for its limit.
-- **Light ad-hoc commands.** A formatter, one linter or one test file runs
-  as `workit check --name <n> -- <cmd>`: no lease, no queue, and still
-  recorded. Keep `--heavy` for full suites, packaging, builds and knip. The
-  shell hook leaves a raw formatter or file-scoped linter alone on every host,
-  and `workit lock heavy test -- <cmd>` says when a command is light.
-- **Fanout plans.** `workit fanout plan` warns when one wave has more slices
-  whose VERIFY runs a full suite (a heavy named check such as
-  `workit check test`, or a heavy command that names no file) than the
-  machine has lease slots: the rest would each queue a whole suite run. Give
-  each slice its targeted test files instead and run the full suite once at
-  fan-in.
-- **Stale leases.** A lease stays held while its `workit` process runs. If
-  `workit` is killed outright (SIGKILL), the lease stays held while the
-  check's process group or scope still has processes, so two heavy checks
-  never overlap. The next acquirer reclaims a lease, and says so, once those
-  are gone, or when it was taken before a reboot (the kernel boot id on
-  Linux, the boot time elsewhere). A reused pid does not keep a lease: the
-  holder's process start time (`/proc` on Linux, `ps -o lstart=` on macOS)
-  must still match. Where it cannot be read (Windows), a lease also ends
-  after the check's `--timeout`, or 6 hours without one, plus a minute.
-- **Nested checks.** A heavy check started by another heavy check reuses
-  that check's lease (`WORKIT_LEASE`) and does not wait for it. On Linux the
-  lease must belong to one of the process's ancestors, so a leaked
-  `WORKIT_LEASE` cannot skip the queue.
-- **The scope (Linux).** If a user systemd manager is running and has the
-  `memory` and `cpu` controllers delegated (cgroup v2), the check runs under
-  `systemd-run --user --scope -p MemoryMax=<m> -p CPUQuota=<c>` as the unit
-  `workit-check-<id>-<pid>.scope`. When the check passes its limit, the
-  kernel kills the check alone, not the desktop session. Without such a
-  manager (no systemd, not delegated, macOS, Windows), the check runs as
-  before and Workit says so once per session. If `systemd-run` itself fails
-  to start the scope, the check runs again without one; systemd-run's error
-  line is not shown as check output. `workit doctor` starts a throwaway scope and reads
-  its cgroup back, so its `heavy_scope` row says whether the limits really
-  apply here, not only whether systemd accepted them.
-- **`--json`** adds `lease` (`slot`, `waitedMs`, the `holder` it waited on
-  with pid, check, cwd and session, `reclaimed`, `inherited`) and `scope`
-  (`unit`, `memoryMax` in bytes, `cpuQuota`, or `unit: null` with a
-  `reason`). Both are `null` for a check that is not heavy; a light command
-  run with `--heavy` adds `light` (`kind`, `tool`, `reason`). A wait that
-  gave up reports `data.lease.requeuedAfterMs`, `estimatedWaitMs` and the
-  `retry` command.
-
-Configure it under `resources`. The machine's limits come from the matching
-entry of your `workspaces.json`. A repo's `.workit/checks.json` can
-only tighten them, so a repo cannot break the machine-wide limit: it can add
-`heavy` checks, lower `memoryMax`, `cpuQuota`, `budget` and `maxHold`, raise
-`reserve` and a check's `weights`, and set its own `wait`; its `slots`,
-`scope`, `light` and `pressure` are ignored with a warning.
-
-```json
-{
-  "workspaces": [
-    {
-      "name": "work",
-      "glob": "/home/me/work/**",
-      "resources": {
-        "slots": 1,
-        "memoryMax": "40%",
-        "cpuQuota": "70%",
-        "scope": true
-      }
-    }
-  ]
-}
-```
-
-```json
-{
-  "checks": { "test": "npm run test:ci", "e2e": "npx playwright test" },
-  "resources": { "heavy": ["e2e"], "memoryMax": "8G", "wait": 900 }
-}
-```
-
-| Field           | Default                      | Where     | Meaning                                                                |
-| --------------- | ---------------------------- | --------- | ---------------------------------------------------------------------- |
-| `heavy`         | `test`, `build`, `packaging` | both      | Named checks that take the lease; a repo only adds to the list         |
-| `light`         | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease; a repo cannot set it           |
-| `slots`         | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
-| `budget`        | RAM less `reserve`           | workspace | Weighted budget: units (`3`) or memory (`"24G"`, `"60%"`); a repo can only lower it |
-| `reserve`       | 25% of RAM, 2-6 GiB          | workspace | Memory kept for the desktop; a repo can only raise it                  |
-| `weights`       | 1 unit, measured peak RSS    | workspace | Per check: units (`2`) or a fixed memory charge (`"6G"`); a repo can only raise one |
-| `pressure`      | `true`                       | workspace | `false` turns the PSI/load pressure gate off                           |
-| `memoryMax`     | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
-| `cpuQuota`      | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
-| `wait`          | `1800`                       | both      | Seconds (or a duration such as `"30m"`) to wait for the lease before exit 4 |
-| `maxHold`       | `900`                        | both      | Seconds (or `"15m"`) a holder may hold a slot before `stuck?`; the floor under 1.5x its measured run; a repo can only lower it |
-| `scope`         | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
-| `heavyCommands` | none                         | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
-
-An invalid field prints a `workit: resources:` warning and keeps the earlier
-value, so a typo never turns the lease off. The lease lives in the CLI, so it
-works the same on every host (Claude Code, OpenCode, Codex, Cursor, Pi):
-each one runs checks through `workit check`.
+(`test`, `build`, `packaging`, or an ad-hoc `--heavy` command) under a
+machine-wide lease and weighted budget, so two test suites never start at
+once, and on Linux it gives each one its own memory and CPU limit. Light
+checks (`lint`, `typecheck`, `format`) and light ad-hoc commands (a formatter,
+one linter or one test file) run at once. The queue, the budget, stuck
+holders, exit codes and every `resources` field are in
+[the heavy-check lease](checks.md#the-heavy-check-lease).

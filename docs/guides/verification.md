@@ -57,7 +57,7 @@ the legacy file, and `workit doctor --fix` moves it into `.workit/`.
 Heavy work (tests, builds, installs, image builds) shares one
 machine-wide lease (the named checks `lint`, `typecheck` and `format` are light
 and skip it), so parallel agents cannot exhaust the machine's memory and
-CPU ([delivery guide](delivery.md#heavy-checks-share-the-machine)). Run heavy
+CPU ([checks guide](checks.md#the-heavy-check-lease)). Run heavy
 commands through `workit check`, never with a hand-made `flock`:
 
 ```bash
@@ -93,7 +93,7 @@ next poll.
   check's exit code would be the filter's, and a stdout file it wrote stays
   (`bun test | tail -50 > out.txt` runs as `workit check --heavy -- bun test
   > out.txt`). A busy lease queues the command, shortest measured run first
-  ([delivery guide](delivery.md#heavy-checks-share-the-machine)); run a long
+  ([checks guide](checks.md#the-heavy-check-lease)); run a long
   check in the background, since the shell tool's own timeout can end a
   foreground wait. The rewrite uses only flags every supported CLI accepts.
   Codex and Cursor do not rewrite a command, and Claude Code in auto mode
@@ -133,31 +133,9 @@ as `noLease`.
 
 #### Stuck holders, cancelled waits, fairness
 
-- **Queue order.** Shortest measured run first, a waiter queued 5 minutes
-  ahead of newer ones, round-robin per session on ties; checks under 30 s and
-  network-bound ones run without a slot. The full rules, with the budget's
-  backfill, are in [checks](checks.md#waiting-for-the-heavy-check-lease).
-- **`stuck?`.** `workit lock status` marks a holder `stuck?`, with its age, once
-  it has held its slot past its hold limit (`resources.maxHold`, default 15
-  min, a repo can only lower it; or 1.5 times its check's last measured run
-  when that is longer, at most 6 h) or its check printed nothing and used no
-  CPU for 5 min. CPU is counted on Linux and macOS; on Windows only
-  output counts as a heartbeat, so raise `resources.maxHold` in your own
-  config for a quiet long check.
-  `workit lock reap` frees that slot and records a `lease.reaped` ledger row
-  naming the pid, session and command; the process itself keeps running, so
-  stop it yourself if it is truly hung. The next check that queues reclaims a
-  holder itself only when it is past 3 times its limit and has been silent
-  (no output, no CPU) for at least its limit; a busy long run is never
-  reclaimed.
-- **Owners and cancel.** A queued check leaves the queue when the process that
-  started it ends, and `workit lock status` drops dead waiters and frees dead
-  holders' slots before it prints. `workit lock cancel [<pid|session|dir>]`
-  (default: your session) ends your own queued checks without `kill`; each
-  exits 4 with `cancelled while queued for the heavy-check lease`.
-- **Gave up waiting.** A check whose wait ran out exits 4 and says `queued
-  behind <holder>, <age>` in its output and in `--json` (`lease.queuedBehind`),
-  so a verifier can report missing evidence instead of dropping it.
+Queue order, `stuck?` holders, `workit lock reap` and `cancel`, and what a
+check that gave up waiting reports are in
+[the heavy-check lease](checks.md#the-heavy-check-lease).
 
 ## `workit ledger`: decisions, rulings, verdicts
 

@@ -823,7 +823,7 @@ and Codex use `PreToolUse`, Cursor uses `preToolUse` and
   formatter writing files from a script, or edits made outside an agent.
 
 Two heavy checks on one machine are kept apart separately, by the
-[machine-wide check lease](delivery.md#heavy-checks-share-the-machine).
+[machine-wide check lease](checks.md#the-heavy-check-lease).
 
 ### Heavy-check slots
 
@@ -845,7 +845,7 @@ waiter's estimated wait.
 On Linux each heavy check also runs in a systemd scope with `MemoryMax`
 (`memoryMax`) and `CPUQuota` (`cpuQuota`); `"scope": false` turns the scope off
 and keeps the lease. A repo can only lower `memoryMax` and `cpuQuota`, and
-cannot set `scope` ([delivery](delivery.md#heavy-checks-share-the-machine)).
+cannot set `scope` ([checks](checks.md#the-heavy-check-lease)).
 
 ### Heavy-check budget
 
@@ -1129,21 +1129,7 @@ verified.
 
 ## Heavy-check queue
 
-The machine-wide heavy-check lease is a queue across every agent and worktree
-of the user: shortest measured run first, a waiter queued 5 minutes ahead of
-newer ones, smaller checks backfilling what is free, and checks under 30 s or
-network-bound ones running without a slot while memory and the pressure gate
-allow. A queued check waits `resources.wait` (default 30 min, `--wait <dur>`
-for one run), then re-queues once in the same place, and exits 4 (`busy`)
-only past that second wait; `--no-wait` and a `--timeout` bound never
-re-queue. Holders past their hold limit (`resources.maxHold`, the floor under
-1.5 times the check's last measured run, at most 6 h) show as `stuck?` in
-`workit lock status`.
-
-- Queue order, the waiting lines and `workit lock status`:
-  [checks guide](checks.md#waiting-for-the-heavy-check-lease).
-- Stuck holders, exit codes and `--json`:
-  [delivery guide](delivery.md#heavy-checks-share-the-machine).
-- Every `resources` field, its default and what a repo may change: the
-  [resources table](delivery.md#heavy-checks-share-the-machine) and
-  [heavy-check budget](#heavy-check-budget) above.
+Queue order, stuck holders, exit codes, `workit lock status` and every
+`resources` field with its default and what a repo may change are in
+[the heavy-check lease](checks.md#the-heavy-check-lease); the weighted
+budget's keys are under [heavy-check budget](#heavy-check-budget) above.
