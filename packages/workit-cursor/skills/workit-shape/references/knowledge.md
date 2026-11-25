@@ -7,7 +7,7 @@ user asks for one, say which trigger fired, and let the user decline.
 | Record | Trigger | Where |
 | --- | --- | --- |
 | Spec | more than one slice, crosses repos, or an open product choice a future reader must know | `docs/<topic>/spec.md` |
-| Plan | more than one slice with dependencies, or work that will be resumed by someone else | `docs/<topic>/plan.md`, next to the spec |
+| Plan | more than one slice with dependencies, or work that will be resumed by someone else | `workit dir plans` (per clone, outside the repo tree) |
 | ADR | the choice is hard to reverse **and** surprising **and** a real trade-off (all three) | `docs/adr/NNNN-<slug>.md` |
 | Glossary entry | a project term was ambiguous and you resolved it | `GLOSSARY.md` (create lazily) |
 | Coding standard | a judgment-call rule a reviewer must check, recurring twice, found by workit-retro; a mechanical rule gets a check instead | `CODING_STANDARDS.md` (create lazily) |

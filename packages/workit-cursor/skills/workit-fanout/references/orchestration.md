@@ -96,7 +96,9 @@ it (`git branch <branch> <winner>`), have the verifier record the verdict on
 Follow the workspace `verification` setting (`workit grant show`); the
 worker never records a verdict on its own work.
 
-- `self` (the default): a verifier that wrote none of the slices records the
+- `proportional` (the default): each slice's review lane decides (none: no
+  verdict; self: the author's `--self`; focused or full: a verifier).
+- `self`: a verifier that wrote none of the slices records the
   verdicts. A lead that authored none of the slices may record them in its
   own session.
 - `independent`, and any slice at high risk: a separate verifier session

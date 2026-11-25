@@ -45,9 +45,10 @@ bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored 
   command; re-login and rerun.
 
 Tiers: `smoke` (a few cases, Haiku) for each slice that changes what agents
-see (skills, hooks, verb output); `full` (every case) on Haiku 4.5 and Haiku
-5.5 before a release, where the gate is no drop against the committed
-baseline. Sonnet and Opus are optional. A smoke run on Haiku costs cents of
+see (skills, hooks, verb output); `full` (every case) before a release, on
+both legs with `--gate first-try` ([release.md](release.md#qualification)):
+every `firstTry` case passes all its runs and no other case drops against the
+committed baseline. Sonnet and Opus are optional. A smoke run on Haiku costs cents of
 subscription-equivalent usage; the printed `$` is Claude Code's
 `total_cost_usd`.
 
@@ -383,7 +384,7 @@ issue or `test/behavior/cases` file).
 | `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass |
 | `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths |
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
-| `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `dontAsk`, the list above |
+| `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `auto`, the list above |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
 | `scaffold.home` | Files written under the world HOME (a host install the case needs, such as `.cursor/mcp.json`); a path that is absolute, has a `..` segment or is not below HOME refuses the world |
 | `scaffold.gitHooks` | Git hooks written to the repo's `.git/hooks/<name>` after the scaffold's commits (a pre-commit hook that refuses unformatted code) |

@@ -6,7 +6,8 @@ the chat never counts: your host's prompt or your own terminal records it.
 ## One click on the action itself
 
 A YouTrack write (`workit youtrack note`, `time`, `meeting`, `update`,
-`create`) asks you on that very call:
+`create`) and `workit release notes approve <version>` (under
+`releaseNotes: review`) ask you on that very call:
 
 - **Claude Code** (`default`, `acceptEdits`, `plan` and auto mode): the
   permission prompt on the `workit youtrack …` call shows the whole text it
@@ -18,7 +19,15 @@ A YouTrack write (`workit youtrack note`, `time`, `meeting`, `update`,
 Your yes covers that one call with exactly that text and those files. It is
 used once and lasts two minutes. In `bypassPermissions`, `dontAsk`,
 `claude -p` or the SDK nobody sees a prompt, so nothing is approved and the
-call says which mode it ran in.
+call says which mode it ran in. A yes the host did not bind to this exact
+call is refused with `approval_not_bound`.
+
+The agent pastes you the draft in chat, in full, before asking. Each call
+prints the text it would post (a comment, a new issue's description, a
+time-log text or release notes) under a `show this to the user verbatim`
+marker with its sha256; after a revision the print starts with a line diff
+from the text printed last (`-` removed, `+` added), then the new full text.
+`workit release notes draft` and `show` print release notes the same way.
 
 The agent must run the call as its own plain command, with no pipe, chain,
 redirect, `cd`, variable or `bash -c` around it; otherwise the host cannot
@@ -68,7 +77,9 @@ step.
 - `workit approve ap_a ap_b` asks once for several requests, for example one
   per repo of a multi-repo release.
 - Requests and approvals live in `<state dir>/approvals/`. Agents cannot edit
-  that directory: Workit's hooks deny it on every host.
+  that directory: Workit's hooks deny it on every host, and `workit setup`
+  also writes the host's own deny rule for it on Claude Code, Cursor and
+  OpenCode (doctor row `native_deny`).
 
 The terminal check stops an honest agent from approving its own action. It is
 not a sandbox: the host's prompt on the call is the hard boundary (see

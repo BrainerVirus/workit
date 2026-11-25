@@ -26,7 +26,7 @@ grants.
 ## Branch, commit, push
 
 ```bash
-workit git branch feature/x [--base <b>] [--track <t>]   # policy-checked name, from the fetched default target
+workit git branch feature/x [--base <b>] [--track <t>] [--carry]   # policy-checked name, from the fetched default target; --carry brings uncommitted changes along
 workit git branch --kind feature|bugfix|release|hotfix --slug <s>   # the kind picks the base (per preset, below)
 workit git commit -m "feat: x" -- <paths>       # convention-checked; --all takes every change
 workit git stage --patch <file|->                # stage selected hunks (a unified diff) in the index only
@@ -36,7 +36,7 @@ workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last com
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
-workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict aborts and lists the paths; then push --force-with-lease
+workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict only in the changelog is merged entry by entry and the rebase goes on, any other conflict aborts and lists the paths; then push --force-with-lease
 workit git hold --why "<the user's words>" | --clear   # the user said not yet: the Stop hook stops asking to push or open a PR for this branch
 ```
 
@@ -176,9 +176,25 @@ Outside git-flow (github-flow, trunk-based, custom, or a track whose
 pushes the release branch and opens a release PR into the trunk instead; tag
 the merged commit and push it with `workit git push --release <tag>`. The PR
 body is the [release notes](#release-notes), and that push publishes the
-GitHub or GitLab release on the tag with them. Before release notes, this path
-created no forge release: under the default `auto` it now creates one, and
-`releaseNotes: off` keeps the old behavior.
+GitHub or GitLab release on the tag with them, unless `releaseNotes: off`.
+
+A monorepo package with its own release line (`releasePackages` in the
+workspace) is released with `workit release package <name> <version>
+[--at <ref>] [--latest] [--dry-run]`: it tags `<namespace><version>`
+(`pkg-a@0.1.0`) on the workspace's release commit (by default the newest
+release tag on the remote production branch), pushes the tag under the
+`release` grant, publishes its forge release from the package's changelog,
+not marked Latest unless `--latest`, and verifies it
+([release packages](configuration.md#release-packages)).
+
+A repository that releases by pushing a tag (GoReleaser and similar,
+github-flow with no release branch) uses `workit release tag v<version>`
+instead: under the `release` grant it tags the green remote trunk without
+moving a local branch and pushes the tag; `--wait` first waits for trunk CI
+still running after a merge, then for the release workflow and the forge
+release. `workit release notes edit <tag> --from-changelog` puts a published
+release's changelog section at the top of its notes. See
+[tag-driven releases](release.md).
 
 #### Release notes
 
@@ -259,7 +275,9 @@ hotfix can need protected branches and the release tag on the remote, so
   trunk-based and custom, no branch (a protected trunk moves only through a
   reviewed PR); and release tags (`v<digit>…`, or `<prefix><digit>…` when
   `gitflow.prefix.versiontag` is set, empty included; a track's tags start
-  with its `tagNamespace`, e.g. `nun/v1.0.0`) in every preset whose commit is
+  with its `tagNamespace`, e.g. `nun/v1.0.0`; a release package's tags,
+  `pkg-a@0.1.0` or its own `tagNamespace`, whose forge release is never
+  marked Latest) in every preset whose commit is
   already on the remote production branch (git-flow production, a track's
   production, else the default target) or on a branch in the same push
   (`tag_unreleased` otherwise). Any
@@ -284,9 +302,22 @@ local branch under `--all`/`--branches`) is denied with the allowed kinds and
 the closest name; a branch the remote already has (a legacy or bot branch),
 and a delete (`--delete`, `:chore/old`), is never judged.
 
+- `git branch` refuses (`dirty_worktree`) when tracked changes outside
+  `docs/` would ride along to the new branch: commit them first, or pass
+  `--carry` to take them along, still uncommitted. When the base the route
+  names does not exist in the clone (git-flow's `develop` in a main-only
+  clone) and no `--base` is given, it starts from the repository's trunk
+  (origin's default branch, else `main`, else `master`) and says so.
+- A `wip: <state>` subject (a handoff checkpoint) that the commit convention
+  refuses is committed as `chore: wip <state>`, and the output says so. When a
+  failing pre-commit hook names its own fix (`run bun run format`), the
+  refusal ends with `workit check --name fix -- <that command>`, then the same
+  `workit git commit`.
 - `git branch` and `git commit` apply the workspace branch and commit policy,
   never commit to a protected branch, and never sweep in changes you did not
-  name. Commits carry a `Workit-Session:` trailer. An amend keeps the old
+  name. Commits carry a `Workit-Session:` trailer unless the workspace sets
+  `trailers: false` ([configuration](configuration.md#config-files));
+  `--trailer "<key: value>"` adds another. An amend keeps the old
   commit's trailers (`--no-edit` keeps the whole message; a new `-m`/`-F`
   message gets the old trailers carried over) and never repeats one.
   `--amend` refuses a commit that is already on the default target or a
@@ -366,9 +397,13 @@ and how to fix it.
 - Git runs the hook for `-m`, `-F`, amend, merge and squash commits, also
   with `--no-verify`, and before `commit-msg`, so a commitlint there sees the
   trailer. Your own `commit-msg` checks keep running unchanged.
-- The id comes from the same variables `workit` reads: `WORKIT_SESSION_ID`
-  (set it empty to opt out), then `OPENCODE_SESSION_ID`, `PI_SESSION_ID` or
-  `CODEX_THREAD_ID` (see [hosts](hosts.md)). Cursor puts no session id in the
+- The id comes from the same variables `workit` reads: the host's own
+  (`OPENCODE_SESSION_ID`, `PI_SESSION_ID` or `CODEX_THREAD_ID`), with
+  `WORKIT_SESSION_ID` winning unless `WORKIT_HOST` names another host; set it
+  empty to opt out (see [hosts](hosts.md)). Under workspace
+  `trailers: false` the hook adds nothing: it follows `WORKIT_TRAILERS=on|off`
+  (set by `workit git commit`), else asks `workit git trailers`, and adds the
+  trailer when Workit cannot answer. Cursor puts no session id in the
   agent's shell, so its raw commits get a trailer only when the command sets
   `WORKIT_SESSION_ID`.
 - The message is left unchanged with no session; an id outside
@@ -414,20 +449,20 @@ and how to fix it.
 ## Pull requests and CI
 
 ```bash
-workit pr create (--title <t ≤100 chars> [--body-file <f|->] | --fill) [--base <b> | --track <t>] [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]
+workit pr create (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [--base <b> | --track <t>] [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]
 workit pr template [--json]            # the PR template to fill (the repo's, else Workit's) and its source
-workit pr status [--pr <n>] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
+workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
 workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
 workit pr threads                      # unresolved review threads, one line each with its id
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
-workit ci wait [--timeout 20m]         # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
+workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s]   # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
 workit ci wait --branch main           # a branch with no PR (the trunk after a merge): its push runs; --ref main is the same
-workit ci rerun --failed --reason flake|infra   # once per PR head without --force
+workit ci rerun [--check <name>… | --failed] --reason flake|infra [--force]   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
 workit ci logs --failed                # each failing check of the PR head with its job log's last 60 lines
-workit pr merge [--method squash|merge|rebase] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--allow-failing <check>… --reason <why>]
-workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
+workit pr merge [--pr <n>] [--squash | --merge | --rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
+workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|released] [--pr <n> | --branch <b>] [--sha <sha>] [--tag <t>] [--package <name[@version]>]  # exit 1 when it did not land
 ```
 
 - `pr create` requires the branch to be pushed and checks the forge reports
@@ -470,8 +505,11 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `git branch`, the default target of `pr create` and the default trunk of
   `stack plan` come from the track the branch belongs to; `pr merge` onto a
   track's production branch reports the branches to merge back into.
-- `pr merge` merges only when `pr status` reads READY, an independent verdict
-  is accepted for that head (`workit ledger check`), and the `merge` grant
+- `pr merge` merges only when `pr status` reads READY, the verdict the
+  head's [review lane](verification.md#review-lanes) asks for is accepted for
+  that head (`workit ledger check`: an independent one, or on the `self` lane
+  the author's `--self` verdict, which for a dependency bump also needs green
+  CI on the head), and the `merge` grant
   allows it, under `merge: true` and `merge: "verified"` alike. The merge call
   carries the head SHA, so a moved head is refused. Only `merge: true` accepts
   `--unverified --reason "<why>"`, which merges without a verdict and records
@@ -506,7 +544,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   the paths (`conflicts` in `--json`), with `workit git rebase --onto <base>`
   as the unblock. `stack land` never rebases this way.
 - `pr merge` ends one of two ways. A merge exits 0 and prints
-  `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout.
+  `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout
+  (`merged MR !<n> …` on GitLab).
   Anything else exits non-zero and ends with
   `workit: error: PR not merged (<reason>, exit <n>)` on stderr, after the
   refusal and its `unblock:` line, whether the verb refused it or the
@@ -550,7 +589,9 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   judged. `workit verify-delivery merge` on such a PR is
   delivered only when the change reached that trunk (`merge_on_trunk`).
 - `pr merge` also reads the CI of the base branch's head (a protected target
-  only). A failing check there refuses the merge (`base_red`, exit 3), naming
+  only). A failing check there that branch protection requires (or, when the
+  required set cannot be read, a hard failure not known to be optional)
+  refuses the merge (`base_red`, exit 3), naming
   the failing checks and the run URL, so a PR never lands silently on a red
   base. Checks still running only print a note, and a base with no checks or
   green checks merges quietly. A PR whose own head passes every check that is
@@ -596,7 +637,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `--reason` serves it and `--unverified` together. `stack land` takes the
   same `--base-red-ok --reason` and passes it to every merge it makes.
 - `verify-delivery` answers "did it land?" from the remote, never from local
-  state. A task whose branch the ledger shows merged (`pr.merged`) and
+  state. `verify-delivery merge` runs the same
+  [cleanup](cleanup.md) as `pr merge` once the merge is confirmed. A task whose branch the ledger shows merged (`pr.merged`) and
   verified (`delivery.verified`, `merged`) is closed by `verify-delivery
   merged` and swept again on the next `workit task` command, so a delivered
   task stops showing as active. A merge without a verified delivery leaves
@@ -907,11 +949,11 @@ Ultimate) are not read.
 child PR on its parent branch) on GitHub and GitLab.
 
 ```bash
-workit stack plan [--trunk <b> | --track <t>] [<bottom> … <top>]   # record the chain (default: the current branch's)
-workit stack status                    # per PR: READY | WAITING | ADVANCE | COMPLETE
-workit stack sync [--local] [--dry-run] [--force <branch>]
-workit stack restack [--dry-run] [--force <branch>]                # sync, then delete the merged branches locally
-workit stack land [--dry-run] [--max <n>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>]
+workit stack plan [--name <n>] [--trunk <b> | --track <t>] [<bottom> … <top>]   # record the chain (default: the current branch's)
+workit stack status [--name <n>]         # per PR: READY | WAITING | ADVANCE | COMPLETE
+workit stack sync [--name <n>] [--local] [--dry-run] [--force <branch>]
+workit stack restack [--name <n>] [--dry-run] [--force <branch>]   # sync, then delete the merged branches locally
+workit stack land [--name <n>] [--dry-run] [--max <n>] [--method squash|merge|rebase] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--timeout 20m] [--interval 30s]
 ```
 
 - The order is stored in `<git common dir>/workit/stacks/`, shared by every
@@ -1002,7 +1044,7 @@ subagents do that.
 workit fanout plan <plan.json> [--name <n>] [--trunk <b> | --track <t>] [--take-lead]  # register slices; refuse gaps and overlap
 workit ledger standing add "<order>" | list | clear [<id>] [--fanout <n>] # the lead's standing orders for every worker
 workit ledger standing add --stop ["<note>"] | add --clear [--fanout <n>] # the stop line for running workers, and lifting it
-workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>]  # the complete worker brief, verbatim
+workit fanout brief <slice> [--name <n>] [--mode new|resume] [--attempt <n>] [--host <h>]  # the complete worker brief, verbatim
 workit fanout status [--name <n>] [--stuck-after 30m] [--offline]        # per-slice dashboard, STUCK, landing order
 workit fanout worktree create <slice>… [--name <plan|plan.json>]       # each slice's worktree, scratch dir, links, WORKTREE line and spawn
 workit fanout worktree create <slice> [--branch <b>] [--base <b>] [--tier <t>]  # one unplanned slice (a one-slice plan named after it)
@@ -1180,8 +1222,9 @@ workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline]  # fan-
 - `worktree create` takes several slices and prints, per slice, its
   `WORKTREE: <path>` line and the spawn that carries it: Claude Code's
   `SPAWN: Agent subagent_type: "workit:implementer", run_in_background: true,
-  description: "<slice>", prompt: "…"` (with `model` only when the slice's
-  tier differs from the `implementer` agent file), elsewhere the prompt for the
+  description: "<slice>", prompt: "…"` (with `model` and `effort` only when the model or
+  effort configured for the implementer at the slice's tier differs from its
+  agent file), elsewhere the prompt for the
   host's implementer subagent. The prompt is the WORKTREE line first, then
   `WORKER`, `TIER`, `TIMEBOX` and "Run `workit fanout brief <slice> --name
   <plan>` and follow it exactly.", so the brief never passes through the lead's
@@ -1261,164 +1304,10 @@ fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
 ## Heavy checks share the machine
 
 Parallel agents run their checks on one machine. Workit runs each heavy check
-under a machine-wide lease, so two test suites never start at once, and on
-Linux it gives each one its own memory and CPU limit.
-
-```bash
-workit check test                 # heavy by default: waits for the lease, then runs
-workit check --heavy -- npx jest  # an ad-hoc command takes the lease only with --heavy
-workit check --name unit -- bun test a.test.ts  # a light ad-hoc command: no lease, runs at once
-workit check --heavy -- bunx oxfmt a.ts         # a formatter never takes the lease, even with --heavy
-workit check test --timeout 1200  # bounds the lease wait and the run together
-workit check test --no-lease --reason "<why>"  # run it now, outside the lease (for you, not for briefs)
-workit lock status                # who holds the lease; `workit lock wait` waits for a slot
-```
-
-- **Which checks are heavy.** The named checks `test`, `build` and `packaging` are heavy by
-  default; `lint`, `typecheck` and `format` are light and never take the lease
-  (`resources.light` in workspaces.json changes the list). An ad-hoc
-  `workit check -- <cmd>` takes the lease only with `--heavy`, and never when
-  it is a formatter (`oxfmt`, `prettier`, `cargo fmt`, `bun run format`) or a
-  linter whose every target is a file (`eslint a.ts b.ts`, not `eslint src`):
-  it runs at once and says why. A raw heavy shell command an agent runs (`npx jest`, `npm run test:ci`) is rewritten
-  through the lease, or denied with the exact rewrite on Codex and Cursor. A
-  chain with heavy parts is denied with each part's lease command, and a
-  command a host permission rule names runs outside the lease
-  ([verification guide](verification.md#heavy-commands-and-the-lease)).
-- **The lease is a queue.** It has `slots` places (default 1) across every
-  worktree and agent of the user. A heavy check that finds them taken joins a
-  queue that serves the shortest measured run first (a waiter queued 5 min
-  goes ahead of newer ones), says where it stands, and prints a
-  status line every 30 s: each holder with its age, the queue position, the
-  time waited, and an estimated wait. It waits up to `--wait <dur>`
-  (`90`, `90s`, `30m`, `1h`; default `resources.wait`, 30 min). At that limit
-  it re-queues once in the same place, printing the estimated wait, and gives
-  up only at the second limit, naming the exact command to run again with a
-  `--wait` sized to the estimate. A wait bounded by `--timeout` never
-  re-queues past it, and `--no-wait` refuses at once. `workit lock status` lists holders and the queue, with
-  each holder's time left (`~3m left`, or `past its last 14m run`).
-  A foreground shell tool call (about 2 min on Claude Code and OpenCode) can
-  end before a long wait: run long checks in the background. The lease is
-  released when the check ends, and a queued check gives up its place when it
-  stops waiting, also on Ctrl-C or SIGTERM. Leases are files
-  under the Workit state dir (`~/.local/state/workit/leases` on Linux and macOS).
-- **Estimates.** The estimated wait comes from each check's last measured
-  run in the ledger of the repo it runs in (a passed run wins over a later
-  failed one; a timed-out run never counts), read from the ledger's last
-  512 KiB. A check with no measured run gives `no wait estimate yet` and
-  names it.
-- **`--timeout` bounds the whole check.** The lease wait counts toward
-  `--timeout`, so a queued check never outlives the timeout its caller set:
-  the wait is at most the timeout, and the command gets what is left. When a
-  slot frees with less than 10 s (or a quarter of the timeout, if smaller)
-  left, the check gives up as a wait timeout and never starts the command.
-- **Exit codes.** A check that never ran because of the lease exits 4
-  (`busy`): `--no-wait` with every slot held, a wait that ran out (`--wait`
-  or `--timeout`), a wait that left too little of `--timeout`, or
-  `workit lock cancel`. A command killed by `--timeout` also exits 4; every
-  other run exits with the command's own code. The two timeouts share 4
-  because Workit's codes (0-5) have no free one and any other number could be
-  a command's own; `--json` tells them apart: `"code": "busy"` with
-  `data.lease` for the wait, `"code": "failed"` with `data.timedOut: true`
-  for the command. The stderr line says which (`the check did not run`, or
-  `timed out after`).
-- **Stuck holders.** A holder is shown `stuck?` once it holds its slot past
-  its limit, or its check printed nothing and used no CPU for 5 min. The
-  limit is 1.5 times the check's last measured run, never below
-  `resources.maxHold` (default 15 min), which alone applies to a check with no
-  measured run; so two full suites that each take 25 min are not flagged at
-  20 min. `workit lock reap` frees a stuck slot. The next acquirer reclaims
-  one itself only when it is past 3 times its limit and silent for its limit.
-- **Light ad-hoc commands.** A formatter, one linter or one test file runs
-  as `workit check --name <n> -- <cmd>`: no lease, no queue, and still
-  recorded. Keep `--heavy` for full suites, packaging, builds and knip. The
-  shell hook leaves a raw formatter or file-scoped linter alone on every host,
-  and `workit lock heavy test -- <cmd>` says when a command is light.
-- **Fanout plans.** `workit fanout plan` warns when one wave has more slices
-  whose VERIFY runs a full suite (a heavy named check such as
-  `workit check test`, or a heavy command that names no file) than the
-  machine has lease slots: the rest would each queue a whole suite run. Give
-  each slice its targeted test files instead and run the full suite once at
-  fan-in.
-- **Stale leases.** A lease stays held while its `workit` process runs. If
-  `workit` is killed outright (SIGKILL), the lease stays held while the
-  check's process group or scope still has processes, so two heavy checks
-  never overlap. The next acquirer reclaims a lease, and says so, once those
-  are gone, or when it was taken before a reboot (the kernel boot id on
-  Linux, the boot time elsewhere). A reused pid does not keep a lease: the
-  holder's process start time (`/proc` on Linux, `ps -o lstart=` on macOS)
-  must still match. Where it cannot be read (Windows), a lease also ends
-  after the check's `--timeout`, or 6 hours without one, plus a minute.
-- **Nested checks.** A heavy check started by another heavy check reuses
-  that check's lease (`WORKIT_LEASE`) and does not wait for it. On Linux the
-  lease must belong to one of the process's ancestors, so a leaked
-  `WORKIT_LEASE` cannot skip the queue.
-- **The scope (Linux).** If a user systemd manager is running and has the
-  `memory` and `cpu` controllers delegated (cgroup v2), the check runs under
-  `systemd-run --user --scope -p MemoryMax=<m> -p CPUQuota=<c>` as the unit
-  `workit-check-<id>-<pid>.scope`. When the check passes its limit, the
-  kernel kills the check alone, not the desktop session. Without such a
-  manager (no systemd, not delegated, macOS, Windows), the check runs as
-  before and Workit says so once per session. If `systemd-run` itself fails
-  to start the scope, the check runs again without one; systemd-run's error
-  line is not shown as check output. `workit doctor` starts a throwaway scope and reads
-  its cgroup back, so its `heavy_scope` row says whether the limits really
-  apply here, not only whether systemd accepted them.
-- **`--json`** adds `lease` (`slot`, `waitedMs`, the `holder` it waited on
-  with pid, check, cwd and session, `reclaimed`, `inherited`) and `scope`
-  (`unit`, `memoryMax` in bytes, `cpuQuota`, or `unit: null` with a
-  `reason`). Both are `null` for a check that is not heavy; a light command
-  run with `--heavy` adds `light` (`kind`, `tool`, `reason`). A wait that
-  gave up reports `data.lease.requeuedAfterMs`, `estimatedWaitMs` and the
-  `retry` command.
-
-Configure it under `resources`. The machine's limits come from the matching
-entry of your `workspaces.json`. A repo's `.workit/checks.json` can
-only tighten them, so a repo cannot break the machine-wide limit: it can add
-`heavy` checks, lower `memoryMax` and `cpuQuota`, and set its own `wait`; its
-`slots` and `scope` are ignored with a warning.
-
-```json
-{
-  "workspaces": [
-    {
-      "name": "work",
-      "glob": "/home/me/work/**",
-      "resources": {
-        "slots": 1,
-        "memoryMax": "40%",
-        "cpuQuota": "70%",
-        "scope": true
-      }
-    }
-  ]
-}
-```
-
-```json
-{
-  "checks": { "test": "npm run test:ci", "e2e": "npx playwright test" },
-  "resources": { "heavy": ["e2e"], "memoryMax": "8G", "wait": 900 }
-}
-```
-
-| Field           | Default                      | Where     | Meaning                                                                |
-| --------------- | ---------------------------- | --------- | ---------------------------------------------------------------------- |
-| `heavy`         | `test`, `build`, `packaging` | both      | Named checks that take the lease; a repo only adds to the list         |
-| `light`         | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease; a repo cannot set it           |
-| `slots`         | `1`                          | workspace | Heavy checks that may run at once on the machine (1-64)                |
-| `budget`        | RAM less `reserve`           | workspace | Weighted budget: units (`3`) or memory (`"24G"`, `"60%"`); a repo can only lower it |
-| `reserve`       | 25% of RAM, 2-6 GiB          | workspace | Memory kept for the desktop; a repo can only raise it                  |
-| `weights`       | 1 unit, measured peak RSS    | workspace | Per check: units (`2`) or a fixed memory charge (`"6G"`); a repo can only raise one |
-| `pressure`      | `true`                       | workspace | `false` turns the PSI/load pressure gate off                           |
-| `memoryMax`     | `40%` of RAM                 | both      | Scope `MemoryMax`: a percent of total RAM, or a size such as `8G`      |
-| `cpuQuota`      | `70%` of all CPUs            | both      | Scope `CPUQuota`: a percent of the whole machine, or a CPU count (`4`) |
-| `wait`          | `1800`                       | both      | Seconds (or a duration such as `"30m"`) to wait for the lease before exit 4 |
-| `maxHold`       | `900`                        | both      | Seconds (or `"15m"`) a holder may hold a slot before `stuck?`; the floor under 1.5x its measured run; a repo can only lower it |
-| `scope`         | `true`                       | workspace | `false` keeps the lease but runs without a systemd scope               |
-| `heavyCommands` | none                         | repo      | Extra shell commands the hook gates (`["mvn verify", "task test:*"]`)  |
-
-An invalid field prints a `workit: resources:` warning and keeps the earlier
-value, so a typo never turns the lease off. The lease lives in the CLI, so it
-works the same on every host (Claude Code, OpenCode, Codex, Cursor, Pi):
-each one runs checks through `workit check`.
+(`test`, `build`, `packaging`, or an ad-hoc `--heavy` command) under a
+machine-wide lease and weighted budget, so two test suites never start at
+once, and on Linux it gives each one its own memory and CPU limit. Light
+checks (`lint`, `typecheck`, `format`) and light ad-hoc commands (a formatter,
+one linter or one test file) run at once. The queue, the budget, stuck
+holders, exit codes and every `resources` field are in
+[the heavy-check lease](checks.md#the-heavy-check-lease).

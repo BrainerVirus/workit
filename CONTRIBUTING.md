@@ -16,7 +16,9 @@ bun run hooks:install   # optional: format/lint check on commit, commitlint on c
 ```
 
 The pre-commit hook checks, it does not rewrite: an unformatted staged file
-fails the commit with `run bun run format`; format, `git add`, commit again.
+fails the commit and names the fix (`workit check --name fix -- bun run
+format`, then `workit git add -- <paths>` and the same commit); without
+Workit, run `bun run format`, `git add`, and commit again.
 Re-run `bun run hooks:install` after pulling a change to `lefthook.yml` or if
 a worktree's hook points at a removed checkout (one `.git/hooks` serves every
 worktree of the clone). It needs `bun install` in the worktree you commit
@@ -29,13 +31,18 @@ or `bun run check` in it; use a separate worktree.
 
 ## Make a change
 
-1. Branch from `origin/main`, ideally in its own worktree:
-   `git worktree add -b feature/<slug> ~/.local/state/workit/worktrees/workit/<slug> origin/main`
-   (Linux and macOS; `workit fanout worktree create` picks the right root on every OS).
+1. Branch from `origin/main` in its own worktree, as
+   [AGENTS.md](AGENTS.md#workflow) shows (`workit fanout worktree create`
+   picks the right root on every OS).
 2. Keep the change small and focused. For larger work, open an issue first;
    a short spec or plan under `docs/` helps when the change spans several PRs.
 3. Write tests for behavior (Given/When/Then is a good shape) and update the
-   README or the relevant guide when user-facing behavior changes.
+   README or the relevant guide when user-facing behavior changes. Add a line
+   for a user-visible change under `## [Unreleased]` in `CHANGELOG.md`; a
+   release puts those entries at the top of its GitHub notes
+   ([release](docs/agents/release.md#how-a-release-happens)). Run
+   `workit changelog driver install` once per clone so a rebase or merge keeps
+   both sides' entries (`bun run hooks:install` does not register it).
 4. Verify:
 
    ```bash
@@ -57,8 +64,8 @@ or `bun run check` in it; use a separate worktree.
   drives the release version. Keep it a valid conventional commit.
 - Fill in the PR template: what and why, scenarios covered, verification
   evidence, breaking notes.
-- CI (lint, format, knip, typecheck, both test tiers on Linux; core and
-  artifacts on macOS and Windows) must be green. A different person or session
+- CI (lint, format, knip, typecheck, react-doctor, actionlint, zizmor, both
+  test tiers on Linux; core and artifacts on macOS and Windows) must be green. A different person or session
   than the author reviews.
 
 Releases are automatic: semantic-release publishes from `main` when product
@@ -67,6 +74,5 @@ paths changed.
 ## Reporting bugs and security issues
 
 Use the [issue forms](https://github.com/BrainerVirus/workit/issues/new/choose)
-and include `workit doctor --json` output. Please do not report security
-vulnerabilities in public issues; contact the maintainer
-([@BrainerVirus](https://github.com/BrainerVirus)) privately first.
+and include `workit doctor --json` output. Report a security vulnerability
+privately, never in a public issue: see [SECURITY.md](SECURITY.md).

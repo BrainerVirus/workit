@@ -151,17 +151,20 @@ version with its age in its `updates` row, read from local files only.
 checkout, read-only: the matched workspace, the vcs provider and default target
 branch, the model per role and the heavy-check resources, each with where it
 comes from (a key in `workspaces.json`, `vcs.json` or `.workit/checks.json`,
-the origin remote, a release track, or `default`). `--json` gives the same as
+the origin remote, a release track, the branch preset, Workit's built-in role
+defaults, or `default`). `--json` gives the same as
 `{ value, source }` pairs. `workit grant show` names the `vcs.provider` and its
 source too.
 
 Global config lives in `~/.config/workit/` (`%APPDATA%\workit\` on Windows;
-`config.json`, `workspaces.json`, `vcs.json`, optional `youtrack.json` and
-`templates/`). Logs, the recorded hook Node, leases and upgrade backups live in
+`config.json`, `workspaces.json` and its `workspaces.json.seal`, `vcs.json`,
+optional `youtrack.json`, `rules/` and `templates/`). When the host withholds
+that dir (permission denied), Workit reads it as no grants and no role models,
+which can only lower what an agent may do. Logs, the recorded hook Node, leases and upgrade backups live in
 the state dir, `~/.local/state/workit/` on Linux and macOS
 (`%LOCALAPPDATA%\workit\` on Windows), and so do the worktrees Workit manages
 (`worktrees/<repo>/<slice>`; see [cleanup](cleanup.md)); `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`,
-`WORKIT_CONFIG_DIR` and `WORKIT_STATE_DIR` move them. macOS kept state in
+`WORKIT_CONFIG` (or `WORKIT_CONFIG_DIR`) and `WORKIT_STATE_DIR` move them. macOS kept state in
 `~/Library/Application Support/workit` in older versions: the first `workit` run or
 hook run moves it, leaves a `workit.moved-<time>` note beside the old place,
 and `workit doctor` (row `legacy_dirs`) prints the command that finishes a move
@@ -187,6 +190,16 @@ nothing reads any more is named obsolete, with the removal as the fix: the
 global `timezone` in `config.json` (the setup wizard wrote it through 2.1.2; a
 work item's day comes from `youtrack.json`'s `timezone`, else `TZ`).
 
+Besides `updates`, `config.json` holds `locale` (the language of Workit's
+prompts and drafts, e.g. `en` or `es-419`), `localeOptions` (the locales the
+setup wizard offers) and the global `branchPolicy`/`commitPolicy`. `vcs.json`
+holds the fallback `provider` (`github` or `gitlab`) and
+`defaultTargetBranch`, `github`/`gitlab` blocks whose `host` names a
+self-hosted forge (the editor schema also lists `apiUrl` and `tokenFile`
+there, but Workit reads neither: the token file is the workspace's
+`vcs.tokenFile` in `workspaces.json`), and `pr` defaults (`squashOnMerge`,
+`removeSourceBranch`, `pushBranch`, `confirmSkip`).
+
 `workit init` edits the entries you open and leaves every other entry
 byte-for-byte as it was. To add or adjust one entry without the wizard:
 
@@ -208,23 +221,19 @@ whichever entry or default matches them next, and a glob's text cannot say
 which (symlinks, linked worktrees), so every other entry and the defaults count
 as a possible taker. When any of them could grant more (or an equally specific
 entry could take a folder that was ambiguous), `rm` is a raise: refused in an
-agent or headless shell and confirmed by typing the workspace name in your own
-terminal. A removal that raises nothing proceeds anywhere and prints what now
+agent or headless shell and confirmed with a y/N in your own terminal (one
+answer for several names). A removal that raises nothing proceeds anywhere and prints what now
 covers the removed glob. `rm` never removes the last entry. Raise a grant
 with `workit grant set` in your own terminal. Each write keeps the previous file as `workspaces.json.bak`, and
 `workit doctor` lists overlapping globs and which entry wins.
 
 `workspaces.json.seal`, beside it in the account's config dir, holds the
 authority fields you last accepted with `workit workspace seal` in your own
-terminal: grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
-`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge identity (`vcs.provider`,
-`account`, `tokenFile`, `host`). While it is missing or does not match, each
-of them is the stricter of the file and the last seal (the defaults when there
-is none). A write at your terminal reseals when the seal matched before; any
-other write reseals only when it lowers them. A redirected config dir
-(`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`) is never read for
-authority and only lowers it; see [the seal](grants.md#the-seal). It is a
-check, not a proof (D18): a process that rewrites the seal as well passes it.
+terminal (grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
+`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge
+identity). While it is missing or does not match, Workit applies the stricter
+of the file and the last seal: [the seal](grants.md#the-seal) has the full
+rules.
 
 An agent session never writes `workspaces.json` itself. On every host, the
 write gate denies an edit or a shell write (redirect, `tee`, `cp`, `mv`,
@@ -234,13 +243,19 @@ at and the default dir grants are read from, reached through `~`, a symlink or
 `..` too. The deny names the `workit grant set` or `workit workspace set`
 command for you to run in your own terminal. Reading the file,
 `workit grant show`, `workit workspace list` and writes to the dir's other
-files are unaffected.
+files are unaffected. `workit setup` and `workit upgrade` also write the
+host's own deny rules for `workspaces.json`, its seal and Workit's approval
+and issued-session stores on Claude Code, Cursor and OpenCode, so they hold
+even when a hook cannot load; Codex has no path deny and Pi no permission
+layer, so the hook is the only guard there. `workit uninstall` removes them
+and `workit doctor` checks them (`native_deny`;
+[hosts guide](hosts.md#host-permissions-workit-setup)).
 
 `remotes` lists the remote URLs a workspace owns: a checkout anywhere whose
 remote it claims never exceeds its grants ([grants](grants.md#remotes)). Like
 a grant, only you change it: `workit workspace set <name> remotes=<url>,…`
-needs your terminal and the workspace name typed, and `add` at your terminal
-offers the folder's `origin`.
+needs your terminal and a y/N, and `add` at your terminal offers the
+folder's `origin`.
 
 A workspace's `defaultEndpoint` sets how far an unnamed delivery request goes:
 `commit` (default), `pr`, `green` (babysit the PR until merge-ready, never
@@ -307,6 +322,25 @@ merge ([when it keeps one](delivery.md)). Turn it off with
 `workit workspace set <name> deleteBranch=false`; `pr merge --keep-branch` does
 it for one merge. A workspace nested inside another inherits it the way it
 inherits `trailers`.
+
+### Branch and commit policy
+
+`branchPolicy.preset` is `gitflow`, `github-flow`, `trunk-based` or `custom`
+(required when `branchPolicy` is set). `allowed` lists the branch-name globs a
+new branch must match, `protected` the branches nobody commits or pushes to
+directly, `integration` is `pr` (default) or `merge`, `developBranch` names
+gitflow's integration branch (default `develop`) and `prefixes` sets the
+`feature`, `bugfix`, `release` and `hotfix` prefixes (all four). A workspace
+with its own preset takes that preset's default target branch over
+`vcs.json`'s. `commitPolicy.preset` is `conventional`, `gitmoji`,
+`ticket-prefix`, `freeform`, `custom` or `auto`, and `pattern` is a regular
+expression every subject must match. `config.json` may hold a global
+`branchPolicy` and `commitPolicy`; a workspace's own wins.
+
+`profiles` names variants of one workspace's policies, each with a
+`branchPolicy`, a `commitPolicy` or both; `defaultProfile` (a key of
+`profiles`) applies when none is named, and `WORKIT_PROFILE=<name>` picks one
+for a session. An unknown profile name is an error.
 
 ### Cleanup when work finishes
 
@@ -508,8 +542,8 @@ workspace's for that track.
   section.
 - `off`: no forge release; the finish still merges, tags and pushes, and says
   why. Outside git-flow the release PR body stays the changelog section.
-  Every other mode makes `workit git push --release <tag>` create the forge
-  release, which it did not before.
+  Under every other mode `workit git push --release <tag>` creates the forge
+  release too.
 - `review`: `finish` refuses (`release_notes_unapproved`) before any merge,
   tag or push until the user approves the current draft with
   `workit release notes approve <version>` in their own terminal. Outside
@@ -533,8 +567,9 @@ auto, with a note.
 Subagents inherit the lead's model unless the spawn names one, so a lead on a
 large model runs every verifier and implementer on it too. `models.roles` names
 the model (and, where the host takes one, the effort) each role runs on, per
-host. Put it at the top of `workspaces.json` for a global default, and on a
-workspace to override it; a nested workspace inherits each role it leaves unset
+host. Put it at the top of `workspaces.json` for a global default
+(`workit workspace set --global models.roles.verifier.claude_code=sonnet`),
+and on a workspace to override it (`workit workspace set <name> models.…`); a nested workspace inherits each role it leaves unset
 from the enclosing one, then from the global default.
 
 Roles: `decider`, `implementer` (one entry per fanout tier: `mundane`,
@@ -542,8 +577,9 @@ Roles: `decider`, `implementer` (one entry per fanout tier: `mundane`,
 `babysit` (PR and CI watching) and `default` (a general spawn: Claude Code's
 `general-purpose`, OpenCode's `general`; a `ROLE: <role>` line in the spawn
 prompt picks another role). A role is an object keyed by host
-(`claude_code`, `opencode`, `codex`, `cursor`, `pi`, plus an optional
-`default`) whose values are a model name or `{ "model": "...", "effort": "..." }`.
+(`claude_code`, `opencode`, `codex`, `codex_cli`, `codex_desktop`, `cursor`,
+`pi`, plus an optional `default`; `codex_cli` and `codex_desktop` win over
+`codex` for that app) whose values are a model name or `{ "model": "...", "effort": "..." }`.
 A bare model name or `{ model, effort }` applies to every host. Effort values
 are the host's own (Claude Code: `low`, `medium`, `high`, `xhigh`, `max`; Pi
 `--thinking` levels; Codex `model_reasoning_effort`).
@@ -706,8 +742,11 @@ Per host:
 `feedback`, in workspaces.json. At the top level, `{ "account": "<login>" }`
 names the GitHub login `--post` uses in every workspace. On a workspace,
 `"off"` drops the feedback line from the agent contract and makes the verb
-refuse, and `{ "account": "<login>" }` overrides the top-level login. Nested
-workspaces inherit it. With no login configured, `--post` needs `--account`:
+refuse, `"on"` turns it back on inside an `"off"` workspace, and
+`{ "account": "<login>" }` overrides the top-level login (a value that is not
+a GitHub login reads as unset). Nested workspaces inherit it from the nearest
+entry that sets it. `workit workspace set` does not take `feedback` yet: edit
+it by hand in your own terminal. With no login configured, `--post` needs `--account`:
 the workspace's own forge account is never used by default.
 
 ```json
@@ -784,13 +823,13 @@ and Codex use `PreToolUse`, Cursor uses `preToolUse` and
   formatter writing files from a script, or edits made outside an agent.
 
 Two heavy checks on one machine are kept apart separately, by the
-[machine-wide check lease](delivery.md#heavy-checks-share-the-machine).
+[machine-wide check lease](checks.md#the-heavy-check-lease).
 
 ### Heavy-check slots
 
 `resources.slots` in a workspaces.json entry sets how many heavy checks run at
 once on this machine. The default is 1: parallel test suites pushed the
-desktop session out of memory before the lease existed. Raise it only on a
+desktop session out of memory before the lease existed. Raise it (at most 64) only on a
 machine with room for more:
 
 ```bash
@@ -803,12 +842,20 @@ naming a `memoryMax` that fits. A repo's `.workit/checks.json` cannot change
 `slots`. `workit lock status` shows the slots, who holds them and each
 waiter's estimated wait.
 
+On Linux each heavy check also runs in a systemd scope with `MemoryMax`
+(`memoryMax`) and `CPUQuota` (`cpuQuota`); `"scope": false` turns the scope off
+and keeps the lease. A repo can only lower `memoryMax` and `cpuQuota`, and
+cannot set `scope` ([checks](checks.md#the-heavy-check-lease)).
+
 ### Heavy-check budget
 
 Instead of a count of slots, a machine can weigh its heavy checks. These keys
 live in the workspaces.json entry only; a repo's `.workit/checks.json` can
 only tighten them (a lower `budget`, a larger `reserve`, a heavier weight), and
-anything else there is ignored with the machine-only warning.
+anything else there is ignored with the machine-only warning. The published
+editor schema does not list `budget`, `weights`, `reserve`, `pressure` or
+`maxHold` yet, so an editor underlines them and `workit doctor`'s
+`config_schema` row names them as unknown keys; Workit still reads them.
 
 ```json
 "resources": {
@@ -1082,63 +1129,7 @@ verified.
 
 ## Heavy-check queue
 
-The machine-wide heavy-check lease
-([delivery guide](delivery.md#heavy-checks-share-the-machine)) is a queue, not
-a door that shuts. A heavy check that finds every slot held takes a ticket and
-waits its turn across every agent and worktree of the user. The shortest
-measured run is served first, so a short suite never waits behind a queued
-full one; a waiter queued 5 minutes goes ahead of every newer one, so nothing
-starves; checks with equal runs (or never measured) are served round-robin per
-session. A heavy check whose last run took under 30 s, or a network-bound one
-(`"heavy": "io"` on its entry in `.workit/checks.json`, `--io` ad hoc), runs
-without a slot while the memory budget and the pressure gate allow
-([checks guide](checks.md#a-checks-own-heavy)). It prints where it stands when
-it starts waiting and every 30 s after:
-
-```text
-workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s-a, 3m 10s, /work/wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it)
-workit: still queued for the heavy-check lease: position 1, 4m 30s of 30m waited; held by test, pid 4121, …
-```
-
-```bash
-workit check test                 # queues up to resources.wait (default 30 min)
-workit check test --wait 45m      # wait longer: 90, 90s, 30m and 1h all work
-workit check test --no-wait       # exit 4 at once if the lease is busy
-workit lock status                # the holders (stuck? marked), then the queue in serving order
-workit lock reap                  # free a stuck? holder's slot; recorded in the ledger
-workit lock cancel                # drop this session's queued checks (each exits 4)
-```
-
-- **Exit 4** (`busy`) means `--no-wait` met a busy lease, or the wait really
-  ran out. The message names the holders with their age and this check's
-  place in the queue.
-- **Light checks.** The named checks `lint`, `typecheck` and `format` are
-  light: they never take the lease, so they run at once beside a long suite.
-  The machine owner sets the list with `resources.light` in
-  `workspaces.json`; listing a check under `resources.heavy` there makes it
-  heavy again. A repo's `.workit/checks.json` can add heavy checks, under
-  `resources.heavy` or with a check's own `"heavy": true | "io"` (that
-  removes them from the light list), but cannot mark one light.
-- **A waiter that dies gives up its place.** A ticket holds while its
-  `workit` process runs; the next waiter removes a ticket whose process is
-  gone, by the same test as a stale lease. A shell tool that kills a long
-  call (Claude Code and OpenCode stop a foreground call after 2 minutes by
-  default) therefore costs the place in line: run a long wait in a
-  background call, or with a longer tool timeout.
-- **`resources.wait`** takes seconds (`1800`) or a duration (`"30m"`), from
-  either config file.
-- **`resources.maxHold`** (same formats, default 15 min) is how long a holder
-  may keep a slot before `lock status` marks it `stuck?`; one with no output
-  and no CPU for 5 min is marked too (CPU is read from `/proc` on Linux and
-  `ps` on macOS; on Windows only output counts as a heartbeat, so raise
-  `resources.maxHold` in your own config for a quiet long check).
-  `workit lock reap` frees a stuck slot
-  without signalling the process, and a holder silent past 3x the limit is
-  reaped automatically. A repo can only lower it.
-
-| Field     | Default                       | Where     | Meaning                                      |
-| --------- | ----------------------------- | --------- | -------------------------------------------- |
-| `light`   | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease       |
-| `heavy`   | `test`, `build`, `packaging`  | both      | Named checks that queue; a repo only adds    |
-| `wait`    | `1800` (30 min)               | both      | How long a queued check waits before exit 4  |
-| `maxHold` | `900` (15 min)                | both      | How long a holder runs before it is `stuck?` |
+Queue order, stuck holders, exit codes, `workit lock status` and every
+`resources` field with its default and what a repo may change are in
+[the heavy-check lease](checks.md#the-heavy-check-lease); the weighted
+budget's keys are under [heavy-check budget](#heavy-check-budget) above.

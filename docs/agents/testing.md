@@ -108,7 +108,9 @@ keep the required check names (`test (ubuntu-latest)`, `test (macos-latest)`,
 `test (windows-latest)`).
 
 The test preload (`test/shared/state-isolation.ts`) also sets the run marker
-`WORKIT_TEST_RUN` to its temp dir, which every child process inherits. The
+`WORKIT_TEST_RUN` to its temp dir, which every child process inherits, and
+`WORKIT_NO_PRESSURE_GATE=1`, so the runner's own load never holds a heavy
+check back (the pressure-gate tests inject their own reading). The
 marker changes nothing a process reads: grants and the seal still come from
 the OS account record (D15), so an agent that sets it gains nothing. It only
 adds refusals: under it the seal, grant, workspace, host-permission, setup,
@@ -198,7 +200,7 @@ CI also runs `bun run knip` (unused files/exports and reachability),
 files, never `bunx` (an unpinned download in a worktree without an install). The
 format job only checks: `git commit -- <paths>`, which `workit git commit` runs,
 hooks against a temporary index, so a fix made there reaches the commit but not
-the real index and leaves `git status` at `MM`. After this fix, reinstall once
+the real index and leaves `git status` at `MM`. Reinstall once
 per clone with `bun run hooks:install`; it also removes the absolute lefthook
 path (for example another worktree's `node_modules`) that `lefthook install`
 bakes into the shared `.git/hooks`. `test/artifacts/install-hooks.test.ts`
@@ -210,3 +212,9 @@ applies to `docs/qualification/context-budget.json`: a key-wise three-way merge
 parallel PRs rebase without a conflict; run `bun run write:budget` afterwards (the drift test asks
 for it). If `bun` cannot run, a `git merge-file` fallback leaves normal conflict markers. GitHub runs
 no custom merge drivers, so a PR whose base moved on the same key still needs a local rebase.
+
+`.gitattributes` also sets `CHANGELOG.md merge=workit-changelog`, which `bun run hooks:install`
+does not register: run `workit changelog driver install` once per clone
+([changelog guide](../guides/changelog.md)) so two branches' `[Unreleased]` entries merge without
+a conflict and a rebase never puts back entries a roll moved into a release (#896). Without it git
+merges `CHANGELOG.md` as plain text.

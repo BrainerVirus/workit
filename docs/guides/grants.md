@@ -18,15 +18,15 @@ repository.
 | Grant | Default | Gates |
 | --- | --- | --- |
 | `push` | allowed | `workit git push`, `stack sync` |
-| `pr` | allowed | `workit pr create` |
+| `pr` | allowed | `workit pr create`, `pr edit`, `pr ready`, `issue create`, `issue comment` and the PRs a stack opens |
 | `rerun` | allowed | `workit ci rerun` |
-| `merge` | needs a grant | `workit pr merge`, `stack land`. Both need an accepted independent verdict. `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
-| `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the git-flow main and develop branches and release tags (`v*`, or the prefix in `gitflow.prefix.versiontag`, which may be empty) whose commit already landed, which `workit git push` refuses; outside git-flow, tags only. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
+| `merge` | needs a grant | `workit pr merge`, `stack land`. Both need the verdict the head's [review lane](verification.md#review-lanes) asks for (under the default `proportional`: none, the author's `--self` one, or a non-author one). `true` also allows `--unverified --reason "<why>"`, a bypass recorded in the ledger; `"verified"` never does (see [Merging](#merging)) |
+| `release` | needs a grant | `workit git push --release <ref>`: finishing a release or hotfix by pushing the git-flow main and develop branches and release tags (`v*`, or the prefix in `gitflow.prefix.versiontag`, which may be empty) whose commit already landed, which `workit git push` refuses; outside git-flow, tags only. Also `workit release finish`, `publish`, `tag`, `package` and `notes edit`. Fast-forward only, a tag never moves; the `push` grant and its account check apply too (see [Releasing](#releasing)) |
 | `defaultEndpoint` | `commit` | Where an unnamed delivery request stops, lowest to highest: `commit`, `pr`, `green`, `merged` (skills read it; see [Default endpoint](#default-endpoint)) |
 | `verification` | `proportional` | What a change needs: `proportional` (the diff's [review lane](verification.md#review-lanes) decides, merge included: `none` no verdict, `self` the author's `--self` verdict, `focused`/`full` a non-author one), `self` (observed `workit check test` plus the author's own `--self` verdict at normal risk, shown as self-reviewed; merge needs a non-author verdict) or `independent` (a verdict from a session that did not author it). High risk always needs an independent live `verified` verdict. Strictness runs `independent` > `proportional` > `self`: `self` is the loosest, because the author's own `--self` verdict then closes a full-lane task that `proportional` sends to a verifier (high risk still needs an independent verdict, and merge a non-author one). So setting `self` is a raise (your terminal only), and a workspace name or a worktree is capped to the stricter of its own value and the folder's or main checkout's |
 
-Without a merge grant the ceiling is: PR or stack opened, CI green,
-independently verified. Explicit grants need `vcs.account` for forge effects.
+Without a merge grant the ceiling is: PR or stack opened, CI green, and the
+verdict its review lane asks for recorded. Explicit grants need `vcs.account` for forge effects.
 Protected-branch pushes stay denied, except git-flow main and develop under
 the `release` grant ([Releasing](#releasing)); outside git-flow a protected
 branch only moves through a PR.
@@ -72,7 +72,7 @@ claims never exceeds its grants, wherever the folder is:
   `.git` is ignored. A pattern ending in `/*` claims everything under that
   owner or group. A local path claims that repository.
 - Each action is matched by what it targets: `workit git push` (and
-  `--release`, `release finish` and `publish`, a stack push) by every push URL
+  `--release`, `release finish`, `publish`, `tag` and `package`, a stack push) by every push URL
   of the remote git pushes the branch to (`branch.<b>.pushRemote`,
   `remote.pushDefault`, `branch.<b>.remote`, then `origin`; `pushurl` and
   `pushInsteadOf` applied); a PR, merge, stack land or CI rerun by the forge
@@ -316,8 +316,8 @@ when grants are read instead, however the file was written.
 `WORKIT_STATE_DIR` moves it), holds a hash of each entry's authority fields
 and their last sealed values: `name`, `glob`, entry order, `remotes`, the
 forge identity (`vcs.provider`, `vcs.account`, `vcs.tokenFile`, `vcs.host`),
-`autonomy`, legacy `autoApprove`, `defaultEndpoint`, `verification` and
-`youtrack.writes`. `vcs.defaultTargetBranch`, roles, branch policy and checks
+`autonomy`, legacy `autoApprove`, `defaultEndpoint`, `verification`,
+`youtrack.writes` and `youtrack.autoHosts`. `vcs.defaultTargetBranch`, roles, branch policy and checks
 are outside it.
 
 `workit workspace seal`, in your own terminal, shows what changed since the
@@ -336,8 +336,8 @@ An existing setup has no seal yet. Then every authority value is the stricter
 of the file and the defaults: anything above them (a merge or release grant,
 an endpoint past `commit`, `verification: self`, `youtrack.writes: auto`) waits
 for the seal. `workit upgrade` and `workit setup` at your terminal show the
-fields once and offer to seal them. The upgrade that installs this release
-asks as soon as the new CLI takes over, `--yes` or not, whenever it runs at
+fields once and offer to seal them. The upgrade that first installs a sealing
+CLI (2.0 and later) asks as soon as the new CLI takes over, `--yes` or not, whenever it runs at
 your terminal outside an agent; afterwards a plain `workit upgrade` or
 `workit setup` asks, and `--yes`, `--json`, `--preview` or `--dry-run` do not.
 `workit doctor` warns (`grant_seal`, also under "Left after upgrade") until
@@ -373,7 +373,10 @@ host's permission prompt: deny or ask on `workit grant set` and on edits under
 `~/.config/workit`, and allowlist only read verbs (such as `workit pr status`
 and `workit grant show`). The block `workit setup` writes follows that rule:
 it allows Workit's gated delivery verbs, never `workit grant`, and asks for
-`--unverified` ([hosts](hosts.md#host-permissions-workit-setup)).
+`--unverified`. On Claude Code, Cursor and OpenCode it also writes the host's
+own deny rules for `workspaces.json` and its seal, which hold even when a
+hook cannot load (`workit doctor` row `native_deny`;
+[hosts](hosts.md#host-permissions-workit-setup)).
 
 A legacy `autoApprove` setting is read once as grants (its merge class becomes
 `merge: "verified"`) and folded into `autonomy` on the next `workit grant`

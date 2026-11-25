@@ -17,10 +17,13 @@ your shell sees. Switching Node with fnm, nvm, volta, mise or asdf no longer cha
 replaces both. `$XDG_BIN_HOME` or `WORKIT_BIN_DIR` replaces `~/.local/bin`. On Windows the root
 is `%LOCALAPPDATA%\workit\install`, and the launcher is `workit.cmd` in its `bin` folder.
 
+### Which Node runs Workit
+
 The launcher runs `current` on a Node 24 or newer, in this order: `WORKIT_NODE`, the node
 `workit setup` or `workit upgrade` recorded, the PATH `node` when it is 24+, the newest 24+
 under fnm, nvm, volta, mise or asdf, and last the node that installed the version. The hook
-launchers use the same order.
+launchers use the same order. The Windows `workit.cmd` launcher cannot scan version managers:
+it tries `WORKIT_NODE`, then the node that installed the version, then the PATH `node`.
 
 ## First install
 
@@ -76,6 +79,16 @@ nothing else (other hosts, your own rules and the Workit config are untouched). 
 `--hosts`, `workit uninstall` opens the interactive picker, which also offers the CLI
 install. See [the hosts guide](hosts.md#host-permissions-workit-setup).
 
+## Removing the CLI
+
+`workit uninstall` (pick the CLI in the picker) removes the owned install. It removes the
+`~/.local/bin/workit` link only when it points into the install; in `bin/`, only the launcher
+Workit wrote and its temp files; it unlinks `current`; and from `versions/`, only entries
+holding the Workit CLI package. It also removes the zsh, bash and fish
+completion scripts `setup` and `upgrade` wrote (only files carrying Workit's
+marker). Anything else (a file of your own, a link elsewhere, an install
+root set to your home) is left untouched and named.
+
 ## Moving from an npm global install
 
 The first upgrade under this layout looks for other copies: `@workit-dev/cli` in
@@ -109,3 +122,30 @@ The `workit.cmd` launcher does not scan version managers. It uses `WORKIT_NODE`,
 that installed the version, then the PATH `node`. Workit does not edit the Windows PATH: add
 `%LOCALAPPDATA%\workit\install\bin` yourself. `current` is a junction. Replacing a junction
 takes a remove and a create, so the swap is not atomic on Windows.
+
+## Shell completion
+
+`workit setup` and `workit upgrade` install tab completion for the shell in
+`$SHELL`: verbs, subcommands and flags, plus configured check names
+(`workit check <Tab>`), fanout slice ids (`workit fanout worktree create <Tab>`)
+and workspace names. The values come from a hidden `__complete` verb, which reads
+only local files. No rc file is edited:
+
+| Shell | Installed to |
+| --- | --- |
+| zsh | `$XDG_DATA_HOME/zsh/site-functions/_workit` (`~/.local/share/zsh/site-functions/_workit`) |
+| bash | `$XDG_DATA_HOME/bash-completion/completions/workit` (loaded by bash-completion) |
+| fish | `$XDG_CONFIG_HOME/fish/completions/workit.fish` |
+| PowerShell | nothing; add `workit completion powershell \| Out-String \| Invoke-Expression` to `$PROFILE` |
+
+zsh loads `_workit` only from a directory on its `$fpath`. When that directory
+is missing from it, setup prints the lines to add to `~/.zshrc`, before any
+other `compinit`:
+
+```zsh
+fpath=("$HOME/.local/share/zsh/site-functions" $fpath)
+autoload -Uz compinit && compinit
+```
+
+`workit completion <shell>` prints the script for any other setup
+(`source <(workit completion zsh)`). Only a file Workit wrote is replaced.

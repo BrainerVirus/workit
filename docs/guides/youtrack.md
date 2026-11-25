@@ -140,30 +140,20 @@ but a command or a file-only attach has no marker, so check the issue first.
 
 ## Writes ask you first
 
-Every write (`create`, `note`, `time`, `meeting`, `update`) waits for your yes, in every
-workspace. How you give it depends on the host (#864):
+Every write (`create`, `note`, `time`, `meeting`, `update`) waits for your yes, unless the
+workspace sets `youtrack.writes: "auto"` for that YouTrack host
+([writes without asking](#writes-without-asking)). How you give it depends on the host (#864):
 
 | Host | How you approve |
 | --- | --- |
 | Claude Code (also in auto mode) | The permission prompt on the `workit youtrack …` call itself shows the full text; Yes posts it in that call, once. No id, no second command. In `bypassPermissions`, `dontAsk` or `claude -p` nobody sees a prompt, so nothing is approved and the call names the mode. |
 | Pi (TUI) | A dialog on the call shows the full text; Approve once posts it in that call. |
-| OpenCode, Codex, Cursor, Pi print/RPC | The call records one request for that text and refuses with `approval_needed`. You run `workit approve` in a terminal: it shows the full text and asks y/N (with an id only when several requests wait). The agent's next run uses your yes once. |
+| OpenCode, Codex, Cursor, Pi print/RPC | The call records one request for that text and refuses with `approval_needed`; you run `workit approve` in a terminal. |
 
-A changed text or length needs a new yes. Refusing the same text again reuses
-its request: one text, one id. The agent must run the call as its own plain
-command (no pipe, chain, redirect, `bash -c` or variable around it; a
-trailing `| tail -5` or `| head -n 20` is fine), or the host cannot show it
-to you; a wrapped call is denied with the plain form. See
-[Approvals](approvals.md) for the other approvals.
-
-The agent also shows you the draft in chat, in full, before asking. Each call
-prints the text it would post (a comment, a new issue's description or a
-time-log text) under a `show this to the user verbatim` marker with its
-sha256. When the draft changed since that call last printed it, the print
-starts with a line diff from the earlier text (`-` removed, `+` added), then
-the new full text. Once the write posts, the next draft for that issue starts
-fresh. `workit release notes draft` and `show` print release notes the same
-way.
+A changed text needs a new yes, the call must run as its own plain command,
+and the agent pastes you the draft in full (with a line diff after each
+revision) before asking: [Approvals](approvals.md) has the details for every
+host. Once the write posts, the next draft for that issue starts fresh.
 
 Before asking, Workit reads the issue back:
 
@@ -176,7 +166,9 @@ Before asking, Workit reads the issue back:
   (`earlier` in `--json`).
 
 A PR backlink (`issues.backlink: true`) asks the same way: `workit pr create`
-reports it `pending` with the request to approve, and the next
+reports it `pending`. On Claude Code and Pi the note names the
+`workit youtrack note <id> --markdown …` call to run as its own call, so the
+host shows you the backlink; elsewhere, after your `workit approve`, the next
 `workit pr create` or `workit pr edit` of that PR posts it once.
 
 An agent that runs a `ytrack` write itself (`ytrack issue comment`,
@@ -199,6 +191,8 @@ so you answer one ask for the whole update. For a write no verb covers:
 
 Reads (`ytrack issue view`, `ytrack work-item list`, `ytrack api` GET) are
 never stopped.
+
+### Writes without asking
 
 To post without asking in one workspace, set this yourself in its entry in
 `workspaces.json`, naming the YouTrack hosts it may post to unasked in

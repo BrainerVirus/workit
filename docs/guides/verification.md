@@ -10,12 +10,14 @@ can verify a change.
 workit check test                       # run the configured "test" check
 workit check --name test -- bun test    # same, if argv is exactly the configured command
 workit check -- bun test src/foo.test.ts   # ad-hoc: recorded, never satisfies a gate
+workit check --list                     # configured checks and groups (also bare `workit check`)
 ```
 
-The command runs without a shell (unless `--shell "<cmd>"`) and records exit
+The command runs without a shell (unless `--shell -- "<cmd>"`) and records exit
 code, duration, HEAD, worktree tree key and patch-id as `observer: workit_cli`
-evidence. The exit code is the command's; `--timeout <s>` kills the whole
-process tree. It prints only the last 60 lines of the output (a failure's
+evidence. The exit code is the command's, except that `--timeout <s>` kills
+the whole process tree and exits 4 (`--json`: `"code": "failed"` with
+`data.timedOut`) and a run you interrupt exits 128 plus the signal. It prints only the last 60 lines of the output (a failure's
 tail, never its head). stdout and stderr arrive on separate pipes, so the
 child's last 10 stderr lines are shown after the tail when the merged log
 holds them earlier, and a failing run also lists up to 15 failing-test or
@@ -55,19 +57,21 @@ the legacy file, and `workit doctor --fix` moves it into `.workit/`.
 Heavy work (tests, builds, installs, image builds) shares one
 machine-wide lease (the named checks `lint`, `typecheck` and `format` are light
 and skip it), so parallel agents cannot exhaust the machine's memory and
-CPU ([delivery guide](delivery.md#heavy-checks-share-the-machine)). Run heavy
+CPU ([checks guide](checks.md#the-heavy-check-lease)). Run heavy
 commands through `workit check`, never with a hand-made `flock`:
 
 ```bash
 workit check test                    # test, build and packaging take the lease
 workit check --heavy -- npx jest     # an ad-hoc heavy command
+workit lock run -- npx jest          # the same lease, without a check record
+workit check --name fmt -- npx oxfmt src/a.ts   # light: a formatter, one linter or one test file takes no lease
 workit lock status                   # who holds the lease, who waits, which holder looks stuck?
 workit lock reap                     # free a stuck? holder's slot (or: workit lock reap <pid|session|dir>)
 workit lock cancel                   # drop this session's queued checks (or: <pid|session|dir>)
 workit lock wait                     # wait for a free slot without taking it (re-queues once at resources.wait)
 workit lock wait --timeout 300       # the same, with one hard bound
 workit check test --no-lease --reason "machine idle, bisecting a hang"
-workit check test --wait 45m         # a queued check waits its turn (default 30 min); --no-wait exits 4 at once
+workit check test --wait 45m         # waits its turn (default 30 min, then once more); --no-wait exits 4 at once
 ```
 
 The shell hook catches the raw form, after every other Workit gate (branch
@@ -84,24 +88,38 @@ next poll.
 - **One heavy command** (`npx jest`, `npm run test:ci`, `cargo test`, `docker
   build`, also behind `flock`, `nice`, `env`, `timeout` or `bash -c '<one
   command>'`) runs as `workit check --heavy -- <cmd>` on Claude Code, OpenCode
-  and Pi. A busy lease queues the command, shortest measured run first
-  ([delivery guide](delivery.md#heavy-checks-share-the-machine)); run a long
+  and Pi. Redirects and one trailing `| grep …` stay outside the wrapped
+  command; a trailing `[2>&1] | tail|head …` is dropped, since piped the
+  check's exit code would be the filter's, and a stdout file it wrote stays
+  (`bun test | tail -50 > out.txt` runs as `workit check --heavy -- bun test
+  > out.txt`). A busy lease queues the command, shortest measured run first
+  ([checks guide](checks.md#the-heavy-check-lease)); run a long
   check in the background, since the shell tool's own timeout can end a
-  foreground wait. The rewrite uses only flags every supported CLI accepts. Codex and Cursor
-  cannot rewrite a command, so the hook denies it there and names that exact
-  command.
+  foreground wait. The rewrite uses only flags every supported CLI accepts.
+  Codex and Cursor do not rewrite a command, and Claude Code in auto mode
+  refuses a call a hook changed, so there the hook denies it and names that
+  exact command (`Retry as: workit check --heavy -- <cmd>`).
 - **A chain with heavy parts** (`git status && make test && touch x`, `cd web
-  && npm test`, a pipe, a redirect) is denied on every host. The reason names
+  && npm test`, a pipe into anything but one trailing filter) is denied on
+  every host. The reason names
   each heavy part's lease command (`workit check --heavy -- make test`); run
   the other parts as their own commands. The hook never wraps a chain in `bash
   -c`.
 - **A host rule decides first.** If a host deny or ask rule names the heavy
   command, or the only allow that would cover the wrapper is one for `workit`,
-  the command runs as typed, outside the lease, with a one-line note. Wrapping
+  the command runs as typed, outside the lease, with no note. Wrapping
   must never change what the host would have done with it.
-- **Not gated:** watch modes (`--watch`, `tsc -w`), dev servers and
-  storybook (`npm run dev`, `start`, `serve`, `vite`, `next dev`), and any
-  command outside a git checkout.
+- **Dev servers** (`npm run dev`, `start`, `serve`, `vite`, `next dev`,
+  storybook, `docker compose up` without `-d`) are routed the same way to
+  `workit run --bg -- <cmd>` ([background processes](processes.md)), or
+  denied naming that command where the host cannot rewrite.
+- **Exit codes are never piped away.** A Workit verb whose exit code is its
+  answer (`check`, `ci wait`, `pr merge`, `release …`, `verify-delivery`)
+  piped into `tail` or `head`, anywhere later in the pipeline or from a
+  group, is denied on every host with `Retry as: <the unpiped call>`;
+  `set -o pipefail` before it leaves it alone.
+- **Not gated:** watch modes (`--watch`, `tsc -w`) and any command outside a
+  git checkout.
 
 The catalog is built in (`workit lock heavy list`). To add a command, use
 `workit lock heavy add 'mvn verify'` (machine-wide, under the state dir), or
@@ -115,27 +133,9 @@ as `noLease`.
 
 #### Stuck holders, cancelled waits, fairness
 
-- **Round-robin per session.** The queue serves sessions in turn: a session's
-  second queued check goes after every other session's first, counting the
-  slots it already held when it queued and those it was granted since, so one
-  session's chain of jobs cannot starve another's single lint.
-- **`stuck?`.** `workit lock status` marks a holder `stuck?`, with its age, once
-  it has held its slot past `resources.maxHold` (default 15 min; a repo can
-  only lower it) or its check printed nothing and used no CPU for 5 min. CPU is counted on Linux and macOS; on Windows only
-  output counts as a heartbeat, so raise `resources.maxHold` in your own
-  config for a quiet long check.
-  `workit lock reap` frees that slot and records a `lease.reaped` ledger row
-  naming the pid, session and command; the process itself keeps running, so
-  stop it yourself if it is truly hung. A holder silent past 3x its max hold
-  is reaped by the next check that queues.
-- **Owners and cancel.** A queued check leaves the queue when the process that
-  started it ends, and `workit lock status` drops dead waiters and frees dead
-  holders' slots before it prints. `workit lock cancel [<pid|session|dir>]`
-  (default: your session) ends your own queued checks without `kill`; each
-  exits 4 with `cancelled while queued for the heavy-check lease`.
-- **Gave up waiting.** A check whose wait ran out exits 4 and says `queued
-  behind <holder>, <age>` in its output and in `--json` (`lease.queuedBehind`),
-  so a verifier can report missing evidence instead of dropping it.
+Queue order, `stuck?` holders, `workit lock reap` and `cancel`, and what a
+check that gave up waiting reports are in
+[the heavy-check lease](checks.md#the-heavy-check-lease).
 
 ## `workit ledger`: decisions, rulings, verdicts
 
@@ -184,7 +184,7 @@ Workit computes a review lane from the diff of the branch against its base
 | `full` | 500+ lines, any file on a risk path, or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
 
 Lines count code, tests and agent instructions (`SKILL.md`, `AGENTS.md`,
-`CLAUDE.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
+`CLAUDE.md`, `GEMINI.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
 lockfiles count as a behavior change but never toward size. A diff Workit
 cannot read reads as `focused`. The lane gates `workit pr merge`, `workit
 stack land`, the Stop hook and the task's `verdict:lane` requirement alike.
@@ -350,7 +350,8 @@ A verdict is keyed to the head it judged. It still applies to a newer head
   its own file; here `docs/qualification/context-budget.json`, which
   `write:budget` regenerates).
 - **Test-only follow-up, `unit` verdicts only:** every changed file is a test
-  file proper (named `*.test.*`, `*.spec.*` or `*_test.*`), docs or
+  file proper (`*.test.<ext>` or `*.spec.<ext>` with a JS or TS extension
+  such as `.ts`, `.tsx`, `.js` or `.mjs`, or `*_test.<ext>`), docs or
   bookkeeping, off risk paths, with no lockfile or binary. Any other file in a
   test folder (a helper, fixture, setup or runner config such as
   `test/helpers/runtime.ts`, `test/fixtures/x.json` or `test/bunfig.toml`) does
@@ -580,7 +581,10 @@ independent pass, but `ledger check` shows it as a warning.
 ledger verdict …`). A `--pr <n>` verdict without `--branch` is refused while
 the checkout is on another branch than the PR's (`branch_mismatch`, naming
 both): add `--branch <the PR's branch>`, or record it from the PR's own repo.
-Nothing is written on either refusal.
+Nothing is written on either refusal. Run from a folder that is not a checkout
+(the parent of a workspace's repos), `--branch <b>` records in the one checkout
+under it that has `b` and says so; two or more are refused as
+`branch_ambiguous`, naming each.
 
 **Voiding a stray verdict.** A verdict that is wrong on its face (filed for
 another repo's PR, or on the wrong branch) is voided by the user, never an
@@ -695,7 +699,10 @@ changes. Some of that state reaches beyond the branch:
   names the exact `--task <id>` command to retry with.
 - **Findings.** `workit finding list [--branch <b>] [--status open|resolved]`
   lists the task's findings with their ids. They are task records, not ledger
-  rows, so `workit ledger list --type finding` prints a note pointing there.
+  rows, so `workit ledger list --type finding` prints a note pointing there,
+  and `workit ledger finding [record|list|resolve]` runs `workit finding` for
+  you. `workit ledger list --limit <n>` (or `--last <n>`) shows the newest
+  rows only.
 - **Delivered tasks close.** A task whose branch the ledger shows merged and
   delivery-verified closes by itself ([delivery](delivery.md#pull-requests-and-ci)).
 - **Short ids.** `workit finding resolve` (`findingId`), `workit worker

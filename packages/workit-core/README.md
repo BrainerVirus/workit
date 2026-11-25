@@ -18,6 +18,7 @@ new host adapter.
 | `skills/` | The `workit-*` method skills; adapters ship generated copies |
 | `scripts/` | Installers, launchers and release helpers |
 | `templates/` | Contract and issue-update templates |
+| `schemas/` | JSON Schemas for `config.json`, `vcs.json`, `workspaces.json` and `youtrack.json` (`"$schema": "https://unpkg.com/@workit-dev/core/schemas/workspaces.json"`) |
 
 Exports: `./src/core.ts` and `./src/*.ts` subpaths. Setup, doctor, upgrade and
 uninstall live in `@workit-dev/cli`. There is no build step; adapters

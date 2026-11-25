@@ -36,8 +36,8 @@ stop it: workit stop p1abc2def3
   start from another checkout of the same repo fails and names the running
   server's directory, branch and owner: use it, stop it, or pick another
   `--name`.
-- `docker compose up`, `docker-compose up` and `docker run` are docker rows.
-  Workit records the containers the start created (the difference in
+- `docker compose up`, `docker-compose up` and `docker run` are docker rows,
+  outside that one-per-name rule: each start runs. Workit records the containers the start created (the difference in
   `docker ps -q` before and after) and a stop runs `docker stop` on exactly
   those. It never runs `down`, `rm`, `-v` or `prune`. When docker can't be
   asked, the row is report-only.
@@ -121,7 +121,9 @@ When a session starts, Workit stops the orphans dead sessions left behind:
 `workit stop --orphans --reason session-start`. It does this at most once
 every 10 minutes per user.
 
-Each host has its own end event. Codex has one, but it can't tell a
+Each host has its own end event. Claude Code's SessionEnd ends a session on
+logout, exit or `other`; Cursor's sessionEnd on `completed`, `aborted`,
+`error`, `window_close` and `user_close`; Pi's on quit. Codex has one, but it can't tell a
 subagent's end from the session's, so Workit doesn't use it: a Codex
 session's processes stop at the next session start after Codex exits.
 OpenCode has neither a start nor an exit event. A deleted OpenCode session's processes stop. The reap runs on the first
@@ -143,9 +145,13 @@ A process counts as an automation browser only if all of these are true:
 - It is a Chrome, Chromium, Chrome for Testing, headless shell or Edge main
   process. Its renderer and GPU child processes (`--type=…`) are not counted.
 - Its command line has `--remote-debugging-port` or `--remote-debugging-pipe`.
-- Its `--user-data-dir` is in a temp dir (`/tmp`, `/var/folders`, `%TEMP%`)
-  or in a profile dir an automation tool uses: `~/.cache/chrome-devtools-mcp`,
-  `~/.cache/ms-playwright`, `~/.cache/puppeteer` or `~/.agent-browser`. A
+- Its `--user-data-dir` is in a temp dir (`/tmp`, `/var/tmp`, `/private/tmp`,
+  `/var/folders`, `/private/var/folders` or the OS temp dir, `%TEMP%` on
+  Windows) or in a profile dir an automation tool uses:
+  `~/.cache/chrome-devtools-mcp`, `~/.cache/chrome-devtools-mcp-cli`,
+  `~/.cache/ms-playwright` (`~/Library/Caches/ms-playwright` on macOS,
+  `AppData/Local/ms-playwright` on Windows), `~/.cache/puppeteer` or
+  `~/.agent-browser`. A
   browser binary one of those tools downloaded also counts.
 
 Workit never touches your own browser. A Chrome without the debugging flags
@@ -203,9 +209,10 @@ processes it takes about 16 ms.
 - On Windows the teardown log records each stop it starts, not the CLI's
   output, so it doesn't say why a row was kept. Run `workit ps` to see what
   still runs.
-- Marking a process kept comes with the end-of-work cleanup in a later
-  release (a ledger decision naming `proc:<id>`); the registry already honors
-  the keep flag.
+- A process is kept by the user's decision (`workit ledger decision "<what>"
+  --why "<the user's words>" --keep proc:<id>`; see
+  [keeping things](cleanup.md#keeping-things)); a later decision that
+  supersedes it lifts the keep.
 
 ## Where the files live
 

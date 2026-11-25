@@ -6,7 +6,9 @@
 
 [Workit](https://github.com/BrainerVirus/workit) for OpenCode 2.0.18+: the seven task families,
 read-only `workit_context` and `workit_init_apply` as native tools, the
-thirteen method skills with `/wk-*` commands, direct-child delegation, and
+thirteen method skills with `/wk-*` commands, the `workit-implementer`,
+`-verifier`, `-reviewer`, `-decider` and `-babysitter` subagents on their
+`models.roles` models, direct-child delegation, and
 context injection on session start and after compaction. Requires Node.js 24+.
 
 ```json
