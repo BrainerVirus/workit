@@ -191,3 +191,35 @@ test("Given `workit git rebase origin/main` (git's positional shape), When run, 
   const both = await run(["git", "rebase", "origin/main", "--onto", "main", "--json"], repo.cwd);
   expect(both.code).toBe(2);
 });
+
+// #928: a local branch literally named `origin/main` never stands in for the
+// remote-tracking base; the base is always fetched and read from refs/remotes.
+test("Given a local branch named origin/main pointing elsewhere, When workit git rebase --onto origin/main, Then it rebases onto the fetched refs/remotes/origin/main", async () => {
+  const repo = setup();
+  const before = await pushedFeature(repo);
+  repo.git("branch", "origin/main", `${before}~1`);
+  const mainTip = repo.pushFromElsewhere("main");
+
+  const result = await run(["git", "rebase", "--onto", "origin/main", "--json"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(result.json().data).toMatchObject({
+    base: "origin/main",
+    baseSha: mainTip,
+    rebased: true,
+  });
+  expect(repo.git("rev-parse", "HEAD~1")).toBe(mainTip);
+  expect(repo.git("rev-parse", "refs/heads/origin/main")).toBe(
+    repo.git("rev-parse", `${before}~1`),
+  );
+});
+
+test("Given a local branch named origin/main and no --onto, When workit git rebase, Then the default base is still the fetched origin/main", async () => {
+  const repo = setup();
+  const before = await pushedFeature(repo);
+  repo.git("branch", "origin/main", `${before}~1`);
+  const mainTip = repo.pushFromElsewhere("main");
+
+  const result = await run(["git", "rebase"], repo.cwd);
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+  expect(repo.git("rev-parse", "HEAD~1")).toBe(mainTip);
+});

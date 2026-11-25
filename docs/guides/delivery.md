@@ -36,7 +36,7 @@ workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last com
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
-workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict only in the changelog is merged entry by entry and the rebase goes on, any other conflict aborts and lists the paths; then push --force-with-lease
+workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`, always fetched and read from refs/remotes, never a local branch named `origin/main`); a conflict only in the changelog is merged entry by entry and the rebase goes on, any other conflict aborts and lists the paths; then push --force-with-lease
 workit git hold --why "<the user's words>" | --clear   # the user said not yet: the Stop hook stops asking to push or open a PR for this branch
 ```
 

@@ -39,17 +39,23 @@ export type RebaseOutcome = {
   recorded: { id: string } | { error: string } | null;
 };
 
-/** `origin/main` -> remote origin, branch main; a local ref -> null. */
+/**
+ * `origin/main` -> remote origin, branch main (the longest remote name that
+ * prefixes it); a name under no remote -> null. A local branch literally named
+ * `origin/main` never shadows the remote-tracking one (#928).
+ */
 function remoteBranchOf(cwd: string, base: string): { remote: string; branch: string } | null {
-  if (resolveRef(cwd, `refs/heads/${base}`)) return null;
-  const slash = base.indexOf("/");
-  if (slash <= 0) return null;
-  const remote = base.slice(0, slash);
-  const branch = base.slice(slash + 1);
-  return branch && remoteNames(cwd).includes(remote) ? { remote, branch } : null;
+  const remote = remoteNames(cwd)
+    .filter((name) => base.startsWith(`${name}/`) && base.length > name.length + 1)
+    .toSorted((a, b) => b.length - a.length)[0];
+  return remote ? { remote, branch: base.slice(remote.length + 1) } : null;
 }
 
-/** The base to rebase onto, fetched when it is a remote-tracking branch. */
+/**
+ * The base to rebase onto, fetched when it is a remote-tracking branch and
+ * then read from `refs/remotes/<remote>/<branch>`, never from a same-named
+ * local branch.
+ */
 function freshBase(cwd: string, onto: string | null): ForgeResult<{ base: string; sha: string }> {
   const base = onto ?? defaultBase(cwd);
   if (!base)
@@ -71,7 +77,8 @@ function freshBase(cwd: string, onto: string | null): ForgeResult<{ base: string
         `workit git rebase --onto ${base}  # retry once the remote answers`,
       );
   }
-  const sha = resolveRef(cwd, `${base}^{commit}`);
+  const ref = tracked ? `refs/remotes/${tracked.remote}/${tracked.branch}` : base;
+  const sha = resolveRef(cwd, `${ref}^{commit}`);
   if (!sha) return failure("not_found", `base ${base} does not resolve to a commit`);
   return success({ base, sha });
 }
@@ -156,7 +163,8 @@ export function rebaseOnto(
   const rebaseEnv = { ...env, GIT_EDITOR: "true" };
   const started = git(
     cwd,
-    ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "--quiet", base],
+    // The resolved commit, not the name: `origin/main` may also be a local branch.
+    ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "--quiet", baseSha],
     { env: rebaseEnv, timeoutMs: GIT_TIMEOUTS.worktree },
   );
   const { run, merged: changelogMerged } = continueThroughChangelog(cwd, rebaseEnv, started);
