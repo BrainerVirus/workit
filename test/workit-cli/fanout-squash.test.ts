@@ -83,8 +83,8 @@ const plan = async (cwd: string, root: string, slices: unknown[]) => {
   expect(result.code, result.stderr + result.stdout).toBe(0);
 };
 
-const create = async (cwd: string, id: string) => {
-  const result = await run(cwd, ["fanout", "worktree", "create", id, "--json"]);
+const create = async (cwd: string, id: string, ...extra: string[]) => {
+  const result = await run(cwd, ["fanout", "worktree", "create", id, ...extra, "--json"]);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   return result.json().data;
 };
@@ -167,7 +167,7 @@ test("fanout check: given b still on a's pre-squash tip after a landed, then b's
 });
 
 // ---------------------------------------------------------------------------
-// #493: stale node_modules
+// #493: stale node_modules (with --deps link, and the fallback when the own install fails)
 
 const LOCK = (version: string) =>
   `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "app" } },\n  "packages": {\n    "left-pad": ["left-pad@${version}", "", {}, "sha512-x"],\n    "@scope/tool": ["@scope/tool@2.0.0", "", {}, "sha512-y"],\n    "linked": ["linked@workspace:packages/linked"],\n  }\n}\n`;
@@ -184,7 +184,7 @@ test("fanout worktree create: given the main checkout's node_modules were instal
   const { root, cwd } = repo({ "bun.lock": LOCK("1.3.0") });
   install(cwd, { "left-pad": "1.2.0", "@scope/tool": "2.0.0" });
   await plan(cwd, root, [slice("a", ["a.ts"])]);
-  const a = await create(cwd, "a");
+  const a = await create(cwd, "a", "--deps", "link");
   expect(a.dependencies).toBeNull();
   expect(a.install).toBe(`bun install --frozen-lockfile --cwd ${a.path}`);
   expect(a.notes.join("\n")).toContain("left-pad 1.2.0 installed, bun.lock has 1.3.0");
@@ -195,7 +195,7 @@ test("fanout worktree create: given a package bun.lock lists is missing from the
   const { root, cwd } = repo({ "bun.lock": LOCK("1.3.0") });
   install(cwd, { "left-pad": "1.3.0" });
   await plan(cwd, root, [slice("a", ["a.ts"])]);
-  const a = await create(cwd, "a");
+  const a = await create(cwd, "a", "--deps", "link");
   expect(a.dependencies).toBeNull();
   expect(a.notes.join("\n")).toContain("@scope/tool missing");
 });
@@ -204,7 +204,7 @@ test("fanout worktree create: given the main checkout's node_modules match its b
   const { root, cwd } = repo({ "bun.lock": LOCK("1.3.0") });
   install(cwd, { "left-pad": "1.3.0", "@scope/tool": "2.0.0" });
   await plan(cwd, root, [slice("a", ["a.ts"])]);
-  const a = await create(cwd, "a");
+  const a = await create(cwd, "a", "--deps", "link");
   expect(a.install).toBeNull();
   expect(a.dependencies).not.toBeNull();
   expect(existsSync(path.join(a.path, "node_modules", "left-pad", "package.json"))).toBe(true);

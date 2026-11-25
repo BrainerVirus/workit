@@ -52,6 +52,7 @@ import {
   isWorkerScratch,
   workerScratch,
 } from "./fanout-worktree";
+import { frozenInstall, installCommand, linkedFrom } from "./worktree-deps";
 
 export type BriefMode = "new" | "resume";
 
@@ -342,6 +343,7 @@ function spawnLines(
   tier: RoleSelector["tier"],
   scratch: string,
   candidate: string,
+  deps: string | null,
 ): string[] {
   if (familyOf(host) !== "claude_code") return [];
   const line = (label: string, type: string, selector: RoleSelector, prompt: string) =>
@@ -357,9 +359,50 @@ function spawnLines(
       "  verifier SPAWN",
       "workit:verifier",
       { role: "verifier" },
-      `the candidate branch with this slice's ACCEPTANCE and VERIFY; probes go in ${scratch}; record the verdict as \`workit ledger verdict --cwd ${candidate} …\` from any shell directory`,
+      `the candidate branch with this slice's ACCEPTANCE and VERIFY; probes go in ${scratch}; ${deps ? `${deps}; ` : ""}record the verdict as \`workit ledger verdict --cwd ${candidate} …\` from any shell directory`,
     ),
   ];
+}
+
+/**
+ * The worktree's node_modules as the brief states it (#934), read from the
+ * filesystem so a later install or link shows: none yet (INSTALL), an own
+ * install (DEPS), or links into another checkout's installed packages, which
+ * can drift from the worktree's lockfile (DEPS: LINKED, and the verifier is
+ * told). `verifier` is the clause the verifier SPAWN line carries.
+ */
+function dependencyLines(
+  worktree: string,
+  made: Record<string, unknown> | undefined,
+): { lines: string[]; verifier: string | null } {
+  const frozen = frozenInstall(worktree);
+  const command = frozen ? installCommand(frozen, worktree) : null;
+  const fallback = typeof made?.depsFallback === "string" ? made.depsFallback : null;
+  if (!fs.existsSync(path.join(worktree, "node_modules"))) {
+    const install = typeof made?.install === "string" ? made.install : command;
+    return {
+      lines: install
+        ? [
+            `INSTALL: \`${install}\` first: this worktree has no node_modules yet${fallback ? ` (${fallback})` : ""}`,
+          ]
+        : [],
+      verifier: null,
+    };
+  }
+  const from = linkedFrom(worktree);
+  if (from)
+    return {
+      lines: [
+        `DEPS: LINKED: node_modules links into the installed packages of ${from}${fallback ? ` (the own install failed: ${fallback})` : ""}; they can drift from this worktree's lockfile, so a test that reads installed packages may fail only here${command ? `: before reporting such a failure, replace the links with an own install (remove the worktree's node_modules, then \`${command}\`)` : ""}`,
+      ],
+      verifier: `the worktree's node_modules is LINKED from ${from}, not its own install: reproduce a failure that reads installed packages on an own install before failing the candidate`,
+    };
+  return command
+    ? {
+        lines: [`DEPS: own install (\`${command}\`): nothing is linked from the main checkout`],
+        verifier: "the worktree's node_modules is its own install of its lockfile",
+      }
+    : { lines: [], verifier: null };
 }
 
 /** VERIFY's extra lines: the skill gates, then the configured checks neither names. */
@@ -436,6 +479,7 @@ export function renderBrief(
     );
 
   const exists = listWorktrees(cwd).some((entry) => samePath(entry.path, planned));
+  const deps = exists ? dependencyLines(planned, made) : null;
   // Judges' probes stay in the candidate worktree, hidden through info/exclude.
   excludeScratch(cwd);
   const probes = exists
@@ -514,6 +558,7 @@ export function renderBrief(
       slice.tier,
       probes,
       exists ? planned : "<candidate worktree>",
+      deps?.verifier ?? null,
     ),
     `TIMEBOX: ${timeboxText(slice.timebox, slice.tier)}; past it without a new commit you will be replaced`,
     scratchLine,
@@ -527,11 +572,7 @@ export function renderBrief(
     exists
       ? `WORKTREE: ${planned}  (made by \`workit fanout worktree create ${slice.id}\`; yours alone)`
       : `WORKTREE: ${planned}  (not made yet: the lead runs \`workit fanout worktree create ${slice.id}\` before spawning, then renders this brief again)`,
-    ...(exists &&
-    typeof made?.install === "string" &&
-    !fs.existsSync(path.join(planned, "node_modules"))
-      ? [`INSTALL: \`${made.install}\` first: the main checkout's node_modules was not linked here`]
-      : []),
+    ...(deps?.lines ?? []),
     ...identityLines(identity, minted),
     ...rules(mode, branch, sliceBase, exists ? planned : null, coAuthor, host),
   ];

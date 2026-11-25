@@ -6,6 +6,7 @@
 //   workit fanout check    [<slice>…] [--name <n>] [--base <ref>] [--offline]
 //   workit fanout status   [--name <n>] [--stuck-after 30m] [--offline]
 //   workit fanout worktree create <slice>… [--name <plan|plan.json>] [--branch <b> [--base <b>] [--tier <t>]]
+//                                          [--deps install|link] [--install-timeout 5m]
 //   workit fanout worktree release <slice> [--name <n>] [--force]
 //
 // `--name` (alias `--plan`) takes a plan's name or its file: a file is
@@ -34,9 +35,11 @@ import {
 import { checkFanout, type CheckOutcome } from "@workit-dev/core/src/fanout-check";
 import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-status";
 import {
+  DEPENDENCY_CHOICES,
   createSliceWorktree,
   releaseSliceWorktree,
   type CreateOutcome,
+  type DependencyChoice,
   type ReleaseOutcome,
 } from "@workit-dev/core/src/fanout-worktree";
 import {
@@ -63,7 +66,7 @@ const CHECK_USAGE =
   "workit fanout check [<slice>…] [--name <n>] [--base <ref>] [--offline] [--json]";
 const STATUS_USAGE = "workit fanout status [--name <n>] [--stuck-after 30m] [--offline] [--json]";
 const WORKTREE_USAGE =
-  "workit fanout worktree create <slice>… [--name <plan|plan.json>] [--branch <b>] [--base <b>] [--tier <t>] | worktree release <slice> [--name <n>] [--force] [--json]";
+  "workit fanout worktree create <slice>… [--name <plan|plan.json>] [--branch <b>] [--base <b>] [--tier <t>] [--deps install|link] [--install-timeout <duration>] | worktree release <slice> [--name <n>] [--force] [--json]";
 const USAGE = "workit fanout plan|brief|check|status|worktree ... (workit help fanout)";
 
 /** The forge for PR lookups, or why there is none (offline is never an error). */
@@ -464,10 +467,22 @@ function status(argv: string[], io: Io): number {
 
 type MadeSlice = CreateOutcome & { prompt: string; spawn: string };
 
+/** How the worktree got node_modules, in one line; LINKED stands out because it can drift. */
+const depsLine = (data: MadeSlice): string[] => {
+  const { mode, from, command, fallback } = data.deps;
+  if (mode === "installed") return [`  deps own install${command ? ` (${command})` : ""}`];
+  if (mode === "linked")
+    return [
+      `  deps LINKED from ${from ?? "the main checkout"}${fallback ? ` (${fallback})` : ""}: shared packages can drift from this worktree's lockfile`,
+    ];
+  return command ? [`  deps none: run ${data.install ?? command} first`] : [];
+};
+
 /** One made slice: what `create` did, then its WORKTREE line and the spawn that carries it. */
 const renderMade = (data: MadeSlice): string[] => [
   `${data.created ? "created" : "kept"} worktree for slice ${data.slice} (${data.mode}): ${data.path}`,
   `  branch ${data.branch} <- ${data.base} at ${short(data.head)}`,
+  ...depsLine(data),
   ...(data.stack ? [`  stack ${data.stack.name}: ${data.stack.slices.join(" -> ")}`] : []),
   `  scratch ${data.scratch}  (put it in the worker brief: temp files go here)`,
   ...data.notes.map((note) => `note: ${note}`),
@@ -513,6 +528,23 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
     return usage(io, "pass --name <plan> or --branch <b>, not both", WORKTREE_USAGE);
   if (flags.tier !== undefined && !(TIERS as readonly string[]).includes(flags.tier))
     return usage(io, `--tier takes one of ${TIERS.join(", ")} (got ${flags.tier})`, WORKTREE_USAGE);
+  if (flags.deps !== undefined && !(DEPENDENCY_CHOICES as readonly string[]).includes(flags.deps))
+    return usage(
+      io,
+      `--deps takes ${DEPENDENCY_CHOICES.join(" or ")} (got ${flags.deps})`,
+      WORKTREE_USAGE,
+    );
+  const timeoutMs =
+    flags["install-timeout"] === undefined ? undefined : parseDuration(flags["install-timeout"]);
+  if (timeoutMs === null || timeoutMs === 0)
+    return usage(io, "--install-timeout takes a duration such as 90s or 5m", WORKTREE_USAGE);
+  if (timeoutMs !== undefined && flags.deps === "link")
+    return usage(io, "--install-timeout goes with --deps install", WORKTREE_USAGE);
+  const dependencies = {
+    choice: (flags.deps ?? "install") as DependencyChoice,
+    env: io.env,
+    timeoutMs,
+  };
   const actor = actorFromEnv(io.env);
   let chosen: FanoutFile | number;
   if (branch === null && !unplanned) chosen = pickFanout(io, flags);
@@ -534,6 +566,7 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
       slice,
       actor,
       forge: () => forgeFor(io, false).forge,
+      dependencies,
     });
     if (!result.ok) {
       if (!io.json) for (const line of made.flatMap(renderMade)) io.stdout(`${line}\n`);
@@ -561,6 +594,8 @@ async function worktree(argv: string[], io: Io): Promise<number> {
     branch: "value",
     base: "value",
     tier: "value",
+    deps: "value",
+    "install-timeout": "value",
   });
   if (typeof flags === "string") return usage(io, flags, WORKTREE_USAGE);
   if (action !== "create" && action !== "release")
@@ -577,7 +612,7 @@ async function worktree(argv: string[], io: Io): Promise<number> {
   }
   if (flags.positionals.length !== 1)
     return usage(io, `unexpected argument ${flags.positionals[1]}`, WORKTREE_USAGE);
-  for (const only of ["branch", "base", "tier"])
+  for (const only of ["branch", "base", "tier", "deps", "install-timeout"])
     if (flags.values[only] !== undefined)
       return usage(io, `--${only} applies to create only`, WORKTREE_USAGE);
   const selected = pickFanout(io, flags.values, flags.positionals[0]);

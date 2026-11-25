@@ -1049,9 +1049,9 @@ export const VERBS: readonly VerbEntry[] = [
         name: "worktree",
         flagAliases: { fanout: "name", plan: "name" },
         usage:
-          "workit fanout worktree create|release <slice>… [--name <plan|plan.json>] [--branch <b>] [--base <b>] [--tier <t>] [--force]",
+          "workit fanout worktree create|release <slice>… [--name <plan|plan.json>] [--branch <b>] [--base <b>] [--tier <t>] [--deps install|link] [--install-timeout <duration>] [--force]",
         summary:
-          "Make slice worktrees and print each WORKTREE line and spawn (a plan file in --name is registered; --branch, --base and --tier make one unplanned slice), or release one (--force applies to release only)",
+          "Make slice worktrees and print each WORKTREE line and spawn (a plan file in --name is registered; --branch, --base and --tier make one unplanned slice; each gets its own frozen install, --deps link shares the main checkout's node_modules), or release one (--force applies to release only)",
       },
     ],
     examples: [
