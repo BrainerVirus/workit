@@ -15,9 +15,9 @@ import {
 import { emit, fail, ok, type Io } from "../output";
 import { parseFlags, usage } from "./forge-common";
 
-export const ROLL_USAGE =
+const ROLL_USAGE =
   "workit changelog roll [--path CHANGELOG.md] [--tag-prefix <prefix>] [--preview]";
-export const RELEASE_USAGE =
+const RELEASE_USAGE =
   "workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--no-write] [--path CHANGELOG.md] [--tag-prefix <prefix>]";
 
 type Done = Extract<ChangelogRollRun, { ok: true }>;
