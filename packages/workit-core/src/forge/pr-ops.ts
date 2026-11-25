@@ -55,6 +55,7 @@ import {
   type VerdictCheck,
 } from "../ledger";
 import { checkVerdictsCovered, type StackCover } from "../verdict-cover";
+import type { SetCover } from "../core/verdict-set";
 import type { LaneNeed, ReviewLane } from "../core/policy/lane";
 import { laneLabel, prLaneGate } from "../core/policy/pr-lane";
 import {
@@ -433,6 +434,8 @@ export type MergeOutcome = {
     verification: VerificationMode;
     /** The stack verdict above this PR that covers it (#334), when it has none of its own. */
     cover?: StackCover | null;
+    /** The set verdict (#891) that covers this PR's diff, when it has none of its own. */
+    set?: SetCover | null;
     /** How a verdict on an older head carried to this one over a follow-up change (#334). */
     carry?: CarryNote | null;
   };
@@ -1043,7 +1046,7 @@ export async function mergePullRequest(
   let gate: ReturnType<typeof prLaneGate>;
   try {
     // A lower PR of a stack may be covered by the verdict at its top (#334).
-    check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
+    check = checkVerdictsCovered(cwd, branch, ledger.value.rows, { ci: doc.checks.state });
     gate = prLaneGate(cwd, check, { branch, base: doc.base, head, ci: doc.checks.state });
   } finally {
     borrowed.release();
@@ -1066,7 +1069,11 @@ export async function mergePullRequest(
     need: gate.need,
     verification: gate.verification,
     ...(covered && gate.review === "verified"
-      ? { cover: check.cover, carry: check.cover ? null : check.carry }
+      ? {
+          cover: check.cover,
+          set: check.set,
+          carry: check.cover || check.set ? null : check.carry,
+        }
       : {}),
   };
   let unverified: MergeOutcome["unverified"] = null;

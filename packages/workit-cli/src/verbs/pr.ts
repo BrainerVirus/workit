@@ -85,6 +85,7 @@ import {
 } from "@workit-dev/core/src/core/branch";
 import { actorFromEnv, carryLabel, readLedger, type CarryNote } from "@workit-dev/core/src/ledger";
 import { checkVerdictsCovered, type StackCover } from "@workit-dev/core/src/verdict-cover";
+import { setCoverLabel, type SetCover } from "@workit-dev/core/src/core/verdict-set";
 import {
   DEPENDENCY_BUMP_EVIDENCE,
   untrackedRiskPathsWarning,
@@ -498,6 +499,8 @@ async function status(argv: string[], io: Io): Promise<number> {
             ? `verdict: ${data.verdict.accepted ? `accepted (${acceptedHow(data.verdict)})` : data.verdict.review === "self-reviewed" ? "self-reviewed (author's own verdict; not independent)" : `not accepted (${data.verdict.reasons.join(", ") || data.verdict.basis})`}`
             : "verdict: unknown (ledger unreadable)",
       );
+      if (data.verdict?.setNote && !data.verdict.merge)
+        lines.splice(lines.length - 1, 0, `set verdict: ${data.verdict.setNote}`);
       if (data.verdict?.reverify && !data.verdict.merge)
         lines.splice(
           lines.length - 1,
@@ -572,7 +575,9 @@ function verdictBlock(
 ) {
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
-  const check = checkVerdictsCovered(cwd, branch, ledger.value.rows);
+  const check = checkVerdictsCovered(cwd, branch, ledger.value.rows, {
+    ci: doc.checks?.state ?? null,
+  });
   // A merged PR's verdict is the one its merge was accepted on: the branch
   // has moved on or been deleted, so a fresh check would read as stale.
   let landed: MergeRecord | "untracked" | null = null;
@@ -639,8 +644,10 @@ function verdictBlock(
       check.accepted.accepted && typeof check.accepted.verdict?.id === "string"
         ? check.accepted.verdict.id
         : null,
-    carry: check.cover ? null : check.carry,
+    carry: check.cover || check.set ? null : check.carry,
     cover: check.cover,
+    set: check.set,
+    setNote: check.setNote,
     reverify: check.reverify,
   };
 }
@@ -656,27 +663,31 @@ const mergedOnLine = (verdict: {
   review: string;
   lane: string;
   cover?: StackCover | null;
+  set?: SetCover | null;
   carry?: CarryNote | null;
 }): string => {
   if (verdict.review === "self-reviewed")
     return `self-reviewed (lane ${verdict.lane}): the author's verdict ${verdict.verdictId ?? "?"}; no independent verdict accepted for that head`;
   if (!verdict.verdictId) return `no verdict required (lane ${verdict.lane})`;
-  if (!verdict.accepted && !verdict.cover && !verdict.carry)
+  if (!verdict.accepted && !verdict.cover && !verdict.set && !verdict.carry)
     return `verdict ${verdict.verdictId} satisfied lane ${verdict.lane}; not an accepted independent verdict for that head`;
-  return `verdict ${verdict.verdictId} accepted for that head${verdict.cover ? ` (stack verdict on ${verdict.cover.branch} @ ${verdict.cover.head.slice(0, 12)})` : verdict.carry ? ` (${carryLabel(verdict.carry)})` : ""}`;
+  return `verdict ${verdict.verdictId} accepted for that head${verdict.cover ? ` (stack verdict on ${verdict.cover.branch} @ ${verdict.cover.head.slice(0, 12)})` : verdict.set ? ` (${setCoverLabel(verdict.set)})` : verdict.carry ? ` (${carryLabel(verdict.carry)})` : ""}`;
 };
 
-/** How the accepted verdict applies: fresh, carried (and why), or a stack verdict above it. */
+/** How the accepted verdict applies: fresh, carried (and why), a stack verdict above it, or a set verdict. */
 const acceptedHow = (verdict: {
   basis: string;
   carry: CarryNote | null;
   cover: StackCover | null;
+  set: SetCover | null;
 }): string =>
   verdict.cover
     ? `stack verdict ${verdict.cover.verdictId} on ${verdict.cover.branch} @ ${verdict.cover.head.slice(0, 12)}`
-    : verdict.carry
-      ? carryLabel(verdict.carry)
-      : verdict.basis;
+    : verdict.set
+      ? setCoverLabel(verdict.set)
+      : verdict.carry
+        ? carryLabel(verdict.carry)
+        : verdict.basis;
 
 /**
  * In-process options a calling verb passes; never a flag. `releasePr`: the PR

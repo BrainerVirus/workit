@@ -385,7 +385,7 @@ export function diffHash(cwd: string, base: string, head: string): string | null
 }
 
 /** The pinned `base...head` diff with `--binary`, or null when it fails or is empty. */
-const binaryRangeDiff = (cwd: string, base: string, head: string): string | null => {
+export const binaryRangeDiff = (cwd: string, base: string, head: string): string | null => {
   if (!safeRef(base) || !safeRef(head)) return null;
   const diff = gitRun(
     cwd,
@@ -395,7 +395,7 @@ const binaryRangeDiff = (cwd: string, base: string, head: string): string | null
   return diff.ok && diff.stdout ? diff.stdout : null;
 };
 
-const hashOfDiff = (diff: string): string => {
+export const hashOfDiff = (diff: string): string => {
   const hash = createHash("sha256");
   for (const line of diff.split("\n")) {
     if (line.startsWith("index ")) continue;
@@ -652,7 +652,7 @@ export function withLedgerLock<T>(
 }
 
 /** `heldLock`: the caller holds the file's lock (withLedgerLock), so never take it again. */
-type AppendOptions = {
+export type AppendOptions = {
   now?: Date;
   forceLock?: boolean;
   heldLock?: boolean;
@@ -715,9 +715,13 @@ const tighten = (fd: number): void => {
 };
 
 /** The line to write, given the file's current last line (null: empty file). */
-type LineBuilder = (previous: string | null) => LedgerResult<string>;
+export type LineBuilder = (previous: string | null) => LedgerResult<string>;
 
-function appendLine(file: string, build: LineBuilder, options: AppendOptions): LedgerResult<void> {
+export function appendLine(
+  file: string,
+  build: LineBuilder,
+  options: AppendOptions,
+): LedgerResult<void> {
   const write = (): LedgerResult<void> => {
     // a+ = O_APPEND|O_RDWR: every write lands at the end, and we can still
     // peek at the tail to chain onto the last row.
@@ -767,7 +771,7 @@ export type NewRow<T extends LedgerRow> = Omit<T, "v" | "id" | "at">;
  * Concurrent lock-free appenders may chain onto the same or an older line;
  * the reader accepts a link to any earlier line.
  */
-const sealed = (row: object, id: string, at: string, previous: string | null) => {
+export const sealed = (row: object, id: string, at: string, previous: string | null) => {
   const { prevHash: _prev, rowHash: _row, ...fields } = row as Record<string, unknown>;
   const prevHash = previous === null ? null : sha256(previous);
   const body = { v: LEDGER_VERSION, id, at, ...fields, prevHash };
@@ -926,7 +930,7 @@ export function readLedger(
 }
 
 /** readLedger of the ledger file at `file` (branch renames read in `cwd`). */
-function readLedgerAt(
+export function readLedgerAt(
   cwd: string,
   file: string,
   options: { integrity?: boolean },
@@ -1551,7 +1555,7 @@ function sessionTrust(cwd: string, row: ReadRow): RejectReason | null {
  * Why a gate cannot trust `row` (D18, audit N1): outside the hash chain, or
  * acting as a session nothing vouches for. Rows read without integrity are unsigned.
  */
-function trustReasons(cwd: string, row: ReadRow): RejectReason[] {
+export function trustReasons(cwd: string, row: ReadRow): RejectReason[] {
   if (row.integrity === "unverified") return [row.integrityReason ?? "unsigned"];
   if (row.integrity !== "verified") return ["unsigned"];
   const session = sessionTrust(cwd, row);
@@ -2077,7 +2081,7 @@ function checkVerdictsOnce(
 // row recorded here. Only rows that verify in the mirror's chain are taken.
 
 /** The remote identity of `cwd`'s `origin`: host and path, lowercased; null without one. */
-function remoteIdentity(cwd: string, hop = 0): string | null {
+export function remoteIdentity(cwd: string, hop = 0): string | null {
   const raw = originUrl(cwd);
   if (!raw) return null;
   // A clone of a local checkout: that checkout's own origin names the remote.
