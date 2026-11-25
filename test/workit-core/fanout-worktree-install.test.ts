@@ -163,7 +163,7 @@ type Made = {
   path: string;
   install: string | null;
   dependencies: { from: string } | null;
-  deps: { mode: string; command: string | null; fallback: string | null };
+  deps: { mode: string; from: string | null; command: string | null; fallback: string | null };
   notes: string[];
 };
 

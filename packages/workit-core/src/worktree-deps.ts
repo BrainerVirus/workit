@@ -276,7 +276,7 @@ export function installWorktreeDependencies(
     fs.closeSync(out);
   }
   const ms = Math.round(performance.now() - started);
-  const code = ran.error?.code;
+  const code = ran.error && "code" in ran.error ? ran.error.code : undefined;
   const reason =
     code === "ETIMEDOUT"
       ? `${shown} timed out after ${Math.round(options.timeoutMs / 1000)} s`
