@@ -149,6 +149,16 @@ const CHECK_STATUS_MS = 60_000;
  */
 const INTERRUPT_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
+/**
+ * Did the command die of `signal` (workit forwards it to the group)? A shell
+ * or wrapper reports that death as exit 128 plus the signal number.
+ */
+const diedOf = (
+  result: { signal: string | null; exitCode: number },
+  signal: NodeJS.Signals,
+): boolean =>
+  result.signal === signal || result.exitCode === 128 + (os.constants.signals[signal] ?? 0);
+
 /** Note the first interrupt signal workit receives until the returned stop is called. */
 function watchInterrupts(): { received: () => NodeJS.Signals | null; stop: () => void } {
   let received: NodeJS.Signals | null = null;
@@ -1175,14 +1185,13 @@ export async function run(argv: string[], io: Io): Promise<number> {
     lease?.release();
   }
   const passed = result.exitCode === 0 && !result.timedOut;
-  // A run the caller stopped (workit got the signal, or the command died of
-  // one) proves nothing about the code: recorded as `interrupted`, never failed.
+  const received = interrupts.received();
+  // #881: a run the caller stopped (workit got the signal and the command died
+  // of it) proves nothing about the code: recorded as `interrupted`. A command
+  // that signalled itself, or exited on its own code after the signal, failed.
   const interruptedBy: NodeJS.Signals | null =
-    passed || result.timedOut
-      ? null
-      : (interrupts.received() ??
-        INTERRUPT_SIGNALS.find((caught) => caught === result.signal) ??
-        null);
+    !passed && !result.timedOut && received && diedOf(result, received) ? received : null;
+  const killedBy = interruptedBy || result.timedOut ? null : result.signal;
   const commandExit = passed
     ? 0
     : interruptedBy
@@ -1223,7 +1232,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     // The checkout it ran in: one ledger serves every worktree of the repo (C20).
     checkout: top,
     result: passed ? "passed" : interruptedBy ? "interrupted" : "failed",
-    ...(interruptedBy ? { signal: interruptedBy } : {}),
+    ...(interruptedBy || killedBy ? { signal: interruptedBy ?? killedBy } : {}),
     exitCode: result.exitCode,
     timedOut: result.timedOut,
     durationMs: result.durationMs,
@@ -1335,7 +1344,11 @@ export async function run(argv: string[], io: Io): Promise<number> {
         ? `timed out after ${options.timeoutMs} ms${queuedMs ? ` (${queuedMs} ms of it queued for the heavy-check lease)` : ""}`
         : result.spawnError
           ? `cannot start ${command[0]}: ${result.spawnError}`
-          : `exited ${result.exitCode}`
+          : killedBy
+            ? received
+              ? `killed by ${killedBy} (exit ${result.exitCode}); workit received ${received}`
+              : `killed by ${killedBy} (exit ${result.exitCode}; no signal reached workit)`
+            : `exited ${result.exitCode}`
     : recordError?.message;
   const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; ran in ${top}${key.head ? ` @ ${key.head.slice(0, 12)}` : ""}; log: ${logPath ?? "not stored"}`;
   if (io.json)

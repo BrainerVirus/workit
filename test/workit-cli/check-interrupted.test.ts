@@ -146,6 +146,78 @@ test("G a command that exits 143 on its own, W no signal reached workit, T the r
   expect(row).not.toHaveProperty("signal");
 });
 
+// #881: only a signal workit itself received, and that the command died of,
+// makes a run `interrupted`; a command that signals itself failed.
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const)
+  test.skipIf(process.platform === "win32")(
+    `G a command that sends itself ${signal}, W no signal reached workit, T the row is failed with the signal named`,
+    async () => {
+      const { root, env } = repo({ self: [BUN, "-e", `process.kill(process.pid, "${signal}")`] });
+      const result = await cli(root, ["check", "self"], env).done;
+      const exit = 128 + os.constants.signals[signal];
+
+      expect(result.code, result.stderr).toBe(exit);
+      expect(result.stderr).toContain(
+        `killed by ${signal} (exit ${exit}; no signal reached workit)`,
+      );
+      expect(result.stderr).not.toContain("interrupted by");
+      expect(lastCheckRow(root)).toMatchObject({ result: "failed", signal, exitCode: exit });
+    },
+  );
+
+/** Prints "ready", then exits 3 on its own when SIGTERM arrives. */
+const TRAPPER = [
+  BUN,
+  "-e",
+  "process.on('SIGTERM', () => process.exit(3)); console.log('ready'); setTimeout(() => {}, 30000)",
+];
+
+test.skipIf(process.platform === "win32")(
+  "G a command that exits 3 when SIGTERM arrives, W the caller sends workit SIGTERM, T the run is recorded failed with exit 3, not interrupted",
+  async () => {
+    const { root, env } = repo({ trapper: TRAPPER });
+    const running = cli(root, ["check", "trapper", "--full"], env);
+    await until(() => running.stdout().includes("ready"));
+    running.child.kill("SIGTERM");
+    const result = await running.done;
+
+    expect(result.code, result.stderr).toBe(3);
+    expect(result.stderr).toContain("exited 3");
+    expect(result.stderr).not.toContain("interrupted by");
+    const row = lastCheckRow(root);
+    expect(row).toMatchObject({ result: "failed", exitCode: 3 });
+    expect(row).not.toHaveProperty("signal");
+  },
+);
+
+/** Prints "ready", then kills itself with SIGTERM when SIGINT arrives. */
+const SWAPPER = [
+  BUN,
+  "-e",
+  "process.on('SIGINT', () => process.kill(process.pid, 'SIGTERM')); console.log('ready'); setTimeout(() => {}, 30000)",
+];
+
+test.skipIf(process.platform === "win32")(
+  "G a command that dies of SIGTERM when SIGINT arrives, W the caller sends workit SIGINT, T the row is failed and the message names both signals",
+  async () => {
+    const { root, env } = repo({ swapper: SWAPPER });
+    const running = cli(root, ["check", "swapper", "--full"], env);
+    await until(() => running.stdout().includes("ready"));
+    running.child.kill("SIGINT");
+    const result = await running.done;
+
+    expect(result.code, result.stderr).toBe(143);
+    expect(result.stderr).toContain("killed by SIGTERM (exit 143); workit received SIGINT");
+    expect(result.stderr).not.toContain("no signal reached workit");
+    expect(result.stderr).not.toContain("interrupted by");
+    expect(lastCheckRow(root)).toMatchObject({
+      result: "failed",
+      signal: "SIGTERM",
+      exitCode: 143,
+    });
+  },
+);
+
 const HEAD = "a".repeat(40);
 const row = (result: string) => ({
   type: "check",
