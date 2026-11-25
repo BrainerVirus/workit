@@ -65,6 +65,7 @@ import {
   type StoreLocation,
   type TaskKey,
 } from "../store/paths";
+import { folderStoreDir } from "./workit-paths.mjs";
 import {
   OPENING_TYPES,
   reduce,
@@ -956,16 +957,26 @@ export class TaskReader {
   }
 
   /**
-   * A 3.x store kept in `<root>/.workit` while the directory was not a git
-   * repository moves into the git store once it is one: task logs, checkout
+   * A 3.x store kept outside git (`<state>/folders/<slug>`, or `<root>/.workit`
+   * from older Workit) moves into the git store once the directory is a repository: task logs, checkout
    * records, blobs and (when the git store has none) the ledger. Entries the
    * git store already has are left in place. The local marker is renamed so
    * this runs once.
    */
   protected adoptLocalStore(): Result<null> {
+    if (!this.paths().shared) return success(null, null, null);
+    for (const local of [this.paths().v2, folderStoreDir(this.root)]) {
+      const adopted = this.adoptStoreFrom(local);
+      if (!adopted.ok) return adopted;
+    }
+    return success(null, null, null);
+  }
+
+  /** Move one non-git store (`local`) into the git store; see adoptLocalStore. */
+  private adoptStoreFrom(local: string): Result<null> {
     const dirs = this.paths();
-    const marker = path.join(dirs.v2, "store.json");
-    if (!dirs.shared || !fs.existsSync(marker)) return success(null, null, null);
+    const marker = path.join(local, "store.json");
+    if (!fs.existsSync(marker)) return success(null, null, null);
     return this.withLock(dirs.checkoutLock, () => {
       if (!fs.existsSync(marker)) return success(null, null, null);
       let tasks = 0;
@@ -987,31 +998,27 @@ export class TaskReader {
               merge(path.join(from, name), path.join(to, name));
         };
         for (const sub of ["tasks", "checkouts", "blobs", "legacy"]) {
-          const from = path.join(dirs.v2, sub);
+          const from = path.join(local, sub);
           if (!fs.existsSync(from)) continue;
           if (sub === "tasks")
             for (const name of fs.readdirSync(from))
               if (validId(name) && !fs.existsSync(path.join(dirs.dir, sub, name))) tasks += 1;
           merge(from, path.join(dirs.dir, sub));
         }
-        const ledger = path.join(dirs.v2, "ledger");
+        const ledger = path.join(local, "ledger");
         if (fs.existsSync(ledger) && !fs.existsSync(path.join(dirs.dir, "ledger")))
           merge(ledger, path.join(dirs.dir, "ledger"));
-        fs.rmSync(path.join(dirs.v2, "task-index.json"), { force: true });
-        fs.renameSync(marker, path.join(dirs.v2, "store.moved.json"));
+        fs.rmSync(path.join(local, "task-index.json"), { force: true });
+        fs.renameSync(marker, path.join(local, "store.moved.json"));
       } catch (error) {
-        return failure(
-          "storage_error",
-          `cannot move ${dirs.v2} into ${dirs.dir}: ${String(error)}`,
-          {
-            path: dirs.v2,
-          },
-        );
+        return failure("storage_error", `cannot move ${local} into ${dirs.dir}: ${String(error)}`, {
+          path: local,
+        });
       }
       reportMigration({
-        from: dirs.v2,
+        from: local,
         to: dirs.dir,
-        backup: dirs.v2,
+        backup: local,
         tasks,
         skipped: 0,
         workspace: false,
@@ -1068,26 +1075,6 @@ export class TaskReader {
     replaceFile(path.join(v2, "workspace.json"), `${JSON.stringify(marker, null, 2)}\n`, true);
   }
 
-  /**
-   * A store outside git carries the marker at `<root>/.workit/workspace.json`,
-   * so a 2.x runtime never starts a second, divergent store there (it fails
-   * closed with the upgrade message). A git checkout gets none: its
-   * `.workit/` holds only committed team config.
-   */
-  private writeTombstoneIfMissing() {
-    try {
-      if (this.paths().shared) return;
-      const v2 = path.join(this.root, ".workit");
-      if (fs.existsSync(path.join(v2, "workspace.json"))) return;
-      let id: Id | null = null;
-      try {
-        id =
-          (JSON.parse(fs.readFileSync(this.paths().workspace, "utf8")) as { id?: Id }).id ?? null;
-      } catch {}
-      this.writeTombstone(v2, id);
-    } catch {}
-  }
-
   // -------------------------------------------------------------------------
   // internals: locks
 
@@ -1101,16 +1088,6 @@ export class TaskReader {
         `${JSON.stringify({ format: "workit-store", version: STORE_FORMAT, createdWith: runtimeVersion() })}\n`,
         false,
       );
-    if (!dirs.shared) {
-      // Outside git the store sits in the checkout: keep it out of any VCS.
-      const ignore = path.join(dirs.dir, ".gitignore");
-      let current: string | null = null;
-      try {
-        current = fs.readFileSync(ignore, "utf8");
-      } catch {}
-      if (current !== "*\n") retryTransient(() => fs.writeFileSync(ignore, "*\n"));
-    }
-    this.writeTombstoneIfMissing();
   }
 
   /**

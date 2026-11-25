@@ -3,8 +3,10 @@
 //
 // - The store directory is `<git common dir>/workit` in a git repository, so
 //   every worktree of the repo shares it and it survives worktree removal and
-//   `git clean`; outside git it is `<root>/.workit`, and a root that does not
-//   exist has none (an error), so a store never recreates a removed directory.
+//   `git clean`; outside git it is `<state>/folders/<slug>` (never in the
+//   folder; an older `<root>/.workit` moves there once, store/folder-store.ts),
+//   and a root that does not exist has none (an error), so a store never
+//   recreates a removed directory.
 // - The implicit task key is the branch name when HEAD is attached,
 //   `detached-<hash of the worktree>` on a detached HEAD, and
 //   `dir-<hash of the root>` outside git.
@@ -17,6 +19,8 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { folderSlug, folderStoreDir } from "../core/workit-paths.mjs";
+import { migrateFolderStore } from "./folder-store";
 
 export type StoreLocation = {
   /** The store directory. */
@@ -179,6 +183,13 @@ function fastGit(root: string): FastGit | null {
   }
 }
 
+/** A folder outside git: its store in the state dir, an older `<root>/.workit` moved there first. */
+const outsideGit = (root: string): StoreLocation => {
+  const dir = folderStoreDir(root);
+  migrateFolderStore(root, dir);
+  return { dir, shared: false, top: null };
+};
+
 /**
  * The store directory for a checkout root, or an error message when git
  * cannot answer for a directory that is (or may be) inside a repository.
@@ -201,7 +212,7 @@ export function resolveStore(root: string): StoreLocation | Error {
     );
   if (!stat.isDirectory()) return { dir: path.join(root, ".workit"), shared: false, top: null };
   const fast = fastGit(root);
-  if (fast?.kind === "none") return { dir: path.join(root, ".workit"), shared: false, top: null };
+  if (fast?.kind === "none") return outsideGit(root);
   if (fast?.kind === "repo")
     return {
       dir: path.join(fast.common, "workit"),
@@ -219,8 +230,7 @@ export function resolveStore(root: string): StoreLocation | Error {
       top: top.ok && top.stdout.trim() ? real(top.stdout.trim()) : null,
     };
   }
-  if (run.missing || (!run.ok && NOT_A_REPO.test(run.stderr)))
-    return { dir: path.join(root, ".workit"), shared: false, top: null };
+  if (run.missing || (!run.ok && NOT_A_REPO.test(run.stderr))) return outsideGit(root);
   return new Error(
     `cannot locate the workit store: git rev-parse failed (${run.stderr.trim().split("\n")[0] || "no output"}); fix the repository (git status should work here)`,
   );
@@ -362,13 +372,4 @@ export function followRenames(key: string, boundAt: string, renames: BranchRenam
  * canonical path, so every spelling of the same directory (symlinks, Windows
  * short names, drive-letter case) maps to one checkout.
  */
-export const checkoutSlug = (root: string): string => {
-  let canonical = real(root);
-  if (process.platform === "win32") canonical = canonical.toLowerCase();
-  const base =
-    path
-      .basename(canonical)
-      .replace(/[^A-Za-z0-9._-]/g, "_")
-      .slice(0, 40) || "root";
-  return `${base}-${shortHash(canonical)}`;
-};
+export const checkoutSlug = (root: string): string => folderSlug(root);

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { storeRoot } from "@/packages/workit-core/src/ledger";
 import { resolveStore } from "@/packages/workit-core/src/store/paths";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 // #835: the outside-git fallback never places a store under a directory that
 // does not exist, so no later write recreates a removed checkout.
@@ -34,9 +35,10 @@ test("G a cwd naming a directory that does not exist, W the store is resolved, T
   expect(existsSync(path.join(base, "removed"))).toBe(false);
 });
 
-test("G a non-git directory that exists, W the store is resolved, T it is <dir>/.workit as before", () => {
+test("G a non-git directory that exists, W the store is resolved, T it is the folder's dir in the state dir", () => {
   const dir = temp();
-  expect(resolveStore(dir)).toEqual({ dir: path.join(dir, ".workit"), shared: false, top: null });
+  expect(resolveStore(dir)).toEqual({ dir: folderStoreDir(dir), shared: false, top: null });
+  expect(existsSync(path.join(dir, ".workit"))).toBe(false);
 });
 
 test("G a path that exists but is a file, W the store is resolved, T the per-directory layout is kept", () => {

@@ -336,7 +336,7 @@ test("G the guarded dirs, W the launcher and core build them for one fixture env
     "guardedDirs(process.env, { configDir: workitConfigDir, stateDir: workitStateDir, userHome })",
   );
   expect(flat("packages/workit-claude-code/bin/workit-hook.mjs")).toMatch(
-    /configDir as workitConfigDir, migrateLegacyDirs, stateDir as workitStateDir, userHome, \} from "\.\/workit-paths\.mjs"/,
+    /configDir as workitConfigDir, folderStoreDir, migrateLegacyDirs, stateDir as workitStateDir, userHome, \} from "\.\/workit-paths\.mjs"/,
   );
   expect(flat("packages/workit-core/src/hooks/write-reach.ts")).toContain(
     "guardedDirs(env, { configDir, stateDir, userHome })",

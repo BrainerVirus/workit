@@ -10,7 +10,8 @@
 // POSIX shell launchers embed the *_SH functions below verbatim, and a test
 // runs them against the JavaScript for the same environment.
 // Side-effect free on import; only migrateLegacyDirs touches the disk.
-import { existsSync, lstatSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -99,6 +100,37 @@ export const runtimeDir = (env, platform) => workitDir("runtime", env, platform)
  * @param {NodeJS.ProcessEnv} [env] @param {string} [platform]
  */
 export const worktreesDir = (env, platform) => path.join(stateDir(env, platform), "worktrees");
+
+/**
+ * A filesystem-safe name for one directory, from its canonical path, so every
+ * spelling of it (symlinks, Windows short names, drive-letter case) maps to one
+ * name: `<basename>-<12 hex of its sha256>`. The task store keys checkouts by it.
+ * @param {string} dir @param {string} [platform]
+ */
+export const folderSlug = (dir, platform = process.platform) => {
+  let canonical = dir;
+  try {
+    canonical = realpathSync.native(dir);
+  } catch {
+    // A missing path keys by its spelling.
+  }
+  if (platform === "win32") canonical = canonical.toLowerCase();
+  const base =
+    path
+      .basename(canonical)
+      .replace(/[^A-Za-z0-9._-]/g, "_")
+      .slice(0, 40) || "root";
+  return `${base}-${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`;
+};
+
+/**
+ * Where a folder outside every git repository keeps its Workit store (ledger,
+ * tasks, plans, retros, handoffs, notes): `<state>/folders/<folderSlug(dir)>`,
+ * never inside the folder itself.
+ * @param {string} dir @param {NodeJS.ProcessEnv} [env] @param {string} [platform]
+ */
+export const folderStoreDir = (dir, env, platform) =>
+  path.join(stateDir(env, platform), "folders", folderSlug(dir, platform));
 
 /**
  * The managed worktree root before it moved to worktreesDir:

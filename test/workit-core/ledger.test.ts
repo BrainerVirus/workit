@@ -13,6 +13,7 @@ import fs, {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { fileURLToPath } from "node:url";
 import {
   MAX_LINE_BYTES,
@@ -124,18 +125,19 @@ const seedAuthor = (root: string, type: "commit.recorded" | "task.opened", sessi
 // ---------------------------------------------------------------------------
 // store root and sharing (D13, M1)
 
-test("given a git repo, the store root is <git common dir>/workit and non-git dirs keep <cwd>/.workit", () => {
+test("given a git repo, the store root is <git common dir>/workit and non-git dirs keep it in the state dir", () => {
   const root = repo();
   expect(value(storeRoot(root))).toEqual({
     root: path.join(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "workit"),
     shared: true,
   });
   const plain = tmp("wk-ledger-plain-");
-  expect(value(storeRoot(plain))).toEqual({ root: path.join(plain, ".workit"), shared: false });
+  expect(value(storeRoot(plain))).toEqual({ root: folderStoreDir(plain), shared: false });
   value(recordDecision({ cwd: plain, actor: actor() }, { what: "x", why: "y" }));
-  expect(readFileSync(path.join(plain, ".workit", "ledger", "ledger.jsonl"), "utf8")).toContain(
-    '"type":"decision"',
-  );
+  expect(
+    readFileSync(path.join(folderStoreDir(plain), "ledger", "ledger.jsonl"), "utf8"),
+  ).toContain('"type":"decision"');
+  expect(existsSync(path.join(plain, ".workit"))).toBe(false);
 });
 
 test("given a git failure other than 'not a git repository', the store is unavailable and no .workit fallback is created", () => {

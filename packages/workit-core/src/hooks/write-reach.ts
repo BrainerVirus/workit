@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { configDir, stateDir, userHome } from "../core/workit-paths.mjs";
+import { configDir, folderStoreDir, stateDir, userHome } from "../core/workit-paths.mjs";
 
 /** The guarded dirs and what a shell expands, as the hook process sees them. */
 export type ReachDirs = {
@@ -30,7 +30,7 @@ type ReachPaths = {
 };
 
 // write-reach:begin
-/** `<git-common-dir>/workit` (or `<dir>/.workit` outside git) holds tasks. */
+/** `<git-common-dir>/workit` (or `<state>/folders/<slug>`, or an older `<dir>/.workit`, outside git) holds tasks. */
 const hasTaskStore = (cwd: string): boolean => {
   try {
     for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
@@ -50,7 +50,11 @@ const hasTaskStore = (cwd: string): boolean => {
           existsSync(path.join(store, "tasks")) || existsSync(path.join(store, "task-index.json"))
         );
       }
-      if (existsSync(path.join(dir, ".workit"))) return true;
+      if (
+        existsSync(path.join(dir, ".workit")) ||
+        existsSync(path.join(folderStoreDir(dir, process.env), "tasks"))
+      )
+        return true;
       if (path.dirname(dir) === dir) return false;
     }
   } catch {

@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "@/packages/workit-core/src/core/task-store";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { eventsOf, eventsFileOf, rewriteTaskLog, workspaceFileOf } from "./store-files";
 import { success, type TaskRecord } from "@/packages/workit-core/src/core/task-contract";
 import { ref, scope } from "./task-fixtures";
@@ -70,7 +71,7 @@ test("workspace root binding accepts another path to the same directory", () => 
 
 const identity = (task: TaskRecord) => success(task.revision, null, task);
 
-test("creates snapshots atomically and writes the ignore file only on mutation", () => {
+test("creates snapshots atomically and writes nothing into a non-git folder", () => {
   const { store, task } = startedStore();
   expect(store.readTask(task.id)).toMatchObject({
     ok: true,
@@ -80,7 +81,8 @@ test("creates snapshots atomically and writes the ignore file only on mutation",
     ok: true,
     data: { id: task.workspaceId },
   });
-  expect(existsSync(join(store.root, ".workit", ".gitignore"))).toBe(true);
+  // Outside git the store is in the state dir, never the folder (#892).
+  expect(existsSync(join(store.root, ".workit"))).toBe(false);
 });
 
 test("new tasks preserve the workspace identity while advancing its CAS revision", () => {
@@ -147,7 +149,7 @@ test("an unreadable event before the last line is damage: reported, never rewrit
   const file = eventsFileOf(store.root, task.id);
   const bytes = `{broken}\n${readFileSync(file, "utf8")}`;
   writeFileSync(file, bytes);
-  rmSync(join(store.root, ".workit", "tasks", task.id, "snapshot.json"), {
+  rmSync(join(folderStoreDir(store.root), "tasks", task.id, "snapshot.json"), {
     force: true,
   });
   expect(store.readTask(task.id)).toMatchObject({
@@ -172,7 +174,7 @@ test("unsupported snapshots stay inspectable and a leftover stale lock no longer
   });
   expect(readFileSync(workspaceFile, "utf8")).toBe(JSON.stringify({ schemaVersion: 2 }));
   writeFileSync(workspaceFile, workspaceBytes);
-  const lockPath = join(store.root, ".workit", "tasks", task.id, "lock");
+  const lockPath = join(folderStoreDir(store.root), "tasks", task.id, "lock");
   const lockBytes = JSON.stringify({
     pid: 999999,
     processStart: "old",
