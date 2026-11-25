@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { VERBS } from "@/packages/workit-cli/src/verbs/registry";
 import { actorFromEnv, appendObserved } from "@/packages/workit-core/src/ledger";
 import {
   admit,
@@ -267,4 +268,11 @@ test("Given an admitted dev server, When lock status runs, Then it lists it unde
     { kind: "server", check: "vite", ref: "srv-1", bytes: 1024 ** 3, stale: null },
   ]);
   if (server.ok) server.admission.release();
+});
+
+test("Given the check verb's help, Then its summary names the exit and the heavy-check lease as before #925 (#926)", () => {
+  const summary = VERBS.find((entry) => entry.name === "check")?.summary;
+  expect(summary).toBe(
+    "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
+  );
 });
