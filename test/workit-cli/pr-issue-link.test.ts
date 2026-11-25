@@ -616,6 +616,7 @@ for (const rerun of ["pr create", "pr edit"] as const)
           title: "feat: y",
           base: { ref: "main" },
           head: { ref: "feature/x" },
+          user: { login: "octo" },
         });
         const { repo } = setup(
           "github",

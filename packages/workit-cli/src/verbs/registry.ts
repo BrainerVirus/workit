@@ -676,13 +676,13 @@ export const VERBS: readonly VerbEntry[] = [
       },
       {
         name: "ready",
-        usage: "workit pr ready [--pr <n>] [--undo]",
+        usage: "workit pr ready [--pr <n>] [--undo] [--others-pr --reason <why>]",
         summary: "Mark a draft PR/MR ready for review (--undo: back to draft)",
       },
       {
         name: "edit",
         usage:
-          "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]",
+          "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--others-pr --reason <why>]",
         summary:
           "Change the title, body, labels, reviewers or base (the default target or the stack parent)",
       },
