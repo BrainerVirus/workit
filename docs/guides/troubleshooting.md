@@ -11,6 +11,7 @@ maps common symptoms to those ids.
 | `blocked` (exit 3) on push/PR/merge | `grant_endpoint`, `grant_seal`, `github_identity`, `gitlab_identity` | Read `unblock` in the output: usually a missing grant (`workit grant show`), an unsealed change (`workit workspace seal` in your own terminal) or a `gh`/`glab` login that is not the workspace account |
 | Agents get permission prompts for `workit` verbs | `claude_permissions`, `codex_permissions`, `cursor_permissions`, `*_grant_rules` | `workit setup` in your own terminal |
 | Hook answers "workit context skipped: host under load" | `hook_deadline` | Rare under normal load; see the [Claude Code guide](claude-code.md) for `WORKIT_HOOK_DEADLINE_MS` |
+| A partly staged file shows only its staged hunks after a `workit git commit` was killed | `unstaged_backups` | The rest is kept under the git dir's `workit/unstaged-*`: `workit gc --unstaged` lists it, `--apply` puts back each file nobody edited since; an edited file is never overwritten, so copy it back from the folder by hand |
 | Store grows large | none | `workit gc --dry-run`, then `workit gc` |
 | `recovery` copies from 2.x reported | none | `workit gc --prune-recovery --yes` |
 | A hook prints `[workit] <host> hook unavailable` | `hook_node`, `hook_runs` | The hook failed open: see [Workit hooks are off](#workit-hooks-are-off) (a Node 24+ for the hooks, or `workit upgrade` and a host restart) |
