@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A fork's PRs stay in the fork when `gh repo set-default <owner>/<fork>` is set (`remote.<name>.gh-resolved` = `base`): the `pr` and `ci` verbs used to target the fork's parent repository (or an `upstream` remote) whatever the checkout said, so a PR for a branch pushed to a working fork opened on the parent. The default order is now the `gh repo set-default` remote, then `upstream`, then the fork parent, then the push repository.
 - `workit feedback` without `--verb` and `--exit-file` fills both in from the session's last failing Workit verb (under a day old), and redacts Windows-style relative paths such as `src\app\main.ts` (#916).
 - A second GitHub workflow with the same display name no longer covers a red base check or hides a failing run from the PR's CI gate; a `--base-red-ok` reason given on a PR that already fixes the red base is recorded and reported as not needed (#920).
 - `workit pr merge` on a PR that conflicts with its base only in the changelog rebases it with the changelog merge driver, pushes it with `--force-with-lease` and stops, printing `workit ci wait` and the same merge as the next commands; any other conflict refuses with an exact `workit git rebase` command (#923).
