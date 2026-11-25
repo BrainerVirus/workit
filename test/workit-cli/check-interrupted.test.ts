@@ -190,6 +190,34 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+/** Prints "ready", then kills itself with SIGTERM when SIGINT arrives. */
+const SWAPPER = [
+  BUN,
+  "-e",
+  "process.on('SIGINT', () => process.kill(process.pid, 'SIGTERM')); console.log('ready'); setTimeout(() => {}, 30000)",
+];
+
+test.skipIf(process.platform === "win32")(
+  "G a command that dies of SIGTERM when SIGINT arrives, W the caller sends workit SIGINT, T the row is failed and the message names both signals",
+  async () => {
+    const { root, env } = repo({ swapper: SWAPPER });
+    const running = cli(root, ["check", "swapper", "--full"], env);
+    await until(() => running.stdout().includes("ready"));
+    running.child.kill("SIGINT");
+    const result = await running.done;
+
+    expect(result.code, result.stderr).toBe(143);
+    expect(result.stderr).toContain("killed by SIGTERM (exit 143); workit received SIGINT");
+    expect(result.stderr).not.toContain("no signal reached workit");
+    expect(result.stderr).not.toContain("interrupted by");
+    expect(lastCheckRow(root)).toMatchObject({
+      result: "failed",
+      signal: "SIGTERM",
+      exitCode: 143,
+    });
+  },
+);
+
 const HEAD = "a".repeat(40);
 const row = (result: string) => ({
   type: "check",

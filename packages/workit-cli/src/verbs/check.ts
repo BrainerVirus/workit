@@ -1345,7 +1345,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
         : result.spawnError
           ? `cannot start ${command[0]}: ${result.spawnError}`
           : killedBy
-            ? `killed by ${killedBy} (exit ${result.exitCode}; no signal reached workit)`
+            ? received
+              ? `killed by ${killedBy} (exit ${result.exitCode}); workit received ${received}`
+              : `killed by ${killedBy} (exit ${result.exitCode}; no signal reached workit)`
             : `exited ${result.exitCode}`
     : recordError?.message;
   const summary = `workit check ${label}: ${passed ? "passed, exit 0" : (error ?? "failed")} in ${result.durationMs} ms (${configured ? "configured" : "ad-hoc"}${warnings ? `; warnings: ${warnings}` : ""}${name && !configured && config.checks.some((item) => item.name === name) ? `; not the configured command for "${name}"` : ""}); ${task.evidenceId ? `evidence ${task.evidenceId} on task ${task.task?.id}` : (task.note ?? (task.error ? `task: ${task.error.message}` : "ledger only"))}; ran in ${top}${key.head ? ` @ ${key.head.slice(0, 12)}` : ""}; log: ${logPath ?? "not stored"}`;

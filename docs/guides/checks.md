@@ -34,7 +34,9 @@ Every other ending is the command's own result:
 - A command that kills itself with a signal while no signal reached Workit is
   `failed`. The row names the signal and Workit prints
   `killed by SIGTERM (exit 143; no signal reached workit)`. A command that
-  exits 143 on its own is `failed` too.
+  exits 143 on its own is `failed` too. When Workit received one signal and the
+  command died of another, the run is `failed` and the message names both:
+  `killed by SIGTERM (exit 143); workit received SIGINT`.
 - A command that catches the forwarded signal and exits on its own code (say
   3) is recorded with that code: `failed`, exit 3 (or `passed` on 0).
 
