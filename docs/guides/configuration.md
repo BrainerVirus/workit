@@ -157,8 +157,10 @@ defaults, or `default`). `--json` gives the same as
 source too.
 
 Global config lives in `~/.config/workit/` (`%APPDATA%\workit\` on Windows;
-`config.json`, `workspaces.json`, `vcs.json`, optional `youtrack.json` and
-`templates/`). Logs, the recorded hook Node, leases and upgrade backups live in
+`config.json`, `workspaces.json` and its `workspaces.json.seal`, `vcs.json`,
+optional `youtrack.json`, `rules/` and `templates/`). When the host withholds
+that dir (permission denied), Workit reads it as no grants and no role models,
+which can only lower what an agent may do. Logs, the recorded hook Node, leases and upgrade backups live in
 the state dir, `~/.local/state/workit/` on Linux and macOS
 (`%LOCALAPPDATA%\workit\` on Windows), and so do the worktrees Workit manages
 (`worktrees/<repo>/<slice>`; see [cleanup](cleanup.md)); `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`,
@@ -192,8 +194,10 @@ Besides `updates`, `config.json` holds `locale` (the language of Workit's
 prompts and drafts, e.g. `en` or `es-419`), `localeOptions` (the locales the
 setup wizard offers) and the global `branchPolicy`/`commitPolicy`. `vcs.json`
 holds the fallback `provider` (`github` or `gitlab`) and
-`defaultTargetBranch`, `github`/`gitlab` blocks with `host`, `apiUrl` and
-`tokenFile` for a self-hosted forge, and `pr` defaults (`squashOnMerge`,
+`defaultTargetBranch`, `github`/`gitlab` blocks whose `host` names a
+self-hosted forge (the editor schema also lists `apiUrl` and `tokenFile`
+there, but Workit reads neither: the token file is the workspace's
+`vcs.tokenFile` in `workspaces.json`), and `pr` defaults (`squashOnMerge`,
 `removeSourceBranch`, `pushBranch`, `confirmSkip`).
 
 `workit init` edits the entries you open and leaves every other entry
@@ -225,17 +229,11 @@ with `workit grant set` in your own terminal. Each write keeps the previous file
 
 `workspaces.json.seal`, beside it in the account's config dir, holds the
 authority fields you last accepted with `workit workspace seal` in your own
-terminal: grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
-`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge identity (`vcs.provider`,
-`account`, `tokenFile`, `host`). While it is missing or does not match, each
-grant, `defaultEndpoint` and `verification` is the stricter of the file and
-the last seal (the defaults when there is none), `youtrack.writes: auto` reads
-as `ask`, and a forge identity that differs from the sealed one blocks forge
-verbs (`identity_unsealed`). A write at your terminal reseals when the seal matched before; any
-other write reseals only when it lowers them. A redirected config dir
-(`WORKIT_CONFIG`, `WORKIT_CONFIG_DIR`, `XDG_CONFIG_HOME`) is never read for
-authority and only lowers it; see [the seal](grants.md#the-seal). It is a
-check, not a proof (D18): a process that rewrites the seal as well passes it.
+terminal (grants, `defaultEndpoint`, `verification`, `youtrack.writes`,
+`youtrack.autoHosts`, `name`, `glob`, entry order, `remotes` and the forge
+identity). While it is missing or does not match, Workit applies the stricter
+of the file and the last seal: [the seal](grants.md#the-seal) has the full
+rules.
 
 An agent session never writes `workspaces.json` itself. On every host, the
 write gate denies an edit or a shell write (redirect, `tee`, `cp`, `mv`,
@@ -245,7 +243,13 @@ at and the default dir grants are read from, reached through `~`, a symlink or
 `..` too. The deny names the `workit grant set` or `workit workspace set`
 command for you to run in your own terminal. Reading the file,
 `workit grant show`, `workit workspace list` and writes to the dir's other
-files are unaffected.
+files are unaffected. `workit setup` and `workit upgrade` also write the
+host's own deny rules for `workspaces.json`, its seal and Workit's approval
+and issued-session stores on Claude Code, Cursor and OpenCode, so they hold
+even when a hook cannot load; Codex has no path deny and Pi no permission
+layer, so the hook is the only guard there. `workit uninstall` removes them
+and `workit doctor` checks them (`native_deny`;
+[hosts guide](hosts.md#host-permissions-workit-setup)).
 
 `remotes` lists the remote URLs a workspace owns: a checkout anywhere whose
 remote it claims never exceeds its grants ([grants](grants.md#remotes)). Like
@@ -538,8 +542,8 @@ workspace's for that track.
   section.
 - `off`: no forge release; the finish still merges, tags and pushes, and says
   why. Outside git-flow the release PR body stays the changelog section.
-  Every other mode makes `workit git push --release <tag>` create the forge
-  release, which it did not before.
+  Under every other mode `workit git push --release <tag>` creates the forge
+  release too.
 - `review`: `finish` refuses (`release_notes_unapproved`) before any merge,
   tag or push until the user approves the current draft with
   `workit release notes approve <version>` in their own terminal. Outside
@@ -1125,63 +1129,21 @@ verified.
 
 ## Heavy-check queue
 
-The machine-wide heavy-check lease
-([delivery guide](delivery.md#heavy-checks-share-the-machine)) is a queue, not
-a door that shuts. A heavy check that finds every slot held takes a ticket and
-waits its turn across every agent and worktree of the user. The shortest
-measured run is served first, so a short suite never waits behind a queued
-full one; a waiter queued 5 minutes goes ahead of every newer one, so nothing
-starves; checks with equal runs (or never measured) are served round-robin per
-session. A heavy check whose last run took under 30 s, or a network-bound one
-(`"heavy": "io"` on its entry in `.workit/checks.json`, `--io` ad hoc), runs
-without a slot while the memory budget and the pressure gate allow
-([checks guide](checks.md#a-checks-own-heavy)). It prints where it stands when
-it starts waiting and every 30 s after:
+The machine-wide heavy-check lease is a queue across every agent and worktree
+of the user: shortest measured run first, a waiter queued 5 minutes ahead of
+newer ones, smaller checks backfilling what is free, and checks under 30 s or
+network-bound ones running without a slot while memory and the pressure gate
+allow. A queued check waits `resources.wait` (default 30 min, `--wait <dur>`
+for one run), then re-queues once in the same place, and exits 4 (`busy`)
+only past that second wait; `--no-wait` and a `--timeout` bound never
+re-queue. Holders past their hold limit (`resources.maxHold`, the floor under
+1.5 times the check's last measured run, at most 6 h) show as `stuck?` in
+`workit lock status`.
 
-```text
-workit: waiting for the heavy-check lease (1 slot): held by test, pid 4121, session s-a, 3m 10s, /work/wt/a; queued at position 2, waiting up to 30m (--wait <dur> sets it)
-workit: still queued for the heavy-check lease: position 1, 4m 30s of 30m waited; held by test, pid 4121, …
-```
-
-```bash
-workit check test                 # queues up to resources.wait (default 30 min)
-workit check test --wait 45m      # wait longer: 90, 90s, 30m and 1h all work
-workit check test --no-wait       # exit 4 at once if the lease is busy
-workit lock status                # the holders (stuck? marked), then the queue in serving order
-workit lock reap                  # free a stuck? holder's slot; recorded in the ledger
-workit lock cancel                # drop this session's queued checks (each exits 4)
-```
-
-- **Exit 4** (`busy`) means `--no-wait` met a busy lease, or the wait really
-  ran out. The message names the holders with their age and this check's
-  place in the queue.
-- **Light checks.** The named checks `lint`, `typecheck` and `format` are
-  light: they never take the lease, so they run at once beside a long suite.
-  The machine owner sets the list with `resources.light` in
-  `workspaces.json`; listing a check under `resources.heavy` there makes it
-  heavy again. A repo's `.workit/checks.json` can add heavy checks, under
-  `resources.heavy` or with a check's own `"heavy": true | "io"` (that
-  removes them from the light list), but cannot mark one light.
-- **A waiter that dies gives up its place.** A ticket holds while its
-  `workit` process runs; the next waiter removes a ticket whose process is
-  gone, by the same test as a stale lease. A shell tool that kills a long
-  call (Claude Code and OpenCode stop a foreground call after 2 minutes by
-  default) therefore costs the place in line: run a long wait in a
-  background call, or with a longer tool timeout.
-- **`resources.wait`** takes seconds (`1800`) or a duration (`"30m"`), from
-  either config file.
-- **`resources.maxHold`** (same formats, default 15 min) is how long a holder
-  may keep a slot before `lock status` marks it `stuck?`; one with no output
-  and no CPU for 5 min is marked too (CPU is read from `/proc` on Linux and
-  `ps` on macOS; on Windows only output counts as a heartbeat, so raise
-  `resources.maxHold` in your own config for a quiet long check).
-  `workit lock reap` frees a stuck slot
-  without signalling the process, and a holder silent past 3x the limit is
-  reaped automatically. A repo can only lower it.
-
-| Field     | Default                       | Where     | Meaning                                      |
-| --------- | ----------------------------- | --------- | -------------------------------------------- |
-| `light`   | `lint`, `typecheck`, `format` | workspace | Named checks that never take the lease       |
-| `heavy`   | `test`, `build`, `packaging`  | both      | Named checks that queue; a repo only adds    |
-| `wait`    | `1800` (30 min)               | both      | How long a queued check waits before exit 4  |
-| `maxHold` | `900` (15 min)                | both      | How long a holder runs before it is `stuck?` |
+- Queue order, the waiting lines and `workit lock status`:
+  [checks guide](checks.md#waiting-for-the-heavy-check-lease).
+- Stuck holders, exit codes and `--json`:
+  [delivery guide](delivery.md#heavy-checks-share-the-machine).
+- Every `resources` field, its default and what a repo may change: the
+  [resources table](delivery.md#heavy-checks-share-the-machine) and
+  [heavy-check budget](#heavy-check-budget) above.
