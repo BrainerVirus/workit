@@ -79,6 +79,7 @@ import {
   remoteRefTip,
   resolveRef,
 } from "./rev";
+import { hideUnstaged, type HiddenUnstaged } from "./hide-unstaged";
 
 /** Commits run the repository's hooks (lint, tests), so they get a long bound. */
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
@@ -1180,7 +1181,18 @@ export function gitCommit(
       );
     }
   }
+  // Hooks see each file staged in part at its staged content (#907).
+  let hidden: HiddenUnstaged | null = null;
+  if (partialIndex) {
+    const hid = hideUnstaged(cwd, keptPartial);
+    if ("error" in hid) {
+      rmSync(partialIndex, { force: true });
+      return failure("failed", hid.error);
+    }
+    hidden = hid;
+  }
   let committed: Run;
+  let unrestored: string | null = null;
   try {
     committed = git(cwd, args, {
       timeoutMs: COMMIT_TIMEOUT_MS,
@@ -1193,6 +1205,7 @@ export function gitCommit(
     });
   } finally {
     if (partialIndex) rmSync(partialIndex, { force: true });
+    unrestored = hidden?.restore() ?? null;
   }
   if (!committed.ok) {
     // A path staged whole stays staged whole: a refusing hook's formatter
@@ -1207,7 +1220,7 @@ export function gitCommit(
     const fix = hookFixCommand(output);
     return failure(
       "failed",
-      `git commit failed (a hook or git refused it):\n${output}${refusal ? `\n${refusal}` : ""}`,
+      `git commit failed (a hook or git refused it):\n${output}${refusal ? `\n${refusal}` : ""}${unrestored ? `\n${unrestored}` : ""}`,
       fix ? hookFixRoute(fix) : undefined,
     );
   }
@@ -1227,6 +1240,7 @@ export function gitCommit(
   );
   const leftDirty = dirtEntries(cwd).length;
   const notes: string[] = [];
+  if (unrestored) notes.push(unrestored);
   if (rewrote)
     notes.push(
       `rewrote the wip subject to this repository's commit style: ${rewrote} (squash or reword it before the PR)`,
