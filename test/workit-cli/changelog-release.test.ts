@@ -249,8 +249,9 @@ test("Given a bad version, date or a stray argument, Then release exits 2 and wr
   expect(await run(["release", "1.1.0", "--notes-out", "-"], io(r.dir, true))).toBe(2);
 });
 
-test("Given a changelog in a package directory, When release runs with --path from the root, Then that file is released", async () => {
+test("Given a tagless changelog in a package directory, When release runs with --path from the root, Then that file is released with a warning to fetch the tags", async () => {
   const r = repo([]);
+  const out = io(r.dir);
   mkdirSync(path.join(r.dir, "pkg"));
   writeFileSync(path.join(r.dir, "pkg", "CHANGELOG.md"), changelog(FIXED));
   expect(
@@ -265,10 +266,12 @@ test("Given a changelog in a package directory, When release runs with --path fr
         "--tag-prefix",
         "pkg-v",
       ],
-      io(r.dir),
+      out,
     ),
   ).toBe(0);
   expect(r.read("pkg/CHANGELOG.md")).toBe(RELEASED);
+  expect(out.err).toContain("workit: warning: no pkg-v<x.y.z> tags here");
+  expect(out.err).toContain("fetch-depth: 0");
 });
 
 test("Given the installed command line, When `changelog release` runs in a pipeline shell, Then it releases with exit 0 and a bad version exits 2", () => {

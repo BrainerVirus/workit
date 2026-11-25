@@ -123,7 +123,7 @@ export function runRelease(argv: string[], io: Io): number {
       return emit(
         io,
         fail("failed", `could not write the notes to ${notesOut}: ${String(error)}`, {
-          unblock: `rerun the same command: ${run.written ? `${run.path} is already released and ` : ""}the notes are read back from its [${version}] section`,
+          unblock: `fix --notes-out, then rerun the same command: a rerun writes the same notes and changes ${run.path} no further`,
         }),
       );
     }

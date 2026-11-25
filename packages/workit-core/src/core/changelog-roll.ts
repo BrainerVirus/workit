@@ -548,15 +548,15 @@ export function runChangelogRoll(input: ChangelogRollInput): ChangelogRollRun {
       `could not read the ${tagPrefix}* tags (${error instanceof Error ? error.message.split("\n")[0] : String(error)}): every [Unreleased] entry counts as unreleased`,
     );
   }
-  if (snapshots.length === 0 && input.release && warnings.length === 0)
-    warnings.push(
-      `no ${tagPrefix}<x.y.z> tags here: every [Unreleased] entry goes to ${input.release.version}; in CI fetch the tags first (actions/checkout with fetch-depth: 0, or git fetch --tags)`,
-    );
   const rolled = rollChangelog(text, {
     snapshots,
     tagPrefix,
     ...(input.release ? { release: input.release } : {}),
   });
+  if (snapshots.length === 0 && warnings.length === 0 && rolled.moved.length > 0)
+    warnings.push(
+      `no ${tagPrefix}<x.y.z> tags here, so no entry counts as released before ${input.release?.version}; in CI fetch the tags first (actions/checkout with fetch-depth: 0, or git fetch --tags)`,
+    );
   const refusal = rolled.changed ? rollRefusal(text, rolled) : null;
   if (refusal)
     return {
