@@ -381,7 +381,7 @@ issue or `test/behavior/cases` file).
 | --- | --- |
 | `tier` | `smoke` or `full`; `--tier full` runs both |
 | `firstTry` | A first-try case: any Workit interaction a hook denies or that fails, and that `expect.declared` does not name, fails the run ([First try](#first-try)) |
-| `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass |
+| `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass. A case that names a model splits per leg, one model each leg can run (`spawn-user-model-override` names `sonnet` on Claude Code; its `-opencode` twin names `opencode-go/deepseek-v4.1-flash`) |
 | `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths |
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
 | `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `auto`, the list above. `permissionMode` is Claude Code's `--permission-mode`: `auto`, `default`, `acceptEdits`, `dontAsk` or `plan` (loading refuses any other). Set `default` when the host's auto-mode classifier denies a sanctioned call before Workit runs (`install-help`, `youtrack-time-raw-ytrack`): the allow rules are then the only gate, and `-p` refuses anything they do not allow |
