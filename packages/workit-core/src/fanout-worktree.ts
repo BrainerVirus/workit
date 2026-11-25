@@ -36,9 +36,19 @@ import { appendObserved, readLedger, type LedgerActor } from "./ledger";
 import { detectLanding, forgeBreaker, sliceStart } from "./fanout-landed";
 import { recordSliceStack } from "./fanout-stack";
 import { FANOUT_TOKEN_FILE } from "./hooks/worktree-confine";
-import { linkWorktreeDependencies, type LinkedDependencies } from "./worktree-deps";
+import {
+  LOCKFILES,
+  frozenInstall,
+  frozenInstallFor,
+  installCommand,
+  installWorktreeDependencies,
+  linkWorktreeDependencies,
+  linkedFrom,
+  type LinkedDependencies,
+} from "./worktree-deps";
 import { heldWithin, stopProcesses } from "./core/procs";
 import { stateDir } from "./core/workit-paths.mjs";
+import { FANOUT_DEPS_MODES, workspaceFanoutDeps, type FanoutDepsMode } from "./core/workspaces";
 import {
   branchRef,
   fanoutFail,
@@ -274,21 +284,78 @@ export type CreateOutcome = {
   created: boolean;
   /** node_modules linked from the main checkout (worktree-deps.ts); null when none were. */
   dependencies: LinkedDependencies | null;
-  /** The install command to run in the worktree when its lockfile differs from the main checkout's. */
+  /** The install command the worker runs first: the worktree has no node_modules. */
   install: string | null;
+  /** How the worktree's node_modules came about. */
+  deps: DependencyState;
   /** The `workit stack` this slice was recorded in when it started on its parent slice's branch. */
   stack: { name: string; slices: string[] } | null;
   notes: string[];
 };
 
-/** Lockfiles in the order a package manager is picked, with its frozen install for a directory. */
-const LOCKFILES: ReadonlyArray<[string, (dir: string) => string]> = [
-  ["bun.lock", (dir) => `bun install --frozen-lockfile --cwd ${dir}`],
-  ["bun.lockb", (dir) => `bun install --frozen-lockfile --cwd ${dir}`],
-  ["pnpm-lock.yaml", (dir) => `pnpm install --frozen-lockfile --dir ${dir}`],
-  ["yarn.lock", (dir) => `yarn install --frozen-lockfile --cwd ${dir}`],
-  ["package-lock.json", (dir) => `npm ci --prefix ${dir}`],
-];
+/**
+ * How a worktree's node_modules came about. installed: the frozen install of
+ * its own lockfile; linked: links into the main checkout's installed packages
+ * (shared, so they can drift from the worktree's lockfile); none: neither.
+ */
+export type DependencyState = {
+  mode: "installed" | "linked" | "none";
+  /** The checkout whose installed packages a linked worktree shares; null unless linked. */
+  from: string | null;
+  /** The worktree's frozen install as one command, null without a lockfile. */
+  command: string | null;
+  /** Why the worktree did not get its own install although that was the choice; null otherwise. */
+  fallback: string | null;
+};
+
+/** `--deps`: the worktree's own frozen install (default), or links into the main checkout's. */
+export type DependencyChoice = FanoutDepsMode;
+export const DEPENDENCY_CHOICES: readonly DependencyChoice[] = FANOUT_DEPS_MODES;
+/** How long the own install may run before it is killed and the worktree is linked instead. */
+export const INSTALL_TIMEOUT_MS = 5 * 60_000;
+
+export type DependencyOptions = {
+  choice?: DependencyChoice;
+  /** The environment (and PATH) the package manager runs with; default process.env. */
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+};
+
+/**
+ * The dependency options of a create: each flag (`--deps`,
+ * `--install-timeout`) wins over the workspace's `fanout.deps` and
+ * `fanout.installTimeout`, which win over the defaults (install, 5m). Notes
+ * name a workspace value that applied and one that was ignored. An error when
+ * an `--install-timeout` meets a link choice: it would bound nothing.
+ */
+export function resolveDependencyOptions(
+  cwd: string,
+  flags: { choice?: DependencyChoice; timeoutMs?: number },
+  env: NodeJS.ProcessEnv,
+): { ok: true; options: DependencyOptions; notes: string[] } | { ok: false; error: string } {
+  const configured = workspaceFanoutDeps(cwd);
+  const notes = [...configured.issues];
+  const choice = flags.choice ?? configured.deps ?? "install";
+  if (flags.timeoutMs !== undefined && choice === "link")
+    return {
+      ok: false,
+      error:
+        flags.choice === "link"
+          ? "--install-timeout goes with --deps install"
+          : `--install-timeout goes with --deps install (workspace ${configured.from.deps} sets fanout.deps link)`,
+    };
+  if (flags.choice === undefined && configured.deps)
+    notes.push(`deps ${configured.deps}: workspace ${configured.from.deps} sets fanout.deps`);
+  const timeoutMs = flags.timeoutMs ?? configured.installTimeoutMs ?? undefined;
+  if (flags.timeoutMs === undefined && configured.installTimeoutMs !== null && choice === "install")
+    notes.push(
+      `install timeout ${Math.round(configured.installTimeoutMs / 1000)} s: workspace ${configured.from.installTimeout} sets fanout.installTimeout`,
+    );
+  return { ok: true, options: { choice, env, timeoutMs }, notes };
+}
+
+/** The install log, in the worker's scratch dir (outside the worktree). */
+const INSTALL_LOG = "deps-install.log";
 
 /** Equal content once CRLF is read as LF (git's autocrlf rewrites checkouts). */
 const sameText = (a: Buffer, b: Buffer): boolean =>
@@ -311,7 +378,7 @@ const readBytes = (file: string): Buffer | null => {
  * nothing is linked and `install` is the command the worker runs instead. The
  * same holds when the main checkout's install is older than its bun.lock.
  */
-function worktreeDependencies(
+function linkDependencies(
   main: string,
   worktree: string,
 ): {
@@ -319,13 +386,13 @@ function worktreeDependencies(
   install: string | null;
   notes: string[];
 } {
-  for (const [name, install] of LOCKFILES) {
+  for (const name of LOCKFILES) {
     const ours = readBytes(path.join(main, name));
     const theirs = readBytes(path.join(worktree, name));
     if (ours === null && theirs === null) continue;
     if (ours !== null && theirs !== null && sameText(ours, theirs)) continue;
     if (fs.existsSync(path.join(worktree, "node_modules"))) break;
-    const command = install(worktree);
+    const command = installCommand(frozenInstallFor(name, worktree), worktree);
     return {
       linked: null,
       install: command,
@@ -346,6 +413,77 @@ function worktreeDependencies(
     };
   }
   return { ...linkWorktreeDependencies(main, worktree), install: null };
+}
+
+/**
+ * Give `worktree` its node_modules: by default the frozen install of its own
+ * lockfile (#934); when the package manager is missing, the install fails or
+ * it times out, or `--deps link` asks for it, links into the main checkout's
+ * (linkDependencies). A worktree that already has node_modules is left as it
+ * is, and so is one without a lockfile and nothing to link (not a JS repo).
+ */
+function worktreeDependencies(
+  main: string,
+  worktree: string,
+  options: DependencyOptions,
+  log: string,
+): {
+  linked: LinkedDependencies | null;
+  install: string | null;
+  notes: string[];
+  state: DependencyState;
+} {
+  const frozen = frozenInstall(worktree);
+  const command = frozen ? installCommand(frozen, worktree) : null;
+  const choice = options.choice ?? "install";
+  if (fs.existsSync(path.join(worktree, "node_modules"))) {
+    const from = linkedFrom(worktree);
+    const filled = from && choice === "link" ? linkDependencies(main, worktree) : null;
+    return {
+      linked: filled?.linked ?? null,
+      install: null,
+      notes: filled?.notes ?? [],
+      state: { mode: from ? "linked" : "installed", from, command, fallback: null },
+    };
+  }
+  let fallback: string | null = null;
+  if (choice === "install" && frozen) {
+    const ran = installWorktreeDependencies(worktree, frozen, {
+      env: options.env ?? process.env,
+      timeoutMs: options.timeoutMs ?? INSTALL_TIMEOUT_MS,
+      log,
+    });
+    if (ran.ok)
+      return {
+        linked: null,
+        install: null,
+        notes: [
+          `installed dependencies from ${frozen.lockfile} (${[frozen.bin, ...frozen.args].join(" ")}, ${ran.ms} ms): the worktree's own node_modules, nothing linked from ${main}`,
+        ],
+        state: { mode: "installed", from: null, command, fallback: null },
+      };
+    // No log when the package manager never started.
+    fallback = fs.existsSync(log) ? `${ran.reason} (log: ${log})` : ran.reason;
+  } else if (choice === "install")
+    fallback = `no lockfile (${LOCKFILES.join(", ")}) to install from`;
+  const linked = linkDependencies(main, worktree);
+  const mode = linked.linked ? "linked" : "none";
+  // Not a JS repo: no lockfile and nothing to link is no news.
+  if (!frozen && mode === "none")
+    return { ...linked, state: { mode, from: null, command, fallback: null } };
+  const notes = [...linked.notes];
+  if (fallback && mode === "linked")
+    notes.push(
+      `LINKED, not installed: ${fallback}; installed packages are shared with ${main} and can drift from this worktree's lockfile, so a test that reads them may fail only here${command ? ` (for an own install: remove its node_modules, then ${command})` : ""}`,
+    );
+  else if (fallback && command)
+    notes.push(`could not install dependencies: ${fallback}; run it yourself: ${command}`);
+  return {
+    ...linked,
+    install: mode === "none" ? (linked.install ?? command) : null,
+    notes,
+    state: { mode, from: linked.linked?.from ?? null, command, fallback },
+  };
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -615,6 +753,8 @@ export function createSliceWorktree(
     actor: LedgerActor;
     /** The forge for landing lookups (a dependency merged by squash); asked only when needed. */
     forge?: () => ResolvedForge | null;
+    /** How the worktree gets node_modules (`--deps`, `--install-timeout`). */
+    dependencies?: DependencyOptions;
   },
 ): FanoutResult<CreateOutcome> {
   const found = findSlice(plan, input.slice);
@@ -656,7 +796,12 @@ export function createSliceWorktree(
     excludeScratch(cwd);
     const kept = ensureScratch(scratch);
     if (kept instanceof Error) return scratchBlocked(kept);
-    const deps = worktreeDependencies(mainCheckout(cwd), target);
+    const deps = worktreeDependencies(
+      mainCheckout(cwd),
+      target,
+      input.dependencies ?? {},
+      path.join(scratch, INSTALL_LOG),
+    );
     return {
       ok: true,
       data: {
@@ -667,10 +812,11 @@ export function createSliceWorktree(
         created: false,
         dependencies: deps.linked,
         install: deps.install,
+        deps: deps.state,
         stack: null,
         notes: [
-          deps.linked
-            ? "the worktree already exists; only its missing dependencies were linked"
+          deps.notes.length
+            ? "the worktree already exists; only its missing dependencies were added"
             : "the worktree already exists; nothing was changed",
           ...deps.notes,
         ],
@@ -770,7 +916,12 @@ export function createSliceWorktree(
   excludeScratch(cwd);
   const made = ensureScratch(scratch);
   if (made instanceof Error) return scratchBlocked(made);
-  const deps = worktreeDependencies(mainCheckout(cwd), target);
+  const deps = worktreeDependencies(
+    mainCheckout(cwd),
+    target,
+    input.dependencies ?? {},
+    path.join(scratch, INSTALL_LOG),
+  );
   notes.push(...deps.notes);
   const head = gitRun(target, ["rev-parse", "HEAD"]).stdout.trim();
   const baseSha = mode === "new" ? head : null;
@@ -792,6 +943,8 @@ export function createSliceWorktree(
     ...(baseSha ? { baseSha } : {}),
     ...(base.base === slice.base ? {} : { startBase: base.base }),
     ...(deps.install ? { install: deps.install } : {}),
+    deps: deps.state.mode,
+    ...(deps.state.fallback ? { depsFallback: deps.state.fallback.slice(0, 600) } : {}),
     ...(stack ? { stack: stack.name } : {}),
   });
   return {
@@ -804,6 +957,7 @@ export function createSliceWorktree(
       created: true,
       dependencies: deps.linked,
       install: deps.install,
+      deps: deps.state,
       stack,
       notes,
     },

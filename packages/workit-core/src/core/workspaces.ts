@@ -17,6 +17,7 @@ import {
 import type { CommitFlavorPreset } from "./commit-flavors";
 import { repoBranchPreset } from "./branch-policy";
 import { remotePattern } from "./remotes";
+import { parseDuration } from "../duration";
 
 export type VcsProvider = "gitlab" | "github";
 
@@ -283,13 +284,26 @@ export const workspaceConfigSchema = z
       .describe(
         "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
       ),
-    // tierModels is read leniently (workspaceTierModel).
+    // tierModels is read leniently (workspaceTierModel), deps and installTimeout
+    // too (workspaceFanoutDeps).
     fanout: z
       .object({
         tierModels: z
           .unknown()
           .optional()
           .describe("The model per slice TIER (mundane, standard, hard), as one name or per host."),
+        deps: z
+          .unknown()
+          .optional()
+          .describe(
+            "How `workit fanout worktree create` gives a slice worktree node_modules: `install` (default: its own frozen install of its lockfile) or `link` (links into the main checkout's installed packages, for a repo too slow to install per slice). `--deps` overrides it.",
+          ),
+        installTimeout: z
+          .unknown()
+          .optional()
+          .describe(
+            "How long the own install may run before its process tree is killed and the worktree is linked instead: a duration such as `90s` or `10m` (default `5m`). `--install-timeout` overrides it.",
+          ),
       })
       .passthrough()
       .optional()
@@ -1325,6 +1339,64 @@ export const workspaceCleanup = (
   const from = found?.source?.name ?? null;
   if (value === undefined || value === "auto") return { mode: "auto", from };
   return value === "keep" ? { mode: "keep", from } : { mode: "keep", from, invalid: value };
+};
+
+export const FANOUT_DEPS_MODES = ["install", "link"] as const;
+export type FanoutDepsMode = (typeof FANOUT_DEPS_MODES)[number];
+
+/**
+ * The workspace's `fanout.deps` and `fanout.installTimeout` (in ms), each
+ * inherited like `trailers`; null when no covering entry sets it. A value this
+ * version does not read is skipped (the default applies, never an error) and
+ * named in `issues`. `from` names the entry each value came from.
+ */
+export const workspaceFanoutDeps = (
+  cwd: string,
+  dir?: string,
+): {
+  deps: FanoutDepsMode | null;
+  installTimeoutMs: number | null;
+  from: { deps: string | null; installTimeout: string | null };
+  issues: string[];
+} => {
+  const field = (entry: RuntimeEntry, key: "deps" | "installTimeout"): unknown =>
+    (entry.fanout as { deps?: unknown; installTimeout?: unknown } | undefined)?.[key];
+  const issues: string[] = [];
+  const depsEntry = inheritedSetting(
+    cwd,
+    dir,
+    (entry) => field(entry, "deps") !== undefined,
+  )?.source;
+  const rawDeps = depsEntry ? field(depsEntry, "deps") : undefined;
+  let deps: FanoutDepsMode | null = null;
+  if (depsEntry && (FANOUT_DEPS_MODES as readonly unknown[]).includes(rawDeps))
+    deps = rawDeps as FanoutDepsMode;
+  else if (depsEntry)
+    issues.push(
+      `workspace ${depsEntry.name} fanout.deps ${JSON.stringify(rawDeps)} is not ${FANOUT_DEPS_MODES.join(" or ")}; ignored`,
+    );
+  const timeoutEntry = inheritedSetting(
+    cwd,
+    dir,
+    (entry) => field(entry, "installTimeout") !== undefined,
+  )?.source;
+  const rawTimeout = timeoutEntry ? field(timeoutEntry, "installTimeout") : undefined;
+  const parsed = typeof rawTimeout === "string" ? parseDuration(rawTimeout) : null;
+  let installTimeoutMs: number | null = null;
+  if (timeoutEntry && parsed !== null && parsed > 0) installTimeoutMs = parsed;
+  else if (timeoutEntry)
+    issues.push(
+      `workspace ${timeoutEntry.name} fanout.installTimeout ${JSON.stringify(rawTimeout)} is not a duration such as "90s" or "10m"; ignored`,
+    );
+  return {
+    deps,
+    installTimeoutMs,
+    from: {
+      deps: deps ? (depsEntry?.name ?? null) : null,
+      installTimeout: installTimeoutMs === null ? null : (timeoutEntry?.name ?? null),
+    },
+    issues,
+  };
 };
 
 /**

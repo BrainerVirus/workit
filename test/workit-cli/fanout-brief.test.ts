@@ -327,23 +327,33 @@ test("fanout brief: given a worktree fanout worktree create just made, with no c
   expect(data.text).not.toContain("INSTALL:");
 });
 
-test("fanout brief: given a worktree whose lockfile differs from the main checkout's, when rendered, then INSTALL names the install command until node_modules exists (#432)", async () => {
+test("fanout brief: given a linked worktree whose lockfile differs from the main checkout's, when rendered, then INSTALL names the install command until node_modules exists (#432)", async () => {
   const { root, cwd } = repo();
   writeFileSync(path.join(cwd, "bun.lock"), "{}\n");
   git(cwd, "add", "bun.lock");
   git(cwd, "commit", "-qm", "chore: lock");
   await plan(cwd, root, "usage", [slice("a", ["a.ts"])]);
   writeFileSync(path.join(cwd, "bun.lock"), '{"changed":true}\n');
-  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--deps", "link", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
   const wt = managedWt("a");
   expect(created.json().data.install).toBe(`bun install --frozen-lockfile --cwd ${wt}`);
+  expect(created.json().data.deps).toEqual({
+    mode: "none",
+    from: null,
+    command: `bun install --frozen-lockfile --cwd ${wt}`,
+    fallback: null,
+  });
   const data = await brief(cwd, "a");
   expect(data.text).toContain(
-    `INSTALL: \`bun install --frozen-lockfile --cwd ${wt}\` first: the main checkout's node_modules was not linked here`,
+    `INSTALL: \`bun install --frozen-lockfile --cwd ${wt}\` first: this worktree has no node_modules yet`,
   );
   mkdirSync(path.join(wt, "node_modules"));
-  expect((await brief(cwd, "a")).text).not.toContain("INSTALL:");
+  const installed = (await brief(cwd, "a")).text;
+  expect(installed).not.toContain("INSTALL:");
+  expect(installed).toContain(
+    `DEPS: own install (\`bun install --frozen-lockfile --cwd ${wt}\`): nothing is linked from the main checkout`,
+  );
 });
 
 test("fanout brief: given a race of two attempts at one slice, when each is rendered, then each has its own branch and session, and --mode resume on a missing branch is refused", async () => {

@@ -1,4 +1,4 @@
-// W2.14: `fanout worktree create` links the main checkout's node_modules when
+// W2.14: `fanout worktree create --deps link` links the main checkout's node_modules when
 // the only packages missing are optional dependencies bun skips on this
 // platform (the `@emnapi/*` runtime of a wasm32 binding), while
 // `bun install --frozen-lockfile` reports nothing to do. A package that is
@@ -113,7 +113,7 @@ const create = async (lock: string, installed: Record<string, string>, mainLock?
     }),
   );
   expect((await run(cwd, ["fanout", "plan", file, "--json"])).code).toBe(0);
-  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--json"]);
+  const created = await run(cwd, ["fanout", "worktree", "create", "a", "--deps", "link", "--json"]);
   expect(created.code, created.stderr + created.stdout).toBe(0);
   return created.json().data as {
     path: string;

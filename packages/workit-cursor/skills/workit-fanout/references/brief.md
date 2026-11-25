@@ -111,9 +111,8 @@ per slice, `WORKTREE: <path>` and the spawn that carries it. Its prompt starts
 with that WORKTREE line, then `WORKER`, `TIER`, `TIMEBOX` and
 "Run `workit fanout brief <slice> --name <plan>` and follow it exactly.";
 Claude Code's `SPAWN:` line names `model` only when the TIER differs from the
-`implementer` agent file. `--name` takes the plan's name or its file (`--plan`
-is the same flag): a file is registered in that call, and a name no plan has
-registers the one file in `workit dir plans` that starts with it. The plan
+`implementer` agent file. `--name` (or `--plan`) takes the plan's name, a
+prefix of one file in `workit dir plans`, or a file to register. The plan
 check refuses a slice branch the workspace branch policy refuses and names the
 allowed one.
 

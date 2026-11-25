@@ -16,6 +16,7 @@ import {
   CLEANUP_MODES,
   DELEGATION_MODES,
   DOCS_MODES,
+  FANOUT_DEPS_MODES,
   MODEL_HOST_KEYS,
   PR_TEMPLATE_MODES,
   RELEASE_NOTES_MODES,
@@ -231,6 +232,15 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
   [entry.issues.unwrap().shape.repo, string("owner/name")],
   [entry.issues.unwrap().shape.host, nonBlankString],
   [entry.fanout.unwrap().shape.tierModels, perTier(ref("tierModel"))],
+  [entry.fanout.unwrap().shape.deps, enumOf(FANOUT_DEPS_MODES)],
+  [
+    entry.fanout.unwrap().shape.installTimeout,
+    {
+      type: "string",
+      // What parseDuration (duration.ts) reads: `90s`, `10m`, `1h30m`, `45 minutes`, bare seconds.
+      pattern: String.raw`^\s*(?:\d+(?:\.\d+)?\s*|(?:\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\s*)+)$`,
+    },
+  ],
   [modelRoles, ROLES_EDITOR],
   ...[entry.models.unwrap(), workspacesFileSchema.shape.models.unwrap()].map(
     (models): [unknown, JsonSchema] => [models, MODELS_EDITOR],

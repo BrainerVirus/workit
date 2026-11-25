@@ -1247,22 +1247,50 @@ resume`). It also makes the worker's scratch dir for its temp files,
   worktree's dir), outside the worktree: nothing Workit adds there shows in
   `git status --ignored` or in a repo tool's scan. Writing there is never
   denied to a confined implementer: it is outside every checkout.
-  Where the main checkout has `node_modules` (also `packages/*/node_modules`)
-  that git ignores, the worktree gets its own: relative links such as
-  workspace packages (`../../packages/<name>`) and `.bin` entries resolve
-  inside the worktree, installed packages link to the main checkout's (about
-  20 ms for this repository, no install). Tests in the worktree then import
-  its own workspace packages, not the main checkout's. When git does not
-  ignore `node_modules`, nothing is linked and a note says so. Nothing is
-  linked either when a lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`,
-  `package-lock.json`) differs between the main checkout and the worktree: a
-  stale main checkout would hand the slice the wrong versions. Nor when the
-  main checkout's `node_modules` were installed for an older `bun.lock` (it
-  was pulled without `bun install`): every top-level package `bun.lock` pins
-  must be installed at that version. The output (and `install` in `--json`)
-  then names the exact command to run, such as
-  `bun install --frozen-lockfile --cwd <worktree>`, and the brief's `INSTALL:`
-  line repeats it.
+  The worktree then gets its own `node_modules` from the frozen install of
+  its own lockfile, run in the worktree by that lockfile's package manager:
+  `bun install --frozen-lockfile` (`bun.lock`, `bun.lockb`),
+  `pnpm install --frozen-lockfile`, `yarn install --immutable` (Yarn 2+) or
+  `--frozen-lockfile` (Yarn 1), `npm ci`. It is the plain install the repo's
+  own developers run (its lifecycle scripts, no more), its output goes to
+  `deps-install.log` in the scratch dir, and after `--install-timeout`
+  (default `5m`) its whole process tree is killed: the package manager runs
+  as the leader of its own process group, so its lifecycle scripts and
+  helpers go with it (`taskkill /T /F` on Windows). A shared `node_modules` can drift from
+  what the lockfile installs, even with identical lockfiles, and a test that
+  reads installed packages then fails only in slice worktrees (#934). The
+  output says `deps own install (<command>)`, `--json` has
+  `deps: { mode, from, command, fallback }`, and the brief's `DEPS:` line
+  says it too.
+  When the package manager is not on PATH, or the install fails or times
+  out, the partial `node_modules` is removed and the worktree is linked as
+  with `--deps link` instead, loudly: `deps LINKED from <checkout> (<why>)`,
+  `deps.mode: "linked"` with `deps.fallback` in `--json`, a
+  `LINKED, not installed` note, and a `DEPS: LINKED` line in the brief that
+  the verifier SPAWN line repeats, so a failure that reads installed packages
+  is reproduced on an own install before it fails the candidate. A worktree
+  without a lockfile is linked the same way, and a repo with neither a
+  lockfile nor `node_modules` gets nothing.
+  `--deps link` (for a repo whose install is too slow to run per slice)
+  links instead of installing. A workspace sets either choice, and the
+  timeout, for every create with `fanout.deps` and `fanout.installTimeout`
+  ([configuration](configuration.md#fanout-worktree-dependencies)); the flags
+  override them. Where the main checkout has `node_modules`
+  (also `packages/*/node_modules`) that git ignores, the worktree gets its
+  own: relative links such as workspace packages (`../../packages/<name>`)
+  and `.bin` entries resolve inside the worktree, installed packages link to
+  the main checkout's (about 20 ms for this repository, no install). Tests in
+  the worktree then import its own workspace packages, not the main
+  checkout's. When git does not ignore `node_modules`, nothing is linked and a
+  note says so. Nothing is linked either when a lockfile (`bun.lock`,
+  `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`) differs between the
+  main checkout and the worktree: a stale main checkout would hand the slice
+  the wrong versions. Nor when the main checkout's `node_modules` were
+  installed for an older `bun.lock` (it was pulled without `bun install`):
+  every top-level package `bun.lock` pins must be installed at that version.
+  The output (and `install` in `--json`) then names the exact command to run,
+  such as `bun install --frozen-lockfile --cwd <worktree>`, and the brief's
+  `INSTALL:` line repeats it until the worktree has `node_modules`.
 - An implementer subagent is confined to such a worktree by Workit's
   pre-tool hooks (Claude Code; Codex when it names the agent on the tool
   call): its first edit or mutating git command inside one binds it
