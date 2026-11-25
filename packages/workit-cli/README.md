@@ -22,7 +22,8 @@ looks).
 
 Agents and hooks call `workit` from PATH. `workit doctor` warns (`workit_on_path`)
 when none is found, when it does not run, or when it is older than an installed
-host plugin, and prints the `npm i -g` (or `npx`) command for the matching version.
+host plugin, and prints the `npx -y @workit-dev/cli@<version> upgrade --cli --hosts=none --yes`
+command for the matching version.
 
 See the root [README](https://github.com/BrainerVirus/workit) for concepts and the
 [CLI reference](https://github.com/BrainerVirus/workit#cli-reference), and the

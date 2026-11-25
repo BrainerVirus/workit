@@ -19,12 +19,10 @@ CLI because MCP is read-only for unattested callers. Invoke skills as
 `$workit-<name>` or from `/skills`. Codex permissions and sandbox stay
 authoritative.
 
-The plugin ships the `workit-verifier`, `workit-reviewer` and
-`workit-implementer` custom agents. Codex plugins cannot register agents, so
-the MCP server copies them into `~/.codex/agents/` when it starts, and Codex
-offers them from the next session. Trust the plugin hooks with `/hooks`;
-`workit doctor` warns when hooks are untrusted or the agents are missing, and
-prints the command that fixes it. Codex PreToolUse does not see `apply_patch` edits, so the
-[before-write gate](https://github.com/BrainerVirus/workit/blob/main/docs/guides/verification.md) is advisory here (the session
-context says so). Delivery limits come from the workspace
+The plugin ships the `workit-implementer`, `workit-verifier`,
+`workit-reviewer`, `workit-decider` and `workit-babysitter` custom agents,
+which the MCP server copies into `~/.codex/agents/`; trust the plugin hooks
+with `/hooks`. Agents, hooks, the before-write gate on `apply_patch` and the
+doctor rows are in
+[the hosts guide](https://github.com/BrainerVirus/workit/blob/main/docs/guides/hosts.md#codex-cli--desktop). Delivery limits come from the workspace
 [grants](https://github.com/BrainerVirus/workit/blob/main/docs/guides/grants.md).
