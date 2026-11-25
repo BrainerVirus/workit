@@ -223,10 +223,29 @@ test("Given a command that fails with its reason on stdout and nothing on stderr
       stderr: "",
     }),
   ).toBe(
-    "`claude plugin update workit@workit` failed: Updating plugin... | ✘ Failed to update plugin workit@workit: version 8.45.2 not found",
+    "`claude plugin update workit@workit` failed (exit 1): stdout: Updating plugin... | ✘ Failed to update plugin workit@workit: version 8.45.2 not found",
   );
   expect(failureReason(command, { status: 1, stdout: "", stderr: "boom" })).toBe(
-    "`claude plugin update workit@workit` failed: boom",
+    "`claude plugin update workit@workit` failed (exit 1): boom",
+  );
+});
+
+test("Given a command that fails with output on both streams, timed out or silent, Then the reason says how it ended and keeps both tails", () => {
+  const command = { command: "codex", args: ["plugin", "marketplace", "upgrade", "workit"] };
+  expect(
+    failureReason(command, {
+      status: 2,
+      stdout: "one\ntwo\nthree\nfour\n",
+      stderr: "warning: slow\nfatal: remote hung up\n",
+    }),
+  ).toBe(
+    "`codex plugin marketplace upgrade workit` failed (exit 2): warning: slow | fatal: remote hung up | stdout: two | three | four",
+  );
+  expect(failureReason(command, { status: 1, stdout: "", timedOut: true })).toBe(
+    "`codex plugin marketplace upgrade workit` failed (timed out): no output",
+  );
+  expect(failureReason(command, { status: null, stdout: "" })).toBe(
+    "`codex plugin marketplace upgrade workit` failed (exit unknown): no output",
   );
 });
 

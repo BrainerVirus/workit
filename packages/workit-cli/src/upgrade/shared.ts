@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
+import { redactText } from "@workit-dev/core/src/forge/redact";
 import { type HostId } from "../admin/detect-hosts";
 import { hostCommand, runHostCommand, type HostInstallCommand } from "../admin/host-install";
 import { type DoctorCheck } from "../admin/doctor";
@@ -37,7 +38,7 @@ export type CommandResult = {
   status: number | null;
   stdout: string;
   stderr?: string;
-  /** A planning probe that did not answer in time (its host reads "could not check"). */
+  /** A command that did not answer in time (a planning probe's host reads "could not check"). */
   timedOut?: boolean;
 };
 /** Where a command runs (OpenCode's plugin commands act on the cwd's location). */
@@ -61,16 +62,26 @@ const errorLine = (result: CommandResult): string | undefined =>
     .map((line) => line.trim())
     .find((line) => /\bError:/.test(line));
 
-/** "`cmd args` failed" plus the error message line and the stderr tail (stdout's, when stderr is empty). */
+/**
+ * "`cmd args` failed (exit N)" plus the error message line and the last lines
+ * of stderr and stdout, redacted like other forge output (#900): a failed row
+ * always says how the command ended and what it printed last.
+ */
 export const failureReason = (
   command: { command: string; args: string[] },
   result: CommandResult,
 ): string => {
-  const tail = stderrTail(result.stderr) || stderrTail(result.stdout, 2);
+  const errors = stderrTail(result.stderr);
+  const output = stderrTail(result.stdout, 3);
   const message = errorLine(result);
-  const detail = message && !tail.includes(message) ? [message, tail].filter(Boolean) : [tail];
-  const text = detail.filter(Boolean).join(" | ");
-  return `\`${command.command} ${command.args.join(" ")}\` failed${text ? `: ${text}` : ""}`;
+  const detail = [
+    message && !errors.includes(message) && !output.includes(message) ? message : "",
+    errors,
+    output && output !== errors ? `stdout: ${output}` : "",
+  ].filter(Boolean);
+  const ended = result.timedOut ? "timed out" : `exit ${result.status ?? "unknown"}`;
+  const text = detail.length ? redactText(detail.join(" | ")) : "no output";
+  return `\`${command.command} ${command.args.join(" ")}\` failed (${ended}): ${text}`;
 };
 /** One process the OS lists: `ps -eo pid=,stat=,args=` (or tasklist on Windows). */
 export type HostProcess = { pid: number; state: string; args: string };
@@ -110,6 +121,8 @@ export type UpgradeDeps = {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
   };
+  /** The pause before retrying an idempotent step that failed once (test seam; default setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
   /** How long one planning probe may run (test seam; default 20 s). */
   probeTimeoutMs?: number;
   /** The CLI version the running entry has on disk now (test seam; default reads its package.json). */
@@ -185,7 +198,7 @@ export const fixFor = (host: UpgradeHost, selector = ""): string =>
   host === "pi"
     ? `pi update --extension ${selector || "npm:@workit-dev/pi"}`
     : host === "codex"
-      ? `codex plugin marketplace upgrade ${CODEX_MARKETPLACE} && codex plugin add workit@${CODEX_MARKETPLACE}`
+      ? "workit upgrade --hosts=codex"
       : host === "claude-code"
         ? "claude plugin marketplace update workit && claude plugin update workit@workit"
         : host === "opencode"
@@ -318,11 +331,11 @@ export const asyncRunner = (
       let stdout = "";
       let stderr = "";
       let settled = false;
-      const finish = (status: number | null) => {
+      const finish = (status: number | null, timedOut = false) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ status, stdout, stderr });
+        resolve({ status, stdout, stderr, ...(timedOut ? { timedOut } : {}) });
       };
       let child: ReturnType<typeof spawn>;
       try {
@@ -339,7 +352,7 @@ export const asyncRunner = (
       }
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
-        finish(1);
+        finish(1, true);
       }, timeoutMs);
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => (stdout += chunk));
