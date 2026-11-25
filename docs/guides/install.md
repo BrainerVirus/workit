@@ -81,7 +81,9 @@ install. See [the hosts guide](hosts.md#host-permissions-workit-setup).
 `workit uninstall` (pick the CLI in the picker) removes the owned install. It removes the
 `~/.local/bin/workit` link only when it points into the install; in `bin/`, only the launcher
 Workit wrote and its temp files; it unlinks `current`; and from `versions/`, only entries
-holding the Workit CLI package. Anything else (a file of your own, a link elsewhere, an install
+holding the Workit CLI package. It also removes the zsh, bash and fish
+completion scripts `setup` and `upgrade` wrote (only files carrying Workit's
+marker). Anything else (a file of your own, a link elsewhere, an install
 root set to your home) is left untouched and named.
 
 ## Moving from an npm global install

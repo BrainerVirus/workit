@@ -13,12 +13,14 @@ maps common symptoms to those ids.
 | Hook answers "workit context skipped: host under load" | `hook_deadline` | Rare under normal load; see the [Claude Code guide](claude-code.md) for `WORKIT_HOOK_DEADLINE_MS` |
 | Store grows large | none | `workit gc --dry-run`, then `workit gc` |
 | `recovery` copies from 2.x reported | none | `workit gc --prune-recovery --yes` |
-| Claude Code hook prints `[workit] Claude Code hook unavailable` | `claude_plugin`, `claude_session_plugin` | The hook failed open: install Bun for a local pin, or `workit upgrade` and restart Claude Code |
+| A hook prints `[workit] <host> hook unavailable` | `hook_node`, `hook_runs` | The hook failed open: see [Workit hooks are off](#workit-hooks-are-off) (a Node 24+ for the hooks, or `workit upgrade` and a host restart) |
+| Claude Code plugin missing or not loaded | `claude_plugin`, `claude_session_plugin` | `workit upgrade` and restart Claude Code; a local pin needs Bun |
 | Codex hooks do not run | `codex_hooks` | Trust them with `/hooks` in Codex |
 | Codex verifier or reviewer agents missing | `codex_agents` | `workit upgrade`, then a new Codex session |
 | OpenCode fails `opencode_version` | `opencode_version` | Upgrade OpenCode to 2.0.18+ |
 | Pi does not load Workit | `pi_extension` | See [Pi](hosts.md#pi) |
 | An agent could edit a Workit-guarded file (`workspaces.json` and its seal, approvals, issued sessions) | `native_deny` | `workit setup` in your own terminal writes each host's own deny rules (Claude Code, Cursor, OpenCode) |
+| A heavy check waits with no holder named, or names "memory pressure" | `pressure_gate`, `heavy_scope` | The machine is over its pressure line; `workit lock status` shows the budget. A failing `heavy_scope` names the systemd `Delegate` fix. See [checks](checks.md) |
 | `youtrack.writes: auto` posts to any YouTrack | `youtrack_writes` | Name the allowed hosts in `youtrack.autoHosts` ([YouTrack guide](youtrack.md)) |
 | Agents do not know ytrack's commands | `ytrack_skill` | The fix doctor names: `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade` (ytrack 0.6.0+ keeps its own skill) |
 
