@@ -35,7 +35,7 @@ import { installOwned, writeLaunchers } from "../install/owned";
 import { realpathOr, shellQuote } from "../install/paths";
 import { pathResolvedWorkit } from "../install/verify";
 import { createProgress, type StepStatus } from "../progress";
-import { codexInventory } from "./codex-inventory";
+import { CODEX_INVENTORY_ARGS, codexInventory } from "./codex-inventory";
 import { classifyProcess, describe, listProcesses } from "./processes";
 import {
   OPENCODE_NOT_READY,
@@ -55,7 +55,6 @@ import {
   piInstalledVersion,
   piListedRoot,
   failureReason,
-  stderrTail,
   asyncRunner,
   upgradePaths,
   versionAtLeast,
@@ -276,6 +275,7 @@ const applyEntry = async (
     configDir: string;
     opencodeReady?: UpgradeDeps["opencodeReady"];
     backup?: string;
+    sleep?: UpgradeDeps["sleep"];
   },
 ): Promise<HostOutcome> => {
   const { runAsync, paths, configDir } = context;
@@ -349,14 +349,35 @@ const applyEntry = async (
     if (!ready) return fail(OPENCODE_NOT_READY);
     before = ready.version;
   }
-  for (const command of entry.commands) {
+  for (const [index, command] of entry.commands.entries()) {
     const where = command.cwd ? { cwd: command.cwd } : undefined;
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- a host's commands are ordered: each needs the one before it.
     let result = await runAsync(command.command, command.args, where);
     // A cold package cache or a transient registry error fails `opencode plugin
     // update` once and succeeds moments later: retry it once before it reads FAILED.
     if (result.status !== 0 && entry.host === "opencode")
       result = await runAsync(command.command, command.args, where);
-    if (result.status !== 0) return fail(failureReason(command, result));
+    // `codex plugin marketplace upgrade` is idempotent and fails transiently
+    // (a git fetch): retry it once after a short pause (#900).
+    // A timeout is not retried: a second one would double the wait.
+    if (result.status !== 0 && !result.timedOut && isCodexMarketplaceUpgrade(command)) {
+      await (context.sleep ?? pause)(RETRY_BACKOFF_MS);
+      result = await runAsync(command.command, command.args, where);
+    }
+    if (result.status !== 0) {
+      const left = entry.commands.slice(index + 1);
+      return {
+        ...fail(failureReason(command, result)),
+        ...(left.length
+          ? {
+              details: left.map(
+                (later) =>
+                  `skipped \`${later.command} ${later.args.join(" ")}\`: it needs the failed step`,
+              ),
+            }
+          : {}),
+      };
+    }
   }
   if (entry.host === "opencode")
     return opencodeOutcome(before, entry.published, runAsync, home, context.opencodeReady);
@@ -380,7 +401,12 @@ const applyEntry = async (
     entry.host === "codex" ? await codexInventory(runAsync) : await runAsync("pi", ["list"]);
   if (verify.status !== 0)
     return fail(
-      `update verification failed${stderrTail(verify.stderr) ? `: ${stderrTail(verify.stderr)}` : ""}`,
+      `update verification failed: ${failureReason(
+        entry.host === "codex"
+          ? { command: "codex", args: CODEX_INVENTORY_ARGS }
+          : { command: "pi", args: ["list"] },
+        verify,
+      )}`,
     );
   if (entry.host === "codex") {
     let installed: Record<string, any>[] = [];
@@ -432,10 +458,44 @@ const refreshCodexAgents = async (
     ? { ok: true, note: "agents refreshed" }
     : {
         ok: false,
-        note: `agent refresh failed${stderrTail(refreshed.stderr) ? `: ${stderrTail(refreshed.stderr)}` : ""}`,
+        note: `agent refresh failed: ${failureReason({ command: "node", args: [launcher, "--install-agents"] }, refreshed)}`,
         fix,
       };
 };
+
+/**
+ * Codex's role agents do not depend on the plugin step (#900): after a failed
+ * Codex step they are still installed from the newest cached plugin, and the
+ * row's details say whether that ran, failed or had nothing to install from.
+ */
+const codexAgentsAnyway = async (
+  outcome: HostOutcome,
+  run: ReturnType<typeof asyncRunner>,
+  codexHome: string,
+): Promise<HostOutcome> => {
+  let agents: Awaited<ReturnType<typeof refreshCodexAgents>>;
+  try {
+    agents = await refreshCodexAgents(run, codexHome);
+  } catch (error) {
+    agents = { ok: false, note: `agent refresh failed: ${errorText(error)}` };
+  }
+  const root = codexPluginRoot(codexHome);
+  const line = !agents.note
+    ? "skipped installing the Codex role agents: no cached Workit plugin to install them from"
+    : agents.ok
+      ? `installed the Codex role agents from the cached plugin ${root ? `${path.basename(root)} ` : ""}(the update failed, so it may be older than the target)`
+      : `${agents.note}${agents.fix ? `; run: ${agents.fix}` : ""}`;
+  return { ...outcome, details: [...(outcome.details ?? []), line] };
+};
+
+/** The idempotent Codex step a transient failure may retry. */
+const isCodexMarketplaceUpgrade = (command: { command: string; args: string[] }): boolean =>
+  command.command === "codex" &&
+  command.args.slice(0, 3).join(" ") === "plugin marketplace upgrade";
+
+/** The pause before that retry. */
+const RETRY_BACKOFF_MS = 2000;
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function applyUpgrade(
   plan: UpgradePlan,
@@ -616,8 +676,11 @@ export async function applyUpgrade(
           configDir,
           opencodeReady: deps.opencodeReady,
           backup,
+          sleep: deps.sleep,
         });
-        if (entry.host === "codex" && outcome.status === "updated") {
+        if (entry.host === "codex" && outcome.status === "failed")
+          outcome = await codexAgentsAnyway(outcome, runAsync, paths.codexHome);
+        else if (entry.host === "codex" && outcome.status === "updated") {
           const agents = await refreshCodexAgents(runAsync, paths.codexHome);
           if (!agents.ok)
             outcome = {
@@ -639,6 +702,8 @@ export async function applyUpgrade(
           reason: errorText(error),
           fix: entry.fix,
         };
+        if (entry.host === "codex")
+          outcome = await codexAgentsAnyway(outcome, runAsync, paths.codexHome);
       }
       if (entry.host === "opencode") {
         const servers = running.filter(

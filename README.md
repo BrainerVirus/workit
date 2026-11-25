@@ -153,7 +153,8 @@ codex plugin add workit@workit
 ```
 
 Update: `workit upgrade`, which updates the plugin and refreshes the Codex agent
-files; the app-server daemon keeps running and its new threads load the update (fallback:
+files; the app-server daemon keeps running and its new threads load the update (a failed
+Codex step: rerun `workit upgrade --hosts=codex`; without the CLI:
 `codex plugin marketplace upgrade workit && codex plugin add
 workit@workit`, then a new Codex session). Uninstall:
 `workit uninstall`.

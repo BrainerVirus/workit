@@ -256,13 +256,131 @@ test("Given one host fails, Then the others and the CLI still upgrade, the table
     w.state.codexFails = true;
     expect(await runUpgradeCommand(["--yes"], w.deps)).toBe(1);
     const text = w.text();
-    expect(text).toMatch(/codex +FAILED +`codex plugin add workit@workit --json` failed/);
-    expect(text).toContain(
-      "fix: codex plugin marketplace upgrade workit && codex plugin add workit@workit",
+    expect(text).toMatch(
+      /codex +FAILED +`codex plugin add workit@workit --json` failed \(exit 1\): no output/,
     );
+    expect(text).toContain("fix: workit upgrade --hosts=codex");
     expect(text).toMatch(/pi +updated/);
     expect(text).toMatch(/claude-code +updated/);
     expect(text).toMatch(/cli +updated/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+/** The world with `codex plugin marketplace upgrade workit` answering from `answers` in turn (then exit 0). */
+const flakyMarketplace = (
+  answers: { status: number | null; stdout: string; stderr?: string; timedOut?: boolean }[],
+) => {
+  const w = world();
+  const sleeps: number[] = [];
+  const run = (command: string, args: string[]) => {
+    if (command === "codex" && args.join(" ") === "plugin marketplace upgrade workit") {
+      w.calls.push([command, ...args]);
+      return (
+        answers.shift() ?? { status: 0, stdout: "Marketplace `workit` is already up to date." }
+      );
+    }
+    return w.deps.run(command, args);
+  };
+  const deps = {
+    ...w.deps,
+    run,
+    sleep: async (ms: number) => void sleeps.push(ms),
+  };
+  return { w, deps, sleeps };
+};
+
+const marketplaceUpgrades = (calls: string[][]) =>
+  calls.filter((call) => call.join(" ") === "codex plugin marketplace upgrade workit").length;
+
+test("Given a host step that fails, Then the row names the command, its exit code and its last output lines, redacted", async () => {
+  const failure = {
+    status: 128,
+    stdout: "Fetching marketplace workit\nfrom https://github.com/BrainerVirus/workit.git\n",
+    stderr: [
+      "fatal: unable to access 'https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/BrainerVirus/workit.git/'",
+      "error: Could not resolve host: github.com",
+    ].join("\n"),
+  };
+  const { w, deps } = flakyMarketplace([failure, failure]);
+  try {
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], deps)).toBe(1);
+    const text = w.text();
+    expect(text).toMatch(
+      /codex +FAILED +`codex plugin marketplace upgrade workit` failed \(exit 128\): .*Could not resolve host: github\.com \| stdout: Fetching marketplace workit \| from https:\/\/github\.com/,
+    );
+    expect(text).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex marketplace upgrade that fails once then succeeds, When upgrade runs, Then it retries once after a pause and Codex updates", async () => {
+  const { w, deps, sleeps } = flakyMarketplace([
+    { status: 1, stdout: "", stderr: "error: failed to fetch marketplace" },
+  ]);
+  try {
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], deps)).toBe(0);
+    expect(marketplaceUpgrades(w.calls)).toBe(2);
+    expect(sleeps).toEqual([2000]);
+    expect(ran(w.calls, "codex plugin add workit@workit --json")).toBe(true);
+    expect(w.text()).toMatch(/codex +updated +1\.0\.0 -> 2\.0\.0; agents refreshed/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex marketplace upgrade that timed out, Then it is not retried (a second timeout would double the wait)", async () => {
+  const { w, deps, sleeps } = flakyMarketplace([
+    { status: null, stdout: "", stderr: "", timedOut: true },
+  ]);
+  try {
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], deps)).toBe(1);
+    expect(marketplaceUpgrades(w.calls)).toBe(1);
+    expect(sleeps).toEqual([]);
+    expect(w.text()).toMatch(
+      /codex +FAILED +`codex plugin marketplace upgrade workit` failed \(timed out\)/,
+    );
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex marketplace upgrade that keeps failing, Then the dependent add is skipped, the role agents still install, and the row says both", async () => {
+  const failure = { status: 1, stdout: "", stderr: "error: failed to fetch marketplace" };
+  const { w, deps } = flakyMarketplace([failure, failure]);
+  try {
+    expect(await runUpgradeCommand(["--hosts=codex,pi", "--yes"], deps)).toBe(1);
+    expect(marketplaceUpgrades(w.calls)).toBe(2);
+    expect(w.calls.some((call) => call[0] === "codex" && call[2] === "add")).toBe(false);
+    expect(w.calls.some((call) => call[0] === "node" && call.at(-1) === "--install-agents")).toBe(
+      true,
+    );
+    const text = w.text();
+    expect(text).toMatch(
+      /codex +FAILED +`codex plugin marketplace upgrade workit` failed \(exit 1\)/,
+    );
+    expect(text).toContain(
+      "skipped `codex plugin add workit@workit --json`: it needs the failed step",
+    );
+    expect(text).toContain("installed the Codex role agents from the cached plugin 2.0.0");
+    expect(text).toContain("fix: workit upgrade --hosts=codex");
+    expect(text).toMatch(/pi +updated/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a failed Codex step and no cached Codex plugin, Then the row says the role agents were skipped and why", async () => {
+  const failure = { status: 1, stdout: "", stderr: "error: failed to fetch marketplace" };
+  const { w, deps } = flakyMarketplace([failure, failure]);
+  try {
+    rmSync(path.join(w.home, ".codex/plugins/cache"), { recursive: true, force: true });
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], deps)).toBe(1);
+    expect(w.text()).toContain(
+      "skipped installing the Codex role agents: no cached Workit plugin to install them from",
+    );
   } finally {
     w.cleanup();
   }
@@ -1475,7 +1593,7 @@ test("Given `opencode plugin update` fails with an Error line followed by stack 
     });
     expect(updates(w.calls)).toBe(2);
     expect(w.text()).toMatch(
-      /opencode +FAILED +`opencode plugin update @workit-dev\/opencode` failed: Error: Plugin is not configured: @workit-dev\/opencode \| at frame3/,
+      /opencode +FAILED +`opencode plugin update @workit-dev\/opencode` failed \(exit 1\): Error: Plugin is not configured: @workit-dev\/opencode \| at frame3/,
     );
   } finally {
     w.cleanup();

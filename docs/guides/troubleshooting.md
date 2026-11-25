@@ -17,6 +17,7 @@ maps common symptoms to those ids.
 | Claude Code plugin missing or not loaded | `claude_plugin`, `claude_session_plugin` | `workit upgrade` and restart Claude Code; a local pin needs Bun |
 | Codex hooks do not run | `codex_hooks` | Trust them with `/hooks` in Codex |
 | Codex verifier or reviewer agents missing | `codex_agents` | `workit upgrade`, then a new Codex session |
+| A host row in `workit upgrade` reads `FAILED` | none | The row names the command, its exit code and its last output lines; see [A host step failed during upgrade](#a-host-step-failed-during-upgrade) |
 | OpenCode fails `opencode_version` | `opencode_version` | Upgrade OpenCode to 2.0.18+ |
 | Pi does not load Workit | `pi_extension` | See [Pi](hosts.md#pi) |
 | An agent could edit a Workit-guarded file (`workspaces.json` and its seal, approvals, issued sessions) | `native_deny` | `workit setup` in your own terminal writes each host's own deny rules (Claude Code, Cursor, OpenCode) |
@@ -63,6 +64,21 @@ spawn a fresh verifier or reviewer.
 OpenCode and Pi load Workit in-process as a plugin or extension. A load error
 there is the host's own plugin error; `workit doctor` checks them with
 `opencode_version` and `pi_extension`.
+
+## A host step failed during upgrade
+
+A `FAILED` row in the `workit upgrade` result names the command that failed,
+how it ended (`exit <code>` or `timed out`) and the last lines it printed on
+stderr and stdout, with tokens and passwords redacted. The `fix:` line under
+it is the one command to rerun that host, such as `workit upgrade --hosts=codex`.
+
+`codex plugin marketplace upgrade workit` fetches the marketplace with git and
+can fail for a moment. The upgrade retries it once after a two-second pause
+before the row fails. When a host step still fails, the steps that need it
+(`codex plugin add workit@workit` after the marketplace) are listed under the
+row as skipped. The steps that do not need it still run: Workit installs the
+Codex role agents from the newest cached plugin, and the row says whether that
+worked or why it was skipped.
 
 ## OpenCode stays one Workit version behind
 
