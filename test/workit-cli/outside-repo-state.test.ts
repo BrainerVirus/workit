@@ -176,20 +176,18 @@ test("Given a stray .workit in a parent folder outside git, When doctor runs bel
   expect(doctorRow(config).detail).not.toContain(path.join(config, ".workit"));
 });
 
-test("Given a test run, When a store resolves at the temp dir itself, a parent of it, or a folder outside it holding a .workit, Then it fails loudly instead of moving anything", () => {
+test("Given a test run, When a .workit would move from the temp dir itself, a parent of it, or a folder outside it, Then it fails loudly instead of moving anything", () => {
   const tmp = tempDir();
   const own = path.join(tmp, "own");
   mkdirSync(own);
   const env = { WORKIT_TEST_RUN: "1" };
-  // A test's own dir inside the temp root: allowed, stray or not.
+  // A test's own dir inside the temp root: allowed.
   expect(testRunFolderRefusal(own, true, env, tmp)).toBeNull();
-  // The temp root itself and its parents (a `cwd: "/tmp"` payload): always refused.
-  expect(testRunFolderRefusal(tmp, false, env, tmp)).toContain("refusing to resolve");
-  expect(testRunFolderRefusal(path.dirname(tmp), false, env, tmp)).toContain("refusing");
-  // Elsewhere (a home, a developer's folder): refused once there is a .workit to move.
-  const elsewhere = tempDir();
-  expect(testRunFolderRefusal(elsewhere, false, env, tmp)).toBeNull();
-  expect(testRunFolderRefusal(elsewhere, true, env, tmp)).toContain("it would move");
+  // The temp root itself, a parent of it, or a folder outside it: refused once there is a .workit to move.
+  for (const folder of [tmp, path.dirname(tmp), tempDir()]) {
+    expect(testRunFolderRefusal(folder, false, env, tmp)).toBeNull();
+    expect(testRunFolderRefusal(folder, true, env, tmp)).toContain("refusing to move");
+  }
   // Outside a test run nothing is refused.
   expect(testRunFolderRefusal(tmp, true, {}, tmp)).toBeNull();
 
@@ -200,7 +198,7 @@ test("Given a test run, When a store resolves at the temp dir itself, a parent o
   process.env.TMPDIR = root;
   try {
     expect(os.tmpdir()).toBe(root);
-    expect(() => resolveStore(root)).toThrow("refusing to resolve a folder store");
+    expect(() => resolveStore(root)).toThrow("refusing to move");
   } finally {
     if (saved === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = saved;
@@ -210,6 +208,8 @@ test("Given a test run, When a store resolves at the temp dir itself, a parent o
   // Recorded for the preload, which fails the test that tripped it (hooks fail open);
   // taken back here, since this test tripped it on purpose.
   const recorded = path.join(process.env.WORKIT_TEST_RUN!, TEST_RUN_REFUSALS);
-  expect(readFileSync(recorded, "utf8")).toContain(`refusing to resolve a folder store at ${root}`);
+  expect(readFileSync(recorded, "utf8")).toContain(
+    `refusing to move ${path.join(root, ".workit")}`,
+  );
   rmSync(recorded);
 });

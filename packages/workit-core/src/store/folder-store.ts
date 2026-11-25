@@ -164,13 +164,12 @@ export const TEST_RUN_REFUSALS = "folder-store-refusals.log";
 
 /**
  * Under a test run (`WORKIT_TEST_RUN`, set by the suite's state-isolation
- * preload), why resolving a folder store at `folder` must fail: a test may
- * only resolve one in a dir of its own inside the OS temp dir. The temp dir
- * itself or a parent of it (a `cwd: "/tmp"` payload) always fails; any other
- * folder outside it (the account's home, a developer's folders) fails once
- * there is something to move, since the move would carry a real `.workit`
- * into the run's throwaway state dir, which the run deletes (#892).
- * Null outside a test run, or for a folder the test owns.
+ * preload), why the move of `<folder>/.workit` must not run: a test may only
+ * move one from a dir of its own inside the OS temp dir. From the temp dir
+ * itself, a parent of it (a `cwd: "/tmp"` payload), the account's home or any
+ * other folder outside it, the move would carry a real `.workit` into the
+ * run's throwaway state dir, which the run deletes (#892). Null outside a
+ * test run, when there is nothing to move, or for a folder the test owns.
  */
 export const testRunFolderRefusal = (
   folder: string,
@@ -178,13 +177,11 @@ export const testRunFolderRefusal = (
   env: NodeJS.ProcessEnv = process.env,
   tempDir: string = os.tmpdir(),
 ): string | null => {
-  if (env.WORKIT_TEST_RUN === undefined) return null;
+  if (env.WORKIT_TEST_RUN === undefined || !hasStray) return null;
   const real = canonical(folder);
   const tmp = canonical(tempDir);
   if (below(tmp, real)) return null;
-  const shared = real === tmp || below(real, tmp);
-  if (!shared && !hasStray) return null;
-  return `workit test run (WORKIT_TEST_RUN): refusing to resolve a folder store at ${real}${hasStray ? ` (it would move ${path.join(real, ".workit")})` : ""}; a test must work in a fresh dir inside ${tmp}, never the temp dir itself, a parent of it or a folder outside it (#892)`;
+  return `workit test run (WORKIT_TEST_RUN): refusing to move ${path.join(real, ".workit")} into the run's throwaway state dir; a test must work in a fresh dir inside ${tmp}, never the temp dir itself, a parent of it or a folder outside it (#892)`;
 };
 
 /**
