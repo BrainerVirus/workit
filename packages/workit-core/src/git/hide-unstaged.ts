@@ -23,6 +23,7 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -72,14 +73,32 @@ export type BackupManifest = {
   files: SavedFile[];
 };
 
-/** Put one saved file back as it was; throws on an I/O error. */
+/**
+ * Put one saved file back as it was; throws on an I/O error. The bytes (or
+ * the link) go to a temporary name beside the target first and are renamed
+ * over it, so a kill mid-restore leaves the file whole: either the staged
+ * content or the original, never missing or partial.
+ */
 export function restoreSaved(dir: string, top: string, entry: SavedFile): void {
   const target = path.join(top, entry.file);
-  rmSync(target, { force: true });
-  if (entry.link !== undefined) symlinkSync(entry.link, target);
-  else if (entry.copy !== null) {
-    writeFileSync(target, readFileSync(path.join(dir, entry.copy)));
-    chmodSync(target, entry.mode);
+  if (entry.link === undefined && entry.copy === null) {
+    rmSync(target, { force: true });
+    return;
+  }
+  const temp = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.workit-restore-${process.pid}-${Date.now()}`,
+  );
+  try {
+    if (entry.link !== undefined) symlinkSync(entry.link, temp);
+    else {
+      writeFileSync(temp, readFileSync(path.join(dir, entry.copy!)));
+      chmodSync(temp, entry.mode);
+    }
+    renameSync(temp, target);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
   }
 }
 

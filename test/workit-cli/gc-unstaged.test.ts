@@ -1,6 +1,7 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -119,7 +120,7 @@ test("Given the file was edited after the killed commit, When workit gc --unstag
   const applied = await gc(killed.cwd, "--apply");
   expect(applied.code).toBe(0);
   expect(applied.stdout).toContain(`kept ${killed.dir}`);
-  expect(applied.stdout).toContain("not overwritten: f.txt");
+  expect(applied.stdout).toContain("changed since the commit: f.txt; not overwritten");
   expect(readFileSync(killed.file, "utf8")).toBe("edited\n");
   expect(readFileSync(path.join(killed.dir, "0"), "utf8")).toBe(ORIGINAL);
 });
@@ -167,6 +168,20 @@ test("Given a killed commit's folder, When doctor runs, Then unstaged_backups wa
   expect(unstagedBackupsCheck(killed.cwd)!.detail).toContain("f.txt matches the working tree");
   writeFileSync(killed.file, "edited\n");
   expect(unstagedBackupsCheck(killed.cwd)!.detail).toContain("f.txt differs (edited since)");
+});
+
+test("Given the working-tree file cannot be hashed (a directory took its place), When doctor and gc --unstaged --apply run, Then doctor says it could not hash it and gc keeps everything", async () => {
+  const killed = killedCommit();
+  rmSync(killed.file);
+  mkdirSync(killed.file);
+
+  expect(unstagedBackupsCheck(killed.cwd)!.detail).toContain(
+    "f.txt could not hash the working-tree file",
+  );
+  const applied = await gc(killed.cwd, "--apply");
+  expect(applied.stdout).toContain(`kept ${killed.dir}`);
+  expect(applied.stdout).toContain("could not hash: f.txt; not overwritten");
+  expect(existsSync(path.join(killed.dir, "0"))).toBe(true);
 });
 
 test("Given a repository with no folder, When doctor runs, Then unstaged_backups passes; outside a repository it has no row", async () => {

@@ -122,7 +122,10 @@ import {
   type SessionHookRemoval,
   type SessionHookStatus,
 } from "@workit-dev/core/src/git/session-hook";
-import { findUnstagedBackups } from "@workit-dev/core/src/git/unstaged-backups";
+import {
+  findUnstagedBackups,
+  type BackupFileState,
+} from "@workit-dev/core/src/git/unstaged-backups";
 import { readHookRuns, type HookRun } from "@workit-dev/core/src/hooks/hook-runs";
 import { issueTrackerOf } from "@workit-dev/core/src/core/vcs-config";
 import {
@@ -2788,6 +2791,13 @@ const checkSessionHook = (res: Resolved): DoctorCheck => {
   };
 };
 
+const UNSTAGED_STATE_TEXT: Record<BackupFileState, string> = {
+  restored: "matches the working tree",
+  hidden: "differs (working tree still at the staged content)",
+  changed: "differs (edited since)",
+  unhashable: "could not hash the working-tree file (git hash-object failed)",
+};
+
 const ageText = (ms: number): string =>
   ms < 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${(ms / 3_600_000).toFixed(1)} h`;
 
@@ -2817,12 +2827,7 @@ export const unstagedBackupsCheck = (cwd: string): DoctorCheck | null => {
   const describe = (backup: (typeof left)[number]) => {
     const files = backup.problem
       ? backup.problem
-      : backup.files
-          .map(
-            (entry) =>
-              `${entry.file} ${entry.state === "restored" ? "matches the working tree" : entry.state === "hidden" ? "differs (working tree still at the staged content)" : "differs (edited since)"}`,
-          )
-          .join(", ");
+      : backup.files.map((entry) => `${entry.file} ${UNSTAGED_STATE_TEXT[entry.state]}`).join(", ");
     return `${backup.dir} (${ageText(backup.ageMs)} old): ${files}`;
   };
   return {

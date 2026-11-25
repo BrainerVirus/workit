@@ -11,6 +11,8 @@
 //   step wrote, so putting the original back loses nothing.
 // - changed: someone edited the file since; it is never overwritten, and the
 //   folder stays so the original can be copied back by hand.
+// - unhashable: git could not hash the working-tree file, so whether it was
+//   edited is unknown; it is treated as changed.
 //
 // `workit doctor` reports the folders (unstaged_backups); `workit gc
 // --unstaged` lists them and, with --apply, restores the hidden files and
@@ -27,7 +29,7 @@ import {
   type SavedFile,
 } from "./hide-unstaged";
 
-export type BackupFileState = "restored" | "hidden" | "changed";
+export type BackupFileState = "restored" | "hidden" | "changed" | "unhashable";
 
 export type UnstagedBackup = {
   dir: string;
@@ -75,15 +77,18 @@ const gitDirs = (cwd: string): string[] => {
   return [common, ...listDir(worktrees).map((name) => path.join(worktrees, name))];
 };
 
-/** The blob git would store for the working-tree file now; null when it is gone. */
-const worktreeBlob = (top: string, file: string): string | null => {
+/**
+ * The blob git would store for the working-tree file now; null when it is
+ * gone, undefined when git could not hash it.
+ */
+const worktreeBlob = (top: string, file: string): string | null | undefined => {
   const target = path.join(top, file);
   const stat = lstatSync(target, { throwIfNoEntry: false });
   if (!stat) return null;
   const run = stat.isSymbolicLink()
     ? runGit(top, ["hash-object", "--stdin"], readlinkSync(target))
     : runGit(top, ["hash-object", `--path=${file}`, "--", file]);
-  return run.status === 0 ? run.stdout.trim() : "";
+  return run.status === 0 ? run.stdout.trim() : undefined;
 };
 
 const isOriginal = (dir: string, top: string, entry: SavedFile): boolean => {
@@ -98,7 +103,9 @@ const isOriginal = (dir: string, top: string, entry: SavedFile): boolean => {
 
 const fileState = (dir: string, top: string, entry: SavedFile): BackupFileState => {
   if (isOriginal(dir, top, entry)) return "restored";
-  return worktreeBlob(top, entry.file) === entry.staged ? "hidden" : "changed";
+  const blob = worktreeBlob(top, entry.file);
+  if (blob === undefined) return "unhashable";
+  return blob === entry.staged ? "hidden" : "changed";
 };
 
 const readManifest = (dir: string): BackupManifest | null => {
@@ -167,8 +174,13 @@ export function sweepUnstagedBackups(cwd: string, options: { apply: boolean }): 
     if (backup.problem) return { ...backup, action: "kept" as const, reason: backup.problem };
     const hidden = summary(backup, "hidden");
     const changed = summary(backup, "changed");
-    const keep = changed.length
-      ? `changed since the commit, not overwritten: ${changed.join(", ")}; the originals stay in ${backup.dir}`
+    const unhashable = summary(backup, "unhashable");
+    const kept = [
+      ...(changed.length ? [`changed since the commit: ${changed.join(", ")}`] : []),
+      ...(unhashable.length ? [`could not hash: ${unhashable.join(", ")}`] : []),
+    ];
+    const keep = kept.length
+      ? `${kept.join("; ")}; not overwritten, the originals stay in ${backup.dir}`
       : null;
     if (!options.apply) {
       if (hidden.length)
