@@ -15,8 +15,9 @@ workit check --list                     # configured checks and groups (also bar
 
 The command runs without a shell (unless `--shell -- "<cmd>"`) and records exit
 code, duration, HEAD, worktree tree key and patch-id as `observer: workit_cli`
-evidence. The exit code is the command's; `--timeout <s>` kills the whole
-process tree. It prints only the last 60 lines of the output (a failure's
+evidence. The exit code is the command's, except that `--timeout <s>` kills
+the whole process tree and exits 4 (`--json`: `"code": "failed"` with
+`data.timedOut`) and a run you interrupt exits 128 plus the signal. It prints only the last 60 lines of the output (a failure's
 tail, never its head). stdout and stderr arrive on separate pipes, so the
 child's last 10 stderr lines are shown after the tail when the merged log
 holds them earlier, and a failing run also lists up to 15 failing-test or
@@ -62,6 +63,8 @@ commands through `workit check`, never with a hand-made `flock`:
 ```bash
 workit check test                    # test, build and packaging take the lease
 workit check --heavy -- npx jest     # an ad-hoc heavy command
+workit lock run -- npx jest          # the same lease, without a check record
+workit check --name fmt -- npx oxfmt src/a.ts   # light: a formatter, one linter or one test file takes no lease
 workit lock status                   # who holds the lease, who waits, which holder looks stuck?
 workit lock reap                     # free a stuck? holder's slot (or: workit lock reap <pid|session|dir>)
 workit lock cancel                   # drop this session's queued checks (or: <pid|session|dir>)
@@ -130,14 +133,10 @@ as `noLease`.
 
 #### Stuck holders, cancelled waits, fairness
 
-- **Shortest measured run first.** The queue serves the waiter whose check's
-  last measured run is shortest, so an 8-second suite never waits behind a
-  queued 15-minute one; a waiter queued 5 minutes goes ahead of every newer
-  one. A check never measured ranks as a 15-minute run. Ties, and the order
-  among those aged waiters, go round-robin per session (a session's second
-  queued check after every other session's first), then by arrival. Checks
-  under 30 s and network-bound ones run without a slot
-  ([checks](checks.md#waiting-for-the-heavy-check-lease)).
+- **Queue order.** Shortest measured run first, a waiter queued 5 minutes
+  ahead of newer ones, round-robin per session on ties; checks under 30 s and
+  network-bound ones run without a slot. The full rules, with the budget's
+  backfill, are in [checks](checks.md#waiting-for-the-heavy-check-lease).
 - **`stuck?`.** `workit lock status` marks a holder `stuck?`, with its age, once
   it has held its slot past its hold limit (`resources.maxHold`, default 15
   min, a repo can only lower it; or 1.5 times its check's last measured run
@@ -147,8 +146,10 @@ as `noLease`.
   config for a quiet long check.
   `workit lock reap` frees that slot and records a `lease.reaped` ledger row
   naming the pid, session and command; the process itself keeps running, so
-  stop it yourself if it is truly hung. A holder silent past 3x its max hold
-  is reaped by the next check that queues.
+  stop it yourself if it is truly hung. The next check that queues reclaims a
+  holder itself only when it is past 3 times its limit and has been silent
+  (no output, no CPU) for at least its limit; a busy long run is never
+  reclaimed.
 - **Owners and cancel.** A queued check leaves the queue when the process that
   started it ends, and `workit lock status` drops dead waiters and frees dead
   holders' slots before it prints. `workit lock cancel [<pid|session|dir>]`
@@ -205,7 +206,7 @@ Workit computes a review lane from the diff of the branch against its base
 | `full` | 500+ lines, any file on a risk path, or a high-risk judgment | an accepted non-author verdict (a high-risk judgment still asks a `live` one at task close) |
 
 Lines count code, tests and agent instructions (`SKILL.md`, `AGENTS.md`,
-`CLAUDE.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
+`CLAUDE.md`, `GEMINI.md`, `skills/`, `agents/`, `commands/`, `rules/`, `prompts/`);
 lockfiles count as a behavior change but never toward size. A diff Workit
 cannot read reads as `focused`. The lane gates `workit pr merge`, `workit
 stack land`, the Stop hook and the task's `verdict:lane` requirement alike.
@@ -371,7 +372,8 @@ A verdict is keyed to the head it judged. It still applies to a newer head
   its own file; here `docs/qualification/context-budget.json`, which
   `write:budget` regenerates).
 - **Test-only follow-up, `unit` verdicts only:** every changed file is a test
-  file proper (named `*.test.*`, `*.spec.*` or `*_test.*`), docs or
+  file proper (`*.test.<ext>` or `*.spec.<ext>` with a JS or TS extension
+  such as `.ts`, `.tsx`, `.js` or `.mjs`, or `*_test.<ext>`), docs or
   bookkeeping, off risk paths, with no lockfile or binary. Any other file in a
   test folder (a helper, fixture, setup or runner config such as
   `test/helpers/runtime.ts`, `test/fixtures/x.json` or `test/bunfig.toml`) does

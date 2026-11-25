@@ -49,7 +49,8 @@ ran locally.
 - Each member runs as its own recorded check: one evidence row per name.
 - Light members (`resources.light`, default lint, typecheck, format) run first
   and never take the heavy lease. Heavy members (`test`, `build`, `packaging`,
-  and what `resources.heavy` adds) queue for it, so a session holding the lease
+  what `resources.heavy` adds, and any member whose own entry sets `"heavy"`)
+  queue for it, so a session holding the lease
   delays only them.
 - Every member runs even when one fails. The exit code is 1 if any failed, and
   the last line names them (`FAILED typecheck (2/3 passed)`).
@@ -115,6 +116,10 @@ side:
   5 minutes goes ahead of every newer one, so a long suite is overtaken for at
   most that long. A check never measured ranks as a 15-minute run and keeps
   the old round-robin order among other unmeasured ones.
+- **A smaller check backfills.** A waiter whose charge fits the free units and
+  memory runs ahead of a bigger one that does not fit yet. Once that bigger
+  waiter has waited 5 minutes, nobody behind it takes what it needs
+  ([heavy-check budget](configuration.md#heavy-check-budget)).
 - **Checks under 30 seconds run without a slot.** A heavy check whose last
   measured run took under 30 s starts at once, even with every slot held,
   while its memory fits the budget and the pressure gate is open:
@@ -163,9 +168,13 @@ side:
   `past its last 14m run`) and, for each waiter in serving order, its own
   check's last run and its estimated wait (`its last run took 8s, estimated
   wait ~3m`, or `no measured run` for that waiter alone); `--json` adds them
-  under `estimates`. A network-bound check shows as `io`, queued
-  (`bench (io), pid …`) or running without a slot (`io bench, pid …` under
-  `admitted`).
+  under `estimates`. A `budget:` line gives the units and memory in use with
+  the reserve and whether it is automatic or configured (`budget: 2 of 3
+  units, 9.6 GiB of 26.0 GiB memory (6.0 GiB reserve, automatic)`), and
+  `admitted (no slot):` lists the checks running without a slot: `short` ones
+  (a last run under 30 s) and `io` ones. A network-bound check shows as `io`,
+  queued (`bench (io), pid …`) or admitted (`io bench, pid …`); `--json` adds
+  `budget` and `admitted`.
 - **A dead holder frees its slot at once.** When a holder's `workit` process
   and its check are gone (crashed or killed), the next waiter takes the slot
   on its next poll, about a second later, and says it reclaimed it.
