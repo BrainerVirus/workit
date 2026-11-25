@@ -40,7 +40,9 @@ or `bun run check` in it; use a separate worktree.
    README or the relevant guide when user-facing behavior changes. Add a line
    for a user-visible change under `## [Unreleased]` in `CHANGELOG.md`; a
    release puts those entries at the top of its GitHub notes
-   ([release](docs/agents/release.md#how-a-release-happens)).
+   ([release](docs/agents/release.md#how-a-release-happens)). Run
+   `workit changelog driver install` once per clone so a rebase or merge keeps
+   both sides' entries (`bun run hooks:install` does not register it).
 4. Verify:
 
    ```bash
