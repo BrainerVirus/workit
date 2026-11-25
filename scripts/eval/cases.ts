@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { providersFor, type Provider } from "./opencode";
 
 export type Tier = "smoke" | "full";
 
@@ -25,6 +26,15 @@ export type CallPattern = {
 const HOSTS = ["claude-code", "opencode"] as const;
 export type CaseHost = (typeof HOSTS)[number];
 
+/**
+ * The Claude Code permission modes a case may set. `auto` (the default) runs
+ * the host's classifier, which can deny a sanctioned call before Workit runs;
+ * `default` leaves the allow rules (`allowedTools`) as the only gate, and in
+ * `-p` anything else is refused. `bypassPermissions` would skip the allow
+ * rules, so no case takes it.
+ */
+const PERMISSION_MODES = ["auto", "default", "acceptEdits", "dontAsk", "plan"];
+
 export type EvalCase = {
   id: string;
   /** The real failure this case replays: a retro item, issue or behaviour case. */
@@ -38,7 +48,10 @@ export type EvalCase = {
   firstTry?: boolean;
   /** The legs the case applies to (default both); another leg reports it not applicable, never a pass. */
   hosts?: CaseHost[];
-  /** `{{root}}` and `{{worktree}}` are replaced with the scaffold paths. */
+  /**
+   * `{{root}}` and `{{worktree}}` are replaced with the scaffold paths;
+   * `{{model}}` and `{{roleModel}}` with the leg's models (`forLeg`).
+   */
   prompt: string;
   scaffold?: {
     /** Branch the repo is on; `main` when absent. */
@@ -54,9 +67,10 @@ export type EvalCase = {
     /** A bare `origin` remote the branch can be pushed to. */
     remote?: boolean;
     /**
-     * A fake forge (scaffold.ts FAKE_GH): `origin` fetches from the bare
-     * remote with the case's branch on it and pushes to
-     * `https://github.example.invalid/eval/demo.git`, `gh` answers only the
+     * A fake forge (scaffold.ts FAKE_GH, FAKE_SSH): `origin` fetches from the
+     * bare remote with the case's branch on it and pushes to
+     * `ssh://git@github.example.invalid/eval/demo.git`, which the world's
+     * `ssh` serves from that same bare remote; `gh` answers only the
      * reads `workit pr create` makes and opens one canned PR, and the
      * workspace entry links YouTrack issues with `backlink: true`.
      */
@@ -87,6 +101,7 @@ export type EvalCase = {
     gitHooks?: Record<string, string>;
   };
   maxTurns?: number;
+  /** Claude Code's `--permission-mode` (default `auto`); the OpenCode leg has no classifier and ignores it. */
   permissionMode?: string;
   allowedTools?: string[];
   expect?: {
@@ -115,6 +130,8 @@ export const loadCases = (dir: string): EvalCase[] =>
       if (!spec.prompt || !spec.source) throw new Error(`${name}: prompt and source are required`);
       if (spec.hosts?.some((host) => !(HOSTS as readonly string[]).includes(host)))
         throw new Error(`${name}: hosts must name ${HOSTS.join(" or ")}`);
+      if (spec.permissionMode !== undefined && !PERMISSION_MODES.includes(spec.permissionMode))
+        throw new Error(`${name}: permissionMode must be one of ${PERMISSION_MODES.join(", ")}`);
       const forge = spec.scaffold?.forge;
       if (forge !== undefined && forge !== "github")
         throw new Error(`${name}: scaffold.forge must be github`);
@@ -136,3 +153,51 @@ export const selectCases = (cases: EvalCase[], tier: Tier, ids: string[] = []): 
 /** Whether the case runs on this leg (`hosts`, default both). */
 export const appliesTo = (spec: EvalCase, host: CaseHost): boolean =>
   spec.hosts === undefined || spec.hosts.includes(host);
+
+/**
+ * The models a leg fills in (`forLeg`): `model` is the one the leg runs on,
+ * `roleModel` another model from the same leg's config, so a case that sets a
+ * role default to `{{roleModel}}` and has the user name `{{model}}` is always
+ * an override. Claude Code: the `--model` family alias (`haiku` for
+ * `claude-haiku-5-5`), and `opus` (or `sonnet` when the leg runs an opus). OpenCode: the provider model the run is on, and the other
+ * provider's model for the same `--model` (go for free, free for go).
+ */
+export type LegModels = { model: string; roleModel: string };
+
+export const legModels = (host: CaseHost, model: string, provider?: Provider): LegModels => {
+  if (host === "claude-code") {
+    // The Agent tool takes the family alias: `claude-haiku-5-5` runs as `haiku`.
+    const alias = /\b(opus|sonnet|haiku|fable)\b/iu.exec(model)?.[1]?.toLowerCase() ?? model;
+    return { model: alias, roleModel: alias === "opus" ? "sonnet" : "opus" };
+  }
+  const providers = providersFor(model);
+  const running = provider ?? providers[0];
+  const other = providers.find((each) => each.name !== running.name) ?? running;
+  return { model: running.model, roleModel: other.model };
+};
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/** Every `{{model}}` and `{{roleModel}}` in `text`, as is or regex-escaped. */
+const fill = (text: string, models: LegModels, regex: boolean): string =>
+  text
+    .replaceAll("{{model}}", regex ? escapeRegex(models.model) : models.model)
+    .replaceAll("{{roleModel}}", regex ? escapeRegex(models.roleModel) : models.roleModel);
+
+const fillAll = (value: unknown, models: LegModels, key = ""): unknown => {
+  if (typeof value === "string") return fill(value, models, key === "pattern" || key === "result");
+  if (Array.isArray(value)) return value.map((each) => fillAll(each, models, key));
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([name, each]) => [name, fillAll(each, models, name)]),
+    );
+  return value;
+};
+
+/**
+ * The case as one leg runs and grades it: `{{model}}` and `{{roleModel}}`
+ * filled in the prompt, the scaffold and the expectations (regex-escaped in
+ * `pattern` and `result`). The cache key keeps the unfilled case.
+ */
+export const forLeg = (spec: EvalCase, models: LegModels): EvalCase =>
+  fillAll(spec, models) as EvalCase;

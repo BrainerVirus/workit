@@ -8,6 +8,7 @@
     "branch": "feature/base"
   },
   "maxTurns": 4,
+  "permissionMode": "default",
   "expect": {
     "require": [
       {

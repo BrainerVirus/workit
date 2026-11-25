@@ -1,6 +1,6 @@
 {
   "id": "branch-with-dirty-tree",
-  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): dirty_worktree on `workit git branch` named --carry only in its unblock, so weak models stashed or committed instead; tagged firstTry 2026-11-18 (--carry discoverability)",
+  "source": "retro 2026-11-17 C8+C9 (first-try workit failures: 2.1% on Claude Code, ~17% on OpenCode weak models): dirty_worktree on `workit git branch` named --carry only in its unblock, so weak models stashed or committed instead; tagged firstTry 2026-11-18 (--carry discoverability); #902: graded on the outcome (the refusal leads to --carry), not on how the model explored",
   "tier": "full",
   "firstTry": true,
   "prompt": "Move my uncommitted change to a.txt onto a new branch feature/next made from main with the workit CLI. Keep the change uncommitted.",
@@ -19,33 +19,28 @@
       {
         "tool": "Bash",
         "pattern": "workit( --cwd \\S+)? git branch[^\\n]*feature/next[^\\n]*--carry|workit( --cwd \\S+)? git branch[^\\n]*--carry[^\\n]*feature/next",
-        "why": "the change rides along with --carry"
+        "why": "the change rides along with --carry",
+        "denied": false
       }
     ],
     "forbid": [
       {
         "tool": "Bash",
-        "pattern": "\\bgit stash\\b",
-        "why": "--carry moves the change; no stash"
+        "pattern": "\\bgit stash(?!\\s+(list|show)\\b)",
+        "why": "--carry moves the change; no stash (reading the stash list is fine)"
       },
       {
         "tool": "Bash",
-        "pattern": "\\bcommit\\b",
+        "pattern": "\\bgit\\s+(-C\\s+\\S+\\s+)?commit\\b",
         "why": "the change stays uncommitted"
       }
     ],
-    "atMost": [
+    "declared": [
       {
         "tool": "Bash",
-        "pattern": "workit( --cwd \\S+)? git branch\\b",
-        "max": 2,
-        "why": "the refusal names --carry in its first line: one retry at most"
-      },
-      {
-        "tool": "Bash",
-        "pattern": "\\bworkit help\\b|\\bworkit\\b[^\\n]*(--help|\\s-h)\\b",
-        "max": 1,
-        "why": "the refusal carries the usage line and the fix: no help call is needed to recover (one help call may find --carry; 2026-11-18: a cap of 0 measured impossibility, not first try)"
+        "pattern": "workit( --cwd \\S+)? git branch\\b(?![^\\n]*--carry)",
+        "result": "dirty_worktree|--carry",
+        "why": "a first try without --carry is refused naming --carry; the grade is that the next call uses it"
       }
     ]
   }

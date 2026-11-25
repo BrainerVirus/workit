@@ -35,7 +35,9 @@ bun scripts/eval/run.ts --replay [--model haiku] [--check]    # re-grade stored 
   packages/workit-cli/src and packages/workit-claude-code on disk>`). An edit to
   a skill, hook or CLI text re-runs every case; `--force` re-runs anyway.
 - Exit 1 when a graded case fails or a case is void, else 0 (with `--gate`,
-  the gate decides; see [First try](#first-try)). Commit `evals/results/`
+  the gate decides; see [First try](#first-try)). Exit 2, with nothing run,
+  when `--tier` and `--cases` select no case (a full-tier case on the default
+  smoke tier). Commit `evals/results/`
   with the change it measures.
 - A run whose host login failed before any tool call (Claude Code asking for
   `/login`, OpenCode's `provider.auth` "Reconnect OpenCode Console") is
@@ -381,15 +383,15 @@ issue or `test/behavior/cases` file).
 | --- | --- |
 | `tier` | `smoke` or `full`; `--tier full` runs both |
 | `firstTry` | A first-try case: any Workit interaction a hook denies or that fails, and that `expect.declared` does not name, fails the run ([First try](#first-try)) |
-| `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass |
-| `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths |
+| `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass. |
+| `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths. `{{model}}` and `{{roleModel}}` become the leg's models, in the prompt, the scaffold and the expectations (regex-escaped in `pattern` and `result`; `scripts/eval/cases.ts` `forLeg`): `{{model}}` is the model the leg runs on (Claude Code: the `--model` family alias, `haiku` for `claude-haiku-5-5`; OpenCode: the provider model of that attempt, `opencode/<m>-free` or `opencode-go/<m>`), `{{roleModel}}` another model of the same leg's config (Claude Code: `opus`, or `sonnet` on an opus leg; OpenCode: the other provider's model). A case that tests a user-named override names `{{model}}` and sets the role default to `{{roleModel}}`, so the two always differ and each leg can run the named one (`spawn-user-model-override`, `spawn-explore-user-model`) |
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
-| `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `auto`, the list above |
+| `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `auto`, the list above. `permissionMode` is Claude Code's `--permission-mode`: `auto`, `default`, `acceptEdits`, `dontAsk` or `plan` (loading refuses any other). Set `default` when the host's auto-mode classifier denies a sanctioned call before Workit runs (`install-help`, `youtrack-time-raw-ytrack`): the allow rules are then the only gate, and `-p` refuses anything they do not allow |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
 | `scaffold.home` | Files written under the world HOME (a host install the case needs, such as `.cursor/mcp.json`); a path that is absolute, has a `..` segment or is not below HOME refuses the world |
 | `scaffold.gitHooks` | Git hooks written to the repo's `.git/hooks/<name>` after the scaffold's commits (a pre-commit hook that refuses unformatted code) |
 | `scaffold.workspace` | The world's workspace entry `eval` (`defaultEndpoint`, `autonomy`, `changelog`, `models` for role models), so `workit grant show` and the Stop hook see it. Only its endpoint and the grants it lowers below the D4 defaults count, and only where no real workspace matches (`packages/workit-core/src/core/eval-world.ts`). A lowered grant is an explicit grant without a forge account, so it also drops the endpoint to `commit` |
-| `scaffold.forge` | `github`: a fake forge with no network. The case's branch is pushed to the bare `origin`, whose push URL becomes `https://github.example.invalid/eval/demo.git`. The world's `gh` (`scripts/eval/scaffold.ts`) answers only the reads `workit pr create` makes and opens one canned PR #1 that a re-run finds open; every other call exits 1 having sent nothing. The workspace entry gets `issues: {provider: youtrack, backlink: true}` and `youtrack.json` points at `https://yt.example.invalid` (the fake `ytrack` still refuses writes) |
+| `scaffold.forge` | `github`: a fake forge with no network. The case's branch is pushed to the bare `origin`, whose push URL becomes `ssh://git@github.example.invalid/eval/demo.git`. The world's `ssh` serves only that repository on that host, from the same bare `origin`, so `workit git push` and `workit pr create` push for real with no network; any other host or command exits 255 having run nothing. The world's `gh` (`scripts/eval/scaffold.ts`) answers only the reads `workit pr create` makes and opens one canned PR #1 that a re-run finds open; every other call exits 1 having sent nothing. The workspace entry gets `issues: {provider: youtrack, backlink: true}` and `youtrack.json` points at `https://yt.example.invalid` (the fake `ytrack` still refuses writes) |
 | `expect.atMost` | `{tool?, pattern, max, why}`: at most `max` calls match |
 | `expect.declared` | `CallPattern`s of calls the case expects to be refused or to fail (a user-only verb, a scripted bad first call): they count in neither `firstTry.failed` nor `firstTry.denied`. A `require` rule with `denied: true` is declared too |
 | `expect.configuredCheck` | Some Bash call is `workit check <a configured name>` (ad-hoc `--name … --` does not count) |
@@ -454,8 +456,8 @@ each `firstTry` case runs 5 times (or `--repeat`, if more) and needs all of
 them; every other case keeps the two-thirds rule and must not drop against
 the committed `summary.json` (a case that passed there and fails now). The
 bench ends `gate first-try: pass|FAIL` with the short cases and the drops,
-and exits 1 on any of them, a void or limited case, or a case the budget
-left unrun. The first-try cases are written by outcome ("no spawn refused",
+and exits 1 on any of them, a void or limited case, a case the budget
+left unrun, or no case graded at all (every selected case `n/a` on this leg). The first-try cases are written by outcome ("no spawn refused",
 "the call ran"), so a fix changes Workit, not the case.
 
 Three drift tests run in `bun run test` with no model:

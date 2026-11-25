@@ -16,7 +16,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
-import { appliesTo, loadCases, selectCases, type EvalCase, type Tier } from "./cases";
+import {
+  appliesTo,
+  forLeg,
+  legModels,
+  loadCases,
+  selectCases,
+  type EvalCase,
+  type Tier,
+} from "./cases";
 import {
   authFailureOf,
   claudeLimitOf,
@@ -849,10 +857,12 @@ const attempt = async (
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
-const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
+const runOpencode = async (unfilled: EvalCase, opts: Options): Promise<Attempt> => {
   let last: Attempt = { ...REFUSED };
   while (opts.providers.length > 0) {
     const [provider] = opts.providers;
+    // Each provider is its own leg model: `{{model}}` is the one this attempt runs on.
+    const spec = forLeg(unfilled, legModels("opencode", opts.model, provider));
     const world = makeWorld(spec);
     try {
       const config = writeOpencodeConfig(
@@ -888,7 +898,8 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   return last;
 };
 
-const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
+const runClaude = async (unfilled: EvalCase, opts: Options): Promise<Attempt> => {
+  const spec = forLeg(unfilled, legModels("claude-code", opts.model));
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
@@ -979,7 +990,10 @@ const runCase = async (
     (opts.host === "opencode"
       ? run.provider === undefined || run.limit !== null
       : run.limit !== null);
-  const graded = grade(run.transcript, spec);
+  const graded = grade(
+    run.transcript,
+    forLeg(spec, legModels(opts.host, opts.model, run.provider)),
+  );
   const auth = trip === null && !run.refused && !skipped ? authFailureOf(run.transcript) : null;
   if (auth) graded.failures.unshift({ rule: "void", detail: `the host's login failed: ${auth}` });
   if (run.refused) graded.failures.unshift({ rule: "isolation", detail: run.refused });
@@ -1207,7 +1221,12 @@ const replay = (
       // A limited run was never graded; re-grading its stub could turn it into a pass.
       // An outside write fails the run whatever its transcript says.
       if (stored.skipped || stored.void || stored.outsideWrite || stored.refused) continue;
-      const fresh = grade(readFileSync(path.join(dir, file), "utf8"), spec);
+      const leg = legModels(
+        stored.host ?? "claude-code",
+        stored.model,
+        stored.provider && providersFor(stored.model).find((each) => each.name === stored.provider),
+      );
+      const fresh = grade(readFileSync(path.join(dir, file), "utf8"), forLeg(spec, leg));
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
       print(
@@ -1378,12 +1397,21 @@ export const main = async (
     carried: [],
   };
   opts.roots = benchRoots(opts);
+  const ids = values.cases?.split(",").filter(Boolean) ?? [];
+  const selected = selectCases(cases, tier, ids);
+  // A gate over nothing proves nothing: an empty selection never reaches "pass".
+  if (selected.length === 0 && !settling) {
+    print(
+      `no case selected: --tier ${tier}${ids.length > 0 ? ` --cases ${ids.join(",")}` : ""} matches nothing (a full-tier case needs --tier full); nothing runs`,
+    );
+    return 2;
+  }
   return tripwired(
     opts,
     print,
     async () =>
       bench(opts, print, {
-        selected: selectCases(cases, tier, values.cases?.split(",").filter(Boolean)),
+        selected,
         repeat,
         budget,
         force: values.force,
@@ -1692,9 +1720,19 @@ const bench = async (
     print(
       `void (auth): ${voided.length} case(s) never reached the model, the host's login failed: ${voided.join(", ")}\n    re-login: ${RELOGIN[host]}, then rerun`,
     );
+  // Every selected case n/a on this leg, or none graded: the gate has nothing to pass on.
+  const graded =
+    selected.length - notApplicable.length - skipped.length - limited.length - voided.length;
+  const gatePass =
+    gateFailed.length === 0 &&
+    drops.length === 0 &&
+    voided.length === 0 &&
+    limited.length === 0 &&
+    skipped.length === 0 &&
+    graded > 0;
   if (gate)
     print(
-      `gate first-try: ${gateFailed.length === 0 && drops.length === 0 && voided.length === 0 && limited.length === 0 && skipped.length === 0 ? "pass" : "FAIL"}; firstTry cases short of ${FIRST_TRY_RUNS} of ${FIRST_TRY_RUNS}: ${gateFailed.join(", ") || "none"}; drops against the committed summary: ${drops.join(", ") || "none"}`,
+      `gate first-try: ${gatePass ? "pass" : "FAIL"}; firstTry cases short of ${FIRST_TRY_RUNS} of ${FIRST_TRY_RUNS}: ${gateFailed.join(", ") || "none"}; drops against the committed summary: ${drops.join(", ") || "none"}${graded > 0 ? "" : "; no case was graded on this leg"}`,
     );
   if (skipped.length > 0)
     print(
@@ -1702,14 +1740,7 @@ const bench = async (
     );
   if (runs > 0)
     print(`results: ${path.relative(REPO, dir) || dir}; commit them with the change they measure`);
-  if (gate)
-    return gateFailed.length > 0 ||
-      drops.length > 0 ||
-      voided.length > 0 ||
-      limited.length > 0 ||
-      skipped.length > 0
-      ? 1
-      : 0;
+  if (gate) return gatePass ? 0 : 1;
   return failed > 0 || limited.length > 0 || voided.length > 0 ? 1 : 0;
 };
 

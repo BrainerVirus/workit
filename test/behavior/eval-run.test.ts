@@ -539,6 +539,80 @@ test("Given a case with scaffold commits and no allowed tools, Then the repo has
   expect(call).toContain("--permission-mode auto --disallowedTools WebFetch WebSearch");
 });
 
+test("Given a case with permissionMode default, Then claude -p runs it in that mode with the case's allow rules", async () => {
+  writeFileSync(
+    path.join(root, "cases", "e-full.json"),
+    JSON.stringify({
+      id: "e-full",
+      source: "test",
+      tier: "full",
+      prompt: "p",
+      permissionMode: "default",
+      allowedTools: ["Bash(workit *)"],
+    }),
+  );
+  await main(["--model", "haiku", "--tier", "full", "--cases", "e-full", ...argv], quiet([]));
+  const [call = ""] = calls();
+  expect(call).toContain(
+    "--permission-mode default --allowedTools Bash(workit *) --disallowedTools",
+  );
+  expect(call).not.toContain("--permission-mode auto");
+});
+
+test("Given --gate first-try with a full-tier case on the default smoke tier, When run, Then it refuses with exit 2 and no host runs", async () => {
+  const printed: string[] = [];
+  const code = await main(
+    ["--model", "haiku", "--gate", "first-try", "--cases", "d-full", ...argv],
+    quiet(printed),
+  );
+  expect(code).toBe(2);
+  expect(calls()).toEqual([]);
+  expect(printed.join("\n")).toContain("no case selected: --tier smoke --cases d-full");
+  expect(printed.join("\n")).not.toContain("gate first-try: pass");
+});
+
+test("Given --gate first-try where every selected case applies to the other leg, When run, Then the gate fails with no case graded", async () => {
+  writeFileSync(
+    path.join(root, "cases", "e-full.json"),
+    JSON.stringify({
+      id: "e-full",
+      source: "test",
+      tier: "full",
+      prompt: "p",
+      hosts: ["opencode"],
+    }),
+  );
+  const printed: string[] = [];
+  const code = await main(
+    ["--model", "haiku", "--tier", "full", "--gate", "first-try", "--cases", "e-full", ...argv],
+    quiet(printed),
+  );
+  expect(code).toBe(1);
+  expect(calls()).toEqual([]);
+  expect(printed.join("\n")).toContain("gate first-try: FAIL");
+  expect(printed.join("\n")).toContain("no case was graded on this leg");
+});
+
+test("Given a case naming {{model}} and {{roleModel}}, When run on claude-haiku-5-5, Then claude -p gets the prompt with the leg's model alias", async () => {
+  writeFileSync(
+    path.join(root, "cases", "e-full.json"),
+    JSON.stringify({
+      id: "e-full",
+      source: "test",
+      tier: "full",
+      prompt: "spawn with model {{model}}",
+      scaffold: { workspace: { models: { roles: { verifier: "{{roleModel}}" } } } },
+    }),
+  );
+  await main(
+    ["--model", "claude-haiku-5-5", "--tier", "full", "--cases", "e-full", ...argv],
+    quiet([]),
+  );
+  const [call = ""] = calls();
+  expect(call).toContain("prompt=spawn with model haiku ");
+  expect(call).toContain("--model claude-haiku-5-5");
+});
+
 const PUSH = [
   JSON.stringify({
     type: "assistant",
