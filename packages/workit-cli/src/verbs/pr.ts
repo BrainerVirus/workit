@@ -108,6 +108,7 @@ import {
   selector,
   unverifiedFlag,
   usage,
+  type ParsedFlags,
 } from "./forge-common";
 
 const CONVENTIONAL_TYPES = [
@@ -344,9 +345,9 @@ const CREATE_USAGE =
   'workit pr create [--base <b> | --track <t>] (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [--issue <#n|ID|url>… [--refs]] [--label <l>]… [--reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>] [--json]';
 const MERGE_USAGE =
   "workit pr merge [--pr <n>] [--squash|--merge|--rebase | --method squash|merge|rebase] [--subject <s>] [--body <b> | --body-file <f|->] [--delete-branch | --keep-branch] [--unverified --reason <why>] [--base-red-ok --reason <why>] [--others-pr --reason <why>] [--allow-failing <check>… --reason <why>] [--json]";
-const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--json]";
+const READY_USAGE = "workit pr ready [--pr <n>] [--undo] [--others-pr --reason <why>] [--json]";
 const EDIT_USAGE =
-  "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--json]";
+  "workit pr edit [--pr <n>] [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--others-pr --reason <why>] [--json]";
 const THREADS_USAGE = "workit pr threads [--pr <n>] [--json]";
 const REPLY_USAGE =
   "workit pr reply [--pr <n>] --thread <id> [--body-file <f|->] [--resolve] [--json]";
@@ -1455,19 +1456,37 @@ async function merge(argv: string[], io: Io): Promise<number> {
   );
 }
 
+/** `--others-pr --reason <why>` of `pr ready|edit` (#882); a usage error as a string. */
+function othersPrFlag(flags: ParsedFlags): { reason: string } | null | string {
+  const reason = flags.values.reason?.trim();
+  if (!flags.booleans.has("others-pr"))
+    return reason === undefined ? null : "--reason is only used with --others-pr";
+  if (!reason)
+    return "--others-pr needs --reason <why the user asked you to change a PR someone else authored>";
+  return reason.length > 500 ? "--reason is capped at 500 characters" : { reason };
+}
+
 async function ready(argv: string[], io: Io): Promise<number> {
-  const flags = parseFlags(argv, { pr: "value", undo: "boolean" });
+  const flags = parseFlags(argv, {
+    pr: "value",
+    undo: "boolean",
+    "others-pr": "boolean",
+    reason: "value",
+  });
   if (typeof flags === "string") return usage(io, flags, READY_USAGE);
   if (flags.positionals.length)
     return usage(io, `unexpected argument ${flags.positionals[0]}`, READY_USAGE);
   const picked = selector(flags);
   if (typeof picked === "string") return usage(io, picked, READY_USAGE);
   const { pr } = picked;
+  const othersPr = othersPrFlag(flags);
+  if (typeof othersPr === "string") return usage(io, othersPr, READY_USAGE);
   const connected = connect(io);
   if (!connected.ok) return forgeFail(io, connected);
   const result = readyPullRequest(io.cwd, connected.data, {
     pr,
     undo: flags.booleans.has("undo"),
+    othersPr,
   });
   if (!result.ok) return forgeFail(io, result);
   const kind = connected.data.forge.kind;
@@ -1485,6 +1504,8 @@ async function edit(argv: string[], io: Io): Promise<number> {
     "add-label": "list",
     "remove-label": "list",
     "add-reviewer": "list",
+    "others-pr": "boolean",
+    reason: "value",
   });
   if (typeof flags === "string") return usage(io, flags, EDIT_USAGE);
   if (flags.positionals.length)
@@ -1492,6 +1513,8 @@ async function edit(argv: string[], io: Io): Promise<number> {
   const picked = selector(flags);
   if (typeof picked === "string") return usage(io, picked, EDIT_USAGE);
   const { pr } = picked;
+  const othersPr = othersPrFlag(flags);
+  if (typeof othersPr === "string") return usage(io, othersPr, EDIT_USAGE);
   let body: string | undefined;
   if (flags.values["body-file"] !== undefined) {
     const read = readBodyFile(io, flags.values["body-file"]);
@@ -1506,6 +1529,7 @@ async function edit(argv: string[], io: Io): Promise<number> {
   if (!connected.ok) return forgeFail(io, connected);
   const result = editPullRequest(io.cwd, connected.data, {
     pr,
+    othersPr,
     edit: {
       ...(flags.values.title !== undefined ? { title: flags.values.title } : {}),
       ...(body !== undefined ? { body } : {}),

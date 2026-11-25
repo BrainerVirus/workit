@@ -460,8 +460,8 @@ and how to fix it.
 workit pr create (--title <t ≤100 chars> [--body <text> | --body-file <f|->] | --fill) [--base <b> | --track <t>] [<issue>… | --issue <#n|ID|url>…] [--refs] [--label|--add-label <l>]… [--reviewer|--add-reviewer <login>]… [--draft] [--changelog "<Section>: <entry>" | --no-changelog <reason>]
 workit pr template [--json]            # the PR template to fill (the repo's, else Workit's) and its source
 workit pr status [--pr <n> | --branch <b>] [--log-lines 60] [--json]   # checks, failing log tails, threads, behind-base, verdict, next, the command for it, babysit step
-workit pr ready [--undo]               # mark the draft ready (or back to draft)
-workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
+workit pr ready [--undo] [--others-pr --reason <why>]   # mark the draft ready (or back to draft)
+workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>] [--others-pr --reason <why>]
 workit pr threads                      # unresolved review threads, one line each with its id
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
 workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s]   # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
@@ -500,6 +500,11 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
 - `pr status` prints the command that clears `next` on a `do:` line
   (`nextHint` in `--json`), e.g. `workit pr ready --pr 12` for a draft.
 - `pr ready`, `pr edit` and `pr reply` need the `pr` grant and an open PR.
+  `pr ready` and `pr edit` on a PR another author opened (its author is not
+  the forge login) are refused with `others_pr`, as `pr merge` refuses it;
+  pass `--others-pr --reason "<why>"` only when the user asks you to change
+  that PR. A PR whose author or login cannot be read is refused as
+  `identity_unknown`.
   `pr edit --base` takes a plain branch name and retargets only to the
   branch's default target (from the release track that owns the PR's current
   base; an undetermined line refuses) or to its stack parent (the base
@@ -863,7 +868,13 @@ the forge too: the repository on the workspace provider's host (github.com by
 default), so `workit issue create --repo owner/name …` works from any folder a
 workspace covers; from a folder no workspace covers it is refused, naming a
 checkout of the repo or a covered folder to run it from. YouTrack and other hosts are refused,
-because no account is verified there. Comment, close and create need the
+because no account is verified there. A comment, close or create with
+`--repo` outside the workspace's own forge owners (the owner of the
+checkout's forge or push repository, of the workspace tracker, or the
+workspace's `vcs.account`, and the repositories its `remotes` claim) is
+refused with `outside_owner` unless the workspace lists the repository in
+[`externalRepos`](grants.md#external-repositories); reading with `issue view`
+is never refused. Comment, close and create need the
 `pr` grant, the same one as `pr edit` and `pr reply`, and each writes an
 `issue.commented`, `issue.closed` or `issue.created` ledger row. `close`
 posts the comment first and then re-reads the issue to confirm the close.

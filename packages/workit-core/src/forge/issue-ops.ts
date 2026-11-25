@@ -7,9 +7,11 @@
 // when it is on this checkout's forge host, else the forge's own base
 // repository. YouTrack and another host are refused: no account is
 // verified there. Every write needs the `pr` grant (the forge-write grant
-// `pr edit|reply` use) and leaves an `issue.*` ledger row.
+// `pr edit|reply` use) and leaves an `issue.*` ledger row. A `--repo` write
+// outside the workspace's forge owners also needs the repository in the
+// entry's `externalRepos` (#882).
 import { createHash } from "node:crypto";
-import { requireGrant } from "../autonomy";
+import { externalReposPolicy, requireGrant, targetClaims } from "../autonomy";
 import { forgeTarget } from "../core/remotes";
 import { vcsConfig, type IssueTracker } from "../core/vcs-config";
 import { currentBranch, headSha } from "../git/rev";
@@ -32,6 +34,57 @@ function trackerOf(cwd: string): IssueTracker | null {
   return (resolved.issue_tracker as IssueTracker | null | undefined) ?? null;
 }
 
+/**
+ * A repository's owner: its whole namespace (everything but the last segment),
+ * so on GitLab `group/sub/app` belongs to `group/sub`, never to `group`.
+ */
+const ownerOf = (repo: string): string => repo.split("/").slice(0, -1).join("/").toLowerCase();
+
+/** Whether `owner/name` or `owner/*` in `patterns` names `repo`. */
+const listed = (patterns: readonly string[], repo: string): boolean =>
+  patterns.some((pattern) => {
+    const [want, have] = [pattern.toLowerCase(), repo.toLowerCase()];
+    return want.endsWith("/*") ? have.startsWith(want.slice(0, -1)) : want === have;
+  });
+
+/**
+ * Why a write to `--repo` is refused (#882), undefined when it is in scope:
+ * the owner of this checkout's forge or push repository, of the workspace
+ * tracker on this host, or the workspace's `vcs.account`; a repository the
+ * workspace's `remotes` claims; or one its sealed `externalRepos` lists.
+ */
+function outsideOwners(
+  cwd: string,
+  resolved: ResolvedForge,
+  repo: string,
+  tracker: IssueTracker | null,
+): IssueApi["outside"] {
+  const { kind, apiHost } = resolved.forge;
+  const owners = new Set<string>();
+  // Outside a checkout (no push remote) the forge is --repo itself: no owner from it.
+  if (resolved.remote) {
+    owners.add(ownerOf(resolved.forge.repo));
+    owners.add(ownerOf(resolved.headRepo));
+  }
+  if (tracker?.repo && tracker.provider === kind && (!tracker.host || same(tracker.host, apiHost)))
+    owners.add(ownerOf(tracker.repo));
+  if (resolved.expectedAccount?.trim()) owners.add(resolved.expectedAccount.trim().toLowerCase());
+  if (owners.has(ownerOf(repo))) return undefined;
+  const claims = resolved.workspace ? targetClaims(forgeTarget(apiHost, repo)) : [];
+  if (!(claims instanceof Error) && claims.some((claim) => claim.workspace === resolved.workspace))
+    return undefined;
+  const policy = externalReposPolicy(cwd);
+  if (listed(policy.repos, repo)) return undefined;
+  const workspace = policy.workspace ?? resolved.workspace;
+  const list = JSON.stringify([...policy.repos, repo]);
+  return {
+    error: `outside_owner: ${repo} is outside this workspace's forge owners (${[...owners].join(", ") || "none"}) and no externalRepos grant names it; workit never writes issues there on its own`,
+    unblock: workspace
+      ? `only if the user wants issues written there: ask them to run, in their own terminal outside the agent host: workit workspace set ${workspace} externalRepos='${list}'${policy.sealed ? "" : ", then workit workspace seal"}`
+      : `run it from a folder a workspace covers, whose entry lists ${repo} in externalRepos (the user sets it: workit workspace set <workspace> externalRepos='${list}')`,
+  };
+}
+
 /** The issue API for this checkout: the workspace tracker's repository, else the forge's. */
 export function issueTarget(
   cwd: string,
@@ -51,9 +104,14 @@ export function issueTarget(
         "invalid_input",
         `--repo is owner/name or group/project on this forge host, without the host: not "${options.repo}"`,
       );
-    return make(options.repo);
   }
   const tracker = options.tracker === undefined ? trackerOf(cwd) : options.tracker;
+  if (options.repo) {
+    const api = make(options.repo);
+    const outside = outsideOwners(cwd, resolved, options.repo, tracker);
+    if (api.ok && outside) api.data.outside = outside;
+    return api;
+  }
   if (tracker?.provider === "youtrack")
     return failure(
       "blocked",
@@ -77,9 +135,10 @@ const grant = (cwd: string, api: IssueApi): ForgeResult<void> => {
   const decision = requireGrant(cwd, "pr", {
     target: forgeTarget(api.apiHost, api.repo),
   });
-  return decision.allowed
-    ? success(undefined)
-    : failure("blocked", decision.error, decision.unblock);
+  if (!decision.allowed) return failure("blocked", decision.error, decision.unblock);
+  return api.outside
+    ? failure("blocked", api.outside.error, api.outside.unblock)
+    : success(undefined);
 };
 
 export type Recorded = { id: string } | { error: string };

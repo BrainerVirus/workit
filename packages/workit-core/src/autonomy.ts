@@ -258,6 +258,41 @@ export const youTrackWritesMode = (cwd: string, host?: string | null): YouTrackW
     : "ask";
 };
 
+/** An entry's externalRepos (#882): owner/name or owner/* patterns, none when unset. */
+const externalReposOf = (entry: WorkspaceConfig | null): string[] =>
+  (entry?.externalRepos ?? []).map((repo) => repo.trim()).filter(Boolean);
+
+/**
+ * The repositories outside the workspace's own forge owners that `workit
+ * issue` may write to (#882): the folder entry's `externalRepos`, read only
+ * from the account's own file with a valid seal, never under a config
+ * redirect or in a bench world. With WORKIT_WORKSPACE_NAME only the patterns
+ * both the named and the folder's entry list stay. `workspace` names the
+ * folder's entry for the unblock; `sealed` is false when the seal is not
+ * valid (then none is allowed). Anything that throws reads as none.
+ */
+export const externalReposPolicy = (
+  cwd: string,
+): { repos: string[]; workspace: string | null; sealed: boolean } => {
+  try {
+    const dir = accountDir();
+    if (dir === null || redirected(dir) || evalWorld(cwd))
+      return { repos: [], workspace: null, sealed: false };
+    const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
+    const folder = resolveWorkspaceFrom(cwd, dir);
+    const workspace = folder?.name ?? null;
+    if (checkSeal(dir).state !== "valid") return { repos: [], workspace, sealed: false };
+    const own = externalReposOf(folder);
+    if (!name) return { repos: own, workspace, sealed: true };
+    const named = externalReposOf(resolveWorkspaceFrom(cwd, dir, name));
+    const key = (repo: string) => repo.toLowerCase();
+    const both = new Set(named.map(key));
+    return { repos: own.filter((repo) => both.has(key(repo))), workspace, sealed: true };
+  } catch {
+    return { repos: [], workspace: null, sealed: false };
+  }
+};
+
 /** Whether the config dir the rest of the config reads is not the account's own. */
 const redirected = (dir: string): boolean => path.resolve(resolveConfigDir()) !== path.resolve(dir);
 

@@ -461,6 +461,27 @@ const parseRemotes = (raw: string): string[] | null | Error => {
   return patterns as string[];
 };
 
+const EXTERNAL_REPOS_KEY = "externalRepos";
+const EXTERNAL_REPO = /^[\w-]+(?:\/\w[\w.-]*)*\/(?:\w[\w.-]*|\*)$/u;
+
+/** `externalRepos=` (#882) as a JSON array, or comma-separated owner/name or owner/*; `null` removes. */
+const parseExternalRepos = (raw: string): string[] | null | Error => {
+  const value = parseSetValue(raw);
+  if (value === null) return null;
+  const repos = Array.isArray(value)
+    ? value
+    : String(value)
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const bad = repos.find((item) => typeof item !== "string" || !EXTERNAL_REPO.test(item));
+  if (bad !== undefined || repos.length === 0)
+    return Error(
+      `externalRepos: ${bad === undefined ? "no repository given" : `${JSON.stringify(bad)} is not owner/name or owner/*`} (on the checkout's forge host, without the host)`,
+    );
+  return repos as string[];
+};
+
 /** The origin URL of the folder `add` runs for: the glob's root, else cwd. */
 const originOf = (glob: string, cwd: string): string | null => {
   for (const where of [globRoot(glob), cwd]) {
@@ -630,6 +651,14 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
       changes.push({ path: keyPath, value: remotes });
       continue;
     }
+    if (!global && keyPath[0] === EXTERNAL_REPOS_KEY) {
+      if (keyPath.length > 1) return usage(io, `${spec}: externalRepos takes the whole list`);
+      const repos = parseExternalRepos(spec.slice(eq + 1));
+      if (repos instanceof Error) return usage(io, repos.message);
+      remoteSpecs.push(spec);
+      changes.push({ path: keyPath, value: repos });
+      continue;
+    }
     if (!global && SCOPE_KEYS.has(keyPath[0]))
       return emit(
         io,
@@ -728,7 +757,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
         io,
         fail(
           "blocked",
-          `grant_raise_refused: remotes decides which checkouts "${name}"'s grants cap; changing it needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
+          `grant_raise_refused: remotes decides which checkouts "${name}"'s grants cap, and externalRepos which other owners' issues an agent writes to; changing either needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
           {
             unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${command}`,
           },
@@ -737,7 +766,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
     const answer = await askOrCancel(io, () =>
       confirmWith(
         deps,
-        `Change the remotes of workspace "${name}" to ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants.`,
+        `Change workspace "${name}": ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants; agents write issues to every externalRepos repository.`,
       ),
     );
     if (answer === null) return cancelled(io);

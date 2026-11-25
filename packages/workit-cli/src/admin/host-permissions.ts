@@ -102,6 +102,12 @@ const AUTO_MODE_ENVIRONMENT =
 const AUTO_MODE_ENVIRONMENT_V1 =
   "Org-specific CLIs: workit — the user's delivery CLI. Its push, pr merge, release and PR-thread verbs run only under per-workspace grants and non-author verdicts the user configured in ~/.config/workit, outside the agent's reach.";
 const AUTO_MODE_ALLOW =
+  "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR, `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment|close` with no `--repo` or a `--repo` under the workspace's own forge owners or listed in its externalRepos are authorized by the user's standing Workit grants, which the workit CLI enforces itself, the own-PR and issue-owner scopes included: it refuses `workit pr edit|ready` on another author's PR without `--others-pr` and a `workit issue` `--repo` under another owner the user did not list; the branch scope is for you to judge. These are not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--others-pr`, `workit workspace set` of remotes or externalRepos, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+/** The #882 line before it named `workit issue close`; a refresh replaces it. */
+const AUTO_MODE_ALLOW_V5 =
+  "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR, `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment` with no `--repo` or a `--repo` under the workspace's own forge owners or listed in its externalRepos are authorized by the user's standing Workit grants, which the workit CLI enforces itself, the own-PR and issue-owner scopes included: it refuses `workit pr edit|ready` on another author's PR without `--others-pr` and a `workit issue` `--repo` under another owner the user did not list; the branch scope is for you to judge. These are not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--others-pr`, `workit workspace set` of remotes or externalRepos, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+/** The V4 line (C17) from before the CLI enforced the own-PR and issue-owner scopes (#882). */
+const AUTO_MODE_ALLOW_V4 =
   "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR (no `--pr`, or the PR whose head is the session's branch), `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment` with no `--repo` or a `--repo` whose owner is the owner in the session repo's origin URL are authorized by the user's standing Workit grants, which the workit CLI enforces itself; the branch, own-PR and owner scopes are for you to judge, the CLI does not check them. These are not Merge Without Review, Git Destructive or External System Writes; a `workit issue` `--repo` under any other owner IS an External System Write and is not covered. Does NOT cover `workit pr edit` or `workit pr ready` with `--pr` on another author's PR, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
 /** The auto-mode line from #759 until the granted delivery verbs (retro 2026-11-17 C17); a refresh replaces it and uninstall still removes it. */
 const AUTO_MODE_ALLOW_V3 =
@@ -663,7 +669,13 @@ const valueAt = (root: Json, dotted: string): { parent: Json; key: string } | nu
 const PRIOR_ENTRIES: Record<JsonHost, Record<string, readonly string[]>> = {
   "claude-code": {
     "autoMode.environment": [AUTO_MODE_ENVIRONMENT_V1],
-    "autoMode.allow": [AUTO_MODE_ALLOW_V1, AUTO_MODE_ALLOW_V2, AUTO_MODE_ALLOW_V3],
+    "autoMode.allow": [
+      AUTO_MODE_ALLOW_V1,
+      AUTO_MODE_ALLOW_V2,
+      AUTO_MODE_ALLOW_V3,
+      AUTO_MODE_ALLOW_V4,
+      AUTO_MODE_ALLOW_V5,
+    ],
   },
   cursor: {},
   opencode: {},

@@ -103,6 +103,8 @@ const ghPull = (fields: Record<string, unknown>) =>
     title: "feat: x",
     base: { ref: "main" },
     head: { ref: "feature/x" },
+    // The forge login's own PR: `ready` and `edit` refuse another author's (#882).
+    user: { login: "octo" },
     ...fields,
   });
 

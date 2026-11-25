@@ -5,7 +5,9 @@
 // only to the branch's default target or to a branch the workspace policy does
 // not protect, so a feature PR is never pointed at a production branch by an
 // edit. `reply` and `resolve` act only on a thread `pr status` lists as
-// unresolved on that PR, so a stray id never lands on another PR.
+// unresolved on that PR, so a stray id never lands on another PR. `ready` and
+// `edit` on a PR another author opened need `--others-pr --reason`, as
+// `pr merge` does (#882).
 import { spawnSync } from "node:child_process";
 import { requireGrant } from "../autonomy";
 import { isProtectedTarget } from "../core/branch";
@@ -14,7 +16,7 @@ import { configFilePath } from "../core/config";
 import { vcsConfig } from "../core/vcs-config";
 import { GIT_TIMEOUTS } from "../git/rev";
 import { listStacks } from "../stack";
-import { baseTarget, checkNames } from "./pr-ops";
+import { baseTarget, checkNames, forgeLogin } from "./pr-ops";
 import { selectPr } from "./report";
 import type { ResolvedForge } from "./resolve";
 import {
@@ -28,6 +30,44 @@ import {
 
 const label = (resolved: ResolvedForge, number: number): string =>
   `${resolved.forge.kind === "github" ? "PR #" : "MR !"}${number}`;
+
+/** `--others-pr --reason`: change a PR someone else authored, for the recorded reason. */
+export type OthersPr = { reason: string } | null;
+
+/**
+ * Another author's PR is refused unless `othersPr` names why (#882), as
+ * `pr merge` refuses it; a login or author that cannot be read refuses too.
+ */
+function othersPrGate(
+  resolved: ResolvedForge,
+  meta: PrMeta,
+  verb: "ready" | "edit",
+  pr: number | null,
+  othersPr: OthersPr,
+): ForgeResult<void> {
+  if (othersPr && !othersPr.reason.trim())
+    return failure(
+      "invalid_input",
+      "--others-pr needs --reason <why the user asked you to change a PR someone else authored>",
+    );
+  if (othersPr) return success(undefined);
+  const prFlag = pr ? ` --pr ${meta.number}` : "";
+  const name = label(resolved, meta.number);
+  const login = forgeLogin(resolved);
+  const { author } = meta;
+  if (!login || !author)
+    return failure(
+      "blocked",
+      `identity_unknown: ${login ? "the forge did not name the PR author" : "the forge login could not be read"}, so ${name} cannot be shown to be yours`,
+      `fix: gh auth status / gh auth login (or glab auth login), then retry workit pr ${verb}${prFlag}`,
+    );
+  if (author.toLowerCase() === login.toLowerCase()) return success(undefined);
+  return failure(
+    "blocked",
+    `others_pr: ${name} is by ${author}, not ${login} (the forge login); workit never changes another author's PR on its own`,
+    `only if the user asks you to: workit pr ${verb}${prFlag} --others-pr --reason "<why>"`,
+  );
+}
 
 /** The grant, the PR number and its metadata; refuses a closed or merged PR. */
 function openPr(cwd: string, resolved: ResolvedForge, pr: number | null): ForgeResult<PrMeta> {
@@ -52,10 +92,12 @@ export type ReadyOutcome = { number: number; url: string; draft: boolean; change
 export function readyPullRequest(
   cwd: string,
   resolved: ResolvedForge,
-  input: { pr: number | null; undo: boolean },
+  input: { pr: number | null; undo: boolean; othersPr?: OthersPr },
 ): ForgeResult<ReadyOutcome> {
   const meta = openPr(cwd, resolved, input.pr);
   if (!meta.ok) return meta;
+  const mine = othersPrGate(resolved, meta.data, "ready", input.pr, input.othersPr ?? null);
+  if (!mine.ok) return mine;
   const { number, url } = meta.data;
   const want = input.undo;
   if (meta.data.draft === want) return success({ number, url, draft: want, changed: false });
@@ -159,7 +201,7 @@ function checkBase(cwd: string, meta: PrMeta, base: string): ForgeResult<void> {
 export function editPullRequest(
   cwd: string,
   resolved: ResolvedForge,
-  input: { pr: number | null; edit: PrEdit },
+  input: { pr: number | null; edit: PrEdit; othersPr?: OthersPr },
 ): ForgeResult<EditOutcome> {
   const { edit } = input;
   const changed = [
@@ -182,6 +224,8 @@ export function editPullRequest(
 
   const meta = openPr(cwd, resolved, input.pr);
   if (!meta.ok) return meta;
+  const mine = othersPrGate(resolved, meta.data, "edit", input.pr, input.othersPr ?? null);
+  if (!mine.ok) return mine;
   const { number } = meta.data;
   if (edit.base !== undefined) {
     const allowed = checkBase(cwd, meta.data, edit.base);

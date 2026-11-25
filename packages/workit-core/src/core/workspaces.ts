@@ -334,6 +334,17 @@ export const workspaceConfigSchema = z
       .describe(
         "Remote URLs this entry owns: a checkout pushing to or opening PRs on one never exceeds this entry's grants, wherever the folder is (`owner/*` claims a whole owner). Only the user changes it, in their own terminal.",
       ),
+    externalRepos: z
+      .array(
+        nonBlank.regex(
+          /^[\w-]+(?:\/\w[\w.-]*)*\/(?:\w[\w.-]*|\*)$/u,
+          "is owner/name, group/project or owner/* on the checkout's forge host, without the host",
+        ),
+      )
+      .optional()
+      .describe(
+        "Repositories outside this workspace's own forge owners that `workit issue create|comment|close --repo` may write to: `owner/name`, or `owner/*` for a whole owner. Only the user changes it, in their own terminal.",
+      ),
     autonomy: z
       .object(
         Object.fromEntries(
