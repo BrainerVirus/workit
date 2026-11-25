@@ -542,7 +542,10 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
   the same merge with `--cwd <worktree>` when the branch is checked out in
   another worktree). A conflict in any other path refuses as before, naming
   the paths (`conflicts` in `--json`), with `workit git rebase --onto <base>`
-  as the unblock. `stack land` never rebases this way.
+  as the unblock. When the base already contains the PR head by the time
+  it rebases (the PR landed meanwhile), nothing is left to push: it puts the
+  branch back at the PR head, pushes nothing and names `workit pr status`.
+  `stack land` never rebases this way.
 - `pr merge` ends one of two ways. A merge exits 0 and prints
   `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout
   (`merged MR !<n> …` on GitLab).
