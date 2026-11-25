@@ -17,8 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - two Workit processes moving an old folder store at once can no longer both take over its stale lock; one mover wins and a fresh lock is never removed (#892).
-- the raw-git hook judges a gh default, upstream or origin remote by its push URL, with pushInsteadOf and insteadOf applied as git remote get-url --push does, so it picks the base repository the forge verbs pick.
 - Outside a git repository Workit keeps a folder's ledger, tasks, plans, retros, handoffs and notes in its state dir (<state>/folders/<folder>-<hash>), never in <folder>/.workit; an older .workit there moves once with a one-line note (team config stays), and workit doctor row stray_workit lists any left in the cwd or its parents (#892).
+
+## [2.22.1] - 2026-11-25
+
+### Fixed
+
+- the raw-git hook judges a gh default, upstream or origin remote by its push URL, with pushInsteadOf and insteadOf applied as git remote get-url --push does, so it picks the base repository the forge verbs pick.
 
 ## [2.22.0] - 2026-11-25
 
@@ -1902,7 +1907,8 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.0...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.1...HEAD
+[2.22.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.0...workit-dev-v2.22.1
 [2.22.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.10...workit-dev-v2.22.0
 [2.21.10]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.9...workit-dev-v2.21.10
 [2.21.9]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.8...workit-dev-v2.21.9
