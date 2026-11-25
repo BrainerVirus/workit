@@ -17,6 +17,8 @@ your shell sees. Switching Node with fnm, nvm, volta, mise or asdf no longer cha
 replaces both. `$XDG_BIN_HOME` or `WORKIT_BIN_DIR` replaces `~/.local/bin`. On Windows the root
 is `%LOCALAPPDATA%\workit\install`, and the launcher is `workit.cmd` in its `bin` folder.
 
+### Which Node runs Workit
+
 The launcher runs `current` on a Node 24 or newer, in this order: `WORKIT_NODE`, the node
 `workit setup` or `workit upgrade` recorded, the PATH `node` when it is 24+, the newest 24+
 under fnm, nvm, volta, mise or asdf, and last the node that installed the version. The hook

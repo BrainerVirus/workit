@@ -31,9 +31,9 @@ or `bun run check` in it; use a separate worktree.
 
 ## Make a change
 
-1. Branch from `origin/main`, ideally in its own worktree:
-   `git worktree add -b feature/<slug> ~/.local/state/workit/worktrees/workit/<slug> origin/main`
-   (Linux and macOS; `workit fanout worktree create` picks the right root on every OS).
+1. Branch from `origin/main` in its own worktree, as
+   [AGENTS.md](AGENTS.md#workflow) shows (`workit fanout worktree create`
+   picks the right root on every OS).
 2. Keep the change small and focused. For larger work, open an issue first;
    a short spec or plan under `docs/` helps when the change spans several PRs.
 3. Write tests for behavior (Given/When/Then is a good shape) and update the
@@ -74,6 +74,5 @@ paths changed.
 ## Reporting bugs and security issues
 
 Use the [issue forms](https://github.com/BrainerVirus/workit/issues/new/choose)
-and include `workit doctor --json` output. Please do not report security
-vulnerabilities in public issues; contact the maintainer
-([@BrainerVirus](https://github.com/BrainerVirus)) privately first.
+and include `workit doctor --json` output. Report a security vulnerability
+privately, never in a public issue: see [SECURITY.md](SECURITY.md).

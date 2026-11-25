@@ -10,9 +10,8 @@ opt in anyway, add `workit-mcp` to your own Claude settings.
 **Published.** The repository root is a Claude Code marketplace
 (`.claude-plugin/marketplace.json`) whose entry installs the
 `@workit-dev/claude-code` npm package. Node.js 24+ is required. If the `node` on `PATH` is older (a repo pinned by
-fnm, nvm or volta), the hooks and the `workit` shim look for a Node 24+ in this
-order: `WORKIT_NODE`, the Node `workit setup` or `workit upgrade` recorded, then
-fnm, nvm, volta, mise and asdf installs. With none found the hooks are off
+fnm, nvm or volta), the hooks and the `workit` shim look for a Node 24+
+([which Node runs Workit](install.md#which-node-runs-workit)). With none found the hooks are off
 (SessionStart says so once) and verdicts fail with `no_session`; `workit doctor`
 row `hook_node` names the cause. Fix it by installing Node 24 or running
 `workit setup` from a Node 24 shell.
