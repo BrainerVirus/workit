@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { uncoveredBaseRed } from "@/packages/workit-core/src/forge/merge-gate-base-red";
+import {
+  classifyBaseRed,
+  uncoveredBaseRed,
+} from "@/packages/workit-core/src/forge/merge-gate-base-red";
+import { success } from "@/packages/workit-core/src/forge/types";
 import type { ForgeCheck } from "@/packages/workit-core/src/forge/types";
 
 const check = (name: string, state: ForgeCheck["state"]): ForgeCheck => ({
@@ -94,4 +98,29 @@ test("Given a head run whose workflow could not be read, Then the check fails cl
 test("Given a base run whose workflow could not be read, Then the check fails closed", () => {
   const head = [inWorkflow(check("CI / test (windows-latest)", "passing"), null)];
   expect(names(uncoveredBaseRed([inWorkflow(RED, null)], head))).toEqual([RED.name]);
+});
+
+// #928: the flaky/broken hint reads the previous base run keyed by workflow too.
+const previousRun = (checks: ForgeCheck[]) =>
+  success({ sha: "0".repeat(40), checks, protected: true, requiredKnown: true });
+
+test("Given two workflows sharing a job name and the base's workflow passed it on the previous run, Then classifyBaseRed calls it flaky from that workflow's run", () => {
+  const previous = previousRun([
+    inWorkflow(check("CI / test (windows-latest)", "passing"), 11),
+    inWorkflow(check("CI / test (windows-latest)", "failing"), 99),
+  ]);
+  expect(classifyBaseRed([RED_CI], previous)).toEqual({ kind: "flaky", checks: [RED_CI] });
+});
+
+test("Given two workflows sharing a job name and the base's workflow failed it on the previous run, Then classifyBaseRed calls it broken from that workflow's run", () => {
+  const previous = previousRun([
+    inWorkflow(check("CI / test (windows-latest)", "failing"), 11),
+    inWorkflow(check("CI / test (windows-latest)", "passing"), 99),
+  ]);
+  expect(classifyBaseRed([RED_CI], previous)).toEqual({ kind: "broken", checks: [RED_CI] });
+});
+
+test("Given only a second workflow with the same job name ran on the previous base commit, Then classifyBaseRed cannot tell a flake apart", () => {
+  const previous = previousRun([inWorkflow(check("CI / test (windows-latest)", "passing"), 99)]);
+  expect(classifyBaseRed([RED_CI], previous)).toMatchObject({ kind: "unknown" });
 });
