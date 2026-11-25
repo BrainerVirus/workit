@@ -1531,28 +1531,47 @@ const normalizedUrl = (url: string, dir: string): string => {
     .replace(/\.git$/, "");
 };
 
-/** `url.<base>.pushInsteadOf`/`insteadOf`: the longest matching prefix is rewritten. */
-const rewrittenUrl = (url: string, config: GitConfig): string => {
-  for (const kind of ["pushinsteadof", "insteadof"]) {
-    let best: { base: string; prefix: string } | null = null;
-    for (const [key, prefixes] of config) {
-      if (!key.startsWith("url.") || !key.endsWith(`.${kind}`)) continue;
-      const base = key.slice(4, -(kind.length + 1));
-      for (const prefix of prefixes)
-        if (url.startsWith(prefix) && prefix.length > (best?.prefix.length ?? -1))
-          best = { base, prefix };
-    }
-    if (best) return best.base + url.slice(best.prefix.length);
+/** `url.<base>.<kind>` (`pushinsteadof` or `insteadof`): the longest matching prefix rewritten, else null. */
+const rewrite = (url: string, config: GitConfig, kind: string): string | null => {
+  let best: { base: string; prefix: string } | null = null;
+  for (const [key, prefixes] of config) {
+    if (!key.startsWith("url.") || !key.endsWith(`.${kind}`)) continue;
+    const base = key.slice(4, -(kind.length + 1));
+    for (const prefix of prefixes)
+      if (url.startsWith(prefix) && prefix.length > (best?.prefix.length ?? -1))
+        best = { base, prefix };
   }
-  return url;
+  return best ? best.base + url.slice(best.prefix.length) : null;
+};
+
+/** Where a push to one URL goes: `pushInsteadOf`, else `insteadOf`. */
+const rewrittenUrl = (url: string, config: GitConfig): string =>
+  rewrite(url, config, "pushinsteadof") ?? rewrite(url, config, "insteadof") ?? url;
+
+/**
+ * A remote's push URLs as `git remote get-url --push --all` prints them (the forge
+ * verbs' `pushUrls`): each `pushurl` through `insteadOf`; without one, the `url`s
+ * `pushInsteadOf` rewrites, else every `url` through `insteadOf`. A name that is no
+ * remote is a URL.
+ */
+const pushUrlsOf = (config: GitConfig, remote: string): string[] => {
+  const pushurls = config.get(`remote.${remote}.pushurl`) ?? [];
+  if (pushurls.length) return pushurls.map((url) => rewrite(url, config, "insteadof") ?? url);
+  const urls = config.get(`remote.${remote}.url`) ?? [remote];
+  const aliased = urls.flatMap((url) => rewrite(url, config, "pushinsteadof") ?? []);
+  return aliased.length ? aliased : urls.map((url) => rewrite(url, config, "insteadof") ?? url);
+};
+
+/** A configured remote's single push URL, or null (no such remote, or several URLs). */
+const singlePushUrl = (config: GitConfig, remote: string): string | null => {
+  if (!config.has(`remote.${remote}.url`) && !config.has(`remote.${remote}.pushurl`)) return null;
+  const urls = pushUrlsOf(config, remote);
+  return urls.length === 1 ? urls[0] : null;
 };
 
 /** Where a remote name or URL pushes, comparable across names and spellings. */
-const pushUrl = (config: GitConfig, remote: string, dir: string): string => {
-  const configured =
-    configValue(config, `remote.${remote}.pushurl`) ?? configValue(config, `remote.${remote}.url`);
-  return normalizedUrl(rewrittenUrl(configured ?? remote, config), dir);
-};
+const pushUrl = (config: GitConfig, remote: string, dir: string): string =>
+  normalizedUrl(pushUrlsOf(config, remote).at(-1) ?? remote, dir);
 
 /** The remote workit pushes to, from the same config `pushRemoteName` reads. */
 const pushRemoteOf = (config: GitConfig, branch: string | null): string | null => {
@@ -2208,7 +2227,8 @@ const forgeRepo = (
     const remote =
       (gh ? ghDefaultOf(config, branch, dir, env) : null) ??
       ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
-    url = rewrittenUrl(configValue(config, `remote.${remote}.url`) ?? "", config);
+    // Judged by its push URL, as the forge verbs judge a base remote.
+    url = remote ? (pushUrlsOf(config, remote).at(-1) ?? "") : "";
   }
   const key = remoteKey(url);
   return key ? { remotes: [{ name: "forge", url, key }] } : Error("its repository is unknown");
@@ -2216,9 +2236,8 @@ const forgeRepo = (
 
 /** The host a remote pushes to through its single push URL, or null (no URL, or several). */
 const pushHostOf = (config: GitConfig, remote: string): string | null => {
-  const urls = config.get(`remote.${remote}.pushurl`) ?? config.get(`remote.${remote}.url`) ?? [];
-  if (urls.length !== 1) return null;
-  return remoteKey(rewrittenUrl(urls[0], config))?.split("/")[0] ?? null;
+  const url = singlePushUrl(config, remote);
+  return url === null ? null : (remoteKey(url)?.split("/")[0] ?? null);
 };
 
 /**
