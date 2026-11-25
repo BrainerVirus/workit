@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit pr merge`: base_red no longer blocks the PR that fixes the base. A PR whose head contains the red base tip and passes every check red there (same workflow / job name) merges without `--base-red-ok` and says it fixes the red base check; a head behind that tip is told to rebase (#906).
 - The heavy-check queue serves the shortest measured run first (a waiter queued 5 min goes ahead of newer ones); a check measured under 30 s or declared `"heavy": "io"` (`--io` ad hoc) runs without a slot while memory allows; `workit lock status` shows each waiter's own last run (#884).
 - `workit feedback` drafts and redacted forge, CI and check output mask the value after a secret-named flag (`--password x`, `--client-secret=x`, `--API-KEY "a b"`) and keep the flag name (#930).
+- a failed `workit upgrade` host step names its command, exit code (or timeout) and the last lines of its output, redacted; a failed `codex plugin marketplace upgrade` is retried once after a short pause; after a failed Codex step the role agents still install from the newest cached plugin, and each skipped dependent step is listed with its reason; the Codex fix line is now `workit upgrade --hosts=codex` (#900).
 
 ## [2.13.0] - 2026-11-18
 
