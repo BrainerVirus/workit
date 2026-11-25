@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/BrainerVirus/workit#troubleshooting
     about: Common problems and their fixes (doctor, locks, migration, grants)
   - name: Security vulnerability
-    url: https://github.com/BrainerVirus
-    about: Do not open a public issue; contact the maintainer privately
+    url: https://github.com/BrainerVirus/workit/blob/main/SECURITY.md
+    about: Do not open a public issue; report it privately as SECURITY.md describes
