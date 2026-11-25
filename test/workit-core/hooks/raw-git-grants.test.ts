@@ -234,6 +234,13 @@ test("Given open's checkouts and no -R, When raw gh PR commands run, Then the ba
   // A fork: gh targets upstream (strict's) unless set-default picked the fork.
   remotes("git@github.com:me/fork.git", "https://github.com/acme/strict");
   expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  // A legacy `owner/repo` value is ignored, as the forge verbs ignore it: still upstream.
+  git(w.own, "config", "remote.origin.gh-resolved", "me/fork");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  // A default naming a remote with no URL falls back to upstream, as the verbs do.
+  git(w.own, "config", "remote.gone.gh-resolved", "base");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  git(w.own, "config", "--unset", "remote.gone.gh-resolved");
   git(w.own, "config", "remote.origin.gh-resolved", "base");
   notDenied(w.own, "gh pr create --fill");
   // Nothing resolves: undetermined, denied while remotes are claimed.

@@ -2198,8 +2198,17 @@ const forgeRepo = (gh: boolean, named: string, env: Record<string, string>, conf
       ? `https://${hosted ? "" : `${host}/`}${repo}`
       : "";
   if (!repo) {
+    // Only `base` (what current gh writes) names the default, as in core's ghDefaultRemote;
+    // a default naming a remote with no URL falls back like the forge verbs.
     const resolved = gh
-      ? [...config.keys()].find((key) => /^remote\..+\.gh-resolved$/.test(key))?.slice(7, -12)
+      ? [...config.keys()]
+          .find(
+            (key) =>
+              /^remote\..+\.gh-resolved$/.test(key) &&
+              configValue(config, key) === "base" &&
+              config.has(`${key.slice(0, -12)}.url`),
+          )
+          ?.slice(7, -12)
       : undefined;
     const remote =
       resolved ?? ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));

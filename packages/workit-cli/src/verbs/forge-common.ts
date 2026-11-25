@@ -207,6 +207,7 @@ export function connect(
     deadline: verbDeadline ?? forgeDeps.now() + CONNECT_BUDGET_MS,
   });
   if (!resolved.ok) return resolved;
+  if (resolved.data.note) announce(io, resolved.data.note);
   const identity = checkIdentity(resolved.data);
   resolved.data.limits.deadline = verbDeadline;
   if (!identity.ok) return identity;

@@ -23,6 +23,7 @@ import {
   pushForge,
   ghDefaultRemote,
   pushUrl,
+  pushUrls,
   remoteNames,
   type DerivedForge,
   type ForgeHosts,
@@ -60,6 +61,8 @@ export type ResolvedForge = {
   limits: { deadline: number | null };
   /** The workspace credential's runner, clamped to `limits` (another repo on the same host). */
   runner: ForgeRunner;
+  /** Why the `gh repo set-default` remote was not used as the base, when one was set. */
+  note?: string;
 };
 
 export type ResolveOptions = {
@@ -378,7 +381,8 @@ export function resolveForge(
   };
   const upstream =
     pushed.remote !== "upstream" && remotes.includes("upstream") ? repoOfRemote("upstream") : null;
-  const chosen = ghDefaultRemote(cwd);
+  // gh-resolved is gh's key: a GitLab checkout ignores it.
+  const chosen = kind === "github" ? ghDefaultRemote(cwd) : null;
   const chosenRepo = chosen ? repoOfRemote(chosen) : null;
   const baseRepo =
     chosenRepo ??
@@ -409,7 +413,20 @@ export function resolveForge(
     baseRemote,
     limits,
     runner,
+    ...(chosen && !chosenRepo ? { note: unusedDefault(cwd, chosen, apiHost, baseRepo) } : {}),
   });
+}
+
+/** Why the `gh repo set-default` remote is not the base: missing, several push URLs, or elsewhere. */
+function unusedDefault(cwd: string, remote: string, apiHost: string, baseRepo: string): string {
+  const urls = pushUrls(cwd, remote).length;
+  const why =
+    urls === 0
+      ? "that remote does not exist"
+      : urls > 1
+        ? "it has no single push URL"
+        : `it is not a GitHub repository on ${apiHost}`;
+  return `gh repo set-default names remote ${remote}, not used as the PR base: ${why}; using ${baseRepo} (fix it with gh repo set-default)`;
 }
 
 /**
