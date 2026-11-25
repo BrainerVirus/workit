@@ -87,8 +87,9 @@ const LOCK = `{
 /**
  * A fake `bun` in its own bin dir. FAKE_BUN picks what it does: `ok` installs
  * leftpad 2.0.0 (the lockfile's own install, unlike the main checkout's
- * 1.0.0), `fail` leaves a partial node_modules and exits 1, `hang` sleeps.
- * Each run appends its cwd and argv to FAKE_BUN_LOG.
+ * 1.0.0), `fail` leaves a partial node_modules and exits 1, `hang` starts a
+ * child that sleeps (its pid in FAKE_BUN_LOG.child) and waits on it. Each run
+ * appends its cwd and argv to FAKE_BUN_LOG.
  */
 const fakeBun = (): { bin: string; log: string } => {
   const bin = tempDir("wk-fake-bun-");
@@ -99,7 +100,7 @@ const fakeBun = (): { bin: string; log: string } => {
     `#!/bin/sh
 echo "$PWD $*" >> "$FAKE_BUN_LOG"
 case "$FAKE_BUN" in
-  hang) exec sleep 30 ;;
+  hang) sleep 30 & echo $! > "$FAKE_BUN_LOG.child"; wait; exit 0 ;;
   fail) mkdir -p node_modules/partial; echo "error: lockfile had changes, but lockfile is frozen" >&2; exit 1 ;;
   empty) exit 0 ;;
 esac
@@ -187,6 +188,24 @@ const brief = async (cwd: string) => {
   const result = await run(cwd, ["fanout", "brief", "a", "--host", "claude_code", "--json"]);
   expect(result.code, result.stderr + result.stdout).toBe(0);
   return result.json().data.text as string;
+};
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Whether `pid` is gone within a few seconds (a killed orphan is reaped by init). */
+const gone = async (pid: number): Promise<boolean> => {
+  for (let tries = 0; tries < 30 && alive(pid); tries += 1)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  const dead = !alive(pid);
+  if (!dead) process.kill(pid, "SIGKILL");
+  return dead;
 };
 
 const leftpad = (wt: string) =>
@@ -288,6 +307,9 @@ describe.skipIf(process.platform === "win32")("own install", () => {
     const made = json.json().data as Made;
     expect(made.deps.mode).toBe("linked");
     expect(made.deps.fallback).toStartWith("bun install --frozen-lockfile timed out after 1 s");
+    // The whole process tree is killed, not only the package manager: its child is gone too.
+    const child = Number(readFileSync(`${fake.log}.child`, "utf8").trim());
+    expect(await gone(child)).toBe(true);
   });
 
   test("given --deps link, then the package manager never runs and the worktree is linked as before", async () => {

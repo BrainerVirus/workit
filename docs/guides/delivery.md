@@ -1253,8 +1253,10 @@ resume`). It also makes the worker's scratch dir for its temp files,
   `pnpm install --frozen-lockfile`, `yarn install --immutable` (Yarn 2+) or
   `--frozen-lockfile` (Yarn 1), `npm ci`. It is the plain install the repo's
   own developers run (its lifecycle scripts, no more), its output goes to
-  `deps-install.log` in the scratch dir, and it is killed after
-  `--install-timeout` (default `5m`). A shared `node_modules` can drift from
+  `deps-install.log` in the scratch dir, and after `--install-timeout`
+  (default `5m`) its whole process tree is killed: the package manager runs
+  as the leader of its own process group, so its lifecycle scripts and
+  helpers go with it (`taskkill /T /F` on Windows). A shared `node_modules` can drift from
   what the lockfile installs, even with identical lockfiles, and a test that
   reads installed packages then fails only in slice worktrees (#934). The
   output says `deps own install (<command>)`, `--json` has

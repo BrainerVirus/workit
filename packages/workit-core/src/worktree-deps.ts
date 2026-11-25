@@ -218,6 +218,13 @@ function onPath(bin: string, env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
+/** The watchdog's exit code when it killed the install at its timeout. */
+const TIMED_OUT_EXIT = 124;
+/** How the watchdog's own line starts when the package manager could not be started. */
+const NOT_STARTED = "workit: cannot start the package manager: ";
+/** How long past the timeout the watchdog itself may take before it is killed. */
+const BACKSTOP_MS = 10_000;
+
 /** The last non-empty line of the install log, for the reason a failure gives. */
 function lastLine(log: string): string {
   try {
@@ -235,11 +242,46 @@ function lastLine(log: string): string {
 
 export type InstallResult = { ok: true; ms: number } | { ok: false; reason: string; ms: number };
 
+// Runs in a child runtime (node or bun, whichever runs workit), like the
+// network git watchdog (git/rev.ts). It starts the package manager as the
+// leader of its own process group and, on timeout, kills the whole group: the
+// package manager and every lifecycle script or helper it spawned. Leftovers
+// are killed after a normal exit too. Windows has no process groups, so the
+// tree is killed with `taskkill /T /F`. A Windows .cmd shim (npm, pnpm, yarn)
+// runs only through cmd.exe; the arguments are fixed words and the worktree
+// goes in as cwd, never into the line.
+const WATCHDOG = `
+const cp = require("node:child_process");
+const { bin, args, cwd, ms, shim } = JSON.parse(process.env.WORKIT_INSTALL_WATCHDOG);
+delete process.env.WORKIT_INSTALL_WATCHDOG;
+const win = process.platform === "win32";
+const child = cp.spawn(shim ? '"' + bin + '"' : bin, args, { cwd, stdio: "inherit", detached: !win, shell: shim, windowsHide: true });
+const killTree = () => {
+  if (!child.pid) return;
+  if (win) cp.spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  else try { process.kill(-child.pid, "SIGKILL"); } catch {}
+};
+let timedOut = false;
+const timer = setTimeout(() => { timedOut = true; killTree(); }, ms);
+child.on("error", (error) => {
+  clearTimeout(timer);
+  process.stderr.write("${NOT_STARTED}" + error.message + "\\n");
+  process.exit(127);
+});
+child.on("exit", (code, signal) => {
+  clearTimeout(timer);
+  if (!win) killTree();
+  if (timedOut) process.exit(${TIMED_OUT_EXIT});
+  if (signal) process.stderr.write("killed by " + signal + "\\n");
+  process.exit(code ?? 1);
+});
+`;
+
 /**
  * Run `install` in `worktree` with the PATH and environment of `env`, its
- * output in `log`, killed after `timeoutMs`. On failure the node_modules
- * directories it made are removed again, so a fallback starts clean. Never
- * throws.
+ * output in `log`, its whole process tree killed after `timeoutMs` (see
+ * WATCHDOG). On failure the node_modules directories it made are removed
+ * again, so a fallback starts clean. Never throws.
  */
 export function installWorktreeDependencies(
   worktree: string,
@@ -259,32 +301,47 @@ export function installWorktreeDependencies(
   } catch (error) {
     return { ok: false, reason: `cannot write ${options.log}: ${(error as Error).message}`, ms: 0 };
   }
-  // A Windows .cmd shim (npm, pnpm, yarn) runs only through cmd.exe; the
-  // arguments are fixed words and the worktree goes in as cwd, never the line.
-  const shim = /\.(?:cmd|bat)$/iu.test(bin);
   let ran: ReturnType<typeof spawnSync>;
   try {
-    ran = spawnSync(shim ? `"${bin}"` : bin, install.args, {
-      cwd: worktree,
-      env: options.env,
+    // The watchdog runs in the log's directory, not the worktree, so a
+    // runtime that reads its cwd's config (bun: bunfig.toml, .env) does not
+    // read the worktree's into the install's environment.
+    ran = spawnSync(process.execPath, ["-e", WATCHDOG], {
+      cwd: path.dirname(options.log),
+      env: {
+        ...options.env,
+        WORKIT_INSTALL_WATCHDOG: JSON.stringify({
+          bin,
+          args: install.args,
+          cwd: worktree,
+          ms: options.timeoutMs,
+          shim: /\.(?:cmd|bat)$/iu.test(bin),
+        }),
+      },
       stdio: ["ignore", out, out],
-      timeout: options.timeoutMs,
+      // Backstop only: the watchdog itself enforces timeoutMs.
+      timeout: options.timeoutMs + BACKSTOP_MS,
       killSignal: "SIGKILL",
-      shell: shim,
       windowsHide: true,
     });
   } finally {
     fs.closeSync(out);
   }
   const ms = Math.round(performance.now() - started);
-  const code = ran.error && "code" in ran.error ? ran.error.code : undefined;
-  const reason =
-    code === "ETIMEDOUT"
-      ? `${shown} timed out after ${Math.round(options.timeoutMs / 1000)} s`
-      : ran.error
-        ? `${shown} did not start: ${ran.error.message}`
+  const last = lastLine(options.log);
+  // A package manager's own exit 124 or 127 is told apart by the time it
+  // took and by the watchdog's marker line.
+  const timedOut =
+    (ran.error && "code" in ran.error && ran.error.code === "ETIMEDOUT") ||
+    (ran.status === TIMED_OUT_EXIT && ms >= options.timeoutMs);
+  const reason = timedOut
+    ? `${shown} timed out after ${Math.round(options.timeoutMs / 1000)} s`
+    : ran.error
+      ? `${shown} did not start: ${ran.error.message}`
+      : last.startsWith(NOT_STARTED) && ran.status === 127
+        ? `${shown} did not start: ${last.slice(NOT_STARTED.length)}`
         : ran.status !== 0
-          ? `${shown} exited ${ran.status ?? ran.signal}${lastLine(options.log) ? `: ${lastLine(options.log)}` : ""}`
+          ? `${shown} exited ${ran.status ?? ran.signal}${last ? `: ${last}` : ""}`
           : null;
   if (reason === null) return { ok: true, ms };
   for (const relative of moduleDirs(worktree))
