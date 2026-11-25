@@ -34,7 +34,11 @@ function trackerOf(cwd: string): IssueTracker | null {
   return (resolved.issue_tracker as IssueTracker | null | undefined) ?? null;
 }
 
-const ownerOf = (repo: string): string => repo.split("/")[0].toLowerCase();
+/**
+ * A repository's owner: its whole namespace (everything but the last segment),
+ * so on GitLab `group/sub/app` belongs to `group/sub`, never to `group`.
+ */
+const ownerOf = (repo: string): string => repo.split("/").slice(0, -1).join("/").toLowerCase();
 
 /** Whether `owner/name` or `owner/*` in `patterns` names `repo`. */
 const listed = (patterns: readonly string[], repo: string): boolean =>

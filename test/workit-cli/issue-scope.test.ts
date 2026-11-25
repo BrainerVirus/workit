@@ -178,3 +178,39 @@ test("Given an agent shell, When it sets externalRepos with workspace set, Then 
   const bad = await run(["workspace", "set", "w", "externalRepos=github.com/acme/tool"], repo.cwd);
   expect(bad.code).toBe(2);
 });
+
+test("Given a GitLab checkout of group/sub/project, When issue create names a sibling under group, Then the owner is the whole namespace: group/other is refused, group/sub/other proceeds", async () => {
+  const repo = makeForgeRepo("gitlab");
+  repos.push(repo);
+  repo.git("remote", "set-url", "--push", "origin", "https://gitlab.com/group/sub/project.git");
+  const project = JSON.parse(fixture("gitlab/project.json"));
+  const routes: Record<string, Reply> = {
+    "GET user": fixture("gitlab/user.json"),
+    "GET projects/group%2Fsub%2Fproject": JSON.stringify({
+      ...project,
+      path_with_namespace: "group/sub/project",
+    }),
+  };
+  for (const other of ["group/other", "group/sub/other"])
+    routes[`POST projects/${encodeURIComponent(other)}/issues`] = JSON.stringify({
+      iid: 900,
+      web_url: `https://gitlab.com/${other}/-/issues/900`,
+    });
+  const runner = replayRunner(routes, repo.subs);
+  Object.assign(forgeDeps, { runner, sleep: async () => {}, now: () => 0, readStdin: () => "x" });
+  workspace(repo);
+  const sibling = await run(create("group/other"), repo.cwd);
+  expect(sibling.code, sibling.stdout).toBe(3);
+  expect(sibling.json().error).toContain(
+    "outside_owner: group/other is outside this workspace's forge owners (group/sub)",
+  );
+  const same = await run(create("group/sub/other"), repo.cwd);
+  expect(same.code, same.stdout).toBe(0);
+  workspace(repo, { externalRepos: ["group/other"] });
+  const granted = await run(create("group/other"), repo.cwd);
+  expect(granted.code, granted.stdout).toBe(0);
+  expect(writes(runner.calls)).toEqual([
+    "projects/group%2Fsub%2Fother/issues",
+    "projects/group%2Fother/issues",
+  ]);
+});

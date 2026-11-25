@@ -172,8 +172,10 @@ there). When its workspace claims no remotes, they print a note (doctor:
 the workspace's own forge owners: the owner of the checkout's forge
 repository (and of its push repository, for a fork), of the workspace
 tracker (`issues.repo`), the workspace's `vcs.account`, and any repository
-its [`remotes`](#remotes) claim. Outside a checkout, `--repo` adds no owner
-of its own. Any other repository is refused with `outside_owner` and an
+its [`remotes`](#remotes) claim. An owner is the repository's whole
+namespace: on GitLab `group/sub/app` belongs to `group/sub`, so a project
+elsewhere under `group` is another owner. Outside a checkout, `--repo` adds
+no owner of its own. Any other repository is refused with `outside_owner` and an
 unblock naming the command below, so a `pr` grant never lets an agent open
 or comment on issues in someone else's repository by accident. Reading with
 `issue view` is never refused.
