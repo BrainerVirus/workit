@@ -22,7 +22,8 @@ is `%LOCALAPPDATA%\workit\install`, and the launcher is `workit.cmd` in its `bin
 The launcher runs `current` on a Node 24 or newer, in this order: `WORKIT_NODE`, the node
 `workit setup` or `workit upgrade` recorded, the PATH `node` when it is 24+, the newest 24+
 under fnm, nvm, volta, mise or asdf, and last the node that installed the version. The hook
-launchers use the same order.
+launchers use the same order. The Windows `workit.cmd` launcher cannot scan version managers:
+it tries `WORKIT_NODE`, then the node that installed the version, then the PATH `node`.
 
 ## First install
 

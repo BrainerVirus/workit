@@ -456,7 +456,7 @@ workit pr ready [--undo]               # mark the draft ready (or back to draft)
 workit pr edit [--title <t>] [--body-file <f|->] [--add-label <l>]… [--remove-label <l>]… [--add-reviewer <login>]… [--base <b>]
 workit pr threads                      # unresolved review threads, one line each with its id
 workit pr reply --thread <id> [--body-file <f|->] [--resolve]
-workit ci wait [--pr <n> | --branch <b>] [--head <sha>] [--timeout 20m] [--interval 30s]   # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
+workit ci wait [--pr <n> | --branch <b> | --ref <b>] [--head <sha>] [--timeout 20m] [--interval 30s]   # exit 0 green, 1 red, 3 conflicts/closed, 4 still pending or another wait in flight
 workit ci wait --branch main           # a branch with no PR (the trunk after a merge): its push runs; --ref main is the same
 workit ci rerun [--check <name>… | --failed] --reason flake|infra [--force]   # once per PR head without --force
 workit ci rerun --ref <b> --failed --reason flake|infra   # the failed jobs of branch <b>'s latest run (a red base), once per head
