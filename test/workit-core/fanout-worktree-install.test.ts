@@ -101,6 +101,7 @@ echo "$PWD $*" >> "$FAKE_BUN_LOG"
 case "$FAKE_BUN" in
   hang) exec sleep 30 ;;
   fail) mkdir -p node_modules/partial; echo "error: lockfile had changes, but lockfile is frozen" >&2; exit 1 ;;
+  empty) exit 0 ;;
 esac
 mkdir -p node_modules/leftpad
 echo '{"name":"leftpad","version":"2.0.0"}' > node_modules/leftpad/package.json
@@ -248,11 +249,26 @@ describe.skipIf(process.platform === "win32")("own install", () => {
     );
   });
 
+  test("given a lockfile whose install makes no node_modules (no dependencies), then the brief says own install, not INSTALL", async () => {
+    const fake = fakeBun();
+    const { cwd, made } = await create([], {
+      PATH: `${fake.bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      FAKE_BUN: "empty",
+      FAKE_BUN_LOG: fake.log,
+    });
+    expect(made.deps.mode).toBe("installed");
+    expect(existsSync(path.join(made.path, "node_modules"))).toBe(false);
+    const text = await brief(cwd);
+    expect(text).toContain("DEPS: own install");
+    expect(text).not.toContain("INSTALL:");
+  });
+
   test("given no bun on PATH, then the worktree is linked and the reason names the missing package manager", async () => {
     const empty = tempDir("wk-empty-path-");
     const { made } = await create([], { PATH: empty });
     expect(made.deps.mode).toBe("linked");
-    expect(made.deps.fallback).toStartWith("bun is not on PATH");
+    // Nothing ran, so no log is named.
+    expect(made.deps.fallback).toBe("bun is not on PATH");
     expect(made.dependencies).not.toBeNull();
   });
 

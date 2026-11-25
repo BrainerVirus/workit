@@ -428,7 +428,8 @@ function worktreeDependencies(
         ],
         state: { mode: "installed", from: null, command, fallback: null },
       };
-    fallback = `${ran.reason} (log: ${log})`;
+    // No log when the package manager never started.
+    fallback = fs.existsSync(log) ? `${ran.reason} (log: ${log})` : ran.reason;
   } else if (choice === "install")
     fallback = `no lockfile (${LOCKFILES.join(", ")}) to install from`;
   const linked = linkDependencies(main, worktree);

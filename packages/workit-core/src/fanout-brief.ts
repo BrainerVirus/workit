@@ -378,7 +378,8 @@ function dependencyLines(
   const frozen = frozenInstall(worktree);
   const command = frozen ? installCommand(frozen, worktree) : null;
   const fallback = typeof made?.depsFallback === "string" ? made.depsFallback : null;
-  if (!fs.existsSync(path.join(worktree, "node_modules"))) {
+  // A lockfile without dependencies installs nothing: no node_modules, still installed.
+  if (!fs.existsSync(path.join(worktree, "node_modules")) && made?.deps !== "installed") {
     const install = typeof made?.install === "string" ? made.install : command;
     return {
       lines: install

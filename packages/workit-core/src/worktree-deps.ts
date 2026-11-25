@@ -247,6 +247,7 @@ export function installWorktreeDependencies(
   options: { env: NodeJS.ProcessEnv; timeoutMs: number; log: string },
 ): InstallResult {
   const shown = [install.bin, ...install.args].join(" ");
+  fs.rmSync(options.log, { force: true });
   const bin = onPath(install.bin, options.env);
   if (!bin) return { ok: false, reason: `${install.bin} is not on PATH`, ms: 0 };
   const before = new Set(moduleDirs(worktree));
