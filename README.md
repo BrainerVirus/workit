@@ -223,7 +223,7 @@ one verdict at the top of a stack covers its unchanged lower PRs
 **Autonomy grants.** Per-workspace grants in `~/.config/workit/workspaces.json`
 set the ceiling: `push`, `pr` and `rerun` are allowed by default; `merge` needs
 `true` or `verified`, and merges only with the verdict the PR's review lane
-asks for. `defaultEndpoint` is where an unnamed delivery request stops:
+asks for; `release` (tags and forge releases) is off until you grant it. `defaultEndpoint` is where an unnamed delivery request stops:
 `commit` (default), `pr`, `green` (babysit CI and threads until merge-ready,
 never merging) or `merged`; `workit grant show` reports the effective one.
 Raising a grant or the endpoint needs you at a terminal; agents can only lower
@@ -234,7 +234,7 @@ terminal, accepts a change, and until then nothing above the last seal applies
 and never raises a grant
 ([configuration](docs/guides/configuration.md#config-files)).
 
-**Policy.** Judge tracked work in four calls (`workit policy assess --judge
+**Policy.** Judge tracked work on four answers (`workit policy assess --judge
 risk=trivial|normal|high behavior=yes|no product-choice=yes|no plan=yes|no`,
 or the flat `workit_policy` tool fields) and Workit derives what it needs:
 nothing for trivial work, an observed `workit check test` and the verdict the
@@ -363,12 +363,12 @@ text.
 | `workit approve <id>…` | Ask you to approve a Workit request (a YouTrack write, release notes under review) on a host with no prompt on the action; your yes is recorded once ([approvals](docs/guides/approvals.md)) |
 | `workit config show` | The effective config here (workspace, VCS provider, target branch, role models, heavy-check resources), each value with its source |
 | `workit workspace list\|add\|set\|rm\|seal` | List, add, edit or remove workspace entries without the wizard (never raises a grant); `seal` accepts the authority fields at your terminal |
-| `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer, babysit) runs on for a host, how it reaches a spawn there (`agent file`, `spawn fill` or `advisory`) and the `models.enforce` mode |
+| `workit models show` | The model and effort each role (decider, implementer tiers, verifier, reviewer, explore, babysit) runs on for a host, how it reaches a spawn there (`agent file`, `spawn fill` or `advisory`) and the `models.enforce` mode |
 | `workit task status\|start\|note\|close\|adopt` | The current branch's task |
 | `workit handoff` | Resume brief: branch, HEAD, dirty state, verdict, next command |
 | `workit check <name>` | Run a configured check and record observed evidence |
 | `workit lock status\|reap\|cancel\|wait\|run\|heavy` | The machine-wide heavy-check lease: holders and waiters, freeing a stuck holder's slot, dropping queued checks, waiting, running a command under it, heavy patterns |
-| `workit run --bg [--port <n>] [--name <n>] -- <cmd…>` | Start a dev server or `docker compose up` under the process registry: one server per repo, charged to the heavy budget ([background processes](docs/guides/processes.md)) |
+| `workit run --bg [--port <n>] [--name <n>] -- <cmd…>` | Start a dev server or `docker compose up` under the process registry: one server per repo and name, its memory charged to the heavy-check budget ([background processes](docs/guides/processes.md)) |
 | `workit ps [--all]` | The registered background processes: id, pid, port, RSS, owner session |
 | `workit stop <id>… \| --session <s> \| --within <dir> \| --orphans` | Stop registered processes (process group, SIGTERM then SIGKILL; docker rows stop only their containers), with a ledger row each |
 | `workit test-audit [--diff] [--mutate]` | Flag tautological tests; optional diff-scoped mutation |
