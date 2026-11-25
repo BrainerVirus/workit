@@ -1,7 +1,8 @@
 // The local weak-model bench grades a stored `claude -p` stream-json
 // transcript with no model (scripts/eval/grade.ts, docs/agents/eval.md).
 import { describe, expect, test } from "bun:test";
-import type { EvalCase } from "@/scripts/eval/cases";
+import path from "node:path";
+import { loadCases, type EvalCase } from "@/scripts/eval/cases";
 import { authFailureOf, claudeLimitOf, grade, usageOf } from "@/scripts/eval/grade";
 
 type Call = {
@@ -696,5 +697,41 @@ describe("Given a run graded for first try (D5)", () => {
     expect(claudeLimitOf(limited)).toContain("5-hour limit");
     expect(authFailureOf(limited)).toBeNull();
     expect(claudeLimitOf(run(ran("workit check test", "tu1")))).toBeNull();
+  });
+});
+
+describe("the committed branch-with-dirty-tree case (#902)", () => {
+  const dirty = loadCases(path.join(import.meta.dir, "..", "..", "evals", "cases")).find(
+    (each) => each.id === "branch-with-dirty-tree",
+  ) as EvalCase;
+  const bash = (command: string, result: string, failed = false): Call => ({
+    name: "Bash",
+    input: { command },
+    result,
+    failed,
+  });
+  const carry = bash("workit git branch feature/next --base main --carry", "switched");
+
+  test("Given a refusal without --carry, a help call and a stash list, When the next call carries, Then the run passes first try", () => {
+    const graded = grade(
+      transcript([
+        bash("git stash list", ""),
+        bash(
+          "workit git branch feature/next --base main",
+          "workit: dirty_worktree: a.txt would ride along; rerun with --carry",
+          true,
+        ),
+        bash("workit git branch --help", "usage: workit git branch <name> [--carry]"),
+        carry,
+      ]),
+      dirty,
+    );
+    expect(graded.failures).toEqual([]);
+    expect(graded.pass).toBe(true);
+  });
+
+  test("Given the model stashes or commits instead, Then the run fails", () => {
+    for (const command of ["git stash", "git stash push -m x", "git -C /w commit -am x"])
+      expect(grade(transcript([bash(command, ""), carry]), dirty).pass, command).toBe(false);
   });
 });
