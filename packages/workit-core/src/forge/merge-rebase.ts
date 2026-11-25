@@ -27,9 +27,10 @@ import type { PrStatusDoc } from "./report";
 import type { ResolvedForge } from "./resolve";
 import type { ForgeResult } from "./types";
 
-/** Test seam: where the rebased branch is pushed (the forge push URL in production). */
+/** Test seams: where the rebased branch is pushed (the forge push URL in production), and how a fast-forward is put back. */
 export const mergeRebaseDeps = {
   pushPlan: (cwd: string, branch: string): ForgeResult<PushPlan> => pushPreflight(cwd, { branch }),
+  restore: (cwd: string, sha: string) => git(cwd, ["reset", "--quiet", "--keep", sha]),
 };
 
 export type ChangelogRebased = {
@@ -273,6 +274,23 @@ export function rebaseChangelogConflict(
     };
   const after = rebased.data;
   if (!after.rebased) return notAuto(`the rebase onto ${onto} changed nothing`, byHand);
+  // A base that moved on to include the PR head fast-forwards the branch onto
+  // it: nothing of the PR is left to push, so put the branch back (#928).
+  if (after.commits === 0) {
+    const restored = mergeRebaseDeps.restore(cwd, head);
+    if (!restored.ok)
+      return {
+        ok: false,
+        code: "failed",
+        why: `${onto} (${short(after.baseSha)}) already contains the PR head ${short(head)}, and ${branch} could not be put back from ${short(after.head)} (${gitError(restored)}); nothing was pushed`,
+        unblock: `git reset --keep ${head}  # then: workit pr status`,
+        conflicts,
+      };
+    return notAuto(
+      `${onto} (${short(after.baseSha)}) already contains the PR head ${short(head)}, so the rebase left nothing to push; ${branch} is back at ${short(head)}`,
+      `workit pr status  # the PR may have landed; if it is still open: ${again}`,
+    );
+  }
   const pushPlan = mergeRebaseDeps.pushPlan(cwd, branch);
   const pushed = pushPlan.ok
     ? executePush(cwd, pushPlan.data, { forceWithLease: true, expect: head, actor: input.actor })

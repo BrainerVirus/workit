@@ -4,7 +4,10 @@ import { failure, type ForgeCheck, type ForgeResult, type RefChecks } from "./ty
 /**
  * Why the base is red, judged against the run before it: `flaky` when every
  * failing check passed on the previous base commit, `broken` when one of them
- * failed there too, `unknown` when the previous run could not tell.
+ * failed there too, `unknown` when the previous run could not tell. A previous
+ * run counts only under the same name and, on GitHub, the same workflow, like
+ * `uncoveredBaseRed`: a second workflow with the same display name is another
+ * check.
  */
 export type BaseRedCause =
   | { kind: "flaky"; checks: ForgeCheck[] }
@@ -17,10 +20,11 @@ export function classifyBaseRed(
 ): BaseRedCause {
   if (!previous.ok)
     return { kind: "unknown", note: `the previous run could not be read (${previous.error})` };
-  const before = new Map(previous.data.checks.map((check) => [check.name, check.state]));
-  const broken = failing.filter((check) => before.get(check.name) === "failing");
+  const key = (check: ForgeCheck) => `${check.workflow ?? ""}\0${check.name}`;
+  const before = new Map(previous.data.checks.map((check) => [key(check), check.state]));
+  const broken = failing.filter((check) => before.get(key(check)) === "failing");
   if (broken.length) return { kind: "broken", checks: broken };
-  if (failing.every((check) => before.get(check.name) === "passing"))
+  if (failing.every((check) => before.get(key(check)) === "passing"))
     return { kind: "flaky", checks: [...failing] };
   return {
     kind: "unknown",

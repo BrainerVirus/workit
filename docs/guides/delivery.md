@@ -36,7 +36,7 @@ workit git commit --amend (-m <msg> | --no-edit) # reword or extend the last com
 workit git commit --allow-empty -m "chore: retrigger"
 workit git push [--set-upstream] [--force-with-lease]   # `push -u origin <current branch>` is accepted; another branch name is refused
 workit git push --release main,develop,v<version>   # finish a release or hotfix (release grant); a comma list, a repeated flag, or both
-workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`); a conflict only in the changelog is merged entry by entry and the rebase goes on, any other conflict aborts and lists the paths; then push --force-with-lease
+workit git rebase [<base> | --onto <base>]   # replay the branch onto its freshly fetched base (default origin/<trunk>; `rebase origin/main` is `--onto origin/main`, always fetched and read from refs/remotes, never a local branch named `origin/main`); a conflict only in the changelog is merged entry by entry and the rebase goes on, any other conflict aborts and lists the paths; then push --force-with-lease
 workit git hold --why "<the user's words>" | --clear   # the user said not yet: the Stop hook stops asking to push or open a PR for this branch
 ```
 
@@ -542,7 +542,10 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
   the same merge with `--cwd <worktree>` when the branch is checked out in
   another worktree). A conflict in any other path refuses as before, naming
   the paths (`conflicts` in `--json`), with `workit git rebase --onto <base>`
-  as the unblock. `stack land` never rebases this way.
+  as the unblock. When the base already contains the PR head by the time
+  it rebases (the PR landed meanwhile), nothing is left to push: it puts the
+  branch back at the PR head, pushes nothing and names `workit pr status`.
+  `stack land` never rebases this way.
 - `pr merge` ends one of two ways. A merge exits 0 and prints
   `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout
   (`merged MR !<n> …` on GitLab).
@@ -591,14 +594,14 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
 - `pr merge` also reads the CI of the base branch's head (a protected target
   only). A failing check there that branch protection requires (or, when the
   required set cannot be read, a hard failure not known to be optional)
-  refuses the merge (`base_red`, exit 3), naming
-  the failing checks and the run URL, so a PR never lands silently on a red
-  base. Checks still running only print a note, and a base with no checks or
-  green checks merges quietly. A PR whose own head passes every check that is
-  red on the base, under the same `<workflow> / <job>` name, and whose head
-  contains the base tip that red CI ran on, is the fix for that base: it
-  merges without `--base-red-ok` and says so ("this merge fixes the red base
-  check"; `baseCi.fixes` in `--json`, `baseRedFixed` in the merge rows). Only
+  refuses the merge (`base_red`, exit 3), naming the failing checks and the
+  run URL, so a PR never lands silently on a red base. Checks still running
+  only print a note, and a base with no checks or green checks merges
+  quietly. A PR can be the fix for that base. Its own head must pass every
+  check that is red on the base, under the same `<workflow> / <job>` name,
+  and contain the base tip that red CI ran on. Such a PR merges without
+  `--base-red-ok` and says so ("this merge fixes the red base check";
+  `baseCi.fixes` in `--json`, `baseRedFixed` in the merge rows). Only
   forge check data and git ancestry decide this, never the PR title or body.
   On GitHub the head's run must come from the same workflow as the base's: a
   second workflow with the same display name never covers it, and a run whose
@@ -614,8 +617,8 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
   red base", with `workit git rebase` (then `workit git push
   --force-with-lease`, `workit ci wait` and the merge again) as the unblock; a
   tip that cannot be fetched counts as not contained. The refusal reads the
-  previous run on the base
-  (`<base>~1`) and names the next step (`baseRedCause` in `--json`):
+  previous run on the base (`<base>~1`), matching each job by name and, on
+  GitHub, by workflow, and names the next step (`baseRedCause` in `--json`):
   - `flaky`: every failing job passed on the previous run. The refusal says
     likely flaky, names each job and its run URL, and its unblock is the exact
     `workit ci rerun --ref <base> --check "<job>" --reason flake`. Run it,
