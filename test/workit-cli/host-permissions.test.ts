@@ -616,6 +616,10 @@ const V3_AUTO_ALLOW =
 const V4_AUTO_ALLOW =
   "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR (no `--pr`, or the PR whose head is the session's branch), `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment` with no `--repo` or a `--repo` whose owner is the owner in the session repo's origin URL are authorized by the user's standing Workit grants, which the workit CLI enforces itself; the branch, own-PR and owner scopes are for you to judge, the CLI does not check them. These are not Merge Without Review, Git Destructive or External System Writes; a `workit issue` `--repo` under any other owner IS an External System Write and is not covered. Does NOT cover `workit pr edit` or `workit pr ready` with `--pr` on another author's PR, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
 
+/** The #882 line before it named `workit issue close`. */
+const V5_AUTO_ALLOW =
+  "Workit-gated delivery: on the session's repo, `workit git push` of a branch this session created or the workspace allows (`--force-with-lease` only on the session's own branch), `workit pr create`, `workit pr edit|ready` on the session's own PR, `workit pr merge|reply|resolve`, `workit release`, and `workit issue create|comment` with no `--repo` or a `--repo` under the workspace's own forge owners or listed in its externalRepos are authorized by the user's standing Workit grants, which the workit CLI enforces itself, the own-PR and issue-owner scopes included: it refuses `workit pr edit|ready` on another author's PR without `--others-pr` and a `workit issue` `--repo` under another owner the user did not list; the branch scope is for you to judge. These are not Merge Without Review, Git Destructive or External System Writes. Does NOT cover `--others-pr`, `workit workspace set` of remotes or externalRepos, `workit release notes approve`, `workit grant set|raise`, `workit ledger void`, `workit approve`, `workit setup`, `workit uninstall`, `workit install`, `workit workspace seal`, `--unverified`, `--admin` or any bypass flag: the user decides those.";
+
 /** The excluded calls and flags every auto-mode line since #759 names, as the text spells them. */
 const NOT_COVERED = [
   "`workit release notes approve`",
@@ -636,6 +640,7 @@ test.each([
   ["the #615 line", V2_AUTO_ALLOW],
   ["the #759 line", V3_AUTO_ALLOW],
   ["the C17 line", V4_AUTO_ALLOW],
+  ["the #882 line", V5_AUTO_ALLOW],
 ])(
   "Given a block with %s, When `workit upgrade` refreshes, Then the old line is replaced once and uninstall removes the new one",
   async (_name, oldLine) => {
@@ -683,7 +688,8 @@ test("Given settings with the old auto-mode lines and the current one and no rec
     [V2_AUTO_ALLOW],
     [V3_AUTO_ALLOW],
     [V4_AUTO_ALLOW],
-    [OLD_AUTO_ALLOW, V2_AUTO_ALLOW, V3_AUTO_ALLOW, V4_AUTO_ALLOW, current],
+    [V5_AUTO_ALLOW],
+    [OLD_AUTO_ALLOW, V2_AUTO_ALLOW, V3_AUTO_ALLOW, V4_AUTO_ALLOW, V5_AUTO_ALLOW, current],
   ]) {
     const settings = { autoMode: { allow: ["$defaults", ...allow] } };
     const { next } = removeOwnedEntries(settings, null, "claude-code");
@@ -704,7 +710,7 @@ test("Given a fresh settings.json, When setup writes the auto-mode line, Then it
     "`workit pr edit|ready` on the session's own PR",
     "`workit pr merge|reply|resolve`",
     "`workit release`",
-    "`workit issue create|comment` with no `--repo` or a `--repo` under the workspace's own forge owners or listed in its externalRepos",
+    "`workit issue create|comment|close` with no `--repo` or a `--repo` under the workspace's own forge owners or listed in its externalRepos",
     // #882: the CLI enforces the own-PR and issue-owner scopes; only the branch scope is guidance.
     "the own-PR and issue-owner scopes included",
     "the branch scope is for you to judge",
