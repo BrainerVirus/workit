@@ -273,6 +273,6 @@ test("Given an admitted dev server, When lock status runs, Then it lists it unde
 test("Given the check verb's help, Then its summary names the exit and the heavy-check lease as before #925 (#926)", () => {
   const summary = VERBS.find((entry) => entry.name === "check")?.summary;
   expect(summary).toBe(
-    "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
+    "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the heavy-check lease",
   );
 });

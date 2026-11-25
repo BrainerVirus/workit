@@ -510,7 +510,7 @@ export const VERBS: readonly VerbEntry[] = [
     usage:
       'workit check <name> [--full] [--task <id>] [--base <ref>] [--wait <dur> | --no-wait] [--no-lease --reason "<why>"] | workit check [--name <n>] [--shell] [--full] [--timeout <s>] [--task <id>] [--base <ref>] [--heavy | --io [--wait <dur> | --no-wait]] [--no-lease --reason "<why>"] -- <cmd…> | workit check [--list]',
     summary:
-      "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the machine-wide heavy-check lease",
+      "Run a configured or ad-hoc check and record CLI-observed evidence (exit = the command's); heavy checks wait for the heavy-check lease",
     examples: [
       "workit check test",
       "workit check --heavy -- npx jest",
