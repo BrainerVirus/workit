@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   type Exec,
+  inferTagPrefix,
   parseGroups,
   releaseBlock,
   runChangelogRoll,
@@ -375,4 +376,35 @@ test("Given a legacy start marker without its end, When merged, Then it is refus
   expect(result.ok).toBe(false);
   expect(!result.ok && result.error).toContain("release_body_unterminated");
   expect(!result.ok && result.unblock).toContain("<!-- workit:changelog:end -->");
+});
+
+// --- the tag prefix when none is configured ------------------------------------------
+
+const tagsExec =
+  (tags: string[]): Exec =>
+  (_cmd, args) => {
+    if (args[0] !== "for-each-ref") throw new Error(`unexpected git ${args.join(" ")}`);
+    return `${tags.join("\n")}\n`;
+  };
+const headings = (...versions: string[]) =>
+  `# Changelog\n\n## [Unreleased]\n\n${versions.map((v) => `## [${v}] - 2026-01-01\n\n- x ${v}\n`).join("\n")}`;
+
+test("Given old v14 tags (v2.x among them) beside workit-dev-v2 tags and 2.x headings, Then the inferred prefix is workit-dev-v", () => {
+  const exec = tagsExec([
+    "v2.0.0",
+    "v2.1.0",
+    "v14.6.1",
+    "workit-dev-v2.0.0",
+    "workit-dev-v2.1.0",
+    "workit-dev-v2.2.0",
+  ]);
+  expect(inferTagPrefix(exec, headings("2.2.0", "2.1.0", "2.0.0"))).toBe("workit-dev-v");
+});
+
+test("Given a plain v repo, Then the inferred prefix stays v; with no heading a tag holds, or no headings, it falls back to v", () => {
+  expect(inferTagPrefix(tagsExec(["v1.0.0", "v1.1.0"]), headings("1.1.0", "1.0.0"))).toBe("v");
+  expect(inferTagPrefix(tagsExec(["app-v1.0.0"]), headings("3.0.0"))).toBe("v");
+  expect(inferTagPrefix(tagsExec(["app-v1.0.0"]), headings())).toBe("v");
+  // Bare x.y.z tags are a family too.
+  expect(inferTagPrefix(tagsExec(["1.0.0", "v0.9.0"]), headings("1.0.0"))).toBe("");
 });

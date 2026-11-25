@@ -8,7 +8,7 @@
 // file and local git (`for-each-ref`, `show`) are read: no forge, no grant.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { git, releaseLinesOf } from "../git/ops";
+import { configuredTagPrefix, git } from "../git/ops";
 import { writeFileAtomic } from "./safe-write";
 
 /** Runs a command and returns its stdout; throws on a non-zero exit. */
@@ -543,10 +543,49 @@ export function refusalLines(file: string, refusal: RollRefusal): string[] {
   ];
 }
 
-/** The repo's release tag prefix (its first release line's), `v` when it cannot be read. */
-export function defaultTagPrefix(cwd: string): string {
+/**
+ * The release tag prefix the changelog's versions are tagged with, from the
+ * repo's tags: each family of `<prefix><x.y.z>` tags that holds the newest
+ * version heading of `changelog` scores one point per version heading it
+ * holds, and the best one wins (`v` on a tie). `v` when no family holds the
+ * newest heading, or without headings. A repo whose old `v14.x` tags sit
+ * beside `workit-dev-v2.x` ones, with 2.x headings, gets `workit-dev-v`.
+ */
+export function inferTagPrefix(exec: Exec, changelog: string): string {
+  const versions = parseChangelog(changelog)
+    .sections.map((s) => s.name)
+    .filter((name) => RELEASE_VERSION.test(name));
+  const newest = versions.toSorted((a, b) => compareVersions(b, a))[0];
+  if (newest === undefined) return "v";
+  const families = new Map<string, Set<string>>();
+  for (const tag of exec("git", ["for-each-ref", "--format=%(refname:short)", "refs/tags"]).split(
+    "\n",
+  )) {
+    const match = /^(.*?)(\d+\.\d+\.\d+)$/.exec(tag.trim());
+    if (!match) continue;
+    const [, prefix = "", version = ""] = match;
+    families.set(prefix, (families.get(prefix) ?? new Set()).add(version));
+  }
+  let best = "v";
+  let score = 0;
+  for (const [prefix, tagged] of families) {
+    if (!tagged.has(newest)) continue;
+    const held = versions.filter((v) => tagged.has(v)).length;
+    if (held > score || (held === score && prefix === "v")) [best, score] = [prefix, held];
+  }
+  return best;
+}
+
+/**
+ * The repo's release tag prefix: the one configured (the branch policy's
+ * `releaseTagPrefix`, else `gitflow.prefix.versiontag`), else the one
+ * inferred from its tags and `changelog` (inferTagPrefix), else `v`.
+ */
+export function defaultTagPrefix(cwd: string, changelog = "", exec?: Exec): string {
   try {
-    return releaseLinesOf(cwd)[0]?.tagPrefix ?? "v";
+    const configured = configuredTagPrefix(cwd);
+    if (configured !== null) return configured;
+    return inferTagPrefix(exec ?? gitExec(cwd), changelog);
   } catch {
     return "v";
   }
@@ -618,8 +657,8 @@ export function runChangelogRoll(input: ChangelogRollInput): ChangelogRollRun {
       lines: [],
     };
   }
-  const tagPrefix = input.tagPrefix ?? defaultTagPrefix(input.cwd);
   const exec = input.exec ?? gitExec(input.cwd);
+  const tagPrefix = input.tagPrefix ?? defaultTagPrefix(input.cwd, text, exec);
   const warnings: string[] = [];
   // `<tag>:./<path>` is relative to the cwd, so a changelog below the repo root reads too.
   const atTag = `./${path.relative(input.cwd, file).split(path.sep).join("/")}`;
@@ -725,7 +764,7 @@ export function shippedChangelogFinding(cwd: string, exec?: Exec): ShippedFindin
   const text = readFileSync(file, "utf8");
   const unreleased = parseChangelog(text).sections.find(isUnreleased);
   if (!unreleased || sectionGroups(unreleased).every((g) => g.entries.length === 0)) return null;
-  const prefix = defaultTagPrefix(root);
+  const prefix = defaultTagPrefix(root, text, exec ?? gitExec(root));
   let snapshots: TagSnapshot[];
   try {
     snapshots = tagSnapshots(exec ?? gitExec(root), prefix);

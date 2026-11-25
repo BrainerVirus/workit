@@ -44,7 +44,10 @@ const FRESH = "- Fresh: not released yet.";
 
 let count = 0;
 /** A repo whose CHANGELOG.md held each step's entries at its tag, then `now` uncommitted. */
-function repo(steps: Array<{ entries: string[]; tag: string }>, now: string | null): string {
+function repo(
+  steps: Array<{ entries: string[]; tag: string; text?: string }>,
+  now: string | null,
+): string {
   const base = path.join(scratch, `case-${count++}`);
   const dir = path.join(base, "repo");
   mkdirSync(dir, { recursive: true });
@@ -59,7 +62,7 @@ function repo(steps: Array<{ entries: string[]; tag: string }>, now: string | nu
   git("add", "README.md");
   git("commit", "-q", "-m", "init");
   for (const step of steps) {
-    writeFileSync(path.join(dir, "CHANGELOG.md"), changelog(step.entries));
+    writeFileSync(path.join(dir, "CHANGELOG.md"), step.text ?? changelog(step.entries));
     git("add", "CHANGELOG.md");
     git("commit", "-q", "-m", "docs: changelog");
     git("tag", step.tag);
@@ -92,6 +95,25 @@ test("Given two [Unreleased] entries v1.0.0 and v1.1.0 already shipped, When doc
     status: "warn",
     detail: "2 [Unreleased] entries already shipped (oldest in v1.0.0)",
     fix: "workit changelog roll",
+  });
+});
+
+test("Given old v14 tags beside workit-dev-v2 tags and 2.x headings, When doctor runs with no prefix configured, Then it infers workit-dev-v and warns about the entries those tags shipped", () => {
+  const released = (entries: string[]) =>
+    `${changelog(entries)}\n## [2.0.0] - 2026-01-01\n\n### Added\n\n- Zero.\n`;
+  const dir = repo(
+    [
+      { entries: [], tag: "v14.0.0", text: "# Changelog\n\n## [14.0.0]\n\n- Old scope.\n" },
+      { entries: [], tag: "v2.1.0", text: "# Changelog\n\n## [2.1.0]\n\n- Old scope 2.1.\n" },
+      { entries: [], tag: "workit-dev-v2.0.0", text: released([]) },
+      { entries: [], tag: "workit-dev-v2.1.0", text: released([ONE]) },
+      { entries: [], tag: "workit-dev-v2.2.0", text: released([ONE, TWO]) },
+    ],
+    `${changelog([FRESH, ONE, TWO])}\n## [2.1.0] - 2026-01-02\n\n### Added\n\n- Earlier.\n\n## [2.0.0] - 2026-01-01\n\n### Added\n\n- Zero.\n`,
+  );
+  expect(check(dir)).toMatchObject({
+    status: "warn",
+    detail: "2 [Unreleased] entries already shipped (oldest in workit-dev-v2.1.0)",
   });
 });
 

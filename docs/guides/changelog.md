@@ -89,9 +89,13 @@ workit changelog release 1.4.0 [--date 2026-11-25] [--notes-out notes.md] [--not
   heading, empty notes. A changelog with no `[Unreleased]` section says the section is missing,
   also with exit 0 and nothing written. A rerun of the same release (a retried CI job) changes nothing and
   writes the same notes, read back from the existing `[x.y.z]` section.
-- Tags are `<prefix><x.y.z>`; the prefix is the workspace's release tag prefix (git-flow's
-  `gitflow.prefix.versiontag`, default `v`), or `--tag-prefix`. `--path` names another
-  changelog, such as one package's in a monorepo, relative to the current directory.
+- Tags are `<prefix><x.y.z>`; the prefix is `--tag-prefix`, else the workspace's release tag
+  prefix (`releaseTagPrefix`, or git-flow's `gitflow.prefix.versiontag`). With neither set, it
+  is inferred from the repo's tags: of the tag families that hold the changelog's newest version
+  heading, the one holding the most of its version headings wins (a repo with old `v14.x` tags
+  and `app-v2.x` tags whose headings are 2.x gets `app-v`), else `v`. `workit doctor` uses the
+  same prefix. `--path` names another changelog, such as one package's in a monorepo, relative
+  to the current directory.
 - Nothing is written, exit 1, when the result would double or drop text: an `[Unreleased]`
   entry its release's section already holds (a merge that put back what a roll moved) is named
   by its line (`CHANGELOG.md:12 is already under [1.3.0]`); delete it from `[Unreleased]` and
