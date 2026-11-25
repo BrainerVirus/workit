@@ -111,24 +111,10 @@ per slice, `WORKTREE: <path>` and the spawn that carries it. Its prompt starts
 with that WORKTREE line, then `WORKER`, `TIER`, `TIMEBOX` and
 "Run `workit fanout brief <slice> --name <plan>` and follow it exactly.";
 Claude Code's `SPAWN:` line names `model` only when the TIER differs from the
-`implementer` agent file. `--name` takes the plan's name or its file (`--plan`
-is the same flag): a file is registered in that call, and a name no plan has
-registers the one file in `workit dir plans` that starts with it. The plan
+`implementer` agent file. `--name` (or `--plan`) takes the plan's name, a
+prefix of one file in `workit dir plans`, or a file to register. The plan
 check refuses a slice branch the workspace branch policy refuses and names the
 allowed one.
-
-Each new worktree gets its own frozen install of its lockfile (`bun install
---frozen-lockfile`, `pnpm install --frozen-lockfile`, `yarn install
---immutable`, `npm ci`), bounded by `--install-timeout` (default `5m`). When
-the package manager is missing or the install fails or times out, the
-worktree links the main checkout's `node_modules` instead and says so:
-`deps LINKED from <checkout> (<why>)`, `deps.mode: "linked"` in `--json`, a
-`DEPS: LINKED` brief line and the same clause in the verifier SPAWN line.
-Linked packages can drift from the lockfile: a verifier reproduces a failure
-that reads installed packages on an own install before failing the
-candidate. `--deps link` links on purpose (a repo too slow to install per
-slice); a workspace's `fanout.deps` and `fanout.installTimeout` set the same
-for every create, and the flags override them.
 
 One unplanned slice: `workit fanout worktree create fix-login [--branch
 fix/login] [--base <b>] [--tier <t>]` (no plan holds it) records a one-slice plan named after it
