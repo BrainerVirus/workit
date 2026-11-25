@@ -16,7 +16,9 @@ removed directory.
 
 A check its caller stops (a host's tool timeout sends SIGTERM, or Ctrl-C) is
 recorded as `interrupted` with the signal, not as `failed`, and exits 128 plus
-the signal number (143 for SIGTERM). It prints:
+the signal number (143 for SIGTERM). Workit forwards the signal to the command,
+and the run counts as interrupted only when Workit itself received SIGINT,
+SIGTERM or SIGHUP and the command died of that signal. It prints:
 
 ```text
 interrupted by SIGTERM (the caller stopped it, likely a tool timeout): run long checks in the background
@@ -24,9 +26,17 @@ interrupted by SIGTERM (the caller stopped it, likely a tool timeout): run long 
 
 An interrupted run is absent evidence: no gate counts it as passing or failing,
 and the run before it on that head still stands. Run a long check in a
-background shell instead of rerunning it in the foreground. A command that exits
-143 on its own, with no signal sent to Workit, is still a failure. In a group, an
+background shell instead of rerunning it in the foreground. In a group, an
 interrupted member stops the group.
+
+Every other ending is the command's own result:
+
+- A command that kills itself with a signal while no signal reached Workit is
+  `failed`. The row names the signal and Workit prints
+  `killed by SIGTERM (exit 143; no signal reached workit)`. A command that
+  exits 143 on its own is `failed` too.
+- A command that catches the forwarded signal and exits on its own code (say
+  3) is recorded with that code: `failed`, exit 3 (or `passed` on 0).
 
 ```json
 {
