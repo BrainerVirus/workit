@@ -269,7 +269,9 @@ test("Given one host fails, Then the others and the CLI still upgrade, the table
 });
 
 /** The world with `codex plugin marketplace upgrade workit` answering from `answers` in turn (then exit 0). */
-const flakyMarketplace = (answers: { status: number; stdout: string; stderr?: string }[]) => {
+const flakyMarketplace = (
+  answers: { status: number | null; stdout: string; stderr?: string; timedOut?: boolean }[],
+) => {
   const w = world();
   const sleeps: number[] = [];
   const run = (command: string, args: string[]) => {
@@ -324,6 +326,22 @@ test("Given a Codex marketplace upgrade that fails once then succeeds, When upgr
     expect(sleeps).toEqual([2000]);
     expect(ran(w.calls, "codex plugin add workit@workit --json")).toBe(true);
     expect(w.text()).toMatch(/codex +updated +1\.0\.0 -> 2\.0\.0; agents refreshed/);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("Given a Codex marketplace upgrade that timed out, Then it is not retried (a second timeout would double the wait)", async () => {
+  const { w, deps, sleeps } = flakyMarketplace([
+    { status: null, stdout: "", stderr: "", timedOut: true },
+  ]);
+  try {
+    expect(await runUpgradeCommand(["--hosts=codex", "--yes"], deps)).toBe(1);
+    expect(marketplaceUpgrades(w.calls)).toBe(1);
+    expect(sleeps).toEqual([]);
+    expect(w.text()).toMatch(
+      /codex +FAILED +`codex plugin marketplace upgrade workit` failed \(timed out\)/,
+    );
   } finally {
     w.cleanup();
   }

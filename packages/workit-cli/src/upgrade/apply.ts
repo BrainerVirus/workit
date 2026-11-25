@@ -359,7 +359,8 @@ const applyEntry = async (
       result = await runAsync(command.command, command.args, where);
     // `codex plugin marketplace upgrade` is idempotent and fails transiently
     // (a git fetch): retry it once after a short pause (#900).
-    if (result.status !== 0 && isCodexMarketplaceUpgrade(command)) {
+    // A timeout is not retried: a second one would double the wait.
+    if (result.status !== 0 && !result.timedOut && isCodexMarketplaceUpgrade(command)) {
       await (context.sleep ?? pause)(RETRY_BACKOFF_MS);
       result = await runAsync(command.command, command.args, where);
     }
@@ -482,7 +483,7 @@ const codexAgentsAnyway = async (
   const line = !agents.note
     ? "skipped installing the Codex role agents: no cached Workit plugin to install them from"
     : agents.ok
-      ? `installed the Codex role agents from the cached plugin ${root ? path.basename(root) : ""}`.trimEnd()
+      ? `installed the Codex role agents from the cached plugin ${root ? `${path.basename(root)} ` : ""}(the update failed, so it may be older than the target)`
       : `${agents.note}${agents.fix ? `; run: ${agents.fix}` : ""}`;
   return { ...outcome, details: [...(outcome.details ?? []), line] };
 };
