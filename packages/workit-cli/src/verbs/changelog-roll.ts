@@ -4,7 +4,7 @@
 // goreleaser). Local only: the file and the repo's tags, no forge, no grant.
 //
 //   workit changelog roll [--path <file>] [--tag-prefix <p>] [--preview]
-//   workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--no-write] [--path <file>] [--tag-prefix <p>]
+//   workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--notes-format markdown|github] [--no-write] [--path <file>] [--tag-prefix <p>]
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -18,7 +18,7 @@ import { parseFlags, usage } from "./forge-common";
 const ROLL_USAGE =
   "workit changelog roll [--path CHANGELOG.md] [--tag-prefix <prefix>] [--preview]";
 const RELEASE_USAGE =
-  "workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--no-write] [--path CHANGELOG.md] [--tag-prefix <prefix>]";
+  "workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--notes-format markdown|github] [--no-write] [--path CHANGELOG.md] [--tag-prefix <prefix>]";
 
 type Done = Extract<ChangelogRollRun, { ok: true }>;
 
@@ -49,12 +49,19 @@ function refused(io: Io, run: Extract<ChangelogRollRun, { ok: false }>): number 
   );
 }
 
+/** Why nothing moved: the section is missing, or it holds no entry for `verb`. */
+const nothingMoved = (run: Done, verb: string): string =>
+  run.unreleased
+    ? `${run.path}: [Unreleased] is empty; nothing to ${verb}`
+    : `${run.path}: no [Unreleased] section; nothing to ${verb}`;
+
 const summary = (run: Done) => ({
   path: run.path,
   tagPrefix: run.tagPrefix,
   tags: run.tags,
   changed: run.changed,
   written: run.written,
+  unreleased: run.unreleased,
   moved: run.moved,
   warnings: run.warnings,
 });
@@ -75,7 +82,11 @@ export function runRoll(argv: string[], io: Io): number {
   if (!io.json) for (const warning of run.warnings) io.stderr(`workit: warning: ${warning}\n`);
   return emit(io, ok({ ...summary(run), ...(preview ? { after: run.text } : {}) }), () =>
     run.moved.length === 0
-      ? [`${run.path}: no [Unreleased] entry has shipped; nothing to roll`]
+      ? [
+          run.unreleased
+            ? `${run.path}: no [Unreleased] entry has shipped; nothing to roll`
+            : nothingMoved(run, "roll"),
+        ]
       : [
           ...movedLines(run, preview ? "would move" : "moved"),
           ...(preview ? ["preview: nothing written"] : []),
@@ -89,6 +100,7 @@ export function runRelease(argv: string[], io: Io): number {
     "tag-prefix": "value",
     date: "value",
     "notes-out": "value",
+    "notes-format": "value",
     "no-write": "boolean",
   });
   if (typeof flags === "string") return usage(io, flags, RELEASE_USAGE);
@@ -107,11 +119,19 @@ export function runRelease(argv: string[], io: Io): number {
       "--notes-out - and --json both write stdout; the notes are in data.notes",
       RELEASE_USAGE,
     );
+  const format = flags.values["notes-format"] ?? "markdown";
+  if (format !== "markdown" && format !== "github")
+    return usage(
+      io,
+      `not a notes format: ${JSON.stringify(format)} (markdown or github)`,
+      RELEASE_USAGE,
+    );
   const write = !flags.booleans.has("no-write");
   const run = runChangelogRoll({
     cwd: io.cwd,
     write,
     release: { version, date },
+    notesFormat: format,
     ...(flags.values.path ? { path: flags.values.path } : {}),
     ...(flags.values["tag-prefix"] ? { tagPrefix: flags.values["tag-prefix"] } : {}),
   });
@@ -132,7 +152,7 @@ export function runRelease(argv: string[], io: Io): number {
       ? [
           run.notes
             ? `${run.path}: [${version}] is already released; nothing to move`
-            : `${run.path}: [Unreleased] is empty; nothing to release`,
+            : nothingMoved(run, "release"),
         ]
       : movedLines(run, write ? "moved" : "would move")),
     ...(write || !run.changed ? [] : ["--no-write: nothing written"]),

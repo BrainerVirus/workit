@@ -1262,9 +1262,9 @@ export const VERBS: readonly VerbEntry[] = [
       {
         name: "release",
         usage:
-          "workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--no-write] [--path CHANGELOG.md] [--tag-prefix <prefix>]",
+          "workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--notes-format markdown|github] [--no-write] [--path CHANGELOG.md] [--tag-prefix <prefix>]",
         summary:
-          "Roll, then move the rest of [Unreleased] into ## [x.y.z] - <date>; --notes-out writes that version's entries as release notes; a rerun changes nothing",
+          "Roll, then move the rest of [Unreleased] into ## [x.y.z] - <date>; --notes-out writes that version's entries as release notes (--notes-format github: between workit:changelog markers, at most 24,000 characters); a rerun changes nothing",
       },
       {
         name: "merge",

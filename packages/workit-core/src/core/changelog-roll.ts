@@ -6,9 +6,10 @@
 // first `<prefix><x.y.z>` tag whose changelog already holds it, so the result
 // depends only on the tags, never on when the file was last rolled. Only the
 // file and local git (`for-each-ref`, `show`) are read: no forge, no grant.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { git, releaseLinesOf } from "../git/ops";
+import { writeFileAtomic } from "./safe-write";
 
 /** Runs a command and returns its stdout; throws on a non-zero exit. */
 export type Exec = (cmd: string, args: string[], input?: string) => string;
@@ -413,6 +414,80 @@ export function versionNotes(text: string, version: string): string {
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
+/** `text` as a literal in a git ref pattern (fnmatch): `*`, `?`, `[` and backslash lose their meaning. */
+export const globEscape = (text: string): string => text.replace(/[*?[\\]/g, "\\$&");
+
+/** The start marker of a release body's changelog block for `tag`. */
+export const blockStart = (tag: string): string => `<!-- workit:changelog ${tag} -->`;
+export const BLOCK_END = "<!-- /workit:changelog -->";
+/** The markers Workit's release script wrote before `workit changelog release`; read, never written. */
+export const LEGACY_BLOCK_START = "<!-- workit:changelog:start -->";
+export const LEGACY_BLOCK_END = "<!-- workit:changelog:end -->";
+
+/**
+ * The changelog block's share of a GitHub release body (`--notes-format
+ * github`): it leaves the generated commit list about 100,000 of GitHub's
+ * 125,000 characters.
+ */
+export const RELEASE_BLOCK_CAP = 24_000;
+
+/**
+ * A release's entries between `tag`'s block markers, at most `cap` characters.
+ * Past the cap it keeps the entries that fit and ends with a line pointing at
+ * `more` (the compare view), so the forge never rejects the body. Empty when
+ * there are none or not even that line fits.
+ */
+export function releaseBlock(
+  groups: Group[],
+  opts: { tag: string; cap: number; more: string },
+): string {
+  const entries = groups.reduce((n, g) => n + g.entries.length, 0);
+  if (entries === 0) return "";
+  const start = blockStart(opts.tag);
+  const wrap = (lines: string[]): string => [start, ...lines, BLOCK_END].join("\n");
+  const whole = wrap(renderGroups(groups));
+  if (whole.length <= opts.cap) return whole;
+
+  // Room for the markers and the closing line.
+  let budget = opts.cap - start.length - BLOCK_END.length - opts.more.length - 120;
+  const kept: Group[] = [];
+  let shown = 0;
+  for (const group of groups) {
+    const fit: Entry[] = [];
+    const cost = (group.heading?.length ?? 0) + 3;
+    for (const entry of group.entries) {
+      const size = trimBlank(entry.lines).join("\n").length + 1 + (fit.length === 0 ? cost : 0);
+      if (size > budget) {
+        budget = -1;
+        break;
+      }
+      budget -= size;
+      fit.push(entry);
+    }
+    if (fit.length > 0) kept.push({ heading: group.heading, entries: fit });
+    shown += fit.length;
+    if (budget < 0) break;
+  }
+  const rest = entries - shown;
+  const cut = wrap([
+    ...renderGroups(kept),
+    ...(kept.length > 0 ? [""] : []),
+    `_${rest} more ${rest === 1 ? "entry is" : "entries are"} not listed here; see ${opts.more}._`,
+  ]);
+  return cut.length <= opts.cap ? cut : "";
+}
+
+/** The link a cut block points at: the release's compare view, else CHANGELOG.md. */
+export function moreLink(
+  base: string | null,
+  previousTag: string | undefined,
+  tag: string,
+): string {
+  if (base === null) return "CHANGELOG.md";
+  if (!previousTag) return `[CHANGELOG.md](${base}/blob/${tag}/CHANGELOG.md)`;
+  return `the full comparison [${previousTag}...${tag}](${base}/compare/${previousTag}...${tag})`;
+}
+
 /** Every `<prefix><x.y.z>` tag, oldest version first, with its changelog's keys at `<tag>:<file>`. */
 export function tagSnapshots(exec: Exec, prefix: string, file = "CHANGELOG.md"): TagSnapshot[] {
   const pattern = new RegExp(
@@ -421,7 +496,7 @@ export function tagSnapshots(exec: Exec, prefix: string, file = "CHANGELOG.md"):
   const rows = exec("git", [
     "for-each-ref",
     "--format=%(refname:short)%09%(creatordate:short)",
-    `refs/tags/${prefix}*`,
+    `refs/tags/${globEscape(prefix)}*`,
   ])
     .split("\n")
     .map((row) => row.trim().split("\t"))
@@ -497,6 +572,12 @@ export interface ChangelogRollInput {
   release?: { version: string; date: string };
   /** False: compute the result and its notes, write nothing. */
   write: boolean;
+  /**
+   * `markdown` (default): the release's groups as they are. `github`: those
+   * groups between `<!-- workit:changelog <tag> -->` markers, capped at
+   * RELEASE_BLOCK_CAP, for a release body other notes follow.
+   */
+  notesFormat?: "markdown" | "github";
   exec?: Exec;
 }
 
@@ -510,6 +591,8 @@ export type ChangelogRollRun =
       tags: number;
       changed: boolean;
       written: boolean;
+      /** False when the changelog has no `## [Unreleased]` section. */
+      unreleased: boolean;
       moved: RollResult["moved"];
       /** The rolled text (what was or would be written). */
       text: string;
@@ -567,11 +650,13 @@ export function runChangelogRoll(input: ChangelogRollInput): ChangelogRollRun {
       lines: refusalLines(rel, refusal).slice(1),
     };
   const written = rolled.changed && input.write;
+  // A temp file beside it, then a rename: a crash never leaves half a
+  // changelog. The real path keeps a symlinked file or directory working, and
+  // writeFileAtomic keeps the file's mode.
   if (written)
-    writeFileSync(
-      file,
+    writeFileAtomic(
+      realpathSync(file),
       text.includes("\r\n") ? rolled.text.replace(/\n/g, "\r\n") : rolled.text,
-      "utf8",
     );
   return {
     ok: true,
@@ -580,9 +665,82 @@ export function runChangelogRoll(input: ChangelogRollInput): ChangelogRollRun {
     tags: snapshots.length,
     changed: rolled.changed,
     written,
+    unreleased: parseChangelog(text).sections.some(isUnreleased),
     moved: rolled.moved,
     text: rolled.text,
-    notes: input.release ? versionNotes(rolled.text, input.release.version) : "",
+    notes: input.release ? releaseNotes(text, rolled.text, input, tagPrefix, snapshots) : "",
     warnings,
+  };
+}
+
+/** The release's notes in `input.notesFormat`; "" without entries. */
+function releaseNotes(
+  before: string,
+  rolled: string,
+  input: ChangelogRollInput,
+  tagPrefix: string,
+  snapshots: TagSnapshot[],
+): string {
+  const version = input.release?.version ?? "";
+  if (input.notesFormat !== "github") return versionNotes(rolled, version);
+  const previous = snapshots.findLast((s) => compareVersions(s.version, version) < 0);
+  const tag = `${tagPrefix}${version}`;
+  const block = releaseBlock(versionGroups(rolled, version), {
+    tag,
+    cap: RELEASE_BLOCK_CAP,
+    more: moreLink(
+      repoBase(parseChangelog(before).links),
+      previous ? `${tagPrefix}${previous.version}` : undefined,
+      tag,
+    ),
+  });
+  return block ? `${block}\n` : "";
+}
+
+/** What `workit doctor` reports as `changelog_released`. */
+export interface ShippedFinding {
+  status: "pass" | "warn";
+  detail: string;
+  fix?: string;
+}
+
+/**
+ * [Unreleased] entries of the repo's CHANGELOG.md that a release tag already
+ * holds (a release that never wrote back to the trunk). Null when there is
+ * nothing to judge: not a git repo, a shallow clone (its tags and their
+ * changelogs may be missing), no changelog, no [Unreleased] entry or no
+ * release tag.
+ */
+export function shippedChangelogFinding(cwd: string, exec?: Exec): ShippedFinding | null {
+  const run = exec ?? gitExec(cwd);
+  let root: string;
+  try {
+    if (run("git", ["rev-parse", "--is-shallow-repository"]).trim() !== "false") return null;
+    root = run("git", ["rev-parse", "--show-toplevel"]).trim();
+  } catch {
+    return null;
+  }
+  const file = path.join(root, "CHANGELOG.md");
+  if (!existsSync(file)) return null;
+  const text = readFileSync(file, "utf8");
+  const unreleased = parseChangelog(text).sections.find(isUnreleased);
+  if (!unreleased || sectionGroups(unreleased).every((g) => g.entries.length === 0)) return null;
+  const prefix = defaultTagPrefix(root);
+  let snapshots: TagSnapshot[];
+  try {
+    snapshots = tagSnapshots(exec ?? gitExec(root), prefix);
+  } catch {
+    return null;
+  }
+  if (snapshots.length === 0) return null;
+  const shipped = shippedUnreleased(text, snapshots);
+  if (shipped.length === 0)
+    return { status: "pass", detail: "no [Unreleased] entry in CHANGELOG.md has shipped" };
+  const oldest = shipped.reduce((a, b) => (compareVersions(b.version, a.version) < 0 ? b : a));
+  const n = shipped.length;
+  return {
+    status: "warn",
+    detail: `${n} [Unreleased] ${n === 1 ? "entry" : "entries"} already shipped (oldest in ${prefix}${oldest.version})`,
+    fix: "workit changelog roll",
   };
 }

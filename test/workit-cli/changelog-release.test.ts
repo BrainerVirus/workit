@@ -223,6 +223,35 @@ test("Given --preview or --no-write, Then nothing is written and the would-be re
   expect(r.read()).toBe(text);
 });
 
+test("Given a changelog with no [Unreleased] section, When roll or release runs, Then it says the section is missing, exits 0 and writes nothing", async () => {
+  const text = "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- First release.\n";
+  const r = repo([{ text, tag: "v1.0.0" }]);
+  const roll = io(r.dir);
+  expect(await run(["roll"], roll)).toBe(0);
+  expect(roll.out).toBe("CHANGELOG.md: no [Unreleased] section; nothing to roll\n");
+  const release = io(r.dir);
+  expect(await run(["release", "1.1.0", "--notes-out", "-"], release)).toBe(0);
+  expect(release.out).toBe("");
+  expect(release.err).toContain("CHANGELOG.md: no [Unreleased] section; nothing to release");
+  expect(release.err).not.toContain("is empty");
+  expect(r.read()).toBe(text);
+  const json = io(r.dir, true);
+  expect(await run(["release", "1.1.0", "--no-write"], json)).toBe(0);
+  expect(JSON.parse(json.out).data).toMatchObject({ unreleased: false, written: false });
+});
+
+test("Given --notes-format github, Then the notes sit between the release tag's workit:changelog markers; a bad format exits 2", async () => {
+  const r = repo([{ text: changelog(""), tag: "v1.0.0" }, { text: changelog(FIXED) }]);
+  const out = io(r.dir);
+  const args = ["release", "1.1.0", "--no-write", "--notes-out", "-", "--notes-format", "github"];
+  expect(await run(args, out)).toBe(0);
+  expect(out.out).toBe(
+    `<!-- workit:changelog v1.1.0 -->\n${FIXED.trim()}\n<!-- /workit:changelog -->\n`,
+  );
+  expect(await run(["release", "1.1.0", "--notes-format", "html"], io(r.dir))).toBe(2);
+  expect(r.read()).toBe(changelog(FIXED));
+});
+
 test("Given --notes-out -, Then the notes alone go to stdout", async () => {
   const r = repo([{ text: changelog(""), tag: "v1.0.0" }, { text: changelog(FIXED) }]);
   const out = io(r.dir);

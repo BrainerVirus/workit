@@ -21,6 +21,7 @@ import {
   resolveRef,
 } from "../git/rev";
 import { resolveChangelogPaths } from "./changelog-gate";
+import { BLOCK_END, LEGACY_BLOCK_END, LEGACY_BLOCK_START, blockStart } from "./changelog-roll";
 import { workspaceChangelog } from "./workspaces";
 
 const VERSION = /^\d[0-9A-Za-z._+-]{0,99}$/u;
@@ -417,37 +418,58 @@ export function writeReleaseBody(
 // ---------------------------------------------------------------------------
 // notes edit --from-changelog
 
-const START = (tag: string) => `<!-- workit:changelog ${tag} -->`;
-const END = "<!-- /workit:changelog -->";
-
 /** The changelog block a release body carries, between Workit's markers. */
 export const changelogBlock = (tag: string, section: string): string =>
-  `${START(tag)}\n${section.trim()}\n${END}`;
+  `${blockStart(tag)}\n${section.trim()}\n${BLOCK_END}`;
 
 /**
  * The release body with `block` in place of the one between the markers, or
- * prepended when there is none. Running it again on its own output changes
- * nothing. A start marker without its end marker is refused: where the old
- * block ends is unknown, and prepending would leave two.
+ * prepended when there is none. A block between the legacy
+ * `<!-- workit:changelog:start -->`/`:end -->` markers (Workit's own release
+ * script before `workit changelog release`) is replaced the same way, so the
+ * body ends with exactly one block; running it again on its own output
+ * changes nothing. A start marker without its end marker is refused: where the
+ * old block ends is unknown, and prepending would leave two. An empty `block`
+ * removes the old ones.
  */
 export function mergeReleaseBody(
   existing: string,
   tag: string,
   block: string,
 ): ForgeResult<string> {
-  const start = existing.indexOf(START(tag));
-  if (start < 0) {
+  const ranges: Array<[number, number]> = [];
+  for (const [start, end] of [
+    [blockStart(tag), BLOCK_END],
+    [LEGACY_BLOCK_START, LEGACY_BLOCK_END],
+  ] as const) {
+    for (let from = existing.indexOf(start); from >= 0;) {
+      const close = existing.indexOf(end, from);
+      if (close < 0)
+        return failure(
+          "blocked",
+          `release_body_unterminated: the body of release ${tag} has ${start} but no ${end} after it; nothing was edited`,
+          `add ${end} where the old changelog block ends (or delete the start marker) in the release on the forge, then rerun: workit release notes edit ${tag} --from-changelog`,
+        );
+      ranges.push([from, close + end.length]);
+      from = existing.indexOf(start, close + end.length);
+    }
+  }
+  if (ranges.length === 0) {
     const rest = existing.trim();
     return success(rest ? `${block}\n\n${rest}` : block);
   }
-  const end = existing.indexOf(END, start);
-  if (end < 0)
-    return failure(
-      "blocked",
-      `release_body_unterminated: the body of release ${tag} has ${START(tag)} but no ${END} after it; nothing was edited`,
-      `add ${END} where the old changelog block ends (or delete the start marker) in the release on the forge, then rerun: workit release notes edit ${tag} --from-changelog`,
-    );
-  return success(`${existing.slice(0, start)}${block}${existing.slice(end + END.length)}`);
+  ranges.sort((a, b) => a[0] - b[0]);
+  // The new block takes the first old block's place; the others go, with the
+  // blank lines that set them apart.
+  const [[first, firstEnd]] = ranges as [[number, number]];
+  let out = existing.slice(0, first) + block;
+  let cursor = firstEnd;
+  for (const [from, to] of ranges.slice(1)) {
+    if (from >= cursor) out = (out + existing.slice(cursor, from)).trimEnd();
+    cursor = Math.max(cursor, to);
+  }
+  const merged = out + existing.slice(cursor);
+  return success(block === "" ? merged.trim() : merged);
 }
 
 /**
