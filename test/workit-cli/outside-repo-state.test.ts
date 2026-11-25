@@ -85,7 +85,7 @@ test("Given a non-git folder, When `workit dir retros` runs and a decision is re
   expect(result).toMatchObject({ code: 0, stdout: `${path.join(store, "retros")}\n` });
   expect(existsSync(path.join(store, "retros"))).toBe(true);
   const recorded = recordDecision(
-    { cwd: folder, actor: { kind: "human", id: "t" } },
+    { cwd: folder, actor: { host: "cli", session: null, agentId: null } },
     { what: "keep it out of the folder", why: "#892" },
   );
   expect(recorded.ok).toBe(true);
