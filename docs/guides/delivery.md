@@ -176,9 +176,16 @@ Outside git-flow (github-flow, trunk-based, custom, or a track whose
 pushes the release branch and opens a release PR into the trunk instead; tag
 the merged commit and push it with `workit git push --release <tag>`. The PR
 body is the [release notes](#release-notes), and that push publishes the
-GitHub or GitLab release on the tag with them. Before release notes, this path
-created no forge release: under the default `auto` it now creates one, and
-`releaseNotes: off` keeps the old behavior.
+GitHub or GitLab release on the tag with them, unless `releaseNotes: off`.
+
+A monorepo package with its own release line (`releasePackages` in the
+workspace) is released with `workit release package <name> <version>
+[--at <ref>] [--latest] [--dry-run]`: it tags `<namespace><version>`
+(`pkg-a@0.1.0`) on the workspace's release commit (by default the newest
+release tag on the remote production branch), pushes the tag under the
+`release` grant, publishes its forge release from the package's changelog,
+not marked Latest unless `--latest`, and verifies it
+([release packages](configuration.md#release-packages)).
 
 A repository that releases by pushing a tag (GoReleaser and similar,
 github-flow with no release branch) uses `workit release tag v<version>`
@@ -268,7 +275,9 @@ hotfix can need protected branches and the release tag on the remote, so
   trunk-based and custom, no branch (a protected trunk moves only through a
   reviewed PR); and release tags (`v<digit>…`, or `<prefix><digit>…` when
   `gitflow.prefix.versiontag` is set, empty included; a track's tags start
-  with its `tagNamespace`, e.g. `nun/v1.0.0`) in every preset whose commit is
+  with its `tagNamespace`, e.g. `nun/v1.0.0`; a release package's tags,
+  `pkg-a@0.1.0` or its own `tagNamespace`, whose forge release is never
+  marked Latest) in every preset whose commit is
   already on the remote production branch (git-flow production, a track's
   production, else the default target) or on a branch in the same push
   (`tag_unreleased` otherwise). Any
@@ -388,9 +397,13 @@ and how to fix it.
 - Git runs the hook for `-m`, `-F`, amend, merge and squash commits, also
   with `--no-verify`, and before `commit-msg`, so a commitlint there sees the
   trailer. Your own `commit-msg` checks keep running unchanged.
-- The id comes from the same variables `workit` reads: `WORKIT_SESSION_ID`
-  (set it empty to opt out), then `OPENCODE_SESSION_ID`, `PI_SESSION_ID` or
-  `CODEX_THREAD_ID` (see [hosts](hosts.md)). Cursor puts no session id in the
+- The id comes from the same variables `workit` reads: the host's own
+  (`OPENCODE_SESSION_ID`, `PI_SESSION_ID` or `CODEX_THREAD_ID`), with
+  `WORKIT_SESSION_ID` winning unless `WORKIT_HOST` names another host; set it
+  empty to opt out (see [hosts](hosts.md)). Under workspace
+  `trailers: false` the hook adds nothing: it follows `WORKIT_TRAILERS=on|off`
+  (set by `workit git commit`), else asks `workit git trailers`, and adds the
+  trailer when Workit cannot answer. Cursor puts no session id in the
   agent's shell, so its raw commits get a trailer only when the command sets
   `WORKIT_SESSION_ID`.
 - The message is left unchanged with no session; an id outside
@@ -531,7 +544,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   the paths (`conflicts` in `--json`), with `workit git rebase --onto <base>`
   as the unblock. `stack land` never rebases this way.
 - `pr merge` ends one of two ways. A merge exits 0 and prints
-  `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout.
+  `merged PR #<n> (<method>) at head <sha> -> <merge sha>` first, on stdout
+  (`merged MR !<n> …` on GitLab).
   Anything else exits non-zero and ends with
   `workit: error: PR not merged (<reason>, exit <n>)` on stderr, after the
   refusal and its `unblock:` line, whether the verb refused it or the
@@ -575,7 +589,9 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   judged. `workit verify-delivery merge` on such a PR is
   delivered only when the change reached that trunk (`merge_on_trunk`).
 - `pr merge` also reads the CI of the base branch's head (a protected target
-  only). A failing check there refuses the merge (`base_red`, exit 3), naming
+  only). A failing check there that branch protection requires (or, when the
+  required set cannot be read, a hard failure not known to be optional)
+  refuses the merge (`base_red`, exit 3), naming
   the failing checks and the run URL, so a PR never lands silently on a red
   base. Checks still running only print a note, and a base with no checks or
   green checks merges quietly. A PR whose own head passes every check that is
@@ -621,7 +637,8 @@ workit verify-delivery [push|pr|merge|release]  # exit 1 when it did not land
   `--reason` serves it and `--unverified` together. `stack land` takes the
   same `--base-red-ok --reason` and passes it to every merge it makes.
 - `verify-delivery` answers "did it land?" from the remote, never from local
-  state. A task whose branch the ledger shows merged (`pr.merged`) and
+  state. `verify-delivery merge` runs the same
+  [cleanup](cleanup.md) as `pr merge` once the merge is confirmed. A task whose branch the ledger shows merged (`pr.merged`) and
   verified (`delivery.verified`, `merged`) is closed by `verify-delivery
   merged` and swept again on the next `workit task` command, so a delivered
   task stops showing as active. A merge without a verified delivery leaves
@@ -1313,8 +1330,14 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   chain with heavy parts is denied with each part's lease command, and a
   command a host permission rule names runs outside the lease
   ([verification guide](verification.md#heavy-commands-and-the-lease)).
-- **The lease is a queue.** It has `slots` places (default 1) across every
-  worktree and agent of the user. A heavy check that finds them taken joins a
+- **The lease is a weighted budget and a queue.** It is shared across every
+  worktree and agent of the user, and counted in units (`resources.slots`,
+  default 1, or a units `budget` with per-check `weights`) and in memory (the
+  RAM less a `reserve`, each check charged its measured peak RSS; see
+  [heavy-check budget](configuration.md#heavy-check-budget)). A pressure gate
+  holds a heavy check while the machine is over its critical pressure line
+  (the wait line then names `memory pressure`), at most 5 min. A heavy check
+  that finds no room joins a
   queue that serves the shortest measured run first (a waiter queued 5 min
   goes ahead of newer ones), says where it stands, and prints a
   status line every 30 s: each holder with its age, the queue position, the
@@ -1408,8 +1431,9 @@ workit lock status                # who holds the lease; `workit lock wait` wait
 Configure it under `resources`. The machine's limits come from the matching
 entry of your `workspaces.json`. A repo's `.workit/checks.json` can
 only tighten them, so a repo cannot break the machine-wide limit: it can add
-`heavy` checks, lower `memoryMax` and `cpuQuota`, and set its own `wait`; its
-`slots` and `scope` are ignored with a warning.
+`heavy` checks, lower `memoryMax`, `cpuQuota`, `budget` and `maxHold`, raise
+`reserve` and a check's `weights`, and set its own `wait`; its `slots`,
+`scope`, `light` and `pressure` are ignored with a warning.
 
 ```json
 {
