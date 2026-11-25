@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { folderStoreDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 
 // #835: a `workit check` whose checkout is removed while it runs records
 // nothing and never recreates the removed path.
@@ -119,12 +120,13 @@ test("G a non-git directory removed by the checked command, W the check ends, T 
   expect(result.stderr).toContain("the result was not recorded");
 });
 
-test("G a non-git directory that exists, W a check runs there, T it records into <dir>/.workit as before", async () => {
+test("G a non-git directory that exists, W a check runs there, T it records into the folder's store in the state dir", async () => {
   const dir = temp("wk-orphan-nogit-");
 
   const result = await run(dir, ["check", "--name", "t", "--", BUN, "-e", "process.exit(0)"]);
 
   expect(result.code).toBe(0);
-  expect(existsSync(path.join(dir, ".workit", "ledger", "ledger.jsonl"))).toBe(true);
+  expect(existsSync(path.join(folderStoreDir(dir), "ledger", "ledger.jsonl"))).toBe(true);
+  expect(existsSync(path.join(dir, ".workit"))).toBe(false);
   expect(result.stderr).not.toContain("not recorded");
 });

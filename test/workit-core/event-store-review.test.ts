@@ -240,8 +240,7 @@ test("a 2.x store created after 3.0 (e.g. after git clean) joins the checkout's 
   if (!first.ok || !first.data) throw new Error("setup");
   const workspace = new TaskStore(root).readWorkspace();
   if (!workspace.ok || !workspace.data) throw new Error("workspace");
-  // A 2.x runtime starts its own store with its own workspace id.
-  rmSync(path.join(root, ".workit", "workspace.json"));
+  // A 2.x runtime starts its own store (in the folder) with its own workspace id.
   const record = {
     ...first.data.task,
     id: crypto.randomUUID(),

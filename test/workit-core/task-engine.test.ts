@@ -24,7 +24,7 @@ import {
   success,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
-import { workspaceFileOf } from "./store-files";
+import { storeDirOf, workspaceFileOf } from "./store-files";
 import {
   assessment,
   caller,
@@ -123,7 +123,7 @@ test("task history search matches summaries and decisions, orders and limits rea
   expect(amended.ok).toBe(true);
 
   // Searching is read-only: no task log or workspace record changes.
-  const taskDir = join(root, ".workit", "tasks");
+  const taskDir = join(storeDirOf(root), "tasks");
   const logs = () =>
     readdirSync(taskDir)
       .toSorted()
