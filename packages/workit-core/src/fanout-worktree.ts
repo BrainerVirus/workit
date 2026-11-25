@@ -48,6 +48,7 @@ import {
 } from "./worktree-deps";
 import { heldWithin, stopProcesses } from "./core/procs";
 import { stateDir } from "./core/workit-paths.mjs";
+import { FANOUT_DEPS_MODES, workspaceFanoutDeps, type FanoutDepsMode } from "./core/workspaces";
 import {
   branchRef,
   fanoutFail,
@@ -308,8 +309,8 @@ export type DependencyState = {
 };
 
 /** `--deps`: the worktree's own frozen install (default), or links into the main checkout's. */
-export type DependencyChoice = "install" | "link";
-export const DEPENDENCY_CHOICES: readonly DependencyChoice[] = ["install", "link"];
+export type DependencyChoice = FanoutDepsMode;
+export const DEPENDENCY_CHOICES: readonly DependencyChoice[] = FANOUT_DEPS_MODES;
 /** How long the own install may run before it is killed and the worktree is linked instead. */
 export const INSTALL_TIMEOUT_MS = 5 * 60_000;
 
@@ -319,6 +320,39 @@ export type DependencyOptions = {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 };
+
+/**
+ * The dependency options of a create: each flag (`--deps`,
+ * `--install-timeout`) wins over the workspace's `fanout.deps` and
+ * `fanout.installTimeout`, which win over the defaults (install, 5m). Notes
+ * name a workspace value that applied and one that was ignored. An error when
+ * an `--install-timeout` meets a link choice: it would bound nothing.
+ */
+export function resolveDependencyOptions(
+  cwd: string,
+  flags: { choice?: DependencyChoice; timeoutMs?: number },
+  env: NodeJS.ProcessEnv,
+): { ok: true; options: DependencyOptions; notes: string[] } | { ok: false; error: string } {
+  const configured = workspaceFanoutDeps(cwd);
+  const notes = [...configured.issues];
+  const choice = flags.choice ?? configured.deps ?? "install";
+  if (flags.timeoutMs !== undefined && choice === "link")
+    return {
+      ok: false,
+      error:
+        flags.choice === "link"
+          ? "--install-timeout goes with --deps install"
+          : `--install-timeout goes with --deps install (workspace ${configured.from.deps} sets fanout.deps link)`,
+    };
+  if (flags.choice === undefined && configured.deps)
+    notes.push(`deps ${configured.deps}: workspace ${configured.from.deps} sets fanout.deps`);
+  const timeoutMs = flags.timeoutMs ?? configured.installTimeoutMs ?? undefined;
+  if (flags.timeoutMs === undefined && configured.installTimeoutMs !== null && choice === "install")
+    notes.push(
+      `install timeout ${Math.round(configured.installTimeoutMs / 1000)} s: workspace ${configured.from.installTimeout} sets fanout.installTimeout`,
+    );
+  return { ok: true, options: { choice, env, timeoutMs }, notes };
+}
 
 /** The install log, in the worker's scratch dir (outside the worktree). */
 const INSTALL_LOG = "deps-install.log";

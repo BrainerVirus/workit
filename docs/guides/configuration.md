@@ -451,6 +451,26 @@ value reads as the default.
 { "name": "work", "glob": "/home/you/work/**", "delegation": "lead-orchestrates" }
 ```
 
+### Fanout worktree dependencies
+
+A workspace's `fanout.deps` says how `workit fanout worktree create` gives a
+slice worktree its `node_modules`: `"install"` (the default) runs the frozen
+install of the worktree's own lockfile, `"link"` links the main checkout's
+installed packages instead, for a repo whose install is too slow to run per
+slice. `fanout.installTimeout` (a duration such as `"90s"` or `"10m"`, default
+`"5m"`) bounds that install: past it, the install's whole process tree is
+killed and the worktree is linked instead. `--deps` and `--install-timeout`
+on one create override them. A workspace nested inside another inherits each
+the way it inherits `trailers`. The create output adds a note when a
+workspace value applied, and names a value Workit does not read, which is
+ignored (the default applies). `--install-timeout` with `fanout.deps` `"link"`
+needs `--deps install` too. See
+[delivery](delivery.md#parallel-slices-fanout) for what each choice does.
+
+```json
+{ "name": "monorepo", "glob": "/home/you/big/**", "fanout": { "deps": "link" } }
+```
+
 ### Changelog and docs steps
 
 A workspace can add a Keep a Changelog step and a docs refresh to shipping.

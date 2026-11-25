@@ -190,6 +190,16 @@
                 },
                 "additionalProperties": false,
                 "description": "The model per slice TIER (mundane, standard, hard), as one name or per host."
+              },
+              "deps": {
+                "type": "string",
+                "enum": ["install", "link"],
+                "description": "How `workit fanout worktree create` gives a slice worktree node_modules: `install` (default: its own frozen install of its lockfile) or `link` (links into the main checkout's installed packages, for a repo too slow to install per slice). `--deps` overrides it."
+              },
+              "installTimeout": {
+                "type": "string",
+                "pattern": "^\\s*(?:\\d+(?:\\.\\d+)?\\s*|(?:\\d+(?:\\.\\d+)?\\s*(?:ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\\s*)+)$",
+                "description": "How long the own install may run before its process tree is killed and the worktree is linked instead: a duration such as `90s` or `10m` (default `5m`). `--install-timeout` overrides it."
               }
             },
             "additionalProperties": false

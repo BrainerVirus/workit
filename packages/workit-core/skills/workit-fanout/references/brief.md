@@ -127,7 +127,8 @@ worktree links the main checkout's `node_modules` instead and says so:
 Linked packages can drift from the lockfile: a verifier reproduces a failure
 that reads installed packages on an own install before failing the
 candidate. `--deps link` links on purpose (a repo too slow to install per
-slice).
+slice); a workspace's `fanout.deps` and `fanout.installTimeout` set the same
+for every create, and the flags override them.
 
 One unplanned slice: `workit fanout worktree create fix-login [--branch
 fix/login] [--base <b>] [--tier <t>]` (no plan holds it) records a one-slice plan named after it

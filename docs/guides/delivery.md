@@ -1272,7 +1272,10 @@ resume`). It also makes the worker's scratch dir for its temp files,
   without a lockfile is linked the same way, and a repo with neither a
   lockfile nor `node_modules` gets nothing.
   `--deps link` (for a repo whose install is too slow to run per slice)
-  links instead of installing. Where the main checkout has `node_modules`
+  links instead of installing. A workspace sets either choice, and the
+  timeout, for every create with `fanout.deps` and `fanout.installTimeout`
+  ([configuration](configuration.md#fanout-worktree-dependencies)); the flags
+  override them. Where the main checkout has `node_modules`
   (also `packages/*/node_modules`) that git ignores, the worktree gets its
   own: relative links such as workspace packages (`../../packages/<name>`)
   and `.bin` entries resolve inside the worktree, installed packages link to

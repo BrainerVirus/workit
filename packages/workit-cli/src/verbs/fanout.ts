@@ -37,6 +37,7 @@ import { fanoutStatus, type StatusOutcome } from "@workit-dev/core/src/fanout-st
 import {
   DEPENDENCY_CHOICES,
   createSliceWorktree,
+  resolveDependencyOptions,
   releaseSliceWorktree,
   type CreateOutcome,
   type DependencyChoice,
@@ -538,13 +539,14 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
     flags["install-timeout"] === undefined ? undefined : parseDuration(flags["install-timeout"]);
   if (timeoutMs === null || timeoutMs === 0)
     return usage(io, "--install-timeout takes a duration such as 90s or 5m", WORKTREE_USAGE);
-  if (timeoutMs !== undefined && flags.deps === "link")
-    return usage(io, "--install-timeout goes with --deps install", WORKTREE_USAGE);
-  const dependencies = {
-    choice: (flags.deps ?? "install") as DependencyChoice,
-    env: io.env,
-    timeoutMs,
-  };
+  // The flags win over the workspace's fanout.deps and fanout.installTimeout.
+  const resolved = resolveDependencyOptions(
+    io.cwd,
+    { choice: flags.deps as DependencyChoice | undefined, timeoutMs },
+    io.env,
+  );
+  if (!resolved.ok) return usage(io, resolved.error, WORKTREE_USAGE);
+  const dependencies = resolved.options;
   const actor = actorFromEnv(io.env);
   let chosen: FanoutFile | number;
   if (branch === null && !unplanned) chosen = pickFanout(io, flags);
@@ -576,6 +578,7 @@ function createWorktrees(io: Io, slices: string[], flags: Record<string, string>
     if (!found) return failed(io, findSliceMissing(chosen.name, slice));
     made.push({
       ...result.data,
+      notes: [...resolved.notes, ...result.data.notes],
       ...slicePointer(io.cwd, chosen, found, result.data.path, actor.host),
     });
   }

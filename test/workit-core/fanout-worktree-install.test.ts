@@ -21,6 +21,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
+import { parseDuration } from "@/packages/workit-core/src/duration";
 import { frozenInstall, installCommand } from "@/packages/workit-core/src/worktree-deps";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 
@@ -33,7 +34,15 @@ afterAll(() => configHome.restore());
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
 });
+
+/** A workspace over every test repo (they live in the temp dir) with these fanout settings. */
+const workspaceFanout = (fanout: Record<string, unknown>) =>
+  writeFileSync(
+    path.join(configHome.configDir, "workspaces.json"),
+    JSON.stringify({ workspaces: [{ name: "tmp", glob: `${os.tmpdir()}/**`, fanout }] }),
+  );
 
 const tempDir = (prefix: string): string => {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -331,6 +340,96 @@ describe.skipIf(process.platform === "win32")("own install", () => {
   });
 });
 
+// Workspace fanout.deps and fanout.installTimeout: the flags override them.
+describe.skipIf(process.platform === "win32")("workspace fanout.deps", () => {
+  const env = (mode: string) => {
+    const fake = fakeBun();
+    return {
+      fake,
+      env: {
+        PATH: `${fake.bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        FAKE_BUN: mode,
+        FAKE_BUN_LOG: fake.log,
+      },
+    };
+  };
+
+  test("given fanout.deps link, when create runs without --deps, then it links without running the package manager and says the workspace chose it", async () => {
+    workspaceFanout({ deps: "link" });
+    const { fake, env: vars } = env("ok");
+    const { made, human } = await create([], vars);
+    expect(existsSync(fake.log)).toBe(false);
+    expect(made.deps.mode).toBe("linked");
+    expect(made.deps.fallback).toBeNull();
+    expect(made.notes).toContain("deps link: workspace tmp sets fanout.deps");
+    expect(human).toContain("note: deps link: workspace tmp sets fanout.deps");
+  });
+
+  test("given fanout.deps link, when create runs with --deps install, then the flag wins and the worktree gets its own install", async () => {
+    workspaceFanout({ deps: "link" });
+    const { fake, env: vars } = env("ok");
+    const { made } = await create(["--deps", "install"], vars);
+    expect(made.deps.mode).toBe("installed");
+    expect(leftpad(made.path)).toBe("2.0.0");
+    expect(readFileSync(fake.log, "utf8")).toContain("install --frozen-lockfile");
+    expect(made.notes.join("\n")).not.toContain("fanout.deps");
+  });
+
+  test("given fanout.installTimeout, then it bounds the install, and --install-timeout overrides it", async () => {
+    workspaceFanout({ installTimeout: "1s" });
+    const configured = await run(
+      await repo(),
+      ["fanout", "worktree", "create", "a", "--json"],
+      env("hang").env,
+    );
+    expect(configured.code, configured.stderr + configured.stdout).toBe(0);
+    const byConfig = configured.json().data as Made;
+    expect(byConfig.deps.fallback).toStartWith("bun install --frozen-lockfile timed out after 1 s");
+    expect(byConfig.notes).toContain(
+      "install timeout 1 s: workspace tmp sets fanout.installTimeout",
+    );
+    const flagged = await run(
+      await repo(),
+      ["fanout", "worktree", "create", "a", "--install-timeout", "2s", "--json"],
+      env("hang").env,
+    );
+    expect(flagged.code, flagged.stderr + flagged.stdout).toBe(0);
+    const byFlag = flagged.json().data as Made;
+    expect(byFlag.deps.fallback).toStartWith("bun install --frozen-lockfile timed out after 2 s");
+    expect(byFlag.notes.join("\n")).not.toContain("fanout.installTimeout");
+  }, 20_000);
+
+  test("given values Workit does not read, then the defaults apply and the notes name each ignored value", async () => {
+    workspaceFanout({ deps: "copy", installTimeout: "soon" });
+    const { made } = await create([], env("ok").env);
+    expect(made.deps.mode).toBe("installed");
+    expect(made.notes).toContain(
+      'workspace tmp fanout.deps "copy" is not install or link; ignored',
+    );
+    expect(made.notes).toContain(
+      'workspace tmp fanout.installTimeout "soon" is not a duration such as "90s" or "10m"; ignored',
+    );
+  });
+
+  test("given fanout.deps link, when --install-timeout is passed without --deps install, then create refuses and names the workspace", async () => {
+    workspaceFanout({ deps: "link" });
+    const cwd = await repo();
+    const result = await run(cwd, [
+      "fanout",
+      "worktree",
+      "create",
+      "a",
+      "--install-timeout",
+      "1m",
+      "--json",
+    ]);
+    expect(result.code).toBe(2);
+    expect(result.stdout + result.stderr).toContain(
+      "--install-timeout goes with --deps install (workspace tmp sets fanout.deps link)",
+    );
+  });
+});
+
 test("given an unknown --deps or --install-timeout with --deps link, then create refuses with usage", async () => {
   const cwd = await repo();
   const bad = await run(cwd, ["fanout", "worktree", "create", "a", "--deps", "copy", "--json"]);
@@ -349,6 +448,32 @@ test("given an unknown --deps or --install-timeout with --deps link, then create
   ]);
   expect(both.code).toBe(2);
   expect(both.stdout + both.stderr).toContain("--install-timeout goes with --deps install");
+});
+
+test("given the editor schema of fanout.installTimeout, then it accepts what the reader reads and nothing else", () => {
+  const schema = JSON.parse(
+    readFileSync(
+      path.join(import.meta.dir, "../../packages/workit-core/schemas/workspaces.json"),
+      "utf8",
+    ),
+  );
+  // The first `installTimeout` property anywhere in the schema (fanout's).
+  const find = (node: unknown): { pattern: string } | undefined => {
+    if (!node || typeof node !== "object") return undefined;
+    const record = node as Record<string, unknown>;
+    const own = (record.properties as Record<string, { pattern: string }> | undefined)
+      ?.installTimeout;
+    return own ?? Object.values(record).map(find).find(Boolean);
+  };
+  const pattern = new RegExp(find(schema)!.pattern, "u");
+  for (const value of ["90s", "10m", "1h30m", "45 minutes", "300", "1500ms"]) {
+    expect(pattern.test(value), value).toBe(true);
+    expect(parseDuration(value), value).toBeGreaterThan(0);
+  }
+  for (const value of ["soon", "5 parsecs", "", "m5"]) {
+    expect(pattern.test(value), value).toBe(false);
+    expect(parseDuration(value), value).toBeNull();
+  }
 });
 
 test("given each lockfile, then the frozen install is the one its package manager documents", () => {
