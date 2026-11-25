@@ -1,6 +1,7 @@
 // CHANGELOG.md entries in GitHub release notes: the release's generateNotes and
 // prepare commands (release.config.cjs) and the backfill of published releases,
-// against a temp repo with real tags and a fake `gh`.
+// against a temp repo with real tags and a fake `gh`. The roll itself is core's
+// (test/workit-core/changelog-roll.test.ts).
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -141,48 +142,6 @@ async function releaseBody(cwd: string, version: string): Promise<string> {
 
 const silent = { out: () => {}, err: () => {} };
 
-test("Given entries added before 2.10.0, before 2.11.0 and after, When the roll splits [Unreleased], Then each lands under the first tag holding it and the later one stays", () => {
-  const repo = makeRepo(HISTORY);
-  expect(main([], { root: repo.cwd, exec: repo.exec, ...silent })).toBe(0);
-  expect(repo.read()).toBe(`# Changelog
-
-Intro.
-
-## [Unreleased]
-
-### Added
-
-- Gamma: added after 2.11.0.
-
-## [2.11.0] - 2026-03-01
-
-### Fixed
-
-- Beta: fixed before 2.11.0.
-
-## [2.10.0] - 2026-02-01
-
-### Added
-
-- Alpha: added before 2.10.0, rewrapped
-  after it shipped.
-
-## [0.1.0] - 2026-01-01
-
-### Added
-
-- Origin.
-
-[Unreleased]: https://github.com/acme/widget/compare/workit-dev-v2.11.0...HEAD
-[2.11.0]: https://github.com/acme/widget/compare/workit-dev-v2.10.0...workit-dev-v2.11.0
-[2.10.0]: https://github.com/acme/widget/releases/tag/workit-dev-v2.10.0
-[0.1.0]: https://github.com/acme/widget/releases/tag/v0.1.0
-`);
-  const rolled = repo.read();
-  main([], { root: repo.cwd, exec: repo.exec, ...silent });
-  expect(repo.read()).toBe(rolled);
-});
-
 test("Given [Unreleased] entries and release 2.12.0, When the release's generateNotes and prepare commands run, Then CHANGELOG.md gets [2.12.0] with them, [Unreleased] is empty and the body starts with them before the PR-title list", async () => {
   const repo = makeRepo(HISTORY);
   const body = await releaseBody(repo.cwd, "2.12.0");
@@ -215,19 +174,6 @@ test("Given a release with no [Unreleased] entries, Then the body is the PR-titl
   expect(body).not.toContain(MARKER_START);
   releaseStep(repo.cwd, "prepareCmd", "2.12.0");
   expect(repo.read()).toBe(rolled);
-});
-
-test("Given two [Unreleased] entries that start alike, Then each is matched on its whole text", () => {
-  const shared = `- ${"Same start ".repeat(10)}`;
-  const repo = makeRepo([
-    { text: changelog([`${shared}shipped.`], []), tag: "workit-dev-v2.10.0", date: "2026-02-01" },
-    { text: changelog([`${shared}shipped.`, `${shared}not yet.`], []), date: "2026-02-02" },
-  ]);
-  main([], { root: repo.cwd, exec: repo.exec, ...silent });
-  const [unreleased = "", released = ""] = repo.read().split("## [2.10.0]");
-  expect(unreleased).toContain("not yet.");
-  expect(unreleased).not.toContain("shipped.");
-  expect(released).toContain("shipped.");
 });
 
 test("Given entries longer than the cap, Then the block keeps those that fit and ends with the compare link", () => {

@@ -79,7 +79,7 @@ const PARSERS: Record<string, string[]> = {
   deslop: ["verbs/deslop.ts"],
   knowledge: ["verbs/knowledge.ts"],
   youtrack: ["verbs/youtrack.ts"],
-  changelog: ["verbs/changelog.ts"],
+  changelog: ["verbs/changelog.ts", "verbs/changelog-roll.ts"],
   handoff: ["verbs/handoff.ts", "task.ts#parseHandoffArgs"],
 };
 PARSERS.task = [...PARSERS.task, "verbs/task.ts"];

@@ -1244,7 +1244,7 @@ export const VERBS: readonly VerbEntry[] = [
   withSubcommands({
     name: "changelog",
     group: "delivery",
-    summary: "Add entries under the Unreleased section of the changelog",
+    summary: "Add Unreleased entries; roll into releases",
     subcommands: [
       {
         name: "apply",
@@ -1252,6 +1252,19 @@ export const VERBS: readonly VerbEntry[] = [
           "workit changelog apply (--entries <JSON|@file|-> | --normalize-only) [--path CHANGELOG.md] [--preview]",
         summary:
           'Add entries (or only normalize the file); --entries takes {"Added":["…"],"Fixed":["…"]} or [{"category":"Fixed","text":"…"}]',
+      },
+      {
+        name: "roll",
+        usage: "workit changelog roll [--path CHANGELOG.md] [--tag-prefix <prefix>] [--preview]",
+        summary:
+          "Move each [Unreleased] entry into the section of the first release tag whose changelog holds it (local tags only; --preview writes nothing)",
+      },
+      {
+        name: "release",
+        usage:
+          "workit changelog release <x.y.z> [--date <YYYY-MM-DD>] [--notes-out <file|->] [--no-write] [--path CHANGELOG.md] [--tag-prefix <prefix>]",
+        summary:
+          "Roll, then move the rest of [Unreleased] into ## [x.y.z] - <date>; --notes-out writes that version's entries as release notes; a rerun changes nothing",
       },
       {
         name: "merge",
@@ -1266,6 +1279,7 @@ export const VERBS: readonly VerbEntry[] = [
     ],
     examples: [
       `workit changelog apply --entries '{"Fixed":["fanout plan names every valid tier"]}'`,
+      "workit changelog release 1.4.0 --notes-out release-notes.md",
     ],
     load: () => import("./changelog"),
   }),

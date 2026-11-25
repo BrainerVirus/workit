@@ -5,7 +5,8 @@
 //   workit changelog apply (--entries <JSON> | --normalize-only) [--path CHANGELOG.md] [--preview]
 //
 // --entries takes `{"Added": ["…"], "Fixed": ["…"]}` or `[{"category", "text"}]`
-// (`@file` reads it from a file, `-` from stdin).
+// (`@file` reads it from a file, `-` from stdin). `roll` and `release` live in
+// changelog-roll.ts.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { changelogApply, changelogApplyPreview } from "@workit-dev/core/src/core/changelog";
@@ -14,6 +15,7 @@ import {
   mergeChangelogFiles,
 } from "@workit-dev/core/src/core/changelog-merge";
 import { emit, fail, ok, type Io } from "../output";
+import { runRelease, runRoll } from "./changelog-roll";
 import { parseFlags, readAllStdin, usage } from "./forge-common";
 
 const MERGE_USAGE = "workit changelog merge <base> <ours> <theirs>";
@@ -69,6 +71,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         : "changelog merge driver already installed",
     ]);
   }
+  if (sub === "roll") return runRoll(rest, io);
+  if (sub === "release") return runRelease(rest, io);
   if (sub !== "apply") return usage(io, `unknown subcommand "${sub ?? ""}"`, USAGE);
   const flags = parseFlags(rest, {
     entries: "value",

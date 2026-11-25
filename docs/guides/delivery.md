@@ -264,6 +264,46 @@ Outside git-flow the same modes apply in two places:
 
 A resumed finish finds an existing forge release instead of creating it again.
 
+### Changelog in automatic releases
+
+A pipeline that cuts releases on merge or on a tag never moves `## [Unreleased]` by itself.
+`workit changelog release <x.y.z>` does: it moves the entries into `## [x.y.z] - <date>` and
+writes them as release notes, local only, with no grant
+([releasing the entries](changelog.md#releasing-the-entries)). Each job needs the release tags:
+check out with full history (`fetch-depth: 0`) or `git fetch --tags` first.
+
+semantic-release, with `@semantic-release/exec` before `@semantic-release/github` and
+`@semantic-release/git` committing `CHANGELOG.md`:
+
+```js
+["@semantic-release/exec", {
+  generateNotesCmd: "npx -y @workit-dev/cli changelog release ${nextRelease.version} --no-write --notes-out -",
+  prepareCmd: "npx -y @workit-dev/cli changelog release ${nextRelease.version}",
+}],
+```
+
+GoReleaser, on the pushed tag (the tag already holds the entries, so they go to its version):
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- run: npx -y @workit-dev/cli changelog release "${GITHUB_REF_NAME#v}" --no-write --notes-out release-notes.md
+- uses: goreleaser/goreleaser-action@v6
+  with: { args: release --clean --release-notes release-notes.md }
+```
+
+release-please, with `skip-changelog: true` so Workit keeps the file: once a release is
+created, put its entries in the forge release body:
+
+```yaml
+- run: npx -y @workit-dev/cli changelog release "${{ steps.release.outputs.version }}" --no-write --notes-out notes.md
+- run: gh release edit "${{ steps.release.outputs.tag_name }}" --notes-file notes.md
+```
+
+A release that never writes back to the trunk leaves the entries under `[Unreleased]` there.
+`workit changelog roll` on a later branch moves each into the release whose tag first holds it,
+so the trunk catches up in one PR; rerunning it changes nothing.
+
 ### Release push
 
 `workit git push` never pushes a protected branch. Finishing a release or

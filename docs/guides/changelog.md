@@ -1,9 +1,14 @@
-# Changelog merge driver
+# Changelog
+
+Workit keeps `## [Unreleased]` mergeable (the merge driver below) and moves its entries into
+releases ([releasing the entries](#releasing-the-entries)).
+
+## Merge driver
 
 Two branches that each add an entry under `## [Unreleased]` conflict in git, because both
 edit the same lines. Workit ships a git merge driver that keeps both sides' entries.
 
-## Install
+### Install
 
 ```bash
 workit changelog driver install
@@ -16,7 +21,7 @@ configured changelog path (`changelogPath`, default `CHANGELOG.md`). Commit `.gi
 every clone gets the attribute; each clone runs the install once for the git config. Running it
 again changes nothing.
 
-## What the driver does
+### What the driver does
 
 - Under `## [Unreleased]`, each `###` heading appears once. Entries keep ours first, then
   theirs; an identical entry on both sides appears once.
@@ -34,7 +39,7 @@ again changes nothing.
 
 `workit` must be on the `PATH` of the process that runs git.
 
-## Without the driver
+### Without the driver
 
 `workit git rebase` applies the same merge itself, so a branch rebases without the driver too.
 When every conflict is in a configured changelog path and merges cleanly as above, it stages the
@@ -55,3 +60,41 @@ lead writes that entry on each slice branch.
 `changelog_required`, rerun it with `--changelog "<Section>: <entry>"` instead: it adds the entry,
 commits it with a conventional subject commitlint accepts, pushes and opens the PR in one call
 ([changelog gate](delivery.md#changelog-gate)).
+
+## Releasing the entries
+
+Entries written under `## [Unreleased]` stay there until something moves them. Two local verbs do
+it; they read only the file and the repo's tags (`git for-each-ref`, `git show`), so they need no
+forge, no grant and no Workit setup, and run headless in any CI.
+
+```bash
+workit changelog roll [--path CHANGELOG.md] [--tag-prefix v] [--preview]
+workit changelog release 1.4.0 [--date 2026-11-25] [--notes-out notes.md] [--no-write]
+```
+
+- `roll` moves each `[Unreleased]` entry into the section of the first release tag whose
+  changelog already holds it, dated by that tag (`## [1.3.0] - <tag date>`), and leaves the
+  entries no tag holds. The result depends only on the tags, so it can run on any branch at any
+  time, and a second run changes nothing. A clone without release tags has nothing to roll.
+  `--preview` writes nothing (`--json` adds the would-be file as `data.after`).
+- `release <x.y.z>` rolls, then moves the rest into `## [x.y.z] - <date>` (`--date`, default
+  today in UTC) and fixes the compare links when the file has them. `--notes-out <file>` writes
+  that version's entries as Markdown (`### Fixed` and its bullets) for the forge release body;
+  `--notes-out -` prints them on stdout and everything else on stderr. `--no-write` leaves the
+  changelog as it is and still writes the notes.
+- An empty `[Unreleased]` releases nothing: exit 0, the file untouched, no empty `[x.y.z]`
+  heading, empty notes. A rerun of the same release (a retried CI job) changes nothing and
+  writes the same notes, read back from the existing `[x.y.z]` section.
+- Tags are `<prefix><x.y.z>`; the prefix is the workspace's release tag prefix (git-flow's
+  `gitflow.prefix.versiontag`, default `v`), or `--tag-prefix`. `--path` names another
+  changelog, such as one package's in a monorepo, relative to the current directory.
+- Nothing is written, exit 1, when the result would double or drop text: an `[Unreleased]`
+  entry its release's section already holds (a merge that put back what a roll moved) is named
+  by its line (`CHANGELOG.md:12 is already under [1.3.0]`); delete it from `[Unreleased]` and
+  rerun. A bad version or date exits 2.
+
+CI clones are often shallow and tagless: fetch the tags first (`fetch-depth: 0` on
+`actions/checkout`, `GIT_DEPTH: 0` on GitLab, or `git fetch --tags`), or `release` moves every
+entry into the new version, ones an older release shipped included. Pipeline setups for
+semantic-release, release-please and GoReleaser are in
+[delivery](delivery.md#changelog-in-automatic-releases).
