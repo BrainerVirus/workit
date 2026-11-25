@@ -1,6 +1,6 @@
 // The `released-changelog` repo rule, a warning: CHANGELOG.md's [Unreleased]
 // should not hold an entry a `workit-dev-v*` release already shipped. No
-// release writes back to main, so before scripts/roll-changelog.ts every entry
+// release writes back to main, so before the roll (`workit changelog roll`) every entry
 // since 0.6.0 piled up under [Unreleased] (about 1,200 lines by 2.11.0).
 // check.mts prints each hit with the roll command and never fails on it:
 // release notes do not depend on main being rolled, and a hard failure would
@@ -48,6 +48,6 @@ export function scanReleasedChangelog(root: string): ReleasedHit[] {
     file: FILE,
     line,
     column: 1,
-    message: `this [Unreleased] entry already shipped in ${version}. Fix: run \`bun scripts/roll-changelog.ts\`, which moves every released entry into its version's section. (${CITED})`,
+    message: `this [Unreleased] entry already shipped in ${version}. Fix: run \`workit changelog roll\`, which moves every released entry into its version's section. (${CITED})`,
   }));
 }

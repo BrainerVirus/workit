@@ -11,11 +11,11 @@ import path from "node:path";
 import {
   type Exec,
   lostLines,
-  main,
   parseChangelog,
   rollChangelog,
+  runChangelogRoll,
   versionGroups,
-} from "@/scripts/roll-changelog";
+} from "@/packages/workit-core/src/core/changelog-roll";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 const REAL = readFileSync(path.join(REPO_ROOT, "CHANGELOG.md"), "utf8");
@@ -39,7 +39,7 @@ const fakeGit: Exec = (cmd, args) => {
   if (cmd !== "git") throw new Error(`unexpected ${cmd}`);
   if (args[0] === "for-each-ref")
     return RELEASES.map((v) => `${PREFIX}${v}\t2026-11-18`).join("\n");
-  const version = /^workit-dev-v(.+):CHANGELOG\.md$/.exec(args[1] ?? "")?.[1] ?? "";
+  const version = /^workit-dev-v(.+):(?:\.\/)?CHANGELOG\.md$/.exec(args[1] ?? "")?.[1] ?? "";
   const upTo = RELEASES.slice(0, RELEASES.indexOf(version) + 1);
   return `# Changelog\n\n## [Unreleased]\n\n${upTo.map(sectionText).join("\n\n")}\n`;
 };
@@ -72,10 +72,20 @@ const checkoutWith = (text: string): string => {
   writeFileSync(path.join(dir, "CHANGELOG.md"), text);
   return dir;
 };
-const run = (dir: string, args: string[]) => {
-  const err: string[] = [];
-  const code = main(args, { root: dir, exec: fakeGit, out: () => {}, err: (l) => err.push(l) });
-  return { code, err: err.join("\n"), text: readFileSync(path.join(dir, "CHANGELOG.md"), "utf8") };
+/** `workit changelog roll` (or `release <version>`) in `dir`, as core runs it. */
+const run = (dir: string, release?: { version: string; date: string }) => {
+  const result = runChangelogRoll({
+    cwd: dir,
+    tagPrefix: PREFIX,
+    write: true,
+    exec: fakeGit,
+    ...(release ? { release } : {}),
+  });
+  return {
+    code: result.ok ? 0 : 1,
+    err: result.ok ? "" : [result.error, ...result.lines].join("\n"),
+    text: readFileSync(path.join(dir, "CHANGELOG.md"), "utf8"),
+  };
 };
 
 test("the real CHANGELOG.md has @workit-dev release sections to roll", () => {
@@ -85,21 +95,21 @@ test("the real CHANGELOG.md has @workit-dev release sections to roll", () => {
 
 test("Given the real, already rolled CHANGELOG.md, When it is rolled twice, Then neither roll changes a byte", () => {
   const dir = checkoutWith(REAL);
-  expect(run(dir, []).text).toBe(REAL);
-  expect(run(dir, []).text).toBe(REAL);
+  expect(run(dir).text).toBe(REAL);
+  expect(run(dir).text).toBe(REAL);
 });
 
 test("Given the real entries back under [Unreleased], When rolled, Then every release gets exactly its entries and no line is lost", () => {
   const before = unrolled();
   expect(before).not.toBe(REAL);
   const dir = checkoutWith(before);
-  const { code, text } = run(dir, []);
+  const { code, text } = run(dir);
   expect(code).toBe(0);
   expect(lostLines(before, text)).toEqual([]);
   for (const version of RELEASES)
     expect(entryTexts(text, version)).toEqual(entryTexts(REAL, version));
   // Rolling the result again is a no-op.
-  expect(run(dir, []).text).toBe(text);
+  expect(run(dir).text).toBe(text);
 });
 
 test("Given a merge that put released entries back under [Unreleased] (the rebase shape), When rolled, Then it refuses with exit 1 and writes nothing", () => {
@@ -109,22 +119,11 @@ test("Given a merge that put released entries back under [Unreleased] (the rebas
     `## [Unreleased]\n\n${sectionText(latest).split("\n").slice(1).join("\n").trim()}\n`,
   );
   const dir = checkoutWith(doubled);
-  const { code, err, text } = run(dir, []);
+  const { code, err, text } = run(dir);
   expect(code).toBe(1);
   expect(err).toContain("CHANGELOG.md: not rolled.");
   expect(err).toContain(`is already under [${latest}]`);
   expect(text).toBe(doubled);
-});
-
-test("Given --help, an unknown flag or a flag without its value, Then the roll prints usage, exits 2 and writes nothing", () => {
-  const before = unrolled();
-  for (const args of [["--help"], ["--bogus"], ["--release"], ["--notes", "1.0.0", "extra"]]) {
-    const dir = checkoutWith(before);
-    const { code, err, text } = run(dir, args);
-    expect(code, args.join(" ")).toBe(2);
-    expect(err).toStartWith("usage: bun scripts/roll-changelog.ts");
-    expect(text).toBe(before);
-  }
 });
 
 test("The line guard catches a dropped continuation line and ignores headings a roll merges", () => {
@@ -141,6 +140,7 @@ test("The line guard catches a dropped continuation line and ignores headings a 
     {
       snapshots: [],
       release: { version: "1.0.1", date: "2026-01-02" },
+      tagPrefix: PREFIX,
     },
   );
   expect(lostLines(before, rolled.text)).toEqual([]);
@@ -165,7 +165,7 @@ function fixedEntryBackInUnreleased(): { text: string; entry: string } {
 test("Given an [Unreleased] entry whose release already has its group, When rolled, Then it joins that group and the roll succeeds", () => {
   const { text, entry } = fixedEntryBackInUnreleased();
   const dir = checkoutWith(text);
-  const { code, err, text: rolled } = run(dir, []);
+  const { code, err, text: rolled } = run(dir);
   expect(err).not.toContain("not rolled");
   expect(code).toBe(0);
   expect(lostLines(text, rolled)).toEqual([]);
@@ -177,7 +177,7 @@ test("Given an [Unreleased] entry whose release already has its group, When roll
 test("Given that same file, When the release prepare runs, Then it succeeds and files the entry under its release, not the new one", () => {
   const { text, entry } = fixedEntryBackInUnreleased();
   const dir = checkoutWith(text);
-  const { code, text: rolled } = run(dir, ["--release", "9.9.9", "--date", "2026-11-19"]);
+  const { code, text: rolled } = run(dir, { version: "9.9.9", date: "2026-11-19" });
   expect(code).toBe(0);
   expect(
     versionGroups(rolled, "1.14.0").flatMap((g) => g.entries.map((e) => e.lines.join("\n"))),
