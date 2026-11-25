@@ -7,7 +7,7 @@
   "hook.subagent-start.implementer-isolated": 1319,
   "hook.subagent-start.verifier": 889,
   "hook.subagent-start.reviewer": 839,
-  "cli.help": 8195,
+  "cli.help": 8286,
   "cli.handoff.lines": 6,
   "cli.check.lines": 64,
   "schema.task": 1146,
