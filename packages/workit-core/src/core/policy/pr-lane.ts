@@ -4,13 +4,14 @@ import { resolveAutonomy, type VerificationMode } from "../../autonomy";
 import { currentBranch } from "../../git/rev";
 import { readLedger, type VerdictCheck } from "../../ledger";
 import { currentJudgment } from "./current-judgment";
-import { branchLane, laneGate, type BranchLane, type LaneGate } from "./lane";
+import { overriddenBranchLane } from "../risk-override";
+import { laneGate, type BranchLane, type LaneGate } from "./lane";
 
 export type PrLaneGate = LaneGate & { verification: VerificationMode; lane: BranchLane };
 
 /**
  * The review lane of `head` against the PR's `base` and what the gate asks
- * for it. The checked-out task's judgment raises the lane only when `branch`
+ * for it, with the workspace's sealed additiveRiskPaths applied (#891). The checked-out task's judgment raises the lane only when `branch`
  * is checked out here (it describes that work, not another branch's).
  *
  * `ci` is the forge's state of the head's checks; a caller that did not read
@@ -23,7 +24,7 @@ export function prLaneGate(
   pr: { branch: string; base: string; head: string; ci?: string | null },
 ): PrLaneGate {
   const verification = resolveAutonomy(cwd).verification;
-  const lane = branchLane(cwd, {
+  const lane = overriddenBranchLane(cwd, {
     base: pr.base,
     head: pr.head,
     judgment: currentBranch(cwd) === pr.branch ? currentJudgment(cwd) : null,

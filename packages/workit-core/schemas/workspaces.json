@@ -334,6 +334,14 @@
               "pattern": "^[\\w-]+(?:\\/\\w[\\w.-]*)*\\/(?:\\w[\\w.-]*|\\*)$"
             }
           },
+          "additiveRiskPaths": {
+            "description": "Risk-path globs whose purely additive edits follow the review lane of the rest of the diff. Only the user sets it; it counts only while sealed.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
           "autonomy": {
             "description": "Autonomy grants (D15): only ever set here, by the user, with `workit grant set`.",
             "type": "object",

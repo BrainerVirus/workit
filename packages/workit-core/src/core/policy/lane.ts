@@ -211,7 +211,7 @@ export function kindOf(file: ChangedFile): FileKind {
 
 const globCache = new Map<string, RegExp>();
 /** `**` spans directories, `*` and `?` stay within one. */
-function globMatch(pattern: string, file: string): boolean {
+export function globMatch(pattern: string, file: string): boolean {
   let regex = globCache.get(pattern);
   if (!regex) {
     let source = "";

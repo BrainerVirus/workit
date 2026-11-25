@@ -293,6 +293,56 @@ export const externalReposPolicy = (
   }
 };
 
+/** An entry's additiveRiskPaths (#891): risk-path globs, none when unset. */
+const additiveRiskPathsOf = (entry: WorkspaceConfig | null): string[] =>
+  (entry?.additiveRiskPaths ?? []).map((glob) => glob.trim().replace(/^\//u, "")).filter(Boolean);
+
+export type AdditiveRiskPathsPolicy = {
+  /** The globs that count: empty unless the seal is valid. */
+  paths: string[];
+  /** The globs the folder's entry lists, sealed or not (for the note an unsealed list gets). */
+  configured: string[];
+  workspace: string | null;
+  sealed: boolean;
+};
+
+/**
+ * The risk paths whose purely additive edits follow the lane of the rest of
+ * the diff (#891): the folder entry's `additiveRiskPaths`, read like
+ * externalReposPolicy (the account's own file with a valid seal, never under
+ * a config redirect or in a bench world; with WORKIT_WORKSPACE_NAME only the
+ * globs both entries list). Anything that throws reads as none.
+ */
+export const additiveRiskPathsPolicy = (cwd: string): AdditiveRiskPathsPolicy => {
+  const none: AdditiveRiskPathsPolicy = {
+    paths: [],
+    configured: [],
+    workspace: null,
+    sealed: false,
+  };
+  try {
+    const dir = accountDir();
+    if (dir === null || redirected(dir) || evalWorld(cwd)) return none;
+    const folder = resolveWorkspaceFrom(cwd, dir);
+    const configured = additiveRiskPathsOf(folder);
+    const workspace = folder?.name ?? null;
+    if (!configured.length) return { ...none, workspace };
+    if (checkSeal(dir).state !== "valid")
+      return { paths: [], configured, workspace, sealed: false };
+    const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
+    if (!name) return { paths: configured, configured, workspace, sealed: true };
+    const both = new Set(additiveRiskPathsOf(resolveWorkspaceFrom(cwd, dir, name)));
+    return {
+      paths: configured.filter((glob) => both.has(glob)),
+      configured,
+      workspace,
+      sealed: true,
+    };
+  } catch {
+    return none;
+  }
+};
+
 /** Whether the config dir the rest of the config reads is not the account's own. */
 const redirected = (dir: string): boolean => path.resolve(resolveConfigDir()) !== path.resolve(dir);
 
