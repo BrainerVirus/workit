@@ -6,12 +6,18 @@
 // release notes do not depend on main being rolled, and a hard failure would
 // make every open branch carry a conflicting roll after each release.
 //
-// It reads the tags of the checkout at `root` (one `git show` per tag). A
-// checkout with no `workit-dev-v*` tags, such as CI's tagless shallow clone,
-// or a root that is not a git repo, reports nothing.
+// It runs the roll's core (packages/workit-core/src/core/changelog-roll.ts)
+// over the tags of the checkout at `root` (one `git show` per tag). A checkout
+// with no `workit-dev-v*` tags, such as CI's tagless shallow clone, or a root
+// that is not a git repo, reports nothing.
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { defaultExec, shippedUnreleased, tagSnapshots } from "../roll-changelog.ts";
+import {
+  gitExec,
+  shippedUnreleased,
+  tagSnapshots,
+} from "../../packages/workit-core/src/core/changelog-roll.ts";
+import { TAG_PREFIX } from "../../packages/workit-core/scripts/analyze-release-scope.ts";
 
 export const RULE = "released-changelog";
 
@@ -33,7 +39,7 @@ export function scanReleasedChangelog(root: string): ReleasedHit[] {
   if (!existsSync(file)) return [];
   let snapshots;
   try {
-    snapshots = tagSnapshots(defaultExec(root));
+    snapshots = tagSnapshots(gitExec(root), TAG_PREFIX);
   } catch {
     return [];
   }
