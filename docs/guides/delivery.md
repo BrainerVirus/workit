@@ -591,14 +591,14 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
 - `pr merge` also reads the CI of the base branch's head (a protected target
   only). A failing check there that branch protection requires (or, when the
   required set cannot be read, a hard failure not known to be optional)
-  refuses the merge (`base_red`, exit 3), naming
-  the failing checks and the run URL, so a PR never lands silently on a red
-  base. Checks still running only print a note, and a base with no checks or
-  green checks merges quietly. A PR whose own head passes every check that is
-  red on the base, under the same `<workflow> / <job>` name, and whose head
-  contains the base tip that red CI ran on, is the fix for that base: it
-  merges without `--base-red-ok` and says so ("this merge fixes the red base
-  check"; `baseCi.fixes` in `--json`, `baseRedFixed` in the merge rows). Only
+  refuses the merge (`base_red`, exit 3), naming the failing checks and the
+  run URL, so a PR never lands silently on a red base. Checks still running
+  only print a note, and a base with no checks or green checks merges
+  quietly. A PR can be the fix for that base. Its own head must pass every
+  check that is red on the base, under the same `<workflow> / <job>` name,
+  and contain the base tip that red CI ran on. Such a PR merges without
+  `--base-red-ok` and says so ("this merge fixes the red base check";
+  `baseCi.fixes` in `--json`, `baseRedFixed` in the merge rows). Only
   forge check data and git ancestry decide this, never the PR title or body.
   On GitHub the head's run must come from the same workflow as the base's: a
   second workflow with the same display name never covers it, and a run whose
@@ -614,8 +614,8 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
   red base", with `workit git rebase` (then `workit git push
   --force-with-lease`, `workit ci wait` and the merge again) as the unblock; a
   tip that cannot be fetched counts as not contained. The refusal reads the
-  previous run on the base
-  (`<base>~1`) and names the next step (`baseRedCause` in `--json`):
+  previous run on the base (`<base>~1`), matching each job by name and, on
+  GitHub, by workflow, and names the next step (`baseRedCause` in `--json`):
   - `flaky`: every failing job passed on the previous run. The refusal says
     likely flaky, names each job and its run URL, and its unblock is the exact
     `workit ci rerun --ref <base> --check "<job>" --reason flake`. Run it,
