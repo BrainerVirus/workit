@@ -101,7 +101,7 @@ export const strayEntries = (workit: string): string[] => {
 export type FolderMigration = {
   from: string;
   to: string;
-  /** Top-level entries moved (whole, or merged into the store's own). */
+  /** Paths (relative to `.workit`) moved, each whole. */
   moved: string[];
   /** Paths (relative to `.workit`) left in place: the store already has one, or the move failed. */
   kept: string[];
@@ -110,9 +110,9 @@ export type FolderMigration = {
 /**
  * Move `from` into `to` without replacing anything there: a whole entry when
  * `to` is absent (a rename, else a copy then a removal), a merge when both are
- * directories. Returns the relative paths left behind.
+ * directories. Returns the relative paths left behind; adds those moved to `moved`.
  */
-const merge = (from: string, to: string, rel: string): string[] => {
+const merge = (from: string, to: string, rel: string, moved: string[]): string[] => {
   if (isV2TaskStub(rel)) return [];
   if (!exists(to)) {
     try {
@@ -131,12 +131,13 @@ const merge = (from: string, to: string, rel: string): string[] => {
         return exists(from) ? [rel] : [];
       }
     }
+    moved.push(rel);
     return [];
   }
   if (!isDir(from) || !isDir(to)) return [rel];
   const kept = fs
     .readdirSync(from)
-    .flatMap((name) => merge(path.join(from, name), path.join(to, name), `${rel}/${name}`));
+    .flatMap((name) => merge(path.join(from, name), path.join(to, name), `${rel}/${name}`, moved));
   try {
     if (fs.readdirSync(from).length === 0) fs.rmdirSync(from);
   } catch {}
@@ -164,9 +165,9 @@ export function migrateFolderStore(
   }
   const result: FolderMigration = { from: workit, to: target, moved: [], kept: [] };
   for (const name of names) {
-    const kept = merge(path.join(workit, name), path.join(target, name), name);
-    result.kept.push(...kept);
-    if (!kept.includes(name)) result.moved.push(name);
+    result.kept.push(
+      ...merge(path.join(workit, name), path.join(target, name), name, result.moved),
+    );
   }
   // The marker and a generated .gitignore go once only the folder's config is left.
   const left = (() => {
