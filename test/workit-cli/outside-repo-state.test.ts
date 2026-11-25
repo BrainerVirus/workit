@@ -281,9 +281,11 @@ test("Given a move that falls back to copying and fails midway, Then no final pa
 test("Given two processes resolving the same folder at once, Then one moves it, the other skips or finds it done, and nothing is kept and no pointer appears", async () => {
   const folder = tempDir();
   const workit = oldStore(folder);
-  for (let index = 0; index < 300; index += 1)
+  for (let index = 0; index < 1500; index += 1)
     write(path.join(workit, "retros", `r${index}.md`), `# retro ${index}\n`);
   const before = snapshot(workit);
+  // The store already has a retros dir, so both movers go file by file.
+  write(path.join(folderStoreDir(folder), "retros", "kept-there.md"), "# already there\n");
   const go = path.join(tempDir(), "go");
   const script = path.join(tempDir(), "resolve.ts");
   writeFileSync(
