@@ -23,7 +23,8 @@ units of ~100+ lines each. Coupled work stays with one owner. Workit never spawn
 3. **Make the worktrees**: `workit fanout worktree create <slice>…` (every host; `--name <plan.json>`
    registers the file) prints per slice its `WORKTREE:` line and the exact spawn, whose prompt points
    the worker at `workit fanout brief <slice> --name <plan>`. Never hand-edit it; change the plan or
-   the standing orders. One unplanned slice needs no plan (`--branch <b>` optional).
+   the standing orders. One unplanned slice needs no plan (`--branch <b>` optional). Each gets its
+   own install (`--deps link` shares `node_modules`); pass the brief's `DEPS:` line to the verifier.
 4. **Spawn in a rolling window**, in the background, each in its own worktree:
    keep 4-6 in flight and refill from `spawnable` in `workit fanout status`.
    Assign before spawn (OpenCode: `workit worker assign`); each prompt is the printed one
