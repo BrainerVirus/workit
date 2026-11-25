@@ -238,6 +238,26 @@ export function resolveResourceSettings(
   return resolveWith(sources, host ?? hostShape());
 }
 
+/**
+ * A checks config's `resources` block with every check configured with its
+ * own `"heavy": true` added to `resources.heavy` (#926), so each verb that
+ * resolves the repo's settings sees the same heavy checks `workit check` runs
+ * under the lease. A network-bound one (`"io"`) takes no slot and is not
+ * added; a malformed block is returned as is, for its own warning.
+ */
+export function repoResources(config: {
+  resources?: unknown;
+  checks: ReadonlyArray<{ name: string; heavy?: true | "io" }>;
+}): unknown {
+  const own = config.checks.flatMap((check) => (check.heavy === true ? [check.name] : []));
+  const value = config.resources;
+  if (!own.length || (value !== undefined && !isRecord(value))) return value;
+  const listed = value?.heavy;
+  const heavy = isRecord(listed) ? Object.keys(listed) : (listed ?? []);
+  if (!Array.isArray(heavy)) return value;
+  return { ...value, heavy: [...new Set([...heavy, ...own])] };
+}
+
 function resolveWith(
   sources: ResourceSource[],
   host: HostShape,
@@ -1428,10 +1448,28 @@ export function fitsBudget(
 
 export const admittedDir = (dir: string): string => path.join(dir, "admitted");
 
-export type AdmittedEntry = { file: string; record: LeaseRecord; stale: string | null };
+export type AdmittedEntry = {
+  file: string;
+  record: LeaseRecord;
+  stale: string | null;
+  /** Why a slot-free check (short or io) looks stuck (stuckReason), or null; a dev server never is. */
+  stuck: string | null;
+};
 
-/** The admitted holders (dev servers) in `dir`. Read-only: nothing is removed. */
-export function admittedHolders(dir: string, probe: LeaseProbe = {}): AdmittedEntry[] {
+/** Is this admitted holder a check run without a slot (#884), not a long-lived holder such as a dev server? */
+export const slotFreeCheck = (record: Pick<LeaseRecord, "kind">): boolean =>
+  record.kind === "short" || record.kind === "io";
+
+/**
+ * The admitted holders (dev servers, slot-free checks) in `dir`. Read-only:
+ * nothing is removed. `maxHoldMs` judges `stuck` for a slot-free check whose
+ * record carries no limit of its own.
+ */
+export function admittedHolders(
+  dir: string,
+  probe: LeaseProbe = {},
+  maxHoldMs = DEFAULT_MAX_HOLD_MS,
+): AdmittedEntry[] {
   let names: string[];
   try {
     names = fs.readdirSync(admittedDir(dir));
@@ -1444,8 +1482,35 @@ export function admittedHolders(dir: string, probe: LeaseProbe = {}): AdmittedEn
     .flatMap((name) => {
       const file = path.join(admittedDir(dir), name);
       const record = parseLease(readText(file));
-      return record ? [{ file, record, stale: staleReason(record, probe) }] : [];
+      if (!record) return [];
+      const stale = staleReason(record, probe);
+      const stuck =
+        !stale && slotFreeCheck(record) ? stuckReason(record, maxHoldMs, probe.now) : null;
+      return [{ file, record, stale, stuck }];
     });
+}
+
+/**
+ * Remove, under the budget guard, each admitted entry whose holder is gone
+ * and each slot-free check past its auto-reap bound (#926), as a slot's
+ * acquirer does; each one goes to `reclaimed`. A dev server is never reaped.
+ */
+function pruneAdmitted(
+  dir: string,
+  probe: LeaseProbe,
+  maxHoldMs: number,
+  reclaimed: Reclaimed[] = [],
+): void {
+  for (const entry of admittedHolders(dir, probe, maxHoldMs)) {
+    const reaped =
+      !entry.stale && slotFreeCheck(entry.record)
+        ? autoReapReason(entry.record, maxHoldMs, probe.now)
+        : null;
+    const reason = entry.stale ?? reaped;
+    if (!reason) continue;
+    removeOwn(entry.file, entry.record.id);
+    reclaimed.push({ ...holderOf(entry.record), reason, ...(reaped ? { reaped: true } : {}) });
+  }
 }
 
 /** Live check holders and admitted holders, with what they take from `budget`. */
@@ -1464,10 +1529,12 @@ function budgetUse(
     used.bytes += charge.bytes;
   }
   const admitted: LeaseHolder[] = [];
-  for (const entry of admittedHolders(dir, probe)) {
+  for (const entry of admittedHolders(dir, probe, maxHoldMs)) {
     if (entry.stale) continue;
+    // A slot-free check past its auto-reap bound holds no memory, as a stuck slot holds no slot.
+    if (slotFreeCheck(entry.record) && autoReapReason(entry.record, maxHoldMs, probe.now)) continue;
     used.bytes += recordCharge(entry.record, budget).bytes;
-    admitted.push(holderOf(entry.record));
+    admitted.push({ ...holderOf(entry.record), ...(entry.stuck ? { stuck: entry.stuck } : {}) });
   }
   return { used, checks: [...checks.values()].map((slot) => slot.holder), admitted };
 }
@@ -1612,8 +1679,7 @@ export function admit(options: AdmitOptions): AdmitResult {
   for (let attempt = 0; attempt < GUARD_TRIES; attempt += 1) {
     const outcome = underGuard(options.dir, () => {
       const probe = options.probe ?? {};
-      for (const entry of admittedHolders(options.dir, probe))
-        if (entry.stale) removeOwn(entry.file, entry.record.id);
+      pruneAdmitted(options.dir, probe, DEFAULT_MAX_HOLD_MS);
       const use = budgetUse(options.dir, MAX_SLOTS, budget, probe, DEFAULT_MAX_HOLD_MS);
       const holders = [...use.checks, ...use.admitted];
       if (use.used.bytes + (record.bytes ?? 0) > budget.memoryBytes)
@@ -1671,21 +1737,30 @@ export function admit(options: AdmitOptions): AdmitResult {
 /**
  * Record `record` (a short or network-bound check) as an admitted holder when
  * its memory charge fits what the slot holders and admitted holders leave of
- * the budget (#884); its file, or null when it does not fit or the guard is busy.
+ * the budget (#884), and no aged waiter that does not fit the memory left is
+ * queued (`agedBytes`, each one's charge; #926): a stream of slot-free runs
+ * must not starve it. Gone and stuck admitted entries are pruned first. Its
+ * file, or null when it is not admitted or the guard is busy.
  */
 function admitWithoutSlot(
   options: AcquireOptions,
   budget: Budget,
   maxHoldMs: number,
   record: LeaseRecord,
+  agedBytes: readonly number[],
+  reclaimed: Reclaimed[],
 ): string | null {
   const file = path.join(
     admittedDir(options.dir),
     `${String(Date.parse(record.startedAt)).padStart(15, "0")}-${record.id}.json`,
   );
   return underGuard(options.dir, () => {
-    const use = budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHoldMs);
-    if (use.used.bytes + (record.bytes ?? 0) > budget.memoryBytes) return null;
+    const probe = options.probe ?? {};
+    pruneAdmitted(options.dir, probe, maxHoldMs, reclaimed);
+    const use = budgetUse(options.dir, options.slots, budget, probe, maxHoldMs);
+    const free = budget.memoryBytes - use.used.bytes;
+    if ((record.bytes ?? 0) > free) return null;
+    if (agedBytes.some((bytes) => Math.min(bytes, budget.memoryBytes) > free)) return null;
     fs.mkdirSync(admittedDir(options.dir), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: "wx" });
     return file;
@@ -1910,13 +1985,23 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
       // A short or network-bound check runs without a slot, the memory budget and the pressure gate still applying (#884).
       if (lane && !pressed) {
         const now = new Date(clock.now()).toISOString();
-        const file = admitWithoutSlot(options, budget, maxHold, {
-          ...record,
-          startedAt: now,
-          heartbeatAt: now,
-          kind: lane,
-          units: 0,
-        });
+        // Only a budget that weighs memory lets an aged waiter wait on memory (fitsBudget).
+        const agedBytes =
+          weighted && budget.mode !== "units"
+            ? waiters
+                .filter(
+                  (waiter) => clock.now() - Date.parse(waiter.holder.startedAt) >= budget.agingMs,
+                )
+                .map((waiter) => recordCharge(waiter.record, budget).bytes)
+            : [];
+        const file = admitWithoutSlot(
+          options,
+          budget,
+          maxHold,
+          { ...record, startedAt: now, heartbeatAt: now, kind: lane, units: 0 },
+          agedBytes,
+          reclaimed,
+        );
         if (file) {
           Object.assign(record, { startedAt: now, heartbeatAt: now, kind: lane, units: 0 });
           return granted(file, null, lane);
@@ -1928,14 +2013,15 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
         record.heartbeatAt = now;
         // A weighted take re-checks the budget under its guard, so two waiters never both fit the same room.
         const outcome = weighted
-          ? (underGuard(options.dir, () =>
-              fitsNow(
+          ? (underGuard(options.dir, () => {
+              pruneAdmitted(options.dir, options.probe ?? {}, maxHold, reclaimed);
+              return fitsNow(
                 budgetUse(options.dir, options.slots, budget, options.probe ?? {}, maxHold),
                 [],
               )
                 ? tryOnce(options, record, reclaimed)
-                : null,
-            ) ?? { holders: [] })
+                : null;
+            }) ?? { holders: [] })
           : tryOnce(options, record, reclaimed);
         if ("slot" in outcome) {
           recordGrant(options.dir, self, clock.now());

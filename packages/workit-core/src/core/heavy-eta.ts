@@ -3,7 +3,7 @@
 // repo it runs in. Only the CLI imports this module; hooks never do.
 import fs from "node:fs";
 import { ledgerPath } from "../ledger";
-import { DEFAULT_MAX_HOLD_MS, formatWait, type LeaseHolder } from "./resources";
+import { DEFAULT_MAX_HOLD_MS, formatWait, SHORT_CHECK_MS, type LeaseHolder } from "./resources";
 
 /** The last measured run of a holder's or waiter's check, in ms, or null when there is none. */
 export type DurationOf = (holder: Pick<LeaseHolder, "check" | "cwd">) => number | null;
@@ -120,7 +120,8 @@ export type WaitEstimate =
  * When a waiter behind `ahead` (in serving order) gets one of `slots`: each
  * holder frees its slot when its last measured run would end (at once when it
  * is already past that), and each waiter ahead takes the slot that frees
- * first for its own measured run.
+ * first for its own measured run. A waiter ahead that runs without a slot
+ * (#884: network-bound, or last measured under SHORT_CHECK_MS) takes none.
  */
 export function estimateWait(input: {
   slots: number;
@@ -142,7 +143,9 @@ export function estimateWait(input: {
     Math.max(0, measure(holder) - (now - Date.parse(holder.startedAt))),
   );
   while (free.length < Math.max(1, input.slots)) free.push(0);
-  for (const waiter of input.ahead.filter((holder) => !holder.kind)) {
+  for (const waiter of input.ahead.filter((holder) => !holder.kind && holder.lane !== "io")) {
+    const ms = input.durationOf(waiter);
+    if (ms !== null && ms < SHORT_CHECK_MS) continue;
     free.sort((a, b) => a - b);
     free[0] += measure(waiter);
   }

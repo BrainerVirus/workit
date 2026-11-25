@@ -51,7 +51,7 @@ import { detectLanding, inSliceRun, sliceStart } from "./fanout-landed";
 import { validateBranchNameFor } from "./core/branch";
 import { CHECKS_FILE, lightCommand, loadCheckConfig, splitCommand } from "./check-config";
 import { heavyCommand } from "./core/heavy";
-import { resolveResourceSettings } from "./core/resources";
+import { repoResources, resolveResourceSettings } from "./core/resources";
 import { worktreesDir } from "./core/workit-paths.mjs";
 import { resolveWorkspace, workspaceDelegation, type DelegationMode } from "./core/workspaces";
 import { stackFileName } from "./stack";
@@ -1330,7 +1330,7 @@ function leaseSettings(cwd: string): { slots: number; heavy: string[] } {
   }
   return resolveResourceSettings([
     { label: "workspaces.json", trust: "machine", value: machine },
-    { label: CHECKS_FILE, trust: "repo", value: loadCheckConfig(cwd).resources },
+    { label: CHECKS_FILE, trust: "repo", value: repoResources(loadCheckConfig(cwd)) },
   ]).settings;
 }
 
