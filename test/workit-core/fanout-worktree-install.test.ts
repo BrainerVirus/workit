@@ -15,6 +15,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -41,11 +42,15 @@ afterEach(() => {
 const workspaceFanout = (fanout: Record<string, unknown>) =>
   writeFileSync(
     path.join(configHome.configDir, "workspaces.json"),
-    JSON.stringify({ workspaces: [{ name: "tmp", glob: `${os.tmpdir()}/**`, fanout }] }),
+    JSON.stringify({
+      workspaces: [{ name: "tmp", glob: `${realpathSync(os.tmpdir())}/**`, fanout }],
+    }),
   );
 
+// The real path: macOS temp dirs sit behind /var -> /private/var, and Workit
+// reports a checkout by its real path.
 const tempDir = (prefix: string): string => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
   dirs.push(dir);
   return dir;
 };
