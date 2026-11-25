@@ -45,6 +45,7 @@ import {
   releaseTracksReport,
 } from "@workit-dev/core/src/core/release-tracks";
 import { releasePackagesDoctor } from "@workit-dev/core/src/core/release-packages";
+import { shippedChangelogFinding } from "@workit-dev/core/src/core/changelog-roll";
 import { repoBranchPreset } from "@workit-dev/core/src/core/branch-policy";
 import {
   getDiagnosticLogger,
@@ -224,6 +225,7 @@ type DoctorCheckId =
   | "stray_workit"
   | "config_schema"
   | "release_packages"
+  | "changelog_released"
   | "updates"
   | "claude_permissions"
   | "codex_permissions"
@@ -2681,6 +2683,16 @@ const checkReleasePackages = (res: Resolved): DoctorCheck | null => {
   return found && { id: "release_packages", ...found };
 };
 
+/**
+ * [Unreleased] entries a release tag already shipped (#889): a warning naming
+ * `workit changelog roll`; silent without tags, in a shallow clone or without
+ * a changelog.
+ */
+const checkChangelogReleased = (res: Resolved): DoctorCheck | null => {
+  const found = shippedChangelogFinding(res.cwd);
+  return found && { id: "changelog_released", ...found };
+};
+
 /** The configured workspace this directory belongs to, or null (none, or unreadable config). */
 const matchedWorkspace = (res: Resolved): WorkspaceConfig | null => {
   try {
@@ -4623,6 +4635,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck | null> = [
   checkConfigSchema,
   checkWorkspaceMismatch,
   checkReleasePackages,
+  checkChangelogReleased,
   checkWorkspaceLock,
   checkSessionHook,
   checkYouTrack,
