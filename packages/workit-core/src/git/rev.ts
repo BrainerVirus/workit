@@ -828,10 +828,15 @@ export function pushUrl(cwd: string, remote: string): string | null {
   return urls.length === 1 ? urls[0] : null;
 }
 
-/** Every push URL of `remote` after rewrites; empty when no `remote.<name>.url` is set. */
+/** Every push URL of `remote` after rewrites; empty when it sets neither url nor pushurl. */
 export function pushUrls(cwd: string, remote: string): string[] {
   // git reads a remote with no url (only other keys, such as gh-resolved) as a path named after it.
-  if (!safeArg(remote) || config(cwd, `remote.${remote}.url`) === null) return [];
+  if (
+    !safeArg(remote) ||
+    (config(cwd, `remote.${remote}.url`) === null &&
+      config(cwd, `remote.${remote}.pushurl`) === null)
+  )
+    return [];
   return git(cwd, ["remote", "get-url", "--push", "--all", remote])
     .stdout.split(/\r?\n/u)
     .map((value) => value.trim())
@@ -841,12 +846,20 @@ export function pushUrls(cwd: string, remote: string): string[] {
 /**
  * The remote `gh repo set-default` chose for this checkout (git config
  * `remote.<name>.gh-resolved` = `base`, the only value current gh writes),
- * else null. A key's last value counts and the first key set to `base` wins,
- * as in the raw-git hook; a legacy `owner/repo` value is not read.
+ * else null. Only the repository-local config counts (gh writes the key there; a
+ * global or included key would redirect PRs in every repository). A key's last
+ * value counts and the first key set to `base` wins, as in the raw-git hook; a
+ * legacy `owner/repo` value is not read.
  */
 export function ghDefaultRemote(cwd: string): string | null {
   const values = new Map<string, string>();
-  const out = git(cwd, ["config", "-z", "--get-regexp", "^remote\\..+\\.gh-resolved$"]).stdout;
+  const out = git(cwd, [
+    "config",
+    "--local",
+    "-z",
+    "--get-regexp",
+    "^remote\\..+\\.gh-resolved$",
+  ]).stdout;
   for (const entry of out.split("\0")) {
     const split = entry.indexOf("\n");
     if (split > 0) values.set(entry.slice(0, split), entry.slice(split + 1));

@@ -481,3 +481,46 @@ test("Given glab -R naming open's unclaimed repository as OWNER/REPO or HOST/OWN
   notDenied(w.own, "glab mr create -R gitlab.com/acme/open --fill");
   expect(denied(w.own, "glab mr create -R acme/strict --fill")).toContain("pr grant");
 });
+
+test("Given gh-resolved=base only in a global or included config, When the hook and the forge verbs resolve the base, Then both ignore it for upstream", () => {
+  const w = world();
+  git(w.own, "remote", "set-url", "origin", "https://github.com/me/fork.git");
+  git(w.own, "remote", "add", "upstream", "https://github.com/acme/strict.git");
+  const scoped = path.join(root, `scoped-${worlds}`);
+  mkdirSync(scoped);
+  const defaultFile = path.join(scoped, "gh-default.gitconfig");
+  writeFileSync(defaultFile, '[remote "origin"]\n\tgh-resolved = base\n');
+  const verbs = () => {
+    const runner = replayRunner({
+      "CLI auth token --hostname github.com --user me": "gho_pinToken\n",
+      "GET repos/me/fork": JSON.stringify({ id: 7, fork: false }),
+    });
+    const resolved = resolveForge(w.own, { runner });
+    if (!resolved.ok) throw new Error(resolved.error);
+    return resolved.data;
+  };
+  const both = (scope: string) => {
+    // A key honoured here would target me/fork (unclaimed, pr granted) and not be denied.
+    expect(denied(w.own, "gh pr create --fill"), scope).toContain("strict");
+    expect(verbs(), scope).toMatchObject({
+      forge: { repo: "acme/strict" },
+      baseRemote: "upstream",
+    });
+  };
+  const saved = process.env.GIT_CONFIG_GLOBAL;
+  // An isolated global config: never the user's.
+  process.env.GIT_CONFIG_GLOBAL = defaultFile;
+  try {
+    both("global");
+  } finally {
+    if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = saved;
+  }
+  git(w.own, "config", "include.path", defaultFile);
+  both("included");
+  // The same key in the repository-local config is honoured by both.
+  git(w.own, "config", "--unset", "include.path");
+  git(w.own, "config", "remote.origin.gh-resolved", "base");
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "me/fork" }, fork: false });
+});

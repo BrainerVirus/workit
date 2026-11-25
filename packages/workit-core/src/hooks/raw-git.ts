@@ -2184,6 +2184,7 @@ const forgeRepo = (
   env: Record<string, string>,
   config: GitConfig,
   branch: string | null,
+  dir: string,
 ) => {
   const repo = explicitRepo(gh, named, env);
   const host = (
@@ -2205,7 +2206,7 @@ const forgeRepo = (
       : "";
   if (!repo) {
     const remote =
-      (gh ? ghDefaultOf(config, branch) : null) ??
+      (gh ? ghDefaultOf(config, branch, dir, env) : null) ??
       ["upstream", "origin"].find((name) => config.has(`remote.${name}.url`));
     url = rewrittenUrl(configValue(config, `remote.${remote}.url`) ?? "", config);
   }
@@ -2225,15 +2226,44 @@ const pushHostOf = (config: GitConfig, remote: string): string | null => {
  * the first `remote.<name>.gh-resolved` = `base` (the only value current gh writes) whose
  * remote has a single push URL on the push remote's host. Anything else falls back.
  */
-const ghDefaultOf = (config: GitConfig, branch: string | null): string | null => {
+const ghDefaultOf = (
+  config: GitConfig,
+  branch: string | null,
+  dir: string,
+  env: Record<string, string>,
+): string | null => {
   const pushHost = pushHostOf(config, pushRemoteOf(config, branch) ?? "origin");
-  for (const key of config.keys()) {
-    const name = /^remote\.(.+)\.gh-resolved$/.exec(key)?.[1];
-    if (!name || configValue(config, key) !== "base") continue;
+  for (const [key, value] of localGhResolved(dir, env)) {
+    const name = key.slice(7, -12);
+    if (!name || value !== "base") continue;
     const host = pushHostOf(config, name);
     return host !== null && host === pushHost ? name : null;
   }
   return null;
+};
+
+/**
+ * Each `remote.<name>.gh-resolved` key in the repository-local config (where gh writes it;
+ * a global or included key is never read), its last value. Empty on any failure.
+ */
+const localGhResolved = (dir: string, env: Record<string, string>): Map<string, string> => {
+  const values = new Map<string, string>();
+  const listed = spawnSync(
+    "git",
+    ["config", "--local", "-z", "--get-regexp", "^remote\\..+\\.gh-resolved$"],
+    {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 3_000,
+      windowsHide: true,
+      env: { ...process.env, ...env },
+    },
+  );
+  for (const entry of (listed.stdout ?? "").split("\0")) {
+    const split = entry.indexOf("\n");
+    if (split > 0) values.set(entry.slice(0, split), entry.slice(split + 1));
+  }
+  return values;
 };
 
 /** The repository a gh/glab call names itself (`-R`, an API path, GH_REPO), or "". */
@@ -2260,6 +2290,7 @@ const grantRefusal = (
       env,
       gitConfig(repo.dir, invocation, cache),
       repo.branch,
+      repo.dir,
     );
   if (action.kind === "push") {
     target = () => {
