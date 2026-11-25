@@ -111,8 +111,12 @@ case "$1 $2" in
 esac
 `;
 
-/** The fake forge's push URL: a reserved `.invalid` host, so a push never leaves the machine. */
-export const FAKE_FORGE_URL = "https://github.example.invalid/eval/demo.git";
+/**
+ * The fake forge's push URL: SSH to a reserved `.invalid` host. The world's
+ * `ssh` (FAKE_SSH) serves it from the bare `origin`, so a push lands there and
+ * never leaves the machine; with no fake `ssh` on PATH the host cannot resolve.
+ */
+export const FAKE_FORGE_URL = "ssh://git@github.example.invalid/eval/demo.git";
 /** The YouTrack the forge world's issues link to: a reserved `.invalid` host. */
 export const FAKE_YOUTRACK_URL = "https://yt.example.invalid";
 
@@ -173,6 +177,33 @@ case "$method $endpoint" in
 esac
 `;
 
+/**
+ * The world's `ssh` (`scaffold.forge`): it serves only `git-receive-pack` and
+ * `git-upload-pack` for `eval/demo.git` on the fake forge host, from the
+ * world's bare `origin.git`, so `workit git push` and `workit pr create` push
+ * for real with no network. Any other host, command or repo exits 255 (ssh's
+ * own failure code) having run nothing.
+ */
+const FAKE_SSH = `#!/bin/sh
+# workit-eval fake ssh
+refuse() { echo "workit eval: the fake ssh serves only eval/demo.git on github.example.invalid ($*)" >&2; exit 255; }
+world=$(cd "$(dirname "$0")/.." && pwd -P) || refuse "$@"
+host= cmd=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|-p|-i|-l|-F) [ $# -ge 2 ] || refuse; shift 2 ;;
+    -*) shift ;;
+    *) if [ -z "$host" ]; then host=$1; else cmd="$cmd\${cmd:+ }$1"; fi; shift ;;
+  esac
+done
+case "$host" in git@github.example.invalid|github.example.invalid) ;; *) refuse "$host" ;; esac
+case "$cmd" in
+  "git-receive-pack '/eval/demo.git'"|"git-receive-pack 'eval/demo.git'") exec git receive-pack "$world/origin.git" ;;
+  "git-upload-pack '/eval/demo.git'"|"git-upload-pack 'eval/demo.git'") exec git upload-pack "$world/origin.git" ;;
+  *) refuse "$cmd" ;;
+esac
+`;
+
 /** Refuses a `scaffold.home` path that is absolute, has a `..` segment or is not below HOME. */
 const checkHomeFiles = (files: Record<string, string> = {}): void => {
   for (const name of Object.keys(files)) {
@@ -201,6 +232,8 @@ export const makeWorld = (spec: EvalCase): World => {
   if (scaffold.forge) {
     writeFileSync(path.join(bin, "gh"), FAKE_GH);
     chmodSync(path.join(bin, "gh"), 0o755);
+    writeFileSync(path.join(bin, "ssh"), FAKE_SSH);
+    chmodSync(path.join(bin, "ssh"), 0o755);
   }
   writeAll(home, scaffold.home);
 
@@ -249,7 +282,8 @@ export const makeWorld = (spec: EvalCase): World => {
   }
   writeAll(worktree ?? repo, scaffold.dirty);
   if (scaffold.forge) {
-    // The branch is already on origin (fetches stay local); the push URL names the fake forge.
+    // The branch is already on origin (fetches stay local); the push URL names
+    // the fake forge, which the world's ssh serves from that same bare origin.
     git(repo, "push", "-q", "origin", "HEAD");
     git(repo, "remote", "set-url", "--push", "origin", FAKE_FORGE_URL);
   }

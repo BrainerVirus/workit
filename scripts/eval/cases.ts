@@ -54,9 +54,10 @@ export type EvalCase = {
     /** A bare `origin` remote the branch can be pushed to. */
     remote?: boolean;
     /**
-     * A fake forge (scaffold.ts FAKE_GH): `origin` fetches from the bare
-     * remote with the case's branch on it and pushes to
-     * `https://github.example.invalid/eval/demo.git`, `gh` answers only the
+     * A fake forge (scaffold.ts FAKE_GH, FAKE_SSH): `origin` fetches from the
+     * bare remote with the case's branch on it and pushes to
+     * `ssh://git@github.example.invalid/eval/demo.git`, which the world's
+     * `ssh` serves from that same bare remote; `gh` answers only the
      * reads `workit pr create` makes and opens one canned PR, and the
      * workspace entry links YouTrack issues with `backlink: true`.
      */

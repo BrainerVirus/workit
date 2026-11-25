@@ -3,7 +3,7 @@
 // PR, and refuses every other call having sent nothing, so a case can grade
 // the pending-backlink flow with no network, real forge or login.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { childEnv } from "@/scripts/eval/run";
@@ -24,7 +24,10 @@ const plain = makeWorld({ id: "forge-none", tier: "smoke", prompt: "x", source: 
 afterAll(() => {
   for (const dir of [world.dir, plain.dir]) rmSync(dir, { recursive: true, force: true });
 });
-const env = childEnv(world, path.join(world.dir, "plugin-bin"));
+const env = childEnv(
+  world,
+  path.join(import.meta.dir, "..", "..", "packages", "workit-claude-code", "bin"),
+);
 const gh = (...args: string[]) =>
   spawnSync("gh", args, { cwd: world.repo, env, encoding: "utf8", timeout: 20_000 });
 const git = (...args: string[]) =>
@@ -76,6 +79,44 @@ test.skipIf(process.platform === "win32")(
       expect.objectContaining({ number: 1, state: "OPEN", headRefOid: head }),
     ]);
     expect(gh(...post).status).not.toBe(0);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given the scaffolded forge world and a new commit, When workit git push runs, Then the push lands on the world's bare origin through the fake ssh",
+  () => {
+    writeFileSync(path.join(world.repo, "next.txt"), "next\n");
+    spawnSync("git", ["add", "next.txt"], { cwd: world.repo });
+    spawnSync("git", ["commit", "-q", "-m", "fix: next"], { cwd: world.repo, env });
+    const head = git("rev-parse", "HEAD");
+    const push = spawnSync("workit", ["git", "push"], {
+      cwd: world.repo,
+      env,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    expect(push.status, push.stderr + push.stdout).toBe(0);
+    const landed = spawnSync("git", ["rev-parse", "refs/heads/feature/fix-login"], {
+      cwd: path.join(world.dir, "origin.git"),
+      encoding: "utf8",
+    });
+    expect(landed.stdout.trim()).toBe(head);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given the fake ssh, When asked for another host or repository, Then it exits 255 having run nothing",
+  () => {
+    const ssh = path.join(world.bin, "ssh");
+    for (const args of [
+      ["git@github.com", "git-receive-pack 'eval/demo.git'"],
+      ["git@github.example.invalid", "git-receive-pack 'other/repo.git'"],
+      ["git@github.example.invalid", "sh -c id"],
+    ]) {
+      const run = spawnSync(ssh, args, { env, encoding: "utf8" });
+      expect(run.status, args.join(" ")).toBe(255);
+      expect(run.stderr).toContain("the fake ssh serves only eval/demo.git");
+    }
   },
 );
 
