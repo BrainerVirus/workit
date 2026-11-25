@@ -524,3 +524,107 @@ test("Given gh-resolved=base only in a global or included config, When the hook 
   notDenied(w.own, "gh pr create --fill");
   expect(verbs()).toMatchObject({ forge: { repo: "me/fork" }, fork: false });
 });
+
+/** The forge verbs' resolution, origin pushing to me/fork (#948). */
+const verbsIn = (cwd: string) => {
+  const runner = replayRunner({
+    "CLI auth token --hostname github.com --user me": "gho_pinToken\n",
+    "GET repos/me/fork": JSON.stringify({ id: 7, fork: false }),
+  });
+  const resolved = resolveForge(cwd, { runner });
+  if (!resolved.ok) throw new Error(resolved.error);
+  return resolved.data;
+};
+
+test("Given a gh default remote and a pushInsteadOf onto another host, When the hook and the forge verbs resolve the base, Then both resolve its push URL as git does", () => {
+  const w = world();
+  git(w.own, "remote", "set-url", "origin", "https://github.com/me/fork.git");
+  git(w.own, "config", "url.https://gitlab.com/acme/.pushInsteadOf", "https://github.com/acme/");
+  // A pushurl is never rewritten by pushInsteadOf: the default pushes to github.com/acme/strict.
+  git(w.own, "remote", "add", "main", "https://github.com/acme/strict.git");
+  git(w.own, "remote", "set-url", "--push", "main", "https://github.com/acme/strict.git");
+  git(w.own, "config", "remote.main.gh-resolved", "base");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  expect(verbsIn(w.own)).toMatchObject({ forge: { repo: "acme/strict" }, baseRemote: "main" });
+  // Without a pushurl, pushInsteadOf sends it to gitlab.com: another host, so neither uses it.
+  git(w.own, "config", "--unset", "remote.main.pushurl");
+  notDenied(w.own, "gh pr create --fill");
+  const skipped = verbsIn(w.own);
+  expect(skipped).toMatchObject({ forge: { repo: "me/fork" }, baseRemote: "origin" });
+  expect(skipped.note).toContain("names remote main, not used as the PR base");
+  // A pushInsteadOf onto github.com makes a gitlab fetch remote the default for both.
+  git(w.own, "config", "--unset", "url.https://gitlab.com/acme/.pushInsteadOf");
+  git(w.own, "remote", "set-url", "main", "https://gitlab.com/acme/strict.git");
+  git(w.own, "config", "url.https://github.com/acme/.pushInsteadOf", "https://gitlab.com/acme/");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  expect(verbsIn(w.own)).toMatchObject({ forge: { repo: "acme/strict" }, baseRemote: "main" });
+});
+
+test("Given a gh default remote whose fetch and push repositories differ, When the hook and the forge verbs resolve the base, Then both judge it by its push URL", () => {
+  const w = world();
+  git(w.own, "remote", "set-url", "origin", "https://github.com/me/fork.git");
+  git(w.own, "remote", "add", "main", "https://github.com/acme/open.git");
+  git(w.own, "remote", "set-url", "--push", "main", "https://github.com/acme/strict.git");
+  git(w.own, "config", "remote.main.gh-resolved", "base");
+  // Its fetch URL (acme/open, pr granted) would run; its push URL is strict's.
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  expect(verbsIn(w.own)).toMatchObject({ forge: { repo: "acme/strict" }, baseRemote: "main" });
+  // The other way round: fetch strict, push open.
+  git(w.own, "remote", "set-url", "main", "https://github.com/acme/strict.git");
+  git(w.own, "remote", "set-url", "--push", "main", "https://github.com/acme/open.git");
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbsIn(w.own)).toMatchObject({ forge: { repo: "acme/open" }, baseRemote: "main" });
+});
+
+test("Given an upstream that pushes off the push remote's host or to several URLs, When the hook and the forge verbs resolve the base, Then both skip it and the hook judges origin", () => {
+  const w = world();
+  git(w.own, "remote", "set-url", "origin", "https://github.com/acme/open.git");
+  const verbs = () => {
+    const runner = replayRunner({
+      "CLI auth token --hostname github.com --user me": "gho_pinToken\n",
+      "GET repos/acme/open": JSON.stringify({ id: 8, fork: false }),
+    });
+    const resolved = resolveForge(w.own, { runner });
+    if (!resolved.ok) throw new Error(resolved.error);
+    return resolved.data;
+  };
+  // On the same host, upstream (strict's) is the base for both.
+  git(w.own, "remote", "add", "upstream", "https://github.com/acme/strict.git");
+  expect(denied(w.own, "gh pr create --fill")).toContain("strict");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/strict" }, baseRemote: "upstream" });
+  // On gitlab.com the verbs would take the fork parent; the hook takes origin (acme/open, pr granted).
+  git(w.own, "remote", "set-url", "upstream", "https://gitlab.com/acme/strict.git");
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/open" }, fork: false });
+  // So does a pushInsteadOf sending it there, and an upstream with two push URLs.
+  git(w.own, "remote", "set-url", "upstream", "https://github.com/acme/strict.git");
+  git(
+    w.own,
+    "config",
+    "url.https://gitlab.com/acme/strict.pushInsteadOf",
+    "https://github.com/acme/strict",
+  );
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/open" }, fork: false });
+  git(w.own, "config", "--unset", "url.https://gitlab.com/acme/strict.pushInsteadOf");
+  git(
+    w.own,
+    "remote",
+    "set-url",
+    "--add",
+    "--push",
+    "upstream",
+    "https://github.com/acme/strict.git",
+  );
+  git(
+    w.own,
+    "remote",
+    "set-url",
+    "--add",
+    "--push",
+    "upstream",
+    "https://github.com/acme/other.git",
+  );
+  notDenied(w.own, "gh pr create --fill");
+  expect(verbs()).toMatchObject({ forge: { repo: "acme/open" }, fork: false });
+});
