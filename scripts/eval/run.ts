@@ -16,7 +16,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVAL_WORLD_ENV } from "../../packages/workit-core/src/core/eval-world";
-import { appliesTo, loadCases, selectCases, type EvalCase, type Tier } from "./cases";
+import {
+  appliesTo,
+  forLeg,
+  legModels,
+  loadCases,
+  selectCases,
+  type EvalCase,
+  type Tier,
+} from "./cases";
 import {
   authFailureOf,
   claudeLimitOf,
@@ -849,10 +857,12 @@ const attempt = async (
 };
 
 /** Each case in a fresh world; a limited provider is dropped for the rest of the invocation. */
-const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
+const runOpencode = async (unfilled: EvalCase, opts: Options): Promise<Attempt> => {
   let last: Attempt = { ...REFUSED };
   while (opts.providers.length > 0) {
     const [provider] = opts.providers;
+    // Each provider is its own leg model: `{{model}}` is the one this attempt runs on.
+    const spec = forLeg(unfilled, legModels("opencode", opts.model, provider));
     const world = makeWorld(spec);
     try {
       const config = writeOpencodeConfig(
@@ -888,7 +898,8 @@ const runOpencode = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
   return last;
 };
 
-const runClaude = async (spec: EvalCase, opts: Options): Promise<Attempt> => {
+const runClaude = async (unfilled: EvalCase, opts: Options): Promise<Attempt> => {
+  const spec = forLeg(unfilled, legModels("claude-code", opts.model));
   const world = makeWorld(spec);
   try {
     const env = childEnv(world, path.join(opts.pluginDir, "bin"));
@@ -979,7 +990,10 @@ const runCase = async (
     (opts.host === "opencode"
       ? run.provider === undefined || run.limit !== null
       : run.limit !== null);
-  const graded = grade(run.transcript, spec);
+  const graded = grade(
+    run.transcript,
+    forLeg(spec, legModels(opts.host, opts.model, run.provider)),
+  );
   const auth = trip === null && !run.refused && !skipped ? authFailureOf(run.transcript) : null;
   if (auth) graded.failures.unshift({ rule: "void", detail: `the host's login failed: ${auth}` });
   if (run.refused) graded.failures.unshift({ rule: "isolation", detail: run.refused });
@@ -1207,7 +1221,12 @@ const replay = (
       // A limited run was never graded; re-grading its stub could turn it into a pass.
       // An outside write fails the run whatever its transcript says.
       if (stored.skipped || stored.void || stored.outsideWrite || stored.refused) continue;
-      const fresh = grade(readFileSync(path.join(dir, file), "utf8"), spec);
+      const leg = legModels(
+        stored.host ?? "claude-code",
+        stored.model,
+        stored.provider && providersFor(stored.model).find((each) => each.name === stored.provider),
+      );
+      const fresh = grade(readFileSync(path.join(dir, file), "utf8"), forLeg(spec, leg));
       if (JSON.stringify(fresh) === JSON.stringify(stored.grade)) continue;
       drift += 1;
       print(

@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { providersFor, type Provider } from "./opencode";
 
 export type Tier = "smoke" | "full";
 
@@ -47,7 +48,10 @@ export type EvalCase = {
   firstTry?: boolean;
   /** The legs the case applies to (default both); another leg reports it not applicable, never a pass. */
   hosts?: CaseHost[];
-  /** `{{root}}` and `{{worktree}}` are replaced with the scaffold paths. */
+  /**
+   * `{{root}}` and `{{worktree}}` are replaced with the scaffold paths;
+   * `{{model}}` and `{{roleModel}}` with the leg's models (`forLeg`).
+   */
   prompt: string;
   scaffold?: {
     /** Branch the repo is on; `main` when absent. */
@@ -149,3 +153,51 @@ export const selectCases = (cases: EvalCase[], tier: Tier, ids: string[] = []): 
 /** Whether the case runs on this leg (`hosts`, default both). */
 export const appliesTo = (spec: EvalCase, host: CaseHost): boolean =>
   spec.hosts === undefined || spec.hosts.includes(host);
+
+/**
+ * The models a leg fills in (`forLeg`): `model` is the one the leg runs on,
+ * `roleModel` another model from the same leg's config, so a case that sets a
+ * role default to `{{roleModel}}` and has the user name `{{model}}` is always
+ * an override. Claude Code: the `--model` family alias (`haiku` for
+ * `claude-haiku-5-5`), and `opus` (or `sonnet` when the leg runs an opus). OpenCode: the provider model the run is on, and the other
+ * provider's model for the same `--model` (go for free, free for go).
+ */
+export type LegModels = { model: string; roleModel: string };
+
+export const legModels = (host: CaseHost, model: string, provider?: Provider): LegModels => {
+  if (host === "claude-code") {
+    // The Agent tool takes the family alias: `claude-haiku-5-5` runs as `haiku`.
+    const alias = /\b(opus|sonnet|haiku|fable)\b/iu.exec(model)?.[1]?.toLowerCase() ?? model;
+    return { model: alias, roleModel: alias === "opus" ? "sonnet" : "opus" };
+  }
+  const providers = providersFor(model);
+  const running = provider ?? providers[0];
+  const other = providers.find((each) => each.name !== running.name) ?? running;
+  return { model: running.model, roleModel: other.model };
+};
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/** Every `{{model}}` and `{{roleModel}}` in `text`, as is or regex-escaped. */
+const fill = (text: string, models: LegModels, regex: boolean): string =>
+  text
+    .replaceAll("{{model}}", regex ? escapeRegex(models.model) : models.model)
+    .replaceAll("{{roleModel}}", regex ? escapeRegex(models.roleModel) : models.roleModel);
+
+const fillAll = (value: unknown, models: LegModels, key = ""): unknown => {
+  if (typeof value === "string") return fill(value, models, key === "pattern" || key === "result");
+  if (Array.isArray(value)) return value.map((each) => fillAll(each, models, key));
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([name, each]) => [name, fillAll(each, models, name)]),
+    );
+  return value;
+};
+
+/**
+ * The case as one leg runs and grades it: `{{model}}` and `{{roleModel}}`
+ * filled in the prompt, the scaffold and the expectations (regex-escaped in
+ * `pattern` and `result`). The cache key keeps the unfilled case.
+ */
+export const forLeg = (spec: EvalCase, models: LegModels): EvalCase =>
+  fillAll(spec, models) as EvalCase;

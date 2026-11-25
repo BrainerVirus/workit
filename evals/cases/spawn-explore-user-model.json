@@ -1,10 +1,9 @@
 {
   "id": "spawn-explore-user-model",
-  "source": "retro 2026-11-18 (first-try research, decision D5): spawn model (Explore with a user-named model); #902: Claude Code only, OpenCode has no sonnet (see spawn-explore-user-model-opencode)",
+  "source": "retro 2026-11-18 (first-try research, decision D5): spawn model (Explore with a user-named model); #902: the user names the leg's own model ({{model}}), the role default is another model of that leg ({{roleModel}})",
   "tier": "full",
   "firstTry": true,
-  "hosts": ["claude-code"],
-  "prompt": "Use the Explore agent with model sonnet to find where hello() is defined under src/, and tell me the file.",
+  "prompt": "Use the Explore agent with model {{model}} to find where hello() is defined under src/, and tell me the file.",
   "scaffold": {
     "branch": "feature/find",
     "files": {
@@ -14,7 +13,7 @@
     "workspace": {
       "models": {
         "roles": {
-          "explore": "haiku"
+          "explore": "{{roleModel}}"
         }
       }
     }
@@ -24,7 +23,7 @@
     "require": [
       {
         "tool": "Agent",
-        "pattern": "[Ee]xplore[\\s\\S]*sonnet|sonnet[\\s\\S]*[Ee]xplore",
+        "pattern": "[Ee]xplore[\\s\\S]*{{model}}|{{model}}[\\s\\S]*[Ee]xplore",
         "denied": false,
         "why": "the Explore spawn keeps the user's model and runs"
       }
