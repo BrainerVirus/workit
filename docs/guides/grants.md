@@ -201,6 +201,30 @@ repositories both the named and the folder's entry list count.
 `workit feedback --post` is not affected: it always posts to Workit's own
 tracker with the account you name.
 
+## Additive risk paths
+
+A guarded append to a CI workflow (`&& (npm run x:check || echo …)`) keeps
+a PR on at least the `focused` lane (see
+[additive workflow edits](verification.md#additive-workflow-edits-and-dependency-bumps)).
+When you trust such appends to a workflow, list it in the workspace's
+`additiveRiskPaths` (globs, repo-relative), so its purely additive edits
+follow the lane of the rest of the diff and you stop merging those PRs
+with `--unverified`:
+
+```bash
+workit workspace set personal additiveRiskPaths='[".github/workflows/ci.yml"]'
+workit workspace seal
+```
+
+It lowers a review gate, so only you change it, at your own terminal:
+`workspace set` asks a y/N and refuses an agent or headless shell. It is
+sealed with the grants and read only while the [seal](#the-seal) is valid;
+unsealed, `pr status` notes that it is ignored. Under
+`WORKIT_WORKSPACE_NAME` only the globs both the named and the folder's
+entry list count. An edit that is not purely additive (a `permissions:`,
+`secrets:`, `on:` or `uses:` change, a removed step) stays on the full lane,
+and the repository's own `.workit/risk-paths` still wins.
+
 ## Releasing
 
 `release: true` (`workit grant set <workspace> release=true`, from your own
