@@ -12,16 +12,16 @@ Deslop removes; it never changes behavior. Its depth follows the review lane.
    `suppression` (a lint or type disable with no reason), `debug` (stray logs,
    `debugger`, `[DEBUG-` tags) or `allowed`, runs `test-audit` on changed
    tests, and prints the lane and its passes. A marker or a lint/type
-   suppression raises `self` to `focused`.
+   suppression raises `none` or `self` to `focused`.
 2. **Run the lane's passes** (each lane adds to the one below):
    - `none` (docs only): prose. Cut filler and hedging from the PR body and
      docs; keep real symbol names and before-to-after numbers.
    - `self`: delete every narration, marker and debug finding, plus dead code
      from the repo's tools (`knip`, `ts-prune`, `vulture`, unused-lint rules).
    - `focused`: a fresh-eyes no-comments pass and a test-quality lens. Hand
-     the diff, never your verdict, to a fresh reviewer: Claude Code and Codex,
-     the `reviewer` agent; OpenCode, a child session; Cursor, a Task subagent
-     marked `ROLE: reviewer`; Pi, a supervised worker. It deletes every added
+     the diff, never your verdict, to a fresh reviewer: Claude Code, the
+     `reviewer` agent; Codex, Cursor and OpenCode, `workit-reviewer`; Pi, a
+     supervised worker. It deletes every added
      comment off the keep list and triages `workit test-audit --diff`
      (workit-test-audit).
    - `full`: also `workit test-audit --mutate --diff` and one architect

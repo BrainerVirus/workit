@@ -97,7 +97,8 @@ is the slice's STUCK threshold in `workit fanout status`. `"fanIn":
       "goal": "The API guide documents GET /v1/usage",
       "acceptance": ["Given the guide, When a reader looks up usage, Then the response shape is shown"],
       "verify": ["workit check docs"],
-      "forbidden": ["no edits outside SCOPE"]
+      "forbidden": ["no edits outside SCOPE"],
+      "reason": "parallel"
     }
   ]
 }
@@ -130,7 +131,8 @@ deny is two lines ending in that ad-hoc command as `Retry as:`.
 and 3 for the worker's host: `--host <host>` (claude_code, codex, opencode,
 cursor, pi), else the lead's (`WORKIT_HOST`, or the host's own session
 variable). With no known host it warns on stderr and names the valid ones.
-RULE 3 carries the host's concrete Co-Authored-By line as a `--trailer`.
+RULE 3 carries the host's concrete Co-Authored-By line as a `--trailer` on
+Claude Code and Cursor; Codex, OpenCode and Pi get none.
 
 | Lead's host | Identity line | RULES 1 and 3 |
 | --- | --- | --- |
@@ -160,3 +162,7 @@ attempt (`--attempt <n>`) follows its host's row with the branch
 3. Commit with `workit git --cwd <worktree> commit -m "<msg>" --trailer "<host's Co-Authored-By>" -- <paths in SCOPE>`;
    push only if the brief says so.
 4. Never record a verdict on your own work.
+5. Run tests, lint, typecheck and builds only through `workit check`; `--heavy`
+   only for full suites, never a hand-made `flock`.
+6. A failed review gets one fix round and one recheck, then stop and report.
+7. Wait for or stop every background command before the final report.
