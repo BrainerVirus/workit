@@ -8,6 +8,7 @@
     "branch": "feature/log-time"
   },
   "maxTurns": 8,
+  "permissionMode": "default",
   "expect": {
     "require": [
       {

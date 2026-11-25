@@ -539,6 +539,26 @@ test("Given a case with scaffold commits and no allowed tools, Then the repo has
   expect(call).toContain("--permission-mode auto --disallowedTools WebFetch WebSearch");
 });
 
+test("Given a case with permissionMode default, Then claude -p runs it in that mode with the case's allow rules", async () => {
+  writeFileSync(
+    path.join(root, "cases", "e-full.json"),
+    JSON.stringify({
+      id: "e-full",
+      source: "test",
+      tier: "full",
+      prompt: "p",
+      permissionMode: "default",
+      allowedTools: ["Bash(workit *)"],
+    }),
+  );
+  await main(["--model", "haiku", "--tier", "full", "--cases", "e-full", ...argv], quiet([]));
+  const [call = ""] = calls();
+  expect(call).toContain(
+    "--permission-mode default --allowedTools Bash(workit *) --disallowedTools",
+  );
+  expect(call).not.toContain("--permission-mode auto");
+});
+
 const PUSH = [
   JSON.stringify({
     type: "assistant",

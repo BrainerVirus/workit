@@ -25,6 +25,15 @@ export type CallPattern = {
 const HOSTS = ["claude-code", "opencode"] as const;
 export type CaseHost = (typeof HOSTS)[number];
 
+/**
+ * The Claude Code permission modes a case may set. `auto` (the default) runs
+ * the host's classifier, which can deny a sanctioned call before Workit runs;
+ * `default` leaves the allow rules (`allowedTools`) as the only gate, and in
+ * `-p` anything else is refused. `bypassPermissions` would skip the allow
+ * rules, so no case takes it.
+ */
+const PERMISSION_MODES = ["auto", "default", "acceptEdits", "dontAsk", "plan"];
+
 export type EvalCase = {
   id: string;
   /** The real failure this case replays: a retro item, issue or behaviour case. */
@@ -88,6 +97,7 @@ export type EvalCase = {
     gitHooks?: Record<string, string>;
   };
   maxTurns?: number;
+  /** Claude Code's `--permission-mode` (default `auto`); the OpenCode leg has no classifier and ignores it. */
   permissionMode?: string;
   allowedTools?: string[];
   expect?: {
@@ -116,6 +126,8 @@ export const loadCases = (dir: string): EvalCase[] =>
       if (!spec.prompt || !spec.source) throw new Error(`${name}: prompt and source are required`);
       if (spec.hosts?.some((host) => !(HOSTS as readonly string[]).includes(host)))
         throw new Error(`${name}: hosts must name ${HOSTS.join(" or ")}`);
+      if (spec.permissionMode !== undefined && !PERMISSION_MODES.includes(spec.permissionMode))
+        throw new Error(`${name}: permissionMode must be one of ${PERMISSION_MODES.join(", ")}`);
       const forge = spec.scaffold?.forge;
       if (forge !== undefined && forge !== "github")
         throw new Error(`${name}: scaffold.forge must be github`);

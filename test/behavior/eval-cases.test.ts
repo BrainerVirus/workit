@@ -38,6 +38,25 @@ test.each(CASES.map((spec) => [spec.id, spec] as const))(
   },
 );
 
+test("Given a case with permissionMode bypassPermissions, Then loading the cases refuses it", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-eval-cases-"));
+  try {
+    writeFileSync(
+      path.join(dir, "bad.json"),
+      JSON.stringify({
+        id: "bad",
+        tier: "full",
+        prompt: "x",
+        source: "#1",
+        permissionMode: "bypassPermissions",
+      }),
+    );
+    expect(() => loadCases(dir)).toThrow("permissionMode must be one of");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test.each([
   [{ forge: "gitlab" }, "scaffold.forge must be github"],
   [{ forge: "github", unborn: true }, "scaffold.forge needs a commit"],

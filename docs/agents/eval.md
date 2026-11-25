@@ -384,7 +384,7 @@ issue or `test/behavior/cases` file).
 | `hosts` | The legs the case applies to (`claude-code`, `opencode`; default both). On another leg it prints `n/a` and is not run: never a pass |
 | `prompt` | What the user typed; `{{root}}` and `{{worktree}}` become the scaffold paths |
 | `scaffold` | `branch`, `files` (committed on main), `dirty` (uncommitted), `checks`, `worktree` (branch of a second worktree), `remote` |
-| `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `auto`, the list above |
+| `maxTurns`, `permissionMode`, `allowedTools` | Defaults 10, `auto`, the list above. `permissionMode` is Claude Code's `--permission-mode`: `auto`, `default`, `acceptEdits`, `dontAsk` or `plan` (loading refuses any other). Set `default` when the host's auto-mode classifier denies a sanctioned call before Workit runs (`install-help`, `youtrack-time-raw-ytrack`): the allow rules are then the only gate, and `-p` refuses anything they do not allow |
 | `scaffold.allowedBranches` | Branch policy patterns; default `feature/*` (a release case adds `release/*`) |
 | `scaffold.home` | Files written under the world HOME (a host install the case needs, such as `.cursor/mcp.json`); a path that is absolute, has a `..` segment or is not below HOME refuses the world |
 | `scaffold.gitHooks` | Git hooks written to the repo's `.git/hooks/<name>` after the scaffold's commits (a pre-commit hook that refuses unformatted code) |
