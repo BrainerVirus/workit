@@ -22,6 +22,8 @@ import { recordDecision } from "@/packages/workit-core/src/ledger";
 import {
   MOVED_POINTER,
   TEST_RUN_REFUSALS,
+  folderStoreIo,
+  migrateFolderStore,
   testRunFolderRefusal,
 } from "@/packages/workit-core/src/store/folder-store";
 import { resolveStore } from "@/packages/workit-core/src/store/paths";
@@ -212,4 +214,105 @@ test("Given a test run, When a .workit would move from the temp dir itself, a pa
     `refusing to move ${path.join(root, ".workit")}`,
   );
   rmSync(recorded);
+});
+
+/** Every file under `dir`, relative path to bytes. */
+const snapshot = (dir: string): Record<string, string> => {
+  const files: Record<string, string> = {};
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const file = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else files[path.relative(dir, file)] = readFileSync(file, "utf8");
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return files;
+};
+
+test("Given a move that falls back to copying and fails midway, Then no final path holds a truncated file, temps are gone, and a rerun finishes with nothing kept", () => {
+  const folder = tempDir();
+  const workit = oldStore(folder);
+  for (let index = 0; index < 6; index += 1)
+    write(path.join(workit, "retros", `r${index}.md`), `# retro ${index}\n${"x".repeat(4096)}\n`);
+  const before = snapshot(workit);
+  const target = folderStoreDir(folder);
+  const real = { ...folderStoreIo };
+  let copies = 0;
+  // Renames out of .workit fail (another device); the third file copy writes half and dies.
+  folderStoreIo.rename = (from, to) => {
+    if (from.startsWith(workit)) throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+    real.rename(from, to);
+  };
+  folderStoreIo.copyFile = (from, to) => {
+    copies += 1;
+    if (copies === 3) {
+      const bytes = readFileSync(from);
+      writeFileSync(to, bytes.subarray(0, Math.floor(bytes.length / 2)));
+      throw new Error("disk gone");
+    }
+    real.copyFile(from, to);
+  };
+  let first;
+  try {
+    first = migrateFolderStore(folder, target, () => {});
+  } finally {
+    Object.assign(folderStoreIo, real);
+  }
+  expect(first?.kept.length).toBeGreaterThan(0);
+  const copied = snapshot(target);
+  expect(Object.keys(copied).filter((rel) => rel.includes(".workit-move-"))).toEqual([]);
+  // Every file at a final path is whole, and whatever did not land is still at the source.
+  for (const [rel, text] of Object.entries(copied)) expect(text, rel).toBe(before[rel]);
+  for (const rel of Object.keys(before))
+    if (!["workspace.json", ".gitignore"].includes(rel))
+      expect(copied[rel] ?? snapshot(workit)[rel], rel).toBe(before[rel]);
+
+  const second = migrateFolderStore(folder, target, () => {});
+  expect(second?.kept).toEqual([]);
+  expect(readdirSync(workit)).toEqual(["checks.json"]);
+  const after = snapshot(target);
+  for (const [rel, text] of Object.entries(before))
+    if (!["workspace.json", ".gitignore", "checks.json"].includes(rel))
+      expect(after[rel], rel).toBe(text);
+  expect(existsSync(`${target}.lock`)).toBe(false);
+});
+
+test("Given two processes resolving the same folder at once, Then one moves it, the other skips or finds it done, and nothing is kept and no pointer appears", async () => {
+  const folder = tempDir();
+  const workit = oldStore(folder);
+  for (let index = 0; index < 300; index += 1)
+    write(path.join(workit, "retros", `r${index}.md`), `# retro ${index}\n`);
+  const before = snapshot(workit);
+  const go = path.join(tempDir(), "go");
+  const script = path.join(tempDir(), "resolve.ts");
+  writeFileSync(
+    script,
+    `import { existsSync } from "node:fs";
+import { resolveStore } from ${JSON.stringify(path.resolve(import.meta.dir, "../../packages/workit-core/src/store/paths.ts"))};
+const [folder, go] = process.argv.slice(2);
+while (!existsSync(go)) {}
+const found = resolveStore(folder);
+if (found instanceof Error) throw found;
+`,
+  );
+  const children = [0, 1].map(() =>
+    Bun.spawn([process.execPath, script, folder, go], {
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    }),
+  );
+  await Bun.sleep(300);
+  writeFileSync(go, "");
+  const codes = await Promise.all(children.map((child) => child.exited));
+  expect(codes).toEqual([0, 0]);
+  const target = folderStoreDir(folder);
+  expect(readdirSync(workit)).toEqual(["checks.json"]);
+  expect(existsSync(path.join(workit, MOVED_POINTER))).toBe(false);
+  const after = snapshot(target);
+  for (const [rel, text] of Object.entries(before))
+    if (!["workspace.json", ".gitignore", "checks.json"].includes(rel))
+      expect(after[rel], rel).toBe(text);
+  expect(existsSync(`${target}.lock`)).toBe(false);
 });

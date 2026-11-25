@@ -108,30 +108,82 @@ type FolderMigration = {
   kept: string[];
 };
 
+/** The filesystem calls a move makes (a test seam: a copy that fails midway). */
+export const folderStoreIo = {
+  rename: (from: string, to: string) => fs.renameSync(from, to),
+  copyFile: (from: string, to: string) => fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL),
+};
+
+let tempSeq = 0;
+/** A temp name beside `file`, in the same dir, so the final rename is atomic. */
+const tempBeside = (file: string): string =>
+  path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.workit-move-${process.pid}-${(tempSeq += 1)}`,
+  );
+
+/**
+ * Copy `from` to the absent `to` when a rename cannot (another device, a
+ * read-only parent): directories are made in place, each file or link goes
+ * to a temp name beside its target and is renamed in, so a final path only
+ * ever holds a complete file. A failure removes its temp and throws; files
+ * already in place are complete, and a rerun drops their source copies.
+ */
+const copyInto = (from: string, to: string) => {
+  const stat = fs.lstatSync(from);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(to, { recursive: true });
+    for (const name of fs.readdirSync(from)) copyInto(path.join(from, name), path.join(to, name));
+    return;
+  }
+  if (exists(to)) throw new Error(`${to} appeared during the move`);
+  const temp = tempBeside(to);
+  try {
+    if (stat.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), temp);
+    else folderStoreIo.copyFile(from, temp);
+    folderStoreIo.rename(temp, to);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
+};
+
+/** Two regular files with the same bytes (a copy a failed earlier move left complete). */
+const sameFile = (left: string, right: string): boolean => {
+  try {
+    const [a, b] = [fs.lstatSync(left), fs.lstatSync(right)];
+    if (!a.isFile() || !b.isFile() || a.size !== b.size) return false;
+    return fs.readFileSync(left).equals(fs.readFileSync(right));
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Move `from` into `to` without replacing anything there: a whole entry when
- * `to` is absent (a rename, else a copy then a removal), a merge when both are
- * directories. Returns the relative paths left behind; adds those moved to `moved`.
+ * `to` is absent (a rename, else copyInto then a removal), a merge when both
+ * are directories; a file the target already holds byte for byte only loses
+ * its source. Returns the relative paths left behind; adds those moved to `moved`.
  */
 const merge = (from: string, to: string, rel: string, moved: string[]): string[] => {
   if (isV2TaskStub(rel)) return [];
   if (!exists(to)) {
     try {
-      fs.renameSync(from, to);
+      folderStoreIo.rename(from, to);
     } catch {
       try {
-        fs.cpSync(from, to, {
-          recursive: true,
-          errorOnExist: true,
-          force: false,
-          verbatimSymlinks: true,
-        });
+        copyInto(from, to);
         fs.rmSync(from, { recursive: true, force: true });
       } catch {
-        // Another process may have moved it meanwhile.
+        // What copied is complete and stays; a rerun merges the rest.
         return exists(from) ? [rel] : [];
       }
     }
+    moved.push(rel);
+    return [];
+  }
+  if (sameFile(from, to)) {
+    fs.rmSync(from, { force: true });
     moved.push(rel);
     return [];
   }
@@ -143,6 +195,57 @@ const merge = (from: string, to: string, rel: string, moved: string[]): string[]
     if (fs.readdirSync(from).length === 0) fs.rmdirSync(from);
   } catch {}
   return kept;
+};
+
+/** How long a lock holder may take before its lock counts as abandoned. */
+const LOCK_STALE_MS = 10_000;
+/** How long a second mover waits before it skips the move this time. */
+const LOCK_WAIT_MS = 250;
+
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** The lock holder is gone (a dead pid) or past LOCK_STALE_MS. */
+const staleLock = (lock: string): boolean => {
+  try {
+    const stat = fs.statSync(lock);
+    if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) return true;
+    const pid = Number(fs.readFileSync(lock, "utf8").trim());
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH";
+    }
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Take `<target>.lock` (O_EXCL) for one move: a short wait for a live holder,
+ * a stale one is taken over. Null when it stays busy: the caller skips the
+ * move this time, so a hook is never held up for long.
+ */
+const takeMoveLock = (target: string): (() => void) | null => {
+  const lock = `${target}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lock, "wx", 0o600);
+      fs.writeSync(fd, `${process.pid}\n`);
+      fs.closeSync(fd);
+      return () => fs.rmSync(lock, { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return null;
+    }
+    if (staleLock(lock)) {
+      fs.rmSync(lock, { force: true });
+      continue;
+    }
+    if (Date.now() >= deadline) return null;
+    pause(25);
+  }
 };
 
 const canonical = (dir: string): string => {
@@ -208,6 +311,28 @@ export function migrateFolderStore(
     throw new Error(refusal);
   }
   // A 2.x store migrates through the task store first (task-store.ts).
+  if (names.length === 0 || v2Workspace(workit) === true) return null;
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+  } catch {
+    return null;
+  }
+  const release = takeMoveLock(target);
+  if (!release) return null;
+  try {
+    return moveLocked(workit, target, note);
+  } finally {
+    release();
+  }
+}
+
+/** migrateFolderStore's move, under its lock: what another mover left is re-read here. */
+function moveLocked(
+  workit: string,
+  target: string,
+  note: (line: string) => void,
+): FolderMigration | null {
+  const names = strayEntries(workit);
   if (names.length === 0 || v2Workspace(workit) === true) return null;
   try {
     fs.mkdirSync(target, { recursive: true });
