@@ -214,6 +214,14 @@ Workit workspace, in a main session (never a subagent):
   reads, Pi's read tool and `/skill:`). `workit ledger list --type
   skill.loaded` shows which skills sessions used; `/wk-retro` reads it.
 
+**Session teardown.** When a session really ends (Claude Code `SessionEnd`,
+Cursor `sessionEnd`, Pi quit, OpenCode session deleted), Workit stops the
+background processes and automation browsers it started, without delaying the
+host; a session start also stops leftovers whose session is gone, at most
+once every 10 minutes. Codex sends no subagent id on its session end, so its
+processes are stopped by that start-time sweep
+([background processes](processes.md)).
+
 **Stop control.** When the main agent ends its turn with an obligation the
 ledger or git can prove unmet, the host continues it once with a message
 naming the obligation and the workit command that clears it:
