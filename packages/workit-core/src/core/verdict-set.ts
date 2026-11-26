@@ -33,6 +33,7 @@ import {
   remoteIdentity,
   sealed,
   trustReasons,
+  type LedgerActor,
   type LedgerResult,
   type ReadRow,
   type VerdictRow,
@@ -46,6 +47,7 @@ export const SET_TTL_MS = 7 * 86_400_000;
 export const SET_NAME = /^[A-Za-z\d][\w.-]{0,63}$/u;
 
 const SET_ROW = "verdict.set";
+const SET_VOID = "verdict.set.voided";
 
 /** The per-user store every repository's gates read. */
 export const setStorePath = (): string =>
@@ -54,13 +56,8 @@ export const setStorePath = (): string =>
 /** The set hash of a range and the lockfiles left out of it. */
 export type SetKey = { hash: string; lockfiles: string[] };
 
-const headerPath = (line: string): string => {
-  const quoted = line.endsWith('"');
-  const text = quoted ? line.slice(0, -1) : line;
-  return text.slice(text.indexOf(" b/") + 3);
-};
-
-const basename = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
+/** The `b/` path of a `diff --git` header (a quoted one keeps its escapes). */
+const headerPath = (line: string): string => line.slice(line.indexOf(" b/") + 3).replace(/"$/u, "");
 
 /**
  * The set hash of `base...head` (see the header), or null when git cannot
@@ -76,7 +73,7 @@ export function setDiffKey(cwd: string, base: string, head: string): SetKey | nu
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff --git ")) {
       const file = headerPath(line);
-      skip = LOCKFILES.has(basename(file));
+      skip = LOCKFILES.has(file.slice(file.lastIndexOf("/") + 1));
       if (skip) lockfiles.push(file);
     }
     if (!skip) kept.push(line);
@@ -107,7 +104,7 @@ const fail = (code: "invalid_input" | "blocked", error: string, unblock: string)
 
 /** A host-derived `<lead>:<agent>` session: what SubagentStart hooks and child shells give a verifier. */
 export const derivedSession = (session: string | null | undefined): session is string =>
-  typeof session === "string" && /^[^:]+:.+$/u.test(session);
+  typeof session === "string" && /^[^:]+:./u.test(session);
 
 export const setSessionError = (session: string | null | undefined): string =>
   `set_session: a set verdict needs a host-derived <lead>:<agent> session; ${session ?? "no session"} is not one`;
@@ -181,6 +178,41 @@ export function recordSetVerdict(
   return { ok: true, value: full as SetRow };
 }
 
+/**
+ * Retire set verdict `target` (`workit ledger void` of the verdict it shares):
+ * append a void row to the store, so it covers no PR any more. False when the
+ * store holds no set row with that id (nothing to retire).
+ */
+export function recordSetVoid(
+  cwd: string,
+  input: { target: string; reason: string; actor: LedgerActor },
+  now: Date = new Date(),
+): LedgerResult<boolean> {
+  const read = readLedgerAt(cwd, setStorePath(), {});
+  if (!read.ok) return read;
+  if (!read.value.rows.some((row) => row.type === SET_ROW && row.id === input.target))
+    return { ok: true, value: false };
+  const written = appendLine(
+    setStorePath(),
+    (previous) => ({
+      ok: true,
+      value: sealed(
+        {
+          type: SET_VOID,
+          target: input.target,
+          reason: input.reason.slice(0, 600),
+          actor: input.actor,
+        },
+        `${input.target}-void-${now.getTime().toString(36)}`,
+        now.toISOString(),
+        previous,
+      ).line,
+    }),
+    {},
+  );
+  return written.ok ? { ok: true, value: true } : written;
+}
+
 /** The set verdict that covers a PR head. */
 export type SetCover = {
   set: string;
@@ -203,76 +235,96 @@ const NONE: SetReading = { cover: null, row: null, note: null };
 const label = (row: ReadRow): string =>
   `set verdict ${row.id} (${String(row.set)}, ${String(row.result)} by ${row.actor.session ?? "no session"})`;
 
+type CoverInput = {
+  base: string | null;
+  head: string | null;
+  authors: Iterable<string>;
+  /** The head's checks state; unread (undefined) never covers a PR with a lockfile outside the hash. */
+  ci?: string | null;
+  now?: number;
+};
+
 /**
- * The set verdict covering `head` of `branch` against `base` (see the
- * header). `authors` are the PR branch's author sessions; `ci` is the head's
- * checks state, which a PR with lockfiles needs passing.
+ * The set rows on the head's set hash, the trusted non-author ones among
+ * them (voided ones dropped), and the newest of those still live; null when
+ * the store or the diff cannot be read or nothing matches. The Stop hook
+ * reads this alone (it carries no note text).
  */
-export function findSetCover(
-  cwd: string,
-  input: {
-    base: string | null;
-    head: string | null;
-    authors: ReadonlySet<string>;
-    ci: string | null;
-    now?: number;
-  },
-): SetReading {
-  if (!input.base || !input.head) return NONE;
+function setRows(cwd: string, input: CoverInput) {
+  if (!input.base || !input.head) return null;
   const read = readLedgerAt(cwd, setStorePath(), { integrity: true });
-  if (!read.ok || read.value.rows.length === 0) return NONE;
+  if (!read.ok || read.value.rows.length === 0) return null;
   const key = setDiffKey(cwd, input.base, input.head);
-  if (!key) return NONE;
+  if (!key) return null;
+  const rows = read.value.rows.filter((row) => row.integrity === "verified");
+  const voided = new Set(rows.filter((row) => row.type === SET_VOID).map((row) => row.target));
+  const matching = rows.filter((row) => row.type === SET_ROW && row.setHash === key.hash);
   const now = input.now ?? Date.now();
   const authors = new Set(input.authors);
-  const matching = read.value.rows.filter(
-    (row) => row.type === SET_ROW && row.setHash === key.hash,
-  );
-  if (!matching.length) return NONE;
   const trusted = matching.filter(
     (row) =>
-      row.integrity === "verified" &&
-      row.self !== true &&
+      !voided.has(row.id) &&
       row.sessionSource !== "as" &&
       derivedSession(row.actor.session) &&
       trustReasons(cwd, row).length === 0 &&
-      !authoredBy(authors, row.actor.session) &&
-      Date.parse(row.at) <= now,
+      !authoredBy(authors, row.actor.session),
   );
-  const live = trusted.filter((row) => Date.parse(String(row.expires)) > now);
-  const newest = live.at(-1);
-  if (!newest) {
-    const expired = trusted.at(-1);
+  const newest = trusted.findLast((row) => Date.parse(String(row.expires)) > now);
+  return matching.length ? { key, matching, trusted, newest } : null;
+}
+
+/** Whether the newest live row covers: a strong pass, and green CI when a lockfile is outside the hash. */
+const covering = (
+  found: NonNullable<ReturnType<typeof setRows>>,
+  ci?: string | null,
+): ReadRow | null =>
+  found.newest &&
+  STRONG_RESULTS.has(String(found.newest.result)) &&
+  (!found.key.lockfiles.length || ci === "passing")
+    ? found.newest
+    : null;
+
+/** The set verdict row covering the head (see findSetCover), or null; what the Stop hook reads. */
+export function setCoverRow(cwd: string, input: CoverInput): ReadRow | null {
+  const found = setRows(cwd, input);
+  return found ? covering(found, input.ci) : null;
+}
+
+/**
+ * The set verdict covering `head` of `branch` against `base` (see the
+ * header), or why a matching one does not. `authors` are the PR branch's
+ * author sessions; `ci` is the head's checks state, which a PR with
+ * lockfiles needs passing.
+ */
+export function findSetCover(cwd: string, input: CoverInput): SetReading {
+  const found = setRows(cwd, input);
+  if (!found) return NONE;
+  const newest = found.newest;
+  const row = covering(found, input.ci);
+  if (row)
     return {
-      cover: null,
-      row: null,
-      note: expired
-        ? `${label(expired)} matches this diff but expired at ${String(expired.expires)}`
-        : `a set verdict matches this diff, but none from a trusted non-author session (${matching.map((row) => row.id).join(", ")})`,
+      cover: {
+        set: String(row.set),
+        verdictId: row.id,
+        hash: found.key.hash,
+        repo: typeof row.repo === "string" ? row.repo : null,
+        branch: row.branch,
+        head: row.head,
+        expires: String(row.expires),
+        lockfiles: found.key.lockfiles,
+      },
+      row,
+      note: null,
     };
-  }
-  if (!STRONG_RESULTS.has(String(newest.result)))
-    return { cover: null, row: null, note: `${label(newest)} on this diff does not pass` };
-  if (key.lockfiles.length && input.ci !== "passing")
-    return {
-      cover: null,
-      row: null,
-      note: `${label(newest)} matches this diff, but ${key.lockfiles.join(", ")} is outside the set hash and needs green CI on the head (CI is ${input.ci ?? "unread"})`,
-    };
-  return {
-    cover: {
-      set: String(newest.set),
-      verdictId: newest.id,
-      hash: key.hash,
-      repo: typeof newest.repo === "string" ? newest.repo : null,
-      branch: newest.branch,
-      head: newest.head,
-      expires: String(newest.expires),
-      lockfiles: key.lockfiles,
-    },
-    row: newest,
-    note: null,
-  };
+  const last = found.trusted.at(-1);
+  const note = newest
+    ? STRONG_RESULTS.has(String(newest.result))
+      ? `${label(newest)} matches this diff, but ${found.key.lockfiles.join(", ")} is outside the set hash and needs green CI on the head (CI is ${input.ci ?? "unread"})`
+      : `${label(newest)} on this diff does not pass`
+    : last
+      ? `${label(last)} matches this diff but expired at ${String(last.expires)}`
+      : `a set verdict matches this diff, but none from a trusted non-author session that was not voided (${found.matching.map((candidate) => candidate.id).join(", ")})`;
+  return { cover: null, row: null, note };
 }
 
 /** One line for status output. */

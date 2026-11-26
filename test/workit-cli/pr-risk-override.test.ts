@@ -156,9 +156,7 @@ test("Given a sealed override for .github/workflows/ci.yml additive edits, Then 
   const { repo, runner } = setup(CHANGE, OVERRIDE);
   const read = await lane(repo);
   expect(read).toMatchObject({ lane: "self", need: "self", riskFiles: [] });
-  expect(read.reasons.at(-1)).toBe(
-    "sealed additiveRiskPaths (workspace w): .github/workflows/ci.yml (jobs.lint.with.lint_command appended) follows the rest of the diff",
-  );
+  expect(read.reasons.at(-1)).toBe("sealed additive edit: .github/workflows/ci.yml");
   expect(read.reasons[0]).toBe("small change: 2 lines in 1 file, no risk path");
   await selfVerdict(repo);
   const merged = await run(["pr", "merge", "--json"], repo.cwd);
@@ -171,10 +169,7 @@ test("Given a sealed override and only the additive ci.yml edit, Then no verdict
   expect(await lane(repo)).toMatchObject({
     lane: "none",
     need: "none",
-    reasons: [
-      "only edits the sealed additiveRiskPaths allow changed",
-      expect.stringContaining("follows the rest of the diff"),
-    ],
+    reasons: ["no changes", "sealed additive edit: .github/workflows/ci.yml"],
   });
 });
 

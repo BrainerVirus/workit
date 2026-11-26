@@ -91,6 +91,7 @@ import { checkVerdictsCovered, type CoveredCheck } from "@workit-dev/core/src/ve
 import {
   derivedSession,
   recordSetVerdict,
+  recordSetVoid,
   SET_NAME,
   SET_SESSION_UNBLOCK,
   setCoverLabel,
@@ -997,14 +998,32 @@ async function voidVerdict(io: Io, values: Values, args: string[]): Promise<numb
     { target: args[0], reason: values.reason },
   );
   if (!voided.ok) return failed(io, voided);
+  // A verdict shared as a set verdict (#891) stops covering other repositories' PRs too.
+  const retired = recordSetVoid(io.cwd, {
+    target: voided.value.target,
+    reason: voided.value.reason,
+    actor: voided.value.actor,
+  });
+  if (!retired.ok)
+    return failed(io, {
+      ...retired,
+      error: `${retired.error}; verdict ${voided.value.target} was voided here, but its set verdict still covers matching PRs elsewhere`,
+    });
   const { branch } = voided.value;
-  const row = { ...voided.value, gate: gateReading(io.cwd, { branch }) };
+  const row = {
+    ...voided.value,
+    setRetired: retired.value,
+    gate: gateReading(io.cwd, { branch }),
+  };
   return emit(io, ok(row), (data) =>
     [
       `voided verdict ${data.target} (${data.targetResult ?? "?"} on ${branch ?? "no branch"}): ${data.reason}`,
       data.gate
         ? `gate: ${branch} ${data.gate.accepted ? `accepted (verdict ${data.gate.verdictId ?? "?"})` : `not accepted (${data.gate.reasons.join(", ")})`}`
         : "gate: unknown",
+      ...(data.setRetired
+        ? ["set verdict retired: it no longer covers PRs in other repositories"]
+        : []),
     ].join("\n"),
   );
 }

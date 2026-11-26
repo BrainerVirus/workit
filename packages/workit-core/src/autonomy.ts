@@ -295,7 +295,7 @@ export const externalReposPolicy = (
 
 /** An entry's additiveRiskPaths (#891): risk-path globs, none when unset. */
 const additiveRiskPathsOf = (entry: WorkspaceConfig | null): string[] =>
-  (entry?.additiveRiskPaths ?? []).map((glob) => glob.trim().replace(/^\//u, "")).filter(Boolean);
+  entry?.additiveRiskPaths ?? [];
 
 export type AdditiveRiskPathsPolicy = {
   /** The globs that count: empty unless the seal is valid. */
@@ -314,32 +314,35 @@ export type AdditiveRiskPathsPolicy = {
  * globs both entries list). Anything that throws reads as none.
  */
 export const additiveRiskPathsPolicy = (cwd: string): AdditiveRiskPathsPolicy => {
-  const none: AdditiveRiskPathsPolicy = {
-    paths: [],
-    configured: [],
-    workspace: null,
-    sealed: false,
-  };
+  let configured: string[] = [];
+  let workspace: string | null = null;
+  let sealed = false;
   try {
     const dir = accountDir();
-    if (dir === null || redirected(dir) || evalWorld(cwd)) return none;
-    const folder = resolveWorkspaceFrom(cwd, dir);
-    const configured = additiveRiskPathsOf(folder);
-    const workspace = folder?.name ?? null;
-    if (!configured.length) return { ...none, workspace };
-    if (checkSeal(dir).state !== "valid")
-      return { paths: [], configured, workspace, sealed: false };
-    const name = process.env.WORKIT_WORKSPACE_NAME?.trim() || undefined;
-    if (!name) return { paths: configured, configured, workspace, sealed: true };
-    const both = new Set(additiveRiskPathsOf(resolveWorkspaceFrom(cwd, dir, name)));
-    return {
-      paths: configured.filter((glob) => both.has(glob)),
-      configured,
-      workspace,
-      sealed: true,
-    };
+    if (dir && !redirected(dir) && !evalWorld(cwd)) {
+      const folder = resolveWorkspaceFrom(cwd, dir);
+      configured = additiveRiskPathsOf(folder);
+      workspace = folder?.name ?? null;
+      sealed = checkSeal(dir).state === "valid";
+    }
   } catch {
-    return none;
+    // unreadable: none configured
+  }
+  return { paths: sealedAdditiveRiskPaths(cwd), configured, workspace, sealed };
+};
+
+/** additiveRiskPathsPolicy's `paths` alone: what the Stop hook's lane reads. */
+export const sealedAdditiveRiskPaths = (cwd: string): string[] => {
+  try {
+    const dir = accountDir();
+    if (dir === null || redirected(dir) || evalWorld(cwd) || checkSeal(dir).state !== "valid")
+      return [];
+    const own = additiveRiskPathsOf(resolveWorkspaceFrom(cwd, dir));
+    const name = process.env.WORKIT_WORKSPACE_NAME?.trim();
+    const named = name ? additiveRiskPathsOf(resolveWorkspaceFrom(cwd, dir, name)) : own;
+    return own.filter((glob) => named.includes(glob));
+  } catch {
+    return [];
   }
 };
 

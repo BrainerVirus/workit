@@ -12,6 +12,7 @@ import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
+import { ledgerDeps } from "@/packages/workit-cli/src/verbs/ledger";
 import { recordIssuedSession } from "@/packages/workit-core/src/host-session";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import {
@@ -309,4 +310,48 @@ test("Given a set verdict older than its time to live, Then it no longer covers 
   } finally {
     Date.now = now;
   }
+});
+
+test("Given a set verdict covering PR B, When the user voids its verdict, Then the set verdict is retired and covers B no more", async () => {
+  const a = repoWith(CHANGE);
+  const b = repoWith(CHANGE);
+  workspace();
+  forgeFor(a);
+  const recorded = await recordSet(a);
+  expect(recorded.code, recorded.stdout).toBe(0);
+  forgeFor(b);
+  expect((await run(["pr", "status", "--json"], b.cwd)).json().data.verdict.accepted).toBe(true);
+  const terminal = ledgerDeps.interactive;
+  ledgerDeps.interactive = () => true;
+  try {
+    let stdout = "";
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const name of Object.keys(env))
+      if (
+        name.startsWith("CODEX_") ||
+        name.startsWith("WORKIT_SESSION") ||
+        [
+          "WORKIT_HOST",
+          "CLAUDECODE",
+          "OPENCODE",
+          "CURSOR_AGENT",
+          "PI_CODING_AGENT",
+          "AI_AGENT",
+          "AGENT",
+        ].includes(name)
+      )
+        delete env[name];
+    const code = await main(
+      ["ledger", "void", recorded.json().data.id, "--reason", "wrong diff", "--json"],
+      { cwd: a.cwd, env, stdout: (text) => void (stdout += text), stderr: () => {} },
+    );
+    expect(code, stdout).toBe(0);
+    expect(JSON.parse(stdout).data.setRetired).toBe(true);
+  } finally {
+    ledgerDeps.interactive = terminal;
+  }
+  forgeFor(b);
+  const status = await run(["pr", "status", "--json"], b.cwd);
+  expect(status.json().data.verdict).toMatchObject({ accepted: false, set: null });
+  expect(status.json().data.verdict.setNote).toContain("that was not voided");
 });

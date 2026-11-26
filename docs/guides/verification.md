@@ -289,12 +289,11 @@ keeps the lane above.
   entirely: the PR lands on the lane of the rest of the diff, without the
   `focused` floor, so a small change with a guarded CI append takes the
   author's `--self` verdict, and an append alone needs none. The reasons end
-  with `sealed additiveRiskPaths (workspace <name>): <file> (<what grew>)
-  follows the rest of the diff`. An edit that is not purely additive stays
-  `full` and says so; a file the repo's `.workit/risk-paths` lists never
-  softens; a list the seal does not cover is ignored with the note `… is
-  ignored: the seal is not valid`. `pr status`, `pr merge` and `stack land`
-  read it; the Stop hook does not.
+  with `sealed additive edit: <file>`. An edit that is not purely additive
+  stays `full` and says so; a file the repo's `.workit/risk-paths` lists
+  never softens; a list the seal does not cover is ignored with the note
+  `… is ignored: the seal is not valid`. `pr status`, `pr merge`, `stack
+  land` and the Stop hook read it.
 
 #### Repo risk paths: `.workit/risk-paths`
 
@@ -410,7 +409,8 @@ If the lower branch gained a commit or was amended after the verdict, or
 Workit cannot read any of this, it is not covered and needs its own. `workit pr merge`, `workit stack land`,
 `workit stack status`, `workit pr status` and `workit ledger check` name the
 covering verdict (`cover` in JSON). The Stop hook still reads each branch's
-own verdicts.
+own verdicts: the stack cache and patch-id comparison would not fit the
+hook bundle's size budget.
 
 **Set verdicts.** The same change made in several repositories (a
 dependency bump across a dozen services) is reviewed once. A non-author
@@ -449,7 +449,14 @@ it (`verdict: accepted (set verdict <id> (<name>) from <repo> <branch> @
 <head>, diff <hash>, until <time>)`, `set` in `--json`), and says why a
 matching one does not apply (`setNote`: expired, failed, an author's,
 missing green CI). `pr merge`, `stack land` and `workit ledger verdict
-[<branch>]` read it too; the Stop hook does not.
+[<branch>]` read it too. The Stop hook does as well, so it does not ask
+for a verdict a set verdict already gives, with one exception: it does not
+read CI, so a PR that changed a lockfile is still asked for one there,
+although the merge gate takes the set verdict once CI is green.
+
+`workit ledger void <id>` of a verdict shared with `--set` also retires the
+set verdict: a void row in the same store, after which it covers no PR in
+any repository (`pr status` notes that it was voided).
 
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged

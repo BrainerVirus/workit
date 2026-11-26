@@ -37,12 +37,13 @@
 // the ledger, local git and the ci-wait marker only (no forge call), and
 // every failure allows the stop.
 import { spawnSync } from "node:child_process";
-import { resolveAutonomy, type VerificationMode } from "../autonomy";
+import { resolveAutonomy, sealedAdditiveRiskPaths, type VerificationMode } from "../autonomy";
 import { liveCiWaiter, type CiWaiter } from "../ci-waiter";
 import { currentJudgment } from "../core/policy/current-judgment";
 import { branchLane, laneNeed } from "../core/policy/lane";
 import { currentBranch, pushRemoteName } from "../git/rev";
-import { branchHold, checkVerdicts, readLedger, type ReadRow } from "../ledger";
+import { branchHold, checkVerdicts, defaultBase, readLedger, type ReadRow } from "../ledger";
+import { setCoverRow } from "../core/verdict-set";
 import type { HostDescriptor } from "./descriptor";
 import type { HookDecision, HookInput } from "./protocol";
 import { guardedBranch, inWorkitWorkspace } from "./raw-git";
@@ -293,11 +294,24 @@ const unverified = (
 ): StopObligation | null => {
   const check = checkVerdicts(cwd, branch, all);
   if (check.accepted.accepted || check.accepted.reasons.includes("failing_verdict")) return null;
+  // A set verdict on the same diff (#891) covers it as at the merge gate; a stack verdict is not read here.
+  if (
+    check.head &&
+    setCoverRow(cwd, {
+      base: check.base ?? defaultBase(cwd),
+      head: check.head,
+      // CI is not read here (hook bundle size): a PR whose lockfile is outside
+      // the set hash is still asked for a verdict, though the merge gate may take it.
+      authors: check.authors,
+    })
+  )
+    return null;
   const judgment = currentJudgment(cwd);
   const high = judgment?.riskTier === "high";
   let independent: boolean;
   if (verification === "proportional") {
     const lane = branchLane(cwd, {
+      additivePaths: sealedAdditiveRiskPaths(cwd),
       base: prBase(all.filter((row) => row.branch === branch)),
       head,
       judgment,

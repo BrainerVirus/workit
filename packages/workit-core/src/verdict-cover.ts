@@ -26,6 +26,7 @@
 // Set verdicts (#891, core/verdict-set.ts): a branch neither its own nor a
 // stack verdict accepts is covered by a set verdict recorded in any
 // repository on this machine on the same set hash, under the same rules.
+// The Stop hook reads set verdicts (setCoverRow) but not stack verdicts.
 import fs from "node:fs";
 import path from "node:path";
 import { branchLane } from "./core/policy/lane";
