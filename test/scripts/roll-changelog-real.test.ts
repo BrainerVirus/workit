@@ -162,6 +162,16 @@ function fixedEntryBackInUnreleased(): { text: string; entry: string } {
   return { text, entry };
 }
 
+/** The [Unreleased] section of `text`: it may hold the branch's own, really unreleased entries. */
+const unreleasedOf = (text: string): string => {
+  const { sections } = parseChangelog(text);
+  const at = sections.findIndex((s) => s.name === "Unreleased");
+  return text
+    .split("\n")
+    .slice(sections[at]?.start, sections[at + 1]?.start)
+    .join("\n");
+};
+
 test("Given an [Unreleased] entry whose release already has its group, When rolled, Then it joins that group and the roll succeeds", () => {
   const { text, entry } = fixedEntryBackInUnreleased();
   const dir = checkoutWith(text);
@@ -171,7 +181,8 @@ test("Given an [Unreleased] entry whose release already has its group, When roll
   expect(lostLines(text, rolled)).toEqual([]);
   const fixed = versionGroups(rolled, "1.14.0").find((g) => g.heading === "### Fixed");
   expect(fixed?.entries.map((e) => e.lines.join("\n"))).toContain(entry);
-  expect(rolled).not.toContain("## [Unreleased]\n\n### Fixed\n");
+  expect(unreleasedOf(text)).toContain(entry);
+  expect(unreleasedOf(rolled)).not.toContain(entry);
 });
 
 test("Given that same file, When the release prepare runs, Then it succeeds and files the entry under its release, not the new one", () => {
@@ -185,4 +196,5 @@ test("Given that same file, When the release prepare runs, Then it succeeds and 
   expect(
     versionGroups(rolled, "9.9.9").flatMap((g) => g.entries.map((e) => e.lines.join("\n"))),
   ).not.toContain(entry);
+  expect(unreleasedOf(rolled)).not.toContain(entry);
 });
