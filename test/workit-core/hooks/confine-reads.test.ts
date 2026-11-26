@@ -553,6 +553,49 @@ test("Given verification mwwyoapt's sinks and module escapes, When a judge or an
   allowed(implementer, writers.slice(0, 3));
 });
 
+// Round 3, group 2: a builtin that reaches code or modules by name (Python's dunders and
+// reflective builtins, Node's constructors and globals, every builtin module `node -e` has as a
+// global) and `process` or `Bun` past their read members.
+test("Given an ambient global that reaches code or modules by name, When a judge or an implementer outside its worktree uses it, Then it is denied", () => {
+  const writers = [
+    `python3 -c "import glob; glob.os.setxattr('x','user.a',b'1')"`,
+    `python3 -c "import pathlib; pathlib.os.system('id')"`,
+    `python3 -c "print(globals())"`,
+    `python3 -c "print(vars())"`,
+    `python3 -c "__builtins__.open('x','w')"`,
+    `python3 -c "print(().__class__.__base__.__subclasses__())"`,
+    `python3 -c "compile('1','x','exec')"`,
+    `python3 -c "setattr(1, 'a', 2)"`,
+    `python3 -c "breakpoint()"`,
+    `node -e "child_process.execSync('id')"`,
+    `node -e "vm.runInThisContext('1')"`,
+    `node -e "fs.writeFileSync('x','a')"`,
+    `node -e "const f = fs; f.readFileSync"`,
+    `node -e "worker_threads.isMainThread"`,
+    `node -e "process.binding('fs')"`,
+    `node -e "process.getBuiltinModule('fs')"`,
+    `node -e "process.mainModule"`,
+    `node -e "process.dlopen(module, 'x')"`,
+    `node -e "globalThis.process.exit()"`,
+    `node -e "global.process"`,
+    `node -e "module.require('fs')"`,
+    `node -e "[].constructor.constructor('return 1')"`,
+    `node -e "new Function('return 1')"`,
+    `node -e "new Worker('x', { eval: true })"`,
+    `node -e "WebAssembly.compile"`,
+    `node -e "console.log(__proto__)"`,
+    `bun -e "Bun.write('x', 'a')"`,
+    `bun -e "Bun.spawnSync(['id'])"`,
+    `bun -e "Bun.openInEditor('x')"`,
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+});
+
 test("Given inline code that imports past the tables, When a judge is refused, Then line 1 names the import and line 2 retries from scratch, or names the read-only ways when the script reads a relative path", () => {
   const scratch = path.join(git(lead, "rev-parse", "--show-toplevel"), ".workit-scratch");
   const plain = `python3 -c "import timeit; print(timeit.timeit('1', number=1))"`;
@@ -618,6 +661,11 @@ test("Given every module in Python's sys.stdlib_module_names and Node's builtinM
       })
       .every(Boolean),
   ).length;
+  // `node -e` has each builtin module as a global: one outside the tables is refused there too.
+  for (const name of builtins.filter(
+    (module) => /^[a-z_]\w*$/.test(module) && module !== "console",
+  ))
+    expect(writes(`node -e "${name}.x()"`, "node"), name).toBe(!node.has(name) || name === "fs");
   console.log(
     `property: Python ${refused} of ${names.length} refused; Node ${refusedNode} of ${builtins.length} refused`,
   );

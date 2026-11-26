@@ -12,6 +12,7 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
+import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskReader } from "../core/task-read";
@@ -296,13 +297,13 @@ const READ_CALLS =
 const MUTATING_CALLS =
   /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
 /**
- * Inline code that runs a command, deletes (a file's `.delete()`), writes a
- * table (`.to_csv(path)`), loads code by path or reaches a call by a computed
- * name: a word anywhere in it, string literals included. A `require` of
- * anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
+ * Inline code that runs code by name, reaches a call by a computed name, deletes (a file's
+ * `.delete()`), changes a file's mode or times through a member of a module Workit reads, or
+ * sets a loader: a word anywhere in it, string literals included. The modules and globals that
+ * run commands are refused by `unread`.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|attrgetter|methodcaller|Reflect|getOwnPropertyDescriptor|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.delete\s*\(\s*\)|\.to_(?!bytes|dict|list)\w+\s*\((?!\s*\))|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*\+?=|-r\b|--(?:require|import|env-file|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
+  /getattr|Reflect|getOwnPropertyDescriptor|FileIO|utime|ch(?:mod|own)|\.delete\s*\(\s*\)|(?:PYTHON|NODE_)\w*\+?=|-r\b|--(?:require|import|env-file|[\w-]*loader)|\b(?:exec\w*|eval|(?:unlink|rename|remove)\w*)\b|\]\s*\(/;
 /**
  * Inline code's tokens, left to right: a whole-line comment (`#`, `//`, or a
  * block comment that starts a line), a read (`open(<literal path or name>[,
@@ -377,6 +378,13 @@ const MEMBERS: Record<string, string> = {
   "py sys": "argv stdin stdout stderr exit version version_info platform path maxsize",
   fs: FS_READS,
   "fs/promises": FS_READS,
+  process: "argv env cwd exit exitCode stdout stderr stdin platform version versions hrtime",
+  Bun: "file argv env version inspect",
+};
+/** Names inline code may not use (a dunder, a reflective builtin or global, a module reached through another). */
+const AMBIENT = {
+  py: /__\w+__|(?<![\w.])(?:compile|globals|locals|vars|setattr|delattr|breakpoint)(?!\w)|\.\s*(?:os|sys|subprocess|shutil|builtins|importlib|ctypes|posix|codecs)(?!\w)/,
+  js: /__\w+__|constructor|(?<![\w$.])(?:globalThis|global|module|Function|WebAssembly|Worker|Deno)(?![\w$])/,
 };
 const OUTSIDE =
   " is outside the modules Workit reads in inline code (json, re, pathlib, os.path, fs reads…)";
@@ -475,6 +483,19 @@ const unread = (bare: string, modules: readonly string[], python: boolean): stri
   // An import or require left over is one Workit cannot read (`require(x)`, `__import__`, `import(\`…\`)`).
   const left = /(?<![\w$.])(?:require|import|__import__)(?![\w$])[^;\n]{0,24}/.exec(rest);
   if (left) refuse(left[0]);
+  const ambient = (python ? AMBIENT.py : AMBIENT.js).exec(rest);
+  if (ambient) refuse(ambient[0]);
+  // Node's `-e` code has every builtin module as a global (`child_process.execSync(…)`), and
+  // `process` and `Bun`: each is used only through its members ("-": none).
+  if (!python)
+    for (const name of [...builtinModules, "Bun"])
+      if (
+        /^[A-Za-z_]\w*$/.test(name) &&
+        name !== "console" &&
+        !bound.has(name) &&
+        !NODE_WHOLE.has(name)
+      )
+        bound.set(name, MEMBERS[name] ?? "-");
   for (const [name, of] of bound)
     for (const use of rest.matchAll(
       new RegExp(
