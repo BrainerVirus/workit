@@ -315,7 +315,7 @@ const READ_CALLS =
   /^(?:print|log|info|warn|error|debug|puts|readdir(?:Sync)?|listdir|scandir|iterdir|glob|l?stat(?:Sync)?|exists(?:Sync)?|isdir|isfile|is_dir|is_file|access(?:Sync)?|realpath(?:Sync)?|dirname|basename|relative|str|repr|len)$/;
 /** Calls that change files (Python, Node, Ruby, PHP names), for a path value that may reach one. */
 const MUTATING_CALLS =
-  /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|f?truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
+  /^(?:renames?(?:Sync)?|move(?:_into)?|copy(?:2|file|tree|File|_into)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|f?truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
 /**
  * Inline code that runs code by name, reaches a call by a computed name, deletes (a file's
  * `.delete()`), changes a file's mode or times through a member of a module Workit reads, or
@@ -323,7 +323,7 @@ const MUTATING_CALLS =
  * run commands are refused by `unread`.
  */
 const SPAWNS =
-  /getattr|Reflect|getOwnPropertyDescriptor|FileIO|utime|ch(?:mod|own)|\.delete\s*\(\s*\)|(?:PYTHON|NODE_)\w*\+?=|-r\b|--(?:require|import|env-file|[\w-]*loader)|\b(?:exec\w*|eval|(?:unlink|rename|remove)\w*)\b|\]\s*\(/;
+  /getattr|Reflect|getOwnPropertyDescriptor|FileIO|\.copy\s*\((?!\s*\))|utime|ch(?:mod|own)|\.delete\s*\(\s*\)|(?:PYTHON|NODE_)\w*\+?=|-r\b|--(?:require|import|env-file|[\w-]*loader)|\b(?:exec\w*|eval|(?:unlink|rename|remove)\w*)\b|\]\s*\(/;
 /**
  * Inline code's tokens, left to right: a whole-line comment (`#`, `//`, or a
  * block comment that starts a line), a read (`open(<literal path or name>[,
@@ -383,7 +383,7 @@ const strip = (text: string, python: boolean, modules: string[] = []): string =>
 
 /** Modules inline code may import whole: Python's, then Node's (bare or `node:`, and any `*.json`). */
 const PY_WHOLE = new Set(
-  "json re math collections itertools functools datetime time hashlib base64 glob fnmatch csv io string textwrap statistics difflib shlex pprint typing ast tomllib yaml configparser pathlib urllib.parse xml.etree.ElementTree os.path".split(
+  "json re math collections itertools functools datetime time hashlib base64 glob fnmatch csv io string textwrap statistics difflib shlex pprint typing ast tomllib configparser pathlib urllib.parse xml.etree.ElementTree os.path".split(
     " ",
   ),
 );
@@ -396,15 +396,22 @@ const FS_READS =
 const MEMBERS: Record<string, string> = {
   "py os": "path getcwd listdir scandir walk stat environ getenv sep linesep",
   "py sys": "argv stdin stdout stderr exit version version_info platform path maxsize",
+  // `yaml.unsafe_load` and the full loaders build objects from tags: code.
+  "py yaml": "safe_load safe_load_all safe_dump safe_dump_all YAMLError",
   fs: FS_READS,
   "fs/promises": FS_READS,
   process: "argv env cwd exit exitCode stdout stderr stdin platform version versions hrtime",
   Bun: "file argv env version inspect",
 };
-/** Names inline code may not use (a dunder, a reflective builtin or global, a module reached through another). */
+/**
+ * Names inline code may not use: a dunder, a private member, a reflective builtin or global, code
+ * evaluated from an annotation, a module reached through another; in Node, a computed object key
+ * or (strings included) a `flag` option, which opens a file to write.
+ */
 const AMBIENT = {
-  py: /__\w+__|(?<![\w.])(?:compile|globals|locals|vars|setattr|delattr|breakpoint)(?!\w)|\.\s*(?:os|sys|subprocess|shutil|builtins|importlib|ctypes|posix|codecs)(?!\w)/,
-  js: /__\w+__|constructor|(?<![\w$.])(?:globalThis|global|module|Function|WebAssembly|Worker|Deno)(?![\w$])/,
+  py: /__\w+__|\.\s*_|(?<![\w.])(?:compile|globals|locals|vars|setattr|delattr|breakpoint|help)(?!\w)|get_type_hints|ForwardRef|\.\s*(?:os|sys|subprocess|shutil|builtins|importlib|ctypes|posix|codecs)(?!\w)/,
+  js: /__\w+__|(?<![\w$.])(?:globalThis|global|module|Function|WebAssembly|Worker|Deno)(?![\w$])|[{,]\s*\[[^\]]*\]\s*:/,
+  raw: /constructor|[gs]etPrototypeOf|getOwnPropertyNames|\bflags?\b/,
 };
 const OUTSIDE =
   " is outside the modules Workit reads in inline code (json, re, pathlib, os.path, fs reads…)";
@@ -412,10 +419,16 @@ const OUTSIDE =
 /**
  * Why inline code (`bare`, as `strip` left it, with the `modules` it names) reaches past the
  * modules Workit reads: an import that is not literal or not in PY_WHOLE, NODE_WHOLE or MEMBERS,
- * a name it imports that is not an allowed member, or a module it binds used other than as
- * `name.member` (a member in MEMBERS where the module has a list). Null when it does not.
+ * a name it imports that is not an allowed member, a module it binds (or a Node global) used
+ * other than as `name.member` (a member in MEMBERS where the module has a list), or an AMBIENT
+ * name (in Node, `raw` is matched against the whole `text`, strings included). Null when none.
  */
-const unread = (bare: string, modules: readonly string[], python: boolean): string | null => {
+const unread = (
+  bare: string,
+  modules: readonly string[],
+  python: boolean,
+  text: string,
+): string | null => {
   let why: string | null = null;
   const refuse = (what: string) => {
     why ??= `\`${what.trim().replace(/«(\d+)»/g, (_, at) => `'${modules[at]}'`)}\`${OUTSIDE}`;
@@ -503,7 +516,9 @@ const unread = (bare: string, modules: readonly string[], python: boolean): stri
   // An import or require left over is one Workit cannot read (`require(x)`, `__import__`, `import(\`…\`)`).
   const left = /(?<![\w$.])(?:require|import|__import__)(?![\w$])[^;\n]{0,24}/.exec(rest);
   if (left) refuse(left[0]);
-  const ambient = (python ? AMBIENT.py : AMBIENT.js).exec(rest);
+  const ambient = python
+    ? AMBIENT.py.exec(rest)
+    : (AMBIENT.js.exec(rest) ?? AMBIENT.raw.exec(text));
   if (ambient) refuse(ambient[0]);
   // Node's `-e` code has every builtin module as a global (`child_process.execSync(…)`), and
   // `process` and `Bun`: each is used only through its members ("-": none).
@@ -597,7 +612,7 @@ const writesIn = (text: string, python = false, code = true): string | null => {
     ? `\`${spawns}\` may run code or change files`
     : /['"`]/.test(bare) || /\\[ux]/.test(text) || callsResult(bare)
       ? "Workit cannot read its strings or a call on a returned value"
-      : ((code ? unread(bare, modules, python) : null) ??
+      : ((code ? unread(bare, modules, python, text) : null) ??
         (renames(bare)
           ? "`.replace(` may rename a path"
           : word === undefined

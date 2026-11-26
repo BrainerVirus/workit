@@ -746,3 +746,39 @@ test("Given awk or sed that writes or runs a command, deno eval, tsx -e, ts-node
     "workit worktree confinement: implementer impl-reads",
   );
 });
+
+// Round 3, self-probe: code from a YAML tag or an annotation, a private member, a copy through
+// Python 3.14's Path, a read opened to write (`flag: 'w'` truncates) and the Function
+// constructor reached through a prototype or a computed key.
+test("Given inline code that runs code from data, opens a read to write or reaches a constructor, When a judge or an implementer outside its worktree runs it, Then it is denied", () => {
+  const writers = [
+    `python3 -c "import yaml; yaml.unsafe_load('!!python/object/apply:os.system [id]')"`,
+    `python3 -c "import yaml; yaml.load('a: 1', Loader=yaml.Loader)"`,
+    `python3 -c "import typing; typing.ForwardRef('1')"`,
+    `python3 -c "import typing; print(typing.get_type_hints(int))"`,
+    `python3 -c "import sys; print(sys._getframe())"`,
+    `python3 -c "import json; json._default_decoder"`,
+    `python3 -c "help('modules')"`,
+    `python3 -c "from pathlib import Path; Path('a').copy('b')"`,
+    `python3 -c "from pathlib import Path; Path('a').copy_into('b')"`,
+    `python3 -c "from pathlib import Path; Path('a').move_into('b')"`,
+    `node -e "require('fs').readFileSync('package.json', { flag: 'w' })"`,
+    `node -e "const fs = require('fs'); fs.createReadStream('package.json', { flags: 'w' })"`,
+    `node -e "const k = 'fl' + 'ag'; require('fs').readFileSync('package.json', { [k]: 'w' })"`,
+    `node -e "require('fs').readFileSync('package.json', JSON.parse('{\\"flag\\":\\"w\\"}'))"`,
+    `node -e "const F = (() => 1)['constructor']; F('return 1')"`,
+    `node -e "const P = Object.getPrototypeOf(() => 1); P"`,
+    `node -e "Object.getOwnPropertyNames(Function)"`,
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  allowed(verifier, [
+    `python3 -c "import yaml; print(yaml.safe_load('a: 1'))"`,
+    `python3 -c "d = {'a': 1}; print(d.copy())"`,
+    `node -e "console.log([[1, 2], [3]].flat())"`,
+  ]);
+});
