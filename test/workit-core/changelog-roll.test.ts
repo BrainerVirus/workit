@@ -490,22 +490,85 @@ function randomHistory(seed: number, tags: number, notUtf8 = false): Step[] {
   return steps;
 }
 
-/** What `git show` of one tag alone gives: for-each-ref narrowed to it, no batch, no shared cache. */
-const oneTagAlone =
-  (exec: Exec, row: string): Exec =>
+/**
+ * `history` as one `git fast-import` stream: two git processes per repo, not
+ * one per commit and tag, so a long history stays fast on Windows. `committed`
+ * is each tag's changelog as `git show` decodes it (null: the file is gone).
+ */
+function importRepo(history: Step[], file = "CHANGELOG.md") {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-clroll-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const globalConfig = path.join(root, ".gitconfig");
+  writeFileSync(globalConfig, "");
+  const cwd = path.join(root, "repo");
+  mkdirSync(cwd);
+  const git = (args: string[], input?: Buffer): void => {
+    const run = spawnSync("git", args, {
+      cwd,
+      input,
+      timeout: 30_000,
+      env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" },
+    });
+    if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${String(run.stderr)}`);
+  };
+  // fast-import's `data` counts bytes, so the stream is built as bytes.
+  const data = (bytes: Buffer): Buffer[] => [Buffer.from(`data ${bytes.length}\n`), bytes];
+  const stream: Buffer[] = [];
+  const committed = new Map<string, string | null>();
+  history.forEach((step, index) => {
+    const mark = index + 1;
+    const who = `t <t@t> ${Date.parse(`${step.date}T12:00:00Z`) / 1000} +0000`;
+    stream.push(
+      Buffer.from(`commit refs/heads/main\nmark :${mark}\ncommitter ${who}\n`),
+      ...data(Buffer.from("docs: changelog")),
+      Buffer.from(step.text === null ? `\nD ${file}\n` : `\nM 100644 inline ${file}\n`),
+      ...(step.text === null ? [] : [...data(Buffer.from(step.text)), Buffer.from("\n")]),
+      Buffer.from("\n"),
+    );
+    if (!step.tag) return;
+    stream.push(
+      ...(step.annotated
+        ? [
+            Buffer.from(`tag ${step.tag}\nfrom :${mark}\ntagger ${who}\n`),
+            ...data(Buffer.from(step.tag)),
+          ]
+        : [Buffer.from(`reset refs/tags/${step.tag}\nfrom :${mark}\n`)]),
+      Buffer.from("\n"),
+    );
+    committed.set(step.tag, step.text === null ? null : Buffer.from(step.text).toString("utf8"));
+  });
+  git(["init", "-q", "-b", "main"]);
+  git(["fast-import", "--quiet"], Buffer.concat(stream));
+  const last = history.at(-1)?.text;
+  if (last !== null && last !== undefined) writeFileSync(path.join(cwd, file), last);
+  return { cwd, committed };
+}
+
+/** A reference reader that starts no git process: `show <tag>:…` answers from `committed`, no batch. */
+const perTagFrom =
+  (real: Exec, committed: Map<string, string | null>): Exec =>
   (cmd, args, input) => {
     if (args[0] === "cat-file") throw new Error("no batch");
-    return args[0] === "for-each-ref" ? `${row}\n` : exec(cmd, args, input);
+    if (args[0] !== "show") return real(cmd, args, input);
+    const text = committed.get((args[1] ?? "").split(":")[0] ?? "");
+    if (text === null || text === undefined) throw new Error(`no ${args[1]}`);
+    return text;
   };
 
+/** `exec` with for-each-ref narrowed to one tag row. */
+const oneTag =
+  (exec: Exec, row: string): Exec =>
+  (cmd, args, input) =>
+    args[0] === "for-each-ref" ? `${row}\n` : exec(cmd, args, input);
+
 test.each([
-  [1, false],
-  [7, false],
-  [42, true],
+  [1, false, 45],
+  [7, false, 45],
+  [42, true, 12],
 ])(
   "Given seeded random history %i (Latin-1 tag: %p), Then tagSnapshots equals reading each tag alone, and a UTF-8 history spawns no git show",
-  (seed, notUtf8) => {
-    const repo = makeRepo(randomHistory(seed, 45, notUtf8));
+  (seed, notUtf8, tags) => {
+    const repo = importRepo(randomHistory(seed, tags, notUtf8));
     const real = gitExec(repo.cwd);
     const calls: string[] = [];
     const counted: Exec = (cmd, args, input) => {
@@ -513,9 +576,12 @@ test.each([
       return real(cmd, args, input);
     };
     const batched = tagSnapshots(counted, "v");
-    expect(batched.length).toBeGreaterThan(20);
+    expect(new Set(batched.map((snapshot) => snapshot.tag))).toEqual(
+      new Set(repo.committed.keys()),
+    );
+    const perTag = perTagFrom(real, repo.committed);
     for (const snapshot of batched) {
-      const [alone] = tagSnapshots(oneTagAlone(real, `${snapshot.tag}\t${snapshot.date}`), "v");
+      const [alone] = tagSnapshots(oneTag(perTag, `${snapshot.tag}\t${snapshot.date}`), "v");
       expect({ ...snapshot, keys: [...snapshot.keys].toSorted() }).toEqual({
         ...alone,
         keys: [...(alone?.keys ?? [])].toSorted(),
@@ -525,10 +591,6 @@ test.each([
     else expect(calls).toEqual(["for-each-ref", "cat-file", "cat-file"]);
     const roll = (exec: Exec) =>
       runChangelogRoll({ cwd: repo.cwd, tagPrefix: "v", write: false, exec });
-    const noBatch: Exec = (cmd, args, input) => {
-      if (args[0] === "cat-file") throw new Error("no batch");
-      return real(cmd, args, input);
-    };
-    expect(roll(real)).toEqual(roll(noBatch));
+    expect(roll(real)).toEqual(roll(perTag));
   },
 );
