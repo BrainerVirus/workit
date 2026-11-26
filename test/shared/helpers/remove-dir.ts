@@ -1,22 +1,10 @@
-import { rmSync } from "node:fs";
-
-/** The codes Windows answers while a just-exited child or a scanner still holds a handle. */
-const RETRYABLE = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"]);
+import { removeTree } from "@/packages/workit-core/src/core/remove-tree";
 
 /**
- * Remove a test's temp dir, retrying while Windows still holds a handle in it.
- * Bun's rmSync accepts `maxRetries` and `retryDelay` but does not retry, so a
- * dir a child had open a moment ago failed EBUSY at once.
+ * Remove a test's temp dir, retrying while Windows still holds a handle in it
+ * (a child that just exited, or a scanner). More patient than product code:
+ * 10 tries by default.
  */
 export function removeDir(dir: string, tries = 10, delayMs = 100): void {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code ?? "";
-      if (attempt >= tries || !RETRYABLE.has(code)) throw error;
-      Bun.sleepSync(delayMs * attempt);
-    }
-  }
+  removeTree(dir, { attempts: tries, delayMs });
 }

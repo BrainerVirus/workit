@@ -47,6 +47,7 @@ import {
   type LinkedDependencies,
 } from "./worktree-deps";
 import { heldWithin, stopProcesses } from "./core/procs";
+import { removeTree } from "./core/remove-tree";
 import { stateDir } from "./core/workit-paths.mjs";
 import { FANOUT_DEPS_MODES, workspaceFanoutDeps, type FanoutDepsMode } from "./core/workspaces";
 import {
@@ -734,7 +735,7 @@ export function workerScratchesOf(
  */
 export function removeWorkerScratch(dir: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (scratchProblem(dir, env) || !fs.existsSync(dir)) return false;
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+  removeTree(dir);
   const parent = path.dirname(path.resolve(dir));
   if (parent !== path.resolve(scratchRoot(env)))
     try {
@@ -1267,5 +1268,5 @@ function removeScratch(worktree: string): void {
     return;
   }
   if (stat.isSymbolicLink() || !stat.isDirectory()) fs.unlinkSync(scratch);
-  else fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 2 });
+  else removeTree(scratch);
 }
