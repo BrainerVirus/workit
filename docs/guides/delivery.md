@@ -305,7 +305,9 @@ created, put its entries in the forge release body:
 
 A release that never writes back to the trunk leaves the entries under `[Unreleased]` there.
 `workit changelog roll` on a later branch moves each into the release whose tag first holds it,
-so the trunk catches up in one PR; rerunning it changes nothing.
+so the trunk catches up in one PR; rerunning it changes nothing. `pr create --changelog` and
+`workit changelog apply` run the same roll before they add an entry, so the next PR that adds one
+carries the move in its changelog commit.
 
 ### Release push
 
@@ -807,7 +809,11 @@ which changes nothing), `pr create` checks the branch before it opens a PR:
   Fill in the entry and run it (for example
   `--changelog "Fixed: the retry loop keeps the timeout"`): `pr create` adds
   the entry, commits it as `docs(<scope>): add the changelog entry`, pushes
-  and opens the PR. When the commit or push is refused, it says what it left
+  and opens the PR. The same commit moves the `[Unreleased]` entries a
+  release tag already shipped into their releases (as `workit changelog roll`
+  does), and the `changelog: added …` line says how many moved; a roll that
+  would double or drop text only prints a warning naming
+  `workit changelog roll`. When the commit or push is refused, it says what it left
   behind (the edited changelog, or the local commit) and opens nothing.
 - Under `update`, a repo without its changelog file passes with one line saying
   there is nothing to update; under `create` the entry is still required. A
@@ -837,8 +843,8 @@ line in the PR body, or neither.
 
 The gate only reads the changelog; entries are written by
 `pr create --changelog` or `workit changelog apply` (with no PR yet), which
-merge into Unreleased and never rewrites or
-reorders existing entries.
+merge into Unreleased and never rewrite or reorder existing entries, apart
+from moving shipped ones into their releases.
 
 ### PR description template
 

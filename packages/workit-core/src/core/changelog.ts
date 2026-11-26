@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { gitExec, runChangelogRoll } from "./changelog-roll";
 import { resolveWorkspaceRoot } from "./scripts";
 
 const CATEGORIES = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
@@ -208,18 +209,75 @@ export function hasUnreleasedHeading(text: string): boolean {
   return text.split("\n").some((line) => UNRELEASED_RE.test(line.replace(/\n$/, "")));
 }
 
+/** What the roll before an apply moved, or why it moved nothing it should have. */
+export interface ApplyRoll {
+  /** Shipped entries moved per release, newest first. */
+  moved: Array<{ version: string; entries: number }>;
+  /** How many entries moved in all. */
+  entries: number;
+  /** Set when the roll refused (duplicated or lost lines): nothing moved. */
+  warning?: string;
+}
+
+/**
+ * The changelog at `target` with every [Unreleased] entry a release tag
+ * already holds moved into that release (what `workit changelog roll`
+ * writes), so an apply commits the roll with its entry. Skipped quietly
+ * outside a git repo, in a shallow clone and without release tags; a roll
+ * that would refuse leaves the text as it is and names the fix.
+ */
+function rollShipped(cwd: string, target: string, text: string): { text: string; roll: ApplyRoll } {
+  const none: ApplyRoll = { moved: [], entries: 0 };
+  const exec = gitExec(cwd);
+  try {
+    if (exec("git", ["rev-parse", "--is-shallow-repository"]).trim() !== "false")
+      return { text, roll: none };
+  } catch {
+    return { text, roll: none };
+  }
+  const rel = path.relative(cwd, target).split(path.sep).join("/");
+  const run = runChangelogRoll({ cwd, path: rel, write: false, exec });
+  if (!run.ok) {
+    if (run.code === "not_found") return { text, roll: none };
+    return {
+      text,
+      roll: {
+        ...none,
+        warning: `${rel}: the shipped [Unreleased] entries were not moved (${
+          run.error.includes("would drop")
+            ? "the roll would drop lines"
+            : "some are already under their release: a merge put back what a roll moved"
+        }); the entry was added anyway. Run workit changelog roll to see the lines and fix them.`,
+      },
+    };
+  }
+  if (run.moved.length === 0) return { text, roll: none };
+  return {
+    text: text.includes("\r\n") ? run.text.replace(/\n/g, "\r\n") : run.text,
+    roll: { moved: run.moved, entries: run.moved.reduce((n, m) => n + m.entries, 0) },
+  };
+}
+
+/** ` (moved N shipped entries into their releases)`, or "" when none moved. */
+export const rolledNote = (rolled: ApplyRoll | undefined): string =>
+  rolled?.entries
+    ? ` (moved ${rolled.entries} shipped ${rolled.entries === 1 ? "entry" : "entries"} from [Unreleased] into ${rolled.moved.map((m) => `[${m.version}]`).join(", ")})`
+    : "";
+
 function applyChangelog(
+  cwd: string,
   target: string,
   entries: Record<string, string[]>,
   normalizeOnly: boolean,
 ): Record<string, any> {
   const source = readChangelogSource(target);
   if ("error" in source) return { error: source.error };
-  const rendered = renderChangelog(source.text, entries, normalizeOnly);
+  const rolled = source.exists ? rollShipped(cwd, target, source.text) : null;
+  const rendered = renderChangelog(rolled?.text ?? source.text, entries, normalizeOnly);
   if ("error" in rendered) return { error: rendered.error };
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, rendered.text, "utf8");
-  return { ...rendered.result, path: target };
+  return { ...rendered.result, path: target, ...(rolled ? { rolled: rolled.roll } : {}) };
 }
 
 function renderChangelog(
@@ -245,8 +303,10 @@ function renderChangelog(
   const [before, body, after] = splitUnreleased(text);
   const [newBody, counts, addedCounts, error] = mergeSections(body, entries, normalizeOnly);
   if (error) return { error };
-  // before already includes "## [Unreleased]\n"
-  const out = (before.endsWith("\n") ? before : before + "\n") + newBody + after;
+  // before already includes "## [Unreleased]\n"; a blank line keeps the
+  // next release heading off the last bullet.
+  const gap = after && newBody.trim() && !newBody.endsWith("\n\n") ? "\n" : "";
+  const out = (before.endsWith("\n") ? before : before + "\n") + newBody + gap + after;
   return {
     text: out,
     result: { ok: true, normalize_only: normalizeOnly, added: addedCounts, categories: counts },
@@ -294,10 +354,16 @@ export function changelogApplyPreview({
   if ("error" in location) return location;
   const source = readChangelogSource(location.target);
   if ("error" in source) return source;
-  const rendered = renderChangelog(source.text, normalized.data, Boolean(normalize_only));
+  const rolled = source.exists ? rollShipped(location.cwd, location.target, source.text) : null;
+  const rendered = renderChangelog(
+    rolled?.text ?? source.text,
+    normalized.data,
+    Boolean(normalize_only),
+  );
   if ("error" in rendered) return rendered;
   return {
     ok: true,
+    ...(rolled ? { rolled: rolled.roll } : {}),
     path: location.target,
     entries: normalized.data,
     normalize_only: Boolean(normalize_only),
@@ -361,10 +427,9 @@ export function changelogApply({
   const rel = changelogPath || "CHANGELOG.md";
   const location = changelogTarget(cwd, rel);
   if ("error" in location) return location;
-  const target = location.target;
 
   try {
-    return applyChangelog(target, normalized.data, Boolean(normalize_only));
+    return applyChangelog(location.cwd, location.target, normalized.data, Boolean(normalize_only));
   } catch (err) {
     return { error: err instanceof Error ? err.message : "changelog apply failed" };
   }

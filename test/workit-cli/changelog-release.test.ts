@@ -5,7 +5,15 @@
 // global git config is empty, so the default tag prefix is the repo's own.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Io } from "@/packages/workit-cli/src/output";
@@ -326,4 +334,68 @@ test("Given the installed command line, When `changelog release` runs in a pipel
   expect(r.read()).toBe(RELEASED);
   expect(r.read("n.md")).toBe(FIXED);
   expect(cli("release", "1.1").status).toBe(2);
+});
+
+// `changelog apply` rolls first: the shipped entries move with the new one.
+const SHIPPED_TAGGED = `# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Shipped in 1.0.0.\n`;
+const SHIPPED_ON_MAIN = `# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Shipped in 1.0.0.\n- Not released yet.\n`;
+const ADD_FIXED = ["apply", "--entries", '{"Fixed": ["The new fix."]}'];
+
+test("Given one shipped and one unreleased entry, When apply adds an entry, Then the shipped one moves under [1.0.0], the others stay in [Unreleased] and the output counts the move", async () => {
+  const r = repo([{ text: SHIPPED_TAGGED, tag: "v1.0.0" }, { text: SHIPPED_ON_MAIN }]);
+  const out = io(r.dir);
+  expect(await run(ADD_FIXED, out)).toBe(0);
+  expect(r.read()).toBe(
+    "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Not released yet.\n\n### Fixed\n\n- The new fix.\n\n## [1.0.0] - 2026-02-03\n\n### Added\n\n- Shipped in 1.0.0.\n",
+  );
+  expect(out.out).toContain("(moved 1 shipped entry from [Unreleased] into [1.0.0])");
+  expect(out.err).toBe("");
+  const json = io(r.dir, true);
+  r.git("checkout", "--", "CHANGELOG.md");
+  expect(await run([...ADD_FIXED, "--preview"], json)).toBe(0);
+  expect(JSON.parse(json.out).data.rolled).toEqual({
+    moved: [{ version: "1.0.0", entries: 1 }],
+    entries: 1,
+  });
+  expect(r.read()).toBe(SHIPPED_ON_MAIN);
+});
+
+test("Given no release tags, or a shallow clone, When apply adds an entry, Then nothing moves and nothing warns", async () => {
+  const tagless = repo([{ text: SHIPPED_ON_MAIN }]);
+  const out = io(tagless.dir);
+  expect(await run(ADD_FIXED, out)).toBe(0);
+  expect(tagless.read()).toBe(`${SHIPPED_ON_MAIN}### Fixed\n\n- The new fix.\n`);
+  expect(out.out).toBe(`changelog updated: ${realpathSync(tagless.dir)}/CHANGELOG.md\n`);
+  expect(out.err).toBe("");
+
+  const tagged = repo([{ text: SHIPPED_TAGGED, tag: "v1.0.0" }, { text: SHIPPED_ON_MAIN }]);
+  const shallow = mkdtempSync(path.join(os.tmpdir(), "wk-clrel-shallow-"));
+  dirs.push(shallow);
+  const cloned = spawnSync(
+    "git",
+    ["clone", "-q", "--depth", "1", `file://${tagged.dir}`, shallow],
+    { encoding: "utf8" },
+  );
+  expect(cloned.status).toBe(0);
+  const shallowOut = io(shallow);
+  expect(await run(ADD_FIXED, shallowOut)).toBe(0);
+  expect(readFileSync(path.join(shallow, "CHANGELOG.md"), "utf8")).toContain(
+    "## [Unreleased]\n\n### Added\n\n- Shipped in 1.0.0.\n- Not released yet.\n",
+  );
+  expect(shallowOut.err).toBe("");
+});
+
+test("Given an [Unreleased] entry also under its release, When apply adds an entry, Then it warns with the fix and still adds the entry", async () => {
+  const doubled = changelog("### Added\n\n- First release.\n");
+  const r = repo([{ text: changelog(""), tag: "v1.0.0" }, { text: doubled }]);
+  const out = io(r.dir);
+  expect(await run(ADD_FIXED, out)).toBe(0);
+  expect(r.read()).toContain(
+    "## [Unreleased]\n\n### Added\n\n- First release.\n\n### Fixed\n\n- The new fix.\n",
+  );
+  expect(out.err).toContain(
+    "workit: warning: CHANGELOG.md: the shipped [Unreleased] entries were not moved",
+  );
+  expect(out.err).toContain("Run workit changelog roll");
+  expect(out.out).not.toContain("moved");
 });

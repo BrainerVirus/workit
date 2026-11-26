@@ -364,6 +364,51 @@ test("Given changelog create and no entry, When pr create --changelog 'Fixed: x'
   expect(opened(routes.calls)).toHaveLength(1);
 });
 
+test("Given main's [Unreleased] holds an entry tag v1.0.0 shipped, When pr create --changelog runs, Then the same commit moves it under [1.0.0], adds the new entry and says how many moved", async () => {
+  const { repo, runner } = setup({ changelog: "create" });
+  prCreateDeps.git = async (argv, io) => {
+    if (argv[0] !== "push") return originalGit(argv, io);
+    repo.git("push", "-q", path.join(repo.root, "remote.git"), "feature/x");
+    return 0;
+  };
+  for (const [key, value] of [
+    ["user.name", "t"],
+    ["user.email", "t@t"],
+    ["commit.gpgsign", "false"],
+    ["tag.gpgsign", "false"],
+  ])
+    repo.git("config", key, value);
+  // The release tagged main without writing back: main still lists the entry as unreleased.
+  const remote = path.join(repo.root, "remote.git");
+  repo.git("fetch", "-q", remote, "main");
+  repo.git("switch", "-q", "-C", "main", "FETCH_HEAD");
+  writeFileSync(
+    path.join(repo.cwd, "CHANGELOG.md"),
+    "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Shipped in 1.0.0.\n",
+  );
+  repo.git("add", "CHANGELOG.md");
+  repo.git("commit", "-q", "-m", "docs: changelog");
+  repo.git("tag", "v1.0.0");
+  repo.git("push", "-q", remote, "main");
+  repo.git("switch", "-q", "feature/x");
+  repo.git("rebase", "-q", "main");
+  repo.git("push", "-q", "-f", remote, "feature/x");
+  repo.subs["{{BASE}}"] = repo.git("rev-parse", "main");
+
+  const result = await create(repo, "--changelog", "Fixed: x no longer crashes");
+  expect(result.stderr).not.toContain("warning");
+  expect(repo.git("log", "-1", "--format=%s")).toBe("docs(changelog): add the changelog entry");
+  expect(repo.git("show", "HEAD:CHANGELOG.md")).toBe(
+    "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- x no longer crashes\n\n## [1.0.0] - " +
+      repo.git("log", "-1", "--format=%cs", "v1.0.0") +
+      "\n\n### Added\n\n- Shipped in 1.0.0.",
+  );
+  expect(result.stdout).toContain(
+    'changelog: added "Fixed: x no longer crashes" to CHANGELOG.md (moved 1 shipped entry from [Unreleased] into [1.0.0]), committed',
+  );
+  expect(opened((runner as unknown as { calls: Call[] }).calls)).toHaveLength(1);
+});
+
 test("Given --changelog and a refused commit, When pr create runs, Then it says the changelog is left edited and uncommitted and opens nothing", async () => {
   const { repo, runner } = setup({ changelog: "create" });
   const before = repo.git("rev-parse", "HEAD");
