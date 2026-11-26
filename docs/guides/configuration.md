@@ -328,6 +328,13 @@ merge ([when it keeps one](delivery.md)). Turn it off with
 it for one merge. A workspace nested inside another inherits it the way it
 inherits `trailers`.
 
+A workspace's `shared` (default `false`) marks repos a team shares that must not
+name your personal tooling. With `workit workspace set <name> shared=true`,
+`workit pr create` and `workit pr edit` warn, never block, for each place the PR
+names Workit: the title, a body line, or a Markdown doc the branch adds
+([shared workspaces](delivery.md#shared-workspaces)). Nested workspaces inherit
+it like `trailers`.
+
 ### Branch and commit policy
 
 `branchPolicy.preset` is `gitflow`, `github-flow`, `trunk-based` or `custom`

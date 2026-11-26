@@ -873,6 +873,18 @@ There is no flag to skip the check: set `prTemplate` instead. The release PR
 that `workit release finish` opens on a non-git-flow repo carries a generated
 body and is not checked.
 
+### Shared workspaces
+
+Some team repos must not mention Workit. Mark the workspace with
+`workit workspace set <ws> shared=true` and `pr create` and `pr edit` print one
+`warning:` line on stderr for each place the PR names Workit (a whole word, any
+case): the title, the body with its line numbers, and each new `.md` or `.mdx`
+file the branch adds since its base. Each line asks you to reword. The PR still
+opens or updates: it is a warning, never a block. What Workit writes itself does
+not count: the `Workit-Session:` trailer and `<!-- workit… -->` markers. Turn
+commit trailers off too with `trailers=false`
+([trailers](configuration.md)).
+
 ### Linking issues
 
 `workit pr create --issue <id>` (repeatable) links the PR to issues. A

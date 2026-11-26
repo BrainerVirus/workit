@@ -171,6 +171,10 @@
             "description": "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
             "type": "boolean"
           },
+          "shared": {
+            "description": "Whether this workspace's repos are shared with a team that must not see Workit named (default false): `workit pr create` and `workit pr edit` then warn, never block, when the PR title, body or a new doc names it.",
+            "type": "boolean"
+          },
           "fanout": {
             "description": "Fanout settings.",
             "type": "object",
