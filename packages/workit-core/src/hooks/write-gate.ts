@@ -323,31 +323,168 @@ const TOKENS =
  * it may be a private field), and a triple-quoted f-string and a regex
  * literal kept, so their quotes are left over.
  */
-const strip = (text: string, python: boolean): string =>
+const strip = (text: string, python: boolean, modules: string[] = []): string =>
   text.replace(
     TOKENS,
     (
       token: string,
-      comment?: string,
-      _path?: string,
-      _mode?: string,
-      _encoding?: string,
-      prefix?: string,
-      triple?: string,
-      template?: string,
-      _quote?: string,
-      fstring?: string,
-      string?: string,
+      comment: string | undefined,
+      _path: string | undefined,
+      _mode: string | undefined,
+      _encoding: string | undefined,
+      prefix: string | undefined,
+      triple: string | undefined,
+      template: string | undefined,
+      _quote: string | undefined,
+      fstring: string | undefined,
+      string: string | undefined,
+      at: number,
     ) => {
       const code = template ?? fstring;
       if (comment) return python || comment[0] !== "#" ? token.replace(/['"`]/g, "") : token;
       if (code !== undefined)
-        return `\n${strip(code.match(/\{[^{}]*\}/g)?.join("\n") ?? "", python)}\n`;
+        return `\n${strip(code.match(/\{[^{}]*\}/g)?.join("\n") ?? "", python, modules)}\n`;
+      // A module a `require(`, `import(`, `import` or `from` names stands as `«<index in modules>»`.
+      if (
+        string &&
+        /^[\w@.:/-]+$/.test(token.slice(1, -1)) &&
+        /(?:\b(?:require|import)\s*\(\s*|\b(?:from|import)\s*)$/.test(
+          text.slice(Math.max(0, at - 24), at),
+        )
+      )
+        return `«${modules.push(token.slice(1, -1)) - 1}»`;
       // A string stands as `0`, so a call still shows how many arguments it takes.
       if (string || (triple && !/f/i.test(prefix ?? ""))) return "0";
-      return /^[os]/.test(token) ? "" : token;
+      // A read is dropped; `stdout.write` stays `stdout`, a member of `sys` and `process`.
+      return token[0] === "o" ? "" : token[0] === "s" ? token.slice(0, 6) : token;
     },
   );
+
+/** Modules inline code may import whole: Python's, then Node's (bare or `node:`, and any `*.json`). */
+const PY_WHOLE = new Set(
+  "json re math collections itertools functools datetime time hashlib base64 glob fnmatch csv io string textwrap statistics difflib shlex pprint typing ast tomllib yaml configparser pathlib urllib.parse xml.etree.ElementTree os.path".split(
+    " ",
+  ),
+);
+const NODE_WHOLE = new Set(
+  "path os url util crypto assert zlib querystring readline buffer".split(" "),
+);
+const FS_READS =
+  "readFileSync readFile readdirSync readdir statSync lstatSync stat lstat existsSync accessSync realpathSync readlinkSync createReadStream promises constants";
+/** Modules (and Node globals) inline code may use only through these members. */
+const MEMBERS: Record<string, string> = {
+  "py os": "path getcwd listdir scandir walk stat environ getenv sep linesep",
+  "py sys": "argv stdin stdout stderr exit version version_info platform path maxsize",
+  fs: FS_READS,
+  "fs/promises": FS_READS,
+};
+const OUTSIDE =
+  " is outside the modules Workit reads in inline code (json, re, pathlib, os.path, fs reads…)";
+
+/**
+ * Why inline code (`bare`, as `strip` left it, with the `modules` it names) reaches past the
+ * modules Workit reads: an import that is not literal or not in PY_WHOLE, NODE_WHOLE or MEMBERS,
+ * a name it imports that is not an allowed member, or a module it binds used other than as
+ * `name.member` (a member in MEMBERS where the module has a list). Null when it does not.
+ */
+const unread = (bare: string, modules: readonly string[], python: boolean): string | null => {
+  let why: string | null = null;
+  const refuse = (what: string) => {
+    why ??= `\`${what.trim().replace(/«(\d+)»/g, (_, at) => `'${modules[at]}'`)}\`${OUTSIDE}`;
+    return " ";
+  };
+  // Each name a module is bound to, with the members it may be used with ("" any).
+  const bound = new Map<string, string>();
+  /** The members `module` may be used with: "" any, undefined not allowed. */
+  const members = (module: string): string | undefined =>
+    python
+      ? PY_WHOLE.has(module)
+        ? ""
+        : MEMBERS[`py ${module}`]
+      : NODE_WHOLE.has(module) || module.endsWith(".json")
+        ? ""
+        : MEMBERS[module];
+  const allows = (list: string, member: string) => !list || list.split(" ").includes(member);
+  // A whole-line comment (`strip` keeps its words) imports nothing.
+  let rest = bare.replace(python ? /^[ \t]*#.*/gm : /^[ \t]*(?:\/\/.*|\/\*[\s\S]*?\*\/)/gm, " ");
+  if (python) {
+    rest = rest
+      .replace(
+        /(?<![\w.])from\s+([\w.]+)\s+import\s+(\*|\([\w\s,]*\)|\w+(?:\s+as\s+\w+)?(?:\s*,\s*\w+(?:\s+as\s+\w+)?)*)/g,
+        (statement, module: string, list: string) => {
+          for (const item of list.replace(/[()]/g, "").split(",")) {
+            const [name, alias = name] = item.trim().split(/\s+as\s+/);
+            const of = members(module);
+            // `from os import path` binds a module; `from json import *` binds names Workit cannot see.
+            if (members(`${module}.${name}`) !== undefined)
+              bound.set(alias, members(`${module}.${name}`)!);
+            else if (name === "*" || of === undefined || (name && !allows(of, name)))
+              return refuse(statement);
+          }
+          return " ";
+        },
+      )
+      .replace(
+        /(?<![\w.])import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)/g,
+        (statement, list: string) => {
+          for (const item of list.split(",")) {
+            const [module, alias] = item.trim().split(/\s+as\s+/);
+            const of = members(module);
+            if (of === undefined) return refuse(statement);
+            // `import urllib.parse` binds `urllib`, used only as `urllib.parse`.
+            const [top, next] = module.split(".");
+            if (alias) bound.set(alias, of);
+            else bound.set(top, members(top) ?? next);
+          }
+          return " ";
+        },
+      );
+  } else {
+    /** A module's import: each name bound to it, the members destructured, the member used. */
+    const use = (
+      statement: string,
+      at: string,
+      names: Array<string | undefined>,
+      list?: string,
+      member?: string,
+    ): string => {
+      const module = modules[Number(at)].replace(/^node:/, "");
+      const of = members(module);
+      if (of === undefined) return refuse(statement);
+      if (member !== undefined) return allows(of, member) ? " " : refuse(statement);
+      for (const name of names) if (name && !module.endsWith(".json")) bound.set(name, of);
+      for (const item of list?.split(",") ?? []) {
+        const key = item.trim().split(/\s*(?::|\bas\b|=)\s*/)[0];
+        if (key && (!/^[\w$]+$/.test(key) || !allows(of, key))) return refuse(statement);
+      }
+      // `require('fs')` passed whole (`Object.values(require('fs'))`) reaches every member.
+      return of && !names.some(Boolean) && list === undefined ? refuse(statement) : " ";
+    };
+    rest = rest
+      .replace(
+        /(?<![\w$.])import\s*(?:([\w$]+)\s*,?\s*)?(?:\*\s*as\s+([\w$]+)\s*|\{([^{}]*)\}\s*)?(?:from\s*)?«(\d+)»/g,
+        (statement, name?: string, all?: string, list?: string, at = "") =>
+          use(statement, at, [name, all], list),
+      )
+      .replace(
+        /(?:(?<![\w$.])(?:(?:const|let|var)\s+)?(?:([\w$]+)|\{([^{}]*)\})\s*=\s*(?:await\s+)?)?(?<![\w$.])(?:require|import)\s*\(\s*«(\d+)»\s*\)(?:\s*\.\s*([\w$]+))?/g,
+        (statement, name?: string, list?: string, at = "", member?: string) =>
+          use(statement, at, [name], list, member),
+      );
+  }
+  // An import or require left over is one Workit cannot read (`require(x)`, `__import__`, `import(\`…\`)`).
+  const left = /(?<![\w$.])(?:require|import|__import__)(?![\w$])[^;\n]{0,24}/.exec(rest);
+  if (left) refuse(left[0]);
+  for (const [name, of] of bound)
+    for (const use of rest.matchAll(
+      new RegExp(
+        `(?<![\\w$.])${name.replaceAll("$", "\\$")}(?![\\w$])(?:\\s*\\.\\s*([\\w$]+))?`,
+        "g",
+      ),
+    ))
+      if (use[1] === undefined || !allows(of, use[1])) refuse(use[0]);
+  return why;
+};
 
 /**
  * A `.replace(` that may rename a path: anything but a string's two or three
@@ -400,26 +537,36 @@ const callsResult = (code: string): boolean =>
   });
 
 /**
- * Whether inline Python or Node code may change files: SPAWNS, a call on a returned value
- * (`callsResult`), a `.replace(` that may rename a path (`renames`), or a word left by
- * `strip` that names a call in MUTATING_CALLS (bar a list's `append` and `copy`).
+ * Why inline Python or Node code (`code`; else an option, argument or assignment it is given)
+ * may change files, or null: SPAWNS, strings or calls Workit cannot read, code that reaches past
+ * the modules it reads (`unread`), a `.replace(` that may rename a path (`renames`), or a word
+ * left by `strip` that names a call in MUTATING_CALLS (bar a list's `append` and `copy`).
  */
-const writesIn = (text: string, python = false): boolean => {
-  const bare = strip(text, python);
+const writesIn = (text: string, python = false, code = true): string | null => {
+  const modules: string[] = [];
+  const bare = strip(text, python, modules);
+  const spawns = SPAWNS.exec(text)?.[0];
+  const word = [...bare.matchAll(/[\w$]+/g)].find(
+    ([name]) => !/^(?:append|copy)$/.test(name) && MUTATING_CALLS.test(name),
+  )?.[0];
   // Fail closed where the strings cannot be told apart: a quote or backtick left over (an
   // f-string or template literal with nested braces, a regex literal holding one) or a `\u`
   // or `\x` escape.
-  return (
-    SPAWNS.test(text) ||
-    /['"`]/.test(bare) ||
-    renames(bare) ||
-    /\\[ux]/.test(text) ||
-    callsResult(bare) ||
-    [...bare.matchAll(/[\w$]+/g)].some(
-      ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
-    )
-  );
+  return spawns !== undefined
+    ? `\`${spawns}\` may run code or change files`
+    : /['"`]/.test(bare) || /\\[ux]/.test(text) || callsResult(bare)
+      ? "Workit cannot read its strings or a call on a returned value"
+      : ((code ? unread(bare, modules, python) : null) ??
+        (renames(bare)
+          ? "`.replace(` may rename a path"
+          : word === undefined
+            ? null
+            : `\`${word}\` may change files`));
 };
+
+/** Why the inline code an analysis read first was judged a writer, by target list (`inlineWhy`). */
+const REASONS = new WeakMap<readonly string[], string>();
+let noted: string | undefined;
 
 /** Calls that only build a path: the value they return may reach any later call. */
 const PATH_CALLS =
@@ -625,20 +772,29 @@ const opaqueWrites = (
     const joined = (index: number) => args[index].includes("=");
     const code = new Set(codes.map((index) => runs + index + (joined(index) ? 1 : 2)));
     const python = name.startsWith("py");
+    let why: string | null = null;
     // Python or Node code with no call that writes, deletes or runs a command changes nothing,
     // unless the command sets a loader (`export NODE_OPTIONS=…` before it).
-    return !loads &&
-      /^(?:python[\d.]*|node|bun)$/.test(name) &&
-      // The code, the environment and the options (before Python's code; anywhere for Node).
-      [
-        ...(at < 0 ? [fed] : []),
-        ...codes.map((index) =>
-          joined(index) ? texts[runs + index + 1]?.replace(/^[^=]*=/, "") : texts[runs + index + 2],
-        ),
-        ...texts
-          .slice(0, runs + 1 + (at < 0 || !python ? args.length : at))
-          .filter((_, index) => !code.has(index)),
-      ].every((text) => text !== undefined && text !== null && !writesIn(text, python))
+    if (loads || !/^(?:python[\d.]*|node|bun)$/.test(name)) why = "";
+    // The code, then the environment and the options (before Python's code; anywhere for Node).
+    const given = [
+      ...(at < 0 ? [fed] : []),
+      ...codes.map((index) =>
+        joined(index) ? texts[runs + index + 1]?.replace(/^[^=]*=/, "") : texts[runs + index + 2],
+      ),
+    ];
+    for (const [index, text] of [
+      ...given,
+      ...texts
+        .slice(0, runs + 1 + (at < 0 || !python ? args.length : at))
+        .filter((_, place) => !code.has(place)),
+    ].entries())
+      why ??=
+        text === undefined || text === null
+          ? "Workit cannot read its code"
+          : writesIn(text, python, index < given.length);
+    if (why) noted ??= why;
+    return why === null
       ? null
       : [
           ".",
@@ -1155,21 +1311,28 @@ const placeholderIn = (dir: string, name: string): string => {
 /** `make()`'s target list, with the placeholders made while it ran recorded for it. */
 const recording = (make: () => string[]): string[] => {
   const outer = collecting;
+  const before = noted;
   const found = new Set<string>();
   collecting = found;
+  noted = undefined;
   try {
     const targets = make();
     PLACEHOLDERS.set(targets, found);
+    if (noted !== undefined) REASONS.set(targets, noted);
     for (const target of found) outer?.add(target);
     return targets;
   } finally {
     collecting = outer;
+    noted = before ?? noted;
   }
 };
 
 /** The placeholders (not files a command names) in a list `shellMutationTargets` or `liveTargets` returned. */
 export const placeholdersOf = (targets: readonly string[]): ReadonlySet<string> =>
   PLACEHOLDERS.get(targets) ?? new Set();
+
+/** Why the first inline script in a list `shellMutationTargets` returned counts as a writer. */
+export const inlineWhy = (targets: readonly string[]): string | undefined => REASONS.get(targets);
 
 /**
  * For an implementer's confinement: a placeholder file name, then the command's

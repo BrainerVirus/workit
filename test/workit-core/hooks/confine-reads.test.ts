@@ -6,12 +6,14 @@
 import "@/test/shared/state-isolation";
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import { FANOUT_TOKEN_FILE } from "@/packages/workit-core/src/hooks/worktree-confine";
+import { shellMutationTargets } from "@/packages/workit-core/src/hooks/write-gate";
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
 import { fixture } from "./hook-fixtures";
 
@@ -499,4 +501,126 @@ test("Given verification mwwyoapt's forms, When a judge or an implementer outsid
     reads.map((command) => `cd ${lead} && ${command}`),
   );
   allowed(implementer, ["eval 'touch x'", "timeout 5 touch x"]);
+});
+
+// #956 round 3 (verification mwwyoapt): inline code imports only the modules Workit reads, by a
+// literal name, and uses a module it binds only as `name.member` (members listed for os, sys, fs).
+test("Given verification mwwyoapt's sinks and module escapes, When a judge or an implementer outside its worktree imports past the tables or uses a module whole, Then each is denied", () => {
+  const writers = [
+    `python3 -c "import timeit; timeit.timeit('open(1)')"`,
+    `python3 -c "import cProfile; cProfile.run('print(1)')"`,
+    `python3 -c "import pickle; pickle.loads(b'x')"`,
+    `python3 -c "import runpy; runpy.run_path('x.py')"`,
+    `node -e "import('data:text/javascript,1')"`,
+    `python3 -c "import ctypes; ctypes.CDLL(None).creat(b'x', 420)"`,
+    `python3 -c "import bz2; bz2.open('x', 'wb')"`,
+    `python3 -c "import gzip; gzip.GzipFile('x', 'wb')"`,
+    `python3 -c "import urllib.request as u; u.urlretrieve('http://x', 'y')"`,
+    `python3 -c "from urllib.request import urlretrieve"`,
+    `python3 -c "import numpy as np; np.savetxt('x', [1])"`,
+    `python3 -c "import numpy as np; np.zeros(1).tofile('x')"`,
+    `python3 -c "import mailbox; mailbox.mbox('x')"`,
+    `python3 -c "import importlib; importlib.import_module('os')"`,
+    `python3 -c "x = __import__('os')"`,
+    `python3 -c "import os; os.setxattr('x','user.a',b'1')"`,
+    `python3 -c "import os; m = os; m.remove('x')"`,
+    `python3 -c "import sys; sys.modules['os'].remove('x')"`,
+    `python3 -c "from os import remove"`,
+    `python3 -c "from os import *"`,
+    `python3 -c "from json import *"`,
+    `python3 -c "from . import x"`,
+    `node -e "Object.entries(require('fs')).filter(([k]) => k > 'w').forEach(([, f]) => f('x', 'a'))"`,
+    `node -e "const fs = require('fs'); Object.entries(fs).forEach(([k, f]) => k)"`,
+    `node -e "const o = {}; o.f = require('fs'); Object.values(o.f)"`,
+    `node -e "const { writeFileSync } = require('fs')"`,
+    `node -e "const { promises: { writeFile } } = require('fs')"`,
+    `node -e "require('fs').fsyncSync(1)"`,
+    `node -e "import('fs').then(m => m.writeFileSync('x','a'))"`,
+    `node -e "require('child_process')"`,
+    `node -e "require('./tool.js')"`,
+    `node -e "const r = require; r('fs')"`,
+    `node -e "const m = 'fs'; require(m)"`,
+    `bun -e "import { writeFileSync } from 'fs'; writeFileSync('x','a')"`,
+    `bun -e "import * as fs from 'fs'; Object.values(fs)"`,
+    `bun -e "import 'node:vm'"`,
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  allowed(implementer, writers.slice(0, 3));
+});
+
+test("Given inline code that imports past the tables, When a judge is refused, Then line 1 names the import and line 2 retries from scratch, or names the read-only ways when the script reads a relative path", () => {
+  const scratch = path.join(git(lead, "rev-parse", "--show-toplevel"), ".workit-scratch");
+  const plain = `python3 -c "import timeit; print(timeit.timeit('1', number=1))"`;
+  const [what, retry] = verifier(plain)?.permissionDecisionReason?.split("\n") ?? [];
+  expect(what).toContain(
+    "`import timeit` is outside the modules Workit reads in inline code (json, re, pathlib, os.path, fs reads…)",
+  );
+  expect(retry).toBe(`Retry as: cd ${scratch} && ${plain}`);
+  const reads = verifier(
+    `node -e "const http = require('http'); console.log(require('./package.json'))"`,
+  )?.permissionDecisionReason?.split("\n");
+  expect(reads?.[0]).toContain(
+    "`const http = require('http')` is outside the modules Workit reads",
+  );
+  expect(reads?.[1]).toBe(
+    `Why: read with cat, jq, grep or the Read tool, or keep to json/re/pathlib/fs reads; a script that needs more goes in a file in ${scratch}.`,
+  );
+});
+
+/** The modules a `python3` here names as its standard library, or [] with no Python 3.10+. */
+const pythonModules = (): string[] => {
+  for (const python of ["python3", "python"]) {
+    const result = spawnSync(
+      python,
+      ["-c", "import sys; print(' '.join(sorted(sys.stdlib_module_names)))"],
+      {
+        encoding: "utf8",
+      },
+    );
+    if (result.status === 0) return result.stdout.trim().split(/\s+/);
+  }
+  return [];
+};
+
+test("Given every module in Python's sys.stdlib_module_names and Node's builtinModules, When inline code imports one outside the tables, Then it is a writer; one inside runs", () => {
+  const cwd = realpathSync(lead);
+  const writes = (command: string, runner: string) =>
+    shellMutationTargets(cwd, command, "posix", true).includes(
+      path.join(cwd, `.workit-runs-${runner}`),
+    );
+  const python = new Set(
+    "json re math collections itertools functools datetime time hashlib base64 glob fnmatch csv io string textwrap statistics difflib shlex pprint typing ast tomllib configparser pathlib os sys".split(
+      " ",
+    ),
+  );
+  const names = pythonModules();
+  const refused = names.filter((name) => {
+    const writer = writes(`python3 -c "import ${name}"`, "python3");
+    expect(writer, name).toBe(!python.has(name));
+    return writer;
+  }).length;
+  const node = new Set(
+    "path os url util crypto assert zlib querystring readline buffer fs fs/promises".split(" "),
+  );
+  const builtins = builtinModules.filter((module) => !module.includes(":"));
+  const refusedNode = builtins.filter((name) =>
+    [name, `node:${name}`]
+      .map((spelled) => {
+        const writer = writes(`node -e "require('${spelled}')"`, "node");
+        // `fs` taken whole reaches every member: only a member or a binding is read.
+        expect(writer, spelled).toBe(!node.has(name) || name.startsWith("fs"));
+        return writer && !node.has(name);
+      })
+      .every(Boolean),
+  ).length;
+  console.log(
+    `property: Python ${refused} of ${names.length} refused; Node ${refusedNode} of ${builtins.length} refused`,
+  );
+  expect(refused).toBeGreaterThan(names.length - python.size - 1);
+  expect(refusedNode).toBe(builtins.filter((name) => !node.has(name)).length);
 });
