@@ -187,13 +187,54 @@ const schemaVersion = (db: SqlDb): number => {
   return row ? Number(row.value) : 0;
 };
 
-const transaction = <T>(db: SqlDb, file: string, waitMs: number, body: () => T): T => {
+/** One wait inside SQLite's busy handler, between checks for another writer's progress. */
+const BUSY_SLICE_MS = 250;
+/** A waiter that sees other writers commit keeps waiting, up to this many busy timeouts in all. */
+const BUSY_PROGRESS_LIMIT = 12;
+
+/** Changes whenever another connection commits; undefined when it cannot be read just now. */
+const dataVersion = (db: SqlDb): number | undefined => {
   try {
-    db.exec("BEGIN IMMEDIATE");
+    return Number(db.get("PRAGMA data_version")?.data_version);
   } catch (error) {
-    if (isBusy(error)) throw new ThreadsBusyError(file, waitMs, { cause: error });
+    if (isBusy(error)) return undefined;
     throw error;
   }
+};
+
+/**
+ * Takes the write lock. SQLite's busy handler polls with growing sleeps, so a
+ * waiter almost never lands in the gap between another process's back-to-back
+ * short transactions and starves for that writer's whole burst, though no
+ * single transaction holds the lock long. So the wait is per slice, and the
+ * busy timeout counts from the last commit any other connection made: a
+ * writer that keeps committing is progress, while a lock held with no commit
+ * for the whole timeout (a stuck or long transaction) is ThreadsBusyError.
+ */
+const begin = (db: SqlDb, file: string, waitMs: number): void => {
+  const start = Date.now();
+  let quietSince = start;
+  let seen = dataVersion(db);
+  for (;;) {
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      return;
+    } catch (error) {
+      if (!isBusy(error)) throw error;
+      const now = Date.now();
+      const version = dataVersion(db);
+      if (version !== undefined && version !== seen) {
+        seen = version;
+        quietSince = now;
+      }
+      if (now - quietSince >= waitMs || now - start >= waitMs * BUSY_PROGRESS_LIMIT)
+        throw new ThreadsBusyError(file, waitMs, { cause: error });
+    }
+  }
+};
+
+const transaction = <T>(db: SqlDb, file: string, waitMs: number, body: () => T): T => {
+  begin(db, file, waitMs);
   try {
     const result = body();
     db.exec("COMMIT");
@@ -273,7 +314,7 @@ export const openThreadsStore = (options: OpenOptions = {}): ThreadsStore => {
   checkStoreFiles(file);
   const db = openSqlite(file);
   try {
-    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(waitMs))}`);
+    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.min(Math.trunc(waitMs), BUSY_SLICE_MS))}`);
     settle(db, file, waitMs);
   } catch (error) {
     db.close();

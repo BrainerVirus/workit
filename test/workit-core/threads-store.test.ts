@@ -77,6 +77,25 @@ if (mode === "open" || mode === "open-as") {
         : { cwd: "/w", cmd: "vite", kind: "server", startedAt: "2026-11-13T00:00:00Z", rss: 1 },
     );
   store.close();
+} else if (mode === "chain") {
+  // Back-to-back short transactions, each holding the lock for a slow commit's
+  // time, for longer than the other writer's busy timeout.
+  const [forMs] = args;
+  const store = openThreadsStore({ env });
+  let until = 0;
+  while (until === 0 || Date.now() < until) {
+    upsertProc(store, "chained", (row) => {
+      Atomics.wait(pause, 0, 0, 20);
+      return row
+        ? { rss: row.rss + 1 }
+        : { cwd: "/w", cmd: "vite", kind: "server", startedAt: "2026-11-13T00:00:00Z", rss: 1 };
+    });
+    if (until === 0) {
+      until = Date.now() + Number(forMs);
+      signal("chaining");
+    }
+  }
+  store.close();
 } else if (mode === "hold") {
   const store = openThreadsStore({ env });
   store.write((db) => {
@@ -250,6 +269,34 @@ test.each([
     try {
       // A lost read-modify-write would leave fewer than 300.
       expect(readProc(store, "p1")?.rss).toBe(300);
+    } finally {
+      store.close();
+    }
+  },
+);
+
+test.each(["bun", "node"] as const)(
+  "Given a %s process committing short transactions back to back for longer than the busy timeout, When another writer waits, Then it writes once the burst ends",
+  async (runtime) => {
+    const state = tempDir("wk-threads-chain-");
+    const env = { WORKIT_STATE_DIR: state };
+    openThreadsStore({ env }).close();
+    const chain = worker(runtime, "chain", state, "1500");
+    await waitForFile(path.join(state, "chaining"), chain);
+
+    // Before the fix this writer starved in SQLite's busy handler and threw
+    // after 300 ms, though no transaction held the lock for over 20 ms.
+    const store = openThreadsStore({ env, busyTimeoutMs: 300 });
+    try {
+      upsertProc(store, "mine", () => ({
+        cwd: "/w",
+        cmd: "next dev",
+        kind: "server",
+        startedAt: "2026-11-13T00:00:01Z",
+      }));
+      expect(await chain).toMatchObject({ code: 0, stderr: "" });
+      expect(readProc(store, "mine")?.cmd).toBe("next dev");
+      expect(readProc(store, "chained")?.rss).toBeGreaterThan(1);
     } finally {
       store.close();
     }
