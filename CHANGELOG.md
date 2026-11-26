@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - under a judge's or an implementer's confinement, a pwsh or powershell -File script (and pwsh x.ps1), an -EncodedCommand (-enc, -e), iex or Invoke-Expression inside a -Command script, a cmd /c link or write target spelled with a %VAR% or !VAR! variable, and an xargs or parallel command whose name stdin fills in (xargs -I{} {} f) count as a write in the directory they run in; pwsh -c Get-ChildItem, cmd /c dir and xargs cat still run (#880).
 - the write confinement counts more loader environment names (SSH askpass, cargo and rustc wrappers, JVM and .NET startup options, BUN_OPTIONS, NODE_PATH, npm_config_*, PROMPT_COMMAND, PATHEXT, PSModulePath), reads a pwsh -WorkingDirectory before the script as a cd, and lets a judge run a read after a non-loader env or prefix assignment
 - the identity-variable guard now reads the script in glued short-option clusters such as `script -qc`, `su -lc` and `runuser -lc`, so an identity change inside them is denied.
+- `--body-file -` on Node no longer drops the start of a piped body when the writer is slow to close the pipe
 
 ### Changed
 

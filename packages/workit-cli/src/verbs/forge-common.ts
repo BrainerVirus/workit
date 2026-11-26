@@ -1,7 +1,7 @@
 // Shared plumbing for the forge verbs (`pr`, `ci`, `git push`, `verify-delivery`):
 // flag parsing, forge resolution + identity check, envelope mapping, and the
 // human rendering of a PR status document.
-import { readFileSync, readSync } from "node:fs";
+import { readSync } from "node:fs";
 import type { ForgeRunner } from "@workit-dev/core/src/forge/exec";
 import type { PrStatusDoc } from "@workit-dev/core/src/forge/report";
 import { evidenceLines } from "@workit-dev/core/src/core/policy/check-evidence";
@@ -22,14 +22,10 @@ import { emit, fail, type Io } from "../output";
  * All of stdin, read synchronously. Touching `process.stdin` (the TTY checks
  * do) leaves fd 0 non-blocking when it is a pipe, so a plain read fails with
  * EAGAIN while the writer has not written yet (`gh … | workit pr edit
- * --body-file -`); wait and read again until end of file.
+ * --body-file -`); wait and read again until end of file. Never `readFileSync(0)`:
+ * when EAGAIN lands after a first chunk it throws and that chunk is lost.
  */
 export function readAllStdin(): string {
-  try {
-    return readFileSync(0, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
-  }
   const chunks: Buffer[] = [];
   const buffer = Buffer.alloc(65_536);
   const pause = new Int32Array(new SharedArrayBuffer(4));
