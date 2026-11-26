@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the write confinement counts more loader environment names (SSH askpass, cargo and rustc wrappers, JVM and .NET startup options, BUN_OPTIONS, NODE_PATH, npm_config_*, PROMPT_COMMAND, PATHEXT, PSModulePath), reads a pwsh -WorkingDirectory before the script as a cd, and lets a judge run a read after a non-loader env or prefix assignment
 - the identity-variable guard now reads the script in glued short-option clusters such as `script -qc`, `su -lc` and `runuser -lc`, so an identity change inside them is denied.
 - `--body-file -` on Node no longer drops the start of a piped body when the writer is slow to close the pipe
+- a verdict under a hook-issued verifier or reviewer id now needs that id's token even from a shell with its host variables cleared (no WORKIT_HOST, WORKIT_HOST=cli, or a host named without its session); the merge gate also refuses such rows already recorded (unbound_session).
 
 ### Changed
 

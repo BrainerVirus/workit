@@ -224,11 +224,18 @@ export function recordSetVoid(
   return written.ok ? { ok: true, value: true } : written;
 }
 
+/** A cited verdict row the gate no longer trusts (trustReasons: outside the chain, unissued or unbound, #975). */
+const distrusted = (cwd: string, id: string, rows: readonly ReadRow[], type: string): boolean =>
+  rows.some((row) => row.type === type && row.id === id && trustReasons(cwd, row).length > 0);
+
 /**
  * Whether a `pr.gate` row (#891) still stands: the verdict it cited is not
- * voided in `rows` (this checkout's ledger) and, for a set cover, it has not
- * expired (its `expires`, else SET_TTL_MS after the row) and the store holds
- * no void of it. The Stop hook reads this instead of the set readers.
+ * voided in `rows` (this checkout's ledger), nor one the gate no longer trusts
+ * (#975: a row recorded while a forged verdict was accepted stops standing),
+ * and, for a set cover, it has not expired (its `expires`, else SET_TTL_MS
+ * after the row) and the store holds no void of it nor distrusts its row. A
+ * cited id found in neither (another repository's ledger) is not re-read.
+ * The Stop hook reads this instead of the set readers.
  */
 export function gateStands(
   cwd: string,
@@ -237,7 +244,8 @@ export function gateStands(
   now: number = Date.now(),
 ): boolean {
   const id = typeof gate.verdictId === "string" ? gate.verdictId : null;
-  if (id !== null && verdictVoids(rows).has(id)) return false;
+  if (id !== null && (verdictVoids(rows).has(id) || distrusted(cwd, id, rows, "verdict")))
+    return false;
   if (gate.via !== "set") return true;
   const until =
     typeof gate.expires === "string" ? Date.parse(gate.expires) : Date.parse(gate.at) + SET_TTL_MS;
@@ -246,6 +254,7 @@ export function gateStands(
   const read = readLedgerAt(cwd, setStorePath(), { integrity: true });
   return (
     read.ok &&
+    !distrusted(cwd, id, read.value.rows, SET_ROW) &&
     !read.value.rows.some(
       (row) => row.type === SET_VOID && row.target === id && row.integrity === "verified",
     )

@@ -230,7 +230,11 @@ Code) or `none` (CI, a plain terminal, Cursor). Before an independent verdict
 is recorded, `sessionClaimRefusal` checks the claimed session (env,
 `--session`, or the base of `--as`):
 
-- `none`: accepted; `--session X` and `WORKIT_SESSION_ID=X` are one rule.
+- First, whatever the host (`none` and `cli` included): an id the issued
+  registry holds with a token hash needs that token (`unbound_session`). The
+  registry decides, not the environment, so clearing the host variables
+  proves nothing (#975).
+- `none`: otherwise accepted; `--session X` and `WORKIT_SESSION_ID=X` are one rule.
 - The shell's own session. Under any declared `WORKIT_HOST`, a
   `<lead>:<x>` is accepted only if it was issued.
 - `<lead>:<real>` where the host sets the variable.
@@ -242,10 +246,15 @@ is recorded, `sessionClaimRefusal` checks the claimed session (env,
   `<lead>:<it>`) is a no-op, accepted and read as the shell's session (#427);
   a declared session (Claude Code) is still refused as `session_flag`.
 
+The global `workit --session <id>` runs the same check before any verb, with
+the verb's `--token` or `WORKIT_SESSION_TOKEN`; a read verb is not exempt (it
+needs no `--session`). A `WORKIT_SESSION_ID` a ledger write acts as meets the
+`--session` grammar (ASCII `[A-Za-z0-9_.:@/+-]`, 1-128), so a lookalike id is refused.
+
 `workit git commit` runs the same check on its acting session and refuses an
 issued id (`judge_session`). The gate (`ledger.ts` `sessionTrust`) re-checks
 recorded rows: `unissued_session`, and `unbound_session` for a token-backed id
-whose row lacks `sessionBound: true`.
+whose row lacks `sessionBound: true`, whatever host recorded it (`cli` rows too).
 
 "Issued" means the SubagentStart handler (`handle.ts`, Claude Code and Codex
 judges) recorded the id it gave with `recordIssuedSession`, which also mints

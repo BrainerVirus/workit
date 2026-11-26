@@ -477,7 +477,9 @@ to them or a dir that holds them.
 set verdict: a void row in the same store, after which it covers no PR in
 any repository (`pr status` notes that it was voided). The Stop hook stops
 trusting the `pr.gate` row `pr status` recorded for a head once the verdict it
-cited is voided or its set cover expires, and asks for a verdict again.
+cited is voided, is one the gate no longer trusts (an issued id recorded
+without its token, a row outside the chain), or its set cover expires, and
+asks for a verdict again.
 
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged
@@ -541,7 +543,9 @@ id already issued prints no command: spawn a fresh verifier instead. An OpenCode
 accepts the id only with `--token=<token>`
 (or `WORKIT_SESSION_TOKEN`), so a lead or sibling that read the id in the
 ledger cannot record under it (`unbound_session`), nor supersede that
-reviewer's failure. The row then carries `sessionBound: true`. Each id is
+reviewer's failure. This holds on every host and with none: a shell that
+clears its host variables, or names `WORKIT_HOST=cli`, still needs the token
+for an id the hook issued. The row then carries `sessionBound: true`. Each id is
 issued once: a SubagentStart fired again for an id already issued mints no
 new token. The token hash lives in its own tree (`<state>/issued-tokens/`),
 which hooks older than tokens never write, and binding is sticky: once a lead
@@ -702,8 +706,9 @@ These verdicts are never accepted as independent:
   whose id no SubagentStart hook issued, or a `<lead>:<x>` environment id on
   a declared host (Claude Code, Cursor or any `WORKIT_HOST` but `cli`) that
   none issued: reason `unissued_session`;
-- such an issued id recorded without its token (an older CLI, or another
-  session reusing it): reason `unbound_session`.
+- an issued id recorded without its token (an older CLI, or another
+  session reusing it, even from a shell with its host variables cleared or
+  from CI): reason `unbound_session`.
 
 A verifier resumed after its lead crashed (or one whose context was
 compacted) may no longer have its token. Nothing rebinds the id, since a token

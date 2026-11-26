@@ -1533,22 +1533,24 @@ const SHELL_VOUCHED_HOSTS: ReadonlySet<string> = new Set([
  *   - `unissued_session`: a `--session` id on a host, or a `<lead>:<x>`
  *     environment id on a host that does not name it in its shell (Claude
  *     Code, Cursor, any declared WORKIT_HOST), that no SubagentStart hook issued;
- *   - `unbound_session`: such an id the hook bound to a token, recorded
- *     without it (another session reusing an id it read in the ledger).
+ *   - `unbound_session`: any id the hook bound to a token, recorded without
+ *     it from any host, `cli` included (another session reusing an id it
+ *     read in the ledger, with or without its host variables).
  */
 function sessionTrust(cwd: string, row: ReadRow): RejectReason | null {
   const session = row.actor.session;
   if (!session || row.self === true) return null;
+  // The registry decides, not the recorded host (#975): an id a hook bound to
+  // a token counts only from a row that presented it, `cli` rows included.
+  const binding = session.includes(":") ? issuedBinding(cwd, session) : null;
+  if (binding === "token" && row.sessionBound !== true) return "unbound_session";
   const source = typeof row.sessionSource === "string" ? row.sessionSource : "env";
   const host = row.actor.host;
   const issuedOnly =
     source === "flag"
       ? host !== "cli"
       : source === "env" && session.includes(":") && !SHELL_VOUCHED_HOSTS.has(host);
-  if (!issuedOnly) return null;
-  const binding = issuedBinding(cwd, session);
-  if (binding === null) return "unissued_session";
-  return binding === "token" && row.sessionBound !== true ? "unbound_session" : null;
+  return issuedOnly && binding === null ? "unissued_session" : null;
 }
 
 /**

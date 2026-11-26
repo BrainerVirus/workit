@@ -149,6 +149,17 @@ export function parseGlobals(argv: readonly string[]): Parsed {
   return { json, cwd, ...(session === undefined ? {} : { session }), rest };
 }
 
+/** The verb's `--token <t>` or `--token=<t>` (before any `--`), for the global --session check. */
+const tokenArg = (rest: readonly string[]): string | undefined => {
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
+    if (arg === "--") return undefined;
+    if (arg === "--token") return rest[index + 1];
+    if (arg.startsWith("--token=")) return arg.slice("--token=".length);
+  }
+  return undefined;
+};
+
 const defaultIo = (json: boolean): Io => ({
   json,
   cwd: process.cwd(),
@@ -205,8 +216,18 @@ export async function main(
   if (parsed.session !== undefined) {
     // The same gate the env var meets (verdicts, commits): where the host's
     // session is checked, the flag cannot name another one.
-    const refusal = sessionClaimRefusal(io.env, parsed.session, cwd);
-    if (refusal) return emit(io, fail("blocked", refusal.error, { unblock: refusal.unblock }));
+    // An issued id needs its token here too (#975): the verb's --token or WORKIT_SESSION_TOKEN.
+    const token = tokenArg(parsed.rest) ?? io.env.WORKIT_SESSION_TOKEN ?? null;
+    const refusal = sessionClaimRefusal(io.env, parsed.session, cwd, { token });
+    if (refusal)
+      return emit(
+        io,
+        fail("blocked", refusal.error, {
+          unblock: refusal.error.startsWith("unbound_session")
+            ? `${refusal.unblock}; a read (ledger list, pr status) needs no --session: drop it`
+            : refusal.unblock,
+        }),
+      );
     io.env = { ...io.env, WORKIT_SESSION_ID: parsed.session };
     // The real CLI also reads the process env (task store, task verbs).
     if (overrides.env === undefined) process.env.WORKIT_SESSION_ID = parsed.session;
