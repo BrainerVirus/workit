@@ -441,6 +441,8 @@ const ORDINARY = [
   "rm ../sibling/file.txt",
   "rm -f *.log",
   'git commit -m "fix: node bin/workit-hook.mjs is the hook"',
+  `find . -name '*.ts' | while read f; do grep -c x "$f"; done`,
+  "find . -name '*.test.mjs' -exec node {} +",
 ];
 
 test("Given the verifier's ordinary commands in a repository with a ledger, When run, Then neither the hook guard nor the ledger guard denies them", () => {

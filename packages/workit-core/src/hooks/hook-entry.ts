@@ -328,17 +328,22 @@ const opaqueEntry = (
   if (head === "git" && !words.some((word) => word.includes("alias."))) return null;
   if (head === "workit" || head === "workit-cli") return null;
   const tokens = words.flatMap((word) => word.split(TOKENS)).filter(Boolean);
-  if (!tokens.some((token) => RUNNERS.has(baseName(token)) || PACKAGE_RUNNERS.has(baseName(token))))
-    return null;
+  // An interpreter by name; `.` and `source` run a script only as the command word.
+  const runner = (token: string) =>
+    (RUNNERS.has(baseName(token)) && !/^(?:\.|source)$/u.test(token)) ||
+    PACKAGE_RUNNERS.has(baseName(token));
+  if (!tokens.some(runner)) return null;
   if (scan.fed) return scan.fed;
   for (const token of tokens) {
     const hit = tokenEntry(token, scan);
     if (hit) return hit;
   }
-  // `find … -name 'w*.mjs' -exec node {} \;`: a name glob that matches an entry's basename.
+  // `find … -name 'w*.mjs' -exec node {} \;`: a name glob that starts with a literal and matches an
+  // entry's basename (`*.mjs` alone names any script).
   if (head === "find")
     for (const [index, word] of words.entries()) {
-      const pattern = /^-i?name$/u.test(words[index - 1] ?? "") ? globPattern(word) : null;
+      const named = /^-i?name$/u.test(words[index - 1] ?? "") && /^[^*?[]/u.test(word);
+      const pattern = named ? globPattern(word) : null;
       if (pattern && ENTRY_SAMPLES.some((sample) => pattern.test(sample))) return word;
     }
   // `xargs node < list`: the words its input file feeds it.
